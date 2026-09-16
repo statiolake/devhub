@@ -75,14 +75,25 @@ function useGitHubLogin(): GitHubLogin {
   const [login, setLogin] = useState<GitHubLogin>({ kind: "pending" });
   useEffect(() => {
     let live = true;
-    void githubLogin().then((answer) => {
-      if (!live) return;
-      setLogin(
-        answer.kind === "login"
-          ? { kind: "known", login: answer.login }
-          : { kind: "unknown", reason: answer.reason },
-      );
-    });
+    void githubLogin().then(
+      (answer) => {
+        if (!live) return;
+        setLogin(
+          answer.kind === "login"
+            ? { kind: "known", login: answer.login }
+            : { kind: "unknown", reason: answer.reason },
+        );
+      },
+      (error: unknown) => {
+        // `gh` not answering at all is the same kind of fact as `gh` saying it
+        // is signed out, and the preview line already knows how to say one of
+        // those. Without this the promise rejected into nothing, `login` stayed
+        // `pending` for the life of the sheet, and the row that clones a bare
+        // name was quietly missing with nothing on screen to say why.
+        if (!live) return;
+        setLogin({ kind: "unknown", reason: reasonOf(error) });
+      },
+    );
     // The answer can arrive after the sheet is gone — `gh` takes as long as it
     // takes — and a hook that set state then would be answering a question
     // nobody is still asking.
@@ -234,7 +245,7 @@ export function CloneProjectSheet({
   withAgent,
   onDismiss,
 }: ProjectSheetProps) {
-  const { cloneProject, cloneParentDirectories, reportFailure } = usePicker();
+  const { cloneProject, cloneParentDirectories } = usePicker();
   const login = useGitHubLogin();
   const [asking, setAsking] = useState<"repository" | "where">("repository");
   /** The repository as it was last committed to, and as it is being typed. */
@@ -247,15 +258,31 @@ export function CloneProjectSheet({
   // Asked for once, when the sheet opens, rather than when the second question
   // is reached: the person is naming a repository for those seconds, and a
   // list that is already there is a list that does not make them wait for it.
+  //
+  // A walk that did not finish leaves this sheet with *no rows*, which is a
+  // state it already knows how to be in: the folder is typed and the pinned row
+  // takes it. So the refusal is drawn here and the list becomes empty, rather
+  // than going to the window's failure area — which on this page nothing draws
+  // — while `parents` stayed undefined and the second question sat on
+  // "Searching…" for as long as the person was willing to look at it.
   useEffect(() => {
-    let live = true;
-    void cloneParentDirectories().then((found) => {
-      if (live) setParents(found);
-    }, reportFailure);
+    const abandon = new AbortController();
+    void cloneParentDirectories(abandon.signal).then(
+      (found) => {
+        if (!abandon.signal.aborted) setParents(found);
+      },
+      (error: unknown) => {
+        if (abandon.signal.aborted) return;
+        setParents([]);
+        setFailure(reasonOf(error));
+      },
+    );
+    // The sheet is gone, so the walk it started is not wanted — and the signal
+    // is what tells main to stop it rather than merely stopping the listening.
     return () => {
-      live = false;
+      abandon.abort();
     };
-  }, [cloneParentDirectories, reportFailure]);
+  }, [cloneParentDirectories]);
 
   // What is going to be cloned, from what is in the field right now. The row
   // and the call that clones read the same value, so the preview cannot

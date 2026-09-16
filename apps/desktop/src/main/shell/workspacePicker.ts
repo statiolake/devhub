@@ -27,6 +27,7 @@ import type {
 import { expandDateTemplate } from "../../model/dateTemplate.js";
 import type { WorkspacePickerEvent } from "../../ipc/contract.js";
 import { score } from "../../model/fuzzy.js";
+import { CancellationToken, portFailure } from "../terminal/ports.js";
 
 const MAX_CANDIDATES = 1000;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -375,11 +376,20 @@ function runCommandSource(
  */
 export function collectParentDirectories(
 	config: Config,
+	/**
+	 * Ends the walk, and kills any command source still running.
+	 *
+	 * This answers a question somebody is looking at — the folder list the clone
+	 * sheet draws — so it is abandonable for the same reason every other lookup
+	 * is: a source configured to run something slow must not keep the sheet on
+	 * "Searching…" after the person has gone.
+	 */
+	cancel?: CancellationToken,
 	now: () => Date = () => new Date(),
 ): Promise<readonly string[]> {
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const found: { path: string; rank: number; sequence: number }[] = [];
-		startWorkspacePicker(
+		const stop = startWorkspacePicker(
 			config,
 			"",
 			"parents",
@@ -390,6 +400,15 @@ export function collectParentDirectories(
 						rank: event.sourceRank,
 						sequence: event.sequence,
 					});
+					return;
+				}
+				if (event.kind === "cancelled") {
+					// A cancelled walk never answers. The parents found so far are a
+					// prefix of the real list and nothing marks them as one, so
+					// resolving with them would hand the sheet a short list that
+					// looks complete — the same confusion a cancelled clone lookup
+					// would cause by answering "no clones".
+					reject(portFailure("cancelled"));
 					return;
 				}
 				if (event.kind !== "completed") return;
@@ -413,5 +432,6 @@ export function collectParentDirectories(
 			},
 			now,
 		);
+		cancel?.onCancelled(stop);
 	});
 }

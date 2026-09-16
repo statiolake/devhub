@@ -529,7 +529,7 @@ export class AppController {
 	private handedOverServices: MainServices | undefined;
 	private config: Config | undefined;
 	/**
-	 * The repository lookup that is running, if one is.
+	 * The lookup a question on screen is waiting for, if there is one.
 	 *
 	 * One, not a map, and that is a fact about the picker rather than a
 	 * simplification: a lookup is started by a question on screen, and there is
@@ -537,7 +537,7 @@ export class AppController {
 	 * a second one beginning means the first is not wanted, and there is no
 	 * identifier for the page to keep and get wrong.
 	 */
-	private repositoryLookup: CancellationToken | undefined;
+	private pickerLookup: CancellationToken | undefined;
 	private state: PersistedAppState;
 	private appearanceSequence = 0;
 	private profileSequence = 0;
@@ -1421,6 +1421,71 @@ export class AppController {
 	 * failure with the effective socket unchanged, not as an app that quietly
 	 * believes it moved.
 	 */
+	/**
+	 * Run something a question is waiting for, bounded and abandonable.
+	 *
+	 * Every lookup the picker starts goes through here, and that is the point:
+	 * the rule is one deadline, one token, one sentence when it expires, and a
+	 * rule stated once cannot be applied differently by the next handler that
+	 * needs it. Each of these has parts with timeouts of their own — a source
+	 * walk, a `git`, a `gh` — and none of those say anything about the sum,
+	 * which is the number the person is actually waiting out.
+	 *
+	 * Starting one ends the one before it. There is one question on screen, so a
+	 * second lookup means the answer to the first is not wanted: that is what
+	 * makes typing a new query cancel the old search without the page having to
+	 * say so.
+	 *
+	 * `what` is the subject of the sentence a person reads when it expires, so
+	 * it is written as a noun phrase — "example/widget", "the folders a clone
+	 * could go into" — and never as a verb or a channel name.
+	 */
+	private async boundedLookup<T>(
+		what: string,
+		run: (cancel: CancellationToken) => Promise<T>,
+	): Promise<T> {
+		this.pickerLookup?.cancel();
+		const cancel = new CancellationToken();
+		this.pickerLookup = cancel;
+		// Which of the two ways this could end, because they are not the same
+		// thing to say. A deadline is DevHub giving up and owes the person a
+		// sentence; a person pressing Escape is not a failure and owes them
+		// nothing, least of all a refusal for a question they withdrew.
+		let expired = false;
+		const timer = setTimeout(() => {
+			expired = true;
+			cancel.cancel();
+		}, REPOSITORY_LOOKUP_DEADLINE_MS);
+		try {
+			return await run(cancel);
+		} catch (error: unknown) {
+			if (expired) {
+				throw asIpcError(
+					errorWire(
+						workspaceFailure(
+							`${what} could not be found within ${String(
+								REPOSITORY_LOOKUP_DEADLINE_MS / 1000,
+							)}s. Something DevHub asked — a workspace source, or git — did not answer.`,
+						),
+					),
+				);
+			}
+			if (cancel.isCancelled) {
+				// Nobody is reading this: the page stopped waiting, which is why
+				// the lookup stopped. It is thrown rather than answered with an
+				// empty list so that a caller who somehow is still listening
+				// cannot mistake "withdrawn" for "there is nothing".
+				throw asIpcError(
+					errorWire(workspaceFailure("The lookup was cancelled.")),
+				);
+			}
+			throw asIpcError(errorWire(error));
+		} finally {
+			clearTimeout(timer);
+			if (this.pickerLookup === cancel) this.pickerLookup = undefined;
+		}
+	}
+
 	async changeTerminalSocket(name: string): Promise<void> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
@@ -5102,6 +5167,7 @@ export class AppController {
 	private async assignmentBranch(
 		url: string,
 		place: WorkspacePlaceWire,
+		cancel?: CancellationToken,
 	): Promise<AssignmentBranchWire> {
 		// Every git question below runs where the repository is; only GitHub is
 		// asked from here, because the token and the network are here.
@@ -5136,7 +5202,8 @@ export class AppController {
 						head.owner,
 						head.repository,
 					);
-			if (remote) await fetchBranchFrom(git, directory, remote, head.branch);
+			if (remote)
+				await fetchBranchFrom(git, directory, remote, head.branch, cancel);
 			return this.branchWhereabouts(
 				git,
 				directory,
@@ -5148,7 +5215,8 @@ export class AppController {
 		// — and only then the convention, which is a guess about a name and is
 		// consulted exactly because most Issues have no record to read.
 		const linked = await readIssueLinkedBranch(item, credentials.token);
-		const branch = linked ?? (await this.branchNamedFor(git, directory, item));
+		const branch =
+			linked ?? (await this.branchNamedFor(git, directory, item, cancel));
 		if (branch === undefined) return { reachable: false };
 		return this.branchWhereabouts(git, directory, branch, undefined);
 	}
@@ -5166,9 +5234,10 @@ export class AppController {
 		git: GitCommand,
 		directory: string,
 		item: GitHubItem,
+		cancel?: CancellationToken,
 	): Promise<string | undefined> {
-		await refreshOrigin(git, directory);
-		const branches = await listBranches(git, directory);
+		await refreshOrigin(git, directory, cancel);
+		const branches = await listBranches(git, directory, cancel);
 		return branches.find(
 			(branch) => issueNumberFromBranch(branch) === item.number,
 		);
@@ -5341,8 +5410,17 @@ export class AppController {
 		// rather than a blank field to compose a path in.
 		handle(CHANNELS.cloneParentDirectories, async () => {
 			const config = this.config;
+			// The same walk the workspace picker runs, so the same way of going
+			// wrong: a source that is a command can hang, and the person is
+			// looking at "Searching…" while it does. It is a lookup like the
+			// others and is bounded like the others.
 			const parents =
-				config === undefined ? [] : await collectParentDirectories(config);
+				config === undefined
+					? []
+					: await this.boundedLookup(
+							"the folders a clone could go into",
+							(cancel) => collectParentDirectories(config, cancel),
+						);
 			return parents.length > 0 ? parents : [defaultProjectDirectory(config)];
 		});
 		// Who `gh` says this person is, asked when a sheet needs it rather than
@@ -5355,13 +5433,16 @@ export class AppController {
 		// shell is unavailable".
 		handle(
 			CHANNELS.assignmentBranch,
-			async (_event, url: string, place: WorkspacePlaceWire) => {
-				try {
-					return await this.assignmentBranch(url, place);
-				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
-				}
-			},
+			(_event, url: string, place: WorkspacePlaceWire) =>
+				// The longest wait in the flow before this was bounded: a `gh`
+				// call, two GraphQL queries and up to two `git fetch`es, each of
+				// which may take the network timeout — ten minutes — while a
+				// person looks at a spinner. Bounded like every other lookup, and
+				// for the same reason: the parts' own timeouts say nothing about
+				// the sum, which is the number actually being waited out.
+				this.boundedLookup(`the branch for ${url}`, (cancel) =>
+					this.assignmentBranch(url, place, cancel),
+				),
 		);
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
@@ -5422,83 +5503,37 @@ export class AppController {
 					),
 				);
 			}
-			// The lookup is bounded here, at the one place that knows it is a
-			// lookup. Underneath it there is a source walk and up to sixty-four
-			// gits, each with a timeout of its own that says nothing about the
-			// sum — and a person is watching a spinner for the whole of it. When
-			// the deadline passes the token kills whatever is in flight and the
-			// sheet is told, in a sentence, rather than going on spinning.
-			//
-			// Asking is also what ends the lookup before it: there is one picker
-			// and one question at a time, so a second lookup means the answer to
-			// the first is not wanted any more. That is what makes typing a new
-			// query cancel the old search without the page having to say so.
-			this.repositoryLookup?.cancel();
-			const cancel = new CancellationToken();
-			this.repositoryLookup = cancel;
-			// Which of the two ways this could end, because they are not the same
-			// thing to say. A deadline is DevHub giving up and owes the person a
-			// sentence; a person pressing Escape is not a failure and owes them
-			// nothing, least of all a refusal for a question they withdrew.
-			let expired = false;
-			const timer = setTimeout(() => {
-				expired = true;
-				cancel.cancel();
-			}, REPOSITORY_LOOKUP_DEADLINE_MS);
-			try {
-				return await findClones(
-					config,
-					(place) => this.gitCommand(runtimeFor(workspaceLocation(place))),
-					issue,
-					// Every open Workspace, with the machine it is on. A remote
-					// one used to arrive as a bare path and be read by this Mac's
-					// git, which answered about a directory of the same name here
-					// or about nothing at all.
-					this.coordinator.model.workspaces.map((workspace) =>
-						workspace.location.kind === "local"
-							? { kind: "local" as const, path: workspace.location.path }
-							: {
-									kind: "ssh" as const,
-									host: workspace.location.host,
-									path: workspace.location.path,
-								},
-					),
-					cancel,
-				);
-			} catch (error: unknown) {
-				if (expired) {
-					throw asIpcError(
-						errorWire(
-							workspaceFailure(
-								`${issue.owner}/${issue.repository} could not be found within ${String(
-									REPOSITORY_LOOKUP_DEADLINE_MS / 1000,
-								)}s. Something DevHub asked — a workspace source, or git — did not answer.`,
-							),
+			return this.boundedLookup(
+				`${issue.owner}/${issue.repository}`,
+				(cancel) =>
+					findClones(
+						config,
+						(place) => this.gitCommand(runtimeFor(workspaceLocation(place))),
+						issue,
+						// Every open Workspace, with the machine it is on. A remote
+						// one used to arrive as a bare path and be read by this Mac's
+						// git, which answered about a directory of the same name here
+						// or about nothing at all.
+						this.coordinator.model.workspaces.map((workspace) =>
+							workspace.location.kind === "local"
+								? { kind: "local" as const, path: workspace.location.path }
+								: {
+										kind: "ssh" as const,
+										host: workspace.location.host,
+										path: workspace.location.path,
+									},
 						),
-					);
-				}
-				if (cancel.isCancelled) {
-					// Nobody is reading this: the page stopped waiting, which is why
-					// the lookup stopped. It is thrown rather than answered with an
-					// empty list so that a caller who somehow is still listening
-					// cannot mistake "withdrawn" for "there are no clones".
-					throw asIpcError(
-						errorWire(workspaceFailure("The lookup was cancelled.")),
-					);
-				}
-				throw asIpcError(errorWire(error));
-			} finally {
-				clearTimeout(timer);
-				if (this.repositoryLookup === cancel) this.repositoryLookup = undefined;
-			}
+						cancel,
+					),
+			);
 		});
 
 		// Escape, or the sheet going away. There is one lookup at a time, so
 		// there is nothing to identify: this ends the one that is running, and
-		// the `gh` or `git` child dies with it rather than at the deadline.
-		handle(CHANNELS.cancelRepositoryLookup, () => {
-			this.repositoryLookup?.cancel();
-			this.repositoryLookup = undefined;
+		// the `git` child dies with it rather than at the deadline.
+		handle(CHANNELS.cancelPickerLookup, () => {
+			this.pickerLookup?.cancel();
+			this.pickerLookup = undefined;
 			return Promise.resolve();
 		});
 		handle(

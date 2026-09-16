@@ -92,7 +92,9 @@ export interface PickerValue {
   ) => Promise<AppOutcome>;
   readonly projectDefaultDirectory: () => Promise<string>;
   /** Where a clone could go: the parents of everything the sources find. */
-  readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  readonly cloneParentDirectories: (
+    signal?: AbortSignal,
+  ) => Promise<readonly string[]>;
   /**
    * Which GitHub account this machine is signed in as, so a bare repository
    * name means what `gh repo clone` would mean by it. Answers with the reason
@@ -122,6 +124,7 @@ export interface PickerValue {
   readonly assignmentBranch: (
     url: string,
     place: WorkspacePlaceWire,
+    signal?: AbortSignal,
   ) => Promise<AssignmentBranchWire>;
   readonly listBranches: (
     place: WorkspacePlaceWire,
@@ -296,19 +299,29 @@ export function PickerProvider({ children }: { children: ReactNode }) {
           await bridge.cloneProject(url, parentDirectory, withAgent),
         ),
       projectDefaultDirectory: () => bridge.projectDefaultDirectory(),
-      cloneParentDirectories: () => bridge.cloneParentDirectories(),
+      cloneParentDirectories: (signal) => {
+        signal?.addEventListener("abort", () => {
+          void bridge.cancelPickerLookup();
+        });
+        return bridge.cloneParentDirectories();
+      },
       githubLogin: () => bridge.githubLogin(),
       findIssueRepositories: (issueUrl, signal) => {
         // Main keeps one lookup and cancels it by name of being the one that is
         // running, so there is nothing to pass and nothing to match up.
         signal?.addEventListener("abort", () => {
-          void bridge.cancelRepositoryLookup();
+          void bridge.cancelPickerLookup();
         });
         return bridge.findIssueRepositories(issueUrl);
       },
       cloneRepository: (url, parentDirectory) =>
         bridge.cloneRepository(url, parentDirectory),
-      assignmentBranch: (url, place) => bridge.assignmentBranch(url, place),
+      assignmentBranch: (url, place, signal) => {
+        signal?.addEventListener("abort", () => {
+          void bridge.cancelPickerLookup();
+        });
+        return bridge.assignmentBranch(url, place);
+      },
       listBranches: (place) => bridge.listBranches(place),
       assignIssue: async (request) =>
         applyOpening(await bridge.assignIssue(request)),

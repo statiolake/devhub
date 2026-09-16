@@ -652,11 +652,12 @@ export function parseWorktrees(output: string): readonly WorktreeRecord[] {
 export async function listBranches(
 	command: GitCommand,
 	directory: string,
+	cancel?: CancellationToken,
 ): Promise<readonly string[]> {
 	const output = await runGit(
 		command,
 		["branch", "-a", "--format=%(refname:short)"],
-		{ cwd: directory },
+		{ cwd: directory, cancel },
 	);
 	const names = output
 		.split("\n")
@@ -793,10 +794,12 @@ export async function fetchBranchFrom(
 	directory: string,
 	remote: string,
 	branch: string,
+	cancel?: CancellationToken,
 ): Promise<void> {
 	await runGit(command, ["fetch", remote, branch], {
 		cwd: directory,
 		timeoutMs: NETWORK_TIMEOUT_MS,
+		cancel,
 	}).catch(() => undefined);
 }
 
@@ -811,8 +814,9 @@ export async function fetchBranchFrom(
 export async function refreshOrigin(
 	command: GitCommand,
 	directory: string,
+	cancel?: CancellationToken,
 ): Promise<void> {
-	await fetchOrigin(command, directory, { allowStaleBase: true });
+	await fetchOrigin(command, directory, { allowStaleBase: true }, cancel);
 }
 
 /**
@@ -999,15 +1003,20 @@ async function fetchOrigin(
 	command: GitCommand,
 	directory: string,
 	options: WorktreeOptions,
+	cancel?: CancellationToken,
 ): Promise<boolean> {
 	const hasOrigin =
-		(await ask(command, ["remote", "get-url", "origin"], directory).catch(
-			() => undefined,
-		)) !== undefined;
+		(await ask(
+			command,
+			["remote", "get-url", "origin"],
+			directory,
+			cancel,
+		).catch(() => undefined)) !== undefined;
 	if (!hasOrigin) return false;
 	return runGit(command, ["fetch", "origin"], {
 		cwd: directory,
 		timeoutMs: NETWORK_TIMEOUT_MS,
+		cancel,
 	}).then(
 		() => true,
 		(error: unknown) => {

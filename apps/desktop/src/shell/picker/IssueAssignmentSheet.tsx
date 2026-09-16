@@ -146,10 +146,13 @@ interface FlowServices {
     readonly split: boolean;
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
-  readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  readonly cloneParentDirectories: (
+    signal?: AbortSignal,
+  ) => Promise<readonly string[]>;
   readonly assignmentBranch: (
     url: string,
     place: WorkspacePlaceWire,
+    signal?: AbortSignal,
   ) => Promise<AssignmentBranchWire>;
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
@@ -425,9 +428,23 @@ function branchStep(
 ): WizardStep {
   const root = place.path;
   return async (input) => {
-    const plan = await input.working(`Reading ${itemLabel(item)}…`, () =>
-      services.assignmentBranch(gitHubItemUrl(item), place),
-    );
+    // A refusal here loses the *plan* and not the question: the three answers
+    // below — an existing branch, a new one, the root checkout — are what this
+    // step is for, and two of the three need nothing GitHub knows. So the
+    // refusal joins the question and the row that depended on the plan is
+    // simply absent, rather than the flow ending or the step re-running the
+    // very reads that did not finish.
+    let plan: AssignmentBranchWire = { reachable: false };
+    let refusal: string | undefined;
+    try {
+      plan = await input.working(`Reading ${itemLabel(item)}…`, (signal) =>
+        services.assignmentBranch(gitHubItemUrl(item), place, signal),
+      );
+    } catch (error: unknown) {
+      const spoken = spokenFailure(error);
+      if (!spoken) throw error;
+      refusal = spoken.summary;
+    }
     const wip = wipBranchForIssue(item.number);
     const answer = await input.ask({
       ...SHEET,
@@ -452,7 +469,7 @@ function branchStep(
           searchText: `repository root ${root}`,
         },
       ],
-      note: unreachableBranch(plan),
+      note: refusal ?? unreachableBranch(plan),
     });
     if (answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined) {
       // Somewhere the same repository is checked out, so the same machine: git
@@ -551,13 +568,31 @@ function cloneDestinationStep(
     // The folders this person already keeps projects in, and where they were
     // last told new ones go. The same rows the "Clone Project…" sheet offers,
     // built by the same function, because it is the same question.
-    const parents = await input.working("Reading folders…", () =>
-      services.cloneParentDirectories(),
-    );
+    //
+    // A walk that did not finish loses the *rows* and not the question: the
+    // folder can still be typed, and the pinned row below has always been able
+    // to take it. So the refusal joins the question rather than replacing it,
+    // and the person is one keystroke from the same outcome. Re-running the
+    // step instead would start the walk again — and this step begins with the
+    // walk, which is how a bounded lookup turns back into an endless spinner.
+    let parents: readonly string[] = [];
+    let refusal: string | undefined;
+    try {
+      parents = await input.working("Reading folders…", (signal) =>
+        services.cloneParentDirectories(signal),
+      );
+    } catch (error: unknown) {
+      const spoken = spokenFailure(error);
+      if (!spoken) throw error;
+      refusal = spoken.summary;
+    }
     const answer = await input.ask({
       ...SHEET,
       title: `Clone ${item.owner}/${item.repository}`,
-      question: `${reason} Choose the folder to clone it into.`,
+      question:
+        refusal === undefined
+          ? `${reason} Choose the folder to clone it into.`
+          : `${refusal} Type the folder to clone it into.`,
       // No starting value: the field is a filter over the rows now, and a path
       // typed into it before anything is chosen would hide the list it is
       // meant to search. Where projects go is a *row* — main puts it there when

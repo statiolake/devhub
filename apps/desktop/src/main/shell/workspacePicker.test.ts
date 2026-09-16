@@ -20,6 +20,7 @@ import {
 	collectParentDirectories,
 	startWorkspacePicker,
 } from "./workspacePicker.js";
+import { CancellationToken } from "../terminal/ports.js";
 
 let root: string;
 
@@ -342,5 +343,41 @@ describe("a search that is cancelled", () => {
 		// finished: it is the kill that is being tested, and a timeout expiring
 		// would prove nothing about cancellation.
 		expect(exited).toBeLessThan(5_000);
+	});
+});
+
+describe("the folders a clone could go into", () => {
+	it("stops when the question it answers is abandoned", async () => {
+		// The clone sheet's "Choose the folder…" step waits on this, and a source
+		// that is a command can hang. Before this the walk could not be stopped
+		// at all, and a run that *was* cancelled resolved never — a promise the
+		// sheet held for the life of the window.
+		const source: WorkspaceSource = {
+			type: "command",
+			id: "slow",
+			command: ["sleep", "30"],
+			timeout_ms: 30_000,
+		};
+		const cancel = new CancellationToken();
+		const started = Date.now();
+		const walk = collectParentDirectories(configWith([source]), cancel);
+		setTimeout(() => {
+			cancel.cancel();
+		}, 100);
+
+		// It refuses rather than answering: the parents found so far are a prefix
+		// of the real list with nothing marking them as one, so a short list
+		// would look exactly like a complete one.
+		await expect(walk).rejects.toThrow();
+		expect(Date.now() - started).toBeLessThan(5_000);
+	});
+
+	it("still answers normally when nothing cancels it", async () => {
+		await mkdir(join(root, "projects", "widget"), { recursive: true });
+		const parents = await collectParentDirectories(
+			configWith([directorySource("one", join(root, "projects"))]),
+			new CancellationToken(),
+		);
+		expect(parents).toEqual([join(root, "projects")]);
 	});
 });

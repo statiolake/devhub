@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from "react";
 import type { SshHostWire } from "../../../ipc/contract";
+import { toAppError } from "../../failure";
 import { usePicker } from "../../picker/PickerContext";
 import { Picker, type PickerItem } from "./Picker";
 
@@ -80,19 +81,39 @@ export function sshHostItems(
  * five minutes ago is in the list. A machine with no config answers with an
  * empty list, which is no rows — not a failure.
  */
-export function useSshHosts(): readonly SshHostWire[] {
-  const { listSshHosts, reportFailure } = usePicker();
+export function useSshHosts(): {
+  readonly hosts: readonly SshHostWire[];
+  /** The config has been read. Before that, "no machines" is not yet true. */
+  readonly read: boolean;
+  readonly refusal: string | undefined;
+} {
+  const { listSshHosts } = usePicker();
   const [hosts, setHosts] = useState<readonly SshHostWire[]>([]);
+  const [read, setRead] = useState(false);
+  const [refusal, setRefusal] = useState<string>();
   useEffect(() => {
     let live = true;
-    void listSshHosts().then((answer) => {
-      if (live) setHosts(answer);
-    }, reportFailure);
+    void listSshHosts().then(
+      (answer) => {
+        if (!live) return;
+        setHosts(answer);
+        setRead(true);
+      },
+      (error: unknown) => {
+        // The config could not be read, which is not the same as a config that
+        // names nothing — and the sheet said the second, in a sentence a person
+        // would have believed. It went to the window's failure area before
+        // this, which on the modal layer draws nothing at all.
+        if (!live) return;
+        setRefusal(toAppError(error).summary);
+        setRead(true);
+      },
+    );
     return () => {
       live = false;
     };
-  }, [listSshHosts, reportFailure]);
-  return hosts;
+  }, [listSshHosts]);
+  return { hosts, read, refusal };
 }
 
 /**
@@ -151,13 +172,22 @@ export function SshDestinationSheet({
   onChoose,
   onCancel,
 }: SshDestinationSheetProps) {
-  const hosts = useSshHosts();
+  const { hosts, read, refusal } = useSshHosts();
   return (
     <Picker
       title="Connect over SSH"
       question="Which machine? Type user@host, or pick one your SSH config already names."
       step={step}
       items={sshHostItems(hosts)}
+      // Until the config has been read there is nothing true to say about what
+      // it names, and the empty state below says something quite definite. The
+      // typed destination is available throughout either way.
+      busy={!read}
+      note={
+        refusal ? (
+          <span className="picker-note-failure">{refusal}</span>
+        ) : undefined
+      }
       pinned={[
         {
           id: CONNECT_TYPED,

@@ -194,7 +194,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   // The machines `~/.ssh/config` names, as rows in the same list as the
   // folders the local sources found — because to the person opening one they
   // are the same question, and two lists would be two places to look.
-  const sshHosts = useSshHosts();
+  const { hosts: sshHosts } = useSshHosts();
 
   /**
    * Everything any round of this sheet has found, in the order Settings put

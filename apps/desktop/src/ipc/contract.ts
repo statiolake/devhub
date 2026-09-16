@@ -1091,7 +1091,13 @@ export interface PickerBridge
 		answer: "close" | "delete",
 	): Promise<AppOutcome>;
 	/**
-	 * Stop the repository lookup that is running, and kill what it started.
+	 * Stop the lookup a question is waiting for, and kill what it started.
+	 *
+	 * Any of them — which clones a repository has, which folders a clone could
+	 * go into — because they are the same kind of thing and main bounds them all
+	 * the same way. It is named for the picker rather than for any one of them
+	 * so that the next question with something slow behind it does not arrive
+	 * with a second way to say stop.
 	 *
 	 * On this bridge and on no other, because the picker is the only page that
 	 * can start one: a lookup begins when a question is asked and there is never
@@ -1108,7 +1114,7 @@ export interface PickerBridge
 	 * cancels whatever is in flight when a new lookup arrives — so the page only
 	 * has to say this for the case where no new question follows.
 	 */
-	cancelRepositoryLookup(): Promise<void>;
+	cancelPickerLookup(): Promise<void>;
 }
 
 /**
@@ -1147,7 +1153,7 @@ export const CHANNELS = {
 	selectWorkspacePicker: "devhub:select-workspace-picker",
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
-	cancelRepositoryLookup: "devhub:cancel-repository-lookup",
+	cancelPickerLookup: "devhub:cancel-picker-lookup",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

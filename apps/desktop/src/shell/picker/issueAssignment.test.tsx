@@ -254,7 +254,11 @@ describe("assigning an Issue", () => {
         expect.objectContaining({ place, branch: "feature/128-wip" }),
       );
     });
-    expect(assignmentBranch).toHaveBeenCalledWith(ISSUE, place);
+    expect(assignmentBranch).toHaveBeenCalledWith(
+      ISSUE,
+      place,
+      expect.any(AbortSignal),
+    );
   });
 
   it("says a fork's branch cannot be checked out here, and offers the rest", async () => {
@@ -393,10 +397,11 @@ describe("assigning an Issue", () => {
         }),
       );
     });
-    expect(assignmentBranch).toHaveBeenCalledWith(PULL_REQUEST, {
-      kind: "local",
-      path: "/projects/widget",
-    });
+    expect(assignmentBranch).toHaveBeenCalledWith(
+      PULL_REQUEST,
+      { kind: "local", path: "/projects/widget" },
+      expect.any(AbortSignal),
+    );
   });
 
   it("checks nothing out when the work stays in the repository itself", async () => {
@@ -628,6 +633,53 @@ describe("assigning an Issue", () => {
     expect(findIssueRepositories).toHaveBeenCalledTimes(1);
   });
 
+  it("asks for the folder anyway when the walk that lists them did not finish", async () => {
+    // The folder step's first act is slow too, so it had the same two bugs: no
+    // refusal in the sheet, and re-running the step would restart the walk. A
+    // walk that did not finish loses the rows and not the question — the folder
+    // can still be typed, and the pinned row has always taken it.
+    const cloneParentDirectories = vi.fn().mockRejectedValue(
+      new Error(
+        `Error: ${JSON.stringify({
+          code: "workspace_unavailable",
+          summary:
+            "the folders a clone could go into could not be found within 20s.",
+          module: "app",
+          timestampMs: 0,
+          runtimeVersion: "0.1.0",
+          actions: ["retry"],
+        })}`,
+      ),
+    );
+    const { cloneRepository } = mount({
+      findIssueRepositories: vi.fn().mockResolvedValue([]),
+      cloneParentDirectories,
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+
+    const sheet = await screen.findByRole("dialog", {
+      name: /Clone example\/widget/u,
+    });
+    expect(sheet).toHaveTextContent(/could not be found within 20s/u);
+    // One walk, not a stream of them.
+    expect(cloneParentDirectories).toHaveBeenCalledTimes(1);
+
+    // And the question still works: a typed folder is taken by the pinned row.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "/elsewhere/scratch" },
+    });
+    fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
+    await choose(/Where to work on/u, /root checkout/u);
+    await vi.waitFor(() => {
+      expect(cloneRepository).toHaveBeenCalledWith(
+        "https://github.com/example/widget.git",
+        "/elsewhere/scratch",
+      );
+    });
+  });
+
   it("aborts the lookup's signal when the person escapes the spinner", async () => {
     // The end of "spins forever, and then nothing can be cancelled". Escape on
     // the working panel has to reach the lookup itself, not only the spinner
@@ -652,7 +704,7 @@ describe("assigning an Issue", () => {
 
     fireEvent.keyDown(working, { key: "Escape" });
 
-    // The signal is what PickerContext turns into `cancelRepositoryLookup`, so
+    // The signal is what PickerContext turns into `cancelPickerLookup`, so
     // this is the renderer's whole half of killing the child.
     await vi.waitFor(() => {
       expect(signal?.aborted).toBe(true);

@@ -80,13 +80,13 @@ describe("the pages, and what each of them may say", () => {
 	 * answers for one page only must be spelled in that page's preload and in no
 	 * other, or the absence is a comment rather than a fact.
 	 *
-	 * `cancelRepositoryLookup` is the case that made this worth asserting. Main
+	 * `cancelPickerLookup` is the case that made this worth asserting. Main
 	 * keeps one repository lookup and cancels "the one that is running", so a
 	 * second page able to call it could stop a lookup it never started — a bug
 	 * with no error in it, because cancelling is a thing that succeeds quietly.
 	 */
 	it("spells a picker-only member in the picker preload and nowhere else", () => {
-		const pickerOnly = "cancelRepositoryLookup";
+		const pickerOnly = "cancelPickerLookup";
 		// It is on the bridge the picker's preload builds, so it is a real member
 		// and not a name this test invented and then failed to find anywhere.
 		expect(read("../ipc/contract.ts")).toContain(pickerOnly);
@@ -96,7 +96,7 @@ describe("the pages, and what each of them may say", () => {
 				spelled,
 				spelled
 					? `the ${page} page can cancel a lookup it never started`
-					: "the picker preload does not expose cancelRepositoryLookup",
+					: "the picker preload does not expose cancelPickerLookup",
 			).toBe(page === "picker");
 		}
 		// `bridge.ts` is shared by every preload, so a member that reached it
