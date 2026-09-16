@@ -357,7 +357,10 @@ describe("the tab cycle", () => {
 });
 
 describe("the two halves of a workspace", () => {
-	it("goes from an Agent back to its workspace", () => {
+	it("goes from an Agent back to its workspace, into its terminal", () => {
+		// The one selection that says where the keyboard goes inside the
+		// workbench: somebody leaving an Agent *for* the editor is going to
+		// the editor's shell.
 		expect(
 			run(
 				"toggle_workspace_agent",
@@ -366,7 +369,40 @@ describe("the two halves of a workspace", () => {
 					context: { kind: "agent", agentId: "b2" },
 				}),
 			),
-		).toEqual(selects({ kind: "workspace", workspaceId: "two" }));
+		).toEqual({
+			...selects({ kind: "workspace", workspaceId: "two" }),
+			focus: "terminal",
+		});
+	});
+
+	it("carries no such intent the other way, or from anywhere else", () => {
+		// Every other way of choosing the same workbench leaves the keyboard
+		// where that editor last had it.
+		for (const effect of [
+			run(
+				"toggle_workspace_agent",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+			run(
+				"focus_editor",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b2" },
+				}),
+			),
+			run(
+				"next_workspace",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b2" },
+				}),
+			),
+		]) {
+			expect(effect).not.toHaveProperty("focus");
+		}
 	});
 
 	it("goes from the workspace back to the Agent it was last in", () => {

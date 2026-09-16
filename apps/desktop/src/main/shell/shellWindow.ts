@@ -116,6 +116,19 @@ export class ShellWindow {
 	 */
 	private readonly editorKeyByViewId = new Map<number, string>();
 	/**
+	 * The workbench a selection asked to land in the terminal of, until the
+	 * keyboard arrives there.
+	 *
+	 * It cannot be run where it is asked for. The selection is a change to the
+	 * model, the arrangement comes back up from the page, and the keyboard is
+	 * placed after that — so a `terminal.focus` sent at the asking would reach
+	 * a workbench that does not have the keys, and VS Code would focus a
+	 * terminal in a view the person is not typing into. This is the other end
+	 * of that: one armed key, consumed at the one moment the keyboard is
+	 * placed, and never on a timer.
+	 */
+	private terminalOnArrival: string | undefined;
+	/**
 	 * What the arrangement is, as the model says.
 	 *
 	 * The only mutable input to the layout that is not the window's own size.
@@ -586,6 +599,50 @@ export class ShellWindow {
 		// renderer — so an announcement sent before `focus()` had moved
 		// anything would be answered with the state it was about to leave.
 		this.publishFocus();
+		this.deliverTerminalOnArrival();
+	}
+
+	/**
+	 * Ask that the next keyboard placement into this workbench land in its
+	 * integrated terminal.
+	 *
+	 * Armed by the one selection that carries the intent (`Cmd+Q J` going
+	 * Agent → editor) and by nothing else, so a workbench chosen any other way
+	 * is typed into wherever it was left.
+	 */
+	focusTerminalOnArrival(editorKey: string): void {
+		this.terminalOnArrival = editorKey;
+	}
+
+	/**
+	 * Run the armed `terminal.focus`, if the keyboard has just landed where it
+	 * was armed for.
+	 *
+	 * Disarmed either way, on the first placement after arming. A workbench
+	 * that is starting, restarting or gone has no view here and the keyboard
+	 * went somewhere else, and a terminal in a window that is not there is
+	 * nothing to focus: the selection still happened, and the intent is
+	 * dropped rather than kept waiting for a window that may never come.
+	 */
+	private deliverTerminalOnArrival(): void {
+		const editorKey = this.terminalOnArrival;
+		if (editorKey === undefined) return;
+		this.terminalOnArrival = undefined;
+		const view = this.viewForEditorKey(editorKey);
+		if (!view || view.isDestroyed()) return;
+		// The same question the workbench itself is told the answer to: the
+		// window is in front, no modal is over it, and this view is where the
+		// keys go. Anything less and `placeTheKeyboard` declined, so focusing
+		// a terminal here would be focusing it in a view nobody is typing in.
+		if (!this.isSurfaceFocused(view)) return;
+		// The workbench's own command, forwarded over upstream's own door for
+		// main (`vscode:runAction`) — the same one `Cmd+Q T` goes through. It
+		// creates a terminal when there is none, which is what a person asking
+		// for the shell of an editor that has not had one wants.
+		view.webContents.send("vscode:runAction", {
+			id: "workbench.action.terminal.focus",
+			from: "menu",
+		});
 	}
 
 	/** The half of `focusSurface` that actually moves the keyboard. */

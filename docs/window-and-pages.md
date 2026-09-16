@@ -148,6 +148,26 @@ Measured in a split, with the Agent selected and the window key: the workbench
 answers `document.hasFocus()` with `false` and the Agents view with `true` —
 exactly one view at a time, in both directions. No view-level blur is needed.
 
+Where the keys go *inside* a workbench is the workbench's own business, with
+one exception. `Cmd+Q J` landing on the editor — the toggle that went Agent →
+editor — focuses that workbench's integrated terminal
+(`workbench.action.terminal.focus`, which creates one when there is none),
+because somebody leaving an Agent *for* the editor is going to the editor's
+shell. Every other way of choosing the same workbench — a sidebar click,
+`Cmd+Q N/P`, a digit, the pickers — leaves it wherever it was last typed into.
+
+The intent rides on the selection (`focus: "terminal"` on the `select-context`
+effect in `chords.ts`) and is run at the other end: `ShellWindow` arms
+`focusTerminalOnArrival` and spends it inside `focusSurface`, once the keyboard
+has actually been placed. It cannot be run where it is asked for — the
+selection changes the model, the arrangement comes back up from the page, and
+the keyboard is placed after that, so a command sent at the asking would focus
+a terminal in a view the keys are not going to. It is not a timer either: it is
+the one keyboard-placed moment, spent once. A workbench that is starting,
+restarting or gone has no view to arm against and the intent is dropped — the
+selection still happens — because a terminal in a window that is not there is
+nothing to focus.
+
 ## Chords are answered in main
 
 `keyboard.ts` installs `before-input-event` on every WebContents DevHub owns,

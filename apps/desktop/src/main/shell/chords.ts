@@ -131,6 +131,17 @@ export type ChordEffect =
 			readonly context: NavigationContext;
 			/** Only an Agent has two; absent means the plain, full one. */
 			readonly presentation?: SurfacePresentationWire;
+			/**
+			 * Where inside the workbench the keyboard is wanted, when the
+			 * selection carries an intent about it.
+			 *
+			 * Ordinary selection carries none: a workbench that is selected is
+			 * typed into wherever it was left, which is what every other way of
+			 * choosing it does and what a person expects of coming back. Only
+			 * `toggle_workspace_agent` going Agent → editor sets this, because
+			 * leaving an Agent *for* the editor is going to the editor's shell.
+			 */
+			readonly focus?: "terminal";
 	  }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
@@ -464,9 +475,16 @@ export function resolveChord(
 				return { kind: "swap-split-focus" };
 			}
 			if (agent) {
+				// The one selection with an opinion about where the keyboard
+				// lands inside the editor. Every other way of choosing this
+				// workbench — the sidebar, the pickers, `Cmd+Q N/P`, a digit —
+				// leaves it where it was; this direction of this chord is a
+				// person walking out of an Agent's conversation and into the
+				// editor's shell, so the terminal is what they came for.
 				return {
 					kind: "select-context",
 					context: { kind: "workspace", workspaceId: workspace.id },
+					focus: "terminal",
 				};
 			}
 			// Back to the Agent you were last in, or the first one if you have

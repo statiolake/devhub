@@ -49,7 +49,17 @@ class FakeView {
 			for (const listener of this.listeners.get(event) ?? []) listener();
 		},
 		setWindowOpenHandler: () => undefined,
-		send: () => undefined,
+		/**
+		 * What main asked this workbench to do, in order.
+		 *
+		 * `vscode:runAction` is upstream's own door for main to raise a
+		 * workbench command, and whether one was raised — and how many times —
+		 * is exactly the question the terminal-on-arrival tests ask.
+		 */
+		sent: [] as { channel: string; payload: unknown }[],
+		send: (channel: string, payload: unknown) => {
+			this.webContents.sent.push({ channel, payload });
+		},
 		focus: () => {
 			focused = this.webContents.id;
 		},
@@ -605,6 +615,74 @@ describe("the shell window's workbench views", () => {
 			// And when the sheet goes, the surface has it again.
 			shell.picker.closeModal(id);
 			expect(focused).toBe(contentsOf(a));
+		});
+
+		/**
+		 * `Cmd+Q J` going Agent → editor asks for the editor's shell.
+		 *
+		 * The command is the workbench's, so it is forwarded rather than
+		 * reimplemented — and it is forwarded at the one moment the keyboard is
+		 * placed, because a `terminal.focus` sent any earlier would focus a
+		 * terminal in a view the keys are not going to.
+		 */
+		describe("and the terminal a selection asked for", () => {
+			const runActions = (view: WorkbenchView): unknown[] =>
+				(
+					view.webContents as unknown as {
+						sent: { channel: string; payload: unknown }[];
+					}
+				).sent
+					.filter((one) => one.channel === "vscode:runAction")
+					.map((one) => one.payload);
+
+			it("is focused once the keyboard has landed in that workbench", () => {
+				shell.focusTerminalOnArrival(keyOf(a));
+				show(shell, a);
+				expect(focused).toBe(contentsOf(a));
+				expect(runActions(a)).toEqual([
+					{ id: "workbench.action.terminal.focus", from: "menu" },
+				]);
+			});
+
+			it("is not asked for by an ordinary selection", () => {
+				show(shell, a);
+				showPage(shell);
+				show(shell, a);
+				expect(runActions(a)).toEqual([]);
+			});
+
+			it("is asked for once, and not again on later placements", () => {
+				shell.focusTerminalOnArrival(keyOf(a));
+				show(shell, a);
+				showPage(shell);
+				show(shell, a);
+				expect(runActions(a)).toHaveLength(1);
+			});
+
+			it("is dropped when the workbench it named is not there", () => {
+				// Starting, restarting, or gone: there is no view to focus a
+				// terminal in, and the selection still happens.
+				shell.focusTerminalOnArrival("/folder/not-open");
+				showPage(shell);
+				expect(runActions(a)).toEqual([]);
+				expect(runActions(b)).toEqual([]);
+			});
+
+			it("is dropped when the keyboard went somewhere else", () => {
+				shell.focusTerminalOnArrival(keyOf(a));
+				show(shell, b);
+				expect(runActions(a)).toEqual([]);
+				expect(runActions(b)).toEqual([]);
+			});
+
+			it("waits for nothing while the window is not in front", () => {
+				// `placeKeyboardIn` declines outright there, so the keys never
+				// arrived and there is nothing to have landed in.
+				theWindow().inFront = false;
+				shell.focusTerminalOnArrival(keyOf(a));
+				show(shell, a);
+				expect(runActions(a)).toEqual([]);
+			});
 		});
 	});
 

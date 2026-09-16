@@ -947,7 +947,22 @@ export class AppController {
 	installChords(): void {
 		installKeyboard({
 			snapshot: () => this.snapshot(),
-			selectContext: (context, presentation) => {
+			selectContext: (context, presentation, focus) => {
+				// Armed before the selection, consumed after the keyboard lands
+				// (`ShellWindow.focusTerminalOnArrival`). Both halves are needed
+				// and neither can be the other's: the selection is what puts the
+				// workbench on screen, and only main knows when the keys got
+				// there. A workbench that is not up has no view to arm against
+				// and the intent is dropped there, which is the honest end of
+				// asking for the shell of an editor that is not running.
+				if (focus === "terminal" && context.kind === "workspace") {
+					const editorKey = this.coordinator.model.workspace(
+						parseWorkspaceId(context.workspaceId),
+					)?.key;
+					if (editorKey !== undefined) {
+						shellWindow().focusTerminalOnArrival(editorKey);
+					}
+				}
 				this.dispatchOwn(
 					intentFromWire({
 						type: "select_context",

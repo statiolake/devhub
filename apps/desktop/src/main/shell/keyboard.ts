@@ -61,10 +61,17 @@ import type {
 export interface ChordHost {
 	/** The model as the page sees it, or nothing before the first projection. */
 	snapshot(): AppSnapshotWire | undefined;
-	/** Only an Agent has two presentations; absent means the plain, full one. */
+	/**
+	 * Only an Agent has two presentations; absent means the plain, full one.
+	 *
+	 * `focus` is the selection's opinion about where the keyboard lands *inside*
+	 * the workbench, which only the Agent → editor toggle has; absent means the
+	 * editor keeps whatever it was last typed into.
+	 */
 	selectContext(
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
+		focus?: "terminal",
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
@@ -134,7 +141,7 @@ function strokeOf(input: Electron.Input): KeyStroke {
 function perform(host: ChordHost, effect: ChordEffect): void {
 	switch (effect.kind) {
 		case "select-context":
-			host.selectContext(effect.context, effect.presentation);
+			host.selectContext(effect.context, effect.presentation, effect.focus);
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();
