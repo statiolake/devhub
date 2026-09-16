@@ -1375,10 +1375,16 @@ body.is-resizing-sidebar {
  * should not be making.
  *
  * They come to full strength on the whole group rather than on the button
- * under the pointer, and on keyboard focus anywhere in the pane. Reaching for
- * one is a decision about the group — "what can I do here" — and a stack in
- * which one button is bright and the two beside it are ghosts is a stack whose
+ * under the pointer, and on keyboard focus inside the group. Reaching for one
+ * is a decision about the group — "what can I do here" — and a stack in which
+ * one button is bright and the two beside it are ghosts is a stack whose
  * other two look disabled.
+ *
+ * Not on focus anywhere in the pane. The Agents page *is* the pane now, and
+ * the terminal holds the keyboard whenever an Agent is selected in a focused
+ * window — so "lit while the pane has focus" meant lit the whole time the
+ * person was working, and faint only when they left the window: the resting
+ * state, backwards, keyed on something unrelated to the buttons.
  *
  * The transition is short enough to feel like the group answering the pointer
  * rather than fading up: 120ms, and only `opacity`, which composites.
@@ -1402,8 +1408,7 @@ body.is-resizing-sidebar {
 /* Lit, they sit above the terminal and say so with a shadow. At rest they make
    no such claim. */
 .agent-shortcuts:hover .agent-shortcut,
-.agent-shortcuts:focus-within .agent-shortcut,
-.agent-pane:focus-within .agent-shortcut {
+.agent-shortcuts:focus-within .agent-shortcut {
   box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
   opacity: 1;
 }
@@ -1432,8 +1437,7 @@ body.is-resizing-sidebar {
    should — neither is asking for anything. The difference appears when the
    group is reached for and one of them does not come up with the others. */
 .agent-shortcuts:hover .agent-shortcut:disabled,
-.agent-shortcuts:focus-within .agent-shortcut:disabled,
-.agent-pane:focus-within .agent-shortcut:disabled {
+.agent-shortcuts:focus-within .agent-shortcut:disabled {
   opacity: 0.45;
 }
 
