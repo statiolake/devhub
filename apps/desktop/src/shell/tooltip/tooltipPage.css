@@ -75,10 +75,10 @@ body,
 /*
  * One fact per line, behind the mark the row would have drawn for it.
  *
- * The mark column is reserved on every line whether or not that line has one,
- * so the facts line up down the box the way the rows they came from line up
- * down the Sidebar — and a tooltip whose first two lines have no mark does not
- * read as two different kinds of tooltip.
+ * A line that has a mark draws it in a column ahead of its text; a line that
+ * has none — the name, the path — starts at the box's edge. The heading is
+ * left-aligned with the box, and the marked facts under it line up among
+ * themselves the way the rows they came from line up down the Sidebar.
  *
  * The marks are the Sidebar's own, resolved by name on this page from
  * `icons.tsx`: one set of drawings for both pages, and no SVG on the bridge.
@@ -93,7 +93,7 @@ body,
   gap: 5px;
 }
 
-/* The column, reserved whether or not this line has a mark in it. */
+/* The mark, ahead of the fact it belongs to. */
 .tooltip-line-mark {
   display: flex;
   width: 13px;

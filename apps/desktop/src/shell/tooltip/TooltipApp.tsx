@@ -99,12 +99,15 @@ export function TooltipApp() {
             key={index}
             data-tone={line.tone}
           >
-            {/* The column is reserved whether or not this line has a mark, so
-                the facts line up down the box the way the rows they came from
-                line up down the Sidebar. */}
-            <span className="tooltip-line-mark">
-              {icon ? <Glyph name={icon} /> : null}
-            </span>
+            {/* A line with no mark starts at the box's edge: the name and the
+                path are the heading, and a heading indented past an empty
+                column reads as a gap nobody meant. The marked facts below it
+                keep their column. */}
+            {icon ? (
+              <span className="tooltip-line-mark">
+                <Glyph name={icon} />
+              </span>
+            ) : null}
             <span className="tooltip-line-text">{line.text}</span>
           </div>
         );
