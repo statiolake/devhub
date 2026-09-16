@@ -22,6 +22,7 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
 	onScreenEditor,
+	sidebarRect,
 	surfaceRect,
 	windowLayout,
 	workbenchRect,
@@ -31,7 +32,7 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type { WorkbenchAreaWire } from "../../ipc/contract.js";
+import type { SidebarAreaWire, WorkbenchAreaWire } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
@@ -895,6 +896,23 @@ export class ShellWindow {
 	 * stale for a frame after main moves it, and the split ratio is a ratio of
 	 * this width.
 	 */
+	/**
+	 * The Sidebar's own rectangle, for the Sidebar.
+	 *
+	 * A page cannot work this out and must not try. `window.screenX` is the
+	 * screen's and needs the window's origin subtracted back off;
+	 * `documentElement`'s box is the view's own and is stale for a while after
+	 * main moves it — measured, the collapsed Sidebar went on answering 249
+	 * for seconds after being narrowed to 76. The Sidebar needs it for exactly
+	 * one thing: saying where one of its rows is *in the window*, so that a
+	 * tooltip can be placed against the window rather than against the column.
+	 *
+	 * Told rather than asked, like the workbench area and for the same reason.
+	 */
+	sidebarArea(): SidebarAreaWire {
+		return sidebarRect(this.windowSize(), this.state);
+	}
+
 	workbenchArea(): WorkbenchAreaWire {
 		return {
 			...this.workbenchRect(),

@@ -224,6 +224,11 @@ const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
 const { WorkbenchView } = await import("./workbenchView.js");
+const { sidebarRect } = await import("./windowLayout.js");
+
+/** The size the fake window reports; see `getContentSize` above. */
+const WINDOW_WIDTH = 1440;
+const WINDOW_HEIGHT = 900;
 type ShellWindow = InstanceType<typeof ShellWindow>;
 type WorkbenchView = InstanceType<typeof WorkbenchView>;
 
@@ -313,6 +318,36 @@ describe("the shell window's workbench views", () => {
 		expect(shell.visibleViews()).toEqual(expected ? [expected] : []);
 		if (expected) expect(shell.topmostView()).toBe(expected);
 	}
+
+	/**
+	 * The Sidebar's own rectangle is main's number, not the page's.
+	 *
+	 * The page needs it to say where one of its rows is *in the window*, so
+	 * that a tooltip is placed against the window rather than against the
+	 * column. It must not work it out for itself: `window.screenX` is the
+	 * screen's, and a view's own box is stale for a while after main moves it
+	 * — measured, the collapsed Sidebar went on answering 249 for seconds
+	 * after being narrowed to 76. So this asserts the number moves with the
+	 * layout and is the same one the layout used.
+	 */
+	it("tells the Sidebar its own rectangle, and moves it when the column does", () => {
+		expect(shell.sidebarArea()).toEqual(
+			sidebarRect(
+				{ width: WINDOW_WIDTH, height: WINDOW_HEIGHT },
+				shell.layoutState(),
+			),
+		);
+
+		shell.setLayoutState({
+			...shell.layoutState(),
+			sidebar: { width: 248, collapsed: true },
+		});
+		// Collapsed with no title bar, the rail is the traffic lights' span —
+		// and it is exactly the case the old in-page tooltip refused to draw
+		// in, because 76px is not a column a sentence fits in.
+		expect(shell.sidebarArea().width).toBe(76);
+		expect(shell.sidebarArea().x).toBe(0);
+	});
 
 	it("shows nothing until the selection says what to show", () => {
 		// Creating a workbench must not put it on screen: three of them open at

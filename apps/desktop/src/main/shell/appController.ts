@@ -1917,6 +1917,15 @@ export class AppController {
 		// given the number rather than asked for it, so there is no
 		// arrangement in which the two can disagree about where the seam is.
 		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchArea());
+		// And the Sidebar is told its own, for one reason: a row has to be
+		// able to say where it is *in the window*, so that its tooltip is
+		// placed against the window rather than against the column it is in.
+		// Nothing about the Sidebar's own drawing depends on this — the
+		// column's width is the model's — which is why it is the rectangle and
+		// not just the origin: a row scrolled half out of the column has half
+		// an anchor, and a tooltip pointing at the invisible half points at
+		// nothing.
+		this.send(CHANNELS.sidebarAreaChanged, shell.sidebarArea());
 	}
 
 	/**
