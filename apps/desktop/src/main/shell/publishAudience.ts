@@ -1,13 +1,16 @@
 /**
  * Which pages main is talking to, and why it is not always all of them.
  *
- * Two audiences, because there are two kinds of thing main says.
+ * Three audiences, because there are three kinds of thing main says.
  *
  * A *projection* is a description of the model. The window's own page, the
  * Sidebar, the Agents and the picker are views of the same model — an alert about a workspace is the
  * same workspace the sidebar lists — so they are told the same things at the
  * same moment rather than the picker fetching its own copy on a second path. A
  * page with no use for a projection draws nothing, and that is the end of it.
+ *
+ * A *palette* is neither: it is how everything in the window is painted, and
+ * every page DevHub draws chrome on needs it. See `chromeAudience`.
  *
  * A *failure* is not a description; it is an event, and a page that receives
  * one and has nowhere to put it has only one thing left to do with it, which
@@ -43,6 +46,42 @@ export interface Pages<Contents> {
 	readonly agents: { contents(): Contents | undefined };
 	readonly picker: { contents(): Contents | undefined };
 	readonly toasts: { contents(): Contents | undefined };
+	readonly tooltip: { contents(): Contents | undefined };
+}
+
+/**
+ * Every page DevHub draws chrome on — which is all of them.
+ *
+ * A third audience, and it is not a third *kind* of thing main says: it is the
+ * palette, which is not a description of the model and not an event but a fact
+ * about how everything in this window is painted. A page left out of it goes
+ * on wearing the colours it was served with, which is right until the
+ * Workbench changes theme and then is a light box on a dark window.
+ *
+ * It existed as `projectionAudience` by accident, because until now every page
+ * that drew chrome also drew from the model. `toasts` broke that and nobody
+ * noticed: it has `onTheme` on its bridge, it is not in the projection
+ * audience, and it has therefore never been recoloured at runtime. Moving the
+ * tooltip out of the Sidebar's document would have made a second page with the
+ * same silent gap — the Sidebar *is* in the projection audience, so the
+ * tooltip it used to draw recoloured correctly, and one drawn on its own page
+ * would not have.
+ *
+ * So the rule is stated rather than coincidental, and the test on it is the
+ * one that keeps it so: every page with `onTheme` is in here.
+ */
+export function chromeAudience<Contents>(
+	pages: Pages<Contents>,
+): readonly Contents[] {
+	if (pages.window.isDestroyed()) return [];
+	return [
+		pages.window.webContents,
+		pages.sidebar.contents(),
+		pages.agents.contents(),
+		pages.picker.contents(),
+		pages.toasts.contents(),
+		pages.tooltip.contents(),
+	].filter((contents): contents is Contents => contents !== undefined);
 }
 
 /** Every page that draws from the model. */
@@ -92,6 +131,7 @@ function ownedBy<Contents>(
 		contents === pages.sidebar.contents() ||
 		contents === pages.agents.contents() ||
 		contents === pages.picker.contents() ||
-		contents === pages.toasts.contents()
+		contents === pages.toasts.contents() ||
+		contents === pages.tooltip.contents()
 	);
 }

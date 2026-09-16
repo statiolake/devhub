@@ -56,6 +56,7 @@ import {
 	type WorkspacePlaceWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
+	type TooltipRequestWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
 import {
@@ -187,7 +188,11 @@ import {
 	type KeyboardHalf,
 	type SurfaceArrangement,
 } from "./windowLayout.js";
-import { displayAudience, projectionAudience } from "./publishAudience.js";
+import {
+	chromeAudience,
+	displayAudience,
+	projectionAudience,
+} from "./publishAudience.js";
 import { WindowAttention, platformDock } from "./windowAttention.js";
 
 /**
@@ -1941,13 +1946,21 @@ export class AppController {
 	/**
 	 * Tell every page DevHub draws chrome on what the Workbench now looks like.
 	 *
-	 * The App Shell page and the modal overlay are the same two views of the
-	 * same window as everywhere else in this region, so the palette goes out
-	 * the same way — a modal must never be a different colour from the window
-	 * it is standing on.
+	 * All seven of them, and that is the point: a modal must never be a
+	 * different colour from the window it is standing on, and neither must a
+	 * notice or a tooltip. This used to go out on the *projection* audience,
+	 * which was every page that draws from the model — a set that happened to
+	 * coincide until `toasts` arrived with `onTheme` on its bridge and no
+	 * model behind it, and then silently did not.
 	 */
 	publishTheme(palette: ShellPalette): void {
-		this.send(CHANNELS.themeChanged, palette);
+		// Every page DevHub draws chrome on, which is not the same set as
+		// every page that draws from the model — `toasts` and `tooltip` have
+		// no model at all and are painted in the Workbench's colours like
+		// everything else. See `chromeAudience` in `publishAudience.ts`.
+		for (const contents of chromeAudience(shellWindow())) {
+			contents.send(CHANNELS.themeChanged, palette);
+		}
 	}
 
 	/**
@@ -5603,6 +5616,28 @@ export class AppController {
 				shellWindow().toasts.setSize(size);
 			},
 		);
+		// The `tooltip` view is exactly as big as the box the page drew, for
+		// the same reason the notices are: a native view takes every click
+		// inside its bounds whether or not anything is painted there. See
+		// `tooltipView.ts`.
+		receive(
+			CHANNELS.tooltipSize,
+			(_event, size: { readonly width: number; readonly height: number }) => {
+				shellWindow().tooltip.setSize(size);
+			},
+		);
+		// The Sidebar asking for a tooltip over the window, about one of its
+		// own rows. It composes the sentence and knows where the pointer is
+		// resting; main owns where anything in the window goes. The anchor
+		// arrives in window coordinates — see `SidebarAreaWire` for how the
+		// page knows its own origin, which is main's number and not a
+		// measurement.
+		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {
+			shellWindow().tooltip.show(request);
+		});
+		receive(CHANNELS.hideTooltip, () => {
+			shellWindow().tooltip.hide();
+		});
 		// "Try Again" on a notice. The button is on the toasts page and what it
 		// restarts is the App Shell page's projection, so main is what joins
 		// them — the same shape as every other command a page carries out.

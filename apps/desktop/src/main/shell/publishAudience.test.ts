@@ -10,18 +10,24 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { displayAudience, projectionAudience } from "./publishAudience.js";
+import {
+	chromeAudience,
+	displayAudience,
+	projectionAudience,
+} from "./publishAudience.js";
 
 const SHELL = "shell page";
 const SIDEBAR = "sidebar page";
 const AGENTS = "agents page";
 const PICKER = "picker page";
 const TOASTS = "toasts page";
+const TOOLTIP = "tooltip page";
 const SETTINGS = "settings page";
 
 function pages(options?: {
 	readonly picker?: boolean;
 	readonly toasts?: boolean;
+	readonly tooltip?: boolean;
 	readonly gone?: boolean;
 }) {
 	return {
@@ -36,6 +42,9 @@ function pages(options?: {
 		},
 		toasts: {
 			contents: () => (options?.toasts === false ? undefined : TOASTS),
+		},
+		tooltip: {
+			contents: () => (options?.tooltip === false ? undefined : TOOLTIP),
 		},
 	};
 }
@@ -98,5 +107,54 @@ describe("a window that has gone", () => {
 	it("has no audience of either kind", () => {
 		expect(projectionAudience(pages({ gone: true }))).toEqual([]);
 		expect(displayAudience(pages({ gone: true }))).toEqual([]);
+	});
+});
+
+/**
+ * The palette is neither a projection nor a failure, and sending it to the
+ * projection audience was a coincidence that had already stopped being true.
+ *
+ * `toasts` has `onTheme` on its bridge and no model behind it, so it was not
+ * in the projection audience and had therefore never been recoloured at
+ * runtime — a page wearing the palette it was served with, on a window that
+ * had since changed theme. The tooltip would have been the second such page
+ * the moment it left the Sidebar's document.
+ *
+ * So the rule is stated rather than coincidental, and this is what keeps it
+ * so: every page with `onTheme` is in this audience. That is all of them.
+ */
+describe("the palette", () => {
+	it("goes to every page DevHub draws chrome on", () => {
+		expect(chromeAudience(pages())).toEqual([
+			SHELL,
+			SIDEBAR,
+			AGENTS,
+			PICKER,
+			TOASTS,
+			TOOLTIP,
+		]);
+	});
+
+	/**
+	 * The two pages this audience exists for. A notice and a tooltip are
+	 * drawn over a live workbench, so a stale palette on either is a light
+	 * box on a dark window — the most visible possible way to be wrong.
+	 */
+	it("reaches the two pages that have no model at all", () => {
+		const told = chromeAudience(pages());
+		expect(told).toContain(TOASTS);
+		expect(told).toContain(TOOLTIP);
+		// Which is exactly what the projection audience does not do, and
+		// correctly so: neither page has a snapshot to be told about.
+		expect(projectionAudience(pages())).not.toContain(TOASTS);
+		expect(projectionAudience(pages())).not.toContain(TOOLTIP);
+	});
+
+	it("says nothing to a window that is gone", () => {
+		expect(chromeAudience(pages({ gone: true }))).toEqual([]);
+	});
+
+	it("skips a page that does not exist yet", () => {
+		expect(chromeAudience(pages({ tooltip: false }))).not.toContain(TOOLTIP);
 	});
 });

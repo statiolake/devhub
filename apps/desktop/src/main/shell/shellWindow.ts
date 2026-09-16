@@ -36,6 +36,7 @@ import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
+import { TooltipView } from "./tooltipView.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -157,6 +158,7 @@ export class ShellWindow {
 	readonly agents: ChromeView;
 	readonly toasts: ToastsView;
 	readonly picker: PickerView;
+	readonly tooltip: TooltipView;
 	/** How the surface key of the workbench on screen is looked up. */
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
@@ -249,6 +251,20 @@ export class ShellWindow {
 				this.layout();
 			},
 			focusSurface: () => this.focusSurface(),
+		});
+		// Built at startup like every other child, and never lazily. A tooltip
+		// is asked for at the moment a pointer stops moving; a view created
+		// then would have a page still loading when the sentence arrived, and
+		// the first tooltip of a session would be the one that did not appear.
+		this.tooltip = new TooltipView(
+			preloadFor("tooltip"),
+			`${pageBase}/tooltip.html`,
+		);
+		this.tooltip.adopt({
+			window: this.window,
+			tooltipChanged: () => {
+				this.layout();
+			},
 		});
 		this.picker = new PickerView(
 			preloadFor("picker"),
@@ -905,7 +921,7 @@ export class ShellWindow {
 			asking: this.askingEditorKey(),
 			toasts: this.toasts.contentSize(),
 			picker: this.picker.scope(),
-			tooltip: undefined,
+			tooltip: this.tooltip.placement(),
 		};
 	}
 
@@ -996,6 +1012,7 @@ export class ShellWindow {
 		const drawn = new Set(children.map((child) => child.identity.kind));
 		if (!drawn.has("toasts")) this.toasts.place(undefined);
 		if (!drawn.has("picker")) this.picker.place(undefined);
+		if (!drawn.has("tooltip")) this.tooltip.place(undefined);
 		// Then the drawn children, in the list's own order, lowest first. That
 		// order *is* the z-order and this is the one way Electron offers to
 		// establish it: re-adding an existing child moves it to the end of the
@@ -1018,6 +1035,9 @@ export class ShellWindow {
 					break;
 				case "picker":
 					this.picker.place(child.visible ? child.rect : undefined);
+					break;
+				case "tooltip":
+					this.tooltip.place(child.visible ? child.rect : undefined);
 					break;
 				case "editor": {
 					if (!child.visible) break;

@@ -338,9 +338,17 @@ function toastsRect(windowSize: LayoutSize, size: LayoutSize): LayoutRect {
 	};
 }
 
-/** Hold `value` inside `[low, high]`, with `low` winning if they cross. */
+/**
+ * Hold `value` inside `[low, high]`.
+ *
+ * `low` is itself held under `high` first, because the two can cross: a
+ * tooltip as big as the window has no position that is both a margin in from
+ * the leading edge and a margin in from the trailing one, and being inside the
+ * window is the rule that matters. Without this a full-window tooltip was
+ * placed at the margin and hung off the far edge by exactly that much.
+ */
 function clamp(value: number, low: number, high: number): number {
-	return Math.max(low, Math.min(value, high));
+	return Math.max(Math.min(low, high), Math.min(value, high));
 }
 
 /**
