@@ -39,7 +39,8 @@ extension host.
 
 ## What is deliberately not here
 
-The extension this replaces (`extensions/vendor/open-remote-ssh`) carried an SSH
+The extension this replaces — a vendored `jeanp413.open-remote-ssh`, removed in
+the same change that added this one — carried an SSH
 client, an ssh configuration reader, a remote-server installer, a port-forwarding
 tree view and a page of settings. DevHub owns every one of those already: one
 connection model, one place a host is named, one place a server is published. A
