@@ -285,7 +285,10 @@ fi
 # project and on an extension repo alike.
 step "built-in extensions"
 (cd "$VSCODE_DIR" && npm run download-builtin-extensions)
+# DevHub's own two extensions are built here for the same reason the bridge
+# always was: the staging script below refuses a set with either missing.
 (cd "$REPO_ROOT/extensions/devhub-bridge" && node scripts/build.mjs)
+(cd "$REPO_ROOT/extensions/devhub-remote" && node scripts/build.mjs)
 "$REPO_ROOT/scripts/stage-builtin-extensions.sh"
 
 printf '\nprovisioned.\n'
