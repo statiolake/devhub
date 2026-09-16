@@ -61,7 +61,11 @@ body,
   width: max-content;
   max-width: var(--tooltip-max-width);
   padding: 4px 7px;
-  border: 1px solid var(--separator);
+  /* `--line-strong`, not `--separator`: the box floats over whatever the
+     window has under it — a workbench, a terminal, the Sidebar — and a
+     hairline that melts into a raised surface leaves the box with no edge
+     against any of them. */
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
   background: var(--chrome-raised, var(--chrome));
   color: var(--label);
