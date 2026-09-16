@@ -303,3 +303,44 @@ describe("the folders a clone could go into", () => {
 		expect(await collectParentDirectories(configWith([]))).toEqual([]);
 	});
 });
+
+describe("a search that is cancelled", () => {
+	it("kills a command source that is still running", async () => {
+		// A command source is trusted to name paths and never to be fast, and the
+		// flag the walk checks between directories is invisible to a child
+		// process. Before this, cancelling the search left the process running:
+		// the dialog was gone and something was still going on behind it.
+		const source: WorkspaceSource = {
+			type: "command",
+			id: "slow",
+			// Long enough that it cannot have exited on its own, and bounded so a
+			// failing test leaves nothing behind.
+			command: ["sleep", "30"],
+			timeout_ms: 30_000,
+		};
+
+		let exited: number | undefined;
+		const started = Date.now();
+		const done = new Promise<void>((resolve) => {
+			const cancel = startWorkspacePicker(
+				configWith([source]),
+				"",
+				"cancel-test",
+				(event: WorkspacePickerEvent) => {
+					if (event.kind === "completed" || event.kind === "cancelled") {
+						exited = Date.now() - started;
+						resolve();
+					}
+				},
+			);
+			// Once the child is certainly spawned, stop caring about it.
+			setTimeout(cancel, 100);
+		});
+
+		await done;
+		// The run ends when the child is killed, not when `sleep` would have
+		// finished: it is the kill that is being tested, and a timeout expiring
+		// would prove nothing about cancellation.
+		expect(exited).toBeLessThan(5_000);
+	});
+});

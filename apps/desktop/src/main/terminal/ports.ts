@@ -95,6 +95,7 @@ export function portFailure(
 export class CancellationToken {
 	private cancelled = false;
 	private readonly children = new Set<CancellationToken>();
+	private readonly listeners = new Set<() => void>();
 
 	get isCancelled(): boolean {
 		return this.cancelled;
@@ -105,6 +106,29 @@ export class CancellationToken {
 		this.cancelled = true;
 		for (const child of this.children) child.cancel();
 		this.children.clear();
+		for (const listener of this.listeners) listener();
+		this.listeners.clear();
+	}
+
+	/**
+	 * Run this when the operation is abandoned, or now if it already has been.
+	 *
+	 * `check` serves the code that is between two awaits and can look; this
+	 * serves the code that is *inside* one and cannot — a directory walk part
+	 * way through, a child process with nobody left to read its output. Without
+	 * it a token can only be noticed at the seams, and the work that takes the
+	 * longest is exactly the work with no seam in it.
+	 *
+	 * Running immediately when the token is already cancelled is the whole point
+	 * rather than a convenience: a caller that registered a moment too late
+	 * would otherwise wait forever for an event that has been and gone.
+	 */
+	onCancelled(listener: () => void): void {
+		if (this.cancelled) {
+			listener();
+			return;
+		}
+		this.listeners.add(listener);
 	}
 
 	child(): CancellationToken {

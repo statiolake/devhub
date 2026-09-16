@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { Picker } from "./Picker";
 import {
   runWizard,
+  WIZARD_ABANDONED,
   WIZARD_BACK,
   type WizardAnswer,
   type WizardPrompt,
@@ -38,7 +39,12 @@ type Screen =
       readonly answer: (answer: WizardAnswer) => void;
       readonly back: () => void;
     }
-  | { readonly kind: "working"; readonly message: string };
+  | {
+      readonly kind: "working";
+      readonly message: string;
+      /** Escape while something slow is happening: stop waiting for it. */
+      readonly back: () => void;
+    };
 
 export function Wizard({ start, onFinished }: WizardProps) {
   const [screen, setScreen] = useState<Screen>();
@@ -74,10 +80,29 @@ export function Wizard({ start, onFinished }: WizardProps) {
             },
           });
         }),
-      working: async (message, task) => {
-        setScreen({ kind: "working", message });
-        return task();
-      },
+      // A slow step is still a question the person is inside, so Escape has to
+      // mean here what it means everywhere else in the wizard: one step back.
+      // It did not — the working panel had no key handling at all — so a lookup
+      // that hung left the person with a spinner and no way out of it, which is
+      // the one state a modal must never be able to reach.
+      //
+      // The task is not cancelled by this, and pretending otherwise would be
+      // the lie: what is abandoned is *waiting* for it. Main bounds the work
+      // itself and kills what it started, so the child process goes away on its
+      // own deadline rather than outliving the app. The race is resolved by
+      // whichever settles first, and a task that finishes after the person has
+      // left resolves a promise the runner has already stopped reading.
+      working: (message, task) =>
+        new Promise((resolve, reject) => {
+          setScreen({
+            kind: "working",
+            message,
+            back: () => {
+              reject(WIZARD_ABANDONED);
+            },
+          });
+          task().then(resolve, reject);
+        }),
       // A failure with no words of its own is rethrown by the runner, and
       // reaches the root handler as an unhandled rejection — the one place the
       // shell draws a failure it cannot explain. It is not caught here, where
@@ -96,6 +121,16 @@ export function Wizard({ start, onFinished }: WizardProps) {
           role="dialog"
           aria-modal="true"
           aria-label={screen.message}
+          // The panel takes focus so that Escape reaches it wherever the
+          // person's focus was when the step began.
+          tabIndex={-1}
+          ref={(node) => node?.focus()}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            screen.back();
+          }}
         >
           <span className="mac-spinner" aria-hidden="true" />
           <p className="mac-caption" role="status">

@@ -133,4 +133,33 @@ describe("the wizard on screen", () => {
     ).toBeVisible();
     release();
   });
+
+  it("answers Escape while a slow step is still running", async () => {
+    // The state this covers is the one a person reported: a lookup that never
+    // came back, a spinner, and no key that did anything. A modal that cannot
+    // be left is worse than a modal that fails, because failing at least says
+    // something.
+    const never = new Promise<void>(() => {
+      /* never settles, which is the whole point */
+    });
+    const first: WizardStep = async (input) => {
+      await input.ask(prompt("Repository", "devhub"));
+      await input.working("Looking for owner/devhub…", () => never);
+      return undefined;
+    };
+
+    render(<Wizard start={first} onFinished={vi.fn()} />);
+    fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Enter" });
+
+    const working = await screen.findByRole("dialog", {
+      name: "Looking for owner/devhub…",
+    });
+    fireEvent.keyDown(working, { key: "Escape" });
+
+    // One step back, to the question that led here — the same thing Escape
+    // means on every other screen the wizard draws.
+    expect(
+      await screen.findByRole("dialog", { name: "Repository" }),
+    ).toBeVisible();
+  });
 });

@@ -215,6 +215,7 @@ import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { editorInspection, editorRuntimeState } from "./editorInspection.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
+import { REPOSITORY_LOOKUP_DEADLINE_MS } from "../runtime/cadence.js";
 import {
 	CancellationToken,
 	scratchTarget,
@@ -5389,6 +5390,16 @@ export class AppController {
 					),
 				);
 			}
+			// The lookup is bounded here, at the one place that knows it is a
+			// lookup. Underneath it there is a source walk and up to sixty-four
+			// gits, each with a timeout of its own that says nothing about the
+			// sum — and a person is watching a spinner for the whole of it. When
+			// the deadline passes the token kills whatever is in flight and the
+			// sheet is told, in a sentence, rather than going on spinning.
+			const cancel = new CancellationToken();
+			const timer = setTimeout(() => {
+				cancel.cancel();
+			}, REPOSITORY_LOOKUP_DEADLINE_MS);
 			try {
 				return await findClones(
 					config,
@@ -5407,9 +5418,23 @@ export class AppController {
 									path: workspace.location.path,
 								},
 					),
+					cancel,
 				);
 			} catch (error: unknown) {
+				if (cancel.isCancelled) {
+					throw asIpcError(
+						errorWire(
+							workspaceFailure(
+								`${issue.owner}/${issue.repository} could not be found within ${String(
+									REPOSITORY_LOOKUP_DEADLINE_MS / 1000,
+								)}s. Something DevHub asked — a workspace source, or git — did not answer.`,
+							),
+						),
+					);
+				}
 				throw asIpcError(errorWire(error));
+			} finally {
+				clearTimeout(timer);
 			}
 		});
 		handle(

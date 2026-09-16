@@ -206,9 +206,10 @@ async function ask(
 	command: GitCommand,
 	args: readonly string[],
 	cwd: string,
+	cancel?: CancellationToken,
 ): Promise<string | undefined> {
 	try {
-		return (await runGit(command, args, { cwd })).trim();
+		return (await runGit(command, args, { cwd, cancel })).trim();
 	} catch (error: unknown) {
 		if (!(error instanceof TypedFailure)) throw error;
 		const summary = error.wire.summary;
@@ -440,11 +441,14 @@ export async function pruneWorktrees(
 export async function readRepository(
 	command: GitCommand,
 	directory: string,
+	/** Abandons the reads below, and kills whichever git is in flight. */
+	cancel?: CancellationToken,
 ): Promise<RepositoryFacts | undefined> {
 	const worktrees = await ask(
 		command,
 		["worktree", "list", "--porcelain"],
 		directory,
+		cancel,
 	);
 	if (worktrees === undefined) return undefined;
 	// The first record is always the main worktree, which is the one every
@@ -466,6 +470,7 @@ export async function readRepository(
 		command,
 		["rev-parse", "--show-toplevel"],
 		directory,
+		cancel,
 	);
 	if (worktree === undefined) return undefined;
 
@@ -476,19 +481,25 @@ export async function readRepository(
 	// the command that cannot be asked is not asked.
 	const branch = unborn
 		? here?.branch
-		: await ask(command, ["rev-parse", "--abbrev-ref", "HEAD"], directory);
+		: await ask(
+				command,
+				["rev-parse", "--abbrev-ref", "HEAD"],
+				directory,
+				cancel,
+			);
 	const pushBranch =
 		branch === undefined || branch === "HEAD"
 			? undefined
-			: await remoteBranchOf(command, directory, branch);
-	const remote = await remoteNamed(command, directory, "origin");
-	const upstream = await remoteNamed(command, directory, "upstream");
+			: await remoteBranchOf(command, directory, branch, cancel);
+	const remote = await remoteNamed(command, directory, "origin", cancel);
+	const upstream = await remoteNamed(command, directory, "upstream", cancel);
 	// `origin/main`, trimmed to `main`. A clone that has never been told what
 	// `origin`'s HEAD is answers nothing, which is not the same as `main`.
 	const head = await ask(
 		command,
 		["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
 		directory,
+		cancel,
 	).catch(() => undefined);
 	const defaultBranch = head?.startsWith("origin/")
 		? head.slice("origin/".length)
@@ -522,6 +533,7 @@ async function remoteBranchOf(
 	command: GitCommand,
 	directory: string,
 	branch: string,
+	cancel?: CancellationToken,
 ): Promise<string | undefined> {
 	const line = await ask(
 		command,
@@ -531,6 +543,7 @@ async function remoteBranchOf(
 			`refs/heads/${branch}`,
 		],
 		directory,
+		cancel,
 	).catch(() => undefined);
 	if (line === undefined) return undefined;
 	const [pushRemote, push, upstreamRemote, upstream] = line.split("\t");
@@ -564,10 +577,14 @@ async function remoteNamed(
 	command: GitCommand,
 	directory: string,
 	name: string,
+	cancel?: CancellationToken,
 ): Promise<RemoteIdentity | undefined> {
-	const url = await ask(command, ["remote", "get-url", name], directory).catch(
-		() => undefined,
-	);
+	const url = await ask(
+		command,
+		["remote", "get-url", name],
+		directory,
+		cancel,
+	).catch(() => undefined);
 	if (url === undefined || url.length === 0) return undefined;
 	try {
 		return remoteIdentity(url);

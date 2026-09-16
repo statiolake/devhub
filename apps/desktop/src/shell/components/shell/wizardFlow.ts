@@ -32,6 +32,21 @@ import type { PickerItem } from "./Picker";
 export const WIZARD_BACK = Symbol("wizard:back");
 /** The flow is over and nothing is going to be asked. */
 export const WIZARD_CANCELLED = Symbol("wizard:cancelled");
+/**
+ * Escape while something slow was running: stop waiting, ask this step again.
+ *
+ * Not `WIZARD_BACK`, and the difference is the whole reason it exists. Back
+ * means "I have answered this and want the question before it"; this means "I
+ * am still inside this step and it is not coming back". The step is where the
+ * person was, so the step is what is re-run — they see the question they last
+ * answered, with what they typed still the thing to change, which is the only
+ * screen from which the slow thing can be asked for differently.
+ *
+ * Popping the step instead, which is what back does, ended the flow outright
+ * for a first step: the person who escaped a wedged lookup lost the wizard
+ * rather than getting their question back.
+ */
+export const WIZARD_ABANDONED = Symbol("wizard:abandoned");
 
 /** One question, in the terms the picker draws it. */
 export interface WizardPrompt {
@@ -155,6 +170,14 @@ export async function runWizard(
       step = next;
     } catch (error: unknown) {
       if (error === WIZARD_CANCELLED) return;
+      if (error === WIZARD_ABANDONED) {
+        // The step stays where it is and is asked again from the top of its own
+        // code, exactly as a step that failed is. There is no reason to show —
+        // the person chose to stop waiting and already knows why.
+        failure = undefined;
+        step = walked.pop();
+        continue;
+      }
       if (error === WIZARD_BACK) {
         failure = undefined;
         walked.pop();

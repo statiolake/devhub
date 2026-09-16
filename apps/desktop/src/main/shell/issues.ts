@@ -22,6 +22,7 @@ import type {
 	WorkspacePickerEvent,
 	WorkspacePlaceWire,
 } from "../../ipc/contract.js";
+import { CancellationToken } from "../terminal/ports.js";
 import {
 	parseWorktrees,
 	readRepository,
@@ -88,6 +89,16 @@ export async function findClones(
 	gitFor: (place: WorkspacePlaceWire) => Promise<GitCommand>,
 	issue: IssueReference,
 	openPlaces: readonly WorkspacePlaceWire[],
+	/**
+	 * The token that abandons this lookup.
+	 *
+	 * A lookup is somebody watching a spinner, and this is what stops it being
+	 * unbounded: the search walk ends, the `git` in flight is killed, and the
+	 * loop below stops before it starts the next one. Defaulted so that the
+	 * callers which genuinely cannot be abandoned — a test, a background
+	 * refresh — read the same as they did.
+	 */
+	cancel: CancellationToken = new CancellationToken(),
 ): Promise<readonly RepositoryCandidate[]> {
 	const wanted = remoteForIssue(issue);
 	// The sources walk *this* machine's disk, so what they find is on it. A
@@ -98,7 +109,7 @@ export async function findClones(
 	const candidates = new Map<string, WorkspacePlaceWire>();
 	for (const place of [
 		...openPlaces,
-		...(await searchSources(config, issue.repository)).map(
+		...(await searchSources(config, issue.repository, cancel)).map(
 			(path): WorkspacePlaceWire => ({ kind: "local", path }),
 		),
 	]) {
@@ -108,8 +119,26 @@ export async function findClones(
 
 	const repositories = new Map<string, WorkspacePlaceWire>();
 	for (const place of [...candidates.values()].slice(0, MAX_INSPECTED)) {
+		// Sixty-four directories is sixty-four gits, and the person is watching a
+		// spinner for all of them. This is the seam where an abandoned lookup
+		// stops costing anything: the one in flight was killed by the token, and
+		// the next one is never started.
+		cancel.check();
 		const command = await gitFor(place);
-		const facts = await readRepository(command, place.path);
+		// One directory git will not answer about is one candidate lost, not the
+		// question. These are *candidates* — whatever the fuzzy search reached
+		// with a matching name — so a broken checkout, a stale mount or a folder
+		// that stopped being a repository between the walk and now is an ordinary
+		// thing to meet here, and losing the other sixty-three clones over it is
+		// not. Cancellation is not one of these: it is the caller saying stop,
+		// and it goes on up.
+		let facts;
+		try {
+			facts = await readRepository(command, place.path, cancel);
+		} catch {
+			cancel.check();
+			continue;
+		}
 		if (!facts || facts.remote !== wanted) continue;
 		// A repository's main worktree is on the same machine as the checkout
 		// git read it from; there is nowhere else it could be.
@@ -121,7 +150,7 @@ export async function findClones(
 	for (const place of repositories.values()) {
 		found.push({
 			place,
-			worktrees: await worktreesOf(await gitFor(place), place),
+			worktrees: await worktreesOf(await gitFor(place), place, cancel),
 		});
 	}
 	return found;
@@ -139,6 +168,7 @@ export async function findClones(
 async function worktreesOf(
 	command: GitCommand,
 	main: WorkspacePlaceWire,
+	cancel?: CancellationToken,
 ): Promise<readonly WorktreeCandidate[]> {
 	const itself: WorktreeCandidate = {
 		place: main,
@@ -147,6 +177,7 @@ async function worktreesOf(
 	};
 	const output = await runGit(command, ["worktree", "list", "--porcelain"], {
 		cwd: main.path,
+		cancel,
 	}).catch(() => undefined);
 	if (output === undefined) return [itself];
 	const records = parseWorktrees(output);
@@ -173,24 +204,33 @@ function namesRepository(path: string, repository: string): boolean {
 	return name === repository || name.startsWith(`${repository}_`);
 }
 
-/** One run of the workspace picker's search, collected rather than streamed. */
+/**
+ * One run of the workspace picker's search, collected rather than streamed.
+ *
+ * The token ends the walk where it has got to and answers with what it found so
+ * far. A search nobody is waiting for is not worth finishing, and the paths it
+ * already has cost nothing to hand back — the caller checks the token again
+ * before it does anything with them.
+ */
 function searchSources(
 	config: Config,
 	query: string,
+	cancel: CancellationToken,
 ): Promise<readonly string[]> {
 	return new Promise<readonly string[]>((resolve) => {
 		const paths: string[] = [];
-		const cancel = startWorkspacePicker(
+		const stop = startWorkspacePicker(
 			config,
 			query,
 			"issue-clone-search",
 			(event: WorkspacePickerEvent) => {
 				if (event.kind === "candidate") paths.push(event.path);
 				else if (event.kind === "completed" || event.kind === "cancelled") {
-					cancel();
+					stop();
 					resolve(paths);
 				}
 			},
 		);
+		cancel.onCancelled(stop);
 	});
 }

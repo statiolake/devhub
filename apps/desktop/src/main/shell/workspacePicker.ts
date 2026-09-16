@@ -41,6 +41,15 @@ interface RunState {
 	readonly operationId: string;
 	sequence: number;
 	cancelled: boolean;
+	/**
+	 * What to stop when the run is cancelled.
+	 *
+	 * The walk notices `cancelled` between directories, but a command source is
+	 * a child process: nothing in this file runs again until it exits, so a flag
+	 * it cannot see is a flag that does not stop it. A source configured to run
+	 * something that hangs used to keep running after the dialog was gone.
+	 */
+	readonly stopping: Set<() => void>;
 	candidateCount: number;
 	errorCount: number;
 	stderrBytes: number;
@@ -68,6 +77,7 @@ export function startWorkspacePicker(
 		operationId,
 		sequence: 0,
 		cancelled: false,
+		stopping: new Set(),
 		candidateCount: 0,
 		errorCount: 0,
 		stderrBytes: 0,
@@ -183,6 +193,8 @@ export function startWorkspacePicker(
 
 	return () => {
 		state.cancelled = true;
+		for (const stop of state.stopping) stop();
+		state.stopping.clear();
 	};
 }
 
@@ -297,13 +309,22 @@ function runCommandSource(
 		const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let settled = false;
+		const kill = () => {
+			child.kill("SIGKILL");
+		};
+		state.stopping.add(kill);
 		const finish = (error?: Error) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			state.stopping.delete(kill);
 			if (error) reject(error);
 			else resolve();
 		};
+		// The run was cancelled between this source being scheduled and the
+		// spawn happening, so the child that has just started has nobody waiting
+		// for it.
+		if (state.cancelled) kill();
 		const timer = setTimeout(() => {
 			child.kill("SIGKILL");
 			finish(new Error(`workspace source timed out: ${source.id}`));

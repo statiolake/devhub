@@ -88,3 +88,19 @@ export const REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS = 10_000;
  * measured here for a derivation to read.
  */
 export const REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000;
+
+/**
+ * How long a lookup started from the picker may run before it is refused.
+ *
+ * A lookup is not a poll: somebody is watching a sheet with a spinner in it,
+ * and the number that matters is how long they will sit in front of one before
+ * the spinner stops meaning "nearly there" and starts meaning "wedged". It is
+ * here rather than beside the git timeouts because it bounds the *whole*
+ * question — a source walk, then one `git` per named-alike directory — and each
+ * of those already has a bound of its own that says nothing about the sum.
+ *
+ * Twenty seconds: longer than a cold `git` on a large checkout and shorter than
+ * a person's patience, and when it expires the sheet says so in a sentence
+ * rather than going on spinning.
+ */
+export const REPOSITORY_LOOKUP_DEADLINE_MS = 20_000;
