@@ -93,6 +93,17 @@ const MARGIN = 4;
  */
 const MIN_READABLE_WIDTH = 160;
 
+/**
+ * How long the pointer rests on a row before its tooltip is drawn.
+ *
+ * A pointer crossing the Sidebar on its way somewhere else passes over every
+ * row it crosses, and a tooltip raised on entry for each of them is a
+ * flicker of sentences nobody asked for. Resting on a row is the question;
+ * this is how long resting takes. The keyboard has no such delay: a row
+ * reached with the arrows was chosen, not crossed.
+ */
+const HOVER_DELAY_MS = 300;
+
 export function RowTooltip() {
   const [placement, setPlacement] = useState<Placement | undefined>(undefined);
   const hide = useCallback(() => {
@@ -128,13 +139,37 @@ export function RowTooltip() {
   }, []);
 
   const anchor = useRef<HTMLElement | null>(null);
+  const resting = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
-    const enter = (event: Event) => {
+    const cancelRest = () => {
+      if (resting.current === undefined) return;
+      clearTimeout(resting.current);
+      resting.current = undefined;
+    };
+    const anchorFor = (event: Event): HTMLElement | undefined => {
       const target = event.target;
-      if (!(target instanceof Element)) return;
+      if (!(target instanceof Element)) return undefined;
       const element = target.closest<HTMLElement>("[data-tooltip]");
-      if (!element || element === anchor.current) return;
+      if (!element || element === anchor.current) return undefined;
+      return element;
+    };
+    // The pointer has to rest on a row first. See `HOVER_DELAY_MS`.
+    const pointerEnter = (event: Event) => {
+      const element = anchorFor(event);
+      if (!element) return;
+      cancelRest();
+      anchor.current = element;
+      resting.current = setTimeout(() => {
+        resting.current = undefined;
+        if (anchor.current === element) show(element);
+      }, HOVER_DELAY_MS);
+    };
+    // The keyboard chose the row; it is drawn at once.
+    const keyboardEnter = (event: Event) => {
+      const element = anchorFor(event);
+      if (!element) return;
+      cancelRest();
       anchor.current = element;
       show(element);
     };
@@ -142,15 +177,16 @@ export function RowTooltip() {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (!anchor.current || !anchor.current.contains(target)) return;
+      cancelRest();
       anchor.current = null;
       hide();
     };
     // Pointer and keyboard alike: a row reached with the arrows has the same
     // question to answer as a row under the pointer, and on a rail it is the
     // only way to ask it.
-    document.addEventListener("pointerover", enter);
+    document.addEventListener("pointerover", pointerEnter);
     document.addEventListener("pointerout", leave);
-    document.addEventListener("focusin", enter);
+    document.addEventListener("focusin", keyboardEnter);
     document.addEventListener("focusout", leave);
     // Anything that can move the row out from under the tooltip takes it
     // down rather than leaving it pointing at nothing.
@@ -158,9 +194,10 @@ export function RowTooltip() {
     window.addEventListener("resize", hide);
     window.addEventListener("blur", hide);
     return () => {
-      document.removeEventListener("pointerover", enter);
+      cancelRest();
+      document.removeEventListener("pointerover", pointerEnter);
       document.removeEventListener("pointerout", leave);
-      document.removeEventListener("focusin", enter);
+      document.removeEventListener("focusin", keyboardEnter);
       document.removeEventListener("focusout", leave);
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);

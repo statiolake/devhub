@@ -17,8 +17,14 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RowTooltip } from "./RowTooltip";
 
 const DESCRIPTION = "widget workspace, path /projects/widget\nbranch main";
@@ -79,12 +85,53 @@ function tooltip(): HTMLElement {
   return node;
 }
 
-afterEach(cleanup);
+/** The pointer arrives on the row and rests there long enough. */
+function hover(row: HTMLElement) {
+  fireEvent.pointerOver(row);
+  act(() => {
+    vi.advanceTimersByTime(300);
+  });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("the Sidebar's own tooltip", () => {
+  it("waits for the pointer to rest on the row before saying anything", () => {
+    mount(100);
+    const row = screen.getByRole("button");
+    fireEvent.pointerOver(row);
+    expect(document.querySelector(".row-tooltip")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(document.querySelector(".row-tooltip")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(tooltip()).toBeInTheDocument();
+  });
+
+  it("says nothing for a row the pointer only crossed", () => {
+    mount(100);
+    const row = screen.getByRole("button");
+    fireEvent.pointerOver(row);
+    fireEvent.pointerOut(row);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(document.querySelector(".row-tooltip")).toBeNull();
+  });
+
   it("says the row's sentence, with the row's own lines", () => {
     mount(100);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     const tip = tooltip();
     expect(tip).toHaveTextContent("widget workspace, path /projects/widget");
     expect(tip).toHaveTextContent("branch main");
@@ -102,7 +149,8 @@ describe("the Sidebar's own tooltip", () => {
   it("goes when the pointer leaves, and when the keyboard does", () => {
     mount(100);
     const row = screen.getByRole("button");
-    fireEvent.pointerOver(row);
+    hover(row);
+    expect(tooltip()).toBeInTheDocument();
     fireEvent.pointerOut(row);
     expect(document.querySelector(".row-tooltip")).toBeNull();
 
@@ -114,7 +162,7 @@ describe("the Sidebar's own tooltip", () => {
 
   it("hangs below a row in the upper half of the view", () => {
     mount(100);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     const tip = tooltip();
     expect(tip.style.top).toBe("130px");
     expect(tip.style.bottom).toBe("");
@@ -129,7 +177,7 @@ describe("the Sidebar's own tooltip", () => {
    */
   it("flips upward for a row near the bottom edge", () => {
     mount(560);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     const tip = tooltip();
     expect(tip.style.bottom).toBe("46px");
     expect(tip.style.top).toBe("");
@@ -143,7 +191,7 @@ describe("the Sidebar's own tooltip", () => {
    */
   it("is clamped to the view it is drawn in", () => {
     mount(100, 600, 248);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     expect(tooltip().style.maxWidth).toBe("236px");
   });
 
@@ -156,13 +204,13 @@ describe("the Sidebar's own tooltip", () => {
    */
   it("draws none at all in a view too narrow to read one in", () => {
     mount(100, 600, 76);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     expect(document.querySelector(".row-tooltip")).toBeNull();
   });
 
   it("never takes a pointer event from the row that raised it", () => {
     mount(100);
-    fireEvent.pointerOver(screen.getByRole("button"));
+    hover(screen.getByRole("button"));
     // Asserted as the class contract rather than the computed style: jsdom
     // applies no stylesheet, and `pointer-events: none` is stated in
     // `sidebarPage.css` against this class.
