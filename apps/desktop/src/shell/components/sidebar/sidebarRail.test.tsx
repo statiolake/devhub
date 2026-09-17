@@ -11,10 +11,21 @@
  * what a rail cannot honour is gone, and that the state survives a restart.
  */
 
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
+import type {
+  SidebarAreaWire,
+  TooltipRequestWire,
+} from "../../../ipc/contract";
 import { AppModel } from "../../../model/appModel";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
@@ -233,6 +244,19 @@ describe("what a rail entry does under the pointer", () => {
     return button;
   }
 
+  /**
+   * The element a tooltip would be raised from for something inside a row.
+   *
+   * The same walk `RowTooltip` does — `closest()` up from whatever the pointer
+   * came to rest on — so this asks the question the pointer asks rather than
+   * naming the element the answer happens to be.
+   */
+  function rowTooltip(inside: Element): HTMLElement {
+    const element = inside.closest<HTMLElement>("[data-tooltip-lines]");
+    if (!element) throw new Error("nothing here raises a tooltip");
+    return element;
+  }
+
   it("selects the row, and does not open the repository", () => {
     const rail = mount(true, REPOSITORY);
     expect(screen.queryByRole("button", { name: /on GitHub$/u })).toBeNull();
@@ -271,21 +295,21 @@ describe("what a rail entry does under the pointer", () => {
 
   it("says in the tooltip exactly what the expanded row says", () => {
     mount(false, REPOSITORY);
-    const expandedWorkspace =
-      selectButton("workspace:w-1").getAttribute("data-tooltip-lines");
-    const expandedAgent = screen
-      .getByRole("button", { name: /^Codex/u })
-      .getAttribute("data-tooltip-lines");
+    const expandedWorkspace = rowTooltip(
+      selectButton("workspace:w-1"),
+    ).getAttribute("data-tooltip-lines");
+    const expandedAgent = rowTooltip(
+      screen.getByRole("button", { name: /^Codex/u }),
+    ).getAttribute("data-tooltip-lines");
     cleanup();
     mount(true, REPOSITORY);
-    expect(selectButton("workspace:w-1")).toHaveAttribute(
+    expect(rowTooltip(selectButton("workspace:w-1"))).toHaveAttribute(
       "data-tooltip-lines",
       expandedWorkspace,
     );
-    expect(screen.getByRole("button", { name: /^Codex/ })).toHaveAttribute(
-      "data-tooltip-lines",
-      expandedAgent,
-    );
+    expect(
+      rowTooltip(screen.getByRole("button", { name: /^Codex/ })),
+    ).toHaveAttribute("data-tooltip-lines", expandedAgent);
   });
 
   /**
@@ -300,7 +324,8 @@ describe("what a rail entry does under the pointer", () => {
    */
   it("carries the branch and the work as facts, each behind its own mark", () => {
     mount(true, REPOSITORY);
-    const row = selectButton("workspace:w-1");
+    const button = selectButton("workspace:w-1");
+    const row = rowTooltip(button);
     expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
       { text: "widget", style: "name" },
       { text: "/projects/widget", style: "muted" },
@@ -324,7 +349,10 @@ describe("what a rail entry does under the pointer", () => {
         href: "https://github.com/example/widget/pull/131",
       },
     ]);
-    expect(row.getAttribute("aria-label")).toBe(
+    // The spoken sentence stays on the control that is spoken: the facts are
+    // the row's and the name is the button's, which is the one reader that has
+    // no mark to look at.
+    expect(button.getAttribute("aria-label")).toBe(
       [
         "widget workspace",
         "path /projects/widget",
@@ -334,5 +362,100 @@ describe("what a rail entry does under the pointer", () => {
         "Pull request #131, draft: Tidy the rail",
       ].join("\n"),
     );
+  });
+
+  /**
+   * The rail's Agent entry, which had no tooltip at all.
+   *
+   * The lines were on the select button, and in the rail an Agent's button
+   * holds nothing: its mark is the sibling in the icon column and its words
+   * are off, so it is a zero-by-zero box. `RowTooltip` clips a row's box to
+   * the column and asks for nothing when what comes back is empty — which is
+   * every rail Agent, every time. A Workspace's button kept a box because the
+   * rail draws its glyph inside it, which is why one kind of entry answered
+   * the pointer and the other did not.
+   *
+   * So the anchor is the row, in both states and for both kinds of entry, and
+   * the row is what the tooltip was always about.
+   */
+  it("raises an Agent's tooltip from the row, which the rail leaves a box", () => {
+    mount(true, REPOSITORY);
+    const mark = document.querySelector(".agent-row .row-glyph");
+    if (!mark) throw new Error("the rail draws no status mark");
+    const row = rowTooltip(mark);
+    expect(row).toHaveClass("agent-row");
+    expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
+      { icon: "statusUnread", text: "Codex", tone: "idle" },
+    ]);
+    // The element it used to be on, and the two rules that leave it without a
+    // box: its words come off and it is told to take no width. The markup is
+    // the same in both states — the collapse is drawn — so this is a fact
+    // about the stylesheet and there is nowhere else for it to be said.
+    const shell = readFileSync("src/shell/styles/shell.css", "utf8");
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .row-text,\n.sidebar[data-collapsed="true"] .sidebar-empty {\n  display: none;\n}',
+    );
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {\n  flex: 0 0 0;',
+    );
+  });
+
+  /**
+   * And the pointer resting on it asks main for that tooltip. The attribute
+   * being in the markup is half the fact; the other half is that the walk from
+   * what the pointer is actually over — the status mark, which is not inside
+   * the button — reaches it.
+   */
+  it("asks main for it when the pointer rests on a rail Agent", () => {
+    vi.useFakeTimers();
+    const asked: TooltipRequestWire[] = [];
+    let pushArea: ((area: SidebarAreaWire) => void) | undefined;
+    const devhub = window.devhub;
+    window.devhub = {
+      ...devhub,
+      onSidebarArea: (listener: (area: SidebarAreaWire) => void) => {
+        pushArea = listener;
+        return () => (pushArea = undefined);
+      },
+      showTooltip: (request: TooltipRequestWire) => asked.push(request),
+    } as unknown as typeof window.devhub;
+    try {
+      mount(true, REPOSITORY);
+      act(() => {
+        if (!pushArea) throw new Error("the page never asked where it is");
+        // The rail with no title bar: the traffic lights' span.
+        pushArea({ x: 0, y: 38, width: 76, height: 862 });
+      });
+      const row = document.querySelector(".agent-row");
+      const mark = row?.querySelector(".row-glyph");
+      if (!row || !mark) throw new Error("the rail draws no Agent");
+      // jsdom lays nothing out, so the row says where it is.
+      row.getBoundingClientRect = () =>
+        ({
+          left: 0,
+          right: 40,
+          top: 60,
+          bottom: 86,
+          width: 40,
+          height: 26,
+        }) as DOMRect;
+      fireEvent.pointerOver(mark);
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(asked).toHaveLength(1);
+      expect(asked[0]?.lines).toEqual([
+        { icon: "statusUnread", text: "Codex", tone: "idle" },
+      ]);
+      expect(asked[0]?.anchor).toEqual({
+        x: 0,
+        y: 38 + 60,
+        width: 40,
+        height: 26,
+      });
+    } finally {
+      vi.useRealTimers();
+      window.devhub = devhub;
+    }
   });
 });

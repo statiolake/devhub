@@ -223,12 +223,16 @@ describe("what an Agent's row leads with", () => {
   });
 });
 
-/** The lines the Agent row hands the tooltip page. */
+/** The lines the Agent row hands the tooltip page.
+ *
+ * Off the row, which is what the tooltip is about and what the pointer is on
+ * in both states — and in the rail it is the only element that has a box to be
+ * beside, because there an Agent's select button holds nothing at all.
+ */
 function agentTooltip(): unknown {
   return JSON.parse(
-    document
-      .querySelector(".agent-row .sidebar-context-button")
-      ?.getAttribute("data-tooltip-lines") ?? "[]",
+    document.querySelector(".agent-row")?.getAttribute("data-tooltip-lines") ??
+      "[]",
   );
 }
 

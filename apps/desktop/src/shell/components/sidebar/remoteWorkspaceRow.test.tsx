@@ -189,6 +189,7 @@ describe("a Workspace row whose folder is on another machine", () => {
     const lines = JSON.parse(
       document
         .querySelector("[data-tree-item-id='workspace:w-1']")
+        ?.closest("[data-tooltip-lines]")
         ?.getAttribute("data-tooltip-lines") ?? "[]",
     ) as { icon?: string; text: string }[];
     expect(lines).toContainEqual({ text: "/srv/api", style: "muted" });
@@ -220,6 +221,7 @@ describe("a Workspace row whose folder is on another machine", () => {
     const lines = JSON.parse(
       document
         .querySelector("[data-tree-item-id='workspace:w-1']")
+        ?.closest("[data-tooltip-lines]")
         ?.getAttribute("data-tooltip-lines") ?? "[]",
     ) as { icon?: string; text: string }[];
     // The path fact is the path *inside* the container, which is not a folder

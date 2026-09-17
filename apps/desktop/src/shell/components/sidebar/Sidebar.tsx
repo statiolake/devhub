@@ -207,6 +207,19 @@ function WorkspaceRow({
       <div
         className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
         data-state={workspace.state.kind}
+        // The same facts, drawn. The expanded row shows two of them and the
+        // rail shows none, and this is where all of them are — which is why it
+        // is the same list and not a shorter version of it.
+        //
+        // On the row, because the row is what the tooltip is about and what
+        // the pointer is on: the select button's hit area is stretched over
+        // the whole row (`.sidebar-context-button::after`), so what a person
+        // is pointing at is the row whichever part of it they are over, and
+        // the box goes beside the row and not beside the button. A mark with a
+        // sentence of its own — the folder's link, an Issue, a stop — is
+        // nearer the pointer than this and still wins, which is `closest()`
+        // doing exactly what it is for. Scratch has always stated it here.
+        data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
       >
         <div className="row-head">
           {/* Which kind of Workspace this is, in the one column every row's
@@ -243,10 +256,6 @@ function WorkspaceRow({
             // is what a sighted reader sees and this is the same statement
             // for everyone else.
             aria-label={description}
-            // The same facts, drawn. The expanded row shows two of them and
-            // the rail shows none, and this is where all of them are — which
-            // is why it is the same list and not a shorter version of it.
-            data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
             onClick={(event) =>
               selectRow(event, {
                 type: "select_context",
@@ -436,6 +445,26 @@ function WorkspaceRow({
                 <div
                   className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
                   data-control-state={agent.controlState.kind}
+                  // The one fact, for the rail — where the words are off and
+                  // the pointer is the only way to ask which Agent this is.
+                  // Not the accessible name: a reader has no mark to look at
+                  // and is told the status in words, and a person looking at
+                  // the box can see the mark and the row it belongs to. See
+                  // `agentTooltipFacts`.
+                  //
+                  // On the row and not on the select button, and on the rail
+                  // that is the difference between a tooltip and none. In the
+                  // rail an Agent's button holds nothing — its mark is the
+                  // sibling beside it and its words are off — so it is a
+                  // zero-by-zero box, and a tooltip anchored on it had no
+                  // rectangle to be beside: `RowTooltip` clips the anchor to
+                  // the column and drops what comes back empty, which is
+                  // exactly what a row with no height does. The row is what
+                  // the tooltip is about in either state, so the row is what
+                  // it is anchored on.
+                  data-tooltip-lines={JSON.stringify(
+                    tooltipLines(agentTooltipFacts(agent)),
+                  )}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     onAgentMenu(agent, {
@@ -469,15 +498,6 @@ function WorkspaceRow({
                       tabIndex={agentSelected ? 0 : -1}
                       aria-current={agentSelected ? "page" : undefined}
                       aria-label={agentDescription}
-                      // The one fact, for the rail — where the words are off
-                      // and the pointer is the only way to ask which Agent
-                      // this is. Not the accessible name: a reader has no mark
-                      // to look at and is told the status in words, and a
-                      // person looking at the box can see the mark and the row
-                      // it belongs to. See `agentTooltipFacts`.
-                      data-tooltip-lines={JSON.stringify(
-                        tooltipLines(agentTooltipFacts(agent)),
-                      )}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same

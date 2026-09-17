@@ -359,7 +359,10 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
-    const row = document.querySelector("[data-tree-item-id='workspace:w-1']");
+    const button = document.querySelector(
+      "[data-tree-item-id='workspace:w-1']",
+    );
+    const row = button?.closest("[data-tooltip-lines]");
     expect(
       JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
     ).toContainEqual({
@@ -367,7 +370,7 @@ describe("the mark a workspace row starts with", () => {
       text: "/projects/other",
       style: "muted",
     });
-    expect(row?.getAttribute("aria-label")).toContain(
+    expect(button?.getAttribute("aria-label")).toContain(
       "worktree of /projects/other",
     );
   });
