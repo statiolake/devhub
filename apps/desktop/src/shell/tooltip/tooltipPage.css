@@ -209,15 +209,20 @@ body,
  * these three are all `muted`, and a link that ignored that would be the one
  * bright line in a box whose only coloured thing is an Agent's status.
  */
+/* A place you can go is underlined, at rest: in a box that is mostly plain
+   facts, the underline is the one thing that says which lines are links
+   before the pointer finds out. Hover only brightens the ink. */
 .tooltip-line-link {
   color: inherit;
   cursor: pointer;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
 }
 
 .tooltip-line-link:hover {
   color: var(--primary);
-  text-decoration: none;
+  text-decoration-color: currentColor;
 }
 
 /* What the thing is called. The one line in the box set as a name — everything
