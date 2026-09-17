@@ -138,6 +138,7 @@ function mount() {
     onSidebarArea: () => () => undefined,
     showTooltip: () => undefined,
     hideTooltip: () => undefined,
+    releaseTooltip: () => undefined,
     openModal,
     closeWorkspace: async () => undefined,
     openExternalUrl: async () => undefined,

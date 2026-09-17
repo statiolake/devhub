@@ -53,6 +53,9 @@ const api: SidebarBridge = {
 	hideTooltip: () => {
 		ipcRenderer.send(CHANNELS.hideTooltip);
 	},
+	releaseTooltip: () => {
+		ipcRenderer.send(CHANNELS.releaseTooltip);
+	},
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

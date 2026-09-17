@@ -507,6 +507,22 @@ export interface TooltipLineWire {
 	 * Sidebar is coloured.
 	 */
 	readonly tone?: AgentStatusWire;
+	/**
+	 * Where this fact leads, when the fact is a place.
+	 *
+	 * Three of a row's facts name a page on GitHub — the repository, the Issue,
+	 * the pull request — and the row itself already links to all three. The
+	 * tooltip draws the same facts, so it links to the same pages: a person
+	 * reading *#128 Fix the thing* in the box is looking at the thing they
+	 * would have clicked on the row, and a sentence that names a destination
+	 * and cannot be followed is a link that is only pretending.
+	 *
+	 * It is composed in one place with the rest of the facts
+	 * (`shell/components/sidebar/rowDescription.ts`), from the same URLs the
+	 * row's own links use, so the box and the row cannot lead anywhere
+	 * different. Absent on every fact that is not a place.
+	 */
+	readonly href?: string;
 }
 
 /**
@@ -952,13 +968,30 @@ export interface SidebarBridge
 	 * One way, like `raiseFailure` and for the same reason: what is being sent
 	 * is a fact about the pointer, not a request waiting on an answer, and a
 	 * tooltip that had to await a round trip would arrive after the pointer
-	 * had moved on. The page still owns *when* — the rest delay, the one
-	 * tooltip for the whole tree, and hiding on leave — because only it can
-	 * see the pointer.
+	 * had moved on. The page still owns *when* — the rest delay and the one
+	 * tooltip for the whole tree — because only it can see the pointer in this
+	 * view. It no longer owns the leave: see `releaseTooltip`.
 	 */
 	showTooltip(request: TooltipRequestWire): void;
-	/** Take the tooltip down. The pointer left, or something moved under it. */
+	/**
+	 * Take the tooltip down at once. Something moved out from under it.
+	 *
+	 * A scroll, a resize, the window losing focus, the keyboard leaving the
+	 * row: in every one of these the row the sentence is about is gone or
+	 * unreachable, and there is nothing to wait to find out.
+	 */
 	hideTooltip(): void;
+	/**
+	 * The pointer left the row. **A request, not an order.**
+	 *
+	 * The tooltip is a different view from this one, so a pointer travelling
+	 * from the row into the box leaves this view — and this page cannot tell
+	 * that from a pointer leaving for the editor. Only main sees both views, so
+	 * only main can decide: it holds the tooltip for a short grace and takes it
+	 * down unless the tooltip page says the pointer arrived there. See
+	 * `main/shell/tooltipView.ts`.
+	 */
+	releaseTooltip(): void;
 }
 
 /** Every Agent, in one view — `agents.html`. */
@@ -1085,6 +1118,31 @@ export interface TooltipBridge extends PageBridge {
 		readonly width: number;
 		readonly height: number;
 	}): void;
+	/**
+	 * Whether the pointer is in the box right now.
+	 *
+	 * The other half of the arbitration the Sidebar's `releaseTooltip` begins.
+	 * The row and the box are different views, so the pointer crossing from one
+	 * to the other is a leave in one document and an enter in the other, with
+	 * nothing in either page able to join them. Main joins them: it holds a
+	 * released tooltip for a grace, `true` within that grace keeps it up, and
+	 * `false` takes it down at once.
+	 *
+	 * One way, like the measurement beside it: where the pointer is, is a fact
+	 * this page has, not a request it is waiting on.
+	 */
+	reportTooltipPointer(inside: boolean): void;
+	/**
+	 * Follow one of the box's links.
+	 *
+	 * A tooltip line that names a page on GitHub (`TooltipLineWire.href`) is
+	 * drawn as a link, and a click on it goes to the person's browser — the
+	 * same destination, by the same route, as the link on the row it is about.
+	 * It is not left to the navigation backstop in `externalLinks.ts`: that one
+	 * catches what a page did not mean to do, and a refusal disappearing into
+	 * it is a click that reports nothing.
+	 */
+	openExternalUrl(url: string): Promise<void>;
 }
 
 /** Everything DevHub stops to ask — `picker.html`. */
@@ -1183,9 +1241,10 @@ export interface SettingsPageBridge extends PageBridge {
 /**
  * Channel names, for every page there is.
  *
- * Requests are `invoke`/`handle`, except the six that answer nothing and
+ * Requests are `invoke`/`handle`, except the eight that answer nothing and
  * cannot (`raiseFailure`, `toastsSize`, `retryApp`, `showTooltip`,
- * `hideTooltip`, `tooltipSize`); the rest are pushes. No
+ * `hideTooltip`, `releaseTooltip`, `tooltipSize`, `tooltipPointer`); the rest
+ * are pushes. No
  * page reaches all of them — which page may spell which is decided by the
  * preload it was loaded with, and stated by the bridge interfaces above.
  */
@@ -1263,8 +1322,12 @@ export const CHANNELS = {
 	sidebarAreaChanged: "devhub:sidebar-area-changed",
 	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
 	showTooltip: "devhub:show-tooltip",
-	/** The Sidebar taking it down again. */
+	/** The Sidebar taking it down again, at once. */
 	hideTooltip: "devhub:hide-tooltip",
+	/** The pointer left the row: main decides, after a grace. */
+	releaseTooltip: "devhub:release-tooltip",
+	/** The `tooltip` page saying whether the pointer is in the box. */
+	tooltipPointer: "devhub:tooltip-pointer",
 	/** The sentence the `tooltip` page is to draw, or nothing to draw none. */
 	tooltipText: "devhub:tooltip-text",
 	/** The `tooltip` page saying how big the box it drew came out. */

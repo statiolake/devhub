@@ -12,9 +12,13 @@
  * rectangle, so a layer bigger than what it draws is a hole in the editor and
  * a layer that lingers with nothing to say is a permanent one. Bounds are the
  * reported size; nothing to say means gone.
+ *
+ * And the arbitration, which is here because this is the only thing in DevHub
+ * that can see both views: the row's leave is a request and the box's own
+ * pointer is the answer to it.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 class FakeWebContents {
 	readonly sent: unknown[] = [];
@@ -224,6 +228,128 @@ describe("the tooltip layer", () => {
 		tooltip.hide();
 		// Reaching here at all is the assertion: `focus()` throws.
 		expect(tooltip.isPresent()).toBe(false);
+	});
+
+	/**
+	 * The arbitration, which exists because neither page can answer it.
+	 *
+	 * The Sidebar's `pointerout` is identical whether the pointer went into the
+	 * tooltip or off to the editor, and the tooltip page never hears of the row.
+	 * So the Sidebar's leave is a request, held for a grace, and what the
+	 * tooltip page says about its own pointer within that grace decides.
+	 */
+	describe("when the pointer leaves the row", () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		const up = () => {
+			show();
+			tooltip.setSize({ width: 220, height: 34 });
+		};
+
+		it("stays up for the grace, and comes down at the end of it", () => {
+			up();
+			tooltip.release();
+			expect(tooltip.isPresent()).toBe(true);
+			vi.advanceTimersByTime(149);
+			expect(tooltip.isPresent()).toBe(true);
+			vi.advanceTimersByTime(1);
+			expect(tooltip.isPresent()).toBe(false);
+		});
+
+		/** The whole point: the pointer crossed the gap into the box. */
+		it("stays up when the pointer arrives in the box within the grace", () => {
+			up();
+			tooltip.release();
+			vi.advanceTimersByTime(100);
+			tooltip.pointerIs(true);
+			vi.advanceTimersByTime(1000);
+			expect(tooltip.isPresent()).toBe(true);
+		});
+
+		/** And comes down the moment the pointer leaves the box it was in. */
+		it("comes down at once when the pointer leaves the box", () => {
+			up();
+			tooltip.release();
+			tooltip.pointerIs(true);
+			vi.advanceTimersByTime(1000);
+			tooltip.pointerIs(false);
+			expect(tooltip.isPresent()).toBe(false);
+		});
+
+		/**
+		 * The two messages are sent by two renderers and do not arrive in a
+		 * decided order. A release that ignored an enter already in hand would
+		 * hide the box the pointer is standing in.
+		 */
+		it("keeps it up when the enter arrived before the leave did", () => {
+			up();
+			tooltip.pointerIs(true);
+			tooltip.release();
+			vi.advanceTimersByTime(1000);
+			expect(tooltip.isPresent()).toBe(true);
+		});
+
+		/**
+		 * Nothing that is not about the pointer waits to find out. A modal
+		 * opening, a scroll, a resize, the window losing focus: the row is gone
+		 * or unreachable, and a grace would leave the sentence over the sheet.
+		 */
+		it("comes down at once when something else takes it down, grace or no", () => {
+			up();
+			tooltip.release();
+			tooltip.hide();
+			expect(tooltip.isPresent()).toBe(false);
+		});
+
+		it("comes down at once even while the pointer is in the box", () => {
+			up();
+			tooltip.pointerIs(true);
+			tooltip.hide();
+			expect(tooltip.isPresent()).toBe(false);
+		});
+
+		/**
+		 * A grace that outlived its tooltip would take the next one down: the
+		 * pointer moving from one row to the next is a release followed by a
+		 * show, and the timer from the first must not fire on the second.
+		 */
+		it("does not take the next row's tooltip down with the last one's grace", () => {
+			up();
+			tooltip.release();
+			tooltip.show({
+				lines: [{ text: "another row entirely", style: "name" }],
+				anchor: { x: 14, y: 300, width: 16, height: 24 },
+				prefer: "right",
+			});
+			vi.advanceTimersByTime(1000);
+			expect(tooltip.isPresent()).toBe(true);
+		});
+
+		/**
+		 * And a grace does not survive the tooltip it belonged to: a stale
+		 * `pointer inside` would keep a tooltip up that nothing is pointing at.
+		 */
+		it("forgets where the pointer was once the tooltip has gone", () => {
+			up();
+			tooltip.pointerIs(true);
+			tooltip.hide();
+			up();
+			tooltip.release();
+			vi.advanceTimersByTime(150);
+			expect(tooltip.isPresent()).toBe(false);
+		});
+
+		it("does nothing when released while nothing is up", () => {
+			tooltip.release();
+			vi.advanceTimersByTime(1000);
+			expect(children).toEqual([]);
+		});
 	});
 
 	it("does nothing when told to hide while nothing is up", () => {

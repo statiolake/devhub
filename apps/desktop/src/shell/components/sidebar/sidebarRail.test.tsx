@@ -29,6 +29,7 @@ window.devhub = {
   onSidebarArea: () => () => undefined,
   showTooltip: () => undefined,
   hideTooltip: () => undefined,
+  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -291,6 +292,11 @@ describe("what a rail entry does under the pointer", () => {
    * The facts, and no label words: the mark in front of each line is what the
    * word "branch" used to be. The words survive in `aria-label`, which is the
    * one reader that has no mark to look at.
+   *
+   * Three of the facts carry a `href` as well, and it is the row's own URL
+   * rather than a second one composed here: the tooltip draws those facts as
+   * the same links the row draws, so the box and the row cannot lead anywhere
+   * different.
    */
   it("carries the branch and the work as facts, each behind its own mark", () => {
     mount(true, REPOSITORY);
@@ -302,13 +308,20 @@ describe("what a rail entry does under the pointer", () => {
         icon: "repository",
         text: "github.com/example/widget",
         style: "muted",
+        href: "https://github.com/example/widget",
       },
       { icon: "branch", text: "feature/128-tidy", style: "muted" },
-      { icon: "issueOpen", text: "#128 Tidy the rail", style: "muted" },
+      {
+        icon: "issueOpen",
+        text: "#128 Tidy the rail",
+        style: "muted",
+        href: "https://github.com/example/widget/issues/128",
+      },
       {
         icon: "pullRequestDraft",
         text: "#131 Tidy the rail",
         style: "muted",
+        href: "https://github.com/example/widget/pull/131",
       },
     ]);
     expect(row.getAttribute("aria-label")).toBe(

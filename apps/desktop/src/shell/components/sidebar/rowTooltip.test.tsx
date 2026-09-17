@@ -46,8 +46,17 @@ const FACTS = [
   { icon: "branch", text: "main", style: "muted" },
 ];
 
-/** Everything this page asked main for, in order. `null` is a hide. */
-let sent: (TooltipRequestWire | null)[] = [];
+/**
+ * Everything this page asked main for, in order.
+ *
+ * Three things and not two, which is the point of the distinction: a request
+ * for a tooltip, an *order* to take it down, and a *release* — the pointer
+ * left the row, which the Sidebar cannot tell from the pointer arriving in the
+ * tooltip's own view. Only main sees both, so a release is a request main
+ * arbitrates; see `main/shell/tooltipView.ts`.
+ */
+type Asked = TooltipRequestWire | "hide" | "release";
+let sent: Asked[] = [];
 /** Main's push of where this view is. */
 let pushArea: ((area: SidebarAreaWire) => void) | undefined;
 
@@ -120,8 +129,16 @@ function hover(row: HTMLElement) {
 /** The last thing asked for, which must be a request rather than a hide. */
 function raised(): TooltipRequestWire {
   const last = sent.at(-1);
-  if (!last) throw new Error("no tooltip was asked for");
+  if (last === undefined || typeof last === "string")
+    throw new Error("no tooltip was asked for");
   return last;
+}
+
+/** Only the tooltips that were asked for: no hides, no releases. */
+function requests(): TooltipRequestWire[] {
+  return sent.filter(
+    (entry): entry is TooltipRequestWire => typeof entry !== "string",
+  );
 }
 
 beforeEach(() => {
@@ -136,7 +153,8 @@ beforeEach(() => {
       return () => (pushArea = undefined);
     },
     showTooltip: (request: TooltipRequestWire) => sent.push(request),
-    hideTooltip: () => sent.push(null),
+    hideTooltip: () => sent.push("hide"),
+    releaseTooltip: () => sent.push("release"),
   };
 });
 
@@ -172,7 +190,7 @@ describe("the Sidebar's tooltips", () => {
     act(() => {
       vi.advanceTimersByTime(300);
     });
-    expect(sent.filter((entry) => entry !== null)).toEqual([]);
+    expect(requests()).toEqual([]);
   });
 
   it("asks at once for the keyboard, because a row reached was chosen", () => {
@@ -253,7 +271,7 @@ describe("the Sidebar's tooltips", () => {
   it("asks for nothing at all until it knows where it is", () => {
     mount(100);
     hover(screen.getByRole("button"));
-    expect(sent.filter((entry) => entry !== null)).toEqual([]);
+    expect(requests()).toEqual([]);
   });
 
   /**
@@ -293,21 +311,32 @@ describe("the Sidebar's tooltips", () => {
     mount(-40);
     layOut(COLUMN);
     hover(screen.getByRole("button"));
-    expect(sent.filter((entry) => entry !== null)).toEqual([]);
+    expect(requests()).toEqual([]);
   });
 
-  it("takes it down when the pointer leaves, and when the keyboard does", () => {
+  /**
+   * The leave the pointer makes is a *request*, and the leave the keyboard
+   * makes is not.
+   *
+   * The pointer may have left the row for the tooltip — the box is two pixels
+   * away, it holds the links to the pages the row's facts name, and a
+   * `pointerout` in this document looks exactly the same either way. So main
+   * decides, after a grace, with the tooltip page's own report of where the
+   * pointer is. The keyboard cannot be in two views at once: a row that lost
+   * focus is a row nobody is on, and there is nothing to find out.
+   */
+  it("releases on the pointer's leave and hides on the keyboard's", () => {
     mount(100);
     layOut(COLUMN);
     const row = screen.getByRole("button");
     hover(row);
     fireEvent.pointerOut(row);
-    expect(sent.at(-1)).toBeNull();
+    expect(sent.at(-1)).toBe("release");
 
     fireEvent.focusIn(row);
-    expect(sent.at(-1)).not.toBeNull();
+    expect(sent.at(-1)).not.toBe("release");
     fireEvent.focusOut(row);
-    expect(sent.at(-1)).toBeNull();
+    expect(sent.at(-1)).toBe("hide");
   });
 
   /**
@@ -322,7 +351,7 @@ describe("the Sidebar's tooltips", () => {
       layOut(COLUMN);
       hover(screen.getByRole("button"));
       fireEvent(window, new Event(event));
-      expect(sent.at(-1)).toBeNull();
+      expect(sent.at(-1)).toBe("hide");
     },
   );
 
@@ -336,7 +365,7 @@ describe("the Sidebar's tooltips", () => {
     layOut(COLUMN);
     hover(screen.getByRole("button"));
     view.unmount();
-    expect(sent.at(-1)).toBeNull();
+    expect(sent.at(-1)).toBe("hide");
   });
 
   /**

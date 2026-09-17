@@ -27,6 +27,15 @@ const FACTS: TooltipContentWire = {
   ],
 };
 
+/** Every link this page asked main to open, in order. */
+let opened: string[] = [];
+/** Every report of where the pointer is, in order. */
+let pointer: boolean[] = [];
+/** What the next `openExternalUrl` answers with. */
+let opening: Promise<void> = Promise.resolve();
+/** Every failure this page raised, in order. */
+let raised: unknown[] = [];
+
 /** Every size this page reported, in order. */
 let reported: { width: number; height: number }[] = [];
 /** The listener main's push would reach. */
@@ -53,6 +62,10 @@ function sizeBoxes(width: number, height: number) {
 
 beforeEach(() => {
   reported = [];
+  opened = [];
+  pointer = [];
+  raised = [];
+  opening = Promise.resolve();
   push = undefined;
   sizeBoxes(220, 34);
   // No `ResizeObserver` in jsdom. The page's first measurement is taken
@@ -66,7 +79,9 @@ beforeEach(() => {
     },
   );
   window.devhub = {
-    raiseFailure: () => undefined,
+    raiseFailure: (error: unknown) => {
+      raised.push(error);
+    },
     onTheme: () => () => undefined,
     onTooltip: (
       listener: (tooltip: TooltipContentWire | undefined) => void,
@@ -76,6 +91,13 @@ beforeEach(() => {
     },
     reportTooltipSize: (size: { width: number; height: number }) => {
       reported.push(size);
+    },
+    reportTooltipPointer: (inside: boolean) => {
+      pointer.push(inside);
+    },
+    openExternalUrl: (url: string) => {
+      opened.push(url);
+      return opening;
     },
   };
 });
@@ -185,6 +207,98 @@ describe("the tooltip page", () => {
     sizeBoxes(410, 68);
     send({ lines: [{ text: "a much longer row entirely", style: "name" }] });
     expect(reported).toContainEqual({ width: 410, height: 68 });
+  });
+
+  /**
+   * Three of a row's facts name a page on GitHub, and the row itself links all
+   * three. The box draws the same facts, so it draws the same links: a person
+   * reading *#128* in the tooltip is looking at the thing they would have
+   * clicked on the row.
+   */
+  it("draws a fact that names a page as the link to it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "widget", style: "name" },
+        {
+          icon: "repository",
+          text: "github.com/example/widget",
+          style: "muted",
+          href: "https://github.com/example/widget",
+        },
+      ],
+    });
+    const link = document.querySelector("a.tooltip-line-link");
+    expect(link).toHaveAttribute("href", "https://github.com/example/widget");
+    expect(link).toHaveTextContent("github.com/example/widget");
+  });
+
+  /** Everything else is words. A fact that is not a place is not a link. */
+  it("draws a fact that names no page as plain words", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(document.querySelector("a")).toBeNull();
+  });
+
+  /**
+   * The click goes out through main, the way every link DevHub draws does —
+   * not through the navigation backstop, which catches what a page did not
+   * mean to do and would swallow a refusal nobody is awaiting. And this
+   * document never navigates: replacing it would put a website in a tooltip.
+   */
+  it("sends a clicked link to the browser instead of navigating to it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [{ text: "#128 Fix it", href: "https://example.com/i/128" }],
+    });
+    const link = document.querySelector("a.tooltip-line-link");
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => {
+      link!.dispatchEvent(click);
+    });
+    expect(opened).toEqual(["https://example.com/i/128"]);
+    expect(click.defaultPrevented).toBe(true);
+  });
+
+  /**
+   * A click that quietly did nothing is the failure the catch exists to
+   * prevent. What began here is raised and never drawn here — this page has
+   * one box in it and no room for a failure.
+   */
+  it("raises a link that could not be opened rather than dropping it", async () => {
+    opening = Promise.reject(new Error("no browser"));
+    render(<TooltipApp />);
+    send({
+      lines: [{ text: "#128 Fix it", href: "https://example.com/i/128" }],
+    });
+    await act(async () => {
+      document
+        .querySelector("a.tooltip-line-link")!
+        .dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      await Promise.resolve();
+    });
+    expect(raised).toHaveLength(1);
+  });
+
+  /**
+   * Half of an answer main assembles. The row is another view, so the pointer
+   * crossing into the box is a leave there and an enter here, and neither page
+   * can see the other's pointer. This page says only what it knows.
+   */
+  it("says when the pointer is in the box, and when it has left", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    const box = document.querySelector(".tooltip-box")!;
+    act(() => {
+      box.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    });
+    expect(pointer).toEqual([true]);
+    act(() => {
+      box.dispatchEvent(new MouseEvent("pointerout", { bubbles: true }));
+    });
+    expect(pointer).toEqual([true, false]);
   });
 
   it("says a size once, not once per render", () => {

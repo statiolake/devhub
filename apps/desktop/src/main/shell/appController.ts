@@ -5837,6 +5837,18 @@ export class AppController {
 		receive(CHANNELS.hideTooltip, () => {
 			shellWindow().tooltip.hide();
 		});
+		// The pointer left the row — which the Sidebar cannot tell from the
+		// pointer arriving in the tooltip, two pixels away in another view. It
+		// is a request; main holds the box for a grace and the tooltip page's
+		// own report of where the pointer is decides. See `tooltipView.ts`.
+		receive(CHANNELS.releaseTooltip, () => {
+			shellWindow().tooltip.release();
+		});
+		// The other half of that: the `tooltip` page saying whether the pointer
+		// is in the box it drew.
+		receive(CHANNELS.tooltipPointer, (_event, inside: boolean) => {
+			shellWindow().tooltip.pointerIs(inside);
+		});
 		// "Try Again" on a notice. The button is on the toasts page and what it
 		// restarts is the App Shell page's projection, so main is what joins
 		// them — the same shape as every other command a page carries out.

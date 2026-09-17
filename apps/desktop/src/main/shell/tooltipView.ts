@@ -42,6 +42,26 @@
  * size; this is only the state that makes that function answerable, plus the
  * page it is drawn on.
  *
+ * # Why the pointer is arbitrated here and not in either page
+ *
+ * The box may be pointed at now — it holds links to the pages a row's facts
+ * name — so it has to stay up while the pointer is in it. But the row is one
+ * view and the box is another, and neither can see the other's pointer: the
+ * Sidebar's `pointerout` fires identically whether the pointer went into the
+ * tooltip or off to the editor, and the tooltip page never hears of the row at
+ * all. Each page knows half the question.
+ *
+ * So neither page answers it. The Sidebar's leave is a *request* (`release`),
+ * the page's arrival is a *fact* (`pointerIs`), and this class — the one thing
+ * that sees both — holds the tooltip for `RELEASE_GRACE_MS` and decides. The
+ * alternative, a page guessing from coordinates whether the pointer landed in
+ * a rectangle belonging to a view it cannot see, is the guess `windowLayout.ts`
+ * exists so that nothing has to make.
+ *
+ * Everything that is *not* about the pointer still hides at once, through
+ * `hide`: a scroll, a resize, the window losing focus, a modal opening. Those
+ * are not questions about where the pointer went.
+ *
  * It never touches the keyboard, in either direction. There is nothing in a
  * tooltip to type into, `keyboardChild` never names it, and
  * `ShellWindow.contentsOf` throws rather than falling back if it ever does.
@@ -78,11 +98,27 @@ export interface TooltipViewHost {
 	tooltipChanged(): void;
 }
 
+/**
+ * How long a released tooltip is held before it comes down.
+ *
+ * The pointer crossing from the row to the box leaves one view and enters
+ * another, and between the two there is a gap — a few pixels of window, and
+ * two IPC messages that do not arrive in a decided order. This is how long
+ * main waits to hear the second one. Long enough that an ordinary hand crosses
+ * the gap inside it; short enough that a tooltip the pointer really left does
+ * not linger noticeably after it.
+ */
+const RELEASE_GRACE_MS = 150;
+
 export class TooltipView {
 	private readonly view: Electron.WebContentsView;
 	private present = false;
 	private request: TooltipRequest | undefined;
 	private size: TooltipSize = { width: 0, height: 0 };
+	/** The grace a `release` started, still running. */
+	private releasing: ReturnType<typeof setTimeout> | undefined;
+	/** Whether the page last said the pointer is in the box. */
+	private pointerInside = false;
 
 	constructor(preloadPath: string, pageUrl: string) {
 		this.view = new electron.WebContentsView({
@@ -134,13 +170,64 @@ export class TooltipView {
 	 * tooltip.
 	 */
 	show(request: TooltipRequest): void {
+		// A tooltip arriving settles any grace that was running: the pointer is
+		// on a row, which is an answer to "did it leave for the box?" — no —
+		// and the sentence that is going up is the one to keep.
+		this.settle();
 		this.request = request;
 		this.send({ lines: request.lines });
 		this.host?.tooltipChanged();
 	}
 
-	/** Take it down. The pointer left, or something moved under it. */
+	/**
+	 * The pointer left the row. Take it down unless it arrived in the box.
+	 *
+	 * The row and the box are different views. The Sidebar sees a pointer leave
+	 * and cannot tell whether it left for the editor or for the tooltip two
+	 * pixels away, so what it sends is a *request* — and this is the only place
+	 * in DevHub that sees both halves, so this is where it is decided.
+	 *
+	 * Held rather than hidden, for one grace. If the page says the pointer is
+	 * in the box within it, the tooltip stays and the page's own leave is what
+	 * takes it down. If nothing says so, it comes down as it always did, one
+	 * grace later than it used to.
+	 *
+	 * A pointer already reported inside settles it immediately: the messages
+	 * can arrive either way round, and a release that ignored an enter already
+	 * in hand would hide the box the pointer is standing in.
+	 */
+	release(): void {
+		if (this.request === undefined) return;
+		if (this.pointerInside) return;
+		if (this.releasing !== undefined) return;
+		this.releasing = setTimeout(() => {
+			this.releasing = undefined;
+			if (this.pointerInside) return;
+			this.hide();
+		}, RELEASE_GRACE_MS);
+	}
+
+	/**
+	 * The page says where the pointer is.
+	 *
+	 * In is the answer the grace was waiting for. Out is the end of the whole
+	 * arrangement: the pointer was in the box and has left it, and there is
+	 * nothing left to wait for — the row it was about is not under the pointer
+	 * either, or the Sidebar would have raised its tooltip again.
+	 */
+	pointerIs(inside: boolean): void {
+		this.pointerInside = inside;
+		if (inside) {
+			this.settle();
+			return;
+		}
+		this.hide();
+	}
+
+	/** Take it down. Something moved under it, or the pointer is finished. */
 	hide(): void {
+		this.settle();
+		this.pointerInside = false;
 		if (this.request === undefined) return;
 		this.request = undefined;
 		// The page is told first so that it stops drawing, and it answers with
@@ -150,6 +237,13 @@ export class TooltipView {
 		this.send(undefined);
 		this.size = { width: 0, height: 0 };
 		this.host?.tooltipChanged();
+	}
+
+	/** Stop waiting to find out. Whatever happens next decides on its own. */
+	private settle(): void {
+		if (this.releasing === undefined) return;
+		clearTimeout(this.releasing);
+		this.releasing = undefined;
 	}
 
 	/** The page measured its box. Zero means it is drawing nothing. */

@@ -17,11 +17,24 @@ position in the list. **The list's order is the z-order**, lowest first:
     last among them) → the Agents → the notices → the questions → the tooltip
 
 The tooltip is on top of everything, the questions included. Not because it
-may stand over a modal — it may not, and in practice cannot: a question covers
-the window, which takes the pointer off the row that raised the tooltip, and
-the Sidebar hides it before the sheet is drawn. It is last because it is the
-one child that takes no click and hides nothing, so there is nothing for it to
-be underneath.
+may stand over a modal — it may not: a question coming up takes the tooltip
+down, and that is the window's own rule rather than the pointer's, because a
+question opened from the keyboard leaves the pointer exactly where it was. It
+is last because it hides nothing — the view is the size of the box it draws
+and is out of the child list altogether when there is no tooltip up, so there
+is nothing for it to be underneath.
+
+It does take a click, which it used not to. The box draws a row's facts, three
+of which name pages on GitHub, and it draws those as the same links the row
+draws; so it has to be something the pointer can enter. That the box stays up
+while the pointer is in it is arbitrated in **main** (`tooltipView.ts`), not in
+either page: the row and the box are different views, the Sidebar's leave is
+identical whether the pointer went into the tooltip or off to the editor, and
+the tooltip page never hears of the row. The Sidebar sends a *request*
+(`releaseTooltip`), main holds the box for a short grace, and the tooltip
+page's own report of where its pointer is decides. Everything that is not
+about the pointer — a scroll, a resize, the window losing focus, a modal
+opening — still takes it down at once.
 
 `ShellWindow.layout()` is the only thing that reads it, and it is the only
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
@@ -50,10 +63,10 @@ file main loaded.**
 | Page | Entry | What it draws | What it may ask for |
 |---|---|---|---|
 | the window's own page | `index.html` | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout` |
-| the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip` |
+| the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip` |
 | the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden | the projection, the appearance, the repository status, the agent actions, the terminal transport, `openModal`, `openExternalUrl`, `writeClipboard` |
 | the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
-| the tooltip | `tooltip.html` | one box with one sentence in it, over whatever is on screen | `tooltipText` in, `tooltipSize` out. **Nothing else.** |
+| the tooltip | `tooltip.html` | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's. |
 | the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings | `settings.html` | its own window | `SETTINGS_CHANNELS` in full, plus the failure contract every page has |
 

@@ -52,6 +52,16 @@ export interface RowFact {
   readonly spoken?: string;
   readonly style?: TooltipLineWire["style"];
   readonly tone?: TooltipLineWire["tone"];
+  /**
+   * The page this fact names, for the reader who can click it.
+   *
+   * The one part of a fact that only the tooltip's rendering takes: a reader
+   * is told the fact in words, and a person looking at the box is given the
+   * same link the row itself draws, to the same page. It is the
+   * row's own URL and never a second one built here, so the box and the row
+   * cannot lead anywhere different.
+   */
+  readonly href?: string;
 }
 
 function said(facts: readonly (RowFact | undefined)[]): RowFact[] {
@@ -70,6 +80,7 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
     text: fact.text,
     ...(fact.style === undefined ? {} : { style: fact.style }),
     ...(fact.tone === undefined ? {} : { tone: fact.tone }),
+    ...(fact.href === undefined ? {} : { href: fact.href }),
   }));
 }
 
@@ -230,6 +241,7 @@ export function workspaceRowFacts(
           text: repositoryPage(repository.repositoryUrl),
           spoken: `repository ${repositoryPage(repository.repositoryUrl)}`,
           style: "muted",
+          href: repository.repositoryUrl,
         },
     // That this checkout is a worktree, and of what. The row's own mark stopped
     // saying it — every Workspace is a folder there — and it is worth saying
@@ -264,6 +276,7 @@ export function workspaceRowFacts(
           text: issueMark(issue),
           spoken: issueLabel(issue),
           style: "muted",
+          href: issue.url,
         }
       : undefined,
     pullRequest
@@ -272,6 +285,7 @@ export function workspaceRowFacts(
           text: pullRequestMark(pullRequest),
           spoken: pullRequestLabel(pullRequest),
           style: "muted",
+          href: pullRequest.url,
         }
       : undefined,
     repository?.pending

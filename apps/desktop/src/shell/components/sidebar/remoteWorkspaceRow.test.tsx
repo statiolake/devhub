@@ -34,6 +34,7 @@ window.devhub = {
   onSidebarArea: () => () => undefined,
   showTooltip: () => undefined,
   hideTooltip: () => undefined,
+  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {

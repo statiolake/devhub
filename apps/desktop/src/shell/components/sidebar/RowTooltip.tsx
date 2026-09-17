@@ -149,6 +149,23 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
     devhub().hideTooltip();
   }, []);
 
+  /**
+   * The pointer left the row, which is not the same as the tooltip being over.
+   *
+   * The box is a different view and may be what the pointer left *for* — it
+   * holds the links to the pages the row's facts name — and a `pointerout` in
+   * this document looks exactly the same either way. So this is a request:
+   * main holds the tooltip for a grace and the tooltip page says whether the
+   * pointer arrived there. See `TooltipView.release`.
+   *
+   * Everything else here still hides at once, through `hide`. A scroll, a
+   * resize and the window losing focus are not questions about the pointer,
+   * and neither is the keyboard leaving a row.
+   */
+  const release = useCallback(() => {
+    devhub().releaseTooltip();
+  }, []);
+
   const show = useCallback((element: HTMLElement) => {
     const lines = tooltipFor(element);
     if (lines === undefined) return;
@@ -218,20 +235,29 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
       anchor.current = element;
       show(element);
     };
-    const leave = (event: Event) => {
+    const left = (event: Event): boolean => {
       const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (!anchor.current || !anchor.current.contains(target)) return;
+      if (!(target instanceof Element)) return false;
+      if (!anchor.current || !anchor.current.contains(target)) return false;
       cancelRest();
       anchor.current = null;
-      hide();
+      return true;
+    };
+    // The pointer may have left for the tooltip. Main decides; see `release`.
+    const pointerLeave = (event: Event) => {
+      if (left(event)) release();
+    };
+    // The keyboard cannot be in two views at once, so there is nothing to
+    // arbitrate: a row that lost focus is a row nobody is on.
+    const keyboardLeave = (event: Event) => {
+      if (left(event)) hide();
     };
     // Pointer and keyboard alike: a row reached with the arrows has the
     // same question to answer as a row under the pointer.
     document.addEventListener("pointerover", pointerEnter);
-    document.addEventListener("pointerout", leave);
+    document.addEventListener("pointerout", pointerLeave);
     document.addEventListener("focusin", keyboardEnter);
-    document.addEventListener("focusout", leave);
+    document.addEventListener("focusout", keyboardLeave);
     // Anything that can move the row out from under the tooltip takes it
     // down rather than leaving it pointing at nothing. It matters more now
     // than it did: the tooltip is a separate view and cannot be scrolled
@@ -247,14 +273,14 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
       // over the editor with nothing under it.
       hide();
       document.removeEventListener("pointerover", pointerEnter);
-      document.removeEventListener("pointerout", leave);
+      document.removeEventListener("pointerout", pointerLeave);
       document.removeEventListener("focusin", keyboardEnter);
-      document.removeEventListener("focusout", leave);
+      document.removeEventListener("focusout", keyboardLeave);
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);
       window.removeEventListener("blur", hide);
     };
-  }, [hide, show]);
+  }, [hide, release, show]);
 
   // Nothing is drawn here. That is the point of the file.
   return null;

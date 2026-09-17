@@ -46,12 +46,19 @@ body,
  * because each one carries a mark: the box no longer needs `pre-line`, and the
  * wrapping it used to do for a `\n` is done by the rows themselves.
  *
- * `pointer-events: none` is belt-and-braces here rather than the load-bearing
- * rule it was in the Sidebar's document: this view is never in the window's
- * child list unless a tooltip is up, and its bounds are the size of this box,
- * so there is nothing under it to steal a click from. It stays because the
- * cost is nothing and the failure it prevents — a tooltip eating the click
- * aimed at the row it is about — is silent.
+ * The box **takes the pointer**, where it used to refuse it. It had
+ * `pointer-events: none`, which was belt-and-braces rather than load-bearing —
+ * this view is not in the window's child list unless a tooltip is up, and its
+ * bounds are the size of this box, so there was nothing under it to steal a
+ * click from. It had to go: the box is now something to point at, because it
+ * holds the links to the pages a row's facts name, and a box the pointer
+ * cannot enter is a link nobody can click. What keeps it from eating the
+ * click aimed at the row it is about is what always did — it is not over the
+ * row, and it is not in the window at all when there is nothing to say.
+ *
+ * That the box stays up while the pointer is in it is not decided here or
+ * anywhere in this page: the row is another view, so main arbitrates. See
+ * `main/shell/tooltipView.ts`.
  */
 .tooltip-box {
   --tooltip-max-width: 480px;
@@ -73,7 +80,6 @@ body,
   line-height: 1.35;
   overflow-wrap: anywhere;
   box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
-  pointer-events: none;
 }
 
 /*
@@ -129,6 +135,29 @@ body,
 
 .tooltip-line-text {
   min-width: 0;
+}
+
+/*
+ * A fact that is a place, as the link to it.
+ *
+ * No underline, because every line in this box is a fact and three of them
+ * happening to be clickable is not a reason to draw three of them differently
+ * at rest — the box would read as a form rather than as a sentence. What says
+ * it is a link is the same thing that says so on the row: the pointer over it.
+ *
+ * `color: inherit` so that the line keeps whatever ink its `style` gave it;
+ * these three are all `muted`, and a link that ignored that would be the one
+ * bright line in a box whose only coloured thing is an Agent's status.
+ */
+.tooltip-line-link {
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.tooltip-line-link:hover {
+  color: var(--label);
+  text-decoration: none;
 }
 
 /* What the thing is called. The one line in the box set as a name — everything

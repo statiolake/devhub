@@ -33,6 +33,11 @@
  *
  * **Leaving for main**
  * - `devhub:tooltip-size` — how big the box is. This view is exactly that big.
+ * - `devhub:tooltip-pointer` — whether the pointer is in the box. Half of an
+ *   answer main assembles: the Sidebar's leave is the other half, and neither
+ *   page can see the other's pointer. See `main/shell/tooltipView.ts`.
+ * - `devhub:open-external-url` — a line that names a page on GitHub was
+ *   clicked. The same route the row's own link takes.
  * - `devhub:raise-failure` — what began *here*, one way. Drawn nowhere here:
  *   this page has no room for a failure and no business reporting one, so it
  *   goes to the page that draws them like every other page's does.
@@ -46,7 +51,9 @@
  * which is exactly what the per-page contract exists to make unspellable.
  */
 
+import { useCallback } from "react";
 import { devhub } from "./client";
+import { toAppError } from "../failure";
 import { useTooltipLines } from "./tooltipText";
 import { useTooltipSize } from "./tooltipSize";
 import {
@@ -71,9 +78,44 @@ function glyphName(icon: string | undefined): GlyphName | undefined {
     : undefined;
 }
 
+/**
+ * One of the box's links, followed.
+ *
+ * `preventDefault` because this document is never navigating anywhere: it is
+ * one box drawn in a view the size of itself, and replacing it with GitHub's
+ * page would put a website inside a tooltip. The URL leaves through main, the
+ * way every link DevHub draws does — not through the navigation backstop in
+ * `externalLinks.ts`, which catches what a page did not mean to do and would
+ * swallow a refusal nobody is awaiting.
+ */
+function useFollow(): (
+  href: string,
+  event: { preventDefault(): void },
+) => void {
+  return useCallback((href, event) => {
+    event.preventDefault();
+    void devhub()
+      .openExternalUrl(href)
+      // What began here is raised and never drawn here: this page has one box
+      // in it and no room for a failure, so it goes to the page that draws
+      // them. A click that quietly did nothing is the failure this catch
+      // exists to prevent, not one it creates.
+      .catch((error: unknown) => devhub().raiseFailure(toAppError(error)));
+  }, []);
+}
+
 export function TooltipApp() {
   const lines = useTooltipLines(devhub);
   const measure = useTooltipSize(lines);
+  const follow = useFollow();
+  // Where the pointer is, as a fact for main. The box is a view of its own, so
+  // the pointer crossing into it from a row is a leave in the Sidebar and an
+  // enter here, and only main sees both. It is reported on the box rather than
+  // on the document because the view is exactly the box's size: entering the
+  // view *is* entering the box.
+  const pointer = useCallback((inside: boolean) => {
+    devhub().reportTooltipPointer(inside);
+  }, []);
   // Nothing to say is a size of zero, which is how this view leaves the
   // window altogether — reported by `useTooltipSize`, which watches the
   // element going away rather than waiting for an observer that cannot fire
@@ -87,9 +129,16 @@ export function TooltipApp() {
     // itself and once as its own tooltip. It is doubly true now that the two
     // are in different documents — nothing here is in the Sidebar's tree to be
     // read at all.
-    <div className="tooltip-box" aria-hidden="true" ref={measure}>
+    <div
+      className="tooltip-box"
+      aria-hidden="true"
+      ref={measure}
+      onPointerEnter={() => pointer(true)}
+      onPointerLeave={() => pointer(false)}
+    >
       {lines.map((line: TooltipLineWire, index: number) => {
         const icon = glyphName(line.icon);
+        const href = line.href;
         return (
           <div
             className={`tooltip-line${line.style ? ` is-${line.style}` : ""}`}
@@ -108,7 +157,26 @@ export function TooltipApp() {
                 <Glyph name={icon} />
               </span>
             ) : null}
-            <span className="tooltip-line-text">{line.text}</span>
+            {/* A fact that names a page is the link to it — the same page
+                the row's own mark leads to, so the box a person is reading is
+                the thing they can act on. Everything else is words. */}
+            {href === undefined ? (
+              <span className="tooltip-line-text">{line.text}</span>
+            ) : (
+              <a
+                className="tooltip-line-text tooltip-line-link"
+                href={href}
+                // Out of the tab order, because the box is out of the
+                // accessibility tree: an anchor that could be tabbed to inside
+                // `aria-hidden` is a stop a reader is taken to and told nothing
+                // about. There is nothing to reach it with anyway — this view
+                // never holds the keyboard (`keyboardChild` never names it).
+                tabIndex={-1}
+                onClick={(event) => follow(href, event)}
+              >
+                {line.text}
+              </a>
+            )}
           </div>
         );
       })}
