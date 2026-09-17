@@ -45,6 +45,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { posix } from "node:path";
@@ -131,6 +132,16 @@ export interface ContainerRuntimeOptions {
 	readonly docker: DockerCli;
 	readonly devcontainer: DevContainerCli;
 	readonly tmux?: TmuxDelivery | undefined;
+	/**
+	 * Where the remote extension host comes from.
+	 *
+	 * Held on the runtime and not only passed to `remoteServer`, because the
+	 * *terminal launcher* needs the server's `node` too — it is the only node a
+	 * dev container image reliably has — and the launcher runs before any
+	 * workbench has resolved. On ssh that ordering holds by luck; here it is
+	 * stated, and `#ensureServerInstalled` is the one place that does it.
+	 */
+	readonly reh?: RehDelivery | undefined;
 	readonly ptyFactory?: PtyFactory;
 	readonly localEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** For tests: how a local port for the bridge is picked. */
@@ -254,6 +265,7 @@ export class ContainerRuntime
 	readonly #docker: DockerCli;
 	readonly #devcontainer: DevContainerCli;
 	readonly #tmuxDelivery: TmuxDelivery | undefined;
+	readonly #rehDelivery: RehDelivery | undefined;
 	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
 	readonly #listen: ContainerRuntimeOptions["listen"];
@@ -280,6 +292,7 @@ export class ContainerRuntime
 		this.#docker = options.docker;
 		this.#devcontainer = options.devcontainer;
 		this.#tmuxDelivery = options.tmux;
+		this.#rehDelivery = options.reh;
 		this.#ptyFactory = options.ptyFactory ?? openPty;
 		this.#localEnvironment = options.localEnvironment ?? process.env;
 		this.#listen = options.listen;
@@ -349,6 +362,13 @@ export class ContainerRuntime
 		const listed = await this.#docker_([
 			"ps",
 			"-a",
+			// `--no-trunc`, and it is load-bearing rather than tidy. Without it
+			// `{{.ID}}` is the *short* twelve-character id, while `devcontainer
+			// up` answers with the full sixty-four — so the two ways this runtime
+			// learns a container's id spell the same container differently, and
+			// the comparison that decides "has this been rebuilt?" reads every
+			// restart as a rebuild. One canonical spelling, asked for here.
+			"--no-trunc",
 			"--filter",
 			`label=${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder}`,
 			"--format",
@@ -740,18 +760,50 @@ export class ContainerRuntime
 		const home = await this.home();
 		const relay = relayPath(home);
 		await this.writeTextFile(relay, RELAY_SOURCE, 0o600);
-		const server = this.#serverInstall;
-		if (server === undefined) {
+		return { node: posix.join(await this.#ensureServerInstalled(), "node"), relay };
+	}
+
+	/**
+	 * The server unpacked in the container, however we got here — and the
+	 * install directory, which is where its `node` is.
+	 *
+	 * Both the resolver and the terminal launcher need this, and they arrive in
+	 * either order: the launcher is built when the Workspace's row appears,
+	 * which can be well before any window resolves. So it is one idempotent
+	 * step that either of them may be the first to take, rather than an
+	 * ordering between two callers that nothing enforces.
+	 */
+	async #ensureServerInstalled(): Promise<string> {
+		const held = this.#serverInstall;
+		if (held !== undefined) return held;
+		const delivery = this.#rehDelivery;
+		if (delivery === undefined) {
 			throw new Error(
-				"the remote extension host has not been installed in this container " +
-					"yet, so there is no node in it to run DevHub's relay",
+				`the runtime for ${this.machineName} was built without a remote ` +
+					`extension host delivery, which is a bug in DevHub and not a fact ` +
+					`about that container`,
 			);
 		}
-		return { node: posix.join(server, "node"), relay };
+		const commit = delivery.commit;
+		if (commit === undefined) {
+			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
+		}
+		const { home, platform, architecture } = await this.describeRemote();
+		const paths = remoteServerPaths({
+			home,
+			dataFolderName: delivery.dataFolderName,
+			applicationName: delivery.applicationName,
+			commit,
+		});
+		await this.#installServer(delivery, paths, platform, architecture);
+		this.#serverInstall = paths.install;
+		return paths.install;
 	}
 
 	/** Where the server was installed, once it has been. */
 	#serverInstall: string | undefined;
+	/** The socket it is listening on in there, once it has been started. */
+	#serverSocket: string | undefined;
 
 	/**
 	 * The remote extension host in this container, and a local port that
@@ -770,9 +822,14 @@ export class ContainerRuntime
 		const held = this.#server;
 		if (held !== undefined) {
 			const endpoint = await held.catch(() => undefined);
-			if (endpoint !== undefined && this.#bridge !== undefined) {
-				const container = await this.#currentContainer().catch(() => undefined);
-				if (container !== undefined) return endpoint;
+			// Verified, not merely remembered — the same rule ssh's `remoteServer`
+			// follows, and for a sharper reason here. A `docker stop` and `docker
+			// start` leaves this runtime with a bridge that still listens and a
+			// container that is running again, so every cheap question says yes
+			// while the server inside is gone. The only honest question is
+			// whether the endpoint still answers.
+			if (endpoint !== undefined && (await this.#endpointAnswers())) {
+				return endpoint;
 			}
 			this.#closeBridge();
 			this.#server = undefined;
@@ -785,6 +842,60 @@ export class ContainerRuntime
 		return pending;
 	}
 
+	/**
+	 * Whether the server's socket *inside the container* still accepts.
+	 *
+	 * The one honest question, and it has to be asked in there. Probing the
+	 * bridge's local port proves nothing: the bridge is a `net.Server` on this
+	 * Mac that accepts every connection and only then spawns the exec that may
+	 * fail — so it answers yes for a container that has been stopped, restarted
+	 * and emptied of its server, which is exactly the case this exists to
+	 * catch. Connecting to the unix socket is the only thing that distinguishes
+	 * "a server is listening" from "a socket file was left behind", and the
+	 * `node` to do it with is the server's own.
+	 */
+	async #socketAccepts(socketPath: string, node: string): Promise<boolean> {
+		const probe = await this.sh(
+			`exec ${shellQuote(node)} -e 'const s=require("net").connect(process.argv[1]);s.on("connect",()=>process.exit(0));s.on("error",()=>process.exit(1));' ${shellQuote(socketPath)}`,
+		);
+		return probe.code === 0;
+	}
+
+	/** The endpoint this runtime handed out, still good. */
+	async #endpointAnswers(): Promise<boolean> {
+		const held = this.#serverSocket;
+		const install = this.#serverInstall;
+		if (this.#bridge === undefined || held === undefined) return false;
+		if (install === undefined) return false;
+		if ((await this.#currentContainer().catch(() => undefined)) === undefined) {
+			return false;
+		}
+		return this.#socketAccepts(held, posix.join(install, "node"));
+	}
+
+	/**
+	 * Take away a socket file whose server is gone.
+	 *
+	 * `startServerScript` decides a server is already running from a socket file
+	 * plus a live pid, which is right on a host and not reliable here: a
+	 * container restart keeps its filesystem, so both files survive, and pids in
+	 * a container's own namespace are small enough that the one in that file is
+	 * very likely to belong to something else by then. So the socket is asked
+	 * directly, and one that refuses is removed along with the pid file — which
+	 * puts the start script back on its "there is nothing here" path.
+	 */
+	async #clearDeadServer(
+		paths: ReturnType<typeof remoteServerPaths>,
+		node: string,
+	): Promise<void> {
+		const present = await this.sh(`test -S ${shellQuote(paths.socket)}`);
+		if (present.code !== 0) return;
+		if (await this.#socketAccepts(paths.socket, node)) return;
+		await this.sh(
+			`rm -f -- ${shellQuote(paths.socket)} ${shellQuote(paths.pid)}`,
+		);
+	}
+
 	async #openRemoteServer(
 		delivery: RehDelivery,
 	): Promise<RemoteServerEndpoint> {
@@ -793,15 +904,15 @@ export class ContainerRuntime
 			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
 		}
 		const container = await this.#currentContainer();
-		const { home, platform, architecture } = await this.describeRemote();
+		const { home } = await this.describeRemote();
 		const paths = remoteServerPaths({
 			home,
 			dataFolderName: delivery.dataFolderName,
 			applicationName: delivery.applicationName,
 			commit,
 		});
-		await this.#installServer(delivery, paths, platform, architecture);
-		this.#serverInstall = paths.install;
+		await this.#ensureServerInstalled();
+		await this.#clearDeadServer(paths, posix.join(paths.install, "node"));
 		const started = await this.sh(startServerScript(paths), {
 			stdin: Buffer.from(newConnectionToken(), "utf8"),
 		});
@@ -822,6 +933,7 @@ export class ContainerRuntime
 		const node = posix.join(paths.install, "node");
 		const relay = relayPath(home);
 		await this.writeTextFile(relay, RELAY_SOURCE, 0o600);
+		this.#serverSocket = answer.socket;
 		const port = await this.#openBridge(container, node, relay, answer.socket);
 		return {
 			port,
@@ -1111,17 +1223,17 @@ export interface RelayExec {
 /**
  * A `docker exec -i` whose stdio is the wire.
  *
- * Imported lazily so that this module can be loaded — and its parsing tested —
- * in a process with no `child_process`, which is the same reason `registry.ts`
- * takes its profile rather than reading Electron's.
+ * `spawn` is imported at the top and not reached for lazily. The packaged main
+ * process is one esbuild ESM bundle, and a `require()` inside one is a
+ * `Dynamic require of "node:child_process" is not supported` at the moment the
+ * first workbench connects — which is to say in the packaged app only, and
+ * never in a test.
  */
 function spawnRelay(
 	file: string,
 	args: readonly string[],
 	env: Readonly<Record<string, string | undefined>>,
 ): RelayExec | undefined {
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const { spawn } = require("node:child_process") as typeof import("node:child_process");
 	const child = spawn(file, [...args], {
 		stdio: ["pipe", "pipe", "pipe"],
 		env: env as NodeJS.ProcessEnv,

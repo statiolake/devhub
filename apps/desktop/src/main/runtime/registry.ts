@@ -186,7 +186,18 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 		case "container": {
 			const key = location.workspaceFolder;
 			const existing = CONTAINERS.get(key);
-			if (existing) return existing;
+			// A runtime that has seen its container replaced refuses everything
+			// from that moment on, because its caches describe a filesystem that
+			// has been deleted. Replacing it is this function's job and nothing
+			// else's: the Workspace is still the same Workspace — that is what
+			// keying the machine on the host folder means — so a rebuild costs a
+			// runtime instance and never a row. Without this the refusal would be
+			// permanent and a rebuilt container would never come back.
+			if (existing !== undefined && !existing.replaced) return existing;
+			if (existing !== undefined) {
+				CONTAINERS.delete(key);
+				void existing.dispose();
+			}
 			if (profile === undefined) {
 				throw new Error(
 					"a runtime was asked for before the runtime profile was set",
@@ -198,6 +209,7 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 				docker: profile.docker,
 				devcontainer: profile.devcontainer,
 				tmux: profile.tmux,
+				reh: profile.reh,
 			});
 			CONTAINERS.set(key, runtime);
 			return runtime;

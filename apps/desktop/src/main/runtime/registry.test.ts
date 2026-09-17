@@ -139,6 +139,30 @@ describe("runtimeFor", () => {
 		).toThrow(/already been set/u);
 	});
 
+	it("replaces a container runtime whose container was rebuilt", async () => {
+		// The other half of the rebuild invariant, and the half that was
+		// missing: a runtime that has seen its container replaced refuses
+		// everything afterwards, so unless *something* throws it away the
+		// refusal is permanent and a rebuilt container never comes back. That
+		// something is this function, because the Workspace has not changed —
+		// keying the machine on the host folder is what makes a rebuild cost an
+		// instance and not a row.
+		const location = workspaceLocation({
+			kind: "container",
+			workspaceFolder: "/src/api",
+			path: "/workspaces/api",
+		});
+		const first = runtimeFor(location);
+		expect(runtimeFor(location)).toBe(first);
+		// Stand in for what `#noteContainer` does when the id underneath it
+		// changes; `container.test.ts` drives that through the real docker calls.
+		Object.defineProperty(first, "replaced", { get: () => true });
+		const second = runtimeFor(location);
+		expect(second).not.toBe(first);
+		// And the machine is the same machine, which is the whole point.
+		expect(second.id).toBe(first.id);
+	});
+
 	it("lists the runtimes that are live, for a reading", async () => {
 		expect(liveRuntimes()).toContain(localRuntime());
 		expect(liveRuntimes()[0]).toBe(localRuntime());

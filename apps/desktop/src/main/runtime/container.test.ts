@@ -28,12 +28,12 @@ function output(
 	stderr = "",
 ): Promise<CommandOutput> {
 	return Promise.resolve({
+		success: code === 0,
 		code,
+		signal: null,
 		stdout: Buffer.from(stdout, "utf8"),
 		stderr: Buffer.from(stderr, "utf8"),
-		stdoutTruncated: false,
-		stderrTruncated: false,
-	} as CommandOutput);
+	});
 }
 
 /** A `docker` that answers from a script and records what it was asked. */
@@ -270,6 +270,28 @@ describe("a rebuild is a different machine underneath the same one", () => {
 		await expect(runtime.home()).rejects.toThrow(/has been rebuilt/u);
 	});
 
+	it("asks docker for untruncated ids, so a restart is not a rebuild", async () => {
+		// Found by running it. `docker ps --format {{.ID}}` gives the short
+		// twelve-character id and `devcontainer up` answers with the full
+		// sixty-four, so without `--no-trunc` the two ways this runtime learns
+		// an id spell the same container differently — and every `docker stop`
+		// followed by a restart was reported to the person as "the dev container
+		// has been rebuilt".
+		const full = "a".repeat(64);
+		const docker = fakeDocker((args) => {
+			if (args[0] === "ps") return output(0, psLine(full, "running"));
+			if (args[0] === "inspect") return output(0, "");
+			return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+		});
+		const runtime = runtimeWith(
+			docker,
+			fakeDevcontainer(() => output(0)),
+		);
+		await runtime.home();
+		expect(docker.calls[0]).toContain("--no-trunc");
+		expect(await runtime.containerState()).toMatchObject({ id: full });
+	});
+
 	it("keeps working when the id is the same after a resume", async () => {
 		const runtime = runtimeWith(
 			fakeDocker((args) => {
@@ -369,7 +391,7 @@ describe("a container that goes away mid-command", () => {
 		running = false;
 		// `home()` is cached, so reach for something that goes to the container
 		// and watch it refuse in the container's own words.
-		await expect(runtime.readTextFile("/etc/hostname")).rejects.toThrow(
+		await expect(runtime.readTextFile("/etc/hostname", 4096)).rejects.toThrow(
 			/is no longer running/u,
 		);
 		runtime.resumed();
