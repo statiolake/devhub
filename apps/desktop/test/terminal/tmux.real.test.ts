@@ -141,10 +141,11 @@ function fixture(
     timeoutMs: 10_000,
     // Scratch stays inside the repository, never in the OS temp directory.
     bootstrapDirectory: home,
-    // The one user tmux config, where DevHub's config directory would put it.
-    // A path and never a search: DevHub owns the location, and `source-file
-    // -q` is what makes "there is no such file" the ordinary case.
-    userTmuxConfigPath: join(home, "config", "tmux.conf"),
+    // The one user tmux config, where DevHub's config directory would put it,
+    // as the path on the machine DevHub runs on. A path and never a search:
+    // DevHub owns the location, and "there is no such file" is the ordinary
+    // case rather than a failure.
+    userTmuxConfigSource: join(home, "config", "tmux.conf"),
     ...(options?.host === undefined ? {} : { host: options.host }),
     ...(options?.paneBinDirectory === undefined
       ? {}
@@ -325,6 +326,115 @@ describe.skipIf(TMUX === undefined)(
         deadline(test.runtime),
       );
       expect(userConfig.stdout.toString("utf8")).toBe("home\n");
+    });
+
+    /**
+     * A tmux server outlives DevHub, and `-f` is read once, while it starts.
+     *
+     * So the fresh-machine order — DevHub launched, dotfiles put `tmux.conf`
+     * in place afterwards — left a server running without the config for as
+     * long as it lived, and nothing about it said so. These cases are the one
+     * rule that replaces every ordering assumption: the server DevHub is
+     * attached to runs DevHub's current config.
+     */
+    describe("the config the running server is running", () => {
+      function userConfig(test: Fixture, text: string): void {
+        mkdirSync(join(test.home, "config"), { recursive: true });
+        writeFileSync(join(test.home, "config", "tmux.conf"), text);
+      }
+
+      async function serverOption(
+        test: Fixture,
+        option: string,
+      ): Promise<string> {
+        const output = await test.runtime.runTmux(
+          test.socket,
+          ["show-options", "-gqv", option],
+          test.home,
+          test.cancel,
+          deadline(test.runtime),
+        );
+        return output.stdout.toString("utf8").trim();
+      }
+
+      it("applies a config that was written after the server started", async () => {
+        const test = fixture("configlate");
+        await test.runtime.ensure(SCRATCH_TARGET);
+        expect(await serverOption(test, "@devhub-test-user-config")).toBe("");
+
+        userConfig(test, "set-option -g @devhub-test-user-config late\n");
+        await test.runtime.ensure(SCRATCH_TARGET);
+
+        expect(await serverOption(test, "@devhub-test-user-config")).toBe(
+          "late",
+        );
+      });
+
+      it("re-applies the config when it changes under the running server", async () => {
+        const test = fixture("configedit");
+        userConfig(test, "set-option -g @devhub-test-user-config first\n");
+        await test.runtime.ensure(SCRATCH_TARGET);
+        expect(await serverOption(test, "@devhub-test-user-config")).toBe(
+          "first",
+        );
+
+        userConfig(test, "set-option -g @devhub-test-user-config second\n");
+        await test.runtime.ensure(SCRATCH_TARGET);
+
+        expect(await serverOption(test, "@devhub-test-user-config")).toBe(
+          "second",
+        );
+      });
+
+      /**
+       * The digest is what makes that not a `source-file` per attach.
+       *
+       * Observed rather than counted: something else changes the option the
+       * config sets, and an attach that left it alone is an attach that did
+       * not source an unchanged file.
+       */
+      it("leaves an unchanged config alone rather than sourcing it again", async () => {
+        const test = fixture("configsame");
+        userConfig(test, "set-option -g @devhub-test-user-config once\n");
+        await test.runtime.ensure(SCRATCH_TARGET);
+        await test.runtime.runTmux(
+          test.socket,
+          ["set-option", "-g", "@devhub-test-user-config", "touched"],
+          test.home,
+          test.cancel,
+          deadline(test.runtime),
+        );
+
+        await test.runtime.ensure(SCRATCH_TARGET);
+
+        expect(await serverOption(test, "@devhub-test-user-config")).toBe(
+          "touched",
+        );
+      });
+
+      /**
+       * tmux runs *none* of a file it cannot parse.
+       *
+       * So a config with one bad line is a config that does nothing at all,
+       * and the bootstrap's `source-file -q` said nothing about it — the one
+       * failure that has to be visible was the one being swallowed.
+       */
+      it("refuses, and says so, when the config does not parse", async () => {
+        const test = fixture("configbroken");
+        userConfig(
+          test,
+          "set-option -g @devhub-test-user-config good\nnot-a-tmux-command\n",
+        );
+
+        await expect(test.runtime.ensure(SCRATCH_TARGET)).rejects.toThrow(
+          /not-a-tmux-command/u,
+        );
+        // And it is still refused on the next attach: a config that failed was
+        // never recorded as the one the server is running.
+        await expect(test.runtime.ensure(SCRATCH_TARGET)).rejects.toThrow(
+          /not-a-tmux-command/u,
+        );
+      });
     });
 
     it("declares RGB on the server it creates, so colour is not quantised", async () => {
@@ -644,14 +754,19 @@ describe.skipIf(TMUX === undefined)(
       for (const target of targets) await test.runtime.ensure(target);
 
       // Nine marked sessions exist. Attaching to one that is already there
-      // takes a fixed four commands whatever the count is, because each of the
+      // takes a fixed five commands whatever the count is, because each of the
       // inventories it reads is a single client. Reading the markers a field
       // at a time cost `4N` per inventory instead: the same attach measured 78
       // processes here, and grew by eight with every workspace the viewer had
       // open.
+      //
+      // The fifth is the one that reads which config the server is running.
+      // It is a constant and it is per attach, not per reconcile round — the
+      // round below is still one client — and it buys the rule that a config
+      // written after the server started is a config the server runs.
       const attachStart = test.tmuxRuns();
       await test.runtime.ensure(targets[0]);
-      expect(test.tmuxRuns() - attachStart).toBe(4);
+      expect(test.tmuxRuns() - attachStart).toBe(5);
 
       // An inspection reads the inventory — marker and listing in one client —
       // and then both of its listings, the windows and the panes sharing one

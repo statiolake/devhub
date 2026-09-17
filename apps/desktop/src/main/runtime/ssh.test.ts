@@ -1130,11 +1130,11 @@ describe("carrying the tmux config to a host", () => {
 		const local = join(here, "tmux.conf");
 		await writeFile(local, "set -g mouse on\n");
 		const answer = await runtime().userTmuxConfig(local);
-		expect(answer).toBe(`${remoteHome}/.devhub-server/tmux/tmux.conf`);
-		expect(await readFile(answer, "utf8")).toBe("set -g mouse on\n");
+		expect(answer.path).toBe(`${remoteHome}/.devhub-server/tmux/tmux.conf`);
+		expect(await readFile(answer.path, "utf8")).toBe("set -g mouse on\n");
 		// It is DevHub's file on somebody else's machine, in a directory whose
 		// other contents run as this user.
-		expect((await stat(answer)).mode & 0o777).toBe(0o600);
+		expect((await stat(answer.path)).mode & 0o777).toBe(0o600);
 	});
 
 	// "Always current" has to mean both directions or it means neither: a
@@ -1144,8 +1144,11 @@ describe("carrying the tmux config to a host", () => {
 		await writeFile(local, "set -g mouse on\n");
 		const answer = await runtime().userTmuxConfig(local);
 		await rm(local);
-		expect(await runtime().userTmuxConfig(local)).toBe("/dev/null");
-		await expect(readFile(answer, "utf8")).rejects.toThrow();
+		expect(await runtime().userTmuxConfig(local)).toEqual({
+			path: "/dev/null",
+			digest: "none",
+		});
+		await expect(readFile(answer.path, "utf8")).rejects.toThrow();
 	});
 });
 

@@ -24,6 +24,7 @@
  */
 
 import type { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
@@ -275,6 +276,38 @@ export type TmuxProgram =
 	  }
 	| { readonly kind: "unavailable"; readonly reason: string };
 
+/**
+ * The user tmux config as it is on one machine *now*, and which one it is.
+ *
+ * The digest is here rather than derived by the caller because a tmux server
+ * outlives DevHub: the server has to be able to say which config it is
+ * running, and "which one" can only be answered against the bytes the machine
+ * actually has. It is recorded on the server (`@devhub-config-digest`), and a
+ * server whose digest is not this one is a server running a config the person
+ * is no longer editing.
+ *
+ * `NO_USER_TMUX_CONFIG` is the absence: `/dev/null`, which the bootstrap's
+ * `source-file` can still name, and a digest that is a value like any other so
+ * that "there is none now, and there was one before" is a change the same
+ * comparison notices.
+ */
+export interface UserTmuxConfig {
+	/** The path on that machine; `/dev/null` when there is no config. */
+	readonly path: string;
+	/** What is in it, or `"none"`. */
+	readonly digest: string;
+}
+
+export const NO_USER_TMUX_CONFIG: UserTmuxConfig = {
+	path: "/dev/null",
+	digest: "none",
+};
+
+/** The identity of one config's bytes, computed the one way. */
+export function userTmuxConfigDigest(text: string): string {
+	return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 32);
+}
+
 /** A machine's `devhub-terminal`, and whether it can reach DevHub. */
 export interface TerminalLauncher {
 	/** The path a workbench on that machine names as its terminal profile. */
@@ -388,7 +421,7 @@ export interface Runtime {
 	 * tmux config, and starting without one is the normal case rather than a
 	 * degraded one.
 	 */
-	userTmuxConfig(localPath: string): Promise<string>;
+	userTmuxConfig(localPath: string): Promise<UserTmuxConfig>;
 
 	/**
 	 * A directory on this machine DevHub may put its own short-lived files in,

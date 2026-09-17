@@ -22,6 +22,7 @@ import {
 } from "../shell/worktreeFolder.js";
 import { LOCAL_CADENCE } from "./local.js";
 import {
+	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
 	type ExecRequest,
 	type ExecResult,
@@ -30,6 +31,7 @@ import {
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type TmuxProgram,
+	type UserTmuxConfig,
 	type Watcher,
 } from "./runtime.js";
 
@@ -84,8 +86,8 @@ class RecordingRuntime implements Runtime {
 		this.execs.push(request);
 		return Promise.resolve(this.answer);
 	}
-	userTmuxConfig(): Promise<string> {
-		return Promise.resolve("/dev/null");
+	userTmuxConfig(): Promise<UserTmuxConfig> {
+		return Promise.resolve(NO_USER_TMUX_CONFIG);
 	}
 
 	tmuxProgram(): Promise<TmuxProgram> {

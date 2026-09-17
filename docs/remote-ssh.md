@@ -914,8 +914,22 @@ ln -s ~/.tmux.conf ~/.config/devhub/tmux.conf
 ```
 
 There need not be one. A profile with no `tmux.conf` starts tmux with DevHub's
-settings alone, which is the ordinary case; the log says so once per machine so
-that a file put in the wrong place is findable.
+settings alone, which is the ordinary case; the log says so whenever a machine's
+tmux is put on that footing, so that a file put in the wrong place is findable.
+
+**The running server runs the current config.** tmux reads `-f` once, while a
+server starts, and a tmux server outlives the DevHub that started it — so on a
+fresh machine, where the dotfiles put `tmux.conf` in place after the first
+launch, the server went on running without it until something killed it. DevHub
+therefore records which config a server was given, as a digest in the server
+option `@devhub-config-digest`, and compares it on every attach: a config that
+appeared, or changed, since the server came up is sourced into it then and
+there. Editing the file and opening a terminal is all it takes; nothing has to
+be killed.
+
+A config tmux will not parse is a refusal that names the file and the line, not
+a log entry. tmux runs **none** of a file it cannot parse, so one bad line is a
+config that does nothing at all — the one failure that must not be silent.
 
 For a host, the same file is **copied to the host on every connection** —
 `~/.devhub-server/tmux/tmux.conf`, beside the tmux it configures — and sourced

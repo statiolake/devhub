@@ -21,6 +21,7 @@ import { REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS } from "./cadence.js";
 import {
 	mkdir,
 	open,
+	readFile,
 	readdir,
 	realpath,
 	rm,
@@ -41,7 +42,9 @@ import {
 	type SettingsResolvedRuntimeWire,
 } from "../../ipc/settings.js";
 import {
+	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
+	userTmuxConfigDigest,
 	type DirEntry,
 	type ExecRequest,
 	type ExecResult,
@@ -54,6 +57,7 @@ import {
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type TmuxProgram,
+	type UserTmuxConfig,
 	type Watcher,
 } from "./runtime.js";
 
@@ -202,8 +206,14 @@ export class LocalRuntime implements Runtime {
 	 * a person edits is the path tmux sources. The remote arm answers the same
 	 * question with a copy, which is the only difference between them.
 	 */
-	async userTmuxConfig(localPath: string): Promise<string> {
-		return (await this.stat(localPath)) === "file" ? localPath : "/dev/null";
+	async userTmuxConfig(localPath: string): Promise<UserTmuxConfig> {
+		// Read and not `stat`: the answer carries which config this is, and
+		// nothing but the bytes can say that. It is a few hundred bytes on this
+		// machine, and a path that is a directory or unreadable is the same
+		// "there is no config here" as a path with nothing at it.
+		const text = await readFile(localPath, "utf8").catch(() => undefined);
+		if (text === undefined) return NO_USER_TMUX_CONFIG;
+		return { path: localPath, digest: userTmuxConfigDigest(text) };
 	}
 
 	async exec(request: ExecRequest): Promise<ExecResult> {

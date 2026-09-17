@@ -58,7 +58,9 @@ import { gitDirectoryOf } from "./gitDirectory.js";
 import { permanent } from "./remoteServer.js";
 import { shellQuote } from "./quote.js";
 import {
+	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
+	userTmuxConfigDigest,
 	type DirEntry,
 	type ExecLimits,
 	type ExecRequest,
@@ -72,6 +74,7 @@ import {
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type TmuxProgram,
+	type UserTmuxConfig,
 	type Watcher,
 } from "./runtime.js";
 import type { TmuxDelivery } from "./tmuxDelivery.js";
@@ -690,18 +693,18 @@ export abstract class RemoteShellRuntime implements Runtime {
 	 * A config that is no longer here is removed from over there for the same
 	 * reason. "Always current" has to mean both directions or it means neither.
 	 */
-	async userTmuxConfig(localPath: string): Promise<string> {
+	async userTmuxConfig(localPath: string): Promise<UserTmuxConfig> {
 		const { home } = await this.describeRemote();
 		const directory = posix.join(home, this.delivery().directory);
 		const remotePath = posix.join(directory, "tmux.conf");
 		const text = await readFile(localPath, "utf8").catch(() => undefined);
 		if (text === undefined) {
 			await this.removeTree(remotePath);
-			return "/dev/null";
+			return NO_USER_TMUX_CONFIG;
 		}
 		await this.makeDirectory(directory);
 		await this.writeTextFile(remotePath, text, 0o600);
-		return remotePath;
+		return { path: remotePath, digest: userTmuxConfigDigest(text) };
 	}
 
 	/**

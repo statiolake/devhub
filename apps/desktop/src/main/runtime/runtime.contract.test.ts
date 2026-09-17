@@ -323,8 +323,8 @@ export function describeRuntimeContract(
 				const local = join(scratch, "tmux.conf");
 				await writeFile(local, "set -g mouse on\n");
 				const answer = await runtime.userTmuxConfig(local);
-				expect(answer).not.toBe("/dev/null");
-				expect(await runtime.readTextFile(answer, 4096)).toBe(
+				expect(answer.path).not.toBe("/dev/null");
+				expect(await runtime.readTextFile(answer.path, 4096)).toBe(
 					"set -g mouse on\n",
 				);
 			});
@@ -338,8 +338,28 @@ export function describeRuntimeContract(
 				await runtime.userTmuxConfig(local);
 				await writeFile(local, "set -g mouse off\n");
 				const answer = await runtime.userTmuxConfig(local);
-				expect(await runtime.readTextFile(answer, 4096)).toBe(
+				expect(await runtime.readTextFile(answer.path, 4096)).toBe(
 					"set -g mouse off\n",
+				);
+			});
+
+			/**
+			 * The digest is what lets a running server say which config it has.
+			 *
+			 * `-f` is read once, while a tmux server starts, and the server
+			 * outlives DevHub — so the only way to know whether the server is
+			 * running the file the person is editing is to compare something.
+			 * Same bytes, same answer, on either machine; an edit changes it.
+			 */
+			it("names which config it is, and says so again when it changes", async () => {
+				const local = join(scratch, "tmux.conf");
+				await writeFile(local, "set -g mouse on\n");
+				const first = await runtime.userTmuxConfig(local);
+				expect(first.digest).not.toBe("none");
+				expect((await runtime.userTmuxConfig(local)).digest).toBe(first.digest);
+				await writeFile(local, "set -g mouse off\n");
+				expect((await runtime.userTmuxConfig(local)).digest).not.toBe(
+					first.digest,
 				);
 			});
 
@@ -347,9 +367,14 @@ export function describeRuntimeContract(
 			// `source-file` needs a real path either way.
 			it("is /dev/null when there is none, and stops being one when there is", async () => {
 				const local = join(scratch, "tmux.conf");
-				expect(await runtime.userTmuxConfig(local)).toBe("/dev/null");
+				expect(await runtime.userTmuxConfig(local)).toEqual({
+					path: "/dev/null",
+					digest: "none",
+				});
 				await writeFile(local, "set -g mouse on\n");
-				expect(await runtime.userTmuxConfig(local)).not.toBe("/dev/null");
+				expect((await runtime.userTmuxConfig(local)).path).not.toBe(
+					"/dev/null",
+				);
 			});
 		});
 

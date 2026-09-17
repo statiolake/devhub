@@ -30,7 +30,13 @@
 
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { localRuntime } from "../runtime/registry.js";
-import type { ExecLimits, Runtime, RuntimeId } from "../runtime/runtime.js";
+import { NO_USER_TMUX_CONFIG } from "../runtime/runtime.js";
+import type {
+	ExecLimits,
+	Runtime,
+	RuntimeId,
+	UserTmuxConfig,
+} from "../runtime/runtime.js";
 import { terminalEnvironment, type Pty, type PtyLaunch } from "./pty.js";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -86,6 +92,21 @@ import { requiredTerminalSet } from "./ports.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
+/**
+ * Which user config the running server has been given, as a digest of it.
+ *
+ * A tmux server outlives DevHub, and `-f` is read once, while it starts. So a
+ * server that came up before the person's `tmux.conf` existed — the ordinary
+ * shape of a fresh machine, where the dotfiles land after the first launch —
+ * would go on running without it until something killed it, and there is
+ * nothing about the server that says so.
+ *
+ * The digest is that missing fact, kept where the server keeps everything else
+ * DevHub knows about it. `applyUserConfig` compares it with the config the
+ * machine has now and sources the file when they differ, so the rule is one
+ * sentence: **the server DevHub is attached to runs DevHub's current config.**
+ */
+const CONFIG_DIGEST_OPTION = "@devhub-config-digest";
 const CONTEXT_OPTION = "@devhub-context";
 const WORKSPACE_ID_OPTION = "@devhub-workspace-id";
 const ROOT_OPTION = "@devhub-root";
@@ -916,16 +937,17 @@ export interface TmuxTerminalRuntimeOptions {
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
 	/**
-	 * The one user tmux config this server will source, as a path on its machine.
+	 * The one user tmux config, as the path on *this Mac* where a person edits
+	 * it.
 	 *
-	 * Resolved by the machine (`Runtime.userTmuxConfig`) when the adapter is
-	 * built, rather than looked for here, because "where the config is" is a
-	 * fact about a machine and this class talks to two kinds of them. It is a
-	 * path and never a search: DevHub owns the location, so there is nothing to
-	 * search for. `/dev/null` when there is none, so the bootstrap's
-	 * `source-file` always names a real path.
+	 * The path on the machine tmux runs on is the machine's answer
+	 * (`Runtime.userTmuxConfig`), and it is asked for again on every bring-up
+	 * rather than once when the adapter is built: a config written after DevHub
+	 * started — which on a fresh machine is every config, because the dotfiles
+	 * land after the first launch — was invisible to an adapter that had
+	 * already resolved `/dev/null` and kept it for the life of the app.
 	 */
-	readonly userTmuxConfigPath?: string;
+	readonly userTmuxConfigSource?: string;
 	/**
 	 * The machine tmux runs on.
 	 *
@@ -991,6 +1013,25 @@ function lastStderrLine(stderr: Buffer): string | undefined {
 	return said.at(-1)?.slice(0, MAX_STDERR_LINE);
 }
 
+/**
+ * What a config tmux would not load says, in tmux's own words.
+ *
+ * Not `tmuxRefusal`: tmux reports a config error on *stdout* — it is the
+ * answer to `source-file`, not a diagnostic about running it — so a refusal
+ * that reads stderr alone would say `tmux \`source-file\` failed.` and drop
+ * the file and line that are the whole of the message. Either stream, because
+ * which one a given tmux uses is not a thing to be right about.
+ */
+function configRefusal(path: string, output: CommandOutput): PortFailure {
+	const said = lastStderrLine(output.stderr) ?? lastStderrLine(output.stdout);
+	return portFailure("failed", {
+		detail:
+			said === undefined
+				? `DevHub could not load the tmux config at ${path}.`
+				: `DevHub could not load the tmux config at ${path}: ${said}`,
+	});
+}
+
 /** The refusal a non-zero exit of this subcommand raises. */
 export function tmuxRefusal(subcommand: string, stderr: Buffer): PortFailure {
 	const said = lastStderrLine(stderr);
@@ -1052,7 +1093,7 @@ export class TmuxTerminalRuntime {
 	private effectiveSocket: SocketName | undefined;
 	private readonly gate = new RuntimeOperationGate();
 	private readonly bootstrapDirectory: string;
-	private readonly userTmuxConfigPath: string;
+	private readonly userTmuxConfigSource: string;
 	private readonly host: Runtime;
 	private readonly paneBinDirectory: string | undefined;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
@@ -1090,7 +1131,7 @@ export class TmuxTerminalRuntime {
 			: undefined;
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.bootstrapDirectory = options.bootstrapDirectory ?? tmpdir();
-		this.userTmuxConfigPath = options.userTmuxConfigPath ?? "/dev/null";
+		this.userTmuxConfigSource = options.userTmuxConfigSource ?? "/dev/null";
 		this.host = options.host ?? localRuntime();
 		this.paneBinDirectory = options.paneBinDirectory;
 	}
@@ -2113,11 +2154,20 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
+		// Asked of the machine here and not when the adapter was built, so that
+		// the config this bring-up applies is the one on disk now. For a host
+		// this is also the copy going across, which is why it is one call and
+		// not a path plus a separate delivery.
+		const config = await this.host.userTmuxConfig(this.userTmuxConfigSource);
 		const marker = await this.markerState(socket, cancel, deadline);
 		if (marker === "wrong") throw portFailure("conflict");
 		if (marker === "absent") {
-			await this.bootstrapAbsentServer(socket, cancel, deadline);
+			await this.bootstrapAbsentServer(socket, config, cancel, deadline);
 		}
+		// Before Scratch and before any session this bring-up goes on to make:
+		// a session created under the wrong config is a pane whose shell, keys
+		// and status line are not the ones the person asked for.
+		await this.applyUserConfig(socket, config, cancel, deadline);
 		// Scratch is the *app's* terminal, not a folder's, and the app runs on
 		// one machine. A host's tmux got one too, because this ran on every
 		// machine's adapter — a session nothing on that host will ever attach
@@ -2745,6 +2795,86 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
+	 * Make the running server run the config the machine has now.
+	 *
+	 * `-f` is read once, while a server starts, and a tmux server outlives the
+	 * DevHub that started it — so "the config was in place when the server came
+	 * up" is a condition DevHub cannot arrange and must therefore stop
+	 * depending on. This is the server-level twin of `applySessionOptions`: the
+	 * server is proven DevHub's, so what it is configured with is DevHub's to
+	 * state, and re-stating it on the path every attach takes is what carries
+	 * an edit — or a first config on a fresh machine — into a server that is
+	 * already up.
+	 *
+	 * The digest is what keeps that from being a `source-file` per attach, and
+	 * it is recorded in the same command as the sourcing: tmux abandons the
+	 * rest of a command sequence when one command fails, so a config that does
+	 * not parse leaves the old digest in place and is re-sourced — and
+	 * re-reported — on the next attach, rather than being recorded as applied.
+	 *
+	 * A config that does not parse is a refusal and not a log line. tmux runs
+	 * *none* of a file it cannot parse, so the alternative is a person whose
+	 * whole config silently does nothing: the one failure that has to be
+	 * visible is exactly the one `source-file -q` in the bootstrap swallows.
+	 */
+	private async applyUserConfig(
+		socket: SocketName,
+		config: UserTmuxConfig,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
+		const recorded = await this.runTmux(
+			socket,
+			["show-options", "-gqv", CONFIG_DIGEST_OPTION],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!recorded.success) throw recorded.refusal();
+		// Empty is a server that has never been told, which is every server a
+		// DevHub without this rule created — not a digest, and never equal to
+		// one.
+		const applied =
+			recorded.stdout.byteLength === 0 ? "" : parseOptionValue(recorded.stdout);
+		if (applied === config.digest) return;
+		// Nothing to source when there is none — and the digest is still
+		// recorded, so a config that was there and is gone is recorded as gone
+		// rather than as still applied. What a removed config already set
+		// cannot be unset; the server carries it until it dies, and says which
+		// config it is carrying.
+		if (config.path !== NO_USER_TMUX_CONFIG.path) {
+			const sourced = await this.runTmux(
+				socket,
+				["source-file", config.path],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			// Two commands and not one sequence: tmux runs the rest of a
+			// command sequence after a `source-file` that failed, so a sequence
+			// would record a broken config as the one the server is running and
+			// never source it again. Failing here leaves the old digest in
+			// place, which is what makes the next attach try — and report — it
+			// again.
+			if (!sourced.success) throw configRefusal(config.path, sourced);
+		}
+		const recording = await this.runTmux(
+			socket,
+			["set-option", "-g", CONFIG_DIGEST_OPTION, config.digest],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!recording.success) throw recording.refusal();
+		console.log(
+			config.path === NO_USER_TMUX_CONFIG.path
+				? `[devhub] no tmux config at ${this.userTmuxConfigSource}, so tmux` +
+						`${this.where} runs DevHub's settings only`
+				: `[devhub] tmux${this.where} now runs the config at ${config.path}`,
+		);
+	}
+
+	/**
 	 * Probe or bootstrap an absent server through a startup config.
 	 *
 	 * tmux reads `-f` only while creating a new server; against an existing one
@@ -2754,6 +2884,7 @@ export class TmuxTerminalRuntime {
 	 */
 	private async bootstrapAbsentServer(
 		socket: SocketName,
+		config: UserTmuxConfig,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
@@ -2766,7 +2897,7 @@ export class TmuxTerminalRuntime {
 			workspaceId: GLOBAL_ID,
 			agentId: NO_AGENT,
 		});
-		const config = await BootstrapConfig.create(
+		const bootstrap = await BootstrapConfig.create(
 			this.host,
 			this.bootstrapDirectory,
 			bootstrapConfig(scratchEnvironment),
@@ -2774,6 +2905,7 @@ export class TmuxTerminalRuntime {
 		let output: TmuxOutput;
 		try {
 			output = await this.runBootstrapProbe(
+				bootstrap,
 				config,
 				socket,
 				this.contextHome,
@@ -2782,7 +2914,7 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 		} finally {
-			await config.remove();
+			await bootstrap.remove();
 		}
 		if (output.success) {
 			if (output.stdout.byteLength === 0) throw portFailure("conflict");
@@ -2804,7 +2936,8 @@ export class TmuxTerminalRuntime {
 	}
 
 	private async runBootstrapProbe(
-		config: BootstrapConfig,
+		bootstrap: BootstrapConfig,
+		config: UserTmuxConfig,
 		socket: SocketName,
 		root: string,
 		sessionEnvironment: Readonly<Record<string, string>>,
@@ -2817,7 +2950,7 @@ export class TmuxTerminalRuntime {
 				args: [
 					...this.tmuxArgs,
 					"-f",
-					config.path,
+					bootstrap.path,
 					"-L",
 					socket,
 					// `show-options` alone does not create a server. Start it and
@@ -2835,7 +2968,7 @@ export class TmuxTerminalRuntime {
 				env: {
 					...this.tmuxEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
-					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath,
+					[BOOTSTRAP_ENV_USER_CONFIG]: config.path,
 					...bootstrapEnvironment(sessionEnvironment),
 				},
 			},

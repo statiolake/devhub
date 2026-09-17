@@ -38,6 +38,7 @@ import type { AttachmentManager } from "../terminal/attachments.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
+import { NO_USER_TMUX_CONFIG } from "../runtime/runtime.js";
 import type {
 	ExecRequest,
 	ExecResult,
@@ -47,6 +48,7 @@ import type {
 	TerminalLauncher,
 	TerminalLauncherSpec,
 	TmuxProgram,
+	UserTmuxConfig,
 	Watcher,
 } from "../runtime/runtime.js";
 
@@ -111,8 +113,8 @@ class FakeMachine implements Runtime {
 	 * asked to run starts with the word `tmux`, so "which machine was asked" is
 	 * a question the recorded requests answer on their own.
 	 */
-	userTmuxConfig(): Promise<string> {
-		return Promise.resolve("/dev/null");
+	userTmuxConfig(): Promise<UserTmuxConfig> {
+		return Promise.resolve(NO_USER_TMUX_CONFIG);
 	}
 
 	tmuxProgram(): Promise<TmuxProgram> {

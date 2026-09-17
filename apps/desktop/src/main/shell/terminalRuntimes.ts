@@ -129,10 +129,9 @@ export class TerminalRuntimes {
 		const searchPath = environment["PATH"] ?? "";
 		const configuredTmux = config?.runtimes.tmux ?? "tmux";
 		const configuredShell = config?.runtimes.shell ?? "/bin/zsh";
-		const [home, scratch, userConfig, tmux, shell] = await Promise.all([
+		const [home, scratch, tmux, shell] = await Promise.all([
 			host.home(),
 			host.scratchDirectory(),
-			host.userTmuxConfig(this.#options.userTmuxConfigPath),
 			// Not `resolveProgram`: which tmux a machine runs is that machine's
 			// answer to give, and the two machines answer it differently in kind
 			// — this Mac uses the person's, a host uses the one DevHub installs
@@ -140,15 +139,6 @@ export class TerminalRuntimes {
 			host.tmuxProgram(configuredTmux, searchPath),
 			host.resolveProgram(configuredShell, searchPath),
 		]);
-		if (userConfig === "/dev/null") {
-			// Said once per machine, and not a failure: most people have no tmux
-			// config, and a person who moved theirs to the wrong place has no
-			// other way to find out that DevHub is not reading it.
-			console.log(
-				`[devhub] no tmux config at ${this.#options.userTmuxConfigPath}, so ` +
-					`tmux${host.where} starts with DevHub's settings only`,
-			);
-		}
 		return new TmuxTerminalRuntime({
 			context: { home, environment },
 			tmux:
@@ -172,7 +162,12 @@ export class TerminalRuntimes {
 			tmuxArgs: config?.runtimes.tmux_args ?? [],
 			effectiveSocketName: this.#socketName,
 			bootstrapDirectory: scratch,
-			userTmuxConfigPath: userConfig,
+			// The path on *this* Mac, not the machine's answer about it: the
+			// adapter asks the machine on every bring-up, so that a config
+			// written after DevHub started is a config DevHub applies. Resolving
+			// it once here was how a fresh machine — dotfiles landing after the
+			// first launch — got a tmux server that never read the file.
+			userTmuxConfigSource: this.#options.userTmuxConfigPath,
 			// Only for a machine that is not this one. The directory is derived
 			// rather than reported by the launcher install, so a session created
 			// before the first window on that host still has the right PATH.
