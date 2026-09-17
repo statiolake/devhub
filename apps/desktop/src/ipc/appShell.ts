@@ -686,6 +686,23 @@ export interface WorkspaceWire {
 	/** The folder's path, whichever machine it is on. */
 	readonly root: string;
 	/**
+	 * The same folder, written the way a person writes it: `~/projects/widget`.
+	 *
+	 * A second field rather than an abbreviation made where it is drawn, because
+	 * abbreviating needs a home directory and a page has none it could use. The
+	 * home is *that machine's* — a Workspace on a NAS is under `/volume1/home/x`
+	 * and this Mac's `/Users/…` is not a prefix of it — and main is the only
+	 * side that can ask a machine anything. A page doing it with `os.homedir()`
+	 * it does not have would be right about local rows and quietly wrong about
+	 * every remote one.
+	 *
+	 * It is for reading and nothing else. `root` is still what identifies the
+	 * Workspace, keys its sessions, is handed to git and is printed by the CLI.
+	 * Until the machine has answered — a host DevHub has not reached yet — this
+	 * is `root` unchanged, which is the true path either way.
+	 */
+	readonly displayRoot: string;
+	/**
 	 * What makes this Workspace this one: the path for a local folder, and the
 	 * host and path together for a remote one. Two hosts' `/src/api` are two
 	 * rows, and only this tells them apart.

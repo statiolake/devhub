@@ -28,6 +28,7 @@ function closeFailed(
     id: "workspace-1",
     label: "example",
     root: "/example",
+    displayRoot: "/example",
     // Open, with a last-failure note. There is no third state: a Workspace is
     // either in the list or gone.
     state: { kind: "available" },

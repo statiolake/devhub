@@ -57,6 +57,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
         label: "folderA",
         location: { kind: "local" },
         root: "/tmp/folderA",
+        displayRoot: "/tmp/folderA",
         key: "/tmp/folderA",
         groupKey: "/tmp/folderA",
         selectedPath: "/tmp/folderA",

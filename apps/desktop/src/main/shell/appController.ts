@@ -1324,7 +1324,12 @@ export class AppController {
 			worktree,
 		}).then((settled) => {
 			this.raiseCloseConfirmation(
-				outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+				outcomeWire(
+					settled,
+					this.coordinator.readiness,
+					this.repositoryOf,
+					this.homeOf,
+				),
 			);
 		});
 	}
@@ -1769,6 +1774,7 @@ export class AppController {
 			this.coordinator.snapshot(),
 			this.coordinator.readiness,
 			this.repositoryOf,
+			this.homeOf,
 		);
 	}
 
@@ -1788,6 +1794,60 @@ export class AppController {
 		this.lastRepositoryStatus.workspaces.find(
 			(entry) => entry.workspaceId === workspaceId,
 		)?.mainWorktree;
+
+	/**
+	 * Each machine's home directory, as that machine has answered it.
+	 *
+	 * The projection needs it to write a row's path the way a person writes it
+	 * (`WorkspaceWire.displayRoot`), and only main can ask: a home is a fact
+	 * about a machine, and a Workspace on a NAS is under *its* `$HOME`, which
+	 * this Mac's has no prefix in common with.
+	 *
+	 * It is a cache and not a lookup because `Runtime.home()` is a round trip on
+	 * a host and the projection is synchronous and runs on every change. This
+	 * machine is in it from the start — `homedir()` costs nothing and is never
+	 * wrong — and a host is filled in the first time a row on it is projected,
+	 * with a republish when the answer lands. Until then the row shows its true
+	 * path, which is never a lie, only longer.
+	 */
+	private readonly homes = new Map<RuntimeId, string>([["local", homedir()]]);
+
+	/** Hosts already being asked, so one slow answer is not asked for twice. */
+	private readonly homesAsked = new Set<RuntimeId>();
+
+	private readonly homeOf = (
+		location: WorkspaceLocation,
+	): string | undefined => {
+		const machine = runtimeIdFor(location);
+		const known = this.homes.get(machine);
+		if (known !== undefined) return known;
+		this.learnHome(machine, location);
+		return undefined;
+	};
+
+	/**
+	 * Ask a machine where its home is, once, and republish when it says.
+	 *
+	 * A failure is not raised. Nothing is broken if this never answers — the row
+	 * shows the path it already had — and a host that is unreachable is being
+	 * reported by everything that actually needs it: the Agents on it, the git
+	 * poll, the terminal. A second toast about the shape of a path would be
+	 * noise about the one thing here that does not matter.
+	 */
+	private learnHome(machine: RuntimeId, location: WorkspaceLocation): void {
+		if (this.homesAsked.has(machine)) return;
+		this.homesAsked.add(machine);
+		void runtimeFor(location)
+			.home()
+			.then((home) => {
+				this.homes.set(machine, home);
+				this.publishSnapshot();
+			})
+			.catch(() => {
+				// Ask again next time this machine is reachable.
+				this.homesAsked.delete(machine);
+			});
+	}
 
 	appearance(): AppAppearance {
 		const config = this.requireConfig();
@@ -2470,6 +2530,7 @@ export class AppController {
 								event.snapshot,
 								this.coordinator.readiness,
 								this.repositoryOf,
+								this.homeOf,
 							);
 							break;
 						case "error":
@@ -2729,7 +2790,12 @@ export class AppController {
 			worktree: answer === "delete" ? "remove-anyway" : "keep",
 		});
 		return this.raiseCloseConfirmation(
-			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+			outcomeWire(
+				settled,
+				this.coordinator.readiness,
+				this.repositoryOf,
+				this.homeOf,
+			),
 		);
 	}
 
@@ -2783,6 +2849,7 @@ export class AppController {
 			{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 			this.coordinator.readiness,
 			this.repositoryOf,
+			this.homeOf,
 		);
 	}
 
@@ -4261,7 +4328,12 @@ export class AppController {
 		});
 		if (withAgent === undefined) {
 			await this.syncEditorView();
-			return outcomeWire(opened, this.coordinator.readiness, this.repositoryOf);
+			return outcomeWire(
+				opened,
+				this.coordinator.readiness,
+				this.repositoryOf,
+				this.homeOf,
+			);
 		}
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
@@ -4274,7 +4346,12 @@ export class AppController {
 			presentation: "full",
 		});
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
+		return outcomeWire(
+			settled,
+			this.coordinator.readiness,
+			this.repositoryOf,
+			this.homeOf,
+		);
 	}
 
 	/**
@@ -5028,7 +5105,12 @@ export class AppController {
 		// done here rather than in the model because a view is an effect on the
 		// window, and the model does not have windows.
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
+		return outcomeWire(
+			settled,
+			this.coordinator.readiness,
+			this.repositoryOf,
+			this.homeOf,
+		);
 	}
 
 	/**
@@ -5167,7 +5249,12 @@ export class AppController {
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId);
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
+		return outcomeWire(
+			settled,
+			this.coordinator.readiness,
+			this.repositoryOf,
+			this.homeOf,
+		);
 	}
 
 	/**
@@ -5336,6 +5423,7 @@ export class AppController {
 					this.coordinator.replayFrom(cursor),
 					this.coordinator.readiness,
 					this.repositoryOf,
+					this.homeOf,
 				),
 		);
 
@@ -5642,6 +5730,7 @@ export class AppController {
 						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 						this.coordinator.readiness,
 						this.repositoryOf,
+						this.homeOf,
 					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
@@ -5659,6 +5748,7 @@ export class AppController {
 						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 						this.coordinator.readiness,
 						this.repositoryOf,
+						this.homeOf,
 					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));

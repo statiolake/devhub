@@ -14,6 +14,7 @@ import {
   DomainError,
   DomainErrorCode,
   displayPath,
+  abbreviateHome,
   locationKey,
   locationLabel,
   remoteAuthorityOf,
@@ -399,5 +400,38 @@ describe("where a Workspace's folder is", () => {
     expect(workspace.canCreateAgent).toBe(true);
     workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1));
     expect(workspace.agents).toHaveLength(1);
+  });
+});
+
+/**
+ * `~` is a rendering, and it needs the home of the machine the path is on.
+ */
+describe("writing a path the way its owner writes it", () => {
+  it("abbreviates the home directory and what is under it", () => {
+    expect(abbreviateHome("/Users/example/projects/x", "/Users/example")).toBe(
+      "~/projects/x",
+    );
+    expect(abbreviateHome("/Users/example", "/Users/example")).toBe("~");
+    // A trailing slash on the home is the same home.
+    expect(abbreviateHome("/Users/example/x", "/Users/example/")).toBe("~/x");
+  });
+
+  it("leaves everything else exactly as it was", () => {
+    // Not under it, and not under it by being a longer name that starts the
+    // same way — `/Users/example2` is somebody else's folder.
+    expect(abbreviateHome("/srv/api", "/Users/example")).toBe("/srv/api");
+    expect(abbreviateHome("/Users/example2/x", "/Users/example")).toBe(
+      "/Users/example2/x",
+    );
+    // A machine that has not answered yet.
+    expect(abbreviateHome("/srv/api", undefined)).toBe("/srv/api");
+  });
+
+  it("refuses a home that would swallow every path on the machine", () => {
+    // `/` is not a home. It is the one wrong answer that looks like a right
+    // one: every absolute path would come back as `~`-something.
+    expect(abbreviateHome("/srv/api", "/")).toBe("/srv/api");
+    expect(abbreviateHome("/srv/api", "")).toBe("/srv/api");
+    expect(abbreviateHome("/srv/api", "relative/home")).toBe("/srv/api");
   });
 });

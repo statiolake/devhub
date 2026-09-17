@@ -197,7 +197,17 @@ export function workspaceRowFacts(
     // Where it is. The path is the one fact a row never draws and always has,
     // because two workspaces with the same folder name are told apart by
     // nothing else.
-    { text: workspace.root, spoken: `path ${workspace.root}`, style: "muted" },
+    //
+    // `displayRoot` and not `root`: the same folder, written the way the person
+    // whose folder it is writes it, with their home directory as `~`. Which
+    // home that is, is main's to know — a Workspace on a host is under that
+    // machine's home — so the page reads the answer and never computes one. See
+    // `WorkspaceWire.displayRoot`.
+    {
+      text: workspace.displayRoot,
+      spoken: `path ${workspace.displayRoot}`,
+      style: "muted",
+    },
     // A close that stopped. Said and not only drawn: the row's colour is what a
     // sighted reader gets, and this is the same statement for everyone else.
     closeFailed

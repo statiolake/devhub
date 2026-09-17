@@ -14,6 +14,7 @@ import {
   DomainError,
   DomainErrorCode,
   surfaceKeyName,
+  abbreviateHome,
   type AgentFailureCode,
   type AgentProfile,
   type AgentControlState,
@@ -344,10 +345,23 @@ function editorHostWire(state: EditorHostState): EditorHostWire {
  */
 export type RepositoryOf = (workspaceId: string) => string | undefined;
 
+/**
+ * The home directory of the machine a Workspace's folder is on, as of the last
+ * time that machine answered — `undefined` for a host nothing has reached yet.
+ *
+ * It is keyed on the *location* and not on the Workspace, because that is what
+ * it is a fact about: every row on one host shares one home, and asking per row
+ * would be the same question asked five times with five chances to differ. It
+ * is asked for here, in the one place the list is projected, because main is
+ * the only side that can ask a machine anything — see `WorkspaceWire.displayRoot`.
+ */
+export type HomeOf = (location: WorkspaceLocation) => string | undefined;
+
 export function snapshotWire(
   snapshot: AppSnapshot,
   readiness: AppReadiness,
   repositoryOf: RepositoryOf,
+  homeOf: HomeOf,
 ): AppSnapshotWire {
   if (snapshot.revision > MAX_SAFE_JS_INTEGER) {
     throw new SnapshotWireError("snapshot revision is outside the safe range");
@@ -357,6 +371,7 @@ export function snapshotWire(
     label: workspace.label,
     location: workspaceLocationWire(workspace.location),
     root: workspace.root,
+    displayRoot: abbreviateHome(workspace.root, homeOf(workspace.location)),
     key: workspace.key,
     groupKey: groupKeyFor(workspace.key, repositoryOf(workspace.id)),
     selectedPath: workspace.selectedPath,
@@ -450,8 +465,14 @@ export function outcomeWire(
   outcome: IntentOutcome,
   readiness: AppReadiness,
   repositoryOf: RepositoryOf,
+  homeOf: HomeOf,
 ): AppOutcomeWire {
-  const snapshot = snapshotWire(outcome.snapshot, readiness, repositoryOf);
+  const snapshot = snapshotWire(
+    outcome.snapshot,
+    readiness,
+    repositoryOf,
+    homeOf,
+  );
   switch (outcome.kind) {
     case "noop":
       return { kind: "noop", snapshot };
@@ -481,6 +502,7 @@ export function replayWire(
   replay: CoordinatorReplay,
   readiness: AppReadiness,
   repositoryOf: RepositoryOf,
+  homeOf: HomeOf,
 ): ReplayWire {
   const events = replay.events.flatMap((event) => {
     const kind: ReplayEventKindWire | undefined =
@@ -498,7 +520,7 @@ export function replayWire(
   return {
     cursor: replay.cursor,
     historyGap: replay.historyGap,
-    snapshot: snapshotWire(replay.snapshot, readiness, repositoryOf),
+    snapshot: snapshotWire(replay.snapshot, readiness, repositoryOf, homeOf),
     events,
   };
 }

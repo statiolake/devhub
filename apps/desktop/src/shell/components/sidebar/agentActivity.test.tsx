@@ -65,6 +65,7 @@ function snapshotWithAgent(
         label: "widget",
         location: { kind: "local" },
         root: "/projects/widget",
+        displayRoot: "/projects/widget",
         key: "/projects/widget",
         selectedPath: "/projects/widget",
         state: { kind: "available" },

@@ -145,6 +145,35 @@ export function rootBasename(root: WorkspaceRoot): string {
   return name && name.length > 0 ? name : "/";
 }
 
+/**
+ * A path as a person writes it: under their home directory, `~`.
+ *
+ * It is a rendering and never an identity. The canonical root is what tells two
+ * Workspaces apart, what keys a session, what git is run in and what the CLI is
+ * given; this is what a row shows a person who already knows where they live.
+ * Nothing reads it back — there is no inverse here — because a `~` that came
+ * back the other way would be this machine's home standing in for whichever
+ * machine's home wrote it.
+ *
+ * Which home, is the whole reason this takes one rather than reading it. A
+ * Workspace on another machine has its folder under *that* machine's home, and
+ * a NAS whose `$HOME` is `/volume1/home/x` shares no prefix with this Mac's.
+ * So the caller — main, which is the only thing that can ask a machine anything
+ * — says whose home it is, and a page never guesses.
+ *
+ * `/` is not a home. A machine that answered it would otherwise turn every
+ * absolute path on it into `~`-something, which is the one wrong answer that
+ * looks like a right one.
+ */
+export function abbreviateHome(path: string, home: string | undefined): string {
+  if (home === undefined || home === "/" || !home.startsWith("/")) return path;
+  const trimmed = home.endsWith("/") ? home.slice(0, -1) : home;
+  if (path === trimmed) return "~";
+  return path.startsWith(`${trimmed}/`)
+    ? `~${path.slice(trimmed.length)}`
+    : path;
+}
+
 /** Parent directory names, nearest first — the disambiguation source. */
 export function rootParentComponents(root: WorkspaceRoot): string[] {
   return root.split("/").filter(Boolean).slice(0, -1).reverse();

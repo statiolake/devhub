@@ -88,14 +88,19 @@ function snapshotOf(workspaces: readonly WorkspaceSnapshot[]): AppSnapshot {
 }
 
 function projectWorkspace(state: WorkspaceState) {
-  return snapshotWire(snapshotOf([workspace(state)]), "ready", () => undefined)
-    .workspaces[0]!.state;
+  return snapshotWire(
+    snapshotOf([workspace(state)]),
+    "ready",
+    () => undefined,
+    () => undefined,
+  ).workspaces[0]!.state;
 }
 
 function projectClose(close: WorkspaceClose) {
   return snapshotWire(
     snapshotOf([{ ...workspace({ kind: "available" }), close }]),
     "ready",
+    () => undefined,
     () => undefined,
   ).workspaces[0]!.close;
 }
@@ -104,6 +109,7 @@ function projectControl(state: AgentControlState) {
   return snapshotWire(
     snapshotOf([workspace({ kind: "available" }, [agent(state)])]),
     "ready",
+    () => undefined,
     () => undefined,
   ).workspaces[0]!.agents[0]!.controlState;
 }
@@ -174,6 +180,7 @@ describe("a Workspace's close across the wire", () => {
       ]),
       "ready",
       () => undefined,
+      () => undefined,
     ).workspaces[0]!;
     expect(projected.state).toEqual({
       kind: "unavailable",
@@ -238,6 +245,7 @@ describe("the order the projection puts the rows in", () => {
       } as unknown as AppSnapshot,
       "ready",
       (id) => (id === A || id === W ? "/a" : undefined),
+      () => undefined,
     ).workspaces;
 
   it("says which group each row is in, so nobody has to work it out twice", () => {
@@ -254,5 +262,69 @@ describe("the order the projection puts the rows in", () => {
       "alpha",
       "alpha_wt",
     ]);
+  });
+});
+
+/**
+ * A path written the way the person whose folder it is writes it.
+ *
+ * `~` is not a fact about a path, it is a fact about a path *and a machine*.
+ * The page has no home directory it could use — and the one it could reach for
+ * would be this Mac's, which is right about local rows and quietly wrong about
+ * every row on a host. So the projection is told whose home to use, per machine,
+ * and `root` crosses unchanged beside it for everything that is not reading.
+ */
+describe("the path a row shows", () => {
+  const HOME = "/Users/example";
+  const REMOTE_HOME = "/volume1/home/example";
+
+  function rowAt(
+    root: string,
+    location: unknown,
+    home: (id: string) => string,
+  ) {
+    const one = {
+      ...workspace({ kind: "available" }),
+      root,
+      key: root,
+      location,
+    } as unknown as WorkspaceSnapshot;
+    return snapshotWire(
+      snapshotOf([one]),
+      "ready",
+      () => undefined,
+      (at) => home(at.kind === "ssh" ? at.host : "local"),
+    ).workspaces[0]!;
+  }
+
+  const local = { kind: "local", path: "/x" };
+  const nas = { kind: "ssh", host: "nas", path: "/x" };
+
+  it("abbreviates a folder under this machine's home", () => {
+    const row = rowAt(`${HOME}/projects/x`, local, () => HOME);
+    expect(row.displayRoot).toBe("~/projects/x");
+    // And the canonical root is untouched: it is what identifies the Workspace,
+    // keys its sessions, is handed to git and is printed by the CLI.
+    expect(row.root).toBe(`${HOME}/projects/x`);
+  });
+
+  it("leaves a folder that is not under it alone", () => {
+    const row = rowAt("/srv/api", local, () => HOME);
+    expect(row.displayRoot).toBe("/srv/api");
+  });
+
+  it("uses the remote machine's home for a remote folder", () => {
+    // The whole point. This Mac's home is no prefix of a NAS's, so a page doing
+    // this for itself would show the full path here and think it was right.
+    const row = rowAt(`${REMOTE_HOME}/api`, nas, (id) =>
+      id === "nas" ? REMOTE_HOME : HOME,
+    );
+    expect(row.displayRoot).toBe("~/api");
+  });
+
+  it("shows the true path until the machine has answered", () => {
+    // A host DevHub has not reached yet. Longer, never wrong.
+    const row = rowAt(`${REMOTE_HOME}/api`, nas, () => "");
+    expect(row.displayRoot).toBe(`${REMOTE_HOME}/api`);
   });
 });

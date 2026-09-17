@@ -36,6 +36,7 @@ function snapshotWith(failure: AgentFailureStateWire | undefined): AppSnapshot {
         id: "workspace-1",
         label: "example",
         root: "/example",
+        displayRoot: "/example",
         state: { kind: "available" },
         close: { kind: "idle" },
         agents: [

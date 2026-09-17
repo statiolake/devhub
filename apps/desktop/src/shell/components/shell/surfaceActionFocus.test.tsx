@@ -33,6 +33,7 @@ function unavailable(): WorkspaceSnapshot {
     id: "workspace-1",
     label: "example",
     root: "/example",
+    displayRoot: "/example",
     state: { kind: "unavailable", reason: "close_root_missing" },
     close: { kind: "idle" },
     agents: [],

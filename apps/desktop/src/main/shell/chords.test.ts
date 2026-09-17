@@ -75,6 +75,7 @@ function workspace(
 		label: id,
 		location: { kind: "local" },
 		root: `/workspaces/${id}`,
+		displayRoot: `/workspaces/${id}`,
 		key: `/workspaces/${id}`,
 		groupKey: `/workspaces/${id}`,
 		selectedPath: `/workspaces/${id}`,
@@ -898,8 +899,11 @@ describe("the order every cycle walks", () => {
 			[ZEBRA_WT, "/src/zebra"],
 			[ALPHA, "/src/alpha"],
 		]);
-		return snapshotWire(model.snapshot(), "ready", (workspace) =>
-			repositories.get(workspaceId(workspace)),
+		return snapshotWire(
+			model.snapshot(),
+			"ready",
+			(workspace) => repositories.get(workspaceId(workspace)),
+			() => undefined,
 		);
 	}
 

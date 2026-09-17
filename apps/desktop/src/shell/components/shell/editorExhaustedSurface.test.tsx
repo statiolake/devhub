@@ -23,6 +23,7 @@ function gaveUp(): WorkspaceSnapshot {
     id: "workspace-1",
     label: "example",
     root: "/example",
+    displayRoot: "/example",
     state: { kind: "unavailable", reason: "editor_restart_exhausted" },
     close: { kind: "idle" },
     agents: [],
