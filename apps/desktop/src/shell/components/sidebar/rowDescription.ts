@@ -449,3 +449,38 @@ export function agentRowDescription(
 ): string {
   return describe(agentRowFacts(agent, owner));
 }
+
+/**
+ * The one fact an Agent's tooltip is: its mark, and what the row leads with.
+ *
+ * A Workspace's tooltip is a list because a Workspace *has* a list of facts a
+ * person cannot see on the row — the path, the branch, the Issue, the machine.
+ * An Agent has none of that. Its tooltip drew the status in words beside the
+ * mark that already says it, the note the row already draws, and the Workspace
+ * whose row is directly above it, which between them made four lines out of a
+ * row that has one thing to tell you: which Agent this is and what it is
+ * doing. On the rail, where the tooltip is the only way to ask, the answer is
+ * the row's own leading text — so that is the answer, behind the row's own
+ * mark, and nothing else.
+ *
+ * The mark and its tone are the row's, taken from the same place
+ * `agentRowFacts` takes them, so the box and the row cannot disagree about
+ * what colour this Agent is. The text is the row's leading rule from
+ * `Sidebar.tsx`: what it says it is doing, or its name when it has not said
+ * anything yet.
+ *
+ * The spoken sentence is *not* cut down with it. A reader has no mark to look
+ * at and no row to glance at either, so `agentRowFacts` stays as it was and
+ * remains what the row's `aria-label` is composed from — the same facts, in
+ * the form the reader who needs them can receive.
+ */
+export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
+  const unread = unreadShows(agent.status, agent.unread);
+  return [
+    {
+      icon: unread ? "statusUnread" : STATUS_GLYPH[agent.status],
+      text: agent.activity ?? agent.displayName,
+      tone: agent.unread !== undefined && unread ? agent.unread : agent.status,
+    },
+  ];
+}

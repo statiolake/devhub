@@ -32,6 +32,7 @@ import { useReorder, type Reorder } from "./useReorder";
 import {
   agentNote,
   agentRowFacts,
+  agentTooltipFacts,
   issueLabel,
   issueMark,
   pullRequestLabel,
@@ -418,13 +419,14 @@ function WorkspaceRow({
                       tabIndex={agentSelected ? 0 : -1}
                       aria-current={agentSelected ? "page" : undefined}
                       aria-label={agentDescription}
-                      // The same sentence, for the rail — where the words are
-                      // off and the pointer is the only way to ask which Agent
-                      // this is. It is the accessible name and not a shorter
-                      // version of it: a rail is the sighted reader's turn at
-                      // being told rather than shown.
+                      // The one fact, for the rail — where the words are off
+                      // and the pointer is the only way to ask which Agent
+                      // this is. Not the accessible name: a reader has no mark
+                      // to look at and is told the status in words, and a
+                      // person looking at the box can see the mark and the row
+                      // it belongs to. See `agentTooltipFacts`.
                       data-tooltip-lines={JSON.stringify(
-                        tooltipLines(agentFacts),
+                        tooltipLines(agentTooltipFacts(agent)),
                       )}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a

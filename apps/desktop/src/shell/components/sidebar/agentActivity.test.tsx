@@ -223,6 +223,67 @@ describe("what an Agent's row leads with", () => {
   });
 });
 
+/** The lines the Agent row hands the tooltip page. */
+function agentTooltip(): unknown {
+  return JSON.parse(
+    document
+      .querySelector(".agent-row .sidebar-context-button")
+      ?.getAttribute("data-tooltip-lines") ?? "[]",
+  );
+}
+
+/**
+ * An Agent's tooltip is one line, where a Workspace's is a list.
+ *
+ * A Workspace has facts a person cannot see on the row — the path, the branch,
+ * the Issue. An Agent has none: the status is the mark, the note is drawn on
+ * the row, and the Workspace is the row directly above it. What the box is for
+ * is the one thing the rail cuts off, which is the row's own leading text.
+ */
+describe("what an Agent's tooltip says", () => {
+  it("is the row's mark and the row's leading text, and nothing else", () => {
+    mount("Reading the reconciler");
+    expect(agentTooltip()).toEqual([
+      {
+        icon: "statusWorking",
+        text: "Reading the reconciler",
+        tone: "working",
+      },
+    ]);
+  });
+
+  it("falls back to the Agent's name the way the row does", () => {
+    mountNamed("Claude 1", undefined, "idle");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusIdle", text: "Claude 1", tone: "idle" },
+    ]);
+  });
+
+  /** The unread mark is the row's mark, so it is the tooltip's mark too. */
+  it("wears the unread mark and its colour when the row does", () => {
+    mountIdle("waiting");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusUnread", text: "Claude 1", tone: "waiting" },
+    ]);
+  });
+
+  /**
+   * And the reader keeps everything. The box is cut down because the person
+   * reading it can see the mark and the row; a screen reader can see neither,
+   * so the accessible name is still the whole list of facts in words.
+   */
+  it("leaves the row's accessible name whole", () => {
+    mountNamed("Claude 1", "Reading the reconciler", "waiting");
+    const name =
+      document
+        .querySelector(".agent-row .sidebar-context-button")
+        ?.getAttribute("aria-label") ?? "";
+    expect(name).toContain("Claude 1");
+    expect(name).toContain("Waiting agent");
+    expect(name).toContain("Reading the reconciler");
+  });
+});
+
 /**
  * Where an Agent's mark is: a gutter at the row's leading edge, before any
  * depth, so that every Agent's status is at the same x whatever its row is
