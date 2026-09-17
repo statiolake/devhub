@@ -46,9 +46,7 @@
  * region declared inside a child view composes into one handle.
  */
 
-import { SidebarProvider } from "./SidebarContext";
-import { devhub } from "./client";
-import { useSidebar } from "./SidebarContext";
+import { SidebarProvider, useSidebar } from "./SidebarContext";
 import { Sidebar } from "../components/sidebar/Sidebar";
 import type { AppIntent } from "../../ipc/appShell";
 
@@ -70,10 +68,22 @@ export function SidebarApp() {
  * drawing the chrome.
  */
 function Column() {
-  const { state, appearance } = useSidebar();
+  /**
+   * `dispatch` is the provider's, not the bridge's.
+   *
+   * An intent has an outcome, and the three things that can come back — a
+   * snapshot to apply, a question to put on the modal layer, a failure to hand
+   * to main — are decided in one place, which is this page's model client
+   * (`useProjection`). Reaching past it for `devhub().dispatch` throws all
+   * three away silently: a stop of a busy Agent is answered with
+   * `confirmation_required`, and dropping that left main holding a one-shot
+   * confirmation nobody was ever asked, so the row's button did nothing and
+   * said nothing. See `sidebarConfirmation.test.tsx`.
+   */
+  const { state, appearance, dispatch } = useSidebar();
   if (state.status !== "ready") return null;
   const onDispatch = (intent: AppIntent) => {
-    void devhub().dispatch(intent);
+    void dispatch(intent);
   };
   return (
     // `app-shell` because that is the selector `tokens.css` hangs the two
