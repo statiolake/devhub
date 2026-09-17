@@ -131,8 +131,21 @@ import {
  * has always been the order; arranging Agents moves them in that array, and a
  * file from before this existed loads as the order they were created in, which
  * is what it has always meant.
+ *
+ * Version 8 is the dev container location: a third `kind` on
+ * `WorkspaceLocationRecord`, carrying the host folder and, when one was
+ * chosen, the `devcontainer.json`. Nothing in a version-7 file changes meaning
+ * and there is no migration to run — a file written before this has no
+ * Workspace of that kind, and every record in it decodes exactly as it did.
+ *
+ * It is a bump anyway, and that is the point of one: without it a version-7
+ * DevHub opening a file that *does* have a container Workspace would meet a
+ * `kind` its decoder does not know and call the whole document corrupt — a
+ * sentence that sends somebody looking for a damaged file. With it, the same
+ * DevHub reads the number, says the file is from a newer DevHub, and leaves it
+ * alone.
  */
-export const STATE_SCHEMA_VERSION = 7;
+export const STATE_SCHEMA_VERSION = 8;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -383,7 +396,19 @@ export interface AgentStateRecord {
  */
 export type WorkspaceLocationRecord =
   | { kind: "local" }
-  | { kind: "ssh"; host: string };
+  | { kind: "ssh"; host: string }
+  | {
+      kind: "container";
+      /**
+       * The folder on this Mac. This is the Workspace's identity, so it is the
+       * field the duplicate check is made on — `canonical_path` for one of
+       * these is the path *inside* the container, and two different host
+       * folders can easily mount at the same one.
+       */
+      workspace_folder: string;
+      /** Only when the person opened a definition other than the default. */
+      config_path?: string;
+    };
 
 export interface WorkspaceStateRecord {
   workspace_id: string;
@@ -742,6 +767,59 @@ function validateAgentRecord(where: string, record: AgentStateRecord): void {
   }
 }
 
+/**
+ * The same identity `locationKey` gives a Workspace, computed on the record.
+ *
+ * It is a separate function from `locationKey` because it works on the file's
+ * spelling rather than the model's, and it is one function rather than an
+ * expression at the call site because the identity of a dev container
+ * Workspace is *not* its `canonical_path`: that is the path inside the
+ * container, and two different host folders mount at `/workspaces/repo` as
+ * readily as not. The host folder is what makes it that Workspace.
+ */
+/**
+ * The place a record names, in the vocabulary the domain constructs from.
+ *
+ * The inverse of `locationRecord`, and here beside the duplicate check for the
+ * same reason: `canonical_path` means a different thing for a dev container
+ * than for the other two — the path inside it — and the field that says which
+ * machine is `workspace_folder`. A file with no `location` at all is a
+ * version-4 file, where every Workspace was a folder on this machine.
+ */
+function locationFromRecord(
+  record: WorkspaceStateRecord,
+): Parameters<typeof workspaceLocation>[0] {
+  const location = record.location;
+  switch (location?.kind) {
+    case "ssh":
+      return {
+        kind: "ssh",
+        host: location.host,
+        path: record.canonical_path,
+      };
+    case "container":
+      return {
+        kind: "container",
+        workspaceFolder: location.workspace_folder,
+        ...(location.config_path === undefined
+          ? {}
+          : { configPath: location.config_path }),
+        path: record.canonical_path,
+      };
+    default:
+      return { kind: "local", path: record.canonical_path };
+  }
+}
+
+function workspaceRecordKey(record: WorkspaceStateRecord): string {
+  const location = record.location;
+  if (location?.kind === "container") {
+    return `dev-container\u0000${normalizePathString(location.workspace_folder)}`;
+  }
+  const host = location?.kind === "ssh" ? location.host : "";
+  return `${host}\u0000${normalizePathString(record.canonical_path)}`;
+}
+
 function validateWorkspaceRecord(
   where: string,
   record: WorkspaceStateRecord,
@@ -760,6 +838,21 @@ function validateWorkspaceRecord(
     refuseRecord(`workspace ${record.workspace_id}'s host`, () =>
       sshHost(record.location?.kind === "ssh" ? record.location.host : ""),
     );
+  }
+  if (record.location?.kind === "container") {
+    // The host folder is this Workspace's identity, so a file that has lost it
+    // — or had it hand-edited into something relative — is refused here rather
+    // than producing a Workspace keyed on nothing.
+    validateAbsolutePath(
+      `${where}.location.workspace_folder`,
+      record.location.workspace_folder,
+    );
+    if (record.location.config_path !== undefined) {
+      validateAbsolutePath(
+        `${where}.location.config_path`,
+        record.location.config_path,
+      );
+    }
   }
   if (record.repository_id !== undefined) {
     validateUuid(`${where}.repository_id`, record.repository_id);
@@ -950,7 +1043,7 @@ export function validateState(state: PersistedAppState): void {
     validateWorkspaceRecord(`workspaces[${index}]`, workspace);
     // The same identity the model enforces: the place, machine included. Two
     // hosts' `/src/api` are two Workspaces and must both survive a reload.
-    const key = `${workspace.location?.kind === "ssh" ? workspace.location.host : ""}\u0000${normalizePathString(workspace.canonical_path)}`;
+    const key = workspaceRecordKey(workspace);
     if (workspaceIds.has(workspace.workspace_id) || locations.has(key)) {
       fail("STATE_INVALID");
     }
@@ -1106,13 +1199,7 @@ export function hydrateModel(
     const { id, location, selected } = refuseRecord(where, () => ({
       id: parseWorkspaceId(record.workspace_id),
       location: workspaceLocation(
-        record.location?.kind === "ssh"
-          ? {
-              kind: "ssh",
-              host: record.location.host,
-              path: record.canonical_path,
-            }
-          : { kind: "local", path: record.canonical_path },
+        locationFromRecord(record),
       ),
       selected: displayPath(record.selected_path),
     }));
@@ -1548,7 +1635,7 @@ const LIFECYCLE_KINDS = [
   "closing",
   "closing_failed",
 ] as const;
-const WORKSPACE_LOCATION_KINDS = ["local", "ssh"] as const;
+const WORKSPACE_LOCATION_KINDS = ["local", "ssh", "container"] as const;
 const NAVIGATION_KINDS = ["global", "workspace", "agent"] as const;
 const OWNED_SESSION_KINDS = ["scratch", "workspace"] as const;
 const CLEANUP_SESSION_STATUSES = [
@@ -1593,6 +1680,14 @@ function locationRecord(location: WorkspaceLocation): WorkspaceLocationRecord {
       return { kind: "local" };
     case "ssh":
       return { kind: "ssh", host: location.host };
+    case "container":
+      return {
+        kind: "container",
+        workspace_folder: location.workspaceFolder,
+        ...(location.configPath === undefined
+          ? {}
+          : { config_path: location.configPath }),
+      };
   }
 }
 
@@ -1606,9 +1701,28 @@ function decodeWorkspaceLocation(
     object["kind"],
     WORKSPACE_LOCATION_KINDS,
   );
-  return kind === "local"
-    ? { kind }
-    : { kind, host: decodeString(`${where}.host`, object["host"]) };
+  switch (kind) {
+    case "local":
+      return { kind };
+    case "ssh":
+      return { kind, host: decodeString(`${where}.host`, object["host"]) };
+    case "container":
+      return {
+        kind,
+        workspace_folder: decodeString(
+          `${where}.workspace_folder`,
+          object["workspace_folder"],
+        ),
+        ...(object["config_path"] === undefined
+          ? {}
+          : {
+              config_path: decodeString(
+                `${where}.config_path`,
+                object["config_path"],
+              ),
+            }),
+      };
+  }
 }
 
 function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {

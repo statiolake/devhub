@@ -20,6 +20,8 @@
  */
 
 import {
+	decodeContainerAuthority,
+	DEV_CONTAINER_PREFIX,
 	workspaceLocation,
 	type WorkspaceLocation,
 } from "../../model/domain.js";
@@ -58,12 +60,26 @@ export function locationFromWorkspaceUri(
 		return tryLocation({ kind: "local", path: uri.fsPath });
 	}
 	if (uri.scheme !== "vscode-remote") return undefined;
-	if (!uri.authority.startsWith(SSH_REMOTE_PREFIX)) return undefined;
-	return tryLocation({
-		kind: "ssh",
-		host: uri.authority.slice(SSH_REMOTE_PREFIX.length),
-		path: uri.path,
-	});
+	if (uri.authority.startsWith(SSH_REMOTE_PREFIX)) {
+		return tryLocation({
+			kind: "ssh",
+			host: uri.authority.slice(SSH_REMOTE_PREFIX.length),
+			path: uri.path,
+		});
+	}
+	if (uri.authority.startsWith(DEV_CONTAINER_PREFIX)) {
+		// Both halves of the place are in the URI and neither is redundant: the
+		// authority says which folder on this Mac, the path says where it is
+		// mounted in there. `configPath` is in neither, and deliberately — it is
+		// not part of the identity, so a window matched back to its Workspace by
+		// `locationKey` matches whether or not one was set.
+		const workspaceFolder = decodeContainerAuthority(
+			uri.authority.slice(DEV_CONTAINER_PREFIX.length),
+		);
+		if (workspaceFolder === undefined) return undefined;
+		return tryLocation({ kind: "container", workspaceFolder, path: uri.path });
+	}
+	return undefined;
 }
 
 /**
@@ -85,6 +101,7 @@ function tryLocation(
  * The Scratch editor's key.
  *
  * Empty, because Scratch has no folder and never had one; `locationKey` starts
- * every real key with `/` or `ssh://`, so nothing can collide with it.
+ * every real key with `/`, `ssh://` or `dev-container://`, so nothing can
+ * collide with it.
  */
 export const SCRATCH_EDITOR_KEY = "";

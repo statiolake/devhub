@@ -217,14 +217,40 @@ export function sshHost(raw: string): SshHost {
  * into — is asked of the key instead, and gets the same answer as before for a
  * local folder because a local folder's key *is* its path.
  *
- * There is no third kind planned and no `kind: "unknown"`. Phase 2 puts Agents
- * and git on the far end of an ssh location; it does not add a location.
+ * There is a third kind, and it is the last one this shape can absorb without
+ * a rethink: a Dev Container. It is not "ssh with a different transport" — the
+ * folder is on *this* machine and bind-mounted into a container, so the place
+ * has two paths in it, the one here and the one in there, and neither is
+ * redundant. `path` is the path a workbench opens, inside the container;
+ * `workspaceFolder` is the folder on this Mac that holds the `.devcontainer/`
+ * and that git runs in. Identity is the host folder, because a container is
+ * rebuilt routinely and a Workspace must survive that — see `locationKey`.
+ *
+ * There is still no `kind: "unknown"`.
  */
 export type WorkspaceLocation =
   | { readonly kind: "local"; readonly path: WorkspaceRoot }
   | {
       readonly kind: "ssh";
       readonly host: SshHost;
+      readonly path: WorkspaceRoot;
+    }
+  | {
+      readonly kind: "container";
+      /**
+       * The folder on this Mac that holds the dev container definition, and
+       * that is bind-mounted into it. This is the Workspace's identity.
+       */
+      readonly workspaceFolder: WorkspaceRoot;
+      /**
+       * The `devcontainer.json` this folder was opened with, when it is not the
+       * one the CLI would find by itself. Carried so that a folder with more
+       * than one definition opens the same one twice running; deliberately
+       * *not* part of the identity or the authority, so that the key a window
+       * is filed under does not change when it is set.
+       */
+      readonly configPath?: string;
+      /** Where the folder is mounted inside the container. */
       readonly path: WorkspaceRoot;
     };
 
@@ -241,12 +267,33 @@ export type WorkspaceLocation =
  * off. `main/runtime/runtime.ts` re-exports it, beside the implementations
  * that answer for a machine.
  */
-export type RuntimeId = "local" | `ssh:${string}`;
+export type RuntimeId = "local" | `ssh:${string}` | `container:${string}`;
+
+/**
+ * The machine a dev container Workspace's folder is on, as an id.
+ *
+ * Keyed on the **host folder** and not on the container id, for the reason
+ * `locationKey` is: `devcontainer up` after an image change hands back a new
+ * container, and a machine id that carried the old one would make the rebuilt
+ * container a different machine — a second runtime, a second tmux install, a
+ * second everything, while the first went on being cached under a name nothing
+ * would ever ask for again. The runtime behind this id is what notices the
+ * container changed underneath it, and it is disposed and rebuilt when it does.
+ */
+export function containerMachine(workspaceFolder: WorkspaceRoot): RuntimeId {
+  return `container:${workspaceFolder}`;
+}
 
 /** What a caller says about a place, before any of it has been validated. */
 export type RequestedLocation =
   | { readonly kind: "local"; readonly path: string }
-  | { readonly kind: "ssh"; readonly host: string; readonly path: string };
+  | { readonly kind: "ssh"; readonly host: string; readonly path: string }
+  | {
+      readonly kind: "container";
+      readonly workspaceFolder: string;
+      readonly configPath?: string;
+      readonly path: string;
+    };
 
 /**
  * The one way a `WorkspaceLocation` is made.
@@ -268,6 +315,96 @@ export function workspaceLocation(
         host: sshHost(requested.host),
         path: workspaceRoot(requested.path),
       };
+    case "container":
+      return {
+        kind: "container",
+        workspaceFolder: workspaceRoot(requested.workspaceFolder),
+        // Absent rather than empty when there is nothing to say: a
+        // `configPath: ""` would be a second spelling of "the CLI decides",
+        // and two spellings of one fact are two things to compare against.
+        ...(requested.configPath === undefined || requested.configPath === ""
+          ? {}
+          : { configPath: requested.configPath }),
+        path: workspaceRoot(requested.path),
+      };
+  }
+}
+
+/**
+ * The same machine, a different folder on it.
+ *
+ * Re-pointing a Workspace at another folder cannot move it to another
+ * computer, so every field that says *which machine* is carried over and only
+ * the path changes. It is a switch here rather than a ternary at the call site
+ * because "which machine" is one field for ssh and two for a container, and a
+ * call site that spelled that itself is a call site that would keep compiling
+ * while quietly dropping one of them.
+ */
+export function relocatedOnSameMachine(
+  location: WorkspaceLocation,
+  path: string,
+): RequestedLocation {
+  switch (location.kind) {
+    case "local":
+      return { kind: "local", path };
+    case "ssh":
+      return { kind: "ssh", host: location.host, path };
+    case "container":
+      return {
+        kind: "container",
+        workspaceFolder: location.workspaceFolder,
+        ...(location.configPath === undefined
+          ? {}
+          : { configPath: location.configPath }),
+        path,
+      };
+  }
+}
+
+/**
+ * Where git can run: this Mac, or a host. Never a container — that is the
+ * invariant `gitPlaceOf` enforces, stated as a type so that a caller which
+ * one day forwards a container place to git does not compile rather than
+ * quietly running `git` where no `.git` may be.
+ */
+/**
+ * Where this Workspace's git runs, which is not always where its terminals do.
+ *
+ * For a folder on this Mac and a folder on a host these are the same place and
+ * always were, which is why there was no such function. A dev container is the
+ * first location where they part: the folder is bind-mounted, so it exists on
+ * both sides, and the two candidates are not equivalent.
+ *
+ * **Git runs on this Mac.** Three reasons, in order. Watching a directory here
+ * is a real `fs.watch`, not the `cksum`-over-`refs` polling a far machine has
+ * to be asked for — a fidelity win, not a cost one. A Workspace's branch,
+ * worktrees and pull request rows are DevHub's own panel, and a container that
+ * is stopped would otherwise take all of it with it, when a stopped container
+ * is meant to be a state and not a failure. And the container may not have
+ * been built yet when the row is first drawn.
+ *
+ * Terminals and Agents go the other way — into the container, unconditionally.
+ * That is the whole point of a dev container, and it is what "an Agent launches
+ * on its Workspace's machine" has always meant.
+ *
+ * The rule holds with no probe because of where these locations come from:
+ * DevHub makes one out of a folder on this Mac, so the host folder is a path
+ * that exists here by construction. A `devcontainer.json` that clones into a
+ * volume instead of bind-mounting is not something DevHub offers to open, and
+ * if it ever is, this is the one function that has to learn about it.
+ */
+export type GitPlace =
+  | { readonly kind: "local"; readonly path: string }
+  | { readonly kind: "ssh"; readonly host: string; readonly path: string };
+
+export function gitPlaceOf(location: WorkspaceLocation): GitPlace {
+  switch (location.kind) {
+    case "local":
+      return { kind: "local", path: location.path };
+    case "ssh":
+      return { kind: "ssh", host: location.host, path: location.path };
+    case "container":
+      return { kind: "local", path: location.workspaceFolder };
   }
 }
 
@@ -284,6 +421,14 @@ export function locationKey(location: WorkspaceLocation): string {
       return location.path;
     case "ssh":
       return `ssh://${location.host}${location.path}`;
+    // The folder on this Mac, not the container and not the path inside it.
+    // A dev container is rebuilt whenever its image changes — that is the
+    // point of one — and a key that moved with it would make every rebuild a
+    // brand-new Workspace, losing the row, its Agents and its history to an
+    // event the person thinks of as a refresh. The host folder is the thing
+    // that does not move.
+    case "container":
+      return `dev-container://${location.workspaceFolder}`;
   }
 }
 
@@ -300,6 +445,11 @@ export function locationLabel(location: WorkspaceLocation): string {
       return location.path;
     case "ssh":
       return `${location.host}:${location.path}`;
+    // The host folder, which is the name the person chose and the one they
+    // will recognise; the path inside the container is an implementation of
+    // the mount and says nothing they picked.
+    case "container":
+      return `${location.workspaceFolder} (dev container)`;
   }
 }
 
@@ -320,6 +470,75 @@ export function remoteAuthorityOf(
       return undefined;
     case "ssh":
       return `ssh-remote+${location.host}`;
+    case "container":
+      return `${DEV_CONTAINER_PREFIX}${encodeContainerAuthority(location.workspaceFolder)}`;
+  }
+}
+
+/**
+ * The authority prefix DevHub's own resolver registers for dev containers.
+ *
+ * Declared three times and they have to agree: here, the extension's
+ * `onResolveRemoteAuthority:dev-container`, and its resource label formatter.
+ * If they drift the window opens on an authority nobody resolves and sits on
+ * "Opening Remote…" forever, which is the failure with no message.
+ *
+ * `dev-container` is the name Microsoft's closed extension uses, and DevHub
+ * uses it too. Not for compatibility — nothing is exchanged with it, and the
+ * hex payload below is DevHub's own shape — but because it is the name that
+ * appears in a person's window title and in every piece of writing about dev
+ * containers there is, and inventing a second word for the same idea would
+ * only mean explaining which one this is.
+ */
+export const DEV_CONTAINER_PREFIX = "dev-container+";
+
+/**
+ * The host folder, carried in the authority.
+ *
+ * Hex of JSON, which is the shape the ecosystem already writes, and it holds
+ * the host folder and nothing else. Not the container id: the authority is a
+ * window's identity and a rebuilt container must not change it. Not
+ * `configPath` either — it is not part of `locationKey`, so an authority that
+ * carried it would be a second identity for one Workspace, and the two would
+ * disagree the moment somebody set it.
+ *
+ * Hex rather than base64url because a URI authority is case-insensitive in
+ * some hands and base64 is not, and a payload that survived being lowercased
+ * is a payload that cannot be corrupted by one.
+ */
+export function encodeContainerAuthority(workspaceFolder: string): string {
+  const json = JSON.stringify({ hostPath: workspaceFolder });
+  let hex = "";
+  for (const byte of new TextEncoder().encode(json)) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+/**
+ * The inverse, or `undefined` for a payload this DevHub did not write.
+ *
+ * Undefined rather than a throw: the authority arrives from a URI VS Code
+ * handed over, which is not a value DevHub validated, and a window on an
+ * authority that does not decode is a window DevHub has no Workspace for —
+ * the same answer as a window on somebody else's authority.
+ */
+export function decodeContainerAuthority(payload: string): string | undefined {
+  if (payload.length === 0 || payload.length % 2 !== 0) return undefined;
+  if (!/^[0-9a-fA-F]+$/.test(payload)) return undefined;
+  const bytes = new Uint8Array(payload.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = Number.parseInt(payload.slice(i * 2, i * 2 + 2), 16);
+  }
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const hostPath = (parsed as { hostPath?: unknown }).hostPath;
+    return typeof hostPath === "string" && hostPath.length > 0
+      ? hostPath
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

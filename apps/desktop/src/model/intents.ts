@@ -27,6 +27,7 @@ import type {
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
+  RequestedLocation,
   RuntimeId,
   SshHost,
   WorkspaceId,
@@ -215,7 +216,7 @@ export function requestedPath(raw: string): RequestedPath {
 /**
  * Where a caller asked DevHub to open, before anything has resolved it.
  *
- * The same two kinds as `WorkspaceLocation` and deliberately not that type: a
+ * The same kinds as `WorkspaceLocation` and deliberately not that type: a
  * request is what somebody typed, and a location is what survived being
  * checked. Only a resolver completion may make the second out of the first.
  */
@@ -225,13 +226,17 @@ export type RequestedWorkspaceLocation =
       readonly kind: "ssh";
       readonly host: SshHost;
       readonly path: RequestedPath;
+    }
+  | {
+      readonly kind: "container";
+      readonly workspaceFolder: RequestedPath;
+      readonly configPath?: string;
+      readonly path: RequestedPath;
     };
 
 /** The one way a `RequestedWorkspaceLocation` is made. See `workspaceLocation`. */
 export function requestedLocation(
-  requested:
-    | { readonly kind: "local"; readonly path: string }
-    | { readonly kind: "ssh"; readonly host: string; readonly path: string },
+  requested: RequestedLocation,
 ): RequestedWorkspaceLocation {
   switch (requested.kind) {
     case "local":
@@ -242,6 +247,60 @@ export function requestedLocation(
         host: sshHost(requested.host),
         path: requestedPath(requested.path),
       };
+    case "container":
+      return {
+        kind: "container",
+        workspaceFolder: requestedPath(requested.workspaceFolder),
+        ...(requested.configPath === undefined || requested.configPath === ""
+          ? {}
+          : { configPath: requested.configPath }),
+        path: requestedPath(requested.path),
+      };
+  }
+}
+
+/**
+ * The same machine this request named, at a path that has now been resolved.
+ *
+ * The step that resolves a typed path has a request and not a location — that
+ * is the whole reason the request type exists — and what it produces is the
+ * same request with `~/src` replaced by what `realpath` said. It is a function
+ * because "which machine" is one field for a host and two for a container, and
+ * a call site that rebuilt the request by hand would keep compiling while
+ * dropping one of them.
+ */
+export function requestedAtPath(
+  requested: RequestedWorkspaceLocation,
+  path: string,
+): RequestedLocation {
+  switch (requested.kind) {
+    case "local":
+      return { kind: "local", path };
+    case "ssh":
+      return { kind: "ssh", host: requested.host, path };
+    case "container":
+      return {
+        kind: "container",
+        workspaceFolder: requested.workspaceFolder,
+        ...(requested.configPath === undefined
+          ? {}
+          : { configPath: requested.configPath }),
+        path,
+      };
+  }
+}
+
+/** Where a request is, for a sentence: empty when it is this Mac. */
+export function whereRequested(
+  requested: RequestedWorkspaceLocation,
+): string {
+  switch (requested.kind) {
+    case "local":
+      return "";
+    case "ssh":
+      return ` on ${requested.host}`;
+    case "container":
+      return ` in the dev container for ${requested.workspaceFolder}`;
   }
 }
 

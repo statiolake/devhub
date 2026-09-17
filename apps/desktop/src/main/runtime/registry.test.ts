@@ -15,6 +15,7 @@ import {
 	setRuntimeProfile,
 } from "./registry.js";
 import type { RehDelivery } from "./remoteServer.js";
+import type { DevContainerCli, DockerCli } from "./container.js";
 import { tmuxInstallDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
 
 /**
@@ -39,6 +40,21 @@ const NO_REH: RehDelivery = {
 };
 
 /**
+ * A docker and a devcontainer CLI nobody runs, for the same reason: a test
+ * that asked the registry which runtime a location is on must not reach the
+ * daemon on whatever machine happens to be running it.
+ */
+const NO_DOCKER: DockerCli = {
+	path: "/nonexistent/docker",
+	run: () => Promise.reject(new Error("no docker in this test")),
+};
+
+const NO_DEVCONTAINER: DevContainerCli = {
+	path: "/nonexistent/devcontainer",
+	run: () => Promise.reject(new Error("no devcontainer CLI in this test")),
+};
+
+/**
  * Short on purpose: a control socket has to fit in 104 bytes, and macOS puts
  * `TMPDIR` fifty characters deep. Naming the profile's two directories is the
  * point of the seam — a test gets the real arithmetic, not a stub of it.
@@ -52,6 +68,8 @@ beforeAll(async () => {
 		home: homedir(),
 		tmux: NO_TMUX,
 		reh: NO_REH,
+		docker: NO_DOCKER,
+		devcontainer: NO_DEVCONTAINER,
 	});
 });
 afterAll(async () => {
@@ -103,6 +121,8 @@ describe("runtimeFor", () => {
 			home: homedir(),
 			tmux: NO_TMUX,
 			reh: NO_REH,
+			docker: NO_DOCKER,
+			devcontainer: NO_DEVCONTAINER,
 		});
 	});
 
@@ -113,6 +133,8 @@ describe("runtimeFor", () => {
 				home: homedir(),
 				tmux: NO_TMUX,
 				reh: NO_REH,
+				docker: NO_DOCKER,
+				devcontainer: NO_DEVCONTAINER,
 			}),
 		).toThrow(/already been set/u);
 	});

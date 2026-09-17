@@ -19,6 +19,7 @@ import {
   confirmationId,
   intentId,
   operationId,
+  requestedAtPath,
   requestedLocation,
   type IntentOutcome,
   type OperationToken,
@@ -87,13 +88,7 @@ class Driver {
           type: "workspace_path_resolved",
           token: effect.token,
           location: workspaceLocation(
-            effect.location.kind === "local"
-              ? { kind: "local", path: effect.location.path }
-              : {
-                  kind: "ssh",
-                  host: effect.location.host,
-                  path: effect.location.path,
-                },
+            requestedAtPath(effect.location, effect.location.path),
           ),
           selectedPath: displayPath(effect.location.path),
         });

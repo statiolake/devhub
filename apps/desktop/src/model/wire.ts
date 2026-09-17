@@ -261,6 +261,8 @@ function workspaceLocationWire(
       return { kind: "local" };
     case "ssh":
       return { kind: "ssh", host: location.host };
+    case "container":
+      return { kind: "container", workspaceFolder: location.workspaceFolder };
   }
 }
 

@@ -675,7 +675,14 @@ export type WorkspaceCloseWire =
  */
 export type WorkspaceLocationWire =
 	| { readonly kind: "local" }
-	| { readonly kind: "ssh"; readonly host: string };
+	| { readonly kind: "ssh"; readonly host: string }
+	/**
+	 * The folder on this Mac, which is what the row is named by and what the
+	 * container mark's tooltip says. The container id is deliberately not here:
+	 * it changes on every rebuild, and a row that re-rendered because of that
+	 * would be flickering at something the person did not do.
+	 */
+	| { readonly kind: "container"; readonly workspaceFolder: string };
 
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];

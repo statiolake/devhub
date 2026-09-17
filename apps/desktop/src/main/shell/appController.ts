@@ -37,6 +37,9 @@ const devhubProduct = vscodeProduct as unknown as {
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
 	readonly serverDownloadUrlTemplate?: string;
+	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
+	readonly dockerPath?: string;
+	readonly devcontainerPath?: string;
 };
 import { activityCounters } from "../diagnostics/counters.js";
 import {
@@ -123,6 +126,8 @@ import {
 	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
+	gitPlaceOf,
+	relocatedOnSameMachine,
 } from "../../model/domain.js";
 import { SCRATCH_EDITOR_KEY } from "./editorPlace.js";
 import { readSshHosts } from "./sshHosts.js";
@@ -131,7 +136,9 @@ import {
 	type OperationId,
 	confirmationId as parseConfirmationId,
 	intentId as parseIntentId,
+	requestedAtPath,
 	requestedLocation,
+	whereRequested,
 	type RequestedWorkspaceLocation,
 	AppError,
 	AppErrorCode,
@@ -255,6 +262,7 @@ import {
 	liveRuntimes,
 	localRuntime,
 	runtimeById,
+	runtimeForRequested,
 	runtimeFor,
 	runtimeIdFor,
 	runtimeMachine,
@@ -2724,10 +2732,7 @@ export class AppController {
 		// and building a location out of it threw `INVALID_PATH` where nothing
 		// was catching — an open that ended in silence.
 		try {
-			const runtime =
-				requested.kind === "local"
-					? localRuntime()
-					: runtimeById(`ssh:${requested.host}`);
+			const runtime = runtimeForRequested(requested);
 			// `~` is the *far* machine's home for a far place. Expanding it here
 			// would name a folder on this Mac and then ask a host about it.
 			const expanded =
@@ -2743,11 +2748,11 @@ export class AppController {
 			this.accept({
 				type: "workspace_path_resolved",
 				token,
-				location: workspaceLocation(
-					requested.kind === "local"
-						? { kind: "local", path: canonical }
-						: { kind: "ssh", host: requested.host, path: canonical },
-				),
+				// The machine is what `requested` already said; only the path has
+				// changed, from what somebody typed into what it resolved to. A
+				// container keeps its host folder untouched that way, and takes the
+				// canonical path as the one inside.
+				location: workspaceLocation(requestedAtPath(requested, canonical)),
 				selectedPath: displayPath(canonical),
 			});
 		} catch (error) {
@@ -2758,7 +2763,7 @@ export class AppController {
 			this.failOperation(token, {
 				subject: "app",
 				code: "workspace_unavailable",
-				detail: `${path}${requested.kind === "local" ? "" : ` on ${requested.host}`} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+				detail: `${path}${whereRequested(requested)} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
 			});
 		}
 	}
@@ -4293,14 +4298,9 @@ export class AppController {
 	noteLocation(location: WorkspaceLocation): void {
 		this.dispatchOwn({
 			type: "open_folder",
-			location:
-				location.kind === "local"
-					? requestedLocation({ kind: "local", path: location.path })
-					: requestedLocation({
-							kind: "ssh",
-							host: location.host,
-							path: location.path,
-						}),
+			location: requestedLocation(
+				relocatedOnSameMachine(location, location.path),
+			),
 		});
 	}
 
@@ -5625,14 +5625,10 @@ export class AppController {
 						// one used to arrive as a bare path and be read by this Mac's
 						// git, which answered about a directory of the same name here
 						// or about nothing at all.
+						// Where each one's git actually runs — which for a dev
+						// container is the folder on this Mac, not the path inside it.
 						this.coordinator.model.workspaces.map((workspace) =>
-							workspace.location.kind === "local"
-								? { kind: "local" as const, path: workspace.location.path }
-								: {
-										kind: "ssh" as const,
-										host: workspace.location.host,
-										path: workspace.location.path,
-									},
+							gitPlaceOf(workspace.location),
 						),
 						cancel,
 					),
@@ -6026,6 +6022,13 @@ export async function createAppController(
 			urlTemplate: devhubProduct.serverDownloadUrlTemplate ?? "",
 			cacheDirectory: join(userDataPath, "reh"),
 		}),
+		// And which binaries drive a dev container. Named rather than
+		// discovered, and separately, because they are separately absent: a Mac
+		// can have Docker and no `devcontainer` CLI, and the two refusals name
+		// different things to install. A bare name is resolved against `PATH`
+		// by the OS, which is the person's own answer to where they put it.
+		docker: { path: devhubProduct.dockerPath ?? "docker" },
+		devcontainer: { path: devhubProduct.devcontainerPath ?? "devcontainer" },
 	});
 
 	// One switch, resolved once: which DevHub this is, and therefore where its

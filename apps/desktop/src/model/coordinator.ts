@@ -24,6 +24,7 @@ import {
   DomainErrorCode,
   GLOBAL_CONTEXT,
   locationKey,
+  relocatedOnSameMachine,
   Workspace,
   type AgentId,
   type AgentProfile,
@@ -837,9 +838,7 @@ export class AppCoordinator {
       kind: "resolve_workspace_path",
       token,
       location: requestedLocation(
-        workspace.location.kind === "local"
-          ? { kind: "local", path }
-          : { kind: "ssh", host: workspace.location.host, path },
+        relocatedOnSameMachine(workspace.location, path),
       ),
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };

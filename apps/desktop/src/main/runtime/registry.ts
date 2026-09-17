@@ -16,12 +16,19 @@
  */
 
 import {
+	containerMachine,
 	remoteAuthorityOf,
 	sshHost,
 	workspaceRoot,
+	type RequestedLocation,
 	type WorkspaceLocation,
 	type WorkspaceRoot,
 } from "../../model/domain.js";
+import {
+	ContainerRuntime,
+	type DevContainerCli,
+	type DockerCli,
+} from "./container.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
 import type { RehDelivery, RemoteServerHost } from "./remoteServer.js";
@@ -45,6 +52,20 @@ const LOCAL = new LocalRuntime();
  * that reported half the truth twice.
  */
 const SSH = new Map<string, SshRuntime>();
+
+/**
+ * One runtime per dev container Workspace, keyed on the folder on this Mac.
+ *
+ * Keyed on the host folder and not on the container id for the reason
+ * `containerMachine` gives: a rebuild hands back a new container and must not
+ * hand back a new machine. The runtime behind the key is what notices the
+ * container underneath it changed, and `disposeRuntime` is how it is replaced
+ * when it has — every "installed once per machine" cache inside a runtime
+ * (tmux, the launcher, the server) is keyed on the instance, so a rebuilt
+ * container needs a new instance or it will go on believing it installed
+ * things into a filesystem that no longer exists.
+ */
+const CONTAINERS = new Map<string, ContainerRuntime>();
 
 /**
  * Where this DevHub keeps its own files, told rather than discovered.
@@ -85,6 +106,17 @@ export interface RuntimeProfile {
 	 * `main/runtime/` so that nothing under it needs Electron at import time.
 	 */
 	readonly reh: RehDelivery;
+	/**
+	 * How this DevHub runs `docker`, and how it runs `devcontainer`.
+	 *
+	 * On the profile beside `tmux` and `reh` and for the same reason: both are
+	 * one statement of one product fact — which binary this build drives — made
+	 * once, where a test can state a different one. They are separate because
+	 * they are separately absent: a Mac can have Docker and no `devcontainer`
+	 * CLI, and the two refusals name different things to install.
+	 */
+	readonly docker: DockerCli;
+	readonly devcontainer: DevContainerCli;
 }
 
 let profile: RuntimeProfile | undefined;
@@ -112,6 +144,7 @@ export function setRuntimeProfile(next: RuntimeProfile): void {
 export function forgetRuntimeProfile(): void {
 	profile = undefined;
 	SSH.clear();
+	CONTAINERS.clear();
 }
 
 /**
@@ -150,6 +183,51 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 			SSH.set(location.host, runtime);
 			return runtime;
 		}
+		case "container": {
+			const key = location.workspaceFolder;
+			const existing = CONTAINERS.get(key);
+			if (existing) return existing;
+			if (profile === undefined) {
+				throw new Error(
+					"a runtime was asked for before the runtime profile was set",
+				);
+			}
+			const runtime = new ContainerRuntime({
+				workspaceFolder: key,
+				configPath: location.configPath,
+				docker: profile.docker,
+				devcontainer: profile.devcontainer,
+				tmux: profile.tmux,
+			});
+			CONTAINERS.set(key, runtime);
+			return runtime;
+		}
+	}
+}
+
+/**
+ * The runtime a path a person just typed would resolve on.
+ *
+ * The same switch as `runtimeFor`, read on a *request* rather than a location
+ * — because the step that resolves a typed path is the one step where there is
+ * no location yet, and building one out of `~/src` throws before anything can
+ * catch it. It is here rather than at that call site because this file is the
+ * only one that knows how a machine id is spelled.
+ */
+export function runtimeForRequested(requested: {
+	readonly kind: RequestedLocation["kind"];
+	readonly host?: string;
+	readonly workspaceFolder?: string;
+}): Runtime {
+	switch (requested.kind) {
+		case "local":
+			return LOCAL;
+		case "ssh":
+			return runtimeById(`ssh:${requested.host ?? ""}`);
+		case "container":
+			return runtimeById(containerMachine(
+				workspaceRoot(requested.workspaceFolder ?? ""),
+			));
 	}
 }
 
@@ -167,6 +245,8 @@ export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
 			return "local";
 		case "ssh":
 			return `ssh:${location.host}`;
+		case "container":
+			return containerMachine(location.workspaceFolder);
 	}
 }
 
@@ -189,7 +269,13 @@ export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
  * adapter for it is found from that name.
  */
 export function runtimeMachine(raw: string): RuntimeId {
-	if (raw === "local" || raw.startsWith("ssh:")) return raw as RuntimeId;
+	if (
+		raw === "local" ||
+		raw.startsWith("ssh:") ||
+		raw.startsWith("container:")
+	) {
+		return raw as RuntimeId;
+	}
 	throw new Error(`${raw} does not name a machine DevHub knows`);
 }
 
@@ -218,9 +304,18 @@ export function locationOnMachine(
 	id: RuntimeId,
 	path: WorkspaceRoot,
 ): WorkspaceLocation {
-	return id === "local"
-		? { kind: "local", path }
-		: { kind: "ssh", host: sshHost(id.slice("ssh:".length)), path };
+	if (id === "local") return { kind: "local", path };
+	if (id.startsWith("container:")) {
+		// The machine id *is* the host folder, so the location comes back whole
+		// apart from `configPath` — which is not on the id because it is not part
+		// of the identity, and a caller that needs it has the Workspace.
+		return {
+			kind: "container",
+			workspaceFolder: workspaceRoot(id.slice("container:".length)),
+			path,
+		};
+	}
+	return { kind: "ssh", host: sshHost(id.slice("ssh:".length)), path };
 }
 
 /**
@@ -253,6 +348,9 @@ export function remoteServerFor(id: RuntimeId): {
 		);
 	}
 	const runtime = runtimeById(id);
+	if (runtime instanceof ContainerRuntime) {
+		return { host: runtime, delivery: profile.reh };
+	}
 	if (!(runtime instanceof SshRuntime)) {
 		throw new Error(
 			`${id} does not name a machine DevHub can reach a server on`,
@@ -284,6 +382,12 @@ export async function disposeRuntime(id: RuntimeId): Promise<void> {
 		await runtime.dispose();
 		return;
 	}
+	for (const [folder, runtime] of CONTAINERS) {
+		if (runtime.id !== id) continue;
+		CONTAINERS.delete(folder);
+		await runtime.dispose();
+		return;
+	}
 }
 
 /**
@@ -307,5 +411,5 @@ export function localRuntime(): Runtime {
  * order twice running, which is what makes two readings comparable.
  */
 export function liveRuntimes(): readonly Runtime[] {
-	return [LOCAL, ...SSH.values()];
+	return [LOCAL, ...SSH.values(), ...CONTAINERS.values()];
 }
