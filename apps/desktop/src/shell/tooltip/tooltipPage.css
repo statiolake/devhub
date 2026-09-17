@@ -31,7 +31,27 @@ body,
 }
 
 /*
- * One box, sized by its own text.
+ * One box, sized by its own text, and no shadow under it.
+ *
+ * The shadow had to go, and dropping it is the fix rather than a taste. This
+ * view is exactly the box's rectangle — that is the bargain at the top of this
+ * file and in `tooltipSize.ts` — and a shadow is paint *outside* the box: it
+ * filled the four triangles the corner radius cuts away, so every tooltip wore
+ * a faint translucent square at each corner over whatever was behind it.
+ *
+ * There were two ways out and only one of them keeps the bargain. Reporting
+ * the box's size plus the shadow's extent would have made the rectangle bigger
+ * than the box on all four sides, and a `WebContentsView` takes every click
+ * inside its bounds whether or not anything is painted there — so the fix for
+ * a visual artefact would have been a sixteen-pixel halo of dead pointer
+ * around every tooltip, which is the exact failure this page is shaped to
+ * avoid. So the shadow goes and the size stays honest.
+ *
+ * What is left is enough to lift the box, because it was never the shadow
+ * doing that work: the border is `--line-strong` rather than a hairline for
+ * precisely this reason, and the background is the raised chrome. It also puts
+ * the tooltip where the rest of the window already is — nothing else in DevHub
+ * casts a shadow at rest.
  *
  * `width: max-content` with a maximum is what makes the measurement mean
  * anything: an element sized by its content is not constrained by the viewport
@@ -75,11 +95,10 @@ body,
   border: 1px solid var(--line-strong);
   border-radius: 5px;
   background: var(--chrome-raised, var(--chrome));
-  color: var(--label);
+  color: var(--primary);
   font-size: 11px;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
 }
 
 /*
@@ -115,6 +134,47 @@ body,
      text sits on the text and not above it. */
   transform: translateY(2px);
   color: var(--tertiary);
+}
+
+/*
+ * A mark in the colour of the thing it stands for.
+ *
+ * The Sidebar's own column is grey at rest, and that is a rule about a
+ * *column*: a dozen rows of lit marks running down the window would be a dozen
+ * things asking to be looked at, so the row lights its marks only under the
+ * pointer. A tooltip is not a column. It is one box, up because somebody
+ * asked, with at most a handful of facts in it — and here the colour is doing
+ * the work it was always meant to do, which is to say what kind of fact each
+ * line is before the words are read.
+ *
+ * So the marks wear the tokens they already wear on the row when it is lit,
+ * out of `tokens.css`, and no token is added for this: GitHub's green for what
+ * is open, its purple for what is finished, `--danger` for what was abandoned,
+ * and `--accent` for the facts that are places rather than states — the
+ * repository, the branch, the worktree, the machine. A draft names no colour,
+ * because GitHub draws a draft grey and the fallback above is that grey.
+ */
+.tooltip-line-mark[data-mark="repository"],
+.tooltip-line-mark[data-mark="branch"],
+.tooltip-line-mark[data-mark="worktree"],
+.tooltip-line-mark[data-mark="folder"],
+.tooltip-line-mark[data-mark="remote"],
+.tooltip-line-mark[data-mark="container"] {
+  color: var(--accent);
+}
+
+.tooltip-line-mark[data-mark="issueOpen"],
+.tooltip-line-mark[data-mark="pullRequest"] {
+  color: var(--status-idle);
+}
+
+.tooltip-line-mark[data-mark="issueClosed"],
+.tooltip-line-mark[data-mark="pullRequestMerged"] {
+  color: var(--status-done);
+}
+
+.tooltip-line-mark[data-mark="pullRequestClosed"] {
+  color: var(--danger);
 }
 
 .tooltip-line-mark .sidebar-glyph {
@@ -156,7 +216,7 @@ body,
 }
 
 .tooltip-line-link:hover {
-  color: var(--label);
+  color: var(--primary);
   text-decoration: none;
 }
 
@@ -172,10 +232,17 @@ body,
   color: var(--secondary);
 }
 
-/* Why something is not doing what it says it is. The stronger of the two dim
-   inks, because it is the one line here that is not simply context. */
+/* Why something is not doing what it says it is. The box's own ink rather
+   than either dim one, because it is the one line here that is not simply
+   context.
+
+   `--primary`, where all three of these rules said `--label`. There is no
+   `--label`: it is declared in no stylesheet and set by no palette
+   (`ipc/palette.ts` names the four it writes), so every `var(--label)` here
+   resolved to nothing and the text fell back to whatever it inherited. The
+   ink that was meant is the one the whole window's words are set in. */
 .tooltip-line.is-note .tooltip-line-text {
-  color: var(--label);
+  color: var(--primary);
 }
 
 /* A failure, in the ink every failure in this window uses — mark and words

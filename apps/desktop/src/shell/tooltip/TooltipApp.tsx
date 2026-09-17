@@ -152,8 +152,13 @@ export function TooltipApp() {
                 path are the heading, and a heading indented past an empty
                 column reads as a gap nobody meant. The marked facts below it
                 keep their column. */}
+            {/* The mark names itself on the element that draws it, so the
+                colour a mark wears is a rule about that mark rather than a
+                colour composed with the fact and sent over the wire. One
+                place decides what an open Issue's green is: this stylesheet,
+                out of the same tokens the row's own marks light up with. */}
             {icon ? (
-              <span className="tooltip-line-mark">
+              <span className="tooltip-line-mark" data-mark={icon}>
                 <Glyph name={icon} />
               </span>
             ) : null}

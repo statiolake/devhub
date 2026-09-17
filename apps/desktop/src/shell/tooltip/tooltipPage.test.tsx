@@ -15,6 +15,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { TooltipApp } from "./TooltipApp";
 import type { TooltipContentWire } from "../../ipc/contract";
 
@@ -169,6 +170,80 @@ describe("the tooltip page", () => {
     expect(
       document.querySelectorAll(".tooltip-line")[1]?.getAttribute("data-tone"),
     ).toBe("waiting");
+  });
+
+  /**
+   * A mark names itself on the element that draws it, which is what lets the
+   * stylesheet say what colour an open Issue is. The alternative was a colour
+   * composed with the fact and sent over the wire, which would have put the
+   * palette in two places and let the row and the box disagree about green.
+   */
+  it("names each mark on the element that draws it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { icon: "repository", text: "github.com/example/widget" },
+        { icon: "issueOpen", text: "#128 Tidy the rail" },
+      ],
+    });
+    expect(
+      [...document.querySelectorAll(".tooltip-line-mark")].map((mark) =>
+        mark.getAttribute("data-mark"),
+      ),
+    ).toEqual(["repository", "issueOpen"]);
+  });
+
+  /**
+   * And the stylesheet colours them, out of tokens that already exist.
+   *
+   * The assertion is against the file rather than a computed style because
+   * jsdom applies no stylesheet of ours; what is worth pinning is the thing a
+   * later edit could quietly lose — that every mark a Workspace's tooltip
+   * draws names an ink, and that the ink is one `tokens.css` declares.
+   */
+  it("gives every workspace mark a colour, from a token that exists", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
+    for (const mark of [
+      "repository",
+      "branch",
+      "worktree",
+      "folder",
+      "remote",
+      "container",
+      "issueOpen",
+      "issueClosed",
+      "pullRequest",
+      "pullRequestMerged",
+      "pullRequestClosed",
+    ]) {
+      const rule = new RegExp(
+        `\\[data-mark="${mark}"\\][^{}]*\\{[^}]*\\}|\\[data-mark="${mark}"\\],`,
+        "u",
+      );
+      expect(css, `${mark} has no colour rule`).toMatch(rule);
+    }
+    for (const token of [...css.matchAll(/color: var\((--[a-z-]+)\)/gu)].map(
+      (match) => match[1],
+    )) {
+      expect(tokens, `${token ?? ""} is not a token`).toContain(
+        `${token ?? ""}:`,
+      );
+    }
+  });
+
+  /**
+   * No shadow, and it is a fact about the *view* rather than about taste.
+   *
+   * This view is exactly the box's rectangle, and a shadow paints outside the
+   * box: it filled the four triangles the corner radius cuts away, so every
+   * tooltip wore a translucent square at each corner. Giving the view room for
+   * it would have meant a halo of dead pointer around every tooltip, because a
+   * native view takes every click inside its bounds. See `tooltipPage.css`.
+   */
+  it("casts no shadow, so the view's corners are empty", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    expect(css).not.toMatch(/^\s*box-shadow:/mu);
   });
 
   /** The row's accessible name is already this sentence; see `TooltipApp`. */
