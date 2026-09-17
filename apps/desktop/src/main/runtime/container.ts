@@ -544,6 +544,13 @@ export class ContainerRuntime
 	#noteContainer(id: string): void {
 		if (this.#containerId !== undefined && this.#containerId !== id) {
 			this.#replaced = true;
+			// Thrown here, at the moment the invariant breaks, and not left for
+			// the next call to notice. A runtime that answered this one command
+			// and refused the next would have done it against a container whose
+			// filesystem has none of what this instance believes it installed —
+			// and the failure that produced would surface somewhere else
+			// entirely, as a missing tmux or a launcher that is not there.
+			throw containerReplaced(this.#workspaceFolder);
 		}
 		this.#containerId = id;
 	}
