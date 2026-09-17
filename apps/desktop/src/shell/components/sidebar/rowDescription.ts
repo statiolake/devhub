@@ -104,7 +104,41 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
  * keeps.
  */
 export function workspaceGlyphName(location: WorkspaceLocationWire): GlyphName {
-  return location.kind === "ssh" ? "remote" : "folder";
+  switch (location.kind) {
+    case "local":
+      return "folder";
+    case "ssh":
+      return "remote";
+    // A dev container is the same distinction the rail already keeps — the
+    // work happens somewhere that is not here — so it takes the same slot
+    // rather than adding a fourth thing to learn. It is a mark of its own and
+    // not the `remote` racks because the two are not the same somewhere: one
+    // is a machine the person has an account on, the other is a box built from
+    // a file in this folder, and what you do when either stops answering is
+    // different.
+    case "container":
+      return "container";
+  }
+}
+
+/**
+ * What a dev container is called, in a row's facts.
+ *
+ * The folder's name and never the container's id: an id is a hash that changes
+ * on every rebuild, and a fact that changed whenever somebody rebuilt would be
+ * a tooltip that says something new about a Workspace that did not move. The
+ * folder is what `locationKey` keys on, for the same reason.
+ *
+ * The name and not the path. The path fact above already carries where this
+ * Workspace is — the path *inside* the container — and this line answers a
+ * different question: which folder of mine is this. A second full path would
+ * be read as a correction of the first one.
+ */
+function containerName(workspaceFolder: string): string {
+  const trimmed = workspaceFolder.replace(/\/+$/u, "");
+  const cut = trimmed.lastIndexOf("/");
+  const name = cut === -1 ? trimmed : trimmed.slice(cut + 1);
+  return name.length === 0 ? workspaceFolder : name;
 }
 
 /**
@@ -309,6 +343,18 @@ export function workspaceRowFacts(
           icon: "remote",
           text: `ssh:${workspace.location.host}`,
           spoken: `on ${workspace.location.host}`,
+          style: "muted",
+        }
+      : undefined,
+    // The same fact for a container: where the terminals and the Agents are.
+    // Worth saying even though the row's mark says it too, because the mark
+    // says *that* it is a container and this says *which* — and because the
+    // path above is the path inside it, which is not a folder the person has.
+    workspace.location.kind === "container"
+      ? {
+          icon: "container",
+          text: `dev container: ${containerName(workspace.location.workspaceFolder)}`,
+          spoken: `in a dev container for ${containerName(workspace.location.workspaceFolder)}`,
           style: "muted",
         }
       : undefined,

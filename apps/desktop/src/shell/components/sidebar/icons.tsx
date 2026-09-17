@@ -51,6 +51,7 @@ export type GlyphName =
   | "repository"
   | "worktree"
   | "remote"
+  | "container"
   | "issueOpen"
   | "issueClosed"
   | "pullRequest"
@@ -143,6 +144,16 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
      `folder` so the leading column does not move. */
   remote: (
     <path d="M2.29 3.43h11.42v3.43H2.29zM2.29 9.14h11.42v3.43H2.29zM4.57 5.14h.01M4.57 10.86h.01" />
+  ),
+
+  /* A dev container. A crate with ribs, in the same slot the `remote` racks
+     use, because it answers the same question that mark answers: this folder's
+     work happens somewhere that is not here. It has to be told from those
+     racks at thirteen pixels and nothing else, so it is the other obvious
+     silhouette — a solid box with uprights, against two stacked bars — rather
+     than a cleverer drawing that would read as a smudge. */
+  container: (
+    <path d="M2.29 4.57h11.42v6.86H2.29zM5.71 4.57v6.86M8 4.57v6.86M10.29 4.57v6.86" />
   ),
 
   /* Scratch: a shell prompt. Redrawn to the shared live area, because at 14

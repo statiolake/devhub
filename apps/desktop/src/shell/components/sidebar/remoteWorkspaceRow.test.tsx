@@ -94,6 +94,15 @@ const REMOTE = {
   agents: [],
 };
 
+const CONTAINER = {
+  ...REMOTE,
+  location: { kind: "container", workspaceFolder: "/projects/api" },
+  root: "/workspaces/api",
+  displayRoot: "/workspaces/api",
+  key: "dev-container:///projects/api",
+  selectedPath: "/workspaces/api",
+};
+
 const LOCAL = {
   ...REMOTE,
   label: "widget",
@@ -186,6 +195,43 @@ describe("a Workspace row whose folder is on another machine", () => {
     expect(lines).toContainEqual({
       icon: "remote",
       text: "ssh:build.example.com",
+      style: "muted",
+    });
+  });
+
+  it("wears a mark of its own when the folder is in a dev container", () => {
+    // Same slot on the rail, different silhouette. It answers the same
+    // question the racks answer — the work happens somewhere that is not here
+    // — but what you do when either stops answering is not the same, so the
+    // two have to be tellable apart at thirteen pixels.
+    mount(CONTAINER);
+    expect(
+      document.querySelector(".workspace-row .row-glyph svg"),
+    ).toHaveAttribute("data-glyph", "container");
+    expect(document.querySelectorAll('[data-glyph="container"]')).toHaveLength(
+      1,
+    );
+    // And it is not wearing the ssh machine's mark.
+    expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(0);
+  });
+
+  it("names which dev container in the facts, by folder and never by id", () => {
+    mount(CONTAINER);
+    const lines = JSON.parse(
+      document
+        .querySelector("[data-tree-item-id='workspace:w-1']")
+        ?.getAttribute("data-tooltip-lines") ?? "[]",
+    ) as { icon?: string; text: string }[];
+    // The path fact is the path *inside* the container, which is not a folder
+    // the person has...
+    expect(lines).toContainEqual({ text: "/workspaces/api", style: "muted" });
+    // ...so the machine fact answers the other question: which folder of mine.
+    // The name and not the id: an id is a hash that changes on every rebuild,
+    // and a fact that moved when somebody rebuilt would say something new
+    // about a Workspace that did not.
+    expect(lines).toContainEqual({
+      icon: "container",
+      text: "dev container: api",
       style: "muted",
     });
   });
