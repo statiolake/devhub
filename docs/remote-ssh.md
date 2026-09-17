@@ -19,6 +19,13 @@ Everything between those two — the connection, the install, the server, the
 token and the port — is `main/runtime/remoteServer.ts` and `main/runtime/ssh.ts`,
 over the ControlMaster DevHub is already holding for git, terminals and Agents.
 
+A folder can also be opened inside a **Dev Container**, which is the same
+machinery with `docker exec` where `ssh` is: see
+[Dev Container development](remote-containers.md). Most of this document
+applies there unchanged — the server, the token file, the reconnect behaviour,
+tmux, the `devhub` shim and the PATH rules are all the shared base class — so
+that document describes only what differs.
+
 ## Why DevHub resolves its own authorities
 
 It did not used to. Until this was written the resolver was a vendored copy of
