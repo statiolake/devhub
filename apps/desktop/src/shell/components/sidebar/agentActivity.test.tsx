@@ -97,7 +97,7 @@ function mount(
   controlState: AgentControlStateWire = { kind: "running" },
 ): void {
   const value = {
-    dispatch: vi.fn(),
+    dispatch: vi.fn().mockResolvedValue(undefined),
     openExternalUrl: vi.fn(),
     agentProfiles: {
       sequence: 1,
@@ -123,7 +123,7 @@ function mountNamed(
   unread: AgentStatus | undefined = undefined,
 ): void {
   const value = {
-    dispatch: vi.fn(),
+    dispatch: vi.fn().mockResolvedValue(undefined),
     openExternalUrl: vi.fn(),
     agentProfiles: {
       sequence: 1,
@@ -285,28 +285,33 @@ describe("what an Agent's tooltip says", () => {
 });
 
 /**
- * Where an Agent's mark is: a gutter at the row's leading edge, before any
- * depth, so that every Agent's status is at the same x whatever its row is
- * nested under. The marks used to sit after the indent, which stepped them
- * right as the tree went deeper and left no column to run an eye down.
+ * Where an Agent's mark is: the one leading column every row has, before any
+ * depth, so that every Agent's status is at the same x as its Workspace's
+ * folder and as every other status in the list. The marks used to sit after
+ * the indent, which stepped them right as the tree went deeper and left no
+ * column to run an eye down; then they sat in a gutter of their own in front
+ * of the glyph column, which was two leading columns to say one thing.
  */
 describe("the column an Agent's status is in", () => {
-  it("is the row's leading gutter, outside the row's own button", () => {
+  it("is the row's one icon column, outside the row's own button", () => {
     mount("Reading the reconciler");
     const row = document.querySelector(".agent-row");
-    expect(row?.querySelector(".row-rail > .status-mark")).toBeInTheDocument();
+    expect(row?.querySelector(".row-glyph > .status-mark")).toBeInTheDocument();
     expect(
       row?.querySelector(".sidebar-context-button .status-mark"),
     ).toBeNull();
   });
 
-  /** The same column on a Workspace row, and empty: it is the statuses this
-      exists for, and a column of folders and statuses alternately is not one. */
-  it("is reserved and empty on a Workspace row", () => {
+  /** The same column on a Workspace row, with that row's own mark in it. One
+      column and one mark per row is what makes the collapse to the rail a
+      subtraction: the connector and the words come off, the icon does not
+      move. */
+  it("is the column a Workspace draws its folder in", () => {
     mount("Reading the reconciler");
-    const rail = document.querySelector(".workspace-row .row-rail");
-    expect(rail).toBeInTheDocument();
-    expect(rail?.childElementCount).toBe(0);
+    const glyph = document.querySelector(".workspace-row .row-glyph");
+    expect(glyph).toBeInTheDocument();
+    expect(glyph?.querySelector("svg")).toBeInTheDocument();
+    expect(document.querySelector(".row-rail")).toBeNull();
   });
 });
 

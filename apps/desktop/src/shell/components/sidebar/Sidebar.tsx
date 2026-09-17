@@ -209,8 +209,7 @@ function WorkspaceRow({
         data-state={workspace.state.kind}
       >
         <div className="row-head">
-          <span className="row-rail" aria-hidden="true" />
-          {/* Which kind of Workspace this is, in the column every row's first
+          {/* Which kind of Workspace this is, in the one column every row's
               mark is in — and, when there is a repository behind it, the way
               to that repository's page. The row's link used to be a second
               `repository` mark in the trailing group, which was a drawing of
@@ -446,20 +445,21 @@ function WorkspaceRow({
                   }}
                 >
                   <div className="row-head">
-                    {/* The rail, empty on an Agent row. It used to carry the
-                        unread dot; the status mark carries that now — see
-                        `unreadShows` in `StatusMark.tsx` — and what is left
-                        here is the column itself, which every row reserves so
-                        that the marks below it line up with the marks above. */}
-                    {/* The gutter, and what is in it: this Agent's one mark.
-                        It is outside the row's own button and at the row's
-                        leading edge rather than beside the name, so that every
-                        Agent's mark is at the same x whatever depth its row is
-                        at — which is what makes the statuses a column a person
-                        can run an eye down. The button's hit area covers the
-                        whole row (`.sidebar-context-button::after`), so the
-                        mark is still part of what selects the row. */}
-                    <span className="row-rail">
+                    {/* The icon column, and what an Agent puts in it: its one
+                        status mark — the unread dot included, see
+                        `unreadShows` in `StatusMark.tsx`.
+
+                        It is the same column, at the same x, that a Workspace
+                        draws its folder in and Scratch draws its terminal in.
+                        Nothing is in front of it and the depth is behind it,
+                        in the connector, so every status in the list is at one
+                        x whatever row it is on — which is what makes them a
+                        column a person can run an eye down, and what lets the
+                        rail be these rows with the connector and the words
+                        taken off. The button's hit area covers the whole row
+                        (`.sidebar-context-button::after`), so the mark is
+                        still part of what selects the row. */}
+                    <span className="row-glyph">
                       <StatusMark status={agent.status} unread={agent.unread} />
                     </span>
                     <button
@@ -723,11 +723,10 @@ function ScratchRow({
         })
       }
     >
-      {/* Mirrors a Workspace row's first line so the rail, the glyph and the
-          label land on the same columns. It has no second line: there is
+      {/* Mirrors a Workspace row's first line so the glyph and the label land
+          on the same columns. It has no second line: there is
           nothing a Scratch terminal is working on. */}
       <span className="row-head">
-        <span className="row-rail" aria-hidden="true" />
         <span className="row-glyph" aria-hidden="true">
           <Glyph name="terminal" />
         </span>
@@ -839,7 +838,10 @@ function ClosingGhostRow({ label }: { label: string }) {
     <li className="sidebar-tree-item is-exiting" aria-hidden="true">
       <div className="sidebar-row workspace-row" data-state="closing">
         <div className="row-head">
-          <span className="row-rail" />
+          {/* Empty, and still here: the row is the picture of one that has just
+              stopped existing, so its name has to stay on the column the names
+              above and below it are on. */}
+          <span className="row-glyph" />
           <span className="sidebar-context-button">
             <span className="row-text">
               <span className="row-label">{label}</span>

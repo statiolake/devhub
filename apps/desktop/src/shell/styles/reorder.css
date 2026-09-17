@@ -74,9 +74,7 @@
   /* The terms are restated rather than inherited: this hangs off the tree item
      and not off the row inside it. The one thing the line has to line up with
      is where the names start. */
-  left: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2)
-  );
+  left: var(--sidebar-text-inset);
   height: 2px;
   border-radius: 1px;
   background: var(--accent);
@@ -92,19 +90,19 @@
   bottom: -1px;
 }
 
-/* An Agent sits a step in from its Workspace, and its line starts where its own
-   name does: the row's line plus one indent, in the same term the indent and
-   its guide are written in. */
+/* An Agent's words start a connector column further in than its Workspace's,
+   so its line does too — written in the same terms the connector is, in
+   `tokens.css`, because a second copy of the number is how they come apart. */
 .agent-tree [data-drop-before="true"]::after,
 .agent-tree [data-drop-after="true"]::after {
-  left: calc(var(--sidebar-rail-width) + var(--sidebar-agent-indent));
+  left: var(--sidebar-agent-text-inset);
 }
 
 /* In the rail there are no words for the line to start under, so it runs from
-   the glyph column it is pointing at. */
+   the leading edge of the one column that is left. */
 .sidebar[data-collapsed="true"] [data-drop-before="true"]::after,
 .sidebar[data-collapsed="true"] [data-drop-after="true"]::after {
-  left: var(--sidebar-rail-width);
+  left: 0;
 }
 
 /*
@@ -117,12 +115,11 @@
  * is.
  */
 .sidebar-tree-item[draggable="true"] .row-glyph,
-.agent-tree li[draggable="true"] .row-rail {
+.agent-tree li[draggable="true"] .row-glyph {
   cursor: grab;
 }
 
-.sidebar[data-reordering="true"] .row-glyph,
-.sidebar[data-reordering="true"] .row-rail {
+.sidebar[data-reordering="true"] .row-glyph {
   cursor: grabbing;
 }
 

@@ -201,17 +201,16 @@
 
 /* The heading is a band of the same height as a row, so the run of text down
    the Sidebar keeps one rhythm: heading to first row is the same step as row
-   to row. Its leading edge is the glyph column, not the row edge. */
+   to row. Its leading edge is the column the rows' own words start on
+   (`--sidebar-text-inset`), so the section's name and the names under it read
+   down one edge — there is one leading column now, and a heading hung off it
+   would have started to the left of every word in the list. */
 .sidebar-section-heading {
   display: flex;
   height: var(--row-height);
   align-items: center;
   justify-content: space-between;
-  padding: 0 2px 0
-    calc(
-      var(--sidebar-rail-width) +
-        (var(--sidebar-glyph-width) - var(--sidebar-glyph-ink)) / 2
-    );
+  padding: 0 2px 0 var(--sidebar-text-inset);
   margin-top: var(--sidebar-section-gap);
   color: var(--tertiary);
 }
@@ -271,18 +270,22 @@
      differently, and the difference was an accident of how many lines each
      happened to have.
 
-     The floor is on the first line rather than here — see `.row-head`. */
+     The floor is on the first line rather than here — see `.row-head`.
+
+     The inline half is zero and is *stated*: it is the user agent's `1px 6px`
+     on the Scratch row's button being taken back off. It was left unsaid while
+     `padding-block` alone was written here, which put Scratch's glyph and its
+     name six pixels to the right of every other row's — the one row in the list
+     that was not on the column, and measured in a browser to be exactly that.
+     There is one leading column now and it is the thing the whole arrangement
+     rests on, so nothing may quietly move a row off it. */
   padding-block: var(--row-pad-block);
+  padding-inline: 0;
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
   color: var(--primary);
   text-align: left;
-  /* How far a row's content sits in from the rail. Zero for every row that is
-     not an Agent, and stated here rather than only on `.agent-row` so that the
-     inset below is one expression with one term for depth, instead of two
-     calcs that have to be kept agreeing. */
-  --row-agent-inset: 0px;
 }
 
 /*
@@ -421,23 +424,6 @@
   stroke: none;
 }
 
-/* The leading gutter every row reserves before anything else.
- *
- * What is in it is exactly one thing: an Agent's status mark. See
- * `--sidebar-rail-width` in `tokens.css` for why it is a column rather than an
- * inset, and why a Workspace leaves it empty.
- */
-.row-rail {
-  display: flex;
-  width: var(--sidebar-rail-width);
-  flex: 0 0 var(--sidebar-rail-width);
-  align-items: center;
-  justify-content: center;
-  align-self: stretch;
-  align-items: center;
-  justify-content: center;
-}
-
 /*
  * ------------------------------------------------- colour, and when there is
  *
@@ -465,8 +451,14 @@
  * after the pointer has gone somewhere else.
  */
 
-/* The row's leading mark: which kind of Workspace this is, or which Agent
-   status. Grey at rest with everything else — at `--row-glyph-ink`, the one
+/* The one leading column, and the whole of what a row leads with: the folder
+   or terminal glyph on a Workspace or Scratch row, the status mark on an
+   Agent's. There is no second column before it and no depth in front of it, so
+   every mark in the list is at one x whatever the row is — which is what makes
+   the statuses a column a person can run an eye down, and what makes the rail
+   the same rows with their connectors and their words taken off.
+
+   Grey at rest with everything else — at `--row-glyph-ink`, the one
    ink every mark in a row rests at, so the folder on the left and GitHub's
    mark on the right weigh the same; the accent — Finder's own treatment for a
    source-list icon — is what hover restores.
@@ -483,6 +475,16 @@
   color: var(--row-glyph-ink);
   /* Level with the label, not with the label's box — see the token. */
   transform: translateY(var(--sidebar-glyph-optical-shift));
+}
+
+/* An Agent's mark is the exception, and for the reason the shift exists: it is
+   levelled against the *row*, not against a label beside it. An Agent's words
+   sit two columns to the right with a connector between them, and the elbow
+   that meets this mark is drawn at the row's own centre line
+   (`--row-height / 2`), so a mark nudged a pixel down would be a mark the
+   connector no longer points at. */
+.agent-row .row-glyph {
+  transform: none;
 }
 
 .row-glyph svg {
@@ -720,90 +722,80 @@
 }
 
 /*
- * An Agent sits one indent step in from its Workspace, and the step is what
- * the guide beside it needs it to be.
+ * Where a row's words start.
  *
- * The depth is not a number somebody liked. It is fixed by the one thing the
- * indent has to agree with: the guide runs down the centre of the Workspace's
- * folder glyph — the line from that folder to the folder below it — and an
- * Agent's words start one gap to the right of it. So the step is half a glyph
- * column plus that gap, and it is one term, `--sidebar-agent-indent`, declared
- * in `tokens.css` where the numbers are written out, because the guide and the
- * drop line in `reorder.css` are built from the same term and a second copy of
- * it is how the three come apart.
- *
- * The inset is the whole of what the button is padded by, and not an addition
- * to the glyph column the Workspace's own words clear. An Agent has no glyph of
- * its own — its mark is in the gutter, before all depth — so a row that cleared
- * a column nothing is drawn in was starting its words to the *right* of the
- * guide's own parent, which is how the step came to be twenty pixels of a
- * twenty-character column.
+ * Every row clears the icon column; an Agent clears the connector column as
+ * well, because that is where the guide that says whose Agent it is is drawn.
+ * Both are written as the button's whole leading padding rather than as an
+ * addition to it, so there is one expression per row kind and not a calc that
+ * has to be kept agreeing with another one. The numbers are in `tokens.css`,
+ * with the rest of the geometry.
  */
-.agent-row {
-  --row-agent-inset: var(--sidebar-agent-indent);
-}
-
-/* Where an Agent's words start: one gap to the right of the guide, which is one
-   gap to the right of its Workspace's folder glyph. The gutter is before all of
-   this and is not part of it — the status mark does not move with the depth,
-   which is the whole point of the gutter — so the depth is spent on the text
-   alone.
-
-   The inset is the whole padding and nothing is added to it: the button's own
-   `padding: 0 var(--space-2)` is replaced here rather than counted alongside,
-   and there is no glyph column to clear because an Agent draws no glyph. */
 .agent-row .sidebar-context-button {
-  padding-left: var(--row-agent-inset);
+  /* The button starts where the icon column ends, so what it clears is the
+     connector column and nothing else — `--sidebar-agent-text-inset` is the
+     same distance counted from the row's leading edge instead. */
+  padding-left: var(--sidebar-tree-width);
 }
 
 /*
- * The line that says which Workspace these rows belong to: an indent guide,
- * and nothing else.
+ * The connector: the bent guide from a Workspace down to each of its Agents.
  *
- * It was `tree`(1)'s drawing — a stem down the Workspace's glyph column, a
- * horizontal branch out of it into each Agent, and a stem that stopped at the
- * last of them to draw `└─`. It is an honest picture of a tree and it is the
- * wrong picture for this one. `tree`(1) draws a structure that is *the
- * content*: the lines are what you are reading. Here the structure is one level
- * deep, it is already said by the indent and by the marks, and the connectors
- * were the heaviest ink in a Sidebar whose whole design is that only a status
- * has colour. Three strokes per row, to say a thing two other things already
- * said.
+ * It is `tree`(1)'s drawing, and it is drawn here because the thing it says is
+ * no longer said anywhere else. It used to be said by the indent — an Agent's
+ * words started well to the right of its Workspace's, and a plain vertical
+ * rule at that indent was enough to tie a run of them together. There is one
+ * leading column now: an Agent's status mark sits at exactly the x its
+ * Workspace's folder sits at, which is the whole point of the column and is
+ * also the last cue that one row belongs to another. So the connector carries
+ * it: a vertical dropping through the run, and an elbow turning right into the
+ * words — `├` for every Agent but the last, `└` for the last, which is the one
+ * thing that says where a Workspace's Agents stop.
  *
- * So it is what an editor draws down a fold: one thin vertical rule at the
- * indent, running the full height of the row, meeting the rule on the row above
- * and the row below because the rows sit flush. No lead into the row, no
- * special drawing for the last one — an indent guide does not have a last one,
- * which is also two rules and a `:last-child` selector that no longer have to
- * be right.
- *
- * It is a pseudo-element rather than an element. There is nothing to read here
- * — the tree is in the markup, where `aria-level` and the arrow-key walk are —
+ * Two pseudo-elements rather than an element. There is nothing to read here —
+ * the tree is in the markup, where `aria-level` and the arrow-key walk are —
  * so a `span` would be a node the keyboard and the accessibility tree would
  * have to be taught to ignore.
  *
  * `--line` and not `--row-glyph-ink`: it is the Sidebar's hairline, the same
  * ink as the rule under the section heading, because that is what it is. It
- * does not light up on hover or on selection — the hierarchy is not a thing you
- * can point at.
+ * does not light up on hover or on selection — the hierarchy is not a thing
+ * you can point at.
  */
+
+/* The vertical. It runs the full height of the row so that it meets the one on
+   the row above and the row below — the rows sit flush — and it stops at the
+   row's own centre line on the last Agent, which is where the elbow turns and
+   is where a `└` ends. */
 .agent-row::before {
   position: absolute;
   top: 0;
   bottom: 0;
-  /* Down the centre of the Workspace's folder glyph — the line from that folder
-     to the folder below it. That is the whole of what the guide is for, and it
-     is why it is written as the gutter plus half a glyph column and not as a
-     fraction of the indent: the indent is derived from *this*, in `tokens.css`,
-     rather than the other way round.
-
-     It clears the gutter, which is the one thing at this end of the row it
-     could collide with. Compact: the gutter is 16 wide and the status mark in
-     it is 14 of ink, so the mark runs 1→15 and the guide is the pixel at 24 —
-     nine clear. Comfortable: mark 1→17, guide at 27, ten clear. An Agent's own
-     words begin at 32 and 35, one `--space-2` to the right of the line. */
-  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);
+  left: var(--sidebar-tree-line);
   width: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.agent-tree > li:last-child .agent-row::before {
+  bottom: auto;
+  /* Every row centres its first line's mark at exactly `--row-height / 2` from
+     its own top, whatever else it has to say — see `.row-head`. So the elbow
+     and the mark it points at are one term and not two. */
+  height: calc(var(--row-height) / 2);
+}
+
+/* The elbow's horizontal run, from the vertical to one gap short of the first
+   letter. */
+.agent-row::after {
+  position: absolute;
+  top: calc(var(--row-height) / 2);
+  left: var(--sidebar-tree-line);
+  width: calc(
+    var(--sidebar-glyph-width) + var(--sidebar-tree-width) -
+      var(--sidebar-tree-line) - var(--sidebar-tree-gap)
+  );
+  height: 1px;
   background: var(--line);
   content: "";
 }
@@ -1718,27 +1710,24 @@ body.is-resizing-split {
   flex-basis: var(--sidebar-rail-collapsed-width);
 }
 
-/* The glyph column, centred, rather than a row that has lost its right-hand
-   two thirds. A rail reads as a column of marks; the same marks pinned to the
-   leading edge would read as a row that had been cut off. */
-.sidebar[data-collapsed="true"] .row-head {
-  justify-content: center;
-}
-
-/* An empty gutter is not drawn at all here.
+/* The rail is centred by the *pane*, not by the row.
  *
- * In the expanded column the gutter is a fixed column every row reserves, so
- * that the Agents' marks line up whatever depth they are at. In the rail there
- * is no depth and there is one mark per entry, centred — so a Workspace row,
- * whose gutter is empty, must not reserve it: two centred boxes and one centred
- * box put their contents in different places, and the glyphs would step from
- * side to side down the column.
+ * It used to be `justify-content: center` on each row's first line, which
+ * centred whatever that row happened to have left — and a row with a gutter it
+ * could not fill centred differently from one that could, so the marks stepped
+ * from side to side down the column and an `:empty` rule had to be kept in step
+ * with which rows have a status.
  *
- * `:empty` is the condition because it is the fact — this row has nothing in
- * its gutter — rather than a class the markup would have to keep in step with
- * which rows have a status. */
-.sidebar[data-collapsed="true"] .row-rail:empty {
-  display: none;
+ * There is one leading column now and every row fills it, so there is nothing
+ * left to choose: the rows keep their own layout exactly as the expanded
+ * column has it, and the pane pads itself so that that one column lands in the
+ * middle of the rail. The collapse is then a subtraction and nothing else —
+ * the connector and the words come off, and the icon does not move within its
+ * row. */
+.sidebar[data-collapsed="true"] .sidebar-scroll-region {
+  padding-inline: calc(
+    (var(--sidebar-rail-collapsed-width) - var(--sidebar-glyph-width)) / 2
+  );
 }
 
 .sidebar[data-collapsed="true"] .sidebar-context-button {
@@ -1796,19 +1785,17 @@ body.is-resizing-split {
   white-space: nowrap;
 }
 
-/* The indent guide marks an indent that is not there in the rail. Two rows one
-   above the other, both centred, are already as joined as they can be. */
-.sidebar[data-collapsed="true"] .agent-row::before {
+/* The connector connects two columns that are one column here. Two rows one
+   above the other, both leading with the same mark at the same x, are already
+   as joined as they can be — and there is no text for an elbow to turn into. */
+.sidebar[data-collapsed="true"] .agent-row::before,
+.sidebar[data-collapsed="true"] .agent-row::after {
   content: none;
 }
 
-.sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
-  padding-left: 0;
-}
-
 /* Nothing is left in an Agent's button in the rail — its one mark is in the
-   gutter beside it — so the button must take no width of its own, or it would
-   push that mark off the centre line. */
+   icon column beside it — so the button must take no width of its own, or it
+   would push that column off the middle of the rail. */
 .sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
   flex: 0 0 0;
   padding: 0;

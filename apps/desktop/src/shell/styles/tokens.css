@@ -241,30 +241,41 @@
 }
 
 /*
- * One level of depth in the Sidebar's tree: where an Agent's words start,
- * measured from the end of the leading gutter.
+ * The Sidebar's row geometry, in one place: one icon column, then the tree
+ * connector, then the words.
  *
- * It is derived rather than chosen, because the thing it has to agree with is
- * the guide. The guide runs down the *centre of the Workspace's folder glyph* —
- * it is the line from one folder to the folder below it — and an Agent's words
- * start one gap to the right of it. So the step is half a glyph column plus that
- * gap, and every line in the arrangement is then written in the same terms and
- * none of them can drift:
+ * Every row — Scratch, a Workspace, an Agent — leads with the *same* column,
+ * at the same x, holding the one mark that says what the row is: the terminal
+ * glyph, the folder glyph, the Agent's status mark. There is no second leading
+ * column and no depth before it, so the statuses are a column a person can run
+ * an eye down and the collapse to the rail is a pure subtraction — the
+ * connector and the words come off and the icon does not move.
  *
- *     compact       gutter 0→16   glyph column 16→32   guide 24   words 32
- *     comfortable   gutter 0→18   glyph column 18→36   guide 27   words 35
+ * What says which Workspace an Agent belongs to is the connector between the
+ * icon and the words: the classic bent guide, a vertical dropping from the
+ * rows above and an elbow turning right into the text, `├` for every Agent but
+ * the last and `└` for the last. It is one column wide, drawn in `--line` at
+ * one pixel, and it is the only thing between the icon column and the text.
  *
- * The status mark in the gutter is the glyph ink centred in it — 1→15 compact,
- * 1→17 comfortable — so the guide clears it by nine pixels and by ten, and the
- * words clear the guide by one `--space-2`. Three stylesheets start a line at
- * this column: the row's own inset, the guide beside it, and the drop line in
- * `reorder.css`. They all read this term, because a second copy of the number is
- * how they come apart.
+ * Measured from the row's own leading edge, which is where the icon column
+ * starts in both densities and in both widths:
  *
- * It was `--space-3` *past the Workspace's own words*, which put an Agent's
- * words at 52 and the guide at 46 — a guide standing in the middle of the
- * parent's name rather than under anything, and twenty pixels of a
- * twenty-character column spent to say one level of depth.
+ *     compact       icon 0→16   connector 16→32   vertical 20   elbow 20→28   text 32
+ *     comfortable   icon 0→18   connector 18→36   vertical 22   elbow 22→32   text 36
+ *
+ * The vertical stands one `--space-1` past the icon column rather than down
+ * its centre. Down the centre is where a file tree puts it, and it is where
+ * this one used to be — but the centre of that column now has an Agent's
+ * status mark in it, which is the one thing in this pane the design exists to
+ * show, and a hairline through it is a hairline through the answer. So the
+ * line starts where the icon ends: the ink of a mark runs 1→15 compact and
+ * 1→17 comfortable, and the vertical is the pixel at 20 and at 22, clear of
+ * both. The elbow then runs to one `--sidebar-tree-gap` short of the words.
+ *
+ * Four stylesheets start a line on these columns: the row's own text inset,
+ * the connector beside it, the section heading above it, and the drop line in
+ * `reorder.css`. They all read these terms, because a second copy of a number
+ * is how they come apart.
  *
  * It is on `.app-shell` and not at the root because it is written in terms of
  * the glyph column, which is the density's to say and is declared on this same
@@ -273,7 +284,21 @@
  * been chosen — is invalid and inherits down as nothing at all.
  */
 .app-shell {
-  --sidebar-agent-indent: calc(var(--sidebar-glyph-width) / 2 + var(--space-2));
+  /* The connector's own column: as wide as the icon column beside it, so the
+     two leading columns keep one rhythm at either density. */
+  --sidebar-tree-width: var(--sidebar-glyph-width);
+  /* Where the vertical stands, from the row's leading edge. */
+  --sidebar-tree-line: calc(var(--sidebar-glyph-width) + var(--space-1));
+  /* The air between the end of the elbow and the first letter. */
+  --sidebar-tree-gap: var(--space-1);
+  /* Where a row's words start: after the icon column, with one gap. */
+  --sidebar-text-inset: calc(var(--sidebar-glyph-width) + var(--space-2));
+  /* Where an Agent's words start: after the connector column as well. The gap
+     before the first letter is inside that column — it is the air the elbow
+     stops short by — so there is no second one to add here. */
+  --sidebar-agent-text-inset: calc(
+    var(--sidebar-glyph-width) + var(--sidebar-tree-width)
+  );
 }
 
 /*
@@ -311,25 +336,6 @@
   --row-pad-block: 3px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
-  /*
-   * The Sidebar's leading gutter: one column at every row's leading edge,
-   * before any depth, holding the one mark that says what an Agent is doing.
-   *
-   * It was 14px of nothing — an inset the glyph column hung off, with an unread
-   * dot in it — and it is a column with a job now. An Agent's status is the one
-   * thing in this pane a person looks at from across the room, and it used to
-   * sit *after* the row's indent, so the marks stepped right as the tree went
-   * deeper and there was no column to run an eye down. Here they are all at one
-   * x, whatever depth the row is at.
-   *
-   * A Workspace row leaves it empty. Its own folder mark stays where it is, in
-   * the row's own layout after the gutter, because a column that held folders
-   * and statuses alternately would not be a column of statuses — and it is the
-   * statuses this exists for.
-   *
-   * It is the glyph column's width, so it follows the density: the mark in it
-   * is a glyph, and a gutter narrower than its own contents is not a gutter. */
-  --sidebar-rail-width: var(--sidebar-glyph-width);
   /* On the 16-unit box every Sidebar mark is drawn on, scaled to this
      density's ink size. Both densities land on 1.5 device pixels — 16/14 ×
      1.5 here, 16/16 × 1.5 there — so a mark weighs the same in both and only
@@ -349,7 +355,6 @@
   --row-pad-block: 5px;
   --sidebar-glyph-width: 18px;
   --sidebar-glyph-ink: 16px;
-  --sidebar-rail-width: var(--sidebar-glyph-width);
   --sidebar-glyph-stroke: 1.5;
   --sidebar-row-gap: var(--space-2);
   --sidebar-section-gap: var(--space-3);

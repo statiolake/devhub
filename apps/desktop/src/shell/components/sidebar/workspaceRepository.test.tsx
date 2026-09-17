@@ -754,19 +754,21 @@ describe("the ink every mark in a row rests at", () => {
 });
 
 /**
- * The depth an Agent row sits at, and the line that says what it is inside.
+ * A row's leading geometry, and the connector that says whose Agent a row is.
  *
- * The geometry is one arrangement and it is stated once, in `tokens.css`:
+ * The arrangement is one thing and it is stated once, in `tokens.css`:
  *
- *     [ gutter ][ glyph column ][ the Workspace's words … ]
- *     [ mark   ]       |
- *                    guide          [ gap ][ the Agent's words … ]
+ *     [ icon ][ the Workspace's words … ]
+ *     [ icon ][ connector ][ the Agent's words … ]
+ *        |      |
+ *        |     vertical, then the elbow turning right
+ *       one column, at one x, on every row
  *
- * The guide runs down the *centre of the Workspace's folder glyph* — it is the
- * line from that folder to the folder below it — an Agent's words start one
- * `--space-2` to the right of it, and the gutter's mark is clear of both. Every
- * number below follows from the density's glyph column and that one gap, so
- * there is nothing here that can be set independently and come out wrong.
+ * Every row leads with the same column and the same x — the folder on a
+ * Workspace, the status mark on an Agent, the terminal on Scratch — so the
+ * statuses are a column to run an eye down and the rail is these rows with the
+ * connector and the words taken off. What is left to say which Workspace an
+ * Agent belongs to is the connector, and that is the whole of what it is for.
  *
  * jsdom resolves neither `calc` nor a custom property, so the numbers are
  * resolved from the tokens themselves and the expressions are checked to be
@@ -774,7 +776,7 @@ describe("the ink every mark in a row rests at", () => {
  * drifting: a stylesheet that stopped reading the token would fail the second
  * half, and a token whose value moved would fail the first.
  */
-describe("how far an Agent row is indented under its Workspace", () => {
+describe("a row's leading columns, and the connector between them", () => {
   const shell = readFileSync("src/shell/styles/shell.css", "utf8");
   const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
   const reorder = readFileSync("src/shell/styles/reorder.css", "utf8");
@@ -787,6 +789,8 @@ describe("how far an Agent row is indented under its Workspace", () => {
   }
 
   const gap = pixels(tokens, "--space-2");
+  /** `--sidebar-tree-gap`, and the step the vertical stands past the icon. */
+  const step = pixels(tokens, "--space-1");
 
   /**
    * Where everything on a row lands, at one density — from the density's own
@@ -798,104 +802,119 @@ describe("how far an Agent row is indented under its Workspace", () => {
     );
     const glyph = pixels(block, "--sidebar-glyph-width");
     const ink = pixels(block, "--sidebar-glyph-ink");
-    // `--sidebar-rail-width: var(--sidebar-glyph-width)` — the gutter is the
-    // glyph column's width, because what sits in it is a glyph.
-    const gutter = glyph;
+    // `--sidebar-tree-width: var(--sidebar-glyph-width)` — the connector's
+    // column is as wide as the icon column beside it.
+    const tree = glyph;
     return {
-      /** The status mark in the gutter, centred in it. */
-      mark: { from: (gutter - ink) / 2, to: (gutter + ink) / 2 },
-      /** The Workspace's folder glyph, and its centre. */
-      glyphCentre: gutter + glyph / 2,
-      /** The Workspace's own words, after the glyph column and the gap. */
-      workspaceText: gutter + glyph + gap,
-      /** The guide: `--sidebar-rail-width + --sidebar-glyph-width / 2`. */
-      guide: gutter + glyph / 2,
-      /** The Agent's words: the gutter plus `--sidebar-agent-indent`. */
-      agentText: gutter + (glyph / 2 + gap),
+      /** The one icon column, on every row, and the mark centred in it. */
+      icon: { from: 0, to: glyph, centre: glyph / 2 },
+      mark: { from: (glyph - ink) / 2, to: (glyph + ink) / 2 },
+      /** The Workspace's own words: after the icon column, one gap. */
+      workspaceText: glyph + gap,
+      /** `--sidebar-tree-line`: where the vertical stands. */
+      vertical: glyph + step,
+      /** Where the elbow's horizontal run stops, one gap short of the words. */
+      elbowEnd: glyph + tree - step,
+      /** `--sidebar-agent-text-inset`: after the connector column. */
+      agentText: glyph + tree,
     };
   }
 
-  it("puts the guide exactly through the folder glyph's centre", () => {
-    // The whole of what request one was: the line connecting one folder glyph
-    // to the folder glyph below it. It was at 46 — out in the middle of the
-    // parent's name, under nothing.
+  it("puts every row's mark in one column, at one x", () => {
+    // The fact the whole arrangement rests on. There is no leading gutter in
+    // front of it any more — that was two columns saying one thing — so an
+    // Agent's status and its Workspace's folder are at the same x, and the
+    // collapse to the rail moves neither.
     for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.guide).toBe(at.glyphCentre);
+      expect(geometry(density).icon.from).toBe(0);
     }
-    expect(geometry("compact").guide).toBe(24);
-    expect(geometry("comfortable").guide).toBe(27);
+    expect(geometry("compact").icon.to).toBe(16);
+    expect(geometry("comfortable").icon.to).toBe(18);
   });
 
-  it("starts the Agent's words to the right of the guide, by one gap", () => {
-    // Never touching it and never under it: the run is [gutter mark] … [guide]
-    // [gap] [title], and the last two terms are this.
+  it("stands the vertical clear of the mark in that column", () => {
+    // The one collision at this end of the row, and the reason the vertical is
+    // not down the icon column's centre the way a file tree draws it: that
+    // centre now has an Agent's status mark in it, which is the one thing this
+    // pane exists to show. So the line starts where the ink stops.
     for (const density of ["compact", "comfortable"] as const) {
       const at = geometry(density);
-      expect(at.agentText).toBeGreaterThanOrEqual(at.guide + gap);
+      expect(at.vertical).toBeGreaterThan(at.mark.to);
+      expect(at.vertical).toBeGreaterThan(at.icon.centre);
     }
+    expect(geometry("compact").vertical).toBe(20);
+    expect(geometry("comfortable").vertical).toBe(22);
+  });
+
+  it("turns the elbow into the words, stopping a gap short of them", () => {
+    for (const density of ["compact", "comfortable"] as const) {
+      const at = geometry(density);
+      expect(at.elbowEnd).toBeGreaterThan(at.vertical);
+      expect(at.agentText - at.elbowEnd).toBe(step);
+    }
+    expect(geometry("compact").elbowEnd).toBe(28);
+    expect(geometry("comfortable").elbowEnd).toBe(32);
+  });
+
+  it("starts an Agent's words one connector column in from its Workspace's", () => {
+    for (const density of ["compact", "comfortable"] as const) {
+      const at = geometry(density);
+      expect(at.agentText).toBeGreaterThan(at.workspaceText);
+    }
+    expect(geometry("compact").workspaceText).toBe(24);
     expect(geometry("compact").agentText).toBe(32);
-    expect(geometry("comfortable").agentText).toBe(35);
+    expect(geometry("comfortable").workspaceText).toBe(26);
+    expect(geometry("comfortable").agentText).toBe(36);
   });
 
-  it("keeps the guide clear of the mark in the gutter", () => {
-    // The two things at this end of the row that could collide. They do not,
-    // by nine pixels at compact and ten at comfortable — the gutter ends where
-    // the glyph column begins, and the guide is half a column further in.
-    for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.guide).toBeGreaterThan(at.mark.to + 1);
-    }
-    expect(geometry("compact").guide - geometry("compact").mark.to).toBe(9);
-  });
-
-  it("costs the name less than it used to", () => {
-    // It was the parent's words plus `--space-3`: 52 at compact, where it is
-    // now 32. A Sidebar 248px wide has about twenty characters to spend on a
-    // name, and every one of those pixels came out of it.
-    const at = geometry("compact");
-    expect(at.agentText).toBeLessThan(at.workspaceText);
-    expect(52 - at.agentText).toBe(20);
-  });
-
-  it("is one term, declared once, zero for every row that is not an Agent", () => {
+  it("is one arrangement, declared once", () => {
     expect(tokens).toContain(
-      "--sidebar-agent-indent: calc(var(--sidebar-glyph-width) / 2 + var(--space-2));",
+      "--sidebar-tree-width: var(--sidebar-glyph-width);",
     );
-    // On `.app-shell`, where the glyph column it is written in terms of is also
-    // declared — and measured in a real browser to be sure of it. A custom
+    expect(tokens).toContain(
+      "--sidebar-tree-line: calc(var(--sidebar-glyph-width) + var(--space-1));",
+    );
+    expect(tokens).toContain("--sidebar-tree-gap: var(--space-1);");
+    // On `.app-shell`, where the glyph column they are written in terms of is
+    // also declared — and measured in a real browser to be sure of it. A custom
     // property resolves its own `var()`s where it is *declared*, so the same
     // expression at `:root`, above every density, is invalid and inherits down
-    // as nothing at all: the indent silently became zero and an Agent's words
-    // started against the gutter. There is no way to catch that here, in an
-    // engine that resolves neither — only to keep the declaration where the
+    // as nothing at all: the connector silently stood at zero and an Agent's
+    // words started against the icon. There is no way to catch that here, in an
+    // engine that resolves neither — only to keep the declarations where the
     // terms are.
-    const at = tokens.indexOf("--sidebar-agent-indent");
+    const at = tokens.indexOf("--sidebar-tree-width");
     expect(tokens.lastIndexOf(".app-shell {", at)).toBeGreaterThan(
       tokens.lastIndexOf(":root {", at),
     );
-    expect(shell).toContain("  --row-agent-inset: 0px;");
-    expect(shell).toContain(
-      ".agent-row {\n  --row-agent-inset: var(--sidebar-agent-indent);\n}",
-    );
+    // The gutter that used to lead every row is gone, along with the term that
+    // sized it and the depth that was written against it.
+    expect(tokens).not.toContain("--sidebar-rail-width");
+    expect(tokens).not.toContain("--sidebar-agent-indent");
+    expect(shell).not.toContain(".row-rail");
+    expect(shell).not.toContain("--row-agent-inset");
   });
 
   /**
-   * An indent guide, and nothing else: one thin vertical rule, the full height
-   * of the row, meeting the rules above and below because the rows sit flush.
-   * What it replaced was `tree`(1)'s drawing — a stem, a horizontal lead into
-   * every row, and a `└─` under the last one — which was three strokes per row
-   * saying a thing the indent and the marks already said.
+   * The bent guide: a vertical through the run, and an elbow into each row —
+   * `├` for every Agent but the last, `└` for the last, which is the one thing
+   * that says where a Workspace's Agents stop.
    */
-  it("draws one vertical guide and no lead into the row", () => {
-    expect(shell).toContain(".agent-row::before {\n  position: absolute;");
+  it("draws the vertical, the elbow, and a stem that closes on the last row", () => {
     expect(shell).toContain(
-      '  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
+      '.agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: var(--sidebar-tree-line);\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
     );
-    // No branch, and no last-child stem to close: an indent guide has no last
-    // one, which is two rules and a selector that no longer have to be right.
-    expect(shell).not.toContain(".agent-row::after");
-    expect(shell).not.toContain(".agent-tree > li:last-child");
+    // The elbow meets the mark it points at off one term — every row centres
+    // its first line at `--row-height / 2`, whatever else it has to say — so
+    // the stem that closes and the run that turns cannot disagree about where
+    // the row's middle is.
+    expect(shell).toContain(
+      ".agent-tree > li:last-child .agent-row::before {\n  bottom: auto;",
+    );
+    expect(shell).toContain("  height: calc(var(--row-height) / 2);");
+    expect(shell).toContain(
+      ".agent-row::after {\n  position: absolute;\n  top: calc(var(--row-height) / 2);\n  left: var(--sidebar-tree-line);",
+    );
   });
 
   it("is the Sidebar's hairline, and never lights up", () => {
@@ -905,14 +924,32 @@ describe("how far an Agent row is indented under its Workspace", () => {
     expect(shell).not.toContain(".agent-row.is-selected::before");
   });
 
-  it("moves the row and its drop line together", () => {
-    // The row's own inset, the guide beside it, and the drop line the reorder
-    // draws all start from the one term, so none of the three can drift.
+  it("moves the row, its connector and its drop line together", () => {
+    // The row's own inset, the connector beside it, and the drop line the
+    // reorder draws all start from the same terms, so none of them can drift.
     expect(shell).toContain(
-      ".agent-row .sidebar-context-button {\n  padding-left: var(--row-agent-inset);\n}",
+      ".agent-row .sidebar-context-button {\n  /* The button starts where the icon column ends, so what it clears is the\n     connector column and nothing else — `--sidebar-agent-text-inset` is the\n     same distance counted from the row's leading edge instead. */\n  padding-left: var(--sidebar-tree-width);\n}",
     );
-    expect(reorder).toContain(
-      "  left: calc(var(--sidebar-rail-width) + var(--sidebar-agent-indent));",
+    expect(reorder).toContain("  left: var(--sidebar-text-inset);");
+    expect(reorder).toContain("  left: var(--sidebar-agent-text-inset);");
+  });
+
+  /**
+   * The collapse is a subtraction and nothing else: the connector and the words
+   * come off, and the icon column does not move within its row. The rail is
+   * then centred by the pane rather than by each row, which is what stopped the
+   * marks stepping from side to side down the column.
+   */
+  it("takes the connector and the words off, and moves nothing", () => {
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .agent-row::before,\n.sidebar[data-collapsed="true"] .agent-row::after {\n  content: none;\n}',
+    );
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .sidebar-scroll-region {\n  padding-inline: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-glyph-width)) / 2\n  );\n}',
+    );
+    // Nothing re-centres a row, which is what used to move the icon.
+    expect(shell).not.toContain(
+      '.sidebar[data-collapsed="true"] .row-head {\n  justify-content: center;\n}',
     );
   });
 });
