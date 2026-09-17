@@ -24,7 +24,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import type { AppOutcome, AppSnapshot } from "../../ipc/appShell";
+import type { AppIntent, AppOutcome, AppSnapshot } from "../../ipc/appShell";
 import { ShellPageProvider, useShellPage } from "../ShellPageContext";
 import { SidebarProvider, useSidebar } from "../sidebar/SidebarContext";
 import { AgentsProvider, useAgents } from "../agents/AgentsContext";
@@ -97,8 +97,8 @@ function bridge(dispatch: () => Promise<AppOutcome>) {
  * its controls is. Every page is asked through its own `dispatch`, because
  * that is the member every control in it reaches for.
  */
-function Raise({ dispatch }: { dispatch: () => unknown }) {
-  void dispatch();
+function Raise({ dispatch }: { dispatch: (intent: AppIntent) => unknown }) {
+  void dispatch({ type: "stop_agent", agentId: AGENT_ID });
   return null;
 }
 
