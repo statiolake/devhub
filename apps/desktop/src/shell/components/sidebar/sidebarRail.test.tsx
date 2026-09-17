@@ -113,7 +113,7 @@ function mount(
 ) {
   const dispatch = vi.fn();
   const value = {
-    dispatch: vi.fn(),
+    dispatch,
     openExternalUrl,
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
@@ -127,7 +127,7 @@ function mount(
   } as unknown as SidebarValue;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot(collapsed)} onDispatch={dispatch} />
+      <Sidebar snapshot={snapshot(collapsed)} />
     </SidebarContext.Provider>,
   );
   return Object.assign(

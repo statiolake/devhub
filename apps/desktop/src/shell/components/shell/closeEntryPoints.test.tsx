@@ -112,7 +112,6 @@ function snapshotWith(row: Row): AppSnapshot {
 function mount(where: "sidebar" | "surface", row: Row) {
   const closeWorkspace = vi.fn();
   const dispatch = vi.fn(async () => undefined);
-  const onDispatch = vi.fn();
   const value = {
     dispatch,
     closeWorkspace,
@@ -132,7 +131,7 @@ function mount(where: "sidebar" | "surface", row: Row) {
     <ShellPageContext.Provider value={value as unknown as ShellPageValue}>
       <SidebarContext.Provider value={value as unknown as SidebarValue}>
         {where === "sidebar" ? (
-          <Sidebar snapshot={snapshotWith(row)} onDispatch={onDispatch} />
+          <Sidebar snapshot={snapshotWith(row)} />
         ) : (
           <Unavailable
             workspace={snapshotWith(row).workspaces[0]}
@@ -156,19 +155,17 @@ function mount(where: "sidebar" | "surface", row: Row) {
       </SidebarContext.Provider>
     </ShellPageContext.Provider>,
   );
-  // Both dispatch sinks come back because the Sidebar has one of its own, and
-  // "the page sent a lifecycle intent instead" is the bug being pinned rather
-  // than an implementation detail.
-  return { closeWorkspace, dispatch, onDispatch };
+  // The dispatch comes back beside the close because "the page sent a
+  // lifecycle intent instead" is the bug being pinned rather than an
+  // implementation detail. There is one sink now: the Sidebar used to have a
+  // second dispatch of its own, threaded in as a prop, and a control reaching
+  // for it was a close nobody watched.
+  return { closeWorkspace, dispatch };
 }
 
 /** Every close a control could have asked for, however it asked. */
 function closesAsked(mounted: ReturnType<typeof mount>): unknown[] {
-  return [
-    ...mounted.closeWorkspace.mock.calls,
-    ...mounted.dispatch.mock.calls,
-    ...mounted.onDispatch.mock.calls,
-  ];
+  return [...mounted.closeWorkspace.mock.calls, ...mounted.dispatch.mock.calls];
 }
 
 afterEach(cleanup);

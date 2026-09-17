@@ -109,10 +109,7 @@ function mount(
   } as unknown as SidebarValue;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar
-        snapshot={snapshotWithAgent(activity, unread, controlState)}
-        onDispatch={vi.fn()}
-      />
+      <Sidebar snapshot={snapshotWithAgent(activity, unread, controlState)} />
     </SidebarContext.Provider>,
   );
 }
@@ -148,7 +145,7 @@ function mountNamed(
   } as unknown as AppSnapshot;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={withAgent} onDispatch={vi.fn()} />
+      <Sidebar snapshot={withAgent} />
     </SidebarContext.Provider>,
   );
 }

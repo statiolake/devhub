@@ -74,7 +74,6 @@ function mount(
   const answerWorktreeClose = vi.fn(() => Promise.resolve({}));
   const closeWorkspace = vi.fn();
   const dispatch = vi.fn();
-  const onDispatch = vi.fn();
   const reportFailure = vi.fn();
   const value = {
     dispatch,
@@ -94,14 +93,14 @@ function mount(
   } as unknown as AppSnapshot;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot} onDispatch={onDispatch} />
+      <Sidebar snapshot={snapshot} />
     </SidebarContext.Provider>,
   );
   return {
+    dispatch,
     openExternalUrl,
     answerWorktreeClose,
     closeWorkspace,
-    onDispatch,
     reportFailure,
   };
 }
@@ -595,14 +594,14 @@ describe("a workspace row, continued", () => {
       // different intent, which is a rule the sidebar knew and the surface
       // pane did not: whether a retry went past the worktree rule depended on
       // which control you happened to press.
-      const { closeWorkspace, onDispatch } = mount(worktree(false), {
+      const { closeWorkspace, dispatch } = mount(worktree(false), {
         kind: "failed",
         step: "terminal",
         diagnostic: "cleanup_failed",
       });
       fireEvent.click(close() as HTMLElement);
       expect(closeWorkspace).toHaveBeenCalledWith("w-1");
-      expect(onDispatch).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
     });
   });
 

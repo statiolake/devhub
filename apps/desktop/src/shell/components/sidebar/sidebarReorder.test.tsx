@@ -125,9 +125,9 @@ function snapshot(): AppSnapshot {
   } as unknown as AppSnapshot;
 }
 
-function mount(onDispatch: (intent: AppIntent) => void) {
+function mount(dispatch: (intent: AppIntent) => void) {
   const value = {
-    dispatch: vi.fn(),
+    dispatch,
     openExternalUrl: vi.fn(),
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
@@ -138,7 +138,7 @@ function mount(onDispatch: (intent: AppIntent) => void) {
   } as unknown as SidebarValue;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot()} onDispatch={onDispatch} />
+      <Sidebar snapshot={snapshot()} />
     </SidebarContext.Provider>,
   );
 }
@@ -273,14 +273,14 @@ describe("the line that says where it will land", () => {
 
 describe("letting go", () => {
   it("asks for the whole order the drop comes to", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     fireEvent.dragStart(row(ZEBRA), { dataTransfer: transfer() });
     dragOver(row(ALPHA), "top");
     fireEvent.drop(row(ALPHA), { dataTransfer: transfer() });
 
-    expect(onDispatch).toHaveBeenCalledTimes(1);
-    expect(onDispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
       type: "reorder_workspaces",
       // The whole list, and the repository's worktree still behind it.
       order: ["w-zebra", "w-alpha", "w-widget", "w-wt-a", "w-wt-b"],
@@ -288,13 +288,13 @@ describe("letting go", () => {
   });
 
   it("moves a worktree within its group and takes nothing else with it", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     fireEvent.dragStart(row(WT_B), { dataTransfer: transfer() });
     dragOver(row(WT_A), "top");
     fireEvent.drop(row(WT_A), { dataTransfer: transfer() });
 
-    expect(onDispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith({
       type: "reorder_workspaces",
       // The two worktrees swapped, the repository still at the head of them,
       // and the groups either side exactly where they were.
@@ -303,23 +303,23 @@ describe("letting go", () => {
   });
 
   it("asks for nothing when the row is let go where it already was", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     fireEvent.dragStart(row(WT_A), { dataTransfer: transfer() });
     dragOver(row(WT_A), "top");
     fireEvent.drop(row(WT_A), { dataTransfer: transfer() });
-    expect(onDispatch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("moves an Agent within its own workspace", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     const second = row(/^a-2/);
     fireEvent.dragStart(second, { dataTransfer: transfer() });
     dragOver(row(/^a-1/), "top");
     fireEvent.drop(row(/^a-1/), { dataTransfer: transfer() });
 
-    expect(onDispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith({
       type: "reorder_agents",
       workspaceId: "w-alpha",
       order: ["a-2", "a-1"],
@@ -334,12 +334,12 @@ describe("letting go", () => {
   });
 
   it("asks for nothing when the row is let go outside the range", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     fireEvent.dragStart(row(WT_A), { dataTransfer: transfer() });
     dragOver(row(ZEBRA), "top");
     fireEvent.drop(row(ZEBRA), { dataTransfer: transfer() });
-    expect(onDispatch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -371,20 +371,20 @@ describe("moving a row with the keyboard", () => {
     fireEvent.keyDown(on, { key, altKey: true });
 
   it("moves a repository past the group below it, worktrees and all", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     arrow(focus(WIDGET), "ArrowDown");
-    expect(onDispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith({
       type: "reorder_workspaces",
       order: ["w-alpha", "w-zebra", "w-widget", "w-wt-a", "w-wt-b"],
     });
   });
 
   it("moves an Agent within its own workspace", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     arrow(focus(/^a-1/), "ArrowDown");
-    expect(onDispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith({
       type: "reorder_agents",
       workspaceId: "w-alpha",
       order: ["a-2", "a-1"],
@@ -392,26 +392,26 @@ describe("moving a row with the keyboard", () => {
   });
 
   it("will not lift a worktree over its own repository", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     arrow(focus(WT_A), "ArrowUp");
-    expect(onDispatch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("is a no-op at the ends, and moves the focus nowhere doing it", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     const top = focus(ALPHA);
     arrow(top, "ArrowUp");
-    expect(onDispatch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(top);
   });
 
   it("leaves the plain arrows walking the tree", () => {
-    const onDispatch = vi.fn();
-    mount(onDispatch);
+    const dispatch = vi.fn();
+    mount(dispatch);
     fireEvent.keyDown(focus(ALPHA), { key: "ArrowDown" });
-    expect(onDispatch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: /^a-1/ }),
     );

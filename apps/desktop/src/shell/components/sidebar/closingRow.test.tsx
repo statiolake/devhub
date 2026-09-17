@@ -106,13 +106,13 @@ function mount(snapshot: AppSnapshot) {
   } as unknown as SidebarValue;
   const view = render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot} onDispatch={vi.fn()} />
+      <Sidebar snapshot={snapshot} />
     </SidebarContext.Provider>,
   );
   const rerender = (next: AppSnapshot) => {
     view.rerender(
       <SidebarContext.Provider value={value}>
-        <Sidebar snapshot={next} onDispatch={vi.fn()} />
+        <Sidebar snapshot={next} />
       </SidebarContext.Provider>,
     );
   };

@@ -25,7 +25,8 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import type { AppIntent, AppSnapshot } from "../../../ipc/appShell";
+import type { AppSnapshot } from "../../../ipc/appShell";
+import { useSidebarDispatch } from "../../sidebar/SidebarContext";
 import {
   dropIntent,
   dropLane,
@@ -62,10 +63,11 @@ interface DragState {
   readonly over: boolean;
 }
 
-export function useReorder(
-  snapshot: AppSnapshot,
-  onDispatch: (intent: AppIntent) => void,
-): Reorder {
+export function useReorder(snapshot: AppSnapshot): Reorder {
+  // The column's one dispatch, taken here rather than passed in: a drag ends
+  // in an intent like every other control, and an intent's answer is the
+  // page's to read. See `useSidebarDispatch`.
+  const dispatch = useSidebarDispatch();
   const [drag, setDrag] = useState<DragState | undefined>(undefined);
 
   const lane = useMemo(
@@ -140,14 +142,14 @@ export function useReorder(
           const intent = dropIntent(snapshot, current.source, current.before);
           // Nothing is the ordinary answer: a row let go in the gap it was
           // already in has not moved, and there is nothing to say about it.
-          if (intent) onDispatch(intent);
+          if (intent) dispatch(intent);
         },
         onDragEnd: () => {
           setDrag(undefined);
         },
       };
     },
-    [drag, lane, onDispatch, snapshot],
+    [dispatch, drag, lane, snapshot],
   );
 
   return { active: drag !== undefined, rowProps };

@@ -64,6 +64,33 @@ export function useSidebar(): SidebarValue {
   return value;
 }
 
+/**
+ * The column's one way to raise an intent.
+ *
+ * Every control in the Sidebar raises intents and none of them waits for the
+ * answer — the answer is the page's, not the button's: the model client
+ * applies the snapshot, puts a `confirmation_required` on the modal layer and
+ * hands a failure to main. So this is the whole of what a control needs, and
+ * it is a hook rather than a prop threaded down from the page.
+ *
+ * It used to be a prop. `SidebarApp` built one out of the raw bridge and
+ * passed it through five components, while `useSidebar().dispatch` sat beside
+ * it saying the same thing — and the two disagreed, because only one of them
+ * read the outcome. Stopping a busy Agent from its row was answered with a
+ * confirmation that the prop threw away, so the question was never asked, the
+ * one-shot confirmation was stranded in main and the button did nothing at all
+ * (`ffe77f3`). One path cannot drift from itself.
+ */
+export function useSidebarDispatch(): (intent: AppIntent) => void {
+  const { dispatch } = useSidebar();
+  return useCallback(
+    (intent: AppIntent) => {
+      void dispatch(intent);
+    },
+    [dispatch],
+  );
+}
+
 export function SidebarProvider({ children }: { children: ReactNode }) {
   const bridge = useMemo(() => devhub(), []);
   const reportFailure = useRaiseFailure(bridge);

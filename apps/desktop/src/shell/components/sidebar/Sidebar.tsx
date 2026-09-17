@@ -19,7 +19,7 @@ import { clampSidebarWidth } from "../../../ipc/appShell";
 import { SCRATCH_NAME } from "../../../ipc/windowTitles";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
-import { useSidebar } from "../../sidebar/SidebarContext";
+import { useSidebar, useSidebarDispatch } from "../../sidebar/SidebarContext";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph } from "./icons";
@@ -46,7 +46,6 @@ import {
 
 export interface SidebarProps {
   readonly snapshot: AppSnapshot;
-  readonly onDispatch: (intent: AppIntent) => void;
 }
 
 function treeContextButtons(tree: HTMLElement): HTMLButtonElement[] {
@@ -70,7 +69,6 @@ function WorkspaceRow({
   workspace,
   repository,
   snapshot,
-  onDispatch,
   agentProfiles,
   agentProfilesAvailability,
   onCreateAgent,
@@ -83,7 +81,6 @@ function WorkspaceRow({
   /** What it is working on, as of the last look. Absent until the first one. */
   readonly repository: WorkspaceRepositoryWire | undefined;
   readonly snapshot: AppSnapshot;
-  readonly onDispatch: (intent: AppIntent) => void;
   readonly agentProfiles: readonly AgentProfile[];
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
@@ -112,10 +109,7 @@ function WorkspaceRow({
       ? snapshot.selection.context.agentId
       : undefined;
 
-  const dispatch = useCallback(
-    (intent: AppIntent) => onDispatch(intent),
-    [onDispatch],
-  );
+  const dispatch = useSidebarDispatch();
 
   // A Workspace on its way out takes no instructions. This is the view half
   // of a fact the model already enforces — a close that is running refuses the
@@ -654,14 +648,13 @@ function WorkspaceMarks({
 
 function ScratchRow({
   snapshot,
-  onDispatch,
   rowRef,
 }: {
   readonly snapshot: AppSnapshot;
-  readonly onDispatch: (intent: AppIntent) => void;
   /** Where `Cmd+Q S` lands when Scratch is what is selected. */
   readonly rowRef: React.Ref<HTMLButtonElement>;
 }) {
+  const dispatch = useSidebarDispatch();
   const selected = snapshot.selection.context.kind === "global";
   return (
     <button
@@ -672,7 +665,7 @@ function ScratchRow({
       aria-label="Scratch terminal"
       data-tooltip={SCRATCH_NAME}
       onClick={() =>
-        onDispatch({ type: "select_context", context: { kind: "global" } })
+        dispatch({ type: "select_context", context: { kind: "global" } })
       }
     >
       {/* Mirrors a Workspace row's first line so the rail, the glyph and the
@@ -803,7 +796,8 @@ function ClosingGhostRow({ label }: { label: string }) {
   );
 }
 
-export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
+export function Sidebar({ snapshot }: SidebarProps) {
+  const dispatchIntent = useSidebarDispatch();
   const { dispatch, agentProfiles, repositoryStatus, closeWorkspace, retry } =
     useSidebar();
   const repositories = useMemo(
@@ -1026,7 +1020,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
    * row can be in the air. Where it may land is `model/workspaceOrder.ts`'s
    * answer and not this component's — the same answer `Alt+↑` gets.
    */
-  const reorder = useReorder(snapshot, onDispatch);
+  const reorder = useReorder(snapshot);
 
   return (
     <aside
@@ -1057,11 +1051,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       {/* The Sidebar runs the full height of the window, so its own top strip
           is where the window buttons live and where the window is dragged. */}
       <div className="sidebar-scroll-region">
-        <ScratchRow
-          snapshot={snapshot}
-          onDispatch={onDispatch}
-          rowRef={scratchRowRef}
-        />
+        <ScratchRow snapshot={snapshot} rowRef={scratchRowRef} />
         <div className="sidebar-section-heading">
           <h2>Workspaces</h2>
           {/* The two ways to start work, kept together at the trailing edge:
@@ -1163,7 +1153,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
                   // The roving tab stop is keyed to the row's id, and the row
                   // keeps its id wherever it lands, so the keyboard follows it
                   // without anything here having to put it back.
-                  if (intent) onDispatch(intent);
+                  if (intent) dispatchIntent(intent);
                   return;
                 }
                 focusItem(items[(index + delta + items.length) % items.length]);
@@ -1209,7 +1199,6 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
                   workspace={entry.workspace}
                   repository={repositories.get(entry.workspace.id)}
                   snapshot={snapshot}
-                  onDispatch={onDispatch}
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
                   onCreateAgent={openAgentPicker}
@@ -1249,7 +1238,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         <RowMenu
           at={agentMenu.at}
           label={`${agentMenu.agent.displayName} actions`}
-          items={agentMenuItems(agentMenu.agent, onDispatch, openRename)}
+          items={agentMenuItems(agentMenu.agent, dispatchIntent, openRename)}
           onDismiss={closeAgentMenu}
         />
       ) : null}

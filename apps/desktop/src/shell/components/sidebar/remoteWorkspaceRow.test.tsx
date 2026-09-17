@@ -74,7 +74,7 @@ function mount(
   } as unknown as AppSnapshot;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot} onDispatch={vi.fn()} />
+      <Sidebar snapshot={snapshot} />
     </SidebarContext.Provider>,
   );
 }
