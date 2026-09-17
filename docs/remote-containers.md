@@ -143,12 +143,24 @@ A container whose state is `removing` is skipped — the CLI's own lookup drops
 those too, and adopting one would be adopting a filesystem that is being
 deleted underneath every command sent to it.
 
-### `devcontainer up` runs only when it must
+### `devcontainer up` runs only when a person asks
 
-When there is no container, when there is a stopped one, or when a running one
-no longer answers. It is the only thing that knows how to build an image,
+Never on a path a timer can reach. Every command DevHub sends a machine goes
+through one place, including the reconcile round that runs on a cadence tick
+for as long as the Workspace has Agents — so an `up` there would restart a
+container within seconds of somebody running `docker stop`, every time, and
+they could never keep it stopped. It is also the call that may *rebuild an
+image*, so a background round could start a minutes-long build nobody asked
+for.
+
+So starting is an explicit act: opening the Workspace in the picker, or the
+first resolve of its window. Everything else refuses with a sentence.
+
+`devcontainer up` itself is the only thing that knows how to build an image,
 create a container and run the lifecycle commands the definition asks for, and
-DevHub has no second opinion about any of that.
+DevHub has no second opinion about any of that. On an existing stopped
+container it is fast — measured at **0.77 s** — because it only has to start
+it.
 
 Its JSON is read strictly. An `outcome` DevHub does not recognise is a hard
 failure that names the CLI — not something to work around. The alternative is
@@ -156,10 +168,37 @@ carrying on with a `containerId` that is actually an error message.
 
 ### A stopped container is a state, not a failure
 
-So is a Docker daemon that is not running. Both are `MachineConditions`
-episodes: raised once per episode against the machine, retracted once on
-sustained recovery, with a sentence that names what was looked for. Starting
-the container is an action the row offers.
+So is a Docker daemon that is not running, and so is a folder whose container
+has never been built. All three are `MachineConditions` episodes: raised once
+per episode against the machine, retracted once on sustained recovery.
+
+**A condition carries a sentence and nothing else** — `machineConditions.ts`
+publishes a summary string, and there is nowhere on it for a button. So the
+sentence has to *be* the action, and each of the three names the exact command
+with the Workspace's own folder already in it:
+
+| what is true | what the condition says |
+| --- | --- |
+| no container built yet | `Build it with: devcontainer up --workspace-folder <folder>` |
+| the container is stopped | `Start it with: devcontainer up --workspace-folder <folder>` |
+| the daemon is not answering | `DevHub could not reach the Docker daemon with <path>. Start Docker and it will reconnect by itself.` |
+
+Three sentences and not one, because folding them together would offer to build
+an image that is already built, or tell somebody to start a container that does
+not exist.
+
+These are thrown as `PortFailure`s rather than bare errors, and that is what
+decides whether the sentence reaches anyone: `portRefusal` carries a `detail`
+through only from a `PortFailure`, and anything else arrives as the bare
+"DevHub is not getting an answer from container:…" — the machine named, and
+nothing to do about it. Docker's own words go to the log; `PortFailure.detail`
+is DevHub's sentence about its own configuration, never the provider's output.
+
+**Conditions ride the Agent reconcile loop.** That loop runs for a machine only
+while a Workspace on it has Agents, so a container Workspace with no Agents is
+not polled and raises no condition when its container stops — its row keeps
+working, because its git is on this Mac. What reports in that case is the
+window: the resolver retries and shows the same sentence.
 
 ### A restarted container needs the window reloaded
 
