@@ -257,19 +257,30 @@
  * the last and `└` for the last. It is one column wide, drawn in `--line` at
  * one pixel, and it is the only thing between the icon column and the text.
  *
- * Measured from the row's own leading edge, which is where the icon column
- * starts in both densities and in both widths:
+ * The column is not against the pane's edge. A source list indents its
+ * contents from the edge it is against, the way Finder's does, and the icon
+ * had been at that edge since the leading gutter was taken out — which put the
+ * marks hard against the window's own frame and read as a toolbar rather than
+ * as a list. So the row leads with an inset, and the inset is one glyph
+ * column: exactly where the folder glyph stood before the two leading columns
+ * became one, so the marks are back on the x a person's eye already knew.
  *
- *     compact       icon 0→16   connector 16→32   vertical 20   elbow 20→28   text 32
- *     comfortable   icon 0→18   connector 18→36   vertical 22   elbow 22→32   text 36
+ * Measured from the row's own leading edge, which is where the inset starts in
+ * both densities and in both widths:
+ *
+ *     compact       inset 0→16   icon 16→32   connector 32→48   vertical 36   elbow 36→44   text 48
+ *     comfortable   inset 0→18   icon 18→36   connector 36→54   vertical 40   elbow 40→50   text 54
+ *
+ * A Workspace's own words start one `--space-2` past the icon column — 40 and
+ * 44 — because they clear the icon and nothing else.
  *
  * The vertical stands one `--space-1` past the icon column rather than down
  * its centre. Down the centre is where a file tree puts it, and it is where
  * this one used to be — but the centre of that column now has an Agent's
  * status mark in it, which is the one thing in this pane the design exists to
  * show, and a hairline through it is a hairline through the answer. So the
- * line starts where the icon ends: the ink of a mark runs 1→15 compact and
- * 1→17 comfortable, and the vertical is the pixel at 20 and at 22, clear of
+ * line starts where the icon ends: the ink of a mark runs 17→31 compact and
+ * 19→35 comfortable, and the vertical is the pixel at 36 and at 40, clear of
  * both. The elbow then runs to one `--sidebar-tree-gap` short of the words.
  *
  * Four stylesheets start a line on these columns: the row's own text inset,
@@ -284,20 +295,30 @@
  * been chosen — is invalid and inherits down as nothing at all.
  */
 .app-shell {
+  /* The air before the icon column: the list's own indent from the pane's
+     leading edge, and one glyph column wide, which is where the folder glyph
+     stood when a gutter led the row. Every term below is measured past it, so
+     the whole arrangement moves with it and nothing has to be moved twice. */
+  --sidebar-row-inset: var(--sidebar-glyph-width);
   /* The connector's own column: as wide as the icon column beside it, so the
-     two leading columns keep one rhythm at either density. */
+     two columns keep one rhythm at either density. */
   --sidebar-tree-width: var(--sidebar-glyph-width);
   /* Where the vertical stands, from the row's leading edge. */
-  --sidebar-tree-line: calc(var(--sidebar-glyph-width) + var(--space-1));
+  --sidebar-tree-line: calc(
+    var(--sidebar-row-inset) + var(--sidebar-glyph-width) + var(--space-1)
+  );
   /* The air between the end of the elbow and the first letter. */
   --sidebar-tree-gap: var(--space-1);
   /* Where a row's words start: after the icon column, with one gap. */
-  --sidebar-text-inset: calc(var(--sidebar-glyph-width) + var(--space-2));
+  --sidebar-text-inset: calc(
+    var(--sidebar-row-inset) + var(--sidebar-glyph-width) + var(--space-2)
+  );
   /* Where an Agent's words start: after the connector column as well. The gap
      before the first letter is inside that column — it is the air the elbow
      stops short by — so there is no second one to add here. */
   --sidebar-agent-text-inset: calc(
-    var(--sidebar-glyph-width) + var(--sidebar-tree-width)
+    var(--sidebar-row-inset) + var(--sidebar-glyph-width) +
+      var(--sidebar-tree-width)
   );
 }
 

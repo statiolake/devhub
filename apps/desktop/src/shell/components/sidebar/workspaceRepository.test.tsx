@@ -805,31 +805,47 @@ describe("a row's leading columns, and the connector between them", () => {
     // `--sidebar-tree-width: var(--sidebar-glyph-width)` — the connector's
     // column is as wide as the icon column beside it.
     const tree = glyph;
+    // `--sidebar-row-inset: var(--sidebar-glyph-width)` — the list's indent
+    // from the pane's leading edge, which is where the folder glyph stood
+    // when a gutter led the row.
+    const inset = glyph;
     return {
+      /** The indent every row leads with, before anything is drawn. */
+      inset: { from: 0, to: inset },
       /** The one icon column, on every row, and the mark centred in it. */
-      icon: { from: 0, to: glyph, centre: glyph / 2 },
-      mark: { from: (glyph - ink) / 2, to: (glyph + ink) / 2 },
+      icon: { from: inset, to: inset + glyph, centre: inset + glyph / 2 },
+      mark: {
+        from: inset + (glyph - ink) / 2,
+        to: inset + (glyph + ink) / 2,
+      },
       /** The Workspace's own words: after the icon column, one gap. */
-      workspaceText: glyph + gap,
+      workspaceText: inset + glyph + gap,
       /** `--sidebar-tree-line`: where the vertical stands. */
-      vertical: glyph + step,
+      vertical: inset + glyph + step,
       /** Where the elbow's horizontal run stops, one gap short of the words. */
-      elbowEnd: glyph + tree - step,
+      elbowEnd: inset + glyph + tree - step,
       /** `--sidebar-agent-text-inset`: after the connector column. */
-      agentText: glyph + tree,
+      agentText: inset + glyph + tree,
     };
   }
 
   it("puts every row's mark in one column, at one x", () => {
-    // The fact the whole arrangement rests on. There is no leading gutter in
-    // front of it any more — that was two columns saying one thing — so an
-    // Agent's status and its Workspace's folder are at the same x, and the
-    // collapse to the rail moves neither.
+    // The fact the whole arrangement rests on. There is one leading column and
+    // not two — the gutter that used to hold an Agent's status beside a
+    // Workspace's folder is gone — so an Agent's status and its Workspace's
+    // folder are at the same x, and the collapse to the rail moves neither.
+    //
+    // That x is one glyph column in, not the pane's own edge: it is where the
+    // folder glyph stood while the gutter led the row, and a source list
+    // indents its contents from the edge it is against.
+    expect(geometry("compact").inset.to).toBe(16);
+    expect(geometry("comfortable").inset.to).toBe(18);
     for (const density of ["compact", "comfortable"] as const) {
-      expect(geometry(density).icon.from).toBe(0);
+      const at = geometry(density);
+      expect(at.icon.from).toBe(at.inset.to);
     }
-    expect(geometry("compact").icon.to).toBe(16);
-    expect(geometry("comfortable").icon.to).toBe(18);
+    expect(geometry("compact").icon.to).toBe(32);
+    expect(geometry("comfortable").icon.to).toBe(36);
   });
 
   it("stands the vertical clear of the mark in that column", () => {
@@ -842,8 +858,8 @@ describe("a row's leading columns, and the connector between them", () => {
       expect(at.vertical).toBeGreaterThan(at.mark.to);
       expect(at.vertical).toBeGreaterThan(at.icon.centre);
     }
-    expect(geometry("compact").vertical).toBe(20);
-    expect(geometry("comfortable").vertical).toBe(22);
+    expect(geometry("compact").vertical).toBe(36);
+    expect(geometry("comfortable").vertical).toBe(40);
   });
 
   it("turns the elbow into the words, stopping a gap short of them", () => {
@@ -852,8 +868,8 @@ describe("a row's leading columns, and the connector between them", () => {
       expect(at.elbowEnd).toBeGreaterThan(at.vertical);
       expect(at.agentText - at.elbowEnd).toBe(step);
     }
-    expect(geometry("compact").elbowEnd).toBe(28);
-    expect(geometry("comfortable").elbowEnd).toBe(32);
+    expect(geometry("compact").elbowEnd).toBe(44);
+    expect(geometry("comfortable").elbowEnd).toBe(50);
   });
 
   it("starts an Agent's words one connector column in from its Workspace's", () => {
@@ -861,10 +877,10 @@ describe("a row's leading columns, and the connector between them", () => {
       const at = geometry(density);
       expect(at.agentText).toBeGreaterThan(at.workspaceText);
     }
-    expect(geometry("compact").workspaceText).toBe(24);
-    expect(geometry("compact").agentText).toBe(32);
-    expect(geometry("comfortable").workspaceText).toBe(26);
-    expect(geometry("comfortable").agentText).toBe(36);
+    expect(geometry("compact").workspaceText).toBe(40);
+    expect(geometry("compact").agentText).toBe(48);
+    expect(geometry("comfortable").workspaceText).toBe(44);
+    expect(geometry("comfortable").agentText).toBe(54);
   });
 
   it("is one arrangement, declared once", () => {
@@ -872,7 +888,12 @@ describe("a row's leading columns, and the connector between them", () => {
       "--sidebar-tree-width: var(--sidebar-glyph-width);",
     );
     expect(tokens).toContain(
-      "--sidebar-tree-line: calc(var(--sidebar-glyph-width) + var(--space-1));",
+      "--sidebar-row-inset: var(--sidebar-glyph-width);",
+    );
+    // Written past the inset, so moving the list's indent moves the connector
+    // with it and neither has to be moved twice.
+    expect(tokens).toContain(
+      "--sidebar-tree-line: calc(\n    var(--sidebar-row-inset) + var(--sidebar-glyph-width) + var(--space-1)\n  );",
     );
     expect(tokens).toContain("--sidebar-tree-gap: var(--space-1);");
     // On `.app-shell`, where the glyph column they are written in terms of is
@@ -929,6 +950,12 @@ describe("a row's leading columns, and the connector between them", () => {
     // reorder draws all start from the same terms, so none of them can drift.
     expect(shell).toContain(
       ".agent-row .sidebar-context-button {\n  /* The button starts where the icon column ends, so what it clears is the\n     connector column and nothing else — `--sidebar-agent-text-inset` is the\n     same distance counted from the row's leading edge instead. */\n  padding-left: var(--sidebar-tree-width);\n}",
+    );
+    // The row's own indent, and the rail taking it back off — the collapse is
+    // a subtraction, so the rail states nothing the expanded column does not.
+    expect(shell).toContain("  padding-inline: var(--sidebar-row-inset) 0;");
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .sidebar-row {\n  padding-inline: 0;\n}',
     );
     expect(reorder).toContain("  left: var(--sidebar-text-inset);");
     expect(reorder).toContain("  left: var(--sidebar-agent-text-inset);");

@@ -278,9 +278,16 @@
      name six pixels to the right of every other row's — the one row in the list
      that was not on the column, and measured in a browser to be exactly that.
      There is one leading column now and it is the thing the whole arrangement
-     rests on, so nothing may quietly move a row off it. */
+     rests on, so nothing may quietly move a row off it.
+
+     The leading half is the list's indent from the pane's edge — see
+     `--sidebar-row-inset` in `tokens.css` — and it is padding on the row and
+     not a margin, so the hover wash and the selection fill still run the whole
+     width of the pane with the words inset inside them, which is how a source
+     list draws a selected row. The rail takes it back off; it is one of the
+     things the collapse subtracts. */
   padding-block: var(--row-pad-block);
-  padding-inline: 0;
+  padding-inline: var(--sidebar-row-inset) 0;
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
@@ -792,8 +799,8 @@
   top: calc(var(--row-height) / 2);
   left: var(--sidebar-tree-line);
   width: calc(
-    var(--sidebar-glyph-width) + var(--sidebar-tree-width) -
-      var(--sidebar-tree-line) - var(--sidebar-tree-gap)
+    var(--sidebar-agent-text-inset) - var(--sidebar-tree-line) -
+      var(--sidebar-tree-gap)
   );
   height: 1px;
   background: var(--line);
@@ -1708,6 +1715,21 @@ body.is-resizing-split {
 .sidebar[data-collapsed="true"] {
   width: var(--sidebar-rail-collapsed-width);
   flex-basis: var(--sidebar-rail-collapsed-width);
+}
+
+/* The list's indent from the pane's leading edge, taken off with the words.
+   It says "these rows are the contents of a pane wider than they are", which a
+   rail is not: here the pane is one column and the pane is what centres it —
+   an indent inside that would push the column off the middle.
+
+   It is the padding that is taken back and not `--sidebar-row-inset` that is
+   redeclared, because redeclaring it here would reach this rule and nothing
+   else: a custom property resolves its own `var()`s where it is *declared*, so
+   the terms written past the inset on `.app-shell` already have the expanded
+   number substituted into them. The connector is not drawn here and the drop
+   line states its own rail value below, so this is the whole of it. */
+.sidebar[data-collapsed="true"] .sidebar-row {
+  padding-inline: 0;
 }
 
 /* The rail is centred by the *pane*, not by the row.
