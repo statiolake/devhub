@@ -33,8 +33,18 @@ import type { TitleBarMode } from "../../model/config.js";
 const TITLE_BAR_HEIGHT = 38;
 /** `--traffic-light-span`: how far the lights reach from the leading edge. */
 const TRAFFIC_LIGHT_SPAN = 76;
-/** `--sidebar-rail-width`: the inset the glyph column hangs off, each side. */
-const SIDEBAR_RAIL_WIDTH = 14;
+/**
+ * `--space-3`: the margin the rail leaves each side of its glyph column.
+ *
+ * It said `--sidebar-rail-width` and it was 14, which was a token that sized a
+ * leading gutter rather than this margin, and 14 was not that token's value
+ * either. So main gave the collapsed view 44px while the page drew a 40px
+ * column inside it, and the rail's marks sat two pixels off the middle of
+ * their own view — the one place in the Sidebar where being on the column is
+ * the whole design. The page's number is `--sidebar-rail-collapsed-width`, and
+ * this is the term it is written in.
+ */
+const SIDEBAR_RAIL_MARGIN = 12;
 /** `--sidebar-glyph-width`, per density. */
 const SIDEBAR_GLYPH_WIDTH = { compact: 16, comfortable: 18 } as const;
 /**
@@ -210,7 +220,7 @@ export function sidebarColumnWidth(state: LayoutState): number {
 	if (!state.sidebar.collapsed) return Math.round(state.sidebar.width);
 	return state.titleBar === "hidden"
 		? TRAFFIC_LIGHT_SPAN
-		: SIDEBAR_GLYPH_WIDTH[state.density] + 2 * SIDEBAR_RAIL_WIDTH;
+		: SIDEBAR_GLYPH_WIDTH[state.density] + 2 * SIDEBAR_RAIL_MARGIN;
 }
 
 /**
@@ -359,7 +369,7 @@ function clamp(value: number, low: number, high: number): number {
  * at all on a rail. The arithmetic is the same shape; what changed is the box
  * it is against. It is the *window* now, so the sentence runs out over the
  * editor the way a tooltip is supposed to, and "does it fit" stopped being a
- * question about a 44px column.
+ * question about a 40px column.
  *
  * Three rules, in order:
  *

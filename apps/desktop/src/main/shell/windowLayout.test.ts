@@ -70,9 +70,13 @@ describe("the rectangle the workbench is laid into", () => {
 	});
 
 	it("is a rail's width when the sidebar is collapsed, per chrome", () => {
+		// The page's own `--sidebar-rail-collapsed-width`: the density's glyph
+		// column with one `--space-3` each side of it. It was 44 and 46 here
+		// against the page's 40 and 42, so the rail's marks were centred in a
+		// column four pixels narrower than the view they were drawn in.
 		expect(
 			sidebarColumnWidth(state({ sidebar: { width: 248, collapsed: true } })),
-		).toBe(44);
+		).toBe(40);
 		expect(
 			sidebarColumnWidth(
 				state({
@@ -80,7 +84,7 @@ describe("the rectangle the workbench is laid into", () => {
 					density: "comfortable",
 				}),
 			),
-		).toBe(46);
+		).toBe(42);
 		// With no bar above it the Sidebar carries the traffic lights, and the
 		// rail may not be narrower than their span.
 		expect(
@@ -373,7 +377,7 @@ describe("the Sidebar and the Agents as children of their own", () => {
 			input({ state: state({ sidebar: { width: 248, collapsed: true } }) }),
 		).find((child) => child.identity.kind === "sidebar");
 		expect(rail?.visible).toBe(true);
-		expect(rail?.rect.width).toBe(44);
+		expect(rail?.rect.width).toBe(40);
 	});
 
 	it("is always in the window, in every arrangement", () => {
@@ -451,7 +455,7 @@ describe("the Sidebar and the Agents as children of their own", () => {
  * child of the window.
  *
  * The Sidebar drew its own until now, against its own box, and the row that
- * most needed one — a glyph on a collapsed rail — was in a box 44 to 76px
+ * most needed one — a glyph on a collapsed rail — was in a box 40 to 76px
  * wide. There was no arithmetic that made a sentence readable in that, so the
  * page refused to draw one at all. These are the assertions that say the
  * refusal is gone: the rectangle may start inside the Sidebar's column and
@@ -472,7 +476,7 @@ describe("where a tooltip goes", () => {
 
 	/**
 	 * The rail's case, and the one that could not be drawn before: the anchor
-	 * is a glyph in a 44px column and the sentence runs out over the editor.
+	 * is a glyph in a 40px column and the sentence runs out over the editor.
 	 */
 	it("puts a rail's tooltip beside the glyph, out over the editor", () => {
 		const rect = tooltipRect(WINDOW, placement());
