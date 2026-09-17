@@ -42,12 +42,11 @@
  *   this page has no room for a failure and no business reporting one, so it
  *   goes to the page that draws them like every other page's does.
  *
- * **And nothing else.** In particular *not* the anchor and *not* the side the
- * row prefers, though both are part of the request the Sidebar sends. They are
- * the owner's: `windowLayout.ts` turns them into a rectangle, and this page
- * never learns where it ended up. Handing them to a renderer that cannot act
- * on them would be two more members on a bridge whose page has no use for
- * them — the shape `onModals` had on four bridges that could never receive it,
+ * **And nothing else.** In particular *not* the anchor, though it is part of
+ * the request the Sidebar sends. It is the owner's: `windowLayout.ts` turns it
+ * into a rectangle, and this page never learns where it ended up. Handing it
+ * to a renderer that cannot act on it would be one more member on a bridge
+ * whose page has no use for it — the shape `onModals` had on four bridges that could never receive it,
  * which is exactly what the per-page contract exists to make unspellable.
  */
 

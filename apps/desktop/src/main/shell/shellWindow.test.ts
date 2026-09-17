@@ -372,7 +372,6 @@ describe("the shell window's workbench views", () => {
 		shell.tooltip.show({
 			lines: [{ text: "widget", style: "name" }],
 			anchor: { x: 14, y: 120, width: 16, height: 24 },
-			prefer: "right",
 		});
 		shell.tooltip.setSize({ width: 220, height: 34 });
 		expect(shell.tooltip.isPresent()).toBe(true);

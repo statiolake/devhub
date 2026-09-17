@@ -468,7 +468,6 @@ describe("where a tooltip goes", () => {
 	): TooltipPlacement {
 		return {
 			anchor: { x: 8, y: 100, width: 36, height: 24 },
-			prefer: "right",
 			size,
 			...overrides,
 		};
@@ -485,10 +484,18 @@ describe("where a tooltip goes", () => {
 		expect(rect.x + rect.width).toBeGreaterThan(76);
 	});
 
-	it("hangs a row's tooltip under the row when that is the side asked for", () => {
-		expect(tooltipRect(WINDOW, placement({ prefer: "below" }))).toEqual({
-			x: 8,
-			y: 100 + 24 + 6,
+	/**
+	 * And the expanded column's case is the same case. It used to be under the
+	 * row, which in a list of stacked rows is over the *next* row: the answer
+	 * to what you just pointed at covering the thing you are pointing at next,
+	 * to be dodged before it can be clicked. There is one side now, and it is
+	 * the side with a workbench on it.
+	 */
+	it("puts an expanded row's tooltip beside it too, never under it", () => {
+		const anchor = { x: 0, y: 100, width: 248, height: 26 };
+		expect(tooltipRect(WINDOW, placement({ anchor }))).toEqual({
+			x: 248 + 6,
+			y: 100,
 			width: 300,
 			height: 40,
 		});
@@ -507,11 +514,35 @@ describe("where a tooltip goes", () => {
 		expect(rect.width).toBe(300);
 	});
 
-	it("flips above the row at the bottom edge", () => {
-		const anchor = { x: 8, y: 870, width: 36, height: 24 };
-		const rect = tooltipRect(WINDOW, placement({ anchor, prefer: "below" }));
-		expect(rect.y).toBe(870 - 6 - 40);
+	/**
+	 * The bottom of the column, where a box that hung under the row would have
+	 * been off the window. Beside the row there is nothing to flip: the box
+	 * starts level with the row's own top and the clamp lifts it until it fits,
+	 * which can only ever move it *up*. Nothing is placed below the row it is
+	 * about, so nothing lands on the row after it.
+	 */
+	it("lifts a tooltip at the bottom edge rather than dropping it below", () => {
+		const anchor = { x: 8, y: 890, width: 36, height: 24 };
+		const rect = tooltipRect(WINDOW, placement({ anchor }));
+		expect(rect.y).toBeLessThanOrEqual(890);
+		expect(rect.y + rect.height).toBeLessThanOrEqual(WINDOW.height);
 		expect(rect.height).toBe(40);
+	});
+
+	/**
+	 * A sentence too wide for either side of the row. It does not fall back to
+	 * hanging under the row — there is no such side any more — it ends against
+	 * the window's trailing edge, still level with the row it is about.
+	 */
+	it("clamps a very wide tooltip to the window, still beside the row", () => {
+		const anchor = { x: 0, y: 100, width: 248, height: 26 };
+		const rect = tooltipRect(
+			WINDOW,
+			placement({ anchor, size: { width: WINDOW.width - 20, height: 40 } }),
+		);
+		expect(rect.y).toBe(100);
+		expect(rect.x + rect.width).toBeLessThanOrEqual(WINDOW.width);
+		expect(rect.width).toBe(WINDOW.width - 20);
 	});
 
 	/**

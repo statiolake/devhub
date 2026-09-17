@@ -12,10 +12,9 @@
  * itself — where the pointer is in it, and what was clicked in it — and neither
  * is a thing the Sidebar could have said instead.
  *
- * `onTooltip` carries the lines and nothing else. The anchor and the preferred
- * side travel from the Sidebar to main and stop there — they are what
- * `windowLayout.ts` turns into a rectangle, and a renderer that was handed
- * them could do nothing with them.
+ * `onTooltip` carries the lines and nothing else. The anchor travels from the
+ * Sidebar to main and stops there — it is what `windowLayout.ts` turns into a
+ * rectangle, and a renderer that was handed it could do nothing with it.
  */
 
 import { contextBridge, ipcRenderer } from "electron";

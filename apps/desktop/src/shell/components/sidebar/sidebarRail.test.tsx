@@ -412,7 +412,7 @@ describe("what a rail entry does under the pointer", () => {
     let pushArea: ((area: SidebarAreaWire) => void) | undefined;
     const devhub = window.devhub;
     window.devhub = {
-      ...devhub,
+      ...(devhub as unknown as Record<string, unknown>),
       onSidebarArea: (listener: (area: SidebarAreaWire) => void) => {
         pushArea = listener;
         return () => (pushArea = undefined);

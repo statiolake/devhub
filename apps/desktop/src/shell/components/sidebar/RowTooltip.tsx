@@ -57,19 +57,15 @@
  * half out of the column has half a row on screen and a tooltip pointing at
  * the invisible half points at nothing.
  *
- * Nothing here decides *where* the tooltip goes. `prefer` is a fact about the
- * row — a glyph has its sentence beside it, a line of text has it underneath —
- * and the owner turns that into a rectangle, flipping and clamping against a
- * window this page cannot see.
+ * Nothing here decides *where* the tooltip goes, and there is no longer a
+ * side to prefer: a tooltip is beside its row, in the rail and in the expanded
+ * column alike. The owner turns the anchor into a rectangle, flipping and
+ * clamping against a window this page cannot see.
  */
 
 import { useCallback, useEffect, useRef } from "react";
 import { devhub } from "../../sidebar/client";
-import type {
-  SidebarAreaWire,
-  TooltipLineWire,
-  TooltipRequestWire,
-} from "../../../ipc/contract";
+import type { SidebarAreaWire, TooltipLineWire } from "../../../ipc/contract";
 
 /**
  * How long the pointer rests on a row before its tooltip is drawn.
@@ -118,17 +114,7 @@ function tooltipFor(
   return text === undefined || text === "" ? undefined : [{ text }];
 }
 
-/**
- * Which side of the row its sentence goes on.
- *
- * A fact about the row rather than about the window: on a rail there is a
- * glyph and the words belong beside it, and in the expanded column there is a
- * line of text and they belong under it. Whether there is *room* on that side
- * is the owner's question — see `tooltipRect`.
- */
-export type TooltipSide = TooltipRequestWire["prefer"];
-
-export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
+export function RowTooltip() {
   /**
    * Where main has laid this view, which is the whole of what this page
    * knows about where it is. Undefined until the first push, and a tooltip
@@ -138,12 +124,6 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
    */
   const area = useRef<SidebarAreaWire | undefined>(undefined);
   useEffect(() => devhub().onSidebarArea((next) => (area.current = next)), []);
-
-  // The side is read through a ref so that the effect below subscribes once:
-  // collapsing the Sidebar changes `prefer` and must not tear down and
-  // rebuild every pointer listener on the document.
-  const side = useRef(prefer);
-  side.current = prefer;
 
   const hide = useCallback(() => {
     devhub().hideTooltip();
@@ -194,7 +174,6 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
         width: Math.min(box.width, sidebar.width),
         height: bottom - top,
       },
-      prefer: side.current,
     });
   }, []);
 

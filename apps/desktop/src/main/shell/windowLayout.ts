@@ -159,18 +159,6 @@ export interface LayoutInput {
 }
 
 /**
- * Which way a tooltip leans off the thing it is about.
- *
- * Two answers and not four, because it is two questions about the *row*
- * rather than four positions: a rail entry is a glyph with the sentence
- * beside it (`right`), and a row in the expanded column is a line of text
- * with the sentence under it (`below`). Where it actually lands is
- * `tooltipRect`'s, which flips and clamps — this is only which side is
- * preferred when there is room for either.
- */
-export type TooltipSide = "right" | "below";
-
-/**
  * Everything the owner needs to place a tooltip, and nothing the page keeps.
  *
  * The anchor is in the *window's* coordinates, which is the whole point of
@@ -188,7 +176,6 @@ export type TooltipSide = "right" | "below";
  */
 export interface TooltipPlacement {
 	readonly anchor: LayoutRect;
-	readonly prefer: TooltipSide;
 	readonly size: LayoutSize;
 }
 
@@ -371,27 +358,37 @@ function clamp(value: number, low: number, high: number): number {
  * editor the way a tooltip is supposed to, and "does it fit" stopped being a
  * question about a 40px column.
  *
- * Three rules, in order:
+ * **Beside the row, and never under it.** The rows are stacked, so a box under
+ * one is a box over the next: the thing a person's pointer is already moving
+ * towards is covered by the answer to what they just pointed at, and they have
+ * to dodge it to click. Out to the side there is a workbench, which is the one
+ * direction in this window with room to spare. It used to be a question the
+ * row answered — beside a glyph on the rail, under a line of text in the
+ * expanded column — and the expanded column's answer was the one that covered
+ * the next row.
  *
- * - **The preferred side**, which is about the row and not about the window:
- *   beside a glyph, or under a line of text. See `TooltipSide`.
- * - **Flip** when that side has no room — to the other side of the anchor,
+ * Two rules, in order:
+ *
+ * - **Flip** to the anchor's leading side when the trailing side has no room —
  *   not to a squeezed version of the same side. A tooltip is one rectangle
  *   with one width, and narrowing it to fit is how a sentence becomes a
  *   ribbon.
- * - **Clamp** to the window, which is the last word. A flip can still land
- *   out of bounds when the anchor is itself near an edge, and off-window is
- *   the one result that is never readable.
+ * - **Clamp** to the window, which is the last word. A flip can still land out
+ *   of bounds when the anchor is itself near an edge, and off-window is the
+ *   one result that is never readable. A box too wide for either side of the
+ *   row ends against the window's trailing edge, still beside the row.
  *
- * The cross-axis is aligned with the anchor's leading edge and then clamped,
- * so a tooltip beside a row starts level with that row — the eye has one line
- * to follow from the glyph to the words.
+ * The cross-axis is the anchor's own top, clamped, so the box starts level
+ * with the row and the eye has one line to follow from the mark to the words.
+ * A row near the foot of the window moves the box *up* — it is the only
+ * direction the clamp can move it — so nothing is ever placed below the row
+ * it is about.
  */
 export function tooltipRect(
 	windowSize: LayoutSize,
 	placement: TooltipPlacement,
 ): LayoutRect {
-	const { anchor, prefer, size } = placement;
+	const { anchor, size } = placement;
 	// Never wider or taller than the window itself: everything below is
 	// about *where* it goes, and a rectangle bigger than the window has no
 	// position that is inside it.
@@ -400,25 +397,13 @@ export function tooltipRect(
 	const lastX = Math.max(0, windowSize.width - width - TOOLTIP_MARGIN);
 	const lastY = Math.max(0, windowSize.height - height - TOOLTIP_MARGIN);
 
-	if (prefer === "right") {
-		const right = anchor.x + anchor.width + TOOLTIP_GAP;
-		// Flipped to the anchor's leading side when the trailing side would
-		// run past the window's edge.
-		const x = right > lastX ? anchor.x - TOOLTIP_GAP - width : right;
-		return {
-			x: clamp(x, TOOLTIP_MARGIN, lastX),
-			y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
-			width,
-			height,
-		};
-	}
-	const below = anchor.y + anchor.height + TOOLTIP_GAP;
-	// Flipped above the row when there is no room under it — the last row's
-	// tooltip is as readable as the first's.
-	const y = below > lastY ? anchor.y - TOOLTIP_GAP - height : below;
+	const right = anchor.x + anchor.width + TOOLTIP_GAP;
+	// Flipped to the anchor's leading side when the trailing side would run
+	// past the window's edge.
+	const x = right > lastX ? anchor.x - TOOLTIP_GAP - width : right;
 	return {
-		x: clamp(anchor.x, TOOLTIP_MARGIN, lastX),
-		y: clamp(y, TOOLTIP_MARGIN, lastY),
+		x: clamp(x, TOOLTIP_MARGIN, lastX),
+		y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
 		width,
 		height,
 	};

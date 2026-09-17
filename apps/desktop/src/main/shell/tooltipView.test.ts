@@ -120,7 +120,6 @@ describe("the tooltip layer", () => {
 		tooltip.show({
 			lines: [{ text: "widget", style: "name" }],
 			anchor: RAIL_GLYPH,
-			prefer: "right",
 		});
 	};
 
@@ -187,7 +186,6 @@ describe("the tooltip layer", () => {
 		tooltip.show({
 			lines: [{ text: "another row entirely", style: "name" }],
 			anchor: { x: 14, y: 300, width: 16, height: 24 },
-			prefer: "right",
 		});
 		expect(tooltip.isPresent()).toBe(true);
 		expect(view().bounds?.y).toBe(300);
@@ -325,7 +323,6 @@ describe("the tooltip layer", () => {
 			tooltip.show({
 				lines: [{ text: "another row entirely", style: "name" }],
 				anchor: { x: 14, y: 300, width: 16, height: 24 },
-				prefer: "right",
 			});
 			vi.advanceTimersByTime(1000);
 			expect(tooltip.isPresent()).toBe(true);

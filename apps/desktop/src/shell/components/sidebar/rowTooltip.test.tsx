@@ -100,11 +100,11 @@ function Row({
   );
 }
 
-function mount(top: number, prefer: "right" | "below" = "below") {
+function mount(top: number) {
   return render(
     <>
       <Row top={top} />
-      <RowTooltip prefer={prefer} />
+      <RowTooltip />
     </>,
   );
 }
@@ -231,7 +231,7 @@ describe("the Sidebar's tooltips", () => {
               }) as DOMRect;
           }}
         />
-        <RowTooltip prefer="below" />
+        <RowTooltip />
       </>,
     );
     layOut(COLUMN);
@@ -275,23 +275,26 @@ describe("the Sidebar's tooltips", () => {
   });
 
   /**
-   * The rail is the row this whole change exists for. It used to get nothing;
-   * it now gets a tooltip, and the side it asks for is beside the glyph
-   * because that is what a rail row is.
+   * The rail is the row this whole change exists for: it used to get nothing,
+   * because a tooltip drawn in a 40px column is a ribbon.
+   *
+   * The request it sends is the same request the expanded column sends. There
+   * is no side on it any more — a tooltip is beside its row wherever the row
+   * is, and where "beside" lands is the owner's (`tooltipRect`) — so the two
+   * states cannot come to ask for different things.
    */
-  it("asks for a tooltip on the rail, beside the glyph", () => {
-    mount(100, "right");
+  it("asks for the same thing on the rail as in the expanded column", () => {
+    mount(100);
     layOut(RAIL);
     hover(screen.getByRole("button"));
-    expect(raised().prefer).toBe("right");
-    expect(raised().lines).toEqual(FACTS);
-  });
-
-  it("asks for one under the row in the expanded column", () => {
-    mount(100, "below");
+    const onTheRail = raised();
+    cleanup();
+    sent = [];
+    mount(100);
     layOut(COLUMN);
     hover(screen.getByRole("button"));
-    expect(raised().prefer).toBe("below");
+    expect(raised()).toEqual(onTheRail);
+    expect(onTheRail.lines).toEqual(FACTS);
   });
 
   /**
@@ -377,7 +380,7 @@ describe("the Sidebar's tooltips", () => {
     render(
       <>
         <Row top={100} />
-        <RowTooltip prefer="below" />
+        <RowTooltip />
       </>,
     );
     layOut(COLUMN);

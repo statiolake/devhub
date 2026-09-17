@@ -1307,10 +1307,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       {/* One tooltip for the whole tree, decided here and drawn on a child of
           the window. See `RowTooltip.tsx` — this view is 44px wide on a
           collapsed rail, so a tooltip drawn in it is clipped by it, which is
-          the exact failure `title` was replaced to avoid. The side is a fact
-          about the row: a rail is a glyph with its sentence beside it, and an
-          expanded row is a line of text with its sentence underneath. */}
-      <RowTooltip prefer={collapsed ? "right" : "below"} />
+          the exact failure `title` was replaced to avoid. Where it goes is the
+          owner's and takes no argument from here: beside the row, always. */}
+      <RowTooltip />
       {agentMenu ? (
         <RowMenu
           at={agentMenu.at}

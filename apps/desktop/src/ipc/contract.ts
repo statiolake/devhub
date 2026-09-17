@@ -455,9 +455,10 @@ export interface SidebarAreaWire {
  *
  * The Sidebar composes the sentence and knows which row the pointer is
  * resting on; main owns where anything in the window goes. So the page sends
- * the three facts only it has — what to say, which rectangle it is about, and
- * which side of that rectangle the row would rather have it on — and never
- * learns where it ended up.
+ * the two facts only it has — what to say and which rectangle it is about —
+ * and never learns where it ended up. Which side of that rectangle the box
+ * goes on is not one of them: it is beside the row, always, and that is
+ * `tooltipRect`'s to know.
  *
  * `anchor` is in **window** coordinates, converted by the page from its own
  * box plus the rectangle main told it it occupies (`SidebarAreaWire`). That
@@ -466,8 +467,6 @@ export interface SidebarAreaWire {
 export interface TooltipRequestWire {
 	readonly lines: readonly TooltipLineWire[];
 	readonly anchor: SidebarAreaWire;
-	/** Beside a glyph on the rail, or under a row in the expanded column. */
-	readonly prefer: "right" | "below";
 }
 
 /**
@@ -1121,13 +1120,12 @@ export interface ToastsBridge extends PageBridge {
  * sentence somebody else composed, and this page only draws it and says how
  * big it came out.
  *
- * **What is deliberately not here is the anchor and the preferred side.** The
- * Sidebar sends both (`TooltipRequestWire`) and main keeps both: they are
- * inputs to `windowLayout.ts`, which turns them into a rectangle this page
- * never sees. Putting them on this bridge would be two members whose page has
- * no use for them — the shape `onModals` had on four bridges that could never
- * receive it, and the exact thing the per-page contract exists to make
- * unspellable.
+ * **What is deliberately not here is the anchor.** The Sidebar sends it
+ * (`TooltipRequestWire`) and main keeps it: it is the input to
+ * `windowLayout.ts`, which turns it into a rectangle this page never sees.
+ * Putting it on this bridge would be a member whose page has no use for it —
+ * the shape `onModals` had on four bridges that could never receive it, and
+ * the exact thing the per-page contract exists to make unspellable.
  */
 export interface TooltipBridge extends PageBridge {
 	/** The sentence to draw, or nothing at all to draw none. */

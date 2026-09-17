@@ -36,8 +36,8 @@
  *
  * # What this class holds and what it does not
  *
- * It holds the *request*: the text, the anchor in window coordinates, and the
- * side the row prefers. It does not hold a rectangle. Where the tooltip goes
+ * It holds the *request*: the text and the anchor in window coordinates. It
+ * does not hold a rectangle. Where the tooltip goes
  * is `windowLayout.ts`'s `tooltipRect`, which is pure and knows the window's
  * size; this is only the state that makes that function answerable, plus the
  * page it is drawn on.
@@ -73,11 +73,7 @@
 import { electron } from "../electron.js";
 import { CHANNELS, type TooltipLineWire } from "../../ipc/contract.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
-import type {
-	LayoutRect,
-	TooltipPlacement,
-	TooltipSide,
-} from "./windowLayout.js";
+import type { LayoutRect, TooltipPlacement } from "./windowLayout.js";
 
 /** How big the page says its box is, in the page's own pixels. */
 export interface TooltipSize {
@@ -85,11 +81,10 @@ export interface TooltipSize {
 	readonly height: number;
 }
 
-/** What the Sidebar asked for: some facts, about a rectangle, on a side. */
+/** What the Sidebar asked for: some facts, about a rectangle. */
 export interface TooltipRequest {
 	readonly lines: readonly TooltipLineWire[];
 	readonly anchor: LayoutRect;
-	readonly prefer: TooltipSide;
 }
 
 export interface TooltipViewHost {
@@ -264,7 +259,7 @@ export class TooltipView {
 		const request = this.request;
 		if (!request) return undefined;
 		if (this.size.width <= 0 || this.size.height <= 0) return undefined;
-		return { anchor: request.anchor, prefer: request.prefer, size: this.size };
+		return { anchor: request.anchor, size: this.size };
 	}
 
 	/**
