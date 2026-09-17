@@ -87,6 +87,7 @@ import type {
 	ExecResult,
 	PtyRequest,
 	RuntimeCadence,
+	Runtime,
 	RuntimeId,
 	RuntimeReading,
 } from "./runtime.js";
@@ -247,6 +248,50 @@ if (mode === "connect") {
   process.exit(2);
 }
 `;
+
+/**
+ * The two names a Dev Container definition may have, in the order the spec
+ * looks for them.
+ *
+ * `.devcontainer/devcontainer.json` first, because it is the one the tooling
+ * writes and the one a folder with features and a Dockerfile will have; the
+ * single-file `.devcontainer.json` second, for a folder that wanted one line
+ * of configuration and no directory.
+ *
+ * DevHub does not look for `.devcontainer/<name>/devcontainer.json`, the
+ * multi-definition layout. Choosing between several is a question, and the
+ * picker asks none — a folder with more than one is opened with whichever the
+ * CLI itself picks, which is the same answer `devcontainer up` would give
+ * without DevHub in the way.
+ */
+export const DEV_CONTAINER_CONFIGS = [
+	".devcontainer/devcontainer.json",
+	".devcontainer.json",
+] as const;
+
+/**
+ * Which file, if any, makes this folder a Dev Container.
+ *
+ * Two `stat`s, so it costs nothing and is asked every time rather than cached:
+ * a `.devcontainer.json` written since DevHub started is a folder that can be
+ * opened in a container now, and the person who just wrote one would not think
+ * to restart.
+ *
+ * It takes a `Runtime` rather than reading the disk directly because the
+ * folder is on whichever machine the caller means — today always this Mac, and
+ * the day a host's folder is offered the same way, this already asks the right
+ * machine.
+ */
+export async function devContainerConfigIn(
+	runtime: Pick<Runtime, "stat">,
+	workspaceFolder: string,
+): Promise<string | undefined> {
+	for (const candidate of DEV_CONTAINER_CONFIGS) {
+		const path = posix.join(workspaceFolder, candidate);
+		if ((await runtime.stat(path)) === "file") return path;
+	}
+	return undefined;
+}
 
 /** Where the relay is written inside the container. */
 function relayPath(home: string): string {
@@ -616,6 +661,44 @@ export class ContainerRuntime
 	/** Whether the container this runtime was built for has been replaced. */
 	get replaced(): boolean {
 		return this.#replaced;
+	}
+
+	/**
+	 * Where this Workspace's folder is mounted inside the container.
+	 *
+	 * `devcontainer up` says so, and a container that was adopted rather than
+	 * started did not — so the mount is read back from the container itself,
+	 * which is the answer that is true either way. `docker inspect`'s `Mounts`
+	 * is where the bind that carries this folder is written down, and its
+	 * `Destination` is the path a workbench opens.
+	 *
+	 * The fallback is the spec's own default, `/workspaces/<folder name>`,
+	 * which is what the CLI uses when the definition names no
+	 * `workspaceFolder`. Guessing is worth it here only because the guess is
+	 * upstream's documented one and a wrong answer is visible immediately — the
+	 * window opens on a folder that is not there — rather than being the kind
+	 * of silent wrongness this codebase refuses.
+	 */
+	async workspacePath(workspaceFolder: string): Promise<string> {
+		const container = await this.#currentContainer();
+		if (container.remoteWorkspaceFolder.length > 0) {
+			return container.remoteWorkspaceFolder;
+		}
+		const mounts = await this.#docker_([
+			"inspect",
+			"-f",
+			"{{range .Mounts}}{{.Source}}\t{{.Destination}}\n{{end}}",
+			container.containerId,
+		]);
+		if (mounts.code === 0) {
+			for (const line of mounts.stdout.toString("utf8").split("\n")) {
+				const [source = "", destination = ""] = line.split("\t");
+				if (source === workspaceFolder && destination.length > 0) {
+					return destination;
+				}
+			}
+		}
+		return posix.join("/workspaces", basenameOf(workspaceFolder));
 	}
 
 	protected override async run(request: ExecRequest): Promise<ExecResult> {

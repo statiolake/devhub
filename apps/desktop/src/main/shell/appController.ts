@@ -255,6 +255,10 @@ import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
+import {
+	ContainerRuntime,
+	devContainerConfigIn,
+} from "../runtime/container.js";
 import { MachineConditions } from "./machineConditions.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
@@ -5504,6 +5508,66 @@ export class AppController {
 				try {
 					return await this.openFolder(
 						requestedLocation({ kind: "ssh", host, path }),
+						withAgent,
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		// The two dev container doors, the same shape as the two SSH ones: a
+		// question that costs nothing and is asked every time, and an open that
+		// goes through `openFolder` like everything else.
+		handle(CHANNELS.devContainerConfig, async (_event, path: string) => {
+			try {
+				return await devContainerConfigIn(localRuntime(), path);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
+		handle(
+			CHANNELS.openContainerWorkspace,
+			async (
+				_event,
+				workspaceFolder: string,
+				withAgent: string | undefined,
+			) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				try {
+					const configPath = await devContainerConfigIn(
+						localRuntime(),
+						workspaceFolder,
+					);
+					// The container has to exist before there is a Workspace to
+					// open, because the path the Workspace is *at* is a path inside
+					// it and nothing knows that path until it does. This is the
+					// explicit act `ensureUp` exists for — a person chose this.
+					const runtime = runtimeFor(
+						workspaceLocation({
+							kind: "container",
+							workspaceFolder,
+							...(configPath === undefined ? {} : { configPath }),
+							// A placeholder only for reaching the runtime: the
+							// machine is keyed on the host folder, so the path plays
+							// no part in which runtime this is.
+							path: "/",
+						}),
+					);
+					if (!(runtime instanceof ContainerRuntime)) {
+						throw new Error(
+							`${workspaceFolder} did not resolve to a dev container runtime`,
+						);
+					}
+					await runtime.ensureUp();
+					const path = await runtime.workspacePath(workspaceFolder);
+					return await this.openFolder(
+						requestedLocation({
+							kind: "container",
+							workspaceFolder,
+							...(configPath === undefined ? {} : { configPath }),
+							path,
+						}),
 						withAgent,
 					);
 				} catch (error: unknown) {

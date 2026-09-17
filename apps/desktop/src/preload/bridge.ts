@@ -196,6 +196,16 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 				path,
 				withAgent,
 			) as Promise<AppOutcome>,
+		devContainerConfig: (path: string) =>
+			ipcRenderer.invoke(CHANNELS.devContainerConfig, path) as Promise<
+				string | undefined
+			>,
+		openContainerWorkspace: (workspaceFolder: string, withAgent?: string) =>
+			ipcRenderer.invoke(
+				CHANNELS.openContainerWorkspace,
+				workspaceFolder,
+				withAgent,
+			) as Promise<AppOutcome>,
 		findIssueRepositories: (issueUrl: string) =>
 			ipcRenderer.invoke(CHANNELS.findIssueRepositories, issueUrl) as Promise<
 				readonly IssueRepository[]

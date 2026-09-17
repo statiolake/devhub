@@ -47,6 +47,8 @@ function mount(hosts: readonly (typeof HOSTS)[number][] = HOSTS) {
     chooseWorkspaceFolder: vi.fn(),
     listSshHosts: vi.fn().mockResolvedValue(hosts),
     openSshWorkspace,
+    devContainerConfig: vi.fn().mockResolvedValue(undefined),
+    openContainerWorkspace: vi.fn(),
     reportFailure: vi.fn(),
   } as unknown as PickerValue;
   render(

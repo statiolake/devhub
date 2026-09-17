@@ -37,6 +37,7 @@ import {
   sshHostItems,
   useSshHosts,
 } from "./SshSheets";
+import { DevContainerSheet } from "./DevContainerSheet";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
@@ -170,8 +171,22 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   // state, because they are one modal — the picker is not still standing
   // behind a form it opened.
   const [asking, setAsking] = useState<
-    "pick" | "agent" | "new" | "clone" | "ssh-destination" | "ssh-folder"
+    | "pick"
+    | "agent"
+    | "new"
+    | "clone"
+    | "ssh-destination"
+    | "ssh-folder"
+    | "dev-container"
   >("pick");
+  /**
+   * The folder that turned out to define a Dev Container, and the file that
+   * says so, while the person is asked which way to open it.
+   */
+  const [container, setContainer] = useState<{
+    folder: string;
+    configPath: string;
+  }>();
   /** The machine an SSH row named, while its folder is being asked for. */
   const [sshHost, setSshHost] = useState<string>();
   /** What was typed here, for whichever sheet is asked for next. */
@@ -189,6 +204,8 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     selectWorkspacePicker,
     chooseWorkspaceFolder,
     openSshWorkspace,
+    devContainerConfig,
+    openContainerWorkspace,
   } = usePicker();
 
   // The machines `~/.ssh/config` names, as rows in the same list as the
@@ -304,9 +321,32 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   const run = useCallback(
     (row: Chosen, profileId: string | undefined) => {
       switch (row.kind) {
-        case "open":
-          finish(() => selectWorkspacePicker(row.path, row.create, profileId));
+        case "open": {
+          // A folder being *made* cannot have a definition in it yet, so there
+          // is nothing to ask about and nothing to probe for.
+          if (row.create) {
+            finish(() => selectWorkspacePicker(row.path, true, profileId));
+            return;
+          }
+          // Two `stat`s before the act, because a folder that defines a Dev
+          // Container can be opened two ways and DevHub must not pick for the
+          // person. A folder with no definition — which is nearly all of them
+          // — goes straight through and never sees the question.
+          const path = row.path;
+          void (async () => {
+            const configPath = await devContainerConfig(path).catch(
+              () => undefined,
+            );
+            if (configPath === undefined) {
+              finish(() => selectWorkspacePicker(path, false, profileId));
+              return;
+            }
+            void cancelWorkspacePicker();
+            setContainer({ folder: path, configPath });
+            setAsking("dev-container");
+          })();
           return;
+        }
         case "ssh-connect":
           void cancelWorkspacePicker();
           setAsking("ssh-destination");
@@ -333,6 +373,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     [
       ask,
       cancelWorkspacePicker,
+      devContainerConfig,
       finish,
       openSshWorkspace,
       selectWorkspacePicker,
@@ -389,6 +430,26 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         }}
         onCancel={() => {
           setSshHost(undefined);
+          setAsking("pick");
+        }}
+      />
+    );
+  if (asking === "dev-container" && container !== undefined)
+    return (
+      <DevContainerSheet
+        folder={container.folder}
+        configPath={container.configPath}
+        step={projectStep}
+        onChoose={(inContainer) => {
+          const { folder } = container;
+          finish(() =>
+            inContainer
+              ? openContainerWorkspace(folder, withAgent)
+              : selectWorkspacePicker(folder, false, withAgent),
+          );
+        }}
+        onCancel={() => {
+          setContainer(undefined);
           setAsking("pick");
         }}
       />

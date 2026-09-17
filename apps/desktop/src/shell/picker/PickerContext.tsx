@@ -79,6 +79,13 @@ export interface PickerValue {
     path: string,
     withAgent?: string,
   ) => Promise<AppOutcome | undefined>;
+  /** Which file makes this folder a Dev Container, if any does. */
+  readonly devContainerConfig: (path: string) => Promise<string | undefined>;
+  /** Build or start this folder's container, then open it as a Workspace. */
+  readonly openContainerWorkspace: (
+    workspaceFolder: string,
+    withAgent?: string,
+  ) => Promise<AppOutcome | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
   readonly createProject: (
     path: string,
@@ -292,6 +299,11 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       listSshHosts: () => bridge.listSshHosts(),
       openSshWorkspace: async (host, path, withAgent) =>
         applyOpening(await bridge.openSshWorkspace(host, path, withAgent)),
+      devContainerConfig: (path) => bridge.devContainerConfig(path),
+      openContainerWorkspace: async (workspaceFolder, withAgent) =>
+        applyOpening(
+          await bridge.openContainerWorkspace(workspaceFolder, withAgent),
+        ),
       createProject: async (path, withAgent) =>
         applyOpening(await bridge.createProject(path, withAgent)),
       cloneProject: async (url, parentDirectory, withAgent) =>

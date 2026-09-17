@@ -822,6 +822,39 @@ export interface WorkspaceOpeningBridge {
 	): Promise<AppOutcome>;
 
 	/**
+	 * Whether a folder defines a Dev Container, and which file says so.
+	 *
+	 * Asked about a folder the person has just chosen, because that is the one
+	 * moment the answer changes what they are offered. It is a `stat` of two
+	 * names and costs nothing, so it is asked every time rather than cached —
+	 * a `.devcontainer.json` added since DevHub started is a folder that can be
+	 * opened in a container now, and a person who just wrote one would not
+	 * think to restart.
+	 *
+	 * `undefined` means "no definition here", which is not a failure: it is the
+	 * ordinary answer for most folders, and the picker simply does not offer
+	 * the second way to open it.
+	 */
+	devContainerConfig(path: string): Promise<string | undefined>;
+
+	/**
+	 * Open a folder as a Dev Container Workspace.
+	 *
+	 * Beside `openSshWorkspace` and for the same reason it is beside
+	 * `selectWorkspacePicker`: the questions differ. This one has to build or
+	 * start the container before there is a Workspace to open, because the path
+	 * the Workspace is *at* is a path inside it and nothing knows that path
+	 * until the container exists.
+	 *
+	 * They meet one call later at `openFolder`, which is where "this is a
+	 * Workspace now" is decided for every way of opening one.
+	 */
+	openContainerWorkspace(
+		workspaceFolder: string,
+		withAgent?: string,
+	): Promise<AppOutcome>;
+
+	/**
 	 * Assigning an Issue, one question at a time.
 	 *
 	 * Four calls rather than one, and the seams are where the flow's questions
@@ -1270,6 +1303,8 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
 	openSshWorkspace: "devhub:open-ssh-workspace",
+	devContainerConfig: "devhub:dev-container-config",
+	openContainerWorkspace: "devhub:open-container-workspace",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",
