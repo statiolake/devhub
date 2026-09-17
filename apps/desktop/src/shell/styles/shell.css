@@ -485,38 +485,45 @@
   transform: translateY(var(--sidebar-glyph-optical-shift));
 }
 
-.sidebar-row:hover .row-glyph,
-.sidebar-row:focus-visible .row-glyph,
-.sidebar-row:has(:focus-visible) .row-glyph {
-  color: var(--accent);
-}
-
 .row-glyph svg {
   width: var(--sidebar-glyph-ink);
   height: var(--sidebar-glyph-ink);
 }
 
-/* The same mark, when it is also the way to the repository's page on GitHub.
-   It has to sit on the glyph column exactly where the plain one does — a row
-   whose first mark is a pixel off the row above it is a column that no longer
-   reads as one — so this only strips what a button brings with it and says,
-   under the pointer, that it is a control.
-
-   No colour of its own: what the mark means is which kind of Workspace this
-   is, and a row that happened to have a GitHub page is not a different kind. */
+/*
+ * The same mark, when it is also the way to the repository's page on GitHub.
+ *
+ * The folder glyph is the row's link out. It was a `repository` mark in the
+ * trailing group, which is one more silhouette to learn for a destination the
+ * row already had a mark standing over: the folder *is* the checkout, so the
+ * folder is what leads to the page it is a checkout of. That leaves the
+ * trailing group to the things that are not the row itself — what it is for,
+ * and how it is going out.
+ *
+ * It has to sit on the glyph column exactly where the plain one does — a row
+ * whose first mark is a pixel off the row above it is a column that no longer
+ * reads as one — so this only strips what a button brings with it.
+ *
+ * What says it is a control is colour and nothing else. No underline: this is
+ * a mark and not a word, and nothing else in the Sidebar draws one. No wash
+ * either — a filled square under one glyph in a column of unfilled ones is the
+ * loudest thing in the pane, about the least of what the row says. It takes the
+ * accent on the same condition every other link in the row does, which is what
+ * makes the condition legible: in a Sidebar where colour is asked for, a mark
+ * that lights up is a mark you can press, and a Workspace with no page on
+ * GitHub draws a plain `span` that never lights, because there is nothing to
+ * press.
+ */
 .row-glyph-button {
   padding: 0;
   border: 0;
-  border-radius: 4px;
   background: transparent;
+  cursor: pointer;
 }
 
-.row-glyph-button:hover {
-  background: var(--wash-strong);
-}
-
-.row-glyph-button:active {
-  background: var(--selection);
+.sidebar-row:hover .row-glyph-button,
+.sidebar-row:has(:focus-visible) .row-glyph-button {
+  color: var(--accent);
 }
 
 /*
@@ -713,37 +720,40 @@
 }
 
 /*
- * An Agent sits one indent step in from its Workspace, and the step is small.
+ * An Agent sits one indent step in from its Workspace, and the step is what
+ * the guide beside it needs it to be.
  *
- * It was a whole glyph column plus the gap after it — 24 pixels at the compact
- * density — chosen so that an Agent's status mark landed under the first letter
- * of its Workspace's name. That is a fine thing to line up with and it was
- * costing the row the wrong currency: a Sidebar 248px wide has about twenty
- * characters to spend on a name, and every one of those pixels came out of the
- * one field the row cannot be read without.
+ * The depth is not a number somebody liked. It is fixed by the one thing the
+ * indent has to agree with: the guide runs down the centre of the Workspace's
+ * folder glyph — the line from that folder to the folder below it — and an
+ * Agent's words start one gap to the right of it. So the step is half a glyph
+ * column plus that gap, and it is one term, `--sidebar-agent-indent`, declared
+ * in `tokens.css` where the numbers are written out, because the guide and the
+ * drop line in `reorder.css` are built from the same term and a second copy of
+ * it is how the three come apart.
  *
- * So the step is `--space-3` — enough that an Agent is visibly inside
- * something, and no more, because the guide beside it is what says *what* it is
- * inside. It is one term, `--sidebar-agent-indent`, declared in `tokens.css`
- * beside the rail's own width, because the drop line in `reorder.css` starts at
- * the same column and a second copy of the number is how the two come apart.
+ * The inset is the whole of what the button is padded by, and not an addition
+ * to the glyph column the Workspace's own words clear. An Agent has no glyph of
+ * its own — its mark is in the gutter, before all depth — so a row that cleared
+ * a column nothing is drawn in was starting its words to the *right* of the
+ * guide's own parent, which is how the step came to be twenty pixels of a
+ * twenty-character column.
  */
 .agent-row {
   --row-agent-inset: var(--sidebar-agent-indent);
 }
 
-/* Where an Agent's words start: where its Workspace's words start, plus one
-   step. The gutter is before all of this and is not part of it — the status
-   mark does not move with the depth, which is the whole point of the gutter —
-   so the depth is spent on the text alone.
+/* Where an Agent's words start: one gap to the right of the guide, which is one
+   gap to the right of its Workspace's folder glyph. The gutter is before all of
+   this and is not part of it — the status mark does not move with the depth,
+   which is the whole point of the gutter — so the depth is spent on the text
+   alone.
 
-   Stated rather than inherited: the button's own `padding: 0 var(--space-2)`
-   would otherwise be counted alongside the terms below and the line would miss
-   the column by eight pixels. */
+   The inset is the whole padding and nothing is added to it: the button's own
+   `padding: 0 var(--space-2)` is replaced here rather than counted alongside,
+   and there is no glyph column to clear because an Agent draws no glyph. */
 .agent-row .sidebar-context-button {
-  padding-left: calc(
-    var(--sidebar-glyph-width) + var(--space-2) + var(--row-agent-inset)
-  );
+  padding-left: var(--row-agent-inset);
 }
 
 /*
@@ -781,14 +791,18 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  /* Down the middle of the indent step — which begins where the Workspace's own
-     words begin, so the guide stands between the parent's text and the child's.
-     Every term is one the indent itself is made of, so moving the indent moves
-     the guide with it. */
-  left: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +
-      var(--sidebar-agent-indent) / 2
-  );
+  /* Down the centre of the Workspace's folder glyph — the line from that folder
+     to the folder below it. That is the whole of what the guide is for, and it
+     is why it is written as the gutter plus half a glyph column and not as a
+     fraction of the indent: the indent is derived from *this*, in `tokens.css`,
+     rather than the other way round.
+
+     It clears the gutter, which is the one thing at this end of the row it
+     could collide with. Compact: the gutter is 16 wide and the status mark in
+     it is 14 of ink, so the mark runs 1→15 and the guide is the pixel at 24 —
+     nine clear. Comfortable: mark 1→17, guide at 27, ten clear. An Agent's own
+     words begin at 32 and 35, one `--space-2` to the right of the line. */
+  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);
   width: 1px;
   background: var(--line);
   content: "";

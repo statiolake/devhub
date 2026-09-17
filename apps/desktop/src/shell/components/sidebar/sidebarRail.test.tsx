@@ -55,6 +55,7 @@ function snapshot(collapsed: boolean): AppSnapshot {
         label: "widget",
         location: { kind: "local" },
         root: "/projects/widget",
+        displayRoot: "/projects/widget",
         key: "/projects/widget",
         selectedPath: "/projects/widget",
         state: { kind: "available" },
@@ -215,10 +216,26 @@ describe("what the model remembers about the rail", () => {
  * rail the entry is the whole of what there is to click.
  */
 describe("what a rail entry does under the pointer", () => {
+  /**
+   * The row's own select control, named by the tree item it is.
+   *
+   * By the attribute and not by its accessible name: the folder glyph is the
+   * link to the repository's page and says the same sentence with "open on
+   * GitHub" after it, so a name match would find two buttons in the expanded
+   * row and one in the rail, which is the difference this file is about.
+   */
+  function selectButton(item: string): HTMLButtonElement {
+    const button = document.querySelector<HTMLButtonElement>(
+      `[data-tree-item-id="${item}"]`,
+    );
+    if (!button) throw new Error(`no tree item ${item}`);
+    return button;
+  }
+
   it("selects the row, and does not open the repository", () => {
     const rail = mount(true, REPOSITORY);
-    expect(screen.queryByRole("button", { name: /on GitHub$/ })).toBeNull();
-    screen.getByRole("button", { name: /widget workspace/ }).click();
+    expect(screen.queryByRole("button", { name: /on GitHub$/u })).toBeNull();
+    selectButton("workspace:w-1").click();
     expect(rail.openExternalUrl).not.toHaveBeenCalled();
     expect(rail.dispatch).toHaveBeenCalledWith({
       type: "select_context",
@@ -226,30 +243,44 @@ describe("what a rail entry does under the pointer", () => {
     });
   });
 
-  it("leaves the expanded row's repository mark as the link it is", () => {
+  it("leaves the expanded row's folder glyph the link it is", () => {
+    // The same rule from the other side: with the words on, the glyph is a
+    // sibling of the select button and is the way to the repository's page.
+    // Only the rail folds it in, and only because there the entry is all there
+    // is to click.
     const expanded = mount(false, REPOSITORY);
-    screen
-      .getByRole("button", { name: "Open github.com/example/widget on GitHub" })
-      .click();
+    const glyph = document.querySelector<HTMLButtonElement>(
+      ".workspace-row .row-glyph-button",
+    );
+    expect(glyph).not.toBeNull();
+    glyph?.click();
     expect(expanded.openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
     );
     expect(expanded.dispatch).not.toHaveBeenCalled();
   });
 
+  it("puts no link of any kind in the rail", () => {
+    // Not hidden — absent. A link that is merely invisible is still a link the
+    // pointer can find.
+    mount(true, REPOSITORY);
+    expect(document.querySelector(".row-glyph-button")).toBeNull();
+    expect(document.querySelector(".row-marks")).toBeNull();
+  });
+
   it("says in the tooltip exactly what the expanded row says", () => {
     mount(false, REPOSITORY);
-    const expandedWorkspace = screen
-      .getByRole("button", { name: /widget workspace/ })
-      .getAttribute("data-tooltip-lines");
+    const expandedWorkspace =
+      selectButton("workspace:w-1").getAttribute("data-tooltip-lines");
     const expandedAgent = screen
-      .getByRole("button", { name: /^Codex/ })
+      .getByRole("button", { name: /^Codex/u })
       .getAttribute("data-tooltip-lines");
     cleanup();
     mount(true, REPOSITORY);
-    expect(
-      screen.getByRole("button", { name: /widget workspace/ }),
-    ).toHaveAttribute("data-tooltip-lines", expandedWorkspace);
+    expect(selectButton("workspace:w-1")).toHaveAttribute(
+      "data-tooltip-lines",
+      expandedWorkspace,
+    );
     expect(screen.getByRole("button", { name: /^Codex/ })).toHaveAttribute(
       "data-tooltip-lines",
       expandedAgent,
@@ -263,7 +294,7 @@ describe("what a rail entry does under the pointer", () => {
    */
   it("carries the branch and the work as facts, each behind its own mark", () => {
     mount(true, REPOSITORY);
-    const row = screen.getByRole("button", { name: /widget workspace/ });
+    const row = selectButton("workspace:w-1");
     expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
       { text: "widget", style: "name" },
       { text: "/projects/widget", style: "muted" },

@@ -54,6 +54,7 @@ const SNAPSHOT = {
       label: "widget",
       location: { kind: "local" },
       root: "/projects/widget",
+      displayRoot: "/projects/widget",
       key: "/projects/widget",
       selectedPath: "/projects/widget",
       state: { kind: "available" },
@@ -391,10 +392,11 @@ describe("the mark a workspace row starts with", () => {
     ).toBeNull();
   });
 
-  it("is not the link: the link is a mark of its own at the row's other end", () => {
-    // The leading mark says which kind of row this is, and that is all it says.
-    // The way to the repository's page is a mark in the trailing group with the
-    // other marks that lead to GitHub.
+  it("is the link, when there is a repository behind it", () => {
+    // One mark, one question. The folder *is* the checkout, so the folder is
+    // what leads to the page it is a checkout of; the `repository` mark that
+    // used to sit in the trailing group was that same question asked twice, in
+    // a second silhouette a person had to learn in order to press it.
     const { openExternalUrl } = mount({
       sequence: 1,
       workspaces: [
@@ -408,20 +410,66 @@ describe("the mark a workspace row starts with", () => {
       ],
     });
     expect(leadingGlyph()).toBe("folder");
-    expect(document.querySelector(".row-glyph")?.tagName).toBe("SPAN");
-    const mark = screen.getByRole("button", {
-      name: "Open github.com/example/widget on GitHub",
-    });
-    expect(mark).toHaveClass("row-mark-repository");
-    fireEvent.click(mark);
+    const glyph = document.querySelector(".workspace-row .row-glyph");
+    expect(glyph?.tagName).toBe("BUTTON");
+    expect(glyph).toHaveClass("row-glyph-button");
+    // The row's own sentence, and then what pressing it does — not a second,
+    // shorter account of which Workspace this is.
+    expect(glyph?.getAttribute("aria-label")).toBe(
+      [
+        "widget workspace",
+        "path /projects/widget",
+        "repository github.com/example/widget",
+        "branch main",
+      ].join("\n") + ", open on GitHub",
+    );
+    fireEvent.click(glyph!);
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
     );
   });
 
+  it("is inert, and not a control at all, when there is no repository", () => {
+    // Not a disabled button: a control that can never be pressed is one that
+    // has to explain itself, and there is nothing here to explain. The row is
+    // still selected by clicking it, because the select button's hit area runs
+    // under the whole row.
+    mount({
+      sequence: 1,
+      workspaces: [{ workspaceId: "w-1", branch: "main" }],
+    });
+    const glyph = document.querySelector(".workspace-row .row-glyph");
+    expect(glyph?.tagName).toBe("SPAN");
+    expect(glyph).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
+  });
+
+  it("leaves the trailing group to what the row is for, not what it is", () => {
+    // What this is a checkout of is the folder glyph. Nothing in the mark group
+    // says it a second time.
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "main",
+          repositoryUrl: "https://github.com/example/widget",
+        },
+      ],
+    });
+    expect(document.querySelector(".row-mark-repository")).toBeNull();
+    expect(
+      document.querySelector(".row-marks [data-glyph='repository']"),
+    ).toBeNull();
+    expect(
+      document.querySelector(".row-marks [data-glyph='worktree']"),
+    ).toBeNull();
+  });
+
   it("takes a worktree to the repository's page, under the same one mark", () => {
-    // A worktree is not a separate thing on GitHub, so the link that leads to
-    // the repository's page wears the repository's own drawing either way.
+    // A worktree is not a separate thing on GitHub, so the folder that is a
+    // worktree leads to the same page as the folder that is not. Which of the
+    // two this is, is a line in the tooltip.
     const { openExternalUrl } = mount({
       sequence: 1,
       workspaces: [
@@ -434,11 +482,9 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
-    const mark = screen.getByRole("button", {
-      name: "Open github.com/example/widget on GitHub",
-    });
-    expect(mark.querySelector("svg")?.dataset.glyph).toBe("repository");
-    fireEvent.click(mark);
+    const glyph = document.querySelector(".workspace-row .row-glyph-button");
+    expect(glyph?.querySelector("svg")?.dataset.glyph).toBe("folder");
+    fireEvent.click(glyph!);
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
     );
@@ -710,18 +756,124 @@ describe("the ink every mark in a row rests at", () => {
 /**
  * The depth an Agent row sits at, and the line that says what it is inside.
  *
- * The same reason as above: the indent is a custom property in a stylesheet,
- * and jsdom resolves neither `calc` nor a custom property, so what can be
- * asserted is that there is one term and that every place that needs it reads
- * that term rather than a number of its own.
+ * The geometry is one arrangement and it is stated once, in `tokens.css`:
+ *
+ *     [ gutter ][ glyph column ][ the Workspace's words … ]
+ *     [ mark   ]       |
+ *                    guide          [ gap ][ the Agent's words … ]
+ *
+ * The guide runs down the *centre of the Workspace's folder glyph* — it is the
+ * line from that folder to the folder below it — an Agent's words start one
+ * `--space-2` to the right of it, and the gutter's mark is clear of both. Every
+ * number below follows from the density's glyph column and that one gap, so
+ * there is nothing here that can be set independently and come out wrong.
+ *
+ * jsdom resolves neither `calc` nor a custom property, so the numbers are
+ * resolved from the tokens themselves and the expressions are checked to be
+ * written in those terms — which is what keeps the two halves of this from
+ * drifting: a stylesheet that stopped reading the token would fail the second
+ * half, and a token whose value moved would fail the first.
  */
 describe("how far an Agent row is indented under its Workspace", () => {
   const shell = readFileSync("src/shell/styles/shell.css", "utf8");
   const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
   const reorder = readFileSync("src/shell/styles/reorder.css", "utf8");
 
+  /** One `--name: 12px;` out of the stylesheet, as a number. */
+  function pixels(source: string, name: string): number {
+    const match = new RegExp(`${name}: (\\d+)px;`, "u").exec(source);
+    if (!match?.[1]) throw new Error(`${name} is not a plain px value`);
+    return Number(match[1]);
+  }
+
+  const gap = pixels(tokens, "--space-2");
+
+  /**
+   * Where everything on a row lands, at one density — from the density's own
+   * numbers, through the arrangement the stylesheets are written in.
+   */
+  function geometry(density: "compact" | "comfortable") {
+    const block = tokens.slice(
+      tokens.indexOf(`[data-sidebar-density="${density}"]`),
+    );
+    const glyph = pixels(block, "--sidebar-glyph-width");
+    const ink = pixels(block, "--sidebar-glyph-ink");
+    // `--sidebar-rail-width: var(--sidebar-glyph-width)` — the gutter is the
+    // glyph column's width, because what sits in it is a glyph.
+    const gutter = glyph;
+    return {
+      /** The status mark in the gutter, centred in it. */
+      mark: { from: (gutter - ink) / 2, to: (gutter + ink) / 2 },
+      /** The Workspace's folder glyph, and its centre. */
+      glyphCentre: gutter + glyph / 2,
+      /** The Workspace's own words, after the glyph column and the gap. */
+      workspaceText: gutter + glyph + gap,
+      /** The guide: `--sidebar-rail-width + --sidebar-glyph-width / 2`. */
+      guide: gutter + glyph / 2,
+      /** The Agent's words: the gutter plus `--sidebar-agent-indent`. */
+      agentText: gutter + (glyph / 2 + gap),
+    };
+  }
+
+  it("puts the guide exactly through the folder glyph's centre", () => {
+    // The whole of what request one was: the line connecting one folder glyph
+    // to the folder glyph below it. It was at 46 — out in the middle of the
+    // parent's name, under nothing.
+    for (const density of ["compact", "comfortable"] as const) {
+      const at = geometry(density);
+      expect(at.guide).toBe(at.glyphCentre);
+    }
+    expect(geometry("compact").guide).toBe(24);
+    expect(geometry("comfortable").guide).toBe(27);
+  });
+
+  it("starts the Agent's words to the right of the guide, by one gap", () => {
+    // Never touching it and never under it: the run is [gutter mark] … [guide]
+    // [gap] [title], and the last two terms are this.
+    for (const density of ["compact", "comfortable"] as const) {
+      const at = geometry(density);
+      expect(at.agentText).toBeGreaterThanOrEqual(at.guide + gap);
+    }
+    expect(geometry("compact").agentText).toBe(32);
+    expect(geometry("comfortable").agentText).toBe(35);
+  });
+
+  it("keeps the guide clear of the mark in the gutter", () => {
+    // The two things at this end of the row that could collide. They do not,
+    // by nine pixels at compact and ten at comfortable — the gutter ends where
+    // the glyph column begins, and the guide is half a column further in.
+    for (const density of ["compact", "comfortable"] as const) {
+      const at = geometry(density);
+      expect(at.guide).toBeGreaterThan(at.mark.to + 1);
+    }
+    expect(geometry("compact").guide - geometry("compact").mark.to).toBe(9);
+  });
+
+  it("costs the name less than it used to", () => {
+    // It was the parent's words plus `--space-3`: 52 at compact, where it is
+    // now 32. A Sidebar 248px wide has about twenty characters to spend on a
+    // name, and every one of those pixels came out of it.
+    const at = geometry("compact");
+    expect(at.agentText).toBeLessThan(at.workspaceText);
+    expect(52 - at.agentText).toBe(20);
+  });
+
   it("is one term, declared once, zero for every row that is not an Agent", () => {
-    expect(tokens).toContain("--sidebar-agent-indent: var(--space-3);");
+    expect(tokens).toContain(
+      "--sidebar-agent-indent: calc(var(--sidebar-glyph-width) / 2 + var(--space-2));",
+    );
+    // On `.app-shell`, where the glyph column it is written in terms of is also
+    // declared — and measured in a real browser to be sure of it. A custom
+    // property resolves its own `var()`s where it is *declared*, so the same
+    // expression at `:root`, above every density, is invalid and inherits down
+    // as nothing at all: the indent silently became zero and an Agent's words
+    // started against the gutter. There is no way to catch that here, in an
+    // engine that resolves neither — only to keep the declaration where the
+    // terms are.
+    const at = tokens.indexOf("--sidebar-agent-indent");
+    expect(tokens.lastIndexOf(".app-shell {", at)).toBeGreaterThan(
+      tokens.lastIndexOf(":root {", at),
+    );
     expect(shell).toContain("  --row-agent-inset: 0px;");
     expect(shell).toContain(
       ".agent-row {\n  --row-agent-inset: var(--sidebar-agent-indent);\n}",
@@ -729,29 +881,16 @@ describe("how far an Agent row is indented under its Workspace", () => {
   });
 
   /**
-   * It was a whole glyph column plus the gap after it, chosen so that an
-   * Agent's status mark landed under the first letter of its Workspace's name.
-   * That is a fine thing to line up with and it cost the row the wrong
-   * currency: every one of those pixels came out of the name.
-   */
-  it("is smaller than the glyph column it used to be", () => {
-    expect(shell).not.toContain(
-      "--row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));",
-    );
-  });
-
-  /**
-   * An indent guide, and nothing else: one thin vertical rule down the middle
-   * of the indent, the full height of the row, meeting the rules above and
-   * below because the rows sit flush. What it replaced was `tree`(1)'s
-   * drawing — a stem, a horizontal lead into every row, and a `└─` under the
-   * last one — which was three strokes per row saying a thing the indent and
-   * the marks already said, in the heaviest ink in the column.
+   * An indent guide, and nothing else: one thin vertical rule, the full height
+   * of the row, meeting the rules above and below because the rows sit flush.
+   * What it replaced was `tree`(1)'s drawing — a stem, a horizontal lead into
+   * every row, and a `└─` under the last one — which was three strokes per row
+   * saying a thing the indent and the marks already said.
    */
   it("draws one vertical guide and no lead into the row", () => {
     expect(shell).toContain(".agent-row::before {\n  position: absolute;");
     expect(shell).toContain(
-      '  left: calc(\n    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +\n      var(--sidebar-agent-indent) / 2\n  );\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
+      '  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
     );
     // No branch, and no last-child stem to close: an indent guide has no last
     // one, which is two rules and a selector that no longer have to be right.
@@ -767,14 +906,13 @@ describe("how far an Agent row is indented under its Workspace", () => {
   });
 
   it("moves the row and its drop line together", () => {
-    // The row's own inset, the guide down the middle of it, and the drop line
-    // the reorder draws all start from the one term, so none of the three can
-    // drift from the others.
+    // The row's own inset, the guide beside it, and the drop line the reorder
+    // draws all start from the one term, so none of the three can drift.
     expect(shell).toContain(
-      "  padding-left: calc(\n    var(--sidebar-glyph-width) + var(--space-2) + var(--row-agent-inset)\n  );",
+      ".agent-row .sidebar-context-button {\n  padding-left: var(--row-agent-inset);\n}",
     );
     expect(reorder).toContain(
-      "    var(--sidebar-rail-width) + var(--sidebar-agent-indent) +\n      var(--sidebar-glyph-width) + var(--space-2)",
+      "  left: calc(var(--sidebar-rail-width) + var(--sidebar-agent-indent));",
     );
   });
 });

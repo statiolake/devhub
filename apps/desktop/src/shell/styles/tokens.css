@@ -214,15 +214,6 @@
      mark, and short enough to leave air above and below it in the band. */
   --titlebar-control-size: 22px;
   --sidebar-width: 248px;
-  /* One level of depth in the Sidebar's tree, which in practice is the step an
-     Agent sits in from its Workspace.
-   *
-   * It is the width of an indent guide's column, not space around a row, so it
-   * does not follow the density. It is here rather than on `.agent-row` because
-   * three stylesheets start a line at this column — the row's own inset, the
-   * guide down the middle of it, and the drop line in `reorder.css` — and a
-   * second copy of the number is how they come apart. */
-  --sidebar-agent-indent: var(--space-3);
   /* How far a row's leading glyph drops to sit level with its label.
    *
    * A row centres its glyph and its label on the same box, and that is the
@@ -247,6 +238,42 @@
    * row, so it is the same at any row height; only a change of type size or
    * family would move it. */
   --sidebar-glyph-optical-shift: 1px;
+}
+
+/*
+ * One level of depth in the Sidebar's tree: where an Agent's words start,
+ * measured from the end of the leading gutter.
+ *
+ * It is derived rather than chosen, because the thing it has to agree with is
+ * the guide. The guide runs down the *centre of the Workspace's folder glyph* —
+ * it is the line from one folder to the folder below it — and an Agent's words
+ * start one gap to the right of it. So the step is half a glyph column plus that
+ * gap, and every line in the arrangement is then written in the same terms and
+ * none of them can drift:
+ *
+ *     compact       gutter 0→16   glyph column 16→32   guide 24   words 32
+ *     comfortable   gutter 0→18   glyph column 18→36   guide 27   words 35
+ *
+ * The status mark in the gutter is the glyph ink centred in it — 1→15 compact,
+ * 1→17 comfortable — so the guide clears it by nine pixels and by ten, and the
+ * words clear the guide by one `--space-2`. Three stylesheets start a line at
+ * this column: the row's own inset, the guide beside it, and the drop line in
+ * `reorder.css`. They all read this term, because a second copy of the number is
+ * how they come apart.
+ *
+ * It was `--space-3` *past the Workspace's own words*, which put an Agent's
+ * words at 52 and the guide at 46 — a guide standing in the middle of the
+ * parent's name rather than under anything, and twenty pixels of a
+ * twenty-character column spent to say one level of depth.
+ *
+ * It is on `.app-shell` and not at the root because it is written in terms of
+ * the glyph column, which is the density's to say and is declared on this same
+ * element. A custom property resolves its own `var()`s where it is *declared*,
+ * not where it is used, so the same expression at `:root` — where no density has
+ * been chosen — is invalid and inherits down as nothing at all.
+ */
+.app-shell {
+  --sidebar-agent-indent: calc(var(--sidebar-glyph-width) / 2 + var(--space-2));
 }
 
 /*

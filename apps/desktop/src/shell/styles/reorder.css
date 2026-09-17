@@ -97,10 +97,7 @@
    its guide are written in. */
 .agent-tree [data-drop-before="true"]::after,
 .agent-tree [data-drop-after="true"]::after {
-  left: calc(
-    var(--sidebar-rail-width) + var(--sidebar-agent-indent) +
-      var(--sidebar-glyph-width) + var(--space-2)
-  );
+  left: calc(var(--sidebar-rail-width) + var(--sidebar-agent-indent));
 }
 
 /* In the rail there are no words for the line to start under, so it runs from

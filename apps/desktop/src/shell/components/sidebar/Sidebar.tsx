@@ -36,7 +36,6 @@ import {
   issueMark,
   pullRequestLabel,
   pullRequestMark,
-  repositoryGlyphName,
   tooltipLines,
   describe,
   pullRequestGlyphName,
@@ -167,16 +166,19 @@ function WorkspaceRow({
         <div className="row-head">
           <span className="row-rail" aria-hidden="true" />
           {/* Which kind of Workspace this is, in the column every row's first
-              mark is in. It is a plain mark now and never a link: the link to
-              the repository's page is in the trailing group, with the other
-              marks that lead to GitHub, so this one is left saying the one
-              thing it is for — which of the four kinds of row this is. That is
-              also what the rail draws, from the same function, which is what
-              makes the rail the row with its words taken off. */}
+              mark is in — and, when there is a repository behind it, the way
+              to that repository's page. The row's link used to be a second
+              `repository` mark in the trailing group, which was a drawing of
+              the thing this drawing already is. The rail draws the same mark
+              from the same function, inside the select button and never as a
+              link, which is what makes the rail the row with its words taken
+              off. */}
           {collapsed ? null : (
-            <span className="row-glyph" aria-hidden="true">
-              <Glyph name={workspaceGlyphName(workspace.location)} />
-            </span>
+            <WorkspaceGlyph
+              workspace={workspace}
+              repository={repository}
+              description={description}
+            />
           )}
           <button
             className="sidebar-context-button"
@@ -213,10 +215,10 @@ function WorkspaceRow({
                 In the rail the glyph *is* the entry: the label beside it is
                 off, so a mark that opened GitHub would be the only thing left
                 to click and the row could not be selected with a pointer at
-                all. In the expanded row there is no leading glyph any more —
-                the words start at the rail, and what the row is a checkout of
-                is said by the repository mark in the trailing group, where it
-                is the link to the page it names. */}
+                all. So the rail draws it here, inside the select button, where
+                it cannot be a link. In the expanded row it is a sibling — see
+                `WorkspaceGlyph` — because there it is the link and a button
+                cannot go inside a button. */}
             {collapsed ? (
               <span className="row-glyph" aria-hidden="true">
                 <Glyph name={workspaceGlyphName(workspace.location)} />
@@ -488,21 +490,80 @@ function WorkspaceRow({
 }
 
 /**
+ * A Workspace's folder glyph, and — when there is a repository behind it — the
+ * row's one way out to GitHub.
+ *
+ * There were two marks saying this. The folder said *this is a checkout*, in
+ * the leading column; a `repository` mark in the trailing group said *and here
+ * is its page*, in a second silhouette a person had to learn in order to press
+ * it. They are one question — show me this on GitHub — asked about the one
+ * thing the folder already stands for, so the folder answers it.
+ *
+ * A worktree leads to the same page, because that is the page it has: a
+ * worktree is not a separate thing on GitHub. Which checkout it is is a line in
+ * the tooltip, behind the `worktree` mark, where it is a fact rather than a
+ * shape to tell apart at thirteen pixels.
+ *
+ * With no repository it is a `span`: inert, unfocusable, and with no hover of
+ * its own. Not a disabled button — a button that is never pressable is a
+ * control that has to explain itself, and there is nothing here to explain. The
+ * row is still selected by clicking it, because the select button's hit area
+ * covers the whole row underneath.
+ *
+ * It says the row and then what it does. The accessible name is the row's own
+ * description — the same sentence the select button carries, so the link is not
+ * a second, shorter account of which Workspace this is — with the action after
+ * it.
+ */
+function WorkspaceGlyph({
+  workspace,
+  repository,
+  description,
+}: {
+  readonly workspace: WorkspaceSnapshot;
+  readonly repository: WorkspaceRepositoryWire | undefined;
+  /** What this row is, in the words its select button uses. */
+  readonly description: string;
+}) {
+  const { openExternalUrl } = useSidebar();
+  const glyph = <Glyph name={workspaceGlyphName(workspace.location)} />;
+  const url = repository?.repositoryUrl;
+  if (url === undefined) {
+    return (
+      <span className="row-glyph" aria-hidden="true">
+        {glyph}
+      </span>
+    );
+  }
+  return (
+    <button
+      className="row-glyph row-glyph-button"
+      type="button"
+      aria-label={`${description}, open on GitHub`}
+      data-tooltip={`Open ${url.replace(/^https:\/\//, "")} on GitHub`}
+      onClick={() => {
+        openExternalUrl(url);
+      }}
+    >
+      {glyph}
+    </button>
+  );
+}
+
+/**
  * What a Workspace row ends with: marks, and only marks.
  *
  * The row's words are its name and its branch, and they are the whole of what
- * it says in words. Everything else it knows — which repository this is a
- * checkout of, which Issue it is for, which pull request is delivering it,
- * and how it is going out — is a mark in this group, at the trailing edge, in
- * the order a person asks the questions: what this is a checkout of, what it is
- * for, and how it is being delivered.
+ * it says in words. What is left is what the row is *for* and how it is going
+ * out — the Issue and the pull request — in the order a person asks about them.
  *
- * The machine is the exception, and it is an exception because it is already
- * drawn: a Workspace on another machine wears the `remote` silhouette as the
- * row's own leading mark, which is the first thing on the row and the one mark
- * the rail keeps. A second copy of it here would be the same drawing twice in
- * one row saying one thing. The host itself — which machine — is in the
- * tooltip, on its own line behind the same mark.
+ * What this is a checkout of is not here. It is the folder glyph at the row's
+ * leading edge, which is the same drawing of the same thing and is the link to
+ * the repository's page (`WorkspaceGlyph`); a `repository` mark in this group
+ * was that question asked a second time, in a second silhouette. The machine is
+ * not here for the same reason — a Workspace on another machine wears the
+ * `remote` silhouette in that one column — and which machine it is, like which
+ * worktree this is, is a line in the tooltip behind its own mark.
  *
  * They are marks and not words because there is one line now and a line is
  * about twenty characters wide. A number and a title beside them would be
@@ -517,33 +578,10 @@ function WorkspaceMarks({
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
   const { openExternalUrl } = useSidebar();
-  const url = repository?.repositoryUrl;
-  // The page as it would be written down — `github.com/owner/repo` — which is
-  // what the mark's hover says and what the row's own facts carry.
-  const page = url?.replace(/^https:\/\//, "");
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
   return (
     <span className="row-marks">
-      {/* The repository this is a checkout of, and the link to its page. It
-          was the row's leading glyph; it is here because the leading column is
-          gone and because it is the same question the other marks answer —
-          *show me this on GitHub*. A worktree keeps its own silhouette and
-          still leads to the repository's page, because that is the page it
-          has: a worktree is not a separate thing on GitHub. */}
-      {url !== undefined && page !== undefined ? (
-        <button
-          className="row-link-button row-mark-repository"
-          type="button"
-          aria-label={`Open ${page} on GitHub`}
-          data-tooltip={page}
-          onClick={() => {
-            openExternalUrl(url);
-          }}
-        >
-          <Glyph name={repositoryGlyphName()} />
-        </button>
-      ) : null}
       {issue ? (
         <button
           className={`row-link-button is-issue-${issue.state}`}
