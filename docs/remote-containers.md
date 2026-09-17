@@ -155,6 +155,24 @@ episodes: raised once per episode against the machine, retracted once on
 sustained recovery, with a sentence that names what was looked for. Starting
 the container is an action the row offers.
 
+### A restarted container needs the window reloaded
+
+`docker stop` kills the server with the container, and `docker start` brings
+back a filesystem with a stale socket file and a stale pid file in it. DevHub
+recovers the transport by itself: the socket is asked whether it still accepts
+— a connection, not a pid check, because a container's pids are small enough
+that the one in the file has very likely been reused — and a socket that
+refuses is swept away so the server starts fresh.
+
+What does **not** recover is the workbench's existing connection. VS Code
+reconnects with a token the *previous* server process issued, and the new one
+answers `Unknown reconnection token (never seen)`. That is not something the
+transport can fix: reconnection is between a client and one server process, and
+that process is gone. The window has to be reloaded.
+
+The same is true of an SSH host whose server is killed. It is worth knowing
+here because stopping a container is a thing people do casually.
+
 ### A rebuild replaces the machine underneath the Workspace
 
 This is the sharp edge, and it is worth understanding.
@@ -258,7 +276,9 @@ eleven-step list in `remote-ssh.md`:
    Mac's** git, against the host folder.
 7. Stop the container (`docker stop <id>`). A machine condition appears saying
    so; the Workspace's git keeps working.
-8. Start it again. The condition retracts and the terminals come back.
+8. Start it again. The condition retracts, the server is restarted inside the
+   container, and the terminals come back — the window itself needs reloading,
+   for the reason above.
 9. Rebuild it (`devcontainer up --remove-existing-container`). The Workspace
    survives with its row and its history; the runtime is replaced.
 10. Close the lid, open it. The workbench reconnects without restarting the
