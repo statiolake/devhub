@@ -161,6 +161,20 @@ Measured in a split, with the Agent selected and the window key: the workbench
 answers `document.hasFocus()` with `false` and the Agents view with `true` —
 exactly one view at a time, in both directions. No view-level blur is needed.
 
+Selecting a row in the Sidebar is the one thing that means two different things,
+and which it means is on the event. **A pointer selection hands the keyboard
+over**: somebody clicked a row — expanded or on the rail — and what they want
+next is the thing they clicked, so the Sidebar asks for the surface and
+`keyboardChild` answers with the editor or with the Agent's terminal. **A
+keyboard selection stays**: somebody is standing in the Sidebar after
+`Cmd+Q S`, and Return there chooses a row without leaving the list, because the
+next ↓ has to still be a ↓. It is read off the activation — a click raised by a
+pointer carries a `detail` of at least one, and a focused button activated from
+the keyboard carries zero — rather than kept as a flag one handler sets and
+another clears. Both go through `focusSurface`, the same door Escape uses, and
+the ask is sent after the selection has been applied, because which child the
+keys belong to is a function of the selection.
+
 Where the keys go *inside* a workbench is the workbench's own business, with
 one exception. `Cmd+Q J` landing on the editor — the toggle that went Agent →
 editor — focuses that workbench's integrated terminal
@@ -225,7 +239,7 @@ The same reasoning retires `title=` in the Sidebar: a native tooltip raised
 inside a view may be clipped by it, and the row that most needs one is on the
 collapsed rail. `RowTooltip.tsx` drew it in-page next — which made the clipping
 decidable, and the answer was that it is clipped, because the rail's view is
-44px wide with a title bar and 76px without. That version refused to draw one
+40px wide with a title bar and 76px without. That version refused to draw one
 below a readable width at all, so the rail had no hover and an expanded row's
 sentence wrapped into a ribbon: one cause, two complaints.
 

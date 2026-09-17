@@ -274,7 +274,7 @@ describe("the line that says where it will land", () => {
 
 describe("letting go", () => {
   it("asks for the whole order the drop comes to", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     fireEvent.dragStart(row(ZEBRA), { dataTransfer: transfer() });
     dragOver(row(ALPHA), "top");
@@ -289,7 +289,7 @@ describe("letting go", () => {
   });
 
   it("moves a worktree within its group and takes nothing else with it", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     fireEvent.dragStart(row(WT_B), { dataTransfer: transfer() });
     dragOver(row(WT_A), "top");
@@ -304,7 +304,7 @@ describe("letting go", () => {
   });
 
   it("asks for nothing when the row is let go where it already was", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     fireEvent.dragStart(row(WT_A), { dataTransfer: transfer() });
     dragOver(row(WT_A), "top");
@@ -313,7 +313,7 @@ describe("letting go", () => {
   });
 
   it("moves an Agent within its own workspace", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     const second = row(/^a-2/);
     fireEvent.dragStart(second, { dataTransfer: transfer() });
@@ -335,7 +335,7 @@ describe("letting go", () => {
   });
 
   it("asks for nothing when the row is let go outside the range", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     fireEvent.dragStart(row(WT_A), { dataTransfer: transfer() });
     dragOver(row(ZEBRA), "top");
@@ -372,7 +372,7 @@ describe("moving a row with the keyboard", () => {
     fireEvent.keyDown(on, { key, altKey: true });
 
   it("moves a repository past the group below it, worktrees and all", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     arrow(focus(WIDGET), "ArrowDown");
     expect(dispatch).toHaveBeenCalledWith({
@@ -382,7 +382,7 @@ describe("moving a row with the keyboard", () => {
   });
 
   it("moves an Agent within its own workspace", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     arrow(focus(/^a-1/), "ArrowDown");
     expect(dispatch).toHaveBeenCalledWith({
@@ -393,14 +393,14 @@ describe("moving a row with the keyboard", () => {
   });
 
   it("will not lift a worktree over its own repository", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     arrow(focus(WT_A), "ArrowUp");
     expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("is a no-op at the ends, and moves the focus nowhere doing it", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     const top = focus(ALPHA);
     arrow(top, "ArrowUp");
@@ -409,7 +409,7 @@ describe("moving a row with the keyboard", () => {
   });
 
   it("leaves the plain arrows walking the tree", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn().mockResolvedValue(undefined);
     mount(dispatch);
     fireEvent.keyDown(focus(ALPHA), { key: "ArrowDown" });
     expect(dispatch).not.toHaveBeenCalled();

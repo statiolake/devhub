@@ -111,7 +111,7 @@ const retry = vi.fn();
 
 function mount(snapshot: AppSnapshot) {
   const value = {
-    dispatch: vi.fn(),
+    dispatch: vi.fn().mockResolvedValue(undefined),
     openExternalUrl: vi.fn(),
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),

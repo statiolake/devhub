@@ -66,6 +66,55 @@ function setTreeTabStop(
   }
 }
 
+/**
+ * Selecting a row, and where the keyboard goes once it is selected.
+ *
+ * The selection is the same intent whoever raised it. What differs is what was
+ * *meant* by it, and there are only two meanings:
+ *
+ * **A pointer selection means "take me there."** Somebody clicked a row —
+ * expanded or on the rail — and what they want next is the thing they clicked:
+ * the editor with its last-typed-into view, or the Agent's terminal. Leaving
+ * the keys in a column they reached with the mouse means the next thing they
+ * type goes to the arrow-key walk.
+ *
+ * **A keyboard selection means "and stay here."** Somebody is standing in the
+ * Sidebar after `Cmd+Q S` and walking it with the arrows; Return there chooses
+ * a row without leaving the list, and the next ↓ has to still be a ↓. Escape
+ * is the way out, and it is the same request this makes.
+ *
+ * Which one it was is on the event and nowhere else: a click raised by a
+ * pointer carries a `detail` of at least one, and a click raised by activating
+ * a focused button from the keyboard carries zero. So this is read off the
+ * activation rather than kept as a flag some other handler has to set and some
+ * other handler has to clear — there is no second path to the same selection,
+ * and nothing to time out.
+ *
+ * Where the keyboard actually lands is not decided here and cannot be: the
+ * surface is usually a native `WebContentsView` this document cannot focus.
+ * `focusSurface` is a request to main, which clears the one fact that says
+ * "the person asked for the Sidebar" and then asks `keyboardChild` again — the
+ * same door Escape uses, so the two can never come to disagree. It is sent
+ * *after* the selection has been applied, because the child the keys belong to
+ * is a function of the selection: asked any earlier it would answer with the
+ * row that was selected a moment ago.
+ */
+function useSelectRow(): (
+  event: { readonly detail: number },
+  intent: AppIntent,
+) => void {
+  const { dispatch } = useSidebar();
+  return useCallback(
+    (event: { readonly detail: number }, intent: AppIntent) => {
+      const byPointer = event.detail > 0;
+      void dispatch(intent).then(() => {
+        if (byPointer) void devhub().focusSurface();
+      });
+    },
+    [dispatch],
+  );
+}
+
 function WorkspaceRow({
   workspace,
   repository,
@@ -111,6 +160,7 @@ function WorkspaceRow({
       : undefined;
 
   const dispatch = useSidebarDispatch();
+  const selectRow = useSelectRow();
 
   // A Workspace on its way out takes no instructions. This is the view half
   // of a fact the model already enforces — a close that is running refuses the
@@ -198,8 +248,8 @@ function WorkspaceRow({
             // the rail shows none, and this is where all of them are — which
             // is why it is the same list and not a shorter version of it.
             data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
-            onClick={() =>
-              dispatch({
+            onClick={(event) =>
+              selectRow(event, {
                 type: "select_context",
                 context: { kind: "workspace", workspaceId: workspace.id },
               })
@@ -435,7 +485,7 @@ function WorkspaceRow({
                       // it is the same choice, and it is stated in the intent
                       // rather than applied afterwards.
                       onClick={(event) =>
-                        dispatch({
+                        selectRow(event, {
                           type: "select_context",
                           context: { kind: "agent", agentId: agent.id },
                           split: event.metaKey,
@@ -656,7 +706,7 @@ function ScratchRow({
   /** Where `Cmd+Q S` lands when Scratch is what is selected. */
   readonly rowRef: React.Ref<HTMLButtonElement>;
 }) {
-  const dispatch = useSidebarDispatch();
+  const selectRow = useSelectRow();
   const selected = snapshot.selection.context.kind === "global";
   return (
     <button
@@ -666,8 +716,11 @@ function ScratchRow({
       aria-current={selected ? "page" : undefined}
       aria-label="Scratch terminal"
       data-tooltip={SCRATCH_NAME}
-      onClick={() =>
-        dispatch({ type: "select_context", context: { kind: "global" } })
+      onClick={(event) =>
+        selectRow(event, {
+          type: "select_context",
+          context: { kind: "global" },
+        })
       }
     >
       {/* Mirrors a Workspace row's first line so the rail, the glyph and the

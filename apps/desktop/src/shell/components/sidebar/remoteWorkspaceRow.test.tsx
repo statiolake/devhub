@@ -47,7 +47,7 @@ function mount(
   repository?: Record<string, unknown>,
 ) {
   const value = {
-    dispatch: vi.fn(),
+    dispatch: vi.fn().mockResolvedValue(undefined),
     openExternalUrl: vi.fn(),
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),

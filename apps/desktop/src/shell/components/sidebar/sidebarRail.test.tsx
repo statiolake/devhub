@@ -112,7 +112,7 @@ function mount(
   repository?: typeof REPOSITORY,
   openExternalUrl = vi.fn(),
 ) {
-  const dispatch = vi.fn();
+  const dispatch = vi.fn().mockResolvedValue(undefined);
   const value = {
     dispatch,
     openExternalUrl,
