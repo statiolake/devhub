@@ -1,11 +1,17 @@
 /**
- * The static checks on DevHub's `ssh-remote` resolver.
+ * The static checks on DevHub's remote authority resolvers.
  *
- * The extension is one registration, and the point of these checks is that it
- * stays one. The extension it replaces grew an SSH client, a config parser, a
- * server installer, a port-forwarding view and a settings page, all of which
- * DevHub already owns; a second copy of any of them is how the two copies start
- * to disagree about which host a person named.
+ * The extension is a registration per authority and *one* resolver behind
+ * them, and the point of these checks is that it stays that way. The extension
+ * it replaces grew an SSH client, a config parser, a server installer, a
+ * port-forwarding view and a settings page, all of which DevHub already owns;
+ * a second copy of any of them is how the two copies start to disagree about
+ * which machine a person named.
+ *
+ * Two authorities, not two extensions: `ssh-remote` and `dev-container` differ
+ * only in how bytes reach the machine, and main is what knows that. If a
+ * transport ever needs its own `resolve`, this list is where it will be seen
+ * to have grown a second answer.
  */
 
 import { readFile } from "node:fs/promises";
@@ -20,13 +26,13 @@ const resolver = await readFile(resolve(root, "src/resolveRemote.ts"), "utf8");
 const control = await readFile(resolve(root, "src/control.ts"), "utf8");
 
 const required = [
-  [
-    extension,
-    "resolver registration",
-    'registerRemoteAuthorityResolver("ssh-remote"',
-  ],
-  [resolver, "authority prefix", "ssh-remote+"],
-  [resolver, "machine spelling", "ssh:"],
+  [extension, "resolver registration", "registerRemoteAuthorityResolver("],
+  [extension, "the ssh authority", '"ssh-remote"'],
+  [extension, "the dev container authority", '"dev-container"'],
+  [resolver, "ssh authority prefix", "ssh-remote+"],
+  [resolver, "container authority prefix", "dev-container+"],
+  [resolver, "ssh machine spelling", "ssh:"],
+  [resolver, "container machine spelling", "container:"],
   [control, "control socket derivation", "controlSocketFromGlobalStorage"],
   [control, "control socket request", "resolve-remote"],
 ];
@@ -68,14 +74,16 @@ if (!manifest.enabledApiProposals?.includes("resolvers")) {
 if (manifest.api !== "none") {
   throw new Error("the resolver exports no API of its own");
 }
-const events = manifest.activationEvents ?? [];
-if (
-  events.length !== 1 ||
-  events[0] !== "onResolveRemoteAuthority:ssh-remote" ||
-  events.includes("*")
-) {
+// One activation event per authority and nothing wider. `*` would make the
+// resolver load in every window, including the local ones it has no answer for.
+const events = [...(manifest.activationEvents ?? [])].sort();
+const expectedEvents = [
+  "onResolveRemoteAuthority:dev-container",
+  "onResolveRemoteAuthority:ssh-remote",
+];
+if (events.join(",") !== expectedEvents.join(",")) {
   throw new Error(
-    "activation must be onResolveRemoteAuthority:ssh-remote and nothing wider",
+    `activation must be exactly ${expectedEvents.join(" and ")} and nothing wider`,
   );
 }
 // The manifest contributes one thing: how a remote path is spelled in the UI.
@@ -85,14 +93,27 @@ if (Object.keys(contributes).join(",") !== "resourceLabelFormatters") {
     "the resolver contributes resourceLabelFormatters and nothing else",
   );
 }
-const formatter = contributes.resourceLabelFormatters?.[0];
-if (
-  formatter?.scheme !== "vscode-remote" ||
-  formatter?.authority !== "ssh-remote+*" ||
-  formatter?.formatting?.tildify !== true ||
-  formatter?.formatting?.workspaceSuffix !== "SSH"
-) {
-  throw new Error("the remote resource label formatter is missing or changed");
+// One static formatter per authority. Without one, a remote path loses its
+// `~` tildification and the window says nothing about which machine it is on
+// until the resolve finishes and registers the specific formatter.
+const formatters = contributes.resourceLabelFormatters ?? [];
+for (const [authority, suffix] of [
+  ["ssh-remote+*", "SSH"],
+  ["dev-container+*", "Dev Container"],
+]) {
+  const formatter = formatters.find((entry) => entry.authority === authority);
+  if (
+    formatter?.scheme !== "vscode-remote" ||
+    formatter?.formatting?.tildify !== true ||
+    formatter?.formatting?.workspaceSuffix !== suffix
+  ) {
+    throw new Error(
+      `the ${authority} resource label formatter is missing or changed`,
+    );
+  }
+}
+if (formatters.length !== 2) {
+  throw new Error("the resolver contributes one formatter per authority");
 }
 if (extension.includes(": any") || resolver.includes(": any")) {
   throw new Error("the resolver must use the pinned VS Code types");

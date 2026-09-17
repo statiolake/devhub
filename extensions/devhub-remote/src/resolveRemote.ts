@@ -1,5 +1,5 @@
 /**
- * Resolving `ssh-remote+<host>` by asking DevHub.
+ * Resolving `ssh-remote+<host>` and `dev-container+<hex>` by asking DevHub.
  *
  * This is the whole extension. It opens no SSH connection, reads no ssh
  * client configuration, publishes no server and forwards no port: DevHub already
@@ -37,19 +37,65 @@ export type AskDevHub = (
   attempt: number,
 ) => Promise<ResolveRemoteAnswer>;
 
-const AUTHORITY_PREFIX = "ssh-remote+";
+export const SSH_PREFIX = "ssh-remote+";
+export const CONTAINER_PREFIX = "dev-container+";
 
 /**
- * `ssh-remote+<host>` into the machine DevHub spells, or `null` when the
- * authority is not one this resolver was registered for. The host is taken
- * whole — it is an ssh host alias as DevHub spells it, not something to be
- * parsed further here.
+ * The hex payload of a `dev-container+` authority, back into the host folder.
+ *
+ * DevHub wrote it (`encodeContainerAuthority` in `model/domain.ts`), so this is
+ * one half of a round trip and not a guess at somebody else's format — the
+ * closed Dev Containers extension's payload is not exchanged with and not
+ * read. It stays a copy rather than an import for the reason the whole of
+ * `control.ts` is a copy: an extension is bundled on its own and cannot import
+ * from `apps/desktop`.
+ */
+function hostFolderFromPayload(payload: string): string | null {
+  if (payload.length === 0 || payload.length % 2 !== 0) return null;
+  if (!/^[0-9a-fA-F]+$/.test(payload)) return null;
+  const bytes = new Uint8Array(payload.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = Number.parseInt(payload.slice(i * 2, i * 2 + 2), 16);
+  }
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const hostPath = (parsed as { hostPath?: unknown }).hostPath;
+    return typeof hostPath === "string" && hostPath.length > 0
+      ? hostPath
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An authority into the machine DevHub spells, or `null` when it is not one
+ * this resolver was registered for.
+ *
+ * Two prefixes and one answer shape, which is the point of the whole design:
+ * main produces a local TCP port that speaks the remote extension host's
+ * protocol, whichever transport got it there, and this extension returns a
+ * `ResolvedAuthority` pointing at it. Adding dev containers added a prefix
+ * here and a runtime in main, and nothing in between.
+ *
+ * The ssh host is taken whole — it is an alias as DevHub spells it, not
+ * something to parse further. The container's payload is decoded because it is
+ * hex that DevHub itself wrote, and what comes out is the folder on this Mac,
+ * which is what `container:` machine ids are keyed on.
  */
 export function machineFromAuthority(authority: string): string | null {
-  if (!authority.startsWith(AUTHORITY_PREFIX)) return null;
-  const host = authority.slice(AUTHORITY_PREFIX.length);
-  if (host.length === 0) return null;
-  return `ssh:${host}`;
+  if (authority.startsWith(SSH_PREFIX)) {
+    const host = authority.slice(SSH_PREFIX.length);
+    return host.length === 0 ? null : `ssh:${host}`;
+  }
+  if (authority.startsWith(CONTAINER_PREFIX)) {
+    const folder = hostFolderFromPayload(
+      authority.slice(CONTAINER_PREFIX.length),
+    );
+    return folder === null ? null : `container:${folder}`;
+  }
+  return null;
 }
 
 function endpointOf(answer: ResolveRemoteAnswer): {

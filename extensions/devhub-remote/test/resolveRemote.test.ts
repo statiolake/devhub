@@ -96,10 +96,45 @@ test("an ssh-remote authority names the machine DevHub spells", () => {
   );
 });
 
+/** What `encodeContainerAuthority` in `model/domain.ts` writes. */
+function containerAuthority(hostPath: string): string {
+  const json = JSON.stringify({ hostPath });
+  let hex = "";
+  for (const byte of new TextEncoder().encode(json)) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return `dev-container+${hex}`;
+}
+
+test("a dev-container authority names the folder on this Mac", () => {
+  // The machine a container Workspace is on is the *host folder*, not the
+  // container id: a rebuild gives a new container and must not give a new
+  // machine. This is the other half of the round trip main writes.
+  strictEqual(
+    machineFromAuthority(containerAuthority("/src/api")),
+    "container:/src/api",
+  );
+  // A path with the characters a real one has, so the hex is exercised on
+  // something wider than ASCII letters.
+  strictEqual(
+    machineFromAuthority(containerAuthority("/src/api (copy)/wörk")),
+    "container:/src/api (copy)/wörk",
+  );
+});
+
 test("a malformed authority names no machine", () => {
   strictEqual(machineFromAuthority("ssh-remote"), null);
   strictEqual(machineFromAuthority("ssh-remote+"), null);
   strictEqual(machineFromAuthority("wsl+ubuntu"), null);
+  // A container payload that is not hex, is a half byte, is not JSON, or is
+  // JSON without a host path, is an authority this DevHub did not write — and
+  // that is "no machine", the same answer as somebody else's scheme, rather
+  // than a crash in the middle of opening a window.
+  strictEqual(machineFromAuthority("dev-container+"), null);
+  strictEqual(machineFromAuthority("dev-container+zz"), null);
+  strictEqual(machineFromAuthority("dev-container+abc"), null);
+  strictEqual(machineFromAuthority("dev-container+6162"), null);
+  strictEqual(machineFromAuthority("dev-container+7b7d"), null);
 });
 
 test("a malformed authority is a permanent failure", async () => {

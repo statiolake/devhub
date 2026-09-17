@@ -1,7 +1,7 @@
 {
   "name": "devhub-remote",
   "displayName": "DevHub Remote",
-  "description": "DevHub's built-in ssh-remote authority resolver: it asks the running DevHub for the endpoint of a remote extension host and hands VS Code the answer.",
+  "description": "DevHub's built-in ssh-remote and dev-container authority resolvers: they ask the running DevHub for the endpoint of a remote extension host and hand VS Code the answer.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -23,7 +23,8 @@
     }
   },
   "activationEvents": [
-    "onResolveRemoteAuthority:ssh-remote"
+    "onResolveRemoteAuthority:ssh-remote",
+    "onResolveRemoteAuthority:dev-container"
   ],
   "contributes": {
     "resourceLabelFormatters": [
@@ -35,6 +36,16 @@
           "separator": "/",
           "tildify": true,
           "workspaceSuffix": "SSH"
+        }
+      },
+      {
+        "scheme": "vscode-remote",
+        "authority": "dev-container+*",
+        "formatting": {
+          "label": "${path}",
+          "separator": "/",
+          "tildify": true,
+          "workspaceSuffix": "Dev Container"
         }
       }
     ]
