@@ -126,9 +126,15 @@ containers up by exactly those. So DevHub answers "is this Workspace's
 container up?" with
 
 ```sh
-docker ps -a --filter label=devcontainer.local_folder=<folder> \
+docker ps -a --no-trunc --filter label=devcontainer.local_folder=<folder> \
   --format '{{.ID}}\t{{.State}}\t{{.Image}}'
 ```
+
+`--no-trunc` is load-bearing, not tidiness. Without it `{{.ID}}` is the short
+twelve-character id while `devcontainer up` answers with the full sixty-four,
+so the two ways DevHub learns an id spell the same container differently — and
+the comparison that decides "has this been rebuilt?" reads every restart as a
+rebuild.
 
 and never spawns the CLI on the happy path. `devcontainer up` is a 1.7 MB Node
 bundle and about a second of wall clock; this poll runs every few seconds.
