@@ -17,7 +17,9 @@
 
 import {
 	containerMachine,
+	gitPlaceOf,
 	remoteAuthorityOf,
+	workspaceLocation,
 	sshHost,
 	workspaceRoot,
 	type RequestedLocation,
@@ -241,6 +243,28 @@ export function runtimeForRequested(requested: {
 				containerMachine(workspaceRoot(requested.workspaceFolder ?? "")),
 			);
 	}
+}
+
+/**
+ * The machine this Workspace's git runs on, and the folder it runs in.
+ *
+ * Both halves, from one call, because they are one decision and a caller that
+ * took the machine from here and the path from the Workspace would be right
+ * for two location kinds and wrong for the third. A dev container's Workspace
+ * carries two paths — the folder on this Mac and where it is mounted inside —
+ * and git wants the first while everything else wants the second.
+ *
+ * `gitPlaceOf` in `model/domain.ts` is the decision and its reasons; this is
+ * where it becomes a runtime. Terminals, Agents and the folder probe keep
+ * using `runtimeFor`, which is the *other* answer and the right one for them:
+ * they run where the work runs.
+ */
+export function gitRuntimeFor(location: WorkspaceLocation): {
+	readonly runtime: Runtime;
+	readonly root: WorkspaceRoot;
+} {
+	const place = workspaceLocation(gitPlaceOf(location));
+	return { runtime: runtimeFor(place), root: place.path };
 }
 
 /**

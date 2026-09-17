@@ -9,6 +9,7 @@ import { workspaceLocation } from "../../model/domain.js";
 import {
 	disposeRuntime,
 	forgetRuntimeProfile,
+	gitRuntimeFor,
 	liveRuntimes,
 	localRuntime,
 	runtimeFor,
@@ -161,6 +162,41 @@ describe("runtimeFor", () => {
 		expect(second).not.toBe(first);
 		// And the machine is the same machine, which is the whole point.
 		expect(second.id).toBe(first.id);
+	});
+
+	it("runs a dev container's git on this Mac, in the folder on this Mac", () => {
+		// The bug this is holding down was visible the first time a container
+		// Workspace drew a row: git ran *in* the container against
+		// `/workspaces/repo`, and the row said it could not read the repository.
+		// Both halves were wrong — the machine and the path — which is why they
+		// come from one call.
+		const location = workspaceLocation({
+			kind: "container",
+			workspaceFolder: "/projects/api",
+			path: "/workspaces/api",
+		});
+		const git = gitRuntimeFor(location);
+		expect(git.runtime).toBe(localRuntime());
+		expect(git.root).toBe("/projects/api");
+		// And the work still happens in the container: terminals and Agents go
+		// through `runtimeFor`, which is the other answer and the right one for
+		// them.
+		expect(runtimeFor(location)).not.toBe(localRuntime());
+	});
+
+	it("leaves the other two kinds exactly where they were", () => {
+		const local = workspaceLocation({ kind: "local", path: "/projects/api" });
+		expect(gitRuntimeFor(local).runtime).toBe(localRuntime());
+		expect(gitRuntimeFor(local).root).toBe("/projects/api");
+		const ssh = workspaceLocation({
+			kind: "ssh",
+			host: "build",
+			path: "/srv/api",
+		});
+		// A host's git runs on the host, in the folder that is on it — the same
+		// runtime everything else about that Workspace uses.
+		expect(gitRuntimeFor(ssh).runtime).toBe(runtimeFor(ssh));
+		expect(gitRuntimeFor(ssh).root).toBe("/srv/api");
 	});
 
 	it("lists the runtimes that are live, for a reading", async () => {

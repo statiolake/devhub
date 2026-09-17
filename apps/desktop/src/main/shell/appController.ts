@@ -264,6 +264,7 @@ import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
 	disposeRuntime,
 	liveRuntimes,
+	gitRuntimeFor,
 	localRuntime,
 	runtimeById,
 	runtimeForRequested,
@@ -2162,11 +2163,15 @@ export class AppController {
 		// so a checkout on another machine is read the same way as one here —
 		// the same row, with the same branch, Issue and pull request on it.
 		workspaces: () =>
-			this.coordinator.model.workspaces.map((workspace) => ({
-				id: workspace.id,
-				root: workspace.root,
-				runtime: runtimeFor(workspace.location),
-			})),
+			this.coordinator.model.workspaces.map((workspace) => {
+				// Where this Workspace's *git* runs, which is not always where its
+				// terminals do. For a dev container it is this Mac, against the
+				// bind-mounted folder — so a stopped container costs a row its
+				// terminals and not its branch, and the watcher here is a real
+				// `fs.watch` rather than polling `refs` through a `docker exec`.
+				const { runtime, root } = gitRuntimeFor(workspace.location);
+				return { id: workspace.id, root, runtime };
+			}),
 		publish: (status) => {
 			// The order the rows are in is git's answer to "which repository is
 			// this a checkout of", so a round that changes that answer changes the
@@ -3480,13 +3485,14 @@ export class AppController {
 		// fallback below is allowed to delete, and a folder that stopped being
 		// readable throws from here rather than being mistaken for one that is
 		// already gone.
-		const folder = await readWorktreeFolder(
-			runtimeFor(workspace.location),
-			workspace.root,
-		);
+		// The worktree is a git fact, so it is read where this Workspace's git
+		// runs — for a dev container, the folder on this Mac and not the path
+		// inside it, which has no `.git` of its own to find.
+		const git = gitRuntimeFor(workspace.location);
+		const folder = await readWorktreeFolder(git.runtime, git.root);
 		const gitSaysWorktree =
 			repository?.mainWorktree !== undefined &&
-			repository.worktree === workspace.root &&
+			repository.worktree === git.root &&
 			repository.worktree !== repository.mainWorktree;
 		const mainWorktree = gitSaysWorktree
 			? repository.mainWorktree
@@ -3506,9 +3512,9 @@ export class AppController {
 			// probe, `git worktree remove`, the prune, the folder removal — goes
 			// through the runtime on this command, so a worktree of a repository
 			// on a host is removed there and not looked for here.
-			await this.gitCommand(runtimeFor(workspace.location)),
+			await this.gitCommand(git.runtime),
 			mainWorktree,
-			workspace.root,
+			git.root,
 			disposition === "remove-anyway",
 		);
 	}
