@@ -105,6 +105,22 @@ export interface RemoteServerHost {
 	 * re-answers with the same port and the same token.
 	 */
 	remoteServer(delivery: RehDelivery): Promise<RemoteServerEndpoint>;
+
+	/**
+	 * A window is opening on this machine — bring up whatever that needs.
+	 *
+	 * Optional, because most machines have nothing to bring up: an ssh host is
+	 * either there or it is not, and DevHub does not start computers. A dev
+	 * container does have something, and `devcontainer up` is expensive enough
+	 * (it may build an image) and surprising enough (it undoes a `docker stop`
+	 * the person just ran) that it must not sit on a path a timer can reach.
+	 *
+	 * So it is called on the *first* resolve of a window and never on a
+	 * reconnect, which is the one place DevHub can tell "somebody opened this"
+	 * from "this is trying to come back". `resolveAttempt` is that fact and it
+	 * is already on the wire.
+	 */
+	prepare?(): Promise<void>;
 }
 
 /**

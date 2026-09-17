@@ -12,6 +12,7 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import type { CommandOutput } from "../terminal/command.js";
+import { PortFailure } from "../terminal/ports.js";
 import {
 	ContainerRuntime,
 	LOCAL_FOLDER_LABEL,
@@ -147,11 +148,108 @@ describe("finding the container", () => {
 			fakeDevcontainer(() => output(0)),
 		);
 		// The two things that produce this are a Docker that is not started and
-		// one that is not installed, and the sentence has to let a person tell
-		// which. So it names the binary it ran and quotes what docker said.
+		// one that is not installed, so it names the binary it ran — and it
+		// names the remedy, because a condition has nowhere to put a button.
+		// What docker itself said goes to the log, not into the sentence.
 		await expect(runtime.containerState()).rejects.toThrow(
-			/\/fake\/docker.*Cannot connect to the Docker daemon/su,
+			/\/fake\/docker.*Start Docker/su,
 		);
+	});
+});
+
+describe("a container that is not running is a condition, not a restart", () => {
+	it("refuses a command rather than starting the container behind the person", async () => {
+		// Every command comes through this path, including the reconcile round
+		// that runs on a cadence tick. A `devcontainer up` here would restart the
+		// container within seconds of somebody running `docker stop`, every
+		// time, so they could never keep it stopped — and `up` is the call that
+		// may rebuild an image, so a background round could start a minutes-long
+		// build nobody asked for.
+		const devcontainer = fakeDevcontainer(() =>
+			Promise.reject(new Error("up must not run on the command path")),
+		);
+		const runtime = runtimeWith(
+			fakeDocker((args) =>
+				args[0] === "ps" ? output(0, psLine("abc", "exited")) : output(0, ""),
+			),
+			devcontainer,
+		);
+		await expect(runtime.home()).rejects.toThrow(/is not running/u);
+		expect(devcontainer.calls).toHaveLength(0);
+	});
+
+	it("names the command in the sentence, because a condition has no button", async () => {
+		// `machineConditions.ts` publishes a summary string and nothing else —
+		// there is nowhere on a condition for an action. So the sentence has to
+		// be the action, with this Workspace's folder already in it.
+		const runtime = runtimeWith(
+			fakeDocker((args) =>
+				args[0] === "ps" ? output(0, psLine("abc", "exited")) : output(0, ""),
+			),
+			fakeDevcontainer(() => output(0)),
+		);
+		const failure = await runtime.home().catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(PortFailure);
+		expect((failure as PortFailure).detail).toContain(
+			`devcontainer up --workspace-folder ${FOLDER}`,
+		);
+	});
+
+	it("tells a container that was never built from one that is stopped", async () => {
+		const runtime = runtimeWith(
+			fakeDocker((args) => (args[0] === "ps" ? output(0, "") : output(0, ""))),
+			fakeDevcontainer(() => output(0)),
+		);
+		await expect(runtime.home()).rejects.toThrow(
+			/No dev container has been built/u,
+		);
+	});
+
+	it("carries a PortFailure, which is what makes the sentence reach a person", async () => {
+		// `portRefusal` carries a `detail` through only from a `PortFailure`;
+		// anything else arrives as the bare "DevHub is not getting an answer
+		// from container:…", which names the machine and nothing to do about it.
+		const runtime = runtimeWith(
+			fakeDocker(() =>
+				output(1, "", "Cannot connect to the Docker daemon at unix:///x.sock"),
+			),
+			fakeDevcontainer(() => output(0)),
+		);
+		const failure = await runtime.containerState().catch((e: unknown) => e);
+		expect(failure).toBeInstanceOf(PortFailure);
+		// DevHub's own words, not docker's — the rule `PortFailure.detail` states.
+		expect((failure as PortFailure).detail).toContain("Start Docker");
+		expect((failure as PortFailure).detail).not.toContain("unix:///x.sock");
+	});
+
+	it("starts the container when somebody actually asks", async () => {
+		let started = false;
+		const devcontainer = fakeDevcontainer(() => {
+			started = true;
+			return output(
+				0,
+				JSON.stringify({
+					outcome: "success",
+					containerId: "c".repeat(64),
+					remoteUser: "vscode",
+					remoteWorkspaceFolder: "/workspaces/api",
+				}),
+			);
+		});
+		const runtime = runtimeWith(
+			fakeDocker((args) => {
+				if (args[0] === "ps") {
+					return output(0, started ? psLine("c".repeat(64), "running") : "");
+				}
+				if (args[0] === "inspect") return output(0, "");
+				return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+			}),
+			devcontainer,
+		);
+		await runtime.ensureUp();
+		expect(devcontainer.calls[0]?.[0]).toBe("up");
+		// And the container it just brought up is the one commands now go to.
+		expect(await runtime.home()).toBe("/home/vscode");
 	});
 });
 
@@ -197,6 +295,9 @@ describe("the happy path does not spawn the CLI", () => {
 			);
 		});
 		const runtime = runtimeWith(docker, devcontainer);
+		// `ensureUp` and not `home()`: starting a container is an explicit act,
+		// and no path a timer can reach may do it.
+		await runtime.ensureUp();
 		expect(await runtime.home()).toBe("/home/vscode");
 		expect(devcontainer.calls[0]).toEqual(["up", "--workspace-folder", FOLDER]);
 	});
@@ -223,7 +324,7 @@ describe("the happy path does not spawn the CLI", () => {
 			),
 			devcontainer,
 		});
-		await runtime.home();
+		await runtime.ensureUp();
 		expect(devcontainer.calls[0]).toEqual([
 			"up",
 			"--workspace-folder",
@@ -392,7 +493,7 @@ describe("a container that goes away mid-command", () => {
 		// `home()` is cached, so reach for something that goes to the container
 		// and watch it refuse in the container's own words.
 		await expect(runtime.readTextFile("/etc/hostname", 4096)).rejects.toThrow(
-			/is no longer running/u,
+			/is not running/u,
 		);
 		runtime.resumed();
 		running = true;

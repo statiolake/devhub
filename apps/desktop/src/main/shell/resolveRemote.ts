@@ -43,6 +43,14 @@ export async function resolveRemoteEndpoint(
 	);
 	try {
 		const { host, delivery } = remoteServerFor(id);
+		// The first attempt is a window opening; every later one is that window
+		// trying to come back. Only the first may start anything — see
+		// `RemoteServerHost.prepare`. Without that line a dev container would be
+		// restarted by the reconnect loop within seconds of somebody stopping
+		// it, and they could never keep it stopped.
+		if (attempt <= 1 && host.prepare !== undefined) {
+			await host.prepare();
+		}
 		const endpoint = await host.remoteServer(delivery);
 		return {
 			ok: true,

@@ -425,16 +425,56 @@ export class ContainerRuntime
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
-			if (adopted) return adopted;
+			if (adopted !== undefined) return adopted;
 		}
-		// Absent, stopped, or running but not answering. `devcontainer up` is the
-		// one thing that knows how to build an image, create a container and run
-		// the lifecycle commands the definition asks for, and DevHub does not
-		// have a second opinion about any of that.
+		// Not running, and this is not the path that starts it. Every command
+		// DevHub sends a machine comes through here, including the reconcile
+		// round that runs on a cadence tick for as long as the Workspace has
+		// Agents — so a `devcontainer up` here would restart a container within
+		// seconds of a person running `docker stop`, every time, and they could
+		// never keep it stopped. Worse, `up` is the call that may rebuild an
+		// image, so a background round could start a minutes-long build nobody
+		// asked for.
+		//
+		// So this refuses, in a sentence that names the command, and the refusal
+		// becomes one machine condition through the ordinary path. Starting a
+		// container is an explicit act and lives in `ensureUp`.
+		throw state.kind === "absent"
+			? containerNotBuilt(this.#workspaceFolder)
+			: containerNotRunning(this.#workspaceFolder);
+	}
+
+	/**
+	 * Build or start this Workspace's container, because somebody asked.
+	 *
+	 * The one place `devcontainer up` is run, and it is deliberately not on any
+	 * path a timer can reach. Opening a Dev Container Workspace is a person
+	 * saying "start this"; a reconcile round is not.
+	 *
+	 * Idempotent: a container that is already running is adopted, which costs
+	 * the one `docker ps` that `#openContainer` would have cost anyway.
+	 */
+	async prepare(): Promise<void> {
+		return this.ensureUp();
+	}
+
+	async ensureUp(): Promise<void> {
+		if (this.#replaced) throw containerReplaced(this.#workspaceFolder);
+		const state = await this.containerState();
+		if (state.kind === "running") {
+			const adopted = await this.#adopt(state.id);
+			if (adopted !== undefined) {
+				this.#container = Promise.resolve(adopted);
+				return;
+			}
+		}
+		// `devcontainer up` is the one thing that knows how to build an image,
+		// create a container and run the lifecycle commands the definition asks
+		// for, and DevHub has no second opinion about any of that.
 		const up = await this.#up();
 		this.#noteContainer(up.containerId);
 		this.#remoteUser = up.remoteUser;
-		return up;
+		this.#container = Promise.resolve(up);
 	}
 
 	/** An already-running container, if `$HOME` can still be read in it. */
@@ -613,10 +653,8 @@ export class ContainerRuntime
 			this.#container = undefined;
 			this.#connected = false;
 			this.lastFailure = lastLine(result.stderr.toString("utf8"));
-			throw new Error(
-				`The dev container for ${this.#workspaceFolder} is no longer ` +
-					`running: ${this.lastFailure}`,
-			);
+			console.warn(`[devhub] ${this.id}: ${this.lastFailure}`);
+			throw containerNotRunning(this.#workspaceFolder);
 		}
 		this.#connected = true;
 		if (result.code === 127) {
@@ -1126,23 +1164,72 @@ function looksLikeContainerGone(result: CommandOutput): boolean {
 /**
  * The docker daemon is not answering, said once and by name.
  *
- * It names the binary it ran, because the two things that produce this are a
- * Docker that is not started and a Docker that is not installed, and the person
- * can tell which from the sentence docker itself printed.
+ * A `PortFailure` and not a bare `Error`, because that is what decides whether
+ * the sentence reaches the person at all: a machine-wide reconcile round that
+ * throws becomes a machine condition, and `portRefusal` carries a `detail`
+ * through only from a `PortFailure`. Anything else arrives as the bare "DevHub
+ * is not getting an answer from container:…", which names the machine and
+ * nothing to do about it.
+ *
+ * The detail is DevHub's own sentence and never docker's output — the rule
+ * `PortFailure.detail` states. So it names the binary that was run, because the
+ * two things that produce this are a Docker that is not started and a Docker
+ * that is not installed, and it names the remedy. What docker itself said goes
+ * to the log, where a second reason is worth having and a condition is not the
+ * place for it.
  */
 export function dockerUnreachable(path: string, said: string): Error {
-	return new Error(
-		`DevHub could not reach the Docker daemon with ${path}` +
-			(said.length === 0 ? "" : `: ${said}`),
-	);
+	if (said.length > 0) {
+		console.warn(`[devhub] ${path}: ${said}`);
+	}
+	return portFailure("unavailable", {
+		detail:
+			`DevHub could not reach the Docker daemon with ${path}. ` +
+			`Start Docker and it will reconnect by itself.`,
+	});
+}
+
+/**
+ * The container is there and not running, with the command that starts it.
+ *
+ * A condition carries a sentence and no action — `machineConditions.ts`
+ * publishes a summary string, and there is nowhere on it for a button. So the
+ * sentence has to be the action: it names the exact command, with this
+ * Workspace's folder already in it, so that the remedy is something to copy
+ * rather than something to work out.
+ */
+export function containerNotRunning(workspaceFolder: string): Error {
+	return portFailure("unavailable", {
+		detail:
+			`The dev container for ${workspaceFolder} is not running. ` +
+			`Start it with: devcontainer up --workspace-folder ${workspaceFolder}`,
+	});
+}
+
+/**
+ * There is no container for this folder yet, with the command that makes one.
+ *
+ * Separate from "not running" because they are different sentences with
+ * different remedies, and folding them together would offer to build an image
+ * that is already built — or, worse, tell somebody to start a container that
+ * does not exist.
+ */
+export function containerNotBuilt(workspaceFolder: string): Error {
+	return portFailure("unavailable", {
+		detail:
+			`No dev container has been built for ${workspaceFolder} yet. ` +
+			`Build it with: devcontainer up --workspace-folder ${workspaceFolder}`,
+	});
 }
 
 /** The container this runtime was built for has been rebuilt. */
 export function containerReplaced(workspaceFolder: string): Error {
-	return new Error(
-		`The dev container for ${workspaceFolder} has been rebuilt, so this ` +
-			`connection to the old one cannot be used`,
-	);
+	return portFailure("unavailable", {
+		detail:
+			`The dev container for ${workspaceFolder} has been rebuilt, so this ` +
+			`connection to the old one cannot be used. DevHub will reconnect to ` +
+			`the new one.`,
+	});
 }
 
 /** `devcontainer up`'s answer, as far as DevHub reads it. */
