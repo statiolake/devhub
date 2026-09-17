@@ -198,11 +198,7 @@ describe("the happy path does not spawn the CLI", () => {
 		});
 		const runtime = runtimeWith(docker, devcontainer);
 		expect(await runtime.home()).toBe("/home/vscode");
-		expect(devcontainer.calls[0]).toEqual([
-			"up",
-			"--workspace-folder",
-			FOLDER,
-		]);
+		expect(devcontainer.calls[0]).toEqual(["up", "--workspace-folder", FOLDER]);
 	});
 
 	it("passes a chosen config through to the CLI", async () => {
@@ -361,8 +357,12 @@ describe("reading devcontainer up", () => {
 		// Not as something to work around: an unrecognised shape means this
 		// build and this CLI version disagree, and carrying on would mean using
 		// whatever happened to be in `containerId` — which could be anything.
-		expect(parseUpOutcome(JSON.stringify({ outcome: "maybe" }))).toBeUndefined();
-		expect(parseUpOutcome(JSON.stringify({ outcome: "success" }))).toBeUndefined();
+		expect(
+			parseUpOutcome(JSON.stringify({ outcome: "maybe" })),
+		).toBeUndefined();
+		expect(
+			parseUpOutcome(JSON.stringify({ outcome: "success" })),
+		).toBeUndefined();
 		expect(parseUpOutcome("not json at all")).toBeUndefined();
 		expect(parseUpOutcome("")).toBeUndefined();
 	});

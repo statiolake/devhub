@@ -1198,9 +1198,7 @@ export function hydrateModel(
     const where = `workspace ${record.workspace_id}`;
     const { id, location, selected } = refuseRecord(where, () => ({
       id: parseWorkspaceId(record.workspace_id),
-      location: workspaceLocation(
-        locationFromRecord(record),
-      ),
+      location: workspaceLocation(locationFromRecord(record)),
       selected: displayPath(record.selected_path),
     }));
     refuseRecord(where, () => {

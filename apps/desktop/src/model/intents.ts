@@ -291,9 +291,7 @@ export function requestedAtPath(
 }
 
 /** Where a request is, for a sentence: empty when it is this Mac. */
-export function whereRequested(
-  requested: RequestedWorkspaceLocation,
-): string {
+export function whereRequested(requested: RequestedWorkspaceLocation): string {
   switch (requested.kind) {
     case "local":
       return "";

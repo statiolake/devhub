@@ -474,7 +474,7 @@ export class ContainerRuntime
 		const inspected = await this.#docker_([
 			"inspect",
 			"-f",
-			"{{index .Config.Labels \"devcontainer.metadata\"}}",
+			'{{index .Config.Labels "devcontainer.metadata"}}',
 			id,
 		]);
 		if (inspected.code !== 0) return undefined;
@@ -509,9 +509,7 @@ export class ContainerRuntime
 			"up",
 			"--workspace-folder",
 			this.#workspaceFolder,
-			...(this.#configPath === undefined
-				? []
-				: ["--config", this.#configPath]),
+			...(this.#configPath === undefined ? [] : ["--config", this.#configPath]),
 		];
 		const custom = this.#devcontainer.run;
 		const result = custom
@@ -760,7 +758,10 @@ export class ContainerRuntime
 		const home = await this.home();
 		const relay = relayPath(home);
 		await this.writeTextFile(relay, RELAY_SOURCE, 0o600);
-		return { node: posix.join(await this.#ensureServerInstalled(), "node"), relay };
+		return {
+			node: posix.join(await this.#ensureServerInstalled(), "node"),
+			relay,
+		};
 	}
 
 	/**

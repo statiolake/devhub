@@ -237,9 +237,9 @@ export function runtimeForRequested(requested: {
 		case "ssh":
 			return runtimeById(`ssh:${requested.host ?? ""}`);
 		case "container":
-			return runtimeById(containerMachine(
-				workspaceRoot(requested.workspaceFolder ?? ""),
-			));
+			return runtimeById(
+				containerMachine(workspaceRoot(requested.workspaceFolder ?? "")),
+			);
 	}
 }
 
