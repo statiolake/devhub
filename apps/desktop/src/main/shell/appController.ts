@@ -149,6 +149,7 @@ import {
 	type WorktreeDisposition,
 } from "../../model/intents.js";
 import { closingDeletesWorktree } from "../../model/worktrees.js";
+import { zoomedTerminalFontSize } from "../../model/terminalZoom.js";
 import {
 	agentSubject,
 	portRefusal,
@@ -1043,6 +1044,30 @@ export class AppController {
 				// workbench is the freed width. Nothing here lays anything out.
 				this.dispatchOwn({ type: "toggle_sidebar" });
 			},
+			terminalZoom: (direction) => {
+				// A question that is up holds the keyboard, so this is all but
+				// unreachable while one is — and "all but" is not a rule. The
+				// keys go through main because main is in front of every
+				// surface, and being in front of a modal and acting anyway is
+				// the one thing that would make it a modal in name only.
+				if (shellWindow().picker.openModals().length > 0) return false;
+				const config = this.config;
+				// The base is the setting's, and a settings file that would not
+				// parse has no base to step from. There is nothing to zoom
+				// relative to, and inventing one would silently zoom from a
+				// size nobody chose.
+				if (!config) return false;
+				this.dispatchOwn({
+					type: "terminal_zoom",
+					direction,
+					base: config.appearance.terminalFontSize,
+				});
+				// The size lives on the appearance projection, which the model's
+				// own revision does not carry: the panes learn the new size the
+				// same way they learn an edited setting.
+				this.publishAppearance();
+				return true;
+			},
 			dismissAlert: () => {
 				// The page that draws app-scoped notices, and nowhere else.
 				// Every failure main raises goes to that one page, so there is
@@ -1862,10 +1887,30 @@ export class AppController {
 			});
 	}
 
+	/**
+	 * What the window looks like — with the Agent panes' zoom already in it.
+	 *
+	 * The zoom is an offset from the size `settings.toml` names and the pages
+	 * are told the sum, not the two halves. That is the whole of why no page
+	 * changed for this: a pane already draws `terminalFontSize` and already
+	 * re-fits and re-sizes its tmux pane when it moves, so zooming is the same
+	 * event as editing the setting. A page given both numbers would be a second
+	 * place the sum is worked out, and the first one to disagree would be
+	 * whichever page forgot to add them.
+	 */
 	appearance(): AppAppearance {
 		const config = this.requireConfig();
 		this.appearanceSequence += 1;
-		return appearanceWire(config.appearance, this.appearanceSequence);
+		return appearanceWire(
+			{
+				...config.appearance,
+				terminalFontSize: zoomedTerminalFontSize(
+					config.appearance.terminalFontSize,
+					this.coordinator.model.terminalZoomOffset,
+				),
+			},
+			this.appearanceSequence,
+		);
 	}
 
 	agentProfiles(): AgentProfiles {

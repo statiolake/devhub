@@ -43,8 +43,10 @@
 import { electron } from "../electron.js";
 import { strokeKeys } from "../../model/chordKeys.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
+import { terminalZoomFor } from "./terminalZoom.js";
 import { resolveChord, type ChordEffect } from "./chords.js";
 import { KeyRouter, type ChordLayout, type KeyStroke } from "./keyRouter.js";
+import type { TerminalZoomDirection } from "../../model/terminalZoom.js";
 import type {
 	AppSnapshotWire,
 	NavigationContext,
@@ -96,6 +98,15 @@ export interface ChordHost {
 	markAgentUnread(agentId: string): void;
 	/** Put away whichever failure the window in front is showing. */
 	dismissAlert(): void;
+	/**
+	 * Zoom every Agent pane's text one step, or forget the zoom.
+	 *
+	 * Answers whether it acted. It declines while a question is up — that is
+	 * main's fact to know, not one to read off a URL — and a key it declined is
+	 * left alone rather than swallowed, so it reaches the surface underneath
+	 * exactly as an unbound key does.
+	 */
+	terminalZoom(direction: TerminalZoomDirection): boolean;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
 	closeAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
@@ -229,6 +240,15 @@ export function handleInput(
 		// answer it — DevHub's own chrome — in which case this layer answers
 		// it, and only for that surface. Anywhere else the key travels on
 		// untouched, which is what leaves Cmd+A to Monaco.
+		// The Agent panes' zoom is the same shape of answer — a key that means
+		// something on one of DevHub's own pages and nothing anywhere else —
+		// and it is asked first because it is the narrower claim: one page,
+		// three chords, none of which the editing keys spell.
+		const zoom = terminalZoomFor(url, stroke);
+		if (zoom !== undefined && host.terminalZoom(zoom)) {
+			take();
+			return;
+		}
 		const command = editingCommandFor(url, stroke);
 		if (!command) return;
 		take();

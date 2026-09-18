@@ -89,7 +89,7 @@ const SNAPSHOT = {
 	],
 } as unknown as ReturnType<ChordHost["snapshot"]>;
 
-function host() {
+function host(zoomActs = true) {
 	const calls: string[] = [];
 	const record =
 		(name: string) =>
@@ -111,6 +111,10 @@ function host() {
 		renameAgent: record("renameAgent"),
 		markAgentUnread: record("markAgentUnread"),
 		dismissAlert: record("dismissAlert"),
+		terminalZoom: (direction) => {
+			calls.push(`terminalZoom ${direction}`);
+			return zoomActs;
+		},
 		closeAgent: record("closeAgent"),
 		closeWorkspace: record("closeWorkspace"),
 		reorderEntries: record("reorderEntries"),
@@ -387,5 +391,62 @@ describe("a chord, as Electron delivers it", () => {
 			20,
 		);
 		expect(roles).toEqual([]);
+	});
+
+	/**
+	 * The Agent panes' zoom, through the same door and with the same rules.
+	 *
+	 * Asserted here as well as in `terminalZoom.test.ts` because only this end
+	 * shows the two things the matcher cannot: that the key is swallowed, so a
+	 * `-` never reaches the terminal, and that a zoom main declined is left
+	 * alone entirely.
+	 */
+	it("zooms the Agent panes, and swallows the key it acted on", () => {
+		const { calls, chordHost } = host();
+		const taken = type(
+			chordHost,
+			[
+				input("Minus", "_", { meta: true, shift: true }),
+				input("Minus", "-", { meta: true }),
+				input("Digit0", ")", { meta: true, shift: true }),
+			],
+			`${SHELL_ORIGIN}/agents.html`,
+		);
+		expect(taken).toEqual([true, true, true]);
+		expect(calls).toEqual([
+			"terminalZoom in",
+			"terminalZoom out",
+			"terminalZoom reset",
+		]);
+	});
+
+	it("leaves the key alone when the zoom declines it", () => {
+		// What a question being up looks like from here: main knows one is,
+		// says so, and the key travels on as any unbound chord does.
+		const { calls, chordHost } = host(false);
+		const taken = type(
+			chordHost,
+			[input("Minus", "-", { meta: true })],
+			`${SHELL_ORIGIN}/agents.html`,
+		);
+		expect(taken).toEqual([false]);
+		expect(calls).toEqual(["terminalZoom out"]);
+	});
+
+	it("does not zoom from any other surface", () => {
+		for (const url of [
+			`${SHELL_ORIGIN}/picker.html`,
+			`${SHELL_ORIGIN}/sidebar.html`,
+			WORKBENCH,
+		]) {
+			const { calls, chordHost } = host();
+			const taken = type(
+				chordHost,
+				[input("Minus", "_", { meta: true, shift: true })],
+				url,
+			);
+			expect(taken).toEqual([false]);
+			expect(calls).toEqual([]);
+		}
 	});
 });

@@ -209,6 +209,54 @@ six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
 
+## Two keys that are not chords
+
+`Cmd+-`, `Cmd+Shift+-` and `Cmd+Shift+0` zoom the Agent panes' text: one pixel
+smaller, one pixel larger, and back to the size the settings name. They are
+answered in the same place chords are and for the same reason — main is in
+front of every surface — but they are not chords, so they are not in the chord
+table and not in the Chord Help sheet, which lists what `Cmd+Q` leads to.
+
+They are decided **per web contents**, the way the Mac's editing keys are
+(`main/shell/editingCommands.ts`, and `main/shell/terminalZoom.ts` beside it).
+A VS Code workbench binds the same chord to zooming the window, so claiming
+these keys for the application would take that away from every editor DevHub
+hosts. The rule is one line: they mean a zoom **only on the Agents page**, and
+everywhere else they are not touched. A modal is not an exception to that, it
+is an instance of it — a question that is up holds the keyboard, so the
+keystroke arrives from the picker's view and matches nothing. Main asks its own
+picker once more before acting, because whether a question is up is main's fact
+and not one to infer from a URL, and a key it declines is left alone rather
+than swallowed.
+
+**Matched by the physical key**, which is the opposite of the rule for a
+chord's second stroke, and both rules have the same cause. `model/chordKeys.ts`
+matches the character because `code` names positions by the US layout and a JIS
+keyboard moves the bracket and quote keys. `Minus` and `Digit0` do not move —
+and the character does: Shift and the key printed `-` is `_` on a US keyboard
+and `=` on a JIS one. What the person means is the key they are looking at, so
+the key is what is matched.
+
+Plain `Cmd+0` is deliberately unbound, and an unbound chord over a terminal is
+one the terminal gets.
+
+**The size is one number, and it lives in main.** The zoom is an *offset* in
+whole pixels from `[appearance] terminal_font_size`, kept in DevHub's own state
+file (`terminal.zoom_offset`, schema version 9) because `settings.toml` is the
+person's file and DevHub does not write it. Editing the setting therefore moves
+the zoomed text with it, and reset is `offset = 0` — there is no copy of the
+base anywhere to go stale. `model/terminalZoom.ts` holds the arithmetic and the
+range, which is the range a terminal font size already had everywhere else
+(9–24): a zoom that could leave it would be a second opinion about what sizes
+exist, arriving at the pages as a projection the wire has to refuse.
+
+No page changed for any of this. The offset is added to the setting in
+`AppController.appearance()` and the pages are told the sum, on the
+`terminalFontSize` they already draw — so zooming is the same event as editing
+the setting, down to the re-fit and the tmux resize the changed geometry
+causes, and there is one zoom for the terminal surface rather than one per
+Agent because there is one appearance.
+
 ## Attention is the Dock
 
 There is no ring drawn around the window. A DOM overlay in the window's own
