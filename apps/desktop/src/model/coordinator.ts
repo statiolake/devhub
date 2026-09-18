@@ -580,6 +580,9 @@ export class AppCoordinator {
       case "toggle_sidebar":
         this.model.toggleSidebar();
         return this.transitionOutcome(beforeRevision, id);
+      case "terminal_zoom":
+        this.model.zoomTerminal(intent.base, intent.direction);
+        return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
         return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {

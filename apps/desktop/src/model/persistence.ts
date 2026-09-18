@@ -65,6 +65,7 @@ import {
   SPLIT_MAX_RATIO,
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
+import { isTerminalZoomOffset } from "./terminalZoom.js";
 
 /**
  * Version 4 took the close out of the file entirely; version 3 made a close's
@@ -144,8 +145,22 @@ import {
  * sentence that sends somebody looking for a damaged file. With it, the same
  * DevHub reads the number, says the file is from a newer DevHub, and leaves it
  * alone.
+ *
+ * Version 9 is `terminal.zoom_offset`: how far the Agent panes' text has been
+ * zoomed from the size `settings.toml` names, in whole pixels. It is here and
+ * not in the settings file for the reason `sidebar.collapsed` is — the setting
+ * is the person's own file and DevHub does not write it — and it is an offset
+ * rather than a size so that editing the setting moves the zoomed text with
+ * it. See `model/terminalZoom.ts`.
+ *
+ * A version-8 file has no such key and loads as `0`, which is the setting
+ * untouched and is what every file written before this meant. The bump is for
+ * the other direction, as usual: a version-8 DevHub reading this file would
+ * drop the key on its next save, and the person's zoom would go back to the
+ * setting with nothing saying why — the same silent loss that made
+ * `sidebar.order` a bump.
  */
-export const STATE_SCHEMA_VERSION = 8;
+export const STATE_SCHEMA_VERSION = 9;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -457,6 +472,11 @@ export interface SplitState {
   ratio: number;
 }
 
+/** How far the Agent panes' text is zoomed from the size the settings name. */
+export interface TerminalState {
+  zoom_offset: number;
+}
+
 export interface WindowState {
   frame: WindowFrame;
 }
@@ -552,6 +572,7 @@ export interface PersistedAppState {
   navigation: NavigationState;
   sidebar: SidebarState;
   split: SplitState;
+  terminal: TerminalState;
   window: WindowState;
   tmux: TmuxState;
   shutdown: ShutdownMetadata;
@@ -565,6 +586,7 @@ export function freshState(): PersistedAppState {
     navigation: { context: { kind: "global" } },
     sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false, order: [] },
     split: { ratio: SPLIT_DEFAULT_RATIO },
+    terminal: { zoom_offset: 0 },
     window: {
       frame: {
         x: 0,
@@ -1060,6 +1082,7 @@ export function validateState(state: PersistedAppState): void {
   decodeObject("navigation.context", state.navigation.context);
   decodeObject("sidebar", state.sidebar);
   decodeObject("split", state.split);
+  decodeObject("terminal", state.terminal);
   decodeObject("window", state.window);
   decodeObject("window.frame", state.window.frame);
   decodeObject("tmux", state.tmux);
@@ -1069,6 +1092,10 @@ export function validateState(state: PersistedAppState): void {
   decodeNumber("sidebar.width", state.sidebar.width);
   decodeBoolean("sidebar.collapsed", state.sidebar.collapsed);
   decodeNumber("split.ratio", state.split.ratio);
+  decodeNumber("terminal.zoom_offset", state.terminal.zoom_offset);
+  if (!isTerminalZoomOffset(state.terminal.zoom_offset)) {
+    fail("STATE_INVALID");
+  }
   if (
     state.sidebar.width < MIN_SIDEBAR_WIDTH ||
     state.sidebar.width > MAX_SIDEBAR_WIDTH ||
@@ -1251,6 +1278,7 @@ export function hydrateModel(
     // and the order is read as a permutation request over whatever is there.
     model.restoreWorkspaceOrder(state.sidebar.order.map(parseWorkspaceId));
     model.restoreSplitRatio(state.split.ratio);
+    model.restoreTerminalZoom(state.terminal.zoom_offset);
   });
 
   const navigation = restoreNavigation(state);
@@ -1380,6 +1408,7 @@ export function stateFromSnapshot(
       order: [...snapshot.workspaceOrder],
     },
     split: { ratio: snapshot.splitRatio },
+    terminal: { zoom_offset: snapshot.terminalZoomOffset },
   };
   validateState(state);
   return state;
@@ -1413,6 +1442,7 @@ export function applySnapshot(
     navigation: projected.navigation,
     sidebar: projected.sidebar,
     split: projected.split,
+    terminal: projected.terminal,
   };
   validateState(next);
   return next;
@@ -2133,6 +2163,17 @@ function decodeState(bytes: Buffer): Decoded {
               ratio: decodeNumber(
                 "split.ratio",
                 decodeObject("split", object["split"])["ratio"],
+              ),
+            },
+      // Absent is `0`, the setting untouched — what every file written before
+      // the zoom existed means, and what a fresh one means.
+      terminal:
+        object["terminal"] === undefined
+          ? fresh.terminal
+          : {
+              zoom_offset: decodeNumber(
+                "terminal.zoom_offset",
+                decodeObject("terminal", object["terminal"])["zoom_offset"],
               ),
             },
       window:

@@ -47,6 +47,11 @@ import {
   type WorkspaceRoot,
   type WorkspaceState,
 } from "./domain.js";
+import {
+  isTerminalZoomOffset,
+  nextTerminalZoomOffset,
+  type TerminalZoomDirection,
+} from "./terminalZoom.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -214,6 +219,12 @@ export interface AppSnapshot {
   readonly workspaceOrder: readonly WorkspaceId[];
   /** Where the divider sits when the layout is a split. */
   readonly splitRatio: number;
+  /**
+   * How far the Agent panes' text has been zoomed from the size the settings
+   * name, in whole pixels. `0` is the setting itself. See
+   * `model/terminalZoom.ts` for why it is an offset and not a size.
+   */
+  readonly terminalZoomOffset: number;
   readonly editorHost: EditorHostState;
 }
 
@@ -343,6 +354,7 @@ export class AppModel {
    */
   private scratchReturn: NavigationSelection | undefined;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
+  private terminalZoomOffsetValue = 0;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
@@ -359,6 +371,7 @@ export class AppModel {
       },
       workspaceOrder: this.workspaceOrderValue,
       splitRatio: this.splitRatioValue,
+      terminalZoomOffset: this.terminalZoomOffsetValue,
       editorHost: this.editorHost,
     };
   }
@@ -540,6 +553,43 @@ export class AppModel {
   /** Restoring is setting, minus the revision bump on an unchanged value. */
   restoreSplitRatio(ratio: number): boolean {
     return this.setSplitRatio(ratio);
+  }
+
+  get terminalZoomOffset(): number {
+    return this.terminalZoomOffsetValue;
+  }
+
+  /**
+   * Zoom the Agent panes one step, or forget the zoom.
+   *
+   * `base` is the size `settings.toml` names, which this model does not own
+   * and is told at the gesture: a step means "one pixel from where the text is
+   * now", and where it is now is the base plus the offset. Passing it in is
+   * what keeps the arithmetic — and the range — in one place
+   * (`model/terminalZoom.ts`) while the answer is kept here, where the rest of
+   * what a restart has to put back is kept.
+   */
+  zoomTerminal(base: number, direction: TerminalZoomDirection): boolean {
+    return this.setTerminalZoomOffset(
+      nextTerminalZoomOffset(base, this.terminalZoomOffsetValue, direction),
+    );
+  }
+
+  private setTerminalZoomOffset(offset: number): boolean {
+    if (!isTerminalZoomOffset(offset)) {
+      fail(DomainErrorCode.InvalidTerminalZoom);
+    }
+    if (this.terminalZoomOffsetValue === offset) {
+      return false;
+    }
+    this.terminalZoomOffsetValue = offset;
+    this.bumpRevision();
+    return true;
+  }
+
+  /** Restoring is setting, minus the revision bump on an unchanged value. */
+  restoreTerminalZoom(offset: number): boolean {
+    return this.setTerminalZoomOffset(offset);
   }
 
   registerRepository(repository: Repository): void {

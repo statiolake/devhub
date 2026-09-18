@@ -40,6 +40,10 @@ import {
 import { isValidFontFamily } from "./fontFamily.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "./terminalZoom.js";
+import {
   AppError,
   AppErrorCode,
   confirmationId as parseConfirmationId,
@@ -152,8 +156,8 @@ function validateAppearanceWire(
   }
   if (
     !isValidFontFamily(wire.terminalFontFamily) ||
-    wire.terminalFontSize < 9 ||
-    wire.terminalFontSize > 24 ||
+    wire.terminalFontSize < MIN_TERMINAL_FONT_SIZE ||
+    wire.terminalFontSize > MAX_TERMINAL_FONT_SIZE ||
     !Number.isFinite(wire.terminalLineHeight) ||
     wire.terminalLineHeight < 1 ||
     wire.terminalLineHeight > 2 ||

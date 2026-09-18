@@ -40,6 +40,7 @@ export enum DomainErrorCode {
   WorkspaceClosingFailed = "WORKSPACE_CLOSING_FAILED",
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
+  InvalidTerminalZoom = "INVALID_TERMINAL_ZOOM",
 }
 
 /**

@@ -40,6 +40,7 @@ import {
   sshHost,
 } from "./domain.js";
 import type { AppSnapshot } from "./appModel.js";
+import type { TerminalZoomDirection } from "./terminalZoom.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
 export type AppReadiness = "starting" | "ready" | "unavailable";
@@ -359,6 +360,20 @@ export type UserIntent =
    * fact the model owns is a second answer waiting to disagree.
    */
   | { readonly type: "toggle_sidebar" }
+  /**
+   * Zoom the Agent panes' text one step, or forget the zoom.
+   *
+   * Raised only in main, by the key router: these keys are answered in front
+   * of every surface (`main/shell/terminalZoom.ts`) and there is no page that
+   * can ask for this, which is why it is not on the wire. `base` is the size
+   * `settings.toml` names — the model is told it rather than reading it,
+   * because settings are not the model's.
+   */
+  | {
+      readonly type: "terminal_zoom";
+      readonly direction: TerminalZoomDirection;
+      readonly base: number;
+    }
   | { readonly type: "resize_split"; readonly ratio: number }
   | {
       readonly type: "open_folder";

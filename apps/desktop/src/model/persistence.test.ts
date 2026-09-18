@@ -960,6 +960,61 @@ describe("the order a person put the rows in, across a restart", () => {
     removeScratchDir(directory);
   });
 
+  /**
+   * The Agent panes' zoom survives a restart, which is the whole point of it
+   * being in this file rather than in `settings.toml`.
+   *
+   * A version-8 file has no key and loads as `0` — the setting untouched —
+   * which is what every file written before the zoom existed meant.
+   */
+  it("loads a version-8 file with no zoom, and writes the zoom back", async () => {
+    const state = freshState();
+    state.schema_version = 8;
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    delete document["terminal"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const store = new JsonStateStore(path);
+    const load = await store.loadState();
+    expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
+    expect(load.state.terminal.zoom_offset).toBe(0);
+    expect(hydrateModel(load.state, []).terminalZoomOffset).toBe(0);
+
+    const model = hydrateModel(load.state, []);
+    model.zoomTerminal(13, "in");
+    model.zoomTerminal(13, "in");
+    await store.saveState(applySnapshot(load.state, model.snapshot()));
+
+    const again = await new JsonStateStore(path).loadState();
+    expect(again.state.terminal.zoom_offset).toBe(2);
+    expect(hydrateModel(again.state, []).terminalZoomOffset).toBe(2);
+    removeScratchDir(directory);
+  });
+
+  it("refuses a zoom no size could be named by", async () => {
+    const state = freshState();
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    document["terminal"] = { zoom_offset: 400 };
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const load = await new JsonStateStore(path).loadState();
+    // Quarantined and started fresh, which is what an unreadable file means
+    // here: the number said nothing this build can act on.
+    expect(load.state.terminal.zoom_offset).toBe(0);
+    expect(load.metadata.origin).not.toBe("primary");
+    removeScratchDir(directory);
+  });
+
   it("carries an arrangement from the model to the file and back", () => {
     const model = new AppModel();
     model.addWorkspace(

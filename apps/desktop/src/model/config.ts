@@ -51,6 +51,10 @@ import {
 import { isValidFontFamily } from "./fontFamily.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
 import {
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "./terminalZoom.js";
+import {
   migrateLocalSettings,
   type MigrationOutcome,
 } from "./settingsMigration.js";
@@ -1060,8 +1064,8 @@ function validateAppearance(appearance: AppearanceConfig): void {
     fail("invalid_font_family", "appearance.terminal_font_family");
   }
   if (
-    appearance.terminalFontSize < 9 ||
-    appearance.terminalFontSize > 24 ||
+    appearance.terminalFontSize < MIN_TERMINAL_FONT_SIZE ||
+    appearance.terminalFontSize > MAX_TERMINAL_FONT_SIZE ||
     !Number.isFinite(appearance.terminalLineHeight) ||
     appearance.terminalLineHeight < 1 ||
     appearance.terminalLineHeight > 2 ||
