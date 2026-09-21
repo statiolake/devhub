@@ -25,6 +25,21 @@ class FakeView {
 	getBounds(): Electron.Rectangle | undefined {
 		return this.bounds;
 	}
+	/**
+	 * `WebContentsView extends View`, so a workbench's view is a container
+	 * too — which is where VS Code's integrated Browser is attached. See
+	 * `WorkbenchView.contentView`.
+	 */
+	readonly children: object[] = [];
+	addChildView(child: object): void {
+		const at = this.children.indexOf(child);
+		if (at !== -1) this.children.splice(at, 1);
+		this.children.push(child);
+	}
+	removeChildView(child: object): void {
+		const at = this.children.indexOf(child);
+		if (at !== -1) this.children.splice(at, 1);
+	}
 	destroyed = false;
 	private readonly listeners = new Map<string, (() => void)[]>();
 	readonly webContents = {
@@ -233,7 +248,7 @@ vi.mock("../electron.js", () => ({
 const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
-const { WorkbenchView } = await import("./workbenchView.js");
+const { WorkbenchView, asBrowserWindow } = await import("./workbenchView.js");
 const { sidebarRect } = await import("./windowLayout.js");
 
 /** The size the fake window reports; see `getContentSize` above. */
@@ -800,6 +815,49 @@ describe("the shell window's modal layer", () => {
 
 		showPage(shell);
 		expect(children[children.length - 1]).toBe(overlayChild());
+	});
+
+	it("stays above a view the workbench opened inside itself", () => {
+		// VS Code's integrated Browser is a `WebContentsView` nested inside the
+		// workbench's own view rather than added beside it, which is the whole
+		// of why the owner needs no new kind of child for it: the subtree moves
+		// with the workbench, and every sibling the owner puts on top of the
+		// workbench — the notices, the questions, the tooltip — is still on top
+		// of everything in it.
+		show(shell, editor);
+		const browser = {} as Electron.View;
+		asBrowserWindow(editor).contentView.addChildView(browser);
+
+		shell.picker.openModal({ kind: "workspace-picker" });
+		const children = shell.window.contentView.children as unknown as FakeView[];
+		expect(children).not.toContain(browser);
+		expect(children[children.length - 1]).toBe(overlayChild());
+
+		// And a later layout moves the workbench without disturbing its subtree.
+		shell.setLayoutState({
+			...shell.layoutState(),
+			sidebar: { width: 400, collapsed: false },
+		});
+		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(asBrowserWindow(editor).contentView.children).toEqual([browser]);
+	});
+
+	it("loses the nested view when the workbench it belongs to goes", () => {
+		// Upstream's own teardown: `BrowserView.dispose` removes its view from
+		// the same container it added it to, guarded by `isDestroyed()`. The
+		// guard is why `contentView` throws rather than handing back a
+		// container for a view that has ended.
+		show(shell, editor);
+		const browser = {} as Electron.View;
+		const window = asBrowserWindow(editor);
+		window.contentView.addChildView(browser);
+
+		window.contentView.removeChildView(browser);
+		expect(window.contentView.children).toEqual([]);
+
+		editor.webContents.close();
+		expect(window.isDestroyed()).toBe(true);
+		expect(() => window.contentView).toThrow(/destroyed/);
 	});
 
 	it("covers the window for a DevHub modal and one workbench for its own", () => {

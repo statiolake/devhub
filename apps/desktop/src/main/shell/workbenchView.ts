@@ -728,6 +728,63 @@ export class WorkbenchView {
 
 	//#endregion
 
+	//#region the child views the workbench attaches to itself
+
+	/**
+	 * Where a child view the workbench opens is put: inside this workbench.
+	 *
+	 * VS Code's integrated Browser (`vs/platform/browserView`) is a
+	 * `WebContentsView` of its own, and `BrowserView` attaches it with
+	 * `this._ownerWindow.win?.contentView.addChildView(view)`, lays it out with
+	 * bounds the *renderer* measured, shows and hides it, and removes it from
+	 * the same `contentView` when the editor closes. Until this existed the
+	 * proxy in `asBrowserWindow` answered `contentView` the way it answers
+	 * everything it does not know — a no-op function — so every one of those
+	 * calls died as `addChildView is not a function`, three frames away from
+	 * anything that could say what had gone wrong, and only on the log.
+	 *
+	 * The answer is the view itself. `WebContentsView extends View`, so the
+	 * workbench's own view already *is* a container with `addChildView`,
+	 * `removeChildView` and `children`, and a child put there is a child of
+	 * this workbench rather than of the window:
+	 *
+	 * - **Bounds land right with nothing translated.** The renderer measures
+	 *   the browser's rectangle in its own document, which is this view's
+	 *   viewport. In upstream VS Code the window's content area and the
+	 *   workbench page's viewport are the same rectangle, which is why
+	 *   upstream may pass them to the window's `contentView` unchanged; in
+	 *   DevHub they are not — the workbench sits to the right of the Sidebar
+	 *   and below the title bar. Nesting restores the coincidence upstream
+	 *   relies on instead of re-deriving it. The alternative was to forward to
+	 *   the shell's content view and add `this.shell.boundsOf(this)` to every
+	 *   rectangle, which is a second place that decides where a workbench is —
+	 *   and `windowLayout.ts` is the only one there may be.
+	 * - **Visibility and clipping follow the workbench for free.** Hiding this
+	 *   view hides its subtree, so selecting another Workspace takes the
+	 *   browser away with the editor it belongs to, and the child is clipped
+	 *   to the workbench rather than able to draw over the Sidebar.
+	 * - **Z-order stays the owner's.** A nested child is inside this view's
+	 *   subtree, so it is above the workbench's own page and below every
+	 *   sibling the owner puts on top of it — the notices, the questions, the
+	 *   tooltip. `ShellWindow.layout()` re-adds this view to the window on
+	 *   every pass, which moves the whole subtree together and never reorders
+	 *   what is inside it, so the owner needs no `nested` child kind and the
+	 *   invariant in `windowLayout.ts` is untouched.
+	 *
+	 * Destroyed is Electron's own answer, thrown rather than faked: upstream
+	 * guards this with `isDestroyed()` before it removes a child, and a
+	 * container handed back for a view that has ended would silently park the
+	 * browser in a subtree nothing will ever draw.
+	 */
+	get contentView(): Electron.View {
+		if (this.isDestroyed()) {
+			throw new Error("Object has been destroyed");
+		}
+		return this.view;
+	}
+
+	//#endregion
+
 	//#region geometry — the shell lays the view out; the view only reports
 
 	getBounds(): Electron.Rectangle {

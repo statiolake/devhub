@@ -40,6 +40,17 @@ opening — still takes it down at once.
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
 DevHub has an opinion about where a view is.
 
+There is one kind of child the owner does not list, and it is not an exception
+to that rule: a view the *workbench itself* opens inside its own editor area —
+VS Code's integrated Browser (`workbench.action.browser.open`) is the one that
+exists today. It is attached to the workbench's own `WebContentsView` rather
+than to the window (`WorkbenchView.contentView`, which is where the reasons
+are), so it is inside that workbench's subtree: the renderer's own rectangle
+is already relative to the right origin, hiding the workbench hides it, and
+every child the owner puts above the workbench is still above it. The owner
+moves the subtree as one view and never reorders what is in it, so the list
+above is still the whole z-order.
+
 No page measures anything the owner decides. The window's own page used to
 leave a hole for the workbench, measure it with a `ResizeObserver` and report
 it back, which made main's idea of the layout a page's idea of it one frame

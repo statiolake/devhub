@@ -61,6 +61,18 @@ class FakeWebContentsView {
 		this.visible = visible;
 	}
 	setBackgroundColor(): void {}
+	/** `WebContentsView extends View`, so it is a container as well. */
+	readonly children: object[] = [];
+	addChildView(child: object): void {
+		// Electron moves an existing child to the end rather than duplicating it.
+		const at = this.children.indexOf(child);
+		if (at !== -1) this.children.splice(at, 1);
+		this.children.push(child);
+	}
+	removeChildView(child: object): void {
+		const at = this.children.indexOf(child);
+		if (at !== -1) this.children.splice(at, 1);
+	}
 }
 
 /**
@@ -702,5 +714,76 @@ describe("a workbench view's focus", () => {
 
 		view.focusConfirmed();
 		expect(announced).toEqual([]);
+	});
+});
+
+/**
+ * Where the integrated Browser goes.
+ *
+ * `vs/platform/browserView`'s `BrowserView` makes a `WebContentsView` of its
+ * own and attaches it with `ownerWindow.win.contentView.addChildView(view)`,
+ * lays it out, and removes it from the same container when the editor closes.
+ * The proxy used to answer `contentView` with the no-op function it answers
+ * every unknown member with, so all of that died as `addChildView is not a
+ * function` — on the log, three frames from anything that could name the
+ * cause. The container is real now, and it is the workbench's own view: a
+ * child of the workbench rather than of the window, which is what makes the
+ * renderer's own rectangles land in the right place.
+ */
+describe("a child view the workbench attaches to itself", () => {
+	let shell: FakeShell;
+	let view: WorkbenchView;
+	let window: Electron.BrowserWindow;
+
+	beforeEach(() => {
+		shell = new FakeShell();
+		view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		window = asBrowserWindow(view);
+	});
+
+	it("is a container, not the no-op an unknown member gets", () => {
+		expect(typeof window.contentView.addChildView).toBe("function");
+		expect(typeof window.contentView.removeChildView).toBe("function");
+		expect(window.contentView.children).toEqual([]);
+	});
+
+	it("is the workbench's own view, so bounds need no translating", () => {
+		// The renderer measures the browser's rectangle in the workbench's own
+		// document. Nested under the workbench's view those numbers are already
+		// relative to the right origin; forwarded to the window they would be
+		// out by wherever the Sidebar and the title bar put the workbench.
+		expect(window.contentView).toBe(view.view);
+	});
+
+	it("holds what VS Code attaches, and lets it go again", () => {
+		const child = {} as Electron.View;
+		window.contentView.addChildView(child);
+		expect(window.contentView.children).toEqual([child]);
+
+		window.contentView.removeChildView(child);
+		expect(window.contentView.children).toEqual([]);
+	});
+
+	it("keeps a child out of the shell's own list of children", () => {
+		// The whole of the z-order argument: a nested child is inside this
+		// view's subtree, so every sibling the owner puts above the workbench —
+		// the notices, the questions, the tooltip — is still above it, and
+		// `windowLayout.ts` needs no new kind of child to say so.
+		shell.attach(view);
+		const child = {} as Electron.View;
+		window.contentView.addChildView(child);
+		expect(shell.attached).toEqual([view]);
+	});
+
+	it("is refused once the view has ended, the way Electron refuses it", () => {
+		// Upstream guards its own removal with `isDestroyed()`. A container
+		// handed back here would park the browser in a subtree nothing draws.
+		(view.webContents as unknown as FakeWebContents).emit(
+			"render-process-gone",
+		);
+		expect(() => window.contentView).toThrow(/destroyed/);
 	});
 });
