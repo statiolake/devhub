@@ -85,6 +85,7 @@ import {
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import {
 	CLOSE_BUDGET_MS,
+	CLOSE_STEP_TIMEOUT_MS,
 	CloseTimeout,
 	sessionsLeftRunning,
 	sessionsLeftRunningDetail,
@@ -122,7 +123,7 @@ import {
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
-	type ResourceInspection,
+	type UnsavedEditorsInspection,
 	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
@@ -233,7 +234,16 @@ import { editorElement, shellTitleFor } from "./shellTitle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
-import { editorInspection, editorRuntimeState } from "./editorInspection.js";
+import {
+	closeEditor,
+	editorInspection,
+	editorRuntimeState,
+} from "./editorInspection.js";
+import {
+	discardUnsavedEditors,
+	readUnsavedEditors,
+	type WorkbenchContents,
+} from "./workbenchUnsaved.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import { REPOSITORY_LOOKUP_DEADLINE_MS } from "../runtime/cadence.js";
 import {
@@ -480,6 +490,29 @@ const NEEDS_PHRASE: Readonly<Record<Exclude<CommandNeeds, "nothing">, string>> =
 
 /** More rounds than any real chain needs, and fewer than a cycle survives. */
 const MAX_DRAIN_ROUNDS = 512;
+
+/** The window a running workbench is; see `workbenchContentsOf`. */
+function workbenchOf(codeWindow: ICodeWindow | undefined): ICodeWindow {
+	if (!codeWindow) {
+		throw new InvariantViolation("a running workbench has no window");
+	}
+	return codeWindow;
+}
+
+/**
+ * The contents a running workbench's requests go to. Only a workbench
+ * `editorRuntimeState` called running is asked anything, and a running one
+ * has contents by that definition — so there being none is a broken rule.
+ */
+function workbenchContentsOf(
+	codeWindow: ICodeWindow | undefined,
+): WorkbenchContents {
+	const contents = workbenchOf(codeWindow).win?.webContents;
+	if (!contents) {
+		throw new InvariantViolation("a running workbench has no contents");
+	}
+	return contents;
+}
 
 /**
  * How long `--metrics` waits for tmux to list its clients.
@@ -3087,21 +3120,18 @@ export class AppController {
 	}
 
 	/**
-	 * Gather what `editorInspection` decides from. The rule itself lives there;
-	 * this only reads the three places the facts come from.
+	 * What the close confirmation says about this Workspace's unsaved editors.
+	 * The rule is `editorInspection`'s; this finds the workbench it is about.
 	 */
 	private async inspectEditors(
 		workspaceId: WorkspaceId,
-	): Promise<ResourceInspection> {
+	): Promise<UnsavedEditorsInspection> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (workspace === undefined) {
-			return editorInspection({ runtime: "absent", documentEdited: false });
-		}
+		if (workspace === undefined) return { kind: "clean" };
 		const codeWindow = await this.editorWindowFor(workspace.key);
-		return editorInspection({
-			runtime: editorRuntimeState(codeWindow),
-			documentEdited: codeWindow?.isDocumentEdited() === true,
-		});
+		return editorInspection(editorRuntimeState(codeWindow), () =>
+			readUnsavedEditors(workbenchContentsOf(codeWindow)),
+		);
 	}
 
 	/**
@@ -3291,11 +3321,15 @@ export class AppController {
 	 * The rule is `Coordinator.closeWorkspace`'s; this is the environment half
 	 * of it. Two things are load-bearing here.
 	 *
-	 * **The editor comes first, because it is the last question.** VS Code's
-	 * `unload` is what runs the workbench's own "do you want to save?" and what
-	 * lets it refuse — a veto is an answer, and an answer of "no" must leave
-	 * everything as it was. So it runs before the first destructive step, and a
-	 * veto stops the close with nothing stopped, killed or deleted.
+	 * **The editor comes first, and asks nothing.** Unsaved work was asked
+	 * about once, in the confirmation, beside everything else a close would
+	 * lose (`editorInspection`), and this step carries out that answer: it
+	 * discards, then unloads (`closeEditor`). An unload with work still
+	 * unsaved raises VS Code's own "do you want to save?" — a second question
+	 * in the middle of an answered close, which is how a close once sat at
+	 * "closing" until its deadline with the dialog stranded over it. A veto
+	 * that survives the discard is still an answer and stops the close before
+	 * anything is stopped, killed or deleted.
 	 *
 	 * **Every step after it treats "already gone" as success.** A `kill-session`
 	 * on a session somebody killed from outside, a whole tmux server that is not
@@ -4274,23 +4308,18 @@ export class AppController {
 	}
 
 	/**
-	 * Ask a workspace's workbench whether it may close.
+	 * Let a workspace's workbench go, carrying out the answer about its
+	 * unsaved work. The rule is `closeEditor`'s; this finds the workbench.
 	 *
-	 * Closing a window in VS Code is an *unload*, and an unload is what runs
-	 * the workbench's "do you want to save?" and what lets it refuse. Killing
-	 * the `WebContents` instead — which is what this used to do — skipped all
-	 * of that and threw away unsaved work without asking.
+	 * Closing a window in VS Code is an *unload*, and an unload is what lets
+	 * the workbench refuse. Killing the `WebContents` instead — which is what
+	 * this used to do — skipped all of that, left VS Code's backups behind to
+	 * come back on the next open, and ran no extension's shutdown.
 	 *
 	 * It does not close the view; the close's `view` step does, once this has
-	 * answered. This is the *question*, and it is the last one a close asks.
-	 *
-	 * Nothing is remembered between attempts. There used to be a mark saying
-	 * "this workbench did not answer last time", so that the second close
-	 * killed it unasked — and the mark was written before the ask, so a
-	 * workbench that was merely still starting got it, and the next close threw
-	 * its work away without a prompt. A workbench that does not answer within
-	 * the step's deadline is a failure of *this* step; the next close asks it
-	 * again, which is the right thing for work that can still be saved.
+	 * answered. Nothing is remembered between attempts: a workbench that does
+	 * not answer within the step's deadline is a failure of *this* step, and
+	 * the next close asks again.
 	 *
 	 * Answers with the diagnostic that stopped the close, or nothing when the
 	 * workbench agreed — or when there was never anything to ask.
@@ -4302,20 +4331,17 @@ export class AppController {
 		if (key === undefined) return undefined;
 		const services = await this.services();
 		const codeWindow = await this.editorWindowFor(key);
-		const runtime = editorRuntimeState(codeWindow);
-		// No process holds work anybody could save, so there is nothing to ask
-		// and nothing in the way.
-		if (!codeWindow || runtime === "absent" || runtime === "gone") {
-			return undefined;
-		}
-		// Still coming up: it cannot answer, and DevHub does not guess about a
-		// workbench a person may be watching load. Said now rather than waited
-		// out, because the answer would not change.
-		if (runtime === "starting") return "close_editor_starting";
-		const vetoed = await services
-			.lifecycle()
-			.unload(codeWindow, UnloadReason.CLOSE);
-		return vetoed ? "close_editor_vetoed" : undefined;
+		return closeEditor(editorRuntimeState(codeWindow), {
+			discardUnsaved: () =>
+				discardUnsavedEditors(
+					workbenchContentsOf(codeWindow),
+					CLOSE_STEP_TIMEOUT_MS,
+				),
+			unload: () =>
+				services
+					.lifecycle()
+					.unload(workbenchOf(codeWindow), UnloadReason.CLOSE),
+		});
 	}
 
 	/**

@@ -32,6 +32,7 @@ import type {
 	AgentProfile,
 	CloseInspectionInputs,
 	ResourceInspection,
+	UnsavedEditorsInspection,
 	WorkspaceId,
 } from "../../model/domain.js";
 import type {
@@ -132,7 +133,7 @@ const CLEAN: ResourceInspection = { kind: "clean" };
 export async function inspectWorkspaceResources(
 	workspaceId: WorkspaceId,
 	agents: ResourceInspection,
-	unsavedEditors: ResourceInspection,
+	unsavedEditors: UnsavedEditorsInspection,
 ): Promise<CloseInspectionInputs> {
 	const terminal = terminals();
 	const terminalInspection = terminal

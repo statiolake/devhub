@@ -1,0 +1,40 @@
+diff --git a/src/vs/workbench/electron-browser/window.ts b/src/vs/workbench/electron-browser/window.ts
+index b60c0adc62c..460fb002937 100644
+--- a/src/vs/workbench/electron-browser/window.ts
++++ b/src/vs/workbench/electron-browser/window.ts
+@@ -365,8 +365,34 @@ export class NativeWindow extends BaseWindow {
+ 			}
+ 		});
+ 
++		// DevHub: a Workspace's close asks about unsaved work once, in DevHub's
++		// own confirmation, and then carries out the answer. Both halves need
++		// this window: which working copies are unsaved, by the names the tabs
++		// show, and — once the person has chosen to close — discarding them, so
++		// that the unload which follows has nothing left to ask about. Without
++		// the second, the unload raised the save dialog as a second question in
++		// the middle of a close that had already been answered.
++		//
++		// Every request is answered, failure included: main waits on the reply.
++		ipcRenderer.on('vscode:devhubUnsavedEditors', (event: unknown, ...argsRaw: unknown[]) => {
++			const nonce = argsRaw[0] as string;
++			ipcRenderer.send('vscode:devhubUnsavedEditorsReply', nonce, { names: this.workingCopyService.modifiedWorkingCopies.map(workingCopy => workingCopy.name) });
++		});
++		ipcRenderer.on('vscode:devhubDiscardUnsavedEditors', async (event: unknown, ...argsRaw: unknown[]) => {
++			const nonce = argsRaw[0] as string;
++			// Soft, as upstream's own "Don't Save" on shutdown is: nothing is
++			// reloaded from disk for a window that is about to go. A reverted
++			// working copy is no longer modified, so its backup goes with it.
++			const results = await Promise.allSettled(this.workingCopyService.modifiedWorkingCopies.map(workingCopy => workingCopy.revert({ soft: true })));
++			const errors = results.flatMap(result => result.status === 'rejected' ? [toErrorMessage(result.reason)] : []);
++			ipcRenderer.send('vscode:devhubDiscardUnsavedEditorsReply', nonce, {
++				errors,
++				remaining: this.workingCopyService.modifiedWorkingCopies.map(workingCopy => workingCopy.name)
++			});
++		});
++
+ 		// Allow to update security settings around protocol handlers
+-		ipcRenderer.on('vscode:disablePromptForProtocolHandling', (event: unknown, ...argsRaw: unknown[]) => {
++		ipcRenderer.on('vscode:disablePromptForProtocolHandling',(event: unknown, ...argsRaw: unknown[]) => {
+ 			const kind = argsRaw[0] as 'local' | 'remote';
+ 			const setting = kind === 'local' ? 'security.promptForLocalFileProtocolHandling' : 'security.promptForRemoteFileProtocolHandling';
+ 			this.configurationService.updateValue(setting, false);

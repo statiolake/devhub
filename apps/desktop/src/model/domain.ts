@@ -1794,13 +1794,49 @@ export function unknownResource(
     : { kind: "unknown", diagnostic, reason };
 }
 
+/**
+ * What a Workspace's workbench holds that a close would throw away.
+ *
+ * Its own type rather than a `ResourceInspection`, because the confirmation
+ * says *which* — the tabs by name — and a count is not that. `unsaved` is
+ * never empty: a workbench with nothing modified is `clean`. `unknown` is a
+ * workbench whose answer could not be had, and is asked about, never read as
+ * clean.
+ */
+export type UnsavedEditorsInspection =
+  | { readonly kind: "clean" }
+  | { readonly kind: "unsaved"; readonly tabs: readonly string[] }
+  | {
+      readonly kind: "unknown";
+      readonly diagnostic: DiagnosticCode;
+      readonly reason?: string;
+    };
+
+export function unsavedEditors(
+  tabs: readonly string[],
+): UnsavedEditorsInspection {
+  return tabs.length === 0 ? { kind: "clean" } : { kind: "unsaved", tabs };
+}
+
+/**
+ * The unsaved editors as one more resource the close counts, so that
+ * consolidating them is the same rule as every other resource.
+ */
+function unsavedEditorsResource(
+  inspection: UnsavedEditorsInspection,
+): ResourceInspection {
+  return inspection.kind === "unsaved"
+    ? busy(inspection.tabs.length)
+    : inspection;
+}
+
 /** Resource counts collected before a Workspace close confirmation. */
 export interface CloseInspectionInputs {
   readonly agents: ResourceInspection;
   readonly terminalProcesses: ResourceInspection;
   readonly terminalPanes: ResourceInspection;
   readonly terminalWindows: ResourceInspection;
-  readonly unsavedEditors: ResourceInspection;
+  readonly unsavedEditors: UnsavedEditorsInspection;
 }
 
 export const CLEAN_INSPECTION: CloseInspectionInputs = {
@@ -1842,9 +1878,16 @@ const INSPECTION_FIELDS = [
 export function consolidateCloseInspection(
   inputs: CloseInspectionInputs,
 ): CloseInspection {
+  const resources: Record<
+    (typeof INSPECTION_FIELDS)[number],
+    ResourceInspection
+  > = {
+    ...inputs,
+    unsavedEditors: unsavedEditorsResource(inputs.unsavedEditors),
+  };
   const unknownDiagnostics: DiagnosticCode[] = [];
   for (const field of INSPECTION_FIELDS) {
-    const check = inputs[field];
+    const check = resources[field];
     if (
       check.kind === "unknown" &&
       !unknownDiagnostics.includes(check.diagnostic)
@@ -1861,7 +1904,7 @@ export function consolidateCloseInspection(
   };
   let anyBusy = false;
   for (const field of INSPECTION_FIELDS) {
-    const check = inputs[field];
+    const check = resources[field];
     if (check.kind === "busy") {
       reasons[field] = check.count;
       anyBusy = true;

@@ -6,12 +6,10 @@
  * that turns them into one answer is here, on its own, because it is the part
  * that has to be right and the part that can be read.
  *
- * The answer main can read is the one VS Code's renderer pushes: every time a
- * working copy changes dirty, `workbench/electron-browser/window.ts` calls
- * `nativeHostService.setDocumentEdited`, which lands on the view's
- * `CodeWindow`, which is `WorkbenchView.setDocumentEdited`. A workbench that
- * is up has therefore already said whether it holds unsaved work, and there is
- * nothing left to ask it.
+ * A workbench that is up is asked which working copies it holds modified, by
+ * name (`workbenchUnsaved.ts`). What it pushes on its own —
+ * `setDocumentEdited`, a boolean — could say "there are unsaved changes" but
+ * not which, and the confirmation names them.
  *
  * The state below is the whole of the question. It used to be a pair of
  * booleans — "there is a view" and "the workbench is running" — and every way
@@ -23,7 +21,12 @@
  * any more: there are four states and each one decides for itself.
  */
 
-import type { ResourceInspection } from "../../model/domain.js";
+import {
+	unsavedEditors,
+	type UnsavedEditorsInspection,
+} from "../../model/domain.js";
+import { TypedFailure } from "../../model/wire.js";
+import type { CloseDiagnosticWire } from "../../ipc/appShell.js";
 
 /**
  * Where this Workspace's workbench actually is.
@@ -92,18 +95,20 @@ export function editorRuntimeState(
 	return codeWindow.isReady ? "running" : "starting";
 }
 
-/** Everything the rule below looks at, and all it looks at. */
-export interface EditorInspectionFacts {
-	/** Where the workbench is. */
-	readonly runtime: EditorRuntimeState;
-	/** What the running workbench last reported about its unsaved work. */
-	readonly documentEdited: boolean;
-}
-
-export function editorInspection(
-	facts: EditorInspectionFacts,
-): ResourceInspection {
-	switch (facts.runtime) {
+/**
+ * What the close confirmation says about a workbench's unsaved editors.
+ *
+ * A running workbench is asked for the names (`readUnsavedEditors`), and only
+ * a running one: every other state either cannot hold unsaved work or cannot
+ * answer. A workbench that was asked and did not answer is `unknown` with
+ * the reason it gave — the confirmation says it could not tell, and the close
+ * that follows discards whatever there is. It is never read as clean.
+ */
+export async function editorInspection(
+	runtime: EditorRuntimeState,
+	readUnsaved: () => Promise<readonly string[]>,
+): Promise<UnsavedEditorsInspection> {
+	switch (runtime) {
 		case "absent":
 		case "gone":
 			// There is no process. Nothing is unsaved in it, so nothing stands in
@@ -111,13 +116,60 @@ export function editorInspection(
 			return { kind: "clean" };
 		case "starting":
 			return { kind: "unknown", diagnostic: "close_editor_starting" };
+		case "running": {
+			let tabs: readonly string[];
+			try {
+				tabs = await readUnsaved();
+			} catch (error) {
+				// Recovered by asking: the sheet shows this, with the workbench's
+				// own reason, in place of the names.
+				if (!(error instanceof TypedFailure)) throw error;
+				return {
+					kind: "unknown",
+					diagnostic: "close_editor_unresponsive",
+					reason: error.wire.summary,
+				};
+			}
+			return unsavedEditors(tabs);
+		}
+	}
+}
+
+/**
+ * The close's `editor` step: carry out the answer about unsaved work, then
+ * let the workbench go.
+ *
+ * The question was asked once, before anything happened — in the close
+ * confirmation, from `editorInspection` — so this step asks nothing. What is
+ * unsaved is discarded *first*, because `unload` is where VS Code raises its
+ * own "do you want to save?" when anything is still modified, and that dialog,
+ * raised here, was a second question in the middle of an answered close: the
+ * close waited on it, ran out its deadline, and left the dialog standing.
+ *
+ * A veto after the discard is still an answer — an extension, a running task
+ * — and stops the close with nothing destroyed. Answers with the diagnostic
+ * that stopped the close, or nothing when the workbench has gone.
+ */
+export async function closeEditor(
+	runtime: EditorRuntimeState,
+	workbench: {
+		readonly discardUnsaved: () => Promise<void>;
+		readonly unload: () => Promise<boolean>;
+	},
+): Promise<CloseDiagnosticWire | undefined> {
+	switch (runtime) {
+		case "absent":
+		case "gone":
+			// No process holds work anybody could save, so there is nothing to
+			// discard and nothing in the way.
+			return undefined;
+		case "starting":
+			// It cannot answer, and DevHub does not guess about a workbench a
+			// person may be watching load. Said now rather than waited out,
+			// because the answer would not change.
+			return "close_editor_starting";
 		case "running":
-			// `close_editor_vetoed` is the definite one: the workbench said so. It
-			// is carried as `unknown` because the count of unsaved files is not
-			// something main is told — only that there is unsaved work — and the
-			// confirmation draws it as "The editor has unsaved changes".
-			return facts.documentEdited
-				? { kind: "unknown", diagnostic: "close_editor_vetoed" }
-				: { kind: "clean" };
+			await workbench.discardUnsaved();
+			return (await workbench.unload()) ? "close_editor_vetoed" : undefined;
 	}
 }

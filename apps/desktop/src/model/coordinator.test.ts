@@ -12,6 +12,7 @@ import {
   workspaceLocation,
   type CloseInspectionInputs,
   NO_INJECTION,
+  unsavedEditors,
 } from "./domain.js";
 import {
   AppError,
@@ -511,7 +512,10 @@ describe("closing a workspace", () => {
       type: "workspace_inspection_completed",
       token: inspect.token,
       workspaceId: WS_A,
-      inspection: { ...CLEAN_INSPECTION, unsavedEditors: busy(1) },
+      inspection: {
+        ...CLEAN_INSPECTION,
+        unsavedEditors: unsavedEditors(["main.ts"]),
+      },
     });
 
     const generate = driver.drainEffects()[0];

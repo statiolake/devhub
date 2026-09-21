@@ -128,6 +128,25 @@ from the shared per-projection hooks in `shell/model/pageModel.ts` so that "the
 snapshot" means the same subscription and the same revision ordering
 everywhere it appears.
 
+## A close asks once, then acts
+
+Closing a Workspace asks every question it has before it does anything, and
+then asks nothing. What it would lose — busy Agents, running terminals, and
+the workbench's unsaved editors, by the names their tabs show — is one
+confirmation on the picker (`close-confirmation`); a dirty worktree is the
+three-way sheet before it, because whether the folder survives decides whether
+there is anything left to close. A workbench whose unsaved editors could not be
+read is said to be so on that sheet and is never read as clean.
+
+Once the person has chosen to close, the close carries the answer out:
+`closeEditor` discards the workbench's unsaved work (the request
+`patches/vscode/0004-devhub-reads-and-discards-unsaved-editors.patch` adds),
+and only then unloads it. Unloading first made VS Code raise its own "do you
+want to save?" as a second question in the middle of an answered close, and the
+close sat at "closing" until its deadline with that dialog stranded over it.
+Every request a close makes to a workbench has a deadline, and a step that
+fails reaches the person down the one failure path below.
+
 ## Failures go one way
 
 A failure is an event, not a description, and a page that is told one and has

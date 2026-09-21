@@ -22,6 +22,7 @@ import {
   type WorkspaceLocation,
   type CloseInspectionProjection,
   type ResourceInspection,
+  type UnsavedEditorsInspection,
   type SurfaceLayout,
   type SurfacePresentation,
 } from "./domain.js";
@@ -72,6 +73,7 @@ import {
   type WorkspaceCloseWire,
   type CloseInspectionWire,
   type CloseResourceWire,
+  type UnsavedEditorsWire,
   type ConfirmationPurposeWire,
   type ContextWire,
   type EditorHostWire,
@@ -439,6 +441,25 @@ function closeResourceWire(value: ResourceInspection): CloseResourceWire {
   }
 }
 
+function unsavedEditorsWire(
+  value: UnsavedEditorsInspection,
+): UnsavedEditorsWire {
+  switch (value.kind) {
+    case "clean":
+      return { kind: "clean" };
+    case "unsaved":
+      return { kind: "unsaved", tabs: value.tabs };
+    case "unknown":
+      return value.reason === undefined
+        ? { kind: "unknown", diagnostic: value.diagnostic }
+        : {
+            kind: "unknown",
+            diagnostic: value.diagnostic,
+            reason: value.reason,
+          };
+  }
+}
+
 function closeInspectionWire(
   projection: CloseInspectionProjection,
 ): CloseInspectionWire {
@@ -449,7 +470,7 @@ function closeInspectionWire(
     terminalProcesses: closeResourceWire(projection.terminalProcesses),
     terminalPanes: closeResourceWire(projection.terminalPanes),
     terminalWindows: closeResourceWire(projection.terminalWindows),
-    unsavedEditors: closeResourceWire(projection.unsavedEditors),
+    unsavedEditors: unsavedEditorsWire(projection.unsavedEditors),
   };
 }
 

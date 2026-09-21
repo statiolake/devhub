@@ -526,13 +526,27 @@ export interface CloseInspectionWire {
 	readonly terminalPanes: CloseResourceWire;
 	readonly terminalProcesses: CloseResourceWire;
 	readonly terminalWindows: CloseResourceWire;
-	readonly unsavedEditors: CloseResourceWire;
+	readonly unsavedEditors: UnsavedEditorsWire;
 	readonly workspaceId: string;
 	readonly workspaceLabel: string;
 }
 export type CloseResourceWire =
 	| { readonly kind: "clean" }
 	| { readonly count: number; readonly kind: "busy" }
+	| {
+			readonly diagnostic: CloseDiagnosticWire;
+			readonly kind: "unknown";
+			/** Why, when the diagnostic's stock words do not say. */
+			readonly reason?: string;
+	  };
+/**
+ * The workbench's unsaved editors, for the close confirmation. `tabs` are the
+ * names the tabs show and are never empty; `unknown` is a workbench whose
+ * answer could not be had, which the sheet says rather than reading as clean.
+ */
+export type UnsavedEditorsWire =
+	| { readonly kind: "clean" }
+	| { readonly kind: "unsaved"; readonly tabs: readonly string[] }
 	| {
 			readonly diagnostic: CloseDiagnosticWire;
 			readonly kind: "unknown";

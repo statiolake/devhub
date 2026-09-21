@@ -28,6 +28,7 @@ import {
   workspaceId,
   workspaceLocation,
   workspaceRoot,
+  unsavedEditors,
 } from "./domain.js";
 
 const UUID_A = "550e8400-e29b-41d4-a716-446655440000";
@@ -232,7 +233,7 @@ describe("close inspection", () => {
       terminalProcesses: busy(3),
       terminalPanes: CLEAN,
       terminalWindows: CLEAN,
-      unsavedEditors: busy(1),
+      unsavedEditors: unsavedEditors(["main.ts"]),
     });
     expect(inspection).toEqual({
       kind: "requires-confirmation",
@@ -253,7 +254,7 @@ describe("close inspection", () => {
       terminalProcesses: unknownResource("close_terminal_unknown"),
       terminalPanes: unknownResource("close_terminal_unknown"),
       terminalWindows: unknownResource("close_editor_unknown"),
-      unsavedEditors: CLEAN,
+      unsavedEditors: unsavedEditors([]),
     });
     expect(inspection.kind).toBe("requires-confirmation");
     if (inspection.kind !== "requires-confirmation") return;
@@ -277,13 +278,49 @@ describe("close inspection", () => {
         terminalProcesses: unknownResource("close_terminal_unknown"),
         terminalPanes: CLEAN,
         terminalWindows: CLEAN,
-        unsavedEditors: busy(1),
+        unsavedEditors: unsavedEditors(["main.ts"]),
       },
     );
     expect(projection.workspaceId).toBe(UUID_A);
     expect(projection.workspaceLabel).toBe("DevHub");
     expect(projection.agents).toEqual({ kind: "busy", count: 2 });
     expect(projection.terminalPanes).toEqual({ kind: "clean" });
+    expect(projection.unsavedEditors).toEqual({
+      kind: "unsaved",
+      tabs: ["main.ts"],
+    });
+  });
+
+  it("calls a workbench with nothing modified clean, not unsaved", () => {
+    expect(unsavedEditors([])).toEqual({ kind: "clean" });
+    expect(
+      consolidateCloseInspection({
+        ...CLEAN_INSPECTION,
+        unsavedEditors: unsavedEditors([]),
+      }),
+    ).toEqual({ kind: "clean" });
+  });
+
+  it("asks about unsaved editors it could not read, and never reads them as clean", () => {
+    const inspection = consolidateCloseInspection({
+      ...CLEAN_INSPECTION,
+      unsavedEditors: {
+        kind: "unknown",
+        diagnostic: "close_editor_unresponsive",
+        reason: "The editor did not answer within 5 seconds.",
+      },
+    });
+    expect(inspection).toEqual({
+      kind: "requires-confirmation",
+      reasons: {
+        agents: 0,
+        terminalProcesses: 0,
+        terminalPanes: 0,
+        terminalWindows: 0,
+        unsavedEditors: 0,
+      },
+      unknownDiagnostics: ["close_editor_unresponsive"],
+    });
   });
 });
 
