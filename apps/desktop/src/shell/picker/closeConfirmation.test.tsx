@@ -165,9 +165,22 @@ const CLOSE_WORKSPACE: ConfirmationPurposeWire = {
     terminalPanes: { kind: "clean" },
     terminalProcesses: { kind: "clean" },
     terminalWindows: { kind: "clean" },
-    unsavedEditors: { kind: "unknown", diagnostic: "close_editor_vetoed" },
+    unsavedEditors: { kind: "unsaved", tabs: ["main.ts", "Untitled-1"] },
   },
 };
+
+function closeWorkspaceWith(
+  unsavedEditors: Extract<
+    ConfirmationPurposeWire,
+    { kind: "workspace_close" }
+  >["inspection"]["unsavedEditors"],
+): ConfirmationPurposeWire {
+  if (CLOSE_WORKSPACE.kind !== "workspace_close") throw new Error("fixture");
+  return {
+    kind: "workspace_close",
+    inspection: { ...CLOSE_WORKSPACE.inspection, unsavedEditors },
+  };
+}
 
 function mount(
   snapshot: AppSnapshot,
@@ -343,12 +356,72 @@ describe("closing a workspace with things open in it", () => {
       expect(screen.getByText("Agents")).toBeInTheDocument();
     });
     expect(screen.getByText("2 busy")).toBeInTheDocument();
-    expect(screen.getByText("Unsaved editors")).toBeInTheDocument();
-    expect(
-      screen.getByText("The editor has unsaved changes"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Unsaved files")).toBeInTheDocument();
+    expect(screen.getByText("main.ts, Untitled-1")).toBeInTheDocument();
     // A clean resource is not news, and listing it would bury the ones that are.
     expect(screen.queryByText("Terminal panes")).not.toBeInTheDocument();
+  });
+
+  it("says that closing discards the unsaved files", async () => {
+    mount(snapshotWith(true), vi.fn(), CLOSE_WORKSPACE);
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Everything listed below is closed with it. Unsaved changes are discarded.",
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("names five tabs and counts the rest", async () => {
+    mount(
+      snapshotWith(true),
+      vi.fn(),
+      closeWorkspaceWith({
+        kind: "unsaved",
+        tabs: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"],
+      }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText("a.ts, b.ts, c.ts, d.ts, e.ts, and 2 more"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /** Not being able to read the editor is not the editor being clean. */
+  it("says when the unsaved files could not be read", async () => {
+    mount(
+      snapshotWith(true),
+      vi.fn(),
+      closeWorkspaceWith({
+        kind: "unknown",
+        diagnostic: "close_editor_unresponsive",
+        reason: "timed out",
+      }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Could not read whether there are unsaved files: Could not verify: the editor is not answering — timed out",
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(
+        "Everything listed below is closed with it. Unsaved changes are discarded.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not mention discarding when nothing is unsaved", async () => {
+    mount(snapshotWith(true), vi.fn(), closeWorkspaceWith({ kind: "clean" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText("Everything listed below is closed with it."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Unsaved files")).not.toBeInTheDocument();
   });
 
   it("closes the workspace on the second row", async () => {

@@ -30,7 +30,11 @@
 import { useEffect, useState } from "react";
 import { usePicker } from "./PickerContext";
 import { Picker } from "../components/shell/Picker";
-import type { CloseResourceWire } from "../../ipc/appShell";
+import type {
+  CloseDiagnosticWire,
+  CloseResourceWire,
+  UnsavedEditorsWire,
+} from "../../ipc/appShell";
 import type { ModalRequest } from "../../ipc/contract";
 
 export type CloseConfirmationRequest = Extract<
@@ -45,32 +49,36 @@ function closeResourceStatus(resource: CloseResourceWire): string {
     case "busy":
       return `${String(resource.count)} busy`;
     case "unknown":
-      switch (resource.diagnostic) {
-        case "root_missing":
-          return "Could not verify: workspace root is missing";
-        case "root_inaccessible":
-          return "Could not verify: workspace root is inaccessible";
-        case "close_agents_unknown":
-          return "Could not verify agents";
-        case "close_terminal_unknown":
-          return "Could not verify terminal state";
-        case "close_editor_unknown":
-          return "Could not verify editor state";
-        case "close_editor_starting":
-          return "Could not verify: the editor is still starting";
-        case "close_editor_unresponsive":
-          return "Could not verify: the editor is not answering";
-        case "close_editor_vetoed":
-          return "The editor has unsaved changes";
-        case "cleanup_failed":
-          return "Could not verify cleanup state";
-        case "runtime_unavailable":
-          return "Could not verify: runtime unavailable";
-        case "editor_restart_exhausted":
-          return "Could not verify: the editor kept stopping";
-        case "editor_unavailable":
-          return "Could not verify: the editor could not be started";
-      }
+      return diagnosticStatus(resource.diagnostic);
+  }
+}
+
+function diagnosticStatus(diagnostic: CloseDiagnosticWire): string {
+  switch (diagnostic) {
+    case "root_missing":
+      return "Could not verify: workspace root is missing";
+    case "root_inaccessible":
+      return "Could not verify: workspace root is inaccessible";
+    case "close_agents_unknown":
+      return "Could not verify agents";
+    case "close_terminal_unknown":
+      return "Could not verify terminal state";
+    case "close_editor_unknown":
+      return "Could not verify editor state";
+    case "close_editor_starting":
+      return "Could not verify: the editor is still starting";
+    case "close_editor_unresponsive":
+      return "Could not verify: the editor is not answering";
+    case "close_editor_vetoed":
+      return "The editor has unsaved changes";
+    case "cleanup_failed":
+      return "Could not verify cleanup state";
+    case "runtime_unavailable":
+      return "Could not verify: runtime unavailable";
+    case "editor_restart_exhausted":
+      return "Could not verify: the editor kept stopping";
+    case "editor_unavailable":
+      return "Could not verify: the editor could not be started";
   }
 }
 
@@ -89,6 +97,35 @@ function closeResourceText(resource: CloseResourceWire): string {
   return `${status} — ${resource.reason}`;
 }
 
+/** How many tab names the sheet spells out before it says how many more. */
+const UNSAVED_TABS_SHOWN = 5;
+
+/**
+ * What the unsaved editors row says, or nothing when there are none.
+ *
+ * Confirming discards them, so the row names the tabs rather than counting
+ * them: "3 busy" is not enough to decide whether losing them is fine. Not
+ * being able to read the editor is said as that, never drawn as clean —
+ * closing discards whatever is there either way.
+ */
+function unsavedEditorsText(unsaved: UnsavedEditorsWire): string | undefined {
+  switch (unsaved.kind) {
+    case "clean":
+      return undefined;
+    case "unsaved": {
+      const shown = unsaved.tabs.slice(0, UNSAVED_TABS_SHOWN).join(", ");
+      const more = unsaved.tabs.length - UNSAVED_TABS_SHOWN;
+      return more > 0 ? `${shown}, and ${String(more)} more` : shown;
+    }
+    case "unknown": {
+      const status = `Could not read whether there are unsaved files: ${diagnosticStatus(unsaved.diagnostic)}`;
+      return unsaved.reason === undefined
+        ? status
+        : `${status} — ${unsaved.reason}`;
+    }
+  }
+}
+
 /**
  * The rows to draw, with rows that are the same fact drawn once.
  *
@@ -100,11 +137,10 @@ function closeResourceText(resource: CloseResourceWire): string {
  * that genuinely differ are untouched, because they are genuinely different.
  */
 function collapsed(
-  rows: readonly (readonly [string, CloseResourceWire])[],
+  rows: readonly (readonly [string, string])[],
 ): readonly (readonly [string, string])[] {
   const joined: (readonly [string, string])[] = [];
-  for (const [label, resource] of rows) {
-    const text = closeResourceText(resource);
+  for (const [label, text] of rows) {
     const previous = joined.at(-1);
     if (previous && previous[1] === text) {
       joined[joined.length - 1] = [`${previous[0]}, ${label}`, text];
@@ -197,19 +233,26 @@ export function CloseConfirmationSheet({
   const inspection =
     purpose.kind === "workspace_close" ? purpose.inspection : undefined;
   const stoppingAgent = purpose.kind === "agent_stop";
-  const allResources: readonly (readonly [string, CloseResourceWire])[] =
+  const resources: readonly (readonly [string, CloseResourceWire])[] =
     inspection
       ? [
           ["Agents", inspection.agents],
           ["Terminal processes", inspection.terminalProcesses],
           ["Terminal panes", inspection.terminalPanes],
           ["Terminal windows", inspection.terminalWindows],
-          ["Unsaved editors", inspection.unsavedEditors],
         ]
       : [];
-  const diagnostics = allResources.filter(
-    ([, resource]) => resource.kind !== "clean",
-  );
+  const unsaved = inspection
+    ? unsavedEditorsText(inspection.unsavedEditors)
+    : undefined;
+  const diagnostics: readonly (readonly [string, string])[] = [
+    ...resources
+      .filter(([, resource]) => resource.kind !== "clean")
+      .map(
+        ([label, resource]) => [label, closeResourceText(resource)] as const,
+      ),
+    ...(unsaved === undefined ? [] : [["Unsaved files", unsaved] as const]),
+  ];
 
   return (
     <Picker
@@ -247,7 +290,9 @@ export function CloseConfirmationSheet({
           label: stoppingAgent ? "Stop the Agent" : "Close the workspace",
           detail: stoppingAgent
             ? "The runtime stops. You can retry if cleanup fails."
-            : "Everything listed below is closed with it.",
+            : unsaved === undefined
+              ? "Everything listed below is closed with it."
+              : "Everything listed below is closed with it. Unsaved changes are discarded.",
         },
       ]}
       note={
