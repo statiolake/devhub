@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   loaded: [] as string[],
   loseContext: undefined as (() => void) | undefined,
   disposedWebgl: false,
+  /** What the next measurement will find. Changed mid-test on purpose. */
+  dimensions: { cols: 80, rows: 24 },
 }));
 
 vi.mock("@xterm/xterm", () => {
@@ -97,7 +99,7 @@ vi.mock("@xterm/addon-fit", () => ({
     readonly kind = "fit";
     fit() {}
     proposeDimensions() {
-      return { cols: 80, rows: 24 };
+      return mocks.dimensions;
     }
   },
 }));
@@ -148,9 +150,46 @@ beforeEach(() => {
   mocks.loaded.length = 0;
   mocks.loseContext = undefined;
   mocks.disposedWebgl = false;
+  mocks.dimensions = { cols: 80, rows: 24 };
 });
 
 describe("the shared xterm session", () => {
+	/**
+	 * The zoom's own bug, in the one place it could be caught.
+	 *
+	 * A font size just assigned is not in xterm's cell metrics until it has
+	 * rendered once, so a measurement taken in the same turn proposes the grid
+	 * the terminal already had. Measured at the poke, every zoom press
+	 * reported the size of the press before it and the terminal appeared to
+	 * respond to every other key.
+	 */
+	it("measures when it reports, not when it is poked", async () => {
+		const sizes: { cols: number; rows: number }[] = [];
+		const host = document.createElement("div");
+		document.body.append(host);
+		const session = openXtermSession(host, {
+			appearance: undefined,
+			inputLabel: "Example terminal input",
+			isHidden: () => false,
+			onGeometry: (geometry) =>
+				sizes.push({ cols: geometry.cols, rows: geometry.rows }),
+		});
+
+		session.remeasure();
+		// What the font change settles into, a moment after it was asked for.
+		mocks.dimensions = { cols: 62, rows: 20 };
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		expect(sizes).toEqual([{ cols: 62, rows: 20 }]);
+		expect(session.geometry).toEqual({
+			cols: 62,
+			rows: 20,
+			pixelWidth: 0,
+			pixelHeight: 0,
+		});
+		session.dispose();
+	});
+
   it("draws through the GPU renderer, not the fallback", () => {
     const session = open();
     expect(mocks.loaded).toContain("webgl");

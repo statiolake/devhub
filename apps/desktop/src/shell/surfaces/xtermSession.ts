@@ -451,7 +451,6 @@ export function openXtermSession(
   });
 
   let geometry = FALLBACK_GEOMETRY;
-  let pending: SurfaceGeometry | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   /**
@@ -489,21 +488,36 @@ export function openXtermSession(
     return FALLBACK_GEOMETRY;
   };
 
+  /**
+   * Ask again what size the host is, and say so if it moved.
+   *
+   * A ResizeObserver delivers a burst while layout settles, so the answer is
+   * given at most once per frame and main coalesces again as a backstop.
+   *
+   * **The measurement is taken when the answer is given, not when the question
+   * arrived**, and that is the fix for a zoom that appeared to work every
+   * other press. A font size just assigned is not yet in xterm's cell metrics:
+   * it recalculates them when it next renders, so `fit()` called in the same
+   * turn measures the *old* cell and proposes the grid the terminal already
+   * had. Measuring at the assignment therefore reported the previous size and
+   * the new one waited for something else to move the host — which the next
+   * press was, one step behind, forever.
+   *
+   * Measuring a frame later is not a rule about fonts. It is the same rule the
+   * debounce was already for: whatever poked this, the thing worth measuring
+   * is where the host ended up, and nothing that has just been asked to change
+   * has finished changing.
+   */
   const remeasure = (): void => {
     if (disposed || options.isHidden()) return;
-    geometry = measure();
-    // A ResizeObserver delivers a burst while layout settles. Keep the latest
-    // and report at most once per frame; main coalesces again as a backstop.
-    pending = geometry;
     if (timer !== undefined) return;
     timer = setTimeout(() => {
       timer = undefined;
-      const next = pending;
-      pending = undefined;
-      if (disposed || next === undefined) return;
-      // Decided here rather than at each `remeasure`, so a burst that ends
-      // where it started — A to B and back to A within one frame — says
-      // nothing, instead of announcing the B nobody ever saw.
+      if (disposed || options.isHidden()) return;
+      const next = measure();
+      geometry = next;
+      // A burst that ends where it started — A to B and back to A within one
+      // frame — says nothing, instead of announcing the B nobody ever saw.
       if (reported && sameGeometry(next, reported)) return;
       reported = next;
       options.onGeometry(next);
@@ -560,7 +574,6 @@ export function openXtermSession(
       observer?.disconnect();
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
-      pending = undefined;
       terminal.dispose();
     },
   };
