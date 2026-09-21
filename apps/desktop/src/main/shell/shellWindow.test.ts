@@ -817,46 +817,91 @@ describe("the shell window's modal layer", () => {
 		expect(children[children.length - 1]).toBe(overlayChild());
 	});
 
-	it("stays above a view the workbench opened inside itself", () => {
-		// VS Code's integrated Browser is a `WebContentsView` nested inside the
-		// workbench's own view rather than added beside it, which is the whole
-		// of why the owner needs no new kind of child for it: the subtree moves
-		// with the workbench, and every sibling the owner puts on top of the
-		// workbench — the notices, the questions, the tooltip — is still on top
-		// of everything in it.
+	it("stays above a view the workbench opened beside itself", () => {
+		// VS Code's integrated Browser is a `WebContentsView` of its own, and it
+		// is a *sibling* of the workbench in this window — a view nested inside
+		// another `WebContentsView` is never painted on macOS with this
+		// Electron. So the owner places it, and everything the owner puts over
+		// the content area is still over it: the notices, the questions, the
+		// tooltip.
 		show(shell, editor);
-		const browser = {} as Electron.View;
-		asBrowserWindow(editor).contentView.addChildView(browser);
+		const browser = new FakeView();
+		asBrowserWindow(editor).contentView.addChildView(
+			browser as unknown as Electron.View,
+		);
+		browser.setBounds({ x: 10, y: 20, width: 300, height: 200 });
+		browser.setVisible(true);
+
+		const children = shell.window.contentView.children as unknown as FakeView[];
+		// In the window, directly above the workbench it belongs to — and never
+		// inside that workbench's own subtree.
+		expect(children).toContain(browser);
+		expect(editor.view.children).toEqual([]);
+		const editorChild = editor.view as unknown as FakeView;
+		expect(children.indexOf(browser)).toBe(children.indexOf(editorChild) + 1);
+		// Placed by the owner: the workbench's rectangle plus VS Code's own.
+		expect(browser.bounds).toEqual({
+			x: AREA.x + 10,
+			y: AREA.y + 20,
+			width: 300,
+			height: 200,
+		});
+		expect(browser.visible).toBe(true);
 
 		shell.picker.openModal({ kind: "workspace-picker" });
-		const children = shell.window.contentView.children as unknown as FakeView[];
-		expect(children).not.toContain(browser);
 		expect(children[children.length - 1]).toBe(overlayChild());
 
-		// And a later layout moves the workbench without disturbing its subtree.
+		// And a later layout moves it with the workbench, with no page asked.
 		shell.setLayoutState({
 			...shell.layoutState(),
 			sidebar: { width: 400, collapsed: false },
 		});
+		expect(browser.bounds?.x).toBe(400 + 10);
 		expect(children[children.length - 1]).toBe(overlayChild());
-		expect(asBrowserWindow(editor).contentView.children).toEqual([browser]);
 	});
 
-	it("loses the nested view when the workbench it belongs to goes", () => {
+	it("takes a view the workbench opened away with the workbench", () => {
+		// Another Workspace selected: the wish stands, and what is drawn does
+		// not. Nothing about this goes through VS Code — it is the same
+		// `layout()` pass that hides the workbench.
+		show(shell, editor);
+		const browser = new FakeView();
+		asBrowserWindow(editor).contentView.addChildView(
+			browser as unknown as Electron.View,
+		);
+		browser.setVisible(true);
+		expect(browser.visible).toBe(true);
+
+		show(shell, other);
+		expect(browser.visible).toBe(false);
+
+		show(shell, editor);
+		expect(browser.visible).toBe(true);
+	});
+
+	it("loses the view the workbench opened when that workbench goes", () => {
 		// Upstream's own teardown: `BrowserView.dispose` removes its view from
 		// the same container it added it to, guarded by `isDestroyed()`. The
 		// guard is why `contentView` throws rather than handing back a
-		// container for a view that has ended.
+		// container for a view that has ended. What is DevHub's is that a
+		// sibling of a workbench that has left the window leaves it too —
+		// nothing else would ever take it out.
 		show(shell, editor);
-		const browser = {} as Electron.View;
+		const browser = new FakeView();
 		const window = asBrowserWindow(editor);
-		window.contentView.addChildView(browser);
+		window.contentView.addChildView(browser as unknown as Electron.View);
 
-		window.contentView.removeChildView(browser);
+		window.contentView.removeChildView(browser as unknown as Electron.View);
 		expect(window.contentView.children).toEqual([]);
+		expect(shell.window.contentView.children).not.toContain(browser);
+
+		const again = new FakeView();
+		window.contentView.addChildView(again as unknown as Electron.View);
+		expect(shell.window.contentView.children).toContain(again);
 
 		editor.webContents.close();
 		expect(window.isDestroyed()).toBe(true);
+		expect(shell.window.contentView.children).not.toContain(again);
 		expect(() => window.contentView).toThrow(/destroyed/);
 	});
 

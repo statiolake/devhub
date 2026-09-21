@@ -28,6 +28,7 @@ import {
 	workbenchRect,
 	type ChildIdentity,
 	type LayoutInput,
+	type AttachedPlacement,
 	type LayoutRect,
 	type LayoutState,
 } from "./windowLayout.js";
@@ -87,6 +88,47 @@ export function shellWindowOptions(
 	};
 }
 
+/**
+ * A view VS Code attached to one of its workbenches, as this window holds it.
+ *
+ * It is a **sibling** of the workbench in the window's child list, placed by
+ * the owner like every other child. It cannot be a child of the workbench's
+ * own view: a `WebContentsView` nested inside another `WebContentsView` is not
+ * composited at all on macOS with this Electron — its renderer runs and
+ * reports itself visible, and nothing is ever painted — and `capturePage()`
+ * does not include child views either, so nothing automated can see it. The
+ * same view at the same rectangle under `window.contentView` draws and
+ * animates. See `docs/window-and-pages.md`.
+ *
+ * Being a sibling is what makes the two fields below necessary. VS Code
+ * measures in the workbench's own document and writes bounds straight onto the
+ * view it created, so those calls are intercepted where the workbench hands
+ * out its container (`WorkbenchView.contentView`) and kept here as a *wish*:
+ * where it would like to be, in the workbench's coordinates, and whether it
+ * would like to be drawn. `windowLayout()` turns the pair into a rectangle in
+ * the window and a visibility, and `place`/`draw` — the view's own methods,
+ * captured before they were wrapped — are how that answer is applied.
+ */
+export interface AttachedChild {
+	/** The view itself, as it goes into the window's child list. */
+	readonly view: Electron.View;
+	/** Where VS Code last asked for it, in its workbench's own document. */
+	local: LayoutRect;
+	/** Whether VS Code wants it drawn. */
+	wish: boolean;
+	/** The view's own `setBounds`, before the container wrapped it. */
+	readonly place: (rect: Electron.Rectangle) => void;
+	/** The view's own `setVisible`. */
+	readonly draw: (visible: boolean) => void;
+}
+
+/** One attached view, and which workbench opened it. */
+interface AttachedEntry {
+	readonly id: number;
+	readonly owner: WorkbenchView;
+	readonly child: AttachedChild;
+}
+
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
 	/**
@@ -115,6 +157,13 @@ export class ShellWindow {
 	 * that asked for the open knows what it asked for.
 	 */
 	private readonly editorKeyByViewId = new Map<number, string>();
+	/**
+	 * Everything the workbenches have attached to themselves, in the order it
+	 * arrived. See `AttachedChild`.
+	 */
+	private readonly attached: AttachedEntry[] = [];
+	/** Names the attached views apart for the owner; never reused. */
+	private attachedCounter = 0;
 	/**
 	 * The workbench a selection asked to land in the terminal of, until the
 	 * keyboard arrives there.
@@ -439,6 +488,10 @@ export class ShellWindow {
 			return;
 		}
 		this.views.splice(index, 1);
+		// Whatever this workbench opened inside itself goes with it, and goes
+		// first: they are siblings in the window's child list, so nothing takes
+		// them out of it when the workbench leaves except this.
+		this.detachChildrenOf(view);
 		// The binding is deliberately *not* dropped here. "There is no view for
 		// this folder any more" and "DevHub let this folder's workbench go" are
 		// two different facts, and the supervisor tells a crash from a close by
@@ -468,6 +521,96 @@ export class ShellWindow {
 	getViews(): readonly WorkbenchView[] {
 		return this.views;
 	}
+
+	//#endregion
+
+	//#region the views a workbench attaches to itself
+
+	/**
+	 * Take a view a workbench opened into the window, as a sibling of it.
+	 *
+	 * Called from `WorkbenchView.contentView`'s container, which is what VS
+	 * Code believes is the window's own content view. Adding the same view
+	 * twice is not an error and not a duplicate: upstream's `BrowserView`
+	 * re-adds its view whenever it thinks it has moved window, and the child
+	 * list order is this class's answer rather than the caller's, re-stated on
+	 * every `layout()`.
+	 */
+	attachChild(owner: WorkbenchView, child: AttachedChild): void {
+		if (this.attached.some((entry) => entry.child.view === child.view)) return;
+		this.attachedCounter += 1;
+		this.attached.push({ id: this.attachedCounter, owner, child });
+		if (this.window.isDestroyed()) return;
+		this.window.contentView.addChildView(child.view);
+		// Never drawn where it happens to have been left: it is placed by the
+		// owner, on the next pass, and until then it is not on screen.
+		child.draw(false);
+		this.layout();
+	}
+
+	/** Let one go again — the browser editor closing, or moving away. */
+	detachChild(view: Electron.View): void {
+		const index = this.attached.findIndex((entry) => entry.child.view === view);
+		if (index === -1) return;
+		this.attached.splice(index, 1);
+		if (this.window.isDestroyed()) return;
+		this.window.contentView.removeChildView(view);
+		this.layout();
+	}
+
+	/** What a workbench has attached, for the container it hands VS Code. */
+	attachedChildren(owner: WorkbenchView): readonly Electron.View[] {
+		return this.attached
+			.filter((entry) => entry.owner === owner)
+			.map((entry) => entry.child.view);
+	}
+
+	/**
+	 * A workbench ending takes everything it opened with it.
+	 *
+	 * The views themselves are VS Code's to destroy — `BrowserView.dispose`
+	 * closes their contents when the window they belong to closes. What is
+	 * this class's is that they stop being children of the window the instant
+	 * the workbench does, so that nothing is laid out against a workbench that
+	 * is no longer in the list.
+	 */
+	private detachChildrenOf(owner: WorkbenchView): void {
+		for (const entry of [...this.attached]) {
+			if (entry.owner !== owner) continue;
+			this.attached.splice(this.attached.indexOf(entry), 1);
+			if (this.window.isDestroyed()) continue;
+			this.window.contentView.removeChildView(entry.child.view);
+		}
+	}
+
+	/** The view the owner named, if it is still attached. */
+	private attachedEntry(id: number): AttachedEntry | undefined {
+		return this.attached.find((entry) => entry.id === id);
+	}
+
+	/** The owner's view of what is attached, for `layoutInput`. */
+	private attachedPlacements(): readonly AttachedPlacement[] {
+		const placements: AttachedPlacement[] = [];
+		for (const entry of this.attached) {
+			if (entry.owner.isDestroyed()) continue;
+			const editorKey = this.editorKeyOf(entry.owner);
+			// A workbench that has not been told what folder it is showing is
+			// not in the layout's list of editors, so nothing it opened can be
+			// placed against it yet. It is swept hidden by `layout()`.
+			if (editorKey === undefined) continue;
+			placements.push({
+				id: entry.id,
+				editorKey,
+				rect: entry.child.local,
+				visible: entry.child.wish,
+			});
+		}
+		return placements;
+	}
+
+	//#endregion
+
+	//#region the views
 
 	/**
 	 * Say which folder a workbench is showing.
@@ -818,12 +961,18 @@ export class ShellWindow {
 					this.window.webContents
 				);
 			case "tooltip":
-				// There is nothing in a tooltip to type into, and
-				// `keyboardChild` never names it. Reaching here means the one
-				// answer to "where do the keys go" has started giving an
-				// answer that is not a place keys can go, which is a broken
-				// invariant rather than a case to handle.
-				throw new Error("the keyboard cannot be put in the tooltip view");
+			case "attached":
+				// There is nothing in a tooltip to type into, and a view a
+				// workbench opened inside itself takes the keyboard from VS
+				// Code rather than from DevHub — the browser is focused by the
+				// editor that owns it. `keyboardChild` names neither. Reaching
+				// here means the one answer to "where do the keys go" has
+				// started giving an answer that is not a place DevHub can put
+				// them, which is a broken invariant rather than a case to
+				// handle.
+				throw new Error(
+					`the keyboard cannot be put in the ${identity.kind} view`,
+				);
 		}
 	}
 
@@ -1010,6 +1159,7 @@ export class ShellWindow {
 			toasts: this.toasts.contentSize(),
 			picker: this.picker.scope(),
 			tooltip: this.tooltip.placement(),
+			attached: this.attachedPlacements(),
 		};
 	}
 
@@ -1076,11 +1226,32 @@ export class ShellWindow {
 				this.agents.place(this.window, child.rect, false);
 				continue;
 			}
+			if (child.identity.kind === "attached") {
+				const entry = this.attachedEntry(child.identity.id);
+				if (!entry) continue;
+				entry.child.place(child.rect);
+				if (!child.visible) entry.child.draw(false);
+				continue;
+			}
 			if (child.identity.kind !== "editor") continue;
 			const view = this.viewForEditorKey(child.identity.editorKey);
 			if (!view) continue;
 			view.view.setBounds(child.rect);
 			if (!child.visible) view.view.setVisible(false);
+		}
+		// Anything attached that the owner said nothing about is not on screen:
+		// a view opened by a workbench that has not been bound to a folder yet,
+		// which is the one case the list cannot name. Absence from the list is
+		// how the owner says "not drawn", here as everywhere else.
+		const placed = new Set(
+			children
+				.map((child) =>
+					child.identity.kind === "attached" ? child.identity.id : undefined,
+				)
+				.filter((id): id is number => id !== undefined),
+		);
+		for (const entry of this.attached) {
+			if (!placed.has(entry.id)) entry.child.draw(false);
 		}
 		// A workbench that exists but has not been told what folder it is
 		// showing yet is still a child of this window, and still has to be
@@ -1133,6 +1304,14 @@ export class ShellWindow {
 					if (!view) break;
 					this.window.contentView.addChildView(view.view);
 					view.view.setVisible(true);
+					break;
+				}
+				case "attached": {
+					if (!child.visible) break;
+					const entry = this.attachedEntry(child.identity.id);
+					if (!entry) break;
+					this.window.contentView.addChildView(entry.child.view);
+					entry.child.draw(true);
 					break;
 				}
 			}

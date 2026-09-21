@@ -14,7 +14,8 @@ arrangement to a list of children — each with a rectangle, a visibility and a
 position in the list. **The list's order is the z-order**, lowest first:
 
     the window's own page → the Sidebar → every workbench (the one on screen
-    last among them) → the Agents → the notices → the questions → the tooltip
+    last among them) → whatever those workbenches attached to themselves →
+    the Agents → the notices → the questions → the tooltip
 
 The tooltip is on top of everything, the questions included. Not because it
 may stand over a modal — it may not: a question coming up takes the tooltip
@@ -40,16 +41,39 @@ opening — still takes it down at once.
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
 DevHub has an opinion about where a view is.
 
-There is one kind of child the owner does not list, and it is not an exception
-to that rule: a view the *workbench itself* opens inside its own editor area —
-VS Code's integrated Browser (`workbench.action.browser.open`) is the one that
-exists today. It is attached to the workbench's own `WebContentsView` rather
-than to the window (`WorkbenchView.contentView`, which is where the reasons
-are), so it is inside that workbench's subtree: the renderer's own rectangle
-is already relative to the right origin, hiding the workbench hides it, and
-every child the owner puts above the workbench is still above it. The owner
-moves the subtree as one view and never reorders what is in it, so the list
-above is still the whole z-order.
+**A `WebContentsView` inside another `WebContentsView` is not painted.** On
+macOS with this Electron a nested view is not composited at all: its renderer
+runs at the display's full rate and reports itself visible, and nothing
+appears. The same view, at the same rectangle on screen, added to the window's
+own `contentView` draws and animates. Nothing automated can show this —
+`win.capturePage()` does not include child views either — so it is written
+down here rather than guarded by a screenshot test, and the tests that stand
+in for it are about the *shape*: what a workbench attaches ends up in the
+window's child list and never in the workbench's own.
+
+So every view in this window is a **sibling**, including the ones a workbench
+opens for itself — VS Code's integrated Browser
+(`workbench.action.browser.open`) is the one that exists today. It is a child
+kind of its own, `attached`, ordered immediately after the workbench it
+belongs to and below everything the shell draws over the content area.
+
+`WorkbenchView.contentView` is what makes that possible without a second
+owner of the layout. VS Code believes it is the window's content view; it is a
+container that registers what it is given with `ShellWindow` and wraps that
+view so the two things VS Code says about it become *wishes*:
+
+- the rectangle its renderer measured, which is in the **workbench's own
+  document** — the only frame a renderer can measure in. `windowLayout()`
+  translates it by that workbench's rectangle and clips it to it, so the
+  browser follows the Sidebar, the split and the window's size with no round
+  trip through any page, and can never draw over the Sidebar or an Agent's
+  pane;
+- whether VS Code wants it drawn, which is half the answer. It is drawn when
+  that wish is true *and* its workbench is the one on screen, so selecting
+  another Workspace takes it away and coming back brings it back where it was.
+
+The workbench going away takes everything it attached out of the window with
+it; nothing else would.
 
 No page measures anything the owner decides. The window's own page used to
 leave a hole for the workbench, measure it with a `ResizeObserver` and report

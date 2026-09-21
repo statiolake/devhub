@@ -6,8 +6,10 @@ import {
 	sidebarColumnWidth,
 	sidebarRect,
 	tooltipRect,
+	insideRect,
 	windowLayout,
 	workbenchRect,
+	type AttachedPlacement,
 	type LayoutInput,
 	type TooltipPlacement,
 	type LayoutState,
@@ -35,6 +37,20 @@ function input(overrides: Partial<LayoutInput> = {}): LayoutInput {
 		toasts: undefined,
 		picker: "none",
 		tooltip: undefined,
+		attached: [],
+		...overrides,
+	};
+}
+
+/** A view VS Code attached to `/a`, asking for a box in that workbench. */
+function attached(
+	overrides: Partial<AttachedPlacement> = {},
+): AttachedPlacement {
+	return {
+		id: 1,
+		editorKey: "/a",
+		rect: { x: 10, y: 20, width: 300, height: 200 },
+		visible: true,
 		...overrides,
 	};
 }
@@ -187,9 +203,15 @@ describe("the child list", () => {
 		expect(whole.at(-1)?.rect).toEqual({ x: 0, y: 0, ...WINDOW });
 	});
 
-	it("keeps the z-order picker > toasts > editors > shell in every arrangement", () => {
+	it("keeps the z-order picker > toasts > attached > editors > shell in every arrangement", () => {
 		const arrangements: readonly LayoutInput[] = [
 			input(),
+			input({ attached: [attached()] }),
+			input({
+				attached: [attached(), attached({ id: 2, editorKey: "/b" })],
+				picker: "window",
+				toasts: { width: 300, height: 80 },
+			}),
 			input({ picker: "window", toasts: { width: 300, height: 80 } }),
 			input({ asking: "/b", picker: "workbench" }),
 			input({ state: state({ surface: { kind: "agent" } }) }),
@@ -201,10 +223,11 @@ describe("the child list", () => {
 				shell: 0,
 				sidebar: 1,
 				editor: 2,
-				agents: 3,
-				toasts: 4,
-				picker: 5,
-				tooltip: 6,
+				attached: 3,
+				agents: 4,
+				toasts: 5,
+				picker: 6,
+				tooltip: 7,
 			} as const;
 			expect(order[0]).toBe("shell");
 			for (let index = 1; index < order.length; index += 1) {
@@ -617,5 +640,152 @@ describe("where a tooltip goes", () => {
 		expect(keyboardChild(input({ tooltip: placement() }))).not.toEqual({
 			kind: "tooltip",
 		});
+	});
+});
+
+/**
+ * Where a view a workbench opened inside itself goes.
+ *
+ * It is a sibling of the workbench, not a child of it — a nested
+ * `WebContentsView` is not painted at all on macOS with this Electron — so
+ * everything that used to be free from nesting is decided here instead: the
+ * rectangle the renderer measured in the workbench's own document, translated
+ * and clipped; visibility that follows the workbench and not only VS Code's
+ * wish; and a place in the child list above the workbench and below everything
+ * the shell draws over it.
+ */
+describe("a view a workbench attached to itself", () => {
+	it("is placed in the window by translating the workbench's origin", () => {
+		const child = windowLayout(input({ attached: [attached()] })).find(
+			(candidate) => candidate.identity.kind === "attached",
+		);
+		const workbench = workbenchRect(WINDOW, state());
+		expect(child?.rect).toEqual({
+			x: workbench.x + 10,
+			y: workbench.y + 20,
+			width: 300,
+			height: 200,
+		});
+	});
+
+	it("moves with the workbench when the sidebar narrows", () => {
+		const collapsed = state({ sidebar: { width: 248, collapsed: true } });
+		const child = windowLayout(
+			input({ state: collapsed, attached: [attached()] }),
+		).find((candidate) => candidate.identity.kind === "attached");
+		expect(child?.rect.x).toBe(workbenchRect(WINDOW, collapsed).x + 10);
+	});
+
+	it("is clipped to its workbench, never over the sidebar or an agent", () => {
+		const workbench = workbenchRect(WINDOW, state());
+		// A box that starts before the workbench and runs past its far corner
+		// is held to the workbench on all four sides.
+		expect(
+			insideRect(workbench, {
+				x: -50,
+				y: -50,
+				width: workbench.width + 500,
+				height: workbench.height + 500,
+			}),
+		).toEqual(workbench);
+		// And one entirely outside it is empty rather than negative.
+		expect(
+			insideRect(workbench, {
+				x: workbench.width + 10,
+				y: 0,
+				width: 100,
+				height: 100,
+			}),
+		).toEqual({
+			x: workbench.x + workbench.width,
+			y: workbench.y,
+			width: 0,
+			height: 100,
+		});
+	});
+
+	it("is drawn only when its workbench is the one on screen", () => {
+		const drawn = (arrangement: LayoutInput) =>
+			windowLayout(arrangement)
+				.filter((child) => child.identity.kind === "attached")
+				.map((child) => child.visible);
+		expect(drawn(input({ attached: [attached()] }))).toEqual([true]);
+		// VS Code does not want it drawn.
+		expect(drawn(input({ attached: [attached({ visible: false })] }))).toEqual([
+			false,
+		]);
+		// Another Workspace is selected: the wish stands, the answer does not.
+		expect(
+			drawn(
+				input({
+					attached: [attached()],
+					state: state({ surface: { kind: "editor", editorKey: "/b" } }),
+				}),
+			),
+		).toEqual([false]);
+		// An Agent covers the content area, so no workbench is on screen.
+		expect(
+			drawn(
+				input({
+					attached: [attached()],
+					state: state({ surface: { kind: "agent" } }),
+				}),
+			),
+		).toEqual([false]);
+	});
+
+	it("is sized whether or not it is drawn, like the workbenches", () => {
+		const hidden = windowLayout(
+			input({
+				attached: [attached()],
+				state: state({ surface: { kind: "editor", editorKey: "/b" } }),
+			}),
+		).find((child) => child.identity.kind === "attached");
+		const shown = windowLayout(input({ attached: [attached()] })).find(
+			(child) => child.identity.kind === "attached",
+		);
+		expect(hidden?.rect).toEqual(shown?.rect);
+	});
+
+	it("sits above every workbench and below the notices and the questions", () => {
+		const order = kinds(
+			windowLayout(
+				input({
+					attached: [attached()],
+					toasts: { width: 300, height: 80 },
+					picker: "window",
+					tooltip: {
+						anchor: { x: 8, y: 100, width: 36, height: 24 },
+						size: { width: 300, height: 40 },
+					},
+				}),
+			),
+		);
+		expect(order).toEqual([
+			"shell",
+			"sidebar",
+			"editor",
+			"editor",
+			"attached",
+			"agents",
+			"toasts",
+			"picker",
+			"tooltip",
+		]);
+	});
+
+	it("tells its views apart, so the owner can place each one", () => {
+		const children = windowLayout(
+			input({
+				attached: [
+					attached(),
+					attached({ id: 2, rect: { x: 0, y: 0, width: 10, height: 10 } }),
+				],
+			}),
+		).filter((child) => child.identity.kind === "attached");
+		expect(children.map((child) => child.identity)).toEqual([
+			{ kind: "attached", editorKey: "/a", id: 1 },
+			{ kind: "attached", editorKey: "/a", id: 2 },
+		]);
 	});
 });

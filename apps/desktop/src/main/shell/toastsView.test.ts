@@ -72,6 +72,7 @@ function placementFor(
 		},
 		editors: [],
 		asking: undefined,
+		attached: [],
 		toasts: toasts.contentSize(),
 		picker: "none",
 		tooltip: undefined,

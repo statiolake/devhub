@@ -15,7 +15,7 @@
 
 import { EventEmitter } from "node:events";
 import { electron } from "../electron.js";
-import type { ShellWindow } from "./shellWindow.js";
+import type { AttachedChild, ShellWindow } from "./shellWindow.js";
 
 /** Members the workbench asked for that this class does not implement. */
 const unimplemented = new Set<string>();
@@ -171,6 +171,9 @@ export class WorkbenchView {
 		});
 		this.contents = this.view.webContents;
 		this.viewId = VIEW_ID_BASE + this.contents.id;
+		// Built here, against this object rather than against the proxy VS
+		// Code holds. See `childContainer`.
+		this.childContainer = attachedContainer(this, shell);
 		if (options.backgroundColor) {
 			this.view.setBackgroundColor(options.backgroundColor);
 		}
@@ -731,57 +734,69 @@ export class WorkbenchView {
 	//#region the child views the workbench attaches to itself
 
 	/**
-	 * Where a child view the workbench opens is put: inside this workbench.
+	 * Where a view the workbench opens is put: beside this workbench, in the
+	 * window, placed by the owner.
 	 *
 	 * VS Code's integrated Browser (`vs/platform/browserView`) is a
 	 * `WebContentsView` of its own, and `BrowserView` attaches it with
-	 * `this._ownerWindow.win?.contentView.addChildView(view)`, lays it out with
-	 * bounds the *renderer* measured, shows and hides it, and removes it from
-	 * the same `contentView` when the editor closes. Until this existed the
-	 * proxy in `asBrowserWindow` answered `contentView` the way it answers
-	 * everything it does not know — a no-op function — so every one of those
-	 * calls died as `addChildView is not a function`, three frames away from
-	 * anything that could say what had gone wrong, and only on the log.
+	 * `this._ownerWindow.win?.contentView.addChildView(view)`, writes bounds
+	 * its *renderer* measured straight onto that view, shows and hides it, and
+	 * removes it from the same `contentView` when the editor closes.
 	 *
-	 * The answer is the view itself. `WebContentsView extends View`, so the
-	 * workbench's own view already *is* a container with `addChildView`,
-	 * `removeChildView` and `children`, and a child put there is a child of
-	 * this workbench rather than of the window:
+	 * **It cannot be a child of this view, and this is not a preference.** A
+	 * `WebContentsView` nested inside another `WebContentsView` is not painted
+	 * at all on macOS with this Electron: the child's renderer runs at the
+	 * display's full rate and reports itself visible, and nothing is ever
+	 * composited. The same view, with the same rectangle on screen, added to
+	 * `window.contentView` appears and animates. Nothing automated can see the
+	 * difference — `capturePage()` does not include child views either — which
+	 * is why this is written down here rather than left to a screenshot test,
+	 * and why the tests below are about the *shape*: that what VS Code attaches
+	 * ends up in the window's child list and never in this view's.
 	 *
-	 * - **Bounds land right with nothing translated.** The renderer measures
-	 *   the browser's rectangle in its own document, which is this view's
-	 *   viewport. In upstream VS Code the window's content area and the
-	 *   workbench page's viewport are the same rectangle, which is why
-	 *   upstream may pass them to the window's `contentView` unchanged; in
-	 *   DevHub they are not — the workbench sits to the right of the Sidebar
-	 *   and below the title bar. Nesting restores the coincidence upstream
-	 *   relies on instead of re-deriving it. The alternative was to forward to
-	 *   the shell's content view and add `this.shell.boundsOf(this)` to every
-	 *   rectangle, which is a second place that decides where a workbench is —
-	 *   and `windowLayout.ts` is the only one there may be.
-	 * - **Visibility and clipping follow the workbench for free.** Hiding this
-	 *   view hides its subtree, so selecting another Workspace takes the
-	 *   browser away with the editor it belongs to, and the child is clipped
-	 *   to the workbench rather than able to draw over the Sidebar.
-	 * - **Z-order stays the owner's.** A nested child is inside this view's
-	 *   subtree, so it is above the workbench's own page and below every
-	 *   sibling the owner puts on top of it — the notices, the questions, the
-	 *   tooltip. `ShellWindow.layout()` re-adds this view to the window on
-	 *   every pass, which moves the whole subtree together and never reorders
-	 *   what is inside it, so the owner needs no `nested` child kind and the
-	 *   invariant in `windowLayout.ts` is untouched.
+	 * So what VS Code gets here is a container that is not a view. It registers
+	 * what it is given with the shell as an `AttachedChild` of this workbench,
+	 * and it wraps that instance so the two things VS Code says about it become
+	 * *wishes* the owner answers:
+	 *
+	 * - `setBounds` is a rectangle in this workbench's own document, which is
+	 *   the only frame the renderer can measure in. It is stored, not applied;
+	 *   `windowLayout()` translates it by this workbench's rectangle and clips
+	 *   it to it, so the browser still moves with the Sidebar and the split
+	 *   with no round trip through any page, and still cannot draw outside the
+	 *   editor it belongs to. `getBounds` gives the same local rectangle back,
+	 *   because that is the frame the caller asked in.
+	 * - `setVisible` is a wish. It is drawn when this workbench is the one on
+	 *   screen *and* VS Code wants it — selecting another Workspace takes it
+	 *   away, and it comes back where it was.
+	 *
+	 * Everything else on the view is left alone, `setBorderRadius` included:
+	 * a corner radius is about the view and not about where it is.
 	 *
 	 * Destroyed is Electron's own answer, thrown rather than faked: upstream
 	 * guards this with `isDestroyed()` before it removes a child, and a
-	 * container handed back for a view that has ended would silently park the
-	 * browser in a subtree nothing will ever draw.
+	 * container handed back for a view that has ended would park the browser
+	 * against a workbench that no longer exists.
 	 */
 	get contentView(): Electron.View {
 		if (this.isDestroyed()) {
 			throw new Error("Object has been destroyed");
 		}
-		return this.view;
+		return this.childContainer;
 	}
+
+	/**
+	 * Built in the constructor, and not on the first ask.
+	 *
+	 * Two reasons, both about `asBrowserWindow`'s proxy. It answers a member
+	 * the view does not carry with the no-op function it answers every unknown
+	 * one with, and a field that is only *declared* is not an own property —
+	 * so a lazily built container would be built on top of that no-op. And a
+	 * getter reached through the proxy runs with `this` bound to the proxy, so
+	 * a container built there would register its children against an object
+	 * that is not the one `ShellWindow` holds in its table.
+	 */
+	private readonly childContainer: Electron.View;
 
 	//#endregion
 
@@ -865,6 +880,103 @@ export class WorkbenchView {
 	}
 
 	//#endregion
+}
+
+/**
+ * The view's own `setBounds` and `setVisible`, kept from before they were
+ * wrapped.
+ *
+ * Kept per view rather than per attachment because an attachment can happen
+ * twice: `BrowserView.layout` moves its view between windows by removing it
+ * from one container and adding it to the next, and wrapping an already
+ * wrapped method would make the second wrapper write its wish into the first
+ * one instead of into the view.
+ */
+const unwrapped = new WeakMap<
+	Electron.View,
+	{
+		readonly place: (rect: Electron.Rectangle) => void;
+		readonly draw: (visible: boolean) => void;
+	}
+>();
+
+/**
+ * The container `WorkbenchView.contentView` hands VS Code.
+ *
+ * Not a view: a view is where a child would be nested, and a nested
+ * `WebContentsView` is never painted. This registers what it is given with the
+ * shell as a sibling of the workbench, and lets it go again. See
+ * `WorkbenchView.contentView` for the whole of why, and `AttachedChild` for
+ * what the shell does with it.
+ */
+function attachedContainer(
+	view: WorkbenchView,
+	shell: ShellWindow,
+): Electron.View {
+	const container = {
+		addChildView(child: Electron.View): void {
+			// Already this workbench's. `BrowserView.layout` re-adds its view
+			// whenever it thinks it has changed window, and wrapping a wrapper
+			// would write VS Code's next wish into an object nobody holds.
+			// Order in the window is the owner's answer, re-stated on every
+			// pass, so there is nothing else for a second add to do.
+			if (shell.attachedChildren(view).includes(child)) return;
+			const own = unwrapped.get(child) ?? {
+				place: child.setBounds.bind(child),
+				draw: child.setVisible.bind(child),
+			};
+			unwrapped.set(child, own);
+			const attached: AttachedChild = {
+				view: child,
+				// Where it is now, in the workbench's coordinates, until VS Code
+				// says otherwise — which it does before it asks to be drawn.
+				local: { x: 0, y: 0, width: 0, height: 0 },
+				wish: false,
+				place: own.place,
+				draw: own.draw,
+			};
+			// Written on the instance, because that is where VS Code writes:
+			// `BrowserView` holds the `WebContentsView` it made and calls these
+			// on it directly, so a container that only intercepted its own
+			// members would never see a single one of them.
+			Object.defineProperties(child, {
+				setBounds: {
+					configurable: true,
+					writable: true,
+					value: (rect: Electron.Rectangle) => {
+						attached.local = { ...rect };
+						shell.layout();
+					},
+				},
+				setVisible: {
+					configurable: true,
+					writable: true,
+					value: (visible: boolean) => {
+						attached.wish = visible;
+						shell.layout();
+					},
+				},
+				getBounds: {
+					configurable: true,
+					writable: true,
+					value: () => ({ ...attached.local }),
+				},
+				getVisible: {
+					configurable: true,
+					writable: true,
+					value: () => attached.wish,
+				},
+			});
+			shell.attachChild(view, attached);
+		},
+		removeChildView(child: Electron.View): void {
+			shell.detachChild(child);
+		},
+		get children(): Electron.View[] {
+			return [...shell.attachedChildren(view)];
+		},
+	};
+	return container as unknown as Electron.View;
 }
 
 /**

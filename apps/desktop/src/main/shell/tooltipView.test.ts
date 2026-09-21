@@ -86,6 +86,7 @@ function placementFor(
 		},
 		editors: [],
 		asking: undefined,
+		attached: [],
 		toasts: undefined,
 		picker: "none",
 		tooltip: tooltip.placement(),

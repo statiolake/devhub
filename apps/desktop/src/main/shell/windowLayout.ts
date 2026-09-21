@@ -156,6 +156,36 @@ export interface LayoutInput {
 	readonly picker: PickerScope;
 	/** The tooltip that is up, if one is. See `TooltipPlacement`. */
 	readonly tooltip: TooltipPlacement | undefined;
+	/** Every view VS Code has attached to a workbench. See below. */
+	readonly attached: readonly AttachedPlacement[];
+}
+
+/**
+ * A view VS Code opened inside a workbench, as the owner is told about it.
+ *
+ * The integrated Browser is one: `vs/platform/browserView` makes a
+ * `WebContentsView` of its own, hands it a rectangle its *renderer* measured,
+ * and expects it to be drawn over that workbench's page. It is a sibling of
+ * the workbench in the window, not a child of it — a `WebContentsView` nested
+ * in another `WebContentsView` is not composited at all on macOS with this
+ * Electron, which is the whole reason this kind of child exists — so the two
+ * numbers below are the whole of what the owner needs to place it as one.
+ *
+ * `rect` is in the **workbench's own document**, which is the only frame VS
+ * Code can measure in, and it is translated and clipped here against that
+ * workbench's rectangle. `visible` is VS Code's *wish*: whether it is drawn is
+ * that wish and whether the workbench it belongs to is on screen, and a wish
+ * about a workspace nobody has selected is not an answer.
+ */
+export interface AttachedPlacement {
+	/** Which view this is, stable for as long as it is attached. */
+	readonly id: number;
+	/** The workbench it belongs to. */
+	readonly editorKey: string;
+	/** Where it goes, in that workbench's own coordinates. */
+	readonly rect: LayoutRect;
+	/** Whether VS Code wants it drawn. */
+	readonly visible: boolean;
 }
 
 /**
@@ -184,6 +214,12 @@ export type ChildIdentity =
 	| { readonly kind: "sidebar" }
 	| { readonly kind: "agents" }
 	| { readonly kind: "editor"; readonly editorKey: string }
+	/** A view VS Code attached to a workbench — see `AttachedPlacement`. */
+	| {
+			readonly kind: "attached";
+			readonly editorKey: string;
+			readonly id: number;
+	  }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
 	| { readonly kind: "tooltip" };
@@ -320,6 +356,46 @@ export function workbenchRect(
 	return {
 		...surface,
 		width: Math.max(0, Math.round(available * state.surface.ratio)),
+	};
+}
+
+/**
+ * A rectangle given in `container`'s own coordinates, placed in the window's.
+ *
+ * Translated by the container's origin and then held inside it, so a view
+ * attached to a workbench can never draw over the Sidebar, over an Agent's
+ * pane beside it, or off the window — which is what being *inside* a
+ * workbench used to mean before nesting turned out not to paint at all. An
+ * empty rectangle is the honest answer for something entirely outside its
+ * container, and a view is never given a negative size.
+ */
+export function insideRect(
+	container: LayoutRect,
+	local: LayoutRect,
+): LayoutRect {
+	const x = clamp(
+		container.x + Math.round(local.x),
+		container.x,
+		container.x + container.width,
+	);
+	const y = clamp(
+		container.y + Math.round(local.y),
+		container.y,
+		container.y + container.height,
+	);
+	const right = Math.min(
+		container.x + container.width,
+		container.x + Math.round(local.x) + Math.round(local.width),
+	);
+	const bottom = Math.min(
+		container.y + container.height,
+		container.y + Math.round(local.y) + Math.round(local.height),
+	);
+	return {
+		x,
+		y,
+		width: Math.max(0, right - x),
+		height: Math.max(0, bottom - y),
 	};
 }
 
@@ -467,7 +543,8 @@ function agentsVisible(state: LayoutState): boolean {
  *
  * The order *is* the z-order, lowest first: the window's own page, the
  * Sidebar, then every workbench with the one on screen last among them, then
- * the Agents, then the notices, then the questions, then the tooltip. A
+ * whatever those workbenches have attached to themselves, then the Agents,
+ * then the notices, then the questions, then the tooltip. A
  * notice about the application is above the thing it is about, a question is
  * above the notice, and the tooltip is above all of them because it is the
  * only child that neither takes a click nor hides anything. Nothing in this
@@ -520,6 +597,29 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			identity: { kind: "editor", editorKey: onScreen },
 			rect: editorRect,
 			visible: true,
+		});
+	}
+	// Then everything VS Code has attached to a workbench, in the same two
+	// passes and for the same reason: sized whether or not it is drawn, and the
+	// ones belonging to the workbench on screen last. They sit above every
+	// workbench and below everything the shell puts over the content area — a
+	// notice, a question and a tooltip are about DevHub and are above anything
+	// a workbench opened inside itself.
+	for (const child of input.attached) {
+		if (child.editorKey === onScreen) continue;
+		children.push({
+			identity: { kind: "attached", editorKey: child.editorKey, id: child.id },
+			rect: insideRect(editorRect, child.rect),
+			visible: false,
+		});
+	}
+	for (const child of input.attached) {
+		if (child.editorKey !== onScreen) continue;
+		children.push({
+			identity: { kind: "attached", editorKey: child.editorKey, id: child.id },
+			rect: insideRect(editorRect, child.rect),
+			// The workbench is on screen, so the wish is the whole answer.
+			visible: child.visible,
 		});
 	}
 	// One view for every Agent there is, showing the selected one. It is drawn
@@ -582,9 +682,13 @@ export function sameIdentity(
 	right: ChildIdentity,
 ): boolean {
 	if (left.kind !== right.kind) return false;
-	return left.kind !== "editor" || right.kind !== "editor"
-		? true
-		: left.editorKey === right.editorKey;
+	if (left.kind === "editor" && right.kind === "editor") {
+		return left.editorKey === right.editorKey;
+	}
+	if (left.kind === "attached" && right.kind === "attached") {
+		return left.id === right.id;
+	}
+	return true;
 }
 
 //#region reconciling the child list against the projection
