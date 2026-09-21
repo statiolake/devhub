@@ -541,6 +541,42 @@ describe("closing a workspace", () => {
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 
+  for (const worktree of ["remove", "remove-anyway"] as const) {
+    it(`asks about unsaved editors before a "${worktree}" close touches the worktree`, () => {
+      // A clean worktree is removed without a question of its own, and a
+      // dirty one has had its three-way sheet answered; either way, the
+      // unsaved editors are still asked about, and nothing — the worktree
+      // above all — is acted on until that is answered.
+      const driver = new Driver();
+      driver.openFolder("/dev/project");
+      driver.dispatch(closeIntent(worktree));
+      const inspect = driver.drainEffects()[0];
+      if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+      driver.accept({
+        type: "workspace_inspection_completed",
+        token: inspect.token,
+        workspaceId: WS_A,
+        inspection: {
+          ...CLEAN_INSPECTION,
+          unsavedEditors: unsavedEditors(["Untitled-1"]),
+        },
+      });
+      const required = driver.answer(driver.drainEffects()[0]);
+      expect(required?.kind).toBe("confirmation_required");
+      // Cancel is this question never being answered: no step has run.
+      expect(driver.drainEffects()).toHaveLength(0);
+      expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+
+      driver.dispatch({
+        type: "confirm_close_workspace",
+        confirmationId: CONFIRM,
+      });
+      const close = driver.drainEffects()[0];
+      if (close?.kind !== "close_workspace") throw new Error("unexpected");
+      expect(close.worktree).toBe(worktree);
+    });
+  }
+
   it("changes nothing when the question is left unanswered", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");

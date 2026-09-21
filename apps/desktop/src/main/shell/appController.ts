@@ -3353,10 +3353,21 @@ export class AppController {
 		// answer. Collected rather than thrown; see `closeSessionsOnMachine`.
 		const leftRunning: string[] = [];
 		try {
-			const vetoed = await withCloseDeadline(
-				step,
-				this.askEditorToClose(workspaceId),
-			);
+			let vetoed: CloseDiagnosticWire | undefined;
+			try {
+				vetoed = await withCloseDeadline(
+					step,
+					this.askEditorToClose(workspaceId),
+				);
+			} finally {
+				// A question the workbench raised while this step waited — an
+				// extension or a task refusing the unload — belongs to this step
+				// and ends with it. Left on the picker after the step had given
+				// up, it covered the app over a close that was no longer running;
+				// withdrawn, it is answered with its own cancel, and the unload
+				// VS Code is still holding settles as a veto.
+				this.withdrawWorkbenchQuestions(workspaceId);
+			}
 			if (vetoed !== undefined) {
 				// The workbench refused — unsaved work, most likely, and the
 				// person has just been asked about it. That is a reason, not an
@@ -4305,6 +4316,16 @@ export class AppController {
 		if (!surfaceKey.startsWith(prefix)) return undefined;
 		const id = surfaceKey.slice(prefix.length) as WorkspaceId;
 		return this.coordinator.model.workspace(id)?.key;
+	}
+
+	/** Take down every question this Workspace's workbench has on the picker. */
+	private withdrawWorkbenchQuestions(workspaceId: WorkspaceId): void {
+		const surfaceKey = `workspace-editor:${workspaceId}`;
+		shellWindow().picker.closeWhere(
+			(modal) =>
+				modal.request.kind === "workbench-dialog" &&
+				modal.request.surfaceKey === surfaceKey,
+		);
 	}
 
 	/**
