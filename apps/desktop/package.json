@@ -13,7 +13,7 @@
     "build": "pnpm run build:main && pnpm run build:terminal && pnpm run build:cli && pnpm run build:preload && pnpm run build:shell",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.shell.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run && pnpm run test:pty",
+    "test": "pnpm run build:terminal && vitest run && pnpm run test:pty",
     "test:pty": "test/terminal/run-under-electron.sh",
     "fmt": "prettier --write src scripts index.html toasts.html picker.html sidebar.html agents.html tooltip.html settings.html package.json vite.config.ts eslint.config.js",
     "fmt:check": "prettier --check src scripts index.html toasts.html picker.html sidebar.html agents.html tooltip.html settings.html package.json vite.config.ts eslint.config.js",
