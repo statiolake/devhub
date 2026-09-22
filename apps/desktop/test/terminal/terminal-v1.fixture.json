@@ -20,7 +20,7 @@
   "requests": {
     "attach": {
       "schemaVersion": 1,
-      "surfaceKey": "global-terminal",
+      "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "targetGeneration": 0,
       "cols": 80,
       "rows": 24,
@@ -29,7 +29,7 @@
     },
     "input": {
       "schemaVersion": 1,
-      "surfaceKey": "global-terminal",
+      "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "attachmentId": "0123456789abcdef0123456789abcdef",
       "targetGeneration": 1,
       "inputSequence": 1,
@@ -37,7 +37,7 @@
     },
     "resize": {
       "schemaVersion": 1,
-      "surfaceKey": "global-terminal",
+      "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "attachmentId": "0123456789abcdef0123456789abcdef",
       "targetGeneration": 1,
       "cols": 100,
@@ -47,14 +47,14 @@
     },
     "acknowledge": {
       "schemaVersion": 1,
-      "surfaceKey": "global-terminal",
+      "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "attachmentId": "0123456789abcdef0123456789abcdef",
       "targetGeneration": 1,
       "sequence": 1
     },
     "detach": {
       "schemaVersion": 1,
-      "surfaceKey": "global-terminal",
+      "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "attachmentId": "0123456789abcdef0123456789abcdef",
       "targetGeneration": 1
     }
@@ -62,7 +62,7 @@
   "receipt": {
     "schemaVersion": 1,
     "attachmentId": "0123456789abcdef0123456789abcdef",
-    "surfaceKey": "global-terminal",
+    "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
     "targetGeneration": 1
   },
   "errors": {
@@ -90,7 +90,7 @@
     "schemaVersion": 1,
     "attachmentId": "0123456789abcdef0123456789abcdef",
     "sequence": 0,
-    "surfaceKey": "global-terminal",
+    "surfaceKey": "workspace-terminal:00000000-0000-4000-8000-00000000005c",
     "targetGeneration": 1,
     "cols": 80,
     "rows": 24

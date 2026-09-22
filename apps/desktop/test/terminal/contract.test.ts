@@ -149,7 +149,7 @@ describe("terminal frame decoding", () => {
         schemaVersion: TERMINAL_PROTOCOL_VERSION,
         attachmentId: ATTACHMENT_ID,
         sequence: 0,
-        surfaceKey: "global-terminal",
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
         targetGeneration: 7,
         cols: 80,
         rows: 24,
@@ -209,7 +209,7 @@ describe("terminal frame decoding", () => {
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
       attachmentId: ATTACHMENT_ID,
       sequence: 0,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       targetGeneration: 1,
       cols: 80,
       rows: 24,
@@ -273,7 +273,11 @@ describe("terminal frame decoding", () => {
 
 describe("terminal request validation", () => {
   it("accepts exactly the surfaces DevHub has", () => {
-    expect(validateSurfaceKey("global-terminal")).toBe("global-terminal");
+    expect(
+      validateSurfaceKey(
+        "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+      ),
+    ).toBe("workspace-terminal:00000000-0000-4000-8000-00000000005c");
     expect(
       validateSurfaceKey(
         "workspace-terminal:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -291,7 +295,7 @@ describe("terminal request validation", () => {
       "workspace-terminal:not-a-uuid",
       "agent:not-a-uuid",
       "agent:",
-      "global-terminal\0",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c\0",
       "x".repeat(MAX_SURFACE_KEY_BYTES + 1),
       42,
     ]) {
@@ -322,7 +326,7 @@ describe("terminal request validation", () => {
 
   it("takes the fixture's requests and refuses anything extra", () => {
     expect(validateAttachRequest(fixture.requests.attach).surfaceKey).toBe(
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
     );
     expect(validateInputRequest(fixture.requests.input).inputSequence).toBe(1);
     expect(validateResizeRequest(fixture.requests.resize).size.cols).toBe(100);

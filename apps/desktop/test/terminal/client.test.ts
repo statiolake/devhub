@@ -40,7 +40,8 @@ function transportHarness(refuse?: TerminalFailure) {
           ? {
               schemaVersion: TERMINAL_PROTOCOL_VERSION,
               attachmentId: "0123456789abcdef0123456789abcdef",
-              surfaceKey: "global-terminal",
+              surfaceKey:
+                "workspace-terminal:00000000-0000-4000-8000-00000000005c",
               targetGeneration: 42,
             }
           : undefined,
@@ -67,7 +68,7 @@ describe("terminal client transport", () => {
     const receipt = await harness.client.attach(
       {
         schemaVersion: TERMINAL_PROTOCOL_VERSION,
-        surfaceKey: "global-terminal",
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
         targetGeneration: 0,
         cols: 80,
         rows: 24,
@@ -78,7 +79,7 @@ describe("terminal client transport", () => {
     );
     await harness.client.input({
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       attachmentId: receipt.attachmentId,
       targetGeneration: receipt.targetGeneration,
       inputSequence: 1,
@@ -86,7 +87,7 @@ describe("terminal client transport", () => {
     });
     await harness.client.resize({
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       attachmentId: receipt.attachmentId,
       targetGeneration: receipt.targetGeneration,
       cols: 100,
@@ -96,14 +97,14 @@ describe("terminal client transport", () => {
     });
     await harness.client.acknowledge({
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       attachmentId: receipt.attachmentId,
       targetGeneration: receipt.targetGeneration,
       sequence: 1,
     });
     await harness.client.detach({
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       attachmentId: receipt.attachmentId,
       targetGeneration: receipt.targetGeneration,
     });
@@ -130,7 +131,7 @@ describe("terminal client transport", () => {
       harness.client.attach(
         {
           schemaVersion: TERMINAL_PROTOCOL_VERSION,
-          surfaceKey: "global-terminal",
+          surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
           targetGeneration: 0,
           cols: 80,
           rows: 24,
@@ -185,7 +186,7 @@ describe("terminal client transport", () => {
       harness.client.attach(
         {
           schemaVersion: TERMINAL_PROTOCOL_VERSION,
-          surfaceKey: "global-terminal",
+          surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
           targetGeneration: 0,
           cols: 80,
           rows: 24,

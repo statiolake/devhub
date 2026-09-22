@@ -141,7 +141,7 @@ function receipt(id: string, generation: number) {
   return {
     schemaVersion: 1 as const,
     attachmentId: id,
-    surfaceKey: "global-terminal",
+    surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
     targetGeneration: generation,
   };
 }
@@ -262,7 +262,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -279,7 +279,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     const view = render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
         hidden
@@ -305,7 +305,7 @@ describe("TerminalSurface lifecycle", () => {
     mocks.fits[0].dimensions.rows = 43;
     view.rerender(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -323,7 +323,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -333,7 +333,7 @@ describe("TerminalSurface lifecycle", () => {
     expect(harness.client.attach).toHaveBeenCalledWith(
       expect.objectContaining({
         targetGeneration: 0,
-        surfaceKey: "global-terminal",
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       }),
       expect.any(Function),
     );
@@ -369,7 +369,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -395,7 +395,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -420,7 +420,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -467,7 +467,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -517,7 +517,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -545,7 +545,7 @@ describe("TerminalSurface lifecycle", () => {
     }, true);
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -580,7 +580,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -612,7 +612,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     const rendered = render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -645,7 +645,7 @@ describe("TerminalSurface lifecycle", () => {
     const firstAppearance = appearanceFixture();
     const rendered = render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         appearance={firstAppearance}
         client={harness.client}
@@ -668,7 +668,7 @@ describe("TerminalSurface lifecycle", () => {
     mocks.fits[0].dimensions.rows = 20;
     rendered.rerender(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         appearance={{
           ...firstAppearance,
@@ -693,7 +693,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     const rendered = render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -734,7 +734,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={mismatch.client}
       />,
@@ -763,7 +763,7 @@ describe("TerminalSurface lifecycle", () => {
     });
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,
@@ -783,7 +783,7 @@ describe("TerminalSurface lifecycle", () => {
     const harness = clientHarness();
     render(
       <TerminalSurface
-        surfaceKey="global-terminal"
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
       />,

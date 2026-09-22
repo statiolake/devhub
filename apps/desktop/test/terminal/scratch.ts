@@ -11,10 +11,10 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 export const SCRATCH_ROOT = fileURLToPath(
-	new URL("../../../../.spike/", import.meta.url),
+  new URL("../../../../.spike/", import.meta.url),
 );
 
 export function scratchDirectory(label: string): string {
-	mkdirSync(SCRATCH_ROOT, { recursive: true });
-	return mkdtempSync(join(SCRATCH_ROOT, `devhub-${label}-`));
+  mkdirSync(SCRATCH_ROOT, { recursive: true });
+  return mkdtempSync(join(SCRATCH_ROOT, `devhub-${label}-`));
 }

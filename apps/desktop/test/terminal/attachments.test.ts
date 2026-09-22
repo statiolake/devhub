@@ -80,7 +80,8 @@ const OTHER_WORKSPACE_SURFACE =
   "workspace-terminal:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function targetFor(surfaceKey: string): TerminalTarget {
-  if (surfaceKey === "global-terminal") return SCRATCH_TARGET;
+  if (surfaceKey === "workspace-terminal:00000000-0000-4000-8000-00000000005c")
+    return SCRATCH_TARGET;
   if (surfaceKey === OTHER_WORKSPACE_SURFACE) {
     return workspaceTarget(
       "local",
@@ -135,7 +136,9 @@ function harness(): Harness {
     attach(overrides) {
       const frames: TerminalFrame[] = [];
       const before = ptys.length;
-      const surfaceKey = overrides?.surfaceKey ?? "global-terminal";
+      const surfaceKey =
+        overrides?.surfaceKey ??
+        "workspace-terminal:00000000-0000-4000-8000-00000000005c";
       const viewLabel = overrides?.viewLabel ?? "shell:1";
       const target = overrides?.target ?? targetFor(surfaceKey);
       // Two phases, as in production: claim the ledger, resolve the session,
@@ -216,14 +219,16 @@ describe("attach", () => {
     vi.useFakeTimers();
     const test = harness();
     const { receipt, frames, pty } = test.attach();
-    expect(receipt.surfaceKey).toBe("global-terminal");
+    expect(receipt.surfaceKey).toBe(
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+    );
     expect(receipt.attachmentId).toMatch(/^[0-9a-f]{32}$/u);
     expect(receipt.targetGeneration).toBeGreaterThan(0);
     expect(frames).toHaveLength(1);
     expect(frames[0]).toMatchObject({
       type: "started",
       sequence: 0,
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       targetGeneration: receipt.targetGeneration,
       cols: 80,
       rows: 24,
@@ -267,13 +272,13 @@ describe("attach", () => {
     const test = harness();
     const first = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "shell:1",
       new CancellationToken(),
     );
     const second = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "shell:1",
       new CancellationToken(),
     );
@@ -281,7 +286,7 @@ describe("attach", () => {
     expect(second.cancel.isCancelled).toBe(false);
 
     const context = {
-      surfaceKey: "global-terminal",
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       viewLabel: "shell:1",
       target: SCRATCH_TARGET,
       spawn: unusedSpawn,
@@ -301,7 +306,7 @@ describe("attach", () => {
     // the publication barrier the receipt depends on.
     first.release();
     expect(test.manager.attach(second, { ...context }).surfaceKey).toBe(
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
     );
     second.release();
   });
@@ -316,13 +321,13 @@ describe("attach", () => {
     });
     const permit = manager.beginAttach(
       SCRATCH_TARGET,
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "shell:1",
       new CancellationToken(),
     );
     expect(() =>
       manager.attach(permit, {
-        surfaceKey: "global-terminal",
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
         viewLabel: "shell:1",
         target: SCRATCH_TARGET,
         spawn: unusedSpawn,
@@ -598,13 +603,13 @@ describe("output", () => {
     // reading a PTY nobody can see.
     const permit = manager.beginAttach(
       SCRATCH_TARGET,
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       "shell:1",
       new CancellationToken(),
     );
     expect(() =>
       manager.attach(permit, {
-        surfaceKey: "global-terminal",
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
         viewLabel: "shell:1",
         target: SCRATCH_TARGET,
         spawn: unusedSpawn,
@@ -842,7 +847,7 @@ describe("ownership", () => {
     const test = harness();
     const scratch = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "global-terminal",
+      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       PAGE,
       new CancellationToken(),
     );

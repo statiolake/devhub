@@ -33,12 +33,18 @@ function chord(key: string, held: Partial<EditingChord> = {}): EditingChord {
 
 describe("the Mac editing chords a terminal answers", () => {
   it("sends Cmd+Left and Cmd+Right the bytes Ghostty binds them to", () => {
-    expect(editingSequence(chord("ArrowLeft", { metaKey: true }))).toBe("\u0001");
-    expect(editingSequence(chord("ArrowRight", { metaKey: true }))).toBe("\u0005");
+    expect(editingSequence(chord("ArrowLeft", { metaKey: true }))).toBe(
+      "\u0001",
+    );
+    expect(editingSequence(chord("ArrowRight", { metaKey: true }))).toBe(
+      "\u0005",
+    );
   });
 
   it("sends Cmd+Backspace the byte Ghostty binds it to", () => {
-    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBe("\u0015");
+    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBe(
+      "\u0015",
+    );
   });
 
   /**
@@ -47,8 +53,12 @@ describe("the Mac editing chords a terminal answers", () => {
    * claiming them here even though xterm would encode something workable.
    */
   it("sends Option with an arrow as the word motion Ghostty binds", () => {
-    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBe("\u001bb");
-    expect(editingSequence(chord("ArrowRight", { altKey: true }))).toBe("\u001bf");
+    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBe(
+      "\u001bb",
+    );
+    expect(editingSequence(chord("ArrowRight", { altKey: true }))).toBe(
+      "\u001bf",
+    );
   });
 
   /**
@@ -89,7 +99,9 @@ describe("the Mac editing chords a terminal answers", () => {
 
   /** Ghostty binds no vertical arrow, so neither does this. */
   it("claims no vertical arrow", () => {
-    expect(editingSequence(chord("ArrowUp", { metaKey: true }))).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowUp", { metaKey: true })),
+    ).toBeUndefined();
     expect(
       editingSequence(chord("ArrowDown", { metaKey: true })),
     ).toBeUndefined();
