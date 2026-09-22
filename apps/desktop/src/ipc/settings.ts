@@ -316,6 +316,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_workspace_depth"
 	| "invalid_workspace_kind"
 	| "invalid_date_template"
+	| "invalid_scratch_daily"
 	| "ambiguous_date_token"
 	| "invalid_exclusion"
 	| "invalid_command"

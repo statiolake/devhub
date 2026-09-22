@@ -40,6 +40,9 @@ export const TMUX_ARGUMENT_RULE =
 export const WORKSPACE_PATH_RULE =
   "A folder is an absolute path, or one starting with ~/ (or ~ on its own).";
 
+export const SCRATCH_DAILY_RULE =
+  "scratch.daily is an absolute or ~/ path naming a date with %Y, %m and %d (%% for a literal %); no other % fields are understood.";
+
 export const DATE_TEMPLATE_RULE =
   "A date path has a closing bracket for every opening one; text inside brackets is used as written.";
 

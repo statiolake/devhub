@@ -48,6 +48,7 @@ import {
   dateTemplateAmbiguity,
   dateTemplateBracketsBalance,
 } from "./dateTemplate.js";
+import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
 import {
@@ -436,6 +437,11 @@ export interface AppearanceConfig {
   readonly terminalTheme: TerminalThemeConfig;
 }
 
+export interface ScratchConfig {
+  /** A path with `%Y` `%m` `%d` (and `%%`), e.g. `~/junk/%Y%m%d`. */
+  readonly daily: string;
+}
+
 export interface Config {
   readonly version: number;
   readonly general: GeneralConfig;
@@ -452,6 +458,8 @@ export interface Config {
    */
   readonly keybindings: KeybindingsSpec;
   readonly workspaceSources: readonly WorkspaceSource[];
+  /** Where Scratch is: today's daily folder. See `model/scratchDay.ts`. */
+  readonly scratch: ScratchConfig;
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
   readonly agentActions: readonly ConfiguredAgentAction[];
 }
@@ -689,6 +697,7 @@ export function defaultConfig(): Config {
     appearance: defaultAppearance(),
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
+    scratch: { daily: DEFAULT_SCRATCH_DAILY },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
   };
@@ -717,6 +726,7 @@ export type ValidationCode =
   | "invalid_workspace_depth"
   | "invalid_workspace_kind"
   | "invalid_date_template"
+  | "invalid_scratch_daily"
   | "ambiguous_date_token"
   | "invalid_exclusion"
   | "invalid_command"
@@ -1247,6 +1257,9 @@ export function validateConfig(config: Config): void {
   validateAppearance(config.appearance);
   validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
+  if (scratchDailyProblem(config.scratch.daily)) {
+    fail("invalid_scratch_daily", "scratch.daily");
+  }
   validateAgentProfiles(config.agentProfiles);
   validateAgentActions(config.agentActions);
 }
@@ -1260,6 +1273,7 @@ const TOP_LEVEL_KEYS = [
   "appearance",
   "keybindings",
   "workspace_sources",
+  "scratch",
   "agent_profiles",
   "agent_actions",
 ] as const;
@@ -1704,6 +1718,8 @@ export function interpretConfig(document: unknown): Config {
   }
 
   const generalTable = requireTable(table["general"] ?? {}, "general");
+  const scratchTable = requireTable(table["scratch"] ?? {}, "scratch");
+  checkKeys(scratchTable, ["daily"], "scratch");
   checkKeys(generalTable, ["import_login_environment"], "general");
 
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
@@ -1854,6 +1870,14 @@ export function interpretConfig(document: unknown): Config {
       ),
       chords,
     },
+    scratch: {
+      daily: optionalString(
+        scratchTable,
+        "daily",
+        "scratch",
+        defaults.scratch.daily,
+      ),
+    },
     workspaceSources:
       rawSources === undefined
         ? defaults.workspaceSources
@@ -1950,6 +1974,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       chords: { ...config.keybindings.chords },
     },
     workspace_sources: config.workspaceSources.map(sourceToTable),
+    scratch: { daily: config.scratch.daily },
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
@@ -2034,6 +2059,7 @@ export type ConfigScopeKey =
   | "appearance"
   | "keybindings"
   | "workspaceSources"
+  | "scratch"
   | "agentProfiles"
   | "agentActions";
 

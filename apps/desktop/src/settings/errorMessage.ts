@@ -35,6 +35,7 @@ import {
   RUNTIME_RULE,
   SOCKET_RULE,
   DATE_TEMPLATE_RULE,
+  SCRATCH_DAILY_RULE,
   DATE_TOKEN_RULE,
   TMUX_ARGUMENT_RULE,
   WORKSPACE_PATH_RULE,
@@ -67,6 +68,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return WORKSPACE_PATH_RULE;
     case "invalid_date_template":
       return DATE_TEMPLATE_RULE;
+    case "invalid_scratch_daily":
+      return SCRATCH_DAILY_RULE;
     case "ambiguous_date_token":
       return DATE_TOKEN_RULE;
     case "invalid_exclusion":
