@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { AppModel, SPLIT_DEFAULT_RATIO, wantsAttention } from "./appModel.js";
 import {
+  localWorkspace,
+  SCRATCH_PATH,
+  scratchModel,
+} from "./testWorkspaces.js";
+import {
   AgentProfile,
   agentId,
   agentProfileId,
@@ -36,8 +41,13 @@ function codeOf(run: () => unknown): DomainErrorCode | undefined {
   return undefined;
 }
 
+/** Scratch, as a context: the model's own daily-folder Workspace. */
+function scratchOf(model: AppModel): NavigationContext {
+  return { kind: "workspace", workspaceId: model.scratchWorkspaceId };
+}
+
 function modelWith(...roots: [ReturnType<typeof workspaceId>, string][]) {
-  const model = new AppModel();
+  const model = scratchModel();
   for (const [id, path] of roots) {
     model.addWorkspace(
       new Workspace(
@@ -51,11 +61,18 @@ function modelWith(...roots: [ReturnType<typeof workspaceId>, string][]) {
 }
 
 describe("startup", () => {
-  it("starts on the Global context with no workspaces", () => {
-    const snapshot = new AppModel().snapshot();
-    expect(snapshot.workspaces).toHaveLength(0);
+  it("starts on Scratch, which is its only workspace and is called Scratch", () => {
+    const model = scratchModel();
+    const snapshot = model.snapshot();
+    expect(snapshot.workspaces).toHaveLength(1);
+    expect(snapshot.scratchWorkspaceId).toBe(model.scratchWorkspaceId);
+    expect(snapshot.workspaces[0]).toMatchObject({
+      id: model.scratchWorkspaceId,
+      label: "Scratch",
+      root: SCRATCH_PATH,
+    });
     expect(snapshot.selection).toEqual({
-      context: { kind: "global" },
+      context: scratchOf(model),
       presentation: "full",
     });
     expect(snapshot.revision).toBe(0);
@@ -68,11 +85,14 @@ function full(model: AppModel, context: NavigationContext) {
 }
 
 describe("layout resolution", () => {
-  it("gives the Global context the folderless workbench, alone", () => {
-    const model = new AppModel();
-    expect(full(model, { kind: "global" })).toEqual({
+  it("gives Scratch its own workbench, like any Workspace", () => {
+    const model = scratchModel();
+    expect(full(model, scratchOf(model))).toEqual({
       kind: "workbench",
-      editor: { kind: "global-editor" },
+      editor: {
+        kind: "workspace-editor",
+        workspaceId: model.scratchWorkspaceId,
+      },
     });
   });
 
@@ -127,12 +147,12 @@ describe("layout resolution", () => {
 
   it("keeps the presentation out of a selection with no other half", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    // A Workspace with no Agents has nothing to be beside, and neither has
-    // Scratch. Recording `beside` anyway would leave a value in the snapshot
+    // A Workspace with no Agents has nothing to be beside, and Scratch with
+    // none is no different. Recording `beside` anyway would leave a value in the snapshot
     // that nothing honours and the next reader has to know to ignore.
     model.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
     expect(model.snapshot().selection.presentation).toBe("full");
-    model.selectContext({ kind: "global" }, "beside");
+    model.selectContext(scratchOf(model), "beside");
     expect(model.snapshot().selection.presentation).toBe("full");
   });
 
@@ -195,7 +215,7 @@ describe("layout resolution", () => {
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     model.toggleScratch();
     expect(model.snapshot().selection).toEqual({
-      context: { kind: "global" },
+      context: scratchOf(model),
       presentation: "full",
     });
     model.toggleScratch();
@@ -232,13 +252,13 @@ describe("layout resolution", () => {
     model.toggleScratch();
     model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
     model.toggleScratch();
-    expect(model.snapshot().selection.context).toEqual({ kind: "global" });
+    expect(model.snapshot().selection.context).toEqual(scratchOf(model));
     // And nothing remembered at all — a fresh model, which is also what a
     // restart is.
-    const fresh = new AppModel();
+    const fresh = scratchModel();
     fresh.toggleScratch();
     expect(fresh.snapshot().selection).toEqual({
-      context: { kind: "global" },
+      context: scratchOf(fresh),
       presentation: "full",
     });
   });
@@ -251,7 +271,7 @@ describe("layout resolution", () => {
     // move the way out: it is written by the jump and by nothing else, so the
     // chord still comes back to where the jump started.
     model.selectContext({ kind: "workspace", workspaceId: WS_B });
-    model.selectContext({ kind: "global" });
+    model.selectContext(scratchOf(model));
     model.toggleScratch();
     expect(model.snapshot().selection.context).toEqual({
       kind: "workspace",
@@ -284,7 +304,7 @@ describe("layout resolution", () => {
 
 describe("the split", () => {
   it("starts where a person would put it and remembers where they moved it", () => {
-    const model = new AppModel();
+    const model = scratchModel();
     expect(model.snapshot().splitRatio).toBe(SPLIT_DEFAULT_RATIO);
     expect(model.setSplitRatio(0.7)).toBe(true);
     expect(model.snapshot().splitRatio).toBe(0.7);
@@ -292,7 +312,7 @@ describe("the split", () => {
   });
 
   it("refuses a ratio that would leave a pane with nothing in it", () => {
-    const model = new AppModel();
+    const model = scratchModel();
     expect(codeOf(() => model.setSplitRatio(0.1))).toBe(
       DomainErrorCode.InvalidSplitRatio,
     );
@@ -315,9 +335,9 @@ describe("selection", () => {
       context: { kind: "agent", agentId: AG_A },
       presentation: "full",
     });
-    model.selectContext({ kind: "global" });
+    model.selectContext(scratchOf(model));
     expect(model.selection).toEqual({
-      context: { kind: "global" },
+      context: scratchOf(model),
       presentation: "full",
     });
   });
@@ -353,7 +373,7 @@ describe("ordinals", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
     const names = () =>
-      model.snapshot().workspaces[0].agents.map((agent) => agent.displayName);
+      model.snapshot().workspaces[1].agents.map((agent) => agent.displayName);
     expect(names()).toEqual(["Codex"]);
 
     model.addAgent(WS_A, AG_B, codex);
@@ -372,14 +392,87 @@ describe("labels", () => {
     const labels = model
       .snapshot()
       .workspaces.map((workspace) => workspace.label);
-    expect(labels).toEqual(["app — alpha", "app — beta"]);
+    expect(labels).toEqual(["Scratch", "app — alpha", "app — beta"]);
   });
 
   it("leaves a unique basename alone", () => {
     const model = modelWith([WS_A, "/dev/alpha"], [WS_B, "/dev/beta"]);
     expect(model.snapshot().workspaces.map((w) => w.label)).toEqual([
+      "Scratch",
       "alpha",
       "beta",
+    ]);
+  });
+
+  it("does not count Scratch's folder name as a collision", () => {
+    // Scratch is `.../junk/20260923` and is called Scratch; a row that
+    // happens to share the basename has nothing to be told apart from.
+    const model = modelWith([WS_A, "/elsewhere/20260923"]);
+    expect(model.snapshot().workspaces.map((w) => w.label)).toEqual([
+      "Scratch",
+      "20260923",
+    ]);
+  });
+});
+
+describe("Scratch, today's daily folder", () => {
+  const TOMORROW = "/scratch-test/junk/20260924";
+
+  it("moves to the new day's folder and leaves yesterday's as an ordinary row", () => {
+    const model = scratchModel();
+    const yesterday = model.scratchWorkspaceId;
+    model.addAgent(yesterday, AG_A, codex);
+    const day = localWorkspace(TOMORROW);
+    expect(model.adoptScratchDay(day)).toBe(true);
+    const snapshot = model.snapshot();
+    expect(snapshot.scratchWorkspaceId).toBe(day.id);
+    const old = snapshot.workspaces.find((w) => w.id === yesterday);
+    // Untouched: the same Workspace, its Agent still there and still
+    // selected, and now named by its folder like any other row.
+    expect(old?.label).toBe("20260923");
+    expect(old?.agents.map((agent) => agent.id)).toEqual([AG_A]);
+    expect(snapshot.selection.context).toEqual({
+      kind: "agent",
+      agentId: AG_A,
+    });
+    expect(snapshot.workspaces.find((w) => w.id === day.id)?.label).toBe(
+      "Scratch",
+    );
+  });
+
+  it("adopts an already-open Workspace for the day's folder instead of a second one", () => {
+    const model = modelWith([WS_A, TOMORROW]);
+    expect(model.adoptScratchDay(localWorkspace(TOMORROW))).toBe(true);
+    expect(model.scratchWorkspaceId).toBe(WS_A);
+    expect(model.workspaces).toHaveLength(2);
+  });
+
+  it("is a no-op when the day has not changed", () => {
+    const model = scratchModel();
+    const before = model.snapshot().revision;
+    expect(model.adoptScratchDay(localWorkspace(SCRATCH_PATH))).toBe(false);
+    expect(model.snapshot().revision).toBe(before);
+    expect(model.workspaces).toHaveLength(1);
+  });
+
+  it("refuses to close today's Scratch, and closes yesterday's like any row", () => {
+    const model = scratchModel();
+    const yesterday = model.scratchWorkspaceId;
+    expect(
+      codeOf(() => {
+        model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION);
+      }),
+    ).toBe(DomainErrorCode.ScratchCannotClose);
+    model.adoptScratchDay(localWorkspace(TOMORROW));
+    model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION);
+    expect(model.workspace(yesterday)).toBeUndefined();
+  });
+
+  it("lets Agents be created in Scratch", () => {
+    const model = scratchModel();
+    model.addAgent(model.scratchWorkspaceId, AG_A, codex);
+    expect(model.snapshot().workspaces[0].agents.map((a) => a.id)).toEqual([
+      AG_A,
     ]);
   });
 });
@@ -398,7 +491,7 @@ describe("revisions", () => {
 
 describe("sidebar", () => {
   it("clamps the width to the supported range", () => {
-    const model = new AppModel();
+    const model = scratchModel();
     expect(codeOf(() => model.setSidebarWidth(100))).toBe(
       DomainErrorCode.InvalidSidebarWidth,
     );
@@ -409,11 +502,11 @@ describe("sidebar", () => {
   it("keeps a workspace's agents in the projection, always", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
-    expect(model.snapshot().workspaces[0].agents.map((a) => a.id)).toEqual([
+    expect(model.snapshot().workspaces[1].agents.map((a) => a.id)).toEqual([
       AG_A,
     ]);
     model.agentExited(AG_A);
-    expect(model.snapshot().workspaces[0].agents).toEqual([]);
+    expect(model.snapshot().workspaces[1].agents).toEqual([]);
   });
 });
 
@@ -428,7 +521,7 @@ describe("closing", () => {
     ).toBe(DomainErrorCode.WorkspaceHasLiveAgents);
   });
 
-  it("moves the selection to the next workspace, then to Global", () => {
+  it("moves the selection to the next workspace, then to Scratch", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
@@ -438,7 +531,7 @@ describe("closing", () => {
     });
     model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION);
     expect(model.selection).toEqual({
-      context: { kind: "global" },
+      context: scratchOf(model),
       presentation: "full",
     });
   });
@@ -450,9 +543,10 @@ describe("closing", () => {
       WS_A,
       CLEAN_CLOSE_INSPECTION,
     );
-    expect(model.workspaces).toHaveLength(1);
+    expect(model.workspaces).toHaveLength(2);
     model.rollbackWorkspaceClose(rollback);
     expect(model.workspaces.map((workspace) => workspace.id)).toEqual([
+      model.scratchWorkspaceId,
       WS_A,
       WS_B,
     ]);
@@ -746,7 +840,7 @@ describe("a refusal about one Agent", () => {
 
 describe("arranging the rows", () => {
   function withTwoAgents(): AppModel {
-    const model = new AppModel();
+    const model = scratchModel();
     model.addWorkspace(
       new Workspace(
         WS_A,
@@ -763,14 +857,14 @@ describe("arranging the rows", () => {
     // The order is read as a permutation request over the grouping
     // (`orderWorkspaces`), so there is no list here that produces a sidebar
     // that is wrong — and therefore nothing to refuse.
-    const model = new AppModel();
+    const model = scratchModel();
     expect(model.workspaceOrder).toEqual([]);
     expect(model.setWorkspaceOrder([WS_B, WS_A])).toBe(true);
     expect(model.workspaceOrder).toEqual([WS_B, WS_A]);
   });
 
   it("publishes nothing when the order is the one it already had", () => {
-    const model = new AppModel();
+    const model = scratchModel();
     model.setWorkspaceOrder([WS_B, WS_A]);
     const before = model.snapshot().revision;
     expect(model.setWorkspaceOrder([WS_B, WS_A])).toBe(false);
@@ -781,7 +875,7 @@ describe("arranging the rows", () => {
     const model = withTwoAgents();
     expect(model.setAgentOrder(WS_A, [AG_B, AG_A])).toBe(true);
     expect(
-      model.snapshot().workspaces[0].agents.map((agent) => agent.id),
+      model.snapshot().workspaces[1].agents.map((agent) => agent.id),
     ).toEqual([AG_B, AG_A]);
     expect(model.setAgentOrder(WS_A, [AG_B, AG_A])).toBe(false);
   });
@@ -800,7 +894,7 @@ describe("arranging the rows", () => {
       DomainErrorCode.UnknownWorkspace,
     );
     expect(
-      model.snapshot().workspaces[0].agents.map((agent) => agent.id),
+      model.snapshot().workspaces[1].agents.map((agent) => agent.id),
     ).toEqual([AG_A, AG_B]);
   });
 });

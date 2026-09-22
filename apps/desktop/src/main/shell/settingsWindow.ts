@@ -191,6 +191,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			chords: { ...config.keybindings.chords },
 		},
 		workspaceSources: config.workspaceSources.map(toWireSource),
+		scratch: { daily: config.scratch.daily },
 		agentActions: config.agentActions.map((action) => ({
 			trigger: action.trigger,
 			id: action.id,
@@ -311,6 +312,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			chords: { ...wire.keybindings.chords },
 		},
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
+		scratch: { daily: wire.scratch.daily },
 		// The order is the order the window shows them in — the tree is where a
 		// person arranges these — so the position in this list is the `order`
 		// that is written down, rather than a number the page has to carry.

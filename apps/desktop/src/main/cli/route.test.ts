@@ -37,6 +37,24 @@ describe("where an open lands", () => {
 		});
 	});
 
+	it("keeps a pane in yesterday's Scratch on yesterday's folder after midnight", () => {
+		// Scratch is a Workspace, so a pane opened in it names it by id. At
+		// midnight that Workspace becomes an ordinary row and keeps its id, so
+		// an open from the pane still goes back to it rather than to the new
+		// day's folder, which is only where opens with no origin go.
+		const open = [
+			workspace("yesterday", "/data/junk/20260922", "local"),
+			workspace("today", "/data/junk/20260923", "local"),
+		];
+		expect(
+			routeOpen("/elsewhere/f.ts", "local", open, "local\tyesterday\tnone"),
+		).toEqual({ kind: "workspace", reason: "origin", workspace: open[0] });
+		expect(routeOpen("/elsewhere/f.ts", "local", open)).toEqual({
+			kind: "scratch",
+			reason: "no-containing-workspace",
+		});
+	});
+
 	it("goes to Scratch when no open Workspace contains the path", () => {
 		const open = routeOpen("/elsewhere/notes.md", "local", [
 			workspace("alpha", "/work/alpha", "local"),

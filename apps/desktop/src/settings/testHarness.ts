@@ -40,6 +40,7 @@ export function testConfig(
   return {
     version: 1,
     general: { importLoginEnvironment: true },
+    scratch: { daily: "~/junk/YYYYMMDD" },
     runtimes: {
       shell: "/bin/zsh",
       git: "git",

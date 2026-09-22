@@ -51,14 +51,28 @@ const SNAPSHOT = {
 	revision: 1,
 	readiness: "ready",
 	editorHost: { status: "ready" },
-	layout: { kind: "workbench", editorKey: "global-editor" },
-	selection: { context: { kind: "global" }, presentation: "full" },
+	layout: { kind: "workbench", editorKey: "workspace-editor:s-0" },
+	// On Scratch — today's daily folder, a workspace with nothing in it.
+	selection: {
+		context: { kind: "workspace", workspaceId: "s-0" },
+		presentation: "full",
+	},
+	scratchWorkspaceId: "s-0",
 	sidebar: { width: 248 },
 	splitRatio: 0.55,
 	// One workspace with one Agent, unread, so that every cycle — including the
 	// one narrowed to unread Agents — has somewhere to go and a chord that was
 	// recognised is visibly distinct from one that was not.
 	workspaces: [
+		{
+			id: "s-0",
+			label: "Scratch",
+			root: "/workspaces/junk/20260923",
+			selectedPath: "/workspaces/junk/20260923",
+			state: { kind: "available" },
+			canCreateAgent: true,
+			agents: [],
+		},
 		{
 			id: "w-1",
 			label: "widget",

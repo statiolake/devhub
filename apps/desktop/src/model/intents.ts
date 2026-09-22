@@ -327,6 +327,20 @@ export type UserIntent =
    */
   | { readonly type: "toggle_scratch" }
   /**
+   * Today's daily folder is Scratch from now on.
+   *
+   * Raised by main, never by the page: at launch and at each local midnight,
+   * once the folder has been made and resolved. It carries a fresh id for the
+   * folder's Workspace, used only when no open Workspace is that folder
+   * already. See `AppModel.adoptScratchDay`.
+   */
+  | {
+      readonly type: "adopt_scratch_day";
+      readonly workspaceId: WorkspaceId;
+      readonly location: WorkspaceLocation;
+      readonly selectedPath: DisplayPath;
+    }
+  /**
    * Where the top-level rows go, as the person just arranged them.
    *
    * The whole list afterwards, rather than "this one moved there", so the model

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppCoordinator, type Effect } from "./coordinator.js";
+import { SCRATCH_PATH, scratchModel } from "./testWorkspaces.js";
 import {
   AgentProfile,
   agentId,
@@ -44,7 +45,7 @@ const codex = AgentProfile.create(
  * coordinator emits and hands back exactly the completion each one asked for.
  */
 class Driver {
-  readonly coordinator = new AppCoordinator();
+  readonly coordinator = new AppCoordinator(scratchModel());
   private nextId = 0;
   private cursor = 0;
 
@@ -209,7 +210,7 @@ describe("dispatch", () => {
   });
 
   it("replays the same result for a repeated intent id", () => {
-    const coordinator = new AppCoordinator();
+    const coordinator = new AppCoordinator(scratchModel());
     const id = intentId("550e8400-e29b-41d4-a716-4466554400f0");
     const op = operationId("550e8400-e29b-41d4-a716-4466554400f1");
     const intent: UserIntent = { type: "resize_sidebar", width: 300 };
@@ -227,7 +228,7 @@ describe("dispatch", () => {
   });
 
   it("refuses a different intent under a used intent id", () => {
-    const coordinator = new AppCoordinator();
+    const coordinator = new AppCoordinator(scratchModel());
     const id = intentId("550e8400-e29b-41d4-a716-4466554400f0");
     const op = operationId("550e8400-e29b-41d4-a716-4466554400f1");
     coordinator.dispatchUser({
@@ -247,7 +248,7 @@ describe("dispatch", () => {
   });
 
   it("refuses an intent with no trusted operation identity", () => {
-    const coordinator = new AppCoordinator();
+    const coordinator = new AppCoordinator(scratchModel());
     expect(
       errorCode(() =>
         coordinator.dispatchUser({
@@ -271,6 +272,7 @@ describe("opening a folder", () => {
     driver.settle();
     const snapshot = driver.coordinator.snapshot();
     expect(snapshot.workspaces.map((workspace) => workspace.root)).toEqual([
+      SCRATCH_PATH,
       "/dev/project",
     ]);
   });
@@ -280,12 +282,15 @@ describe("opening a folder", () => {
     driver.openFolder("/dev/project");
     driver.dispatch({
       type: "select_context",
-      context: { kind: "global" },
+      context: {
+        kind: "workspace",
+        workspaceId: driver.coordinator.model.scratchWorkspaceId,
+      },
       presentation: "full",
     });
     driver.settle();
     driver.openFolder("/dev/project");
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
     expect(driver.coordinator.snapshot().selection.context).toEqual({
       kind: "workspace",
       workspaceId: WS_A,
@@ -337,7 +342,7 @@ describe("opening a folder on another machine", () => {
       }),
     });
     driver.settle();
-    const [workspace] = driver.coordinator.snapshot().workspaces;
+    const [, workspace] = driver.coordinator.snapshot().workspaces;
     expect(workspace?.location).toEqual({
       kind: "ssh",
       host: "build.example.com",
@@ -383,7 +388,7 @@ describe("opening a folder on another machine", () => {
       }
       driver.settle();
     });
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(3);
   });
 });
 
@@ -462,7 +467,7 @@ describe("closing a workspace", () => {
     driver.openFolder("/dev/project");
     driver.dispatch(closeIntent());
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 
   it("asks everything before it does anything", () => {
@@ -538,7 +543,7 @@ describe("closing a workspace", () => {
       confirmationId: CONFIRM,
     });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 
   for (const worktree of ["remove", "remove-anyway"] as const) {
@@ -565,7 +570,7 @@ describe("closing a workspace", () => {
       expect(required?.kind).toBe("confirmation_required");
       // Cancel is this question never being answered: no step has run.
       expect(driver.drainEffects()).toHaveLength(0);
-      expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+      expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
 
       driver.dispatch({
         type: "confirm_close_workspace",
@@ -620,7 +625,7 @@ describe("closing a workspace", () => {
     // Cancel is the sheet closing itself: the confirmation is simply never
     // answered. The Workspace is exactly where it was, and no step has run.
     expect(driver.drainEffects()).toHaveLength(0);
-    const workspace = driver.coordinator.snapshot().workspaces[0];
+    const workspace = driver.coordinator.snapshot().workspaces[1];
     expect(workspace).toBeDefined();
     expect(workspace.close).toEqual({ kind: "idle" });
   });
@@ -638,11 +643,11 @@ describe("closing a workspace", () => {
       presentation: "full",
     });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(1);
 
     driver.dispatch(closeIntent());
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 
   it("closes a workspace whose Agent was killed from outside", () => {
@@ -669,7 +674,7 @@ describe("closing a workspace", () => {
       result: { kind: "closed" },
     });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 
   it("refuses a second close while one is running", () => {
@@ -693,7 +698,7 @@ describe("closing a workspace", () => {
       },
     });
 
-    const workspace = driver.coordinator.snapshot().workspaces[0];
+    const workspace = driver.coordinator.snapshot().workspaces[1];
     expect(workspace).toBeDefined();
     expect(workspace.close).toEqual({
       kind: "failed",
@@ -727,11 +732,11 @@ describe("closing a workspace", () => {
       },
     });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
 
     driver.dispatch(closeIntent());
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 
   it("clears a previous failure when the next close starts", () => {
@@ -749,7 +754,7 @@ describe("closing a workspace", () => {
     driver.settle();
     driver.dispatch(closeIntent());
     driver.answer(driver.drainEffects()[0]);
-    expect(driver.coordinator.snapshot().workspaces[0].close).toEqual({
+    expect(driver.coordinator.snapshot().workspaces[1].close).toEqual({
       kind: "running",
     });
   });
@@ -779,7 +784,7 @@ describe("launching an agent", () => {
     });
     driver.settle();
     const snapshot = driver.coordinator.snapshot();
-    expect(snapshot.workspaces[0].agents.map((agent) => agent.id)).toEqual([
+    expect(snapshot.workspaces[1].agents.map((agent) => agent.id)).toEqual([
       AG_A,
     ]);
     expect(snapshot.selection).toEqual({
@@ -812,7 +817,7 @@ describe("launching an agent", () => {
         }),
       ),
     ).toBe(AppErrorCode.PortUnavailable);
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 });
 
@@ -865,7 +870,7 @@ describe("stopping an agent", () => {
     expect(effects.map((effect) => effect.kind)).toContain("stop_agent");
     for (const effect of effects) driver.answer(effect);
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 
   it("asks before stopping an Agent that is working", () => {
@@ -882,7 +887,7 @@ describe("stopping an agent", () => {
     });
     expect(required.kind).toBe("confirmation_required");
     // Cancelling is not answering: the Agent is still there.
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(1);
   });
 
   it("asks about an Agent nobody has read, because not knowing is not idle", () => {
@@ -916,7 +921,7 @@ describe("stopping an agent", () => {
 
     driver.dispatch({ type: "confirm_stop_agent", confirmationId: CONFIRM });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 
   it("keeps a failed stop retryable", () => {
@@ -950,7 +955,7 @@ describe("stopping an agent", () => {
       agentId: AG_A,
       result: { kind: "failed", diagnostic: "cleanup_failed" },
     });
-    const agent = driver.coordinator.snapshot().workspaces[0].agents[0];
+    const agent = driver.coordinator.snapshot().workspaces[1].agents[0];
     expect(agent.controlState).toEqual({
       kind: "stop-failed",
       diagnostic: "cleanup_failed",
@@ -1064,7 +1069,7 @@ describe("closing again after a close that failed", () => {
       },
     });
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces[0].close.kind).toBe(
+    expect(driver.coordinator.snapshot().workspaces[1].close.kind).toBe(
       "failed",
     );
 
@@ -1075,7 +1080,7 @@ describe("closing again after a close that failed", () => {
     expect(again.map((one) => one.kind)).toEqual(["inspect_workspace"]);
     for (const effect of again) driver.answer(effect);
     driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
   });
 });
 
@@ -1165,7 +1170,7 @@ describe("reconciling agents", () => {
         exited: [],
       },
     });
-    const agent = driver.coordinator.snapshot().workspaces[0].agents[0];
+    const agent = driver.coordinator.snapshot().workspaces[1].agents[0];
     expect(agent.status).toBe("working");
     expect(agent.runtimeHealth).toBe("healthy");
   });
@@ -1197,7 +1202,7 @@ describe("reconciling agents", () => {
           exited: [],
         },
       });
-      return driver.coordinator.snapshot().workspaces[0].agents[0].activity;
+      return driver.coordinator.snapshot().workspaces[1].agents[0].activity;
     };
     expect(said("Reading agentReconciler.ts")).toBe(
       "Reading agentReconciler.ts",
@@ -1215,7 +1220,7 @@ describe("reconciling agents", () => {
       token,
       reconciliation: { observations: [], exited: [AG_A] },
     });
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 
   it("announces a round it superseded, so nothing waits on the answer", () => {
@@ -1260,5 +1265,73 @@ describe("the window coming and going", () => {
 
     driver.dispatch({ type: "window_focus_changed", focused: true });
     expect(driver.coordinator.model.windowFocused).toBe(true);
+  });
+});
+
+describe("Scratch, today's daily folder", () => {
+  const TOMORROW = "/scratch-test/junk/20260924";
+  const WS_DAY = workspaceId("550e8400-e29b-41d4-a716-4466554400d0");
+
+  it("makes the adopted day's folder Scratch and persists it", () => {
+    const driver = new Driver();
+    const yesterday = driver.coordinator.model.scratchWorkspaceId;
+    const outcome = driver.dispatch({
+      type: "adopt_scratch_day",
+      workspaceId: WS_DAY,
+      location: workspaceLocation({ kind: "local", path: TOMORROW }),
+      selectedPath: displayPath(TOMORROW),
+    });
+    expect(outcome.kind).toBe("updated");
+    expect(driver.drainEffects().map((effect) => effect.kind)).toContain(
+      "persist_state",
+    );
+    const snapshot = driver.coordinator.snapshot();
+    expect(snapshot.scratchWorkspaceId).toBe(WS_DAY);
+    expect(snapshot.workspaces.map((workspace) => workspace.id)).toEqual([
+      yesterday,
+      WS_DAY,
+    ]);
+  });
+
+  it("does nothing when the day is the one Scratch already is", () => {
+    const driver = new Driver();
+    const outcome = driver.dispatch({
+      type: "adopt_scratch_day",
+      workspaceId: WS_DAY,
+      location: workspaceLocation({ kind: "local", path: SCRATCH_PATH }),
+      selectedPath: displayPath(SCRATCH_PATH),
+    });
+    expect(outcome.kind).toBe("noop");
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+  });
+
+  it("refuses to close today's Scratch", () => {
+    const driver = new Driver();
+    const scratch = driver.coordinator.model.scratchWorkspaceId;
+    let caught: unknown;
+    try {
+      driver.dispatch({
+        type: "request_close_workspace",
+        workspaceId: scratch,
+        worktree: "keep",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AppError);
+    expect((caught as AppError).domainCode).toBe(
+      DomainErrorCode.ScratchCannotClose,
+    );
+    expect(driver.coordinator.model.workspace(scratch)).toBeDefined();
+  });
+
+  it("answers a new window with no folder by selecting Scratch", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({ type: "new_window" });
+    expect(driver.coordinator.snapshot().selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: driver.coordinator.model.scratchWorkspaceId,
+    });
   });
 });

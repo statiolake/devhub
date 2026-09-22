@@ -1053,11 +1053,11 @@ terminal — as a conflict, on a host where nothing was in conflict.
 
 ### Scratch stays here
 
-Scratch is the *app's* terminal, not a folder's, and the app runs on this Mac.
+Scratch is today's daily folder on this Mac (see the README's Scratch section).
 A host's tmux gets workspace sessions and Agent sessions and nothing else. The
 bootstrap config still has to create some session — a tmux server with none
-exits — so on a machine that is not this one that anchor is retired as soon as
-the session replacing it exists, and only when its whole marker tuple proves it
-is DevHub's own. A workbench terminal on a host, started in a directory no
-Workspace there contains, is refused in words rather than given a Scratch that
-does not belong to that machine.
+exits — so on a machine that is not this one that anchor (named `scratch`, for
+historical reasons) is retired as soon as the session replacing it exists, and
+only when its whole marker tuple proves it is DevHub's own. A workbench
+terminal on a host, started in a directory no Workspace there contains, is
+refused in words rather than given a session on this Mac's Scratch.

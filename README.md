@@ -72,6 +72,40 @@ configured source directories rather than kept in a registry.
 Internally a Workspace knows its Git remote, so that a future "paste an issue
 URL and start working" flow can resolve which checkout to open.
 
+### Scratch
+
+Scratch is **today's daily folder**, and it is an ordinary Workspace: git or
+not, with a workbench and Agents like any other. The one thing that is special
+about it is which Workspace it is. The sidebar draws it as its fixed entry 1,
+called "Scratch", with the real folder in its tooltip; `Cmd+Q Shift+J` and
+`Cmd+Q 1` select it.
+
+- **Which folder.** `[scratch] daily` in `settings.toml`, a path in the same
+  date language a `workspace_sources` entry of type `date` takes: `YYYY`,
+  `YY`, `MM`, `DD`, `MMDD` (and `HH` `mm` `ss`, which a daily folder cannot
+  use), with `[text]` for text used as written. The default is
+  `~/junk/YYYYMMDD`. A relative path, an unclosed bracket, a token hiding in a
+  word (`summaries` has `mm` in it — write `[summaries]`), or a path that is
+  not exactly one folder per day (no date at all, or a time in it) is refused
+  as a settings failure (`invalid_scratch_daily` at `scratch.daily`), never
+  passed through. `~` is this Mac's home. The folder is made when it is first needed.
+- **Midnight.** At local midnight Scratch becomes the new day's folder,
+  immediately. Yesterday's stays open as an ordinary row named by its folder
+  (`20260922`), with its Agents and its workbench untouched, and closes like
+  any row. Nothing running is affected. The timer aims at the next local
+  midnight and is re-aimed on wake and when `[scratch] daily` changes; a launch
+  works Scratch out from the clock, so a state file from yesterday opens with
+  yesterday's row and today's Scratch.
+- **Closing.** Today's Scratch cannot be closed; it stops being Scratch at
+  midnight instead.
+- **Opens.** `devhub <file>` for a file no open Workspace contains,
+  `devhub -`, `devhub --wait`, and any request for an empty window go to
+  today's Scratch. A terminal or editor that belongs to a Workspace — yesterday's
+  Scratch included — keeps sending its opens to that Workspace.
+- **A folder that cannot be made** (a file in the way, no permission) leaves
+  Scratch as an unavailable row with Retry and Locate…, and the reason is
+  reported.
+
 ## Subsystems
 
 **Editor** — VS Code's desktop workbench, from the pinned `vscode/` submodule,
@@ -88,9 +122,13 @@ so scrollback, copy mode, resize and byte-for-byte input are the terminal's
 rather than an imitation of one. See
 [`src/main/agent/sessions.ts`](apps/desktop/src/main/agent/sessions.ts).
 
-**Terminal** — tmux. One persistent session per Workspace, plus a global
-Scratch session. The workbench's own integrated terminal is attached to that
-same session, so quitting DevHub does not end it.
+**Terminal** — tmux. One persistent session per Workspace — Scratch is one.
+The workbench's own integrated terminal is attached to that same session, so
+quitting DevHub does not end it. Each tmux server also has an anchor session
+named `scratch`, which the bootstrap creates with the server so it carries
+DevHub's marker from its first instant; it is not Scratch, nothing accounts
+for it, and the startup sweep reaps it like any other session nothing accounts
+for (which is also what happens to the old folderless Scratch's terminal).
 
 ## Architecture
 
@@ -150,7 +188,7 @@ devhub --version                     # DevHub, VS Code, and the commit
 
 Which Workspace a path lands in is decided by the path, never by which window
 was focused last: the open Workspace whose root is its nearest ancestor, and
-the Scratch editor when no open Workspace contains it. The extension options
+today's Scratch when no open Workspace contains it (see [Scratch](#scratch)). The extension options
 are VS Code's own `ExtensionManagementCLI`, run against the running app's
 extension management service, so the gallery (Open VSX), the allow-list and the
 built-in protections are the ones the app itself uses. An option `devhub` does
@@ -169,6 +207,13 @@ the file now, so the two layers were two answers to one question. A
 merged key by key, arrays replaced whole, exactly the rule that used to combine
 them at read time — and then renamed to `settings.local.toml.migrated`. An
 older `config.toml` is renamed into place the same way.
+
+```toml
+version = 2
+
+[scratch]
+daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
+```
 
 The workbench's own settings are VS Code's, on disk under the app's user-data
 directory. Runtime state lives separately under Application Support.

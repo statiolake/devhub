@@ -7,7 +7,7 @@ import {
 	resolveChord,
 	type KeyStroke,
 } from "./chords.js";
-import { AppModel } from "../../model/appModel.js";
+import { scratchModel } from "../../model/testWorkspaces.js";
 import {
 	AgentProfile,
 	agentId,
@@ -25,6 +25,7 @@ import type {
 	SurfacePresentationWire,
 	WorkspaceWire,
 } from "../../ipc/appShell.js";
+import { sidebarWorkspaces } from "../../ipc/appShell.js";
 
 function agent(
 	id: string,
@@ -85,31 +86,52 @@ function workspace(
 	};
 }
 
+/** Scratch: today's daily-folder Workspace, entry 1 of every sidebar. */
+const SCRATCH_ID = "scratch";
+const SCRATCH: NavigationContext = {
+	kind: "workspace",
+	workspaceId: SCRATCH_ID,
+};
+
+/**
+ * A snapshot with Scratch in it, first, as the model always has it — with no
+ * Agents unless `scratch` is given.
+ */
 function snapshotOf({
 	workspaces = [],
-	context = { kind: "global" } as NavigationContext,
+	scratch = workspace(SCRATCH_ID, [], { label: "Scratch" }),
+	context = SCRATCH,
 	presentation = "full" as SurfacePresentationWire,
 }: {
 	workspaces?: readonly WorkspaceWire[];
+	scratch?: WorkspaceWire;
 	context?: NavigationContext;
 	presentation?: SurfacePresentationWire;
 } = {}): AppSnapshotWire {
 	return {
 		editorHost: { status: "ready" },
-		layout: { kind: "workbench", editorKey: "global-editor" },
+		layout: {
+			kind: "workbench",
+			editorKey: `workspace-editor:${SCRATCH_ID}`,
+		},
 		readiness: "ready",
 		revision: 1,
 		schemaVersion: 1,
 		selection: { context, presentation },
+		scratchWorkspaceId: scratch.id,
 		sidebar: { width: 248, collapsed: false },
 		splitRatio: 0.55,
-		workspaces,
+		workspaces: [scratch, ...workspaces],
 	};
 }
 
 const one = workspace("one", ["a1"]);
 const two = workspace("two", ["b1", "b2"]);
 const empty = workspace("empty", []);
+
+function scratchOf(snapshot: AppSnapshotWire): NavigationContext {
+	return { kind: "workspace", workspaceId: snapshot.scratchWorkspaceId };
+}
 
 function run(commandId: CommandId, snapshot: AppSnapshotWire) {
 	return resolveChord(commandId, snapshot);
@@ -123,9 +145,7 @@ describe("the workspace cycle", () => {
 	const snapshot = snapshotOf({ workspaces: [one, two] });
 
 	it("counts Scratch as the first entry", () => {
-		expect(run("select_entry_1", snapshot)).toEqual(
-			selects({ kind: "global" }),
-		);
+		expect(run("select_entry_1", snapshot)).toEqual(selects(SCRATCH));
 		expect(run("select_entry_3", snapshot)).toEqual(
 			selects({ kind: "workspace", workspaceId: "two" }),
 		);
@@ -150,7 +170,7 @@ describe("the workspace cycle", () => {
 					context: { kind: "workspace", workspaceId: "two" },
 				}),
 			),
-		).toEqual(selects({ kind: "global" }));
+		).toEqual(selects(SCRATCH));
 	});
 
 	it("moves out of an Agent by the workspace that Agent is in", () => {
@@ -346,7 +366,7 @@ describe("the tab cycle", () => {
 					context: { kind: "agent", agentId: "b2" },
 				}),
 			),
-		).toEqual(selects({ kind: "global" }));
+		).toEqual(selects(SCRATCH));
 		expect(run("previous_tab", snapshot)).toEqual(
 			selects({ kind: "agent", agentId: "b2" }),
 		);
@@ -624,9 +644,7 @@ describe("the layout toggles", () => {
 				}),
 			),
 		).toEqual(selects({ kind: "workspace", workspaceId: "two" }));
-		expect(run("focus_editor", snapshotOf())).toEqual(
-			selects({ kind: "global" }),
-		);
+		expect(run("focus_editor", snapshotOf())).toEqual(selects(SCRATCH));
 	});
 });
 
@@ -651,8 +669,12 @@ describe("the commands that act on what is selected", () => {
 		});
 	});
 
-	it("does not add an Agent on Scratch, or where one cannot start", () => {
-		expect(run("add_agent", snapshotOf())).toBeUndefined();
+	it("adds an Agent on Scratch like anywhere, but not where one cannot start", () => {
+		// Scratch is a Workspace — today's daily folder — so it takes Agents.
+		expect(run("add_agent", snapshotOf())).toEqual({
+			kind: "open-agent-picker",
+			workspaceId: SCRATCH_ID,
+		});
 		expect(
 			run(
 				"add_agent",
@@ -700,8 +722,19 @@ describe("the commands that act on what is selected", () => {
 			kind: "close-workspace",
 			workspaceId: "two",
 		});
-		// Scratch is neither, so there is nothing to close.
+		// Today's Scratch does not close (it stops being Scratch at midnight
+		// instead), so standing on it there is nothing to close. Its Agents
+		// close like anybody's.
 		expect(run("close_selection", snapshotOf())).toBeUndefined();
+		expect(
+			run(
+				"close_selection",
+				snapshotOf({
+					scratch: workspace(SCRATCH_ID, ["s1"], { label: "Scratch" }),
+					context: { kind: "agent", agentId: "s1" },
+				}),
+			),
+		).toEqual({ kind: "close-agent", agentId: "s1" });
 	});
 
 	it("closes the workspace from either row, and nothing on Scratch", () => {
@@ -875,7 +908,7 @@ describe("the order every cycle walks", () => {
 	const MIDDLE = id("4000a4");
 
 	function projected() {
-		const model = new AppModel();
+		const model = scratchModel("/src/daily/20260923");
 		for (const [workspace, path] of [
 			[ZEBRA_WT, "/src/zebra_topic"],
 			[ALPHA, "/src/alpha"],
@@ -911,31 +944,26 @@ describe("the order every cycle walks", () => {
 	function sidebarRows(
 		snapshot: AppSnapshotWire,
 	): readonly NavigationContext[] {
-		return [
-			{ kind: "global" },
-			...snapshot.workspaces.flatMap((workspace): NavigationContext[] => [
-				{ kind: "workspace", workspaceId: workspace.id },
-				...workspace.agents.map(
-					(one): NavigationContext => ({ kind: "agent", agentId: one.id }),
-				),
-			]),
-		];
+		const { scratch, rows } = sidebarWorkspaces(snapshot);
+		return [scratch, ...rows].flatMap((workspace): NavigationContext[] => [
+			{ kind: "workspace", workspaceId: workspace.id },
+			...workspace.agents.map(
+				(one): NavigationContext => ({ kind: "agent", agentId: one.id }),
+			),
+		]);
 	}
 
 	it("groups worktrees under their repository, by name", () => {
-		expect(projected().workspaces.map((workspace) => workspace.label)).toEqual([
-			"alpha",
-			"middle",
-			"zebra",
-			"zebra_topic",
-		]);
+		expect(
+			sidebarWorkspaces(projected()).rows.map((workspace) => workspace.label),
+		).toEqual(["alpha", "middle", "zebra", "zebra_topic"]);
 	});
 
 	it("steps `next_tab` through the rows the sidebar draws", () => {
 		const snapshot = projected();
 		const rows = sidebarRows(snapshot);
 		const visited: NavigationContext[] = [];
-		let context: NavigationContext = { kind: "global" };
+		let context: NavigationContext = scratchOf(snapshot);
 		for (let step = 0; step < rows.length; step += 1) {
 			const effect = run("next_tab", {
 				...snapshot,
@@ -943,7 +971,9 @@ describe("the order every cycle walks", () => {
 			});
 			expect(effect?.kind).toBe("select-context");
 			context =
-				effect?.kind === "select-context" ? effect.context : { kind: "global" };
+				effect?.kind === "select-context"
+					? effect.context
+					: scratchOf(snapshot);
 			visited.push(context);
 		}
 		// Round the ring once, ending back where it started.
@@ -954,14 +984,16 @@ describe("the order every cycle walks", () => {
 		const snapshot = projected();
 		const agents = sidebarRows(snapshot).filter((row) => row.kind === "agent");
 		const visited: NavigationContext[] = [];
-		let context: NavigationContext = { kind: "global" };
+		let context: NavigationContext = scratchOf(snapshot);
 		for (let step = 0; step < agents.length; step += 1) {
 			const effect = run("next_agent", {
 				...snapshot,
 				selection: { context, presentation: "full" },
 			});
 			context =
-				effect?.kind === "select-context" ? effect.context : { kind: "global" };
+				effect?.kind === "select-context"
+					? effect.context
+					: scratchOf(snapshot);
 			visited.push(context);
 		}
 		expect(visited).toEqual(agents);
@@ -1032,8 +1064,8 @@ describe("moving the row that is selected", () => {
 	});
 
 	it("does nothing on Scratch, which is the first row by definition", () => {
-		expect(move({ kind: "global" }, "move_entry_down")).toBeUndefined();
-		expect(move({ kind: "global" }, "move_entry_up")).toBeUndefined();
+		expect(move(SCRATCH, "move_entry_down")).toBeUndefined();
+		expect(move(SCRATCH, "move_entry_up")).toBeUndefined();
 	});
 
 	it("is reached by Option and an arrow, on any keyboard", () => {

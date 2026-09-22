@@ -169,14 +169,10 @@ const upstreamOpenInBrowserWindow = (
 	const controller = appController();
 
 	if (!location || editorKey === undefined) {
-		// The one no-folder request that is not a request for Scratch is
-		// DevHub building Scratch itself: answering that with "here is the
-		// Scratch workbench" would be asking for the thing being created.
-		if (controller.isOpeningScratch()) {
-			console.log("[devhub] open: building the Scratch workbench");
-			return upstreamOpenInBrowserWindow.call(this, options);
-		}
-		console.log("[devhub] open: no folder — the Scratch editor");
+		// DevHub never builds a folderless workbench — Scratch is a folder, so
+		// its workbench comes through the branch below like any other — and so
+		// every request without one is a request for somewhere to scribble.
+		console.log("[devhub] open: no folder — Scratch");
 		const scratch = await controller.scratchWorkbench();
 		if (options.filesToOpen) {
 			controller.sendFilesToWorkbench(scratch, options.filesToOpen);

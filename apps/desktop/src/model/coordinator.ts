@@ -22,7 +22,6 @@ import {
   closeInspectionProjection,
   consolidateCloseInspection,
   DomainErrorCode,
-  GLOBAL_CONTEXT,
   locationKey,
   relocatedOnSameMachine,
   Workspace,
@@ -420,7 +419,7 @@ export class AppCoordinator {
   private readinessValue: AppReadiness = "starting";
   private detached: DetachReason | undefined;
 
-  constructor(readonly model: AppModel = new AppModel()) {
+  constructor(readonly model: AppModel) {
     this.emit({ kind: "snapshot", snapshot: model.snapshot() });
   }
 
@@ -565,6 +564,15 @@ export class AppCoordinator {
       case "toggle_scratch":
         this.model.toggleScratch();
         return this.transitionOutcome(beforeRevision, id);
+      case "adopt_scratch_day":
+        this.model.adoptScratchDay(
+          new Workspace(
+            intent.workspaceId,
+            intent.location,
+            intent.selectedPath,
+          ),
+        );
+        return this.transitionOutcome(beforeRevision, id);
       case "resize_split":
         this.model.setSplitRatio(intent.ratio);
         return this.transitionOutcome(beforeRevision, id);
@@ -592,9 +600,10 @@ export class AppCoordinator {
             id,
           );
         }
-        if (this.model.selection.context.kind !== "global") {
-          this.model.selectContext(GLOBAL_CONTEXT);
-        }
+        this.model.selectContext({
+          kind: "workspace",
+          workspaceId: this.model.scratchWorkspaceId,
+        });
         return this.transitionOutcome(beforeRevision, id);
       }
       case "retry_workspace":
@@ -1054,6 +1063,11 @@ export class AppCoordinator {
     if (!workspace) {
       throw new AppError(AppErrorCode.Domain).withDomain(
         DomainErrorCode.UnknownWorkspace,
+      );
+    }
+    if (workspaceId === this.model.scratchWorkspaceId) {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.ScratchCannotClose,
       );
     }
     if (workspace.close.kind === "running") {

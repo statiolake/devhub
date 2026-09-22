@@ -240,8 +240,6 @@ function contextWire(
   context: AppSnapshot["selection"]["context"],
 ): ContextWire {
   switch (context.kind) {
-    case "global":
-      return { kind: "global" };
     case "workspace":
       return { kind: "workspace", workspaceId: context.workspaceId };
     case "agent":
@@ -409,6 +407,7 @@ export function snapshotWire(
     },
     layout: layoutWire(snapshot.layout),
     workspaces,
+    scratchWorkspaceId: snapshot.scratchWorkspaceId,
     sidebar: {
       width: snapshot.sidebar.width,
       collapsed: snapshot.sidebar.collapsed,
@@ -798,12 +797,6 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       // plain click and every plain Return.
       const presentation = presentationFrom(wire.split);
       switch (context.kind) {
-        case "global":
-          return {
-            type: "select_context",
-            context: { kind: "global" },
-            presentation,
-          };
         case "workspace":
           return {
             type: "select_context",

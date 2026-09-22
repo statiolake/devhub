@@ -438,7 +438,7 @@ export interface AppearanceConfig {
 }
 
 export interface ScratchConfig {
-  /** A path with `%Y` `%m` `%d` (and `%%`), e.g. `~/junk/%Y%m%d`. */
+  /** A date path (`model/dateTemplate.ts`), e.g. `~/junk/YYYYMMDD`. */
   readonly daily: string;
 }
 

@@ -14,7 +14,6 @@ import {
   AVAILABLE,
   DomainError,
   DomainErrorCode,
-  GLOBAL_CONTEXT,
   isWorkspaceAvailable,
   locationKey,
   locationLabel,
@@ -52,6 +51,7 @@ import {
   nextTerminalZoomOffset,
   type TerminalZoomDirection,
 } from "./terminalZoom.js";
+import { SCRATCH_NAME } from "../ipc/windowTitles.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -202,6 +202,14 @@ export interface AppSnapshot {
   readonly schemaVersion: number;
   readonly revision: number;
   readonly selection: NavigationSelection;
+  /**
+   * The Workspace that is Scratch: today's daily folder.
+   *
+   * Always one of `workspaces`. It is an ordinary Workspace in every other
+   * respect — this id is the whole of what makes the Sidebar draw it as
+   * Scratch, and of what `Cmd+Q Shift+J` and entry 1 select.
+   */
+  readonly scratchWorkspaceId: WorkspaceId;
   /** What the content area holds for that selection. */
   readonly layout: SurfaceLayout;
   readonly workspaces: readonly WorkspaceSnapshot[];
@@ -279,10 +287,15 @@ export class AppModel {
   private readonly workspaceList: Workspace[] = [];
   private readonly repositoryMap = new Map<RepositoryId, Repository>();
   private readonly nextAgentOrdinals = new Map<string, number>();
-  private selectionValue: NavigationSelection = {
-    context: GLOBAL_CONTEXT,
-    presentation: "full",
-  };
+  /**
+   * Which Workspace is Scratch. See `AppSnapshot.scratchWorkspaceId`.
+   *
+   * A model is made *with* its Scratch, so there is never a moment when
+   * nothing is selectable and nothing is Scratch; `adoptScratchDay` is the
+   * only thing that moves it afterwards.
+   */
+  private scratchId: WorkspaceId;
+  private selectionValue: NavigationSelection;
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
   /**
    * Whether the Sidebar is shown as its icon rail.
@@ -358,11 +371,51 @@ export class AppModel {
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
+  constructor(scratch: Workspace) {
+    this.workspaceList.push(scratch);
+    this.scratchId = scratch.id;
+    this.selectionValue = {
+      context: { kind: "workspace", workspaceId: scratch.id },
+      presentation: "full",
+    };
+  }
+
+  get scratchWorkspaceId(): WorkspaceId {
+    return this.scratchId;
+  }
+
+  /**
+   * Today's daily folder becomes Scratch.
+   *
+   * `day` is a Workspace for the folder, with an id nobody has used. If a
+   * Workspace for that folder is already open it is the one that becomes
+   * Scratch and `day` is dropped; otherwise `day` is added. The Workspace
+   * that was Scratch before stays exactly as it is — its Agents, its editor,
+   * the selection if it is on it — and is from now on an ordinary row.
+   *
+   * Returns whether anything changed, so a launch reconcile on the same day
+   * is a no-op.
+   */
+  adoptScratchDay(day: Workspace): boolean {
+    const existing = this.workspaceList.find(
+      (workspace) => workspace.key === day.key,
+    );
+    if (existing === undefined) {
+      this.addWorkspace(day);
+    }
+    const id = existing?.id ?? day.id;
+    if (id === this.scratchId) return false;
+    this.scratchId = id;
+    this.bumpRevision();
+    return true;
+  }
+
   snapshot(): AppSnapshot {
     return {
       schemaVersion: APP_SNAPSHOT_SCHEMA_VERSION,
       revision: this.revision,
       selection: this.selectionValue,
+      scratchWorkspaceId: this.scratchId,
       layout: this.resolveLayout(this.selectionValue),
       workspaces: this.workspaceSnapshots(),
       sidebar: {
@@ -925,7 +978,7 @@ export class AppModel {
    * reads to know which half to leave the split to.
    *
    * Anything with no other half to be beside is recorded as `full` whatever
-   * the caller passed: Scratch, and a workspace with no Agents. That keeps the
+   * the caller passed: a workspace with no Agents. That keeps the
    * invariant a fact about the stored value rather than a rule every reader has
    * to remember — there is no selection carrying a `beside` nothing would
    * honour.
@@ -976,9 +1029,13 @@ export class AppModel {
    * remembered at all, and what it is after a restart.
    */
   toggleScratch(): void {
-    if (this.selectionValue.context.kind !== "global") {
+    const context = this.selectionValue.context;
+    if (
+      context.kind !== "workspace" ||
+      context.workspaceId !== this.scratchId
+    ) {
       this.scratchReturn = this.selectionValue;
-      this.selectContext(GLOBAL_CONTEXT);
+      this.selectContext({ kind: "workspace", workspaceId: this.scratchId });
       return;
     }
     const back = this.scratchReturn;
@@ -1006,7 +1063,6 @@ export class AppModel {
   /** Whether this context has an other half to be shown beside. */
   private canPresentBeside(context: NavigationContext): boolean {
     if (context.kind === "agent") return true;
-    if (context.kind === "global") return false;
     return this.pairedAgentIn(context.workspaceId) !== undefined;
   }
 
@@ -1045,10 +1101,6 @@ export class AppModel {
    */
   resolveLayout(selection: NavigationSelection): SurfaceLayout {
     const context = selection.context;
-    if (context.kind === "global") {
-      return { kind: "workbench", editor: { kind: "global-editor" } };
-    }
-
     if (context.kind === "workspace") {
       const workspace = this.workspace(context.workspaceId);
       if (!workspace || !showable(workspace)) {
@@ -1124,6 +1176,12 @@ export class AppModel {
     if (index < 0) {
       fail(DomainErrorCode.UnknownWorkspace);
     }
+    // Today's folder is what Scratch *is*; it stops being Scratch at midnight,
+    // not by being closed. Yesterday's is an ordinary Workspace and closes like
+    // one.
+    if (id === this.scratchId) {
+      fail(DomainErrorCode.ScratchCannotClose);
+    }
     if (this.workspaceList[index].agents.length > 0) {
       fail(DomainErrorCode.WorkspaceHasLiveAgents);
     }
@@ -1140,9 +1198,10 @@ export class AppModel {
     if (ownsSelection) {
       const successor = next ?? previous;
       this.selectionValue = {
-        context: successor
-          ? { kind: "workspace", workspaceId: successor }
-          : GLOBAL_CONTEXT,
+        context: {
+          kind: "workspace",
+          workspaceId: successor ?? this.scratchId,
+        },
         presentation: "full",
       };
     }
@@ -1293,10 +1352,7 @@ export class AppModel {
     if (context.kind === "workspace") {
       return this.workspace(context.workspaceId) !== undefined;
     }
-    if (context.kind === "agent") {
-      return this.agent(context.agentId) !== undefined;
-    }
-    return true;
+    return this.agent(context.agentId) !== undefined;
   }
 
   private ensureContextExists(context: NavigationContext): void {
@@ -1361,11 +1417,20 @@ export class AppModel {
   /**
    * The shortest label that tells two Workspaces apart: the folder name, and
    * only as much of the path above it as the collision needs.
+   *
+   * Scratch is called Scratch, and this is the one place that says so: the
+   * Sidebar's entry 1, the window title and the picker all read the label.
+   * It is called that only while it is today's folder — the same Workspace
+   * after midnight is labelled by its folder like any other row. It takes no
+   * part in the collisions either way, since nothing else is called Scratch.
    */
   private labelFor(workspace: Workspace): string {
+    if (workspace.id === this.scratchId) return SCRATCH_NAME;
     const basename = rootBasename(workspace.root);
     const collisions = this.workspaceList.filter(
-      (candidate) => rootBasename(candidate.root) === basename,
+      (candidate) =>
+        candidate.id !== this.scratchId &&
+        rootBasename(candidate.root) === basename,
     );
     if (collisions.length === 1) {
       return basename;

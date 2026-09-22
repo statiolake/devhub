@@ -481,6 +481,16 @@ export interface AppSnapshotWire {
 	readonly revision: number;
 	readonly schemaVersion: 1;
 	readonly selection: SelectionWire;
+	/**
+	 * The Workspace in `workspaces` that is Scratch: today's daily folder.
+	 *
+	 * Always present and always one of `workspaces`. It is an ordinary
+	 * Workspace — Agents, editor, close sheet and all — and this id is the
+	 * whole of what makes it the Sidebar's entry 1, drawn as "Scratch".
+	 * Yesterday's folder is an ordinary row. Selecting Scratch is selecting
+	 * this Workspace.
+	 */
+	readonly scratchWorkspaceId: string;
 	readonly sidebar: SidebarWire;
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
@@ -490,7 +500,7 @@ export interface AppSnapshotWire {
 /**
  * The content area, for this selection.
  *
- * A workbench alone for a Workspace or for Scratch; that workbench with an
+ * A workbench alone for a Workspace (Scratch is one); that workbench with an
  * Agent's pane beside it when an Agent is selected; nothing at all when the
  * Workspace cannot be shown, in which case the workspace's own `state` is
  * what says why.
@@ -567,7 +577,6 @@ export type ConfirmationPurposeWire =
 	 */
 	| { readonly kind: "agent_stop"; readonly agentId: string };
 export type ContextWire =
-	| { readonly kind: "global" }
 	| { readonly kind: "workspace"; readonly workspaceId: string }
 	| { readonly agentId: string; readonly kind: "agent" };
 export type EditorHostWire =
@@ -781,8 +790,6 @@ export type AppLoadState =
 
 export function contextKey(context: NavigationContext): string {
 	switch (context.kind) {
-		case "global":
-			return "global";
 		case "workspace":
 			return `workspace:${context.workspaceId}`;
 		case "agent":
@@ -800,6 +807,32 @@ export function workspaceById(
 	workspaceId: string,
 ): WorkspaceSnapshot | undefined {
 	return snapshot.workspaces.find((workspace) => workspace.id === workspaceId);
+}
+/**
+ * The Workspaces in the order the Sidebar lists them: Scratch first, as entry
+ * 1, then every other Workspace in the snapshot's order.
+ *
+ * The one statement of "Scratch is entry 1", shared by the page that draws
+ * the rows and the chord layer that counts them, so a digit and the row it
+ * names cannot come to disagree. A snapshot whose Scratch is not among its
+ * Workspaces is a broken snapshot, and it throws.
+ */
+export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
+	readonly workspaces: readonly W[];
+	readonly scratchWorkspaceId: string;
+}): { readonly scratch: W; readonly rows: readonly W[] } {
+	const scratch = snapshot.workspaces.find(
+		(workspace) => workspace.id === snapshot.scratchWorkspaceId,
+	);
+	if (scratch === undefined) {
+		throw new Error(
+			`Scratch ${snapshot.scratchWorkspaceId} is not one of the snapshot's workspaces`,
+		);
+	}
+	return {
+		scratch,
+		rows: snapshot.workspaces.filter((workspace) => workspace !== scratch),
+	};
 }
 export function workspaceForContext(
 	snapshot: AppSnapshot,

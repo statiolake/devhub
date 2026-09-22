@@ -50,9 +50,10 @@ import {
  *   is not the right place to decide otherwise on their behalf.
  *
  *   What this key covers is a different question with no such answer. DevHub
- *   sends a file no open Workspace contains to the Scratch workbench, and an
- *   empty window is a *trusted* workspace, so upstream's `requestOpenFilesTrust`
- *   asks — every time, about every loose file, in a modal inside the workbench
+ *   sends a file no open Workspace contains to Scratch's workbench, and a file
+ *   outside the window's folder is a loose file, so upstream's
+ *   `requestOpenFilesTrust` asks — every time, about every loose file, in a
+ *   modal inside the workbench
  *   view — before it will open one (`editorService.openEditors(..., {
  *   validateTrust: true })`). Upstream is right to ask when the target window
  *   was chosen for you by "whichever window you last looked at". DevHub chose

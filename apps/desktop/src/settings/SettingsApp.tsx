@@ -113,7 +113,7 @@ type Section = (typeof SECTIONS)[number];
 const SECTION_SCOPE: Readonly<
   Record<Section, readonly SettingsScopeKeyWire[]>
 > = {
-  General: ["general"],
+  General: ["general", "scratch"],
   Workspaces: ["workspaceSources"],
   Agents: ["agentProfiles"],
   Actions: ["agentActions"],

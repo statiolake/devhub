@@ -137,7 +137,10 @@ function parseOrigin(origin: string | undefined):
 	return { machine, workspaceId, agentId };
 }
 
-/** The workbench named by `scratch` in an origin. */
+/**
+ * The Workspace field of an origin written by the tmux anchor session, which
+ * belongs to no Workspace. Such a pane's opens go to Scratch.
+ */
 const SCRATCH_ORIGIN = "scratch";
 
 /**

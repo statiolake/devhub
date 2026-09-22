@@ -369,7 +369,6 @@ export function validateSchema(schemaVersion: unknown): void {
 const UUID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
-export const GLOBAL_TERMINAL_SURFACE_KEY = "global-terminal";
 export const WORKSPACE_TERMINAL_SURFACE_PREFIX = "workspace-terminal:";
 /**
  * An Agent's surface.
@@ -402,7 +401,6 @@ export function validateSurfaceKey(value: unknown): string {
 		throw new TerminalFailure("invalid_surface");
 	}
 	const valid =
-		value === GLOBAL_TERMINAL_SURFACE_KEY ||
 		(value.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX) &&
 			UUID_PATTERN.test(
 				value.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),

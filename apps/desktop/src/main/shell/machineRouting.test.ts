@@ -538,10 +538,11 @@ function twoMachineModel(
 	here: string,
 	there: string,
 ): { model: AppModel; machineOf: (id: WorkspaceId) => RuntimeId } {
-	const model = new AppModel();
 	const localWorkspace = workspaceId("00000000-0000-4000-8000-0000000000c1");
 	const remoteWorkspace = workspaceId("00000000-0000-4000-8000-0000000000c2");
-	model.addWorkspace(
+	// The local one is the model's Scratch — a model is made with one — which
+	// makes no difference to which machine its Agent is on.
+	const model = new AppModel(
 		new Workspace(
 			localWorkspace,
 			workspaceLocation({ kind: "local", path: "/projects/widget" }),

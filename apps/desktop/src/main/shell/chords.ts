@@ -49,6 +49,7 @@ import type {
 	SurfacePresentationWire,
 	WorkspaceWire,
 } from "../../ipc/appShell.js";
+import { sidebarWorkspaces } from "../../ipc/appShell.js";
 
 /**
  * One row of the effective table: the key that completes the chord, and the
@@ -194,21 +195,28 @@ export type ChordEffect =
 	| { readonly kind: "open-chord-help" }
 	| { readonly kind: "open-settings" };
 
-const GLOBAL: NavigationContext = { kind: "global" };
+/** Scratch, then the workspaces in sidebar order. See `sidebarWorkspaces`. */
+function orderedWorkspaces(
+	snapshot: AppSnapshotWire,
+): readonly WorkspaceWire[] {
+	const { scratch, rows } = sidebarWorkspaces(snapshot);
+	return [scratch, ...rows];
+}
+
+function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
+	return { kind: "workspace", workspaceId: snapshot.scratchWorkspaceId };
+}
 
 /** Scratch, then the workspaces in sidebar order. What a digit names. */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,
 ): readonly NavigationContext[] {
-	return [
-		GLOBAL,
-		...snapshot.workspaces.map(
-			(workspace): NavigationContext => ({
-				kind: "workspace",
-				workspaceId: workspace.id,
-			}),
-		),
-	];
+	return orderedWorkspaces(snapshot).map(
+		(workspace): NavigationContext => ({
+			kind: "workspace",
+			workspaceId: workspace.id,
+		}),
+	);
 }
 
 /**
@@ -220,20 +228,19 @@ function sidebarEntries(
  * at a boundary that means nothing to the person pressing it.
  */
 function everyAgent(snapshot: AppSnapshotWire): readonly AgentWire[] {
-	return snapshot.workspaces.flatMap((workspace) => workspace.agents);
+	return orderedWorkspaces(snapshot).flatMap((workspace) => workspace.agents);
 }
 
 /** Every row of the tree, of both kinds, in the order it is drawn. */
 function everyTab(snapshot: AppSnapshotWire): readonly NavigationContext[] {
-	return [
-		GLOBAL,
-		...snapshot.workspaces.flatMap((workspace): NavigationContext[] => [
+	return orderedWorkspaces(snapshot).flatMap(
+		(workspace): NavigationContext[] => [
 			{ kind: "workspace", workspaceId: workspace.id },
 			...workspace.agents.map(
 				(agent): NavigationContext => ({ kind: "agent", agentId: agent.id }),
 			),
-		]),
-	];
+		],
+	);
 }
 
 /** The workspace the selection is in, whether a row or one of its agents. */
@@ -241,7 +248,6 @@ function selectedWorkspace(
 	snapshot: AppSnapshotWire,
 ): WorkspaceWire | undefined {
 	const context = snapshot.selection.context;
-	if (context.kind === "global") return undefined;
 	return snapshot.workspaces.find((workspace) =>
 		context.kind === "workspace"
 			? workspace.id === context.workspaceId
@@ -266,7 +272,22 @@ function sameContext(
 	if (left.kind === "agent" && right.kind === "agent") {
 		return left.agentId === right.agentId;
 	}
-	return left.kind === "global" && right.kind === "global";
+	return false;
+}
+
+/**
+ * Close the workspace the selection is in — nothing, when that is Scratch,
+ * which does not close (it stops being Scratch at midnight instead). The same
+ * rule File ▸ Close Workspace reads in `menu.ts`.
+ */
+function closeWorkspace(
+	snapshot: AppSnapshotWire,
+	workspace: WorkspaceWire | undefined,
+): ChordEffect | undefined {
+	if (!workspace || workspace.id === snapshot.scratchWorkspaceId) {
+		return undefined;
+	}
+	return { kind: "close-workspace", workspaceId: workspace.id };
 }
 
 function wrap(index: number, length: number): number {
@@ -379,14 +400,10 @@ export function resolveChord(
 			// not. `close_workspace` is the same second half, under its own key.
 			return agent
 				? { kind: "close-agent", agentId: agent.id }
-				: workspace
-					? { kind: "close-workspace", workspaceId: workspace.id }
-					: undefined;
+				: closeWorkspace(snapshot, workspace);
 
 		case "close_workspace":
-			return workspace
-				? { kind: "close-workspace", workspaceId: workspace.id }
-				: undefined;
+			return closeWorkspace(snapshot, workspace);
 
 		case "refresh_repositories":
 			return { kind: "refresh-repositories" };
@@ -419,7 +436,7 @@ export function resolveChord(
 				kind: "select-context",
 				context: workspace
 					? { kind: "workspace", workspaceId: workspace.id }
-					: GLOBAL,
+					: scratchContext(snapshot),
 			};
 
 		case "swap_split_focus":
@@ -512,7 +529,9 @@ export function resolveChord(
 			// Agent is somewhere in this ring even though it is not a row of it.
 			return step(
 				entries,
-				workspace ? { kind: "workspace", workspaceId: workspace.id } : GLOBAL,
+				workspace
+					? { kind: "workspace", workspaceId: workspace.id }
+					: scratchContext(snapshot),
 				direction,
 			);
 		}
@@ -542,11 +561,17 @@ export function resolveChord(
 		case "move_entry_down": {
 			// The one command that changes where the rows *are* rather than which
 			// of them is selected, and it acts on whatever is selected — which is
-			// why it needs nothing: Scratch is not a row that moves, and a chord
-			// with nothing to act on is a no-op like every other.
+			// why it needs nothing: Scratch is not a row that moves (it is entry
+			// 1, always), and a chord with nothing to act on is a no-op like
+			// every other. Its Agents move like any Workspace's.
 			const direction = commandId === "move_entry_up" ? -1 : 1;
 			const context = snapshot.selection.context;
-			if (context.kind === "global") return undefined;
+			if (
+				context.kind === "workspace" &&
+				context.workspaceId === snapshot.scratchWorkspaceId
+			) {
+				return undefined;
+			}
 			if (context.kind === "agent") {
 				if (!workspace) return undefined;
 				const order = moveAgent(
@@ -559,7 +584,7 @@ export function resolveChord(
 					: { kind: "reorder-entries", workspaceId: workspace.id, order };
 			}
 			const order = moveWorkspace(
-				snapshot.workspaces,
+				sidebarWorkspaces(snapshot).rows,
 				(one) => one.groupKey,
 				context.workspaceId,
 				direction,

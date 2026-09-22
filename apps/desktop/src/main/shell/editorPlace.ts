@@ -12,8 +12,8 @@
  * both sides, `URI.file` one way and `uri.fsPath` the other, and a window whose
  * folder was on another machine had no path at all. `vscode-remote://` URIs
  * would have fallen through as "no folder", which is DevHub's signal for
- * Scratch — so an SSH Workspace's window would have been handed the Scratch
- * workbench.
+ * "somewhere to scribble" — so an SSH Workspace's window would have been
+ * handed Scratch's workbench.
  *
  * Nothing here touches VS Code: it works on the four fields of a URI, so it is
  * a rule about strings and is tested as one.
@@ -96,12 +96,3 @@ function tryLocation(
 		return undefined;
 	}
 }
-
-/**
- * The Scratch editor's key.
- *
- * Empty, because Scratch has no folder and never had one; `locationKey` starts
- * every real key with `/`, `ssh://` or `dev-container://`, so nothing can
- * collide with it.
- */
-export const SCRATCH_EDITOR_KEY = "";

@@ -159,8 +159,25 @@ import { isTerminalZoomOffset } from "./terminalZoom.js";
  * drop the key on its next save, and the person's zoom would go back to the
  * setting with nothing saying why — the same silent loss that made
  * `sidebar.order` a bump.
+ *
+ * Version 10 is Scratch becoming a Workspace. Scratch used to be a context of
+ * its own with no folder — `navigation.context.kind = "global"` — and a tmux
+ * session of its own, `{ kind: "scratch", session_name: "scratch" }`, in every
+ * socket transition's lists. Now it is today's daily folder, an ordinary
+ * Workspace record like any other, and which Workspace is Scratch is not
+ * written down at all: it is worked out at launch from `[scratch] daily` and
+ * the clock, so a file from yesterday loads with yesterday's folder as an
+ * ordinary row and today's as Scratch.
+ *
+ * So `navigation.context` may be absent, and absent means Scratch — which is
+ * what a fresh file says, since it has no Workspace to name. A version-9 file
+ * is migrated by `migrateToVersion10` before it is decoded: `"global"` becomes
+ * absent, and the `scratch` session records are dropped from the transition's
+ * lists. The old folderless editor had no folder and nothing here records its
+ * tabs, so nothing of it carries; the old `scratch` tmux session is no longer
+ * one DevHub owns.
  */
-export const STATE_SCHEMA_VERSION = 9;
+export const STATE_SCHEMA_VERSION = 10;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -297,7 +314,6 @@ export interface StateLoad {
 }
 
 export type NavigationContextRecord =
-  | { kind: "global" }
   | { kind: "workspace"; workspace_id: string }
   | { kind: "agent"; agent_id: string };
 
@@ -464,7 +480,11 @@ export interface WorkspaceStateRecord {
 }
 
 export interface NavigationState {
-  context: NavigationContextRecord;
+  /**
+   * What was selected, or absent for Scratch — whichever day's folder Scratch
+   * is when the file is read. See version 10.
+   */
+  context?: NavigationContextRecord;
 }
 
 /** Where the divider sits when an Agent is selected. */
@@ -488,9 +508,11 @@ export interface WindowState {
  * is counted and never named, so it can never become a kill target after a
  * crash — which is why this is a record of ownership rather than a listing.
  */
-export type OwnedSessionRecord =
-  | { kind: "scratch"; session_name: string }
-  | { kind: "workspace"; workspace_id: string; session_name: string };
+export type OwnedSessionRecord = {
+  kind: "workspace";
+  workspace_id: string;
+  session_name: string;
+};
 
 export type CleanupSessionStatus =
   | "pending"
@@ -583,7 +605,7 @@ export function freshState(): PersistedAppState {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
     session_machines: [],
-    navigation: { context: { kind: "global" } },
+    navigation: {},
     sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false, order: [] },
     split: { ratio: SPLIT_DEFAULT_RATIO },
     terminal: { zoom_offset: 0 },
@@ -903,10 +925,6 @@ function validateOwnedSession(session: OwnedSessionRecord): void {
   if (name.length === 0 || name.length > 256 || name.includes("\0")) {
     fail("STATE_INVALID");
   }
-  if (session.kind === "scratch") {
-    if (name !== "scratch") fail("STATE_INVALID");
-    return;
-  }
   validateUuid("the session's workspace_id", session.workspace_id);
   // A workspace session is named from a digest of its canonical root, which is
   // what lets the name be rebuilt from the snapshot after a crash.
@@ -921,21 +939,19 @@ function validateOwnedSession(session: OwnedSessionRecord): void {
 }
 
 /**
- * A required set is exactly one scratch session plus one per workspace, with
- * no duplicate names — the same shape the runtime rebuilds from the snapshot.
+ * A required set is exactly one session per workspace, with no duplicate
+ * names — the same shape the runtime rebuilds from the snapshot.
  */
 function validateRequiredSet(sessions: readonly OwnedSessionRecord[]): void {
   const names = new Set<string>();
-  let scratch = 0;
   const workspaces = new Set<string>();
   for (const session of sessions) {
     validateOwnedSession(session);
     if (names.has(session.session_name)) fail("STATE_INVALID");
     names.add(session.session_name);
-    if (session.kind === "scratch") scratch += 1;
-    else workspaces.add(session.workspace_id);
+    workspaces.add(session.workspace_id);
   }
-  if (scratch !== 1 || workspaces.size + 1 !== sessions.length) {
+  if (workspaces.size !== sessions.length) {
     fail("STATE_INVALID");
   }
 }
@@ -1039,11 +1055,7 @@ function validateTmux(
   // trusted to say which sessions DevHub owns.
   const required = requiredOf(transition);
   if (required) {
-    const named = new Set(
-      required
-        .filter((session) => session.kind === "workspace")
-        .map((session) => (session as { workspace_id: string }).workspace_id),
-    );
+    const named = new Set(required.map((session) => session.workspace_id));
     if (
       named.size !== workspaceIds.size ||
       [...named].some((id) => !workspaceIds.has(id))
@@ -1079,7 +1091,9 @@ export function validateState(state: PersistedAppState): void {
     }
   }
   decodeObject("navigation", state.navigation);
-  decodeObject("navigation.context", state.navigation.context);
+  if (state.navigation.context !== undefined) {
+    decodeObject("navigation.context", state.navigation.context);
+  }
   decodeObject("sidebar", state.sidebar);
   decodeObject("split", state.split);
   decodeObject("terminal", state.terminal);
@@ -1122,12 +1136,14 @@ export function validateState(state: PersistedAppState): void {
     validateUuid(`sidebar.order[${index}]`, id);
   }
   const context = state.navigation.context;
-  decodeMember("navigation.context.kind", context.kind, NAVIGATION_KINDS);
-  if (context.kind === "workspace") {
-    validateUuid("navigation.context.workspace_id", context.workspace_id);
-  }
-  if (context.kind === "agent") {
-    validateUuid("navigation.context.agent_id", context.agent_id);
+  if (context !== undefined) {
+    decodeMember("navigation.context.kind", context.kind, NAVIGATION_KINDS);
+    if (context.kind === "workspace") {
+      validateUuid("navigation.context.workspace_id", context.workspace_id);
+    }
+    if (context.kind === "agent") {
+      validateUuid("navigation.context.agent_id", context.agent_id);
+    }
   }
   validateTmux(state.tmux, workspaceIds);
 }
@@ -1209,6 +1225,13 @@ function launchProfile(
 export function hydrateModel(
   state: PersistedAppState,
   profiles: readonly AgentProfile[],
+  /**
+   * A Workspace for today's daily folder with an id nobody has used. If the
+   * file already has a Workspace for that folder, that one is Scratch and
+   * this is dropped. Every other Workspace — yesterday's folder included — is
+   * an ordinary row.
+   */
+  today: Workspace,
 ): AppModel {
   validateState(state);
   const profileById = new Map<string, AgentProfile>();
@@ -1220,17 +1243,30 @@ export function hydrateModel(
     profileById.set(profile.id, profile);
   }
 
-  const model = new AppModel();
-  for (const record of state.workspaces) {
+  const restored = state.workspaces.map((record) => {
     const where = `workspace ${record.workspace_id}`;
-    const { id, location, selected } = refuseRecord(where, () => ({
-      id: parseWorkspaceId(record.workspace_id),
-      location: workspaceLocation(locationFromRecord(record)),
-      selected: displayPath(record.selected_path),
-    }));
-    refuseRecord(where, () => {
-      model.addWorkspace(new Workspace(id, location, selected));
-    });
+    const workspace = refuseRecord(
+      where,
+      () =>
+        new Workspace(
+          parseWorkspaceId(record.workspace_id),
+          workspaceLocation(locationFromRecord(record)),
+          displayPath(record.selected_path),
+        ),
+    );
+    return { record, where, workspace };
+  });
+  const scratch =
+    restored.find(({ workspace }) => workspace.key === today.key)?.workspace ??
+    today;
+  const model = new AppModel(scratch);
+  for (const { record, where, workspace } of restored) {
+    const id = workspace.id;
+    if (workspace !== scratch) {
+      refuseRecord(where, () => {
+        model.addWorkspace(workspace);
+      });
+    }
     refuseRecord(`${where}'s lifecycle`, () => {
       switch (record.lifecycle.kind) {
         case "available":
@@ -1281,22 +1317,26 @@ export function hydrateModel(
     model.restoreTerminalZoom(state.terminal.zoom_offset);
   });
 
-  const navigation = restoreNavigation(state);
+  const navigation = restoreNavigation(state).context;
   refuseRecord("the selection", () => {
-    switch (navigation.context.kind) {
-      case "global":
-        model.selectContext({ kind: "global" });
-        break;
+    if (navigation === undefined) {
+      model.selectContext({
+        kind: "workspace",
+        workspaceId: model.scratchWorkspaceId,
+      });
+      return;
+    }
+    switch (navigation.kind) {
       case "workspace":
         model.selectContext({
           kind: "workspace",
-          workspaceId: parseWorkspaceId(navigation.context.workspace_id),
+          workspaceId: parseWorkspaceId(navigation.workspace_id),
         });
         break;
       case "agent":
         model.selectContext({
           kind: "agent",
-          agentId: parseAgentId(navigation.context.agent_id),
+          agentId: parseAgentId(navigation.agent_id),
         });
         break;
     }
@@ -1305,7 +1345,8 @@ export function hydrateModel(
 }
 
 export interface NavigationRestore {
-  readonly context: NavigationContextRecord;
+  /** Absent is Scratch. */
+  readonly context: NavigationContextRecord | undefined;
   readonly changed: boolean;
 }
 
@@ -1313,8 +1354,9 @@ export interface NavigationRestore {
  * Where the app opens when the thing it was last looking at is gone.
  *
  * A missing Agent falls to the next Agent in its Workspace, then to the
- * Workspace, then to Global — the same walk the model does when an Agent exits
- * while the app is running, so a restart lands where a live removal would have.
+ * Workspace, then to Scratch — the same walk the model does when an Agent
+ * exits while the app is running, so a restart lands where a live removal
+ * would have.
  */
 export function restoreNavigation(
   state: PersistedAppState,
@@ -1332,18 +1374,14 @@ export function restoreNavigation(
         workspace.agents.map((agent) => agent.agent_id),
       ),
     );
-  const global: NavigationRestore = {
-    context: { kind: "global" },
-    changed: true,
-  };
+  const scratch: NavigationRestore = { context: undefined, changed: true };
   const context = state.navigation.context;
+  if (context === undefined) return { ...scratch, changed: false };
   switch (context.kind) {
-    case "global":
-      return { ...global, changed: false };
     case "workspace":
       return workspaces.has(context.workspace_id)
         ? { context, changed: false }
-        : global;
+        : scratch;
     case "agent": {
       if (agents.has(context.agent_id)) {
         return { context, changed: false };
@@ -1352,7 +1390,7 @@ export function restoreNavigation(
         workspace.agents.some((agent) => agent.agent_id === context.agent_id),
       );
       if (!owner || !workspaces.has(owner.workspace_id)) {
-        return global;
+        return scratch;
       }
       const index = owner.agents.findIndex(
         (agent) => agent.agent_id === context.agent_id,
@@ -1401,7 +1439,7 @@ export function stateFromSnapshot(
         control_state: controlStateTo(agent.controlState),
       })),
     })),
-    navigation: { context: contextRecord(snapshot.selection.context) },
+    navigation: navigationRecord(snapshot),
     sidebar: {
       width: snapshot.sidebar.width,
       collapsed: snapshot.sidebar.collapsed,
@@ -1448,12 +1486,28 @@ export function applySnapshot(
   return next;
 }
 
+/**
+ * The selection, with Scratch itself written as absent so that a restart on
+ * another day comes back to *that* day's Scratch rather than to the folder
+ * that was Scratch when the file was written.
+ */
+function navigationRecord(
+  snapshot: import("./appModel.js").AppSnapshot,
+): NavigationState {
+  const context = snapshot.selection.context;
+  if (
+    context.kind === "workspace" &&
+    context.workspaceId === snapshot.scratchWorkspaceId
+  ) {
+    return {};
+  }
+  return { context: contextRecord(context) };
+}
+
 function contextRecord(
   context: import("./domain.js").NavigationContext,
 ): NavigationContextRecord {
   switch (context.kind) {
-    case "global":
-      return { kind: "global" };
     case "workspace":
       return { kind: "workspace", workspace_id: context.workspaceId };
     case "agent":
@@ -1664,8 +1718,8 @@ const LIFECYCLE_KINDS = [
   "closing_failed",
 ] as const;
 const WORKSPACE_LOCATION_KINDS = ["local", "ssh", "container"] as const;
-const NAVIGATION_KINDS = ["global", "workspace", "agent"] as const;
-const OWNED_SESSION_KINDS = ["scratch", "workspace"] as const;
+const NAVIGATION_KINDS = ["workspace", "agent"] as const;
+const OWNED_SESSION_KINDS = ["workspace"] as const;
 const CLEANUP_SESSION_STATUSES = [
   "pending",
   "completed",
@@ -1855,6 +1909,8 @@ function decodeWorkspaceRecord(
 
 function decodeNavigation(where: string, value: unknown): NavigationState {
   const object = decodeObject(where, value);
+  // Absent is Scratch. See version 10 above.
+  if (object["context"] === undefined) return {};
   const context = decodeObject(`${where}.context`, object["context"]);
   const kind = decodeMember(
     `${where}.context.kind`,
@@ -1862,8 +1918,6 @@ function decodeNavigation(where: string, value: unknown): NavigationState {
     NAVIGATION_KINDS,
   );
   switch (kind) {
-    case "global":
-      return { context: { kind } };
     case "workspace":
       return {
         context: {
@@ -1898,16 +1952,11 @@ function decodeOwnedSession(where: string, value: unknown): OwnedSessionRecord {
     `${where}.session_name`,
     object["session_name"],
   );
-  return kind === "scratch"
-    ? { kind, session_name: sessionName }
-    : {
-        kind,
-        workspace_id: decodeString(
-          `${where}.workspace_id`,
-          object["workspace_id"],
-        ),
-        session_name: sessionName,
-      };
+  return {
+    kind,
+    workspace_id: decodeString(`${where}.workspace_id`, object["workspace_id"]),
+    session_name: sessionName,
+  };
 }
 
 function decodeOwnedSessions(
@@ -2079,6 +2128,44 @@ function detailOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Scratch as a context and a tmux session of its own, taken out of a
+ * version-9 document before it is decoded. See version 10 above.
+ *
+ * On the raw document rather than in the decoders, so the decoders read
+ * exactly one shape — this one — and a version-10 file naming `"global"` or a
+ * `scratch` session is refused as the corrupt file it is.
+ */
+function migrateToVersion10(object: Record<string, unknown>): void {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const navigation = object["navigation"];
+  if (
+    isRecord(navigation) &&
+    isRecord(navigation["context"]) &&
+    navigation["context"]["kind"] === "global"
+  ) {
+    delete navigation["context"];
+  }
+  const tmux = object["tmux"];
+  const transition = isRecord(tmux) ? tmux["transition"] : undefined;
+  if (!isRecord(transition)) return;
+  const isScratch = (entry: unknown): boolean =>
+    isRecord(entry) &&
+    (entry["kind"] === "scratch" ||
+      (isRecord(entry["session"]) && entry["session"]["kind"] === "scratch"));
+  for (const key of [
+    "required",
+    "verified_old_sessions",
+    "sessions",
+  ] as const) {
+    const list = transition[key];
+    if (Array.isArray(list)) {
+      transition[key] = list.filter((entry) => !isScratch(entry));
+    }
+  }
+}
+
 function decodeState(bytes: Buffer): Decoded {
   let value: unknown;
   try {
@@ -2112,6 +2199,7 @@ function decodeState(bytes: Buffer): Decoded {
     return { kind: "newer_version" };
   }
   const migrated = version < STATE_SCHEMA_VERSION || legacy !== undefined;
+  if (version < 10) migrateToVersion10(object);
   const fresh = freshState();
   // A key this build reads and the file does not have is the default; a key
   // the file *does* have has to mean what this build reads it as.

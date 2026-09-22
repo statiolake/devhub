@@ -16,7 +16,6 @@
 
 import {
 	agentTarget,
-	scratchTarget,
 	socketName,
 	workspaceTarget,
 	type TerminalTarget,
@@ -94,10 +93,6 @@ export function createSurfaceResolver(
 	model: () => AppModel,
 ): (surfaceKey: string) => TerminalTarget | undefined {
 	return (surfaceKey) => {
-		// The Global context is not a Workspace and is on no machine of its
-		// own, so it is this one: DevHub is running here, and Scratch is the
-		// terminal of the app rather than of a folder.
-		if (surfaceKey === "global-terminal") return scratchTarget("local");
 		const agentPrefix = "agent:";
 		if (surfaceKey.startsWith(agentPrefix)) {
 			const raw = surfaceKey.slice(agentPrefix.length);
@@ -159,8 +154,8 @@ export interface TerminalWiring {
  * Build the per-machine terminal adapters and put them behind the surface keys
  * the App Shell already uses.
  *
- * `global-terminal` is this machine's scratch session; a workspace's terminal
- * is named from its canonical root on its own machine, which is what makes the
+ * A workspace's terminal — Scratch's included, Scratch being a Workspace — is
+ * named from its canonical root on its own machine, which is what makes the
  * session findable again after a restart — and what keeps two hosts with the
  * same path from being one terminal.
  */

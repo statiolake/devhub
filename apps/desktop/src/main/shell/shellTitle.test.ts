@@ -5,6 +5,8 @@ import { agentId, workspaceId } from "../../model/domain.js";
 
 const WORKSPACE = workspaceId("63752e9f-c93d-4d49-87f0-70f352eea8b0");
 const AGENT = agentId("5d7fd0e2-2a0e-4a2b-9f3e-9a1a0a0b1c2d");
+/** Today's daily folder, which the model labels Scratch. */
+const SCRATCH = workspaceId("0c1d2e3f-4a5b-4c6d-8e7f-8091a2b3c4d5");
 
 function facts(
 	overrides: Partial<ShellTitleFacts> & {
@@ -18,6 +20,7 @@ function facts(
 			...(overrides.selection ?? {}),
 		},
 		workspaces: [
+			{ id: SCRATCH, label: "Scratch", agents: [] },
 			{
 				id: WORKSPACE,
 				label: "widget",
@@ -50,7 +53,7 @@ describe("the shell window's title", () => {
 			shellTitleFor(
 				facts({
 					selection: {
-						context: { kind: "global" },
+						context: { kind: "workspace", workspaceId: SCRATCH },
 						presentation: "full",
 					},
 					editorElement: "notes.md",
@@ -93,7 +96,10 @@ describe("the shell window's title", () => {
 
 	it("never loses DevHub or the workspace, whatever is selected", () => {
 		const everySelection: ShellTitleFacts["selection"][] = [
-			{ context: { kind: "global" }, presentation: "full" },
+			{
+				context: { kind: "workspace", workspaceId: SCRATCH },
+				presentation: "full",
+			},
 			{
 				context: { kind: "workspace", workspaceId: WORKSPACE },
 				presentation: "full",

@@ -30,7 +30,7 @@ export enum DomainErrorCode {
   UnknownAgent = "UNKNOWN_AGENT",
   WorkspaceUnavailable = "WORKSPACE_UNAVAILABLE",
   WorkspaceNotClean = "WORKSPACE_NOT_CLEAN",
-  GlobalContextCannotClose = "GLOBAL_CONTEXT_CANNOT_CLOSE",
+  ScratchCannotClose = "SCRATCH_CANNOT_CLOSE",
   InvalidProfile = "INVALID_PROFILE",
   AgentWorkspaceMismatch = "AGENT_WORKSPACE_MISMATCH",
   WorkspaceNotUnavailable = "WORKSPACE_NOT_UNAVAILABLE",
@@ -1639,13 +1639,16 @@ export class Workspace {
   }
 }
 
-/** The left-pane Navigation Context, and the whole of the selection. */
+/**
+ * The left-pane Navigation Context, and the whole of the selection.
+ *
+ * Scratch is not a kind of its own. It is a Workspace — today's daily folder —
+ * and selecting it is selecting that Workspace; `AppModel.scratchWorkspaceId`
+ * says which one it is.
+ */
 export type NavigationContext =
-  | { readonly kind: "global" }
   | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
   | { readonly kind: "agent"; readonly agentId: AgentId };
-
-export const GLOBAL_CONTEXT: NavigationContext = { kind: "global" };
 
 export function sameContext(
   left: NavigationContext,
@@ -1660,29 +1663,28 @@ export function sameContext(
   if (left.kind === "agent" && right.kind === "agent") {
     return left.agentId === right.agentId;
   }
-  return true;
+  return false;
 }
 
 /**
  * Semantic DevHub surface identity. Provider and editor identifiers do not
  * cross this seam.
  *
- * There are three kinds, and there used to be five. A terminal is no longer a
+ * There are two kinds, and there used to be five. A terminal is no longer a
  * DevHub Surface — it is the workbench's integrated terminal, on the same tmux
- * session it always was — so `global-terminal` and `workspace-terminal` name
- * nothing the shell page can put on screen. The tmux runtime still owns those
- * sessions and still spells their keys that way on the wire it shares with the
- * Agents; what is gone is the idea that a person could *select* one.
+ * session it always was — so `workspace-terminal` names nothing the shell page
+ * can put on screen. The tmux runtime still owns those sessions and still
+ * spells their keys that way on the wire it shares with the Agents; what is
+ * gone is the idea that a person could *select* one. Scratch's editor was the
+ * third, `global-editor`, until Scratch became a Workspace with a workbench
+ * like any other.
  */
 export type SurfaceKey =
-  | { readonly kind: "global-editor" }
   | { readonly kind: "workspace-editor"; readonly workspaceId: WorkspaceId }
   | { readonly kind: "agent"; readonly agentId: AgentId };
 
 export function surfaceKeyName(key: SurfaceKey): string {
   switch (key.kind) {
-    case "global-editor":
-      return "global-editor";
     case "workspace-editor":
       return `workspace-editor:${key.workspaceId}`;
     case "agent":
@@ -1733,8 +1735,8 @@ export type SurfaceLayout =
  * is how "which half of the split am I in" is written down — as what is
  * selected, not as a second notion of focus.
  *
- * Scratch has no other half, and neither has a Workspace with no Agents, so
- * `full` is the only presentation either is ever recorded with — which
+ * A Workspace with no Agents has no other half, so `full` is the only
+ * presentation it is ever recorded with — which
  * `AppModel.selectContext` enforces rather than leaving a second value lying
  * around that nothing reads.
  */

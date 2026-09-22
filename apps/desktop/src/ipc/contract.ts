@@ -1052,7 +1052,7 @@ export interface AgentsBridge
 	 * because it had its own provider, its own framing and its own idea of a
 	 * screen; now an Agent is a tmux session like any other, so `agent:<uuid>`
 	 * is simply another surface key this API answers about, alongside
-	 * `global-terminal` and `workspace-terminal:<uuid>`. What the key names is
+	 * `workspace-terminal:<uuid>`. What the key names is
 	 * the resolver's business, not the page's.
 	 */
 	readonly terminal: DevhubTerminalApi;

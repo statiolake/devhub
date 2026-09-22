@@ -57,10 +57,10 @@ export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 };
 
 /**
- * What the Navigation Context is called when nothing is selected in it.
+ * What today's daily-folder Workspace is called while it is Scratch.
  *
- * The Scratch row and the shell window's title are two places that name the
- * same thing, so they name it from here rather than each spelling it.
+ * `AppModel`'s label is the one place that applies it; everything that shows
+ * a Workspace's name reads that label.
  */
 export const SCRATCH_NAME = "Scratch";
 

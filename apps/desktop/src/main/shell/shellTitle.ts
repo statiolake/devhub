@@ -33,7 +33,6 @@ import type {
 	WorkspaceSnapshot,
 } from "../../model/appModel.js";
 import {
-	SCRATCH_NAME,
 	shellWindowTitle,
 	type ShellTitleParts,
 } from "../../ipc/windowTitles.js";
@@ -89,10 +88,6 @@ export function shellTitleFor(facts: ShellTitleFacts): string {
 function titleParts(facts: ShellTitleFacts): ShellTitleParts {
 	const context = facts.selection.context;
 	switch (context.kind) {
-		case "global":
-			// Scratch is a Workspace as far as a title is concerned: it is where
-			// the work is happening, and it has a name.
-			return { element: facts.editorElement, workspace: SCRATCH_NAME };
 		case "workspace":
 			return {
 				element: facts.editorElement,

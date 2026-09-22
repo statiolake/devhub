@@ -213,21 +213,20 @@ export interface AgentTerminalTarget extends TerminalMachine {
 /**
  * Which terminal a request is about.
  *
- * `scratch` is the Global context's terminal; it has no workspace and its root
- * is the launch home.
+ * `scratch` is the tmux server's anchor: the session the bootstrap creates in
+ * the same breath as the server, so the server has DevHub's marker from its
+ * first instant (see `bootstrapConfig` in `tmux.ts`). It has no workspace and
+ * its root is the launch home. It is not Scratch any more — Scratch is a
+ * Workspace, today's daily folder, and its terminal is that Workspace's
+ * session — so nothing accounts for it and the startup sweep reaps it
+ * (`sessionSweep.ts`); the name is the one it had when it was.
  */
 export type TerminalTarget =
 	| ({ readonly kind: "scratch" } & TerminalMachine)
 	| ({ readonly kind: "workspace" } & WorkspaceTerminalTarget)
 	| ({ readonly kind: "agent" } & AgentTerminalTarget);
 
-/**
- * The Global context's terminal, on one machine.
- *
- * There is one per machine and not one altogether: a workbench opened on a
- * host starts its terminal in that host's home, nothing there is rooted, and
- * the session it falls to has to be a session on that host's tmux server.
- */
+/** The anchor session, on one machine. */
 export function scratchTarget(machine: RuntimeId): TerminalTarget {
 	return { kind: "scratch", machine };
 }

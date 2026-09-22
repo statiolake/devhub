@@ -9,7 +9,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { AppModel } from "../../model/appModel.js";
+import type { AppModel } from "../../model/appModel.js";
+import { scratchModel } from "../../model/testWorkspaces.js";
 import {
 	AgentProfile,
 	agentId,
@@ -34,7 +35,7 @@ const codex = AgentProfile.create(
 );
 
 function modelWithWorkspace(): AppModel {
-	const model = new AppModel();
+	const model = scratchModel();
 	model.addWorkspace(
 		new Workspace(
 			WS,
@@ -98,7 +99,7 @@ describe("a workspace that is closing", () => {
 
 describe("keys that name nothing", () => {
 	it("has no surface for a workspace that is gone", () => {
-		const resolve = resolverFor(new AppModel());
+		const resolve = resolverFor(scratchModel());
 		expect(resolve(`workspace-terminal:${WS}`)).toBeUndefined();
 	});
 
@@ -107,20 +108,24 @@ describe("keys that name nothing", () => {
 		expect(resolve("workspace-terminal:not-a-uuid")).toBeUndefined();
 	});
 
-	it("still answers the scratch terminal, which belongs to no workspace", () => {
+	it("has no Global terminal any more: Scratch's is its Workspace's", () => {
+		// Scratch is today's daily-folder Workspace, so its terminal is the
+		// ordinary `workspace-terminal:<id>` and the old folderless key names
+		// nothing.
 		const model = modelWithWorkspace();
-		model.beginWorkspaceClose(WS);
-		// The scratch session is not a workspace's, so nothing about a closing
-		// workspace may take it away.
-		expect(resolverFor(model)("global-terminal")).toMatchObject({
-			kind: "scratch",
+		expect(resolverFor(model)("global-terminal")).toBeUndefined();
+		expect(
+			resolverFor(model)(`workspace-terminal:${model.scratchWorkspaceId}`),
+		).toMatchObject({
+			kind: "workspace",
+			workspaceId: model.scratchWorkspaceId,
 		});
 	});
 });
 
 describe("a workspace whose folder is on another machine", () => {
 	function remoteModel(): AppModel {
-		const model = new AppModel();
+		const model = scratchModel();
 		model.addWorkspace(
 			new Workspace(
 				WS,

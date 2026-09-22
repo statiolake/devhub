@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { locationFromWorkspaceUri, SCRATCH_EDITOR_KEY } from "./editorPlace.js";
+import { locationFromWorkspaceUri } from "./editorPlace.js";
 import { locationKey } from "../../model/domain.js";
 
 /** As much of a `URI` as the rule reads, spelled out. */
@@ -96,15 +96,5 @@ describe("which place a window's folder URI names", () => {
 				uri({ scheme: "file", fsPath: "relative/path" }),
 			),
 		).toBeUndefined();
-	});
-
-	it("keeps Scratch's key out of every real one's way", () => {
-		expect(SCRATCH_EDITOR_KEY).toBe("");
-		for (const place of [
-			{ kind: "local" as const, path: "/dev/api" as never },
-			{ kind: "ssh" as const, host: "build" as never, path: "/srv" as never },
-		]) {
-			expect(locationKey(place)).not.toBe(SCRATCH_EDITOR_KEY);
-		}
 	});
 });

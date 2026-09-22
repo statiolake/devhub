@@ -57,6 +57,7 @@ import {
   type CommandNeeds,
 } from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
+import { scratchDailyProblem } from "../model/scratchDay";
 import {
   ACTION_VARIABLES,
   BUILT_IN_ACTIONS,
@@ -91,6 +92,7 @@ import {
   socketProblem,
   dateTemplateProblem,
   workspacePathProblem,
+  SCRATCH_DAILY_RULE,
   type MatchChoice,
 } from "./rules";
 
@@ -181,6 +183,29 @@ export function GeneralSection({
                 ...config,
                 appearance: { ...config.appearance, titleBar },
               });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
+        heading="Scratch"
+        note="Scratch is today's folder: an ordinary workspace, made when it is first needed. At midnight Scratch moves to the new day's folder and yesterday's stays in the sidebar under its own name."
+      >
+        <Row
+          label="Daily folder"
+          help="A path with the date tokens a dated workspace source takes: YYYY, MM, DD (or MMDD), and [text] for text used as written."
+        >
+          <TextField
+            label="Scratch daily folder"
+            value={config.scratch.daily}
+            placeholder="~/junk/YYYYMMDD"
+            mono
+            validate={(next) =>
+              scratchDailyProblem(next) ? SCRATCH_DAILY_RULE : undefined
+            }
+            onCommit={(daily) => {
+              update({ ...config, scratch: { daily } });
             }}
           />
         </Row>

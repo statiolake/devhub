@@ -130,7 +130,6 @@ import {
 	gitPlaceOf,
 	relocatedOnSameMachine,
 } from "../../model/domain.js";
-import { SCRATCH_EDITOR_KEY } from "./editorPlace.js";
 import { readSshHosts } from "./sshHosts.js";
 import {
 	operationId as parseOperationId,
@@ -350,6 +349,8 @@ import {
 import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
+import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
+import { MidnightTimer, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
@@ -375,9 +376,6 @@ const APP_ROOT = join(
 	"..",
 	"..",
 );
-
-/** The folder key a scratch (folderless) workbench view is filed under. */
-const SCRATCH_EDITOR = SCRATCH_EDITOR_KEY;
 
 /**
  * What a thrown thing said, for a detail line.
@@ -543,13 +541,12 @@ export class AppController {
 	 */
 	private readonly waitReturns = new WaitSelectionReturns();
 
-	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	/**
 	 * The workbench view showing each place, by that place's key.
 	 *
 	 * The key is `locationKey` — a local folder's canonical path, unchanged from
 	 * when that was the only kind, and `ssh://host/path` for a folder on another
-	 * machine — or `SCRATCH_EDITOR_KEY` for Scratch. A path stopped being enough
+	 * machine. A path stopped being enough
 	 * the moment two machines could both have `/src/api`: they are two
 	 * Workspaces, two windows and two rows, and one map entry would have made
 	 * them share a workbench.
@@ -908,6 +905,46 @@ export class AppController {
 		this.agentReconcilers.follow(this.agentHosts());
 		this.repositoryStatus.start();
 		this.watchForWake();
+		this.midnight.arm();
+	}
+
+	/**
+	 * Scratch moves to the new day's folder at each local midnight.
+	 *
+	 * Only the identity moves: yesterday's folder stays open as an ordinary
+	 * row with its Agents and its workbench exactly as they were. A wake and a
+	 * settings change re-aim the timer (see `MidnightTimer`); the launch itself
+	 * was reconciled before the model existed (`createAppController`).
+	 */
+	private readonly midnight = new MidnightTimer(() => {
+		// Not caught here: a failure nothing can recover from goes to the main
+		// process's root (`mainFailureRoot.ts`) like any other.
+		void this.adoptToday();
+	});
+
+	/** Make today's folder and make it Scratch. See `AppModel.adoptScratchDay`. */
+	private async adoptToday(): Promise<void> {
+		const today = await scratchDay(
+			scratchTemplate(this.config),
+			new Date(),
+			homedir(),
+		);
+		await this.dispatchAwaiting({
+			type: "adopt_scratch_day",
+			workspaceId: today.workspace.id,
+			location: today.workspace.location,
+			selectedPath: today.workspace.selectedPath,
+		});
+		if (today.failure !== undefined) {
+			await this.dispatchAwaiting({
+				type: "workspace_root_unreadable",
+				workspaceId: this.coordinator.model.scratchWorkspaceId,
+				reason: "root_inaccessible",
+			});
+			this.publishError(
+				withDetail(errorWireAt("workspace_unavailable"), today.failure),
+			);
+		}
 	}
 
 	/**
@@ -926,6 +963,9 @@ export class AppController {
 			for (const runtime of liveRuntimes()) runtime.resumed();
 			this.agentReconcilers.wake();
 			this.checkEditorHealth();
+			// A Mac asleep across midnight wakes to a timer aimed at a moment
+			// that has passed, or at one in a timezone it has left.
+			this.midnight.rearm();
 		};
 		electron.powerMonitor.on("resume", wake);
 		this.stopWatchingWake = (): void => {
@@ -1444,10 +1484,8 @@ export class AppController {
 	 *
 	 * What arrives is the directory VS Code started the terminal in, and there
 	 * is one rule for turning it into a session: it belongs to the Workspace
-	 * that contains it, and to Scratch when no Workspace does. The folderless
-	 * workbench is not a case of its own — VS Code starts its terminal in the
-	 * user's home, nothing is rooted there, and Scratch is what the rule gives,
-	 * which is the same `scratch` session it has been since before this existed.
+	 * that contains it, and to Scratch — today's daily-folder Workspace — when
+	 * no Workspace does.
 	 */
 	async terminalProfileFor(
 		machine: string,
@@ -1476,17 +1514,18 @@ export class AppController {
 		// that answers is that machine's and not whichever one is at hand.
 		const asking = runtimeMachine(machine);
 		if (!workspace) {
-			// Scratch is the app's own terminal and the app runs here, so there
-			// is no Scratch on a host to fall back to: a terminal over there in
-			// a directory no Workspace contains has no session, and saying so is
-			// the honest end of it. Creating one would put a `scratch` session on
-			// somebody's host that nothing will ever attach to.
+			// Scratch is a folder on this Mac, so there is no Scratch on a host
+			// to fall back to: a terminal over there in a directory no Workspace
+			// contains has no session, and saying so is the honest end of it.
 			if (asking !== "local") {
 				throw new Error(
 					`${root ?? "this directory"}${runtimeById(asking).where} is not inside any Workspace DevHub has open there, so there is no terminal session for it.`,
 				);
 			}
-			return wiring.service.surfaces.profile(scratchTarget(asking));
+			const scratch = this.scratchWorkspace();
+			return wiring.service.surfaces.profile(
+				workspaceTarget(asking, scratch.id, scratch.root),
+			);
 		}
 		return wiring.service.surfaces.profile(
 			workspaceTarget(asking, workspace.id, workspace.root),
@@ -1609,6 +1648,7 @@ export class AppController {
 					await runtime.transitionCloseOwnedSession(old, record, cancel);
 				}
 				const targets = [
+					// The server's anchor, not Scratch: see `TerminalTarget`.
 					...(machine === "local" ? [scratchTarget("local")] : []),
 					...this.coordinator.model.workspaces
 						.filter((workspace) => this.machineOf(workspace.id) === machine)
@@ -1765,8 +1805,8 @@ export class AppController {
 	/**
 	 * Every machine a Workspace is open on, this one always among them.
 	 *
-	 * This one always, because Scratch is on it and because DevHub itself runs
-	 * there: a sweep or a socket migration that skipped it would leave the
+	 * This one always, because the tmux anchor is on it and because DevHub
+	 * itself runs there: a sweep or a socket migration that skipped it would leave the
 	 * app's own sessions behind.
 	 */
 	private workspaceMachines(): readonly RuntimeId[] {
@@ -1829,6 +1869,7 @@ export class AppController {
 		await this.saveState();
 		this.agentReconcilers.stop();
 		this.stopWatchingWake?.();
+		this.midnight.stop();
 		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -2369,10 +2410,11 @@ export class AppController {
 	 * comes back every time the page reloads cannot be dismissed.
 	 */
 	noteStartupFailure(error: AppErrorWire): void {
-		this.startupFailure = error;
+		this.startupFailures.push(error);
 	}
 
-	private startupFailure: AppErrorWire | undefined;
+	/** Every one, in order: a second failure before the page must not hide the first. */
+	private startupFailures: AppErrorWire[] = [];
 
 	/**
 	 * Refuse an operation, and say why *where its subject is*.
@@ -3690,17 +3732,15 @@ export class AppController {
 	 * impossible. Everything after the wait is the same whenever it was asked.
 	 */
 	/**
-	 * The place a workbench key names, or nothing for Scratch.
+	 * The place a workbench key names, or nothing when no Workspace is there.
 	 *
 	 * Read out of the model rather than remembered beside the map, because the
 	 * model is where a Workspace's place lives and a second copy is a second
-	 * thing that can be stale. A key with no Workspace behind it any more is
-	 * Scratch's answer too — there is nothing to open a folder on.
+	 * thing that can be stale.
 	 */
 	private locationForEditorKey(
 		editorKey: string,
 	): WorkspaceLocation | undefined {
-		if (editorKey === SCRATCH_EDITOR) return undefined;
 		return this.coordinator.model.workspaces.find(
 			(workspace) => workspace.key === editorKey,
 		)?.location;
@@ -3966,13 +4006,10 @@ export class AppController {
 	 * it is not, and main now refuses to be told otherwise.
 	 */
 	private announceRestarting(folder: string, restarting: boolean): void {
-		const surfaceKey =
-			folder === SCRATCH_EDITOR
-				? "global-editor"
-				: this.coordinator.model.workspaces
-						.filter((workspace) => workspace.root === folder)
-						.map((workspace) => `workspace-editor:${workspace.id}`)
-						.at(0);
+		const surfaceKey = this.coordinator.model.workspaces
+			.filter((workspace) => workspace.root === folder)
+			.map((workspace) => `workspace-editor:${workspace.id}`)
+			.at(0);
 		if (restarting) this.restartingEditors.add(folder);
 		else this.restartingEditors.delete(folder);
 		if (surfaceKey === undefined) return;
@@ -4117,9 +4154,8 @@ export class AppController {
 	 * `syncEditorViews`'s list, which is the second half of "never retried by
 	 * a projection tick".
 	 *
-	 * Scratch has no row, so it is the one editor whose giving up really is
-	 * the application speaking, and it says so app-wide — once, because the
-	 * supervisor never reaches this verdict twice.
+	 * A folder no Workspace owns any more has no row, so its giving up is said
+	 * app-wide — once, because the supervisor never reaches this verdict twice.
 	 */
 	private reportEditorGaveUp(
 		folder: string,
@@ -4156,7 +4192,6 @@ export class AppController {
 
 	/** Whether this folder is one `syncEditorViews` would keep a workbench for. */
 	private wantsWorkbench(folder: string): boolean {
-		if (folder === SCRATCH_EDITOR) return true;
 		const workspace = this.coordinator.model.workspaces.find(
 			(candidate) => candidate.key === folder,
 		);
@@ -4181,7 +4216,7 @@ export class AppController {
 	 * Make the set of workbench views match the set of workspaces.
 	 *
 	 * One rule, in one place: every workspace DevHub knows about has a
-	 * workbench, plus the scratch one, and nothing else does. Creating them at
+	 * workbench — Scratch is one of them — and nothing else does. Creating them at
 	 * launch rather than on first selection is why nobody waits for a workbench
 	 * at the moment they ask to see it; destroying one only when its workspace
 	 * leaves the model is why a close that fails or is refused still has its
@@ -4236,12 +4271,9 @@ export class AppController {
 		// in is the projection and the answers the supervisor and the restart
 		// timers already hold, and what comes out is what to do. What is left
 		// here is the doing.
-		const wanted = [
-			SCRATCH_EDITOR,
-			...this.coordinator.model.workspaces
-				.filter((workspace) => workspace.state.kind !== "unavailable")
-				.map((workspace) => workspace.key),
-		];
+		const wanted = this.coordinator.model.workspaces
+			.filter((workspace) => workspace.state.kind !== "unavailable")
+			.map((workspace) => workspace.key);
 		const gaveUp = this.editorSupervisor.gaveUpKeys();
 		const plan = reconcileEditors({
 			wanted,
@@ -4269,9 +4301,7 @@ export class AppController {
 		// exactly "a person asked again", read off the model rather than hooked
 		// onto the retry intent — the model is where availability is decided,
 		// and a second copy of that decision is a second thing to disagree with
-		// it. Scratch never leaves `wanted`, so it never parks and never
-		// forgets itself: its giving up is terminal for the run, which is what
-		// an app-wide notice that cannot be retried should mean.
+		// it.
 		for (const folder of plan.park) this.editorSupervisor.park(folder);
 		for (const folder of plan.forget) this.editorSupervisor.forget(folder);
 
@@ -4311,7 +4341,6 @@ export class AppController {
 	}
 
 	private editorKeyForSurfaceKey(surfaceKey: string): string | undefined {
-		if (surfaceKey === "global-editor") return SCRATCH_EDITOR;
 		const prefix = "workspace-editor:";
 		if (!surfaceKey.startsWith(prefix)) return undefined;
 		const id = surfaceKey.slice(prefix.length) as WorkspaceId;
@@ -4374,7 +4403,6 @@ export class AppController {
 	editorSurfaceKeyForView(viewId: number): string | undefined {
 		for (const [key, id] of shellWindow().editorBindings()) {
 			if (id !== viewId) continue;
-			if (key === SCRATCH_EDITOR) return "global-editor";
 			const workspace = this.coordinator.model.workspaces.find(
 				(candidate) => candidate.key === key,
 			);
@@ -4515,31 +4543,30 @@ export class AppController {
 		});
 	}
 
-	/**
-	 * Whether the scratch workbench is being built right now.
-	 *
-	 * `openInBrowserWindow` asks this to tell its two no-folder callers apart:
-	 * DevHub building the scratch workbench (which must go through to upstream,
-	 * or it would ask itself for the workbench it is creating) and everything
-	 * else asking for an empty window (which is a request for scratch).
-	 */
-	isOpeningScratch(): boolean {
-		return this.editorOpens.has(SCRATCH_EDITOR);
+	/** Scratch: today's daily-folder Workspace. See `AppModel.scratchWorkspaceId`. */
+	private scratchWorkspace(): Workspace {
+		const model = this.coordinator.model;
+		const scratch = model.workspace(model.scratchWorkspaceId);
+		if (!scratch)
+			throw new Error("Scratch is not one of the model's workspaces");
+		return scratch;
 	}
 
 	/**
-	 * The scratch workbench, built if it is not there, revealed, and selected.
+	 * Scratch's workbench, built if it is not there, revealed, and selected.
 	 *
 	 * This is where every "new window with no folder" ends up: DevHub has one
-	 * window, and the empty workbench in it is the Scratch editor. Selecting
-	 * Global → Editor is the same intent the menu's New Window raises, so the
-	 * sidebar, the activity and the view agree afterwards however it was asked.
+	 * window, and a request for an empty one is a request for somewhere to
+	 * scribble, which is what Scratch is. Selecting it is the same intent the
+	 * menu's New Window raises, so the sidebar and the view agree afterwards
+	 * however it was asked.
 	 */
 	async scratchWorkbench(): Promise<ICodeWindow> {
-		await this.ensureEditorView(SCRATCH_EDITOR);
 		await this.dispatchAwaiting({ type: "new_window" });
+		const key = this.scratchWorkspace().key;
+		await this.ensureEditorView(key);
 		await this.syncEditorView();
-		return await this.workbenchWindow(SCRATCH_EDITOR);
+		return await this.workbenchWindow(key);
 	}
 
 	/**
@@ -4566,9 +4593,7 @@ export class AppController {
 						.getWindows()
 						.find((candidate) => candidate.id === viewId);
 		if (!window) {
-			throw new Error(
-				`the workbench for ${folder === SCRATCH_EDITOR ? "the Scratch editor" : folder} is not running`,
-			);
+			throw new Error(`the workbench for ${folder} is not running`);
 		}
 		return window;
 	}
@@ -4616,7 +4641,8 @@ export class AppController {
 	 * on the canonical root and that is the one rule for it.
 	 *
 	 * A file belongs to the open Workspace whose root is its nearest ancestor,
-	 * and to the Scratch editor when no open Workspace contains it. It is
+	 * and to Scratch — today's daily folder — when no open Workspace contains
+	 * it. It is
 	 * deliberately never "the window you last looked at": the same command has
 	 * to mean the same thing from the same directory, whatever has the focus.
 	 *
@@ -4684,10 +4710,8 @@ export class AppController {
 			request.origin,
 		);
 		if (destination.kind === "scratch") {
-			await this.dispatchAwaiting({ type: "new_window" });
-			await this.syncEditorView();
 			openFileInWorkbench(
-				await this.workbenchWindow(SCRATCH_EDITOR),
+				await this.scratchWorkbench(),
 				machine,
 				target,
 				position,
@@ -4695,7 +4719,7 @@ export class AppController {
 			);
 			this.rememberWaitReturn(waitMarkerPath, before);
 			this.bringToFront();
-			return `${target.path}${at(position)} is open in the Scratch editor: ${because(destination.reason)}`;
+			return `${target.path}${at(position)} is open in Scratch (${this.scratchWorkspace().root}): ${because(destination.reason)}`;
 		}
 
 		const root = destination.workspace.root;
@@ -5176,7 +5200,11 @@ export class AppController {
 	}
 
 	adoptConfig(config: Config): void {
+		const dailyBefore = scratchTemplate(this.config);
 		this.config = config;
+		// A new `[scratch] daily` names a different folder for today, and that
+		// folder is Scratch from now on; the old one stays as an ordinary row.
+		if (scratchTemplate(config) !== dailyBefore) this.midnight.rearm();
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every
@@ -5487,11 +5515,9 @@ export class AppController {
 		handle(CHANNELS.getSnapshot, () => {
 			// A page asking for the world is the first moment there is anywhere
 			// to say what went wrong before it existed. See `noteStartupFailure`.
-			const pending = this.startupFailure;
-			if (pending) {
-				this.startupFailure = undefined;
-				this.publishError(pending);
-			}
+			const pending = this.startupFailures;
+			this.startupFailures = [];
+			for (const failure of pending) this.publishError(failure);
 			// A page asking for the world is also a page that has just started
 			// and has none of the pushes yet. The rectangle the owner leaves
 			// for a workbench is one of those, and the window's own page draws
@@ -6247,10 +6273,19 @@ export async function createAppController(
 	await stateStore.saveState(state);
 
 	const profiles = (config?.agentProfiles ?? []).map(toDomainProfile);
+	// Scratch is today's folder, worked out now rather than read from the file:
+	// a file from yesterday names yesterday's folder as an ordinary Workspace,
+	// and today's becomes Scratch. With no readable settings it is the default
+	// template — the settings failure is already on its way to the person.
+	const today = await scratchDay(
+		scratchTemplate(config),
+		new Date(),
+		homedir(),
+	);
 	let model: AppModel;
 	let projectionFailure: string | undefined;
 	try {
-		model = hydrateModel(state, profiles);
+		model = hydrateModel(state, profiles, today.workspace);
 	} catch (error) {
 		// Two different things used to arrive here and both started the app
 		// empty in silence, which is every workspace gone and a working-looking
@@ -6263,7 +6298,13 @@ export async function createAppController(
 		// attached: starting empty would move it somewhere it cannot be found.
 		if (!(error instanceof StateError)) throw error;
 		projectionFailure = error.describe(stateStore.path);
-		model = new AppModel();
+		model = new AppModel(today.workspace);
+	}
+	if (today.failure !== undefined) {
+		model.markWorkspaceUnavailable(
+			model.scratchWorkspaceId,
+			"root_inaccessible",
+		);
 	}
 
 	current = new AppController(
@@ -6285,7 +6326,17 @@ export async function createAppController(
 			withDetail(errorWireAt("persistence_degraded"), stateFailure),
 		);
 	}
+	if (today.failure !== undefined) {
+		current.noteStartupFailure(
+			withDetail(errorWireAt("workspace_unavailable"), today.failure),
+		);
+	}
 	return current;
+}
+
+/** `[scratch] daily`, or its default when there are no readable settings. */
+function scratchTemplate(config: Config | undefined): string {
+	return config?.scratch.daily ?? DEFAULT_SCRATCH_DAILY;
 }
 
 export function appController(): AppController {

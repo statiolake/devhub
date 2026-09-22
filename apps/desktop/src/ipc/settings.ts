@@ -163,6 +163,8 @@ export interface SettingsConfigWire {
 	readonly appearance: SettingsAppearanceWire;
 	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
+	/** `[scratch]`: where Scratch is, `daily = "~/junk/YYYYMMDD"`. */
+	readonly scratch: { readonly daily: string };
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];
 }
@@ -402,6 +404,7 @@ export type SettingsScopeKeyWire =
 	| "appearance"
 	| "keybindings"
 	| "workspaceSources"
+	| "scratch"
 	| "agentProfiles"
 	| "agentActions";
 

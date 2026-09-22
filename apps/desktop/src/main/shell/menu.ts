@@ -52,7 +52,8 @@ export interface MenuHost {
 let host: MenuHost | undefined;
 
 /**
- * The workspace the selection is in, or nothing when it is Global.
+ * The workspace the selection is in, or nothing when that is Scratch, which
+ * does not close (it stops being Scratch at midnight instead).
  *
  * An Agent is selected *within* a workspace, so Close Workspace means the same
  * thing there as it does with the workspace row itself selected. Anything else
@@ -63,13 +64,15 @@ function selectedWorkspace(
 	snapshot: AppSnapshotWire | undefined,
 ): { readonly id: string; readonly label: string } | undefined {
 	const context = snapshot?.selection.context;
-	if (!context || context.kind === "global") return undefined;
-	const workspace = snapshot?.workspaces.find((candidate) =>
+	if (!context) return undefined;
+	const workspace = snapshot.workspaces.find((candidate) =>
 		context.kind === "workspace"
 			? candidate.id === context.workspaceId
 			: candidate.agents.some((agent) => agent.id === context.agentId),
 	);
-	if (!workspace) return undefined;
+	if (!workspace || workspace.id === snapshot.scratchWorkspaceId) {
+		return undefined;
+	}
 	return { id: workspace.id, label: workspace.label };
 }
 

@@ -62,8 +62,8 @@ export class DevHubApplication extends CodeApplication {}
  * `openFirstWindow` decides what to restore or create before anything asks —
  * it would open a window DevHub's own model never chose, so it opens nothing.
  * The App Shell decides when a workbench view exists, and the "empty window"
- * VS Code wants is exactly DevHub's scratch editor: the Global context's
- * Editor activity, created on first selection and kept alive after.
+ * VS Code wants is answered with Scratch — today's daily-folder Workspace,
+ * whose workbench is built like every other Workspace's.
  *
  * `startup()` discards the return value, so opening nothing costs nothing —
  * but upstream also caches the two window services here, and the rest of the

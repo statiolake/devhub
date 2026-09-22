@@ -22,8 +22,9 @@
  * carries DevHub's whole marker tuple on DevHub's own socket under DevHub's
  * own server protocol marker — so another DevHub profile's sessions (a
  * different socket) and anybody's own tmux (no markers) are not merely spared,
- * they are never seen. Of those, `scratch` is DevHub's own global session and
- * always accounted for; a `ws-` session is accounted for by its Workspace and
+ * they are never seen. Of those, `scratch` — the server's bootstrap anchor,
+ * which was the folderless Scratch's terminal before Scratch was a Workspace —
+ * is accounted for by nothing and reaped; a `ws-` session is accounted for by its Workspace and
  * an `ag-` session by its Agent, both read out of the model at sweep time. The
  * kill itself is the runtime's exact-record rule, which re-reads the marker
  * and the listing immediately before destroying anything.
@@ -95,9 +96,13 @@ export function unaccountedSessions(
 	return sessions.filter((session) => {
 		switch (session.kind) {
 			case "scratch":
-				// DevHub's own global session. There is one, DevHub makes it, and
-				// no row shows it — "no row accounts for it" is its normal state.
-				return false;
+				// Scratch is a Workspace now, and its terminal is that
+				// Workspace's session. This one is only the tmux server's
+				// bootstrap anchor (see `TerminalTarget` in `ports.ts`) — and the
+				// folderless Scratch's terminal, for a state from before that —
+				// and nothing accounts for it, so it goes like anything else
+				// nothing accounts for.
+				return true;
 			case "workspace":
 				return !accounted.workspaces.has(session.workspaceId);
 			case "agent":

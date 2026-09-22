@@ -105,7 +105,7 @@ class FakeWorld implements SessionSweepWorld {
 }
 
 describe("which owned sessions nothing accounts for", () => {
-	it("keeps the ones the model still has, and Scratch always", () => {
+	it("keeps the ones the model still has, and reaps the old scratch anchor", () => {
 		const stray = unaccountedSessions(
 			[
 				SCRATCH,
@@ -114,7 +114,9 @@ describe("which owned sessions nothing accounts for", () => {
 			],
 			accounting([WORKSPACE_ONE], [AGENT_ONE]),
 		);
-		expect(stray).toEqual([]);
+		// Scratch is a Workspace now; the `scratch` session is accounted for
+		// by nothing.
+		expect(stray).toEqual([SCRATCH]);
 	});
 
 	it("names a terminal session whose Workspace is gone and an Agent's whose Agent is", () => {
@@ -129,6 +131,7 @@ describe("which owned sessions nothing accounts for", () => {
 			accounting([WORKSPACE_ONE], [AGENT_ONE]),
 		);
 		expect(stray.map((session) => session.sessionName)).toEqual([
+			"devhub-scratch",
 			`ws-${WORKSPACE_TWO.slice(0, 20)}`,
 			`ag-${AGENT_TWO}`,
 		]);

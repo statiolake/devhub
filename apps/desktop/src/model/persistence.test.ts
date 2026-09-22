@@ -28,6 +28,20 @@ import {
   type PersistedAppState,
 } from "./persistence.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
+import { localWorkspace } from "./testWorkspaces.js";
+
+/**
+ * Today's Scratch, as a launch hands it to `hydrateModel`: a Workspace for
+ * the day's folder with an id nobody has used.
+ *
+ * The populated model below is made with `/dev/a` as its Scratch, so a state
+ * written from it names that folder and hydrating it with this day finds it
+ * — which keeps every record where the rest of this file expects it.
+ */
+const TODAY_PATH = "/dev/a";
+function today(path: string = TODAY_PATH): Workspace {
+  return localWorkspace(path);
+}
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const WS_B = workspaceId("550e8400-e29b-41d4-a716-446655440001");
@@ -45,14 +59,13 @@ function emptied(state: PersistedAppState): PersistedAppState {
   return {
     ...state,
     workspaces: [],
-    navigation: { context: { kind: "global" } },
+    navigation: {},
     sidebar: { ...state.sidebar },
   };
 }
 
 function populatedModel(): AppModel {
-  const model = new AppModel();
-  model.addWorkspace(
+  const model = new AppModel(
     new Workspace(
       WS_A,
       workspaceLocation({ kind: "local", path: "/dev/a" }),
@@ -74,7 +87,7 @@ describe("projection", () => {
   it("round-trips a populated model through records", () => {
     const model = populatedModel();
     const state = stateFromSnapshot(model.snapshot());
-    const restored = hydrateModel(state, [codex]);
+    const restored = hydrateModel(state, [codex], today());
     expect(restored.snapshot().workspaces.map((w) => w.root)).toEqual([
       "/dev/a",
       "/dev/b",
@@ -87,7 +100,7 @@ describe("projection", () => {
 
   it("keeps an agent whose profile is gone, marked unavailable", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
-    const restored = hydrateModel(state, []);
+    const restored = hydrateModel(state, [], today());
     const agent = restored.snapshot().workspaces[0].agents[0];
     expect(agent.status).toBe("waiting");
     expect(agent.runtimeHealth).toBe("unavailable");
@@ -104,7 +117,7 @@ describe("projection", () => {
     model.setAgentStatus(AG_A, "idle");
     const state = stateFromSnapshot(model.snapshot());
     expect(state.workspaces[0].agents[0].unread).toBe("idle");
-    const restored = hydrateModel(state, [codex]);
+    const restored = hydrateModel(state, [codex], today());
     expect(restored.snapshot().workspaces[0].agents[0].unread).toBe("idle");
   });
 
@@ -118,7 +131,7 @@ describe("projection", () => {
     model.selectContext({ kind: "workspace", workspaceId: WS_B });
     const state = stateFromSnapshot(model.snapshot());
     state.workspaces[0].agents[0].unread = true;
-    const restored = hydrateModel(state, [codex]);
+    const restored = hydrateModel(state, [codex], today());
     expect(restored.snapshot().workspaces[0].agents[0].unread).toBe("waiting");
   });
 
@@ -127,7 +140,7 @@ describe("projection", () => {
     model.selectContext({ kind: "workspace", workspaceId: WS_B });
     const state = stateFromSnapshot(model.snapshot());
     state.workspaces[0].agents[0].unread = false;
-    const restored = hydrateModel(state, [codex]);
+    const restored = hydrateModel(state, [codex], today());
     expect(restored.snapshot().workspaces[0].agents[0].unread).toBeUndefined();
   });
 
@@ -138,7 +151,7 @@ describe("projection", () => {
     model.selectContext({ kind: "workspace", workspaceId: WS_B });
     const state = stateFromSnapshot(model.snapshot());
     expect(state.workspaces[0].last_agent_id).toBe(AG_A);
-    const restored = hydrateModel(state, [codex]);
+    const restored = hydrateModel(state, [codex], today());
     expect(restored.lastAgentIn(WS_A)).toBe(AG_A);
   });
 
@@ -148,7 +161,9 @@ describe("projection", () => {
     model.selectContext({ kind: "workspace", workspaceId: WS_B });
     const state = stateFromSnapshot(model.snapshot());
     state.workspaces[0].last_agent_id = undefined;
-    expect(hydrateModel(state, [codex]).lastAgentIn(WS_A)).toBeUndefined();
+    expect(
+      hydrateModel(state, [codex], today()).lastAgentIn(WS_A),
+    ).toBeUndefined();
   });
 
   it("forgets an Agent that did not come back", () => {
@@ -159,7 +174,9 @@ describe("projection", () => {
     // An Agent this workspace does not have: the same shape as an id whose
     // Agent was removed while DevHub was not running.
     state.workspaces[0].last_agent_id = AG_B;
-    expect(hydrateModel(state, [codex]).lastAgentIn(WS_A)).toBeUndefined();
+    expect(
+      hydrateModel(state, [codex], today()).lastAgentIn(WS_A),
+    ).toBeUndefined();
   });
 
   it("keeps the provider mapping the model does not own", () => {
@@ -191,14 +208,46 @@ describe("projection", () => {
       validateState(state);
     }).not.toThrow();
     const rewritten = stateFromSnapshot(
-      hydrateModel(state, [codex]).snapshot(),
+      hydrateModel(state, [codex], today()).snapshot(),
     );
     expect(rewritten.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });
 
+describe("Scratch across a restart", () => {
+  it("brings yesterday's Scratch back as an ordinary row, with its Agents, and makes today's", () => {
+    // A state file written yesterday: Scratch was `/dev/a` and had an Agent.
+    const yesterday = populatedModel();
+    yesterday.selectContext({ kind: "workspace", workspaceId: WS_A });
+    const state = stateFromSnapshot(yesterday.snapshot());
+    // The selection was on Scratch, so the file says so by saying nothing.
+    expect(state.navigation).toEqual({});
+    const model = hydrateModel(state, [codex], today("/dev/daily/20260924"));
+    const snapshot = model.snapshot();
+    expect(snapshot.workspaces.map((w) => [w.root, w.label])).toEqual([
+      ["/dev/daily/20260924", "Scratch"],
+      ["/dev/a", "a"],
+      ["/dev/b", "b"],
+    ]);
+    expect(snapshot.workspaces[1].id).toBe(WS_A);
+    expect(snapshot.workspaces[1].agents.map((a) => a.id)).toEqual([AG_A]);
+    // Being on Scratch comes back as today's Scratch.
+    expect(snapshot.selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: snapshot.scratchWorkspaceId,
+    });
+  });
+
+  it("keeps Scratch's id, Agents and all, on the same day", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    const model = hydrateModel(state, [codex], today());
+    expect(model.scratchWorkspaceId).toBe(WS_A);
+    expect(model.snapshot().workspaces).toHaveLength(2);
+  });
+});
+
 describe("navigation restore", () => {
-  it("falls to the next agent, then the workspace, then Global", () => {
+  it("falls to the next agent, then the workspace, then Scratch", () => {
     const model = populatedModel();
     model.addAgent(WS_A, AG_B, codex);
     model.selectContext({ kind: "agent", agentId: AG_A });
@@ -224,11 +273,9 @@ describe("navigation restore", () => {
       changed: true,
     });
 
-    const global = restoreNavigation(state, new Set(), new Set());
-    expect(global).toEqual({
-      context: { kind: "global" },
-      changed: true,
-    });
+    // Absent is Scratch, whichever day's folder that is when it is read.
+    const scratch = restoreNavigation(state, new Set(), new Set());
+    expect(scratch).toEqual({ context: undefined, changed: true });
   });
 });
 
@@ -312,8 +359,11 @@ describe("a version-3 file with a close in it", () => {
 
   it("loads the Workspace as open, because it was never closed", async () => {
     for (const lifecycle of [CLOSING, CLOSING_FAILED]) {
-      const workspace = hydrateModel(await loadedFrom(lifecycle), []).snapshot()
-        .workspaces[0]!;
+      const workspace = hydrateModel(
+        await loadedFrom(lifecycle),
+        [],
+        today(),
+      ).snapshot().workspaces[0]!;
       expect(workspace.state).toEqual({ kind: "available" });
       expect(workspace.close).toEqual({ kind: "idle" });
     }
@@ -321,7 +371,7 @@ describe("a version-3 file with a close in it", () => {
 
   it("writes the file back with no close in it at all", async () => {
     const written = stateFromSnapshot(
-      hydrateModel(await loadedFrom(CLOSING), []).snapshot(),
+      hydrateModel(await loadedFrom(CLOSING), [], today()).snapshot(),
     );
     expect(written.workspaces[0]!.lifecycle).toEqual({ kind: "available" });
     // Not "the progress fields are empty": there are no such fields. A close
@@ -458,7 +508,7 @@ describe("store", () => {
     // The retired field is not read — the decoder keeps what this build reads
     // and nothing else — and the new one defaults rather than making an old
     // file unloadable.
-    expect(load.state.navigation).toEqual({ context: { kind: "global" } });
+    expect(load.state.navigation).toEqual({});
     expect(load.state.split.ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
@@ -476,7 +526,7 @@ describe("store", () => {
     const load = await store.loadState();
     expect(load.state.sidebar.width).toBe(321);
 
-    const model = hydrateModel(load.state, []);
+    const model = hydrateModel(load.state, [], today());
     expect(model.snapshot().sidebar.width).toBe(321);
     expect(model.snapshot().sidebar.collapsed).toBe(false);
 
@@ -499,7 +549,7 @@ describe("store", () => {
     });
 
     const load = await store.loadState();
-    const model = hydrateModel(load.state, []);
+    const model = hydrateModel(load.state, [], today());
     // Both facts, because there are two: the rail is what is on screen, and
     // the width is what it goes back to.
     expect(model.snapshot().sidebar).toEqual({ width: 321, collapsed: true });
@@ -508,6 +558,52 @@ describe("store", () => {
   it("round-trips an interrupted socket transition", async () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     state.tmux = {
+      effective_socket_name: "devhub",
+      transition: {
+        kind: "cleaning_old",
+        old_socket_name: "devhub",
+        requested_socket_name: "devhub-next",
+        target_preflight: "target_absent",
+        required: [
+          {
+            kind: "workspace",
+            workspace_id: WS_A,
+            session_name: "ws-0123456789abcdef0123",
+          },
+          {
+            kind: "workspace",
+            workspace_id: WS_B,
+            session_name: "ws-fedcba9876543210fedc",
+          },
+        ],
+        sessions: [
+          {
+            session: {
+              kind: "workspace",
+              workspace_id: WS_A,
+              session_name: "ws-0123456789abcdef0123",
+            },
+            status: "completed",
+          },
+        ],
+      },
+    };
+    const store = new JsonStateStore(path);
+    await store.saveState(state);
+    expect((await store.loadState()).state.tmux).toEqual(state.tmux);
+  });
+
+  it("migrates a version-9 file's Scratch: Global becomes absent, the scratch session goes", async () => {
+    // What a version-9 DevHub wrote while on Scratch in the middle of a socket
+    // change: the folderless context, and the `scratch` session in every list.
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    document["schema_version"] = 9;
+    document["navigation"] = { context: { kind: "global" } };
+    document["tmux"] = {
       effective_socket_name: "devhub",
       transition: {
         kind: "cleaning_old",
@@ -535,9 +631,48 @@ describe("store", () => {
         ],
       },
     };
-    const store = new JsonStateStore(path);
-    await store.saveState(state);
-    expect((await store.loadState()).state.tmux).toEqual(state.tmux);
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.migrated).toBe(true);
+    expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
+    expect(load.state.navigation).toEqual({});
+    const transition = load.state.tmux.transition;
+    expect(transition.kind).toBe("cleaning_old");
+    if (transition.kind !== "cleaning_old") return;
+    expect(transition.required.map((one) => one.workspace_id)).toEqual([
+      WS_A,
+      WS_B,
+    ]);
+    expect(transition.sessions).toEqual([]);
+    // Every Workspace and Agent it had is still there, and the selection it
+    // left on Scratch comes back as today's Scratch.
+    const model = hydrateModel(
+      load.state,
+      [codex],
+      today("/srv/daily/20260923"),
+    );
+    const snapshot = model.snapshot();
+    expect(snapshot.workspaces.map((w) => w.root)).toEqual([
+      "/srv/daily/20260923",
+      "/dev/a",
+      "/dev/b",
+    ]);
+    expect(snapshot.workspaces[1].agents.map((a) => a.id)).toEqual([AG_A]);
+    expect(snapshot.selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: snapshot.scratchWorkspaceId,
+    });
+  });
+
+  it("refuses a version-10 file that still names Global", async () => {
+    const document = JSON.parse(JSON.stringify(freshState())) as Record<
+      string,
+      unknown
+    >;
+    document["navigation"] = { context: { kind: "global" } };
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.corruptionDetail).toContain("navigation.context.kind");
   });
 
   it("carries every field the model owns, not only the ones it used to", () => {
@@ -674,10 +809,12 @@ describe("decoding the state file", () => {
     const load = await loadWith((document) => {
       firstAgent(document)["unread"] = true;
       // Looking at an Agent is what clears its mark, so look elsewhere.
-      document["navigation"] = { context: { kind: "global" } };
+      document["navigation"] = {
+        context: { kind: "workspace", workspace_id: WS_B },
+      };
     });
     expect(load.recoveryReason).toBeUndefined();
-    const agent = hydrateModel(load.state, []).snapshot().workspaces[0]
+    const agent = hydrateModel(load.state, [], today()).snapshot().workspaces[0]
       .agents[0];
     expect(agent.unread).toBe("waiting");
 
@@ -723,7 +860,7 @@ describe("projecting a state file that will not project", () => {
     // accept, because it climbs out above the root.
     state.workspaces[0].selected_path = "/dev/../..";
     try {
-      hydrateModel(state, []);
+      hydrateModel(state, [], today());
       throw new Error("the projection should have refused");
     } catch (error) {
       expect(error).toBeInstanceOf(StateError);
@@ -742,7 +879,7 @@ describe("projecting a state file that will not project", () => {
       { id: "codex" },
       { id: "codex" },
     ] as unknown as AgentProfile[];
-    expect(() => hydrateModel(state, notProfiles)).toThrow(TypeError);
+    expect(() => hydrateModel(state, notProfiles, today())).toThrow(TypeError);
   });
 });
 
@@ -759,14 +896,7 @@ describe("a Workspace's place across a restart", () => {
   const WS_C = "33333333-3333-4333-8333-333333333333";
 
   function remoteModel(): AppModel {
-    const model = new AppModel();
-    model.addWorkspace(
-      new Workspace(
-        WS_A,
-        workspaceLocation({ kind: "local", path: "/dev/a" }),
-        displayPath("/dev/a"),
-      ),
-    );
+    const model = new AppModel(today());
     model.addWorkspace(
       new Workspace(
         WS_B,
@@ -802,7 +932,7 @@ describe("a Workspace's place across a restart", () => {
       { kind: "ssh", host: "staging.example.com" },
     ]);
     validateState(state);
-    const restored = hydrateModel(state, []).snapshot();
+    const restored = hydrateModel(state, [], today()).snapshot();
     expect(restored.workspaces.map((workspace) => workspace.key)).toEqual([
       "/dev/a",
       "ssh://build.example.com/srv/api",
@@ -835,12 +965,12 @@ describe("a Workspace's place across a restart", () => {
     const loaded = (await new JsonStateStore(path).loadState()).state;
     expect(loaded.schema_version).toBe(STATE_SCHEMA_VERSION);
     expect(loaded.workspaces[0]!.location).toEqual({ kind: "local" });
-    expect(hydrateModel(loaded, []).snapshot().workspaces[0]!.location).toEqual(
-      {
-        kind: "local",
-        path: "/dev/a",
-      },
-    );
+    expect(
+      hydrateModel(loaded, [], today()).snapshot().workspaces[0]!.location,
+    ).toEqual({
+      kind: "local",
+      path: "/dev/a",
+    });
     removeScratchDir(directory);
   });
 
@@ -951,7 +1081,7 @@ describe("the order a person put the rows in, across a restart", () => {
     const load = await store.loadState();
     expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
     expect(load.state.sidebar.order).toEqual([]);
-    expect(hydrateModel(load.state, []).workspaceOrder).toEqual([]);
+    expect(hydrateModel(load.state, [], today()).workspaceOrder).toEqual([]);
 
     load.state.sidebar.order = [WS_A];
     await store.saveState(load.state);
@@ -983,16 +1113,16 @@ describe("the order a person put the rows in, across a restart", () => {
     const load = await store.loadState();
     expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
     expect(load.state.terminal.zoom_offset).toBe(0);
-    expect(hydrateModel(load.state, []).terminalZoomOffset).toBe(0);
+    expect(hydrateModel(load.state, [], today()).terminalZoomOffset).toBe(0);
 
-    const model = hydrateModel(load.state, []);
+    const model = hydrateModel(load.state, [], today());
     model.zoomTerminal(13, "in");
     model.zoomTerminal(13, "in");
     await store.saveState(applySnapshot(load.state, model.snapshot()));
 
     const again = await new JsonStateStore(path).loadState();
     expect(again.state.terminal.zoom_offset).toBe(2);
-    expect(hydrateModel(again.state, []).terminalZoomOffset).toBe(2);
+    expect(hydrateModel(again.state, [], today()).terminalZoomOffset).toBe(2);
     removeScratchDir(directory);
   });
 
@@ -1016,7 +1146,7 @@ describe("the order a person put the rows in, across a restart", () => {
   });
 
   it("carries an arrangement from the model to the file and back", () => {
-    const model = new AppModel();
+    const model = new AppModel(today());
     model.addWorkspace(
       new Workspace(
         WS_A,
@@ -1035,14 +1165,17 @@ describe("the order a person put the rows in, across a restart", () => {
 
     const state = stateFromSnapshot(model.snapshot());
     expect(state.sidebar.order).toEqual([WS_B, WS_A]);
-    expect(hydrateModel(state, []).workspaceOrder).toEqual([WS_B, WS_A]);
+    expect(hydrateModel(state, [], today()).workspaceOrder).toEqual([
+      WS_B,
+      WS_A,
+    ]);
   });
 
   it("keeps an id whose workspace has closed", () => {
     // The row comes back where it was if the folder is opened again, and
     // pruning here would make closing one workspace a way of forgetting where
     // its neighbours went.
-    const model = new AppModel();
+    const model = new AppModel(today());
     model.addWorkspace(
       new Workspace(
         WS_A,
@@ -1053,7 +1186,10 @@ describe("the order a person put the rows in, across a restart", () => {
     model.setWorkspaceOrder([WS_B, WS_A]);
     const state = stateFromSnapshot(model.snapshot());
     expect(state.sidebar.order).toEqual([WS_B, WS_A]);
-    expect(hydrateModel(state, []).workspaceOrder).toEqual([WS_B, WS_A]);
+    expect(hydrateModel(state, [], today()).workspaceOrder).toEqual([
+      WS_B,
+      WS_A,
+    ]);
   });
 
   it("refuses an order entry that is not an identity", () => {
@@ -1067,7 +1203,7 @@ describe("the order a person put the rows in, across a restart", () => {
   it("writes an Agent's place out as the place it is in the list", () => {
     // Agents need no key of their own: the array *is* the order, so arranging
     // them is moving them in it, and the file already says what that is.
-    const model = new AppModel();
+    const model = new AppModel(today());
     model.addWorkspace(
       new Workspace(
         WS_A,
@@ -1080,14 +1216,15 @@ describe("the order a person put the rows in, across a restart", () => {
     model.setAgentOrder(WS_A, [AG_B, AG_A]);
 
     const state = stateFromSnapshot(model.snapshot());
-    expect(state.workspaces[0].agents.map((agent) => agent.agent_id)).toEqual([
+    // After Scratch, which is always the model's first Workspace.
+    expect(state.workspaces[1].agents.map((agent) => agent.agent_id)).toEqual([
       AG_B,
       AG_A,
     ]);
     expect(
-      hydrateModel(state, [codex])
+      hydrateModel(state, [codex], today())
         .snapshot()
-        .workspaces[0].agents.map((agent) => agent.id),
+        .workspaces[1].agents.map((agent) => agent.id),
     ).toEqual([AG_B, AG_A]);
   });
 });
@@ -1121,8 +1258,8 @@ describe("what validation checks and hydration may then assume", () => {
     expect(refusal).toBeInstanceOf(StateError);
     // The same state through the other road: hydration must refuse it the same
     // way, and never with the unnamed error this whole rule exists to stop.
-    expect(() => hydrateModel(state, [codex])).toThrow(StateError);
-    expect(() => hydrateModel(state, [codex])).not.toThrow(TypeError);
+    expect(() => hydrateModel(state, [codex], today())).toThrow(StateError);
+    expect(() => hydrateModel(state, [codex], today())).not.toThrow(TypeError);
     return refusal as StateError;
   }
 
@@ -1309,7 +1446,7 @@ describe("what validation checks and hydration may then assume", () => {
         continue;
       }
       accepted += 1;
-      expect(() => hydrateModel(state, [codex]), path).not.toThrow();
+      expect(() => hydrateModel(state, [codex], today()), path).not.toThrow();
     }
     // The absences that are migrations, not gaps — if this ever reaches zero
     // the loop is passing because nothing gets through it.
