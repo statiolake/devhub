@@ -680,6 +680,8 @@ export type ConfirmationOutcomePurpose =
   | {
       readonly kind: "workspace_close";
       readonly inspection: CloseInspectionProjection;
+      /** What Confirm does to the worktree folder, so the sheet can say it. */
+      readonly worktree: WorktreeDisposition;
     }
   | { readonly kind: "agent_stop"; readonly agentId: AgentId };
 

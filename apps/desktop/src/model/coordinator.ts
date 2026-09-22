@@ -1552,7 +1552,11 @@ export class AppCoordinator {
 
     const purpose: ConfirmationOutcomePurpose =
       request.kind === "workspace_close"
-        ? { kind: "workspace_close", inspection: request.inspection }
+        ? {
+            kind: "workspace_close",
+            inspection: request.inspection,
+            worktree: request.worktree,
+          }
         : { kind: "agent_stop", agentId: request.agentId };
 
     if (request.kind === "stop") {

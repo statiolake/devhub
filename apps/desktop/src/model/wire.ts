@@ -482,6 +482,7 @@ function confirmationPurposeWire(
       return {
         kind: "workspace_close",
         inspection: closeInspectionWire(purpose.inspection),
+        worktree: purpose.worktree,
       };
     case "agent_stop":
       return { kind: "agent_stop", agentId: purpose.agentId };

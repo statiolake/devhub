@@ -33,6 +33,7 @@ import { Picker } from "../components/shell/Picker";
 import type {
   CloseDiagnosticWire,
   CloseResourceWire,
+  ConfirmationPurposeWire,
   UnsavedEditorsWire,
 } from "../../ipc/appShell";
 import type { ModalRequest } from "../../ipc/contract";
@@ -123,6 +124,27 @@ function unsavedEditorsText(unsaved: UnsavedEditorsWire): string | undefined {
         ? status
         : `${status} — ${unsaved.reason}`;
     }
+  }
+}
+
+/**
+ * What the worktree row says, or nothing when the folder stays.
+ *
+ * A clean worktree with unsaved editors stops at this sheet and nowhere else,
+ * so this is the only place the person learns the folder goes with the close.
+ */
+function worktreeText(
+  worktree: Extract<
+    ConfirmationPurposeWire,
+    { kind: "workspace_close" }
+  >["worktree"],
+): string | undefined {
+  switch (worktree) {
+    case "keep":
+      return undefined;
+    case "remove":
+    case "remove-anyway":
+      return "The folder is removed from disk";
   }
 }
 
@@ -245,6 +267,10 @@ export function CloseConfirmationSheet({
   const unsaved = inspection
     ? unsavedEditorsText(inspection.unsavedEditors)
     : undefined;
+  const removedFolder =
+    purpose.kind === "workspace_close"
+      ? worktreeText(purpose.worktree)
+      : undefined;
   const diagnostics: readonly (readonly [string, string])[] = [
     ...resources
       .filter(([, resource]) => resource.kind !== "clean")
@@ -252,6 +278,9 @@ export function CloseConfirmationSheet({
         ([label, resource]) => [label, closeResourceText(resource)] as const,
       ),
     ...(unsaved === undefined ? [] : [["Unsaved files", unsaved] as const]),
+    ...(removedFolder === undefined
+      ? []
+      : [["Worktree", removedFolder] as const]),
   ];
 
   return (

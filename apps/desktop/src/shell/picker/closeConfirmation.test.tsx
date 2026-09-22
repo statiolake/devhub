@@ -167,6 +167,7 @@ const CLOSE_WORKSPACE: ConfirmationPurposeWire = {
     terminalWindows: { kind: "clean" },
     unsavedEditors: { kind: "unsaved", tabs: ["main.ts", "Untitled-1"] },
   },
+  worktree: "keep",
 };
 
 function closeWorkspaceWith(
@@ -179,6 +180,7 @@ function closeWorkspaceWith(
   return {
     kind: "workspace_close",
     inspection: { ...CLOSE_WORKSPACE.inspection, unsavedEditors },
+    worktree: CLOSE_WORKSPACE.worktree,
   };
 }
 
@@ -422,6 +424,26 @@ describe("closing a workspace with things open in it", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByText("Unsaved files")).not.toBeInTheDocument();
+  });
+
+  for (const worktree of ["remove", "remove-anyway"] as const) {
+    it(`says the folder is removed when the close is "${worktree}"`, async () => {
+      mount(snapshotWith(true), vi.fn(), { ...CLOSE_WORKSPACE, worktree });
+      await waitFor(() => {
+        expect(screen.getByText("Worktree")).toBeInTheDocument();
+      });
+      expect(
+        screen.getByText("The folder is removed from disk"),
+      ).toBeInTheDocument();
+    });
+  }
+
+  it("does not mention the folder when the worktree is kept", async () => {
+    mount(snapshotWith(true), vi.fn(), CLOSE_WORKSPACE);
+    await waitFor(() => {
+      expect(screen.getByText("Unsaved files")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Worktree")).not.toBeInTheDocument();
   });
 
   it("closes the workspace on the second row", async () => {

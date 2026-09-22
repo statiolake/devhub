@@ -136,7 +136,9 @@ the workbench's unsaved editors, by the names their tabs show — is one
 confirmation on the picker (`close-confirmation`); a dirty worktree is the
 three-way sheet before it, because whether the folder survives decides whether
 there is anything left to close. A workbench whose unsaved editors could not be
-read is said to be so on that sheet and is never read as clean.
+read is said to be so on that sheet and is never read as clean. When the close
+removes a worktree, the confirmation carries that disposition and the sheet says
+so in a "Worktree" row: a clean worktree with unsaved editors stops only here.
 
 Once the person has chosen to close, the close carries the answer out:
 `closeEditor` discards the workbench's unsaved work (the request

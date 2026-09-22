@@ -577,6 +577,33 @@ describe("closing a workspace", () => {
     });
   }
 
+  for (const worktree of ["keep", "remove", "remove-anyway"] as const) {
+    it(`tells the question that the close will "${worktree}" the worktree`, () => {
+      const driver = new Driver();
+      driver.openFolder("/dev/project");
+      driver.dispatch(closeIntent(worktree));
+      const inspect = driver.drainEffects()[0];
+      if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+      driver.accept({
+        type: "workspace_inspection_completed",
+        token: inspect.token,
+        workspaceId: WS_A,
+        inspection: {
+          ...CLEAN_INSPECTION,
+          unsavedEditors: unsavedEditors(["Untitled-1"]),
+        },
+      });
+      const required = driver.answer(driver.drainEffects()[0]);
+      if (required?.kind !== "confirmation_required") {
+        throw new Error("unexpected");
+      }
+      if (required.purpose.kind !== "workspace_close") {
+        throw new Error("unexpected");
+      }
+      expect(required.purpose.worktree).toBe(worktree);
+    });
+  }
+
   it("changes nothing when the question is left unanswered", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");

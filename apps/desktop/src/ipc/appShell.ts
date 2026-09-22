@@ -557,6 +557,8 @@ export type ConfirmationPurposeWire =
 	| {
 			readonly inspection: CloseInspectionWire;
 			readonly kind: "workspace_close";
+			/** What Confirm does to the worktree folder. */
+			readonly worktree: "keep" | "remove" | "remove-anyway";
 	  }
 	/**
 	 * Stopping this Agent. The subject is *in* the purpose, not beside it: a
