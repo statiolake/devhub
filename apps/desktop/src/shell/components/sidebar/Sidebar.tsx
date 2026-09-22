@@ -15,14 +15,13 @@ import {
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
-import { clampSidebarWidth } from "../../../ipc/appShell";
-import { SCRATCH_NAME } from "../../../ipc/windowTitles";
+import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
 import { useSidebar, useSidebarDispatch } from "../../sidebar/SidebarContext";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
-import { Glyph } from "./icons";
+import { Glyph, type GlyphName } from "./icons";
 import { RowTooltip } from "./RowTooltip";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { StatusMark, unreadShows } from "./StatusMark";
@@ -41,7 +40,8 @@ import {
   describe,
   pullRequestGlyphName,
   unavailableText,
-  workspaceGlyphName,
+  rowIdentity,
+  type RowIdentity,
   workspaceRowFacts,
 } from "./rowDescription";
 
@@ -117,6 +117,7 @@ function useSelectRow(): (
 
 function WorkspaceRow({
   workspace,
+  identity,
   repository,
   snapshot,
   agentProfiles,
@@ -128,6 +129,8 @@ function WorkspaceRow({
   reorder,
 }: {
   readonly workspace: WorkspaceSnapshot;
+  /** Its mark, and whether it is Scratch. See `rowIdentity`. */
+  readonly identity: RowIdentity;
   /** What it is working on, as of the last look. Absent until the first one. */
   readonly repository: WorkspaceRepositoryWire | undefined;
   readonly snapshot: AppSnapshot;
@@ -195,8 +198,9 @@ function WorkspaceRow({
       role="treeitem"
       {...reorder.rowProps({ kind: "workspace", id: workspace.id })}
       // A Workspace on its way out is not somewhere to put anything, and is
-      // not something to pick up: it is leaving.
-      draggable={!closing}
+      // not something to pick up: it is leaving. Scratch is not picked up
+      // either: it is first because it is Scratch, not because it was put there.
+      draggable={!closing && !identity.fixed}
       aria-level={1}
       aria-selected={selected}
       aria-busy={closing || undefined}
@@ -205,7 +209,7 @@ function WorkspaceRow({
       aria-expanded={workspace.agents.length > 0 ? true : undefined}
     >
       <div
-        className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
+        className={`sidebar-row workspace-row${identity.fixed ? " is-scratch" : ""}${selected ? " is-selected" : ""}`}
         data-state={workspace.state.kind}
         // The same facts, drawn. The expanded row shows two of them and the
         // rail shows none, and this is where all of them are — which is why it
@@ -232,7 +236,7 @@ function WorkspaceRow({
               off. */}
           {collapsed ? null : (
             <WorkspaceGlyph
-              workspace={workspace}
+              glyphName={identity.glyph}
               repository={repository}
               description={description}
             />
@@ -274,7 +278,7 @@ function WorkspaceRow({
                 cannot go inside a button. */}
             {collapsed ? (
               <span className="row-glyph" aria-hidden="true">
-                <Glyph name={workspaceGlyphName(workspace.location)} />
+                <Glyph name={identity.glyph} />
               </span>
             ) : null}
             {/* The name, then the branch, on one line that fades out under the
@@ -330,13 +334,14 @@ function WorkspaceRow({
           )}
           {/* One close, whatever state the Workspace is in: a close that failed
             is retried by asking for the same thing again, not by a second
-            icon that means the same thing.
+            icon that means the same thing. Scratch has none: it is today's
+            folder, and tomorrow replaces it without anybody closing it.
 
             It says which of the two closes it is, because on a worktree row
             closing deletes the folder (`closingDeletesWorktree`). The ellipsis
             is the rest of that promise: a question may follow, and does
             whenever there is anything in the folder to lose. */}
-          {!closing && (
+          {!closing && !identity.fixed && (
             <button
               className="row-action-button"
               type="button"
@@ -407,7 +412,7 @@ function WorkspaceRow({
             const leading = agent.activity ?? agent.displayName;
             const agentFacts = agentRowFacts(agent, {
               label: workspace.label,
-              icon: workspaceGlyphName(workspace.location),
+              icon: identity.glyph,
             });
             const agentDescription = describe(agentFacts);
             /**
@@ -582,17 +587,17 @@ function WorkspaceRow({
  * it.
  */
 function WorkspaceGlyph({
-  workspace,
+  glyphName,
   repository,
   description,
 }: {
-  readonly workspace: WorkspaceSnapshot;
+  readonly glyphName: GlyphName;
   readonly repository: WorkspaceRepositoryWire | undefined;
   /** What this row is, in the words its select button uses. */
   readonly description: string;
 }) {
   const { openExternalUrl } = useSidebar();
-  const glyph = <Glyph name={workspaceGlyphName(workspace.location)} />;
+  const glyph = <Glyph name={glyphName} />;
   const url = repository?.repositoryUrl;
   if (url === undefined) {
     return (
@@ -715,51 +720,6 @@ function WorkspaceMarks({
         </span>
       ) : null}
     </span>
-  );
-}
-
-function ScratchRow({
-  snapshot,
-  rowRef,
-}: {
-  readonly snapshot: AppSnapshot;
-  /** Where `Cmd+Q S` lands when Scratch is what is selected. */
-  readonly rowRef: React.Ref<HTMLButtonElement>;
-}) {
-  const selectRow = useSelectRow();
-  const selected = snapshot.selection.context.kind === "global";
-  return (
-    <button
-      ref={rowRef}
-      className={`sidebar-row scratch-row${selected ? " is-selected" : ""}`}
-      type="button"
-      aria-current={selected ? "page" : undefined}
-      aria-label="Scratch terminal"
-      data-tooltip={SCRATCH_NAME}
-      onClick={(event) =>
-        selectRow(event, {
-          type: "select_context",
-          context: { kind: "global" },
-        })
-      }
-    >
-      {/* Mirrors a Workspace row's first line so the glyph and the label land
-          on the same columns. It has no second line: there is
-          nothing a Scratch terminal is working on. */}
-      <span className="row-head">
-        <span className="row-glyph" aria-hidden="true">
-          <Glyph name="terminal" />
-        </span>
-        <span className="sidebar-context-button">
-          {/* In `.row-text` like every other row's words, because that is what
-              the rail takes off. A label outside it would be the one row whose
-              name survived the collapse. */}
-          <span className="row-text">
-            <span className="row-label">{SCRATCH_NAME}</span>
-          </span>
-        </span>
-      </span>
-    </button>
   );
 }
 
@@ -888,7 +848,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
   // they came from and everything else is by name, but that is decided once,
   // in the projection (`model/workspaceOrder.ts`), so the rows on screen and
   // the rows `Cmd+Q Cmd+N` steps through are the same rows in the same order.
-  const workspaces = snapshot.workspaces;
+  //
+  // Scratch is one of them, drawn first, in the order main counts entries in
+  // (`sidebarWorkspaces`), so `Cmd+Q 1` and the row on top are the same row.
+  const { scratch, rows: workspaces } = useMemo(
+    () => sidebarWorkspaces(snapshot),
+    [snapshot],
+  );
   // Rows that have finished closing, still on screen for as long as it takes
   // them to leave. See `closingExit.ts`.
   const exiting = useClosingExit(workspaces);
@@ -928,29 +894,20 @@ export function Sidebar({ snapshot }: SidebarProps) {
   }, []);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
-  const scratchRowRef = useRef<HTMLButtonElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
-  // Which row the keyboard would land on, kept in a ref so that the one
-  // subscription to main's commands does not have to be torn down and remade
-  // every time the selection moves.
-  const onScratch = useRef(false);
-  onScratch.current = snapshot.selection.context.kind === "global";
 
   /**
    * `Cmd+Q S`: put the keyboard on the row that is selected.
    *
    * The tree's roving tab stop is already the selected row — the layout effect
    * above keeps it there — so this focuses whatever that is and the tree's own
-   * arrows, Home/End and Return take over from there. Scratch is a button of
-   * its own outside the tree, so a global selection lands on it; a Sidebar with
-   * no workspaces has nothing else to land on either way.
+   * arrows, Home/End and Return take over from there. Scratch is the tree's
+   * first row, so the tree is never empty and there is always somewhere to land.
    */
   const focusSidebar = useCallback(() => {
     const tree = workspaceTreeRef.current;
     const items = tree ? treeContextButtons(tree) : [];
-    const stop = items.find((item) => item.tabIndex === 0) ?? items[0];
-    const target = onScratch.current ? scratchRowRef.current : stop;
-    (target ?? scratchRowRef.current)?.focus();
+    (items.find((item) => item.tabIndex === 0) ?? items[0])?.focus();
   }, []);
 
   /**
@@ -1128,152 +1085,175 @@ export function Sidebar({ snapshot }: SidebarProps) {
       {/* The Sidebar runs the full height of the window, so its own top strip
           is where the window buttons live and where the window is dragged. */}
       <div className="sidebar-scroll-region">
-        <ScratchRow snapshot={snapshot} rowRef={scratchRowRef} />
-        <div className="sidebar-section-heading">
-          <h2>Workspaces</h2>
-          {/* The two ways to start work, kept together at the trailing edge:
-              open a workspace you have, or take an Issue and let DevHub make
-              one. */}
-          <span className="sidebar-section-actions">
-            <button
-              className="section-action-button"
-              type="button"
-              aria-label="Assign issue"
-              data-tooltip="Assign issue"
-              onClick={openIssueAssignment}
-            >
-              {/* An act, not a state: DevHub's own mark, the same one the
-                Agent shortcut for opening an Issue wears. The Octicon a
-                Workspace row shows is GitHub reporting on an Issue that
-                exists, which this button's is not. */}
-              <Glyph name="openIssue" />
-            </button>
-            <button
-              ref={pickerTriggerRef}
-              className="section-action-button"
-              type="button"
-              aria-label="Open workspace picker"
-              data-tooltip="Open workspace picker"
-              onClick={openPicker}
-            >
-              <Glyph name="plus" />
-            </button>
-          </span>
-        </div>
-        {/* `rows` and not the snapshot: the last Workspace to close still has
-            a ghost fading in its place, and swapping the whole list for "No
-            workspaces open" underneath it is exactly the jump the ghost is
-            there to prevent. */}
-        {rows.length > 0 ? (
-          <ul
-            ref={workspaceTreeRef}
-            className="workspace-tree"
-            role="tree"
-            aria-label="Open workspaces"
-            onFocusCapture={(event) => {
-              const button = (
-                event.target as HTMLElement
-              ).closest<HTMLButtonElement>("[data-tree-item-id]");
-              if (!button) return;
-              const treeItemId = button.dataset.treeItemId;
+        <ul
+          ref={workspaceTreeRef}
+          className="workspace-tree"
+          role="tree"
+          aria-label="Open workspaces"
+          onFocusCapture={(event) => {
+            const button = (
+              event.target as HTMLElement
+            ).closest<HTMLButtonElement>("[data-tree-item-id]");
+            if (!button) return;
+            const treeItemId = button.dataset.treeItemId;
+            if (!treeItemId) return;
+            treeFocusId.current = treeItemId;
+            setTreeTabStop(event.currentTarget, button);
+          }}
+          onKeyDown={(event) => {
+            if (
+              isImeComposing(event.nativeEvent) ||
+              event.target instanceof HTMLInputElement
+            ) {
+              return;
+            }
+            const active = event.currentTarget.ownerDocument
+              .activeElement as HTMLElement | null;
+            const activeItem = active?.closest<HTMLButtonElement>(
+              "[data-tree-item-id]",
+            );
+            if (
+              !activeItem ||
+              activeItem.parentElement?.closest("[role=dialog]")
+            ) {
+              return;
+            }
+            const items = treeContextButtons(event.currentTarget);
+            const index = items.indexOf(activeItem);
+            if (index < 0) return;
+            const focusItem = (item: HTMLButtonElement | null | undefined) => {
+              if (!item) return;
+              const treeItemId = item.dataset.treeItemId;
               if (!treeItemId) return;
               treeFocusId.current = treeItemId;
-              setTreeTabStop(event.currentTarget, button);
-            }}
-            onKeyDown={(event) => {
-              if (
-                isImeComposing(event.nativeEvent) ||
-                event.target instanceof HTMLInputElement
-              ) {
+              setTreeTabStop(event.currentTarget, item);
+              item.focus();
+            };
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const delta = event.key === "ArrowDown" ? 1 : -1;
+              // Option moves the row instead of moving to it — the drag,
+              // under a key, so that a list nobody can drag is still a list
+              // that can be arranged. The chord `Cmd+Q Alt+↑` raises the
+              // same intent through the same rule; this is the version that
+              // needs no prefix once the keyboard is already in the tree.
+              if (event.altKey) {
+                const treeItemId = activeItem.dataset.treeItemId;
+                const source = treeItemId
+                  ? sourceOfTreeItem(snapshot, treeItemId)
+                  : undefined;
+                const intent = source
+                  ? moveIntent(snapshot, source, delta)
+                  : undefined;
+                // The roving tab stop is keyed to the row's id, and the row
+                // keeps its id wherever it lands, so the keyboard follows it
+                // without anything here having to put it back.
+                if (intent) dispatchIntent(intent);
                 return;
               }
-              const active = event.currentTarget.ownerDocument
-                .activeElement as HTMLElement | null;
-              const activeItem = active?.closest<HTMLButtonElement>(
-                "[data-tree-item-id]",
+              focusItem(items[(index + delta + items.length) % items.length]);
+              return;
+            }
+            if (event.key === "Home" || event.key === "End") {
+              event.preventDefault();
+              focusItem(event.key === "Home" ? items[0] : items.at(-1));
+              return;
+            }
+            const item = activeItem.closest<HTMLElement>("[role=treeitem]");
+            if (!item) return;
+            // Nothing here collapses: a Workspace is always open, so the
+            // horizontal keys only walk between a Workspace and its Agents.
+            if (event.key === "ArrowRight") {
+              const child = item.querySelector<HTMLButtonElement>(
+                ".agent-tree [data-tree-item-id]:not([disabled])",
               );
-              if (
-                !activeItem ||
-                activeItem.parentElement?.closest("[role=dialog]")
-              ) {
-                return;
-              }
-              const items = treeContextButtons(event.currentTarget);
-              const index = items.indexOf(activeItem);
-              if (index < 0) return;
-              const focusItem = (
-                item: HTMLButtonElement | null | undefined,
-              ) => {
-                if (!item) return;
-                const treeItemId = item.dataset.treeItemId;
-                if (!treeItemId) return;
-                treeFocusId.current = treeItemId;
-                setTreeTabStop(event.currentTarget, item);
-                item.focus();
-              };
-              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                const delta = event.key === "ArrowDown" ? 1 : -1;
-                // Option moves the row instead of moving to it — the drag,
-                // under a key, so that a list nobody can drag is still a list
-                // that can be arranged. The chord `Cmd+Q Alt+↑` raises the
-                // same intent through the same rule; this is the version that
-                // needs no prefix once the keyboard is already in the tree.
-                if (event.altKey) {
-                  const treeItemId = activeItem.dataset.treeItemId;
-                  const source = treeItemId
-                    ? sourceOfTreeItem(snapshot, treeItemId)
-                    : undefined;
-                  const intent = source
-                    ? moveIntent(snapshot, source, delta)
-                    : undefined;
-                  // The roving tab stop is keyed to the row's id, and the row
-                  // keeps its id wherever it lands, so the keyboard follows it
-                  // without anything here having to put it back.
-                  if (intent) dispatchIntent(intent);
-                  return;
-                }
-                focusItem(items[(index + delta + items.length) % items.length]);
-                return;
-              }
-              if (event.key === "Home" || event.key === "End") {
-                event.preventDefault();
-                focusItem(event.key === "Home" ? items[0] : items.at(-1));
-                return;
-              }
-              const item = activeItem.closest<HTMLElement>("[role=treeitem]");
-              if (!item) return;
-              // Nothing here collapses: a Workspace is always open, so the
-              // horizontal keys only walk between a Workspace and its Agents.
-              if (event.key === "ArrowRight") {
-                const child = item.querySelector<HTMLButtonElement>(
-                  ".agent-tree [data-tree-item-id]:not([disabled])",
-                );
-                if (!child) return;
-                event.preventDefault();
-                focusItem(child);
-                return;
-              }
-              if (event.key === "ArrowLeft") {
-                const parent =
-                  item.parentElement?.closest<HTMLElement>("[role=treeitem]");
-                if (!parent) return;
-                event.preventDefault();
-                focusItem(
-                  parent.querySelector<HTMLButtonElement>(
-                    ":scope > .sidebar-row [data-tree-item-id]",
-                  ),
-                );
-              }
-            }}
-          >
-            {rows.map((entry) =>
+              if (!child) return;
+              event.preventDefault();
+              focusItem(child);
+              return;
+            }
+            if (event.key === "ArrowLeft") {
+              const parent =
+                item.parentElement?.closest<HTMLElement>("[role=treeitem]");
+              if (!parent) return;
+              event.preventDefault();
+              focusItem(
+                parent.querySelector<HTMLButtonElement>(
+                  ":scope > .sidebar-row [data-tree-item-id]",
+                ),
+              );
+            }
+          }}
+        >
+          {/* Scratch first, as the tree's first row: it is a Workspace, so it
+                is walked, selected and focused the way every Workspace is. */}
+          <WorkspaceRow
+            key={scratch.id}
+            workspace={scratch}
+            identity={rowIdentity(scratch, snapshot.scratchWorkspaceId)}
+            repository={repositories.get(scratch.id)}
+            snapshot={snapshot}
+            agentProfiles={agentProfiles.profiles}
+            agentProfilesAvailability={agentProfiles.availability}
+            onCreateAgent={openAgentPicker}
+            onCloseWorkspace={closeWorkspaceRow}
+            onRenameAgent={openRename}
+            onAgentMenu={openAgentMenu}
+            reorder={reorder}
+          />
+          {/* Between Scratch and the rest, as a row of the tree that is not
+                one: `role="none"` takes it out of the tree the arrows walk
+                (`treeContextButtons` only finds the rows' own buttons) and
+                leaves the heading and its buttons where they always were. */}
+          <li role="none">
+            <div className="sidebar-section-heading">
+              <h2>Workspaces</h2>
+              {/* The two ways to start work, kept together at the trailing edge:
+                  open a workspace you have, or take an Issue and let DevHub make
+                  one. */}
+              <span className="sidebar-section-actions">
+                <button
+                  className="section-action-button"
+                  type="button"
+                  aria-label="Assign issue"
+                  data-tooltip="Assign issue"
+                  onClick={openIssueAssignment}
+                >
+                  {/* An act, not a state: DevHub's own mark, the same one the
+                    Agent shortcut for opening an Issue wears. The Octicon a
+                    Workspace row shows is GitHub reporting on an Issue that
+                    exists, which this button's is not. */}
+                  <Glyph name="openIssue" />
+                </button>
+                <button
+                  ref={pickerTriggerRef}
+                  className="section-action-button"
+                  type="button"
+                  aria-label="Open workspace picker"
+                  data-tooltip="Open workspace picker"
+                  onClick={openPicker}
+                >
+                  <Glyph name="plus" />
+                </button>
+              </span>
+            </div>
+          </li>
+          {/* `rows` and not the snapshot: the last Workspace to close still
+                has a ghost fading in its place, and swapping the whole list for
+                "No workspaces open" underneath it is exactly the jump the ghost
+                is there to prevent. */}
+          {rows.length > 0 ? (
+            rows.map((entry) =>
               entry.kind === "exiting" ? (
                 <ClosingGhostRow key={entry.row.id} label={entry.row.label} />
               ) : (
                 <WorkspaceRow
                   key={entry.workspace.id}
                   workspace={entry.workspace}
+                  identity={rowIdentity(
+                    entry.workspace,
+                    snapshot.scratchWorkspaceId,
+                  )}
                   repository={repositories.get(entry.workspace.id)}
                   snapshot={snapshot}
                   agentProfiles={agentProfiles.profiles}
@@ -1285,11 +1265,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
                   reorder={reorder}
                 />
               ),
-            )}
-          </ul>
-        ) : (
-          <p className="sidebar-empty">No workspaces open</p>
-        )}
+            )
+          ) : (
+            <li role="none">
+              <p className="sidebar-empty">No workspaces open</p>
+            </li>
+          )}
+        </ul>
       </div>
       {/* A rail has no width to set: it is exactly its glyph column, or — on a
           window with no title bar — exactly what the traffic lights need. The

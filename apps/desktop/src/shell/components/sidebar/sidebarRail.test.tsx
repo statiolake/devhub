@@ -26,10 +26,11 @@ import type {
   SidebarAreaWire,
   TooltipRequestWire,
 } from "../../../ipc/contract";
-import { AppModel } from "../../../model/appModel";
+import { scratchModel } from "../../../model/testWorkspaces";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
@@ -61,7 +62,9 @@ function snapshot(collapsed: boolean): AppSnapshot {
     },
     sidebar: { width: 248, collapsed },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: "w-1",
         label: "widget",
@@ -158,7 +161,7 @@ describe("the collapsed rail", () => {
   it("keeps every row, in the same order, as the same buttons", () => {
     mount(true);
     expect(
-      screen.getByRole("button", { name: "Scratch terminal" }),
+      screen.getByRole("button", { name: /^Scratch workspace/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
@@ -169,7 +172,7 @@ describe("the collapsed rail", () => {
   it("keeps the tree, so the keyboard is unchanged", () => {
     mount(true);
     const tree = screen.getByRole("tree", { name: "Open workspaces" });
-    expect(tree.querySelectorAll("[data-tree-item-id]")).toHaveLength(2);
+    expect(tree.querySelectorAll("[data-tree-item-id]")).toHaveLength(3);
     // The roving tab stop is still on the selected row.
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
@@ -191,9 +194,16 @@ describe("the collapsed rail", () => {
 
   it("names each row in a tooltip, since the words are off", () => {
     mount(true);
-    expect(
-      screen.getByRole("button", { name: "Scratch terminal" }),
-    ).toHaveAttribute("data-tooltip", "Scratch");
+    const lines = JSON.parse(
+      screen
+        .getByRole("button", { name: /^Scratch workspace/ })
+        .closest(".sidebar-row")
+        ?.getAttribute("data-tooltip-lines") ?? "[]",
+    ) as { text: string }[];
+    expect(lines.map((line) => line.text).slice(0, 2)).toEqual([
+      "Scratch",
+      "~/junk/20260923",
+    ]);
   });
 
   it("takes away the resize handle, because a rail has no width to set", () => {
@@ -211,7 +221,7 @@ describe("the collapsed rail", () => {
 
 describe("what the model remembers about the rail", () => {
   it("keeps the width, so coming back comes back to it", () => {
-    const model = new AppModel();
+    const model = scratchModel();
     model.setSidebarWidth(321);
     model.toggleSidebar();
     expect(model.snapshot().sidebar).toEqual({ width: 321, collapsed: true });

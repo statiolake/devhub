@@ -37,6 +37,10 @@ import type {
 } from "../../ipc/appShell";
 import type { ModalRequest, SidebarBridge } from "../../ipc/contract";
 import { SidebarApp } from "./SidebarApp";
+import {
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "../components/sidebar/scratchFixture";
 
 const AGENT_ID = "5d7fd0e2-2a0e-4a2b-9f3e-9a1a0a0b1c2d";
 const WORKSPACE_ID = "63752e9f-c93d-4d49-87f0-70f352eea8b0";
@@ -55,7 +59,9 @@ const SNAPSHOT = {
   selection: { context: { kind: "agent", agentId: AGENT_ID } },
   sidebar: { width: 240, collapsed: false },
   splitRatio: 0.55,
+  scratchWorkspaceId: SCRATCH_ID,
   workspaces: [
+    scratchWorkspace(),
     {
       id: WORKSPACE_ID,
       label: "folderA",

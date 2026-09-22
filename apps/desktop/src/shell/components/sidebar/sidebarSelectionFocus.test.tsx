@@ -23,6 +23,7 @@ import type { AppSnapshot } from "../../../ipc/appShell";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 const focusSurface = vi.fn(() => Promise.resolve());
 
@@ -54,7 +55,9 @@ function snapshot(collapsed: boolean): AppSnapshot {
     },
     sidebar: { width: 248, collapsed },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: "w-1",
         label: "widget",
@@ -149,7 +152,9 @@ describe("a pointer selection hands the keyboard to what was selected", () => {
 
   it("does so from Scratch", async () => {
     mount();
-    clickWithPointer(screen.getByRole("button", { name: "Scratch terminal" }));
+    clickWithPointer(
+      screen.getByRole("button", { name: /^Scratch workspace/ }),
+    );
     await vi.waitFor(() => {
       expect(focusSurface).toHaveBeenCalledTimes(1);
     });

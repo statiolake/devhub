@@ -19,6 +19,7 @@ import type { AppIntent, AppSnapshot } from "../../../ipc/appShell";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
@@ -110,10 +111,12 @@ function snapshot(): AppSnapshot {
     readiness: "ready",
     editorHost: { status: "ready" },
     layout: { kind: "unavailable" },
-    selection: { context: { kind: "global" }, presentation: "full" },
+    selection: { context: ON_SCRATCH, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       workspace("w-alpha", "alpha", "/projects/alpha", [
         agent("a-1", "w-alpha", 0),
         agent("a-2", "w-alpha", 1),
@@ -347,8 +350,11 @@ describe("letting go", () => {
 describe("what does not move", () => {
   it("leaves Scratch out of it: it is the first row by definition", () => {
     mount(vi.fn());
-    const scratch = screen.getByRole("button", { name: "Scratch terminal" });
-    expect(scratch.closest("[draggable]")).toBeNull();
+    const scratch = screen.getByRole("button", { name: /^Scratch workspace/ });
+    expect(scratch.closest("[role=treeitem]")).toHaveAttribute(
+      "draggable",
+      "false",
+    );
   });
 });
 

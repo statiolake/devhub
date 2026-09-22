@@ -27,6 +27,11 @@ import type {
 import { ShellPageProvider } from "./ShellPageContext";
 import type { ShellPageBridge } from "../ipc/contract";
 import { useShellPage } from "./ShellPageContext";
+import {
+  ON_SCRATCH,
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "./components/sidebar/scratchFixture";
 
 const SNAPSHOT = {
   schemaVersion: 1,
@@ -34,10 +39,11 @@ const SNAPSHOT = {
   readiness: "ready",
   editorHost: { status: "ready" },
   layout: { kind: "unavailable" },
-  selection: { context: { kind: "global" }, presentation: "full" },
+  selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 240 },
   splitRatio: 0.55,
-  workspaces: [],
+  scratchWorkspaceId: SCRATCH_ID,
+  workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;
 
 const APPEARANCE = { sequence: 1 } as unknown as AppAppearance;

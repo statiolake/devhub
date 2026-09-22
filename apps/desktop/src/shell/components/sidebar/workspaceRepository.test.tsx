@@ -18,6 +18,7 @@ import type { RepositoryStatusWire } from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 // The Sidebar asks main to put modals on screen and listens for menu
 // commands. Both are what the component genuinely does, so the bridge is
@@ -46,10 +47,12 @@ const SNAPSHOT = {
   readiness: "ready",
   editorHost: { status: "ready" },
   layout: { kind: "unavailable" },
-  selection: { context: { kind: "global" }, presentation: "full" },
+  selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 248 },
   splitRatio: 0.55,
+  scratchWorkspaceId: SCRATCH_ID,
   workspaces: [
+    scratchWorkspace(),
     {
       id: "w-1",
       label: "widget",
@@ -134,7 +137,7 @@ describe("a workspace row", () => {
     // the next. Everything else the row knows is a mark at its trailing edge
     // and a line in its tooltip.
     mount(WORKING_ON);
-    const row = document.querySelector(".workspace-row");
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
     expect(row?.querySelector(".row-text")?.textContent).toBe(
       "widgetfeature/128-tidy",
     );
@@ -150,7 +153,7 @@ describe("a workspace row", () => {
     // number is the part a person already knows, and the title is what the
     // Issue's own mark says the moment it is hovered.
     mount(WORKING_ON);
-    const row = document.querySelector(".workspace-row");
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
     expect(row?.querySelector(".row-text")?.textContent).not.toContain("#128");
     expect(row?.querySelector(".row-text")?.textContent).not.toContain(
       "Tidy the picker",
@@ -179,12 +182,12 @@ describe("a workspace row", () => {
         },
       ],
     });
-    expect(document.querySelectorAll(".workspace-row .row-text")).toHaveLength(
-      1,
-    );
-    expect(document.querySelector(".workspace-row")?.textContent).toBe(
-      "widgetmain",
-    );
+    expect(
+      document.querySelectorAll(".workspace-row:not(.is-scratch) .row-text"),
+    ).toHaveLength(1);
+    expect(
+      document.querySelector(".workspace-row:not(.is-scratch)")?.textContent,
+    ).toBe("widgetmain");
   });
 
   it("says what the pull request is called in the mark's own hover", () => {
@@ -314,7 +317,7 @@ describe("the mark a workspace row starts with", () => {
   function leadingGlyph(): string | undefined {
     return (
       document
-        .querySelector(".workspace-row .row-glyph svg")
+        .querySelector(".workspace-row:not(.is-scratch) .row-glyph svg")
         ?.getAttribute("data-glyph") ?? undefined
     );
   }
@@ -413,7 +416,9 @@ describe("the mark a workspace row starts with", () => {
       ],
     });
     expect(leadingGlyph()).toBe("folder");
-    const glyph = document.querySelector(".workspace-row .row-glyph");
+    const glyph = document.querySelector(
+      ".workspace-row:not(.is-scratch) .row-glyph",
+    );
     expect(glyph?.tagName).toBe("BUTTON");
     expect(glyph).toHaveClass("row-glyph-button");
     // The row's own sentence, and then what pressing it does — not a second,
@@ -441,7 +446,9 @@ describe("the mark a workspace row starts with", () => {
       sequence: 1,
       workspaces: [{ workspaceId: "w-1", branch: "main" }],
     });
-    const glyph = document.querySelector(".workspace-row .row-glyph");
+    const glyph = document.querySelector(
+      ".workspace-row:not(.is-scratch) .row-glyph",
+    );
     expect(glyph?.tagName).toBe("SPAN");
     expect(glyph).toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
@@ -485,7 +492,9 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
-    const glyph = document.querySelector(".workspace-row .row-glyph-button");
+    const glyph = document.querySelector(
+      ".workspace-row:not(.is-scratch) .row-glyph-button",
+    );
     expect(glyph?.querySelector("svg")?.dataset.glyph).toBe("folder");
     fireEvent.click(glyph!);
     expect(openExternalUrl).toHaveBeenCalledWith(
@@ -497,7 +506,7 @@ describe("the mark a workspace row starts with", () => {
 describe("a workspace row, continued", () => {
   it("says only its name when there is nothing else to say", () => {
     mount({ sequence: 1, workspaces: [] });
-    const row = document.querySelector(".workspace-row");
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-branch")).toBeNull();
   });
@@ -693,7 +702,7 @@ describe("a workspace row, continued", () => {
       ],
     });
     const note = document
-      .querySelector(".workspace-row")
+      .querySelector(".workspace-row:not(.is-scratch)")
       ?.querySelector(".row-mark-unavailable")
       ?.getAttribute("aria-label");
     expect(note).toContain("detected dubious ownership");

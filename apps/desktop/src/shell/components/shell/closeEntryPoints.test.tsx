@@ -33,6 +33,7 @@ import {
 } from "../../sidebar/SidebarContext";
 import { Sidebar } from "../sidebar/Sidebar";
 import { Unavailable } from "./SurfaceViewport";
+import { SCRATCH_ID, scratchWorkspace } from "../sidebar/scratchFixture";
 
 window.devhub = {
   openModal: () => Promise.resolve(""),
@@ -82,7 +83,9 @@ function snapshotWith(row: Row): AppSnapshot {
     },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: WORKSPACE_ID,
         label: "widget",
@@ -135,7 +138,7 @@ function mount(where: "sidebar" | "surface", row: Row) {
           <Sidebar snapshot={snapshotWith(row)} />
         ) : (
           <Unavailable
-            workspace={snapshotWith(row).workspaces[0]}
+            workspace={snapshotWith(row).workspaces[1]}
             actions={
               row.state.kind === "unavailable"
                 ? [

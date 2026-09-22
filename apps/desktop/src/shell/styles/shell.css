@@ -251,10 +251,10 @@
  * and the whole of what a row knows is in its tooltip where there is room for
  * it.
  *
- * A Workspace row is a `div` and the Scratch row is a `button`, and the user
- * agent pads a button by `1px 6px` while leaving a div alone. Left unstated,
- * that inset shifts a whole row — glyph and label together — off the rail the
- * other rows sit on. */
+ * Every row is a `div` now — Scratch is a Workspace row — but a button pads
+ * itself by `1px 6px` where a div does not, and the inset below is stated so
+ * that no row that is ever a button again can drift off the rail the other
+ * rows sit on. */
 .sidebar-row {
   position: relative;
   display: flex;
@@ -453,7 +453,7 @@
  *
  * The condition is written the same way every time it appears below: the row
  * is hovered, or something inside it has keyboard focus, or the row *is* the
- * focused control (the Scratch row is itself a button). Focus is
+ * focused control (a row that is itself a button). Focus is
  * `:focus-visible` and not `:focus`, so clicking a row does not leave it lit
  * after the pointer has gone somewhere else.
  */

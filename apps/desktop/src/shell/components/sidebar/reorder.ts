@@ -28,7 +28,11 @@
  * they have to be told.
  */
 
-import type { AppSnapshot, WorkspaceSnapshot } from "../../../ipc/appShell";
+import {
+  sidebarWorkspaces,
+  type AppSnapshot,
+  type WorkspaceSnapshot,
+} from "../../../ipc/appShell";
 import {
   moveAgent,
   moveWorkspace,
@@ -43,7 +47,8 @@ import {
  *
  * A workspace row or an Agent row, which are the only two kinds of row that
  * move. Scratch is not one of them and never becomes one: it is the first row
- * by definition, not by arrangement.
+ * by definition, not by arrangement, so every Workspace lane and every order
+ * sent is over `sidebarWorkspaces(snapshot).rows`, which it is not in.
  */
 export type DragSource =
   | { readonly kind: "workspace"; readonly id: string }
@@ -88,7 +93,7 @@ export function dropLane(
 ): readonly string[] {
   if (source.kind === "agent") return agentsOf(snapshot, source.workspaceId);
   return siblingsOf(
-    snapshot.workspaces,
+    sidebarWorkspaces(snapshot).rows,
     (workspace) => workspace.groupKey,
     source.id,
   ).map((workspace) => workspace.id);
@@ -152,7 +157,7 @@ export function dropIntent(
         };
   }
   const order = placeWorkspace(
-    snapshot.workspaces,
+    sidebarWorkspaces(snapshot).rows,
     (workspace) => workspace.groupKey,
     source.id,
     before,
@@ -214,7 +219,7 @@ export function moveIntent(
       : { type: "reorder_agents", workspaceId: source.workspaceId, order };
   }
   const order = moveWorkspace(
-    snapshot.workspaces,
+    sidebarWorkspaces(snapshot).rows,
     (workspace) => workspace.groupKey,
     source.id,
     direction,

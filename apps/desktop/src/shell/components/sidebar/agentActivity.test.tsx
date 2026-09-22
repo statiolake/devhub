@@ -32,6 +32,7 @@ import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 window.devhub = {
   openModal: () => Promise.resolve(""),
@@ -57,10 +58,12 @@ function snapshotWithAgent(
     readiness: "ready",
     editorHost: { status: "ready" },
     layout: { kind: "unavailable" },
-    selection: { context: { kind: "global" }, presentation: "full" },
+    selection: { context: ON_SCRATCH, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: "w-1",
         label: "widget",
@@ -312,7 +315,9 @@ describe("the column an Agent's status is in", () => {
       move. */
   it("is the column a Workspace draws its folder in", () => {
     mount("Reading the reconciler");
-    const glyph = document.querySelector(".workspace-row .row-glyph");
+    const glyph = document.querySelector(
+      ".workspace-row:not(.is-scratch) .row-glyph",
+    );
     expect(glyph).toBeInTheDocument();
     expect(glyph?.querySelector("svg")).toBeInTheDocument();
     expect(document.querySelector(".row-rail")).toBeNull();

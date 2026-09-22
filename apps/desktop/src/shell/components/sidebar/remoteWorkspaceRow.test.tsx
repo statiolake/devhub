@@ -25,6 +25,7 @@ import type { RepositoryStatusWire } from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
@@ -68,10 +69,11 @@ function mount(
     readiness: "ready",
     editorHost: { status: "ready" },
     layout: { kind: "unavailable" },
-    selection: { context: { kind: "global" }, presentation: "full" },
+    selection: { context: ON_SCRATCH, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
-    workspaces: [workspace],
+    scratchWorkspaceId: SCRATCH_ID,
+    workspaces: [scratchWorkspace(), workspace],
   } as unknown as AppSnapshot;
   render(
     <SidebarContext.Provider value={value}>
@@ -123,7 +125,7 @@ describe("a Workspace row whose folder is on another machine", () => {
     // there is one silhouette for "not here", and the host is a name.
     mount(REMOTE);
     expect(
-      document.querySelector(".workspace-row .row-glyph svg"),
+      document.querySelector(".workspace-row:not(.is-scratch) .row-glyph svg"),
     ).toHaveAttribute("data-glyph", "remote");
     // And not a second copy of the same drawing in the trailing group.
     expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(1);
@@ -139,7 +141,7 @@ describe("a Workspace row whose folder is on another machine", () => {
       branch: "feature/128-tidy",
     });
     expect(
-      document.querySelector(".workspace-row .row-glyph svg"),
+      document.querySelector(".workspace-row:not(.is-scratch) .row-glyph svg"),
     ).toHaveAttribute("data-glyph", "remote");
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
   });
@@ -207,7 +209,7 @@ describe("a Workspace row whose folder is on another machine", () => {
     // two have to be tellable apart at thirteen pixels.
     mount(CONTAINER);
     expect(
-      document.querySelector(".workspace-row .row-glyph svg"),
+      document.querySelector(".workspace-row:not(.is-scratch) .row-glyph svg"),
     ).toHaveAttribute("data-glyph", "container");
     expect(document.querySelectorAll('[data-glyph="container"]')).toHaveLength(
       1,

@@ -17,6 +17,7 @@ import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { CLOSING_EXIT_MS, mergeExitingRows, rowsThatLeft } from "./closingExit";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
@@ -63,10 +64,11 @@ function snapshotWith(state: WorkspaceCloseWire): AppSnapshot {
     readiness: "ready",
     editorHost: { status: "ready" },
     layout: { kind: "unavailable" },
-    selection: { context: { kind: "global" }, presentation: "full" },
+    selection: { context: ON_SCRATCH, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
-    workspaces: [workspace(state)],
+    scratchWorkspaceId: SCRATCH_ID,
+    workspaces: [scratchWorkspace(), workspace(state)],
   } as unknown as AppSnapshot;
 }
 
@@ -76,17 +78,20 @@ const EMPTY: AppSnapshot = {
   readiness: "ready",
   editorHost: { status: "ready" },
   layout: { kind: "unavailable" },
-  selection: { context: { kind: "global" }, presentation: "full" },
+  selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 248 },
   splitRatio: 0.55,
-  workspaces: [],
+  scratchWorkspaceId: SCRATCH_ID,
+  workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;
 
 // A worktree, so the row offers the destructive control that a closing row
 // most needs to withdraw.
 const WORKTREE: RepositoryStatusWire = {
   sequence: 1,
+  scratchWorkspaceId: SCRATCH_ID,
   workspaces: [
+    scratchWorkspace(),
     {
       workspaceId: "w-1",
       mainWorktree: "/projects/widget-main",
@@ -134,7 +139,9 @@ describe("a closing workspace row", () => {
     expect(
       screen.queryByRole("button", { name: /^Remove the worktree/ }),
     ).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Create agent/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^Create agent in widget/ }),
+    ).toBeNull();
   });
 
   it("still offers all of them while it is merely open", () => {
@@ -143,13 +150,15 @@ describe("a closing workspace row", () => {
     mount(snapshotWith(IDLE));
     expect(screen.getByRole("button", { name: /^Close/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^Create agent/ }),
+      screen.getByRole("button", { name: /^Create agent in widget/ }),
     ).toBeInTheDocument();
   });
 
   it("says it is busy, and is not italic about it", () => {
     mount(snapshotWith(CLOSING));
-    const item = document.querySelector(".sidebar-tree-item");
+    const item = screen
+      .getByRole("button", { name: /widget workspace/ })
+      .closest(".sidebar-tree-item");
     expect(item).toHaveAttribute("aria-busy", "true");
     expect(item).toHaveClass("is-closing");
   });

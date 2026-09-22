@@ -16,6 +16,7 @@
 import { useMemo } from "react";
 import { Picker, type PickerItem } from "../components/shell/Picker";
 import { usePicker } from "./PickerContext";
+import { sidebarWorkspaces } from "../../ipc/appShell";
 
 const EMPTY: readonly never[] = [];
 
@@ -24,7 +25,7 @@ export interface TabPickerSheetProps {
 }
 
 /** `workspace:<id>` and `agent:<id>`, so one list can hold both kinds. */
-function rowId(kind: "workspace" | "agent" | "global", id: string): string {
+function rowId(kind: "workspace" | "agent", id: string): string {
   return `${kind}:${id}`;
 }
 
@@ -32,17 +33,16 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
   const { state, dispatch } = usePicker();
   // Before the first projection there is nothing to list. The sheet still
   // stands — it was asked for — and shows its own "nothing to go to" line.
-  const workspaces =
-    state.status === "ready" ? state.snapshot.workspaces : EMPTY;
+  // In the Sidebar's order — Scratch first — which is also the order main
+  // counts entries in (`sidebarWorkspaces`). Scratch is named "Scratch" by main.
+  const workspaces = useMemo(() => {
+    if (state.status !== "ready") return EMPTY;
+    const { scratch, rows } = sidebarWorkspaces(state.snapshot);
+    return [scratch, ...rows];
+  }, [state]);
 
   const items = useMemo((): readonly PickerItem[] => {
-    const rows: PickerItem[] = [
-      {
-        id: rowId("global", "scratch"),
-        label: "Scratch",
-        detail: "The folderless workbench",
-      },
-    ];
+    const rows: PickerItem[] = [];
     for (const workspace of workspaces) {
       rows.push({
         id: rowId("workspace", workspace.id),
@@ -90,10 +90,7 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
             context: { kind: "workspace", workspaceId: value },
           });
         } else {
-          void dispatch({
-            type: "select_context",
-            context: { kind: "global" },
-          });
+          throw new Error(`Go to chose a row it never listed: ${id}`);
         }
         onDismiss();
       }}

@@ -31,6 +31,10 @@ import type {
 import { PickerProvider } from "./PickerContext";
 import type { PickerBridge } from "../../ipc/contract";
 import { AgentRenameSheet } from "./AgentRenameSheet";
+import {
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "../components/sidebar/scratchFixture";
 
 // jsdom implements no layout, so it has no `scrollIntoView`. Keeping the
 // selected row visible is the picker's job and not this file's subject.
@@ -55,7 +59,9 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
     } as AppSnapshot["selection"],
     sidebar: { width: 240 } as AppSnapshot["sidebar"],
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: WORKSPACE_ID,
         label: "folderA",

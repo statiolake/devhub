@@ -19,14 +19,20 @@ import type { AppAppearance, AppSnapshot } from "../../../ipc/appShell";
 import type { ShellPageBridge } from "../../../ipc/contract";
 import { ShellPageProvider } from "../../ShellPageContext";
 import { TitleBar } from "./TitleBar";
+import {
+  ON_SCRATCH,
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "../sidebar/scratchFixture";
 
 const SNAPSHOT = {
   schemaVersion: 1,
   revision: 1,
   readiness: "ready",
-  selection: { context: { kind: "global" }, presentation: "full" },
+  selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 248, collapsed: false },
-  workspaces: [],
+  scratchWorkspaceId: SCRATCH_ID,
+  workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;
 
 const APPEARANCE = {

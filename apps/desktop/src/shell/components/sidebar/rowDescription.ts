@@ -122,6 +122,33 @@ export function workspaceGlyphName(location: WorkspaceLocationWire): GlyphName {
 }
 
 /**
+ * How a Workspace row introduces itself: its mark, and whether it can be
+ * closed or moved.
+ *
+ * Scratch is today's daily folder, an ordinary Workspace (`scratchWorkspaceId`),
+ * and this is the one place the page tells it apart. Its name is already
+ * "Scratch" on the wire (main names it once); what the page adds is the
+ * terminal in place of its folder's mark, and that it is neither closed nor
+ * dragged — main refuses both, and a control main refuses is not drawn.
+ * Everything else about it — its path, its branch, its Agents — is a Workspace
+ * row's. Yesterday's folder is not Scratch any more and is any other row.
+ */
+export interface RowIdentity {
+  readonly glyph: GlyphName;
+  /** Scratch: always first, never closed, never dragged. */
+  readonly fixed: boolean;
+}
+
+export function rowIdentity(
+  workspace: WorkspaceSnapshot,
+  scratchWorkspaceId: string,
+): RowIdentity {
+  return workspace.id === scratchWorkspaceId
+    ? { glyph: "terminal", fixed: true }
+    : { glyph: workspaceGlyphName(workspace.location), fixed: false };
+}
+
+/**
  * What a dev container is called, in a row's facts.
  *
  * The folder's name and never the container's id: an id is a hash that changes
@@ -359,13 +386,6 @@ export function workspaceRowFacts(
         }
       : undefined,
   ]);
-}
-
-export function workspaceRowDescription(
-  workspace: WorkspaceSnapshot,
-  repository: WorkspaceRepositoryWire | undefined,
-): string {
-  return describe(workspaceRowFacts(workspace, repository));
 }
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {

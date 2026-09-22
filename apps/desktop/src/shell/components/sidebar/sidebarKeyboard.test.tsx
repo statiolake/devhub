@@ -25,6 +25,7 @@ import type { MenuCommand } from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 /** What main has asked the page to do, replayable from the test. */
 let listeners: ((command: MenuCommand) => void)[] = [];
@@ -89,7 +90,9 @@ function snapshotOn(context: AppSnapshot["selection"]["context"]): AppSnapshot {
     selection: { context, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: "w-1",
         label: "widget",
@@ -144,11 +147,11 @@ describe("focus_sidebar", () => {
     );
   });
 
-  it("lands on Scratch, which is a row outside the tree", () => {
-    mount(snapshotOn({ kind: "global" }));
+  it("lands on Scratch, the tree's first row, when Scratch is selected", () => {
+    mount(snapshotOn(ON_SCRATCH));
     send("focus_sidebar");
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Scratch terminal" }),
+      screen.getByRole("button", { name: /^Scratch workspace/ }),
     );
   });
 
@@ -173,7 +176,7 @@ describe("Escape in the Sidebar", () => {
   });
 
   it("does it from anywhere in the pane, the resize handle included", () => {
-    mount(snapshotOn({ kind: "global" }));
+    mount(snapshotOn(ON_SCRATCH));
     fireEvent.keyDown(
       screen.getByRole("separator", { name: "Resize sidebar" }),
       {
@@ -184,9 +187,9 @@ describe("Escape in the Sidebar", () => {
   });
 
   it("does not do it while a composition is being cancelled", () => {
-    mount(snapshotOn({ kind: "global" }));
+    mount(snapshotOn(ON_SCRATCH));
     fireEvent.keyDown(
-      screen.getByRole("button", { name: "Scratch terminal" }),
+      screen.getByRole("button", { name: /^Scratch workspace/ }),
       {
         key: "Escape",
         isComposing: true,
@@ -206,13 +209,13 @@ describe("Escape in the Sidebar", () => {
  */
 describe("retry_app", () => {
   it("starts this page's projection over", () => {
-    mount(snapshotOn({ kind: "global" }));
+    mount(snapshotOn(ON_SCRATCH));
     send("retry_app");
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it("does not answer for a notice it cannot see", () => {
-    mount(snapshotOn({ kind: "global" }));
+    mount(snapshotOn(ON_SCRATCH));
     send("dismiss_alert");
     expect(retry).not.toHaveBeenCalled();
   });

@@ -29,6 +29,11 @@ import { ShellPageProvider, useShellPage } from "../ShellPageContext";
 import { SidebarProvider, useSidebar } from "../sidebar/SidebarContext";
 import { AgentsProvider, useAgents } from "../agents/AgentsContext";
 import { PickerProvider, usePicker } from "../picker/PickerContext";
+import {
+  ON_SCRATCH,
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "../components/sidebar/scratchFixture";
 
 const AGENT_ID = "5d7fd0e2-2a0e-4a2b-9f3e-9a1a0a0b1c2d";
 const CONFIRMATION_ID = "0d2f8f8e-1f37-4a1f-9b3d-1b0a5a5c6d7e";
@@ -39,10 +44,11 @@ const SNAPSHOT = {
   readiness: "ready",
   editorHost: { status: "ready", host: "local" },
   layout: { kind: "unavailable" },
-  selection: { context: { kind: "global" }, presentation: "full" },
+  selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 240, collapsed: false },
   splitRatio: 0.55,
-  workspaces: [],
+  scratchWorkspaceId: SCRATCH_ID,
+  workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;
 
 const CONFIRMATION_REQUIRED = {

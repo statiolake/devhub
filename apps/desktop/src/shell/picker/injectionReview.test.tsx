@@ -29,6 +29,10 @@ import type {
 import { PickerProvider } from "./PickerContext";
 import type { PickerBridge } from "../../ipc/contract";
 import { InjectionReviewSheet } from "./InjectionReviewSheet";
+import {
+  SCRATCH_ID,
+  scratchWorkspace,
+} from "../components/sidebar/scratchFixture";
 
 const AGENT_ID = "5d7fd0e2-2a0e-4a2b-9f3e-9a1a0a0b1c2d";
 const WORKSPACE_ID = "63752e9f-c93d-4d49-87f0-70f352eea8b0";
@@ -52,7 +56,9 @@ function snapshotWith(agent: "running" | "stopped" | "gone"): AppSnapshot {
     } as AppSnapshot["selection"],
     sidebar: { width: 240 } as AppSnapshot["sidebar"],
     splitRatio: 0.55,
+    scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
+      scratchWorkspace(),
       {
         id: WORKSPACE_ID,
         label: "folderA",
