@@ -115,6 +115,7 @@ import {
 	agentsInspection,
 	agentProfileId,
 	displayPath,
+	locationKey,
 	agentId as parseAgentId,
 	remoteAuthorityOf,
 	surfaceKeyName,
@@ -4426,6 +4427,12 @@ export class AppController {
 	 * that already exists rather than making a second.
 	 */
 	noteLocation(location: WorkspaceLocation): void {
+		// A workbench DevHub is building itself — `syncEditorViews` making one
+		// for every Workspace, today's Scratch at midnight among them — is not a
+		// request to open anything: the Workspace is already in the model, and
+		// "opening" it again would select it, moving the person off whatever
+		// they were in. Only a place VS Code asked for on its own is news.
+		if (this.editorOpens.has(locationKey(location))) return;
 		this.dispatchOwn({
 			type: "open_folder",
 			location: requestedLocation(
