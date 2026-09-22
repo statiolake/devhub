@@ -1,48 +1,38 @@
 /**
  * Scratch is today's daily folder: `[scratch] daily` in `settings.toml`.
  *
- * The setting is a path with `strftime` fields, `~/junk/%Y%m%d` by default.
- * Exactly four fields are understood, and they are the ones a daily folder is
- * named with:
+ * The setting is a path in the one date language DevHub has,
+ * `model/dateTemplate.ts` — the same tokens a `workspace_sources` entry of
+ * type `date` takes (`YYYY`, `MM`, `DD`, `MMDD`, …, `[...]` for literal text).
+ * The default is `~/junk/YYYYMMDD`.
  *
- * - `%Y` — the year, four digits
- * - `%m` — the month, `01`–`12`
- * - `%d` — the day of the month, `01`–`31`
- * - `%%` — a literal `%`
+ * What makes a value refused (`scratchDailyProblem`) is the date language's
+ * own two mistakes — an unclosed bracket, a token hiding inside a word — plus
+ * one of Scratch's: it has to name *a day*. A path that names no date is one
+ * folder forever, and one with `HH` or `mm` in it names a new folder every
+ * hour or minute; neither is today's folder, and both are refused rather than
+ * quietly producing a Scratch that moves when nobody expects it.
  *
- * Anything else after a `%` is refused when the settings are read
- * (`scratchDailyProblem`), never passed through: `%H` in a daily folder would
- * make a new Scratch every hour, and `%j` a folder the person never asked for,
- * and in both cases nothing on screen would say why.
- *
- * The day is the *local* day, read through `Date`'s local getters, for the
- * same reason `dateTemplate.ts` gives: a daily folder is named after the day
- * the person is living in. `nextLocalMidnight` is the one other thing here
- * that knows what a day is, so the rollover timer and the folder name can
- * never disagree about when "today" ends.
- *
- * Nothing here touches the filesystem or reads the clock.
+ * The day is the local day, as `dateTemplate.ts` says. Nothing here touches
+ * the filesystem or reads the clock.
  */
 
-export const DEFAULT_SCRATCH_DAILY = "~/junk/%Y%m%d";
+import {
+  dateTemplateAmbiguity,
+  dateTemplateBracketsBalance,
+  expandDateTemplate,
+} from "./dateTemplate.js";
+
+export const DEFAULT_SCRATCH_DAILY = "~/junk/YYYYMMDD";
 
 /** Why a `daily` value is refused, or nothing when it is fine. */
 export type ScratchDailyProblem =
   | { readonly kind: "not-a-path" }
-  | { readonly kind: "unknown-field"; readonly field: string }
-  | { readonly kind: "no-date" };
+  | { readonly kind: "unbalanced-brackets" }
+  | { readonly kind: "ambiguous"; readonly segment: string }
+  | { readonly kind: "not-one-day" };
 
-function pad(value: number, width: number): string {
-  return String(value).padStart(width, "0");
-}
-
-/**
- * What is wrong with this `daily` value, if anything.
- *
- * A path that names no date at all is refused too: it would be one folder
- * forever, which is a Workspace a person can simply open, and calling it
- * "today's" would be a claim the setting cannot keep.
- */
+/** What is wrong with this `daily` value, if anything. */
 export function scratchDailyProblem(
   template: string,
 ): ScratchDailyProblem | undefined {
@@ -53,18 +43,23 @@ export function scratchDailyProblem(
   ) {
     return { kind: "not-a-path" };
   }
-  let dated = false;
-  for (let index = 0; index < template.length; index += 1) {
-    if (template[index] !== "%") continue;
-    const field = template[index + 1];
-    if (field === "Y" || field === "m" || field === "d") {
-      dated = true;
-    } else if (field !== "%") {
-      return { kind: "unknown-field", field: `%${field ?? ""}` };
-    }
-    index += 1;
+  if (!dateTemplateBracketsBalance(template)) {
+    return { kind: "unbalanced-brackets" };
   }
-  return dated ? undefined : { kind: "no-date" };
+  const ambiguity = dateTemplateAmbiguity(template);
+  if (ambiguity) return { kind: "ambiguous", segment: ambiguity.segment };
+  // One folder per day: the same all day long, and a different one tomorrow.
+  const morning = new Date(2001, 1, 3, 0, 0, 0);
+  const night = new Date(2001, 1, 3, 23, 59, 59);
+  const tomorrow = new Date(2001, 1, 4, 0, 0, 0);
+  const today = expandDateTemplate(template, morning);
+  if (
+    expandDateTemplate(template, night) !== today ||
+    expandDateTemplate(template, tomorrow) === today
+  ) {
+    return { kind: "not-one-day" };
+  }
+  return undefined;
 }
 
 /**
@@ -74,25 +69,10 @@ export function scratchDailyProblem(
  * refuses those first, so one arriving here is a broken invariant.
  */
 export function scratchDailyPath(template: string, now: Date): string {
-  const problem = scratchDailyProblem(template);
-  if (problem) {
+  if (scratchDailyProblem(template)) {
     throw new Error(`scratch.daily is not a valid template: ${template}`);
   }
-  let out = "";
-  for (let index = 0; index < template.length; index += 1) {
-    const character = template[index];
-    if (character !== "%") {
-      out += character;
-      continue;
-    }
-    const field = template[index + 1];
-    index += 1;
-    if (field === "Y") out += pad(now.getFullYear(), 4);
-    else if (field === "m") out += pad(now.getMonth() + 1, 2);
-    else if (field === "d") out += pad(now.getDate(), 2);
-    else out += "%";
-  }
-  return out;
+  return expandDateTemplate(template, now);
 }
 
 /** `~/…` against this machine's home; an absolute path as it is. */

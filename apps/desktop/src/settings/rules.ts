@@ -41,7 +41,7 @@ export const WORKSPACE_PATH_RULE =
   "A folder is an absolute path, or one starting with ~/ (or ~ on its own).";
 
 export const SCRATCH_DAILY_RULE =
-  "scratch.daily is an absolute or ~/ path naming a date with %Y, %m and %d (%% for a literal %); no other % fields are understood.";
+  "scratch.daily is an absolute or ~/ path naming one folder per day with the date tokens (YYYY, MM, DD, …; [text] for literal text), e.g. ~/junk/YYYYMMDD.";
 
 export const DATE_TEMPLATE_RULE =
   "A date path has a closing bracket for every opening one; text inside brackets is used as written.";

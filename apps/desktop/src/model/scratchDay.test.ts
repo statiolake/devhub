@@ -27,38 +27,36 @@ function codeOf(run: () => unknown): string | undefined {
 }
 
 describe("[scratch] daily", () => {
-  it("defaults to ~/junk/%Y%m%d", () => {
-    expect(parseConfig("version = 2\n").scratch.daily).toBe("~/junk/%Y%m%d");
+  it("defaults to ~/junk/YYYYMMDD", () => {
+    expect(parseConfig("version = 2\n").scratch.daily).toBe("~/junk/YYYYMMDD");
     expect(defaultConfig().scratch.daily).toBe(DEFAULT_SCRATCH_DAILY);
   });
 
   it("reads a custom value and writes it back", () => {
-    const config = parseConfig(scratchSetting("/data/daily/%Y/%m-%d"));
-    expect(config.scratch.daily).toBe("/data/daily/%Y/%m-%d");
+    const config = parseConfig(scratchSetting("/data/[daily]/YYYY/MM-DD"));
+    expect(config.scratch.daily).toBe("/data/[daily]/YYYY/MM-DD");
     expect(parseConfig(configToToml(config)).scratch.daily).toBe(
-      "/data/daily/%Y/%m-%d",
+      "/data/[daily]/YYYY/MM-DD",
     );
   });
 
-  it("refuses a field it does not understand, naming the key", () => {
-    for (const daily of ["~/junk/%Y%m%d-%H", "~/junk/%j", "~/junk/%Y%"]) {
-      expect(codeOf(() => parseConfig(scratchSetting(daily)))).toBe(
-        "invalid_scratch_daily",
-      );
+  it("refuses what is not one folder per day, naming the key", () => {
+    for (const daily of [
+      "~/junk", // no date: one folder forever
+      "~/junk/YYYYMMDD-HH", // a new folder every hour
+      "~/junk/YYYY/MM", // the same folder all month
+      "~/[junk/YYYYMMDD", // an unclosed bracket
+      "~/summaries/YYYYMMDD", // `mm` hiding in a word
+      "junk/YYYYMMDD", // not a path
+    ]) {
+      expect(
+        codeOf(() => parseConfig(scratchSetting(daily))),
+        daily,
+      ).toBe("invalid_scratch_daily");
     }
-    expect(scratchDailyProblem("~/junk/%Y%m%d-%H")).toEqual({
-      kind: "unknown-field",
-      field: "%H",
+    expect(scratchDailyProblem("~/junk/YYYYMMDD-HH")).toEqual({
+      kind: "not-one-day",
     });
-  });
-
-  it("refuses a relative path and a path with no date", () => {
-    expect(codeOf(() => parseConfig(scratchSetting("junk/%Y")))).toBe(
-      "invalid_scratch_daily",
-    );
-    expect(codeOf(() => parseConfig(scratchSetting("~/junk")))).toBe(
-      "invalid_scratch_daily",
-    );
   });
 
   it("refuses an unknown key in the table", () => {
@@ -71,12 +69,12 @@ describe("[scratch] daily", () => {
 describe("scratchDailyPath", () => {
   it("names the local day", () => {
     const now = new Date(2026, 8, 3, 23, 59);
-    expect(scratchDailyPath("~/junk/%Y%m%d", now)).toBe("~/junk/20260903");
-    expect(scratchDailyPath("/d/%Y/%m/%d/%%", now)).toBe("/d/2026/09/03/%");
+    expect(scratchDailyPath("~/junk/YYYYMMDD", now)).toBe("~/junk/20260903");
+    expect(scratchDailyPath("/d/YYYY/MMDD/[DD]", now)).toBe("/d/2026/0903/DD");
   });
 
   it("throws on a template the settings reader refuses", () => {
-    expect(() => scratchDailyPath("~/junk/%H", new Date())).toThrow();
+    expect(() => scratchDailyPath("~/junk/HH", new Date())).toThrow();
   });
 
   it("expands ~ against the given home", () => {
