@@ -1608,3 +1608,61 @@ describe("the chords table, written so it can be added to", () => {
     expect(parseConfig(written).keybindings).toEqual(loaded.config.keybindings);
   });
 });
+
+describe("where new projects go, as [projects] directory says", () => {
+  const projectsSetting = (line: string): string =>
+    ["version = 1", "", "[projects]", line, ""].join("\n");
+
+  it("is unset when the file does not mention it", () => {
+    expect(parseConfig(MINIMAL).projects).toEqual({ directory: undefined });
+    // And an unset value writes no table back, so the file stays as it was.
+    expect(configToToml(defaultConfig())).not.toContain("[projects]");
+  });
+
+  it("reads an absolute path, ~/ and ~ as written, and writes them back", () => {
+    for (const directory of ["/srv/code", "~/dev/new", "~"]) {
+      const config = parseConfig(projectsSetting(`directory = "${directory}"`));
+      expect(config.projects).toEqual({ directory });
+      expect(parseConfig(configToToml(config))).toEqual(config);
+    }
+  });
+
+  it("takes no date tokens: a token-looking folder is a folder name", () => {
+    expect(
+      parseConfig(projectsSetting('directory = "~/dev/YYYY"')).projects,
+    ).toEqual({ directory: "~/dev/YYYY" });
+  });
+
+  it("refuses an empty or relative value, naming the key", () => {
+    for (const directory of ["", "dev/new", "./dev", "~user/dev"]) {
+      const source = projectsSetting(`directory = "${directory}"`);
+      expect(
+        codeOf(() => parseConfig(source)),
+        directory,
+      ).toBe("invalid_project_directory");
+      expect(
+        pathOf(() => parseConfig(source)),
+        directory,
+      ).toBe("projects.directory");
+    }
+  });
+
+  it("refuses a value that is not a string, and a key it does not know", () => {
+    expect(codeOf(() => parseConfig(projectsSetting("directory = 3")))).toBe(
+      "invalid_type",
+    );
+    expect(
+      codeOf(() => parseConfig(projectsSetting('clone_into = "~/dev"'))),
+    ).toBe("unknown_key");
+  });
+
+  it("drops the table when a save unsets it", () => {
+    const written = projectsSetting('directory = "~/dev/new"');
+    const unset = configOntoDocument(written, {
+      ...parseConfig(written),
+      projects: { directory: undefined },
+    });
+    expect(unset).not.toContain("directory");
+    expect(parseConfig(unset).projects).toEqual({ directory: undefined });
+  });
+});

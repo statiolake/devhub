@@ -165,6 +165,8 @@ export interface SettingsConfigWire {
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
 	/** `[scratch]`: where Scratch is, `daily = "~/junk/YYYYMMDD"`. */
 	readonly scratch: { readonly daily: string };
+	/** `[projects]`: where new projects go; absent means derived from the sources. */
+	readonly projects: { readonly directory: string | undefined };
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];
 }
@@ -319,6 +321,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_workspace_kind"
 	| "invalid_date_template"
 	| "invalid_scratch_daily"
+	| "invalid_project_directory"
 	| "ambiguous_date_token"
 	| "invalid_exclusion"
 	| "invalid_command"
@@ -405,6 +408,7 @@ export type SettingsScopeKeyWire =
 	| "keybindings"
 	| "workspaceSources"
 	| "scratch"
+	| "projects"
 	| "agentProfiles"
 	| "agentActions";
 

@@ -43,6 +43,9 @@ export const WORKSPACE_PATH_RULE =
 export const SCRATCH_DAILY_RULE =
   "scratch.daily is an absolute or ~/ path naming one folder per day with the date tokens (YYYY, MM, DD, …; [text] for literal text), e.g. ~/junk/YYYYMMDD.";
 
+export const PROJECT_DIRECTORY_RULE =
+  "projects.directory is an absolute path, or one starting with ~/ (or ~ on its own), used as written.";
+
 export const DATE_TEMPLATE_RULE =
   "A date path has a closing bracket for every opening one; text inside brackets is used as written.";
 
@@ -86,6 +89,17 @@ export function socketProblem(value: string): string | undefined {
   const valid =
     value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_.-]+$/.test(value);
   return valid ? undefined : SOCKET_RULE;
+}
+
+/** An empty field is the unset key (derive the folder from the sources), not a value. */
+export function projectDirectoryProblem(value: string): string | undefined {
+  if (hasNull(value)) return TEXT_RULE;
+  const valid =
+    value.length === 0 ||
+    value.startsWith("/") ||
+    value === "~" ||
+    value.startsWith("~/");
+  return valid ? undefined : PROJECT_DIRECTORY_RULE;
 }
 
 export function workspacePathProblem(value: string): string | undefined {

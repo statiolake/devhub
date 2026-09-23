@@ -213,6 +213,12 @@ version = 2
 
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
+
+[projects]
+directory = "~/dev/new"     # where New Project starts and the first folder Clone offers;
+                            # absolute or ~/, no date tokens. Unset, it is the first
+                            # folder source's path (or ~), and Clone offers the parents
+                            # of what the sources find
 ```
 
 The workbench's own settings are VS Code's, on disk under the app's user-data

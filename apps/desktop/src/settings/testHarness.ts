@@ -41,6 +41,7 @@ export function testConfig(
     version: 1,
     general: { importLoginEnvironment: true },
     scratch: { daily: "~/junk/YYYYMMDD" },
+    projects: { directory: undefined },
     runtimes: {
       shell: "/bin/zsh",
       git: "git",

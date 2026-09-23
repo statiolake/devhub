@@ -41,6 +41,7 @@ const CODES: readonly SettingsDiagnosticCodeWire[] = [
   "invalid_workspace_kind",
   "invalid_date_template",
   "invalid_scratch_daily",
+  "invalid_project_directory",
   "ambiguous_date_token",
   "invalid_exclusion",
   "invalid_command",

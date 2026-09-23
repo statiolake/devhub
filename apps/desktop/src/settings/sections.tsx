@@ -91,6 +91,7 @@ import {
   runtimeProblem,
   socketProblem,
   dateTemplateProblem,
+  projectDirectoryProblem,
   workspacePathProblem,
   SCRATCH_DAILY_RULE,
   type MatchChoice,
@@ -206,6 +207,30 @@ export function GeneralSection({
             }
             onCommit={(daily) => {
               update({ ...config, scratch: { daily } });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
+        heading="Projects"
+        note="Where New Project starts, and the first folder Clone offers. Left empty, it is the first folder source's path (or ~), and Clone offers the folders your sources' projects are in."
+      >
+        <Row
+          label="Folder"
+          help="An absolute path, or one starting with ~/. Used as written."
+        >
+          <TextField
+            label="Projects folder"
+            value={config.projects.directory ?? ""}
+            placeholder="From the first folder source"
+            mono
+            validate={projectDirectoryProblem}
+            onCommit={(next) => {
+              update({
+                ...config,
+                projects: { directory: next === "" ? undefined : next },
+              });
             }}
           />
         </Row>

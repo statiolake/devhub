@@ -36,6 +36,7 @@ import {
   SOCKET_RULE,
   DATE_TEMPLATE_RULE,
   SCRATCH_DAILY_RULE,
+  PROJECT_DIRECTORY_RULE,
   DATE_TOKEN_RULE,
   TMUX_ARGUMENT_RULE,
   WORKSPACE_PATH_RULE,
@@ -70,6 +71,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return DATE_TEMPLATE_RULE;
     case "invalid_scratch_daily":
       return SCRATCH_DAILY_RULE;
+    case "invalid_project_directory":
+      return PROJECT_DIRECTORY_RULE;
     case "ambiguous_date_token":
       return DATE_TOKEN_RULE;
     case "invalid_exclusion":

@@ -15,7 +15,7 @@
  */
 
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { localRuntime } from "../runtime/registry.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type { Config } from "../../model/config.js";
@@ -36,16 +36,38 @@ export function expandHome(path: string): string {
 /**
  * Where a new project goes unless the person says otherwise.
  *
- * The first filesystem workspace source, because that is the sentence "this is
- * where my projects live" already written in `config.toml`; the home directory
- * when there is none. It is a starting value in an editable field, never a
- * decision taken on the person's behalf.
+ * `[projects] directory` when it is set, because that is the person saying it.
+ * Otherwise the first filesystem workspace source, because that is the
+ * sentence "this is where my projects live" already written in `settings.toml`;
+ * the home directory when there is none. It is a starting value in an editable
+ * field, never a decision taken on the person's behalf.
  */
 export function defaultProjectDirectory(config: Config | undefined): string {
+	const configured = config?.projects.directory;
+	if (configured !== undefined) return resolve(expandHome(configured));
 	const source = config?.workspaceSources.find(
 		(candidate) => candidate.type === "filesystem",
 	);
 	return source ? expandHome(source.path) : homedir();
+}
+
+/**
+ * The folders a clone is offered, given the parents the sources imply.
+ *
+ * A set `[projects] directory` is the new-project default and leads the list,
+ * with the derived parents after it and never twice. Unset, the list is the
+ * derived parents alone. Either way it is never empty: with nothing else to
+ * offer it is the new-project default, so the sheet always has something to
+ * take with Return rather than a blank field to compose a path in.
+ */
+export function cloneParentChoices(
+	config: Config | undefined,
+	derived: readonly string[],
+): readonly string[] {
+	const fallback = defaultProjectDirectory(config);
+	const named = config?.projects.directory === undefined ? [] : [fallback];
+	const choices = [...new Set([...named, ...derived])];
+	return choices.length > 0 ? choices : [fallback];
 }
 
 function requireAbsolute(path: string): string {

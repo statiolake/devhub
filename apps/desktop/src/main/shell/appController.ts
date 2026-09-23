@@ -314,6 +314,7 @@ import {
 	startWorkspacePicker,
 } from "./workspacePicker.js";
 import {
+	cloneParentChoices,
 	cloneProject,
 	createProject,
 	defaultProjectDirectory,
@@ -5709,11 +5710,7 @@ export class AppController {
 		handle(CHANNELS.projectDefaultDirectory, () =>
 			defaultProjectDirectory(this.config),
 		);
-		// The folders a clone can go into: the parents the sources imply, or —
-		// when they imply none, which is what a configuration with no sources
-		// means — the one folder DevHub would otherwise have guessed. The list is
-		// never empty, so the sheet always has something to take with Return
-		// rather than a blank field to compose a path in.
+		// The folders a clone can go into: see `cloneParentChoices`.
 		handle(CHANNELS.cloneParentDirectories, async () => {
 			const config = this.config;
 			// The same walk the workspace picker runs, so the same way of going
@@ -5727,7 +5724,7 @@ export class AppController {
 							"the folders a clone could go into",
 							(cancel) => collectParentDirectories(config, cancel),
 						);
-			return parents.length > 0 ? parents : [defaultProjectDirectory(config)];
+			return cloneParentChoices(config, parents);
 		});
 		// Who `gh` says this person is, asked when a sheet needs it rather than
 		// kept: a login that was switched or logged out of should stop being

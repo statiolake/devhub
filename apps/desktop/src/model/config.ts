@@ -442,6 +442,15 @@ export interface ScratchConfig {
   readonly daily: string;
 }
 
+export interface ProjectsConfig {
+  /**
+   * Where new projects go: an absolute or `~/` path, taken as written (no date
+   * tokens). Absent, the folder is derived from the workspace sources — see
+   * `defaultProjectDirectory` in `main/shell/projects.ts`.
+   */
+  readonly directory: string | undefined;
+}
+
 export interface Config {
   readonly version: number;
   readonly general: GeneralConfig;
@@ -460,6 +469,8 @@ export interface Config {
   readonly workspaceSources: readonly WorkspaceSource[];
   /** Where Scratch is: today's daily folder. See `model/scratchDay.ts`. */
   readonly scratch: ScratchConfig;
+  /** Where a new project or a clone goes by default. */
+  readonly projects: ProjectsConfig;
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
   readonly agentActions: readonly ConfiguredAgentAction[];
 }
@@ -698,6 +709,7 @@ export function defaultConfig(): Config {
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
+    projects: { directory: undefined },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
   };
@@ -727,6 +739,7 @@ export type ValidationCode =
   | "invalid_workspace_kind"
   | "invalid_date_template"
   | "invalid_scratch_daily"
+  | "invalid_project_directory"
   | "ambiguous_date_token"
   | "invalid_exclusion"
   | "invalid_command"
@@ -1024,13 +1037,16 @@ function validateId(id: string, path: string): void {
   }
 }
 
+/** An absolute path, `~`, or one starting with `~/`: what a folder setting takes. */
+function isHomeOrAbsolutePath(path: string): boolean {
+  return (
+    !path.includes("\0") &&
+    (path.startsWith("/") || path === "~" || path.startsWith("~/"))
+  );
+}
+
 function validatePath(path: string, key: string): void {
-  if (
-    path.length === 0 ||
-    path.includes("\0") ||
-    path === "~user" ||
-    (!path.startsWith("/") && path !== "~" && !path.startsWith("~/"))
-  ) {
+  if (!isHomeOrAbsolutePath(path)) {
     fail("invalid_workspace_path", key);
   }
 }
@@ -1260,6 +1276,13 @@ export function validateConfig(config: Config): void {
   if (scratchDailyProblem(config.scratch.daily)) {
     fail("invalid_scratch_daily", "scratch.daily");
   }
+  const projectDirectory = config.projects.directory;
+  if (
+    projectDirectory !== undefined &&
+    !isHomeOrAbsolutePath(projectDirectory)
+  ) {
+    fail("invalid_project_directory", "projects.directory");
+  }
   validateAgentProfiles(config.agentProfiles);
   validateAgentActions(config.agentActions);
 }
@@ -1274,6 +1297,7 @@ const TOP_LEVEL_KEYS = [
   "keybindings",
   "workspace_sources",
   "scratch",
+  "projects",
   "agent_profiles",
   "agent_actions",
 ] as const;
@@ -1720,6 +1744,12 @@ export function interpretConfig(document: unknown): Config {
   const generalTable = requireTable(table["general"] ?? {}, "general");
   const scratchTable = requireTable(table["scratch"] ?? {}, "scratch");
   checkKeys(scratchTable, ["daily"], "scratch");
+  const projectsTable = requireTable(table["projects"] ?? {}, "projects");
+  checkKeys(projectsTable, ["directory"], "projects");
+  const projectDirectory = projectsTable["directory"];
+  if (projectDirectory !== undefined && typeof projectDirectory !== "string") {
+    fail("invalid_type", "projects.directory");
+  }
   checkKeys(generalTable, ["import_login_environment"], "general");
 
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
@@ -1878,6 +1908,7 @@ export function interpretConfig(document: unknown): Config {
         defaults.scratch.daily,
       ),
     },
+    projects: { directory: projectDirectory },
     workspaceSources:
       rawSources === undefined
         ? defaults.workspaceSources
@@ -1975,6 +2006,11 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     },
     workspace_sources: config.workspaceSources.map(sourceToTable),
     scratch: { daily: config.scratch.daily },
+    // Absent rather than empty when unset: an absent key is the person's "derive
+    // it from the sources", and an empty string is a refused value.
+    ...(config.projects.directory === undefined
+      ? {}
+      : { projects: { directory: config.projects.directory } }),
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
@@ -2060,6 +2096,7 @@ export type ConfigScopeKey =
   | "keybindings"
   | "workspaceSources"
   | "scratch"
+  | "projects"
   | "agentProfiles"
   | "agentActions";
 
