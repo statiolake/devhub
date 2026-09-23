@@ -107,6 +107,7 @@ const RELEASE_GRACE_MS = 150;
 
 export class TooltipView {
 	private readonly view: Electron.WebContentsView;
+	private readonly pageUrl: string;
 	private present = false;
 	private request: TooltipRequest | undefined;
 	private size: TooltipSize = { width: 0, height: 0 };
@@ -133,7 +134,16 @@ export class TooltipView {
 		// the rule is about what the view *can* be made to do, not about what
 		// this page happens to draw. See `externalLinks.ts`.
 		sendLinksToTheBrowser(this.view.webContents);
-		void this.view.webContents.loadURL(pageUrl);
+		this.pageUrl = pageUrl;
+	}
+
+	/**
+	 * Run the page. Not at construction: the window owns when its pages run,
+	 * and runs them all at once, when everything they ask for exists — see
+	 * `ShellWindow.openPage`.
+	 */
+	openPage(): void {
+		void this.view.webContents.loadURL(this.pageUrl);
 	}
 
 	/**

@@ -100,7 +100,7 @@ file main loaded.**
 | the window's own page | `index.html` | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout` |
 | the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip` |
 | the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden | the projection, the appearance, the repository status, the agent actions, the terminal transport, `openModal`, `openExternalUrl`, `writeClipboard` |
-| the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
+| the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
 | the tooltip | `tooltip.html` | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's. |
 | the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings | `settings.html` | its own window | `SETTINGS_CHANNELS` in full, plus the failure contract every page has |
@@ -121,6 +121,24 @@ directly rather than through `send()`, so `onModals` on any other bridge was a
 listener on a channel nobody was ever going to write to: spellable, silent, and
 indistinguishable from a bug in the modal layer. Now it is unspellable
 anywhere else, and confirmed so on a running instance.
+
+**Every page in the window runs at one moment, after the runtimes.** The
+window and its child views are built early — the controller is built around
+the window, and it paints while startup goes on — but no page is loaded until
+`ShellWindow.openPage`, which `bootstrapShell` calls once `startRuntimes` has
+registered what the pages will ask for, and which runs the window's own page
+and every child's together. A page asks the moment it mounts: the Agents page
+attaches every running Agent's terminal, and an attach that arrives before the
+terminal handlers exist is refused by Electron ("No handler registered for
+'devhub:terminal:attach'"), which the pane draws as "The terminal session is
+not connected." Only the window's own page used to wait; the Agents page ran
+from its view's constructor, so an Agent restored at launch came back
+disconnected — and, having no attachment, sent none of its geometry to tmux.
+What main has to say before any page exists (a settings file that will not
+parse) is held until the notices page says it is listening
+(`reportListening`), not until some page asks for the snapshot: the pages start
+together, so another page's request says nothing about whether the notices page
+can draw yet.
 
 Each page has a provider of its own holding exactly that contract
 (`ShellPageContext`, `SidebarContext`, `AgentsContext`, `PickerContext`), built

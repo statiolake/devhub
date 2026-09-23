@@ -84,9 +84,15 @@ class FakeView {
 		isFocused: () => focused === this.webContents.id,
 		devToolsFocused: false,
 		isDevToolsFocused: () => this.webContents.devToolsFocused,
-		loadURL: () => Promise.resolve(),
+		loadURL: (url: string) => {
+			loaded.push(url);
+			return Promise.resolve();
+		},
 	};
 }
+
+/** Every page any view or window in these tests was told to run, in order. */
+const loaded: string[] = [];
 
 /** Which `webContents` was told to take the keyboard most recently. */
 let focused: number | undefined;
@@ -169,7 +175,9 @@ class FakeWindow {
 	getContentSize(): [number, number] {
 		return [1440, 900];
 	}
-	loadURL(): void {}
+	loadURL(url: string): void {
+		loaded.push(url);
+	}
 	once(): void {}
 	/**
 	 * Recorded rather than dropped, so a test can fire what Electron fires.
@@ -965,6 +973,40 @@ describe("the shell window's modal layer", () => {
 		shell.picker.closeModal(next);
 		expect(focused).toBe(
 			(shell.agents.contents() as unknown as { id: number } | undefined)?.id,
+		);
+	});
+});
+
+describe("the pages in the shell window", () => {
+	/**
+	 * Every page in the window asks main for something the moment it mounts —
+	 * the Agents page for its terminals above all — and main answers those
+	 * only once its runtimes are up. A page that runs earlier than that is
+	 * refused by an IPC handler that does not exist yet ("No handler
+	 * registered for 'devhub:terminal:attach'"), and the Agent restored at
+	 * launch came back saying its terminal was not connected. So no page in
+	 * the window runs at construction, and every one of them runs at
+	 * `openPage`, together.
+	 */
+	it("runs none of them before openPage, and all of them at it", () => {
+		loaded.length = 0;
+		const shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+			"hidden",
+		);
+		expect(loaded).toEqual([]);
+		shell.openPage();
+		expect([...loaded].sort()).toEqual(
+			[
+				"devhub-app://shell/agents.html",
+				"devhub-app://shell/index.html",
+				"devhub-app://shell/picker.html",
+				"devhub-app://shell/sidebar.html",
+				"devhub-app://shell/toasts.html",
+				"devhub-app://shell/tooltip.html",
+			].sort(),
 		);
 	});
 });

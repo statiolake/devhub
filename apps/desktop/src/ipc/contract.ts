@@ -1111,6 +1111,17 @@ export interface ToastsBridge extends PageBridge {
 	 */
 	retryApp(): void;
 	openSettings(): Promise<void>;
+	/**
+	 * The page is listening for notices.
+	 *
+	 * Sent once, after its listeners are in place. What went wrong before any
+	 * page existed is held in main until this: a notice sent a moment earlier
+	 * reaches a page with no listener and is gone. It is this page's to say
+	 * because it is this page that draws them — another page asking for the
+	 * snapshot says nothing about whether this one is ready, and every page
+	 * in the window starts at the same moment.
+	 */
+	reportListening(): void;
 }
 
 /**
@@ -1369,6 +1380,8 @@ export const CHANNELS = {
 	retryApp: "devhub:retry-app",
 	/** A page telling main that a notice has left the screen, and why. */
 	noticeRetired: "devhub:notice-retired",
+	/** The `toasts` page saying its notice listeners are in place. */
+	noticesListening: "devhub:notices-listening",
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",

@@ -67,6 +67,7 @@ export interface ToastsViewHost {
 
 export class ToastsView {
 	private readonly view: Electron.WebContentsView;
+	private readonly pageUrl: string;
 	private present = false;
 	private size: ToastsSize = { width: 0, height: 0 };
 
@@ -87,7 +88,16 @@ export class ToastsView {
 		// Every child page needs this, and a page that forgets it can mint a
 		// second window wearing DevHub's preload. See `externalLinks.ts`.
 		sendLinksToTheBrowser(this.view.webContents);
-		void this.view.webContents.loadURL(pageUrl);
+		this.pageUrl = pageUrl;
+	}
+
+	/**
+	 * Run the page. Not at construction: the window owns when its pages run,
+	 * and runs them all at once, when everything they ask for exists — see
+	 * `ShellWindow.openPage`.
+	 */
+	openPage(): void {
+		void this.view.webContents.loadURL(this.pageUrl);
 	}
 
 	/**

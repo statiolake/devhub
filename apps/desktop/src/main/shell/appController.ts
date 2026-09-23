@@ -2406,9 +2406,11 @@ export class AppController {
 	 * Startup does things a person needs to be told about — reading the
 	 * workbench's settings file is one — and it does them before the App Shell
 	 * page exists. Published there and then, the message goes to a window with
-	 * nothing loaded in it and is gone. So it waits, and the page's first
-	 * request for the snapshot delivers it: that request is what "there is
-	 * somebody to tell" means. It is delivered once, because an alert that
+	 * nothing loaded in it and is gone. So it waits, and the notices page
+	 * saying it is listening delivers it: that is what "there is somebody to
+	 * tell" means. It used to be any page's first request for the snapshot,
+	 * which said nothing about the notices page once every page in the window
+	 * started at the same moment. It is delivered once, because an alert that
 	 * comes back every time the page reloads cannot be dismissed.
 	 */
 	noteStartupFailure(error: AppErrorWire): void {
@@ -5521,11 +5523,6 @@ export class AppController {
 		const receive = electron.ipcMain.on.bind(electron.ipcMain);
 
 		handle(CHANNELS.getSnapshot, () => {
-			// A page asking for the world is the first moment there is anywhere
-			// to say what went wrong before it existed. See `noteStartupFailure`.
-			const pending = this.startupFailures;
-			this.startupFailures = [];
-			for (const failure of pending) this.publishError(failure);
 			// A page asking for the world is also a page that has just started
 			// and has none of the pushes yet. The rectangle the owner leaves
 			// for a workbench is one of those, and the window's own page draws
@@ -6042,6 +6039,14 @@ export class AppController {
 		// them — the same shape as every other command a page carries out.
 		receive(CHANNELS.retryApp, () => {
 			this.send(CHANNELS.menuCommand, "retry_app");
+		});
+		// The page that draws notices is listening: the first moment there is
+		// anywhere to say what went wrong before it existed. See
+		// `noteStartupFailure`.
+		receive(CHANNELS.noticesListening, () => {
+			const pending = this.startupFailures;
+			this.startupFailures = [];
+			for (const failure of pending) this.publishError(failure);
 		});
 		// The other half of the journal: main sees every raise and none of the
 		// ways a notice leaves the screen, two of which are gestures in the

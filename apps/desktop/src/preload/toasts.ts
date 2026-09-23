@@ -34,6 +34,9 @@ const api: ToastsBridge = {
 	retryApp: () => {
 		ipcRenderer.send(CHANNELS.retryApp);
 	},
+	reportListening: () => {
+		ipcRenderer.send(CHANNELS.noticesListening);
+	},
 	openSettings,
 };
 

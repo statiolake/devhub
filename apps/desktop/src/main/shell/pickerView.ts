@@ -107,6 +107,7 @@ function identity(request: ModalRequest): string {
 
 export class PickerView {
 	private readonly view: Electron.WebContentsView;
+	private readonly pageUrl: string;
 	private present = false;
 	private readonly open: OpenModal[] = [];
 	private readonly pending = new Map<string, Settle>();
@@ -135,7 +136,16 @@ export class PickerView {
 			this.published = undefined;
 			this.publish(this.open);
 		});
-		void this.view.webContents.loadURL(pageUrl);
+		this.pageUrl = pageUrl;
+	}
+
+	/**
+	 * Run the page. Not at construction: the window owns when its pages run,
+	 * and runs them all at once, when everything they ask for exists — see
+	 * `ShellWindow.openPage`.
+	 */
+	openPage(): void {
+		void this.view.webContents.loadURL(this.pageUrl);
 	}
 
 	/**

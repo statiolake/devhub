@@ -100,6 +100,13 @@ export function ToastsApp() {
     [dismissNewest],
   );
 
+  // After every listener above: effects run in order, so by now whatever main
+  // sends is drawn. What it held back until there was somebody to tell comes
+  // in answer to this. See `reportListening` in `ipc/contract.ts`.
+  useEffect(() => {
+    devhub().reportListening();
+  }, []);
+
   const measure = useStackSize(notices.length);
 
   return (

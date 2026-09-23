@@ -48,17 +48,25 @@ function mount() {
   }) => void = () => undefined;
   let menuCommand: (command: string) => void = () => undefined;
   let actionStarted: () => void = () => undefined;
+  /** What was already being listened for, each time the page said it listens. */
+  const listening: string[][] = [];
+  const heard = new Set<string>();
 
   window.devhub = {
     onNativeError: (listener: (error: AppError) => void) => {
       publishError = listener;
+      heard.add("nativeError");
       return () => undefined;
     },
     onAppCondition: (
       listener: (condition: { source: string; summary?: string }) => void,
     ) => {
       publishCondition = listener;
+      heard.add("appCondition");
       return () => undefined;
+    },
+    reportListening: () => {
+      listening.push([...heard].sort());
     },
     onActionStarted: (listener: () => void) => {
       actionStarted = listener;
@@ -81,6 +89,7 @@ function mount() {
   return {
     /** Every size this page has told main its notices take up. */
     sizes,
+    listening,
     /**
      * A look at the repositories that did or did not finish.
      *
@@ -148,6 +157,21 @@ function watchToastChurn() {
     },
   };
 }
+
+describe("the page coming up", () => {
+  afterEach(cleanup);
+
+  // Main holds what went wrong before any page existed — a settings file that
+  // will not parse — until there is somebody to tell. The somebody is this
+  // page, and only once it is listening: a failure sent a moment earlier is
+  // sent to a page with no listener and is gone. So the page says so, once,
+  // after its listeners are in place, rather than main guessing from some
+  // other page having asked for the snapshot.
+  it("says it is listening once, after it can draw what main sends", () => {
+    const page = mount();
+    expect(page.listening).toEqual([["appCondition", "nativeError"]]);
+  });
+});
 
 describe("a condition about the whole application", () => {
   afterEach(cleanup);

@@ -68,6 +68,7 @@ function mount() {
     reportNoticeRetired: () => Promise.resolve(),
     reportToastsSize: () => undefined,
     retryApp: () => undefined,
+    reportListening: () => undefined,
     openSettings: () => Promise.resolve(),
     raiseFailure: (error: AppError) => {
       raised.push(error);

@@ -245,13 +245,17 @@ export class ShellWindow {
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
 	 *
-	 * Creating the window and running its page are two facts, not one. The
+	 * Creating the window and running its pages are two facts, not one. The
 	 * window has to exist early — the controller is built around it, and it
-	 * paints in the restored palette while the rest of startup happens — but the
-	 * page starts asking for its terminal the moment it mounts, and a request
-	 * that arrives before the handler that answers it is a pane reporting a
-	 * failure that never happened. So the page is opened by whoever finished the
-	 * things it will ask for; see `bootstrapShell`.
+	 * paints in the restored palette while the rest of startup happens — but a
+	 * page starts asking the moment it mounts (the Agents page for every
+	 * running Agent's terminal), and a request that arrives before the handler
+	 * that answers it is a pane reporting a failure that never happened. So
+	 * the pages are run by whoever finished the things they will ask for; see
+	 * `bootstrapShell`. *Every* page in the window: this used to hold back the
+	 * App Shell page alone, while its children ran from their constructors, so
+	 * an Agent restored at launch attached before the terminal handlers
+	 * existed and came back disconnected.
 	 */
 	private readonly pageUrl: string;
 	private pageOpened = false;
@@ -291,9 +295,10 @@ export class ShellWindow {
 			event.preventDefault();
 		});
 
-		// Built before anything can ask for them, and with their pages already
-		// loading. Creation used to be the first modal's job, and the first
-		// modal of a session was drawn on a page that had not run yet.
+		// Built before anything can ask for them, and their pages run with the
+		// window's own in `openPage`. Creation used to be the first modal's
+		// job, and the first modal of a session was drawn on a page that had
+		// not run yet.
 		this.sidebar = new ChromeView(
 			preloadFor("sidebar"),
 			`${pageBase}/sidebar.html`,
@@ -408,13 +413,21 @@ export class ShellWindow {
 		});
 	}
 
-	/** Runs the page. Calling it twice is a bug, not a reload. */
+	/**
+	 * Runs every page in the window: its own and each child's, together.
+	 * Calling it twice is a bug, not a reload.
+	 */
 	openPage(): void {
 		if (this.pageOpened) {
 			throw new Error("the App Shell page has already been opened");
 		}
 		this.pageOpened = true;
 		void this.window.loadURL(this.pageUrl);
+		this.sidebar.openPage();
+		this.agents.openPage();
+		this.toasts.openPage();
+		this.tooltip.openPage();
+		this.picker.openPage();
 	}
 
 	/**
@@ -1395,7 +1408,7 @@ export function createShellWindow(
 	return current;
 }
 
-/** Runs the App Shell page, once everything it will ask for exists. */
+/** Runs every page in the App Shell window, once everything they ask for exists. */
 export function openShellPage(): void {
 	shellWindow().openPage();
 }

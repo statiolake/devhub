@@ -183,9 +183,10 @@ export async function bootstrapShell(
 		shellTheme().palette(),
 	);
 	// The window is created first — the controller is built around it, and it
-	// paints in the restored palette while the rest of startup happens — but its
-	// *page* is not run until the runtimes it will ask for exist. The page asks
-	// for its terminal the moment it mounts, and a request that arrives before
+	// paints in the restored palette while the rest of startup happens — but
+	// its *pages* are not run until the runtimes they will ask for exist: the
+	// window's own and every child's, the Agents page among them. A page asks
+	// for its terminals the moment it mounts, and a request that arrives before
 	// the handler that answers it produced "No handler registered for
 	// 'devhub:terminal:attach'" in the log and a pane saying the connection was
 	// unavailable, on a machine where everything was installed and reachable.
