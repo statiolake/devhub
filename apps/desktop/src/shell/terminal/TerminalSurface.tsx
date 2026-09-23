@@ -143,9 +143,11 @@ export function TerminalSurface({
   const hiddenRef = useRef(hidden);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string>();
+  const connectionRef = useRef(connection);
 
   clientRef.current = boundClient;
   hiddenRef.current = hidden;
+  connectionRef.current = connection;
 
   // The palette follows the page's scheme rather than a saved choice, so it
   // changes without the snapshot changing. Both schemes are already here, and
@@ -528,6 +530,17 @@ export function TerminalSurface({
     // Selecting a surface is a request to type into it, whether it is being
     // attached for the first time or coming back out of the pool.
     sessionRef.current?.focus();
+    // …and a request to use it, so a pane that is disconnected when it comes
+    // on screen reconnects on its own, exactly once. The rule is tied to the
+    // transition and to nothing else: one activation, one try. If that try
+    // fails the pane says so exactly as it did — the error, and Retry — and
+    // nothing tries again until the person does, or until the pane is shown
+    // again. No timer, no count to reset: a connect that succeeds has nothing
+    // left to retry, and the next activation is a new request. A pane mounted
+    // on screen needs none of this; its mount's own attach is that try.
+    if (connectionRef.current === "disconnected") {
+      controllerRef.current?.retry();
+    }
   }, [hidden]);
 
   useEffect(() => {

@@ -140,6 +140,15 @@ parse) is held until the notices page says it is listening
 together, so another page's request says nothing about whether the notices page
 can draw yet.
 
+**An Agent pane that comes on screen disconnected reconnects once, on its
+own.** Being shown is a request to use it, so `TerminalSurface` retries the
+attach on the hidden-to-shown transition when the pane is disconnected — one
+activation, one try. If that try fails, the pane is what it was: the error and
+Retry, and nothing tries again until the person presses Retry or the pane is
+shown again. There is no timer and no counter; the rule is the transition. A
+pane mounted on screen needs none of it, because its mount's own attach is that
+try.
+
 Each page has a provider of its own holding exactly that contract
 (`ShellPageContext`, `SidebarContext`, `AgentsContext`, `PickerContext`), built
 from the shared per-projection hooks in `shell/model/pageModel.ts` so that "the

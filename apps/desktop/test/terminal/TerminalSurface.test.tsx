@@ -806,3 +806,113 @@ describe("TerminalSurface lifecycle", () => {
     await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("TerminalSurface coming on screen disconnected", () => {
+  const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+
+  function surface(client: TerminalClient, hidden: boolean) {
+    return (
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={client}
+        hidden={hidden}
+      />
+    );
+  }
+
+  /** An attach that fails for the first `failures` calls, then succeeds. */
+  function failingHarness(failures: number) {
+    const harness = clientHarness();
+    const succeed = harness.client.attach;
+    let calls = 0;
+    harness.client.attach = vi.fn(async (request, onFrame) => {
+      calls += 1;
+      if (calls <= failures) {
+        throw new TerminalFailure("session_unavailable");
+      }
+      return succeed(request, onFrame);
+    });
+    return harness;
+  }
+
+  /** Long enough for anything this pane would do on its own to have happened. */
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+  }
+
+  it("reconnects on its own, once, when it is shown", async () => {
+    // A pooled Agent whose attach failed while nobody was looking at it. The
+    // person selecting it is asking to use it, so it tries again — once. That
+    // try failing is the same pane as before: the error, and Retry.
+    const harness = failingHarness(2);
+    const view = render(surface(harness.client, true));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+
+    view.rerender(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(harness.client.attach).toHaveBeenCalledTimes(2);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/terminal session is not connected/i);
+    expect(alert).toHaveTextContent("The terminal session is unavailable.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("tries again on the next time it is shown, and not while hidden", async () => {
+    const harness = failingHarness(3);
+    const view = render(surface(harness.client, false));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    // Mounted on screen: the mount's own attach is this activation's try.
+    await settle();
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+
+    view.rerender(surface(harness.client, true));
+    await settle();
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+
+    view.rerender(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
+    view.rerender(surface(harness.client, true));
+    view.rerender(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(3));
+    await settle();
+    expect(harness.client.attach).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("is simply connected when the one try succeeds", async () => {
+    const harness = failingHarness(1);
+    const view = render(surface(harness.client, true));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    view.rerender(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(document.querySelector("[data-connection]")).toHaveAttribute(
+        "data-connection",
+        "connected",
+      ),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(harness.client.attach).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a connected pane alone when it is shown", async () => {
+    const harness = clientHarness();
+    const view = render(surface(harness.client, true));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalled());
+    view.rerender(surface(harness.client, false));
+    await settle();
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+    expect(harness.client.detach).not.toHaveBeenCalled();
+  });
+});
