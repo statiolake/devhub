@@ -903,7 +903,10 @@ export class AppModel {
     }
   }
 
-  reconcileAgents(reconciliation: AgentReconciliation): void {
+  reconcileAgents(
+    reconciliation: AgentReconciliation,
+    drawn: readonly WorkspaceId[],
+  ): void {
     for (const observation of reconciliation.observations) {
       if (!this.agent(observation.agentId)) {
         fail(DomainErrorCode.UnknownAgent);
@@ -928,7 +931,7 @@ export class AppModel {
       );
     }
     for (const id of [...exited].sort()) {
-      this.agentExited(id);
+      this.agentExited(id, drawn);
     }
   }
 
@@ -1145,28 +1148,88 @@ export class AppModel {
     };
   }
 
-  agentExited(id: AgentId): void {
+  agentExited(id: AgentId, drawn: readonly WorkspaceId[]): void {
     const position = this.findAgentPosition(id);
-    const workspace = this.workspaceList[position.workspaceIndex];
-    const nextAgent = workspace.agents[position.agentIndex + 1]?.id;
-    workspace.removeAgent(id);
-    if (
-      this.selectionValue.context.kind === "agent" &&
-      this.selectionValue.context.agentId === id
-    ) {
-      // Whatever the departing Agent was shown as, the successor is shown on
-      // its own: `beside` was asked for about an Agent that is gone.
-      this.selectionValue = {
-        context: nextAgent
-          ? { kind: "agent", agentId: nextAgent }
-          : { kind: "workspace", workspaceId: workspace.id },
-        presentation: "full",
-      };
-    }
+    const before = this.tabs(drawn);
+    this.workspaceList[position.workspaceIndex].removeAgent(id);
+    this.repairSelection(before);
     this.bumpRevision();
   }
 
-  closeWorkspace(id: WorkspaceId, inspection: CloseInspection): void {
+  /**
+   * Every row of the Sidebar, of both kinds, in the order it is drawn: each
+   * Workspace followed by its Agents. The same list `Cmd+Q N` and `]` walk
+   * (`everyTab` in `chords.ts`).
+   *
+   * `drawn` is the Workspaces in the order the Sidebar draws them, Scratch
+   * first. The model cannot work that out — the grouping is git's answer (see
+   * `AppSnapshot.workspaceOrder`) — so it is told, and an order that does not
+   * name exactly the Workspaces there are is a caller reading a list that no
+   * longer exists.
+   */
+  private tabs(drawn: readonly WorkspaceId[]): readonly NavigationContext[] {
+    if (
+      drawn.length !== this.workspaceList.length ||
+      new Set(drawn).size !== drawn.length ||
+      drawn.some((id) => !this.workspace(id))
+    ) {
+      throw new Error(
+        `the drawn order [${drawn.join(", ")}] does not name the open workspaces`,
+      );
+    }
+    return drawn.flatMap((workspaceId): NavigationContext[] => [
+      { kind: "workspace", workspaceId },
+      ...this.requireWorkspace(workspaceId).agents.map(
+        (agent): NavigationContext => ({ kind: "agent", agentId: agent.id }),
+      ),
+    ]);
+  }
+
+  /**
+   * The selection, after something was removed from under it.
+   *
+   * **A close lands on the next row, and on the previous one only when what
+   * closed was the last.** "Next" is the row that followed it as the Sidebar
+   * drew it before the removal (`before`), so closing an Agent lands on the
+   * Agent under it, or on the next Workspace's row when it was its
+   * Workspace's last, and closing a Workspace lands past all of its Agents.
+   * A removal of several rows at once — a Workspace, and the Agents that go
+   * with it — arrives here once per row, and landing on the first survivor
+   * after each is the same as landing past the whole block.
+   *
+   * One rule for every removal: an Agent stopped from its row, from the chord
+   * or from the confirmation sheet, an Agent that exited on its own, a
+   * Workspace closed any way it can be. Whatever the departed row was shown
+   * as, the successor is shown on its own: `beside` was asked for about a row
+   * that is gone. A selection that did not go is left where it is.
+   */
+  private repairSelection(before: readonly NavigationContext[]): void {
+    const selected = this.selectionValue.context;
+    if (this.contextExists(selected)) return;
+    const at = before.findIndex((tab) => sameContext(tab, selected));
+    if (at < 0) {
+      throw new Error(
+        "the selection was not one of the rows before the removal",
+      );
+    }
+    const successor =
+      before.slice(at + 1).find((tab) => this.contextExists(tab)) ??
+      before
+        .slice(0, at)
+        .reverse()
+        .find((tab) => this.contextExists(tab));
+    // Scratch cannot close, so there is always a row left.
+    if (successor === undefined) {
+      throw new Error("a removal left no row to select");
+    }
+    this.selectionValue = { context: successor, presentation: "full" };
+  }
+
+  closeWorkspace(
+    id: WorkspaceId,
+    inspection: CloseInspection,
+    drawn: readonly WorkspaceId[],
+  ): void {
     if (inspection.kind !== "clean") {
       fail(DomainErrorCode.WorkspaceNotClean);
     }
@@ -1185,26 +1248,9 @@ export class AppModel {
     if (this.workspaceList[index].agents.length > 0) {
       fail(DomainErrorCode.WorkspaceHasLiveAgents);
     }
-    const next = this.workspaceList[index + 1]?.id;
-    const previous = index > 0 ? this.workspaceList[index - 1]?.id : undefined;
-    const context = this.selectionValue.context;
-    const ownsSelection =
-      context.kind === "workspace"
-        ? context.workspaceId === id
-        : context.kind === "agent"
-          ? this.agent(context.agentId)?.workspaceId === id
-          : false;
+    const before = this.tabs(drawn);
     this.workspaceList.splice(index, 1);
-    if (ownsSelection) {
-      const successor = next ?? previous;
-      this.selectionValue = {
-        context: {
-          kind: "workspace",
-          workspaceId: successor ?? this.scratchId,
-        },
-        presentation: "full",
-      };
-    }
+    this.repairSelection(before);
     this.bumpRevision();
   }
 
@@ -1212,6 +1258,7 @@ export class AppModel {
   closeWorkspaceForPersistence(
     id: WorkspaceId,
     inspection: CloseInspection,
+    drawn: readonly WorkspaceId[],
   ): WorkspaceCloseRollback {
     const index = this.workspaceList.findIndex(
       (workspace) => workspace.id === id,
@@ -1221,7 +1268,7 @@ export class AppModel {
     }
     const workspace = this.workspaceList[index].clone();
     const selectionBefore = this.selectionValue;
-    this.closeWorkspace(id, inspection);
+    this.closeWorkspace(id, inspection, drawn);
     return {
       workspace,
       index,

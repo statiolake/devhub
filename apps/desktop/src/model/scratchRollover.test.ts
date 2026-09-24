@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AppModel } from "./appModel.js";
-import { AppCoordinator } from "./coordinator.js";
+import { coordinatorFor, drawn } from "./testWorkspaces.js";
 import {
   AgentProfile,
   agentId,
@@ -90,7 +90,7 @@ describe("Scratch is today's daily-folder Workspace", () => {
     const model = new AppModel(today());
     expect(
       codeOf(() => {
-        model.closeWorkspace(TODAY, CLEAN_CLOSE_INSPECTION);
+        model.closeWorkspace(TODAY, CLEAN_CLOSE_INSPECTION, drawn(model));
       }),
     ).toBe(DomainErrorCode.ScratchCannotClose);
   });
@@ -125,7 +125,7 @@ describe("midnight", () => {
       kind: "workspace",
       workspaceId: TODAY,
     });
-    model.closeWorkspace(YESTERDAY, CLEAN_CLOSE_INSPECTION);
+    model.closeWorkspace(YESTERDAY, CLEAN_CLOSE_INSPECTION, drawn(model));
     expect(model.snapshot().workspaces.map((one) => one.id)).toEqual([TODAY]);
   });
 
@@ -149,7 +149,7 @@ describe("midnight", () => {
   });
 
   it("goes through the coordinator as one intent", () => {
-    const coordinator = new AppCoordinator(new AppModel(yesterday()));
+    const coordinator = coordinatorFor(new AppModel(yesterday()));
     const fresh = today();
     coordinator.dispatchUser({
       intentId: "00000000-0000-4000-8000-000000000001" as never,

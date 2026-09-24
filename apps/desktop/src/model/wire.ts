@@ -25,6 +25,7 @@ import {
   type UnsavedEditorsInspection,
   type SurfaceLayout,
   type SurfacePresentation,
+  type WorkspaceId,
 } from "./domain.js";
 import type {
   AgentSnapshot,
@@ -83,6 +84,7 @@ import {
   type WorkspaceLocationWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
+  sidebarWorkspaces,
 } from "../ipc/appShell.js";
 import type { AppearanceConfig, TerminalPalette } from "./config.js";
 import type { CoordinatorReplay } from "./coordinator.js";
@@ -363,6 +365,45 @@ export type RepositoryOf = (workspaceId: string) => string | undefined;
  */
 export type HomeOf = (location: WorkspaceLocation) => string | undefined;
 
+/**
+ * The Workspaces in the order the Sidebar draws them.
+ *
+ * The person's arrangement over the automatic rule (`model/workspaceOrder.ts`),
+ * read with git's answer about which folders are checkouts of one repository.
+ * The model carries the arrangement and does not know git, so the order is
+ * worked out here, where the two meet, and nowhere else: the projection is put
+ * in it, and so is what a close lands on (`drawnWorkspaceOrder`).
+ */
+function drawnWorkspaces(
+  snapshot: AppSnapshot,
+  repositoryOf: RepositoryOf,
+): readonly WorkspaceSnapshot[] {
+  return orderWorkspaces(
+    snapshot.workspaces,
+    (workspace) => repositoryOf(workspace.id),
+    snapshot.workspaceOrder,
+  );
+}
+
+/**
+ * Every Workspace as the Sidebar lists it: Scratch, then the rows as drawn.
+ *
+ * What the model is told when it has to repair the selection after a removal
+ * (`DrawnOrder` in `coordinator.ts`), so that the row a close lands on is the
+ * row `Cmd+Q N` would have stepped to — the chords walk the projection, and
+ * the projection is in this order.
+ */
+export function drawnWorkspaceOrder(
+  snapshot: AppSnapshot,
+  repositoryOf: RepositoryOf,
+): readonly WorkspaceId[] {
+  const { scratch, rows } = sidebarWorkspaces({
+    workspaces: drawnWorkspaces(snapshot, repositoryOf),
+    scratchWorkspaceId: snapshot.scratchWorkspaceId,
+  });
+  return [scratch, ...rows].map((workspace) => workspace.id);
+}
+
 export function snapshotWire(
   snapshot: AppSnapshot,
   readiness: AppReadiness,
@@ -372,7 +413,10 @@ export function snapshotWire(
   if (snapshot.revision > MAX_SAFE_JS_INTEGER) {
     throw new SnapshotWireError("snapshot revision is outside the safe range");
   }
-  const projected: WorkspaceWire[] = snapshot.workspaces.map((workspace) => ({
+  const workspaces: WorkspaceWire[] = drawnWorkspaces(
+    snapshot,
+    repositoryOf,
+  ).map((workspace) => ({
     id: workspace.id,
     label: workspace.label,
     location: workspaceLocationWire(workspace.location),
@@ -389,13 +433,6 @@ export function snapshotWire(
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
   }));
-  // The person's arrangement over the automatic rule, in the one place the
-  // list is put in order. See `model/workspaceOrder.ts`.
-  const workspaces = orderWorkspaces(
-    projected,
-    (workspace) => workspace.groupKey,
-    snapshot.workspaceOrder,
-  );
   const wire: AppSnapshotWire = {
     schemaVersion: APP_SHELL_SCHEMA_VERSION,
     revision: snapshot.revision,

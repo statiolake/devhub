@@ -188,6 +188,7 @@ import {
 	replayWire,
 	setRuntimeVersion,
 	snapshotWire,
+	drawnWorkspaceOrder,
 	TypedFailure,
 	withDetail,
 	withSummary,
@@ -707,7 +708,12 @@ export class AppController {
 			// with. Without it DevHub would run in `auto` until the first save.
 			appearanceMode().apply(config.appearance.mode);
 		}
-		this.coordinator = new AppCoordinator(model);
+		// Where a close lands is the row after it as the Sidebar draws it, and
+		// the Sidebar's order is read with the repository status only main
+		// has — so the model is handed the same order the projection is in.
+		this.coordinator = new AppCoordinator(model, (snapshot) =>
+			drawnWorkspaceOrder(snapshot, this.repositoryOf),
+		);
 		// The overlay has to know whether the workbench a question belongs to is
 		// the one on screen. Views are the window's; surface keys are the
 		// model's; this is the one place the two are joined.
@@ -1140,10 +1146,20 @@ export class AppController {
 				// it was never out of the keyboard's reach.
 				this.sendToDisplay(CHANNELS.menuCommand, "dismiss_alert");
 			},
+			// A close typed from the keyboard is a move like every other chord
+			// that goes somewhere: it ends on the row the model repairs the
+			// selection to (`AppModel.repairSelection`), and the keyboard ends
+			// there with it — out of the Sidebar too. It is taken out now, not
+			// when the close lands: a close that asks first is answered on the
+			// sheet, which puts the keys on the surface whatever it is asked
+			// from, and one that does not ask would otherwise leave them on a
+			// row that has gone.
 			closeAgent: (agentId) => {
+				this.placeKeyboardOnSurface();
 				this.requestCloseAgent(agentId);
 			},
 			closeWorkspace: (workspaceId) => {
+				this.placeKeyboardOnSurface();
 				this.closeWorkspaceOrWorktree(workspaceId);
 			},
 			reorderEntries: (order, workspaceId) => {

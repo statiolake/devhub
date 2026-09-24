@@ -176,6 +176,27 @@ close sat at "closing" until its deadline with that dialog stranded over it.
 Every request a close makes to a workbench has a deadline, and a step that
 fails reaches the person down the one failure path below.
 
+**A close lands on the next row, and on the previous one only when what
+closed was the last.** "Next" is the row that followed it in the Sidebar as
+drawn — Scratch first, each Workspace followed by its Agents, the same list
+`Cmd+Q N` and `]` walk — so closing an Agent lands on the Agent under it, or
+on the next Workspace's row when it was its Workspace's last, and closing a
+Workspace lands past all of its Agents. The rule is one method,
+`AppModel.repairSelection`, run by every removal: an Agent stopped from its
+row, from `Cmd+Q X` or from the confirmation sheet, an Agent that exited on
+its own, a Workspace closed any way it can be. A close that asks moves
+nothing until it is answered; Cancel leaves the selection where it was.
+
+The order is not the model's to work out: the Sidebar groups worktrees under
+their repository, which is git's answer, and the model does not know git
+(`AppSnapshot.workspaceOrder`). So the coordinator is handed the drawn order
+(`DrawnOrder`), read by the projection's own function (`drawnWorkspaceOrder`
+in `model/wire.ts`) with main's repository status — the same order every
+page and chord reads. The model used to choose on its own, from the order
+folders happened to be opened in: an Agent's successor was the Agent under
+it or else its own Workspace's editor, a step backwards, and a Workspace's
+was its neighbour in opening order, which could be anywhere on screen.
+
 ## Failures go one way
 
 A failure is an event, not a description, and a page that is told one and has
@@ -275,6 +296,14 @@ from the Sidebar with Scratch already selected is still somebody asking to be
 in Scratch). An answer to a question is the same kind of move: a row chosen in
 Go to, and every way of opening a folder (`openFolder`), land in what was
 chosen rather than back in the Sidebar the question was asked from.
+
+A close typed from the keyboard (`X`, `Shift+W`) is a move too, and it lands
+where the close repairs the selection to. The keyboard leaves the Sidebar
+when the chord is typed rather than when the close lands, because a close is
+not over in one call: one that asks is answered on the sheet, which already
+put the keys on the surface, and one that does not ask used to leave them on
+a row that had gone, so the same close ended in two places depending on
+whether it had asked.
 
 Opening a folder is choosing it, new or not — the model's `open_folder`
 selects the Workspace it adds exactly as it selects one that was already open.

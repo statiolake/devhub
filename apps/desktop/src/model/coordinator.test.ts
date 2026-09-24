@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AppCoordinator, type Effect } from "./coordinator.js";
-import { SCRATCH_PATH, scratchModel } from "./testWorkspaces.js";
+import { type Effect } from "./coordinator.js";
+import {
+  coordinatorFor,
+  localWorkspace,
+  SCRATCH_PATH,
+  scratchModel,
+} from "./testWorkspaces.js";
 import {
   AgentProfile,
   agentId,
@@ -11,7 +16,10 @@ import {
   DomainErrorCode,
   workspaceId,
   workspaceLocation,
+  type AgentId,
   type CloseInspectionInputs,
+  type NavigationContext,
+  type WorkspaceId,
   NO_INJECTION,
   unsavedEditors,
 } from "./domain.js";
@@ -45,7 +53,7 @@ const codex = AgentProfile.create(
  * coordinator emits and hands back exactly the completion each one asked for.
  */
 class Driver {
-  readonly coordinator = new AppCoordinator(scratchModel());
+  constructor(readonly coordinator = coordinatorFor(scratchModel())) {}
   private nextId = 0;
   private cursor = 0;
 
@@ -210,7 +218,7 @@ describe("dispatch", () => {
   });
 
   it("replays the same result for a repeated intent id", () => {
-    const coordinator = new AppCoordinator(scratchModel());
+    const coordinator = coordinatorFor(scratchModel());
     const id = intentId("550e8400-e29b-41d4-a716-4466554400f0");
     const op = operationId("550e8400-e29b-41d4-a716-4466554400f1");
     const intent: UserIntent = { type: "resize_sidebar", width: 300 };
@@ -228,7 +236,7 @@ describe("dispatch", () => {
   });
 
   it("refuses a different intent under a used intent id", () => {
-    const coordinator = new AppCoordinator(scratchModel());
+    const coordinator = coordinatorFor(scratchModel());
     const id = intentId("550e8400-e29b-41d4-a716-4466554400f0");
     const op = operationId("550e8400-e29b-41d4-a716-4466554400f1");
     coordinator.dispatchUser({
@@ -248,7 +256,7 @@ describe("dispatch", () => {
   });
 
   it("refuses an intent with no trusted operation identity", () => {
-    const coordinator = new AppCoordinator(scratchModel());
+    const coordinator = coordinatorFor(scratchModel());
     expect(
       errorCode(() =>
         coordinator.dispatchUser({
@@ -1352,5 +1360,179 @@ describe("Scratch, today's daily folder", () => {
       kind: "workspace",
       workspaceId: driver.coordinator.model.scratchWorkspaceId,
     });
+  });
+});
+
+describe("where a close lands", () => {
+  // The rows as the Sidebar draws them — Scratch, then the workspaces by name
+  // (nobody has arranged anything and none of these is a checkout), each
+  // followed by its Agents:
+  //
+  //   Scratch, s1, alpha, a1, a2, a3, bravo, b1, charlie
+  //
+  // They are opened charlie first on purpose: the order folders were opened
+  // in is not the order anybody sees, and a successor read off that order
+  // lands somewhere nobody expected.
+  const S1 = agentId("00000000-0000-4000-8000-0000000000f1");
+  const A1 = agentId("00000000-0000-4000-8000-0000000000a1");
+  const A2 = agentId("00000000-0000-4000-8000-0000000000a2");
+  const A3 = agentId("00000000-0000-4000-8000-0000000000a3");
+  const B1 = agentId("00000000-0000-4000-8000-0000000000b1");
+  const ALPHA = workspaceId("00000000-0000-4000-8000-00000000000a");
+  const BRAVO = workspaceId("00000000-0000-4000-8000-00000000000b");
+  const CHARLIE = workspaceId("00000000-0000-4000-8000-00000000000c");
+
+  function arranged(): Driver {
+    const model = scratchModel();
+    model.addWorkspace(localWorkspace("/dev/charlie", CHARLIE));
+    model.addWorkspace(localWorkspace("/dev/alpha", ALPHA));
+    model.addWorkspace(localWorkspace("/dev/bravo", BRAVO));
+    const agents: [AgentId, WorkspaceId][] = [
+      [S1, model.scratchWorkspaceId],
+      [A1, ALPHA],
+      [A2, ALPHA],
+      [A3, ALPHA],
+      [B1, BRAVO],
+    ];
+    for (const [id, owner] of agents) {
+      model.addAgent(owner, id, codex);
+      // Idle, so a close is not a question unless a test makes it one.
+      model.setAgentStatus(id, "idle");
+    }
+    return new Driver(coordinatorFor(model));
+  }
+
+  function select(driver: Driver, context: NavigationContext): void {
+    driver.dispatch({ type: "select_context", context, presentation: "full" });
+    driver.settle();
+  }
+
+  function selected(driver: Driver): NavigationContext {
+    return driver.coordinator.snapshot().selection.context;
+  }
+
+  const agent = (id: AgentId): NavigationContext => ({
+    kind: "agent",
+    agentId: id,
+  });
+  const workspace = (id: WorkspaceId): NavigationContext => ({
+    kind: "workspace",
+    workspaceId: id,
+  });
+
+  function closeAgent(driver: Driver, id: AgentId): void {
+    driver.dispatch({ type: "stop_agent", agentId: id });
+    driver.settle();
+  }
+
+  function closeWorkspace(driver: Driver, id: WorkspaceId): void {
+    driver.dispatch({
+      type: "request_close_workspace",
+      workspaceId: id,
+      worktree: "keep",
+    });
+    driver.settle();
+  }
+
+  it("closing an Agent in the middle lands on the one after it", () => {
+    const driver = arranged();
+    select(driver, agent(A2));
+    closeAgent(driver, A2);
+    expect(selected(driver)).toEqual(agent(A3));
+  });
+
+  it("closing a workspace's last Agent lands on the next row, in the next workspace", () => {
+    const driver = arranged();
+    select(driver, agent(A3));
+    closeAgent(driver, A3);
+    expect(selected(driver)).toEqual(workspace(BRAVO));
+  });
+
+  it("an Agent that exits on its own is replaced by the same rule", () => {
+    const driver = arranged();
+    select(driver, agent(A3));
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
+    const effect = driver
+      .drainEffects()
+      .find((candidate) => candidate.kind === "reconcile_agents");
+    if (effect?.kind !== "reconcile_agents") throw new Error("unexpected");
+    driver.accept({
+      type: "agents_reconciled",
+      token: effect.token,
+      reconciliation: { observations: [], exited: [A3] },
+    });
+    expect(selected(driver)).toEqual(workspace(BRAVO));
+  });
+
+  it("closing the last row lands on the one before it", () => {
+    const driver = arranged();
+    select(driver, workspace(CHARLIE));
+    closeWorkspace(driver, CHARLIE);
+    expect(selected(driver)).toEqual(agent(B1));
+  });
+
+  it("closing a workspace with Agents lands on the row after all of them", () => {
+    const driver = arranged();
+    select(driver, agent(B1));
+    closeWorkspace(driver, BRAVO);
+    expect(selected(driver)).toEqual(workspace(CHARLIE));
+  });
+
+  it("closing a workspace from inside one of its Agents skips its other Agents", () => {
+    const driver = arranged();
+    select(driver, agent(A1));
+    closeWorkspace(driver, ALPHA);
+    expect(selected(driver)).toEqual(workspace(BRAVO));
+  });
+
+  it("closing what is not selected leaves the selection where it is", () => {
+    const driver = arranged();
+    select(driver, agent(A2));
+    closeWorkspace(driver, BRAVO);
+    closeAgent(driver, A3);
+    expect(selected(driver)).toEqual(agent(A2));
+  });
+
+  it("an Agent close that asks moves nothing until it is confirmed", () => {
+    const driver = arranged();
+    driver.coordinator.model.setAgentStatus(A3, "working");
+    select(driver, agent(A3));
+    driver.dispatch({ type: "stop_agent", agentId: A3 });
+    const required = driver.answer(driver.drainEffects()[0]);
+    expect(required?.kind).toBe("confirmation_required");
+    // Cancel is this question never being answered.
+    expect(driver.drainEffects()).toHaveLength(0);
+    expect(selected(driver)).toEqual(agent(A3));
+
+    driver.dispatch({ type: "confirm_stop_agent", confirmationId: CONFIRM });
+    driver.settle();
+    expect(selected(driver)).toEqual(workspace(BRAVO));
+  });
+
+  it("a workspace close that asks moves nothing until it is confirmed", () => {
+    const driver = arranged();
+    select(driver, agent(B1));
+    driver.dispatch({
+      type: "request_close_workspace",
+      workspaceId: BRAVO,
+      worktree: "keep",
+    });
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.answer(inspect, {
+      ...CLEAN_INSPECTION,
+      unsavedEditors: unsavedEditors(["main.ts"]),
+    });
+    const required = driver.answer(driver.drainEffects()[0]);
+    expect(required?.kind).toBe("confirmation_required");
+    expect(driver.drainEffects()).toHaveLength(0);
+    expect(selected(driver)).toEqual(agent(B1));
+
+    driver.dispatch({
+      type: "confirm_close_workspace",
+      confirmationId: CONFIRM,
+    });
+    driver.settle();
+    expect(selected(driver)).toEqual(workspace(CHARLIE));
   });
 });

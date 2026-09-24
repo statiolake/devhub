@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AppModel, SPLIT_DEFAULT_RATIO, wantsAttention } from "./appModel.js";
 import {
+  drawn,
   localWorkspace,
   SCRATCH_PATH,
   scratchModel,
@@ -250,7 +251,7 @@ describe("layout resolution", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     model.toggleScratch();
-    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
+    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
     model.toggleScratch();
     expect(model.snapshot().selection.context).toEqual(scratchOf(model));
     // And nothing remembered at all — a fresh model, which is also what a
@@ -347,16 +348,36 @@ describe("selection", () => {
     model.addAgent(WS_A, AG_A, codex);
     model.addAgent(WS_A, AG_B, codex);
     model.selectContext({ kind: "agent", agentId: AG_A });
-    model.agentExited(AG_A);
+    model.agentExited(AG_A, drawn(model));
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_B },
       presentation: "full",
     });
-    model.agentExited(AG_B);
+    model.agentExited(AG_B, drawn(model));
     expect(model.selection).toEqual({
       context: { kind: "workspace", workspaceId: WS_A },
       presentation: "full",
     });
+  });
+
+  it("refuses a drawn order that does not name the open workspaces", () => {
+    // A caller reading a list that no longer exists would land the selection
+    // on a row nobody sees; it fails where it is read instead, and nothing
+    // is removed.
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.addAgent(WS_A, AG_A, codex);
+    const stale = drawn(model).filter((id) => id !== WS_B);
+    expect(() => {
+      model.agentExited(AG_A, stale);
+    }).toThrow(/does not name the open workspaces/);
+    expect(() => {
+      model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION, [
+        ...drawn(model),
+        WS_A,
+      ]);
+    }).toThrow(/does not name the open workspaces/);
+    expect(model.agent(AG_A)).toBeDefined();
+    expect(model.workspace(WS_B)).toBeDefined();
   });
 });
 
@@ -460,11 +481,11 @@ describe("Scratch, today's daily folder", () => {
     const yesterday = model.scratchWorkspaceId;
     expect(
       codeOf(() => {
-        model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION);
+        model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION, drawn(model));
       }),
     ).toBe(DomainErrorCode.ScratchCannotClose);
     model.adoptScratchDay(localWorkspace(TOMORROW));
-    model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION);
+    model.closeWorkspace(yesterday, CLEAN_CLOSE_INSPECTION, drawn(model));
     expect(model.workspace(yesterday)).toBeUndefined();
   });
 
@@ -505,7 +526,7 @@ describe("sidebar", () => {
     expect(model.snapshot().workspaces[1].agents.map((a) => a.id)).toEqual([
       AG_A,
     ]);
-    model.agentExited(AG_A);
+    model.agentExited(AG_A, drawn(model));
     expect(model.snapshot().workspaces[1].agents).toEqual([]);
   });
 });
@@ -516,7 +537,7 @@ describe("closing", () => {
     model.addAgent(WS_A, AG_A, codex);
     expect(
       codeOf(() => {
-        model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
+        model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
       }),
     ).toBe(DomainErrorCode.WorkspaceHasLiveAgents);
   });
@@ -524,12 +545,12 @@ describe("closing", () => {
   it("moves the selection to the next workspace, then to Scratch", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
-    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
+    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
     expect(model.selection.context).toEqual({
       kind: "workspace",
       workspaceId: WS_B,
     });
-    model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION);
+    model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION, drawn(model));
     expect(model.selection).toEqual({
       context: scratchOf(model),
       presentation: "full",
@@ -542,6 +563,7 @@ describe("closing", () => {
     const rollback = model.closeWorkspaceForPersistence(
       WS_A,
       CLEAN_CLOSE_INSPECTION,
+      drawn(model),
     );
     expect(model.workspaces).toHaveLength(2);
     model.rollbackWorkspaceClose(rollback);
