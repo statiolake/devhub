@@ -136,7 +136,21 @@ export function ConversationSurface({
     const card = content.current?.querySelector<HTMLElement>(
       ".conversation-request",
     );
-    if (!card) return;
+    if (!card) {
+      throw new Error(
+        "requests are waiting, but no request card is drawn for any of them",
+      );
+    }
+    // A card inside a subagent the person folded is still the thing to
+    // answer: every fold around it opens, which the subagent records as the
+    // person's own choice.
+    for (
+      let fold = card.parentElement?.closest("details");
+      fold;
+      fold = fold.parentElement?.closest("details")
+    ) {
+      fold.open = true;
+    }
     card.scrollIntoView({ block: "center" });
     card.focus();
   };
