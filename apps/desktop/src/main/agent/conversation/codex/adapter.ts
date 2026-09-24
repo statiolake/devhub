@@ -68,6 +68,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type SettingName,
 } from "../protocolAdapter.js";
 import {
 	Reader,
@@ -356,9 +357,22 @@ export class CodexAdapter implements ProtocolAdapter {
 					return this.interrupt();
 				case "answer":
 					return this.answer(command.request, command.answer);
-				case "set-setting":
-					return this.choose(command.which, command.id);
 			}
+		});
+	}
+
+	configure(which: SettingName, id: string): AdapterStep {
+		// Checked before the step, so a choice DevHub should not have offered
+		// is refused and leaves the adapter as it was, not spent.
+		this.refuseIfSpent();
+		if (
+			!this.sessionFacts()[which].choices.some((choice) => choice.id === id)
+		) {
+			throw new Error(`${id} is not a ${which} this Codex offers`);
+		}
+		return this.step(() => {
+			this.choose(which, id);
+			this.publishSession();
 		});
 	}
 
@@ -1870,19 +1884,10 @@ export class CodexAdapter implements ProtocolAdapter {
 	/**
 	 * Codex keeps no setting on the thread: model, effort and mode travel on
 	 * each `turn/start`, so choosing one writes nothing. The choice is held
-	 * here, shown by the next step (`step` publishes the session first), and
-	 * carried by the next `turn/start`, whose `sent` makes it survive a replay.
-	 *
-	 * This is the one place `encode` moves state beyond an id counter, because
-	 * there is no line for the choice to come back through. Whether the seam
-	 * should carry it instead is an open question to stage 5.
+	 * here, shown at once (`configure` publishes the session), and carried by
+	 * the next `turn/start`, whose `sent` makes it survive a replay.
 	 */
-	private choose(which: "model" | "effort" | "mode", id: string): void {
-		if (
-			!this.sessionFacts()[which].choices.some((choice) => choice.id === id)
-		) {
-			throw new Error(`${id} is not a ${which} this Codex offers`);
-		}
+	private choose(which: SettingName, id: string): void {
 		this.chosen[which] = id;
 		if (which === "model") this.chosen.effort = undefined;
 	}

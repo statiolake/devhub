@@ -61,6 +61,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type SettingName,
 } from "./protocolAdapter.js";
 
 /** What a conversation needs of its host. `HostLink` is the real one. */
@@ -154,13 +155,31 @@ export class AgentConversation {
 	 */
 	command(command: ConversationCommand): Promise<void> {
 		return this.#serial(async () => {
-			const { state } = this.#transcript;
-			if (state.phase === "broken") {
-				throw new Error(
-					`this conversation has stopped taking input: ${state.failure.detail}`,
-				);
-			}
+			this.#refuseIfBroken();
 			await this.#write(this.#adapter.encode(command));
+		});
+	}
+
+	#refuseIfBroken(): void {
+		const { state } = this.#transcript;
+		if (state.phase === "broken") {
+			throw new Error(
+				`this conversation has stopped taking input: ${state.failure.detail}`,
+			);
+		}
+	}
+
+	/**
+	 * Choose a setting. Whatever lines the protocol sets it with are written
+	 * and taken back as sent, like a command's; a protocol that carries it on
+	 * the next turn instead has already said so in the step's events.
+	 */
+	configure(which: SettingName, id: string): Promise<void> {
+		return this.#serial(async () => {
+			this.#refuseIfBroken();
+			const step = this.#adapter.configure(which, id);
+			this.#take(step);
+			await this.#write(step.replies);
 		});
 	}
 

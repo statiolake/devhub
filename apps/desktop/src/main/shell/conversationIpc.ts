@@ -13,7 +13,10 @@ import {
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
 import type { AgentId } from "../../model/domain.js";
-import type { ConversationCommand } from "../agent/conversation/protocolAdapter.js";
+import type {
+	ConversationCommand,
+	SettingName,
+} from "../agent/conversation/protocolAdapter.js";
 import type { GuiConversations } from "./agentWiring.js";
 
 export interface ConversationIpcOptions {
@@ -86,12 +89,22 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	});
 
 	handle(CONVERSATION_CHANNELS.command, async (agentId, wire) => {
+		const request = requestFrom(wire);
 		const conversation = await options.conversations.of(agentId);
-		await conversation.command(commandFrom(wire));
+		await (request.kind === "set-setting"
+			? conversation.configure(request.which, request.id)
+			: conversation.command(request));
 	});
 }
 
-function commandFrom(wire: unknown): ConversationCommand {
+/** What the page asked for, checked; a person's words are the person's. */
+function requestFrom(wire: unknown):
+	| ConversationCommand
+	| {
+			readonly kind: "set-setting";
+			readonly which: SettingName;
+			readonly id: string;
+	  } {
 	const command = wire as ConversationCommandWire;
 	switch (command?.kind) {
 		case "send":

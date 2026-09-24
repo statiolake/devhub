@@ -85,6 +85,10 @@ class Harness {
 		for (const line of this.adapter.encode(command)) this.write(line);
 	}
 
+	configure(which: "model" | "effort" | "mode", id: string): void {
+		this.fold(this.adapter.configure(which, id));
+	}
+
 	/** The written lines since `from`, parsed. */
 	writesSince(from: number): unknown[] {
 		return this.written.slice(from).map((line) => JSON.parse(line) as unknown);
@@ -627,28 +631,20 @@ describe("a turn", () => {
 
 	it("carries chosen settings into the next turn/start", () => {
 		const harness = ready();
-		harness.command({
-			kind: "set-setting",
-			which: "model",
-			id: "gpt-5.5-mini",
-		});
-		// Choosing writes nothing (Codex takes settings per turn), so the choice
-		// shows with the next step the adapter takes.
-		expect(harness.transcript.session.model.current).toBe("gpt-5.5-codex");
-		harness.receive({
-			method: "turn/diff/updated",
-			params: { threadId: MAIN, turnId: "t", diff: "" },
-		});
+		harness.configure("model", "gpt-5.5-mini");
+		// Choosing writes nothing (Codex takes settings per turn), and the
+		// choice shows at once.
+		expect(harness.written.at(-1)).not.toContain("gpt-5.5-mini");
 		expect(harness.transcript.session.model.current).toBe("gpt-5.5-mini");
 		expect(harness.transcript.session.effort).toEqual({
 			current: undefined,
 			choices: [{ id: "low", label: "low" }],
 		});
-		harness.command({ kind: "set-setting", which: "effort", id: "low" });
-		harness.command({ kind: "set-setting", which: "mode", id: "read-only" });
-		expect(() =>
-			harness.command({ kind: "set-setting", which: "effort", id: "extreme" }),
-		).toThrow(/not a effort/);
+		harness.configure("effort", "low");
+		harness.configure("mode", "read-only");
+		expect(() => harness.configure("effort", "extreme")).toThrow(
+			/not a effort/,
+		);
 		harness.command({ kind: "send", text: "go", origin: "person" });
 		expect(harness.lastWrite()).toMatchObject({
 			method: "turn/start",

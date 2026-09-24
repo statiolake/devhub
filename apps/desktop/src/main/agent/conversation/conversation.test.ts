@@ -55,6 +55,8 @@ class FakeHost implements ConversationHost {
 	failAfter: number | undefined;
 	/** The next write fails. */
 	refuseWrite = false;
+	/** Writes return a turn of the event loop after the CLI has taken them, as a real exec does. */
+	slowWrites = false;
 
 	print(line: string): void {
 		this.#size += Buffer.byteLength(`${line}\n`);
@@ -102,6 +104,7 @@ class FakeHost implements ConversationHost {
 		}
 		this.inLog.push({ afterOffset, line });
 		this.onWrite(line);
+		if (this.slowWrites) await new Promise((resolve) => setImmediate(resolve));
 	}
 
 	async sentLog(): Promise<readonly SentRecord[]> {
@@ -290,6 +293,67 @@ describe("a command", () => {
 			}),
 		).rejects.toThrow(HostLinkFailure);
 		expect(conversation.snapshot()).toEqual(before);
+		await conversation.stop();
+	});
+});
+
+describe("a setting chosen", () => {
+	it("writes the lines that set it and takes them back as sent, so the CLI's answer is expected", async () => {
+		const host = new FakeHost();
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+		);
+		conversation.start();
+		await settle();
+		await conversation.configure("model", "opus");
+		expect(JSON.parse(host.inLog.at(-1)!.line)).toEqual({
+			type: "control_request",
+			request_id: "boot-a:2",
+			request: { subtype: "set_model", model: "opus" },
+		});
+		host.print(
+			JSON.stringify({
+				type: "control_response",
+				response: { subtype: "success", request_id: "boot-a:2" },
+			}),
+		);
+		await settle();
+		expect(conversation.reading().transcript.session.model.current).toBe(
+			"opus",
+		);
+		await conversation.stop();
+	});
+});
+
+describe("a line printed while DevHub's write is still in flight", () => {
+	it("is fed only after that write has been taken back as sent, so an answer never precedes its question", async () => {
+		const host = new FakeHost();
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+		);
+		conversation.start();
+		await settle();
+		// The CLI answers inside the write, before the write has returned: the
+		// journal has the answer before the caller could have called `sent`.
+		host.slowWrites = true;
+		host.onWrite = (line) => {
+			const { request_id } = JSON.parse(line) as { request_id: string };
+			host.print(
+				JSON.stringify({
+					type: "control_response",
+					response: { subtype: "success", request_id },
+				}),
+			);
+		};
+		await conversation.configure("mode", "plan");
+		await settle();
+		const { transcript } = conversation.reading();
+		expect(transcript.state.phase).not.toBe("broken");
+		expect(transcript.session.mode.current).toBe("plan");
 		await conversation.stop();
 	});
 });

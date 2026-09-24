@@ -63,6 +63,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type SettingName,
 } from "../protocolAdapter.js";
 import {
 	ORIGIN_KEY,
@@ -242,23 +243,27 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return [this.controlRequest({ subtype: "interrupt" })];
 			case "answer":
 				return [this.answerLine(command.request, command.answer)];
-			case "set-setting":
-				switch (command.which) {
-					case "model":
-						return [
-							this.controlRequest({ subtype: "set_model", model: command.id }),
-						];
-					case "mode":
-						return [
-							this.controlRequest({
-								subtype: "set_permission_mode",
-								mode: command.id,
-							}),
-						];
-					case "effort":
-						return [userLine(`/effort ${command.id}`, "person")];
-				}
 		}
+	}
+
+	configure(which: SettingName, id: string): AdapterStep {
+		return this.step(() => {
+			switch (which) {
+				case "model":
+					this.replies.push(
+						this.controlRequest({ subtype: "set_model", model: id }),
+					);
+					return;
+				case "mode":
+					this.replies.push(
+						this.controlRequest({ subtype: "set_permission_mode", mode: id }),
+					);
+					return;
+				case "effort":
+					this.replies.push(userLine(`/effort ${id}`, "person"));
+					return;
+			}
+		});
 	}
 
 	sent(line: string): AdapterStep {

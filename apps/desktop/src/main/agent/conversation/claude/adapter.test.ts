@@ -70,6 +70,17 @@ function json(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+/** Choose a setting, and write whatever lines it takes, as the caller does. */
+function configure(
+	adapter: ClaudeAdapter,
+	which: "model" | "effort" | "mode",
+	id: string,
+): readonly string[] {
+	const step = adapter.configure(which, id);
+	for (const line of step.replies) adapter.sent(line);
+	return step.replies;
+}
+
 /** Send what `encode` makes of a command, as the caller does once the write succeeds. */
 function perform(
 	adapter: ClaudeAdapter,
@@ -1004,11 +1015,7 @@ describe("interrupting", () => {
 describe("settings", () => {
 	it("change the model with set_model, and the session follows once the CLI agrees", () => {
 		const adapter = inTurn();
-		const [line] = perform(adapter, {
-			kind: "set-setting",
-			which: "model",
-			id: "opus",
-		});
+		const [line] = configure(adapter, "model", "opus");
 		expect(JSON.parse(line!)).toEqual({
 			type: "control_request",
 			request_id: "boot:1",
@@ -1026,11 +1033,7 @@ describe("settings", () => {
 
 	it("change the mode with set_permission_mode", () => {
 		const adapter = inTurn();
-		const [line] = perform(adapter, {
-			kind: "set-setting",
-			which: "mode",
-			id: "plan",
-		});
+		const [line] = configure(adapter, "mode", "plan");
 		expect(JSON.parse(line!).request).toEqual({
 			subtype: "set_permission_mode",
 			mode: "plan",
@@ -1046,7 +1049,7 @@ describe("settings", () => {
 
 	it("show a refusal as an error notice and leave the setting as it was", () => {
 		const adapter = inTurn();
-		perform(adapter, { kind: "set-setting", which: "model", id: "nonsense" });
+		configure(adapter, "model", "nonsense");
 		adapter.received(
 			json({
 				type: "control_response",
@@ -1067,11 +1070,7 @@ describe("settings", () => {
 
 	it("change the effort with the /effort command, as a message", () => {
 		const adapter = inTurn();
-		const [line] = perform(adapter, {
-			kind: "set-setting",
-			which: "effort",
-			id: "high",
-		});
+		const [line] = configure(adapter, "effort", "high");
 		expect(JSON.parse(line!).message).toEqual({
 			role: "user",
 			content: "/effort high",

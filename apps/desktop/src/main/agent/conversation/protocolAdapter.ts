@@ -45,12 +45,10 @@ export type ConversationCommand =
 			readonly kind: "answer";
 			readonly request: RequestId;
 			readonly answer: RequestAnswer;
-	  }
-	| {
-			readonly kind: "set-setting";
-			readonly which: "model" | "effort" | "mode";
-			readonly id: string;
 	  };
+
+/** The three settings a session offers choices for, as `SessionFacts` names them. */
+export type SettingName = "model" | "effort" | "mode";
 
 export interface AdapterStep {
 	readonly events: readonly ConversationEvent[];
@@ -65,6 +63,18 @@ export interface ProtocolAdapter {
 	opening(): readonly string[];
 	/** The lines that carry `command`. Changes nothing until they come back through `sent`. */
 	encode(command: ConversationCommand): readonly string[];
+	/**
+	 * A setting chosen: one of `SessionFacts[which].choices`.
+	 *
+	 * The one call that may change what the adapter holds without a line
+	 * coming back through `sent`, because a protocol may carry settings on the
+	 * next turn rather than set them (Codex): the choice is held, and its
+	 * session event is in the step. A protocol that does set them (Claude)
+	 * returns the lines that do as `replies`; the caller writes them and hands
+	 * them back through `sent`, like every other line, and the setting changes
+	 * when the CLI says it has.
+	 */
+	configure(which: SettingName, id: string): AdapterStep;
 	/** A line DevHub wrote to the CLI's stdin — live, or read back from `in.log`. */
 	sent(line: string): AdapterStep;
 	/** A line the CLI printed on stdout. */
