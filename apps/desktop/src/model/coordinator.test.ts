@@ -849,6 +849,30 @@ describe("launching an agent", () => {
   });
 });
 
+describe("an Agent whose launch is under way", () => {
+  it("is named from the moment its launch starts until the model has it", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.answer(driver.drainEffects()[0]);
+    expect(driver.coordinator.launchingAgents()).toEqual([]);
+    driver.answer(driver.drainEffects()[0]);
+    const launch = driver.drainEffects()[0];
+    if (launch?.kind !== "launch_agent") throw new Error("unexpected");
+    // Its session and its host files may exist now, and no row does yet.
+    expect(driver.coordinator.model.agent(AG_A)).toBeUndefined();
+    expect(driver.coordinator.launchingAgents()).toEqual([AG_A]);
+    driver.answer(launch);
+    expect(driver.coordinator.model.agent(AG_A)).toBeDefined();
+    expect(driver.coordinator.launchingAgents()).toEqual([]);
+  });
+});
+
 describe("continuing a GUI Agent in a terminal", () => {
   const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400b0");
 

@@ -2247,6 +2247,21 @@ export class AppCoordinator {
     return this.pending.has(id);
   }
 
+  /**
+   * The Agents a launch is under way for: from the launch effect until the
+   * completion puts the Agent in the model, the one window in which its
+   * session and host files exist and no row accounts for them. A sweep counts
+   * them as accounted for — by this, and not by how old anything is.
+   */
+  launchingAgents(): readonly AgentId[] {
+    return [...this.pending.values()].flatMap((operation) =>
+      operation.kind === "launch_agent" &&
+      operation.target.kind === "agent_launch"
+        ? [operation.target.agentId]
+        : [],
+    );
+  }
+
   /** Every scope at once: the model underneath all of them has moved. */
   private invalidateReconciliation(): void {
     for (const scope of [...this.activeReconciles.keys()]) {

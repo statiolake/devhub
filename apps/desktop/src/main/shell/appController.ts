@@ -926,6 +926,11 @@ export class AppController {
 					workspaces.add(workspace.id);
 					for (const agent of workspace.agents) agents.add(agent.id);
 				}
+				// An Agent being launched has its session, and a GUI Agent its
+				// host files, before it has a row: its launch accounts for them.
+				for (const agent of this.coordinator.launchingAgents()) {
+					agents.add(agent);
+				}
 				return { workspaces, agents };
 			},
 			workspaceMachines: () => this.workspaceMachines(),

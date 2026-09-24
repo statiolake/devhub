@@ -49,6 +49,18 @@ import {
   type JournalLine,
 } from "../../src/main/agent/conversation/hostLink";
 import { localRuntime } from "../../src/main/runtime/registry";
+import { AppModel } from "../../src/model/appModel";
+import {
+  AgentProfile,
+  agentId,
+  agentProfileId,
+  displayPath,
+  Workspace,
+  workspaceId,
+  workspaceLocation,
+} from "../../src/model/domain";
+import { agents } from "../../src/main/shell/adapters";
+import { wireAgents } from "../../src/main/shell/agentWiring";
 import type { Runtime } from "../../src/main/runtime/runtime";
 import { AgentStatusDetector } from "../../src/main/agent/detect/detector";
 import {
@@ -2054,6 +2066,163 @@ describe.skipIf(TMUX === undefined)(
       const ending = await link.ending();
       expect(ending).toMatchObject({ kind: "exited", code: 3 });
       expect(ending.stderrTail).toContain("fake-agent: exiting with 3");
+    });
+  },
+);
+
+/**
+ * A GUI Agent across a restart of DevHub, as the wiring lives it: launched,
+ * read by the round, then DevHub gone and a new one wired up on the same
+ * tmux and the same host files — which must find the conversation again from
+ * the journal, by itself, with nobody attaching.
+ */
+describe.skipIf(TMUX === undefined)(
+  "a GUI Agent across a restart of DevHub",
+  { timeout: 60_000 },
+  () => {
+    const FAKE_AGENT = fileURLToPath(
+      new URL("../fixtures/agent-conversation/fake-agent.sh", import.meta.url),
+    );
+    const FIXTURE = fileURLToPath(
+      new URL(
+        "../../src/main/agent/conversation/fixtures/claude-permission-turn.ndjson",
+        import.meta.url,
+      ),
+    );
+    const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000f5");
+    const AGENT = agentId("00000000-0000-4000-8000-0000000000f6");
+
+    /** This machine, with its home where the fixture's is. */
+    function machineAt(home: string, broken = false): Runtime {
+      const local = localRuntime();
+      return new Proxy(local, {
+        get(target, key) {
+          if (key === "home") {
+            return () =>
+              broken
+                ? Promise.reject(
+                    new Error("this machine did not say where home is"),
+                  )
+                : Promise.resolve(home);
+          }
+          const value = Reflect.get(target, key, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }
+
+    /** One DevHub's wiring of the Agents, over the same model, tmux and home. */
+    function devhub(
+      model: AppModel,
+      tmux: TmuxTerminalRuntime,
+      machine: Runtime,
+    ) {
+      const reports: string[] = [];
+      const wiring = wireAgents({
+        runtimeFor: localAdapter(tmux),
+        model: () => model,
+        machineOf: () => "local",
+        machineRuntime: () => machine,
+        report: (message) => reports.push(message),
+        clientVersion: "0.0.0-test",
+        profileTag: "0123456789ab",
+      });
+      const adapter = agents();
+      if (!adapter) throw new Error("the Agent adapter was not registered");
+      return { wiring, adapter, reports };
+    }
+
+    /** Rounds until the Agent reads as `status`, or the reason it never did. */
+    async function roundsUntil(
+      adapter: NonNullable<ReturnType<typeof agents>>,
+      status: string,
+    ) {
+      let last: unknown;
+      for (let round = 0; round < 60; round += 1) {
+        const reconciliation = await adapter.reconcile("local");
+        last = reconciliation.observations.find((one) => one.agentId === AGENT);
+        if ((last as { status?: string } | undefined)?.status === status) {
+          return last;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error(
+        `the Agent never read as ${status}: ${JSON.stringify(last)}`,
+      );
+    }
+
+    async function launchedGui(label: string) {
+      const test = fixture(label);
+      const home = realpathSync(test.home);
+      await test.runtime.ensure(SCRATCH_TARGET);
+      const model = new AppModel(
+        new Workspace(
+          WORKSPACE,
+          workspaceLocation({ kind: "local", path: home }),
+          displayPath(home),
+        ),
+      );
+      const profile = AgentProfile.create(
+        agentProfileId("fake-claude"),
+        "Fake Claude",
+        "claude",
+        FAKE_AGENT,
+        [],
+        new Map([["FAKE_AGENT_SCRIPT", FIXTURE]]),
+        "gui",
+      );
+      const first = devhub(model, test.runtime, machineAt(home));
+      expect(
+        await first.adapter.launch(WORKSPACE, AGENT, profile, "gui", home),
+      ).toEqual({ kind: "started" });
+      model.addAgent(WORKSPACE, AGENT, profile, "gui");
+      return { test, home, model, first };
+    }
+
+    it("finds its conversation again from the journal, and reads as it did", async () => {
+      const { test, home, model, first } = await launchedGui("gui-restart");
+      await roundsUntil(first.adapter, "idle");
+      const before = (await first.wiring.conversations.of(AGENT)).snapshot();
+      expect(before.transcript.session.sessionId).toBe(
+        "00000000-0000-4000-8000-000000000001",
+      );
+
+      // DevHub goes: its conversation stops following, the host keeps running.
+      await first.wiring.conversations.registry.close(AGENT);
+
+      const second = devhub(model, test.runtime, machineAt(home));
+      const reading = await roundsUntil(second.adapter, "idle");
+      expect(reading).toMatchObject({ status: "idle", failure: undefined });
+      const after = (await second.wiring.conversations.of(AGENT)).snapshot();
+      expect(after.transcript).toEqual(before.transcript);
+      // It was not greeted a second time.
+      const sent = await new HostLink(
+        localRuntime(),
+        agentStateDirectory(home, "0123456789ab", AGENT),
+      ).sentLog();
+      expect(sent).toHaveLength(1);
+
+      await second.wiring.conversations.registry.close(AGENT);
+      await second.wiring.sessions.terminate("local", AGENT);
+    });
+
+    it("says on the Agent, not in a failed round, when the conversation cannot be opened", async () => {
+      const { test, home, model, first } = await launchedGui("gui-unopenable");
+      await roundsUntil(first.adapter, "idle");
+      await first.wiring.conversations.registry.close(AGENT);
+
+      const second = devhub(model, test.runtime, machineAt(home, true));
+      const reading = await roundsUntil(second.adapter, "error");
+      expect(reading).toMatchObject({
+        status: "error",
+        failure: {
+          code: "conversation_failed",
+          detail: "this machine did not say where home is",
+        },
+      });
+
+      await second.wiring.conversations.registry.close(AGENT);
+      await second.wiring.sessions.terminate("local", AGENT);
     });
   },
 );
