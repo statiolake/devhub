@@ -102,13 +102,6 @@ const MODES: Setting["choices"] = [
 	{ id: "bypassPermissions", label: "Bypass permissions" },
 ];
 
-const EFFORTS: Setting["choices"] = [
-	{ id: "low", label: "Low" },
-	{ id: "medium", label: "Medium" },
-	{ id: "high", label: "High" },
-	{ id: "max", label: "Max" },
-];
-
 const EFFORT_COMMAND = /^\/effort\s+(\S+)\s*$/u;
 
 /** The input field that says, in a word, what a call of each well-known tool does. */
@@ -217,6 +210,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly streaming = new Map<EntryId | null, MessageState>();
 
 	private described: InitializeFacts["commands"] = [];
+	private models: InitializeFacts["models"] = [];
 	private announced: readonly string[] = [];
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
@@ -278,7 +272,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					const effort = EFFORT_COMMAND.exec(sent.text);
 					if (effort !== null) {
 						this.setSession({
-							effort: { current: effort[1], choices: EFFORTS },
+							effort: { ...this.current.session.effort, current: effort[1] },
 						});
 					}
 					return;
@@ -422,6 +416,45 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			}));
 	}
 
+	/**
+	 * The model a session reports, as one of the choices the handshake listed,
+	 * and the effort that model takes.
+	 *
+	 * A session names its model in full (`claude-haiku-4-5-…`) and the choices
+	 * are aliases (`haiku`), so the choice is found by what it resolves to — a
+	 * named alias before `default`, which resolves to whatever the default is
+	 * today. A model no choice resolves to is shown by its own name, with no
+	 * effort to offer, since nothing says which it takes.
+	 */
+	private modelSettings(
+		reported: string | undefined,
+	): Pick<SessionFacts, "model" | "effort"> {
+		const chosen =
+			reported === undefined
+				? undefined
+				: (this.models.find((model) => model.id === reported) ??
+					this.models.find(
+						(model) => model.id !== "default" && model.resolved === reported,
+					) ??
+					this.models.find((model) => model.resolved === reported));
+		const efforts = chosen?.efforts ?? [];
+		const effort = this.current.session.effort.current;
+		return {
+			model: {
+				current: chosen?.id ?? reported,
+				choices: this.models.map((model) => ({
+					id: model.id,
+					label: model.label,
+				})),
+			},
+			effort: {
+				current:
+					effort !== undefined && efforts.includes(effort) ? effort : undefined,
+				choices: efforts.map((level) => ({ id: level, label: level })),
+			},
+		};
+	}
+
 	private becomeReady(): void {
 		if (this.current.state.phase === "connecting") this.turn("none");
 	}
@@ -504,8 +537,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					agentVersion: line.version,
 					sessionId: line.sessionId,
 					cwd: line.cwd,
-					model: { ...this.current.session.model, current: line.model },
-					effort: { ...this.current.session.effort, choices: EFFORTS },
+					...this.modelSettings(line.model),
 					mode: {
 						current: line.permissionMode ?? this.current.session.mode.current,
 						choices: MODES,
@@ -608,22 +640,19 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					this.current.session.agentVersion,
 				);
 				this.described = facts.commands;
+				this.models = facts.models;
 				this.setSession({
-					model: {
-						current: this.current.session.model.current,
-						choices: facts.models,
+					...this.modelSettings(this.current.session.model.current),
+					mode: {
+						current: this.current.session.mode.current ?? facts.currentMode,
+						choices: MODES,
 					},
 					commands: this.commands(),
 				});
 				return this.becomeReady();
 			}
 			case "set_model":
-				return this.setSession({
-					model: {
-						...this.current.session.model,
-						current: request.model as string,
-					},
-				});
+				return this.setSession(this.modelSettings(request.model as string));
 			case "set_permission_mode":
 				return this.setSession({
 					mode: { current: request.mode as string, choices: MODES },

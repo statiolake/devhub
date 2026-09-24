@@ -1527,3 +1527,89 @@ describe("the assistant message without partial messages", () => {
 		});
 	});
 });
+
+/**
+ * A real session, scrubbed (see the capture's header): what the CLI printed
+ * and what DevHub wrote, in the order they happened. Where it and the
+ * hand-written fixtures disagree, the capture is right.
+ */
+describe("the captured session", () => {
+	const lines = fixture("claude-session.capture.ndjson");
+
+	function played(upTo = lines.length): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("replay");
+		play(adapter, lines.slice(0, upTo));
+		return adapter;
+	}
+
+	it("plays through to an idle conversation, with three turns completed and nothing it does not know", () => {
+		const { transcript } = played();
+		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(
+			transcript.entries
+				.filter((entry) => entry.kind === "turn-end")
+				.map((entry) => (entry.kind === "turn-end" ? entry.outcome : "")),
+		).toEqual(["completed", "completed", "completed"]);
+		expect(
+			transcript.entries.filter((entry) => entry.kind === "notice"),
+		).toEqual([]);
+		expect(
+			transcript.entries
+				.filter((entry) => entry.kind === "user")
+				.map((entry) => entry.kind === "user" && entry.origin),
+		).toEqual(["person", "person", "person"]);
+	});
+
+	it("draws the Markdown and runs the Bash call to its output", () => {
+		const { transcript } = played();
+		const texts = transcript.entries.flatMap((entry) =>
+			entry.kind === "assistant"
+				? entry.blocks.flatMap((block) =>
+						block.kind === "text" ? [block.markdown] : [],
+					)
+				: [],
+		);
+		expect(texts[0]).toContain("| Key | Value |");
+		expect(texts[0]).toContain("```typescript");
+		expect(
+			transcript.entries.find((entry) => entry.kind === "tool"),
+		).toMatchObject({
+			tool: "Bash",
+			title: "Bash: pwd",
+			status: "succeeded",
+			output: { kind: "text", text: "/home/testuser/project" },
+		});
+	});
+
+	it("knows the mode from the handshake, before the first turn names it", () => {
+		const { transcript } = played(2);
+		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(transcript.session.mode.current).toBe("default");
+	});
+
+	it("names the model by the choice the CLI resolved it from, and offers the effort that model has", () => {
+		const firstTurn = lines.findIndex((each) =>
+			each.line.includes('"subtype":"init"'),
+		);
+		const { session } = played(firstTurn + 1).transcript;
+		expect(session.agentVersion).toBe("2.1.281");
+		expect(session.cwd).toBe("/home/testuser/project");
+		// Haiku, reported by its full name, is the "haiku" choice — and has no effort to choose.
+		expect(session.model.current).toBe("haiku");
+		expect(session.effort).toEqual({ current: undefined, choices: [] });
+	});
+
+	it("offers every effort level a model supports, as the handshake lists them", () => {
+		const adapter = played(2);
+		adapter.received(init({ model: "claude-sonnet-5" }));
+		const { session } = adapter.transcript;
+		expect(session.model.current).toBe("sonnet");
+		expect(session.effort.choices.map((choice) => choice.id)).toEqual([
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+	});
+});

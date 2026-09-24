@@ -462,7 +462,16 @@ export interface InitializeFacts {
 		readonly description: string;
 		readonly argumentHint: string | undefined;
 	}[];
-	readonly models: readonly { readonly id: string; readonly label: string }[];
+	readonly models: readonly {
+		readonly id: string;
+		readonly label: string;
+		/** The full model name the choice resolves to, as a session reports its model. */
+		readonly resolved: string | undefined;
+		/** The effort levels the model takes; none for a model without effort. */
+		readonly efforts: readonly string[];
+	}[];
+	/** The permission mode the session is in, before any turn has said so. */
+	readonly currentMode: string | undefined;
 }
 
 /** The payload of the CLI's success response to DevHub's `initialize`. */
@@ -496,8 +505,25 @@ export function decodeInitialize(
 			return {
 				id: f.string(model.value, `${path}.value`),
 				label: f.string(model.displayName, `${path}.displayName`),
+				resolved: f.optionalString(
+					model.resolvedModel,
+					`${path}.resolvedModel`,
+				),
+				efforts: (model.supportedEffortLevels === undefined
+					? []
+					: f.array(
+							model.supportedEffortLevels,
+							`${path}.supportedEffortLevels`,
+						)
+				).map((level, at) =>
+					f.string(level, `${path}.supportedEffortLevels[${at}]`),
+				),
 			};
 		}),
+		currentMode: f.optionalString(
+			body.current_permission_mode,
+			`${at}.current_permission_mode`,
+		),
 	};
 }
 
@@ -583,6 +609,9 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 		// whether or not hook events were asked for. v1 does not draw hooks
 		// (design §3.5), and what a hook prints is the owner's configuration,
 		// not the conversation.
+		// An estimate of the thinking so far, while it streams: the thinking
+		// block itself is what is drawn.
+		case "thinking_tokens":
 		case "hook_started":
 		case "hook_progress":
 		case "hook_response":
