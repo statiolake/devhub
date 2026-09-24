@@ -963,6 +963,68 @@ describe("round trip", () => {
     expect(reparsed.agentProfiles[1].command).toBe("my-agent");
   });
 
+  /**
+   * A hand-written file spells a profile without `[agent_profiles.env]` — it
+   * has no variables, so why write the heading? A save gives every profile an
+   * `env` table, and that table has to land inside the block it belongs to,
+   * spelled the way TOML spells "this element's": `[agent_profiles.env]`
+   * directly under its own `[[agent_profiles]]`. It used to be written at the
+   * end of the file as `[agent_profiles.0.env]`, which is a key named `0`, and
+   * the next read refused the whole file.
+   */
+  it("saves every field of hand-written profiles that have no env table", () => {
+    const source = [
+      "version = 1",
+      "",
+      "# mine",
+      "[[agent_profiles]]",
+      'id = "codex"',
+      'display_name = "Codex"',
+      'kind = "codex"',
+      "",
+      "[[agent_profiles]]",
+      'id = "claude"',
+      'display_name = "Claude"',
+      'kind = "claude"',
+      "",
+      "[scratch]",
+      'daily = "~/work/YYYYMMDD"',
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const edited = [
+      {
+        id: "codex",
+        display_name: "Codex, edited",
+        kind: "claude" as const,
+        command: "/opt/example/claude",
+        args: ["--verbose", "--model", "example"],
+        env: { EXAMPLE_TOKEN: "dummy", OTHER: "2" },
+        presentation: "gui" as const,
+      },
+      {
+        id: "claude",
+        display_name: "Claude",
+        kind: "custom" as const,
+        command: "my-agent",
+        args: [],
+        env: { ONLY_THE_SECOND: "yes" },
+        presentation: "tui" as const,
+      },
+    ];
+    const saved = configOntoDocument(source, {
+      ...config,
+      agentProfiles: edited,
+    });
+    expect(saved).not.toMatch(/agent_profiles\.\d/u);
+    const reparsed = parseConfig(saved);
+    expect(reparsed.agentProfiles).toEqual(edited);
+    expect(reparsed.scratch.daily).toBe("~/work/YYYYMMDD");
+    expect(saved).toContain("# mine");
+    // Saving what was just read changes nothing.
+    expect(configOntoDocument(saved, reparsed)).toBe(saved);
+  });
+
   it("saves a document it did not change back byte for byte", () => {
     const full = configToToml(defaultConfig());
     expect(configOntoDocument(full, parseConfig(full))).toBe(full);

@@ -248,6 +248,29 @@ interface Edit {
   readonly text: string;
 }
 
+/**
+ * How a table path is written in a heading.
+ *
+ * A numeric segment is an element of an array of tables, and TOML has no way
+ * to name one by position: `[agent_profiles.env]` means "the `env` of the
+ * `[[agent_profiles]]` block most recently opened". So the element's index is
+ * dropped from the spelling — and that spelling only says the right thing when
+ * the heading is written inside that element's block, which is what
+ * `BlockSink` is for.
+ */
+function spelled(path: readonly (string | number)[]): string[] {
+  return path.filter((part): part is string => typeof part === "string");
+}
+
+/**
+ * Where a new `[table]` block for a given table goes.
+ *
+ * At the end of the document for everything except the inside of an array
+ * element, whose new sub-tables have to follow that element's own block: at
+ * the end of the file they would belong to whichever element came last.
+ */
+type BlockSink = (block: string) => void;
+
 function keyPath(key: AST.TOMLKey): string[] {
   return key.keys.map((part) =>
     part.type === "TOMLBare" ? part.name : String(part.value),
@@ -383,9 +406,7 @@ export function updateTomlDocument(
    * the document stops parsing — the same class of failure as leaving the
    * block behind, just spelled differently.
    */
-  const blockWithChildrenSpan = (
-    entry: TableEntry,
-  ): { start: number; end: number } => {
+  const lastOfFamily = (entry: TableEntry): TableEntry => {
     let last = entry;
     for (
       let next = allTables.indexOf(entry) + 1;
@@ -399,11 +420,14 @@ export function updateTomlDocument(
       }
       last = candidate;
     }
-    return {
-      start: blockSpan(source, entry.node).start,
-      end: blockSpan(source, last.node).end,
-    };
+    return last;
   };
+  const blockWithChildrenSpan = (
+    entry: TableEntry,
+  ): { start: number; end: number } => ({
+    start: blockSpan(source, entry.node).start,
+    end: blockSpan(source, lastOfFamily(entry).node).end,
+  });
 
   /**
    * Whether this key is an array of tables at all.
@@ -480,6 +504,7 @@ export function updateTomlDocument(
     container: AST.TOMLTable | undefined,
     existing: Record<string, unknown>,
     target: Record<string, TomlValue>,
+    place: BlockSink,
   ): void => {
     const pairs = new Map<string, AST.TOMLKeyValue>();
     for (const node of body) {
@@ -520,6 +545,7 @@ export function updateTomlDocument(
           existing,
           key,
           wanted as readonly Record<string, TomlValue>[],
+          place,
         );
         // Exactly one of the two spellings survives: blocks when there is
         // anything to put in them, `key = []` when there is not.
@@ -557,6 +583,7 @@ export function updateTomlDocument(
             child,
             (existing[key] ?? {}) as Record<string, unknown>,
             wanted,
+            place,
           );
           continue;
         }
@@ -575,6 +602,7 @@ export function updateTomlDocument(
             undefined,
             (existing[key] ?? {}) as Record<string, unknown>,
             wanted,
+            place,
           );
           continue;
         }
@@ -606,7 +634,7 @@ export function updateTomlDocument(
           const span = lineSpan(source, inline);
           edits.push({ start: span.start, end: span.end, text: "" });
         }
-        appended.push(renderTableBlock(childPath.map(String), wanted));
+        place(renderTableBlock(spelled(childPath), wanted));
         continue;
       }
 
@@ -637,9 +665,7 @@ export function updateTomlDocument(
       if (!container && path.length > 0) {
         // An implicit table: there is no heading to insert after, so the
         // scalars get one of their own.
-        appended.push(
-          renderTableBlock(path.map(String), Object.fromEntries(newKeys)),
-        );
+        place(renderTableBlock(spelled(path), Object.fromEntries(newKeys)));
         return;
       }
       const point = container
@@ -660,8 +686,9 @@ export function updateTomlDocument(
     existing: Record<string, unknown>,
     key: string,
     wanted: readonly Record<string, TomlValue>[],
+    place: BlockSink,
   ): void => {
-    const name = path.map(String);
+    const name = spelled(path);
     const blocks = arrayTableBlocks(path);
     const existingArray = Array.isArray(existing[key])
       ? (existing[key] as Record<string, unknown>[])
@@ -684,17 +711,38 @@ export function updateTomlDocument(
       const id = typeof item["id"] === "string" ? item["id"] : undefined;
       const match = id === undefined ? undefined : byId.get(id);
       if (!match) {
-        appended.push(renderArrayTableBlock(name, item));
+        place(renderArrayTableBlock(name, item));
         continue;
       }
       kept.add(match.node);
+      const element = blocks.find((entry) => entry.node === match.node);
+      if (element === undefined) {
+        throw new Error("a matched block is not one of the array's blocks");
+      }
+      // This element's new sub-tables, written at the end of its own block.
+      const inside: string[] = [];
       reconcile(
-        [...path, blocks.findIndex((entry) => entry.node === match.node)],
+        element.path,
         match.node.body,
         match.node,
         match.value,
         item,
+        (block) => inside.push(block),
       );
+      if (inside.length > 0) {
+        const last = lastOfFamily(element).node;
+        let insertAt = last.range[1];
+        while (insertAt < source.length && source[insertAt] !== "\n") {
+          insertAt += 1;
+        }
+        insertAt = Math.min(source.length, insertAt + 1);
+        const lead = source[insertAt - 1] === "\n" ? "" : "\n";
+        edits.push({
+          start: insertAt,
+          end: insertAt,
+          text: `${lead}\n${inside.join("\n\n")}\n`,
+        });
+      }
     }
 
     // Every block the desired array did not claim goes, whether it had an `id`
@@ -707,10 +755,20 @@ export function updateTomlDocument(
     }
   };
 
-  reconcile([], ast.body[0].body, undefined, current, desired);
+  reconcile([], ast.body[0].body, undefined, current, desired, (block) =>
+    appended.push(block),
+  );
 
-  // Back to front, so an earlier edit cannot move a later one's range.
-  edits.sort((left, right) => right.start - left.start);
+  // Back to front, so an earlier edit cannot move a later one's range. Two
+  // insertions at one point come out in the order they were made — a new key
+  // of a block, then a new sub-table after it — so the later one is applied
+  // first and the earlier one lands in front of it.
+  const order = new Map(edits.map((edit, index) => [edit, index]));
+  edits.sort(
+    (left, right) =>
+      right.start - left.start ||
+      (order.get(right) ?? 0) - (order.get(left) ?? 0),
+  );
   let output = source;
   for (const edit of edits) {
     output = output.slice(0, edit.start) + edit.text + output.slice(edit.end);
