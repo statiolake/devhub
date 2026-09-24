@@ -22,7 +22,6 @@
  */
 
 import {
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -138,17 +137,6 @@ export function Composer({
       ? []
       : completions(transcript.session.commands, query);
   const highlighted = Math.min(selected, offered.length - 1);
-
-  // The field grows with what is in it, up to the ceiling the stylesheet sets.
-  useLayoutEffect(() => {
-    const field = inputRef.current;
-    if (!field) return;
-    // Border-box: the height is the text's scroll height plus the borders
-    // round it, which is what `offsetHeight - clientHeight` measures.
-    field.style.height = "auto";
-    const borders = field.offsetHeight - field.clientHeight;
-    field.style.height = `${field.scrollHeight + borders}px`;
-  }, [text, inputRef]);
 
   const edit = (next: string) => {
     setText(next);

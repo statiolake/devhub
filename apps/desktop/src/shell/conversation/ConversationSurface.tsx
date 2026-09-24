@@ -32,7 +32,7 @@ import {
 import type { AppAppearance } from "../../ipc/appShell";
 import type { Transcript } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
-import { Composer } from "./Composer";
+import { Composer, inputRefusal } from "./Composer";
 import {
   ConversationActionsProvider,
   FocusComposerProvider,
@@ -96,10 +96,14 @@ export function ConversationSurface({
     composer.current?.focus();
   }, []);
 
-  // Being shown is a request to type into it.
+  // Being shown is a request to type into it, and so is becoming able to
+  // take input while shown: a pane shown while its conversation is still
+  // connecting has a disabled composer, which cannot take the keyboard, so the
+  // keyboard goes there the moment it can.
+  const accepting = inputRefusal(transcript.state) === undefined;
   useLayoutEffect(() => {
-    if (!hidden) focusComposer();
-  }, [hidden, focusComposer]);
+    if (!hidden && accepting) focusComposer();
+  }, [hidden, accepting, focusComposer]);
 
   const openSetting = useCallback(
     (setting: SettingName) => {

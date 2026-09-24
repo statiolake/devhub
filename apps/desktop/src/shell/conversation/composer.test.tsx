@@ -375,6 +375,18 @@ describe("stopping a turn", () => {
 });
 
 describe("focus", () => {
+  it("puts the keyboard in the composer once a shown pane's conversation can take input", () => {
+    const connecting = withSession([
+      { type: "state", state: { phase: "connecting" } },
+    ]);
+    const { redraw } = draw(connecting);
+    // Disabled while connecting: nothing can have the keyboard yet.
+    expect(composer()).toBeDisabled();
+    expect(composer()).not.toHaveFocus();
+    redraw(withSession());
+    expect(composer()).toHaveFocus();
+  });
+
   it("puts the keyboard in the composer when the pane is shown", () => {
     const { redraw } = draw(withSession(), fakeActions(), true);
     expect(composer()).not.toHaveFocus();

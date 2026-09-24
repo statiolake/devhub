@@ -761,7 +761,13 @@
   gap: var(--space-2);
 }
 
+/* The field is as tall as what is in it, from one line up to 40% of the
+   view, and the browser does the measuring (`field-sizing`). Measuring it in
+   script went wrong whenever the pane was measured before it had a width: a
+   pooled pane mounted hidden read its placeholder as one character a line. */
 .conversation-composer-input {
+  field-sizing: content;
+  min-height: calc(1.55em + 2 * var(--space-1) + 2px);
   max-height: 40vh;
   box-sizing: border-box;
   flex: 1;
