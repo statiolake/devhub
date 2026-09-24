@@ -257,7 +257,7 @@ const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
 const { WorkbenchView, asBrowserWindow } = await import("./workbenchView.js");
-const { sidebarRect } = await import("./windowLayout.js");
+const { sidebarRect, trafficLightPosition } = await import("./windowLayout.js");
 
 /** The size the fake window reports; see `getContentSize` above. */
 const WINDOW_WIDTH = 1440;
@@ -1479,6 +1479,12 @@ describe("shellWindowOptions", () => {
 			titleBarStyle: "hiddenInset",
 			title: WINDOW_TITLES.shell,
 		});
+	});
+
+	it("places the traffic lights from the bar's height, not where hiddenInset drops them", () => {
+		expect(
+			shellWindowOptions("preload.js", undefined).trafficLightPosition,
+		).toEqual(trafficLightPosition());
 	});
 
 	it("does not take the mode at all", () => {

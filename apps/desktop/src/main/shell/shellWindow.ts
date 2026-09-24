@@ -24,6 +24,7 @@ import {
 	onScreenEditor,
 	sidebarRect,
 	surfaceRect,
+	trafficLightPosition,
 	windowLayout,
 	workbenchRect,
 	type ChildIdentity,
@@ -58,6 +59,10 @@ import type { Landing } from "./chords.js";
  * inset and no title text of its own. `shown` and `hidden` are then two
  * arrangements of the *page*, and the whole of the difference between them is
  * in `data-title-bar`. See `TitleBarMode`.
+ *
+ * The lights are placed, not left where `hiddenInset` drops them: centred in
+ * the bar DevHub draws, from that bar's height (`trafficLightPosition`). The
+ * bar is the same band in both chromes, so the placement is too.
  */
 export function shellWindowOptions(
 	preloadPath: string,
@@ -70,6 +75,7 @@ export function shellWindowOptions(
 		minHeight: 480,
 		title: WINDOW_TITLES.shell,
 		titleBarStyle: "hiddenInset",
+		trafficLightPosition: trafficLightPosition(),
 		// The window's material and its background are the same decision as
 		// the page's `data-window-material`, made in the same breath: a shell
 		// that follows the Workbench's colour theme cannot also show a system

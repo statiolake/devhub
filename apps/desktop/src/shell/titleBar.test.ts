@@ -73,10 +73,12 @@ describe("the window's two chromes", () => {
   });
 
   it("gives the bar the height the lights are placed for, and the room they take", () => {
-    // Both are measurements of the same window — `hiddenInset` puts the lights
-    // in the same place whichever chrome is up — so both are at the root, once.
-    expect(/--titlebar-height: (\d+)px;/.exec(tokens)?.[1]).toBe("38");
-    expect(/--traffic-light-span: (\d+)px;/.exec(tokens)?.[1]).toBe("76");
+    // Both are the window's, and main places the lights from the first: so the
+    // page is told them as it is served and never keeps a copy. A declaration
+    // here would be a second bar height the lights were not centred in. (The
+    // numbers are asserted where they are owned: `windowLayout.test.ts`.)
+    expect(tokens).not.toMatch(/--titlebar-height:/);
+    expect(tokens).not.toMatch(/--traffic-light-span:/);
     expect(shell).toContain("height: var(--titlebar-bar);");
     expect(shell).toContain(
       "padding: 0 var(--space-3) 0 var(--traffic-light-span);",

@@ -3,9 +3,12 @@ import {
 	keyboardChild,
 	reconcileEditors,
 	agentsRect,
+	chromeVariables,
 	sidebarColumnWidth,
 	sidebarRect,
+	surfaceRect,
 	tooltipRect,
+	trafficLightPosition,
 	insideRect,
 	windowLayout,
 	workbenchRect,
@@ -62,9 +65,9 @@ describe("the rectangle the workbench is laid into", () => {
 	it("is the content area minus the sidebar and the bar", () => {
 		expect(workbenchRect(WINDOW, state())).toEqual({
 			x: 248,
-			y: 39,
+			y: 33,
 			width: 1192,
-			height: 861,
+			height: 867,
 		});
 	});
 
@@ -370,9 +373,9 @@ describe("the Sidebar and the Agents as children of their own", () => {
 	it("gives the Sidebar the leading column under the bar", () => {
 		expect(sidebarRect(WINDOW, state())).toEqual({
 			x: 0,
-			y: 39,
+			y: 33,
 			width: 248,
-			height: 861,
+			height: 867,
 		});
 	});
 
@@ -389,9 +392,9 @@ describe("the Sidebar and the Agents as children of their own", () => {
 	it("leaves the traffic lights' band to the window's own page", () => {
 		expect(sidebarRect(WINDOW, state({ titleBar: "hidden" }))).toEqual({
 			x: 0,
-			y: 38,
+			y: 32,
 			width: 248,
-			height: 862,
+			height: 868,
 		});
 	});
 
@@ -417,9 +420,9 @@ describe("the Sidebar and the Agents as children of their own", () => {
 	it("gives the Agents the whole content area when one covers it", () => {
 		expect(agentsRect(WINDOW, state({ surface: { kind: "agent" } }))).toEqual({
 			x: 248,
-			y: 39,
+			y: 33,
 			width: 1192,
-			height: 861,
+			height: 867,
 		});
 	});
 
@@ -469,7 +472,7 @@ describe("the Sidebar and the Agents as children of their own", () => {
 		expect(agents?.visible).toBe(false);
 		// The whole content area — the size it will be shown at, so that being
 		// shown is not also a resize.
-		expect(agents?.rect).toEqual({ x: 248, y: 39, width: 1192, height: 861 });
+		expect(agents?.rect).toEqual({ x: 248, y: 33, width: 1192, height: 867 });
 	});
 });
 
@@ -787,5 +790,47 @@ describe("a view a workbench attached to itself", () => {
 			{ kind: "attached", editorKey: "/a", id: 1 },
 			{ kind: "attached", editorKey: "/a", id: 2 },
 		]);
+	});
+});
+
+/**
+ * The bar and the lights in it are one measurement, not two.
+ *
+ * The bar is a plain macOS title bar's height, and the lights are placed from
+ * it rather than tuned beside it — so what is asserted is the relation: their
+ * middle is the bar's middle, and they are as far from the leading edge as
+ * from the top, which is where a plain titled window keeps them.
+ */
+describe("the title bar and the traffic lights", () => {
+	const variables = new Map(chromeVariables());
+	const bar = Number.parseFloat(variables.get("--titlebar-height") ?? "");
+	/** A light's frame, as macOS 26 draws it. */
+	const light = 14;
+
+	it("is a plain titled window's bar", () => {
+		expect(bar).toBe(32);
+	});
+
+	it("centres the lights on the bar's middle line", () => {
+		const { y } = trafficLightPosition();
+		expect(y + light / 2).toBe(bar / 2);
+	});
+
+	it("insets the lights as far from the leading edge as from the top", () => {
+		expect(trafficLightPosition()).toEqual({ x: 9, y: 9 });
+	});
+
+	it("keeps the lights inside the span the page leaves them", () => {
+		// Three lights at the system's 23pt pitch, from the derived inset.
+		const reach = trafficLightPosition().x + 2 * 23 + light;
+		const span = Number.parseFloat(variables.get("--traffic-light-span") ?? "");
+		expect(reach).toBeLessThan(span);
+	});
+
+	it("starts the content area under the bar and its hairline, and the Sidebar under the bar alone without one", () => {
+		expect(surfaceRect(WINDOW, state()).y).toBe(bar + 1);
+		expect(sidebarRect(WINDOW, state()).y).toBe(bar + 1);
+		expect(sidebarRect(WINDOW, state({ titleBar: "hidden" })).y).toBe(bar);
+		expect(surfaceRect(WINDOW, state({ titleBar: "hidden" })).y).toBe(0);
 	});
 });

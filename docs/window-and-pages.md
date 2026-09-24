@@ -424,6 +424,31 @@ prefers, flipped to the other side of the anchor when that one has no room, and
 clamped to the window last. It flips rather than narrows — one rectangle with
 one width, because narrowing to fit is how the ribbon happened.
 
+## The title bar is one number, and it is main's
+
+The bar is as tall as a plain titled macOS window's: **32pt** on macOS 26,
+measured off an `NSWindow` with `.titled` (it was 28pt before Tahoe; the lights
+there are 14pt frames, 9pt from the top and 9pt from the leading edge). It is
+`TITLE_BAR_HEIGHT` in `windowLayout.ts`, and it is said there only.
+
+Two things follow from it, and neither is a number of its own:
+
+- **The traffic lights.** The window is `hiddenInset`, which on its own leaves
+  them at Electron's fixed (12, 11) — centred in a 36pt band that the page's
+  bar did not match. `shellWindowOptions` passes `trafficLightPosition()`
+  instead, which is the inset that puts a light's middle on the bar's middle
+  line, used for `x` as well because that is where a plain window keeps them.
+  Change the height and the lights follow.
+- **The pages.** `tokens.css` reads `--titlebar-height` and
+  `--traffic-light-span` and declares neither. `shellPageProtocol.ts` writes
+  them into every page's `<head>` as the page is served (`chromeVariables`),
+  palette or not, and refuses a page it cannot write into — a page without
+  them would draw a bar of no height.
+
+The band is the same in both chromes: with `shown` it is the bar, with `hidden`
+the Sidebar's view starts under it and `.window-drag-strip` fills it. Full
+screen changes nothing here; macOS hides the lights and the bar stays drawn.
+
 ## What it costs
 
 One main process, one renderer per page (seven, of which Settings exists only

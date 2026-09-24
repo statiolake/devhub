@@ -187,29 +187,19 @@
 
   /* Native chrome geometry. */
   /*
-   * The title bar's height, and the one number both chromes are measured off.
+   * `--titlebar-height` and `--traffic-light-span` are read everywhere below
+   * and declared nowhere in this file, on purpose.
    *
-   * It is not a taste. On a `hiddenInset` window macOS draws the traffic
-   * lights itself, into a band it decides the height of, and this is that
-   * band: 38px, with the lights' centres on its middle line. Everything the
-   * bar holds is centred in it, so the name and the sidebar control sit on the
-   * same line as the lights; and with no bar it is what the Sidebar reserves
+   * They are the window's, not the page's. The title bar's height is a plain
+   * macOS title bar's, measured, and the one number both chromes are measured
+   * off; the traffic lights are *placed* from it by main, centred in it, so a
+   * second copy here is how the lights and the bar they sit in come apart. So
+   * main says both once (`main/shell/windowLayout.ts`, `chromeVariables`) and
+   * writes them into every page's `<head>` as the page is served. Everything
+   * the bar holds is centred in it, so the name and the sidebar control sit on
+   * the same line as the lights; with no bar it is the band the Sidebar leaves
    * at its top instead, because the lights are in the same place either way.
-   *
-   * Change it and the lights stop being centred in whatever is drawn around
-   * them. Measure before changing it.
    */
-  --titlebar-height: 38px;
-  /*
-   * How far the traffic lights reach from the window's leading edge.
-   *
-   * The other half of the same measurement, and a fact about the window rather
-   * than about either chrome — the window is a `hiddenInset` one whichever of
-   * them is on screen, and the lights are in the same three places. It is at
-   * the root for that reason: both blocks below need it, and two spellings of
-   * one measured number is how one of them comes to be wrong.
-   */
-  --traffic-light-span: 76px;
   /* A bar control: the smallest square that reads as pressable beside a 16px
      mark, and short enough to leave air above and below it in the band. */
   --titlebar-control-size: 22px;

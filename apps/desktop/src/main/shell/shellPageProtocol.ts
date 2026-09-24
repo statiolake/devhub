@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { extname, normalize, sep } from "node:path";
 import { electron } from "../electron.js";
 import { paletteStyleSheet, type ShellPalette } from "../../ipc/palette.js";
+import { chromeVariables } from "./windowLayout.js";
 
 export const SHELL_SCHEME = "devhub-app";
 export const SHELL_ORIGIN = `${SHELL_SCHEME}://shell`;
@@ -65,7 +66,7 @@ export function registerShellPageProtocol(
 		const bytes = await readFile(path);
 		const body =
 			contentType === CONTENT_TYPES[".html"]
-				? themed(bytes.toString("utf8"), palette())
+				? served(bytes.toString("utf8"), palette())
 				: bytes;
 
 		return new Response(body, {
@@ -75,7 +76,14 @@ export function registerShellPageProtocol(
 }
 
 /**
- * The page with the palette in it, or the page unchanged when there is none.
+ * The page with the window's chrome geometry in it, and the palette when there
+ * is one.
+ *
+ * The geometry is always written. It is how tall the title bar is and how far
+ * the traffic lights reach — numbers main owns (`windowLayout.ts`) because the
+ * window is placed from them, and that the page's stylesheets read and never
+ * declare. A page served without them would lay its bar out at no height at
+ * all, so a page this cannot write into is an error, not a page left alone.
  *
  * No palette means this profile has never run a workbench, and the tokens'
  * own light/dark defaults are the honest answer until one does.
@@ -87,25 +95,36 @@ export function registerShellPageProtocol(
  * material and the same chrome is painted from `--chrome` instead — which is
  * what those rules were written for.
  */
-function themed(html: string, palette: ShellPalette | undefined): string {
-	if (!palette) return html;
-
+export function served(
+	html: string,
+	palette: ShellPalette | undefined,
+): string {
 	const root = "<html ";
 	const head = "</head>";
 	if (!html.includes(root) || !html.includes(head)) {
 		// The page is built by Vite from one `index.html` in this repo. If it
 		// no longer has a root element or a head, the build changed and this
 		// injection is silently doing nothing — which would show up as a window
-		// that flashes the wrong colour and nowhere else.
+		// with no title bar and the wrong colour, and nowhere else.
 		throw new Error(
-			`${SHELL_SCHEME}: the App Shell page has no <html> or </head> to theme`,
+			`${SHELL_SCHEME}: the App Shell page has no <html> or </head> to write into`,
 		);
 	}
 
+	const chrome = `  <style id="devhub-chrome">\n${chromeStyleSheet()}\n  </style>\n`;
+	if (!palette) return html.replace(head, `${chrome}  ${head}`);
 	return html
 		.replace(root, `${root}data-window-material="none" `)
 		.replace(
 			head,
-			`  <style id="devhub-palette">\n${paletteStyleSheet(palette)}\n  </style>\n  ${head}`,
+			`${chrome}  <style id="devhub-palette">\n${paletteStyleSheet(palette)}\n  </style>\n  ${head}`,
 		);
+}
+
+/** `chromeVariables` as the root rule a page's `<head>` carries. */
+export function chromeStyleSheet(): string {
+	const declarations = chromeVariables()
+		.map(([name, value]) => `${name}: ${value};`)
+		.join("\n  ");
+	return `:root {\n  ${declarations}\n}`;
 }

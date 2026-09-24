@@ -25,12 +25,32 @@
  * drifting is that the page draws the workbench hole at the width *this*
  * module computed, so a disagreement about the sidebar is a disagreement about
  * a number neither side is free to invent.
+ *
+ * The window's own two — the title bar's height and the lights' span — are not
+ * spelled twice at all. They are facts about the native window rather than
+ * about any page, so they are said here once and every page is *told* them:
+ * `chromeVariables` is written into each page's `<head>` as it is served
+ * (`shellPageProtocol.ts`), and the stylesheets only read them.
  */
 
 import type { TitleBarMode } from "../../model/config.js";
 
-/** `--titlebar-height`: the band the traffic lights sit in, either chrome. */
-const TITLE_BAR_HEIGHT = 38;
+/**
+ * `--titlebar-height`: the band the traffic lights sit in, either chrome.
+ *
+ * A plain titled macOS window's own bar, measured rather than remembered: on
+ * macOS 26 an `NSWindow` with `.titled` has a 32pt title bar with 14pt lights
+ * whose frames start 9pt from the top and 9pt from the leading edge. (It was
+ * 28pt before Tahoe; the number is the system's, not a taste.) DevHub's bar is
+ * that bar, and the lights are placed from it — see `trafficLightPosition`.
+ */
+const TITLE_BAR_HEIGHT = 32;
+/**
+ * One traffic light's frame, square. Measured with the bar above: it is what
+ * the lights' centre is worked out from, so it is the only other number the
+ * placement is allowed to have.
+ */
+const TRAFFIC_LIGHT_SIZE = 14;
 /** `--traffic-light-span`: how far the lights reach from the leading edge. */
 const TRAFFIC_LIGHT_SPAN = 76;
 /**
@@ -55,7 +75,7 @@ const SIDEBAR_GLYPH_WIDTH = { compact: 16, comfortable: 18 } as const;
  * exactly the width the Sidebar was given. The bar's is, because it is drawn
  * on the content area's own top edge — the one place a border adds to an
  * offset rather than being absorbed by one. (Measured against the page: with
- * the bar shown the hole starts at y 39, not 38.)
+ * the bar shown the hole starts at y 33, not 32.)
  */
 const HAIRLINE = 1;
 /**
@@ -228,6 +248,38 @@ export interface LayoutChild {
 	readonly identity: ChildIdentity;
 	readonly rect: LayoutRect;
 	readonly visible: boolean;
+}
+
+/**
+ * Where the window's traffic lights go: centred in the title bar, and as far
+ * from the leading edge as from the top.
+ *
+ * Derived, never tuned. Electron centres the lights in a band of their own
+ * height plus twice `y`, so `y` is what puts their middle on the bar's middle
+ * line — the bar's height changes and they follow. `x` is the same inset,
+ * which is where a plain titled window keeps them (9pt each way on a 32pt
+ * bar). Left to `hiddenInset` alone they sat at Electron's fixed (12, 11),
+ * which centred them in a 36pt band under a 38pt bar: a pixel high, and a
+ * second number nobody here owned.
+ */
+export function trafficLightPosition(): { x: number; y: number } {
+	const inset = (TITLE_BAR_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2;
+	return { x: inset, y: inset };
+}
+
+/**
+ * The window's chrome geometry as the custom properties the pages read.
+ *
+ * Every page is served with these in its `<head>` (`shellPageProtocol.ts`),
+ * which is how a page knows how tall the bar is without keeping a copy of the
+ * number: `tokens.css` reads `--titlebar-height` and `--traffic-light-span`
+ * and declares neither.
+ */
+export function chromeVariables(): ReadonlyArray<readonly [string, string]> {
+	return [
+		["--titlebar-height", `${TITLE_BAR_HEIGHT}px`],
+		["--traffic-light-span", `${TRAFFIC_LIGHT_SPAN}px`],
+	];
 }
 
 /**
