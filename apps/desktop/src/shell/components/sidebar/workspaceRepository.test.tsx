@@ -963,11 +963,11 @@ describe("a row's leading columns, and the connector between them", () => {
     expect(shell).toContain(
       ".agent-row .sidebar-context-button {\n  /* The button starts where the icon column ends, so what it clears is the\n     connector column and nothing else — `--sidebar-agent-text-inset` is the\n     same distance counted from the row's leading edge instead. */\n  padding-left: var(--sidebar-tree-width);\n}",
     );
-    // The row's own indent, and the rail taking it back off — the collapse is
-    // a subtraction, so the rail states nothing the expanded column does not.
+    // The row's own indent, and the rail trading it for the rail's own: the
+    // glyph column centred in an entry as wide as the row is tall.
     expect(shell).toContain("  padding-inline: var(--sidebar-row-inset) 0;");
     expect(shell).toContain(
-      '.sidebar[data-collapsed="true"] .sidebar-row {\n  padding-inline: 0;\n}',
+      '.sidebar[data-collapsed="true"] .sidebar-row {\n  padding-inline: calc(\n    (var(--sidebar-rail-entry) - var(--sidebar-glyph-width)) / 2\n  );\n}',
     );
     expect(reorder).toContain("  left: var(--sidebar-text-inset);");
     expect(reorder).toContain("  left: var(--sidebar-agent-text-inset);");
@@ -984,7 +984,18 @@ describe("a row's leading columns, and the connector between them", () => {
       '.sidebar[data-collapsed="true"] .agent-row::before,\n.sidebar[data-collapsed="true"] .agent-row::after {\n  content: none;\n}',
     );
     expect(shell).toContain(
-      '.sidebar[data-collapsed="true"] .sidebar-scroll-region {\n  padding-inline: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-glyph-width)) / 2\n  );\n}',
+      '.sidebar[data-collapsed="true"] .sidebar-scroll-region {\n  --sidebar-rail-air: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-rail-entry)) / 2\n  );\n\n  padding-inline: var(--sidebar-rail-air)\n    calc(var(--sidebar-rail-air) - var(--sidebar-edge));\n}',
+    );
+    // An entry is a square: as wide as a row is tall at either density, which
+    // is the only number the rail adds, and it is written as that relation.
+    // The rail's own width is `windowLayout.test.ts`'s to pin, and does not
+    // move — the square is paid for out of the air around it.
+    expect(tokens).toContain("  --sidebar-rail-entry: var(--row-height);");
+    // The Sidebar's trailing hairline is inside the rail's width, so the air
+    // after the entry is short by it; both read one term.
+    expect(tokens).toContain("  --sidebar-edge: 1px;");
+    expect(shell).toContain(
+      "  border-right: var(--sidebar-edge) solid var(--line-strong);",
     );
     // Nothing re-centres a row, which is what used to move the icon.
     expect(shell).not.toContain(

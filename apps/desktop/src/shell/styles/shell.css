@@ -173,7 +173,7 @@
   width: var(--sidebar-width);
   flex: 0 0 var(--sidebar-width);
   flex-direction: column;
-  border-right: 1px solid var(--line-strong);
+  border-right: var(--sidebar-edge) solid var(--line-strong);
   background: transparent;
 }
 
@@ -1727,9 +1727,16 @@ body.is-resizing-split {
    else: a custom property resolves its own `var()`s where it is *declared*, so
    the terms written past the inset on `.app-shell` already have the expanded
    number substituted into them. The connector is not drawn here and the drop
-   line states its own rail value below, so this is the whole of it. */
+   line states its own rail value below, so this is the whole of it.
+
+   What the row pads itself with instead is the rail's own: an entry is
+   `--sidebar-rail-entry` wide — a square, as wide as the row is tall — and the
+   glyph column sits in the middle of it, so the hover wash and the selection
+   fill are a square around the mark and not a sliver the width of it. */
 .sidebar[data-collapsed="true"] .sidebar-row {
-  padding-inline: 0;
+  padding-inline: calc(
+    (var(--sidebar-rail-entry) - var(--sidebar-glyph-width)) / 2
+  );
 }
 
 /* The rail is centred by the *pane*, not by the row.
@@ -1743,13 +1750,24 @@ body.is-resizing-split {
  * There is one leading column now and every row fills it, so there is nothing
  * left to choose: the rows keep their own layout exactly as the expanded
  * column has it, and the pane pads itself so that that one column lands in the
- * middle of the rail. The collapse is then a subtraction and nothing else —
- * the connector and the words come off, and the icon does not move within its
- * row. */
+ * middle of the rail. Every row is padded the same, so no mark can step off
+ * the column: the connector and the words come off, and what each row gets
+ * back is the same square around its one mark.
+ *
+ * What the pane centres is the entry, not the glyph: the air either side of it
+ * is what is left of the rail once the entry has its square, which is how the
+ * entry grows without the rail growing. The trailing side is short by the
+ * Sidebar's own edge, because that hairline is inside the rail's width — so
+ * the entry is exactly its square and its middle is the rail's middle, and it
+ * was a pixel narrower than the column it was meant to fill while the edge was
+ * left uncounted. */
 .sidebar[data-collapsed="true"] .sidebar-scroll-region {
-  padding-inline: calc(
-    (var(--sidebar-rail-collapsed-width) - var(--sidebar-glyph-width)) / 2
+  --sidebar-rail-air: calc(
+    (var(--sidebar-rail-collapsed-width) - var(--sidebar-rail-entry)) / 2
   );
+
+  padding-inline: var(--sidebar-rail-air)
+    calc(var(--sidebar-rail-air) - var(--sidebar-edge));
 }
 
 .sidebar[data-collapsed="true"] .sidebar-context-button {

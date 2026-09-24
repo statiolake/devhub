@@ -320,6 +320,16 @@
     var(--sidebar-row-inset) + var(--sidebar-glyph-width) +
       var(--sidebar-tree-width)
   );
+  /* An entry in the rail: as wide as a row is tall, so its hover wash and its
+     selection fill are a square around the one mark left in it rather than a
+     sliver the width of the glyph. The rail does not get wider for it — the
+     room comes out of the air the pane pads the column with. See the
+     `data-collapsed` rules in `shell.css`. */
+  --sidebar-rail-entry: var(--row-height);
+  /* The hairline down the Sidebar's trailing edge. Named because the rail has
+     to count it: it is inside the rail's width, so the column the rail centres
+     its entries in is this much narrower at the trailing end. */
+  --sidebar-edge: 1px;
 }
 
 /*
