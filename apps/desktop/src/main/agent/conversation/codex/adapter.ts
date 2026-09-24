@@ -403,8 +403,6 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.spent = true;
 		this.events = [];
 		this.writes = [];
-		// A setting chosen since the last step is shown now (see `choose`).
-		this.publishSession();
 		work();
 		this.spent = false;
 		return { events: this.events, replies: this.writes };

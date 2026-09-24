@@ -631,10 +631,11 @@ describe("a turn", () => {
 
 	it("carries chosen settings into the next turn/start", () => {
 		const harness = ready();
+		const before = harness.written.length;
 		harness.configure("model", "gpt-5.5-mini");
 		// Choosing writes nothing (Codex takes settings per turn), and the
 		// choice shows at once.
-		expect(harness.written.at(-1)).not.toContain("gpt-5.5-mini");
+		expect(harness.written).toHaveLength(before);
 		expect(harness.transcript.session.model.current).toBe("gpt-5.5-mini");
 		expect(harness.transcript.session.effort).toEqual({
 			current: undefined,
