@@ -9,6 +9,9 @@
  * An answer that fails to reach the Agent is handed to the page's root, and
  * the card stays: the request is still open, so it is still the thing to
  * answer.
+ *
+ * From the keyboard, as in the CLIs' own dialogs: with the card focused, 1–9
+ * press its choices in order, and Esc goes back to the composer.
  */
 
 import { useState } from "react";
@@ -18,7 +21,10 @@ import type {
   RequestAnswer,
   RequestChoice,
 } from "../../model/conversation";
-import { useConversationActions } from "./ConversationContext";
+import {
+  useConversationActions,
+  useFocusComposer,
+} from "./ConversationContext";
 import { DiffView, JsonView } from "./EntryParts";
 
 function Subject({ request }: { readonly request: PendingRequest }) {
@@ -111,18 +117,25 @@ function Choices({
   }
   return (
     <div className="conversation-request-choices">
-      {choices.map((choice) => (
+      {choices.map((choice, index) => (
         <button
           key={choice.id}
           type="button"
           className="conversation-request-choice"
           data-tone={choice.tone}
+          data-choice-index={index}
+          aria-keyshortcuts={index < 9 ? `${index + 1}` : undefined}
           disabled={busy}
           onClick={() => {
             if (choice.takesText) setWriting(choice);
             else send({ kind: "choice", choiceId: choice.id, text: undefined });
           }}
         >
+          {index < 9 ? (
+            <span className="conversation-request-key" aria-hidden>
+              {index + 1}
+            </span>
+          ) : null}
           {choice.label}
           {choice.takesText ? "…" : null}
         </button>
@@ -225,6 +238,7 @@ function QuestionForm({
 
 export function RequestCard({ request }: { readonly request: PendingRequest }) {
   const { answer, reportFailure } = useConversationActions();
+  const focusComposer = useFocusComposer();
   const [busy, setBusy] = useState(false);
   const send = (reply: RequestAnswer) => {
     setBusy(true);
@@ -238,6 +252,27 @@ export function RequestCard({ request }: { readonly request: PendingRequest }) {
       role="group"
       aria-label="The Agent is waiting for an answer"
       data-request-id={request.id}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          // Back to the composer, and not an interrupt: the surface would
+          // read the same key as "stop the turn".
+          event.preventDefault();
+          event.stopPropagation();
+          focusComposer();
+          return;
+        }
+        const target = event.target as HTMLElement;
+        if (target.matches("input, textarea")) return;
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (!/^[1-9]$/.test(event.key)) return;
+        const button = event.currentTarget.querySelector<HTMLButtonElement>(
+          `[data-choice-index="${Number(event.key) - 1}"]`,
+        );
+        if (!button || button.disabled) return;
+        event.preventDefault();
+        button.click();
+      }}
     >
       <Subject request={request} />
       {request.subject.kind === "question" ? (

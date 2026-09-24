@@ -16,16 +16,18 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { Transcript } from "../../model/conversation";
-import type { ConversationActions } from "./ConversationContext";
-import { ConversationSurface } from "./ConversationSurface";
 import { COPIED_MS } from "./CopyButton";
+import {
+  draw,
+  entry,
+  fakeActions,
+  installResizeObserver,
+} from "./surfaceTestKit";
 import {
   assistant,
   delta,
@@ -39,67 +41,12 @@ import {
   user,
 } from "./transcriptFixtures";
 
-beforeAll(() => {
-  // jsdom lays nothing out, so there is nothing for it to observe. The
-  // follow-scroll tests drive the scroller's metrics by hand instead.
-  globalThis.ResizeObserver ??= class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-});
+beforeAll(installResizeObserver);
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
 });
-
-function fakeActions(
-  overrides: Partial<ConversationActions> = {},
-): ConversationActions {
-  return {
-    writeClipboard: vi.fn(() => Promise.resolve()),
-    openExternalUrl: vi.fn(() => Promise.resolve()),
-    answer: vi.fn(() => Promise.resolve()),
-    reportFailure: vi.fn(),
-    ...overrides,
-  };
-}
-
-function draw(transcript: Transcript, actions = fakeActions()) {
-  const view = render(
-    <ConversationSurface
-      transcript={transcript}
-      actions={actions}
-      appearance={undefined}
-      hidden={false}
-      label="Agent 1"
-    />,
-  );
-  return {
-    ...view,
-    actions,
-    redraw(next: Transcript, hidden = false) {
-      view.rerender(
-        <ConversationSurface
-          transcript={next}
-          actions={actions}
-          appearance={undefined}
-          hidden={hidden}
-          label="Agent 1"
-        />,
-      );
-    },
-  };
-}
-
-function entry(id: string): HTMLElement {
-  const element = document.querySelector<HTMLElement>(
-    `[data-entry-id="${id}"]`,
-  );
-  if (!element) throw new Error(`no entry ${id} was drawn`);
-  return element;
-}
 
 describe("every entry kind", () => {
   it("draws a person's message and a template's, and says which is which", () => {
@@ -417,7 +364,7 @@ describe("pending requests", () => {
       within(card)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Allow once", "Always allow Bash(npm test:*)", "Deny…"]);
+    ).toEqual(["1Allow once", "2Always allow Bash(npm test:*)", "3Deny…"]);
     fireEvent.click(within(card).getByRole("button", { name: "Allow once" }));
     await waitFor(() =>
       expect(actions.answer).toHaveBeenCalledWith("r1", {
