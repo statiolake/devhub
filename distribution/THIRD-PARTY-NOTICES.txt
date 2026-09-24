@@ -25,6 +25,20 @@ Shipped application components
   `@xterm/addon-clipboard` depends on it, and the App Shell bundle carries it.
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.
   The main process imports these three at runtime.
+* react-markdown 10.1.0 and remark-gfm 4.0.1 — MIT, with the unified, remark,
+  micromark and hast packages they depend on (MIT, and `@ungap/structured-clone`
+  under ISC); see `licenses/react-markdown-remark-gfm-MIT-ISC.txt`, which names
+  every package and version. The App Shell bundle carries them to draw a GUI
+  Agent's transcript.
+* Shiki 4.4.3 (`shiki` and `@shikijs/*`) — MIT, with the packages it depends on
+  (MIT); see `licenses/Shiki-MIT.txt`. It colours code in a GUI Agent's
+  transcript with its JavaScript regex engine.
+* The TextMate grammars for C, C#, CSS, diff, Dockerfile, Go, HTML, Java,
+  JavaScript, JSON, JSON with Comments, JSX, Kotlin, Lua, Python, Rust, shell
+  script, SQL, Swift, TSX, TypeScript and XML, and VS Code's Light+ and Dark+
+  themes, as Shiki packages them — MIT; see
+  `licenses/Shiki-grammars-and-themes-NOTICE.txt` for each one's source and
+  licence. No other grammar or theme is in the bundle.
 
 * Octicons 19.36.0 (`@primer/octicons`) — MIT; see
   `licenses/Octicons-MIT.txt`. The Sidebar's Issue and pull-request marks are
@@ -65,4 +79,8 @@ Upstream source references
 * https://github.com/electron/electron
 * https://github.com/facebook/react
 * https://github.com/xtermjs/xterm.js
+* https://github.com/remarkjs/react-markdown
+* https://github.com/remarkjs/remark-gfm
+* https://github.com/shikijs/shiki
+* https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
