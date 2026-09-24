@@ -1982,7 +1982,7 @@ describe.skipIf(TMUX === undefined)(
     async function launched(label: string, agentId: string) {
       const test = fixture(label);
       const root = realpathSync(test.home);
-      const directory = agentStateDirectory(root, agentId);
+      const directory = agentStateDirectory(root, "0123456789ab", agentId);
       mkdirSync(directory, { recursive: true });
       const sessions = new AgentSessions(localAdapter(test.runtime));
       await test.runtime.ensure(SCRATCH_TARGET);

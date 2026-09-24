@@ -11,7 +11,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentFailureStateWire, AppSnapshot } from "../../../ipc/appShell";
 import { AgentPane } from "../../agents/AgentPane";
@@ -25,8 +25,14 @@ vi.mock("../../terminal/TerminalSurface", () => ({
 vi.mock("./AgentShortcuts", () => ({
   AgentShortcuts: () => null,
 }));
+const dispatch = vi.fn(() => Promise.resolve(undefined));
+const reportFailure = vi.fn();
 vi.mock("../../agents/AgentsContext", () => ({
-  useAgents: () => ({ repositoryStatus: { workspaces: [] } }),
+  useAgents: () => ({
+    repositoryStatus: { workspaces: [] },
+    dispatch,
+    reportFailure,
+  }),
 }));
 
 function snapshotWith(failure: AgentFailureStateWire | undefined): AppSnapshot {
@@ -119,5 +125,68 @@ describe("a failure about one Agent", () => {
       />,
     );
     expect(container.querySelector(".agent-pane-failure")).toBeNull();
+  });
+});
+
+/**
+ * A GUI Agent's conversation that has stopped offers the one way on: the
+ * Agent's CLI in a terminal (design §6.1).
+ */
+describe("a conversation that has stopped", () => {
+  afterEach(() => {
+    cleanup();
+    dispatch.mockClear();
+    reportFailure.mockClear();
+  });
+
+  it("offers to carry the conversation on in a terminal, resuming it", () => {
+    const continueInTerminal = vi.fn(() => Promise.resolve());
+    window.devhub = { conversation: { continueInTerminal } };
+    renderPane({
+      code: "conversation_protocol_mismatch",
+      detail: "assistant.message.content: expected an array",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue in terminal" }),
+    );
+    expect(continueInTerminal).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("offers a terminal from the same profile to sign in, when the CLI is not signed in", () => {
+    renderPane({
+      code: "conversation_not_signed_in",
+      detail:
+        "claude is not signed in. Open a terminal Agent from this profile and run /login there.",
+    });
+    expect(screen.getByText(/run \/login there/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open a terminal to sign in" }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "request_create_agent",
+      workspaceId: "workspace-1",
+      profileId: "codex",
+      presentation: "tui",
+    });
+  });
+
+  it("hands a way out that failed to the page's root", async () => {
+    const refused = new Error("no session yet");
+    window.devhub = {
+      conversation: { continueInTerminal: () => Promise.reject(refused) },
+    };
+    renderPane({
+      code: "conversation_host_lost",
+      detail: "the journal stopped",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue in terminal" }),
+    );
+    await vi.waitFor(() => expect(reportFailure).toHaveBeenCalledWith(refused));
+  });
+
+  it("offers nothing for a terminal Agent's own failures", () => {
+    renderPane({ code: "tmux_session_conflict" });
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

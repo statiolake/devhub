@@ -52,6 +52,7 @@ import type {
 import type { AgentSessionCommand } from "../terminal/ports.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
+import { errorWireAt, TypedFailure, withDetail } from "../../model/wire.js";
 import { registerAgentAdapter } from "./adapters.js";
 import { portRefusal } from "./agentFailure.js";
 
@@ -71,6 +72,8 @@ export interface AgentWiringOptions {
 	readonly report: (message: string) => void;
 	/** DevHub's version, which a protocol that asks who the client is is told. */
 	readonly clientVersion: string;
+	/** This DevHub profile's tag, which keeps its host files apart from another profile's. */
+	readonly profileTag: string;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -86,6 +89,12 @@ export interface GuiConversations {
 	 * first. The same conversation either way.
 	 */
 	of(agentId: AgentId): Promise<AgentConversation>;
+	/**
+	 * What resumes a GUI Agent's session in its CLI's terminal mode. Refused
+	 * while the CLI has not named a session, which it does with its first
+	 * turn: there is nothing to resume yet.
+	 */
+	resumeArgs(agentId: AgentId): Promise<readonly string[]>;
 	readonly registry: ConversationRegistry;
 }
 
@@ -105,7 +114,11 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	const stopping = new Set<AgentId>();
 
 	const stateDirectory = async (machine: RuntimeId, agentId: AgentId) =>
-		agentStateDirectory(await options.machineRuntime(machine).home(), agentId);
+		agentStateDirectory(
+			await options.machineRuntime(machine).home(),
+			options.profileTag,
+			agentId,
+		);
 
 	const conversationOn = async (
 		machine: RuntimeId,
@@ -134,6 +147,20 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 
 	const conversations: GuiConversations = {
 		registry,
+		async resumeArgs(agentId) {
+			const conversation = await conversations.of(agentId);
+			const agent = options.model().agent(agentId)!;
+			const session = conversation.reading().transcript.session.sessionId;
+			if (session === undefined) {
+				throw new TypedFailure(
+					withDetail(
+						errorWireAt("conversation_not_resumable"),
+						`“${agent.displayName}” has no session to resume yet: its CLI names one with the first turn. A new terminal Agent from the same profile starts afresh.`,
+					),
+				);
+			}
+			return resumeArgsFor(agent.profile.kind, session);
+		},
 		async of(agentId) {
 			const agent = options.model().agent(agentId);
 			if (agent === undefined) throw new Error(`there is no Agent ${agentId}`);
@@ -556,6 +583,21 @@ function structuredCommand(
 			return claudeStructuredCommand(cli);
 		case "codex":
 			return { ...cli, args: appServerArgs(cli.args) };
+		default:
+			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
+	}
+}
+
+/** How each CLI's terminal mode is told to go on with a session. */
+function resumeArgsFor(
+	kind: AgentProfile["kind"],
+	session: string,
+): readonly string[] {
+	switch (kind) {
+		case "claude":
+			return ["--resume", session];
+		case "codex":
+			return ["resume", session];
 		default:
 			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
 	}

@@ -56,6 +56,7 @@ function wired() {
 			throw new Error("nothing ended in these tests");
 		},
 		clientVersion: "0.0.0-test",
+		profileTag: "0123456789ab",
 	});
 	const adapter = agents();
 	if (!adapter) throw new Error("the Agent adapter was not registered");
@@ -87,7 +88,7 @@ describe("launching a GUI Claude Agent", () => {
 		);
 
 		expect(result).toEqual({ kind: "started" });
-		const directory = `${HOME}/.devhub/agents/${AGENT}`;
+		const directory = `${HOME}/.devhub/agents-0123456789ab/${AGENT}`;
 		expect(makeDirectory).toHaveBeenCalledWith(directory);
 		expect(launchAgent).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -127,7 +128,7 @@ describe("launching a GUI Codex Agent", () => {
 		);
 
 		expect(result).toEqual({ kind: "started" });
-		const directory = `${HOME}/.devhub/agents/${AGENT}`;
+		const directory = `${HOME}/.devhub/agents-0123456789ab/${AGENT}`;
 		expect(makeDirectory).toHaveBeenCalledWith(directory);
 		expect(launchAgent).toHaveBeenCalledWith(
 			expect.anything(),

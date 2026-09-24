@@ -29,6 +29,10 @@
  * kill itself is the runtime's exact-record rule, which re-reads the marker
  * and the listing immediately before destroying anything.
  *
+ * **A GUI Agent's host files** (`~/.devhub/agents-<profile>/<id>`, this profile's own) follow the same
+ * rule: its stop or its ending removes them, and one whose Agent went while
+ * no DevHub was there to see it is removed here, once its session is gone.
+ *
  * **A machine that does not answer is not a failure.** It stays in the set and
  * in `pending`, is visible in `devhub --metrics` as `pendingSweeps`, and is
  * swept when a runtime for it next connects — which is the transition
@@ -58,6 +62,15 @@ export interface SweepAdapter {
 	): Promise<void>;
 }
 
+/**
+ * One machine's GUI Agent host directories (`hostCommand.ts`), by the id of
+ * the Agent each belongs to.
+ */
+export interface AgentHostFiles {
+	list(): Promise<readonly string[]>;
+	remove(agentId: string): Promise<void>;
+}
+
 /** What the model still accounts for, read fresh for every sweep. */
 export interface SweepAccounting {
 	readonly workspaces: ReadonlySet<string>;
@@ -67,6 +80,8 @@ export interface SweepAccounting {
 export interface SessionSweepWorld {
 	/** One machine's adapter. Rejects when the machine cannot be reached. */
 	adapterFor(machine: RuntimeId): Promise<SweepAdapter>;
+	/** One machine's GUI Agent host directories. Rejects like `adapterFor`. */
+	hostFilesFor(machine: RuntimeId): Promise<AgentHostFiles>;
 	accounted(): SweepAccounting;
 	/** Every machine a Workspace is on right now, this one always among them. */
 	workspaceMachines(): readonly RuntimeId[];
@@ -178,6 +193,7 @@ export class SessionSweeper {
 
 	async #sweep(machine: RuntimeId): Promise<SweepOutcome> {
 		let reaped = 0;
+		let removed = 0;
 		try {
 			const adapter = await this.#world.adapterFor(machine);
 			// No tmux on that machine is no server on it, and therefore no
@@ -193,6 +209,16 @@ export class SessionSweeper {
 					reaped += 1;
 				}
 			}
+			// A GUI Agent's host files go with its Agent, by the same rule as its
+			// session: kept while the model has the Agent, and only then. Read
+			// after the sessions are gone, so no host is still writing into one.
+			const files = await this.#world.hostFilesFor(machine);
+			const agents = this.#world.accounted().agents;
+			for (const agentId of await files.list()) {
+				if (agents.has(agentId)) continue;
+				await files.remove(agentId);
+				removed += 1;
+			}
 		} catch (error: unknown) {
 			const reason = error instanceof Error ? error.message : String(error);
 			this.#pending.add(machine);
@@ -204,9 +230,10 @@ export class SessionSweeper {
 			return { kind: "postponed", reason };
 		}
 		this.#pending.delete(machine);
-		if (reaped > 0) {
+		if (reaped > 0 || removed > 0) {
 			console.info(
-				`[devhub] sweep: closed ${String(reaped)} session(s) on ${machine} ` +
+				`[devhub] sweep: closed ${String(reaped)} session(s) and removed ` +
+					`${String(removed)} Agent host directories on ${machine} ` +
 					`that nothing in DevHub accounts for`,
 			);
 		} else if (!this.#world.workspaceMachines().includes(machine)) {

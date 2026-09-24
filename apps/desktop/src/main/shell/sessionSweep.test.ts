@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SessionSweeper, unaccountedSessions } from "./sessionSweep.js";
 import type {
+	AgentHostFiles,
 	SessionSweepWorld,
 	SweepAccounting,
 	SweepAdapter,
@@ -72,8 +73,24 @@ class FakeMachine implements SweepAdapter {
 	}
 }
 
+/** One machine's GUI Agent host directories, by Agent id. */
+class FakeHostFiles implements AgentHostFiles {
+	readonly removed: string[] = [];
+	constructor(public directories: string[] = []) {}
+
+	async list(): Promise<readonly string[]> {
+		return [...this.directories];
+	}
+
+	async remove(agentId: string): Promise<void> {
+		this.removed.push(agentId);
+		this.directories = this.directories.filter((one) => one !== agentId);
+	}
+}
+
 class FakeWorld implements SessionSweepWorld {
 	readonly adapters = new Map<RuntimeId, FakeMachine>();
+	readonly hostFiles = new Map<RuntimeId, FakeHostFiles>();
 	remembered_: string[] = [];
 	workspaceMachines_: RuntimeId[] = ["local"];
 	accounted_: SweepAccounting = accounting([], []);
@@ -84,6 +101,15 @@ class FakeWorld implements SessionSweepWorld {
 		if (!found) throw new Error(`DevHub cannot reach ${machine}`);
 		if (found.unreachable !== undefined) throw new Error(found.unreachable);
 		return found;
+	}
+
+	async hostFilesFor(machine: RuntimeId): Promise<AgentHostFiles> {
+		let files = this.hostFiles.get(machine);
+		if (!files) {
+			files = new FakeHostFiles();
+			this.hostFiles.set(machine, files);
+		}
+		return files;
 	}
 
 	accounted(): SweepAccounting {
@@ -292,5 +318,57 @@ describe("sweeping the machines DevHub has owned sessions on", () => {
 		expect(sweeper.machines()).toEqual(["local"]);
 		await sweeper.sweepAll();
 		expect(sweeper.pending).toEqual([]);
+	});
+});
+
+/**
+ * A GUI Agent's host keeps its files in a directory of its own, which the
+ * Agent's stop or ending removes. An Agent that went while DevHub was not
+ * there to see it — its row never written, or its state file lost — leaves
+ * one behind, and the sweep that reaps its session takes that too.
+ */
+describe("sweeping the GUI Agents' host files", () => {
+	it("removes the directory of an Agent nothing accounts for, and keeps the rest", async () => {
+		const world = new FakeWorld();
+		world.adapters.set(
+			"local",
+			new FakeMachine([agentSession(AGENT_TWO, WORKSPACE_ONE)]),
+		);
+		world.hostFiles.set("local", new FakeHostFiles([AGENT_ONE, AGENT_TWO]));
+		world.accounted_ = accounting([WORKSPACE_ONE], [AGENT_ONE]);
+
+		await new SessionSweeper(world).sweep("local");
+
+		expect(world.adapters.get("local")!.killed).toEqual([`ag-${AGENT_TWO}`]);
+		expect(world.hostFiles.get("local")!.removed).toEqual([AGENT_TWO]);
+		expect(world.hostFiles.get("local")!.directories).toEqual([AGENT_ONE]);
+	});
+
+	it("does not forget a machine it just removed host files from", async () => {
+		const world = new FakeWorld();
+		world.workspaceMachines_ = ["local"];
+		world.remembered_ = ["ssh:build.example.com"];
+		world.adapters.set("ssh:build.example.com", new FakeMachine([]));
+		world.hostFiles.set(
+			"ssh:build.example.com",
+			new FakeHostFiles([AGENT_TWO]),
+		);
+
+		await new SessionSweeper(world).sweep("ssh:build.example.com");
+
+		expect(world.hostFiles.get("ssh:build.example.com")!.removed).toEqual([
+			AGENT_TWO,
+		]);
+		expect(world.forgotten).toEqual([]);
+	});
+
+	it("postpones a machine whose host files cannot be read, like one that does not answer", async () => {
+		const world = new FakeWorld();
+		world.adapters.set("local", new FakeMachine([]));
+		world.hostFilesFor = () => Promise.reject(new Error("permission denied"));
+
+		const outcome = await new SessionSweeper(world).sweep("local");
+
+		expect(outcome).toEqual({ kind: "postponed", reason: "permission denied" });
 	});
 });

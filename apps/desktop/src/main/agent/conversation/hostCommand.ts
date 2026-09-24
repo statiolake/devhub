@@ -9,6 +9,8 @@
  */
 
 import { posix } from "node:path";
+import { isCanonicalUuid } from "../../../model/domain.js";
+import type { Runtime } from "../../runtime/runtime.js";
 import type { AgentSessionCommand } from "../../terminal/ports.js";
 import { HOST_NAME, HOST_SCRIPT } from "./hostScript.js";
 
@@ -21,20 +23,78 @@ import { HOST_NAME, HOST_SCRIPT } from "./hostScript.js";
  */
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9-]*$/u;
 
+/** What a profile tag (`remoteProfileTag`) looks like: a hex digest. */
+const PROFILE_TAG = /^[0-9a-f]+$/u;
+
 /**
- * `<home>/.devhub/agents/<agentId>` on the Agent's machine.
+ * `<home>/.devhub/agents-<profile tag>`: one DevHub profile's host directories
+ * on a machine.
+ *
+ * Per profile, like the `bin-<tag>` beside it, because two DevHubs — two
+ * profiles on this Mac — reach the same home, and each accounts only for its
+ * own Agents: a directory shared between them would be one whose every entry
+ * the other profile's sweep takes for an Agent nobody has.
+ */
+function agentsDirectory(home: string, profileTag: string): string {
+	if (!PROFILE_TAG.test(profileTag)) {
+		throw new Error(
+			`${JSON.stringify(profileTag)} is not a profile tag DevHub makes, so it cannot name a directory`,
+		);
+	}
+	return posix.join(home, ".devhub", `agents-${profileTag}`);
+}
+
+/**
+ * `<home>/.devhub/agents-<profile tag>/<agentId>` on the Agent's machine.
  *
  * Beside `~/.devhub/terminal` and `~/.devhub/tmp`, which DevHub already keeps
  * on a far machine, and built from `Runtime.home()` on this one too, so there
  * is one rule for where a host's files are rather than one per machine.
  */
-export function agentStateDirectory(home: string, agentId: string): string {
+export function agentStateDirectory(
+	home: string,
+	profileTag: string,
+	agentId: string,
+): string {
 	if (!AGENT_ID.test(agentId)) {
 		throw new Error(
 			`${JSON.stringify(agentId)} is not an Agent id DevHub mints, so it cannot name a directory`,
 		);
 	}
-	return posix.join(home, ".devhub", "agents", agentId);
+	return posix.join(agentsDirectory(home, profileTag), agentId);
+}
+
+/**
+ * Every GUI Agent host directory on a machine, by Agent id, and the removal
+ * of one.
+ *
+ * Only a name DevHub could have made is listed: anything else under
+ * `agents/` is not a host directory, and DevHub does not remove what it did
+ * not make.
+ */
+export async function agentHostFiles(
+	runtime: Runtime,
+	profileTag: string,
+): Promise<{
+	list(): Promise<readonly string[]>;
+	remove(agentId: string): Promise<void>;
+}> {
+	const home = await runtime.home();
+	const root = agentsDirectory(home, profileTag);
+	return {
+		async list() {
+			if ((await runtime.stat(root)) === "absent") return [];
+			return (
+				(await runtime.readdir(root))
+					// An Agent id DevHub mints is a canonical UUID, and nothing
+					// else here is a host directory of this profile's.
+					.filter((entry) => entry.directory && isCanonicalUuid(entry.name))
+					.map((entry) => entry.name)
+			);
+		},
+		remove: (agentId) =>
+			runtime.removeTree(agentStateDirectory(home, profileTag, agentId)),
+	};
 }
 
 /**

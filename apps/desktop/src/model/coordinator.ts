@@ -401,6 +401,14 @@ export class AppCoordinator {
       agentPresentation: AgentPresentation;
     }
   >();
+  /**
+   * The GUI Agent each continue-in-terminal launch replaces, by operation: it
+   * is stopped when that launch has an Agent running, and not before — a
+   * launch that fails leaves the conversation where it was.
+   */
+  private readonly replacedByLaunch = new Map<OperationId, AgentId>();
+  /** The same, once its launch is running: stopped when that launch's save is over. */
+  private readonly stopAfterPersist = new Map<OperationId, AgentId>();
   private readonly launchProfiles = new Map<
     OperationId,
     {
@@ -659,6 +667,12 @@ export class AppCoordinator {
           intent.extraArgs ?? [],
           intent.presentation,
           intent.agentPresentation,
+          id,
+        );
+      case "continue_agent_in_terminal":
+        return this.beginContinueInTerminal(
+          intent.agentId,
+          intent.resumeArgs,
           id,
         );
       case "rename_agent":
@@ -924,6 +938,48 @@ export class AppCoordinator {
       extraArgs,
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
+  }
+
+  /**
+   * Stop the GUI Agent a continue-in-terminal launch replaced, if this
+   * operation had one — without asking, because nothing is lost: the session
+   * goes on in the terminal. One that went already is left alone.
+   */
+  private stopReplaced(id: OperationId): IntentOutcome | undefined {
+    const replaced = this.stopAfterPersist.get(id);
+    if (replaced === undefined) return undefined;
+    this.stopAfterPersist.delete(id);
+    if (!this.model.agent(replaced)) return undefined;
+    return this.startAgentStop(replaced, id);
+  }
+
+  private beginContinueInTerminal(
+    agentId: AgentId,
+    resumeArgs: readonly string[],
+    id: OperationId,
+  ): IntentOutcome {
+    const agent = this.model.agent(agentId);
+    const workspace = this.model.workspaceForAgent(agentId);
+    if (!agent || !workspace) {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.UnknownAgent,
+      );
+    }
+    if (agent.presentation !== "gui") {
+      throw new AppError(AppErrorCode.Domain)
+        .withDomain(DomainErrorCode.InvalidAgentControlTransition)
+        .withDetail(`“${agent.displayName}” is already a terminal Agent.`);
+    }
+    const outcome = this.beginProfileResolution(
+      workspace.id,
+      agent.profile.id,
+      resumeArgs,
+      "full",
+      "tui",
+      id,
+    );
+    this.replacedByLaunch.set(id, agentId);
+    return outcome;
   }
 
   /**
@@ -1215,6 +1271,8 @@ export class AppCoordinator {
     this.requestedPresentations.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
+    this.replacedByLaunch.delete(id);
+    this.stopAfterPersist.delete(id);
     this.closeRequests.delete(id);
     this.confirmationRequests.delete(id);
     this.finalizationPending.delete(id);
@@ -1335,6 +1393,7 @@ export class AppCoordinator {
     const id = token.operationId;
     if (!this.workspaceAllowsAgentCreation(workspaceId)) {
       this.resolvedProfiles.delete(id);
+      this.replacedByLaunch.delete(id);
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(id);
     }
     const requested = this.requestedPresentations.get(id);
@@ -1406,6 +1465,7 @@ export class AppCoordinator {
     );
     if (!this.workspaceAllowsAgentCreation(workspaceId)) {
       this.resolvedProfiles.delete(token.operationId);
+      this.replacedByLaunch.delete(token.operationId);
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(
         token.operationId,
       );
@@ -1481,6 +1541,8 @@ export class AppCoordinator {
     const profile = expected.profile;
     const presentation = expected.presentation;
     this.launchProfiles.delete(token.operationId);
+    const replaced = this.replacedByLaunch.get(token.operationId);
+    this.replacedByLaunch.delete(token.operationId);
 
     if (result.kind === "failed") {
       throw new AppError(AppErrorCode.PortUnavailable)
@@ -1517,6 +1579,12 @@ export class AppCoordinator {
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });
     this.queuePersist(token.operationId);
+    // The terminal that carries the conversation on is running, so the GUI
+    // Agent it replaces goes once the new one is written down — the save just
+    // queued holds this operation until then.
+    if (replaced !== undefined) {
+      this.stopAfterPersist.set(token.operationId, replaced);
+    }
     return { kind: "updated", snapshot };
   }
 
@@ -1910,6 +1978,8 @@ export class AppCoordinator {
       (target) => target.kind === "application",
     );
     this.emit({ kind: "operation_completed", token });
+    const stopped = this.stopReplaced(token.operationId);
+    if (stopped !== undefined) return stopped;
     if (this.finalizationPending.delete(token.operationId)) {
       this.finalizationWorkspaces.delete(token.operationId);
       const backup = this.finalizationBackups.get(token.operationId);
@@ -1938,6 +2008,9 @@ export class AppCoordinator {
       "persist_state",
       (target) => target.kind === "application",
     );
+    // The terminal is running whether or not the save was: the GUI Agent goes
+    // all the same, and the save's failure is reported as it always is.
+    this.stopReplaced(token.operationId);
     if (this.finalizationPending.delete(token.operationId)) {
       const workspaceId = this.finalizationWorkspaces.get(token.operationId);
       this.finalizationWorkspaces.delete(token.operationId);
@@ -2221,6 +2294,7 @@ export class AppCoordinator {
       }
       this.resolvedProfiles.delete(id);
       this.launchProfiles.delete(id);
+      this.replacedByLaunch.delete(id);
       this.confirmationRequests.delete(id);
     }
     this.confirmations = this.confirmations.filter((pending) =>

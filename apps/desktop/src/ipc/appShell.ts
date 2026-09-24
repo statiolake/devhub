@@ -245,6 +245,11 @@ export type AppErrorCodeWire =
 	| "agent_profile_unavailable"
 	/** The Agent Surface asked to attach and got no answer in time. */
 	| "agent_attach_timed_out"
+	/**
+	 * A GUI Agent's conversation cannot be carried on in a terminal yet: its CLI
+	 * has not named a session to resume.
+	 */
+	| "conversation_not_resumable"
 	/** A request DevHub accepted never reached an answer. */
 	| "operation_timed_out"
 	/**
@@ -328,6 +333,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
 	agent_profile_unavailable: "The agent could not start from this profile.",
 	agent_attach_timed_out: "The agent surface did not connect in time.",
+	conversation_not_resumable:
+		"This conversation cannot be continued in a terminal yet.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",

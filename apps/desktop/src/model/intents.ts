@@ -449,6 +449,22 @@ export type UserIntent =
        */
       readonly agentPresentation?: AgentPresentation;
     }
+  /**
+   * Carry a GUI Agent's conversation on in a terminal: a new terminal Agent in
+   * the same Workspace, from the same profile, resuming the session — and the
+   * GUI Agent stopped once that one is running. An Agent keeps the
+   * presentation it was launched with, so this is a second Agent, not the
+   * first one changing its mind.
+   */
+  | {
+      readonly type: "continue_agent_in_terminal";
+      readonly agentId: AgentId;
+      /**
+       * What resumes the session, as the Agent's CLI spells it. Only main knows
+       * the session and the CLI, so the request arrives with them composed.
+       */
+      readonly resumeArgs: readonly string[];
+    }
   | {
       readonly type: "rename_agent";
       readonly agentId: AgentId;

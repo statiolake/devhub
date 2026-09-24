@@ -849,6 +849,125 @@ describe("launching an agent", () => {
   });
 });
 
+describe("continuing a GUI Agent in a terminal", () => {
+  const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400b0");
+
+  /** A GUI Agent AG_A running in WS_A, and a continue-in-terminal asked of it, up to its launch. */
+  function continuing(): { driver: Driver; launch: Effect } {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      agentPresentation: "gui",
+    });
+    driver.settle();
+    driver.dispatch({
+      type: "continue_agent_in_terminal",
+      agentId: AG_A,
+      resumeArgs: ["resume", "thread-1"],
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    // The same profile, with the session's resume after its own arguments.
+    expect(resolve.profileId).toBe(agentProfileId("codex"));
+    expect(resolve.extraArgs).toEqual(["resume", "thread-1"]);
+    driver.answer(resolve);
+    const id = driver.drainEffects()[0];
+    if (id?.kind !== "generate_agent_id") throw new Error("unexpected");
+    driver.accept({
+      type: "agent_id_generated",
+      token: id.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+    });
+    const launch = driver.drainEffects()[0];
+    if (launch?.kind !== "launch_agent") throw new Error("unexpected");
+    return { driver, launch };
+  }
+
+  it("launches a terminal Agent from the same profile, then stops the GUI one and shows the new one", () => {
+    const { driver, launch } = continuing();
+    if (launch.kind !== "launch_agent") throw new Error("unexpected");
+    expect(launch.agentPresentation).toBe("tui");
+    // Nothing is stopped while the terminal is still starting.
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+    driver.accept({
+      type: "agent_launch_completed",
+      token: launch.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+      result: { kind: "started" },
+    });
+    // The new Agent is written down first, and only then is the GUI one stopped.
+    const persist = driver.drainEffects()[0];
+    if (persist?.kind !== "persist_state") throw new Error("unexpected");
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+    driver.answer(persist);
+    const stop = driver
+      .drainEffects()
+      .find((effect) => effect.kind === "stop_agent");
+    expect(stop).toMatchObject({ kind: "stop_agent", agentId: AG_A });
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "stopping",
+    );
+    expect(driver.coordinator.snapshot().selection.context).toEqual({
+      kind: "agent",
+      agentId: AG_B,
+    });
+  });
+
+  it("leaves the GUI Agent running when the terminal could not be started", () => {
+    const { driver, launch } = continuing();
+    if (launch.kind !== "launch_agent") throw new Error("unexpected");
+    expect(
+      errorCode(() =>
+        driver.accept({
+          type: "agent_launch_completed",
+          token: launch.token,
+          workspaceId: WS_A,
+          agentId: AG_B,
+          result: { kind: "failed", code: "agent_profile_unavailable" },
+        }),
+      ),
+    ).toBe(AppErrorCode.PortUnavailable);
+    expect(
+      driver.drainEffects().some((effect) => effect.kind === "stop_agent"),
+    ).toBe(false);
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+  });
+
+  it("is refused for an Agent that is already a terminal", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    expect(
+      errorCode(() =>
+        driver.dispatch({
+          type: "continue_agent_in_terminal",
+          agentId: AG_A,
+          resumeArgs: ["resume", "thread-1"],
+        }),
+      ),
+    ).toBe(AppErrorCode.Domain);
+  });
+});
+
 describe("how a launched agent is shown", () => {
   const cursor = AgentProfile.create(
     agentProfileId("cursor"),

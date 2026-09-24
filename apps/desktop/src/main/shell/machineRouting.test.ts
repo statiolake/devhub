@@ -614,6 +614,7 @@ describe("a reconcile round is about one machine's Agents", () => {
 			machineRuntime: noGuiAgentHere,
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
+			profileTag: "0123456789ab",
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");
@@ -658,6 +659,7 @@ describe("a launch the Agent port refuses", () => {
 			machineRuntime: noGuiAgentHere,
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
+			profileTag: "0123456789ab",
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");

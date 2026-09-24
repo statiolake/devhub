@@ -57,6 +57,7 @@ function stateDirectory(): string {
 	scratch.push(home);
 	const directory = agentStateDirectory(
 		home,
+		"0123456789ab",
 		"00000000-0000-4000-8000-0000000000e1",
 	);
 	mkdirSync(directory, { recursive: true });

@@ -261,6 +261,7 @@ import {
 	enclosingRoot,
 	readCliEntryBundle,
 	readTerminalEntryBundle,
+	remoteProfileTag,
 	CLI_ENTRY_BUNDLE,
 	terminalLauncherPath,
 	TERMINAL_ENTRY_BUNDLE,
@@ -270,6 +271,7 @@ import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
+import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import {
 	ContainerRuntime,
@@ -888,11 +890,18 @@ export class AppController {
 			report: (message) =>
 				this.publishError(withDetail(errorWireAt("agent_exited"), message)),
 			clientVersion: electron.app.getVersion(),
+			profileTag: remoteProfileTag(controlSocketPath(userDataPath)),
 		});
 		registerConversationIpc({
 			ipcMain: electron.ipcMain,
 			conversations: this.agentWiring.conversations,
 			agentsPage: () => shellWindow().agents.contents(),
+			continueInTerminal: (agentId, resumeArgs) =>
+				this.dispatchSettled({
+					type: "continue_agent_in_terminal",
+					agentId,
+					resumeArgs,
+				}),
 			fail: (error) => asIpcError(errorWire(error)),
 		});
 		// Everything restored from the state file describes the previous run,
@@ -905,6 +914,11 @@ export class AppController {
 		// machines it still has Workspaces on. See `sessionSweep.ts`.
 		this.sessionSweeper = new SessionSweeper({
 			adapterFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
+			hostFilesFor: (machine) =>
+				agentHostFiles(
+					runtimeById(machine),
+					remoteProfileTag(controlSocketPath(userDataPath)),
+				),
 			accounted: () => {
 				const workspaces = new Set<string>();
 				const agents = new Set<string>();
@@ -4561,6 +4575,13 @@ export class AppController {
 	 * timeout instead of a confirmation.
 	 */
 	private dispatchAwaiting(intent: UserIntent): Promise<IntentOutcome> {
+		return this.dispatchSettled(intent).catch((error: unknown) => {
+			throw asIpcError(errorWire(error));
+		});
+	}
+
+	/** `dispatchAwaiting`, with the failure as it was raised, for a caller that converts it itself. */
+	private async dispatchSettled(intent: UserIntent): Promise<IntentOutcome> {
 		let outcome: IntentOutcome;
 		try {
 			outcome = this.coordinator.dispatchUser({
@@ -4570,13 +4591,11 @@ export class AppController {
 			});
 		} catch (error) {
 			this.drain();
-			throw asIpcError(errorWire(error));
+			throw error;
 		}
 		const answer = this.awaitOutcome(outcome);
 		this.drain();
-		return answer.catch((error: unknown) => {
-			throw asIpcError(errorWire(error));
-		});
+		return answer;
 	}
 
 	/** Scratch: today's daily-folder Workspace. See `AppModel.scratchWorkspaceId`. */

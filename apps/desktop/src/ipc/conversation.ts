@@ -22,6 +22,7 @@ export const CONVERSATION_CHANNELS = {
 	attach: "devhub:conversation:attach",
 	detach: "devhub:conversation:detach",
 	command: "devhub:conversation:command",
+	continueInTerminal: "devhub:conversation:continue-in-terminal",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -70,6 +71,12 @@ export interface ConversationApi {
 		request: RequestId,
 		answer: RequestAnswer,
 	): Promise<void>;
+	/**
+	 * Carry the conversation on in a terminal Agent from the same profile,
+	 * resuming the session, and stop this one once that one runs. Refused,
+	 * with the reason, while there is no session to resume.
+	 */
+	continueInTerminal(agentId: string): Promise<void>;
 	setSetting(
 		agentId: string,
 		which: "model" | "effort" | "mode",

@@ -58,6 +58,11 @@ export const conversationApi: ConversationApi = {
 		await ipcRenderer.invoke(CONVERSATION_CHANNELS.detach, agentId);
 	},
 	send: (agentId, text) => command(agentId, { kind: "send", text }),
+	continueInTerminal: (agentId) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.continueInTerminal,
+			agentId,
+		) as Promise<void>,
 	interrupt: (agentId) => command(agentId, { kind: "interrupt" }),
 	answer: (agentId, request, answer) =>
 		command(agentId, { kind: "answer", request, answer }),

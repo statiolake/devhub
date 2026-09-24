@@ -7,6 +7,9 @@ import { Failure } from "../components/shell/SurfaceState";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { AgentShortcuts } from "../components/shell/AgentShortcuts";
 import { ConversationPane } from "./ConversationPane";
+import { devhub } from "./client";
+import type { SurfaceAction } from "../components/shell/SurfaceState";
+import type { AgentWire } from "../../ipc/appShell";
 
 /**
  * Every running Agent, mounted; the selected one shown.
@@ -34,7 +37,7 @@ export function AgentPane({
    */
   readonly activeKey: string | undefined;
 }) {
-  const { repositoryStatus } = useAgents();
+  const { repositoryStatus, dispatch, reportFailure } = useAgents();
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
   // The shortcuts belong to the Agent on screen and to no other. The pool
   // keeps every running Agent mounted so that coming back to one is unhiding a
@@ -100,6 +103,19 @@ export function AgentPane({
             {...(active.failure.detail === undefined
               ? {}
               : { detail: active.failure.detail })}
+            actions={conversationWayOut(active, {
+              openTerminal: () =>
+                dispatch({
+                  type: "request_create_agent",
+                  workspaceId: active.workspaceId,
+                  profileId: active.profileId,
+                  presentation: "tui",
+                }).catch(reportFailure),
+              continueInTerminal: () =>
+                devhub()
+                  .conversation.continueInTerminal(active.id)
+                  .catch(reportFailure),
+            })}
           />
         </div>
       ) : null}
@@ -108,4 +124,42 @@ export function AgentPane({
       ) : null}
     </div>
   );
+}
+
+/**
+ * The way out of a conversation that has stopped (design §6.1): the Agent's
+ * own CLI in a terminal. Not signed in is a terminal Agent from the same
+ * profile, where the CLI's own sign-in runs; anything else carries the
+ * conversation on there, resuming its session. A terminal Agent's failures
+ * have none: a terminal is already where it is.
+ */
+function conversationWayOut(
+  agent: AgentWire,
+  ways: {
+    readonly openTerminal: () => void;
+    readonly continueInTerminal: () => void;
+  },
+): readonly SurfaceAction[] | undefined {
+  switch (agent.failure?.code) {
+    case "conversation_not_signed_in":
+      return [
+        {
+          label: "Open a terminal to sign in",
+          primary: true,
+          run: ways.openTerminal,
+        },
+      ];
+    case "conversation_host_lost":
+    case "conversation_protocol_mismatch":
+    case "conversation_refused":
+      return [
+        {
+          label: "Continue in terminal",
+          primary: true,
+          run: ways.continueInTerminal,
+        },
+      ];
+    default:
+      return undefined;
+  }
 }

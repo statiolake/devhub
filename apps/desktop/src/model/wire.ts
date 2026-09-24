@@ -656,6 +656,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "agent_exited":
     case "agent_runtime_unavailable":
     case "agent_attach_timed_out":
+    case "conversation_not_resumable":
       return "agent";
     case "terminal_launcher_unavailable":
     case "workspace_sessions_left_running":
