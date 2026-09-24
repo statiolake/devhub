@@ -20,6 +20,7 @@ import {
   type Transcript,
 } from "../../model/conversation";
 import { ConversationSurface } from "../conversation/ConversationSurface";
+import { refuseContinueInTerminal } from "../conversation/continueInTerminal";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 
@@ -50,12 +51,7 @@ export function ConversationPane({
         bridge.conversation.answer(agentId, request, answer),
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>
         bridge.conversation.setSetting(agentId, setting, id),
-      continueInTerminal: () =>
-        Promise.reject(
-          new Error(
-            "Continuing a GUI Agent in a terminal is not available yet.",
-          ),
-        ),
+      continueInTerminal: refuseContinueInTerminal,
       reportFailure,
     };
   }, [agentId, reportFailure]);
