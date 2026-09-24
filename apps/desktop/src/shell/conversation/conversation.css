@@ -314,6 +314,16 @@
   white-space: pre;
 }
 
+/* What a tool was given and what it printed wraps, the way a terminal
+   wraps it: a long prompt or log line is read, not scrolled to. Code and
+   diffs keep their lines, because there a line is the unit. */
+.conversation-json,
+.conversation-output,
+.conversation-request-command {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .conversation-code pre span[style] {
   color: light-dark(var(--code-light), var(--code-dark));
 }

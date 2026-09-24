@@ -114,6 +114,21 @@ describe("every entry kind", () => {
     );
   });
 
+  it("draws no fold for thinking that came with no text", () => {
+    draw(
+      transcriptOf([
+        put(
+          assistant("a1", [
+            { kind: "thinking", text: "" },
+            { kind: "text", markdown: "The answer." },
+          ]),
+        ),
+      ]),
+    );
+    expect(entry("a1").querySelector(".conversation-thinking")).toBeNull();
+    expect(entry("a1")).toHaveTextContent("The answer.");
+  });
+
   it("folds thinking and draws a plan with each step's state", () => {
     draw(
       transcriptOf([

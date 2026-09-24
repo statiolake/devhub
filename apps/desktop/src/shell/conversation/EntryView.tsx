@@ -84,6 +84,10 @@ function BlockView({
     case "text":
       return <Markdown source={block.markdown} streaming={streaming} />;
     case "thinking":
+      // Claude withholds the thinking itself and sends the block with no
+      // text (only its signature): a fold with nothing inside would be drawn
+      // once per message, so there is nothing to draw.
+      if (block.text === "") return null;
       return (
         <details className="conversation-thinking">
           <summary>Thinking</summary>
