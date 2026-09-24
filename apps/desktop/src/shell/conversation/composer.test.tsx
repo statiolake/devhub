@@ -27,12 +27,7 @@ import {
   type SessionFacts,
   type SlashCommand,
 } from "../../model/conversation";
-import { UserFacingFailure } from "../failure";
 import { COMPOSER_PLACEHOLDER } from "./Composer";
-import {
-  CONTINUE_IN_TERMINAL_REFUSAL,
-  refuseContinueInTerminal,
-} from "./continueInTerminal";
 import { draw, fakeActions, installResizeObserver } from "./surfaceTestKit";
 import {
   opened,
@@ -483,18 +478,19 @@ describe("the header", () => {
     );
   });
 
-  it("refuses Continue in terminal with the reason, through the page's root", async () => {
+  it("asks to continue in a terminal, and hands a refusal to the page's root", async () => {
+    const notYet = new Error("this conversation has no session to resume yet");
     const actions = fakeActions({
-      continueInTerminal: refuseContinueInTerminal,
+      continueInTerminal: vi.fn(() => Promise.reject(notYet)),
     });
     draw(withSession(), actions);
     fireEvent.click(
       screen.getByRole("button", { name: "Continue in terminal" }),
     );
-    await waitFor(() => expect(actions.reportFailure).toHaveBeenCalledOnce());
-    const failure = vi.mocked(actions.reportFailure).mock.calls[0]![0];
-    expect(failure).toBeInstanceOf(UserFacingFailure);
-    expect((failure as Error).message).toBe(CONTINUE_IN_TERMINAL_REFUSAL);
+    expect(actions.continueInTerminal).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(notYet),
+    );
   });
 });
 
