@@ -1542,14 +1542,20 @@ describe("the captured session", () => {
 		return adapter;
 	}
 
-	it("plays through to an idle conversation, with three turns completed and nothing it does not know", () => {
+	it("plays through to an idle conversation, with every turn completed and nothing it does not know", () => {
 		const { transcript } = played();
 		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
 		expect(
 			transcript.entries
 				.filter((entry) => entry.kind === "turn-end")
 				.map((entry) => (entry.kind === "turn-end" ? entry.outcome : "")),
-		).toEqual(["completed", "completed", "completed"]);
+		).toEqual([
+			"completed",
+			"completed",
+			"completed",
+			"completed",
+			"completed",
+		]);
 		expect(
 			transcript.entries.filter((entry) => entry.kind === "notice"),
 		).toEqual([]);
@@ -1557,7 +1563,71 @@ describe("the captured session", () => {
 			transcript.entries
 				.filter((entry) => entry.kind === "user")
 				.map((entry) => entry.kind === "user" && entry.origin),
-		).toEqual(["person", "person", "person"]);
+		).toEqual(["person", "person", "person", "person"]);
+	});
+
+	it("draws no thinking the API withheld: no empty block, and no message made of nothing else", () => {
+		const { transcript } = played();
+		for (const entry of transcript.entries) {
+			if (entry.kind !== "assistant") continue;
+			expect(entry.blocks.length).toBeGreaterThan(0);
+			for (const block of entry.blocks) {
+				if (block.kind === "thinking") expect(block.text).not.toBe("");
+			}
+		}
+	});
+
+	it("hangs a background subagent's work under the Agent call, and asks for its Bash call after the turn is over", () => {
+		const adapter = new ClaudeAdapter("replay");
+		const asked = lines.findIndex((each) =>
+			each.line.includes('"subtype":"can_use_tool"'),
+		);
+		play(adapter, lines.slice(0, asked + 1));
+		const agent = adapter.transcript.entries.find(
+			(entry) => entry.kind === "tool" && entry.tool === "Agent",
+		) as ToolEntry;
+		expect(agent.spawns).toMatchObject({
+			label: "general-purpose",
+			state: "running",
+		});
+		const [request] = adapter.transcript.requests;
+		const bash = adapter.transcript.entries.find(
+			(entry) => entry.id === request?.entry,
+		) as ToolEntry;
+		expect(bash).toMatchObject({
+			tool: "Bash",
+			parent: agent.id,
+			status: "running",
+		});
+		expect(request?.choices.map((choice) => choice.id)).toContain("allow");
+		// The turn that started it has already ended; the request is still owed an answer.
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(conversationStatus(adapter.transcript)).toBe("waiting");
+
+		play(adapter, lines.slice(asked + 1));
+		const { transcript } = adapter;
+		expect(transcript.requests).toEqual([]);
+		expect(
+			transcript.entries.find((entry) => entry.id === bash.id),
+		).toMatchObject({ status: "succeeded" });
+		expect(
+			(transcript.entries.find((entry) => entry.id === agent.id) as ToolEntry)
+				.spawns?.state,
+		).toBe("completed");
+	});
+
+	it("reads a turn the CLI starts by itself, when a background subagent finishes, as running", () => {
+		const own = lines.findLastIndex(
+			(each) =>
+				each.line.includes('"type":"message_start"') &&
+				each.line.includes('"parent_tool_use_id":null'),
+		);
+		const adapter = new ClaudeAdapter("replay");
+		play(adapter, lines.slice(0, own + 1));
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
 	});
 
 	it("draws the Markdown and runs the Bash call to its output", () => {

@@ -167,6 +167,12 @@ type Slot =
 			final: boolean;
 	  }
 	| { readonly kind: "tool"; readonly entry: EntryId; readonly id: string }
+	/**
+	 * A thinking block with no text yet. The API may withhold thinking and send
+	 * only its signature, so the block is drawn once it has something to say,
+	 * and never if it has not.
+	 */
+	| { readonly kind: "unsaid" }
 	| { readonly kind: "ignored" };
 
 interface MessageState {
@@ -202,6 +208,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}[] = [];
 	private readonly permissions = new Map<string, Permission>();
 	private readonly denied = new Set<EntryId>();
+	/**
+	 * The CLI's requests DevHub has answered. The CLI prints each answer back
+	 * (as it replays user messages), and an echo is not a response to a
+	 * request of DevHub's own.
+	 */
+	private readonly answered = new Set<string>();
 	/** DevHub asked the running turn to stop. */
 	private interrupting = false;
 
@@ -282,6 +294,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					if (sent.subtype === "interrupt") this.interrupting = true;
 					return;
 				case "control_response": {
+					this.answered.add(sent.requestId);
 					const permission = this.permissions.get(sent.requestId);
 					// Cancelled by the CLI before the answer reached it: already closed.
 					if (permission === undefined) return;
@@ -604,6 +617,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		line: Extract<ClaudeLine, { type: "control_response" }>,
 	): void {
 		const request = this.ours.get(line.requestId);
+		// DevHub's own answer to one of the CLI's requests, printed back.
+		if (request === undefined && this.answered.has(line.requestId)) return;
 		if (request === undefined) {
 			return this.mismatch(
 				"control_response.response.request_id",
@@ -722,6 +737,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				};
 				this.messages.set(event.messageId, message);
 				this.streaming.set(parent, message);
+				// The model is answering at the top level, so a turn is under
+				// way — one the CLI can start by itself, with no message of
+				// DevHub's to echo, when a background subagent finishes.
+				if (parent === null) this.turn("running");
 				return;
 			}
 			case "block_start":
@@ -744,6 +763,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				switch (delta.kind) {
 					case "text":
 					case "thinking":
+						if (slot.kind === "unsaid" && delta.kind === "thinking") {
+							if (delta.text === "") return;
+							return this.openBlock(
+								message,
+								event.index,
+								{ kind: "thinking", text: delta.text },
+								false,
+							);
+						}
 						if (slot.kind !== delta.kind) {
 							return this.mismatch(
 								"stream_event.event(content_block_delta).delta.type",
@@ -788,6 +816,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		line: Extract<ClaudeLine, { type: "assistant" }>,
 	): void {
 		const parent = this.parentOf(line.parent, "assistant");
+		if (parent === null) this.turn("running");
 		let message = this.messages.get(line.messageId);
 		if (message === undefined) {
 			message = { id: line.messageId, parent, slots: new Map(), finals: 0 };
@@ -801,6 +830,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.openBlock(message, index, block, true);
 			this.finalize(
 				message,
+				index,
 				slot,
 				block,
 				`assistant.message.content[${position}]`,
@@ -836,6 +866,13 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		block: ContentBlock,
 		final: boolean,
 	): void {
+		if (block.kind === "thinking" && block.text === "") {
+			message.slots.set(
+				index,
+				final ? { kind: "ignored" } : { kind: "unsaid" },
+			);
+			return;
+		}
 		switch (block.kind) {
 			case "text":
 			case "thinking": {
@@ -913,11 +950,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	/** A streamed block, made final by its complete message. */
 	private finalize(
 		message: MessageState,
+		index: number,
 		slot: Slot,
 		block: ContentBlock,
 		path: string,
 	): void {
 		switch (slot.kind) {
+			case "unsaid": {
+				if (block.kind !== "thinking") {
+					return this.mismatch(
+						`${path}.type`,
+						"the thinking block that streamed",
+					);
+				}
+				return this.openBlock(message, index, block, true);
+			}
 			case "text":
 			case "thinking": {
 				if (block.kind !== slot.kind)

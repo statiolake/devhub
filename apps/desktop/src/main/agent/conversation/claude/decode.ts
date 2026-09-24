@@ -605,13 +605,16 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					f.optionalString(raw.description, `${at}.description`),
 				raw,
 			};
-		// A hook the owner configured (SessionStart and the like) reports itself
-		// whether or not hook events were asked for. v1 does not draw hooks
-		// (design §3.5), and what a hook prints is the owner's configuration,
-		// not the conversation.
-		// An estimate of the thinking so far, while it streams: the thinking
-		// block itself is what is drawn.
+		// Known, and not drawn:
+		// - hook_*: a hook the owner configured (SessionStart and the like)
+		//   reports itself whether or not hook events were asked for; v1 does
+		//   not draw hooks (design §3.5), and what a hook prints is the owner's
+		//   configuration, not the conversation;
+		// - thinking_tokens: an estimate of the thinking while it streams;
+		// - background_tasks_changed: the set of background tasks as a whole,
+		//   whose each task's lifecycle arrives as task_*.
 		case "thinking_tokens":
+		case "background_tasks_changed":
 		case "hook_started":
 		case "hook_progress":
 		case "hook_response":
