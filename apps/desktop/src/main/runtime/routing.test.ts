@@ -101,6 +101,9 @@ class RecordingRuntime implements Runtime {
 	spawnPty(): never {
 		throw new Error("not asked for in these cases");
 	}
+	spawnStream(): never {
+		throw new Error("not asked for in these cases");
+	}
 	stat(path: string): Promise<FileKind> {
 		this.stats.push(path);
 		return Promise.resolve(this.kinds[path] ?? "absent");

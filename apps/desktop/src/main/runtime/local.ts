@@ -35,6 +35,7 @@ import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
+import { openByteStream } from "./byteStream.js";
 import { resolveExecutable } from "../shell/runtimes.js";
 import { launchEnvironment } from "../shell/loginEnvironment.js";
 import {
@@ -45,6 +46,7 @@ import {
 	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
 	userTmuxConfigDigest,
+	type ByteStream,
 	type DirEntry,
 	type ExecRequest,
 	type ExecResult,
@@ -54,6 +56,7 @@ import {
 	type RuntimeCadence,
 	type RuntimeId,
 	type RuntimeReading,
+	type StreamRequest,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type TmuxProgram,
@@ -252,6 +255,24 @@ export class LocalRuntime implements Runtime {
 
 	spawnPty(request: PtyRequest): Pty {
 		return openPty(request);
+	}
+
+	spawnStream(request: StreamRequest): ByteStream {
+		const file = request.argv[0];
+		if (file === undefined) {
+			throw new Error("a runtime stream needs a program to run");
+		}
+		activityCounters.record(COUNTER.process(basename(file)));
+		return openByteStream(
+			() =>
+				Promise.resolve({
+					file,
+					args: request.argv.slice(1),
+					cwd: request.cwd,
+					env: request.env ?? {},
+				}),
+			request.cancel,
+		);
 	}
 
 	/**

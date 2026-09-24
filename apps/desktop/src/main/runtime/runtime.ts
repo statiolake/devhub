@@ -98,6 +98,63 @@ export interface ExecResult {
  */
 export type PtyRequest = PtyLaunch;
 
+/**
+ * A long-lived program whose output is read as it arrives, over pipes.
+ *
+ * `exec` answers once, at the end, and a pty is a terminal. Neither fits a
+ * program that writes a line now and another in ten minutes and whose bytes
+ * must arrive exactly as written: a pty's line discipline turns `\n` into
+ * `\r\n`, caps a canonical line and echoes what is typed at it, and any one of
+ * those breaks a stream of JSON. So this is the third shape — the same argv,
+ * cwd and environment an `exec` takes, and no deadline, because the program is
+ * expected to outlive every deadline DevHub has.
+ */
+export interface StreamRequest {
+	/** The program and its arguments — never a shell string. See `ExecRequest`. */
+	readonly argv: readonly string[];
+	/** Absolute, on the runtime's machine. */
+	readonly cwd?: string;
+	readonly env?: Readonly<Record<string, string | undefined>>;
+	/** Cancelling it is `kill()`. */
+	readonly cancel: CancellationToken;
+}
+
+/** How a stream's program ended, and the end of what it said on stderr. */
+export interface StreamEnd {
+	readonly code: number | null;
+	readonly signal: string | null;
+	/** The last `STREAM_STDERR_BYTES` of it: the end is where a reason is. */
+	readonly stderr: Buffer;
+}
+
+/**
+ * One running `spawnStream`.
+ *
+ * `stdout` is every byte the program wrote, in order, and it ends when the
+ * program's stdout closes. It never throws for how the program ended — that is
+ * `ended`'s to say, once, so that a caller has one place to read a failure
+ * from rather than two that could disagree. A caller must read `stdout` (the
+ * pipe is not drained for it) and must await `ended`.
+ *
+ * `ended` resolves with the exit, whatever it was: a non-zero code or a
+ * signal is an answer, as it is for `exec`. It rejects when there was no
+ * program to answer — a `PortFailure("unavailable")` for one that is not
+ * there, on every machine alike — or when the transport itself refused (an
+ * ssh that could not reach its host, a container that is no longer running),
+ * in the same words `exec` uses for that machine.
+ *
+ * The program's stdin is a pipe DevHub holds open and never writes to, for
+ * the program's sake rather than DevHub's: EOF on it is how a program on a
+ * far machine learns that DevHub let go of it. Killing a local `ssh` or
+ * `docker exec` client sends no signal across; closing its stdin does.
+ */
+export interface ByteStream {
+	readonly stdout: AsyncIterable<Buffer>;
+	readonly ended: Promise<StreamEnd>;
+	/** Stop it. `ended` then resolves with the signal. Idempotent. */
+	kill(): void;
+}
+
 /** What is at a path: the three answers a probe is allowed to give. */
 export type FileKind = "directory" | "file" | "absent";
 
@@ -370,6 +427,15 @@ export interface Runtime {
 
 	exec(request: ExecRequest): Promise<ExecResult>;
 	spawnPty(request: PtyRequest): Pty;
+	/**
+	 * A long-lived program on this machine, over pipes. See `ByteStream`.
+	 *
+	 * Synchronous like `spawnPty`, and for the same reason the stream is an
+	 * object rather than a promise of one: whatever the far machine needs
+	 * first (its login environment, its container) is waited for inside the
+	 * stream, and a failure there arrives through `ended` like every other.
+	 */
+	spawnStream(request: StreamRequest): ByteStream;
 
 	/**
 	 * What a configured program name means on this machine.

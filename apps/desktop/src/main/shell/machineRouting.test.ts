@@ -145,6 +145,9 @@ class FakeMachine implements Runtime {
 			resume: () => {},
 		};
 	}
+	spawnStream(): never {
+		throw new Error("not asked for in these cases");
+	}
 	stat(): Promise<FileKind> {
 		return Promise.resolve("directory");
 	}

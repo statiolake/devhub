@@ -42,6 +42,7 @@ import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import { describeRuntimeContract } from "./runtime.contract.test.js";
+import { describeHostLink } from "../agent/conversation/hostLink.test.js";
 import type { TerminalLauncherSpec } from "./runtime.js";
 import {
 	chooseControlDirectory,
@@ -230,6 +231,11 @@ function fakeRuntime(): SshRuntime {
 }
 
 describeRuntimeContract("ssh", fakeRuntime);
+// A GUI Agent's host, followed and written to through the same fake ssh: the
+// host process and its files are on this machine either way, so what this
+// adds over the local suite is exactly the transport — `ssh -T`, the stdin
+// that tells the far side DevHub let go, and the composed remote script.
+describeHostLink("ssh", fakeRuntime);
 
 async function refusing(stderr: string): Promise<SshRuntime> {
 	const name = `ssh-refuse-${String(Math.random()).slice(2)}`;

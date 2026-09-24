@@ -10,9 +10,13 @@
  */
 
 import { Buffer } from "node:buffer";
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, describe, expect, it } from "vitest";
+import { describeHostLink } from "../agent/conversation/hostLink.test.js";
 import type { CommandOutput } from "../terminal/command.js";
-import { PortFailure } from "../terminal/ports.js";
+import { CancellationToken, PortFailure } from "../terminal/ports.js";
 import {
 	ContainerRuntime,
 	LOCAL_FOLDER_LABEL,
@@ -503,3 +507,123 @@ describe("a container that goes away mid-command", () => {
 		expect(psCalls).toBeGreaterThan(before);
 	});
 });
+
+/**
+ * A `docker` that is a program, for the one thing a function cannot stand in
+ * for: a long-lived `docker exec -i` whose stdout is a pipe. It answers `ps`
+ * and `inspect` the way the adopt path needs and runs every `exec` here, as
+ * the fake ssh does, so the container is this machine and what is under test
+ * is the argv DevHub composes and what it makes of the ending. While the file
+ * `$DEVHUB_FAKE_DOCKER_GONE` exists, `exec` answers the way docker does for a
+ * container that has stopped.
+ */
+const FAKE_DOCKER = `#!/bin/sh
+case "$1" in
+  ps) printf 'abc\\trunning\\timg\\n'; exit 0;;
+  inspect) exit 0;;
+  exec) shift;;
+  *) echo "fake docker: $1 is not something it answers" >&2; exit 2;;
+esac
+while [ $# -gt 0 ]; do
+  case "$1" in -u) shift 2;; -i) shift;; *) break;; esac
+done
+id=$1
+shift
+if [ -f "$DEVHUB_FAKE_DOCKER_GONE" ]; then
+  echo "Error response from daemon: container $id is not running" >&2
+  exit 1
+fi
+exec "$@"
+`;
+
+const dockerHome = mkdtempSync(
+	join(
+		(() => {
+			const root = fileURLToPath(
+				new URL("../../../../../.spike/", import.meta.url),
+			);
+			mkdirSync(root, { recursive: true });
+			return root;
+		})(),
+		"devhub-fake-docker-",
+	),
+);
+const dockerProgram = join(dockerHome, "docker");
+const containerGone = join(dockerHome, "gone");
+writeFileSync(dockerProgram, FAKE_DOCKER, { mode: 0o700 });
+afterAll(() => {
+	rmSync(dockerHome, { recursive: true, force: true });
+});
+
+/**
+ * A container runtime whose `docker` really runs, here.
+ *
+ * `SHELL` is pinned for the reason `ssh.test.ts` pins it: the runtime reads
+ * the login environment of the "container", which is this machine, and that
+ * must not be whoever is running the suite's own shell profile.
+ */
+function streamingRuntime(): ContainerRuntime {
+	return new ContainerRuntime({
+		workspaceFolder: FOLDER,
+		docker: { path: dockerProgram },
+		devcontainer: fakeDevcontainer(() =>
+			Promise.reject(new Error("the CLI must not be spawned on this path")),
+		),
+		localEnvironment: {
+			...process.env,
+			SHELL: "/bin/sh",
+			DEVHUB_FAKE_DOCKER_GONE: containerGone,
+		},
+	});
+}
+
+async function streamed(stdout: AsyncIterable<Buffer>): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of stdout) chunks.push(chunk);
+	return Buffer.concat(chunks).toString("utf8");
+}
+
+describe("a stream in the container", () => {
+	it("runs through docker exec -i, with the environment it was given", async () => {
+		const running = streamingRuntime().spawnStream({
+			argv: ["/bin/sh", "-c", 'printf %s "$DEVHUB_STREAMED"; exit 4'],
+			env: { DEVHUB_STREAMED: "in the container" },
+			cancel: new CancellationToken(),
+		});
+		expect(await streamed(running.stdout)).toBe("in the container");
+		expect((await running.ended).code).toBe(4);
+	});
+
+	it("says a program is unavailable in the words exec uses", async () => {
+		const running = streamingRuntime().spawnStream({
+			argv: ["devhub-no-such-program"],
+			cancel: new CancellationToken(),
+		});
+		expect(await streamed(running.stdout)).toBe("");
+		await expect(running.ended).rejects.toMatchObject({ code: "unavailable" });
+	});
+
+	it("says the container stopped, rather than that the program failed", async () => {
+		const runtime = streamingRuntime();
+		// Reached once, so the container is adopted; then it stops.
+		await runtime.home();
+		writeFileSync(containerGone, "");
+		try {
+			const running = runtime.spawnStream({
+				argv: ["/bin/sh", "-c", "echo never"],
+				cancel: new CancellationToken(),
+			});
+			expect(await streamed(running.stdout)).toBe("");
+			const failure = await running.ended.then(
+				() => undefined,
+				(caught: unknown) => caught,
+			);
+			expect(failure).toBeInstanceOf(PortFailure);
+			expect((failure as PortFailure).message).toContain("is not running");
+		} finally {
+			rmSync(containerGone, { force: true });
+		}
+	});
+});
+
+describeHostLink("container", streamingRuntime);

@@ -58,6 +58,7 @@ import {
 } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
+import type { StreamLaunch } from "./byteStream.js";
 import { LOCAL_CADENCE } from "./local.js";
 import { shellQuote } from "./quote.js";
 import {
@@ -750,6 +751,44 @@ export class ContainerRuntime
 	}
 
 	/**
+	 * A long-lived command in the container: `docker exec -i` and no `-t`.
+	 *
+	 * The stream's form of `run`, and it reads a refusal the same way: a
+	 * container that went away is not a command that failed, and the next
+	 * command must ask for the container again rather than reuse this one.
+	 * Unlike `spawnPty` it waits for the container itself, so there is no
+	 * order in which it can be asked for too early.
+	 */
+	protected override async streamLaunch(script: string): Promise<StreamLaunch> {
+		const container = await this.#currentContainer();
+		activityCounters.record(COUNTER.process(`${this.id}/stream`));
+		return {
+			file: this.#docker.path,
+			args: [
+				"exec",
+				...(container.remoteUser.length === 0
+					? []
+					: ["-u", container.remoteUser]),
+				"-i",
+				container.containerId,
+				"/bin/sh",
+				"-c",
+				script,
+			],
+			// The docker client runs here; the `cd` is in the script.
+			cwd: undefined,
+			env: this.#localEnvironment,
+			refusal: (end) => {
+				if (end.code === 0 || !looksLikeContainerGone(end)) return undefined;
+				this.#container = undefined;
+				this.#connected = false;
+				this.lastFailure = lastLine(end.stderr.toString("utf8"));
+				return containerNotRunning(this.#workspaceFolder);
+			},
+		};
+	}
+
+	/**
 	 * A pseudo-terminal in the container.
 	 *
 	 * `docker exec -it` where ssh has `-tt`, and for the same reason: the far
@@ -1235,7 +1274,7 @@ function basenameOf(path: string): string {
  * when it ran and 1 or 125 when it could not, and 1 is also what half of the
  * commands DevHub runs return for ordinary reasons.
  */
-function looksLikeContainerGone(result: CommandOutput): boolean {
+function looksLikeContainerGone(result: { readonly stderr: Buffer }): boolean {
 	const stderr = result.stderr.toString("utf8");
 	return (
 		stderr.includes("is not running") ||

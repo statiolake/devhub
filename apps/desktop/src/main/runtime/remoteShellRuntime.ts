@@ -46,7 +46,7 @@ import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
 import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
-import { CancellationToken } from "../terminal/ports.js";
+import { CancellationToken, portFailure } from "../terminal/ports.js";
 import type { Pty } from "../terminal/pty.js";
 import {
 	remoteTerminalPaths,
@@ -55,12 +55,14 @@ import {
 } from "../terminal/launcher.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
+import { openByteStream, type StreamLaunch } from "./byteStream.js";
 import { permanent } from "./remoteServer.js";
 import { shellQuote } from "./quote.js";
 import {
 	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
 	userTmuxConfigDigest,
+	type ByteStream,
 	type DirEntry,
 	type ExecLimits,
 	type ExecRequest,
@@ -71,6 +73,8 @@ import {
 	type RuntimeCadence,
 	type RuntimeId,
 	type RuntimeReading,
+	type StreamEnd,
+	type StreamRequest,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type TmuxProgram,
@@ -301,6 +305,19 @@ export function lastLine(text: string): string {
 	return lines[lines.length - 1] ?? "";
 }
 
+/**
+ * A stream whose program was never there, in the words `exec` uses for it.
+ *
+ * Only the marker counts, for the reason `SCRIPT_MARKER` exists: a program
+ * that ran and exited 127 of its own accord is an answer, not a refusal.
+ */
+function scriptRefusal(end: StreamEnd): Error | undefined {
+	if (end.code !== 127) return undefined;
+	const stderr = end.stderr.toString("utf8");
+	if (!stderr.includes(SCRIPT_MARKER)) return undefined;
+	return portFailure("unavailable", { detail: lastLine(stderr) });
+}
+
 export function unsupportedPlatformFailure(
 	machine: string,
 	uname: string,
@@ -342,6 +359,16 @@ export abstract class RemoteShellRuntime implements Runtime {
 	 * there is the subclass's business and nothing above this line's.
 	 */
 	protected abstract run(request: ExecRequest): Promise<ExecResult>;
+
+	/**
+	 * How one composed script becomes a long-lived process on this Mac that
+	 * runs it over there, with its stdin and stdout as pipes.
+	 *
+	 * The stream's half of `run`: the transport, and nothing else. What the
+	 * script is, the environment it runs in and what a 127 means are composed
+	 * once, in `spawnStream`, for every machine.
+	 */
+	protected abstract streamLaunch(script: string): Promise<StreamLaunch>;
 
 	/** What to call this machine in a sentence: a host name, a container label. */
 	protected abstract get machineName(): string;
@@ -524,6 +551,32 @@ export abstract class RemoteShellRuntime implements Runtime {
 	async exec(request: ExecRequest): Promise<ExecResult> {
 		const { login } = await this.describeRemote();
 		return this.run({ ...request, env: { ...login, ...request.env } });
+	}
+
+	/**
+	 * A long-lived program on the other machine, in its own environment.
+	 *
+	 * The same composed script `exec` sends — so a missing program or
+	 * directory is the same `unavailable`, in the same words — handed to the
+	 * transport's long-lived form instead of its one-shot one. The login
+	 * environment is waited for inside the stream, which is why this can be
+	 * synchronous where `spawnPty` has to find it already read.
+	 */
+	spawnStream(request: StreamRequest): ByteStream {
+		return openByteStream(async () => {
+			const { login } = await this.describeRemote();
+			const launch = await this.streamLaunch(
+				remoteScript({
+					argv: request.argv,
+					cwd: request.cwd,
+					env: { ...login, ...request.env },
+				}),
+			);
+			return {
+				...launch,
+				refusal: (end) => launch.refusal?.(end) ?? scriptRefusal(end),
+			};
+		}, request.cancel);
 	}
 
 	/**

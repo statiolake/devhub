@@ -22,6 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { OperationDeadline } from "../../src/main/terminal/command";
 import {
@@ -39,6 +40,14 @@ import {
   workspaceDigest,
 } from "../../src/main/terminal/tmux";
 import { AgentSessions } from "../../src/main/agent/sessions";
+import {
+  agentStateDirectory,
+  hostSessionCommand,
+} from "../../src/main/agent/conversation/hostCommand";
+import {
+  HostLink,
+  type JournalLine,
+} from "../../src/main/agent/conversation/hostLink";
 import { localRuntime } from "../../src/main/runtime/registry";
 import type { Runtime } from "../../src/main/runtime/runtime";
 import { AgentStatusDetector } from "../../src/main/agent/detect/detector";
@@ -1948,6 +1957,103 @@ describe.skipIf(TMUX === undefined)(
         root,
       });
       expect(sessionNames(test.socket)).toEqual([agentSessionName(agentId)]);
+    });
+  },
+);
+
+/**
+ * A GUI Agent's host, as the Agent session it is.
+ *
+ * `hostLink.test.ts` runs the host as a bare process group; this is the part
+ * only tmux can show. The session *is* the host, so DevHub's Stop — the same
+ * `terminate` a TUI Agent gets — has to end it without an `exit` written,
+ * which is how "stopped" stays distinguishable from "ended"; and an agent that
+ * exits on its own has to take the session with it and leave its status
+ * behind.
+ */
+describe.skipIf(TMUX === undefined)(
+  "a GUI Agent's host in its tmux session",
+  { timeout: 30_000 },
+  () => {
+    const FAKE_AGENT = fileURLToPath(
+      new URL("../fixtures/agent-conversation/fake-agent.sh", import.meta.url),
+    );
+
+    async function launched(label: string, agentId: string) {
+      const test = fixture(label);
+      const root = realpathSync(test.home);
+      const directory = agentStateDirectory(root, agentId);
+      mkdirSync(directory, { recursive: true });
+      const sessions = new AgentSessions(localAdapter(test.runtime));
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await sessions.launch({
+        machine: "local",
+        agentId,
+        workspaceId: "00000000-0000-4000-8000-0000000000f0",
+        root,
+        command: hostSessionCommand(directory, {
+          file: "/bin/sh",
+          args: [FAKE_AGENT],
+          env: {},
+        }),
+      });
+      return {
+        test,
+        sessions,
+        link: new HostLink(localRuntime(), directory),
+        directory,
+      };
+    }
+
+    async function next(
+      lines: AsyncGenerator<JournalLine>,
+    ): Promise<JournalLine> {
+      const got = await lines.next();
+      if (got.done === true) throw new Error("the journal ended");
+      return got.value;
+    }
+
+    it("talks to the agent in the session, and a Stop leaves no ending written", async () => {
+      const agentId = "00000000-0000-4000-8000-0000000000f1";
+      const { test, sessions, link, directory } = await launched(
+        "host-stop",
+        agentId,
+      );
+      const lines = link.lines(0, new CancellationToken());
+      expect((await next(lines)).line).toBe('{"type":"hello","argc":0}');
+      await link.write('{"through":"tmux"}');
+      expect((await next(lines)).line).toBe('{"echo":{"through":"tmux"}}');
+
+      await sessions.terminate("local", agentId);
+
+      const rest: JournalLine[] = [];
+      for await (const line of lines) rest.push(line);
+      expect(rest).toEqual([]);
+      expect(await test.runtime.listAgents()).toEqual([]);
+      expect(await link.ending()).toMatchObject({ kind: "vanished" });
+      expect(existsSync(join(directory, "exit"))).toBe(false);
+    });
+
+    it("ends the session when the agent exits, and keeps the status and the reason", async () => {
+      const agentId = "00000000-0000-4000-8000-0000000000f2";
+      const { test, link } = await launched("host-exit", agentId);
+      const lines = link.lines(0, new CancellationToken());
+      await next(lines);
+      await link.write('{"fake":"exit","code":3}');
+
+      for await (const line of lines) {
+        throw new Error(`nothing more was written, and yet: ${line.line}`);
+      }
+      // The session goes when its command does, which is the host writing
+      // its ending and returning: the reconcile round's one signal.
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((await test.runtime.listAgents()).length === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(await test.runtime.listAgents()).toEqual([]);
+      const ending = await link.ending();
+      expect(ending).toMatchObject({ kind: "exited", code: 3 });
+      expect(ending.stderrTail).toContain("fake-agent: exiting with 3");
     });
   },
 );

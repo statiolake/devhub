@@ -173,6 +173,99 @@ export function describeRuntimeContract(
 			});
 		});
 
+		describe("spawnStream", () => {
+			function stream(argv: readonly string[], extra: { cwd?: string } = {}) {
+				return runtime.spawnStream({
+					argv,
+					cwd: extra.cwd,
+					env: { PATH: process.env["PATH"], DEVHUB_CONTRACT: "streamed" },
+					cancel: new CancellationToken(),
+				});
+			}
+
+			async function everything(
+				stdout: AsyncIterable<Buffer>,
+			): Promise<string> {
+				const chunks: Buffer[] = [];
+				for await (const chunk of stdout) chunks.push(chunk);
+				return Buffer.concat(chunks).toString("utf8");
+			}
+
+			it("delivers bytes while the program is still running, exactly as written", async () => {
+				// `read` waits on the stdin DevHub holds open, so the program is
+				// alive when the first line arrives: a line that only came at the
+				// end would be an exec, not a stream.
+				const running = stream([
+					"/bin/sh",
+					"-c",
+					`printf '{"a":1}\\n\\r\\n'; read -r never`,
+				]);
+				const iterator = running.stdout[Symbol.asyncIterator]();
+				const first = await iterator.next();
+				expect(first.done).toBe(false);
+				expect(Buffer.from(first.value as Buffer).toString("utf8")).toBe(
+					'{"a":1}\n\r\n',
+				);
+				running.kill();
+				await iterator.return?.();
+				const end = await running.ended;
+				expect(end.signal ?? end.code).not.toBe(0);
+			});
+
+			it("carries the exit code and the end of stderr", async () => {
+				const running = stream([
+					"/bin/sh",
+					"-c",
+					'echo out; echo "why it stopped" >&2; exit 3',
+				]);
+				expect(await everything(running.stdout)).toBe("out\n");
+				const end = await running.ended;
+				expect(end.code).toBe(3);
+				expect(end.stderr.toString("utf8")).toBe("why it stopped\n");
+			});
+
+			it("runs where it was told to, in the environment it was given", async () => {
+				const running = stream(
+					["/bin/sh", "-c", 'pwd -P; printf %s "$DEVHUB_CONTRACT"'],
+					{ cwd: scratch },
+				);
+				expect(await everything(running.stdout)).toBe(
+					`${await runtime.realpath(scratch)}\nstreamed`,
+				);
+				expect((await running.ended).code).toBe(0);
+			});
+
+			it("stops when the operation is abandoned", async () => {
+				const cancel = new CancellationToken();
+				const running = runtime.spawnStream({
+					argv: ["/bin/sh", "-c", "sleep 30"],
+					env: { PATH: process.env["PATH"] },
+					cancel,
+				});
+				cancel.cancel();
+				expect(await everything(running.stdout)).toBe("");
+				const end = await running.ended.then(
+					(ended) => ended,
+					(failure: unknown) => failure,
+				);
+				// Stopped before it started is a cancellation; stopped after, a
+				// signal. Either way it is over, and it says so.
+				if (end instanceof PortFailure) expect(end.code).toBe("cancelled");
+				else expect((end as { signal: string | null }).signal).not.toBeNull();
+			});
+
+			it("says a program is unavailable rather than streaming nothing", async () => {
+				const running = stream(["/nonexistent/devhub-no-such-program"]);
+				expect(await everything(running.stdout)).toBe("");
+				const failure = await running.ended.then(
+					() => undefined,
+					(caught: unknown) => caught,
+				);
+				expect(failure).toBeInstanceOf(PortFailure);
+				expect((failure as PortFailure).code).toBe("unavailable");
+			});
+		});
+
 		describe("probes", () => {
 			it("tells a directory from a file from nothing there", async () => {
 				await writeFile(join(scratch, "a-file"), "x");

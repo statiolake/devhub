@@ -48,6 +48,7 @@ import {
 	REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
 	remoteReconcileIntervalMs,
 } from "./cadence.js";
+import type { StreamLaunch } from "./byteStream.js";
 import { runtimeConnected } from "./connectivity.js";
 import { shellQuote } from "./quote.js";
 import {
@@ -687,6 +688,41 @@ export class SshRuntime extends RemoteShellRuntime implements RemoteServerHost {
 		});
 		pty.onExit(release);
 		return pty;
+	}
+
+	/**
+	 * A long-lived remote command over a session of this host's master.
+	 *
+	 * `-T` where `spawnPty` has `-tt`, and that is the whole difference: no
+	 * tty on the far side, so the bytes arrive as they were written. The
+	 * session holds a slot for its whole life and takes it without waiting,
+	 * for the reason a pty does (`MuxSessions`): a stream is somebody reading
+	 * an Agent, and a poll can give way to it.
+	 *
+	 * A refusal is read with `clientFailure`, so a stream that could not reach
+	 * the host says the same sentence an `exec` would have.
+	 */
+	protected override async streamLaunch(script: string): Promise<StreamLaunch> {
+		await this.#ensureControlDirectory();
+		activityCounters.record(COUNTER.process(`${this.id}/stream`));
+		const release = this.#sessions.take();
+		return {
+			file: this.#sshPath,
+			args: [
+				...sshOptionArgv(this.#controlDirectory),
+				"-T",
+				this.#host,
+				"--",
+				script,
+			],
+			// The client's own working directory is nobody's business: the
+			// caller's `cwd` is a `cd` in the script, on the other machine.
+			cwd: undefined,
+			env: this.#localEnvironment,
+			release,
+			refusal: (end) =>
+				clientFailure(this.#host, { ...end, stdout: Buffer.alloc(0) }),
+		};
 	}
 
 	/**
