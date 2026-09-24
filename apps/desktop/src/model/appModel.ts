@@ -15,6 +15,7 @@ import {
   DomainError,
   DomainErrorCode,
   isWorkspaceAvailable,
+  scratchHoldsNothing,
   locationKey,
   locationLabel,
   rootBasename,
@@ -392,7 +393,9 @@ export class AppModel {
    * Workspace for that folder is already open it is the one that becomes
    * Scratch and `day` is dropped; otherwise `day` is added. The Workspace
    * that was Scratch before stays exactly as it is — its Agents, its editor,
-   * the selection if it is on it — and is from now on an ordinary row.
+   * the selection if it is on it — and is from now on an ordinary row; unless
+   * it holds nothing (`scratchHoldsNothing`), and then it goes, and a
+   * selection on it moves to the new Scratch.
    *
    * Returns whether anything changed, so a launch reconcile on the same day
    * is a no-op.
@@ -406,7 +409,18 @@ export class AppModel {
     }
     const id = existing?.id ?? day.id;
     if (id === this.scratchId) return false;
+    const previous = this.requireWorkspace(this.scratchId);
     this.scratchId = id;
+    if (scratchHoldsNothing(previous)) {
+      this.workspaceList.splice(this.workspaceList.indexOf(previous), 1);
+      const context = this.selectionValue.context;
+      if (context.kind === "workspace" && context.workspaceId === previous.id) {
+        this.selectionValue = {
+          context: { kind: "workspace", workspaceId: id },
+          presentation: "full",
+        };
+      }
+    }
     this.bumpRevision();
     return true;
   }

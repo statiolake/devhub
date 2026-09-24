@@ -93,9 +93,20 @@ called "Scratch", with the real folder in its tooltip; `Cmd+Q Shift+J` and
   immediately. Yesterday's stays open as an ordinary row named by its folder
   (`20260922`), with its Agents and its workbench untouched, and closes like
   any row. Nothing running is affected. The timer aims at the next local
-  midnight and is re-aimed on wake and when `[scratch] daily` changes; a launch
-  works Scratch out from the clock, so a state file from yesterday opens with
-  yesterday's row and today's Scratch.
+  midnight and is re-aimed on wake; a launch works Scratch out from the clock
+  and the setting, so a state file from yesterday opens with yesterday's row
+  and today's Scratch.
+- **The setting it follows.** Scratch is always the folder today's date gives
+  under the `[scratch] daily` DevHub is running on — the last settings it
+  accepted. Settings accepted with a different `daily`, from the Settings
+  window or from an edit to the file, move Scratch to that folder at once.
+  Settings refused while DevHub runs change nothing: it goes on with the ones
+  it had, and the refusal is reported. Settings refused at launch leave it on
+  none, and then no folder is made — not the default's either: Scratch is an
+  unavailable stand-in at `settings.toml`, the refusal is reported, and the
+  first settings accepted make today's folder Scratch. A Scratch that holds
+  nothing (unavailable, no Agents) is not kept as a row once it stops being
+  Scratch, and is not written to the state file.
 - **Closing.** Today's Scratch cannot be closed; it stops being Scratch at
   midnight instead.
 - **Opens.** `devhub <file>` for a file no open Workspace contains,

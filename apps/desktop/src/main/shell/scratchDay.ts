@@ -1,16 +1,30 @@
 /**
- * Today's daily folder, on disk, and the midnight that ends it.
+ * Today's daily folder, on disk, and the moments that can change which it is.
  *
  * `model/scratchDay.ts` says what the folder is called; this makes it and
  * resolves it, so the model can be handed a Workspace for it. It is made here,
- * when it is first needed — at launch and at each midnight — rather than when
- * somebody first looks at it, because Scratch is a Workspace and a Workspace
- * is a folder that is there.
+ * when it is first needed, rather than when somebody first looks at it,
+ * because Scratch is a Workspace and a Workspace is a folder that is there.
+ *
+ * Scratch is always the folder today's date gives under the `[scratch] daily`
+ * DevHub is running on — the one in the last settings it accepted. Three
+ * things change the answer, and `ScratchFollower` is the one place that hears
+ * all three: a new day, a wake (a timer cannot see a midnight slept through),
+ * and settings accepted with a different `daily`, whether they came from the
+ * Settings window or from an edit to the file.
  *
  * A folder that cannot be made is not a reason for DevHub not to start, and not
  * a thing to hide: the Workspace comes back with the path as the setting spells
  * it and `failure` says why, and the caller marks it unavailable and reports
  * the sentence — so the row says what is wrong in the place it is wrong.
+ *
+ * Settings that were refused at launch leave DevHub running on none, and then
+ * there is no `daily` to make a folder from. That is not the default's cue:
+ * a folder nobody configured is not made. Scratch is a stand-in, unavailable,
+ * at the settings file — the thing that is wrong — with the refusal as its
+ * failure, until settings are accepted and today's folder takes its place.
+ * Settings refused *later* change nothing here: DevHub goes on running on the
+ * ones it had, and so does Scratch.
  */
 
 import { randomUUID } from "node:crypto";
@@ -34,19 +48,33 @@ export interface ScratchDay {
 	readonly failure: string | undefined;
 }
 
+/** Where Scratch comes from: the `daily` DevHub runs on, and where it is written. */
+export interface ScratchSetting {
+	/** `[scratch] daily`, or `undefined` while DevHub runs on no settings. */
+	readonly daily: string | undefined;
+	/** The settings file, which is where Scratch points when there is no `daily`. */
+	readonly settingsFile: string;
+}
+
 export async function scratchDay(
-	template: string,
+	setting: ScratchSetting,
 	now: Date,
 	home: string,
 ): Promise<ScratchDay> {
-	const path = expandHome(scratchDailyPath(template, now), home);
 	const id = parseWorkspaceId(randomUUID());
-	const at = (folder: string): Workspace =>
+	const at = (path: string): Workspace =>
 		new Workspace(
 			id,
-			workspaceLocation({ kind: "local", path: folder }),
-			displayPath(folder),
+			workspaceLocation({ kind: "local", path }),
+			displayPath(path),
 		);
+	if (setting.daily === undefined) {
+		return {
+			workspace: at(setting.settingsFile),
+			failure: `Scratch has no folder: ${setting.settingsFile} could not be read, so there is no [scratch] daily to make today's folder from. Nothing was made; Scratch moves to today's folder when the file is accepted.`,
+		};
+	}
+	const path = expandHome(scratchDailyPath(setting.daily, now), home);
 	let canonical: string;
 	try {
 		await mkdir(path, { recursive: true });
@@ -67,43 +95,87 @@ export async function scratchDay(
 }
 
 /**
- * Call `onMidnight` at every local midnight from now on.
+ * Keeps Scratch on today's folder under the `daily` DevHub is running on.
  *
- * One timer to the next midnight, re-armed after each one rather than a
- * minute-by-minute poll. A timer is a duration, and a Mac that sleeps through
- * midnight or changes timezone makes the duration wrong — so `rearm` is there
- * for the moments that can do that (resume, a settings change): it throws the
- * old timer away and aims again from the clock as it is now. Calling
- * `onMidnight` on every re-arm is safe, because adopting the same day twice is
- * a no-op, and it is what catches a midnight slept through.
+ * Launch is not here: the model is built with today's Scratch already in it
+ * (`createAppController`), from the same `scratchDay`. From then on, every
+ * moment that can change the answer works it out again from the clock and
+ * the current `daily` and hands it to `adopt`; adopting the same folder twice
+ * is a no-op, so asking too often costs nothing and asking too rarely is the
+ * only way to be wrong.
  */
-export class MidnightTimer {
+export class ScratchFollower {
+	#daily: string | undefined;
 	#timer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
-		private readonly onMidnight: () => void,
-		private readonly clock: () => Date = () => new Date(),
-	) {}
-
-	arm(): void {
-		this.stop();
-		const now = this.clock();
-		const delay = Math.max(0, nextLocalMidnight(now).getTime() - now.getTime());
-		this.#timer = setTimeout(() => {
-			this.#timer = undefined;
-			this.onMidnight();
-			this.arm();
-		}, delay);
+		daily: string | undefined,
+		private readonly options: {
+			readonly settingsFile: string;
+			readonly home: string;
+			/** Make `day` Scratch. A rejection is the caller's to raise. */
+			readonly adopt: (day: ScratchDay) => Promise<void>;
+			readonly clock?: () => Date;
+		},
+	) {
+		this.#daily = daily;
 	}
 
-	/** After a wake or a settings change: catch up, and aim again. */
-	rearm(): void {
-		this.onMidnight();
+	/** Aim at the next midnight. Launch already made today's Scratch. */
+	start(): void {
 		this.arm();
+	}
+
+	/**
+	 * Settings were accepted — from the Settings window or from the file.
+	 * A different `daily` names a different folder for today, and that folder
+	 * is Scratch from now on; the old one stays as an ordinary row.
+	 */
+	settingsAccepted(daily: string): Promise<void> {
+		if (daily === this.#daily) return Promise.resolve();
+		this.#daily = daily;
+		return this.catchUp();
+	}
+
+	/** A Mac asleep across midnight wakes to a timer aimed at a moment that has passed. */
+	resumed(): Promise<void> {
+		return this.catchUp();
 	}
 
 	stop(): void {
 		if (this.#timer !== undefined) clearTimeout(this.#timer);
 		this.#timer = undefined;
+	}
+
+	/** Work today out again now, and aim at the next midnight from the clock as it is. */
+	private catchUp(): Promise<void> {
+		this.arm();
+		return this.followToday();
+	}
+
+	private arm(): void {
+		this.stop();
+		const now = this.now();
+		const delay = Math.max(0, nextLocalMidnight(now).getTime() - now.getTime());
+		this.#timer = setTimeout(() => {
+			this.#timer = undefined;
+			this.arm();
+			// Not caught here: a failure nothing can recover from goes to the
+			// main process's root (`mainFailureRoot.ts`) like any other.
+			void this.followToday();
+		}, delay);
+	}
+
+	private async followToday(): Promise<void> {
+		const day = await scratchDay(
+			{ daily: this.#daily, settingsFile: this.options.settingsFile },
+			this.now(),
+			this.options.home,
+		);
+		await this.options.adopt(day);
+	}
+
+	private now(): Date {
+		return (this.options.clock ?? (() => new Date()))();
 	}
 }

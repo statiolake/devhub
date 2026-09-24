@@ -57,6 +57,7 @@ import {
   type UnreadReason,
   type RuntimeHealth,
   type WorkspaceLocation,
+  scratchHoldsNothing,
 } from "./domain.js";
 import {
   AppModel,
@@ -1414,31 +1415,40 @@ export function stateFromSnapshot(
 ): PersistedAppState {
   const state: PersistedAppState = {
     ...freshState(),
-    workspaces: snapshot.workspaces.map((workspace) => ({
-      workspace_id: workspace.id,
-      selected_path: workspace.selectedPath,
-      canonical_path: workspace.root,
-      location: locationRecord(workspace.location),
-      repository_id: workspace.repositoryId,
-      last_agent_id: workspace.lastAgentId,
-      lifecycle: lifecycleFrom(workspace.state),
-      agents: workspace.agents.map((agent) => ({
-        agent_id: agent.id,
-        workspace_id: agent.workspaceId,
-        profile_id: agent.profileId,
-        profile_kind: agent.profileKind,
-        profile_display_name: agent.profileDisplayName,
-        profile_command: agent.profile.command,
-        profile_args: [...agent.profile.args],
-        profile_env: Object.fromEntries(agent.profile.env),
-        ordinal: agent.ordinal,
-        temporary_name: agent.displayName,
-        status: agent.status,
-        unread: agent.unread,
-        runtime_health: agent.runtimeHealth,
-        control_state: controlStateTo(agent.controlState),
+    // Scratch that holds nothing is not written down: the next launch works
+    // Scratch out again, and a record of it would come back as a row with
+    // nothing in it. See `scratchHoldsNothing`.
+    workspaces: snapshot.workspaces
+      .filter(
+        (workspace) =>
+          workspace.id !== snapshot.scratchWorkspaceId ||
+          !scratchHoldsNothing(workspace),
+      )
+      .map((workspace) => ({
+        workspace_id: workspace.id,
+        selected_path: workspace.selectedPath,
+        canonical_path: workspace.root,
+        location: locationRecord(workspace.location),
+        repository_id: workspace.repositoryId,
+        last_agent_id: workspace.lastAgentId,
+        lifecycle: lifecycleFrom(workspace.state),
+        agents: workspace.agents.map((agent) => ({
+          agent_id: agent.id,
+          workspace_id: agent.workspaceId,
+          profile_id: agent.profileId,
+          profile_kind: agent.profileKind,
+          profile_display_name: agent.profileDisplayName,
+          profile_command: agent.profile.command,
+          profile_args: [...agent.profile.args],
+          profile_env: Object.fromEntries(agent.profile.env),
+          ordinal: agent.ordinal,
+          temporary_name: agent.displayName,
+          status: agent.status,
+          unread: agent.unread,
+          runtime_health: agent.runtimeHealth,
+          control_state: controlStateTo(agent.controlState),
+        })),
       })),
-    })),
     navigation: navigationRecord(snapshot),
     sidebar: {
       width: snapshot.sidebar.width,

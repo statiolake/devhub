@@ -489,6 +489,30 @@ describe("Scratch, today's daily folder", () => {
     expect(model.workspace(yesterday)).toBeUndefined();
   });
 
+  it("drops a Scratch that holds nothing, rather than keeping it as a row, and moves a selection on it", () => {
+    // The stand-in a launch on refused settings makes: unavailable, no Agents.
+    const model = scratchModel();
+    const standIn = model.scratchWorkspaceId;
+    model.markWorkspaceUnavailable(standIn, "root_inaccessible");
+    const day = localWorkspace(TOMORROW);
+    expect(model.adoptScratchDay(day)).toBe(true);
+    expect(model.workspace(standIn)).toBeUndefined();
+    expect(model.workspaces.map((w) => w.id)).toEqual([day.id]);
+    expect(model.snapshot().selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: day.id,
+    });
+  });
+
+  it("keeps an unavailable Scratch that still has Agents, as an ordinary row", () => {
+    const model = scratchModel();
+    const yesterday = model.scratchWorkspaceId;
+    model.addAgent(yesterday, AG_A, codex);
+    model.markWorkspaceUnavailable(yesterday, "root_missing");
+    model.adoptScratchDay(localWorkspace(TOMORROW));
+    expect(model.workspace(yesterday)?.agents.map((a) => a.id)).toEqual([AG_A]);
+  });
+
   it("lets Agents be created in Scratch", () => {
     const model = scratchModel();
     model.addAgent(model.scratchWorkspaceId, AG_A, codex);

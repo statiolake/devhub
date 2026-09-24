@@ -238,6 +238,37 @@ describe("Scratch across a restart", () => {
     });
   });
 
+  it("makes Scratch the folder the setting it launches on gives, not the one the file was written under", () => {
+    // The same day, and a file written while `daily` named another folder.
+    const before = new AppModel(today("/dev/junk/20260925"));
+    const state = stateFromSnapshot(before.snapshot());
+    const model = hydrateModel(
+      state,
+      [],
+      today("/dev/workspace/daily/2026/0925"),
+    );
+    const snapshot = model.snapshot();
+    expect(snapshot.workspaces.map((w) => [w.root, w.label])).toEqual([
+      ["/dev/workspace/daily/2026/0925", "Scratch"],
+      ["/dev/junk/20260925", "20260925"],
+    ]);
+  });
+
+  it("does not write down a Scratch that holds nothing, so it does not come back as a row", () => {
+    // A launch on refused settings: Scratch is an unavailable stand-in.
+    const standIn = new AppModel(today("/dev/settings.toml"));
+    standIn.markWorkspaceUnavailable(
+      standIn.scratchWorkspaceId,
+      "root_inaccessible",
+    );
+    const state = stateFromSnapshot(standIn.snapshot());
+    expect(state.workspaces).toEqual([]);
+    const model = hydrateModel(state, [], today("/dev/daily/20260925"));
+    expect(model.snapshot().workspaces.map((w) => w.root)).toEqual([
+      "/dev/daily/20260925",
+    ]);
+  });
+
   it("keeps Scratch's id, Agents and all, on the same day", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     const model = hydrateModel(state, [codex], today());

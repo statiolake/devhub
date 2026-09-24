@@ -352,8 +352,7 @@ import {
 import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
-import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
-import { MidnightTimer, scratchDay } from "./scratchDay.js";
+import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
@@ -703,6 +702,11 @@ export class AppController {
 	) {
 		this.state = state;
 		this.config = config;
+		this.scratch = new ScratchFollower(config?.scratch.daily, {
+			settingsFile: configStore.paths.file,
+			home: homedir(),
+			adopt: (day) => this.adoptScratchDay(day),
+		});
 		if (config) {
 			// The same call `adoptConfig` makes, for the config this run started
 			// with. Without it DevHub would run in `auto` until the first save.
@@ -914,30 +918,21 @@ export class AppController {
 		this.agentReconcilers.follow(this.agentHosts());
 		this.repositoryStatus.start();
 		this.watchForWake();
-		this.midnight.arm();
+		this.scratch.start();
 	}
 
 	/**
-	 * Scratch moves to the new day's folder at each local midnight.
-	 *
-	 * Only the identity moves: yesterday's folder stays open as an ordinary
-	 * row with its Agents and its workbench exactly as they were. A wake and a
-	 * settings change re-aim the timer (see `MidnightTimer`); the launch itself
-	 * was reconciled before the model existed (`createAppController`).
+	 * Keeps Scratch on today's folder under the `[scratch] daily` this run is
+	 * on: at each local midnight, on a wake, and when settings with a
+	 * different `daily` are accepted (`adoptConfig`). Only the identity moves:
+	 * yesterday's folder stays open as an ordinary row with its Agents and its
+	 * workbench exactly as they were. The launch itself was reconciled before
+	 * the model existed (`createAppController`).
 	 */
-	private readonly midnight = new MidnightTimer(() => {
-		// Not caught here: a failure nothing can recover from goes to the main
-		// process's root (`mainFailureRoot.ts`) like any other.
-		void this.adoptToday();
-	});
+	private readonly scratch: ScratchFollower;
 
-	/** Make today's folder and make it Scratch. See `AppModel.adoptScratchDay`. */
-	private async adoptToday(): Promise<void> {
-		const today = await scratchDay(
-			scratchTemplate(this.config),
-			new Date(),
-			homedir(),
-		);
+	/** Make `today` Scratch. See `AppModel.adoptScratchDay`. */
+	private async adoptScratchDay(today: ScratchDay): Promise<void> {
 		await this.dispatchAwaiting({
 			type: "adopt_scratch_day",
 			workspaceId: today.workspace.id,
@@ -973,8 +968,9 @@ export class AppController {
 			this.agentReconcilers.wake();
 			this.checkEditorHealth();
 			// A Mac asleep across midnight wakes to a timer aimed at a moment
-			// that has passed, or at one in a timezone it has left.
-			this.midnight.rearm();
+			// that has passed, or at one in a timezone it has left. Not caught
+			// here: a failure goes to the main process's root like any other.
+			void this.scratch.resumed();
 		};
 		electron.powerMonitor.on("resume", wake);
 		this.stopWatchingWake = (): void => {
@@ -1894,7 +1890,7 @@ export class AppController {
 		await this.saveState();
 		this.agentReconcilers.stop();
 		this.stopWatchingWake?.();
-		this.midnight.stop();
+		this.scratch.stop();
 		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -5199,11 +5195,7 @@ export class AppController {
 	private watchConfig(): void {
 		this.stopWatchingConfig = this.configStore.watch(2000, (outcome) => {
 			if ("kind" in outcome && outcome.kind === "applied") {
-				this.config = outcome.loaded.config;
-				this.applyChordLayout();
-				this.publishAppearance();
-				this.publishProfiles();
-				this.publishActions();
+				this.adoptConfig(outcome.loaded.config);
 				publishSettingsSnapshot();
 				return;
 			}
@@ -5221,12 +5213,21 @@ export class AppController {
 		return this.config;
 	}
 
-	adoptConfig(config: Config): void {
-		const dailyBefore = scratchTemplate(this.config);
+	/**
+	 * Settings were accepted, and this run is on them from now on.
+	 *
+	 * The one way in, whether they came from the Settings window or from an
+	 * edit to the file: two paths used to say this, each doing part of it, so
+	 * an edit to the file left Scratch and the OS appearance where they were
+	 * and a Settings save left the Agent actions and the profile's socket.
+	 */
+	adoptConfig(accepted: Config): void {
+		const config = withProfileRuntimes(accepted, activeProfile()).config;
 		this.config = config;
 		// A new `[scratch] daily` names a different folder for today, and that
 		// folder is Scratch from now on; the old one stays as an ordinary row.
-		if (scratchTemplate(config) !== dailyBefore) this.midnight.rearm();
+		// Not caught here: a failure goes to the main process's root.
+		void this.scratch.settingsAccepted(config.scratch.daily);
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every
@@ -5234,6 +5235,7 @@ export class AppController {
 		appearanceMode().apply(config.appearance.mode);
 		this.publishAppearance();
 		this.publishProfiles();
+		this.publishActions();
 	}
 
 	//#endregion
@@ -6301,10 +6303,11 @@ export async function createAppController(
 	const profiles = (config?.agentProfiles ?? []).map(toDomainProfile);
 	// Scratch is today's folder, worked out now rather than read from the file:
 	// a file from yesterday names yesterday's folder as an ordinary Workspace,
-	// and today's becomes Scratch. With no readable settings it is the default
-	// template — the settings failure is already on its way to the person.
+	// and today's becomes Scratch. With no readable settings there is no
+	// `daily`, and Scratch is the stand-in `scratchDay` says — never a folder
+	// made from the default nobody configured.
 	const today = await scratchDay(
-		scratchTemplate(config),
+		{ daily: config?.scratch.daily, settingsFile: configStore.paths.file },
 		new Date(),
 		homedir(),
 	);
@@ -6358,11 +6361,6 @@ export async function createAppController(
 		);
 	}
 	return current;
-}
-
-/** `[scratch] daily`, or its default when there are no readable settings. */
-function scratchTemplate(config: Config | undefined): string {
-	return config?.scratch.daily ?? DEFAULT_SCRATCH_DAILY;
 }
 
 export function appController(): AppController {
