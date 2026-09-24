@@ -23,7 +23,10 @@ import { ClaudeAdapter } from "../agent/conversation/claude/adapter.js";
 import { claudeStructuredCommand } from "../agent/conversation/claude/argv.js";
 import { CodexAdapter } from "../agent/conversation/codex/adapter.js";
 import { appServerArgs } from "../agent/conversation/codex/argv.js";
-import { AgentConversation } from "../agent/conversation/conversation.js";
+import {
+	AgentConversation,
+	openedLater,
+} from "../agent/conversation/conversation.js";
 import {
 	agentStateDirectory,
 	hostSessionCommand,
@@ -120,21 +123,30 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			agentId,
 		);
 
-	const conversationOn = async (
+	/**
+	 * The Agent's conversation, made on first ask. Nothing here can fail but
+	 * DevHub's own invariants: opening the host is the conversation's first
+	 * act, so a machine that cannot be asked is that Agent's failure, read on
+	 * its pane, rather than a failure of whoever asked.
+	 */
+	const conversationOn = (
 		machine: RuntimeId,
 		agentId: AgentId,
 		kind: AgentProfile["kind"],
 		root: string,
-	): Promise<AgentConversation> => {
-		const existing = registry.get(agentId);
-		if (existing !== undefined) return existing;
-		const runtime = options.machineRuntime(machine);
-		const directory = await stateDirectory(machine, agentId);
-		return registry.open(
+	): AgentConversation =>
+		registry.get(agentId) ??
+		registry.open(
 			agentId,
 			(publish) =>
 				new AgentConversation(
-					new HostLink(runtime, directory),
+					openedLater(
+						async () =>
+							new HostLink(
+								options.machineRuntime(machine),
+								await stateDirectory(machine, agentId),
+							),
+					),
 					adapterFor(kind, {
 						bootId,
 						cwd: root,
@@ -143,7 +155,6 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					publish,
 				),
 		);
-	};
 
 	const conversations: GuiConversations = {
 		registry,
@@ -473,7 +484,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				};
 				let send: (text: string) => Promise<void>;
 				if (about.presentation === "gui") {
-					const conversation = await conversationOn(
+					const conversation = conversationOn(
 						machine,
 						id,
 						about.kind,

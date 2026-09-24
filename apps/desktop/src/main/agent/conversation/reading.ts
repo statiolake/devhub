@@ -37,7 +37,14 @@ const FAILURE_CODES: Readonly<
 export function observeConversation(
 	reading: ConversationReading,
 ): ConversationObservation {
-	const { transcript, lost } = reading;
+	const { transcript, lost, crashed } = reading;
+	if (crashed !== undefined) {
+		return {
+			status: "error",
+			activity: undefined,
+			failure: { code: "conversation_failed", detail: crashed.message },
+		};
+	}
 	// A conversation DevHub cannot follow is not read at all, whatever the last
 	// thing it said was: the status is the one for "nobody is reading it".
 	if (lost !== undefined) {

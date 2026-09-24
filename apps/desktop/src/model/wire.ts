@@ -632,6 +632,7 @@ function agentFailureAsAppError(
     case "conversation_protocol_mismatch":
     case "conversation_not_signed_in":
     case "conversation_refused":
+    case "conversation_failed":
       // A conversation's failure is a reading a round carries onto its
       // Agent's row, never the refusal of a port call.
       throw new Error(

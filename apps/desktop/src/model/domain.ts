@@ -910,6 +910,11 @@ export const AGENT_FAILURE_CODES = [
   "conversation_not_signed_in",
   /** A GUI Agent's CLI refused to start. */
   "conversation_refused",
+  /**
+   * DevHub could not follow a GUI Agent's conversation for a reason of its
+   * own — its host could not be opened, or DevHub failed on what it read.
+   */
+  "conversation_failed",
 ] as const;
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number];
 

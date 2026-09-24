@@ -124,7 +124,8 @@ export type AgentFailureWire =
 	| "conversation_host_lost"
 	| "conversation_protocol_mismatch"
 	| "conversation_not_signed_in"
-	| "conversation_refused";
+	| "conversation_refused"
+	| "conversation_failed";
 
 export interface AgentFailureStateWire {
 	readonly code: AgentFailureWire;

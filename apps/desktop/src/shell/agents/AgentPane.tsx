@@ -152,6 +152,7 @@ function conversationWayOut(
     case "conversation_host_lost":
     case "conversation_protocol_mismatch":
     case "conversation_refused":
+    case "conversation_failed":
       return [
         {
           label: "Continue in terminal",

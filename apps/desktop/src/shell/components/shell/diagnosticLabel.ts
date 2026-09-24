@@ -107,6 +107,8 @@ export function agentFailureSummary(code: AgentFailureWire): string {
       return "This Agent's CLI is not signed in.";
     case "conversation_refused":
       return "This Agent's CLI refused to start.";
+    case "conversation_failed":
+      return "DevHub stopped following this Agent's conversation.";
   }
 }
 

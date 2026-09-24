@@ -39,8 +39,12 @@
  *   `TranscriptInvariantError` from its own fold). That is version skew and
  *   nothing retries it: the conversation turns `broken` and takes no input.
  *
- * Anything else is a broken assumption of DevHub's own, and it is not turned
- * into either: the reading throws it, so the round that asks fails with it.
+ * Anything else is a broken assumption of DevHub's own — a host that could
+ * not even be opened, a bug — and it is not turned into either. It stops the
+ * conversation for good, goes to the log with its stack, and is read as this
+ * Agent's failure (`crashed`): on its pane and its row, where its subject is.
+ * It is not thrown at the round, which would fail every Agent on the machine
+ * and show on none of them — the spinner that never ends.
  */
 
 import {
@@ -74,10 +78,33 @@ export interface ConversationHost {
 	sentLog(): Promise<readonly SentRecord[]>;
 }
 
+/**
+ * A host that is opened by the first call that needs it.
+ *
+ * Opening one asks the machine where its home is, which can fail; done here,
+ * inside the conversation's own calls, the failure reaches the conversation's
+ * root like every other, instead of whoever asked for the conversation.
+ */
+export function openedLater(
+	open: () => Promise<ConversationHost>,
+): ConversationHost {
+	let opening: Promise<ConversationHost> | undefined;
+	const host = () => (opening ??= open());
+	return {
+		async *lines(fromOffset, cancel) {
+			yield* (await host()).lines(fromOffset, cancel);
+		},
+		write: async (line, afterOffset) => (await host()).write(line, afterOffset),
+		sentLog: async () => (await host()).sentLog(),
+	};
+}
+
 export interface ConversationReading {
 	readonly transcript: Transcript;
 	/** Why the journal is not being followed now, if it is not. */
 	readonly lost: HostLinkFailure | undefined;
+	/** What stopped the conversation for good, if something DevHub did not expect did. */
+	readonly crashed: Error | undefined;
 }
 
 /** An event as the page receives it: numbered, so a gap is visible. */
@@ -109,7 +136,7 @@ export class AgentConversation {
 	#following: Promise<void> | undefined;
 	#attached = false;
 	#lost: HostLinkFailure | undefined;
-	#crashed: { readonly error: unknown } | undefined;
+	#crashed: Error | undefined;
 
 	constructor(
 		host: ConversationHost,
@@ -140,8 +167,11 @@ export class AgentConversation {
 	}
 
 	reading(): ConversationReading {
-		if (this.#crashed !== undefined) throw this.#crashed.error;
-		return { transcript: this.#transcript, lost: this.#lost };
+		return {
+			transcript: this.#transcript,
+			lost: this.#lost,
+			crashed: this.#crashed,
+		};
 	}
 
 	/** The page's starting point: everything up to `revision`; events after it follow. */
@@ -161,6 +191,7 @@ export class AgentConversation {
 	}
 
 	#refuseIfBroken(): void {
+		if (this.#crashed !== undefined) throw this.#crashed;
 		const { state } = this.#transcript;
 		if (state.phase === "broken") {
 			throw new Error(
@@ -243,7 +274,12 @@ export class AgentConversation {
 				});
 				return;
 			}
-			this.#crashed = { error };
+			this.#cancel.cancel();
+			this.#crashed = error instanceof Error ? error : new Error(String(error));
+			console.error(
+				"[devhub] a GUI Agent's conversation stopped on a failure DevHub did not expect:",
+				this.#crashed.stack ?? this.#crashed.message,
+			);
 		}
 	}
 

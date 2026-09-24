@@ -37,6 +37,7 @@ describe("reading a conversation", () => {
 			observeConversation({
 				transcript: applyEvents(EMPTY_TRANSCRIPT, running),
 				lost: undefined,
+				crashed: undefined,
 			}),
 		).toEqual({
 			status: "working",
@@ -47,7 +48,11 @@ describe("reading a conversation", () => {
 
 	it("is unknown while connecting, as a screen nobody has read", () => {
 		expect(
-			observeConversation({ transcript: EMPTY_TRANSCRIPT, lost: undefined }),
+			observeConversation({
+				transcript: EMPTY_TRANSCRIPT,
+				lost: undefined,
+				crashed: undefined,
+			}),
 		).toEqual({
 			status: "unknown",
 			activity: undefined,
@@ -61,6 +66,7 @@ describe("reading a conversation", () => {
 			observeConversation({
 				transcript: applyEvents(EMPTY_TRANSCRIPT, running),
 				lost,
+				crashed: undefined,
 			}),
 		).toEqual({
 			status: "unknown",
@@ -68,6 +74,23 @@ describe("reading a conversation", () => {
 			failure: {
 				code: "conversation_host_lost",
 				detail: "the journal stopped",
+			},
+		});
+	});
+
+	it("is an error, saying what went wrong, when DevHub could not follow it at all", () => {
+		expect(
+			observeConversation({
+				transcript: applyEvents(EMPTY_TRANSCRIPT, running),
+				lost: undefined,
+				crashed: new Error("home() did not answer"),
+			}),
+		).toEqual({
+			status: "error",
+			activity: undefined,
+			failure: {
+				code: "conversation_failed",
+				detail: "home() did not answer",
 			},
 		});
 	});
@@ -86,7 +109,9 @@ describe("reading a conversation", () => {
 				},
 			},
 		]);
-		expect(observeConversation({ transcript, lost: undefined })).toEqual({
+		expect(
+			observeConversation({ transcript, lost: undefined, crashed: undefined }),
+		).toEqual({
 			status: "error",
 			activity: undefined,
 			failure: {

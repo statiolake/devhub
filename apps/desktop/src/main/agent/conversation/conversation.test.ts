@@ -21,7 +21,11 @@ import {
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
-import { AgentConversation, type ConversationHost } from "./conversation.js";
+import {
+	AgentConversation,
+	openedLater,
+	type ConversationHost,
+} from "./conversation.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
@@ -425,8 +429,44 @@ describe("a journal stream that is lost", () => {
 	});
 });
 
+describe("a host that could not be opened", () => {
+	it("is this Agent's failure, read from its conversation, and not a round's", async () => {
+		const conversation = new AgentConversation(
+			openedLater(() => Promise.reject(new Error("the machine has no home"))),
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+		);
+		conversation.start();
+		await settle();
+		expect(conversation.reading().crashed?.message).toBe(
+			"the machine has no home",
+		);
+		await conversation.stop();
+	});
+
+	it("is opened once, by the first thing that needs it", async () => {
+		const host = new FakeHost();
+		let opened = 0;
+		const conversation = new AgentConversation(
+			openedLater(() => {
+				opened += 1;
+				return Promise.resolve(host);
+			}),
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+		);
+		conversation.start();
+		await settle();
+		host.print(JSON.stringify({ type: "hologram" }));
+		await settle();
+		expect(opened).toBe(1);
+		expect(conversation.reading().transcript.entries).toHaveLength(1);
+		await conversation.stop();
+	});
+});
+
 describe("a failure that is neither the host's nor the protocol's", () => {
-	it("is thrown by the reading, so the round that asks fails with it", async () => {
+	it("stops the conversation and is read as a failure of this Agent, not of the round", async () => {
 		const host = new FakeHost();
 		host.sentLog = () => Promise.reject(new TypeError("a bug of DevHub's own"));
 		const conversation = new AgentConversation(
@@ -436,7 +476,14 @@ describe("a failure that is neither the host's nor the protocol's", () => {
 		);
 		conversation.start();
 		await settle();
-		expect(() => conversation.reading()).toThrow(/a bug of DevHub's own/);
+		const reading = conversation.reading();
+		expect(reading.crashed).toBeInstanceOf(TypeError);
+		expect(reading.crashed?.message).toBe("a bug of DevHub's own");
+		// It does not start again on its own, and it takes no input.
+		conversation.reattach();
+		await expect(conversation.command({ kind: "interrupt" })).rejects.toThrow(
+			/a bug of DevHub's own/,
+		);
 		await conversation.stop();
 	});
 });
