@@ -1058,9 +1058,7 @@ describe("a protocol DevHub stopped understanding", () => {
 			}
 			expect(thrown).toBeInstanceOf(ProtocolMismatch);
 			expect((thrown as ProtocolMismatch).message).toMatch(detail);
-			expect((thrown as ProtocolMismatch).agentVersion).toContain(
-				"0.156.1",
-			);
+			expect((thrown as ProtocolMismatch).agentVersion).toContain("0.156.1");
 			expect(() =>
 				harness.receive({
 					method: "warning",
