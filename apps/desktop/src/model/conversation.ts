@@ -260,8 +260,11 @@ export interface SlashCommand {
   readonly name: string;
   readonly description: string;
   readonly argumentHint: string | undefined;
-  /** `message` is sent as the text of a user message; `devhub` opens DevHub's own UI for it (`/model`). */
-  readonly route: "message" | "devhub";
+  /**
+   * `message`: sent as the text of a user message. Otherwise the header picker
+   * for that setting, which DevHub opens instead of sending (`/model`).
+   */
+  readonly route: "message" | "model" | "effort" | "mode";
 }
 
 /**

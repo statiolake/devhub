@@ -655,7 +655,7 @@ describe("session facts and usage", () => {
         name: "model",
         description: "Switch model",
         argumentHint: undefined,
-        route: "devhub",
+        route: "model",
       },
     ],
   };

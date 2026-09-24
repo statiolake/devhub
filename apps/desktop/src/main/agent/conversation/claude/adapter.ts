@@ -78,8 +78,15 @@ import {
 
 type JsonObject = { readonly [key: string]: JsonValue };
 
-/** Commands DevHub answers with its own UI rather than sending (design §3.3). */
-const DEVHUB_ROUTED = new Set(["model", "effort", "permissions"]);
+/**
+ * Commands DevHub answers with its own header picker rather than sending
+ * (design §3.3), and the setting each one opens.
+ */
+const PICKED: Readonly<Record<string, "model" | "effort" | "mode">> = {
+	model: "model",
+	effort: "effort",
+	permissions: "mode",
+};
 
 /** Commands that only work in the TUI; "continue in terminal" is the way to them. */
 const TUI_ONLY = new Set(["login", "logout"]);
@@ -401,7 +408,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			.filter((command) => !TUI_ONLY.has(command.name))
 			.map((command) => ({
 				...command,
-				route: DEVHUB_ROUTED.has(command.name) ? "devhub" : "message",
+				route: Object.hasOwn(PICKED, command.name)
+					? PICKED[command.name]!
+					: "message",
 			}));
 	}
 

@@ -100,7 +100,14 @@ function init(fields: Record<string, unknown> = {}): string {
 		cwd: "/home/testuser/project",
 		model: "claude-sonnet-5",
 		permissionMode: "default",
-		slash_commands: ["review", "model", "effort", "login", "logout"],
+		slash_commands: [
+			"review",
+			"model",
+			"effort",
+			"permissions",
+			"login",
+			"logout",
+		],
 		claude_code_version: "2.1.0",
 		...fields,
 	});
@@ -296,13 +303,19 @@ describe("the handshake", () => {
 				name: "model",
 				description: "",
 				argumentHint: undefined,
-				route: "devhub",
+				route: "model",
 			},
 			{
 				name: "effort",
 				description: "",
 				argumentHint: undefined,
-				route: "devhub",
+				route: "effort",
+			},
+			{
+				name: "permissions",
+				description: "",
+				argumentHint: undefined,
+				route: "mode",
 			},
 		]);
 	});
@@ -397,7 +410,7 @@ describe("the permission fixture", () => {
 				name: "model",
 				description: "Set the AI model",
 				argumentHint: undefined,
-				route: "devhub",
+				route: "model",
 			},
 			{
 				name: "compact",

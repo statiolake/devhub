@@ -766,19 +766,19 @@ export class CodexAdapter implements ProtocolAdapter {
 					name: "model",
 					description: "Choose the model",
 					argumentHint: undefined,
-					route: "devhub",
+					route: "model",
 				},
 				{
 					name: "effort",
 					description: "Choose the reasoning effort",
 					argumentHint: undefined,
-					route: "devhub",
+					route: "effort",
 				},
 				{
 					name: "approvals",
 					description: "Choose what Codex may do without asking",
 					argumentHint: undefined,
-					route: "devhub",
+					route: "mode",
 				},
 			],
 		};
