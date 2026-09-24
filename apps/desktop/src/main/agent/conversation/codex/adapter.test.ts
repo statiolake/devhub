@@ -219,7 +219,7 @@ describe("the handshake", () => {
 		expect(harness.events.at(-1)?.type).not.toBe("entry");
 		harness.receive(models!);
 		const { session } = harness.transcript;
-		expect(session.agentVersion).toContain("codex_cli_rs/0.156.1");
+		expect(session.agentVersion).toBe("0.156.1");
 		expect(session.sessionId).toBe(MAIN);
 		expect(session.cwd).toBe(CWD);
 		expect(session.model).toEqual({
@@ -281,7 +281,7 @@ describe("the handshake", () => {
 
 		expect(harness.lastWrite()).toMatchObject({ method: "thread/start" });
 		expect(outline(harness.transcript)).toEqual([
-			"notice(warning): codex_cli_rs/0.156.1 (Mac OS 15.0.0; arm64) devhub/0.1.0 could not read its account: keyring locked",
+			"notice(warning): codex 0.156.1 could not read its account: keyring locked",
 		]);
 	});
 
@@ -929,7 +929,7 @@ describe("what DevHub does not know", () => {
 		const harness = ready();
 		harness.receive({ method: "thread/sparkles", params: { threadId: MAIN } });
 		expect(outline(harness.transcript)).toEqual([
-			"notice(warning): codex_cli_rs/0.156.1 (Mac OS 15.0.0; arm64) devhub/0.1.0 sent `thread/sparkles`, which DevHub does not know.",
+			"notice(warning): codex 0.156.1 sent `thread/sparkles`, which DevHub does not know.",
 		]);
 		expect(harness.transcript.entries[0]).toMatchObject({
 			raw: { method: "thread/sparkles" },
@@ -1025,7 +1025,7 @@ describe("a protocol DevHub stopped understanding", () => {
 					},
 				},
 			},
-			/^params\.item\.status: expected one of inProgress \| completed \| failed \| declined, got a string \(CLI codex_cli_rs\/0\.156\.1/,
+			/^params\.item\.status: expected one of inProgress \| completed \| failed \| declined, got a string \(CLI 0\.156\.1/,
 		],
 		[
 			"a line that is not JSON",
@@ -1059,7 +1059,7 @@ describe("a protocol DevHub stopped understanding", () => {
 			expect(thrown).toBeInstanceOf(ProtocolMismatch);
 			expect((thrown as ProtocolMismatch).message).toMatch(detail);
 			expect((thrown as ProtocolMismatch).agentVersion).toContain(
-				"codex_cli_rs/0.156.1",
+				"0.156.1",
 			);
 			expect(() =>
 				harness.receive({
@@ -1140,5 +1140,40 @@ describe("replay", () => {
 		}
 		replayed.receive({ id: 9, method: "item/tool/call", params: {} });
 		expect(replayed.written).toEqual([]);
+	});
+});
+
+/**
+ * Real app-server sessions, scrubbed (see each capture's header): the lines
+ * it printed and the lines DevHub wrote, in the order they happened. Where
+ * they and the hand-written fixtures disagree, the captures are right.
+ */
+function played(
+	name: string,
+	adapter = new CodexAdapter(OPTIONS),
+): CodexAdapter {
+	for (const line of readFileSync(
+		new URL(`./fixtures/${name}`, import.meta.url),
+		"utf8",
+	).split("\n")) {
+		if (line.startsWith("> ")) adapter.sent(line.slice(2));
+		else if (line.startsWith("< ")) adapter.received(line.slice(2));
+	}
+	return adapter;
+}
+
+describe("a captured app-server that is not signed in", () => {
+	it("stops, naming codex and its version rather than the user agent DevHub is sent back", () => {
+		const { transcript } = played("signed-out.capture.ndjson");
+		expect(transcript.session.agentVersion).toBe("0.156.1");
+		expect(transcript.state).toEqual({
+			phase: "broken",
+			failure: {
+				code: "not_signed_in",
+				detail:
+					"codex 0.156.1 is not signed in. Run `codex login` in a terminal.",
+			},
+		});
+		expect(transcript.entries).toEqual([]);
 	});
 });

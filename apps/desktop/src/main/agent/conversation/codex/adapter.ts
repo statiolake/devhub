@@ -465,7 +465,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	}
 
 	private get codexName(): string {
-		return this.version ?? "codex";
+		return this.version === undefined ? "codex" : `codex ${this.version}`;
 	}
 
 	// -------------------------------------------------------------------------
@@ -595,7 +595,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		const method = this.methodOf(id, "message.id");
 		switch (method) {
 			case "initialize": {
-				this.version = initializeResponse(this.reader, result).userAgent;
+				this.version = versionOf(
+					initializeResponse(this.reader, result).userAgent,
+				);
 				this.publishSession();
 				if (!this.sentMethods.has("initialized")) {
 					this.writes.push(JSON.stringify({ method: "initialized" }));
@@ -2208,4 +2210,15 @@ function mcpText(result: JsonValue): string {
 			)
 		: [];
 	return texts.length > 0 ? texts.join("\n") : JSON.stringify(result, null, 2);
+}
+
+/**
+ * Codex's version, from the user agent `initialize` answers with.
+ *
+ * The agent is `<client name>/<codex version> (<platform>) …` — the name at
+ * its head is the one DevHub sent as `clientInfo.name`, so the whole string
+ * reads as DevHub's, not Codex's. The version after the slash is Codex's own.
+ */
+function versionOf(userAgent: string): string | undefined {
+	return /^[^/\s]+\/(\S+)/u.exec(userAgent)?.[1];
 }

@@ -1,0 +1,11 @@
+# SCRUBBED REAL CAPTURE. codex-cli 0.156.1 app-server, through DevHub's host
+# (journal "< " and in.log "> ", interleaved at the offsets in.log recorded),
+# captured 2026-09-25 for design §8 stage 0, with an empty CODEX_HOME: the
+# handshake of an app-server that is not signed in. No prompt was sent.
+# Scrubbed: paths, host name, ids, platform version.
+> {"id":0,"method":"initialize","params":{"clientInfo":{"name":"devhub","title":"DevHub","version":"0.1.0"},"capabilities":{"experimentalApi":false,"requestAttestation":false}}}
+< {"id":0,"result":{"userAgent":"devhub/0.156.1 (Mac OS 15.0.0; arm64) tmux-256color (devhub; 0.1.0)","codexHome":"/home/testuser/.codex","platformFamily":"unix","platformOs":"macos"}}
+> {"method":"initialized"}
+> {"id":1,"method":"account/read","params":{}}
+< {"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"build-box.example.com","installationId":"00000000-0000-7000-8000-000000000001","environmentId":null},"emittedAtMs":1790293979406}
+< {"id":1,"result":{"account":null,"requiresOpenaiAuth":true,"workspaceRouting":null}}
