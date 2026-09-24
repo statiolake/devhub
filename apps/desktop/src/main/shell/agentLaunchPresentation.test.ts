@@ -1,12 +1,11 @@
 /**
- * A GUI Agent, before there is a GUI to start.
+ * Launching an Agent as a terminal or as a GUI.
  *
- * The conversation host arrives in a later stage. Until it does, a launch that
- * asked for GUI has nothing to start — and the one thing it must not do is
- * start a terminal instead, because the person who asked for the conversation
- * view would be looking at a TUI with no sign that their choice was ignored.
- * So it is refused where it would have started, by name, and tmux is never
- * asked for anything.
+ * The two differ at launch in one place: the session command. A GUI Agent's
+ * session runs its CLI in structured mode under the host, with the host's
+ * files in a directory made for it first; everything else about the session
+ * is the terminal's. Only Claude and Codex can be GUI Agents at all; the
+ * domain refuses a GUI presentation to any other kind before it gets here.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -19,13 +18,18 @@ import {
 	Workspace,
 	workspaceId,
 	workspaceLocation,
+	type AgentProfileKind,
 } from "../../model/domain.js";
+import { CLAUDE_STRUCTURED_FLAGS } from "../agent/conversation/claude/argv.js";
+import { HOST_NAME, HOST_SCRIPT } from "../agent/conversation/hostScript.js";
+import type { Runtime } from "../runtime/runtime.js";
+import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { agents } from "./adapters.js";
 import { wireAgents } from "./agentWiring.js";
-import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 
 const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
 const AGENT = agentId("550e8400-e29b-41d4-a716-4466554400d0");
+const HOME = "/home/testuser";
 
 function wired() {
 	const model = new AppModel(
@@ -36,60 +40,134 @@ function wired() {
 		),
 	);
 	const launchAgent = vi.fn(() => Promise.resolve());
+	const makeDirectory = vi.fn(() => Promise.resolve());
 	wireAgents({
 		runtimeFor: () =>
 			Promise.resolve({ launchAgent } as unknown as TmuxTerminalRuntime),
 		model: () => model,
 		machineOf: () => "local",
+		machineRuntime: () =>
+			({
+				home: () => Promise.resolve(HOME),
+				makeDirectory,
+				where: "",
+			}) as unknown as Runtime,
+		report: () => {
+			throw new Error("nothing ended in these tests");
+		},
+		clientVersion: "0.0.0-test",
 	});
 	const adapter = agents();
 	if (!adapter) throw new Error("the Agent adapter was not registered");
-	return { adapter, launchAgent };
+	return { adapter, launchAgent, makeDirectory };
 }
 
-const claude = AgentProfile.create(
-	agentProfileId("claude"),
-	"Claude",
-	"claude",
-	"claude",
-	[],
-	new Map(),
-	"gui",
-);
+function profile(kind: AgentProfileKind): AgentProfile {
+	return AgentProfile.create(
+		agentProfileId(kind),
+		kind === "claude" ? "Claude" : "Codex",
+		kind,
+		kind,
+		["--model", "opus"],
+		new Map([["EXAMPLE", "1"]]),
+		"gui",
+	);
+}
 
-describe("launching a GUI Agent", () => {
-	it("is refused by name, and nothing is started in its place", async () => {
-		const { adapter, launchAgent } = wired();
+describe("launching a GUI Claude Agent", () => {
+	it("runs claude in structured mode under the host, in a directory made for it first", async () => {
+		const { adapter, launchAgent, makeDirectory } = wired();
 
 		const result = await adapter.launch(
 			WORKSPACE,
 			AGENT,
-			claude,
+			profile("claude"),
 			"gui",
 			"/srv/api",
 		);
 
-		expect(result).toEqual({
-			kind: "failed",
-			code: "agent_profile_unavailable",
-			detail:
-				"GUI mode is not available yet, so “Claude” was not started. It can open as a terminal instead.",
-		});
-		expect(launchAgent).not.toHaveBeenCalled();
+		expect(result).toEqual({ kind: "started" });
+		const directory = `${HOME}/.devhub/agents/${AGENT}`;
+		expect(makeDirectory).toHaveBeenCalledWith(directory);
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: AGENT,
+				workspaceId: WORKSPACE,
+				root: "/srv/api",
+			}),
+			{
+				file: "/bin/sh",
+				args: [
+					"-c",
+					HOST_SCRIPT,
+					HOST_NAME,
+					directory,
+					"claude",
+					"--model",
+					"opus",
+					...CLAUDE_STRUCTURED_FLAGS,
+				],
+				env: { EXAMPLE: "1" },
+			},
+			expect.anything(),
+		);
 	});
+});
 
-	it("still starts a terminal from the same profile when that is what was asked", async () => {
-		const { adapter, launchAgent } = wired();
+describe("launching a GUI Codex Agent", () => {
+	it("runs codex's app-server under the host, after the profile's own arguments", async () => {
+		const { adapter, launchAgent, makeDirectory } = wired();
 
 		const result = await adapter.launch(
 			WORKSPACE,
 			AGENT,
-			claude,
+			profile("codex"),
+			"gui",
+			"/srv/api",
+		);
+
+		expect(result).toEqual({ kind: "started" });
+		const directory = `${HOME}/.devhub/agents/${AGENT}`;
+		expect(makeDirectory).toHaveBeenCalledWith(directory);
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			{
+				file: "/bin/sh",
+				args: [
+					"-c",
+					HOST_SCRIPT,
+					HOST_NAME,
+					directory,
+					"codex",
+					"--model",
+					"opus",
+					"app-server",
+				],
+				env: { EXAMPLE: "1" },
+			},
+			expect.anything(),
+		);
+	});
+});
+
+describe("launching a terminal Agent", () => {
+	it("runs the profile's own command, with no host and no directory", async () => {
+		const { adapter, launchAgent, makeDirectory } = wired();
+
+		const result = await adapter.launch(
+			WORKSPACE,
+			AGENT,
+			profile("claude"),
 			"tui",
 			"/srv/api",
 		);
 
 		expect(result).toEqual({ kind: "started" });
-		expect(launchAgent).toHaveBeenCalledTimes(1);
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			{ file: "claude", args: ["--model", "opus"], env: { EXAMPLE: "1" } },
+			expect.anything(),
+		);
+		expect(makeDirectory).not.toHaveBeenCalled();
 	});
 });

@@ -801,12 +801,18 @@ export class AppModel {
    * cannot get it wrong. The reason recorded is the status it moved into, so
    * the Sidebar can say *why* without a second vocabulary.
    */
-  setAgentStatus(id: AgentId, status: AgentStatus): void {
+  setAgentStatus(
+    id: AgentId,
+    status: AgentStatus,
+    failure: AgentFailure | undefined = undefined,
+  ): void {
     const agent = this.requireAgent(id);
     const attention = wantsAttention(agent.status, status);
     // Reading the Agent is what retires its last refusal, and the only thing
-    // that does. See `Agent.clearFailure`.
-    let changed = agent.clearFailure();
+    // that does. See `Agent.clearFailure`. A reading that itself says the
+    // Agent is failing puts that failure in its place instead.
+    let changed =
+      failure === undefined ? agent.clearFailure() : agent.fail(failure);
     if (agent.setStatus(status)) changed = true;
     if (attention && !this.isAgentVisible(id) && agent.setUnread(status)) {
       changed = true;
@@ -931,7 +937,11 @@ export class AppModel {
       if (exited.has(observation.agentId)) {
         continue;
       }
-      this.setAgentStatus(observation.agentId, observation.status);
+      this.setAgentStatus(
+        observation.agentId,
+        observation.status,
+        observation.failure,
+      );
       this.setAgentActivity(observation.agentId, observation.activity);
       this.setAgentInjection(observation.agentId, observation.injection);
       this.setAgentRuntimeHealth(

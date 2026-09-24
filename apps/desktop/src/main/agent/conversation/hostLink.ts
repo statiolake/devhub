@@ -78,6 +78,12 @@ export interface JournalLine {
 	readonly offset: number;
 }
 
+/** A line DevHub wrote to the host, and the journal offset it was written after. */
+export interface SentRecord {
+	readonly afterOffset: number;
+	readonly line: string;
+}
+
 /** How a host that is no longer running ended. */
 export type HostEnding =
 	/** The CLI exited, and this is its status (128 + n for a signal). */
@@ -256,7 +262,9 @@ export class HostLink {
 	}
 
 	/**
-	 * One line into the CLI's stdin, and into `in.log`.
+	 * One line into the CLI's stdin, and into `in.log` after `afterOffset`:
+	 * the journal offset the caller had read when it wrote, which is what lets
+	 * a replay put the line back where it was written.
 	 *
 	 * Writes run one at a time, in the order they were asked for: a line
 	 * longer than `PIPE_BUF` is not written atomically, and two of them at
@@ -264,13 +272,18 @@ export class HostLink {
 	 * contain a newline — that is the framing, and a caller that has one in a
 	 * line has not encoded it.
 	 */
-	write(line: string): Promise<void> {
+	write(line: string, afterOffset: number): Promise<void> {
 		if (line.includes("\n")) {
 			throw new Error(
 				"a line written to an Agent host must not contain a newline",
 			);
 		}
-		const next = this.#writes.then(() => this.#write(line));
+		if (!Number.isSafeInteger(afterOffset) || afterOffset < 0) {
+			throw new Error(`${String(afterOffset)} is not a journal offset`);
+		}
+		const next = this.#writes.then(() =>
+			this.#write(`${String(afterOffset)} ${line}`),
+		);
 		// Only the order is kept here; the failure itself is `next`'s, and it
 		// goes to the caller that asked for this write.
 		this.#writes = next.then(
@@ -319,8 +332,8 @@ export class HostLink {
 		);
 	}
 
-	/** Every line DevHub has written to this host, as one text. */
-	async sentLog(): Promise<string> {
+	/** Every line DevHub has written to this host, in order, each with the offset it followed. */
+	async sentLog(): Promise<readonly SentRecord[]> {
 		const result = await this.#read(
 			SENT_LOG_SCRIPT,
 			[],
@@ -334,7 +347,32 @@ export class HostLink {
 			);
 		}
 		this.#answered(result, "the input log");
-		return result.stdout.toString("utf8");
+		const text = result.stdout.toString("utf8");
+		if (text.length === 0) return [];
+		if (!text.endsWith("\n")) {
+			throw new HostLinkFailure(
+				"unreadable",
+				`the input log of the Agent host in ${this.#directory}${this.#runtime.where} ends in the middle of a line`,
+				undefined,
+			);
+		}
+		return text
+			.slice(0, -1)
+			.split("\n")
+			.map((entry, index) => {
+				const match = /^(\d+) /u.exec(entry);
+				if (match === null) {
+					throw new HostLinkFailure(
+						"unreadable",
+						`line ${String(index + 1)} of the input log of the Agent host in ${this.#directory}${this.#runtime.where} carries no journal offset`,
+						undefined,
+					);
+				}
+				return {
+					afterOffset: Number(match[1]),
+					line: entry.slice(match[0].length),
+				};
+			});
 	}
 
 	/**

@@ -2021,7 +2021,7 @@ describe.skipIf(TMUX === undefined)(
       );
       const lines = link.lines(0, new CancellationToken());
       expect((await next(lines)).line).toBe('{"type":"hello","argc":0}');
-      await link.write('{"through":"tmux"}');
+      await link.write('{"through":"tmux"}', 0);
       expect((await next(lines)).line).toBe('{"echo":{"through":"tmux"}}');
 
       await sessions.terminate("local", agentId);
@@ -2039,7 +2039,7 @@ describe.skipIf(TMUX === undefined)(
       const { test, link } = await launched("host-exit", agentId);
       const lines = link.lines(0, new CancellationToken());
       await next(lines);
-      await link.write('{"fake":"exit","code":3}');
+      await link.write('{"fake":"exit","code":3}', 0);
 
       for await (const line of lines) {
         throw new Error(`nothing more was written, and yet: ${line.line}`);

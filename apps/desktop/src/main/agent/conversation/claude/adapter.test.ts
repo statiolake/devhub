@@ -1300,6 +1300,27 @@ describe("what DevHub does not know", () => {
 			}),
 		);
 		adapter.received(stream({ type: "ping" }));
+		// A SessionStart hook reports itself even without --include-hook-events,
+		// and what it says is the owner's own configuration, not the conversation.
+		adapter.received(
+			json({
+				type: "system",
+				subtype: "hook_started",
+				hook_id: "h",
+				hook_name: "SessionStart:startup",
+			}),
+		);
+		adapter.received(
+			json({ type: "system", subtype: "hook_progress", hook_id: "h" }),
+		);
+		adapter.received(
+			json({
+				type: "system",
+				subtype: "hook_response",
+				hook_id: "h",
+				output: "private",
+			}),
+		);
 		expect(
 			adapter.transcript.entries.filter((each) => each.kind === "notice"),
 		).toEqual([]);

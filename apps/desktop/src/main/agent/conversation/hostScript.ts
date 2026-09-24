@@ -28,7 +28,10 @@
  * - `in`     a FIFO; the CLI's stdin. The host holds it open for reading and
  *            writing, so the CLI never sees EOF and a writer never blocks on
  *            open while the host is alive.
- * - `in.log` every line DevHub wrote to `in`, appended by the writer.
+ * - `in.log` every line DevHub wrote to `in`, appended by the writer, each
+ *            after the journal offset the conversation had read when it
+ *            wrote it: `<offset> <line>`. A replay puts every written line
+ *            back where it was written, which the lines alone cannot say.
  * - `pid`    the host's own pid, written (atomically) once `in` is open: the
  *            host is ready when this exists.
  * - `exit`   written (atomically) once, when the host is over: the CLI's exit
@@ -154,8 +157,9 @@ done
 export const WRITE_EXIT = { stateMissing: 3, hostGone: 4 } as const;
 
 /**
- * One line (on stdin) into the CLI, and into `in.log`. `$1` is the state
- * directory.
+ * One line into the CLI, and into `in.log`. `$1` is the state directory; stdin
+ * is `<offset> <line>`, all of which goes to `in.log` and only the line to the
+ * CLI.
  *
  * A host that has not written its `pid` yet is waited for — the first line a
  * conversation sends goes out straight after the launch, before the host has
@@ -182,7 +186,9 @@ done
 if [ -f "$D/exit" ] || ! kill -0 "$(cat "$D/pid")" 2>/dev/null; then
   echo "the host in $D has ended, so nothing is reading its input" >&2; exit ${WRITE_EXIT.hostGone}
 fi
-exec tee -a "$D/in.log" >"$D/in"
+IFS= read -r x || { echo "the write to $D carried no line" >&2; exit 2; }
+printf '%s\\n' "$x" >>"$D/in.log" || exit 1
+printf '%s\\n' "\${x#* }" >"$D/in"
 `;
 
 /** Everything DevHub has written to the host. `$1` is the state directory. */

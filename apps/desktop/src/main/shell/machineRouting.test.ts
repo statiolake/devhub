@@ -611,6 +611,9 @@ describe("a reconcile round is about one machine's Agents", () => {
 				Promise.resolve(adapterListing(machine === "local" ? [HERE] : [THERE])),
 			model: () => model.model,
 			machineOf: (workspaceId) => model.machineOf(workspaceId),
+			machineRuntime: noGuiAgentHere,
+			report: noGuiAgentHere,
+			clientVersion: "0.0.0-test",
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");
@@ -652,6 +655,9 @@ describe("a launch the Agent port refuses", () => {
 				} as unknown as TmuxTerminalRuntime),
 			model: () => model.model,
 			machineOf: (workspaceId) => model.machineOf(workspaceId),
+			machineRuntime: noGuiAgentHere,
+			report: noGuiAgentHere,
+			clientVersion: "0.0.0-test",
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");
@@ -678,3 +684,8 @@ describe("a launch the Agent port refuses", () => {
 		});
 	});
 });
+
+/** Every Agent in these tests is a terminal, so nothing reaches for a host. */
+function noGuiAgentHere(): never {
+	throw new Error("a terminal Agent's round asked for a GUI Agent's host");
+}

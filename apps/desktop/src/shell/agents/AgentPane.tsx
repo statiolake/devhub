@@ -6,6 +6,7 @@ import { agentFailureSummary } from "../components/shell/diagnosticLabel";
 import { Failure } from "../components/shell/SurfaceState";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { AgentShortcuts } from "../components/shell/AgentShortcuts";
+import { ConversationPane } from "./ConversationPane";
 
 /**
  * Every running Agent, mounted; the selected one shown.
@@ -55,15 +56,27 @@ export function AgentPane({
           key={surface.key}
           hidden={surface.key !== activeKey}
         >
-          <TerminalSurface
-            surfaceKey={surface.key}
-            surfaceLabel={surface.label}
-            appearance={appearance}
-            hidden={surface.key !== activeKey}
-            // The Sidebar already names the Agent on screen; a title inside
-            // the pane would say it twice.
-            hideTitle
-          />
+          {/* The one place the two presentations differ on this page: which
+              surface the pane is. Everything around it — the pool, the
+              failure drawn over it, the shortcuts — is the same pane. */}
+          {surface.presentation === "gui" ? (
+            <ConversationPane
+              agentId={surface.agentId}
+              label={surface.label}
+              appearance={appearance}
+              hidden={surface.key !== activeKey}
+            />
+          ) : (
+            <TerminalSurface
+              surfaceKey={surface.key}
+              surfaceLabel={surface.label}
+              appearance={appearance}
+              hidden={surface.key !== activeKey}
+              // The Sidebar already names the Agent on screen; a title inside
+              // the pane would say it twice.
+              hideTitle
+            />
+          )}
         </div>
       ))}
       {/* A failure about this Agent is drawn over this Agent's pane, because

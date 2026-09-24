@@ -99,6 +99,14 @@ export function agentFailureSummary(code: AgentFailureWire): string {
       return "This Agent's profile cannot be used.";
     case "workspace_unavailable":
       return "The workspace this Agent belongs to is unavailable.";
+    case "conversation_host_lost":
+      return "DevHub cannot read this Agent's conversation right now.";
+    case "conversation_protocol_mismatch":
+      return "This Agent said something DevHub cannot read, so the conversation has stopped taking input.";
+    case "conversation_not_signed_in":
+      return "This Agent's CLI is not signed in.";
+    case "conversation_refused":
+      return "This Agent's CLI refused to start.";
   }
 }
 

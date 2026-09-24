@@ -25,6 +25,7 @@ import {
 	readFileSync,
 	rmSync,
 	truncateSync,
+	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,7 +153,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 				Buffer.byteLength('{"type":"hello","argc":0}\n'),
 			);
 
-			await link.write('{"say":"日本語も一行"}');
+			await link.write('{"say":"日本語も一行"}', 0);
 			const [echo] = await readUntil(lines, (seen) => seen.length === 1);
 			expect(echo?.line).toBe('{"echo":{"say":"日本語も一行"}}');
 			expect(echo?.offset).toBe(
@@ -162,7 +163,9 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 
 			cancel.cancel();
 			expect(await lines.next()).toEqual({ done: true, value: undefined });
-			expect(await link.sentLog()).toBe('{"say":"日本語も一行"}\n');
+			expect(await link.sentLog()).toEqual([
+				{ afterOffset: 0, line: '{"say":"日本語も一行"}' },
+			]);
 		}, 20_000);
 
 		it("attaches from an offset after main restarts, with nothing missing and nothing twice", async () => {
@@ -172,7 +175,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const firstCancel = new CancellationToken();
 			const firstLines = first.lines(0, firstCancel);
 			await readUntil(firstLines, (seen) => seen.length === 1);
-			await first.write('{"fake":"count","n":200}');
+			await first.write('{"fake":"count","n":200}', 0);
 			const before = await readUntil(firstLines, (seen) => seen.length === 37);
 			// main goes away in the middle of a burst: the stream is killed and
 			// nothing but the last offset survives.
@@ -210,8 +213,8 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const link = new HostLink(make(), directory);
 			const lines = link.lines(0, new CancellationToken());
 			await readUntil(lines, (seen) => seen.length === 1);
-			await link.write('{"before":"exit"}');
-			await link.write('{"fake":"exit","code":3}');
+			await link.write('{"before":"exit"}', 0);
+			await link.write('{"fake":"exit","code":3}', 0);
 
 			const rest = await readAll(lines);
 			expect(rest.map((entry) => entry.line)).toEqual([
@@ -228,7 +231,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const link = new HostLink(make(), directory);
 			const lines = link.lines(0, new CancellationToken());
 			await readUntil(lines, (seen) => seen.length === 1);
-			await link.write('{"fake":"partial"}');
+			await link.write('{"fake":"partial"}', 0);
 
 			const rest = await readAll(lines);
 			expect(rest.map((entry) => entry.line)).toEqual(['{"cut":']);
@@ -251,7 +254,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(await readAll(lines)).toEqual([]);
 			expect(await link.ending()).toMatchObject({ kind: "vanished" });
 			expect(existsSync(join(directory, "exit"))).toBe(false);
-			const refused = await failureOf(link.write('{"after":"death"}'));
+			const refused = await failureOf(link.write('{"after":"death"}', 0));
 			expect(refused.code).toBe("host_gone");
 			expect(refused.message).toContain("nothing is reading its input");
 		}, 20_000);
@@ -259,7 +262,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 		it("holds a write for a host that has not started yet, rather than refusing it", async () => {
 			const directory = stateDirectory();
 			const link = new HostLink(make(), directory);
-			const written = link.write('{"first":"line"}');
+			const written = link.write('{"first":"line"}', 0);
 			startHost(directory);
 			await written;
 
@@ -277,7 +280,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			startHost(directory, ["/bin/sh", "-c", "sleep 30"]);
 			const link = new HostLink(make(), directory, { writeTimeoutMs: 1500 });
 			// Far more than any pipe holds, so the write has to wait for a reader.
-			const failure = await failureOf(link.write("x".repeat(1024 * 1024)));
+			const failure = await failureOf(link.write("x".repeat(1024 * 1024), 0));
 			expect(failure.code).toBe("write_failed");
 			expect(failure.message).toContain("did not take a line");
 		}, 20_000);
@@ -287,7 +290,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			startHost(directory);
 			const link = new HostLink(make(), directory);
 			const lines = link.lines(0, new CancellationToken());
-			await link.write('{"fake":"count","n":5}');
+			await link.write('{"fake":"count","n":5}', 0);
 			const seen = await readUntil(lines, (so) => so.length === 6);
 
 			truncateSync(join(directory, "out"), 0);
@@ -369,14 +372,55 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(
 				(await failureOf(readAll(link.lines(0, new CancellationToken())))).code,
 			).toBe("state_missing");
-			expect((await failureOf(link.write("{}"))).code).toBe("state_missing");
+			expect((await failureOf(link.write("{}", 0))).code).toBe("state_missing");
 			expect((await failureOf(link.sentLog())).code).toBe("state_missing");
 			expect((await failureOf(link.ending())).code).toBe("state_missing");
 		}, 20_000);
 
+		it("keeps each written line with the journal offset it followed, and gives both back", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			const [hello] = await readUntil(lines, (seen) => seen.length === 1);
+
+			await link.write('{"a":"one line"}', 0);
+			await link.write('{"b":"with  spaces "}', hello!.offset);
+			const echoes = await readUntil(lines, (seen) => seen.length === 2);
+
+			// The agent was given the lines alone.
+			expect(echoes.map((each) => each.line)).toEqual([
+				'{"echo":{"a":"one line"}}',
+				'{"echo":{"b":"with  spaces "}}',
+			]);
+			expect(await link.sentLog()).toEqual([
+				{ afterOffset: 0, line: '{"a":"one line"}' },
+				{ afterOffset: hello!.offset, line: '{"b":"with  spaces "}' },
+			]);
+			await lines.return(undefined);
+		}, 20_000);
+
+		it("fails visibly on an input log line with no offset", async () => {
+			const directory = stateDirectory();
+			writeFileSync(
+				join(directory, "in.log"),
+				'12 {"fine":1}\n{"no":"offset"}\n',
+			);
+			const failure = await failureOf(
+				new HostLink(make(), directory).sentLog(),
+			);
+			expect(failure.code).toBe("unreadable");
+			expect(failure.message).toContain("line 2 of the input log");
+		}, 20_000);
+
+		it("refuses an offset that is not one", () => {
+			const link = new HostLink(make(), stateDirectory());
+			expect(() => link.write("{}", -1)).toThrow("is not a journal offset");
+		});
+
 		it("refuses a line with a newline in it rather than sending two", () => {
 			const link = new HostLink(make(), stateDirectory());
-			expect(() => link.write("one\ntwo")).toThrow(
+			expect(() => link.write("one\ntwo", 0)).toThrow(
 				"must not contain a newline",
 			);
 		});

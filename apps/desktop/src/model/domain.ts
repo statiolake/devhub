@@ -895,6 +895,21 @@ export const AGENT_FAILURE_CODES = [
   "agent_profile_unavailable",
   /** The Workspace this Agent belongs to is not open any more. */
   "workspace_unavailable",
+  /**
+   * A GUI Agent's host cannot be read: its journal stream stopped, or never
+   * started. The conversation is intact in the host; DevHub attaches again
+   * once a round.
+   */
+  "conversation_host_lost",
+  /**
+   * A GUI Agent's CLI printed something of a kind DevHub knows in a shape it
+   * does not (version skew). The conversation takes no more input.
+   */
+  "conversation_protocol_mismatch",
+  /** A GUI Agent's CLI is not signed in. */
+  "conversation_not_signed_in",
+  /** A GUI Agent's CLI refused to start. */
+  "conversation_refused",
 ] as const;
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number];
 
@@ -1002,6 +1017,17 @@ export interface AgentObservation {
   readonly activity: string | undefined;
   /** What DevHub is holding for this Agent, and why it has not gone yet. */
   readonly injection: AgentInjection;
+  /**
+   * A failure that is a reading, not a refusal: true of the Agent for as long
+   * as the round keeps finding it, and gone the first round that does not.
+   *
+   * A GUI Agent's conversation can be unreadable or broken for many rounds
+   * running, so it cannot be a one-shot refusal that the next reading retires.
+   * Carried here, it is retired by the same rule — the next reading — because
+   * the next reading is simply the one that no longer says it. A terminal
+   * Agent's rounds never carry one.
+   */
+  readonly failure: AgentFailure | undefined;
 }
 
 /**

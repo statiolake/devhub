@@ -860,6 +860,70 @@ describe("a refusal about one Agent", () => {
   });
 });
 
+/**
+ * A failure that is itself a reading: a GUI Agent's conversation that cannot
+ * be followed, or that broke. It holds for as many rounds as the round keeps
+ * finding it, so it is carried on the reading — and retired by the same rule
+ * as a refusal, the next reading, because that is the reading that no longer
+ * says it.
+ */
+describe("a failure a reading carries", () => {
+  const lost = {
+    code: "conversation_host_lost",
+    detail: "the journal stopped",
+  } as const;
+
+  function reading(failure: typeof lost | undefined) {
+    return {
+      observations: [
+        {
+          agentId: AG_A,
+          status: "unknown" as const,
+          runtimeHealth: "healthy" as const,
+          activity: undefined,
+          injection: {
+            queued: 0,
+            waitingFor: "nothing_queued" as const,
+            lastResult: undefined,
+          },
+          failure,
+        },
+      ],
+      exited: [],
+    };
+  }
+
+  function model() {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "gui");
+    return model;
+  }
+
+  function failureOf(model: AppModel) {
+    return model
+      .snapshot()
+      .workspaces.flatMap((workspace) => workspace.agents)
+      .find((agent) => agent.id === AG_A)?.failure;
+  }
+
+  it("is shown on the Agent while the rounds keep reading it, without being republished", () => {
+    const shown = model();
+    shown.reconcileAgents(reading(lost), [WS_A]);
+    expect(failureOf(shown)).toEqual(lost);
+    const before = shown.snapshot().revision;
+    shown.reconcileAgents(reading(lost), [WS_A]);
+    expect(shown.snapshot().revision).toBe(before);
+    expect(failureOf(shown)).toEqual(lost);
+  });
+
+  it("goes with the first reading that does not carry it", () => {
+    const shown = model();
+    shown.reconcileAgents(reading(lost), [WS_A]);
+    shown.reconcileAgents(reading(undefined), [WS_A]);
+    expect(failureOf(shown)).toBeUndefined();
+  });
+});
+
 describe("arranging the rows", () => {
   function withTwoAgents(): AppModel {
     const model = scratchModel();

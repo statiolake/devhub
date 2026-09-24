@@ -1,9 +1,12 @@
-import type { AppSnapshot } from "../../../ipc/appShell";
+import type { AgentPresentationWire, AppSnapshot } from "../../../ipc/appShell";
 
 /** One mounted Agent pane: what the pool needs to keep it, and its label. */
 export interface PooledSurface {
   readonly key: string;
+  readonly agentId: string;
   readonly label: string;
+  /** Which surface the pane is: a terminal, or a conversation. Fixed at launch. */
+  readonly presentation: AgentPresentationWire;
 }
 
 /**
@@ -31,7 +34,12 @@ export function runningAgentSurfaces(
     for (const agent of workspace.agents) {
       if (agent.controlState.kind !== "running") continue;
       const key = `agent:${agent.id}`;
-      surfaces.set(key, { key, label: agent.displayName });
+      surfaces.set(key, {
+        key,
+        agentId: agent.id,
+        label: agent.displayName,
+        presentation: agent.presentation,
+      });
     }
   }
   return surfaces;

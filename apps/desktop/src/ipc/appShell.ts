@@ -120,7 +120,11 @@ export type AgentFailureWire =
 	| "tmux_command_timed_out"
 	| "tmux_session_conflict"
 	| "agent_profile_unavailable"
-	| "workspace_unavailable";
+	| "workspace_unavailable"
+	| "conversation_host_lost"
+	| "conversation_protocol_mismatch"
+	| "conversation_not_signed_in"
+	| "conversation_refused";
 
 export interface AgentFailureStateWire {
 	readonly code: AgentFailureWire;

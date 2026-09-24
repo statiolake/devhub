@@ -628,6 +628,15 @@ function agentFailureAsAppError(
     case "agent_runtime_unavailable":
     case undefined:
       return "agent_runtime_unavailable";
+    case "conversation_host_lost":
+    case "conversation_protocol_mismatch":
+    case "conversation_not_signed_in":
+    case "conversation_refused":
+      // A conversation's failure is a reading a round carries onto its
+      // Agent's row, never the refusal of a port call.
+      throw new Error(
+        `${failure} is a reading of a GUI Agent's conversation, not a port refusal`,
+      );
   }
 }
 

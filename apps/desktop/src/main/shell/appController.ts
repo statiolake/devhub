@@ -268,7 +268,8 @@ import {
 import { controlSocketPath } from "../cli/protocol.js";
 import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
-import { wireAgents } from "./agentWiring.js";
+import { wireAgents, type AgentWiring } from "./agentWiring.js";
+import { registerConversationIpc } from "./conversationIpc.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import {
 	ContainerRuntime,
@@ -310,7 +311,6 @@ import {
 	resolveLoginEnvironment,
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
-import type { AgentSessions } from "../agent/sessions.js";
 import { onRuntimeConnected } from "../runtime/connectivity.js";
 import { SessionSweeper } from "./sessionSweep.js";
 import {
@@ -614,7 +614,7 @@ export class AppController {
 		RuntimeId,
 		TerminalLauncherStatus
 	>();
-	private agentSessions: AgentSessions | undefined;
+	private agentWiring: AgentWiring | undefined;
 	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
 	private sessionSweeper: SessionSweeper | undefined;
 	private stopHearingReconnections: (() => void) | undefined;
@@ -880,10 +880,20 @@ export class AppController {
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
-		this.agentSessions = wireAgents({
+		this.agentWiring = wireAgents({
 			runtimeFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			model: () => this.coordinator.model,
 			machineOf: (workspaceId) => this.machineOf(workspaceId),
+			machineRuntime: (machine) => runtimeById(machine),
+			report: (message) =>
+				this.publishError(withDetail(errorWireAt("agent_exited"), message)),
+			clientVersion: electron.app.getVersion(),
+		});
+		registerConversationIpc({
+			ipcMain: electron.ipcMain,
+			conversations: this.agentWiring.conversations,
+			agentsPage: () => shellWindow().agents.contents(),
+			fail: (error) => asIpcError(errorWire(error)),
 		});
 		// Everything restored from the state file describes the previous run,
 		// and the sessions on the socket are what is left of it. Nothing has to

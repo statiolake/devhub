@@ -19,10 +19,24 @@ import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentInjectionQueue } from "../agent/injection.js";
 import { AgentScreenFreshness } from "../agent/screenFreshness.js";
 import { AgentSessions } from "../agent/sessions.js";
+import { ClaudeAdapter } from "../agent/conversation/claude/adapter.js";
+import { claudeStructuredCommand } from "../agent/conversation/claude/argv.js";
+import { CodexAdapter } from "../agent/conversation/codex/adapter.js";
+import { appServerArgs } from "../agent/conversation/codex/argv.js";
+import { AgentConversation } from "../agent/conversation/conversation.js";
+import {
+	agentStateDirectory,
+	hostSessionCommand,
+} from "../agent/conversation/hostCommand.js";
+import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
+import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
+import { observeConversation } from "../agent/conversation/reading.js";
+import { ConversationRegistry } from "../agent/conversation/registry.js";
 import type { AgentScreen } from "../agent/detect/detector.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
 	AgentId,
+	AgentFailure,
 	AgentInjection,
 	AgentProfile,
 	AgentPresentation,
@@ -35,8 +49,9 @@ import type {
 	AgentLaunchResult,
 	AgentStopResult,
 } from "../../model/intents.js";
+import type { AgentSessionCommand } from "../terminal/ports.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
-import type { RuntimeId } from "../runtime/runtime.js";
+import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import { registerAgentAdapter } from "./adapters.js";
 import { portRefusal } from "./agentFailure.js";
 
@@ -47,10 +62,164 @@ export interface AgentWiringOptions {
 	readonly model: () => AppModel;
 	/** Which machine a Workspace's Agents run on: the one its folder is on. */
 	readonly machineOf: (workspaceId: WorkspaceId) => RuntimeId | undefined;
+	/** The machine itself, for a GUI Agent's host files and journal. */
+	readonly machineRuntime: (machine: RuntimeId) => Runtime;
+	/**
+	 * Say something app-wide about an Agent that is no longer there to say it
+	 * on: how a GUI Agent's CLI ended, once its row is gone.
+	 */
+	readonly report: (message: string) => void;
+	/** DevHub's version, which a protocol that asks who the client is is told. */
+	readonly clientVersion: string;
 }
 
-export function wireAgents(options: AgentWiringOptions): AgentSessions {
+/** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
+export interface AgentWiring {
+	readonly sessions: AgentSessions;
+	readonly conversations: GuiConversations;
+}
+
+export interface GuiConversations {
+	/**
+	 * The conversation of a running GUI Agent, attached on first ask — by the
+	 * round that finds its session, or by the page that draws it, whichever is
+	 * first. The same conversation either way.
+	 */
+	of(agentId: AgentId): Promise<AgentConversation>;
+	readonly registry: ConversationRegistry;
+}
+
+export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	const sessions = new AgentSessions(options.runtimeFor);
+	const registry = new ConversationRegistry();
+	/**
+	 * Names this DevHub in the ids of the control requests its adapters make,
+	 * so a restart never reuses one a CLI may still be answering.
+	 */
+	const bootId = randomUUID().slice(0, 8);
+	/**
+	 * The GUI Agents DevHub is stopping. Their sessions vanish on purpose, and
+	 * a round that sees one gone before the stop has returned must not report
+	 * the ending as news.
+	 */
+	const stopping = new Set<AgentId>();
+
+	const stateDirectory = async (machine: RuntimeId, agentId: AgentId) =>
+		agentStateDirectory(await options.machineRuntime(machine).home(), agentId);
+
+	const conversationOn = async (
+		machine: RuntimeId,
+		agentId: AgentId,
+		kind: AgentProfile["kind"],
+		root: string,
+	): Promise<AgentConversation> => {
+		const existing = registry.get(agentId);
+		if (existing !== undefined) return existing;
+		const runtime = options.machineRuntime(machine);
+		const directory = await stateDirectory(machine, agentId);
+		return registry.open(
+			agentId,
+			(publish) =>
+				new AgentConversation(
+					new HostLink(runtime, directory),
+					adapterFor(kind, {
+						bootId,
+						cwd: root,
+						clientVersion: options.clientVersion,
+					}),
+					publish,
+				),
+		);
+	};
+
+	const conversations: GuiConversations = {
+		registry,
+		async of(agentId) {
+			const agent = options.model().agent(agentId);
+			if (agent === undefined) throw new Error(`there is no Agent ${agentId}`);
+			if (agent.presentation !== "gui") {
+				throw new Error(
+					`${agent.displayName} is a terminal Agent, so it has no conversation`,
+				);
+			}
+			const machine = machineOfAgent(agentId);
+			const workspace = options.model().workspaceForAgent(agentId);
+			if (machine === undefined || workspace === undefined) {
+				throw new Error(
+					`the Workspace ${agent.displayName} belongs to is no longer open`,
+				);
+			}
+			return conversationOn(
+				machine,
+				agentId,
+				agent.profile.kind,
+				workspace.root,
+			);
+		},
+	};
+
+	/**
+	 * A GUI Agent is over: stop following it, say how it ended unless DevHub
+	 * ended it, and take its host files away.
+	 *
+	 * What is said goes app-wide, because the Agent's row is on its way out and
+	 * there is nowhere else to say it. A failure to read the ending, or to
+	 * remove the files, is said the same way and does not hold the exit up: the
+	 * Agent is gone either way, and a row kept for a directory would be a row
+	 * for nothing.
+	 */
+	const endConversation = async (
+		machine: RuntimeId,
+		agentId: AgentId,
+		name: string,
+		kind: string,
+	): Promise<void> => {
+		await registry.close(agentId);
+		const runtime = options.machineRuntime(machine);
+		const directory = await stateDirectory(machine, agentId);
+		if (!stopping.has(agentId)) {
+			try {
+				const ending = await new HostLink(runtime, directory).ending();
+				const sentence = endingSentence(name, kind, ending);
+				if (sentence !== undefined) options.report(sentence);
+			} catch (failure: unknown) {
+				if (!(failure instanceof HostLinkFailure)) throw failure;
+				options.report(
+					`DevHub could not read how “${name}” ended: ${failure.message}`,
+				);
+			}
+		}
+		try {
+			await runtime.removeTree(directory);
+		} catch (failure: unknown) {
+			options.report(
+				`DevHub could not remove the files of “${name}” at ${directory}${runtime.where}: ${failure instanceof Error ? failure.message : String(failure)}`,
+			);
+		}
+	};
+
+	/** Stop an Agent's session; a GUI Agent's conversation and host files go with it. */
+	const stopAgent = async (
+		machine: RuntimeId,
+		agentId: AgentId,
+	): Promise<void> => {
+		const agent = options.model().agent(agentId);
+		const gui = agent?.presentation === "gui";
+		if (gui) stopping.add(agentId);
+		try {
+			await sessions.terminate(machine, agentId);
+			if (gui) {
+				await endConversation(
+					machine,
+					agentId,
+					agent!.displayName,
+					agent!.profile.kind,
+				);
+			}
+		} finally {
+			stopping.delete(agentId);
+		}
+	};
 	/**
 	 * The machine an Agent is on, from the model.
 	 *
@@ -90,18 +259,6 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			presentation: AgentPresentation,
 			workspaceRoot: string,
 		): Promise<AgentLaunchResult> {
-			// The conversation host is not here yet, so a GUI Agent has nothing
-			// to start. It is refused where it would have started, by name, and
-			// never started as a terminal instead: a person who asked for the
-			// conversation view and got a terminal would have no way to tell
-			// that the choice had been ignored.
-			if (presentation === "gui") {
-				return {
-					kind: "failed",
-					code: "agent_profile_unavailable",
-					detail: `GUI mode is not available yet, so “${profile.displayName}” was not started. It can open as a terminal instead.`,
-				};
-			}
 			try {
 				const machine = options.machineOf(workspaceId);
 				if (machine === undefined) {
@@ -109,16 +266,30 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 						"the Workspace this Agent belongs to is no longer open",
 					);
 				}
+				const cli: AgentSessionCommand = {
+					file: profile.command,
+					args: [...profile.args],
+					env: Object.fromEntries(profile.env),
+				};
+				// The one place the two presentations differ at launch: a GUI
+				// Agent's session runs its CLI under the host, in structured mode.
+				// Everything else about the session — its markers, its tmux, its
+				// Stop — is the same session.
+				let command = cli;
+				if (presentation === "gui") {
+					const directory = await stateDirectory(machine, agentId);
+					await options.machineRuntime(machine).makeDirectory(directory);
+					command = hostSessionCommand(
+						directory,
+						structuredCommand(profile.kind, cli),
+					);
+				}
 				await sessions.launch({
 					machine,
 					agentId,
 					workspaceId,
 					root: workspaceRoot,
-					command: {
-						file: profile.command,
-						args: [...profile.args],
-						env: Object.fromEntries(profile.env),
-					},
+					command,
 				});
 				return { kind: "started" };
 			} catch (failure: unknown) {
@@ -147,9 +318,9 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			}
 		},
 
-		stop: (agentId) => terminate(sessions, machineOfAgent(agentId), agentId),
+		stop: (agentId) => terminate(stopAgent, machineOfAgent(agentId), agentId),
 		terminate: (agentId) =>
-			terminate(sessions, machineOfAgent(agentId), agentId),
+			terminate(stopAgent, machineOfAgent(agentId), agentId),
 
 		/**
 		 * One round: the socket's Agent sessions, matched against the model's.
@@ -178,7 +349,13 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			// simply not this round's business.
 			const asked = new Map<
 				AgentId,
-				{ workspaceId: WorkspaceId; kind: string }
+				{
+					workspaceId: WorkspaceId;
+					kind: AgentProfile["kind"];
+					presentation: AgentPresentation;
+					name: string;
+					root: string;
+				}
 			>();
 			for (const workspace of options.model().workspaces) {
 				// One round is about one machine. A round that judged every
@@ -191,6 +368,9 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					asked.set(agent.id, {
 						workspaceId: workspace.id,
 						kind: agent.profile.kind,
+						presentation: agent.presentation,
+						name: agent.displayName,
+						root: workspace.root,
 					});
 				}
 			}
@@ -201,11 +381,15 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			// has to be answered from what the last round saw. `shouldCapture`
 			// is unchanged and does the deciding; all that is new is which
 			// round's markers it is given.
-			const captureIds = [...asked.keys()].filter(
-				(id) =>
-					lastMarkers.has(id) &&
-					freshness.shouldCapture(id, lastMarkers.get(id)),
-			);
+			// A GUI Agent has no screen to read: its pane is its host's.
+			const captureIds = [...asked]
+				.filter(([, about]) => about.presentation === "tui")
+				.map(([id]) => id)
+				.filter(
+					(id) =>
+						lastMarkers.has(id) &&
+						freshness.shouldCapture(id, lastMarkers.get(id)),
+				);
 			// The listing carries each Agent's activity marker, so this is both
 			// "which Agents are alive" and "which of them have written
 			// anything" — one answer, from one command, as it has to be: two
@@ -225,6 +409,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				runtimeHealth: RuntimeHealth;
 				activity: string | undefined;
 				injection: AgentInjection;
+				failure: AgentFailure | undefined;
 			}[] = [];
 			const exited: AgentId[] = [];
 			for (const [id, about] of asked) {
@@ -245,36 +430,61 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 							`[devhub] agent ${id} ended with text never delivered (${undelivered.state}): ${undelivered.text.slice(0, 120)}`,
 						);
 					}
+					if (about.presentation === "gui") {
+						await endConversation(machine, id, about.name, about.kind);
+					}
 					exited.push(id);
 					continue;
 				}
-				const reading = observe(
-					detector,
-					activity,
-					freshness,
-					markers.get(id),
-					round.screens.get(id),
-					id,
-					about.kind,
-				);
+				// The two presentations are read from two places — a screen, a
+				// conversation — into the one reading the round reports, and
+				// deliver to two places through the one queue and gate.
+				let reading: {
+					readonly status: AgentStatus;
+					readonly activity: string | undefined;
+					readonly failure: AgentFailure | undefined;
+				};
+				let send: (text: string) => Promise<void>;
+				if (about.presentation === "gui") {
+					const conversation = await conversationOn(
+						machine,
+						id,
+						about.kind,
+						about.root,
+					);
+					// Once a round, and only here: the round is the clock.
+					conversation.reattach();
+					reading = observeConversation(conversation.reading());
+					send = (text) =>
+						conversation.command({ kind: "send", text, origin: "injection" });
+				} else {
+					reading = {
+						...observe(
+							detector,
+							activity,
+							freshness,
+							markers.get(id),
+							round.screens.get(id),
+							id,
+							about.kind,
+						),
+						failure: undefined,
+					};
+					send = (text) =>
+						sessions.inject(machine, id, about.workspaceId, text);
+				}
 				// The send happens here, on the reading this round settled on,
 				// because this is the only place that knows the Agent is idle
 				// *now*. A queue that decided on its own clock would be acting
 				// on a status that was true when it was last told about it.
-				await deliver(
-					sessions,
-					injections,
-					machine,
-					id,
-					about.workspaceId,
-					reading.status,
-				);
+				await deliver(injections, id, reading.status, send);
 				observations.push({
 					agentId: id,
 					status: reading.status,
 					activity: reading.activity,
 					runtimeHealth: health,
 					injection: injections.state(id, reading.status),
+					failure: reading.failure,
 				});
 			}
 			return { observations, exited };
@@ -323,12 +533,79 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			const machine = options.machineOf(workspaceId);
 			if (machine === undefined) return;
 			for (const agent of workspace.agents) {
-				await sessions.terminate(machine, agent.id);
+				await stopAgent(machine, agent.id);
 			}
 		},
 	});
 
-	return sessions;
+	return { sessions, conversations };
+}
+
+/**
+ * The command line that puts a CLI into the structured mode its adapter reads.
+ *
+ * Only Claude and Codex can be GUI Agents — the domain refuses any other kind
+ * a GUI presentation — so reaching another kind here is that rule broken.
+ */
+function structuredCommand(
+	kind: AgentProfile["kind"],
+	cli: AgentSessionCommand,
+): AgentSessionCommand {
+	switch (kind) {
+		case "claude":
+			return claudeStructuredCommand(cli);
+		case "codex":
+			return { ...cli, args: appServerArgs(cli.args) };
+		default:
+			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
+	}
+}
+
+function adapterFor(
+	kind: AgentProfile["kind"],
+	context: {
+		readonly bootId: string;
+		readonly cwd: string;
+		readonly clientVersion: string;
+	},
+): ProtocolAdapter {
+	switch (kind) {
+		case "claude":
+			return new ClaudeAdapter(context.bootId);
+		case "codex":
+			return new CodexAdapter({
+				clientVersion: context.clientVersion,
+				cwd: context.cwd,
+				resumeThreadId: undefined,
+			});
+		default:
+			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
+	}
+}
+
+/**
+ * How a GUI Agent's CLI ended, in a sentence — or nothing, when it ended the
+ * way a conversation is meant to.
+ */
+function endingSentence(
+	name: string,
+	kind: string,
+	ending: Awaited<ReturnType<HostLink["ending"]>>,
+): string | undefined {
+	const said = (tail: string) => {
+		const trimmed = tail.trim();
+		return trimmed.length === 0 ? "" : `: ${trimmed}`;
+	};
+	switch (ending.kind) {
+		case "exited":
+			return ending.code === 0
+				? undefined
+				: `The ${kind} of “${name}” exited with code ${ending.code}${said(ending.stderrTail)}`;
+		case "host_failed":
+			return `The ${kind} of “${name}” could not be started${said(ending.stderrTail)}`;
+		case "vanished":
+			return `The session of “${name}” was ended outside DevHub${said(ending.stderrTail)}`;
+	}
 }
 
 /**
@@ -397,17 +674,15 @@ function observe(
  * with the queue for the row to show.
  */
 async function deliver(
-	sessions: AgentSessions,
 	injections: AgentInjectionQueue,
-	machine: RuntimeId,
 	agentId: AgentId,
-	workspaceId: WorkspaceId,
 	status: AgentStatus,
+	send: (text: string) => Promise<void>,
 ): Promise<void> {
 	const text = injections.due(agentId, status);
 	if (text === undefined) return;
 	try {
-		await sessions.inject(machine, agentId, workspaceId, text);
+		await send(text);
 		injections.sent(agentId);
 	} catch (failure: unknown) {
 		injections.failed(
@@ -418,7 +693,7 @@ async function deliver(
 }
 
 async function terminate(
-	sessions: AgentSessions,
+	stopAgent: (machine: RuntimeId, agentId: AgentId) => Promise<void>,
 	machine: RuntimeId | undefined,
 	agentId: AgentId,
 ): Promise<AgentStopResult> {
@@ -426,7 +701,7 @@ async function terminate(
 	// no session either: the Workspace's close killed it on the way out.
 	if (machine === undefined) return { kind: "stopped" };
 	try {
-		await sessions.terminate(machine, agentId);
+		await stopAgent(machine, agentId);
 		return { kind: "stopped" };
 	} catch {
 		// A stop that did not stop leaves the Agent retryable rather than

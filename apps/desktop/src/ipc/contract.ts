@@ -13,6 +13,7 @@
 
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
+import type { ConversationApi } from "./conversation.js";
 import type {
 	AgentLaunchWire,
 	AgentProfiles,
@@ -1057,6 +1058,12 @@ export interface AgentsBridge
 	 * the resolver's business, not the page's.
 	 */
 	readonly terminal: DevhubTerminalApi;
+	/**
+	 * The GUI Agents' conversations. On this page only: it is the page that
+	 * draws them, and a second page able to attach would be a second reader
+	 * main sends every event to. See `ipc/conversation.ts`.
+	 */
+	readonly conversation: ConversationApi;
 }
 
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */

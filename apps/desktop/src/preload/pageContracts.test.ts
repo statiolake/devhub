@@ -127,6 +127,27 @@ describe("the pages, and what each of them may say", () => {
 		expect(read("./tooltip.ts")).toContain("openExternalUrl");
 	});
 
+	/**
+	 * A conversation is attached by the page that draws it. Main sends every
+	 * event of every attached conversation to its attacher, so a second page
+	 * that could attach would be a second reader of every word, and a second
+	 * page that could `send` would be a second place a person's words come
+	 * from.
+	 */
+	it("gives the conversations to the Agents page and to no other", () => {
+		const member = "conversationApi";
+		for (const page of PAGES) {
+			const spelled = read(`./${page}.ts`).includes(member);
+			expect(
+				spelled,
+				spelled
+					? `the ${page} page can reach the GUI Agents' conversations`
+					: "the Agents preload does not expose the conversations",
+			).toBe(page === "agents");
+		}
+		expect(read("./bridge.ts")).not.toContain(member);
+	});
+
 	it("reaches each page's bridge from that page's entry and from no other", () => {
 		const entries = {
 			shell: "main.tsx",

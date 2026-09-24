@@ -233,7 +233,9 @@ kind = "claude"             # codex | claude | cursor | custom
 presentation = "tui"        # how its Agents are shown: "tui", the CLI in a terminal, or
                             # "gui", DevHub's conversation view (claude and codex only).
                             # Unset, "tui". ⌥Return in New Agent opens one the other way.
-                            # GUI launches are refused until the conversation view lands
+                            # A GUI Agent runs its CLI in structured mode (`claude -p`
+                            # stream-json, `codex app-server`) under a small host in its
+                            # tmux session, so it outlives a DevHub restart like a TUI one.
 ```
 
 The workbench's own settings are VS Code's, on disk under the app's user-data

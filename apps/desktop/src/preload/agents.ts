@@ -18,6 +18,7 @@ import {
 	repositoryStatusBridge,
 	writeClipboard,
 } from "./bridge.js";
+import { conversationApi } from "./conversation.js";
 import { terminalApi } from "./terminal.js";
 
 const api: AgentsBridge = {
@@ -31,6 +32,7 @@ const api: AgentsBridge = {
 	openExternalUrl,
 	writeClipboard,
 	terminal: terminalApi,
+	conversation: conversationApi,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

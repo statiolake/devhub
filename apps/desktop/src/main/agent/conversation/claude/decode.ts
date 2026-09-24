@@ -579,6 +579,14 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					f.optionalString(raw.description, `${at}.description`),
 				raw,
 			};
+		// A hook the owner configured (SessionStart and the like) reports itself
+		// whether or not hook events were asked for. v1 does not draw hooks
+		// (design §3.5), and what a hook prints is the owner's configuration,
+		// not the conversation.
+		case "hook_started":
+		case "hook_progress":
+		case "hook_response":
+			return { type: "unused" };
 		default:
 			return { type: "unknown", key: `system/${subtype}`, raw };
 	}
