@@ -1352,11 +1352,22 @@ body.is-resizing-sidebar {
 }
 
 /* Lit, they sit above the terminal and say so with a shadow. At rest they make
-   no such claim. */
+   no such claim.
+
+   One rule for everything in the group, and it is the last word on opacity:
+   the group is reached for, so all of it comes up to be read. Nothing inside
+   states an opacity of its own against the lit state — a disabled button that
+   did (0.45) was a button whose label could not be read however long it was
+   pointed at, and it could not be focused either, so it never came up at all.
+   What a child needs to say beyond "rest" or "lit" it says in ink. */
+.agent-shortcuts:hover > *,
+.agent-shortcuts:focus-within > * {
+  opacity: 1;
+}
+
 .agent-shortcuts:hover .agent-shortcut,
 .agent-shortcuts:focus-within .agent-shortcut {
   box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
-  opacity: 1;
 }
 
 .agent-shortcut svg {
@@ -1374,21 +1385,26 @@ body.is-resizing-sidebar {
   background: var(--selection);
 }
 
-/* Dimmed and still there, with the reason in its tooltip. An agent whose screen
-   nothing can read cannot be typed into safely, and a button that vanished for
-   that would take the explanation with it.
+/* Unavailable and still there, with the reason in its tooltip. An agent whose
+   screen nothing can read cannot be typed into safely, and a button that
+   vanished for that would take the explanation with it.
 
-   Stated against the lit state, because at rest it is already fainter than
-   this: a resting button and a resting disabled button look alike, and they
-   should — neither is asking for anything. The difference appears when the
-   group is reached for and one of them does not come up with the others. */
-.agent-shortcuts:hover .agent-shortcut:disabled,
-.agent-shortcuts:focus-within .agent-shortcut:disabled {
-  opacity: 0.45;
+   Said in ink, not in opacity: it comes up with the group like every other
+   button, so its label can be read — in the secondary ink, which is still
+   words — and its mark loses the accent, which is what makes the others read
+   as acts. At rest it looks like any resting button, and it should: neither is
+   asking for anything. */
+.agent-shortcut:disabled {
+  color: var(--secondary);
+}
+
+.agent-shortcut:disabled svg {
+  color: var(--disabled-ink);
 }
 
 /* The notes under the stack are about the buttons, so they keep the buttons'
-   strength — with one exception below: a failure is never a suggestion. */
+   strength and come up with them under the group's one rule above — with one
+   exception below: a failure is never a suggestion. */
 .agent-shortcuts-note,
 .agent-shortcuts-failure {
   max-width: 100%;
@@ -1398,12 +1414,6 @@ body.is-resizing-sidebar {
   text-align: right;
   opacity: 0.4;
   transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.agent-shortcuts:hover .agent-shortcuts-note,
-.agent-shortcuts:focus-within .agent-shortcuts-note,
-.agent-pane:focus-within .agent-shortcuts-note {
-  opacity: 1;
 }
 
 /* Something the person asked for did not happen. That is not a suggestion and
