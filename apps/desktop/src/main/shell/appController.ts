@@ -353,6 +353,7 @@ import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
+import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
@@ -700,6 +701,8 @@ export class AppController {
 		private readonly previousExitValue: "clean" | "unclean" | "unknown",
 		/** Whether this run started from a state file that did not exist. */
 		private readonly freshState: boolean,
+		/** Why this run is on the defaults, when it is. See `settingsRefusal.ts`. */
+		private readonly settingsRefusal: SettingsRefusal,
 	) {
 		this.state = state;
 		this.config = config;
@@ -2030,9 +2033,7 @@ export class AppController {
 	 * would not parse is reported rather than answered with silent defaults.
 	 */
 	private requireConfig(): Config {
-		if (!this.config) {
-			throw asIpcError(errorWire(new AppError(AppErrorCode.PortUnavailable)));
-		}
+		if (!this.config) throw asIpcError(this.settingsRefusal.required());
 		return this.config;
 	}
 
@@ -5203,7 +5204,9 @@ export class AppController {
 				// The file on disk no longer parses. The last good config stays in
 				// effect, and the person is told rather than left guessing why an edit
 				// did nothing.
-				this.publishError(errorWire(new Error(`config: ${outcome.code}`)));
+				this.publishError(
+					this.settingsRefusal.onReload(outcome, this.config !== undefined),
+				);
 				publishSettingsSnapshot();
 			}
 		});
@@ -5224,6 +5227,7 @@ export class AppController {
 	adoptConfig(accepted: Config): void {
 		const config = withProfileRuntimes(accepted, activeProfile()).config;
 		this.config = config;
+		this.settingsRefusal.accepted();
 		// A new `[scratch] daily` names a different folder for today, and that
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
@@ -6260,7 +6264,9 @@ export async function createAppController(
 		);
 	}
 	const configStore = new ConfigStore(defaultConfigPaths(homedir()));
+	const settingsRefusal = new SettingsRefusal(configStore.paths.file);
 	let config: Config | undefined;
+	let launchRefusal: AppErrorWire | undefined;
 	try {
 		const loaded = (await configStore.load()).config;
 		const applied = withProfileRuntimes(loaded, profile);
@@ -6284,6 +6290,7 @@ export async function createAppController(
 		// has the log.
 		console.error("[devhub] settings could not be read:", error);
 		config = undefined;
+		launchRefusal = settingsRefusal.atLaunch(error);
 	}
 
 	const stateStore = new JsonStateStore(
@@ -6341,7 +6348,11 @@ export async function createAppController(
 		config,
 		previousExit,
 		load.metadata.origin === "fresh",
+		settingsRefusal,
 	);
+	// Before the pages ask for anything: what they are told when they need
+	// settings is this same notice (`requireConfig`).
+	if (launchRefusal !== undefined) current.noteStartupFailure(launchRefusal);
 	// A file DevHub refused is a session that vanished, and there is exactly one
 	// place to say so before there is a page to say it to. Both halves report
 	// the same way: the file would not load, or it loaded and would not project.
