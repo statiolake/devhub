@@ -370,6 +370,23 @@ export function Picker({
     setActive((current) => (current < rows.length ? current : 0));
   }, [rows.length]);
 
+  /**
+   * Whether a `mousemove` is the pointer moving. A sheet opening under a
+   * resting pointer, or rows re-filtering and scrolling beneath one, puts a
+   * new row under it without the person pointing at anything — and Chromium
+   * reports that as a `mousemove` at the same screen position. So the pointer
+   * selects only when its screen position differs from the last one seen; the
+   * first one seen is only where it was resting, and selects nothing.
+   */
+  const pointerAt = useRef<{ x: number; y: number } | null>(null);
+  const pointerMoved = (event: React.MouseEvent): boolean => {
+    const last = pointerAt.current;
+    pointerAt.current = { x: event.screenX, y: event.screenY };
+    return (
+      last !== null && (last.x !== event.screenX || last.y !== event.screenY)
+    );
+  };
+
   useEffect(() => {
     listRef.current
       ?.querySelector('[aria-selected="true"]')
@@ -553,8 +570,10 @@ export function Picker({
                     // here is what used to leave the sheet deaf to the keyboard.
                     event.preventDefault();
                   }}
-                  onMouseEnter={() => {
-                    if (taken === undefined) setActive(index);
+                  onMouseMove={(event) => {
+                    if (pointerMoved(event) && taken === undefined) {
+                      setActive(index);
+                    }
                   }}
                   onClick={(event) => {
                     // The row taken is the row shown as taken: the spinner and
