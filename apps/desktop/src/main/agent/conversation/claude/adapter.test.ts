@@ -1136,20 +1136,78 @@ describe("the end of a turn", () => {
 
 	it("shows an API error the assistant message stands for", () => {
 		const adapter = inTurn();
+		// Any error but the one that means "not signed in".
 		adapter.received(
 			assistantLine(
 				"m",
-				[{ type: "text", text: "Invalid API key · Please run /login" }],
+				[{ type: "text", text: "API Error: Rate limit reached" }],
 				null,
-				{
-					error: "authentication_failed",
-				},
+				{ error: "rate_limit" },
 			),
 		);
 		expect(adapter.transcript.entries.at(-1)).toMatchObject({
 			kind: "notice",
 			level: "error",
-			text: "The API refused the request: authentication_failed",
+			text: "The API refused the request: rate_limit",
+		});
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
+	});
+});
+
+describe("a CLI that cannot work", () => {
+	it("is not signed in when the API refuses it as unauthenticated: the conversation stops, saying how to sign in", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine(
+				"m",
+				[{ type: "text", text: "Invalid API key · Please run /login" }],
+				null,
+				{ error: "authentication_failed" },
+			),
+		);
+		expect(adapter.transcript.state).toEqual({
+			phase: "broken",
+			failure: {
+				code: "not_signed_in",
+				detail:
+					"claude is not signed in. Open a terminal Agent from this profile and run /login there.",
+			},
+		});
+		// The turn still ends, and the conversation stays broken past it.
+		adapter.received(result({ is_error: true, result: "Invalid API key" }));
+		expect(adapter.transcript.state.phase).toBe("broken");
+		// What the CLI said is still in the transcript, in its own words.
+		expect(
+			adapter.transcript.entries.find((entry) => entry.kind === "assistant"),
+		).toMatchObject({
+			blocks: [
+				{ kind: "text", markdown: "Invalid API key · Please run /login" },
+			],
+		});
+	});
+
+	it("refused the conversation when it refuses the handshake", () => {
+		const adapter = new ClaudeAdapter("boot");
+		for (const line of adapter.opening()) adapter.sent(line);
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "error",
+					request_id: "boot:1",
+					error: "unsupported protocol",
+				},
+			}),
+		);
+		expect(adapter.transcript.state).toEqual({
+			phase: "broken",
+			failure: {
+				code: "refused",
+				detail: "claude refused the handshake: unsupported protocol",
+			},
 		});
 	});
 });

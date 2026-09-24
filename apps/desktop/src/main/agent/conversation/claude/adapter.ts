@@ -160,6 +160,9 @@ const DECLINE: RequestChoice = {
 	takesText: true,
 };
 
+/** The `error` of an assistant message whose request the API refused as unauthenticated. */
+const SIGNED_OUT = "authentication_failed";
+
 const DENIED_WITHOUT_WORDS = "The person denied this in DevHub.";
 
 /** One block of a message, as far as it has come. */
@@ -420,9 +423,19 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	private becomeReady(): void {
-		if (this.current.state.phase === "connecting") {
-			this.emit({ type: "state", state: { phase: "ready", turn: "none" } });
-		}
+		if (this.current.state.phase === "connecting") this.turn("none");
+	}
+
+	/**
+	 * Whether a turn is running. The one way the state moves, and it never
+	 * moves a broken conversation: what broke it stays the last word, whatever
+	 * the CLI goes on to print about the turn it was in.
+	 */
+	private turn(turn: "none" | "running"): void {
+		const { state } = this.current;
+		if (state.phase === "broken") return;
+		if (state.phase === "ready" && state.turn === turn) return;
+		this.emit({ type: "state", state: { phase: "ready", turn } });
 	}
 
 	private notice(
@@ -568,6 +581,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.ours.delete(line.requestId);
 		const subtype = request.subtype as string;
 		if (!line.outcome.ok) {
+			// Without the handshake there is no conversation to have; any other
+			// refusal is one request that did not happen, said where it happened.
+			if (subtype === "initialize") {
+				return this.emit({
+					type: "state",
+					state: {
+						phase: "broken",
+						failure: {
+							code: "refused",
+							detail: `claude refused the handshake: ${line.outcome.error}`,
+						},
+					},
+				});
+			}
 			return this.notice(
 				"error",
 				`${subtype} was refused: ${line.outcome.error}`,
@@ -750,7 +777,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				`assistant.message.content[${position}]`,
 			);
 		});
-		if (line.error !== undefined) {
+		if (line.error === SIGNED_OUT) {
+			// The one API error no turn can get past: the CLI has no sign-in to
+			// use. What it said stays in the transcript above, in its words.
+			this.emit({
+				type: "state",
+				state: {
+					phase: "broken",
+					failure: {
+						code: "not_signed_in",
+						detail:
+							"claude is not signed in. Open a terminal Agent from this profile and run /login there.",
+					},
+				},
+			});
+		} else if (line.error !== undefined) {
 			this.notice(
 				"error",
 				`The API refused the request: ${line.error}`,
@@ -946,13 +987,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				origin,
 			},
 		});
-		const { state } = this.current;
-		if (
-			state.phase !== "broken" &&
-			!(state.phase === "ready" && state.turn === "running")
-		) {
-			this.emit({ type: "state", state: { phase: "ready", turn: "running" } });
-		}
+		this.turn("running");
 	}
 
 	private takeToolResult(
@@ -1011,7 +1046,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			},
 		});
 		this.emit({ type: "usage", usage });
-		this.emit({ type: "state", state: { phase: "ready", turn: "none" } });
+		this.turn("none");
 		this.interrupting = false;
 	}
 
