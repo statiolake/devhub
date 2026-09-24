@@ -886,6 +886,11 @@ export type RuntimeHealth = (typeof RUNTIME_HEALTHS)[number];
 export const DIAGNOSTIC_CODES = [
   "root_missing",
   "root_inaccessible",
+  /**
+   * Scratch while DevHub runs on no settings: there is no `[scratch] daily`,
+   * so there is no folder. See `main/shell/scratchDay.ts`.
+   */
+  "settings_refused",
   "close_agents_unknown",
   "close_terminal_unknown",
   "close_editor_unknown",
@@ -1397,6 +1402,15 @@ export const AVAILABLE: WorkspaceState = { kind: "available" };
 export function isWorkspaceAvailable(state: WorkspaceState): boolean {
   return state.kind === "available";
 }
+
+/**
+ * Why today's Scratch has no folder: it could not be made, or there is no
+ * `[scratch] daily` to make it from because DevHub runs on no settings.
+ */
+export type ScratchUnavailable = Extract<
+  DiagnosticCode,
+  "root_inaccessible" | "settings_refused"
+>;
 
 /**
  * Whether a Workspace that stops being Scratch has anything to come back to.

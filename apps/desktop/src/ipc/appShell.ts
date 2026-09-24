@@ -189,6 +189,16 @@ export type AppErrorCodeWire =
 	| "operation_pending"
 	| "persistence_degraded"
 	| "native_unavailable"
+	/**
+	 * `settings.toml` could not be used: it would not read, would not parse,
+	 * or said something DevHub refuses.
+	 *
+	 * Its own code because it is the cause of everything that needs settings
+	 * failing after it, and a person told only that "the native app shell is
+	 * unavailable" is told the consequence and not the file, the key or the
+	 * reason. The detail says all three.
+	 */
+	| "settings_refused"
 	| "editor_provider_missing"
 	| "editor_port_unavailable"
 	| "editor_unavailable"
@@ -275,6 +285,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	// operating system's own words; this says what kind of thing broke.
 	persistence_degraded: "DevHub could not save its state file.",
 	native_unavailable: "The native app shell is unavailable.",
+	settings_refused: "DevHub could not use its settings file.",
 	editor_provider_missing: "Visual Studio Code was not found.",
 	editor_port_unavailable: "The editor's port is already in use.",
 	editor_unavailable: "The editor could not start.",
@@ -530,7 +541,8 @@ export type CloseDiagnosticWire =
 	| "cleanup_failed"
 	| "runtime_unavailable"
 	| "editor_restart_exhausted"
-	| "editor_unavailable";
+	| "editor_unavailable"
+	| "settings_refused";
 export interface CloseInspectionWire {
 	readonly agents: CloseResourceWire;
 	readonly terminalPanes: CloseResourceWire;

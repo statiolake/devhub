@@ -24,7 +24,7 @@ import {
   type WorkspaceClose,
   type WorkspaceState,
 } from "./domain.js";
-import { snapshotWire } from "./wire.js";
+import { settingsRefused, snapshotWire, TypedFailure } from "./wire.js";
 import type {
   AgentSnapshot,
   AppSnapshot,
@@ -326,5 +326,48 @@ describe("the path a row shows", () => {
     // A host DevHub has not reached yet. Longer, never wrong.
     const row = rowAt(`${REMOTE_HOME}/api`, nas, () => "");
     expect(row.displayRoot).toBe(`${REMOTE_HOME}/api`);
+  });
+});
+
+describe("a settings file DevHub could not use", () => {
+  it("says which file, which key and why, and offers Settings rather than a retry", () => {
+    const refused = settingsRefused(
+      "/scratch-test/devhub/settings.toml",
+      {
+        code: "unsupported_version",
+        path: "version",
+        location: { line: 1, column: 1 },
+      },
+      "nothing",
+    );
+    expect(refused.code).toBe("settings_refused");
+    expect(refused.summary).toBe("DevHub could not use its settings file.");
+    expect(refused.detail).toBe(
+      "/scratch-test/devhub/settings.toml: version was refused (line 1, column 1): unsupported_version. DevHub is running on no settings until the file is fixed, and Scratch has no folder.",
+    );
+    expect(refused.actions).toEqual(["open_settings"]);
+    expect(refused.module).toBe("config");
+  });
+
+  it("says the last accepted settings stay in effect when it happens later", () => {
+    const refused = settingsRefused(
+      "/scratch-test/devhub/settings.toml",
+      { code: "unknown_key", path: "bogus" },
+      "the last accepted settings",
+    );
+    expect(refused.detail).toBe(
+      "/scratch-test/devhub/settings.toml: bogus was refused: unknown_key. DevHub is still running on the last settings it accepted.",
+    );
+  });
+
+  it("keeps the file and the key when it is refused as text, as the devhub command prints it", () => {
+    const refused = settingsRefused(
+      "/scratch-test/devhub/settings.toml",
+      { code: "unknown_key", path: "bogus" },
+      "nothing",
+    );
+    expect(new TypedFailure(refused).message).toBe(
+      `DevHub could not use its settings file. ${refused.detail ?? ""}`,
+    );
   });
 });

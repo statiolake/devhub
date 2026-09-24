@@ -17,6 +17,8 @@ export function closeDiagnosticLabel(diagnostic: CloseDiagnosticWire): string {
       return "The workspace folder is missing.";
     case "root_inaccessible":
       return "The workspace folder cannot be read.";
+    case "settings_refused":
+      return "Scratch has no folder: DevHub could not use its settings file, so there is no [scratch] daily to make today's folder from. Fix it in Settings, and Scratch becomes today's folder as soon as the file is accepted.";
     case "close_agents_unknown":
       return "DevHub could not confirm the agents had stopped.";
     case "close_terminal_unknown":

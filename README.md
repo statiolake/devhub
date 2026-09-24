@@ -103,8 +103,13 @@ called "Scratch", with the real folder in its tooltip; `Cmd+Q Shift+J` and
   Settings refused while DevHub runs change nothing: it goes on with the ones
   it had, and the refusal is reported. Settings refused at launch leave it on
   none, and then no folder is made — not the default's either: Scratch is an
-  unavailable stand-in at `settings.toml`, the refusal is reported, and the
-  first settings accepted make today's folder Scratch. A Scratch that holds
+  unavailable stand-in at `settings.toml`, and the first settings accepted make
+  today's folder Scratch. A refusal is reported as itself — "DevHub could not
+  use its settings file.", with the file, the key and the reason — and it is
+  what everything that needs settings answers with. While the stand-in holds,
+  selecting Scratch shows that reason with Open Settings, and `devhub -`,
+  `devhub --wait`, an open no Workspace contains and a request for an empty
+  window are refused with it; no workbench is started for it. A Scratch that holds
   nothing (unavailable, no Agents) is not kept as a row once it stops being
   Scratch, and is not written to the state file.
 - **Closing.** Today's Scratch cannot be closed; it stops being Scratch at

@@ -15,14 +15,22 @@
  *
  * A folder that cannot be made is not a reason for DevHub not to start, and not
  * a thing to hide: the Workspace comes back with the path as the setting spells
- * it and `failure` says why, and the caller marks it unavailable and reports
- * the sentence — so the row says what is wrong in the place it is wrong.
+ * it, unavailable as `root_inaccessible`, and `report` says why — so the row
+ * says what is wrong in the place it is wrong.
  *
  * Settings that were refused at launch leave DevHub running on none, and then
  * there is no `daily` to make a folder from. That is not the default's cue:
- * a folder nobody configured is not made. Scratch is a stand-in, unavailable,
- * at the settings file — the thing that is wrong — with the refusal as its
- * failure, until settings are accepted and today's folder takes its place.
+ * a folder nobody configured is not made. Scratch is a stand-in, unavailable
+ * as `settings_refused`, until settings are accepted and today's folder takes
+ * its place. It has no `report` of its own: its reason *is* the refusal, which
+ * is reported as itself (`settingsRefused`), and a second notice saying "and
+ * so Scratch has no folder" would take the refusal's place on screen.
+ *
+ * The stand-in cannot be mistaken for a Workspace: its location is the
+ * settings file, and a Workspace's root is a folder, so no open Workspace has
+ * its key; and a Scratch that holds nothing is neither kept as a row nor
+ * written to the state file (`scratchHoldsNothing`).
+ *
  * Settings refused *later* change nothing here: DevHub goes on running on the
  * ones it had, and so does Scratch.
  */
@@ -32,9 +40,12 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import {
 	displayPath,
 	workspaceId as parseWorkspaceId,
+	type ScratchUnavailable,
 	Workspace,
 	workspaceLocation,
 } from "../../model/domain.js";
+import type { AppErrorWire } from "../../ipc/appShell.js";
+import { errorWireAt, withDetail } from "../../model/wire.js";
 import {
 	expandHome,
 	nextLocalMidnight,
@@ -44,8 +55,15 @@ import {
 export interface ScratchDay {
 	/** A Workspace for today's folder, with an id nobody has used. */
 	readonly workspace: Workspace;
-	/** Why the folder is not there, when it could not be made. */
-	readonly failure: string | undefined;
+	/** Why the day has no folder, when it has none. */
+	readonly unavailable:
+		| {
+				readonly reason: Extract<ScratchUnavailable, "root_inaccessible">;
+				/** The sentence to report: which folder, and what stopped it. */
+				readonly report: string;
+		  }
+		| { readonly reason: Extract<ScratchUnavailable, "settings_refused"> }
+		| undefined;
 }
 
 /** Where Scratch comes from: the `daily` DevHub runs on, and where it is written. */
@@ -71,7 +89,7 @@ export async function scratchDay(
 	if (setting.daily === undefined) {
 		return {
 			workspace: at(setting.settingsFile),
-			failure: `Scratch has no folder: ${setting.settingsFile} could not be read, so there is no [scratch] daily to make today's folder from. Nothing was made; Scratch moves to today's folder when the file is accepted.`,
+			unavailable: { reason: "settings_refused" },
 		};
 	}
 	const path = expandHome(scratchDailyPath(setting.daily, now), home);
@@ -88,10 +106,36 @@ export async function scratchDay(
 		// with this sentence.
 		return {
 			workspace: at(path),
-			failure: `Today's Scratch folder ${path} could not be made: ${error instanceof Error ? error.message : String(error)}`,
+			unavailable: {
+				reason: "root_inaccessible",
+				report: `Today's Scratch folder ${path} could not be made: ${error instanceof Error ? error.message : String(error)}`,
+			},
 		};
 	}
-	return { workspace: at(canonical), failure: undefined };
+	return { workspace: at(canonical), unavailable: undefined };
+}
+
+/**
+ * Why a request that lands in Scratch without selecting it is refused, or
+ * nothing when Scratch can take it.
+ *
+ * `devhub -`, `--wait`, an open no Workspace contains and a request for an
+ * empty window all end at Scratch's workbench, and an unavailable Scratch has
+ * none to give — the stand-in least of all, whose location is a file. They
+ * are refused with the cause: the settings refusal itself for the stand-in,
+ * and the missing folder for a day that could not be made.
+ */
+export function scratchRefusal(
+	scratch: Workspace,
+	settingsRefusal: () => AppErrorWire,
+): AppErrorWire | undefined {
+	const state = scratch.state;
+	if (state.kind === "available") return undefined;
+	if (state.reason === "settings_refused") return settingsRefusal();
+	return withDetail(
+		errorWireAt("workspace_unavailable"),
+		`Scratch (${scratch.root}) has no folder to open this in: ${state.reason}.`,
+	);
 }
 
 /**

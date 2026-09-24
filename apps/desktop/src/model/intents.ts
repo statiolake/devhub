@@ -28,6 +28,7 @@ import type {
   SurfacePresentation,
   RuntimeHealth,
   RequestedLocation,
+  ScratchUnavailable,
   RuntimeId,
   SshHost,
   WorkspaceId,
@@ -332,13 +333,16 @@ export type UserIntent =
    * Raised by main, never by the page: at launch and at each local midnight,
    * once the folder has been made and resolved. It carries a fresh id for the
    * folder's Workspace, used only when no open Workspace is that folder
-   * already. See `AppModel.adoptScratchDay`.
+   * already. `unavailable` says why the day has no folder, in the same
+   * intent, so there is never a moment when it is Scratch and looks usable.
+   * See `AppModel.adoptScratchDay`.
    */
   | {
       readonly type: "adopt_scratch_day";
       readonly workspaceId: WorkspaceId;
       readonly location: WorkspaceLocation;
       readonly selectedPath: DisplayPath;
+      readonly unavailable: ScratchUnavailable | undefined;
     }
   /**
    * Where the top-level rows go, as the person just arranged them.
