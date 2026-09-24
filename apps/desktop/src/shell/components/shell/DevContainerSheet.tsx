@@ -15,7 +15,11 @@
  * is a minute of somebody's time DevHub decided to spend for them.
  *
  * The question is only asked of folders that have one, so nobody who does not
- * use dev containers ever sees it.
+ * use dev containers ever sees it — and of folders DevHub could not check,
+ * because "could not check" is not "has none". Opening such a folder here
+ * without a word would be answering a question nobody got an answer to. The
+ * sheet says the check failed and why, and offers the same two ways with the
+ * folder first: it is the one that does not depend on the missing answer.
  */
 
 import { Picker } from "./Picker";
@@ -45,11 +49,15 @@ function FolderGlyph() {
   );
 }
 
+/** What the probe of a folder said, when it said anything but "none". */
+export type DevContainerDefinition =
+  | { readonly kind: "found"; readonly configPath: string }
+  | { readonly kind: "unchecked"; readonly reason: string };
+
 export interface DevContainerSheetProps {
   /** The folder on this Mac, as the person chose it. */
   readonly folder: string;
-  /** The definition that was found, for the row that names it. */
-  readonly configPath: string;
+  readonly definition: DevContainerDefinition;
   readonly step: number;
   readonly onChoose: (inContainer: boolean) => void;
   readonly onCancel: () => void;
@@ -57,35 +65,49 @@ export interface DevContainerSheetProps {
 
 export function DevContainerSheet({
   folder,
-  configPath,
+  definition,
   step,
   onChoose,
   onCancel,
 }: DevContainerSheetProps) {
+  const container = {
+    id: OPEN_IN_CONTAINER,
+    label: "Open in Dev Container",
+    // What it costs, said before it is spent: the first open of a definition
+    // that has never been built is an image build, and a person who did not
+    // expect one reads a long pause as a hang.
+    detail:
+      definition.kind === "found"
+        ? `Build or start the container ${definition.configPath} describes`
+        : "Build or start the container the folder's definition describes, if it has one",
+    glyph: <ContainerGlyph />,
+  };
+  const here = {
+    id: OPEN_HERE,
+    label: "Open the folder",
+    detail: "Work in it on this Mac, as usual",
+    glyph: <FolderGlyph />,
+  };
   return (
     <Picker
       title="Open in a Dev Container?"
-      question={`${folder} defines a Dev Container. Where should its terminals and agents run?`}
+      question={
+        definition.kind === "found"
+          ? `${folder} defines a Dev Container. Where should its terminals and agents run?`
+          : `DevHub could not check whether ${folder} defines a Dev Container. Where should its terminals and agents run?`
+      }
       step={step}
-      items={[
-        {
-          id: OPEN_IN_CONTAINER,
-          label: "Open in Dev Container",
-          // What it costs, said before it is spent: the first open of a
-          // definition that has never been built is an image build, and a
-          // person who did not expect one reads a long pause as a hang.
-          detail: `Build or start the container ${configPath} describes`,
-          glyph: <ContainerGlyph />,
-        },
-        {
-          id: OPEN_HERE,
-          label: "Open the folder",
-          detail: "Work in it on this Mac, as usual",
-          glyph: <FolderGlyph />,
-        },
-      ]}
-      // The container first, because it is why this sheet appeared at all: the
-      // folder said so itself. The other answer is one key away either way.
+      // A definition found puts the container first, because it is why this
+      // sheet appeared at all: the folder said so itself. A check that failed
+      // puts the folder first. The other answer is one key away either way.
+      items={
+        definition.kind === "found" ? [container, here] : [here, container]
+      }
+      note={
+        definition.kind === "unchecked" ? (
+          <span className="picker-note-failure">{definition.reason}</span>
+        ) : undefined
+      }
       onChoose={(choice) => {
         onChoose(choice.id === OPEN_IN_CONTAINER);
       }}

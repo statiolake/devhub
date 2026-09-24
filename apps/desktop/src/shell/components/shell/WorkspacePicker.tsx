@@ -37,7 +37,11 @@ import {
   sshHostItems,
   useSshHosts,
 } from "./SshSheets";
-import { DevContainerSheet } from "./DevContainerSheet";
+import {
+  DevContainerSheet,
+  type DevContainerDefinition,
+} from "./DevContainerSheet";
+import { toAppError } from "../../failure";
 import type { AgentLaunchWire } from "../../../ipc/appShell";
 
 export interface WorkspacePickerProps {
@@ -186,7 +190,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
    */
   const [container, setContainer] = useState<{
     folder: string;
-    configPath: string;
+    definition: DevContainerDefinition;
   }>();
   /** The machine an SSH row named, while its folder is being asked for. */
   const [sshHost, setSshHost] = useState<string>();
@@ -335,15 +339,29 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           // — goes straight through and never sees the question.
           const path = row.path;
           void (async () => {
-            const configPath = await devContainerConfig(path).catch(
-              () => undefined,
-            );
-            if (configPath === undefined) {
-              finish(() => selectWorkspacePicker(path, false, agent));
-              return;
+            // A probe that fails is not "no definition": nobody knows. It is
+            // put to the person with its reason, rather than read as the
+            // answer that opens the folder without a word.
+            let definition: DevContainerDefinition;
+            try {
+              const configPath = await devContainerConfig(path);
+              if (configPath === undefined) {
+                finish(() => selectWorkspacePicker(path, false, agent));
+                return;
+              }
+              definition = { kind: "found", configPath };
+            } catch (error: unknown) {
+              const failure = toAppError(error);
+              definition = {
+                kind: "unchecked",
+                reason:
+                  failure.detail === undefined || failure.detail === null
+                    ? failure.summary
+                    : `${failure.summary} ${failure.detail}`,
+              };
             }
             void cancelWorkspacePicker();
-            setContainer({ folder: path, configPath });
+            setContainer({ folder: path, definition });
             setAsking("dev-container");
           })();
           return;
@@ -439,7 +457,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     return (
       <DevContainerSheet
         folder={container.folder}
-        configPath={container.configPath}
+        definition={container.definition}
         step={projectStep}
         onChoose={(inContainer) => {
           const { folder } = container;

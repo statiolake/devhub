@@ -32,8 +32,11 @@ afterEach(cleanup);
 
 const FOLDER = "/projects/api";
 
-function mount(configPath: string | undefined) {
-  const devContainerConfig = vi.fn().mockResolvedValue(configPath);
+function mount(configPath: string | undefined | Error) {
+  const devContainerConfig =
+    configPath instanceof Error
+      ? vi.fn().mockRejectedValue(configPath)
+      : vi.fn().mockResolvedValue(configPath);
   const openContainerWorkspace = vi.fn().mockResolvedValue(undefined);
   const selectWorkspacePicker = vi.fn().mockResolvedValue(undefined);
   const value = {
@@ -135,5 +138,58 @@ describe("a folder that defines a Dev Container", () => {
     // The definition is still there and still not built. Choosing to work here
     // is not choosing to spend a minute building an image.
     expect(openContainerWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A probe that could not answer.
+ *
+ * "No definition" is the ordinary answer, and it opens the folder without a
+ * word. A probe that *failed* is not that answer — nobody knows whether there
+ * is a definition — so treating it as one would open a folder whose container
+ * the person may have wanted, with nothing on screen saying anything was
+ * checked. The sheet says it could not check, and why, and still offers both
+ * ways; the folder is first, because it is the one that does not depend on
+ * the answer nobody got.
+ */
+describe("a folder DevHub could not check for a Dev Container", () => {
+  const refused = () => new Error("the folder could not be read");
+
+  it("says it could not check, and why, instead of opening the folder", async () => {
+    const { selectWorkspacePicker } = mount(refused());
+    await chooseFolder();
+    expect(
+      await screen.findByText(
+        /could not check whether \/projects\/api defines a Dev Container/u,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "the folder could not be read",
+    );
+    expect(selectWorkspacePicker).not.toHaveBeenCalled();
+  });
+
+  it("still opens the folder here, and offers it first", async () => {
+    const { selectWorkspacePicker, openContainerWorkspace } = mount(refused());
+    await chooseFolder();
+    await screen.findByText("Open the folder");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+    await waitFor(() => {
+      expect(selectWorkspacePicker).toHaveBeenCalledWith(
+        FOLDER,
+        false,
+        undefined,
+      );
+    });
+    expect(openContainerWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("still lets the person try the container", async () => {
+    const { openContainerWorkspace } = mount(refused());
+    await chooseFolder();
+    fireEvent.click(await screen.findByText("Open in Dev Container"));
+    await waitFor(() => {
+      expect(openContainerWorkspace).toHaveBeenCalledWith(FOLDER, undefined);
+    });
   });
 });
