@@ -104,6 +104,7 @@ const PROFILE: ConfiguredAgentProfile = {
   command: "codex",
   args: [],
   env: {},
+  presentation: "tui",
 };
 
 function base(): Config {

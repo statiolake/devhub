@@ -748,6 +748,15 @@
   pointer-events: none;
 }
 
+/* What the row says at its right end — for a profile, whether it opens as a
+   terminal or a GUI. Pushed to the end so it reads as a property of the row,
+   not as more of its name. */
+.picker-accessory {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
 .picker-note-failure {
   color: var(--danger);
 }

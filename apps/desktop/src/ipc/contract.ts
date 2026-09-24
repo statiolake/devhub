@@ -14,6 +14,7 @@
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type {
+	AgentLaunchWire,
 	AgentProfiles,
 	AgentStatusWire,
 	AppAppearance,
@@ -764,7 +765,7 @@ export interface WorkspaceOpeningBridge {
 	selectWorkspacePicker(
 		path: string,
 		create: boolean,
-		withAgent?: string,
+		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 	onWorkspacePicker(
 		listener: (event: WorkspacePickerEvent) => void,
@@ -779,11 +780,11 @@ export interface WorkspaceOpeningBridge {
 	 * there already, git could not reach the URL — is thrown with what to do
 	 * about it, and the sheet that asked shows it and stays open.
 	 */
-	createProject(path: string, withAgent?: string): Promise<AppOutcome>;
+	createProject(path: string, withAgent?: AgentLaunchWire): Promise<AppOutcome>;
 	cloneProject(
 		url: string,
 		parentDirectory: string,
-		withAgent?: string,
+		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 	/** Where a new project goes unless the person says otherwise. */
 	projectDefaultDirectory(): Promise<string>;
@@ -817,7 +818,7 @@ export interface WorkspaceOpeningBridge {
 	openSshWorkspace(
 		host: string,
 		path: string,
-		withAgent?: string,
+		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 
 	/**
@@ -850,7 +851,7 @@ export interface WorkspaceOpeningBridge {
 	 */
 	openContainerWorkspace(
 		workspaceFolder: string,
-		withAgent?: string,
+		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 
 	/**

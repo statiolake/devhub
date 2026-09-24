@@ -45,6 +45,7 @@ function agent(
 		id,
 		ordinal,
 		profileId: "profile",
+		presentation: "tui",
 		runtimeHealth: "healthy",
 		status: "idle",
 		unread: undefined,
@@ -963,9 +964,9 @@ describe("the order every cycle walks", () => {
 				),
 			);
 		}
-		model.addAgent(ZEBRA, agentOf("4000b1"), codex);
-		model.addAgent(ZEBRA_WT, agentOf("4000b2"), codex);
-		model.addAgent(ALPHA, agentOf("4000b3"), codex);
+		model.addAgent(ZEBRA, agentOf("4000b1"), codex, "tui");
+		model.addAgent(ZEBRA_WT, agentOf("4000b2"), codex, "tui");
+		model.addAgent(ALPHA, agentOf("4000b3"), codex, "tui");
 		// MIDDLE deliberately has none: a workspace with no Agents is still a row.
 		const repositories = new Map<string, string>([
 			[ZEBRA, "/src/zebra"],

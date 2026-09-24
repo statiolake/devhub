@@ -31,6 +31,8 @@ export interface SettingsAgentProfileWire {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly env: Record<string, string>;
+	/** How its Agents are shown unless a launch says otherwise. */
+	readonly presentation: "tui" | "gui";
 }
 
 export interface SettingsTerminalPaletteWire {

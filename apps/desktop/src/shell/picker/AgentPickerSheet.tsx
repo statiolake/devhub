@@ -30,13 +30,14 @@ export function AgentPickerSheet({
   return (
     <AgentProfilePicker
       question="Which agent profile should the new agent start from?"
-      hint="The agent starts at the workspace root. ⌘Return opens it beside the editor."
-      onChoose={(profileId, split) => {
+      hint="The agent starts at the workspace root. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI."
+      onChoose={(profileId, split, presentation) => {
         void dispatch({
           type: "request_create_agent",
           workspaceId,
           profileId,
           split,
+          presentation,
         });
         onDismiss();
       }}

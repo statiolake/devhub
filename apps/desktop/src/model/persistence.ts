@@ -34,6 +34,7 @@ import { dirname, join } from "node:path";
 import {
   Agent,
   AgentProfile,
+  AGENT_PRESENTATIONS,
   AGENT_PROFILE_KINDS,
   AGENT_STATUSES,
   DIAGNOSTIC_CODES,
@@ -52,6 +53,7 @@ import {
   workspaceLocation,
   type AgentControlState,
   type DiagnosticCode,
+  type AgentPresentation,
   type AgentProfileKind,
   type AgentStatus,
   type UnreadReason,
@@ -176,8 +178,21 @@ import { isTerminalZoomOffset } from "./terminalZoom.js";
  * lists. The old folderless editor had no folder and nothing here records its
  * tabs, so nothing of it carries; the old `scratch` tmux session is no longer
  * one DevHub owns.
+ *
+ * Version 11 is `agents[].presentation`: whether the Agent is its CLI's own
+ * screen in a terminal (`"tui"`) or DevHub's conversation view (`"gui"`),
+ * fixed when it was launched — and `profile_presentation`, the default of the
+ * profile snapshot it was launched from. Both are written for every Agent. A
+ * version-10 file is migrated by `migrateToVersion11`, which writes `"tui"`
+ * into both for every Agent: there was no GUI before this version, so that is
+ * what every one of them is, not a guess.
+ *
+ * The bump is for the other direction again. A version-10 DevHub reading a
+ * GUI Agent would attach a terminal to it and put the conversation host's
+ * script on screen as though it were the Agent; with the bump it says the
+ * file is from a newer DevHub and leaves it alone.
  */
-export const STATE_SCHEMA_VERSION = 10;
+export const STATE_SCHEMA_VERSION = 11;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -398,6 +413,10 @@ export interface AgentStateRecord {
   profile_command?: string;
   profile_args?: string[];
   profile_env?: Record<string, string>;
+  /** The snapshot's default presentation, as it was at launch. */
+  profile_presentation?: AgentPresentation;
+  /** How the Agent was launched to be shown. See version 11. */
+  presentation: AgentPresentation;
   ordinal: number;
   temporary_name?: string;
   status: AgentStatus;
@@ -707,6 +726,14 @@ function validateAgentShape(where: string, record: AgentStateRecord): void {
   if (record.profile_kind !== undefined) {
     decodeMember(at("profile_kind"), record.profile_kind, AGENT_PROFILE_KINDS);
   }
+  if (record.profile_presentation !== undefined) {
+    decodeMember(
+      at("profile_presentation"),
+      record.profile_presentation,
+      AGENT_PRESENTATIONS,
+    );
+  }
+  decodeMember(at("presentation"), record.presentation, AGENT_PRESENTATIONS);
   decodeMember(at("status"), record.status, AGENT_STATUSES);
   if (record.unread !== undefined) {
     decodeUnread(at("unread"), record.unread);
@@ -1185,12 +1212,14 @@ function launchProfile(
     record.profile_env !== undefined
       ? new Map(Object.entries(record.profile_env))
       : fallback?.env;
+  const presentation = record.profile_presentation ?? fallback?.presentation;
   if (
     kind === undefined ||
     displayName === undefined ||
     command === undefined ||
     args === undefined ||
-    env === undefined
+    env === undefined ||
+    presentation === undefined
   ) {
     fail("STATE_INVALID");
   }
@@ -1202,6 +1231,7 @@ function launchProfile(
       command,
       args,
       env,
+      presentation,
     ),
   );
 }
@@ -1289,6 +1319,7 @@ export function hydrateModel(
           id: parseAgentId(agentRecord.agent_id),
           workspaceId: id,
           profile,
+          presentation: agentRecord.presentation,
           ordinal: agentRecord.ordinal,
           temporaryName: agentRecord.temporary_name,
           status,
@@ -1431,6 +1462,8 @@ export function stateFromSnapshot(
         profile_command: agent.profile.command,
         profile_args: [...agent.profile.args],
         profile_env: Object.fromEntries(agent.profile.env),
+        profile_presentation: agent.profile.presentation,
+        presentation: agent.presentation,
         ordinal: agent.ordinal,
         temporary_name: agent.displayName,
         status: agent.status,
@@ -1830,6 +1863,16 @@ function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
     profile_env: decodeOptional(object["profile_env"], (entry) =>
       decodeStringMap(at("profile_env"), entry),
     ),
+    profile_presentation: decodeOptional(
+      object["profile_presentation"],
+      (entry) =>
+        decodeMember(at("profile_presentation"), entry, AGENT_PRESENTATIONS),
+    ),
+    presentation: decodeMember(
+      at("presentation"),
+      object["presentation"],
+      AGENT_PRESENTATIONS,
+    ),
     ordinal: decodeNumber(at("ordinal"), object["ordinal"]),
     temporary_name: decodeOptional(object["temporary_name"], (entry) =>
       decodeString(at("temporary_name"), entry),
@@ -2166,6 +2209,29 @@ function migrateToVersion10(object: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Every Agent of a version-10 document made a terminal, before it is decoded.
+ * See version 11 above.
+ *
+ * On the raw document for the reason `migrateToVersion10` is: the decoder
+ * reads one shape, and a version-11 Agent with no `presentation` is refused
+ * as the incomplete record it is rather than defaulted.
+ */
+function migrateToVersion11(object: Record<string, unknown>): void {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const workspaces = object["workspaces"];
+  if (!Array.isArray(workspaces)) return;
+  for (const workspace of workspaces) {
+    if (!isRecord(workspace) || !Array.isArray(workspace["agents"])) continue;
+    for (const agent of workspace["agents"]) {
+      if (!isRecord(agent)) continue;
+      agent["presentation"] = "tui";
+      agent["profile_presentation"] = "tui";
+    }
+  }
+}
+
 function decodeState(bytes: Buffer): Decoded {
   let value: unknown;
   try {
@@ -2200,6 +2266,7 @@ function decodeState(bytes: Buffer): Decoded {
   }
   const migrated = version < STATE_SCHEMA_VERSION || legacy !== undefined;
   if (version < 10) migrateToVersion10(object);
+  if (version < 11) migrateToVersion11(object);
   const fresh = freshState();
   // A key this build reads and the file does not have is the default; a key
   // the file *does* have has to mean what this build reads it as.

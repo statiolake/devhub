@@ -693,6 +693,38 @@ export const AGENT_PROFILE_KINDS = [
 ] as const;
 export type AgentProfileKind = (typeof AGENT_PROFILE_KINDS)[number];
 
+/**
+ * How an Agent is shown: its CLI's own screen in a terminal, or DevHub's
+ * conversation view over the CLI's structured protocol.
+ *
+ * Decided once, when the Agent is launched, and never again. A profile carries
+ * a default for it and a launch may ask for the other one, which is why it is
+ * a field of the Agent and not of the profile snapshot the Agent keeps.
+ */
+export const AGENT_PRESENTATIONS = ["tui", "gui"] as const;
+export type AgentPresentation = (typeof AGENT_PRESENTATIONS)[number];
+
+/** A presentation named by something outside the model — the page, a wire. */
+export function agentPresentation(raw: string): AgentPresentation {
+  if (!(AGENT_PRESENTATIONS as readonly string[]).includes(raw)) {
+    throw invalid(DomainErrorCode.InvalidProfile);
+  }
+  return raw as AgentPresentation;
+}
+
+/**
+ * The presentations a kind can have.
+ *
+ * GUI needs a structured protocol to read, and only Claude and Codex have one.
+ * A Cursor or custom profile is a terminal whatever it asks for, so asking for
+ * anything else is refused rather than quietly shown as a terminal.
+ */
+export function presentationsFor(
+  kind: AgentProfileKind,
+): readonly AgentPresentation[] {
+  return kind === "claude" || kind === "codex" ? ["tui", "gui"] : ["tui"];
+}
+
 export function validDisplayName(value: string): boolean {
   return value.trim().length > 0 && !value.includes("\0");
 }
@@ -720,6 +752,8 @@ export class AgentProfile {
     readonly command: string,
     readonly args: readonly string[],
     readonly env: ReadonlyMap<string, string>,
+    /** How an Agent from this profile is shown unless its launch says otherwise. */
+    readonly presentation: AgentPresentation,
   ) {}
 
   static create(
@@ -729,11 +763,15 @@ export class AgentProfile {
     command: string,
     args: readonly string[] = [],
     env: ReadonlyMap<string, string> = new Map(),
+    presentation: AgentPresentation = "tui",
   ): AgentProfile {
     if (!validDisplayName(displayName)) {
       throw invalid(DomainErrorCode.InvalidDisplayName);
     }
     if (command.trim().length === 0 || command.includes("\0")) {
+      throw invalid(DomainErrorCode.InvalidProfile);
+    }
+    if (!presentationsFor(kind).includes(presentation)) {
       throw invalid(DomainErrorCode.InvalidProfile);
     }
     if (
@@ -752,6 +790,7 @@ export class AgentProfile {
       command,
       [...args],
       new Map([...env].sort(([left], [right]) => (left < right ? -1 : 1))),
+      presentation,
     );
   }
 
@@ -761,6 +800,7 @@ export class AgentProfile {
       this.displayName !== other.displayName ||
       this.kind !== other.kind ||
       this.command !== other.command ||
+      this.presentation !== other.presentation ||
       this.args.length !== other.args.length ||
       this.env.size !== other.env.size
     ) {
@@ -1039,6 +1079,8 @@ export interface AgentRestoreRecord {
   readonly id: AgentId;
   readonly workspaceId: WorkspaceId;
   readonly profile: AgentProfile;
+  /** How it was launched to be shown. See `AgentPresentation`. */
+  readonly presentation: AgentPresentation;
   readonly ordinal: number;
   readonly temporaryName?: string;
   readonly status: AgentStatus;
@@ -1053,6 +1095,9 @@ export function agentRestoreRecord(
 ): AgentRestoreRecord {
   if (!Number.isInteger(record.ordinal) || record.ordinal === 0) {
     throw invalid(DomainErrorCode.InvalidOrdinal);
+  }
+  if (!presentationsFor(record.profile.kind).includes(record.presentation)) {
+    throw invalid(DomainErrorCode.InvalidProfile);
   }
   if (
     record.temporaryName !== undefined &&
@@ -1094,6 +1139,14 @@ export class Agent {
     readonly id: AgentId,
     readonly workspaceId: WorkspaceId,
     readonly profile: AgentProfile,
+    /**
+     * How this Agent is shown, fixed when it was launched.
+     *
+     * Its own field rather than the profile snapshot's, because the snapshot
+     * says which settings it came from and this says what the launch asked
+     * for — which a launch may have turned the other way for this one Agent.
+     */
+    readonly presentation: AgentPresentation,
     readonly ordinal: number,
     nameOverride: string | undefined,
     private statusValue: AgentStatus,
@@ -1119,12 +1172,14 @@ export class Agent {
     owner: WorkspaceId,
     profile: AgentProfile,
     ordinal: number,
+    presentation: AgentPresentation,
   ): Agent {
     return Agent.restore(
       agentRestoreRecord({
         id,
         workspaceId: owner,
         profile,
+        presentation,
         ordinal,
         // Nothing has read this Agent's screen yet, and "idle" would be a
         // reading. The first reconcile replaces it.
@@ -1141,6 +1196,7 @@ export class Agent {
       validated.id,
       validated.workspaceId,
       validated.profile,
+      validated.presentation,
       validated.ordinal,
       validated.temporaryName,
       validated.status,
@@ -1155,6 +1211,7 @@ export class Agent {
       this.id,
       this.workspaceId,
       this.profile,
+      this.presentation,
       this.ordinal,
       this.nameOverride,
       this.statusValue,

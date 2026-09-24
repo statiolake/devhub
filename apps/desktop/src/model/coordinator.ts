@@ -23,9 +23,11 @@ import {
   consolidateCloseInspection,
   DomainErrorCode,
   locationKey,
+  presentationsFor,
   relocatedOnSameMachine,
   Workspace,
   type AgentId,
+  type AgentPresentation,
   type AgentProfile,
   type AgentProfileId,
   type CloseInspectionInputs,
@@ -129,6 +131,8 @@ export type Effect =
       readonly workspaceId: WorkspaceId;
       readonly agentId: AgentId;
       readonly profile: AgentProfile;
+      /** Already resolved against the profile. See `launchPresentation`. */
+      readonly agentPresentation: AgentPresentation;
     }
   | {
       readonly kind: "inspect_workspace";
@@ -385,13 +389,16 @@ export class AppCoordinator {
   // The presentation rides along with the profile from the moment the request
   // is made until the Agent is in the model, because "open it beside the
   // workbench" is part of that one request — not a second command that could
-  // arrive after the row already appeared somewhere else.
+  // arrive after the row already appeared somewhere else. The Agent's own
+  // presentation rides the same way, for the same reason, resolved against
+  // the profile as soon as there is one.
   private readonly resolvedProfiles = new Map<
     OperationId,
     {
       workspaceId: WorkspaceId;
       profile: AgentProfile;
       presentation: SurfacePresentation;
+      agentPresentation: AgentPresentation;
     }
   >();
   private readonly launchProfiles = new Map<
@@ -401,12 +408,16 @@ export class AppCoordinator {
       agentId: AgentId;
       profile: AgentProfile;
       presentation: SurfacePresentation;
+      agentPresentation: AgentPresentation;
     }
   >();
-  /** The presentation an agent-creation request asked for, until it lands. */
+  /** The presentations an agent-creation request asked for, until it lands. */
   private readonly requestedPresentations = new Map<
     OperationId,
-    SurfacePresentation
+    {
+      presentation: SurfacePresentation;
+      agentPresentation: AgentPresentation | undefined;
+    }
   >();
   /** Closes that are still asking their questions. See `CloseRequest`. */
   private readonly closeRequests = new Map<OperationId, CloseRequest>();
@@ -647,6 +658,7 @@ export class AppCoordinator {
           intent.profileId,
           intent.extraArgs ?? [],
           intent.presentation,
+          intent.agentPresentation,
           id,
         );
       case "rename_agent":
@@ -881,6 +893,7 @@ export class AppCoordinator {
     profileId: AgentProfileId,
     extraArgs: readonly string[],
     presentation: SurfacePresentation,
+    agentPresentation: AgentPresentation | undefined,
     id: OperationId,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
@@ -899,7 +912,10 @@ export class AppCoordinator {
       { kind: "profile", workspaceId, profileId },
       id,
     );
-    this.requestedPresentations.set(token.operationId, presentation);
+    this.requestedPresentations.set(token.operationId, {
+      presentation,
+      agentPresentation,
+    });
     this.emitEffect({
       kind: "resolve_agent_profile",
       token,
@@ -1321,17 +1337,23 @@ export class AppCoordinator {
       this.resolvedProfiles.delete(id);
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(id);
     }
+    const requested = this.requestedPresentations.get(id);
+    this.requestedPresentations.delete(id);
+    const agentPresentation = this.resolveAgentPresentation(
+      id,
+      profile,
+      requested?.agentPresentation,
+    );
     const nextToken = this.startOperation(
       "generate_agent_id",
       { kind: "profile", workspaceId, profileId: profile.id },
       id,
     );
-    const presentation = this.requestedPresentations.get(id) ?? "full";
-    this.requestedPresentations.delete(id);
     this.resolvedProfiles.set(nextToken.operationId, {
       workspaceId,
       profile,
-      presentation,
+      presentation: requested?.presentation ?? "full",
+      agentPresentation,
     });
     this.emitEffect({
       kind: "generate_agent_id",
@@ -1343,6 +1365,32 @@ export class AppCoordinator {
       operationId: nextToken.operationId,
       snapshot: this.snapshot(),
     };
+  }
+
+  /**
+   * How the Agent this launch makes is shown: what the request asked for, or
+   * — when it asked for nothing — the profile's default.
+   *
+   * A presentation the profile's kind cannot have is refused here, before
+   * anything is started, with the words the domain's own refusal deliberately
+   * does not carry: which profile, and what it can do instead. `Agent.create`
+   * holds the same rule, and reaching it there would be a bug in this check.
+   */
+  private resolveAgentPresentation(
+    id: OperationId,
+    profile: AgentProfile,
+    requested: AgentPresentation | undefined,
+  ): AgentPresentation {
+    const presentation = requested ?? profile.presentation;
+    if (!presentationsFor(profile.kind).includes(presentation)) {
+      throw new AppError(AppErrorCode.Domain)
+        .withDomain(DomainErrorCode.InvalidProfile)
+        .withDetail(
+          `“${profile.displayName}” cannot open as GUI: only Claude and Codex profiles can. It can open as a terminal.`,
+        )
+        .withOperation(id);
+    }
+    return presentation;
   }
 
   private completeAgentId(
@@ -1374,6 +1422,7 @@ export class AppCoordinator {
       agentId,
       profile: resolved.profile,
       presentation: resolved.presentation,
+      agentPresentation: resolved.agentPresentation,
     });
     const launchToken = this.startOperation(
       "launch_agent",
@@ -1386,6 +1435,7 @@ export class AppCoordinator {
       workspaceId,
       agentId,
       profile: resolved.profile,
+      agentPresentation: resolved.agentPresentation,
     });
     return {
       kind: "deferred",
@@ -1441,7 +1491,13 @@ export class AppCoordinator {
     }
 
     try {
-      this.model.addAgent(workspaceId, agentId, profile, presentation);
+      this.model.addAgent(
+        workspaceId,
+        agentId,
+        profile,
+        expected.agentPresentation,
+        presentation,
+      );
     } catch (raw) {
       const error = AppError.from(raw);
       const terminateToken = this.startOperation(

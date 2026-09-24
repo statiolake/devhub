@@ -79,7 +79,7 @@ function populatedModel(): AppModel {
       displayPath("/dev/b"),
     ),
   );
-  model.addAgent(WS_A, AG_A, codex);
+  model.addAgent(WS_A, AG_A, codex, "tui");
   return model;
 }
 
@@ -183,7 +183,7 @@ describe("projection", () => {
     const model = populatedModel();
     const state = stateFromSnapshot(model.snapshot());
     state.workspaces[0].agents[0].provider_mapping = "session-42";
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_B, codex, "tui");
     const next = applySnapshot(state, model.snapshot());
     expect(next.workspaces[0].agents[0].provider_mapping).toBe("session-42");
     expect(next.workspaces[0].agents[1].provider_mapping).toBeUndefined();
@@ -265,7 +265,7 @@ describe("Scratch across a restart", () => {
 describe("navigation restore", () => {
   it("falls to the next agent, then the workspace, then Scratch", () => {
     const model = populatedModel();
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_B, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A });
     const state = stateFromSnapshot(model.snapshot());
 
@@ -689,6 +689,87 @@ describe("store", () => {
     await writeFile(path, JSON.stringify(document), { mode: 0o600 });
     const load = await new JsonStateStore(path).loadState();
     expect(load.metadata.corruptionDetail).toContain("navigation.context.kind");
+  });
+
+  it("migrates a version-10 file's Agents to terminals: there was no GUI then", async () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    const document = JSON.parse(JSON.stringify(state)) as {
+      schema_version: number;
+      workspaces: { agents: Record<string, unknown>[] }[];
+    };
+    document.schema_version = 10;
+    for (const workspace of document.workspaces) {
+      for (const agent of workspace.agents) {
+        delete agent["presentation"];
+        delete agent["profile_presentation"];
+      }
+    }
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.migrated).toBe(true);
+    expect(load.state.schema_version).toBe(11);
+    const [agent] = load.state.workspaces[0]!.agents;
+    expect(agent?.presentation).toBe("tui");
+    expect(agent?.profile_presentation).toBe("tui");
+    // Even against a profile that has since been set to GUI: the snapshot is
+    // what it was at launch, and at launch there was no GUI.
+    const nowGui = AgentProfile.create(
+      agentProfileId("codex"),
+      "Codex",
+      "codex",
+      "codex",
+      [],
+      new Map(),
+      "gui",
+    );
+    const restored = hydrateModel(load.state, [nowGui], today()).snapshot()
+      .workspaces[0]!.agents[0]!;
+    expect(restored.presentation).toBe("tui");
+    expect(restored.profile.presentation).toBe("tui");
+  });
+
+  it("refuses a version-11 Agent with no presentation rather than guessing one", async () => {
+    const document = JSON.parse(
+      JSON.stringify(stateFromSnapshot(populatedModel().snapshot())),
+    ) as { workspaces: { agents: Record<string, unknown>[] }[] };
+    delete document.workspaces[0]!.agents[0]!["presentation"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.primaryQuarantined).toBe(true);
+    expect(load.metadata.corruptionDetail).toContain(
+      "workspaces[0].agents[0].presentation",
+    );
+  });
+
+  it("keeps an Agent's presentation apart from its profile's default", () => {
+    // A GUI-default profile launched the other way, as Option-Return does.
+    const claude = AgentProfile.create(
+      agentProfileId("claude"),
+      "Claude",
+      "claude",
+      "claude",
+      [],
+      new Map(),
+      "gui",
+    );
+    const model = populatedModel();
+    model.addAgent(WS_B, AG_B, claude, "tui");
+    const state = stateFromSnapshot(model.snapshot());
+    const record = state.workspaces[1]!.agents[0]!;
+    expect(record.presentation).toBe("tui");
+    expect(record.profile_presentation).toBe("gui");
+    const agent = hydrateModel(state, [codex, claude], today()).snapshot()
+      .workspaces[1]!.agents[0]!;
+    expect(agent.presentation).toBe("tui");
+    expect(agent.profile.presentation).toBe("gui");
+  });
+
+  it("refuses a GUI Agent whose profile's kind has no GUI", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    const record = state.workspaces[0]!.agents[0]!;
+    record.profile_kind = "cursor";
+    record.presentation = "gui";
+    expect(() => hydrateModel(state, [], today())).toThrow(StateError);
   });
 
   it("carries every field the model owns, not only the ones it used to", () => {
@@ -1227,8 +1308,8 @@ describe("the order a person put the rows in, across a restart", () => {
         displayPath("/srv/api"),
       ),
     );
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_A, AG_B, codex, "tui");
     model.setAgentOrder(WS_A, [AG_B, AG_A]);
 
     const state = stateFromSnapshot(model.snapshot());

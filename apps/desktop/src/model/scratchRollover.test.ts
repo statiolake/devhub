@@ -59,7 +59,7 @@ function codeOf(run: () => unknown): DomainErrorCode | undefined {
 /** Yesterday's Scratch, with an Agent created in it and selected. */
 function yesterdayWithAgent(): AppModel {
   const model = new AppModel(yesterday());
-  model.addAgent(YESTERDAY, AGENT, codex);
+  model.addAgent(YESTERDAY, AGENT, codex, "tui");
   return model;
 }
 

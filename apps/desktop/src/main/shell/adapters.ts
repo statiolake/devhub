@@ -30,6 +30,7 @@ import type { RuntimeId } from "../runtime/runtime.js";
 import type {
 	AgentId,
 	AgentProfile,
+	AgentPresentation,
 	CloseInspectionInputs,
 	ResourceInspection,
 	UnsavedEditorsInspection,
@@ -46,6 +47,7 @@ export interface AgentAdapter {
 		workspaceId: WorkspaceId,
 		agentId: AgentId,
 		profile: AgentProfile,
+		presentation: AgentPresentation,
 		workspaceRoot: string,
 	): Promise<AgentLaunchResult>;
 	stop(agentId: AgentId): Promise<AgentStopResult>;

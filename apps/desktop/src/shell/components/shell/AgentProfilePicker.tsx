@@ -14,9 +14,22 @@
  * genuinely knows and this cannot: what it is asking for, where the question
  * sits in its flow, what the Command modifier means to it, and what to do with
  * the answer.
+ *
+ * The Option modifier means the same thing to every caller, so it is answered
+ * here: the profile's presentation turned the other way for this one launch.
+ * Each row says at its right end which one Return will launch — `TUI` or
+ * `GUI` — and says the other while Option is held, so the sheet always shows
+ * what the key about to be pressed will do. A profile with only one
+ * presentation says the same thing either way, because Option has nowhere to
+ * turn it. What reaches the caller is the presentation the row was showing,
+ * not the gesture, so there is one reading of it and it is this one.
  */
 
-import type { AgentProfileKindWire } from "../../../ipc/appShell";
+import type {
+  AgentPresentationWire,
+  AgentProfileKindWire,
+  AgentProfileWire,
+} from "../../../ipc/appShell";
 import { usePicker } from "../../picker/PickerContext";
 import { Picker } from "./Picker";
 import type { ReactNode } from "react";
@@ -33,7 +46,11 @@ export interface AgentProfilePickerProps {
    * about the list itself, and it outranks anything about the keys.
    */
   readonly hint: ReactNode;
-  readonly onChoose: (profileId: string, split: boolean) => void;
+  readonly onChoose: (
+    profileId: string,
+    split: boolean,
+    presentation: AgentPresentationWire,
+  ) => void;
   readonly onCancel: () => void;
 }
 
@@ -62,6 +79,8 @@ export function AgentProfilePicker({
           // never be known.
           detail: kind === profile.displayName ? undefined : kind,
           searchText: `${profile.displayName} ${profile.kind}`,
+          accessory: (alternate: boolean) =>
+            PRESENTATION_LABEL[launchPresentation(profile, alternate)],
         };
       })}
       emptyNoMatch="No agent profiles match."
@@ -76,10 +95,46 @@ export function AgentProfilePicker({
           : hint
       }
       onChoose={(choice) => {
-        onChoose(choice.id, choice.split);
+        const profile = agentProfiles.profiles.find(
+          (candidate) => candidate.id === choice.id,
+        );
+        if (profile === undefined) {
+          // The row taken is one this list drew, from these profiles. Not
+          // finding it means the two disagree, and launching anything would
+          // launch something nobody picked.
+          throw new Error(
+            `the picker offered a profile it does not have: ${choice.id}`,
+          );
+        }
+        onChoose(
+          choice.id,
+          choice.split,
+          launchPresentation(profile, choice.alternate),
+        );
       }}
       onCancel={onCancel}
     />
+  );
+}
+
+const PRESENTATION_LABEL: Record<AgentPresentationWire, string> = {
+  tui: "TUI",
+  gui: "GUI",
+};
+
+/**
+ * What a launch of this profile is: its default, or with Option held, the
+ * other presentation it has — and still its default when it has no other.
+ */
+export function launchPresentation(
+  profile: AgentProfileWire,
+  alternate: boolean,
+): AgentPresentationWire {
+  if (!alternate) return profile.presentation;
+  return (
+    profile.presentations.find(
+      (presentation) => presentation !== profile.presentation,
+    ) ?? profile.presentation
   );
 }
 

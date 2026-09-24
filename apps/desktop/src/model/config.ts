@@ -50,6 +50,11 @@ import {
 } from "./dateTemplate.js";
 import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import {
+  AGENT_PRESENTATIONS,
+  presentationsFor,
+  type AgentPresentation,
+} from "./domain.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -274,6 +279,13 @@ export interface ConfiguredAgentProfile {
   readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  /**
+   * How an Agent from this profile is shown unless its launch says otherwise:
+   * `"tui"`, the CLI's own screen in a terminal, or `"gui"`, DevHub's
+   * conversation view. Absent in the file means `"tui"`, which is what every
+   * profile was before there was a choice. Only Claude and Codex have a GUI.
+   */
+  readonly presentation: AgentPresentation;
 }
 
 export interface GeneralConfig {
@@ -633,6 +645,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "codex",
       args: [],
       env: {},
+      presentation: "tui",
     },
     {
       id: "claude",
@@ -641,6 +654,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "claude",
       args: [],
       env: {},
+      presentation: "tui",
     },
     // Cursor has a manifest now, so `custom` — which used to be the truthful
     // kind here, because DevHub had no idea what a Cursor screen looked like —
@@ -667,6 +681,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "cursor-agent",
       args: [],
       env: {},
+      presentation: "tui",
     },
   ];
 }
@@ -1254,6 +1269,9 @@ function validateAgentProfiles(
     if (profile.args.some((argument) => argument.includes("\0"))) {
       fail("invalid_profile", `${prefix}.args`);
     }
+    if (!presentationsFor(profile.kind).includes(profile.presentation)) {
+      fail("invalid_profile", `${prefix}.presentation`);
+    }
     for (const [key, value] of Object.entries(profile.env)) {
       if (!isEnvironmentName(key)) {
         fail("invalid_environment_key", `${prefix}.env`);
@@ -1652,7 +1670,7 @@ function agentProfileFromTable(
   const table = requireTable(value, prefix);
   checkKeys(
     table,
-    ["id", "display_name", "kind", "command", "args", "env"],
+    ["id", "display_name", "kind", "command", "args", "env", "presentation"],
     prefix,
   );
   const kind = table["kind"];
@@ -1663,6 +1681,10 @@ function agentProfileFromTable(
     kind !== "custom"
   ) {
     fail("invalid_profile_kind", `${prefix}.kind`);
+  }
+  const presentation = optionalString(table, "presentation", prefix, "tui");
+  if (!(AGENT_PRESENTATIONS as readonly string[]).includes(presentation)) {
+    fail("invalid_profile", `${prefix}.presentation`);
   }
   const rawEnv = table["env"];
   const env: Record<string, string> = {};
@@ -1689,6 +1711,7 @@ function agentProfileFromTable(
         : optionalString(table, "command", prefix, defaultCommandForKind(kind)),
     args: optionalStringArray(table, "args", prefix, []),
     env,
+    presentation: presentation as AgentPresentation,
   };
 }
 
@@ -2019,6 +2042,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       command: profile.command,
       args: [...profile.args],
       env: { ...profile.env },
+      presentation: profile.presentation,
     })),
   } as Record<string, TomlValue>;
 }

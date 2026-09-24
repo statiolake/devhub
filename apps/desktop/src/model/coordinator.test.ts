@@ -37,6 +37,7 @@ import {
   type UserIntent,
   type WorktreeDisposition,
 } from "./intents.js";
+import { errorWire } from "./wire.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
@@ -848,6 +849,117 @@ describe("launching an agent", () => {
   });
 });
 
+describe("how a launched agent is shown", () => {
+  const cursor = AgentProfile.create(
+    agentProfileId("cursor"),
+    "Cursor",
+    "cursor",
+    "cursor-agent",
+  );
+
+  /** Asks for an Agent, answers the profile with `profile`, and returns what follows. */
+  function requested(
+    profile: AgentProfile,
+    agentPresentation?: "tui" | "gui",
+  ): { driver: Driver; refusal: unknown; next: Effect[] } {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: profile.id,
+      presentation: "full",
+      ...(agentPresentation === undefined ? {} : { agentPresentation }),
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "profile_resolved",
+        token: resolve.token,
+        workspaceId: WS_A,
+        profile,
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    return { driver, refusal, next: driver.drainEffects() };
+  }
+
+  function launched(driver: Driver, next: Effect[]): Effect {
+    driver.answer(next[0]!);
+    const launch = driver.drainEffects()[0];
+    if (launch?.kind !== "launch_agent") throw new Error("unexpected");
+    return launch;
+  }
+
+  it("is the profile's default when the request does not say", () => {
+    const { driver, next } = requested(codex);
+    const launch = launched(driver, next);
+    expect(launch).toMatchObject({ agentPresentation: "tui" });
+    driver.answer(launch);
+    driver.settle();
+    expect(
+      driver.coordinator.snapshot().workspaces[1].agents[0]?.presentation,
+    ).toBe("tui");
+  });
+
+  it("is what the request asked for, apart from the profile's default", () => {
+    const { driver, next } = requested(codex, "gui");
+    const launch = launched(driver, next);
+    expect(launch).toMatchObject({ agentPresentation: "gui" });
+    driver.answer(launch);
+    driver.settle();
+    const agent = driver.coordinator.snapshot().workspaces[1].agents[0];
+    expect(agent?.presentation).toBe("gui");
+    expect(agent?.profile.presentation).toBe("tui");
+  });
+
+  it("refuses GUI for a profile whose kind has none, before anything starts", () => {
+    const { refusal, next } = requested(cursor, "gui");
+    expect(refusal).toBeInstanceOf(AppError);
+    expect((refusal as AppError).domainCode).toBe(
+      DomainErrorCode.InvalidProfile,
+    );
+    // No identity asked for, nothing launched: the refusal is the answer.
+    expect(next).toEqual([]);
+    const wire = errorWire(refusal);
+    expect(wire.code).toBe("agent_profile_unavailable");
+    expect(wire.summary).toBe("The agent could not start from this profile.");
+    expect(wire.detail).toBe(
+      "“Cursor” cannot open as GUI: only Claude and Codex profiles can. It can open as a terminal.",
+    );
+  });
+
+  it("names a launch refused for its presentation as the profile's, not the runtime's", () => {
+    const { driver, next } = requested(codex, "gui");
+    const launch = launched(driver, next);
+    if (launch.kind !== "launch_agent") throw new Error("unexpected");
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "agent_launch_completed",
+        token: launch.token,
+        workspaceId: WS_A,
+        agentId: AG_A,
+        result: {
+          kind: "failed",
+          code: "agent_profile_unavailable",
+          detail: "GUI mode is not available yet.",
+        },
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    const wire = errorWire(refusal);
+    expect(wire.code).toBe("agent_profile_unavailable");
+    expect(wire.detail).toBe("GUI mode is not available yet.");
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
+  });
+});
+
 describe("stopping an agent", () => {
   /** A driver with one Agent in one workspace, reported as `status`. */
   function withAgent(status: "idle" | "working" | "unknown"): Driver {
@@ -1395,7 +1507,7 @@ describe("where a close lands", () => {
       [B1, BRAVO],
     ];
     for (const [id, owner] of agents) {
-      model.addAgent(owner, id, codex);
+      model.addAgent(owner, id, codex, "tui");
       // Idle, so a close is not a question unless a test makes it one.
       model.setAgentStatus(id, "idle");
     }

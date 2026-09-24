@@ -72,6 +72,7 @@ import {
 import {
 	appConditionIdentity,
 	appFailureIdentity,
+	type AgentLaunchWire,
 	type AgentProfiles,
 	type AppAppearance,
 	type AppErrorWire,
@@ -112,6 +113,8 @@ import {
 } from "../cli/route.js";
 import {
 	AgentProfile,
+	type AgentPresentation,
+	agentPresentation,
 	agentsInspection,
 	agentProfileId,
 	displayPath,
@@ -2800,6 +2803,7 @@ export class AppController {
 					effect.workspaceId,
 					effect.agentId,
 					effect.profile,
+					effect.agentPresentation,
 				);
 				return;
 			case "stop_agent":
@@ -3227,6 +3231,7 @@ export class AppController {
 		workspaceId: WorkspaceId,
 		agentId: ReturnType<typeof parseAgentId>,
 		profile: AgentProfile,
+		presentation: AgentPresentation,
 	): Promise<void> {
 		const adapter = agents();
 		const workspace = this.coordinator.model.workspace(workspaceId);
@@ -3256,6 +3261,7 @@ export class AppController {
 			workspaceId,
 			agentId,
 			profile,
+			presentation,
 			workspace.root,
 		);
 		this.accept({
@@ -4468,7 +4474,7 @@ export class AppController {
 	 * Open a folder on the page's behalf, and answer with the outcome.
 	 *
 	 * `withAgent` is the profile the person asked to start in it — the picker's
-	 * Command gesture — and it is carried here rather than made a second call
+	 * Command gesture — and how they asked for it to be shown, and it is carried here rather than made a second call
 	 * because it is one act: a folder opened for an agent that then failed to
 	 * start would leave them looking at a workspace they did not ask for on its
 	 * own. Every way of opening ends up here, so the gesture means the same
@@ -4477,7 +4483,7 @@ export class AppController {
 	 */
 	private async openFolder(
 		location: RequestedWorkspaceLocation,
-		withAgent?: string,
+		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcomeWire> {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
@@ -4499,7 +4505,8 @@ export class AppController {
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId: this.openedWorkspaceId(location),
-			profileId: agentProfileId(withAgent),
+			profileId: agentProfileId(withAgent.profileId),
+			agentPresentation: agentPresentation(withAgent.presentation),
 			// The person answered "which profile", not "where to put it". The
 			// Agent gets the plain arrangement, the same one `devhub --agent`
 			// gets, and the modifier they used to get here has already been spent
@@ -5614,7 +5621,7 @@ export class AppController {
 				_event,
 				path: string,
 				create: boolean,
-				withAgent: string | undefined,
+				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
@@ -5653,7 +5660,7 @@ export class AppController {
 				_event,
 				host: string,
 				path: string,
-				withAgent: string | undefined,
+				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
@@ -5682,7 +5689,7 @@ export class AppController {
 			async (
 				_event,
 				workspaceFolder: string,
-				withAgent: string | undefined,
+				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
@@ -5772,7 +5779,7 @@ export class AppController {
 		// and not "the native app shell is unavailable".
 		handle(
 			CHANNELS.createProject,
-			async (_event, path: string, withAgent: string | undefined) => {
+			async (_event, path: string, withAgent: AgentLaunchWire | undefined) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				try {
@@ -5794,7 +5801,7 @@ export class AppController {
 				_event,
 				url: string,
 				parentDirectory: string,
-				withAgent: string | undefined,
+				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
@@ -6188,6 +6195,7 @@ function toDomainProfile(profile: {
 	command: string;
 	args: readonly string[];
 	env: Readonly<Record<string, string>>;
+	presentation: AgentPresentation;
 }): AgentProfile {
 	return AgentProfile.create(
 		agentProfileId(profile.id),
@@ -6196,6 +6204,7 @@ function toDomainProfile(profile: {
 		profile.command,
 		profile.args,
 		new Map(Object.entries(profile.env)),
+		profile.presentation,
 	);
 }
 

@@ -208,6 +208,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			command: profile.command,
 			args: [...profile.args],
 			env: { ...profile.env },
+			presentation: profile.presentation,
 		})),
 	};
 }
@@ -334,6 +335,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			command: profile.command,
 			args: [...profile.args],
 			env: { ...profile.env },
+			presentation: profile.presentation,
 		})),
 	};
 }

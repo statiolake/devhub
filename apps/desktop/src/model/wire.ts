@@ -15,6 +15,8 @@ import {
   DomainErrorCode,
   surfaceKeyName,
   abbreviateHome,
+  agentPresentation as parseAgentPresentation,
+  presentationsFor,
   type AgentFailureCode,
   type AgentProfile,
   type AgentControlState,
@@ -193,6 +195,8 @@ export function agentProfilesWire(
     id: profile.id,
     displayName: profile.displayName,
     kind: profile.kind,
+    presentation: profile.presentation,
+    presentations: presentationsFor(profile.kind),
   }));
   return {
     sequence,
@@ -323,6 +327,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     id: agent.id,
     workspaceId: agent.workspaceId,
     profileId: agent.profileId,
+    presentation: agent.presentation,
     displayName: agent.displayName,
     ordinal: agent.ordinal,
     status: agent.status,
@@ -600,10 +605,11 @@ const SAFE_ERROR_SUMMARY = APP_ERROR_SUMMARY;
  *
  * Total, so a new `AgentFailureCode` is a compile error here rather than a
  * failure that quietly reads as "the agent runtime is unavailable" again.
- * `agent_profile_unavailable` is the one that has no app-wide sentence of its
- * own — it is drawn on the Agent's row, where the profile is — so it keeps the
- * runtime's, and `undefined` is a port failure that never went through
- * `portRefusal` at all.
+ * `agent_profile_unavailable` has a sentence of its own because a launch can
+ * be refused for it before there is any row to draw it on — a profile asking
+ * for a presentation it cannot have yet — and "the agent runtime is
+ * unavailable" would send the reader to a runtime that was fine. `undefined`
+ * is a port failure that never went through `portRefusal` at all.
  */
 function agentFailureAsAppError(
   failure: AgentFailureCode | undefined,
@@ -618,6 +624,7 @@ function agentFailureAsAppError(
     case "workspace_unavailable":
       return "workspace_unavailable";
     case "agent_profile_unavailable":
+      return "agent_profile_unavailable";
     case "agent_runtime_unavailable":
     case undefined:
       return "agent_runtime_unavailable";
@@ -805,6 +812,11 @@ export function errorWire(error: unknown): AppErrorWire {
         case DomainErrorCode.WorkspaceClosingFailed:
           code = "workspace_close_failed";
           break;
+        // The one domain refusal about a profile is a launch asking for what
+        // the profile cannot be, and it reads as the launch-time one does.
+        case DomainErrorCode.InvalidProfile:
+          code = "agent_profile_unavailable";
+          break;
         default:
           code = "invalid_intent";
       }
@@ -957,13 +969,24 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
           parseConfirmationId(wire.confirmationId),
         ),
       };
-    case "request_create_agent":
+    case "request_create_agent": {
+      // Absent is the profile's own default, the way an absent `split` is
+      // the plain arrangement.
+      const requested = wire.presentation;
       return {
         type: "create_agent",
         workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
         profileId: tryParse(() => parseAgentProfileId(wire.profileId)),
         presentation: presentationFrom(wire.split),
+        ...(requested === undefined
+          ? {}
+          : {
+              agentPresentation: tryParse(() =>
+                parseAgentPresentation(requested),
+              ),
+            }),
       };
+    }
     case "rename_agent": {
       const displayName = wire.displayName;
       if (

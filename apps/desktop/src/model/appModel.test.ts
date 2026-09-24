@@ -124,7 +124,7 @@ describe("layout resolution", () => {
 
   it("gives a plainly selected Agent the whole content area", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     expect(full(model, { kind: "agent", agentId: AG_A })).toEqual({
       kind: "agent",
       agent: { kind: "agent", agentId: AG_A },
@@ -133,7 +133,7 @@ describe("layout resolution", () => {
 
   it("splits an Agent beside its own Workspace's workbench when asked", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     expect(
       model.resolveLayout({
         context: { kind: "agent", agentId: AG_A },
@@ -159,8 +159,8 @@ describe("layout resolution", () => {
 
   it("splits a Workspace beside the Agent it is paired with", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_A, AG_B, codex, "tui");
     // Never been in one: the pair is the first Agent. The editor is what is
     // selected, so the editor is the half in front.
     expect(
@@ -189,7 +189,7 @@ describe("layout resolution", () => {
 
   it("swaps the half of a split the keyboard is in, and only inside one", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
     model.swapSplitFocus();
     expect(model.snapshot().selection).toEqual({
@@ -212,7 +212,7 @@ describe("layout resolution", () => {
 
   it("jumps to Scratch and comes back to the whole selection it left", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     model.toggleScratch();
     expect(model.snapshot().selection).toEqual({
@@ -228,7 +228,7 @@ describe("layout resolution", () => {
 
   it("comes back to an Agent, and to one that was side by side, as it was", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A });
     model.toggleScratch();
     model.toggleScratch();
@@ -282,7 +282,7 @@ describe("layout resolution", () => {
 
   it("re-selecting the same Agent a different way moves the layout", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     const context = { kind: "agent", agentId: AG_A } as const;
     model.selectContext(context, "full");
     const before = model.snapshot().revision;
@@ -295,7 +295,7 @@ describe("layout resolution", () => {
 
   it("shows nothing for an Agent whose Workspace went away", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.markWorkspaceUnavailable(WS_A, "root_missing");
     expect(full(model, { kind: "agent", agentId: AG_A })).toEqual({
       kind: "unavailable",
@@ -331,7 +331,7 @@ describe("selection", () => {
       context: { kind: "workspace", workspaceId: WS_A },
       presentation: "full",
     });
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_A },
       presentation: "full",
@@ -345,8 +345,8 @@ describe("selection", () => {
 
   it("falls to the next agent, then the workspace, when one exits", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_A, AG_B, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A });
     model.agentExited(AG_A, drawn(model));
     expect(model.selection).toEqual({
@@ -365,7 +365,7 @@ describe("selection", () => {
     // on a row nobody sees; it fails where it is read instead, and nothing
     // is removed.
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     const stale = drawn(model).filter((id) => id !== WS_B);
     expect(() => {
       model.agentExited(AG_A, stale);
@@ -384,20 +384,20 @@ describe("selection", () => {
 describe("ordinals", () => {
   it("numbers agents per workspace and profile", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_B, AG_B, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_B, AG_B, codex, "tui");
     expect(model.agent(AG_A)?.displayName).toBe("Codex 1");
     expect(model.agent(AG_B)?.displayName).toBe("Codex 1");
   });
 
   it("shows the number only once there are two of a profile to tell apart", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     const names = () =>
       model.snapshot().workspaces[1].agents.map((agent) => agent.displayName);
     expect(names()).toEqual(["Codex"]);
 
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_B, codex, "tui");
     expect(names()).toEqual(["Codex 1", "Codex 2"]);
 
     // A name a person typed is theirs, and is not a second Codex the other one
@@ -442,7 +442,7 @@ describe("Scratch, today's daily folder", () => {
   it("moves to the new day's folder and leaves yesterday's as an ordinary row", () => {
     const model = scratchModel();
     const yesterday = model.scratchWorkspaceId;
-    model.addAgent(yesterday, AG_A, codex);
+    model.addAgent(yesterday, AG_A, codex, "tui");
     const day = localWorkspace(TOMORROW);
     expect(model.adoptScratchDay(day)).toBe(true);
     const snapshot = model.snapshot();
@@ -491,7 +491,7 @@ describe("Scratch, today's daily folder", () => {
 
   it("lets Agents be created in Scratch", () => {
     const model = scratchModel();
-    model.addAgent(model.scratchWorkspaceId, AG_A, codex);
+    model.addAgent(model.scratchWorkspaceId, AG_A, codex, "tui");
     expect(model.snapshot().workspaces[0].agents.map((a) => a.id)).toEqual([
       AG_A,
     ]);
@@ -522,7 +522,7 @@ describe("sidebar", () => {
 
   it("keeps a workspace's agents in the projection, always", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     expect(model.snapshot().workspaces[1].agents.map((a) => a.id)).toEqual([
       AG_A,
     ]);
@@ -534,7 +534,7 @@ describe("sidebar", () => {
 describe("closing", () => {
   it("refuses a workspace that still has agents", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     expect(
       codeOf(() => {
         model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
@@ -664,7 +664,7 @@ describe("unread agents", () => {
    */
   function withAgent() {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     return model;
   }
@@ -746,7 +746,7 @@ describe("unread agents", () => {
 describe("looking at an Agent, and the window that is not in front", () => {
   function selectedAgent() {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A });
     return model;
   }
@@ -807,7 +807,7 @@ describe("looking at an Agent, and the window that is not in front", () => {
 describe("a refusal about one Agent", () => {
   function withFailingAgent() {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
     return model;
   }
 
@@ -870,8 +870,8 @@ describe("arranging the rows", () => {
         displayPath("/srv/api"),
       ),
     );
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_A, AG_B, codex);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_A, AG_B, codex, "tui");
     return model;
   }
 

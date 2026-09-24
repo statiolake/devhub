@@ -260,6 +260,7 @@ describe("a collection of agent profiles", () => {
       command: "codex",
       args: [],
       env: {},
+      presentation: "tui",
     },
     {
       id: "claude",
@@ -268,6 +269,7 @@ describe("a collection of agent profiles", () => {
       command: "claude",
       args: ["--verbose"],
       env: { TOKEN: "x" },
+      presentation: "tui",
     },
   ];
 
@@ -294,6 +296,7 @@ describe("a collection of agent profiles", () => {
             command: "codex",
             args: [],
             env: { FIRST: "1", SECOND: "2" },
+            presentation: "tui",
           },
         ],
       }),
@@ -309,6 +312,43 @@ describe("a collection of agent profiles", () => {
         "SECOND",
       ]);
     });
+  });
+
+  it("sets how a profile's agents are shown", async () => {
+    const { saves } = await open(
+      "Agents",
+      testConfig({ agentProfiles: PROFILES }),
+    );
+    const popup = screen.getByLabelText("Agent presentation");
+    expect(popup).toHaveValue("tui");
+    fireEvent.change(popup, { target: { value: "gui" } });
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentProfiles[0]?.presentation).toBe("gui");
+    });
+  });
+
+  it("offers no GUI for a kind that has none, and takes a GUI profile back to the terminal", async () => {
+    const { saves } = await open(
+      "Agents",
+      testConfig({
+        agentProfiles: [{ ...PROFILES[0]!, presentation: "gui" }],
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Agent runtime"), {
+      target: { value: "cursor" },
+    });
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentProfiles[0]).toMatchObject({
+        kind: "cursor",
+        presentation: "tui",
+      });
+    });
+    const popup = screen.getByLabelText("Agent presentation");
+    expect(
+      within(popup)
+        .getAllByRole("option")
+        .map((one) => one.textContent),
+    ).toEqual(["Terminal (TUI)"]);
   });
 
   it("says the collection is empty", async () => {

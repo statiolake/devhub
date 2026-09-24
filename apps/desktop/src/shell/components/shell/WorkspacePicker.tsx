@@ -38,6 +38,7 @@ import {
   useSshHosts,
 } from "./SshSheets";
 import { DevContainerSheet } from "./DevContainerSheet";
+import type { AgentLaunchWire } from "../../../ipc/appShell";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
@@ -193,8 +194,8 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   const [typedQuery, setTypedQuery] = useState("");
   /** The row Command took, waiting on the agent question. */
   const [chosen, setChosen] = useState<Chosen>();
-  /** The profile the answer to that question named, once there is one. */
-  const [withAgent, setWithAgent] = useState<string>();
+  /** The Agent the answer to that question named, once there is one. */
+  const [withAgent, setWithAgent] = useState<AgentLaunchWire>();
   const {
     pickerCandidates,
     pickerBusy,
@@ -319,13 +320,13 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
    * one that cannot half-happen.
    */
   const run = useCallback(
-    (row: Chosen, profileId: string | undefined) => {
+    (row: Chosen, agent: AgentLaunchWire | undefined) => {
       switch (row.kind) {
         case "open": {
           // A folder being *made* cannot have a definition in it yet, so there
           // is nothing to ask about and nothing to probe for.
           if (row.create) {
-            finish(() => selectWorkspacePicker(row.path, true, profileId));
+            finish(() => selectWorkspacePicker(row.path, true, agent));
             return;
           }
           // Two `stat`s before the act, because a folder that defines a Dev
@@ -338,7 +339,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
               () => undefined,
             );
             if (configPath === undefined) {
-              finish(() => selectWorkspacePicker(path, false, profileId));
+              finish(() => selectWorkspacePicker(path, false, agent));
               return;
             }
             void cancelWorkspacePicker();
@@ -362,7 +363,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
             setAsking("ssh-folder");
             return;
           }
-          finish(() => openSshWorkspace(host, path, profileId));
+          finish(() => openSshWorkspace(host, path, agent));
           return;
         }
         case "new":
@@ -459,16 +460,17 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       <AgentProfilePicker
         question="Which agent profile should start in the workspace being opened?"
         step={2}
-        hint="The agent starts at the workspace root, once it is open."
-        onChoose={(profileId) => {
+        hint="The agent starts at the workspace root, once it is open. ⌥Return opens it as the other of TUI and GUI."
+        onChoose={(profileId, _split, presentation) => {
           if (chosen === undefined) {
             // This question is only ever asked with a row behind it. Standing
             // here without one means the two states disagree, and going on
             // would start an agent in a workspace nobody named.
             throw new Error("the agent question was asked with no row taken");
           }
-          setWithAgent(profileId);
-          run(chosen, profileId);
+          const launch = { profileId, presentation };
+          setWithAgent(launch);
+          run(chosen, launch);
         }}
         // One question back, which is the list — and the same list, because
         // the pool it is drawn from outlives the sheet that draws it.

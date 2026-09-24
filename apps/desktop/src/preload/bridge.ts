@@ -41,6 +41,7 @@ import {
 } from "../ipc/contract.js";
 import type { ShellPalette } from "../ipc/palette.js";
 import type {
+	AgentLaunchWire,
 	AgentProfiles,
 	AppAppearance,
 	AppError,
@@ -150,7 +151,7 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 		selectWorkspacePicker: (
 			path: string,
 			create: boolean,
-			withAgent?: string,
+			withAgent?: AgentLaunchWire,
 		) =>
 			ipcRenderer.invoke(
 				CHANNELS.selectWorkspacePicker,
@@ -160,13 +161,17 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 			) as Promise<AppOutcome>,
 		onWorkspacePicker: (listener) =>
 			on<WorkspacePickerEvent>(CHANNELS.workspacePicker, listener),
-		createProject: (path: string, withAgent?: string) =>
+		createProject: (path: string, withAgent?: AgentLaunchWire) =>
 			ipcRenderer.invoke(
 				CHANNELS.createProject,
 				path,
 				withAgent,
 			) as Promise<AppOutcome>,
-		cloneProject: (url: string, parentDirectory: string, withAgent?: string) =>
+		cloneProject: (
+			url: string,
+			parentDirectory: string,
+			withAgent?: AgentLaunchWire,
+		) =>
 			ipcRenderer.invoke(
 				CHANNELS.cloneProject,
 				url,
@@ -189,7 +194,11 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 			ipcRenderer.invoke(CHANNELS.listSshHosts) as Promise<
 				readonly SshHostWire[]
 			>,
-		openSshWorkspace: (host: string, path: string, withAgent?: string) =>
+		openSshWorkspace: (
+			host: string,
+			path: string,
+			withAgent?: AgentLaunchWire,
+		) =>
 			ipcRenderer.invoke(
 				CHANNELS.openSshWorkspace,
 				host,
@@ -200,7 +209,10 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 			ipcRenderer.invoke(CHANNELS.devContainerConfig, path) as Promise<
 				string | undefined
 			>,
-		openContainerWorkspace: (workspaceFolder: string, withAgent?: string) =>
+		openContainerWorkspace: (
+			workspaceFolder: string,
+			withAgent?: AgentLaunchWire,
+		) =>
 			ipcRenderer.invoke(
 				CHANNELS.openContainerWorkspace,
 				workspaceFolder,

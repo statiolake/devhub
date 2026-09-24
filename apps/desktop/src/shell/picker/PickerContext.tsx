@@ -25,6 +25,7 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  AgentLaunchWire,
   AgentProfiles,
   AppIntent,
   AppLoadState,
@@ -68,7 +69,7 @@ export interface PickerValue {
   readonly selectWorkspacePicker: (
     path: string,
     create: boolean,
-    withAgent?: string,
+    withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
   /** The machines `~/.ssh/config` names, read fresh when the picker opens. */
@@ -77,25 +78,25 @@ export interface PickerValue {
   readonly openSshWorkspace: (
     host: string,
     path: string,
-    withAgent?: string,
+    withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   /** Which file makes this folder a Dev Container, if any does. */
   readonly devContainerConfig: (path: string) => Promise<string | undefined>;
   /** Build or start this folder's container, then open it as a Workspace. */
   readonly openContainerWorkspace: (
     workspaceFolder: string,
-    withAgent?: string,
+    withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
   readonly createProject: (
     path: string,
-    withAgent?: string,
+    withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome>;
   /** Clone into `parentDirectory` and open what git made. Throws git's reason. */
   readonly cloneProject: (
     url: string,
     parentDirectory: string,
-    withAgent?: string,
+    withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome>;
   readonly projectDefaultDirectory: () => Promise<string>;
   /** Where a clone could go: the parents of everything the sources find. */

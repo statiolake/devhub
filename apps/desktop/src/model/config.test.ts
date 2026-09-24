@@ -824,6 +824,105 @@ describe("round trip", () => {
     expect(parsed.agentProfiles[0]?.command).toBe("cursor-agent");
   });
 
+  describe("a profile's presentation", () => {
+    const profile = (kind: string, presentation?: string) =>
+      [
+        "version = 1",
+        "",
+        "[[agent_profiles]]",
+        'id = "agent"',
+        'display_name = "Agent"',
+        `kind = "${kind}"`,
+        ...(presentation === undefined
+          ? []
+          : [`presentation = "${presentation}"`]),
+        "",
+        "[agent_profiles.env]",
+        "",
+      ].join("\n");
+
+    it("is a terminal when the file does not say", () => {
+      expect(
+        parseConfig(profile("claude")).agentProfiles[0]?.presentation,
+      ).toBe("tui");
+    });
+
+    it("is GUI when a Claude or Codex profile asks for it", () => {
+      expect(
+        parseConfig(profile("claude", "gui")).agentProfiles[0]?.presentation,
+      ).toBe("gui");
+      expect(
+        parseConfig(profile("codex", "gui")).agentProfiles[0]?.presentation,
+      ).toBe("gui");
+    });
+
+    it.each(["cursor", "custom"])(
+      "refuses GUI on a %s profile, naming the key",
+      (kind) => {
+        const source =
+          kind === "custom"
+            ? profile(kind, "gui").replace(
+                'presentation = "gui"',
+                'command = "my-agent"\npresentation = "gui"',
+              )
+            : profile(kind, "gui");
+        expect(codeOf(() => parseConfig(source))).toBe("invalid_profile");
+        expect(pathOf(() => parseConfig(source))).toBe(
+          "agent_profiles[0].presentation",
+        );
+      },
+    );
+
+    it("refuses a presentation that is neither", () => {
+      const source = profile("claude", "sideways");
+      expect(codeOf(() => parseConfig(source))).toBe("invalid_profile");
+      expect(pathOf(() => parseConfig(source))).toBe(
+        "agent_profiles[0].presentation",
+      );
+    });
+
+    it("refuses one that is not a string", () => {
+      const source = profile("claude").replace(
+        'kind = "claude"',
+        'kind = "claude"\npresentation = true',
+      );
+      expect(codeOf(() => parseConfig(source))).toBe("invalid_type");
+      expect(pathOf(() => parseConfig(source))).toBe(
+        "agent_profiles[0].presentation",
+      );
+    });
+
+    it("is written back, and read back the same", () => {
+      const source = profile("codex");
+      const config = parseConfig(source);
+      const saved = configOntoDocument(source, {
+        ...config,
+        agentProfiles: config.agentProfiles.map((one) => ({
+          ...one,
+          presentation: "gui" as const,
+        })),
+      });
+      expect(saved).toContain('presentation = "gui"');
+      expect(parseConfig(saved).agentProfiles[0]?.presentation).toBe("gui");
+    });
+
+    it("is not written as GUI for a kind that has none", () => {
+      const source = profile("cursor");
+      const config = parseConfig(source);
+      expect(
+        codeOf(() =>
+          configOntoDocument(source, {
+            ...config,
+            agentProfiles: config.agentProfiles.map((one) => ({
+              ...one,
+              presentation: "gui" as const,
+            })),
+          }),
+        ),
+      ).toBe("invalid_profile");
+    });
+  });
+
   it("switches a profile to a custom runtime and still re-parses", () => {
     // A profile block written with its `env` as a sub-table heading, which is
     // how the shipped defaults are saved.

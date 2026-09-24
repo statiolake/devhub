@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   Agent,
   AgentProfile,
+  agentPresentation,
   agentProfileId,
   agentId,
   agentIsIdle,
@@ -11,6 +12,7 @@ import {
   busy,
   CLEAN,
   CLEAN_INSPECTION,
+  presentationsFor,
   DomainError,
   DomainErrorCode,
   displayPath,
@@ -155,6 +157,7 @@ describe("agent naming", () => {
       workspaceId(UUID_B),
       profile,
       2,
+      "tui",
     );
     expect(agent.displayName).toBe("Codex 2");
     agent.rename("Investigator");
@@ -169,9 +172,84 @@ describe("agent naming", () => {
       workspaceId(UUID_B),
       profile,
       1,
+      "tui",
     );
     expect(codeOf(() => agent.rename("   "))).toBe(
       DomainErrorCode.InvalidDisplayName,
+    );
+  });
+});
+
+describe("how an Agent is shown", () => {
+  const profile = (
+    kind: "codex" | "claude" | "cursor" | "custom",
+    presentation?: "tui" | "gui",
+  ) =>
+    AgentProfile.create(
+      agentProfileId(kind),
+      kind,
+      kind,
+      kind,
+      [],
+      new Map(),
+      presentation,
+    );
+
+  it("has a GUI only for the kinds with a structured protocol", () => {
+    expect(presentationsFor("claude")).toEqual(["tui", "gui"]);
+    expect(presentationsFor("codex")).toEqual(["tui", "gui"]);
+    expect(presentationsFor("cursor")).toEqual(["tui"]);
+    expect(presentationsFor("custom")).toEqual(["tui"]);
+  });
+
+  it("is a terminal when a profile does not say", () => {
+    expect(profile("claude").presentation).toBe("tui");
+  });
+
+  it.each(["cursor", "custom"] as const)(
+    "refuses a %s profile that defaults to GUI",
+    (kind) => {
+      expect(codeOf(() => profile(kind, "gui"))).toBe(
+        DomainErrorCode.InvalidProfile,
+      );
+    },
+  );
+
+  it("refuses a GUI Agent on a profile whose kind has none", () => {
+    expect(
+      codeOf(() =>
+        Agent.create(
+          agentId(UUID_A),
+          workspaceId(UUID_B),
+          profile("cursor"),
+          1,
+          "gui",
+        ),
+      ),
+    ).toBe(DomainErrorCode.InvalidProfile);
+  });
+
+  it("keeps the Agent's own presentation apart from the profile's default", () => {
+    const agent = Agent.create(
+      agentId(UUID_A),
+      workspaceId(UUID_B),
+      profile("codex", "tui"),
+      1,
+      "gui",
+    );
+    expect(agent.presentation).toBe("gui");
+    expect(agent.profile.presentation).toBe("tui");
+    expect(agent.clone().presentation).toBe("gui");
+  });
+
+  it("tells two profiles that differ only in their default apart", () => {
+    expect(profile("codex", "gui").equals(profile("codex", "tui"))).toBe(false);
+  });
+
+  it("reads a presentation named from outside, and nothing else", () => {
+    expect(agentPresentation("gui")).toBe("gui");
+    expect(codeOf(() => agentPresentation("sideways"))).toBe(
+      DomainErrorCode.InvalidProfile,
     );
   });
 });
@@ -208,13 +286,15 @@ describe("workspace lifecycle", () => {
       workspaceLocation({ kind: "local", path: "/dev/project" }),
       displayPath("/dev/project"),
     );
-    workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1));
+    workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1, "tui"));
     workspace.markUnavailable("root_missing");
     expect(workspace.agents).toHaveLength(1);
     expect(workspace.canCreateAgent).toBe(false);
     expect(
       codeOf(() =>
-        workspace.addAgent(Agent.create(agentId(UUID_C), owner, profile, 2)),
+        workspace.addAgent(
+          Agent.create(agentId(UUID_C), owner, profile, 2, "tui"),
+        ),
       ),
     ).toBe(DomainErrorCode.WorkspaceUnavailable);
   });
@@ -435,7 +515,7 @@ describe("where a Workspace's folder is", () => {
       displayPath("/srv/api"),
     );
     expect(workspace.canCreateAgent).toBe(true);
-    workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1));
+    workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1, "tui"));
     expect(workspace.agents).toHaveLength(1);
   });
 });

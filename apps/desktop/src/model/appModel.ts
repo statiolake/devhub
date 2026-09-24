@@ -11,6 +11,7 @@
 import {
   Agent,
   AgentProfile,
+  type AgentPresentation,
   AVAILABLE,
   DomainError,
   DomainErrorCode,
@@ -140,6 +141,8 @@ export interface AgentSnapshot {
   readonly id: AgentId;
   readonly workspaceId: WorkspaceId;
   readonly profile: AgentProfile;
+  /** How it was launched to be shown. See `AgentPresentation`. */
+  readonly presentation: AgentPresentation;
   readonly profileId: AgentProfileId;
   readonly profileKind: AgentProfile["kind"];
   readonly profileDisplayName: string;
@@ -716,12 +719,15 @@ export class AppModel {
    *
    * Creating an Agent is a way of selecting it, so it takes the presentation
    * for the same reason `selectContext` does — and defaults it the same way,
-   * to `full`.
+   * to `full`. That presentation is where the Agent's pane sits; how the
+   * Agent itself is shown, `agentPresentation`, is the launch's and has no
+   * default here — the launch has already decided it.
    */
   addAgent(
     owner: WorkspaceId,
     id: AgentId,
     profile: AgentProfile,
+    agentPresentation: AgentPresentation,
     presentation: SurfacePresentation = "full",
   ): void {
     if (this.agent(id)) {
@@ -736,7 +742,9 @@ export class AppModel {
     if (!workspace) {
       fail(DomainErrorCode.UnknownWorkspace);
     }
-    workspace.addAgent(Agent.create(id, owner, profile, ordinal));
+    workspace.addAgent(
+      Agent.create(id, owner, profile, ordinal, agentPresentation),
+    );
     this.nextAgentOrdinals.set(key, ordinal + 1);
     this.selectionValue = {
       context: { kind: "agent", agentId: id },
@@ -1436,6 +1444,7 @@ export class AppModel {
         id: agent.id,
         workspaceId: agent.workspaceId,
         profile: agent.profile,
+        presentation: agent.presentation,
         profileId: agent.profile.id,
         profileKind: agent.profile.kind,
         profileDisplayName: agent.profile.displayName,

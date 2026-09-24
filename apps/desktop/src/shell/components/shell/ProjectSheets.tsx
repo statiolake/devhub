@@ -37,6 +37,7 @@ import {
   cloneTypedItem,
 } from "./cloneDestination";
 import { Picker } from "./Picker";
+import type { AgentLaunchWire } from "../../../ipc/appShell";
 
 /** What went wrong, in the words whoever refused it used. */
 function reasonOf(error: unknown): string {
@@ -133,7 +134,7 @@ export interface ProjectSheetProps {
    * that started the agent itself would have to find the workspace the opening
    * produced, which is main's fact to state and not this page's to re-derive.
    */
-  readonly withAgent?: string;
+  readonly withAgent?: AgentLaunchWire;
   readonly onDismiss: () => void;
 }
 

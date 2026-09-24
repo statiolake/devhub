@@ -58,6 +58,7 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "claude",
       split: false,
+      alternate: false,
       query: "",
     });
   });
@@ -71,6 +72,21 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "claude",
       split: true,
+      alternate: false,
+      query: "",
+    });
+  });
+
+  it("reports Option-Return as the alternate choice", () => {
+    const { onChoose } = renderPicker({});
+    fireEvent.keyDown(screen.getByRole("dialog"), {
+      key: "Enter",
+      altKey: true,
+    });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "claude",
+      split: false,
+      alternate: true,
       query: "",
     });
   });
@@ -83,6 +99,7 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "codex",
       split: true,
+      alternate: false,
       query: "",
     });
   });
@@ -183,6 +200,7 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "new",
       split: false,
+      alternate: false,
       query: "",
     });
   });
@@ -211,6 +229,7 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "new",
       split: false,
+      alternate: false,
       query: "feature/128-tidy",
     });
   });
@@ -289,6 +308,7 @@ describe("the picker", () => {
     expect(onChoose).toHaveBeenCalledWith({
       id: "claude",
       split: false,
+      alternate: false,
       query: "",
     });
   });

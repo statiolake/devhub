@@ -225,6 +225,15 @@ directory = "~/dev/new"     # where New Project starts and the first folder Clon
                             # absolute or ~/, no date tokens. Unset, it is the first
                             # folder source's path (or ~), and Clone offers the parents
                             # of what the sources find
+
+[[agent_profiles]]
+id = "claude"
+display_name = "Claude"
+kind = "claude"             # codex | claude | cursor | custom
+presentation = "tui"        # how its Agents are shown: "tui", the CLI in a terminal, or
+                            # "gui", DevHub's conversation view (claude and codex only).
+                            # Unset, "tui". ⌥Return in New Agent opens one the other way.
+                            # GUI launches are refused until the conversation view lands
 ```
 
 The workbench's own settings are VS Code's, on disk under the app's user-data

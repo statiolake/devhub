@@ -25,6 +25,7 @@ import type {
 	AgentId,
 	AgentInjection,
 	AgentProfile,
+	AgentPresentation,
 	AgentReconciliation,
 	AgentStatus,
 	RuntimeHealth,
@@ -86,8 +87,21 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			workspaceId: WorkspaceId,
 			agentId: AgentId,
 			profile: AgentProfile,
+			presentation: AgentPresentation,
 			workspaceRoot: string,
 		): Promise<AgentLaunchResult> {
+			// The conversation host is not here yet, so a GUI Agent has nothing
+			// to start. It is refused where it would have started, by name, and
+			// never started as a terminal instead: a person who asked for the
+			// conversation view and got a terminal would have no way to tell
+			// that the choice had been ignored.
+			if (presentation === "gui") {
+				return {
+					kind: "failed",
+					code: "agent_profile_unavailable",
+					detail: `GUI mode is not available yet, so “${profile.displayName}” was not started. It can open as a terminal instead.`,
+				};
+			}
 			try {
 				const machine = options.machineOf(workspaceId);
 				if (machine === undefined) {

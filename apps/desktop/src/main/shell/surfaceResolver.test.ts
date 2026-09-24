@@ -43,7 +43,7 @@ function modelWithWorkspace(): AppModel {
 			displayPath(ROOT),
 		),
 	);
-	model.addAgent(WS, AG, codex);
+	model.addAgent(WS, AG, codex, "tui");
 	return model;
 }
 
@@ -137,7 +137,7 @@ describe("a workspace whose folder is on another machine", () => {
 				displayPath("/srv/api"),
 			),
 		);
-		model.addAgent(WS, AG, codex);
+		model.addAgent(WS, AG, codex, "tui");
 		return model;
 	}
 

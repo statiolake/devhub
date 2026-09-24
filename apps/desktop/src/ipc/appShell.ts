@@ -38,10 +38,33 @@ export type AgentControlStateWire =
 			readonly diagnostic: CloseDiagnosticWire;
 	  };
 export type AgentProfileKindWire = "codex" | "claude" | "cursor" | "custom";
+/**
+ * How an Agent is shown: its CLI's own screen in a terminal, or DevHub's
+ * conversation view. Mirrors `AgentPresentation`.
+ */
+export type AgentPresentationWire = "tui" | "gui";
+/**
+ * An Agent a Workspace opening should start once it is open: which profile,
+ * and how the person asked for it to be shown — the Option gesture in the
+ * profile question already spent, so this is the answer and not the default.
+ */
+export interface AgentLaunchWire {
+	readonly profileId: string;
+	readonly presentation: AgentPresentationWire;
+}
 export interface AgentProfileWire {
 	readonly displayName: string;
 	readonly id: string;
 	readonly kind: AgentProfileKindWire;
+	/** What a launch from this profile is, unless the launch says otherwise. */
+	readonly presentation: AgentPresentationWire;
+	/**
+	 * Every presentation this profile's kind can have, its default among them.
+	 *
+	 * Main's answer, so the picker offers the other one only where there is
+	 * another one, without a second copy of the rule about which kinds have it.
+	 */
+	readonly presentations: readonly AgentPresentationWire[];
 }
 export type AgentProfilesAvailabilityWire =
 	| "available"
@@ -119,6 +142,8 @@ export interface AgentWire {
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;
+	/** Fixed when the Agent was launched. See `AgentPresentationWire`. */
+	readonly presentation: AgentPresentationWire;
 	readonly runtimeHealth: RuntimeHealthWire;
 	readonly status: AgentStatusWire;
 	/**
@@ -212,6 +237,8 @@ export type AppErrorCodeWire =
 	| "agent_exited"
 	/** The Agent runtime is not answering, so no Agent can be started. */
 	| "agent_runtime_unavailable"
+	/** The profile cannot start this Agent the way it was asked to. */
+	| "agent_profile_unavailable"
 	/** The Agent Surface asked to attach and got no answer in time. */
 	| "agent_attach_timed_out"
 	/** A request DevHub accepted never reached an answer. */
@@ -295,6 +322,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	agent_not_connected: "The agent surface is not connected.",
 	agent_exited: "The agent has exited.",
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
+	agent_profile_unavailable: "The agent could not start from this profile.",
 	agent_attach_timed_out: "The agent surface did not connect in time.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
@@ -431,6 +459,14 @@ export type AppIntentWire =
 			 * decision, made once, at the moment the row is taken.
 			 */
 			readonly split?: boolean;
+			/**
+			 * The presentation this one Agent should have — Option-Return in the
+			 * picker turns the profile's default the other way.
+			 *
+			 * Absent means the profile's own default, the way an absent `split`
+			 * means the plain arrangement.
+			 */
+			readonly presentation?: AgentPresentationWire;
 			readonly type: "request_create_agent";
 			readonly workspaceId: string;
 	  }

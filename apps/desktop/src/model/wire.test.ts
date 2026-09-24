@@ -17,6 +17,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  AgentProfile,
+  agentProfileId,
   CLOSE_STEPS,
   DIAGNOSTIC_CODES,
   type AgentControlState,
@@ -24,7 +26,13 @@ import {
   type WorkspaceClose,
   type WorkspaceState,
 } from "./domain.js";
-import { snapshotWire } from "./wire.js";
+import {
+  agentProfilesWire,
+  intentFromWire,
+  InvalidIntent,
+  snapshotWire,
+} from "./wire.js";
+import type { AppIntentWire } from "../ipc/appShell.js";
 import type {
   AgentSnapshot,
   AppSnapshot,
@@ -326,5 +334,79 @@ describe("the path a row shows", () => {
     // A host DevHub has not reached yet. Longer, never wrong.
     const row = rowAt(`${REMOTE_HOME}/api`, nas, () => "");
     expect(row.displayRoot).toBe(`${REMOTE_HOME}/api`);
+  });
+});
+
+describe("how an Agent is shown, across the wire", () => {
+  const WORKSPACE = "22222222-2222-4222-8222-222222222222";
+  const request = (presentation?: unknown) =>
+    intentFromWire({
+      type: "request_create_agent",
+      workspaceId: WORKSPACE,
+      profileId: "claude",
+      ...(presentation === undefined ? {} : { presentation }),
+    } as AppIntentWire);
+
+  it("carries the presentation a New Agent asked for", () => {
+    expect(request("gui")).toMatchObject({
+      type: "create_agent",
+      agentPresentation: "gui",
+    });
+  });
+
+  it("leaves it to the profile when the request does not say", () => {
+    expect(request()).not.toHaveProperty("agentPresentation");
+  });
+
+  it("refuses a presentation that is neither", () => {
+    expect(() => request("sideways")).toThrow(InvalidIntent);
+  });
+
+  it("offers each profile's default and every presentation its kind has", () => {
+    const claude = AgentProfile.create(
+      agentProfileId("claude"),
+      "Claude",
+      "claude",
+      "claude",
+      [],
+      new Map(),
+      "gui",
+    );
+    const cursor = AgentProfile.create(
+      agentProfileId("cursor"),
+      "Cursor",
+      "cursor",
+      "cursor-agent",
+    );
+    expect(agentProfilesWire([claude, cursor], 1).profiles).toEqual([
+      {
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        presentation: "gui",
+        presentations: ["tui", "gui"],
+      },
+      {
+        id: "cursor",
+        displayName: "Cursor",
+        kind: "cursor",
+        presentation: "tui",
+        presentations: ["tui"],
+      },
+    ]);
+  });
+
+  it("says how each Agent was launched", () => {
+    const shown = snapshotWire(
+      snapshotOf([
+        workspace({ kind: "available" }, [
+          { ...agent({ kind: "running" }), presentation: "gui" },
+        ]),
+      ]),
+      "ready",
+      () => undefined,
+      () => undefined,
+    ).workspaces[0]!.agents[0]!;
+    expect(shown.presentation).toBe("gui");
   });
 });

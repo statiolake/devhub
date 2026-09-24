@@ -60,8 +60,20 @@ function mount() {
     agentProfiles: {
       availability: "available",
       profiles: [
-        { id: "claude", displayName: "Claude", kind: "claude" },
-        { id: "codex", displayName: "Codex", kind: "codex" },
+        {
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          presentation: "gui",
+          presentations: ["tui", "gui"],
+        },
+        {
+          id: "codex",
+          displayName: "Codex",
+          kind: "codex",
+          presentation: "tui",
+          presentations: ["tui", "gui"],
+        },
       ],
       sequence: 1,
     },
@@ -145,7 +157,7 @@ describe("opening a workspace with an agent", () => {
       expect(selectWorkspacePicker).toHaveBeenCalledWith(
         "/projects/devhub",
         false,
-        "codex",
+        { profileId: "codex", presentation: "tui" },
       );
     });
   });
@@ -164,7 +176,25 @@ describe("opening a workspace with an agent", () => {
     expect(screen.getByText("Step 3")).toBeInTheDocument();
     fireEvent.click(create);
     await waitFor(() => {
-      expect(createProject).toHaveBeenCalledWith("/projects/", "claude");
+      expect(createProject).toHaveBeenCalledWith("/projects/", {
+        profileId: "claude",
+        presentation: "gui",
+      });
+    });
+  });
+
+  it("carries the other presentation into the opening on Option", async () => {
+    const { selectWorkspacePicker } = mount();
+    fireEvent.click(workspaceRow(), { metaKey: true });
+    fireEvent.click(await screen.findByRole("option", { name: /Codex/u }), {
+      altKey: true,
+    });
+    await waitFor(() => {
+      expect(selectWorkspacePicker).toHaveBeenCalledWith(
+        "/projects/devhub",
+        false,
+        { profileId: "codex", presentation: "gui" },
+      );
     });
   });
 });

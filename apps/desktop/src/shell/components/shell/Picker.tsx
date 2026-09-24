@@ -4,8 +4,8 @@
  * One control answers every "which one?" DevHub asks: a heading that says what
  * is being asked, a search field, a ranked list, and a footer. Typing filters,
  * the arrows move, Return chooses, Escape cancels or goes back a question —
- * and Command-Return chooses the same row the other way, which is the
- * only thing a caller may vary. There used to be two of these, a searchable one
+ * and Command-Return and Option-Return choose the same row the other way,
+ * which are the only things a caller may vary. There used to be two of these, a searchable one
  * for workspaces and a plain list for agent profiles, and the second was a
  * different control answering the same question with different keys. A person
  * should not have to know which list they are looking at to know what Return
@@ -103,6 +103,14 @@ export interface PickerItem {
    * starts meaning something.
    */
   readonly needsQuery?: boolean;
+  /**
+   * What the row says at its right end, given whether Option is held.
+   *
+   * A function of the modifier because what Option-Return would do is only
+   * worth reading while Option is down, and a row that said it the whole time
+   * would be two answers where the person asked for one.
+   */
+  readonly accessory?: (alternate: boolean) => ReactNode;
 }
 
 /**
@@ -116,6 +124,12 @@ export interface PickerItem {
 export interface PickerChoice {
   readonly id: string;
   readonly split: boolean;
+  /**
+   * The Option modifier — Option-Return, or Option-click — reported for every
+   * picker for the reason `split` is. It can be held with Command: the two are
+   * independent answers about one row.
+   */
+  readonly alternate: boolean;
   /**
    * What was in the field when the row was taken.
    *
@@ -410,16 +424,36 @@ export function Picker({
    */
   const [taken, setTaken] = useState<string>();
 
+  /**
+   * Whether Option is down, for the rows' accessories.
+   *
+   * Read off every key event the sheet sees, and let go when the window loses
+   * focus: a key released while another app had the keyboard is a keyup this
+   * sheet never hears, and a row still saying what Option would do after it
+   * was let go would be a row describing a launch that Return will not make.
+   */
+  const [alternate, setAlternate] = useState(false);
+  useEffect(() => {
+    const release = () => {
+      setAlternate(false);
+    };
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("blur", release);
+    };
+  }, []);
+
   const choose = useCallback(
-    (id: string, split: boolean) => {
+    (id: string, split: boolean, alternateChoice: boolean) => {
       if (taken !== undefined) return;
       setTaken(id);
-      onChoose({ id, split, query });
+      onChoose({ id, split, alternate: alternateChoice, query });
     },
     [onChoose, query, taken],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    setAlternate(event.altKey);
     // Answered. The keyboard is no longer this sheet's to act on — including
     // Escape, which would otherwise cancel a clone that is already running.
     if (taken !== undefined) {
@@ -448,7 +482,7 @@ export function Picker({
     if (event.key === "Enter") {
       event.preventDefault();
       const candidate = rows[active];
-      if (candidate) choose(candidate.id, event.metaKey);
+      if (candidate) choose(candidate.id, event.metaKey, event.altKey);
       return;
     }
     // Anything else is typing, and typing belongs in the field.
@@ -483,6 +517,9 @@ export function Picker({
         aria-labelledby={headingId}
         aria-describedby={questionId}
         onKeyDown={onKeyDown}
+        onKeyUp={(event) => {
+          setAlternate(event.altKey);
+        }}
         // A click inside the sheet acts, it does not move the keyboard. The
         // field keeps it whatever was pressed, which is what makes the sheet
         // still answer Return after a row was clicked and missed.
@@ -580,7 +617,7 @@ export function Picker({
                     // the selection must not end up on two different rows when
                     // one was clicked while another was under the arrows.
                     setActive(index);
-                    choose(item.id, event.metaKey);
+                    choose(item.id, event.metaKey, event.altKey);
                   }}
                 >
                   {item.glyph ? (
@@ -594,6 +631,11 @@ export function Picker({
                       </span>
                     ) : null}
                   </span>
+                  {item.accessory ? (
+                    <span className="picker-accessory mac-caption">
+                      {item.accessory(alternate)}
+                    </span>
+                  ) : null}
                   {/* On the row that was taken, so the wait is attached to the
                       answer rather than floating at the top of the sheet. */}
                   {taken === item.id ? (

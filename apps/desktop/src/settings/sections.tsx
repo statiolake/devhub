@@ -58,6 +58,7 @@ import {
 } from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { scratchDailyProblem } from "../model/scratchDay";
+import { presentationsFor } from "../model/domain";
 import {
   ACTION_VARIABLES,
   BUILT_IN_ACTIONS,
@@ -789,6 +790,7 @@ export function AgentsSection({
               command: "codex",
               args: [],
               env: {},
+              presentation: "tui",
             },
           ],
         });
@@ -869,7 +871,34 @@ export function AgentsSection({
                   ["custom", "Other (no status)"],
                 ]}
                 onChange={(kind) => {
-                  replace({ ...profile, kind });
+                  // A kind with no GUI takes the profile back to the terminal,
+                  // on screen in the row below, rather than keeping a default
+                  // the file would refuse.
+                  replace({
+                    ...profile,
+                    kind,
+                    presentation: presentationsFor(kind).includes(
+                      profile.presentation,
+                    )
+                      ? profile.presentation
+                      : "tui",
+                  });
+                }}
+              />
+            </Row>
+            <Row
+              label="Show as"
+              help="How a new agent from this profile is shown. Option-Return in New Agent opens one the other way. Only Claude and Codex have a GUI."
+            >
+              <Popup
+                label="Agent presentation"
+                value={profile.presentation}
+                options={presentationsFor(profile.kind).map(
+                  (presentation) =>
+                    [presentation, PRESENTATION_NAMES[presentation]] as const,
+                )}
+                onChange={(presentation) => {
+                  replace({ ...profile, presentation });
                 }}
               />
             </Row>
@@ -908,6 +937,11 @@ export function AgentsSection({
     </Collection>
   );
 }
+
+const PRESENTATION_NAMES = {
+  tui: "Terminal (TUI)",
+  gui: "GUI",
+} as const;
 
 /**
  * A variable name nobody is using. Underscores, not dashes: an environment

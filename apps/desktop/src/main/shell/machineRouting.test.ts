@@ -566,8 +566,8 @@ function twoMachineModel(
 		"codex",
 		"codex",
 	);
-	model.addAgent(localWorkspace, agentId(here), profile);
-	model.addAgent(remoteWorkspace, agentId(there), profile);
+	model.addAgent(localWorkspace, agentId(here), profile, "tui");
+	model.addAgent(remoteWorkspace, agentId(there), profile, "tui");
 	return {
 		model,
 		machineOf: (id) =>
@@ -664,6 +664,7 @@ describe("a launch the Agent port refuses", () => {
 				args: [],
 				env: new Map(),
 			} as unknown as AgentProfile,
+			"tui",
 			"/srv/api",
 		);
 
