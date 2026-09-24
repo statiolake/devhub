@@ -201,7 +201,6 @@ export function runBounded(
 		if (outPipe === null || errPipe === null) {
 			throw new Error("a bounded command was spawned without pipes to read");
 		}
-		if (stdin !== undefined) child.stdin?.end(Buffer.from(stdin));
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
 		let stdoutBytes = 0;
@@ -230,6 +229,22 @@ export function runBounded(
 			}
 		};
 
+		if (stdin !== undefined) {
+			// A program that stops reading before its input is all written has
+			// not been given what the caller handed it — and without a listener
+			// the EPIPE that says so is an uncaught exception in main. After the
+			// command has settled (it was killed at its deadline, say), `finish`
+			// ignores it: the settled answer already says why.
+			child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+				finish(
+					portFailure("failed", {
+						detail: `${spec.file} stopped reading its input before all of it was written (${error.code ?? error.message})`,
+						cause: error,
+					}),
+				);
+			});
+			child.stdin?.end(Buffer.from(stdin));
+		}
 		child.on("error", (error: NodeJS.ErrnoException) => {
 			finish(
 				portFailure(
