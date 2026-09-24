@@ -1307,7 +1307,6 @@ describe("Scratch, today's daily folder", () => {
       workspaceId: WS_DAY,
       location: workspaceLocation({ kind: "local", path: TOMORROW }),
       selectedPath: displayPath(TOMORROW),
-      unavailable: undefined,
     });
     expect(outcome.kind).toBe("updated");
     expect(driver.drainEffects().map((effect) => effect.kind)).toContain(
@@ -1328,7 +1327,6 @@ describe("Scratch, today's daily folder", () => {
       workspaceId: WS_DAY,
       location: workspaceLocation({ kind: "local", path: SCRATCH_PATH }),
       selectedPath: displayPath(SCRATCH_PATH),
-      unavailable: undefined,
     });
     expect(outcome.kind).toBe("noop");
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);

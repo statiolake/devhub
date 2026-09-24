@@ -16,7 +16,6 @@ import {
   DomainErrorCode,
   isWorkspaceAvailable,
   scratchHoldsNothing,
-  type ScratchUnavailable,
   locationKey,
   locationLabel,
   rootBasename,
@@ -398,17 +397,10 @@ export class AppModel {
    * it holds nothing (`scratchHoldsNothing`), and then it goes, and a
    * selection on it moves to the new Scratch.
    *
-   * `unavailable` is why the day has no folder, applied in the same step, so
-   * no snapshot ever shows it as Scratch and usable — a usable Workspace is
-   * one a workbench is built for.
-   *
    * Returns whether anything changed, so a launch reconcile on the same day
    * is a no-op.
    */
-  adoptScratchDay(
-    day: Workspace,
-    unavailable: ScratchUnavailable | undefined = undefined,
-  ): boolean {
+  adoptScratchDay(day: Workspace): boolean {
     const existing = this.workspaceList.find(
       (workspace) => workspace.key === day.key,
     );
@@ -416,13 +408,7 @@ export class AppModel {
       this.addWorkspace(day);
     }
     const id = existing?.id ?? day.id;
-    const marked =
-      unavailable !== undefined &&
-      this.requireWorkspace(id).markUnavailable(unavailable);
-    if (id === this.scratchId) {
-      if (marked) this.bumpRevision();
-      return marked;
-    }
+    if (id === this.scratchId) return false;
     const previous = this.requireWorkspace(this.scratchId);
     this.scratchId = id;
     if (scratchHoldsNothing(previous)) {

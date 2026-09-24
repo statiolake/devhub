@@ -159,7 +159,6 @@ describe("midnight", () => {
         workspaceId: fresh.id,
         location: fresh.location,
         selectedPath: fresh.selectedPath,
-        unavailable: undefined,
       },
     });
     expect(coordinator.snapshot().scratchWorkspaceId).toBe(TODAY);

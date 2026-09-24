@@ -146,34 +146,6 @@ function SplitDivider({
   );
 }
 
-/**
- * What a person can do about a Workspace that is unavailable, or nothing when
- * it is not.
- *
- * Scratch with no settings to make its folder from has one thing to do about
- * it, and it is not here: there is no folder to retry or locate, and today's
- * Scratch cannot be closed. See `main/shell/scratchDay.ts`.
- */
-export function unavailableActionsFor(
-  workspace: WorkspaceSnapshot,
-  run: {
-    readonly retry: () => void;
-    readonly locate: () => void;
-    readonly close: () => void;
-    readonly openSettings: () => void;
-  },
-): React.ComponentProps<typeof Failure>["actions"] {
-  if (workspace.state.kind !== "unavailable") return undefined;
-  if (workspace.state.reason === "settings_refused") {
-    return [{ label: "Open Settings", primary: true, run: run.openSettings }];
-  }
-  return [
-    { label: "Retry", primary: true, run: run.retry },
-    { label: "Locate…", run: run.locate },
-    { label: "Close", run: run.close },
-  ];
-}
-
 /** Why this Workspace cannot be shown, in the Sidebar's own vocabulary. */
 export function Unavailable({
   workspace,
@@ -246,8 +218,7 @@ export function Unavailable({
  * area a few pixels from where the eye says the seam is.
  */
 export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
-  const { dispatch, closeWorkspace, chooseWorkspaceFolder, openSettings } =
-    useShellPage();
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useShellPage();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();
@@ -280,33 +251,42 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
   }, []);
 
   const unavailableActions =
-    workspace === undefined
-      ? undefined
-      : unavailableActionsFor(workspace, {
-          retry: () =>
-            void dispatch({
-              type: "retry_workspace",
-              workspaceId: workspace.id,
-            }),
-          locate: () =>
-            void chooseWorkspaceFolder().then((path) => {
-              if (path)
-                void dispatch({
-                  type: "locate_workspace",
-                  workspaceId: workspace.id,
-                  path,
-                });
-            }),
-          // Main's one close, the same one the Sidebar's button asks for.
-          // This used to dispatch the raw lifecycle intent, which went around
-          // the worktree rule entirely — so closing an unavailable worktree
-          // from the Sidebar deleted the folder and closing the same
-          // workspace from this pane did not.
-          close: () => {
-            closeWorkspace(workspace.id);
+    workspace?.state.kind === "unavailable"
+      ? ([
+          {
+            label: "Retry",
+            primary: true,
+            run: () =>
+              void dispatch({
+                type: "retry_workspace",
+                workspaceId: workspace.id,
+              }),
           },
-          openSettings: () => void openSettings(),
-        });
+          {
+            label: "Locate…",
+            run: () =>
+              void chooseWorkspaceFolder().then((path) => {
+                if (path)
+                  void dispatch({
+                    type: "locate_workspace",
+                    workspaceId: workspace.id,
+                    path,
+                  });
+              }),
+          },
+          {
+            // Main's one close, the same one the Sidebar's button asks for.
+            // This used to dispatch the raw lifecycle intent, which went around
+            // the worktree rule entirely — so closing an unavailable worktree
+            // from the Sidebar deleted the folder and closing the same
+            // workspace from this pane did not.
+            label: "Close",
+            run: () => {
+              closeWorkspace(workspace.id);
+            },
+          },
+        ] as const)
+      : undefined;
 
   let surfaceState: string;
   let body: ReactNode = null;

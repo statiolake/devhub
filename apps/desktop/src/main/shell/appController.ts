@@ -164,7 +164,6 @@ import {
 } from "../../model/profile.js";
 import { seedProfileSettings } from "../profileSeed.js";
 import {
-	ConfigError,
 	ConfigStore,
 	defaultConfigPaths,
 	withProfileRuntimes,
@@ -191,7 +190,6 @@ import {
 	snapshotWire,
 	drawnWorkspaceOrder,
 	TypedFailure,
-	settingsRefused,
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
@@ -354,12 +352,7 @@ import {
 import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
-import {
-	type ScratchDay,
-	ScratchFollower,
-	scratchDay,
-	scratchRefusal,
-} from "./scratchDay.js";
+import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
@@ -945,26 +938,17 @@ export class AppController {
 			workspaceId: today.workspace.id,
 			location: today.workspace.location,
 			selectedPath: today.workspace.selectedPath,
-			unavailable: today.unavailable?.reason,
 		});
-		const report = scratchReport(today);
-		if (report !== undefined) this.publishError(report);
-	}
-
-	/**
-	 * Why Scratch cannot be opened, or nothing when it can.
-	 *
-	 * Everything that lands in Scratch without selecting it — `devhub -`,
-	 * `--wait`, an open no Workspace contains, a request for an empty window —
-	 * goes through `scratchWorkbench`, and this is what it is refused with:
-	 * the settings refusal itself for the stand-in, and the day's reason for a
-	 * folder that is not there. Selecting Scratch is not refused; its pane
-	 * says the same thing where Scratch is (`SurfaceViewport`).
-	 */
-	private scratchRefusal(): AppErrorWire | undefined {
-		return scratchRefusal(this.scratchWorkspace(), () =>
-			this.requireConfigRefusal(),
-		);
+		if (today.failure !== undefined) {
+			await this.dispatchAwaiting({
+				type: "workspace_root_unreadable",
+				workspaceId: this.coordinator.model.scratchWorkspaceId,
+				reason: "root_inaccessible",
+			});
+			this.publishError(
+				withDetail(errorWireAt("workspace_unavailable"), today.failure),
+			);
+		}
 	}
 
 	/**
@@ -2046,33 +2030,10 @@ export class AppController {
 	 * would not parse is reported rather than answered with silent defaults.
 	 */
 	private requireConfig(): Config {
-		if (!this.config) throw asIpcError(this.requireConfigRefusal());
-		return this.config;
-	}
-
-	/**
-	 * Why this run has no settings: the refusal, as itself.
-	 *
-	 * This used to be a bare "the native app shell is unavailable", raised by
-	 * the first page that asked for its appearance — the consequence of the
-	 * refusal, arriving after it, in the same place, and so the only thing
-	 * left on screen. Now the refusal is what everything that needs settings
-	 * answers with.
-	 */
-	private requireConfigRefusal(): AppErrorWire {
-		if (this.configRefusal === undefined) {
-			throw new Error("DevHub has no settings and no refusal to say why");
+		if (!this.config) {
+			throw asIpcError(errorWire(new AppError(AppErrorCode.PortUnavailable)));
 		}
-		return this.configRefusal;
-	}
-
-	/** The refusal this run has no settings because of; cleared by `adoptConfig`. */
-	private configRefusal: AppErrorWire | undefined;
-
-	/** At launch: the settings file could not be used, so this run has none. */
-	noteConfigRefused(refusal: AppErrorWire): void {
-		this.configRefusal = refusal;
-		this.noteStartupFailure(refusal);
+		return this.config;
 	}
 
 	/** Push one projection to every page that draws from the model. */
@@ -4619,8 +4580,6 @@ export class AppController {
 	 * however it was asked.
 	 */
 	async scratchWorkbench(): Promise<ICodeWindow> {
-		const refusal = this.scratchRefusal();
-		if (refusal !== undefined) throw new TypedFailure(refusal);
 		await this.dispatchAwaiting({ type: "new_window" });
 		const key = this.scratchWorkspace().key;
 		await this.ensureEditorView(key);
@@ -5244,13 +5203,7 @@ export class AppController {
 				// The file on disk no longer parses. The last good config stays in
 				// effect, and the person is told rather than left guessing why an edit
 				// did nothing.
-				const refusal = settingsRefused(
-					this.configStore.paths.file,
-					outcome,
-					this.config === undefined ? "nothing" : "the last accepted settings",
-				);
-				if (this.config === undefined) this.configRefusal = refusal;
-				this.publishError(refusal);
+				this.publishError(errorWire(new Error(`config: ${outcome.code}`)));
 				publishSettingsSnapshot();
 			}
 		});
@@ -5271,7 +5224,6 @@ export class AppController {
 	adoptConfig(accepted: Config): void {
 		const config = withProfileRuntimes(accepted, activeProfile()).config;
 		this.config = config;
-		this.configRefusal = undefined;
 		// A new `[scratch] daily` names a different folder for today, and that
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
@@ -6309,7 +6261,6 @@ export async function createAppController(
 	}
 	const configStore = new ConfigStore(defaultConfigPaths(homedir()));
 	let config: Config | undefined;
-	let configRefusal: AppErrorWire | undefined;
 	try {
 		const loaded = (await configStore.load()).config;
 		const applied = withProfileRuntimes(loaded, profile);
@@ -6333,11 +6284,6 @@ export async function createAppController(
 		// has the log.
 		console.error("[devhub] settings could not be read:", error);
 		config = undefined;
-		configRefusal = settingsRefused(
-			configStore.paths.file,
-			error instanceof ConfigError ? error.diagnostic : { code: "io" },
-			"nothing",
-		);
 	}
 
 	const stateStore = new JsonStateStore(
@@ -6383,10 +6329,10 @@ export async function createAppController(
 		projectionFailure = error.describe(stateStore.path);
 		model = new AppModel(today.workspace);
 	}
-	if (today.unavailable !== undefined) {
+	if (today.failure !== undefined) {
 		model.markWorkspaceUnavailable(
 			model.scratchWorkspaceId,
-			today.unavailable.reason,
+			"root_inaccessible",
 		);
 	}
 
@@ -6409,17 +6355,12 @@ export async function createAppController(
 			withDetail(errorWireAt("persistence_degraded"), stateFailure),
 		);
 	}
-	if (configRefusal !== undefined) current.noteConfigRefused(configRefusal);
-	const report = scratchReport(today);
-	if (report !== undefined) current.noteStartupFailure(report);
+	if (today.failure !== undefined) {
+		current.noteStartupFailure(
+			withDetail(errorWireAt("workspace_unavailable"), today.failure),
+		);
+	}
 	return current;
-}
-
-/** The notice a day with no folder is reported as; the stand-in has none. */
-function scratchReport(today: ScratchDay): AppErrorWire | undefined {
-	return today.unavailable?.reason === "root_inaccessible"
-		? withDetail(errorWireAt("workspace_unavailable"), today.unavailable.report)
-		: undefined;
 }
 
 export function appController(): AppController {

@@ -504,43 +504,6 @@ describe("Scratch, today's daily folder", () => {
     });
   });
 
-  it("adopts a day with no folder as unavailable in the same step, and never lays it out as a workbench", () => {
-    const model = scratchModel();
-    const yesterday = model.scratchWorkspaceId;
-    const standIn = localWorkspace("/scratch-test/settings.toml");
-    // One call: no snapshot can be taken between it becoming Scratch and it
-    // being unavailable, so nothing ever sees it as a folder to build for.
-    expect(model.adoptScratchDay(standIn, "settings_refused")).toBe(true);
-    const adopted = model.snapshot();
-    expect(adopted.scratchWorkspaceId).toBe(standIn.id);
-    expect(adopted.workspaces.find((w) => w.id === standIn.id)?.state).toEqual({
-      kind: "unavailable",
-      reason: "settings_refused",
-    });
-    // Every way of arriving in Scratch — the toggle (Cmd+Q Shift+J), the row
-    // and Cmd+Q 1 (which select it) — shows why, and builds nothing.
-    model.selectContext({ kind: "workspace", workspaceId: yesterday });
-    model.toggleScratch();
-    expect(model.snapshot().selection.context).toEqual({
-      kind: "workspace",
-      workspaceId: standIn.id,
-    });
-    expect(model.snapshot().layout.kind).toBe("unavailable");
-    model.selectContext({ kind: "workspace", workspaceId: standIn.id });
-    expect(model.snapshot().layout.kind).toBe("unavailable");
-  });
-
-  it("marks the same day unavailable when it is adopted again without a folder", () => {
-    const model = scratchModel();
-    expect(
-      model.adoptScratchDay(localWorkspace(SCRATCH_PATH), "root_inaccessible"),
-    ).toBe(true);
-    expect(model.snapshot().workspaces[0].state).toEqual({
-      kind: "unavailable",
-      reason: "root_inaccessible",
-    });
-  });
-
   it("keeps an unavailable Scratch that still has Agents, as an ordinary row", () => {
     const model = scratchModel();
     const yesterday = model.scratchWorkspaceId;

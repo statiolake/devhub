@@ -86,11 +86,7 @@ import {
   type WorkspaceWire,
   sidebarWorkspaces,
 } from "../ipc/appShell.js";
-import type {
-  AppearanceConfig,
-  ConfigDiagnostic,
-  TerminalPalette,
-} from "./config.js";
+import type { AppearanceConfig, TerminalPalette } from "./config.js";
 import type { CoordinatorReplay } from "./coordinator.js";
 
 /** A projection that cannot be represented on the wire is a bug, not a state. */
@@ -628,8 +624,6 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
   switch (code) {
     case "persistence_degraded":
       return "state";
-    case "settings_refused":
-      return "config";
     case "editor_provider_missing":
     case "editor_port_unavailable":
     case "editor_unavailable":
@@ -670,17 +664,14 @@ export function errorWireAt(
   timestampMs = 0,
 ): AppErrorWire {
   const actions: AppErrorActionWire[] =
-    // Trying again reads the same file; what answers it is fixing the file.
-    code === "settings_refused"
-      ? ["open_settings"]
-      : code === "native_unavailable" ||
-          code === "persistence_degraded" ||
-          code === "editor_provider_missing" ||
-          code === "editor_port_unavailable" ||
-          code === "editor_unavailable" ||
-          code === "editor_restart_exhausted"
-        ? ["retry", "open_settings"]
-        : ["retry"];
+    code === "native_unavailable" ||
+    code === "persistence_degraded" ||
+    code === "editor_provider_missing" ||
+    code === "editor_port_unavailable" ||
+    code === "editor_unavailable" ||
+    code === "editor_restart_exhausted"
+      ? ["retry", "open_settings"]
+      : ["retry"];
   return {
     code,
     summary: SAFE_ERROR_SUMMARY[code],
@@ -689,36 +680,6 @@ export function errorWireAt(
     runtimeVersion,
     actions,
   };
-}
-
-/**
- * `settings.toml` could not be used, said as itself: which file, which key,
- * and the refusal's code — the one thing a person can go and fix, where the
- * failures that follow from it (anything that needs settings) would only say
- * that something is unavailable. The Settings window says the rule in words.
- *
- * `runningOn` is what DevHub is doing instead, because the same refusal means
- * two different things: at launch there is nothing else to run on, and later
- * the last settings accepted stay in effect.
- */
-export function settingsRefused(
-  file: string,
-  diagnostic: ConfigDiagnostic,
-  runningOn: "nothing" | "the last accepted settings",
-): AppErrorWire {
-  const key = diagnostic.path === undefined ? "the file" : diagnostic.path;
-  const at =
-    diagnostic.location === undefined
-      ? ""
-      : ` (line ${String(diagnostic.location.line)}, column ${String(diagnostic.location.column)})`;
-  const instead =
-    runningOn === "nothing"
-      ? "DevHub is running on no settings until the file is fixed, and Scratch has no folder."
-      : "DevHub is still running on the last settings it accepted.";
-  return withDetail(
-    errorWireAt("settings_refused"),
-    `${file}: ${key} was refused${at}: ${diagnostic.code}. ${instead}`,
-  );
 }
 
 export function withDetail(error: AppErrorWire, detail: string): AppErrorWire {
@@ -748,13 +709,7 @@ export function withSummary(
  */
 export class TypedFailure extends Error {
   constructor(readonly wire: AppErrorWire) {
-    // The detail too: a failure that ends as text — the `devhub` command
-    // prints `message` — would otherwise lose the part that says what to fix.
-    super(
-      wire.detail === undefined
-        ? wire.summary
-        : `${wire.summary} ${wire.detail}`,
-    );
+    super(wire.summary);
     this.name = "TypedFailure";
   }
 }

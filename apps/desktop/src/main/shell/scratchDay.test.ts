@@ -8,15 +8,7 @@ import {
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import type { AppErrorWire } from "../../ipc/appShell.js";
-import { localWorkspace } from "../../model/testWorkspaces.js";
-import { errorWireAt } from "../../model/wire.js";
-import {
-	type ScratchDay,
-	ScratchFollower,
-	scratchDay,
-	scratchRefusal,
-} from "./scratchDay.js";
+import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 
 const SETTINGS = "/scratch-test/settings.toml";
 
@@ -39,7 +31,7 @@ describe("today's Scratch folder", () => {
 			new Date(2026, 8, 23, 9, 30),
 			home,
 		);
-		expect(day.unavailable).toBeUndefined();
+		expect(day.failure).toBeUndefined();
 		const expected = join(realpathSync(home), "junk", "20260923");
 		expect(statSync(expected).isDirectory()).toBe(true);
 		expect(day.workspace.root).toBe(expected);
@@ -54,7 +46,7 @@ describe("today's Scratch folder", () => {
 			new Date(2026, 8, 23),
 			"/nowhere",
 		);
-		expect(day.unavailable).toBeUndefined();
+		expect(day.failure).toBeUndefined();
 		expect(statSync(join(day.workspace.root, "notes.txt")).isFile()).toBe(true);
 	});
 
@@ -66,10 +58,7 @@ describe("today's Scratch folder", () => {
 			new Date(2026, 8, 23),
 			home,
 		);
-		expect(day.unavailable).toEqual({
-			reason: "root_inaccessible",
-			report: expect.stringContaining(`${home}/junk/20260923`),
-		});
+		expect(day.failure).toContain(`${home}/junk/20260923`);
 		expect(day.workspace.root).toBe(`${home}/junk/20260923`);
 	});
 
@@ -83,37 +72,8 @@ describe("today's Scratch folder", () => {
 		// value nobody configured.
 		expect(existsSync(join(home, "junk"))).toBe(false);
 		expect(day.workspace.root).toBe(SETTINGS);
-		// No report of its own: the reason is the settings refusal, which is
-		// reported as itself.
-		expect(day.unavailable).toEqual({ reason: "settings_refused" });
-	});
-});
-
-describe("what lands in Scratch without selecting it", () => {
-	// `devhub -`, `devhub --wait`, an open no Workspace contains and a request
-	// for an empty window all go through Scratch's workbench, and this is what
-	// decides whether there is one to give.
-	const refusal = (): AppErrorWire => errorWireAt("settings_refused");
-
-	it("goes ahead when Scratch is a folder that is there", () => {
-		expect(
-			scratchRefusal(localWorkspace("/scratch-test/day"), refusal),
-		).toBeUndefined();
-	});
-
-	it("is refused with the settings refusal itself while Scratch is the stand-in", () => {
-		const standIn = localWorkspace(SETTINGS);
-		standIn.markUnavailable("settings_refused");
-		const settings = refusal();
-		expect(scratchRefusal(standIn, () => settings)).toBe(settings);
-	});
-
-	it("is refused, naming the folder, when the day's folder could not be made", () => {
-		const day = localWorkspace("/scratch-test/day");
-		day.markUnavailable("root_inaccessible");
-		const refused = scratchRefusal(day, refusal);
-		expect(refused?.code).toBe("workspace_unavailable");
-		expect(refused?.detail).toContain("/scratch-test/day");
+		expect(day.failure).toContain(SETTINGS);
+		expect(day.failure).toContain("[scratch] daily");
 	});
 });
 
@@ -195,13 +155,11 @@ describe("ScratchFollower", () => {
 		await adoptions(1);
 		await scratch.resumed();
 		expect(roots()).toEqual([SETTINGS, SETTINGS]);
-		expect(
-			adopted.every((day) => day.unavailable?.reason === "settings_refused"),
-		).toBe(true);
+		expect(adopted.every((day) => day.failure !== undefined)).toBe(true);
 		expect(existsSync(join(home, "junk"))).toBe(false);
 		await scratch.settingsAccepted("~/daily/YYYYMMDD");
 		expect(roots().at(-1)).toBe(join(realpathSync(home), "daily", "20260924"));
-		expect(adopted.at(-1)?.unavailable).toBeUndefined();
+		expect(adopted.at(-1)?.failure).toBeUndefined();
 		scratch.stop();
 	});
 

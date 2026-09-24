@@ -173,18 +173,7 @@ const upstreamOpenInBrowserWindow = (
 		// its workbench comes through the branch below like any other — and so
 		// every request without one is a request for somewhere to scribble.
 		console.log("[devhub] open: no folder — Scratch");
-		let scratch: ICodeWindow;
-		try {
-			scratch = await controller.scratchWorkbench();
-		} catch (error) {
-			// Said in the app as well as answered to whoever asked: a second
-			// `code`-style launch from a terminal prints the rejection, but one
-			// from Finder or the Dock has nobody reading its output, and a
-			// refused Scratch (no settings, no folder) would then be nothing
-			// happening. Re-raised, because the request did fail.
-			controller.noteFailure(error);
-			throw error;
-		}
+		const scratch = await controller.scratchWorkbench();
 		if (options.filesToOpen) {
 			controller.sendFilesToWorkbench(scratch, options.filesToOpen);
 		}

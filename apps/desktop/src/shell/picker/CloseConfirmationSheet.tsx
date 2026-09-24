@@ -60,8 +60,6 @@ function diagnosticStatus(diagnostic: CloseDiagnosticWire): string {
       return "Could not verify: workspace root is missing";
     case "root_inaccessible":
       return "Could not verify: workspace root is inaccessible";
-    case "settings_refused":
-      return "Could not verify: DevHub could not use its settings file";
     case "close_agents_unknown":
       return "Could not verify agents";
     case "close_terminal_unknown":

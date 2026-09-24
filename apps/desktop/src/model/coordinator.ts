@@ -591,7 +591,6 @@ export class AppCoordinator {
             intent.location,
             intent.selectedPath,
           ),
-          intent.unavailable,
         );
         return this.transitionOutcome(beforeRevision, id);
       case "resize_split":
