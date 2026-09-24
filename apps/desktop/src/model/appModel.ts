@@ -52,6 +52,7 @@ import {
   type TerminalZoomDirection,
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
+import { tabOrder, tabPosition } from "../ipc/appShell.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -1158,8 +1159,8 @@ export class AppModel {
 
   /**
    * Every row of the Sidebar, of both kinds, in the order it is drawn: each
-   * Workspace followed by its Agents. The same list `Cmd+Q N` and `]` walk
-   * (`everyTab` in `chords.ts`).
+   * Workspace followed by its Agents. The same list `Cmd+Q N` and `]` walk,
+   * built by the same function (`tabOrder`).
    *
    * `drawn` is the Workspaces in the order the Sidebar draws them, Scratch
    * first. The model cannot work that out — the grouping is git's answer (see
@@ -1177,12 +1178,7 @@ export class AppModel {
         `the drawn order [${drawn.join(", ")}] does not name the open workspaces`,
       );
     }
-    return drawn.flatMap((workspaceId): NavigationContext[] => [
-      { kind: "workspace", workspaceId },
-      ...this.requireWorkspace(workspaceId).agents.map(
-        (agent): NavigationContext => ({ kind: "agent", agentId: agent.id }),
-      ),
-    ]);
+    return tabOrder(drawn.map((id) => this.requireWorkspace(id)));
   }
 
   /**
@@ -1206,12 +1202,7 @@ export class AppModel {
   private repairSelection(before: readonly NavigationContext[]): void {
     const selected = this.selectionValue.context;
     if (this.contextExists(selected)) return;
-    const at = before.findIndex((tab) => sameContext(tab, selected));
-    if (at < 0) {
-      throw new Error(
-        "the selection was not one of the rows before the removal",
-      );
-    }
+    const at = tabPosition(before, selected);
     const successor =
       before.slice(at + 1).find((tab) => this.contextExists(tab)) ??
       before

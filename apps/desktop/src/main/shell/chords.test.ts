@@ -244,22 +244,22 @@ describe("the Agent cycle", () => {
 	});
 
 	/**
-	 * An editor stands where its `Cmd+Q Cmd+J` partner stands.
+	 * An editor steps from its own row, as every tab does.
 	 *
-	 * The editor and the Agent it toggles with are one place in the list, so
-	 * stepping from the editor is stepping from that Agent. It used to step
-	 * from nowhere, which is the first Agent of the whole list — Scratch's —
-	 * and the `Cmd+J` after it then went to Scratch's editor, a long way from
-	 * where the person had been standing.
+	 * The row is where the editor is in the one tab order `N`/`P` walk and a
+	 * close lands by, so `]` from it is the Workspace's first Agent and `[` is
+	 * the last Agent above it. It used to step from its `Cmd+Q Cmd+J` partner
+	 * — the Agent last selected there — which made `]` from alpha's editor skip
+	 * alpha's own first Agent when the partner was further down.
 	 */
-	it("steps from an editor as it would from the Agent that editor toggles with", () => {
+	it("steps from an editor's own row, not from the Agent it toggles with", () => {
 		const ring = {
 			scratch: workspace(SCRATCH_ID, ["s1"], { label: "Scratch" }),
-			workspaces: [one, workspace("two", ["b1", "b2"], { lastAgentId: "b1" })],
+			workspaces: [one, workspace("two", ["b1", "b2"], { lastAgentId: "b2" })],
 			context: { kind: "workspace", workspaceId: "two" } as NavigationContext,
 		};
 		expect(run("next_agent", snapshotOf(ring))).toEqual(
-			selects({ kind: "agent", agentId: "b2" }),
+			selects({ kind: "agent", agentId: "b1" }),
 		);
 		expect(run("previous_agent", snapshotOf(ring))).toEqual(
 			selects({ kind: "agent", agentId: "a1" }),
@@ -330,6 +330,8 @@ describe("the unread Agent cycle", () => {
 		expect(run("previous_unread_agent", snapshot)).toEqual(
 			selects({ kind: "agent", agentId: "b1" }),
 		);
+		// An editor steps from its own row: the first unread Agent under
+		// two's row is two's own b1.
 		expect(
 			run(
 				"next_unread_agent",
@@ -338,7 +340,7 @@ describe("the unread Agent cycle", () => {
 					context: { kind: "workspace", workspaceId: "two" },
 				}),
 			),
-		).toEqual(selects({ kind: "agent", agentId: "a2" }));
+		).toEqual(selects({ kind: "agent", agentId: "b1" }));
 	});
 
 	it("is a no-op with nothing unread, and with no Agents at all", () => {

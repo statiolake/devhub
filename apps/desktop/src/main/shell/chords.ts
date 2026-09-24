@@ -28,8 +28,9 @@
  * - `sidebarEntries` — Scratch, then the workspaces. What a digit names.
  * - `everyAgent` — every Agent there is, in sidebar order, across workspaces.
  *   `Cmd+Q ]` stops at each of them and `Cmd+Q }` at the unread ones, both
- *   walking the tree below so that an editor has a place to step from, and so
- *   the filtered cycle cannot disagree with the whole one about the order.
+ *   walking the tree below from the selection's own row, so that an editor
+ *   steps from where it is drawn, and so the filtered cycle cannot disagree
+ *   with the whole one about the order.
  * - `everyTab` — every row of the tree in order, of both kinds.
  */
 
@@ -50,7 +51,11 @@ import type {
 	SurfacePresentationWire,
 	WorkspaceWire,
 } from "../../ipc/appShell.js";
-import { sidebarWorkspaces } from "../../ipc/appShell.js";
+import {
+	sidebarWorkspaces,
+	tabOrder,
+	tabPosition,
+} from "../../ipc/appShell.js";
 
 /**
  * One row of the effective table: the key that completes the chord, and the
@@ -243,14 +248,7 @@ function everyAgent(snapshot: AppSnapshotWire): readonly AgentWire[] {
 
 /** Every row of the tree, of both kinds, in the order it is drawn. */
 function everyTab(snapshot: AppSnapshotWire): readonly NavigationContext[] {
-	return orderedWorkspaces(snapshot).flatMap(
-		(workspace): NavigationContext[] => [
-			{ kind: "workspace", workspaceId: workspace.id },
-			...workspace.agents.map(
-				(agent): NavigationContext => ({ kind: "agent", agentId: agent.id }),
-			),
-		],
-	);
+	return tabOrder(orderedWorkspaces(snapshot));
 }
 
 /** The workspace the selection is in, whether a row or one of its agents. */
@@ -270,47 +268,6 @@ function selectedAgent(snapshot: AppSnapshotWire): AgentWire | undefined {
 	const context = snapshot.selection.context;
 	if (context.kind !== "agent") return undefined;
 	return everyAgent(snapshot).find((agent) => agent.id === context.agentId);
-}
-
-/**
- * Where the selection stands in the tree, for a cycle that steps between
- * Agents.
- *
- * An Agent stands where it is. An editor stands where its `Cmd+Q Cmd+J`
- * partner stands (`pairedAgentId`): the two are one place, toggled between, so
- * `]` from the editor goes to the Agent after the one `Cmd+J` would have gone
- * to, and never somewhere unrelated. A workspace with no Agents has no partner
- * and stands on its own row, which is between the Agents before it and the
- * ones after.
- */
-function standing(
-	snapshot: AppSnapshotWire,
-	workspace: WorkspaceWire | undefined,
-	agent: AgentWire | undefined,
-): NavigationContext {
-	if (agent) return { kind: "agent", agentId: agent.id };
-	if (!workspace) {
-		// `resolveChord` has the selection's workspace for every selection the
-		// model can hold; one that names nothing is a broken snapshot.
-		throw new Error("the selection is in no workspace of the snapshot");
-	}
-	const partner = pairedAgentId(workspace);
-	return partner === undefined
-		? { kind: "workspace", workspaceId: workspace.id }
-		: { kind: "agent", agentId: partner };
-}
-
-function sameContext(
-	left: NavigationContext,
-	right: NavigationContext,
-): boolean {
-	if (left.kind === "workspace" && right.kind === "workspace") {
-		return left.workspaceId === right.workspaceId;
-	}
-	if (left.kind === "agent" && right.kind === "agent") {
-		return left.agentId === right.agentId;
-	}
-	return false;
 }
 
 /**
@@ -337,9 +294,9 @@ function wrap(index: number, length: number): number {
  *
  * One function for every cycle, because they differ only in what the ring holds
  * and which of its entries count. Every caller steps from somewhere that is in
- * its ring — the Agent cycle walks the whole tree so that an editor, which is
- * not an Agent, still has a place to step from (`standing`) — so a starting
- * point the ring does not hold is a broken snapshot, not a case.
+ * its ring — the Agent cycle walks the whole tree, so that every tab, an
+ * editor's row included, steps from its own place in it — so a starting point
+ * the ring does not hold is a broken snapshot, not a case (`tabPosition`).
  *
  * `wanted` is what makes `}` a narrowing of `]` rather than a second cycle: the
  * same ring, from the same place, in the same direction, stopping at the first
@@ -352,12 +309,7 @@ function step(
 	direction: 1 | -1,
 	wanted: (index: number) => boolean = () => true,
 ): ChordEffect | undefined {
-	const current = ring.findIndex((entry) => sameContext(entry, from));
-	if (current === -1) {
-		throw new Error(
-			`a cycle was asked to step from ${JSON.stringify(from)}, which is not in it`,
-		);
-	}
+	const current = tabPosition(ring, from);
 	for (let offset = 1; offset <= ring.length; offset += 1) {
 		const index = wrap(current + direction * offset, ring.length);
 		if (wanted(index)) {
@@ -583,9 +535,10 @@ export function resolveChord(
 			const onlyUnread =
 				commandId === "next_unread_agent" ||
 				commandId === "previous_unread_agent";
-			// The tree rather than the Agents alone, so that where the person
-			// stands is always somewhere in it (`standing`); only the Agents are
-			// stops, and in the same order `everyAgent` has them.
+			// The tree rather than the Agents alone, so that every tab steps from
+			// its own row — an editor from its Workspace's, not from the Agent
+			// `Cmd+Q Cmd+J` would toggle to; only the Agents are stops, and in
+			// the same order `everyAgent` has them.
 			const tabs = everyTab(snapshot);
 			const unread = new Set(
 				everyAgent(snapshot)
@@ -594,7 +547,7 @@ export function resolveChord(
 			);
 			return step(
 				tabs,
-				standing(snapshot, workspace, agent),
+				snapshot.selection.context,
 				forwards ? 1 : -1,
 				(index) => {
 					const entry = tabs[index];

@@ -834,6 +834,59 @@ export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
 		rows: snapshot.workspaces.filter((workspace) => workspace !== scratch),
 	};
 }
+/**
+ * One row of the Sidebar's tree: a Workspace's own row, or one of its Agents.
+ * Generic over the id types so the model, whose ids are branded, and the
+ * pages and chords, whose ids are plain strings, read the same list.
+ */
+export type TabOf<W extends string, A extends string> =
+	| { readonly kind: "workspace"; readonly workspaceId: W }
+	| { readonly kind: "agent"; readonly agentId: A };
+
+/**
+ * The tab order: every row of the tree, of both kinds, each Workspace
+ * followed by its Agents, over Workspaces already in the order the Sidebar
+ * draws them (Scratch first — see `sidebarWorkspaces`).
+ *
+ * The one list `Cmd+Q N`/`P` and `]`/`[` walk and a close lands by
+ * (`AppModel.repairSelection`), so where you go next and where a close puts
+ * you cannot come to disagree.
+ */
+export function tabOrder<W extends string, A extends string>(
+	workspaces: readonly {
+		readonly id: W;
+		readonly agents: readonly { readonly id: A }[];
+	}[],
+): readonly TabOf<W, A>[] {
+	return workspaces.flatMap((workspace): TabOf<W, A>[] => [
+		{ kind: "workspace", workspaceId: workspace.id },
+		...workspace.agents.map(
+			(agent): TabOf<W, A> => ({ kind: "agent", agentId: agent.id }),
+		),
+	]);
+}
+
+/**
+ * Where a tab stands in the tab order.
+ *
+ * Every tab stands on its own row — an editor on its Workspace's, an Agent on
+ * its own — and nowhere else. A tab that is not in the list is a caller
+ * reading a list that no longer exists, and it throws.
+ */
+export function tabPosition<W extends string, A extends string>(
+	tabs: readonly TabOf<W, A>[],
+	tab: TabOf<W, A>,
+): number {
+	const at = tabs.findIndex((candidate) =>
+		candidate.kind === "workspace"
+			? tab.kind === "workspace" && tab.workspaceId === candidate.workspaceId
+			: tab.kind === "agent" && tab.agentId === candidate.agentId,
+	);
+	if (at < 0) {
+		throw new Error(`${JSON.stringify(tab)} is not a row of the tab order`);
+	}
+	return at;
+}
 export function workspaceForContext(
 	snapshot: AppSnapshot,
 	context: NavigationContext,

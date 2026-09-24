@@ -335,12 +335,16 @@ an Agent is a terminal already — and one on a workbench that is starting,
 restarting or gone, behind a question, or while DevHub is not in front is
 simply not had: the move still happens.
 
-**Where you stand, for `]` and `[`, is your `Cmd+J` partner.** An editor and
-the Agent `Cmd+Q Cmd+J` toggles it with (`pairedAgentId`) are one place, so
-stepping to the next or previous Agent from an editor steps from that Agent,
-and a workspace with no Agents steps from its own row. It used to step from
-nowhere, which is the first Agent of the whole list — Scratch's — and the
-`Cmd+J` after that went to Scratch's editor, far from where the person was.
+**`]` and `[` step from the tab you are on.** Every tab stands on its own row
+of the tab order — the list `N`/`P` walk and a close lands by, built by one
+function (`tabOrder` in `ipc/appShell.ts`, found in by `tabPosition`) — and
+`]` (`[`) walks forward (back) from there to the first Agent, wrapping. From
+an Agent that is the next Agent; from an editor, Scratch or a Workspace with
+no Agents it is the first Agent under that row, so alpha's editor `]` is
+alpha's first Agent and `[` the last Agent above alpha. An editor used to
+step from its `Cmd+J` partner (`pairedAgentId`) instead, which skipped the
+Workspace's own first Agents whenever the partner was further down; before
+that it stepped from nowhere, which is Scratch's first Agent.
 
 ## Chords are answered in main
 
