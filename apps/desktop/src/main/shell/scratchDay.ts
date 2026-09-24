@@ -18,13 +18,10 @@
  * it and `failure` says why, and the caller marks it unavailable and reports
  * the sentence — so the row says what is wrong in the place it is wrong.
  *
- * Settings that were refused at launch leave DevHub running on none, and then
- * there is no `daily` to make a folder from. That is not the default's cue:
- * a folder nobody configured is not made. Scratch is a stand-in, unavailable,
- * at the settings file — the thing that is wrong — with the refusal as its
- * failure, until settings are accepted and today's folder takes its place.
- * Settings refused *later* change nothing here: DevHub goes on running on the
- * ones it had, and so does Scratch.
+ * A refused settings file is handled here as it is for every other setting:
+ * at launch DevHub runs on the defaults, so `daily` is the default
+ * (`~/junk/YYYYMMDD`), and a refusal later leaves the last accepted settings,
+ * and so Scratch, as they were.
  */
 
 import { randomUUID } from "node:crypto";
@@ -48,16 +45,8 @@ export interface ScratchDay {
 	readonly failure: string | undefined;
 }
 
-/** Where Scratch comes from: the `daily` DevHub runs on, and where it is written. */
-export interface ScratchSetting {
-	/** `[scratch] daily`, or `undefined` while DevHub runs on no settings. */
-	readonly daily: string | undefined;
-	/** The settings file, which is where Scratch points when there is no `daily`. */
-	readonly settingsFile: string;
-}
-
 export async function scratchDay(
-	setting: ScratchSetting,
+	daily: string,
 	now: Date,
 	home: string,
 ): Promise<ScratchDay> {
@@ -68,13 +57,7 @@ export async function scratchDay(
 			workspaceLocation({ kind: "local", path }),
 			displayPath(path),
 		);
-	if (setting.daily === undefined) {
-		return {
-			workspace: at(setting.settingsFile),
-			failure: `Scratch has no folder: ${setting.settingsFile} could not be read, so there is no [scratch] daily to make today's folder from. Nothing was made; Scratch moves to today's folder when the file is accepted.`,
-		};
-	}
-	const path = expandHome(scratchDailyPath(setting.daily, now), home);
+	const path = expandHome(scratchDailyPath(daily, now), home);
 	let canonical: string;
 	try {
 		await mkdir(path, { recursive: true });
@@ -105,13 +88,12 @@ export async function scratchDay(
  * only way to be wrong.
  */
 export class ScratchFollower {
-	#daily: string | undefined;
+	#daily: string;
 	#timer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
-		daily: string | undefined,
+		daily: string,
 		private readonly options: {
-			readonly settingsFile: string;
 			readonly home: string;
 			/** Make `day` Scratch. A rejection is the caller's to raise. */
 			readonly adopt: (day: ScratchDay) => Promise<void>;
@@ -167,11 +149,7 @@ export class ScratchFollower {
 	}
 
 	private async followToday(): Promise<void> {
-		const day = await scratchDay(
-			{ daily: this.#daily, settingsFile: this.options.settingsFile },
-			this.now(),
-			this.options.home,
-		);
+		const day = await scratchDay(this.#daily, this.now(), this.options.home);
 		await this.options.adopt(day);
 	}
 

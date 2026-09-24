@@ -1398,27 +1398,6 @@ export function isWorkspaceAvailable(state: WorkspaceState): boolean {
   return state.kind === "available";
 }
 
-/**
- * Whether a Workspace that stops being Scratch has anything to come back to.
- *
- * Yesterday's Scratch stays as an ordinary row because it holds work: its
- * Agents, or a folder with a workbench on it. One that is unavailable and has
- * no Agents holds neither — the stand-in DevHub puts in Scratch's place while
- * it runs on no settings is one, and so is a day whose folder could not be
- * made — and it does not outlive being Scratch: not as a row when the next
- * Scratch is adopted, and not in the state file, since the next launch works
- * Scratch out again anyway. Structural, so the live model and the snapshot the
- * state file is written from ask the one question.
- */
-export function scratchHoldsNothing(workspace: {
-  readonly state: WorkspaceState;
-  readonly agents: readonly unknown[];
-}): boolean {
-  return (
-    !isWorkspaceAvailable(workspace.state) && workspace.agents.length === 0
-  );
-}
-
 function sameWorkspaceState(
   left: WorkspaceState,
   right: WorkspaceState,

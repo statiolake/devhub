@@ -254,21 +254,6 @@ describe("Scratch across a restart", () => {
     ]);
   });
 
-  it("does not write down a Scratch that holds nothing, so it does not come back as a row", () => {
-    // A launch on refused settings: Scratch is an unavailable stand-in.
-    const standIn = new AppModel(today("/dev/settings.toml"));
-    standIn.markWorkspaceUnavailable(
-      standIn.scratchWorkspaceId,
-      "root_inaccessible",
-    );
-    const state = stateFromSnapshot(standIn.snapshot());
-    expect(state.workspaces).toEqual([]);
-    const model = hydrateModel(state, [], today("/dev/daily/20260925"));
-    expect(model.snapshot().workspaces.map((w) => w.root)).toEqual([
-      "/dev/daily/20260925",
-    ]);
-  });
-
   it("keeps Scratch's id, Agents and all, on the same day", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     const model = hydrateModel(state, [codex], today());

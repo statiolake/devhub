@@ -10,12 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 
-const SETTINGS = "/scratch-test/settings.toml";
-
-function daily(template: string) {
-	return { daily: template, settingsFile: SETTINGS };
-}
-
 describe("today's Scratch folder", () => {
 	let home: string;
 	beforeEach(() => {
@@ -27,7 +21,7 @@ describe("today's Scratch folder", () => {
 
 	it("is made on demand, under ~, and resolved", async () => {
 		const day = await scratchDay(
-			daily("~/junk/YYYYMMDD"),
+			"~/junk/YYYYMMDD",
 			new Date(2026, 8, 23, 9, 30),
 			home,
 		);
@@ -42,7 +36,7 @@ describe("today's Scratch folder", () => {
 		mkdirSync(join(home, "junk", "20260923"), { recursive: true });
 		writeFileSync(join(home, "junk", "20260923", "notes.txt"), "kept");
 		const day = await scratchDay(
-			daily(`${home}/junk/YYYYMMDD`),
+			`${home}/junk/YYYYMMDD`,
 			new Date(2026, 8, 23),
 			"/nowhere",
 		);
@@ -54,26 +48,12 @@ describe("today's Scratch folder", () => {
 		// A file where the parent folder has to be.
 		writeFileSync(join(home, "junk"), "not a folder");
 		const day = await scratchDay(
-			daily("~/junk/YYYYMMDD"),
+			"~/junk/YYYYMMDD",
 			new Date(2026, 8, 23),
 			home,
 		);
 		expect(day.failure).toContain(`${home}/junk/20260923`);
 		expect(day.workspace.root).toBe(`${home}/junk/20260923`);
-	});
-
-	it("makes no folder at all when DevHub runs on no settings, and says so at the settings file", async () => {
-		const day = await scratchDay(
-			{ daily: undefined, settingsFile: SETTINGS },
-			new Date(2026, 8, 23),
-			home,
-		);
-		// Not the default's folder, and nothing under home: the default is a
-		// value nobody configured.
-		expect(existsSync(join(home, "junk"))).toBe(false);
-		expect(day.workspace.root).toBe(SETTINGS);
-		expect(day.failure).toContain(SETTINGS);
-		expect(day.failure).toContain("[scratch] daily");
 	});
 });
 
@@ -91,9 +71,8 @@ describe("ScratchFollower", () => {
 		removeScratchDir(home);
 	});
 
-	function follower(template: string | undefined): ScratchFollower {
+	function follower(template: string): ScratchFollower {
 		return new ScratchFollower(template, {
-			settingsFile: SETTINGS,
 			home,
 			adopt: (day) => {
 				adopted.push(day);
@@ -142,24 +121,6 @@ describe("ScratchFollower", () => {
 			join(realpathSync(home), "b", "20260924"),
 		]);
 		expect(existsSync(join(home, "a"))).toBe(false);
-		scratch.stop();
-	});
-
-	it("makes nothing while there are no settings, and moves to today's folder when they are accepted", async () => {
-		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-		vi.setSystemTime(new Date(2026, 8, 23, 23, 0));
-		const scratch = follower(undefined);
-		scratch.start();
-		// Midnight and a wake, with nothing to make a folder from.
-		await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-		await adoptions(1);
-		await scratch.resumed();
-		expect(roots()).toEqual([SETTINGS, SETTINGS]);
-		expect(adopted.every((day) => day.failure !== undefined)).toBe(true);
-		expect(existsSync(join(home, "junk"))).toBe(false);
-		await scratch.settingsAccepted("~/daily/YYYYMMDD");
-		expect(roots().at(-1)).toBe(join(realpathSync(home), "daily", "20260924"));
-		expect(adopted.at(-1)?.failure).toBeUndefined();
 		scratch.stop();
 	});
 

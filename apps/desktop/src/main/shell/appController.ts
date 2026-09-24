@@ -352,6 +352,7 @@ import {
 import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
+import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
@@ -702,8 +703,7 @@ export class AppController {
 	) {
 		this.state = state;
 		this.config = config;
-		this.scratch = new ScratchFollower(config?.scratch.daily, {
-			settingsFile: configStore.paths.file,
+		this.scratch = new ScratchFollower(scratchDaily(config), {
 			home: homedir(),
 			adopt: (day) => this.adoptScratchDay(day),
 		});
@@ -6303,14 +6303,10 @@ export async function createAppController(
 	const profiles = (config?.agentProfiles ?? []).map(toDomainProfile);
 	// Scratch is today's folder, worked out now rather than read from the file:
 	// a file from yesterday names yesterday's folder as an ordinary Workspace,
-	// and today's becomes Scratch. With no readable settings there is no
-	// `daily`, and Scratch is the stand-in `scratchDay` says — never a folder
-	// made from the default nobody configured.
-	const today = await scratchDay(
-		{ daily: config?.scratch.daily, settingsFile: configStore.paths.file },
-		new Date(),
-		homedir(),
-	);
+	// and today's becomes Scratch. With no readable settings it is the
+	// default, like every other setting — the settings failure is already on
+	// its way to the person.
+	const today = await scratchDay(scratchDaily(config), new Date(), homedir());
 	let model: AppModel;
 	let projectionFailure: string | undefined;
 	try {
@@ -6361,6 +6357,11 @@ export async function createAppController(
 		);
 	}
 	return current;
+}
+
+/** `[scratch] daily`, or its default when there are no readable settings. */
+function scratchDaily(config: Config | undefined): string {
+	return config?.scratch.daily ?? DEFAULT_SCRATCH_DAILY;
 }
 
 export function appController(): AppController {
