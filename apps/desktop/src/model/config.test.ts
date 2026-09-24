@@ -5,6 +5,7 @@ import {
   CONFIG_SCHEMA_VERSION,
   ConfigError,
   type ConfigPaths,
+  type ConfiguredAgentProfile,
   ConfigStore,
   configOntoDocument,
   configToToml,
@@ -992,7 +993,7 @@ describe("round trip", () => {
       "",
     ].join("\n");
     const config = parseConfig(source);
-    const edited = [
+    const edited: ConfiguredAgentProfile[] = [
       {
         id: "codex",
         display_name: "Codex, edited",
