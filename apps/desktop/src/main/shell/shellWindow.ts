@@ -42,6 +42,7 @@ import { TooltipView } from "./tooltipView.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
+import type { Landing } from "./chords.js";
 
 /**
  * The one window's construction options.
@@ -164,19 +165,8 @@ export class ShellWindow {
 	private readonly attached: AttachedEntry[] = [];
 	/** Names the attached views apart for the owner; never reused. */
 	private attachedCounter = 0;
-	/**
-	 * The workbench a selection asked to land in the terminal of, until the
-	 * keyboard arrives there.
-	 *
-	 * It cannot be run where it is asked for. The selection is a change to the
-	 * model, the arrangement comes back up from the page, and the keyboard is
-	 * placed after that — so a `terminal.focus` sent at the asking would reach
-	 * a workbench that does not have the keys, and VS Code would focus a
-	 * terminal in a view the person is not typing into. This is the other end
-	 * of that: one armed key, consumed at the one moment the keyboard is
-	 * placed, and never on a timer.
-	 */
-	private terminalOnArrival: string | undefined;
+	/** `keyboardChild`'s answer as of the last `layout()`. */
+	private keyboardAnswer: string | undefined;
 	/**
 	 * What the arrangement is, as the model says.
 	 *
@@ -741,7 +731,7 @@ export class ShellWindow {
 	 * should come to the front is a different question with one answer,
 	 * `raise`, and only the paths that carry a person's intent ask it.
 	 */
-	focusSurface(): void {
+	focusSurface(landing?: Landing): void {
 		if (this.window.isDestroyed()) return;
 		this.placeTheKeyboard();
 		// Reported after the keyboard has been placed, never before, and
@@ -755,42 +745,28 @@ export class ShellWindow {
 		// renderer — so an announcement sent before `focus()` had moved
 		// anything would be answered with the state it was about to leave.
 		this.publishFocus();
-		this.deliverTerminalOnArrival();
+		if (landing === "terminal") this.landInTerminal();
 	}
 
 	/**
-	 * Ask that the next keyboard placement into this workbench land in its
-	 * integrated terminal.
+	 * The shell of the workbench the keyboard has just been placed in, for a
+	 * move that lands there (`Landing` in `chords.ts`).
 	 *
-	 * Armed by the one selection that carries the intent (`Cmd+Q J` going
-	 * Agent → editor) and by nothing else, so a workbench chosen any other way
-	 * is typed into wherever it was left.
+	 * Asked by the placement that ends the move and by nothing later, so there
+	 * is nothing to keep between the asking and the landing: the move changed
+	 * the model, the model published the arrangement, and the keyboard was
+	 * placed, all before this line. When the keys did not arrive in a
+	 * workbench — the move landed on an Agent, the workbench is starting or
+	 * gone, a question is standing, DevHub is not in front — there is no shell
+	 * of anything to focus, and the landing is simply not had; the move still
+	 * happened.
 	 */
-	focusTerminalOnArrival(editorKey: string): void {
-		this.terminalOnArrival = editorKey;
-	}
-
-	/**
-	 * Run the armed `terminal.focus`, if the keyboard has just landed where it
-	 * was armed for.
-	 *
-	 * Disarmed either way, on the first placement after arming. A workbench
-	 * that is starting, restarting or gone has no view here and the keyboard
-	 * went somewhere else, and a terminal in a window that is not there is
-	 * nothing to focus: the selection still happened, and the intent is
-	 * dropped rather than kept waiting for a window that may never come.
-	 */
-	private deliverTerminalOnArrival(): void {
-		const editorKey = this.terminalOnArrival;
-		if (editorKey === undefined) return;
-		this.terminalOnArrival = undefined;
-		const view = this.viewForEditorKey(editorKey);
-		if (!view || view.isDestroyed()) return;
-		// The same question the workbench itself is told the answer to: the
-		// window is in front, no modal is over it, and this view is where the
-		// keys go. Anything less and `placeTheKeyboard` declined, so focusing
-		// a terminal here would be focusing it in a view nobody is typing in.
-		if (!this.isSurfaceFocused(view)) return;
+	private landInTerminal(): void {
+		const view = this.views.find(
+			(candidate) =>
+				!candidate.isDestroyed() && this.isSurfaceFocused(candidate),
+		);
+		if (!view) return;
 		// The workbench's own command, forwarded over upstream's own door for
 		// main (`vscode:runAction`) — the same one `Cmd+Q T` goes through. It
 		// creates a terminal when there is none, which is what a person asking
@@ -1339,6 +1315,20 @@ export class ShellWindow {
 			this.onScreen = onScreen;
 			this.titleChanged();
 			shellTheme().selectionChanged();
+		}
+
+		// Where the keys go is a function of the same input, and it moves with
+		// it — not only with the arrangement. A workbench that was chosen
+		// before it existed (a folder just opened, one on another machine, one
+		// being rebuilt) changes the answer by arriving, and nothing else
+		// would put the keyboard in it: it went to the window's own page while
+		// there was nothing else, and stayed there. Asked only when the answer
+		// changed, so a pass that moves nothing about the keyboard — a
+		// tooltip, a resize — never takes it out of wherever the person put it.
+		const keyboard = JSON.stringify(keyboardChild(this.layoutInput()));
+		if (keyboard !== this.keyboardAnswer) {
+			this.keyboardAnswer = keyboard;
+			this.focusSurface();
 		}
 	}
 

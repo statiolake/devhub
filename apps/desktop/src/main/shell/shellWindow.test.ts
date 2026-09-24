@@ -582,6 +582,41 @@ describe("the shell window's workbench views", () => {
 			expect(focused).toBeUndefined();
 		});
 
+		/**
+		 * A workbench that arrives after it was chosen still gets the keys.
+		 *
+		 * Opening a folder selects it at once, and its workbench is built
+		 * after that — a moment later for a folder here, much later for one
+		 * on another machine. The keyboard went to the window's own page in
+		 * between, because there was nothing else to put it in, and nothing
+		 * put it anywhere when the workbench came: the arrangement had not
+		 * changed, only which workbenches exist. Where the keys go is a
+		 * function of both, so a change in either places them.
+		 */
+		it("gives the keyboard to a chosen workbench when it arrives", () => {
+			shell.setLayoutState({
+				...BASE,
+				surface: { kind: "editor", editorKey: "/folder/late" },
+				keyboard: "editor",
+			});
+			expect(focused).toBe(
+				(shell.window.webContents as unknown as { id: number }).id,
+			);
+			const late = new WorkbenchView(shell, {});
+			shell.attach(late);
+			shell.bindEditorKey(late.id, "/folder/late");
+			expect(focused).toBe(contentsOf(late));
+		});
+
+		it("leaves the keyboard alone when a workbench nobody chose arrives", () => {
+			show(shell, a);
+			focused = undefined;
+			const other = new WorkbenchView(shell, {});
+			shell.attach(other);
+			shell.bindEditorKey(other.id, "/folder/elsewhere");
+			expect(focused).toBeUndefined();
+		});
+
 		it("gives it back to the workbench when the split is closed", () => {
 			show(shell, a);
 			showSplit(shell, a);
@@ -640,14 +675,18 @@ describe("the shell window's workbench views", () => {
 		});
 
 		/**
-		 * `Cmd+Q J` going Agent → editor asks for the editor's shell.
+		 * A toggle landing on an editor lands in its shell.
 		 *
-		 * The command is the workbench's, so it is forwarded rather than
-		 * reimplemented — and it is forwarded at the one moment the keyboard is
-		 * placed, because a `terminal.focus` sent any earlier would focus a
-		 * terminal in a view the keys are not going to.
+		 * `Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at
+		 * an editor ask for it (see `Landing` in `chords.ts`). The command is
+		 * the workbench's, so it is forwarded rather than reimplemented — and
+		 * it is forwarded by the placement that ends the move, after the
+		 * keyboard is in that workbench, never before: a `terminal.focus` sent
+		 * any earlier would focus a terminal in a view the keys are not going
+		 * to. There is nothing kept between the asking and the landing, because
+		 * the move and its placement are one call.
 		 */
-		describe("and the terminal a selection asked for", () => {
+		describe("and the terminal a move lands in", () => {
 			const runActions = (view: WorkbenchView): unknown[] =>
 				(
 					view.webContents as unknown as {
@@ -656,53 +695,67 @@ describe("the shell window's workbench views", () => {
 				).sent
 					.filter((one) => one.channel === "vscode:runAction")
 					.map((one) => one.payload);
+			const TERMINAL = { id: "workbench.action.terminal.focus", from: "menu" };
 
-			it("is focused once the keyboard has landed in that workbench", () => {
-				shell.focusTerminalOnArrival(keyOf(a));
+			it("is focused in the workbench the keyboard has landed in", () => {
 				show(shell, a);
+				shell.focusSurface("terminal");
 				expect(focused).toBe(contentsOf(a));
-				expect(runActions(a)).toEqual([
-					{ id: "workbench.action.terminal.focus", from: "menu" },
-				]);
+				expect(runActions(a)).toEqual([TERMINAL]);
+				expect(runActions(b)).toEqual([]);
 			});
 
-			it("is not asked for by an ordinary selection", () => {
+			it("is not asked for by an ordinary placement", () => {
 				show(shell, a);
 				showPage(shell);
 				show(shell, a);
+				shell.focusSurface();
 				expect(runActions(a)).toEqual([]);
 			});
 
-			it("is asked for once, and not again on later placements", () => {
-				shell.focusTerminalOnArrival(keyOf(a));
+			it("is asked for once, by the move that asked, and not by later placements", () => {
 				show(shell, a);
+				shell.focusSurface("terminal");
 				showPage(shell);
 				show(shell, a);
-				expect(runActions(a)).toHaveLength(1);
+				theWindow().emit("focus");
+				expect(runActions(a)).toEqual([TERMINAL]);
 			});
 
-			it("is dropped when the workbench it named is not there", () => {
+			it("means nothing when the move landed on an Agent", () => {
+				// `Cmd+Q Shift+J` back to an Agent: an Agent is a terminal already.
+				show(shell, a);
+				showPage(shell);
+				shell.focusSurface("terminal");
+				expect(focused).toBe(page());
+				expect(runActions(a)).toEqual([]);
+			});
+
+			it("is dropped when the workbench the move named is not there", () => {
 				// Starting, restarting, or gone: there is no view to focus a
 				// terminal in, and the selection still happens.
-				shell.focusTerminalOnArrival("/folder/not-open");
-				showPage(shell);
-				expect(runActions(a)).toEqual([]);
-				expect(runActions(b)).toEqual([]);
+				shell.setLayoutState({
+					...BASE,
+					surface: { kind: "editor", editorKey: "/folder/not-open" },
+					keyboard: "editor",
+				});
+				shell.focusSurface("terminal");
+				for (const view of [a, b, c]) expect(runActions(view)).toEqual([]);
 			});
 
-			it("is dropped when the keyboard went somewhere else", () => {
-				shell.focusTerminalOnArrival(keyOf(a));
-				show(shell, b);
-				expect(runActions(a)).toEqual([]);
-				expect(runActions(b)).toEqual([]);
-			});
-
-			it("waits for nothing while the window is not in front", () => {
+			it("is dropped while the window is not in front", () => {
 				// `placeKeyboardIn` declines outright there, so the keys never
 				// arrived and there is nothing to have landed in.
 				theWindow().inFront = false;
-				shell.focusTerminalOnArrival(keyOf(a));
 				show(shell, a);
+				shell.focusSurface("terminal");
+				expect(runActions(a)).toEqual([]);
+			});
+
+			it("is dropped while a question stands over the workbench", () => {
+				show(shell, a);
+				shell.picker.openModal({ kind: "workspace-picker" });
+				shell.focusSurface("terminal");
 				expect(runActions(a)).toEqual([]);
 			});
 		});
@@ -1361,6 +1414,9 @@ describe("when the shell window may come to the front", () => {
 
 	it("raises when a command line asks for DevHub", () => {
 		window.inFront = false;
+		// Building the window placed the keyboard once, as the first answer to
+		// where it goes; what is asked here is whether the raise places it.
+		focused = undefined;
 		shell.raise();
 		expect(raised).toEqual(["show", "focus", "app.focus"]);
 		// Not the keyboard: macOS has not made the window key yet, and the

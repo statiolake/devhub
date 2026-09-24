@@ -44,7 +44,7 @@ import { electron } from "../electron.js";
 import { strokeKeys } from "../../model/chordKeys.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
-import { resolveChord, type ChordEffect } from "./chords.js";
+import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
 import { KeyRouter, type ChordLayout, type KeyStroke } from "./keyRouter.js";
 import type { TerminalZoomDirection } from "../../model/terminalZoom.js";
 import type {
@@ -64,16 +64,20 @@ export interface ChordHost {
 	/** The model as the page sees it, or nothing before the first projection. */
 	snapshot(): AppSnapshotWire | undefined;
 	/**
-	 * Only an Agent has two presentations; absent means the plain, full one.
+	 * Go there, and take the keyboard along.
 	 *
-	 * `focus` is the selection's opinion about where the keyboard lands *inside*
-	 * the workbench, which only the Agent → editor toggle has; absent means the
-	 * editor keeps whatever it was last typed into.
+	 * Both moves below are a person going somewhere from the keyboard, so both
+	 * end with the keyboard in what they selected — out of the Sidebar too, if
+	 * that is where the chord was typed, because a chord is not the Sidebar's
+	 * own Return. `focus` is where it lands inside an editor (see `Landing`);
+	 * absent, the editor keeps whatever it was last typed into.
+	 *
+	 * Only an Agent has two presentations; absent means the plain, full one.
 	 */
 	selectContext(
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
-		focus?: "terminal",
+		focus?: Landing,
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
@@ -81,8 +85,11 @@ export interface ChordHost {
 	focusSidebar(): void;
 	/** Show the Sidebar as its icon rail, or give it its width back. */
 	toggleSidebar(): void;
-	/** Jump out to Scratch, or back to where the jump out started. */
-	toggleScratch(): void;
+	/**
+	 * Jump out to Scratch, or back to where the jump out started — a move like
+	 * `selectContext`, landing the same way, to a place only the model knows.
+	 */
+	toggleScratch(focus: Landing): void;
 	openWorkspacePicker(): void;
 	/** Every workspace and Agent, as a list to choose from. */
 	openTabPicker(): void;
@@ -164,7 +171,7 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			host.toggleSidebar();
 			return;
 		case "toggle-scratch":
-			host.toggleScratch();
+			host.toggleScratch(effect.focus);
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();

@@ -242,6 +242,43 @@ describe("the Agent cycle", () => {
 			run("next_agent", snapshotOf({ workspaces: [empty] })),
 		).toBeUndefined();
 	});
+
+	/**
+	 * An editor stands where its `Cmd+Q Cmd+J` partner stands.
+	 *
+	 * The editor and the Agent it toggles with are one place in the list, so
+	 * stepping from the editor is stepping from that Agent. It used to step
+	 * from nowhere, which is the first Agent of the whole list — Scratch's —
+	 * and the `Cmd+J` after it then went to Scratch's editor, a long way from
+	 * where the person had been standing.
+	 */
+	it("steps from an editor as it would from the Agent that editor toggles with", () => {
+		const ring = {
+			scratch: workspace(SCRATCH_ID, ["s1"], { label: "Scratch" }),
+			workspaces: [one, workspace("two", ["b1", "b2"], { lastAgentId: "b1" })],
+			context: { kind: "workspace", workspaceId: "two" } as NavigationContext,
+		};
+		expect(run("next_agent", snapshotOf(ring))).toEqual(
+			selects({ kind: "agent", agentId: "b2" }),
+		);
+		expect(run("previous_agent", snapshotOf(ring))).toEqual(
+			selects({ kind: "agent", agentId: "a1" }),
+		);
+	});
+
+	it("steps from a workspace with no Agents from where its row is", () => {
+		const ring = {
+			scratch: workspace(SCRATCH_ID, ["s1"], { label: "Scratch" }),
+			workspaces: [one, empty, two],
+			context: { kind: "workspace", workspaceId: "empty" } as NavigationContext,
+		};
+		expect(run("next_agent", snapshotOf(ring))).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+		expect(run("previous_agent", snapshotOf(ring))).toEqual(
+			selects({ kind: "agent", agentId: "a1" }),
+		);
+	});
 });
 
 /**
@@ -605,9 +642,10 @@ describe("the layout toggles", () => {
 					context: { kind: "agent", agentId: "b1" },
 				}),
 			),
-		).toEqual({ kind: "toggle-scratch" });
+		).toEqual({ kind: "toggle-scratch", focus: "terminal" });
 		expect(run("toggle_scratch", snapshotOf())).toEqual({
 			kind: "toggle-scratch",
+			focus: "terminal",
 		});
 	});
 

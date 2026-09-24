@@ -242,6 +242,19 @@ describe("a chord, as Electron delivers it", () => {
 		}
 	});
 
+	/**
+	 * `Cmd+Q Shift+J` is a toggle, so it lands the way `Cmd+Q Cmd+J` does.
+	 *
+	 * Where it arrives is the model's to say — only the model remembers the
+	 * way back — so what travels to the host is the landing, and the host
+	 * spends it on whatever editor the jump arrived at.
+	 */
+	it("hands the jump to Scratch to the host with the landing a toggle has", () => {
+		const { calls, chordHost } = host();
+		type(chordHost, [PREFIX, input("KeyJ", "J", { shift: true })]);
+		expect(calls).toEqual(["toggleScratch terminal"]);
+	});
+
 	it("keeps the chord through the Shift that arrives before the key", () => {
 		// The sequence the reporter typed. `ShiftLeft` is not taken, because a
 		// surface underneath is entitled to know Shift went down; the `P` is.

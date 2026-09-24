@@ -1272,6 +1272,10 @@ export class AppCoordinator {
     this.model.addWorkspace(
       new Workspace(workspaceId, resolved.location, resolved.selectedPath),
     );
+    // Opening a folder is choosing it, new or not — the branch above says the
+    // same of one that was open already. Nothing else selects it: a workbench
+    // DevHub builds for a Workspace does not report itself back.
+    this.model.selectContext({ kind: "workspace", workspaceId });
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });

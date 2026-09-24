@@ -356,6 +356,7 @@ import { MidnightTimer, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
+import type { Landing } from "./chords.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
@@ -1045,36 +1046,22 @@ export class AppController {
 		installKeyboard({
 			snapshot: () => this.snapshot(),
 			selectContext: (context, presentation, focus) => {
-				// Armed before the selection, consumed after the keyboard lands
-				// (`ShellWindow.focusTerminalOnArrival`). Both halves are needed
-				// and neither can be the other's: the selection is what puts the
-				// workbench on screen, and only main knows when the keys got
-				// there. A workbench that is not up has no view to arm against
-				// and the intent is dropped there, which is the honest end of
-				// asking for the shell of an editor that is not running.
-				if (focus === "terminal" && context.kind === "workspace") {
-					const editorKey = this.coordinator.model.workspace(
-						parseWorkspaceId(context.workspaceId),
-					)?.key;
-					if (editorKey !== undefined) {
-						shellWindow().focusTerminalOnArrival(editorKey);
-					}
-				}
-				this.dispatchOwn(
+				this.arrive(
 					intentFromWire({
 						type: "select_context",
 						context,
 						...(presentation === "beside" ? { split: true } : {}),
 					}),
+					focus,
 				);
 			},
 			swapSplitFocus: () => {
 				this.swapSplitFocus();
 			},
-			toggleScratch: () => {
-				// A selection change like any other, so it needs nothing the
-				// ordinary `select_context` path does not already do.
-				this.dispatchOwn({ type: "toggle_scratch" });
+			toggleScratch: (focus) => {
+				// A selection change like any other, to a place only the model
+				// remembers — so it arrives exactly the way `selectContext` does.
+				this.arrive({ type: "toggle_scratch" }, focus);
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
@@ -1247,8 +1234,28 @@ export class AppController {
 	 * `shell/focusHome.ts`, which is the page's half of that rule).
 	 */
 	private swapSplitFocus(): void {
-		this.dispatchOwn({ type: "swap_split_focus" });
-		this.placeKeyboardOnSurface();
+		this.arrive({ type: "swap_split_focus" }, undefined);
+	}
+
+	/**
+	 * A move made from the keyboard: make it, and take the keyboard there.
+	 *
+	 * The one rule for every chord that goes somewhere. The keyboard ends in
+	 * what the move selected — the Sidebar is left too, because a chord typed
+	 * there is not the Sidebar's own Return, which is the one keyboard
+	 * selection that stays in the list — and `landing` says where inside an
+	 * editor, for the toggles that have an opinion (`Landing`).
+	 *
+	 * Placed once more after the move even when the move changed nothing.
+	 * `Cmd+Q 1` on Scratch from the Sidebar selects what is already selected,
+	 * and is still somebody asking to be in Scratch; and the landing is spent
+	 * by this placement and no other, so it cannot linger into a later one
+	 * that nobody asked to land anywhere.
+	 */
+	private arrive(intent: UserIntent, landing: Landing | undefined): void {
+		this.keyboardInSidebar = false;
+		this.dispatchOwn(intent);
+		this.placeKeyboardOnSurface(landing);
 	}
 
 	/**
@@ -1267,13 +1274,13 @@ export class AppController {
 	 * ask it here rather than each deciding, because two answers to one question
 	 * is how the split ended up focusing the wrong pane once already.
 	 */
-	private placeKeyboardOnSurface(): void {
+	private placeKeyboardOnSurface(landing?: Landing): void {
 		this.keyboardInSidebar = false;
 		// The arrangement said "the Sidebar" a moment ago and says something
 		// else now, so the window is told the new one before it is asked to
 		// act on it.
 		this.publishLayoutState();
-		shellWindow().focusSurface();
+		shellWindow().focusSurface(landing);
 	}
 
 	/**
@@ -4459,9 +4466,10 @@ export class AppController {
 		location: RequestedWorkspaceLocation,
 		withAgent?: string,
 	): Promise<AppOutcomeWire> {
-		const before = new Set(
-			this.coordinator.model.workspaces.map((workspace) => workspace.id),
-		);
+		// Opening a folder is going there, keyboard and all: the selection it
+		// makes is where the keys land, the Sidebar it may have been asked
+		// from included. See `arrive`.
+		this.keyboardInSidebar = false;
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			location,
@@ -4477,7 +4485,7 @@ export class AppController {
 		}
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
-			workspaceId: this.openedWorkspaceId(before, location),
+			workspaceId: this.openedWorkspaceId(location),
 			profileId: agentProfileId(withAgent),
 			// The person answered "which profile", not "where to put it". The
 			// Agent gets the plain arrangement, the same one `devhub --agent`
@@ -4497,30 +4505,18 @@ export class AppController {
 	/**
 	 * Which Workspace an `openFolder` just produced.
 	 *
-	 * The model states it in one of two ways and this reads both: a folder that
-	 * was not open is *added*, and a folder that was becomes the *selection*.
-	 * Matching the path back would be a third answer to a question already
-	 * answered — the root is canonicalised on the way in, so it is not the
-	 * string the call was given — and a third answer is one that can disagree.
-	 *
-	 * `before` is the set of Workspace ids from before the opening.
+	 * The selection: opening a folder selects it, whether it was open already
+	 * or has just been added. Matching the path back would be a second answer
+	 * to a question already answered — the root is canonicalised on the way
+	 * in, so it is not the string the call was given — and a second answer is
+	 * one that can disagree.
 	 */
-	private openedWorkspaceId(
-		before: ReadonlySet<WorkspaceId>,
-		target: RequestedWorkspaceLocation,
-	): WorkspaceId {
-		const added = this.coordinator.model.workspaces.find(
-			(workspace) => !before.has(workspace.id),
-		);
-		if (added) return added.id;
+	private openedWorkspaceId(target: RequestedWorkspaceLocation): WorkspaceId {
 		const context = this.coordinator.model.selection.context;
 		if (context.kind === "workspace") return context.workspaceId;
-		// Neither happened, so the model and this call disagree about what just
-		// took place; going on would attach whatever comes next to whatever else
-		// was selected.
-		throw new Error(
-			`opening ${target.path} neither added a workspace nor selected one`,
-		);
+		// The model and this call disagree about what just took place; going on
+		// would attach whatever comes next to whatever else was selected.
+		throw new Error(`opening ${target.path} did not select a workspace`);
 	}
 
 	/**
@@ -5353,12 +5349,10 @@ export class AppController {
 				)
 			: place.path;
 
-		// Which workspace the opening produced is a fact the model states, and it
-		// states it in one of two ways: a folder that was not open is *added*,
-		// and a folder that was becomes the *selection*. Deriving it from the
-		// path instead would be a third answer — the root is canonicalised on the
-		// way in, so it is not the string this call was given.
-		const before = new Set(this.coordinator.model.workspaces.map((w) => w.id));
+		// Which workspace the opening produced is a fact the model states: it is
+		// the selection, new or not. Deriving it from the path instead would be
+		// a second answer — the root is canonicalised on the way in, so it is not
+		// the string this call was given.
 		// A worktree of a repository on a host is beside it, on that host: git
 		// made it there, and there is nowhere else it could be. So the place the
 		// flow was working in decides the machine, and only the path moves.
@@ -5369,7 +5363,7 @@ export class AppController {
 		// editor when the person asked for that, and the Issue's prompt is queued
 		// against whichever Agent it produced — but *which workspace opening
 		// produced* is the same fact, read the same way.
-		const workspaceId = this.openedWorkspaceId(before, opening);
+		const workspaceId = this.openedWorkspaceId(opening);
 		// Nothing is written down about which Issue this workspace is for. The
 		// branch the flow just made carries the number (`feature/128-…`), and the
 		// branch is the whole of the link — so a worktree made for the Issue shows
@@ -5538,7 +5532,7 @@ export class AppController {
 		// name the OS is showing, which is the only thing the bar may letter.
 		handle(CHANNELS.getWindowTitle, () => shellWindow().window.getTitle());
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
-		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) => {
+		handle(CHANNELS.dispatch, (event, intent: AppIntentWire) => {
 			// The person asked for something, which is one of the three things
 			// that retire a failure — they have moved on, and a report about the
 			// last thing is in the way of the next. The page that draws notices
@@ -5547,6 +5541,13 @@ export class AppController {
 			// does not, because DevHub raising its own intent is not the person
 			// starting an action.
 			this.sendToDisplay(CHANNELS.actionStarted, undefined);
+			// An answer to a question — Go to's row, above all — is a move the
+			// person made from the keyboard, and it lands where a chord's does:
+			// in what it chose, not back in the Sidebar the question was asked
+			// from. The sheet going away is what places the keyboard.
+			if (event.sender === shellWindow().picker.contents()) {
+				this.keyboardInSidebar = false;
+			}
 			return this.dispatchFromPage(intent);
 		});
 		handle(

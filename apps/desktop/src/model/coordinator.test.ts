@@ -277,6 +277,25 @@ describe("opening a folder", () => {
     ]);
   });
 
+  /**
+   * Opening a folder is choosing it, whether or not it was open already.
+   *
+   * Only the second half used to be true in here. A new folder was added and
+   * left unselected, and what put the person in it was its workbench
+   * reporting its own folder back as a second `open_folder` — which found the
+   * Workspace that now existed and selected that. When a workbench DevHub
+   * builds stopped reporting itself (so that midnight's Scratch would not
+   * pull anybody off what they were in), `Cmd+Q F` stopped arriving anywhere.
+   */
+  it("selects a folder it has just added, as it selects one that was open", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    expect(driver.coordinator.snapshot().selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: WS_A,
+    });
+  });
+
   it("selects the existing workspace when the same folder is opened again", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");

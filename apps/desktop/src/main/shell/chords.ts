@@ -27,7 +27,8 @@
  *
  * - `sidebarEntries` — Scratch, then the workspaces. What a digit names.
  * - `everyAgent` — every Agent there is, in sidebar order, across workspaces.
- *   `Cmd+Q }` walks this same ring with the unread ones as the only stops, so
+ *   `Cmd+Q ]` stops at each of them and `Cmd+Q }` at the unread ones, both
+ *   walking the tree below so that an editor has a place to step from, and so
  *   the filtered cycle cannot disagree with the whole one about the order.
  * - `everyTab` — every row of the tree in order, of both kinds.
  */
@@ -119,6 +120,23 @@ export function matchChord(
 }
 
 /**
+ * Where the keyboard lands inside an editor a move arrives at.
+ *
+ * Every move a chord makes takes the keyboard to what it selected — that is
+ * the host's rule, not something an effect can opt out of. Inside a workbench,
+ * though, the keyboard is the workbench's own business, and an ordinary move
+ * leaves it wherever that editor was last typed into, which is what coming
+ * back to an editor is supposed to feel like.
+ *
+ * The toggles are the exception, and both of them, for one reason: `Cmd+Q
+ * Cmd+J` and `Cmd+Q Shift+J` are how somebody goes *to the other place they
+ * work*, and at an editor that place is its shell. So a toggle that lands on
+ * an editor lands in its integrated terminal. Landing on an Agent, it means
+ * nothing — an Agent is a terminal already.
+ */
+export type Landing = "terminal";
+
+/**
  * What running a chord comes to, once it has been resolved against the model.
  *
  * Every one of these is something DevHub can already be asked for by pointing
@@ -132,17 +150,8 @@ export type ChordEffect =
 			readonly context: NavigationContext;
 			/** Only an Agent has two; absent means the plain, full one. */
 			readonly presentation?: SurfacePresentationWire;
-			/**
-			 * Where inside the workbench the keyboard is wanted, when the
-			 * selection carries an intent about it.
-			 *
-			 * Ordinary selection carries none: a workbench that is selected is
-			 * typed into wherever it was left, which is what every other way of
-			 * choosing it does and what a person expects of coming back. Only
-			 * `toggle_workspace_agent` going Agent → editor sets this, because
-			 * leaving an Agent *for* the editor is going to the editor's shell.
-			 */
-			readonly focus?: "terminal";
+			/** Where the keyboard lands in an editor. See `Landing`. */
+			readonly focus?: Landing;
 	  }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
@@ -159,12 +168,13 @@ export type ChordEffect =
 	/**
 	 * Out to Scratch, or back to wherever the jump out started.
 	 *
-	 * The one effect that carries no target: which selection to come back to is
+	 * The one move that carries no target: which selection to come back to is
 	 * a thing only the model remembers, because it is written down by this
 	 * command and by nothing else, and a snapshot of what is on screen cannot
-	 * say where somebody was before it.
+	 * say where somebody was before it. It is a toggle all the same, so it
+	 * lands the way the other toggle does.
 	 */
-	| { readonly kind: "toggle-scratch" }
+	| { readonly kind: "toggle-scratch"; readonly focus: Landing }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-tab-picker" }
 	| { readonly kind: "open-agent-picker"; readonly workspaceId: string }
@@ -262,6 +272,34 @@ function selectedAgent(snapshot: AppSnapshotWire): AgentWire | undefined {
 	return everyAgent(snapshot).find((agent) => agent.id === context.agentId);
 }
 
+/**
+ * Where the selection stands in the tree, for a cycle that steps between
+ * Agents.
+ *
+ * An Agent stands where it is. An editor stands where its `Cmd+Q Cmd+J`
+ * partner stands (`pairedAgentId`): the two are one place, toggled between, so
+ * `]` from the editor goes to the Agent after the one `Cmd+J` would have gone
+ * to, and never somewhere unrelated. A workspace with no Agents has no partner
+ * and stands on its own row, which is between the Agents before it and the
+ * ones after.
+ */
+function standing(
+	snapshot: AppSnapshotWire,
+	workspace: WorkspaceWire | undefined,
+	agent: AgentWire | undefined,
+): NavigationContext {
+	if (agent) return { kind: "agent", agentId: agent.id };
+	if (!workspace) {
+		// `resolveChord` has the selection's workspace for every selection the
+		// model can hold; one that names nothing is a broken snapshot.
+		throw new Error("the selection is in no workspace of the snapshot");
+	}
+	const partner = pairedAgentId(workspace);
+	return partner === undefined
+		? { kind: "workspace", workspaceId: workspace.id }
+		: { kind: "agent", agentId: partner };
+}
+
 function sameContext(
 	left: NavigationContext,
 	right: NavigationContext,
@@ -298,10 +336,10 @@ function wrap(index: number, length: number): number {
  * Step through a ring, from wherever the selection is in it.
  *
  * One function for every cycle, because they differ only in what the ring holds
- * and which of its entries count. A selection that is not in the ring at all —
- * a workspace row while the Agent ring is being stepped — steps forward onto
- * the first entry and back onto the last, which is the answer with no arbitrary
- * choice in it.
+ * and which of its entries count. Every caller steps from somewhere that is in
+ * its ring — the Agent cycle walks the whole tree so that an editor, which is
+ * not an Agent, still has a place to step from (`standing`) — so a starting
+ * point the ring does not hold is a broken snapshot, not a case.
  *
  * `wanted` is what makes `}` a narrowing of `]` rather than a second cycle: the
  * same ring, from the same place, in the same direction, stopping at the first
@@ -310,13 +348,16 @@ function wrap(index: number, length: number): number {
  */
 function step(
 	ring: readonly NavigationContext[],
-	from: NavigationContext | undefined,
+	from: NavigationContext,
 	direction: 1 | -1,
 	wanted: (index: number) => boolean = () => true,
 ): ChordEffect | undefined {
-	if (ring.length === 0) return undefined;
-	const found = from ? ring.findIndex((entry) => sameContext(entry, from)) : -1;
-	const current = found === -1 ? (direction === 1 ? -1 : 0) : found;
+	const current = ring.findIndex((entry) => sameContext(entry, from));
+	if (current === -1) {
+		throw new Error(
+			`a cycle was asked to step from ${JSON.stringify(from)}, which is not in it`,
+		);
+	}
 	for (let offset = 1; offset <= ring.length; offset += 1) {
 		const index = wrap(current + direction * offset, ring.length);
 		if (wanted(index)) {
@@ -447,7 +488,7 @@ export function resolveChord(
 			// Both directions, unconditionally: the model holds the memory this
 			// turns on, so there is nothing here to decide and nothing to gate
 			// on. On Scratch with nothing remembered it is a no-op there.
-			return { kind: "toggle-scratch" };
+			return { kind: "toggle-scratch", focus: "terminal" };
 
 		case "toggle_split": {
 			// Both halves of one pair, side by side — the twin of
@@ -492,12 +533,9 @@ export function resolveChord(
 				return { kind: "swap-split-focus" };
 			}
 			if (agent) {
-				// The one selection with an opinion about where the keyboard
-				// lands inside the editor. Every other way of choosing this
-				// workbench — the sidebar, the pickers, `Cmd+Q N/P`, a digit —
-				// leaves it where it was; this direction of this chord is a
-				// person walking out of an Agent's conversation and into the
-				// editor's shell, so the terminal is what they came for.
+				// A toggle landing on an editor: see `Landing`. Every other way
+				// of choosing this workbench — the sidebar, the pickers, `Cmd+Q
+				// N/P`, a digit — leaves the keyboard where that editor had it.
 				return {
 					kind: "select-context",
 					context: { kind: "workspace", workspaceId: workspace.id },
@@ -545,15 +583,25 @@ export function resolveChord(
 			const onlyUnread =
 				commandId === "next_unread_agent" ||
 				commandId === "previous_unread_agent";
-			const agents = everyAgent(snapshot);
-			if (agents.length === 0) return undefined;
+			// The tree rather than the Agents alone, so that where the person
+			// stands is always somewhere in it (`standing`); only the Agents are
+			// stops, and in the same order `everyAgent` has them.
+			const tabs = everyTab(snapshot);
+			const unread = new Set(
+				everyAgent(snapshot)
+					.filter((one) => one.unread !== undefined)
+					.map((one) => one.id),
+			);
 			return step(
-				agents.map(
-					(one): NavigationContext => ({ kind: "agent", agentId: one.id }),
-				),
-				agent ? { kind: "agent", agentId: agent.id } : undefined,
+				tabs,
+				standing(snapshot, workspace, agent),
 				forwards ? 1 : -1,
-				onlyUnread ? (index) => agents[index].unread !== undefined : undefined,
+				(index) => {
+					const entry = tabs[index];
+					return (
+						entry.kind === "agent" && (!onlyUnread || unread.has(entry.agentId))
+					);
+				},
 			);
 		}
 

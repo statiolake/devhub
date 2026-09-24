@@ -228,7 +228,12 @@ fills that page, because there is nothing behind it to draw instead.
 
 `ShellWindow.placeKeyboardIn` is the only `webContents.focus()` call in DevHub,
 and `keyboardChild(layoutInput())` is the only answer to "where do the keys
-go". Focus is a function of the same state the layout is a function of.
+go". Focus is a function of the same state the layout is a function of — all
+of it, not only the arrangement: `layout()` places the keyboard again whenever
+that answer changes, so a workbench that was chosen before it existed (a
+folder just opened, one on another machine, one being rebuilt) gets the keys
+when it arrives rather than leaving them on the window's own page, where they
+went while there was nothing else.
 
 `placeKeyboardIn` declines while any other window is in front — another app,
 the Settings window, an undocked Web Inspector — because seven callers reach it
@@ -258,25 +263,55 @@ another clears. Both go through `focusSurface`, the same door Escape uses, and
 the ask is sent after the selection has been applied, because which child the
 keys belong to is a function of the selection.
 
-Where the keys go *inside* a workbench is the workbench's own business, with
-one exception. `Cmd+Q J` landing on the editor — the toggle that went Agent →
-editor — focuses that workbench's integrated terminal
-(`workbench.action.terminal.focus`, which creates one when there is none),
-because somebody leaving an Agent *for* the editor is going to the editor's
-shell. Every other way of choosing the same workbench — a sidebar click,
-`Cmd+Q N/P`, a digit, the pickers — leaves it wherever it was last typed into.
+**A move made from the keyboard lands the keyboard in what it chose.** Every
+chord that goes somewhere — a digit, `N`/`P`, `n`/`p`, `]`/`[`, `}`/`{`, `e`,
+`z`, `o`, `Cmd+J`, `Shift+J` — goes through one door, `AppController.arrive`: the
+move is made, and the keyboard is placed on the new selection, out of the
+Sidebar too if that is where the chord was typed. A chord typed in the Sidebar
+is not the Sidebar's own Return, and the Sidebar keeping the keys after one
+used to leave them on a row that was no longer selected while the screen had
+moved on. The arrival is placed even when the move changed nothing (`Cmd+Q 1`
+from the Sidebar with Scratch already selected is still somebody asking to be
+in Scratch). An answer to a question is the same kind of move: a row chosen in
+Go to, and every way of opening a folder (`openFolder`), land in what was
+chosen rather than back in the Sidebar the question was asked from.
 
-The intent rides on the selection (`focus: "terminal"` on the `select-context`
-effect in `chords.ts`) and is run at the other end: `ShellWindow` arms
-`focusTerminalOnArrival` and spends it inside `focusSurface`, once the keyboard
-has actually been placed. It cannot be run where it is asked for — the
-selection changes the model, the arrangement comes back up from the page, and
-the keyboard is placed after that, so a command sent at the asking would focus
-a terminal in a view the keys are not going to. It is not a timer either: it is
-the one keyboard-placed moment, spent once. A workbench that is starting,
-restarting or gone has no view to arm against and the intent is dropped — the
-selection still happens — because a terminal in a window that is not there is
-nothing to focus.
+Opening a folder is choosing it, new or not — the model's `open_folder`
+selects the Workspace it adds exactly as it selects one that was already open.
+It did not use to: a new folder was added and left unselected, and what put
+somebody in it was its workbench reporting its own folder back as a second
+`open_folder`, which found the Workspace and selected it. When a workbench
+DevHub builds stopped reporting itself, `Cmd+Q F` stopped arriving anywhere.
+
+Where the keys go *inside* a workbench is the workbench's own business, with
+one exception: **a toggle that lands on an editor lands in its shell.**
+`Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at an editor —
+Scratch on the way out, or the editor it came from on the way back — focus
+that workbench's integrated terminal (`workbench.action.terminal.focus`,
+which creates one when there is none), because the toggles are how somebody
+goes to the other place they work, and at an editor that place is its shell.
+Every other way of choosing the same workbench — a sidebar click, `Cmd+Q
+N/P`, a digit, the pickers — leaves it wherever it was last typed into.
+
+The intent is `Landing` in `chords.ts`, carried by the effect (`focus:
+"terminal"`) and spent by the placement that ends the move:
+`focusSurface("terminal")`, which forwards the command to the workbench the
+keyboard has just been put in, when it is one. Nothing is kept between the
+asking and the landing, because the move, the arrangement it publishes and
+the placement are one synchronous call in main. (It used to be armed on one
+side and spent on the other, from when the arrangement came back up from a
+page a round trip later; `Shift+J`, whose destination only the model knows,
+could not have been armed for at all.) A landing on an Agent means nothing —
+an Agent is a terminal already — and one on a workbench that is starting,
+restarting or gone, behind a question, or while DevHub is not in front is
+simply not had: the move still happens.
+
+**Where you stand, for `]` and `[`, is your `Cmd+J` partner.** An editor and
+the Agent `Cmd+Q Cmd+J` toggles it with (`pairedAgentId`) are one place, so
+stepping to the next or previous Agent from an editor steps from that Agent,
+and a workspace with no Agents steps from its own row. It used to step from
+nowhere, which is the first Agent of the whole list — Scratch's — and the
+`Cmd+J` after that went to Scratch's editor, far from where the person was.
 
 ## Chords are answered in main
 
