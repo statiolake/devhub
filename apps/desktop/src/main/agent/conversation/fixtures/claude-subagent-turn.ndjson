@@ -1,0 +1,23 @@
+# HAND-WRITTEN, NOT A CAPTURE. Composed from the documented stream-json shapes
+# (headless docs "Follow subagent messages", research.md §1.1). Stage 0 or 8
+# replaces it with a scrubbed capture.
+#
+# "> " DevHub wrote, "< " the CLI printed. Starts after a handshake (see
+# claude-permission-turn.ndjson): a Task tool starts an Explore subagent, which
+# (with --forward-subagent-text) says something and runs its own tool; the
+# task_* events report the subagent's lifecycle; the parent then answers.
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000002","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"acceptEdits","slash_commands":[],"claude_code_version":"2.1.0","tools":["Bash","Task"],"uuid":"00000000-0000-4000-8000-0000000000c0"}
+> {"type":"user","message":{"role":"user","content":"Find the reducer"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"injection"}
+< {"type":"user","message":{"role":"user","content":"Find the reducer"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c1","isReplay":true}
+< {"type":"assistant","message":{"id":"msg_10","type":"message","role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_task","name":"Task","input":{"description":"Find the reducer","prompt":"Look for applyEvent","subagent_type":"Explore","model":"haiku"}}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c2"}
+< {"type":"system","subtype":"task_started","task_id":"task_1","tool_use_id":"toolu_task","description":"Find the reducer","task_type":"local_agent","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c3"}
+< {"type":"user","message":{"role":"user","content":[{"type":"text","text":"Look for applyEvent"}]},"parent_tool_use_id":"toolu_task","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c4"}
+< {"type":"assistant","message":{"id":"msg_s1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"Searching the model."}]},"parent_tool_use_id":"toolu_task","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c5"}
+< {"type":"assistant","message":{"id":"msg_s1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"toolu_grep","name":"Grep","input":{"pattern":"applyEvent"}}]},"parent_tool_use_id":"toolu_task","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c6"}
+< {"type":"system","subtype":"task_progress","task_id":"task_1","tool_use_id":"toolu_task","description":"Grep applyEvent","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c7"}
+< {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_grep","content":[{"type":"text","text":"src/model/conversation.ts"}]}]},"parent_tool_use_id":"toolu_task","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c8"}
+< {"type":"assistant","message":{"id":"msg_s2","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"It is in src/model/conversation.ts."}]},"parent_tool_use_id":"toolu_task","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000c9"}
+< {"type":"system","subtype":"task_notification","task_id":"task_1","tool_use_id":"toolu_task","status":"completed","summary":"Found it in src/model/conversation.ts","session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000ca"}
+< {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_task","content":[{"type":"text","text":"It is in src/model/conversation.ts."}]}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000cb"}
+< {"type":"assistant","message":{"id":"msg_11","type":"message","role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"The reducer is `applyEvent`."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000002","uuid":"00000000-0000-4000-8000-0000000000cc"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":9000,"num_turns":3,"result":"The reducer is `applyEvent`.","session_id":"00000000-0000-4000-8000-000000000002","total_cost_usd":0.02,"usage":{"input_tokens":3000,"cache_read_input_tokens":0,"output_tokens":120},"uuid":"00000000-0000-4000-8000-0000000000cd"}
