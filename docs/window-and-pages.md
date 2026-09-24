@@ -99,7 +99,7 @@ file main loaded.**
 |---|---|---|---|
 | the window's own page | `index.html` | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout` |
 | the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip` |
-| the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden | the projection, the appearance, the repository status, the agent actions, the terminal transport, `openModal`, `openExternalUrl`, `writeClipboard` |
+| the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard` |
 | the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
 | the tooltip | `tooltip.html` | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's. |
 | the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
@@ -107,6 +107,13 @@ file main loaded.**
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a
 DevHub page" means.
+
+The conversation transport is the GUI Agent's counterpart of the terminal
+transport. A GUI pane attaches once, gets the transcript main holds, and then
+folds every numbered event after it with the same `applyEvent` main uses.
+Everything it sends (messages, answers, interrupts, settings, "continue in
+terminal") goes back through the same bridge member. See
+[`agent-gui.md`](agent-gui.md).
 
 **The preload is the enforcement.** `ipc/contract.ts` states each page's bridge
 as an interface; `preload/<page>.ts` builds exactly that object and exposes it;

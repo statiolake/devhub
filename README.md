@@ -127,6 +127,9 @@ the same `tmux attach-session` over the same PTY as every Workspace terminal,
 so scrollback, copy mode, resize and byte-for-byte input are the terminal's
 rather than an imitation of one. See
 [`src/main/agent/sessions.ts`](apps/desktop/src/main/agent/sessions.ts).
+A Claude Code or Codex Agent can instead be a **GUI Agent**: the same tmux
+session runs the CLI in its structured mode, and DevHub draws the
+conversation itself. See [`docs/agent-gui.md`](docs/agent-gui.md).
 
 **Terminal** — tmux. One persistent session per Workspace — Scratch is one.
 The workbench's own integrated terminal is attached to that same session, so
@@ -236,6 +239,7 @@ presentation = "tui"        # how its Agents are shown: "tui", the CLI in a term
                             # A GUI Agent runs its CLI in structured mode (`claude -p`
                             # stream-json, `codex app-server`) under a small host in its
                             # tmux session, so it outlives a DevHub restart like a TUI one.
+                            # See docs/agent-gui.md.
 ```
 
 The workbench's own settings are VS Code's, on disk under the app's user-data
