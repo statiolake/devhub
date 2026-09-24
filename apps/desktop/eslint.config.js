@@ -6,8 +6,9 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   {
     // Build output. The VS Code submodule is not linted at all: DevHub
-    // consumes it.
-    ignores: ["dist", "out"],
+    // consumes it. Nor are the vendored Codex protocol types: they are
+    // upstream's generated code, kept diffable against upstream.
+    ignores: ["dist", "out", "src/main/agent/conversation/codex/protocol"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

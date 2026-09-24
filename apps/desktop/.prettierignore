@@ -6,3 +6,7 @@ out
 # upstream, which means they are not reformatted.
 src/main/main.ts
 src/main/codeMain.ts
+
+# The vendored Codex protocol types: upstream's generated code, kept diffable
+# against upstream. See its README.
+src/main/agent/conversation/codex/protocol

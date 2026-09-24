@@ -59,6 +59,23 @@ Ported source
   `src/detect/manifests/cursor.toml` 2026.08.03.1). Each ported file names herdr
   and this licence in its header. herdr ships no NOTICE file, so there is no
   attribution notice to reproduce beyond this entry and the licence text.
+* OpenAI Codex — Apache License 2.0; see `licenses/openai-codex-Apache-2.0.txt`.
+  The TypeScript protocol types that `codex app-server generate-ts` prints, as
+  checked in to openai/codex at tag `rust-v0.156.1` under
+  `codex-rs/app-server-protocol/schema/typescript`, are vendored in part into
+  `apps/desktop/src/main/agent/conversation/codex/protocol/` with upstream's
+  LICENSE and NOTICE beside them; relative import specifiers gain a `.js`
+  extension and nothing else changes. They are types only: DevHub's Codex
+  adapter reads them at compile time and none of their code reaches the bundle.
+  Upstream's NOTICE reads:
+
+    OpenAI Codex
+    Copyright 2025 OpenAI
+
+    This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
+    Copyright (c) 2016-2022 Florian Dehau
+    Copyright (c) 2023-2025 The Ratatui Developers
+
 Build-only tools — Vite, TypeScript, ESLint, Prettier, esbuild and the rest of
 the toolchain — are not part of the bundle and are not represented here.
 
@@ -84,3 +101,4 @@ Upstream source references
 * https://github.com/shikijs/shiki
 * https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
+* https://github.com/openai/codex
