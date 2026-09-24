@@ -74,6 +74,12 @@ export function ConversationPane({
  * that arrive before the answer are held and folded after it; an event the
  * snapshot already holds is dropped by its revision, and a gap in the
  * revisions is a broken promise of main's, reported rather than folded over.
+ *
+ * Every event is folded the moment it arrives, so an event the fold refuses
+ * is refused at that event and not a frame later. What is drawn is published
+ * at most once per animation frame: a streaming answer sends a delta per
+ * token, and drawing each of them would redraw the transcript many times
+ * inside one frame for a picture only the last of them is on.
  */
 function useConversation(
   agentId: string,
@@ -84,6 +90,14 @@ function useConversation(
     const bridge = devhub();
     let current: { transcript: Transcript; revision: number } | undefined;
     let broken = false;
+    let frame: number | undefined;
+    const publish = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (current !== undefined) setTranscript(current.transcript);
+      });
+    };
     const early: [number, ConversationEvent][] = [];
     const fold = (revision: number, event: ConversationEvent) => {
       if (broken) return;
@@ -108,7 +122,7 @@ function useConversation(
         reportFailure(error);
         return;
       }
-      setTranscript(current.transcript);
+      publish();
     };
     let attached = true;
     bridge.conversation
@@ -122,6 +136,7 @@ function useConversation(
       .catch(reportFailure);
     return () => {
       attached = false;
+      if (frame !== undefined) cancelAnimationFrame(frame);
       bridge.conversation.detach(agentId).catch(reportFailure);
     };
   }, [agentId, reportFailure]);
