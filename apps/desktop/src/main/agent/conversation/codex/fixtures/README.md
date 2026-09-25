@@ -27,3 +27,16 @@ command's `item/started` comes before its approval request (upstream's
 `bespoke_event_handling.rs` does it that way at this tag), and that a subagent's
 `thread/started` and items arrive on the same connection after the `spawnAgent`
 call that names it.
+
+## Captures
+
+Two files here are scrubbed real captures (their headers say how each was
+made), in the `> ` / `< ` form: `> ` is a line DevHub wrote, `< ` one
+app-server printed, interleaved at the offsets DevHub's `in.log` recorded.
+
+- `signed-out.capture.ndjson` — codex-cli 0.156.1 with an empty `CODEX_HOME`:
+  the handshake of an app-server that is not signed in. No prompt.
+- `codex-greeting.capture.ndjson` — the owner's signed-in app-server, one
+  greeting turn (gpt-6-luna, effort low, read-only sandbox).
+
+Approvals, file changes and subagents are still only in the hand-written files.

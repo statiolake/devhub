@@ -1175,3 +1175,44 @@ describe("a captured app-server that is not signed in", () => {
 		expect(transcript.entries).toEqual([]);
 	});
 });
+
+describe("a captured greeting on the owner's signed-in app-server", () => {
+	it("plays to one completed turn: the message, the answer, nothing it does not know", () => {
+		const { transcript } = played("codex-greeting.capture.ndjson");
+		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(
+			transcript.entries.map((entry) =>
+				entry.kind === "user"
+					? `user: ${entry.text}`
+					: entry.kind === "assistant"
+						? `assistant: ${entry.blocks.map((block) => (block.kind === "text" ? block.markdown : block.kind)).join("|")}`
+						: entry.kind === "turn-end"
+							? `turn-end: ${entry.outcome}`
+							: `${entry.kind}`,
+			),
+		).toEqual([
+			"user: Hello! Please reply with a one-line greeting.",
+			"assistant: Hello! 👋",
+			"turn-end: completed",
+		]);
+	});
+
+	it("keeps, across a replay, the settings the turn was started with", () => {
+		const { session } = played("codex-greeting.capture.ndjson").transcript;
+		expect(session.agentVersion).toBe("0.156.1");
+		expect(session.sessionId).toBe("00000000-0000-7000-8000-000000000006");
+		expect(session.model.current).toBe("gpt-6-luna");
+		expect(session.effort.current).toBe("low");
+		expect(session.mode.current).toBe("read-only");
+	});
+
+	it("reads the rate limit's reset, which app-server sends in seconds, as milliseconds", () => {
+		const { usage } = played("codex-greeting.capture.ndjson").transcript;
+		expect(usage?.rateLimit?.resetsAt).toBe(1_790_313_079_000);
+		expect(usage).toMatchObject({
+			inputTokens: 21669,
+			outputTokens: 8,
+			contextWindow: 258400,
+		});
+	});
+});
