@@ -512,9 +512,7 @@ export class AppCoordinator {
         this.emit({ kind: "noop" });
         return this.replayCached(cached);
       }
-      const error = new AppError(AppErrorCode.DuplicateIntent).withIntent(id);
-      this.emit({ kind: "error", error });
-      throw error;
+      throw new AppError(AppErrorCode.DuplicateIntent).withIntent(id);
     }
 
     if (this.detached !== undefined) {
@@ -530,7 +528,6 @@ export class AppCoordinator {
     if (trustedOperationId === undefined) {
       const error = new AppError(AppErrorCode.InvalidIntent).withIntent(id);
       this.cacheIntent(id, print, undefined, error);
-      this.emit({ kind: "error", error });
       throw error;
     }
 
@@ -539,8 +536,11 @@ export class AppCoordinator {
       this.cacheIntent(id, print, outcome, undefined);
       return outcome;
     } catch (raw) {
+      // Thrown and not also emitted: whoever catches it decides where it is
+      // drawn, and an `error` event as well was a second route to the screen.
+      // The event is for failures nobody is waiting on (a close that failed
+      // a step, a save that degraded).
       const error = AppError.from(raw);
-      this.emit({ kind: "error", error });
       this.cacheIntent(id, print, undefined, error);
       throw error;
     }
@@ -555,19 +555,17 @@ export class AppCoordinator {
         this.emit({ kind: "noop" });
         return this.replayCached(cached);
       }
-      const error = new AppError(
-        AppErrorCode.DuplicateIntent,
-      ).withProviderEvent(eventId);
-      this.emit({ kind: "error", error });
-      throw error;
+      throw new AppError(AppErrorCode.DuplicateIntent).withProviderEvent(
+        eventId,
+      );
     }
     try {
       const outcome = this.applyProviderEvent(event);
       this.cacheProviderEvent(eventId, print, outcome, undefined);
       return outcome;
     } catch (raw) {
+      // Thrown and not also emitted, as in `dispatchUser`.
       const error = AppError.from(raw);
-      this.emit({ kind: "error", error });
       this.cacheProviderEvent(eventId, print, undefined, error);
       throw error;
     }

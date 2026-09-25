@@ -71,6 +71,10 @@ export interface PendingConfirmation {
 export function useRaiseFailure(bridge: PageBridge): (error: unknown) => void {
   const raise = useCallback(
     (error: AppError) => {
+      // A failure main already drew — a refused request, handed back marked
+      // `reported` so that it is answered in the same words — did not begin
+      // on this page, and raising it would draw it a second time.
+      if (error.reported === true) return;
       bridge.raiseFailure(error);
     },
     [bridge],
@@ -190,9 +194,7 @@ export function useProjection(
         return outcome;
       } catch (error) {
         if (generation.current !== dispatchGeneration) return undefined;
-        // A refusal main already drew where its subject is did not begin on
-        // this page, and raising it would draw it a second time.
-        if (toAppError(error).reported !== true) raiseFailure(error);
+        raiseFailure(error);
         return undefined;
       }
     },

@@ -303,7 +303,7 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
-import { completionRefusal } from "./completionRefusal.js";
+import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
 	type SettingsUnavailableRuntimeWire,
@@ -4580,7 +4580,7 @@ export class AppController {
 		});
 	}
 
-	/** `dispatchAwaiting`, with the failure as it was raised, for a caller that converts it itself. */
+	/** `dispatchAwaiting`, with the failure unconverted, for a caller that converts it itself. */
 	private async dispatchSettled(intent: UserIntent): Promise<IntentOutcome> {
 		let outcome: IntentOutcome;
 		try {
@@ -4591,7 +4591,12 @@ export class AppController {
 			});
 		} catch (error) {
 			this.drain();
-			throw error;
+			// Refused on the spot: drawn once, here, and handed to the caller
+			// marked as drawn — the same rule a refused completion follows.
+			const refusal = refusalOf(error, false);
+			if (refusal.kind === "crash") throw error;
+			if (refusal.publish) this.publishError(refusal.publish);
+			throw refusal.rejection;
 		}
 		const answer = this.awaitOutcome(outcome);
 		this.drain();

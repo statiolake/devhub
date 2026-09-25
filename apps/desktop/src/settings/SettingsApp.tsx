@@ -58,7 +58,7 @@ import {
 } from "../ipc/settings";
 import { isImeComposing } from "../shell/accessibility/ime";
 import { useAlertLifetime } from "../shell/alertLifetime";
-import { subscribeToUnhandled } from "../shell/failure";
+import { useRaiseFailure } from "../shell/model/pageModel";
 import { devhub } from "./client";
 import type { AppError } from "../ipc/appShell";
 import { Picker } from "../shell/components/shell/Picker";
@@ -379,13 +379,7 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   // above. Without this the handler collected failures and told nobody: the
   // window went on looking as though the thing it had been asked to do had
   // happened.
-  useEffect(
-    () =>
-      subscribeToUnhandled((failure) => {
-        devhub().raiseFailure(failure);
-      }),
-    [],
-  );
+  useRaiseFailure(devhub());
 
   const generation = useRef(0);
   const lastSequence = useRef(0);

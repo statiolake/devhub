@@ -882,6 +882,40 @@ describe("an operation a port could not carry out", () => {
   });
 });
 
+describe("a refusal the coordinator throws", () => {
+  // Whoever catches the throw decides where it is drawn. Emitting it as well
+  // was a second route: main drew the event and the catch drew the throw.
+  it("is not also emitted as an error event", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    expect(() =>
+      driver.accept({
+        type: "profile_resolution_completed",
+        token: resolve.token,
+        workspaceId: WS_A,
+        result: {
+          kind: "failed",
+          code: "agent_profile_unavailable",
+          detail: "codex was not found.",
+        },
+      }),
+    ).toThrow(AppError);
+    expect(() =>
+      driver.dispatch({ type: "stop_agent", agentId: AG_A }),
+    ).toThrow(AppError);
+    expect(driver.drainErrors()).toEqual([]);
+  });
+});
+
 describe("a profile that could not be resolved", () => {
   it("refuses that launch as the profile's failure and leaves the workspace open to the next", () => {
     const driver = new Driver();

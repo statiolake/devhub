@@ -52,6 +52,8 @@
  * is still worth being able to look up.
  */
 
+import { TypedFailure } from "../../model/wire.js";
+
 /**
  * Whether this is somebody having cancelled something.
  *
@@ -86,6 +88,12 @@ export function installMainFailureRoot(
 	const listener = (reason: unknown) => {
 		if (isCancellation(reason)) {
 			console.log(`[devhub] cancelled: ${describeCancellation(reason)}`);
+			return;
+		}
+		// A refusal main drew when it happened and handed to the request marked
+		// as drawn; nobody awaited the request. Drawing it here would be the
+		// second notice for one failure.
+		if (reason instanceof TypedFailure && reason.wire.reported === true) {
 			return;
 		}
 		root.raiseUnhandled(reason);

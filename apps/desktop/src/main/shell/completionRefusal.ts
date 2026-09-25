@@ -47,13 +47,25 @@ export function completionRefusal(
 	event: ProviderEvent,
 	error: unknown,
 ): CompletionRefusal {
+	return refusalOf(error, event.type === "operation_failed");
+}
+
+/**
+ * The same decision for a refusal of any request to the coordinator — a
+ * completion, or an intent the coordinator refused on the spot — given
+ * whether it was already drawn at its subject.
+ */
+export function refusalOf(
+	error: unknown,
+	drawnAtSubject: boolean,
+): CompletionRefusal {
 	if (isCode(error, AppErrorCode.UnknownOperation)) return { kind: "crash" };
 	if (isCode(error, AppErrorCode.StaleCompletion)) {
 		return { kind: "answer", rejection: error };
 	}
 	const drawn = errorWire(error);
 	const rejection = new TypedFailure({ ...drawn, reported: true });
-	return event.type === "operation_failed"
+	return drawnAtSubject
 		? { kind: "answer", rejection }
 		: { kind: "answer", publish: drawn, rejection };
 }

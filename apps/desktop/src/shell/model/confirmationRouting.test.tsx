@@ -25,6 +25,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type { AppIntent, AppOutcome, AppSnapshot } from "../../ipc/appShell";
+import { reportUnhandled } from "../failure";
 import { ShellPageProvider, useShellPage } from "../ShellPageContext";
 import { SidebarProvider, useSidebar } from "../sidebar/SidebarContext";
 import { AgentsProvider, useAgents } from "../agents/AgentsContext";
@@ -257,6 +258,44 @@ describe("a dispatch refused with a failure main already drew", () => {
         expect(dispatch).toHaveBeenCalled();
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(raiseFailure).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("an unawaited request refused with a failure main already drew", () => {
+  const drawn = (reported: boolean) =>
+    new Error(
+      JSON.stringify({
+        code: "workspace_unavailable",
+        summary: "The workspace is unavailable.",
+        module: "workspace",
+        runtimeVersion: "0.0.0",
+        timestampMs: 1,
+        actions: ["retry"],
+        ...(reported ? { reported: true } : {}),
+      }),
+    );
+
+  for (const page of PAGES) {
+    it(`is not raised again by ${page.name}`, async () => {
+      const raiseFailure = vi.fn();
+      window.devhub = {
+        ...bridge(async () => CONFIRMATION_REQUIRED),
+        openModal: async () => "modal-1",
+        raiseFailure,
+      } as never;
+      const { Provider } = page;
+      render(<Provider>{null}</Provider>);
+      // The page's root handler is listening once an undrawn one gets through.
+      // The picker's own calls to main are not dispatches, and a rejection of
+      // one nobody awaited arrives here instead.
+      await waitFor(() => {
+        reportUnhandled(drawn(false));
+        expect(raiseFailure).toHaveBeenCalled();
+      });
+      raiseFailure.mockClear();
+      reportUnhandled(drawn(true));
       expect(raiseFailure).not.toHaveBeenCalled();
     });
   }

@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { errorWireAt, TypedFailure } from "../../model/wire.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
 
 function processWithListeners() {
@@ -54,6 +55,26 @@ describe("a rejection nothing caught", () => {
 		}
 
 		expect(raiseUnhandled).toHaveBeenCalledTimes(10);
+	});
+});
+
+describe("a rejection main already drew", () => {
+	// A refusal main drew and handed to the request marked as drawn, which
+	// nobody then awaited. Raising it here would draw it a second time.
+	it("is not raised again", () => {
+		const raiseUnhandled = vi.fn();
+		const host = processWithListeners();
+		installMainFailureRoot({ raiseUnhandled }, host.on, host.off);
+
+		host.emit(
+			"unhandledRejection",
+			new TypedFailure({
+				...errorWireAt("agent_profile_unavailable"),
+				reported: true,
+			}),
+		);
+
+		expect(raiseUnhandled).not.toHaveBeenCalled();
 	});
 });
 
