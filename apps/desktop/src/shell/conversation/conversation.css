@@ -1266,32 +1266,6 @@
   content: "";
 }
 
-.conversation-header-actions {
-  display: flex;
-  flex: none;
-  gap: var(--space-2);
-}
-
-.conversation-header-button {
-  padding: 1px var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--secondary);
-  cursor: pointer;
-  font: inherit;
-}
-
-.conversation-header-button:hover {
-  background: var(--wash);
-  color: var(--primary);
-}
-
-.conversation-header-button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
 /* ------------------------------------------------------------- Composer */
 
 .conversation-waiting {
