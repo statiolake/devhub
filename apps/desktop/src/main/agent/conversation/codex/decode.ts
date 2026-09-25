@@ -320,6 +320,29 @@ export function threadOpenedResponse(r: Reader, value: unknown): ThreadOpened {
 	};
 }
 
+/** One earlier thread, as `thread/list` names it: what the resume picker shows. */
+export type ListedThread = Pick<
+	Thread,
+	"id" | "preview" | "name" | "updatedAt"
+>;
+
+/** `thread/list`'s page of threads, newest first as asked. */
+export function threadListResponse(
+	r: Reader,
+	value: unknown,
+): readonly ListedThread[] {
+	const o = r.fields(value, "result");
+	return r.array(o, "data", "result", (each, at) => {
+		const t = r.fields(each, at);
+		return {
+			id: r.string(t, "id", at),
+			preview: r.string(t, "preview", at),
+			name: r.nullableString(t, "name", at),
+			updatedAt: r.number(t, "updatedAt", at),
+		};
+	});
+}
+
 export type ModelChoice = Pick<Model, "id" | "displayName" | "hidden"> & {
 	readonly efforts: readonly string[];
 };

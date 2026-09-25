@@ -240,6 +240,46 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 - If the conversation has no session yet, it is refused with the reason. If
   the new Agent fails to launch, the GUI Agent keeps running.
 
+## Resuming an earlier session
+
+New Agent offers **Resume a Claude session…** and **Resume a Codex
+session…** under the profiles, one row per Claude or Codex profile. Taking one
+asks a second question: which of this Workspace's earlier sessions of that
+profile, newest first, with its title (or its first message) and when it last
+changed. The row launches as the profile's presentation says, and ⌥ turns it
+the other way, as on a profile's own row — so the same list resumes a session
+in a GUI Agent or in a terminal Agent.
+
+The list is the CLI's own, read on the Workspace's machine:
+
+- **Codex**: `thread/list` on a short-lived `codex app-server`, filtered to
+  the Workspace's directory (`cwd`), sorted by `updated_at`.
+- **Claude** has no listing command. It keeps each session as JSONL under
+  `~/.claude/projects/<the directory, every non-alphanumeric character as
+  ->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
+  machine's). DevHub reads the newest 50 files there and never writes to
+  them. A title is Claude's own `ai-title` when there is one.
+
+A resumed Agent is an ordinary launch whose arguments end with the terminal
+mode's resume: `--resume <session id>` or `resume <thread id>`, the same ones
+Continue in terminal uses. They are part of the Agent's recorded profile, so
+a restart of DevHub knows what it resumed.
+
+- **Claude GUI** runs `claude --resume <id> -p …` in stream-json. stream-json
+  prints nothing of the past, so DevHub reads the session's file at launch
+  and writes its conversation at the head of the journal, before the CLI
+  starts, as `devhub_history` lines: the chain of messages from the last one
+  back to the first (a rewound branch and a subagent's lines are not part of
+  it; across a compaction the earlier messages are). The adapter draws them as
+  the entries a live turn makes, without a turn running.
+- **Codex GUI** has no argument for it: DevHub takes `resume <id>` off the
+  argv and sends `thread/resume` instead of `thread/start`. Its answer carries
+  the thread's turns, which are drawn as the conversation.
+
+A session that is not there (Claude's file is missing) refuses the launch
+with the path, and a listing that fails says why in the sheet instead of
+showing an empty list.
+
 ## Folder trust: hooks and `.mcp.json` run without asking
 
 `claude -p` does not show the folder-trust prompt that interactive `claude`
@@ -325,6 +365,12 @@ and changes it for this session.
 - **The journal is never trimmed.** Partial messages are journaled too, so a
   long session's `out` can reach tens of megabytes, and a restart reads all of
   it once.
+- **Resuming a Claude session reads its file's format**, which Claude does not
+  document: the directory naming, the record fields, `parentUuid` chains.
+  A very long directory name, which Claude shortens with a hash, is not
+  found; a session file over 32 MiB is refused rather than read in part.
+  Past turns show no usage (neither CLI hands it back), and a Claude history
+  has no turn endings between its messages.
 
 ## Troubleshooting
 

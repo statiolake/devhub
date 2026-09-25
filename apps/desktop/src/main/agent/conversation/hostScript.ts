@@ -23,6 +23,9 @@
  * ever creates files in it.
  *
  * - `out`    the CLI's stdout, appended to, never truncated. The journal.
+ *            A launch that resumes a session DevHub has to draw the past of
+ *            writes that past here first, before the host starts
+ *            (`resume.ts`, `seedJournal`); everything after it is the CLI's.
  * - `err`    the CLI's stderr, and the host's own complaints, prefixed
  *            `devhub-agent-host:`.
  * - `in`     a FIFO; the CLI's stdin. The host holds it open for reading and

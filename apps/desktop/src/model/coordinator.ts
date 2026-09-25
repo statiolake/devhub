@@ -116,6 +116,11 @@ export type Effect =
       readonly profileId: AgentProfileId;
       /** Appended to the resolved profile's arguments, for this Agent only. */
       readonly extraArgs: readonly string[];
+      /**
+       * The session this Agent resumes, if it resumes one. Main spells it the
+       * way the profile's CLI is told, after `extraArgs`.
+       */
+      readonly resume: string | undefined;
     }
   | {
       readonly kind: "generate_confirmation_id";
@@ -660,14 +665,11 @@ export class AppCoordinator {
           intent.extraArgs ?? [],
           intent.presentation,
           intent.agentPresentation,
+          intent.resume,
           id,
         );
       case "continue_agent_in_terminal":
-        return this.beginContinueInTerminal(
-          intent.agentId,
-          intent.resumeArgs,
-          id,
-        );
+        return this.beginContinueInTerminal(intent.agentId, intent.session, id);
       case "rename_agent":
         this.model.renameAgent(intent.agentId, intent.displayName);
         return this.transitionOutcome(beforeRevision, id);
@@ -901,6 +903,7 @@ export class AppCoordinator {
     extraArgs: readonly string[],
     presentation: SurfacePresentation,
     agentPresentation: AgentPresentation | undefined,
+    resume: string | undefined,
     id: OperationId,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
@@ -929,6 +932,7 @@ export class AppCoordinator {
       workspaceId,
       profileId,
       extraArgs,
+      resume,
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
@@ -948,7 +952,7 @@ export class AppCoordinator {
 
   private beginContinueInTerminal(
     agentId: AgentId,
-    resumeArgs: readonly string[],
+    session: string,
     id: OperationId,
   ): IntentOutcome {
     const agent = this.model.agent(agentId);
@@ -966,9 +970,10 @@ export class AppCoordinator {
     const outcome = this.beginProfileResolution(
       workspace.id,
       agent.profile.id,
-      resumeArgs,
+      [],
       "full",
       "tui",
+      session,
       id,
     );
     this.replacedByLaunch.set(id, agentId);

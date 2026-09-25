@@ -22,10 +22,15 @@ afterEach(cleanup);
 
 const WORKSPACE = "550e8400-e29b-41d4-a716-446655440000";
 
-function mount() {
+function mount(
+  listPastSessions: PickerValue["listPastSessions"] = vi
+    .fn()
+    .mockResolvedValue([]),
+) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const value = {
     dispatch,
+    listPastSessions,
     agentProfiles: {
       availability: "available",
       sequence: 1,
@@ -59,7 +64,7 @@ function mount() {
       <AgentPickerSheet workspaceId={WORKSPACE} onDismiss={vi.fn()} />
     </PickerContext.Provider>,
   );
-  return { dispatch };
+  return { dispatch, listPastSessions };
 }
 
 function row(name: RegExp) {
@@ -132,7 +137,7 @@ describe("launching from New Agent", () => {
 
   it("takes Option from a click too", () => {
     const { dispatch } = mount();
-    fireEvent.click(row(/Codex/u), { altKey: true });
+    fireEvent.click(row(/^Codex/u), { altKey: true });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "codex", presentation: "tui" }),
     );
@@ -142,23 +147,23 @@ describe("launching from New Agent", () => {
 describe("what the sheet says will happen", () => {
   it("names each profile's own presentation", () => {
     mount();
-    expect(row(/Claude/u)).toHaveTextContent("TUI");
-    expect(row(/Codex/u)).toHaveTextContent("GUI");
-    expect(row(/Cursor/u)).toHaveTextContent("TUI");
+    expect(row(/^Claude/u)).toHaveTextContent("TUI");
+    expect(row(/^Codex/u)).toHaveTextContent("GUI");
+    expect(row(/^Cursor/u)).toHaveTextContent("TUI");
   });
 
   it("names the other one while Option is held, and only then", () => {
     mount();
     const dialog = screen.getByRole("dialog");
     fireEvent.keyDown(dialog, { key: "Alt", altKey: true });
-    expect(row(/Claude/u)).toHaveTextContent("GUI");
-    expect(row(/Codex/u)).toHaveTextContent("TUI");
+    expect(row(/^Claude/u)).toHaveTextContent("GUI");
+    expect(row(/^Codex/u)).toHaveTextContent("TUI");
     // Nowhere to turn it, so nothing to say differently.
-    expect(row(/Cursor/u)).toHaveTextContent("TUI");
+    expect(row(/^Cursor/u)).toHaveTextContent("TUI");
 
     fireEvent.keyUp(dialog, { key: "Alt", altKey: false });
-    expect(row(/Claude/u)).toHaveTextContent("TUI");
-    expect(row(/Codex/u)).toHaveTextContent("GUI");
+    expect(row(/^Claude/u)).toHaveTextContent("TUI");
+    expect(row(/^Codex/u)).toHaveTextContent("GUI");
   });
 
   it("stops naming the other one when the window loses the keyboard", () => {
@@ -167,10 +172,10 @@ describe("what the sheet says will happen", () => {
       key: "Alt",
       altKey: true,
     });
-    expect(row(/Claude/u)).toHaveTextContent("GUI");
+    expect(row(/^Claude/u)).toHaveTextContent("GUI");
     // Option let go in another app is a keyup this sheet never hears.
     fireEvent.blur(window);
-    expect(row(/Claude/u)).toHaveTextContent("TUI");
+    expect(row(/^Claude/u)).toHaveTextContent("TUI");
   });
 
   it("says what Option does", () => {
@@ -178,5 +183,47 @@ describe("what the sheet says will happen", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "⌥Return opens it as the other of TUI and GUI.",
     );
+  });
+});
+
+describe("resuming an earlier session", () => {
+  it("offers it for the profiles whose CLI keeps sessions", () => {
+    mount();
+    expect(row(/Resume a Claude session/u)).toBeInTheDocument();
+    expect(row(/Resume a Codex session/u)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /Resume a Cursor session/u }),
+    ).toBeNull();
+  });
+
+  it("lists the Workspace's sessions of that profile and launches the one picked", async () => {
+    const { dispatch, listPastSessions } = mount(
+      vi.fn().mockResolvedValue([
+        { id: "session-new", title: "Fix the login flow", updatedAt: 2000 },
+        { id: "session-old", title: "Write the README" },
+      ]),
+    );
+    // Option on the resume row turns its presentation the way it does a profile's.
+    fireEvent.click(row(/Resume a Claude session/u), { altKey: true });
+    expect(listPastSessions).toHaveBeenCalledWith(WORKSPACE, "claude");
+    fireEvent.click(await screen.findByRole("option", { name: /README/u }));
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "request_create_agent",
+      workspaceId: WORKSPACE,
+      profileId: "claude",
+      split: false,
+      presentation: "gui",
+      resume: "session-old",
+    });
+  });
+
+  it("says why when the sessions cannot be listed", async () => {
+    mount(vi.fn().mockRejectedValue(new Error("codex app-server ended: boom")));
+    fireEvent.click(row(/Resume a Codex session/u));
+    // The reason, and not "there are none", which would be a different fact.
+    expect(
+      await screen.findByText(/codex app-server ended: boom/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/has no earlier sessions/u)).toBeNull();
   });
 });

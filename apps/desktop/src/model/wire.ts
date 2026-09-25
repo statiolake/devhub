@@ -984,11 +984,22 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       // Absent is the profile's own default, the way an absent `split` is
       // the plain arrangement.
       const requested = wire.presentation;
+      const resume = wire.resume;
+      // A session id goes onto a command line as one argument of its own, so
+      // one that could read as an option or carry a NUL is refused here.
+      if (
+        resume !== undefined &&
+        (typeof resume !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(resume))
+      ) {
+        invalid();
+      }
       return {
         type: "create_agent",
         workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
         profileId: tryParse(() => parseAgentProfileId(wire.profileId)),
         presentation: presentationFrom(wire.split),
+        ...(resume === undefined ? {} : { resume }),
         ...(requested === undefined
           ? {}
           : {

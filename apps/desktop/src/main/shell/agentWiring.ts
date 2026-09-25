@@ -22,7 +22,6 @@ import { AgentSessions } from "../agent/sessions.js";
 import { ClaudeAdapter } from "../agent/conversation/claude/adapter.js";
 import { claudeStructuredCommand } from "../agent/conversation/claude/argv.js";
 import { CodexAdapter } from "../agent/conversation/codex/adapter.js";
-import { appServerArgs } from "../agent/conversation/codex/argv.js";
 import {
 	AgentConversation,
 	openedLater,
@@ -30,11 +29,17 @@ import {
 import {
 	agentStateDirectory,
 	hostSessionCommand,
+	seedJournal,
 } from "../agent/conversation/hostCommand.js";
 import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
+import {
+	claudeHistory,
+	codexStructuredArgs,
+	resumedSession,
+} from "../agent/conversation/resume.js";
 import type { AgentScreen } from "../agent/detect/detector.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
@@ -93,11 +98,11 @@ export interface GuiConversations {
 	 */
 	of(agentId: AgentId): Promise<AgentConversation>;
 	/**
-	 * What resumes a GUI Agent's session in its CLI's terminal mode. Refused
-	 * while the CLI has not named a session, which it does with its first
+	 * The session a GUI Agent's CLI named, for its terminal mode to resume.
+	 * Refused while the CLI has not named one, which it does with its first
 	 * turn: there is nothing to resume yet.
 	 */
-	resumeArgs(agentId: AgentId): Promise<readonly string[]>;
+	session(agentId: AgentId): Promise<string>;
 	readonly registry: ConversationRegistry;
 }
 
@@ -132,7 +137,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	const conversationOn = (
 		machine: RuntimeId,
 		agentId: AgentId,
-		kind: AgentProfile["kind"],
+		profile: AgentProfile,
 		root: string,
 	): AgentConversation =>
 		registry.get(agentId) ??
@@ -147,7 +152,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 								await stateDirectory(machine, agentId),
 							),
 					),
-					adapterFor(kind, {
+					adapterFor(profile, {
 						bootId,
 						cwd: root,
 						clientVersion: options.clientVersion,
@@ -158,7 +163,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 
 	const conversations: GuiConversations = {
 		registry,
-		async resumeArgs(agentId) {
+		async session(agentId) {
 			const conversation = await conversations.of(agentId);
 			const agent = options.model().agent(agentId)!;
 			const session = conversation.reading().transcript.session.sessionId;
@@ -170,7 +175,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					),
 				);
 			}
-			return resumeArgsFor(agent.profile.kind, session);
+			return session;
 		},
 		async of(agentId) {
 			const agent = options.model().agent(agentId);
@@ -187,12 +192,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					`the Workspace ${agent.displayName} belongs to is no longer open`,
 				);
 			}
-			return conversationOn(
-				machine,
-				agentId,
-				agent.profile.kind,
-				workspace.root,
-			);
+			return conversationOn(machine, agentId, agent.profile, workspace.root);
 		},
 	};
 
@@ -315,8 +315,20 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				// Stop — is the same session.
 				let command = cli;
 				if (presentation === "gui") {
+					const runtime = options.machineRuntime(machine);
 					const directory = await stateDirectory(machine, agentId);
-					await options.machineRuntime(machine).makeDirectory(directory);
+					await runtime.makeDirectory(directory);
+					// Claude prints nothing of a resumed session's past, so DevHub
+					// reads it from the session's file and puts it first in the
+					// journal (`resume.ts`); Codex answers `thread/resume` with it.
+					const resumed = resumedSession(profile.kind, profile.args);
+					if (profile.kind === "claude" && resumed !== undefined) {
+						await seedJournal(
+							runtime,
+							directory,
+							await claudeHistory(runtime, profile, workspaceRoot, resumed),
+						);
+					}
 					command = hostSessionCommand(
 						directory,
 						structuredCommand(profile.kind, cli),
@@ -390,6 +402,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				{
 					workspaceId: WorkspaceId;
 					kind: AgentProfile["kind"];
+					profile: AgentProfile;
 					presentation: AgentPresentation;
 					name: string;
 					root: string;
@@ -406,6 +419,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					asked.set(agent.id, {
 						workspaceId: workspace.id,
 						kind: agent.profile.kind,
+						profile: agent.profile,
 						presentation: agent.presentation,
 						name: agent.displayName,
 						root: workspace.root,
@@ -487,7 +501,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					const conversation = conversationOn(
 						machine,
 						id,
-						about.kind,
+						about.profile,
 						about.root,
 					);
 					// Once a round, and only here: the round is the clock.
@@ -593,46 +607,31 @@ function structuredCommand(
 		case "claude":
 			return claudeStructuredCommand(cli);
 		case "codex":
-			return { ...cli, args: appServerArgs(cli.args) };
-		default:
-			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
-	}
-}
-
-/** How each CLI's terminal mode is told to go on with a session. */
-function resumeArgsFor(
-	kind: AgentProfile["kind"],
-	session: string,
-): readonly string[] {
-	switch (kind) {
-		case "claude":
-			return ["--resume", session];
-		case "codex":
-			return ["resume", session];
+			return { ...cli, args: codexStructuredArgs(cli.args).args };
 		default:
 			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
 	}
 }
 
 function adapterFor(
-	kind: AgentProfile["kind"],
+	profile: AgentProfile,
 	context: {
 		readonly bootId: string;
 		readonly cwd: string;
 		readonly clientVersion: string;
 	},
 ): ProtocolAdapter {
-	switch (kind) {
+	switch (profile.kind) {
 		case "claude":
 			return new ClaudeAdapter(context.bootId);
 		case "codex":
 			return new CodexAdapter({
 				clientVersion: context.clientVersion,
 				cwd: context.cwd,
-				resumeThreadId: undefined,
+				resumeThreadId: codexStructuredArgs(profile.args).resumeThreadId,
 			});
 		default:
-			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
+			throw new Error(`a ${profile.kind} Agent cannot be a GUI Agent`);
 	}
 }
 

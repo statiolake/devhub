@@ -117,6 +117,14 @@ export type ClaudeLine =
 			readonly usedPercent: number | undefined;
 			readonly resetsAt: number | undefined;
 	  }
+	/**
+	 * A message of the session this conversation resumed, put at the head of
+	 * the journal by DevHub (`resume.ts`) — not something the CLI printed.
+	 */
+	| {
+			readonly type: "history";
+			readonly message: Extract<ClaudeLine, { type: "assistant" | "user" }>;
+	  }
 	| { readonly type: "unused" }
 	| {
 			readonly type: "unknown";
@@ -325,6 +333,8 @@ export function decodeReceived(
 			return decodeResult(raw, f);
 		case "rate_limit_event":
 			return decodeRateLimit(raw, f);
+		case "devhub_history":
+			return decodeHistory(raw, f);
 		// `tool_progress`: ticks of a running tool, whose entry already says it
 		// runs. `prompt_suggestion`: suggested next prompts, which v1 does not
 		// offer (design §3.5).
@@ -333,6 +343,20 @@ export function decodeReceived(
 			return { type: "unused" };
 		default:
 			return { type: "unknown", key: type, raw };
+	}
+}
+
+/** A session file's message, in the shape stream-json prints the same message. */
+function decodeHistory(raw: JsonObject, f: Fields): ClaudeLine {
+	const record = f.object(raw.record, "devhub_history.record");
+	const type = f.string(record.type, "devhub_history.record.type");
+	switch (type) {
+		case "assistant":
+			return { type: "history", message: decodeAssistant(record, f) };
+		case "user":
+			return { type: "history", message: decodeUser(record, f) };
+		default:
+			return f.fail("devhub_history.record.type", "assistant or user");
 	}
 }
 
@@ -718,7 +742,10 @@ function decodeContentBlock(
 	}
 }
 
-function decodeAssistant(raw: JsonObject, f: Fields): ClaudeLine {
+function decodeAssistant(
+	raw: JsonObject,
+	f: Fields,
+): Extract<ClaudeLine, { type: "assistant" }> {
 	const message = f.object(raw.message, "assistant.message");
 	return {
 		type: "assistant",
@@ -737,7 +764,10 @@ function decodeAssistant(raw: JsonObject, f: Fields): ClaudeLine {
 	};
 }
 
-function decodeUser(raw: JsonObject, f: Fields): ClaudeLine {
+function decodeUser(
+	raw: JsonObject,
+	f: Fields,
+): Extract<ClaudeLine, { type: "user" }> {
 	const message = f.object(raw.message, "user.message");
 	const content = message.content;
 	return {

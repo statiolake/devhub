@@ -24,10 +24,10 @@ export interface ConversationIpcOptions {
 	readonly conversations: GuiConversations;
 	/** The Agents page, the one page that draws conversations, once it exists. */
 	readonly agentsPage: () => WebContents | undefined;
-	/** Ask the model to carry a GUI Agent on in a terminal Agent, resuming with these arguments. */
+	/** Ask the model to carry a GUI Agent on in a terminal Agent, resuming this session. */
 	readonly continueInTerminal: (
 		agentId: AgentId,
-		resumeArgs: readonly string[],
+		session: string,
 	) => Promise<unknown>;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
@@ -94,8 +94,8 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	});
 
 	handle(CONVERSATION_CHANNELS.continueInTerminal, async (agentId) => {
-		const resumeArgs = await options.conversations.resumeArgs(agentId);
-		await options.continueInTerminal(agentId, resumeArgs);
+		const session = await options.conversations.session(agentId);
+		await options.continueInTerminal(agentId, session);
 	});
 
 	handle(CONVERSATION_CHANNELS.command, async (agentId, wire) => {

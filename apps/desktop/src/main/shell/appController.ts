@@ -68,6 +68,7 @@ import {
 	type RepositoryStatusWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
+	type PastSessionWire,
 } from "../../ipc/contract.js";
 import {
 	appConditionIdentity,
@@ -144,6 +145,8 @@ import {
 	requestedLocation,
 	whereRequested,
 	type RequestedWorkspaceLocation,
+	AppError,
+	AppErrorCode,
 	type AgentProfileResolution,
 	type IntentOutcome,
 	type OperationToken,
@@ -303,6 +306,7 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
+import { listPastSessions, resumeArgs } from "../agent/conversation/resume.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -898,11 +902,11 @@ export class AppController {
 			ipcMain: electron.ipcMain,
 			conversations: this.agentWiring.conversations,
 			agentsPage: () => shellWindow().agents.contents(),
-			continueInTerminal: (agentId, resumeArgs) =>
+			continueInTerminal: (agentId, session) =>
 				this.dispatchSettled({
 					type: "continue_agent_in_terminal",
 					agentId,
-					resumeArgs,
+					session,
 				}),
 			fail: (error) => asIpcError(errorWire(error)),
 		});
@@ -2811,6 +2815,7 @@ export class AppController {
 					effect.workspaceId,
 					effect.profileId,
 					effect.extraArgs,
+					effect.resume,
 				);
 				return;
 			case "inspect_workspace":
@@ -3143,12 +3148,18 @@ export class AppController {
 		workspaceId: WorkspaceId,
 		profileId: string,
 		extraArgs: readonly string[],
+		resume: string | undefined,
 	): Promise<void> {
 		this.accept({
 			type: "profile_resolution_completed",
 			token,
 			workspaceId,
-			result: await this.profileResolution(workspaceId, profileId, extraArgs),
+			result: await this.profileResolution(
+				workspaceId,
+				profileId,
+				extraArgs,
+				resume,
+			),
 		});
 	}
 
@@ -3156,6 +3167,7 @@ export class AppController {
 		workspaceId: WorkspaceId,
 		profileId: string,
 		extraArgs: readonly string[],
+		resume: string | undefined,
 	): Promise<AgentProfileResolution> {
 		const configured = this.config?.agentProfiles.find(
 			(profile) => profile.id === profileId,
@@ -3175,10 +3187,23 @@ export class AppController {
 				detail: "The workspace this Agent belongs to is no longer open.",
 			};
 		}
+		if (
+			resume !== undefined &&
+			configured.kind !== "claude" &&
+			configured.kind !== "codex"
+		) {
+			return {
+				kind: "failed",
+				code: "agent_profile_unavailable",
+				detail: `“${configured.display_name}” is a ${configured.kind} profile, which has no sessions to resume.`,
+			};
+		}
 		const resolved = await resolveAgentProfile(
 			runtimeFor(workspace.location),
 			configured,
-			extraArgs,
+			resume === undefined
+				? extraArgs
+				: [...extraArgs, ...resumeArgs(configured.kind, resume)],
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {
@@ -3189,6 +3214,44 @@ export class AppController {
 			};
 		}
 		return { kind: "resolved", profile: toDomainProfile(resolved.profile) };
+	}
+
+	/**
+	 * A profile's earlier sessions in a Workspace, read on its machine with the
+	 * command a launch from that profile would run there.
+	 */
+	private async pastSessions(
+		workspaceId: string,
+		profileId: string,
+	): Promise<readonly PastSessionWire[]> {
+		const id = parseWorkspaceId(workspaceId);
+		const resolution = await this.profileResolution(
+			id,
+			profileId,
+			[],
+			undefined,
+		);
+		// Refused the way a launch from the profile is, because it is the same
+		// refusal: the profile cannot be run there.
+		if (resolution.kind === "failed") {
+			throw new AppError(AppErrorCode.PortUnavailable)
+				.withPort("agent")
+				.withAgentFailure(resolution.code)
+				.withDetail(resolution.detail);
+		}
+		const workspace = this.coordinator.model.workspace(id)!;
+		const sessions = await listPastSessions(
+			runtimeFor(workspace.location),
+			resolution.profile,
+			workspace.root,
+		);
+		return sessions.map((session) => ({
+			id: session.id,
+			title: session.title,
+			...(session.updatedAt === undefined
+				? {}
+				: { updatedAt: session.updatedAt }),
+		}));
 	}
 
 	private async inspect(
@@ -5904,6 +5967,16 @@ export class AppController {
 			this.pickerLookup = undefined;
 			return Promise.resolve();
 		});
+		handle(
+			CHANNELS.listPastSessions,
+			async (_event, workspaceId: string, profileId: string) => {
+				try {
+					return await this.pastSessions(workspaceId, profileId);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
 		handle(
 			CHANNELS.cloneRepository,
 			async (_event, url: string, parentDirectory: string) => {

@@ -564,9 +564,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					line.event,
 				);
 			case "assistant":
-				return this.takeAssistant(line);
+				return this.takeAssistant(line, "live");
 			case "user":
-				return this.takeUser(line);
+				return this.takeUser(line, "live");
+			// The resumed session's past: the same messages, drawn the same way,
+			// except that they are not a turn running now.
+			case "history":
+				return line.message.type === "assistant"
+					? this.takeAssistant(line.message, "history")
+					: this.takeUser(line.message, "history");
 			case "result":
 				return this.takeResult(line);
 			case "api_retry":
@@ -814,9 +820,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	private takeAssistant(
 		line: Extract<ClaudeLine, { type: "assistant" }>,
+		when: "live" | "history",
 	): void {
 		const parent = this.parentOf(line.parent, "assistant");
-		if (parent === null) this.turn("running");
+		if (parent === null && when === "live") this.turn("running");
 		let message = this.messages.get(line.messageId);
 		if (message === undefined) {
 			message = { id: line.messageId, parent, slots: new Map(), finals: 0 };
@@ -1023,7 +1030,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		return false;
 	}
 
-	private takeUser(line: Extract<ClaudeLine, { type: "user" }>): void {
+	private takeUser(
+		line: Extract<ClaudeLine, { type: "user" }>,
+		when: "live" | "history",
+	): void {
 		const parent = this.parentOf(line.parent, "user");
 		const texts: string[] = [];
 		line.content.forEach((block, position) => {
@@ -1046,11 +1056,16 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		// Task call that started it already carries (`spawns.prompt`).
 		if (texts.length === 0 || parent !== null) return;
 		const text = texts.join("\n");
-		const taken = this.untaken.findIndex((each) => each.text === text);
-		if (taken < 0) return this.notice("info", text, undefined);
-		const [{ origin }] = this.untaken.splice(taken, 1) as [
-			(typeof this.untaken)[number],
-		];
+		// A message of the past is the person's: nothing DevHub wrote this time
+		// is waiting to be matched with it.
+		let origin: "person" | "injection" = "person";
+		if (when === "live") {
+			const taken = this.untaken.findIndex((each) => each.text === text);
+			if (taken < 0) return this.notice("info", text, undefined);
+			[{ origin }] = this.untaken.splice(taken, 1) as [
+				(typeof this.untaken)[number],
+			];
+		}
 		this.users += 1;
 		this.emit({
 			type: "entry",
@@ -1063,7 +1078,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				origin,
 			},
 		});
-		this.turn("running");
+		if (when === "live") this.turn("running");
 	}
 
 	private takeToolResult(

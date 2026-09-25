@@ -1002,14 +1002,15 @@ describe("continuing a GUI Agent in a terminal", () => {
     driver.dispatch({
       type: "continue_agent_in_terminal",
       agentId: AG_A,
-      resumeArgs: ["resume", "thread-1"],
+      session: "thread-1",
     });
     const resolve = driver.drainEffects()[0];
     if (resolve?.kind !== "resolve_agent_profile")
       throw new Error("unexpected");
-    // The same profile, with the session's resume after its own arguments.
+    // The same profile, resuming the session: main spells it for the CLI.
     expect(resolve.profileId).toBe(agentProfileId("codex"));
-    expect(resolve.extraArgs).toEqual(["resume", "thread-1"]);
+    expect(resolve.extraArgs).toEqual([]);
+    expect(resolve.resume).toBe("thread-1");
     driver.answer(resolve);
     const id = driver.drainEffects()[0];
     if (id?.kind !== "generate_agent_id") throw new Error("unexpected");
@@ -1096,7 +1097,7 @@ describe("continuing a GUI Agent in a terminal", () => {
         driver.dispatch({
           type: "continue_agent_in_terminal",
           agentId: AG_A,
-          resumeArgs: ["resume", "thread-1"],
+          session: "thread-1",
         }),
       ),
     ).toBe(AppErrorCode.Domain);
@@ -1973,5 +1974,24 @@ describe("where a close lands", () => {
     });
     driver.settle();
     expect(selected(driver)).toEqual(workspace(CHARLIE));
+  });
+});
+
+describe("a launch that resumes a session", () => {
+  it("asks main for the profile with the session to resume, by id alone", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("claude"),
+      presentation: "full",
+      resume: "session-1",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    expect(resolve.extraArgs).toEqual([]);
+    expect(resolve.resume).toBe("session-1");
   });
 });

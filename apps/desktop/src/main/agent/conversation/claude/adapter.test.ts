@@ -27,6 +27,7 @@ import {
 	ProtocolMismatch,
 	type ConversationCommand,
 } from "../protocolAdapter.js";
+import { claudeHistoryLines } from "../resume.js";
 import { ClaudeAdapter } from "./adapter.js";
 
 const FIXTURES = join(
@@ -1681,5 +1682,65 @@ describe("the captured session", () => {
 			"xhigh",
 			"max",
 		]);
+	});
+});
+
+describe("a resumed session's history", () => {
+	// The lines `resume.ts` makes of the hand-written session file
+	// (`claude-session-file.handwritten.jsonl`), put before the CLI's own.
+	function resumed(): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		const file = readFileSync(
+			join(FIXTURES, "claude-session-file.handwritten.jsonl"),
+			"utf8",
+		);
+		for (const line of claudeHistoryLines(SESSION, file))
+			adapter.received(line);
+		return adapter;
+	}
+
+	it("draws the past as the same entries a live turn makes, the person's words as the person's", () => {
+		const adapter = resumed();
+		expect(entry(adapter, "user:u2")).toMatchObject({
+			kind: "user",
+			text: "List the files in src",
+			origin: "person",
+		});
+		expect(entry(adapter, "user:u6")).toMatchObject({
+			text: "Now read main.ts",
+		});
+		const tools = adapter.transcript.entries.filter(
+			(each): each is ToolEntry => each.kind === "tool",
+		);
+		expect(tools).toHaveLength(1);
+		expect(tools[0]).toMatchObject({
+			status: "succeeded",
+			output: { kind: "text", text: "main.ts" },
+		});
+		expect(
+			adapter.transcript.entries.flatMap((each) =>
+				each.kind === "assistant" ? each.blocks : [],
+			),
+		).toEqual([
+			{ kind: "thinking", text: "Use ls." },
+			{ kind: "text", markdown: "There is one file: main.ts." },
+			{ kind: "text", markdown: "It is empty." },
+		]);
+		expect(
+			adapter.transcript.entries.every(
+				(each) => each.kind !== "assistant" || !each.streaming,
+			),
+		).toBe(true);
+		// Nothing of the past is a notice: it is what was said, not news.
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toEqual([]);
+	});
+
+	it("is no turn running now: the conversation is ready once the CLI says so", () => {
+		const adapter = resumed();
+		expect(adapter.transcript.state.phase).toBe("connecting");
+		adapter.received(init());
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
 });

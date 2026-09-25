@@ -106,6 +106,23 @@ export async function agentHostFiles(
  * re-parsed by a shell. The profile's environment is the session's, as it is
  * for a TUI Agent.
  */
+/**
+ * Put `lines` at the head of a new Agent's journal, before its host starts:
+ * the one thing DevHub ever writes to `out`, and only while nothing else can.
+ */
+export async function seedJournal(
+	runtime: Runtime,
+	stateDirectory: string,
+	lines: readonly string[],
+): Promise<void> {
+	if (lines.length === 0) return;
+	await runtime.writeTextFile(
+		posix.join(stateDirectory, "out"),
+		lines.map((line) => `${line}\n`).join(""),
+		0o600,
+	);
+}
+
 export function hostSessionCommand(
 	stateDirectory: string,
 	cli: AgentSessionCommand,

@@ -449,6 +449,12 @@ export type UserIntent =
        * with `presentation` above, which is where the pane sits.
        */
       readonly agentPresentation?: AgentPresentation;
+      /**
+       * An earlier session of the profile's CLI in this Workspace, to go on
+       * with instead of starting afresh: Claude's session id, Codex's thread
+       * id. Only main knows how the CLI is told, so this is the id alone.
+       */
+      readonly resume?: string;
     }
   /**
    * Carry a GUI Agent's conversation on in a terminal: a new terminal Agent in
@@ -460,11 +466,8 @@ export type UserIntent =
   | {
       readonly type: "continue_agent_in_terminal";
       readonly agentId: AgentId;
-      /**
-       * What resumes the session, as the Agent's CLI spells it. Only main knows
-       * the session and the CLI, so the request arrives with them composed.
-       */
-      readonly resumeArgs: readonly string[];
+      /** The session the GUI Agent's CLI named, which the terminal Agent resumes. */
+      readonly session: string;
     }
   | {
       readonly type: "rename_agent";

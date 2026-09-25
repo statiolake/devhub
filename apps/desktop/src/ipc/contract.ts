@@ -1272,6 +1272,24 @@ export interface PickerBridge
 	 * has to say this for the case where no new question follows.
 	 */
 	cancelPickerLookup(): Promise<void>;
+	/**
+	 * The earlier sessions of a profile's CLI in a Workspace, newest first, read
+	 * on the Workspace's machine: what "Resume a session…" offers. Throws the
+	 * reason when the CLI's sessions cannot be listed.
+	 */
+	listPastSessions(
+		workspaceId: string,
+		profileId: string,
+	): Promise<readonly PastSessionWire[]>;
+}
+
+/** One earlier session of an Agent's CLI, as the resume picker lists it. */
+export interface PastSessionWire {
+	/** What `request_create_agent`'s `resume` names. */
+	readonly id: string;
+	readonly title: string;
+	/** When it last changed, in ms since the epoch, when the CLI says. */
+	readonly updatedAt?: number;
 }
 
 /**
@@ -1312,6 +1330,7 @@ export const CHANNELS = {
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
+	listPastSessions: "devhub:list-past-sessions",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

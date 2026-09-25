@@ -51,6 +51,8 @@ const ROOTS = [
   "v2/McpServerElicitationRequestResponse",
   "v2/ModelListParams",
   "v2/ModelListResponse",
+  "v2/ThreadListParams",
+  "v2/ThreadListResponse",
 ];
 
 const SCHEMA = "codex-rs/app-server-protocol/schema/typescript";
