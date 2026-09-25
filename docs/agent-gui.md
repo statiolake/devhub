@@ -392,8 +392,9 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 
 **Continue in terminal** is the way out of a GUI Agent:
 
-- It is a small floating button at the right of the pane, just above the
-  composer, translucent until it is pointed at or focused (the same rule as
+- It is a small floating button at the right of the conversation's column,
+  just above the composer (left of the subagent column when one is open),
+  translucent until it is pointed at or focused (the same rule as
   the Agent shortcuts). It is also on the failure over the pane when the
   conversation broke (the host was lost, a protocol mismatch, or the CLI
   refused to start).

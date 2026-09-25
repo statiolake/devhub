@@ -7,8 +7,9 @@
  *
  * A corner control like the Agent shortcuts, under the same rule: it rests
  * translucent over the work and comes up to full when pointed at or focused.
- * Over a conversation it sits at the right just above the composer, where the
- * transcript's column leaves room; over a terminal, in the top right corner,
+ * Over a conversation it sits at the right of the conversation's own column
+ * (never over the subagents beside it), just above the composer; over a
+ * terminal, in the top right corner,
  * since the bottom right is the shortcuts'.
  *
  * What it could not do goes to the page's root like every other failure here.
@@ -29,18 +30,18 @@ export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
   const { reportFailure } = useAgents();
   const own = useRef<HTMLDivElement | null>(null);
   const toTerminal = agent.presentation === "gui";
-  const aboveComposer = useComposerHeight(
-    own,
-    toTerminal ? agent.id : undefined,
-  );
+  const corner = useConversationCorner(own, toTerminal ? agent.id : undefined);
   return (
     <div
       ref={own}
       className={`agent-continue${toTerminal ? " is-above-composer" : ""}`}
       style={
-        aboveComposer === undefined
+        corner === undefined
           ? undefined
-          : { bottom: `calc(${String(aboveComposer)}px + var(--space-2))` }
+          : {
+              right: `calc(${String(corner.right)}px + var(--space-3))`,
+              bottom: `calc(${String(corner.bottom)}px + var(--space-2))`,
+            }
       }
     >
       <button
@@ -69,32 +70,45 @@ export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
 }
 
 /**
- * The height of the conversation's composer in the pane of Agent `agentId`,
- * kept current as it grows with what is typed; `undefined` for no Agent.
+ * Where the conversation's own column leaves room in the pane of Agent
+ * `agentId`, from the pane's right and bottom edges: the width of whatever is
+ * beside the column (the subagents'), and the composer's height with what is
+ * under it. Kept current as either changes; `undefined` for no Agent.
  */
-function useComposerHeight(
+function useConversationCorner(
   own: React.RefObject<HTMLDivElement | null>,
   agentId: string | undefined,
-): number | undefined {
-  const [height, setHeight] = useState<number>();
+): { readonly right: number; readonly bottom: number } | undefined {
+  const [corner, setCorner] = useState<{
+    readonly right: number;
+    readonly bottom: number;
+  }>();
   useLayoutEffect(() => {
     if (agentId === undefined) {
-      setHeight(undefined);
+      setCorner(undefined);
       return;
     }
-    const composer = own.current?.parentElement?.querySelector<HTMLElement>(
+    const pane = own.current?.parentElement;
+    const composer = pane?.querySelector<HTMLElement>(
       `[data-surface-key="agent:${agentId}"] .conversation-composer`,
     );
-    if (!composer) {
+    const column = composer?.closest<HTMLElement>(".conversation-main");
+    if (!pane || !composer || !column) {
       throw new Error(
-        `the conversation of Agent ${agentId} is on screen with no composer to sit above`,
+        `the conversation of Agent ${agentId} is on screen with no composer in its column to sit above`,
       );
     }
-    const measure = () => setHeight(composer.offsetHeight);
+    const measure = () => {
+      const edges = pane.getBoundingClientRect();
+      setCorner({
+        right: edges.right - column.getBoundingClientRect().right,
+        bottom: edges.bottom - composer.getBoundingClientRect().top,
+      });
+    };
     measure();
     const observer = new ResizeObserver(measure);
-    observer.observe(composer);
+    for (const each of [pane, column, composer]) observer.observe(each);
     return () => observer.disconnect();
   }, [own, agentId]);
-  return height;
+  return corner;
 }

@@ -204,17 +204,49 @@ describe("the floating Continue buttons", () => {
     expect(bridge.continueInGui).toHaveBeenCalledWith("agent-1");
   });
 
-  it("offers a GUI Agent the terminal, just above its composer", () => {
-    render(
+  it("offers a GUI Agent the terminal, just above its composer and inside the conversation's column", () => {
+    const observed: (() => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(changed: () => void) {
+          observed.push(changed);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const { container } = render(
       <div>
         <div data-surface-key="agent:agent-1">
-          <div className="conversation-composer" />
+          <div className="conversation-main">
+            <div className="conversation-composer" />
+          </div>
+          <div className="conversation-subagent-column" />
         </div>
         <ContinueElsewhere agent={agent({ presentation: "gui" })} />
       </div>,
     );
     const button = screen.getByRole("button", { name: "Continue in terminal" });
     expect(button.parentElement).toHaveClass("is-above-composer");
+    // jsdom lays nothing out: the pane is 1000 × 800, the conversation's
+    // column its left 640 px, the rest the subagents', the composer 120 high.
+    const place = (selector: string, rect: Partial<DOMRect>) => {
+      const element =
+        selector === "pane"
+          ? container.firstElementChild!
+          : container.querySelector(selector)!;
+      element.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, right: 0, bottom: 0, ...rect }) as DOMRect;
+    };
+    place("pane", { right: 1000, bottom: 800 });
+    place(".conversation-main", { right: 640, bottom: 800 });
+    place(".conversation-composer", { top: 680, right: 640, bottom: 800 });
+    act(() => observed.forEach((changed) => changed()));
+    expect(button.parentElement).toHaveStyle({
+      right: "calc(360px + var(--space-3))",
+      bottom: "calc(120px + var(--space-2))",
+    });
     fireEvent.click(button);
     expect(bridge.continueInTerminal).toHaveBeenCalledWith("agent-1");
   });
