@@ -164,6 +164,8 @@ export interface IssueAssignment {
 	readonly actionId?: string;
 	/** The agent beside the editor rather than over it — ⌘Return, as ever. */
 	readonly split: boolean;
+	/** TUI or GUI, as the agent row said when it was taken (⌥ flips it). */
+	readonly presentation: "tui" | "gui";
 	/**
 	 * Start the branch from the `origin` already on disk, the fetch having
 	 * failed and the person having been asked and said to go on.

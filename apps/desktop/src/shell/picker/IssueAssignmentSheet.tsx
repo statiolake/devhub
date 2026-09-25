@@ -16,7 +16,14 @@
  */
 
 import { useMemo, useRef, type ReactNode } from "react";
-import type { AgentProfilesWire } from "../../ipc/appShell";
+import type {
+  AgentPresentationWire,
+  AgentProfilesWire,
+} from "../../ipc/appShell";
+import {
+  launchPresentation,
+  presentationAccessory,
+} from "../components/shell/AgentProfilePicker";
 import type { AssignmentBranchWire } from "../../ipc/contract";
 import {
   wipBranchForIssue,
@@ -144,6 +151,7 @@ interface FlowServices {
     readonly profileId: string;
     readonly actionId?: string;
     readonly split: boolean;
+    readonly presentation: AgentPresentationWire;
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly cloneParentDirectories: (
@@ -240,17 +248,28 @@ function agentStep(
         id: profile.id,
         label: profile.displayName,
         searchText: `${profile.displayName} ${profile.kind}`,
+        accessory: presentationAccessory(profile),
       })),
-      note: "⌘Return opens the agent beside the editor.",
+      note: "⌘Return opens the agent beside the editor; ⌥Return opens it as the other of TUI and GUI.",
       emptyNoItems:
         services.agentProfiles().availability === "unavailable"
           ? "Agent profiles are unavailable until the configuration is readable again."
           : "No agent profiles are enabled.",
       emptyNoMatch: "No agent profiles match.",
     });
+    const profile = services
+      .agentProfiles()
+      .profiles.find((candidate) => candidate.id === answer.id);
+    if (profile === undefined) {
+      // The row taken is one this step drew from these profiles.
+      throw new Error(
+        `the Issue sheet offered a profile it does not have: ${answer.id}`,
+      );
+    }
     return repositoryStep(services, item, {
       profileId: answer.id,
       split: answer.split,
+      presentation: launchPresentation(profile, answer.alternate),
       actionId,
     });
   };
@@ -259,6 +278,8 @@ function agentStep(
 interface AgentChoice {
   readonly profileId: string;
   readonly split: boolean;
+  /** TUI or GUI, as the row said when it was taken — the New Agent rule. */
+  readonly presentation: AgentPresentationWire;
   /** Which of the person's actions the agent is being started for. */
   readonly actionId: string | undefined;
 }
@@ -662,6 +683,7 @@ function finishStep(
           profileId: agent.profileId,
           actionId: agent.actionId,
           split: agent.split,
+          presentation: agent.presentation,
           allowStaleBase,
         }),
       );

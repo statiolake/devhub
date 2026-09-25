@@ -47,7 +47,22 @@ function mount(overrides: Partial<PickerValue> = {}) {
     agentProfiles: {
       sequence: 1,
       availability: "available",
-      profiles: [{ id: "claude", displayName: "Claude", kind: "claude" }],
+      profiles: [
+        {
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          presentation: "tui",
+          presentations: ["tui", "gui"],
+        },
+        {
+          id: "cursor",
+          displayName: "Cursor",
+          kind: "cursor",
+          presentation: "tui",
+          presentations: ["tui"],
+        },
+      ],
     },
     findIssueRepositories,
     listBranches,
@@ -129,12 +144,16 @@ async function choose(dialogName: RegExp, rowName: string | RegExp) {
   fireEvent.click(screen.getByRole("option", { name: rowName }));
 }
 
-async function answer(name: string | RegExp, text?: string) {
+async function answer(
+  name: string | RegExp,
+  text?: string,
+  modifiers: { altKey?: boolean } = {},
+) {
   const dialog = await screen.findByRole("dialog", { name });
   if (text !== undefined) {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
   }
-  fireEvent.keyDown(dialog, { key: "Enter" });
+  fireEvent.keyDown(dialog, { key: "Enter", ...modifiers });
 }
 
 describe("assigning an Issue", () => {
@@ -159,8 +178,42 @@ describe("assigning an Issue", () => {
         profileId: "claude",
         actionId: "implement",
         split: false,
+        presentation: "tui",
         allowStaleBase: false,
       });
+    });
+  });
+
+  it("offers TUI and GUI the way New Agent does, and carries the choice to the launch", async () => {
+    const { assignIssue } = mount();
+
+    await answer("Assign Issue", ISSUE);
+    const dialog = await screen.findByRole("dialog", {
+      name: /Agent for example\/widget#128/u,
+    });
+    // Each row says what Return launches, and the other while ⌥ is held.
+    expect(screen.getByRole("option", { name: /Claude/u })).toHaveTextContent(
+      "TUI",
+    );
+    fireEvent.keyDown(dialog, { key: "Alt", altKey: true });
+    expect(screen.getByRole("option", { name: /Claude/u })).toHaveTextContent(
+      "GUI",
+    );
+    // A kind with no GUI does not flip.
+    expect(screen.getByRole("option", { name: /Cursor/u })).toHaveTextContent(
+      "TUI",
+    );
+    fireEvent.keyUp(dialog, { key: "Alt", altKey: false });
+    await answer(/Agent for example\/widget#128/u, undefined, { altKey: true });
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /New branch feature\/128-wip/u,
+    );
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ profileId: "claude", presentation: "gui" }),
+      );
     });
   });
 
@@ -306,6 +359,7 @@ describe("assigning an Issue", () => {
         profileId: "claude",
         actionId: "implement",
         split: false,
+        presentation: "tui",
         allowStaleBase: false,
       });
     });

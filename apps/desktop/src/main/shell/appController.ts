@@ -5529,6 +5529,7 @@ export class AppController {
 			workspaceId,
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
+			agentPresentation: agentPresentation(request.presentation),
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId);
 		await this.syncEditorView();

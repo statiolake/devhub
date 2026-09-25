@@ -100,8 +100,7 @@ export function AgentProfilePicker({
             // never be known.
             detail: kind === profile.displayName ? undefined : kind,
             searchText: `${profile.displayName} ${profile.kind}`,
-            accessory: (alternate: boolean) =>
-              PRESENTATION_LABEL[launchPresentation(profile, alternate)],
+            accessory: presentationAccessory(profile),
           };
         })
         .concat(
@@ -110,8 +109,7 @@ export function AgentProfilePicker({
             label: `Resume a ${profile.displayName} session…`,
             detail: "Go on with one of this workspace's earlier sessions",
             searchText: `resume ${profile.displayName} ${profile.kind}`,
-            accessory: (alternate: boolean) =>
-              PRESENTATION_LABEL[launchPresentation(profile, alternate)],
+            accessory: presentationAccessory(profile),
           })),
         )}
       emptyNoMatch="No agent profiles match."
@@ -154,6 +152,18 @@ const PRESENTATION_LABEL: Record<AgentPresentationWire, string> = {
   tui: "TUI",
   gui: "GUI",
 };
+
+/**
+ * A profile row's right end: `TUI` or `GUI`, whichever Return launches — the
+ * other while Option is held. Every sheet that starts an Agent draws it, so a
+ * row means the same thing wherever it is.
+ */
+export function presentationAccessory(
+  profile: AgentProfileWire,
+): (alternate: boolean) => string {
+  return (alternate) =>
+    PRESENTATION_LABEL[launchPresentation(profile, alternate)];
+}
 
 /**
  * What a launch of this profile is: its default, or with Option held, the
