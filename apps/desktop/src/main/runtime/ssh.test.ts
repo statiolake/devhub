@@ -64,6 +64,7 @@ import {
 	rehTopLevelDirectory,
 	type RehDelivery,
 } from "./remoteServer.js";
+import { resolveAgentProfile } from "../shell/agentProfileCommand.js";
 
 /**
  * An `ssh` that never leaves this machine.
@@ -868,6 +869,31 @@ describe("the login environment on the host", () => {
 		expect(await runtime.resolveProgram("widget", "")).toEqual({
 			kind: "absolute_path",
 			value: widget,
+		});
+	});
+
+	// An Agent profile goes through the same lookup: the host's login PATH
+	// decides, and the launch PATH handed in from this Mac names nothing there.
+	it("resolves an Agent profile's command under the host's PATH, not this Mac's", async () => {
+		const agent = join(shells, "host-agent");
+		await writeFile(agent, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+		await chmod(agent, 0o700);
+		const runtime = runtimeWithShell(
+			await loginShell(
+				"agent",
+				`case "$2" in 'env -0') printf 'PATH=%s\\0' ${JSON.stringify(shells)}; exit 0;; esac\nexit 1`,
+			),
+		);
+		expect(
+			await resolveAgentProfile(
+				runtime,
+				{ command: "host-agent", args: ["--profile"] },
+				["--extra"],
+				"/nonexistent/mac-only/bin",
+			),
+		).toEqual({
+			kind: "resolved",
+			profile: { command: agent, args: ["--profile", "--extra"] },
 		});
 	});
 
