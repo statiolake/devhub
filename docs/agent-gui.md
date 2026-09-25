@@ -364,9 +364,6 @@ has none.
   user message's `parent_tool_use_id` names where output came from, not where
   input goes, and no control request addresses a subagent.
 
-The box is drawn in the subagent's inline card. A subagent shown in the
-column or maximized has no box yet.
-
 ## Not signed in, and Continue in terminal
 
 When the CLI is not signed in, the conversation stops and the Agent's pane
