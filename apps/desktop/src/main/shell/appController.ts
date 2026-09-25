@@ -303,7 +303,7 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
-import { completionRefusalRoute } from "./completionRefusal.js";
+import { completionRefusal } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
 	type SettingsUnavailableRuntimeWire,
@@ -2596,13 +2596,17 @@ export class AppController {
 			});
 			this.settle(id, outcome);
 		} catch (error) {
-			// Where the refusal goes is `completionRefusalRoute`'s decision, for
-			// every completion alike; the request waiting on it is refused either
-			// way.
-			const route = completionRefusalRoute(error);
-			if (route === "crash") crash(error);
-			if (route === "publish") this.publishError(errorWire(error));
-			this.reject(id, error);
+			// Where the refusal is drawn, and what the request waiting on it is
+			// refused with, is `completionRefusal`'s decision for every
+			// completion alike.
+			const refusal = completionRefusal(event, error);
+			if (refusal.kind === "crash") {
+				crash(error);
+				this.reject(id, error);
+			} else {
+				if (refusal.publish) this.publishError(refusal.publish);
+				this.reject(id, refusal.rejection);
+			}
 		}
 		this.drain();
 	}

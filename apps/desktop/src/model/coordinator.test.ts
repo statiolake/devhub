@@ -855,7 +855,7 @@ const REPORTED = withDetail(
 );
 
 describe("an operation a port could not carry out", () => {
-  it("reaches whoever asked in the words it was reported in, marked as already drawn", () => {
+  it("reaches whoever asked in the words it was drawn in at its subject", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
     driver.dispatch({
@@ -877,8 +877,8 @@ describe("an operation a port could not carry out", () => {
     } catch (error) {
       refusal = error;
     }
-    // In the words it was drawn in at its subject, and marked as drawn.
-    expect(errorWire(refusal)).toEqual({ ...REPORTED, reported: true });
+    // In the words it was drawn in at its subject.
+    expect(errorWire(refusal)).toEqual(REPORTED);
   });
 });
 

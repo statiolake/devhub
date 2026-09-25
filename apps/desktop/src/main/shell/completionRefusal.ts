@@ -5,41 +5,57 @@
  * that no failure has two ways onto the screen.
  */
 
-import { AppError, AppErrorCode } from "../../model/intents.js";
-import { TypedFailure } from "../../model/wire.js";
+import type { AppErrorWire } from "../../ipc/appShell.js";
+import {
+	AppError,
+	AppErrorCode,
+	type ProviderEvent,
+} from "../../model/intents.js";
+import { errorWire, TypedFailure } from "../../model/wire.js";
 
-export type CompletionRefusalRoute =
+export type CompletionRefusal =
 	/** A bug in main's own flow: nobody is waiting and nothing can answer it. */
-	| "crash"
-	/** The request that was waiting is refused; nothing is published. */
-	| "reject"
-	/** The request is refused, and the failure is published as an app notice. */
-	| "publish";
+	| { readonly kind: "crash" }
+	| {
+			readonly kind: "answer";
+			/** Drawn as an app notice, when nothing has drawn it yet. */
+			readonly publish?: AppErrorWire;
+			/** What the request waiting on the operation is refused with. */
+			readonly rejection: unknown;
+	  };
 
 /**
  * - A completion for an operation that was never started is a bug in main —
  *   a token invented or completed twice — and stops the process.
  * - A *stale* one answers an operation something newer already settled on
  *   purpose (the reconciler supersedes its own rounds), and a person told so
- *   every time learns nothing and stops reading the error area.
- * - A failure marked `reported` was already drawn at its subject — the
- *   Agent's pane, the machine's condition, or the app notice — by
- *   `failOperation`, and comes back only to answer the request in the same
- *   words. Publishing it again was a second route to the screen: for an
- *   app-wide failure the second notice replaced the first under another
- *   sentence, and for a machine it put an app notice back on every round the
- *   machine condition exists to say once. The page keeps the same rule for
- *   the rejection it is handed (`pageModel`'s `dispatch`).
- * - Anything else is a failure nothing has reported yet, and the app notice
- *   is where it is said.
+ *   every time learns nothing and stops reading the error area. Nothing is
+ *   drawn.
+ * - `operation_failed` is only ever sent by `failOperation`, which has already
+ *   drawn the failure at its subject — the Agent's pane, the machine's
+ *   condition, or the app notice. Drawing it again was a second route to the
+ *   screen: for a machine it put an app notice back on every round the
+ *   machine condition exists to say once.
+ * - Anything else has not been drawn yet, and the app notice is where it is.
+ *
+ * Whatever main has drawn, by either route, reaches the request in the same
+ * words and marked `reported`, so the page that asked does not raise it a
+ * second time (`pageModel`'s `dispatch`) and `devhub` prints exactly what the
+ * person saw.
  */
-export function completionRefusalRoute(error: unknown): CompletionRefusalRoute {
-	if (isCode(error, AppErrorCode.UnknownOperation)) return "crash";
-	if (isCode(error, AppErrorCode.StaleCompletion)) return "reject";
-	if (error instanceof TypedFailure && error.wire.reported === true) {
-		return "reject";
+export function completionRefusal(
+	event: ProviderEvent,
+	error: unknown,
+): CompletionRefusal {
+	if (isCode(error, AppErrorCode.UnknownOperation)) return { kind: "crash" };
+	if (isCode(error, AppErrorCode.StaleCompletion)) {
+		return { kind: "answer", rejection: error };
 	}
-	return "publish";
+	const drawn = errorWire(error);
+	const rejection = new TypedFailure({ ...drawn, reported: true });
+	return event.type === "operation_failed"
+		? { kind: "answer", rejection }
+		: { kind: "answer", publish: drawn, rejection };
 }
 
 function isCode(error: unknown, code: AppErrorCode): boolean {

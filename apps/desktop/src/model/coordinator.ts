@@ -1265,7 +1265,7 @@ export class AppCoordinator {
     this.pending.delete(token.operationId);
     this.clearOperationAuxiliaryState(token);
     this.rememberCompleted(token);
-    throw new TypedFailure({ ...failure, reported: true });
+    throw new TypedFailure(failure);
   }
 
   private clearOperationAuxiliaryState(token: OperationToken): void {

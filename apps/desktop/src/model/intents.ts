@@ -736,9 +736,7 @@ export type ProviderEvent =
       /**
        * The failure as it was already drawn at its subject — code, sentence
        * and detail — for whoever asked for the operation. The request is
-       * answered in exactly these words, never in a port's catch-all, and is
-       * told they were drawn already (`reported`), so it does not draw them a
-       * second time.
+       * answered in exactly these words, never in a port's catch-all.
        */
       readonly failure: AppErrorWire;
     };
