@@ -111,10 +111,10 @@ class Driver {
         });
       case "resolve_agent_profile":
         return this.accept({
-          type: "profile_resolved",
+          type: "profile_resolution_completed",
           token: effect.token,
           workspaceId: effect.workspaceId,
-          profile: codex,
+          result: { kind: "resolved", profile: codex },
         });
       case "generate_agent_id":
         return this.accept({
@@ -879,6 +879,50 @@ describe("an operation a port could not carry out", () => {
   });
 });
 
+describe("a profile that could not be resolved", () => {
+  it("refuses that launch as the profile's failure and leaves the workspace open to the next", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "profile_resolution_completed",
+        token: resolve.token,
+        workspaceId: WS_A,
+        result: {
+          kind: "failed",
+          code: "agent_profile_unavailable",
+          detail: "codex was not found in /usr/bin:/bin.",
+        },
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(errorWire(refusal)).toMatchObject({
+      code: "agent_profile_unavailable",
+      summary: "The agent could not start from this profile.",
+      detail: "codex was not found in /usr/bin:/bin.",
+    });
+    expect(driver.coordinator.model.workspace(WS_A)?.canCreateAgent).toBe(true);
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    expect(driver.drainEffects()[0]?.kind).toBe("resolve_agent_profile");
+  });
+});
+
 describe("an Agent whose launch is under way", () => {
   it("is named from the moment its launch starts until the model has it", () => {
     const driver = new Driver();
@@ -1050,10 +1094,10 @@ describe("how a launched agent is shown", () => {
     let refusal: unknown;
     try {
       driver.accept({
-        type: "profile_resolved",
+        type: "profile_resolution_completed",
         token: resolve.token,
         workspaceId: WS_A,
-        profile,
+        result: { kind: "resolved", profile },
       });
     } catch (error) {
       refusal = error;

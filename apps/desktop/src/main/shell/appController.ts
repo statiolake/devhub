@@ -146,6 +146,7 @@ import {
 	type RequestedWorkspaceLocation,
 	AppError,
 	AppErrorCode,
+	type AgentProfileResolution,
 	type IntentOutcome,
 	type OperationToken,
 	type ProviderEvent,
@@ -3146,6 +3147,11 @@ export class AppController {
 	 * same kind of name, worked. And a name that resolves to nothing is said
 	 * out loud rather than becoming a session that dies on `exec` a moment
 	 * later, with nothing left to read.
+	 *
+	 * Every refusal here is this launch's, carried by the completion as a
+	 * result like a launch's own: the Workspace is not marked, so a profile
+	 * whose program is missing does not take the Workspace's other launches
+	 * down with it, and the request reads it as the profile's failure.
 	 */
 	private async resolveProfile(
 		token: OperationToken,
@@ -3153,26 +3159,36 @@ export class AppController {
 		profileId: string,
 		extraArgs: readonly string[],
 	): Promise<void> {
+		this.accept({
+			type: "profile_resolution_completed",
+			token,
+			workspaceId,
+			result: await this.profileResolution(workspaceId, profileId, extraArgs),
+		});
+	}
+
+	private async profileResolution(
+		workspaceId: WorkspaceId,
+		profileId: string,
+		extraArgs: readonly string[],
+	): Promise<AgentProfileResolution> {
 		const configured = this.config?.agentProfiles.find(
 			(profile) => profile.id === profileId,
 		);
 		if (!configured) {
-			this.failOperation(token, {
-				subject: "workspace",
-				id: workspaceId,
-				code: "runtime_unavailable",
+			return {
+				kind: "failed",
+				code: "agent_profile_unavailable",
 				detail: `There is no agent profile called “${profileId}”.`,
-			});
-			return;
+			};
 		}
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (!workspace) {
-			this.failOperation(token, {
-				subject: "app",
+			return {
+				kind: "failed",
 				code: "workspace_unavailable",
 				detail: "The workspace this Agent belongs to is no longer open.",
-			});
-			return;
+			};
 		}
 		const resolved = await resolveAgentProfile(
 			runtimeFor(workspace.location),
@@ -3181,20 +3197,13 @@ export class AppController {
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {
-			this.failOperation(token, {
-				subject: "workspace",
-				id: workspaceId,
-				code: "runtime_unavailable",
+			return {
+				kind: "failed",
+				code: "agent_profile_unavailable",
 				detail: this.executableMissingMessage(resolved),
-			});
-			return;
+			};
 		}
-		this.accept({
-			type: "profile_resolved",
-			token,
-			workspaceId,
-			profile: toDomainProfile(resolved.profile),
-		});
+		return { kind: "resolved", profile: toDomainProfile(resolved.profile) };
 	}
 
 	private async inspect(

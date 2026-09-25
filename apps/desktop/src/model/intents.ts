@@ -536,6 +536,25 @@ export type AgentStopResult =
   | { readonly kind: "stopped" }
   | { readonly kind: "failed"; readonly diagnostic: DiagnosticCode };
 
+/**
+ * A profile looked up for one launch, on the machine its Agent would run on.
+ *
+ * A failure is that launch's and the profile's, never the Workspace's: the
+ * next launch there, from another profile or after the program is installed,
+ * has nothing to wait out. So it is a result the completion carries, the same
+ * shape as `AgentLaunchResult`'s, and not an `operation_failed` whose subject
+ * something would have to pick.
+ */
+export type AgentProfileResolution =
+  | { readonly kind: "resolved"; readonly profile: AgentProfile }
+  | {
+      readonly kind: "failed";
+      /** `agent_profile_unavailable`, or `workspace_unavailable` for one that closed meanwhile. */
+      readonly code: AgentFailureCode;
+      /** Which profile, and what the lookup found — DevHub's own words. */
+      readonly detail: string;
+    };
+
 export type AgentLaunchResult =
   | { readonly kind: "started" }
   | {
@@ -646,10 +665,10 @@ export type ProviderEvent =
       readonly confirmationId: ConfirmationId;
     }
   | {
-      readonly type: "profile_resolved";
+      readonly type: "profile_resolution_completed";
       readonly token: OperationToken;
       readonly workspaceId: WorkspaceId;
-      readonly profile: AgentProfile;
+      readonly result: AgentProfileResolution;
     }
   | {
       readonly type: "agent_id_generated";

@@ -26,6 +26,7 @@ import {
   presentationsFor,
   relocatedOnSameMachine,
   Workspace,
+  type AgentFailureCode,
   type AgentId,
   type AgentPresentation,
   type AgentProfile,
@@ -1204,12 +1205,19 @@ export class AppCoordinator {
         );
       case "confirmation_id_generated":
         return this.completeConfirmationId(event.token, event.confirmationId);
-      case "profile_resolved":
-        return this.completeProfileResolved(
-          event.token,
-          event.workspaceId,
-          event.profile,
-        );
+      case "profile_resolution_completed":
+        return event.result.kind === "resolved"
+          ? this.completeProfileResolved(
+              event.token,
+              event.workspaceId,
+              event.result.profile,
+            )
+          : this.completeProfileUnresolved(
+              event.token,
+              event.workspaceId,
+              event.result.code,
+              event.result.detail,
+            );
       case "agent_id_generated":
         return this.completeAgentId(
           event.token,
@@ -1428,6 +1436,32 @@ export class AppCoordinator {
       operationId: nextToken.operationId,
       snapshot: this.snapshot(),
     };
+  }
+
+  /**
+   * A launch whose profile could not be resolved, refused as the Agent port's
+   * `agent_profile_unavailable` with the lookup's own sentence — and nothing
+   * else: the Workspace is as available as it was, so the next launch there
+   * starts as if this one had never been asked for.
+   */
+  private completeProfileUnresolved(
+    token: OperationToken,
+    workspaceId: WorkspaceId,
+    code: AgentFailureCode,
+    detail: string,
+  ): never {
+    this.takePending(
+      token,
+      "resolve_agent_profile",
+      (target) =>
+        target.kind === "profile" && target.workspaceId === workspaceId,
+    );
+    this.clearOperationAuxiliaryState(token);
+    throw new AppError(AppErrorCode.PortUnavailable)
+      .withPort("agent")
+      .withAgentFailure(code)
+      .withDetail(detail)
+      .withOperation(token.operationId);
   }
 
   /**
