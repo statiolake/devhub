@@ -248,6 +248,7 @@ export async function bootstrapShell(
 	const socketPath = controlSocketPath(userDataPath);
 
 	const control = await startControlServer(socketPath, {
+		personStarted: () => controller.personStartedAction(),
 		activate: () => controller.activateFromCli(),
 		open: (request) => controller.openFromCli(request),
 		waitEnded: (waitMarkerPath) => controller.waitEndedFromCli(waitMarkerPath),

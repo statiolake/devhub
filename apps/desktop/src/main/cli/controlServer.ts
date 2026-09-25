@@ -27,6 +27,11 @@ import {
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 export interface ControlHandlers {
+	/**
+	 * The person started an operation: this is a command they typed. Called
+	 * before it is answered, as a dispatch from the window is.
+	 */
+	personStarted(): void;
 	/** Bring DevHub to the front, and change nothing else. */
 	activate(): Promise<string>;
 	/** A folder or a file. Answers with the text the CLI prints. */
@@ -207,6 +212,7 @@ export async function answerControlRequest(
 	} catch (error) {
 		return { ok: false, message: messageOf(error) };
 	}
+	if (typedByPerson(request)) handlers.personStarted();
 	try {
 		switch (request.kind) {
 			// Answered here rather than by a handler, and that is the point: what
@@ -309,6 +315,36 @@ export async function answerControlRequest(
 		}
 	} catch (error) {
 		return { ok: false, message: messageOf(error) };
+	}
+}
+
+/**
+ * Whether a person typed this — `devhub …` in a terminal — or DevHub's own
+ * machinery sent it.
+ *
+ * A typed command is the person's next operation, exactly as a click in the
+ * window is, and it retires what their last one left on screen by the same
+ * rule. A ping, a `--wait` ending, and a workbench asking for its host or its
+ * terminal are nobody's next operation. Total, so a new request is a compile
+ * error here until somebody says which it is.
+ */
+function typedByPerson(request: ControlRequest): boolean {
+	switch (request.kind) {
+		case "activate":
+		case "open":
+		case "add-agent":
+		case "install-extensions":
+		case "uninstall-extensions":
+		case "list-extensions":
+		case "version":
+		case "metrics":
+		case "install-cli":
+			return true;
+		case "ping":
+		case "wait-ended":
+		case "resolve-remote":
+		case "terminal-profile":
+			return false;
 	}
 }
 

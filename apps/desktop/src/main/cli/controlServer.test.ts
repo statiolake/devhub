@@ -9,7 +9,7 @@
 import { connect } from "node:net";
 import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	answerControlRequest,
@@ -38,6 +38,7 @@ function everythingSaysOk(): ControlHandlers {
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
+		personStarted: () => undefined,
 	};
 }
 
@@ -69,6 +70,7 @@ describe("the DevHub control socket", () => {
 		socketPath = join(scratch, "c.sock");
 		calls = [];
 		server = await startControlServer(socketPath, {
+			personStarted: () => undefined,
 			activate: () => {
 				calls.push("activate");
 				return Promise.resolve("DevHub is in front.");
@@ -714,5 +716,65 @@ describe("resolving where a remote workbench connects", () => {
 		// None of them reached DevHub: a request that cannot be read is refused
 		// before anything is asked to act on it.
 		expect(seen).toEqual([]);
+	});
+});
+
+describe("a command the person typed", () => {
+	// Their next operation, exactly as a click in the window is: the notice a
+	// person closed stays closed until they do something else, and typing
+	// `devhub …` is doing something else. What DevHub's own machinery asks —
+	// a ping, a `--wait` ending, a workbench resolving its host or its
+	// terminal — is nobody's next operation.
+	it.each([
+		["activate", { kind: "activate" }],
+		["open", { kind: "open", path: "/src/api", cwd: "/src" }],
+		[
+			"add-agent",
+			{ kind: "add-agent", profileId: "claude", args: [], cwd: "/src" },
+		],
+		[
+			"install-extensions",
+			{
+				kind: "install-extensions",
+				targets: ["a.b"],
+				force: false,
+				cwd: "/src",
+			},
+		],
+		[
+			"uninstall-extensions",
+			{ kind: "uninstall-extensions", ids: ["a.b"], force: false },
+		],
+		["list-extensions", { kind: "list-extensions", showVersions: false }],
+		["version", { kind: "version" }],
+		["metrics", { kind: "metrics" }],
+		["install-cli", { kind: "install-cli" }],
+	])("starts an operation: %s", async (_kind, request) => {
+		const personStarted = vi.fn();
+		await answerControlRequest(JSON.stringify(request), {
+			...everythingSaysOk(),
+			personStarted,
+		});
+		expect(personStarted).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		["ping", { kind: "ping" }],
+		["wait-ended", { kind: "wait-ended", waitMarkerPath: "/src/.wait" }],
+		[
+			"resolve-remote",
+			{ kind: "resolve-remote", machine: "ssh:build-box", attempt: 1 },
+		],
+		[
+			"terminal-profile",
+			{ kind: "terminal-profile", machine: "local", root: null },
+		],
+	])("is not what DevHub's own machinery asks: %s", async (_kind, request) => {
+		const personStarted = vi.fn();
+		await answerControlRequest(JSON.stringify(request), {
+			...everythingSaysOk(),
+			personStarted,
+		});
+		expect(personStarted).not.toHaveBeenCalled();
 	});
 });

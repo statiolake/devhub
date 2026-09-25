@@ -5287,6 +5287,21 @@ export class AppController {
 
 	//#region the page
 
+	/**
+	 * The person started an operation — from the window, or with a `devhub`
+	 * command they typed; where it came from does not matter.
+	 *
+	 * Starting one is one of the three things that retire a failure: they have
+	 * moved on, and a report about the last thing is in the way of the next.
+	 * The page that draws notices cannot see this for itself and does not want
+	 * to: main sees every dispatch a page makes and every command typed, so
+	 * main says so. `dispatchOwn` deliberately does not, because DevHub raising
+	 * its own intent is not the person starting an action.
+	 */
+	personStartedAction(): void {
+		this.sendToDisplay(CHANNELS.actionStarted, undefined);
+	}
+
 	private async dispatchFromPage(wire: AppIntentWire): Promise<AppOutcomeWire> {
 		let intent: UserIntent;
 		try {
@@ -5596,14 +5611,7 @@ export class AppController {
 		handle(CHANNELS.getWindowTitle, () => shellWindow().window.getTitle());
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
 		handle(CHANNELS.dispatch, (event, intent: AppIntentWire) => {
-			// The person asked for something, which is one of the three things
-			// that retire a failure — they have moved on, and a report about the
-			// last thing is in the way of the next. The page that draws notices
-			// cannot see this for itself and does not want to: main sees every
-			// dispatch a page makes, so main says so. `dispatchOwn` deliberately
-			// does not, because DevHub raising its own intent is not the person
-			// starting an action.
-			this.sendToDisplay(CHANNELS.actionStarted, undefined);
+			this.personStartedAction();
 			// An answer to a question — Go to's row, above all — is a move the
 			// person made from the keyboard, and it lands where a chord's does:
 			// in what it chose, not back in the Sidebar the question was asked
