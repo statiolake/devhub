@@ -333,7 +333,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 		return {
 			kind: "restart",
-			args:
+			session:
 				cut === null ? [] : ["--resume", sessionId, "--resume-session-at", cut],
 			mark: [JSON.stringify({ type: "devhub_rewind", message })],
 		};
@@ -353,7 +353,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 		return {
 			kind: "restart",
-			args: ["--resume", session],
+			session: ["--resume", session],
 			mark: [JSON.stringify({ type: "devhub_resume", session }), ...history],
 		};
 	}

@@ -9,10 +9,12 @@
  */
 
 import { posix } from "node:path";
-import { isCanonicalUuid } from "../../../model/domain.js";
+import { isCanonicalUuid, type AgentProfile } from "../../../model/domain.js";
 import type { Runtime } from "../../runtime/runtime.js";
 import type { AgentSessionCommand } from "../../terminal/ports.js";
+import { claudeStructuredCommand } from "./claude/argv.js";
 import { HOST_NAME, HOST_SCRIPT } from "./hostScript.js";
+import { codexStructuredArgs, withSession } from "./resume.js";
 
 /**
  * What an Agent id may look like to become a directory name.
@@ -132,4 +134,35 @@ export function hostSessionCommand(
 		args: ["-c", HOST_SCRIPT, HOST_NAME, stateDirectory, cli.file, ...cli.args],
 		env: cli.env,
 	};
+}
+
+/**
+ * The CLI a GUI Agent's host runs: `profile`'s command in the structured mode
+ * its adapter reads, on the session its record picks — or, given `session`,
+ * on the one a rewind or a `/resume` picks in its place (`withSession`), which
+ * is the whole argv the host starts it again with.
+ *
+ * Only Claude and Codex can be GUI Agents — the domain refuses any other kind
+ * a GUI presentation — so reaching another kind here is that rule broken.
+ */
+export function guiAgentCli(
+	profile: Pick<AgentProfile, "kind" | "command" | "args" | "env">,
+	session?: readonly string[],
+): AgentSessionCommand {
+	const cli: AgentSessionCommand = {
+		file: profile.command,
+		args:
+			session === undefined
+				? [...profile.args]
+				: withSession(profile.kind, profile.args, session),
+		env: Object.fromEntries(profile.env),
+	};
+	switch (profile.kind) {
+		case "claude":
+			return claudeStructuredCommand(cli);
+		case "codex":
+			return { ...cli, args: codexStructuredArgs(cli.args).args };
+		default:
+			throw new Error(`a ${profile.kind} Agent cannot be a GUI Agent`);
+	}
 }

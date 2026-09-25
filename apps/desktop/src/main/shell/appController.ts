@@ -314,6 +314,7 @@ import {
 	listPastSessions,
 	previewPastSession,
 	resumeArgs,
+	withSession,
 	sessionScope,
 	type SessionScope,
 } from "../agent/conversation/resume.js";
@@ -3224,12 +3225,23 @@ export class AppController {
 				detail: `“${configured.display_name}” is a ${configured.kind} profile, which has no sessions to resume.`,
 			};
 		}
+		// A resumed launch picks its session in place of any the profile's own
+		// arguments pick (`withSession`), so its record says exactly one.
+		const args = [...configured.args, ...extraArgs];
 		const resolved = await resolveAgentProfile(
 			runtimeFor(workspace.location),
-			configured,
-			resume === undefined
-				? extraArgs
-				: [...extraArgs, ...resumeArgs(configured.kind, resume)],
+			{
+				...configured,
+				args:
+					resume === undefined
+						? args
+						: withSession(
+								configured.kind,
+								args,
+								resumeArgs(configured.kind, resume),
+							),
+			},
+			[],
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {

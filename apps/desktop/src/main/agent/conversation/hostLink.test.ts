@@ -208,16 +208,21 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(replay[200]?.line).toBe('{"seq":200}');
 		}, 30_000);
 
-		it("starts the CLI again with the arguments it is given, the mark in the journal between the two", async () => {
+		it("starts the CLI again as the whole argv it is given, the mark in the journal between the two", async () => {
 			const directory = stateDirectory();
-			startHost(directory);
+			startHost(directory, ["/bin/sh", FAKE_AGENT, "--resume", "the old one"]);
 			const link = new HostLink(make(), directory);
 			const lines = link.lines(0, new CancellationToken());
-			await readUntil(lines, (seen) => seen.length === 1);
+			const [hello] = await readUntil(lines, (seen) => seen.length === 1);
+			expect(hello?.line).toBe('{"type":"hello","argc":2}');
 			await link.write('{"to":"the first"}', 0);
 			await readUntil(lines, (seen) => seen.length === 1);
 
-			await link.restart(["--resume", "a session id"], ['{"mark":"here"}']);
+			// The argv replaces the first start's: two arguments, not four.
+			await link.restart(
+				{ file: "/bin/sh", args: [FAKE_AGENT, "--resume", "a session id"] },
+				['{"mark":"here"}'],
+			);
 			const restarted = await readUntil(lines, (seen) => seen.length === 2);
 			expect(restarted.map((each) => each.line)).toEqual([
 				'{"mark":"here"}',
@@ -227,8 +232,10 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const [echo] = await readUntil(lines, (seen) => seen.length === 1);
 			expect(echo?.line).toBe('{"echo":{"to":"the second"}}');
 
-			// A second start adds its own arguments to the CLI's argv, not to the first start's.
-			await link.restart([], ['{"mark":"again"}']);
+			// A second start is its own argv again, not the first start's or the host's.
+			await link.restart({ file: "/bin/sh", args: [FAKE_AGENT] }, [
+				'{"mark":"again"}',
+			]);
 			const again = await readUntil(lines, (seen) => seen.length === 2);
 			expect(again.map((each) => each.line)).toEqual([
 				'{"mark":"again"}',
@@ -250,7 +257,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 
 			const long = `{"history":"${"x".repeat(100_000)}"}`;
 			await link.restart(
-				["--resume", "a session id"],
+				{ file: "/bin/sh", args: [FAKE_AGENT, "--resume", "a session id"] },
 				['{"mark":"resume"}', long, '{"history":"last"}'],
 			);
 			const restarted = await readUntil(lines, (seen) => seen.length === 4);
@@ -262,6 +269,27 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			]);
 		}, 20_000);
 
+		it("refuses to start again the CLI of a host that would add the argv to its own", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (seen) => seen.length === 1);
+			// What a host started by an earlier DevHub lacks.
+			rmSync(join(directory, "version"));
+			const failure = await failureOf(
+				link.restart({ file: "/bin/sh", args: [FAKE_AGENT] }, [
+					'{"mark":"old host"}',
+				]),
+			);
+			expect(failure.message).toContain(
+				"it was started by a DevHub from before",
+			);
+			await link.write('{"still":"here"}', 0);
+			const [echo] = await readUntil(lines, (seen) => seen.length === 1);
+			expect(echo?.line).toBe('{"echo":{"still":"here"}}');
+		}, 20_000);
+
 		it("refuses to start again the CLI of a host that is gone", async () => {
 			const directory = stateDirectory();
 			startHost(directory);
@@ -270,7 +298,11 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			await readUntil(lines, (seen) => seen.length === 1);
 			await link.write('{"fake":"exit","code":0}', 0);
 			await readAll(lines);
-			const failure = await failureOf(link.restart([], ['{"mark":"late"}']));
+			const failure = await failureOf(
+				link.restart({ file: "/bin/sh", args: [FAKE_AGENT] }, [
+					'{"mark":"late"}',
+				]),
+			);
 			expect(failure.code).toBe("host_gone");
 			expect(failure.message).toContain("there is no CLI to start again");
 		}, 20_000);

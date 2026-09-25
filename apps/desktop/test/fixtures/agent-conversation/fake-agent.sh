@@ -27,17 +27,23 @@
 # --resume-session-at, as DevHub's rewind of a Claude session does), it plays
 # FAKE_AGENT_REWIND_SCRIPT instead, which must then be set. Started with
 # --resume and no --resume-session-at while FAKE_AGENT_RESUME_SCRIPT is set (as
-# DevHub's /resume of a Claude session does), it plays that one.
+# DevHub's /resume of a Claude session does), it plays that one. An argv that
+# picks a session twice (two --resume, or two --resume-session-at) is said on
+# stderr and exits 2: which one a real CLI takes is nobody's to rely on.
 request_id() { printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p'; }
 script=${FAKE_AGENT_SCRIPT:-}
 cuts=
 resumes=
 for arg in "$@"; do
   case "$arg" in
-    --resume-session-at) cuts=1 ;;
-    --resume) resumes=1 ;;
+    --resume-session-at) cuts=$cuts. ;;
+    --resume) resumes=$resumes. ;;
   esac
 done
+if [ "${#cuts}" -gt 1 ] || [ "${#resumes}" -gt 1 ]; then
+  echo "fake-agent: started on two sessions at once: $*" >&2
+  exit 2
+fi
 if [ -n "$cuts" ] && [ -n "$script" ]; then
   script=${FAKE_AGENT_REWIND_SCRIPT:?fake-agent: started again to take a turn back, but FAKE_AGENT_REWIND_SCRIPT is not set}
 elif [ -n "$resumes" ] && [ -n "${FAKE_AGENT_RESUME_SCRIPT:-}" ]; then

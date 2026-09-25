@@ -111,6 +111,56 @@ export function resumeArgs(
 	}
 }
 
+/**
+ * The CLI's argv for a session: `args` with every argument that picks a
+ * session taken out, and `session` — the arguments that pick this one
+ * (`resumeArgs`, a rewind's cut), or none for a new session — at the end.
+ *
+ * The one place a session is put into an argv: a launch that resumes, a
+ * continue, a `/resume` and a rewind all compose theirs here, so an argv
+ * that already picked a session (a resumed launch's record, a profile's own
+ * `--continue`) never carries two for the CLI to choose between.
+ */
+export function withSession(
+	kind: AgentProfile["kind"],
+	args: readonly string[],
+	session: readonly string[],
+): readonly string[] {
+	const kept: string[] = [];
+	for (let at = 0; at < args.length; at += 1) {
+		const taken = sessionArgumentsAt(kind, args, at);
+		if (taken === 0) kept.push(args[at]!);
+		else at += taken - 1;
+	}
+	return [...kept, ...session];
+}
+
+/** How many of `args` from `at` on pick a session: 0 when `args[at]` does not. */
+function sessionArgumentsAt(
+	kind: AgentProfile["kind"],
+	args: readonly string[],
+	at: number,
+): number {
+	const arg = args[at]!;
+	const next = args[at + 1];
+	const withValue = next !== undefined && !next.startsWith("-") ? 2 : 1;
+	switch (kind) {
+		case "claude":
+			if (["--continue", "-c", "--resume-drops-turn"].includes(arg)) return 1;
+			if (arg.startsWith("--resume=") || arg.startsWith("--resume-session-at="))
+				return 1;
+			if (arg === "--resume" || arg === "-r") return withValue;
+			if (arg === "--resume-session-at") return 2;
+			return 0;
+		case "codex":
+			if (arg !== "resume") return 0;
+			if (next === "--last") return 2;
+			return withValue;
+		default:
+			throw new Error(`a ${kind} Agent has no sessions to pick`);
+	}
+}
+
 /** The session `resumeArgs` put at the end of `args`, if it put one there. */
 export function resumedSession(
 	kind: AgentProfile["kind"],

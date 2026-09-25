@@ -13,8 +13,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { rewindTargets, type Transcript } from "../../../model/conversation.js";
 import { LocalRuntime } from "../../runtime/local.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
-import { AgentConversation } from "./conversation.js";
-import { agentStateDirectory, hostSessionCommand } from "./hostCommand.js";
+import { AgentConversation, hostOn } from "./conversation.js";
+import {
+	agentStateDirectory,
+	guiAgentCli,
+	hostSessionCommand,
+} from "./hostCommand.js";
 import { HostLink } from "./hostLink.js";
 
 /** The gitignored scratch root; never the OS temp directory. */
@@ -63,11 +67,15 @@ describe("rewinding through a real host", () => {
 
 	it("starts the fake Claude again at the cut before an earlier message, drops every turn from it on, and a new DevHub replays to the same", async () => {
 		const directory = stateDirectory();
-		const command = hostSessionCommand(directory, {
-			file: "/bin/sh",
-			args: [FAKE_AGENT],
-			env: {},
-		});
+		// A resumed launch, as Continue in GUI makes: its record already picks
+		// a session, which the rewind's must replace rather than follow.
+		const profile = {
+			kind: "claude",
+			command: "/bin/sh",
+			args: [FAKE_AGENT, "--resume", "the launch's session"],
+			env: new Map<string, string>(),
+		} as const;
+		const command = hostSessionCommand(directory, guiAgentCli(profile));
 		const host = spawn(command.file, [...command.args], {
 			stdio: "ignore",
 			detached: true,
@@ -109,8 +117,10 @@ describe("rewinding through a real host", () => {
 		const idle = (transcript: Transcript) =>
 			transcript.state.phase === "ready" && transcript.state.turn === "none";
 
+		const hosted = (link: HostLink) =>
+			hostOn(link, (session) => guiAgentCli(profile, session));
 		const conversation = new AgentConversation(
-			new HostLink(new LocalRuntime(), directory),
+			hosted(new HostLink(new LocalRuntime(), directory)),
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
 		);
@@ -150,7 +160,7 @@ describe("rewinding through a real host", () => {
 		const link = new HostLink(new LocalRuntime(), directory);
 		const written = (await link.sentLog()).length;
 		const again = new AgentConversation(
-			link,
+			hosted(link),
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
 		);

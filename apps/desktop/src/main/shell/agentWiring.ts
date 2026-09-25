@@ -20,14 +20,15 @@ import { AgentInjectionQueue } from "../agent/injection.js";
 import { AgentScreenFreshness } from "../agent/screenFreshness.js";
 import { AgentSessions } from "../agent/sessions.js";
 import { ClaudeAdapter } from "../agent/conversation/claude/adapter.js";
-import { claudeStructuredCommand } from "../agent/conversation/claude/argv.js";
 import { CodexAdapter } from "../agent/conversation/codex/adapter.js";
 import {
 	AgentConversation,
+	hostOn,
 	openedLater,
 } from "../agent/conversation/conversation.js";
 import {
 	agentStateDirectory,
+	guiAgentCli,
 	hostSessionCommand,
 	seedJournal,
 } from "../agent/conversation/hostCommand.js";
@@ -176,12 +177,14 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			agentId,
 			(publish) =>
 				new AgentConversation(
-					openedLater(
-						async () =>
+					openedLater(async () =>
+						hostOn(
 							new HostLink(
 								options.machineRuntime(machine),
 								await stateDirectory(machine, agentId),
 							),
+							(session) => guiAgentCli(profile, session),
+						),
 					),
 					adapterFor(profile, {
 						bootId,
@@ -407,10 +410,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							await claudeHistory(runtime, profile, workspaceRoot, resumed),
 						);
 					}
-					command = hostSessionCommand(
-						directory,
-						structuredCommand(profile.kind, cli),
-					);
+					command = hostSessionCommand(directory, guiAgentCli(profile));
 				}
 				await sessions.launch({
 					machine,
@@ -697,26 +697,6 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	};
 
 	return { sessions, conversations, terminalSession: terminalSessionOf };
-}
-
-/**
- * The command line that puts a CLI into the structured mode its adapter reads.
- *
- * Only Claude and Codex can be GUI Agents — the domain refuses any other kind
- * a GUI presentation — so reaching another kind here is that rule broken.
- */
-function structuredCommand(
-	kind: AgentProfile["kind"],
-	cli: AgentSessionCommand,
-): AgentSessionCommand {
-	switch (kind) {
-		case "claude":
-			return claudeStructuredCommand(cli);
-		case "codex":
-			return { ...cli, args: codexStructuredArgs(cli.args).args };
-		default:
-			throw new Error(`a ${kind} Agent cannot be a GUI Agent`);
-	}
 }
 
 function adapterFor(

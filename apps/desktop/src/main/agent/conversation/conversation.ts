@@ -90,6 +90,7 @@ import { CancellationToken } from "../../terminal/ports.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
+	type RestartedCli,
 	type SentRecord,
 } from "./hostLink.js";
 import {
@@ -108,9 +109,41 @@ export interface ConversationHost {
 		cancel: CancellationToken,
 	): AsyncIterable<JournalLine>;
 	write(line: string, afterOffset: number): Promise<void>;
-	/** Have the host start the CLI again with `args` added, the lines of `mark` in the journal between the two. */
-	restart(args: readonly string[], mark: readonly string[]): Promise<void>;
+	/**
+	 * Have the host start the CLI again on the session `session` picks (the
+	 * arguments that pick it; none, a new session), the lines of `mark` in the
+	 * journal between the two.
+	 */
+	restart(session: readonly string[], mark: readonly string[]): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
+}
+
+/** What a conversation's host is made of: `HostLink`, whose restart takes the CLI whole. */
+export interface HostOnLink {
+	lines(
+		fromOffset: number,
+		cancel: CancellationToken,
+	): AsyncIterable<JournalLine>;
+	write(line: string, afterOffset: number): Promise<void>;
+	restart(cli: RestartedCli, mark: readonly string[]): Promise<void>;
+	sentLog(): Promise<readonly SentRecord[]>;
+}
+
+/**
+ * The conversation's host on `link`, whose CLI is started again as
+ * `cliOn(session)`: the CLI whole, on the session a rewind or a `/resume`
+ * picks, composed as the launch's was (`guiAgentCli`).
+ */
+export function hostOn(
+	link: HostOnLink,
+	cliOn: (session: readonly string[]) => RestartedCli,
+): ConversationHost {
+	return {
+		lines: (fromOffset, cancel) => link.lines(fromOffset, cancel),
+		write: (line, afterOffset) => link.write(line, afterOffset),
+		restart: (session, mark) => link.restart(cliOn(session), mark),
+		sentLog: () => link.sentLog(),
+	};
 }
 
 /**
@@ -496,7 +529,7 @@ export class AgentConversation {
 		});
 		try {
 			if (plan.kind === "write") await this.#write(plan.lines);
-			else await this.#host.restart(plan.args, plan.mark);
+			else await this.#host.restart(plan.session, plan.mark);
 		} catch (error: unknown) {
 			this.#rewind = undefined;
 			throw error;

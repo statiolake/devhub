@@ -1850,7 +1850,7 @@ describe("taking back the last turn", () => {
 		const plan = adapter.rewind(entryId("user:u2"));
 		expect(plan).toEqual({
 			kind: "restart",
-			args: ["--resume", SESSION, "--resume-session-at", "a1"],
+			session: ["--resume", SESSION, "--resume-session-at", "a1"],
 			mark: [json({ type: "devhub_rewind", message: "user:u2" })],
 		});
 		// Nothing changes until the host says the CLI was started again.
@@ -1892,7 +1892,7 @@ describe("taking back the last turn", () => {
 		adapter.received(result());
 		const again = adapter.rewind(entryId("user:u3"));
 		expect(again).toMatchObject({
-			args: ["--resume", SESSION, "--resume-session-at", "a1"],
+			session: ["--resume", SESSION, "--resume-session-at", "a1"],
 		});
 	});
 
@@ -1904,7 +1904,7 @@ describe("taking back the last turn", () => {
 		adapter.received(result());
 		expect(adapter.rewind(entryId("user:u1"))).toMatchObject({
 			kind: "restart",
-			args: [],
+			session: [],
 		});
 	});
 
@@ -1925,7 +1925,7 @@ describe("taking back the last turn", () => {
 		const last = (JSON.parse(history.at(-1)!) as { record: { uuid: string } })
 			.record.uuid;
 		expect(adapter.rewind(entryId("user:u9"))).toMatchObject({
-			args: ["--resume", SESSION, "--resume-session-at", last],
+			session: ["--resume", SESSION, "--resume-session-at", last],
 		});
 	});
 
@@ -1945,7 +1945,7 @@ describe("taking back the last turn", () => {
 		]);
 		const plan = adapter.rewind(entryId("user:u1"));
 		// The first message has nothing before it: a fresh session.
-		expect(plan).toMatchObject({ kind: "restart", args: [] });
+		expect(plan).toMatchObject({ kind: "restart", session: [] });
 		if (plan.kind !== "restart") throw new Error("not a restart");
 		adapter.received(plan.mark[0]!);
 		expect(adapter.transcript.entries).toEqual([]);
@@ -1956,7 +1956,7 @@ describe("taking back the last turn", () => {
 		three.received(result());
 		const cut = three.rewind(entryId("user:u2"));
 		expect(cut).toMatchObject({
-			args: ["--resume", SESSION, "--resume-session-at", "a1"],
+			session: ["--resume", SESSION, "--resume-session-at", "a1"],
 		});
 		if (cut.kind !== "restart") throw new Error("not a restart");
 		three.received(cut.mark[0]!);
@@ -2054,7 +2054,7 @@ describe("going on with another session (/resume)", () => {
 		const plan = adapter.resumeSession(OTHER, history);
 		expect(plan).toEqual({
 			kind: "restart",
-			args: ["--resume", OTHER],
+			session: ["--resume", OTHER],
 			mark: [json({ type: "devhub_resume", session: OTHER }), ...history],
 		});
 		// Nothing changes until the host puts the mark in the journal.

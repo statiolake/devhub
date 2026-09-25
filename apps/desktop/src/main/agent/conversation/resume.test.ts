@@ -37,6 +37,7 @@ import {
 	terminalSession,
 	resumeArgs,
 	resumedSession,
+	withSession,
 	type SessionProfile,
 } from "./resume.js";
 
@@ -69,6 +70,59 @@ describe("the one spelling of a resume", () => {
 			args: ["-c", "a=b", "app-server"],
 			resumeThreadId: undefined,
 		});
+	});
+});
+
+describe("the CLI's argv for a session", () => {
+	it("replaces every argument that picks a session, rather than adding to them", () => {
+		expect(
+			withSession(
+				"claude",
+				["--model", "x", "--resume", "old", "--verbose"],
+				["--resume", "new"],
+			),
+		).toEqual(["--model", "x", "--verbose", "--resume", "new"]);
+		expect(
+			withSession(
+				"claude",
+				[
+					"--continue",
+					"-r",
+					"a",
+					"--resume=b",
+					"--resume-session-at",
+					"m1",
+					"--resume-session-at=m2",
+					"--resume-drops-turn",
+					"-c",
+					"--model",
+					"x",
+				],
+				["--resume", "s", "--resume-session-at", "m3"],
+			),
+		).toEqual(["--model", "x", "--resume", "s", "--resume-session-at", "m3"]);
+		expect(
+			withSession("codex", ["-c", "a=b", "resume", "old"], ["resume", "new"]),
+		).toEqual(["-c", "a=b", "resume", "new"]);
+		expect(
+			withSession("codex", ["resume", "--last", "-m", "x"], ["resume", "t"]),
+		).toEqual(["-m", "x", "resume", "t"]);
+	});
+
+	it("starts a new session when nothing picks one", () => {
+		expect(
+			withSession("claude", ["--resume", "old", "--model", "x"], []),
+		).toEqual(["--model", "x"]);
+	});
+
+	it("is what a launch resuming a session runs, which reads its session back", () => {
+		const args = withSession(
+			"claude",
+			["--resume", "old"],
+			resumeArgs("claude", "new"),
+		);
+		expect(args).toEqual(["--resume", "new"]);
+		expect(resumedSession("claude", args)).toBe("new");
 	});
 });
 

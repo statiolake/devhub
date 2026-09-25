@@ -124,11 +124,21 @@ The session's command is not the CLI itself but a small POSIX `sh` script, the
   it ends.
 
 The CLI runs beside the host rather than in its place, and its pid is in
-`cli`. To rewind a Claude conversation, DevHub writes `again` (the arguments
-to add) and `again.mark` (the line for the journal), then stops the CLI. The
+`cli`. To rewind a Claude conversation, DevHub writes `again` (the CLI's
+whole argv for the new start, which replaces the one the host was started
+with) and `again.mark` (the line for the journal), then stops the CLI. The
 host finds `again`, appends the mark to `out` and starts the CLI again. A host
-started by a DevHub from before this change has no `cli`, and the rewind is
-refused.
+started by a DevHub from before restarts has no `cli`, and one from before the
+argv was given whole has no `version`; either refuses the rewind, and the
+Agent has to be stopped and started again.
+
+Every argv that picks a session is composed by one function, `withSession`
+(`resume.ts`): a resumed launch, Continue in GUI or in terminal, `/resume` and
+a rewind take out every argument already picking one (`--resume`, `-r`,
+`--continue`, `-c`, `--resume-session-at`, `--resume-drops-turn`, Codex's
+`resume <id>` or `resume --last`) and put their own at the end. After a
+resumed launch the CLI is never started on two sessions at once, and a rewind
+to the first message really starts a new session.
 
 Everything DevHub writes goes through the FIFO and is also appended to
 `in.log`, prefixed with the journal offset it followed. The files live in
@@ -476,8 +486,8 @@ whole and sent, or picked from the completions, it is DevHub's command and
 nothing is sent to the CLI. It is refused while a turn runs or a request is
 open.
 
-- **Claude**: the host starts the CLI again with `--resume <id>` added (the
-  mechanism a rewind uses). The mark it puts in the journal between the two
+- **Claude**: the host starts the CLI again on `--resume <id>`, in place of
+  whatever session its launch picked (the mechanism a rewind uses). The mark it puts in the journal between the two
   CLIs is `devhub_resume` followed by the session's past as `devhub_history`
   lines, read from its file before the CLI is touched, so a session that
   cannot be read back is refused and the running one goes on. The adapter

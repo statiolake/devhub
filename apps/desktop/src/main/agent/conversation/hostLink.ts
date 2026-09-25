@@ -53,6 +53,12 @@ export type HostLinkFailureCode =
 	/** The host's files say something the contract does not allow. */
 	| "unreadable";
 
+/** The CLI a host is started again as: the whole of its argv. */
+export interface RestartedCli {
+	readonly file: string;
+	readonly args: readonly string[];
+}
+
 export class HostLinkFailure extends Error {
 	constructor(
 		readonly code: HostLinkFailureCode,
@@ -300,15 +306,17 @@ export class HostLink {
 	}
 
 	/**
-	 * Have the host start its CLI again, with `args` added to its argv for
-	 * that start, and the lines of `mark` in the journal between the two CLIs'
-	 * output (`RESTART_SCRIPT`). Resolves once the old CLI has been told to
+	 * Have the host start its CLI again as `cli` — its whole argv, in place of
+	 * the one the host was started with (its environment stays) — and the
+	 * lines of `mark` in the journal between the two CLIs' output
+	 * (`RESTART_SCRIPT`). Resolves once the old CLI has been told to
 	 * stop; the mark in the journal is how the caller learns the new one
 	 * started. In order with the writes, like one of them.
 	 */
-	restart(args: readonly string[], mark: readonly string[]): Promise<void> {
+	restart(cli: RestartedCli, mark: readonly string[]): Promise<void> {
 		if (mark.length === 0) throw new Error("a restart's mark has no line");
-		for (const each of [...mark, ...args]) {
+		const argv = [cli.file, ...cli.args];
+		for (const each of [...mark, ...argv]) {
 			if (each.includes("\n")) {
 				throw new Error(
 					"a restart's mark lines and arguments must not contain a newline",
@@ -319,7 +327,7 @@ export class HostLink {
 			this.#input(
 				RESTART_SCRIPT,
 				"devhub-agent-restart",
-				[String(args.length), ...args, ...mark]
+				[String(argv.length), ...argv, ...mark]
 					.map((each) => `${each}\n`)
 					.join(""),
 				"did not start its CLI again",

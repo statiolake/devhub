@@ -78,7 +78,8 @@ export type RewindPlan =
 	| { readonly kind: "write"; readonly lines: readonly string[] }
 	| {
 			readonly kind: "restart";
-			readonly args: readonly string[];
+			/** The arguments that pick the session the CLI starts on (`withSession`); none, a new one. */
+			readonly session: readonly string[];
 			/** The lines, one at least, the host puts in the journal between the two CLIs. */
 			readonly mark: readonly string[];
 	  };

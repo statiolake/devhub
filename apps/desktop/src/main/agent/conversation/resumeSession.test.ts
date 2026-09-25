@@ -13,8 +13,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Transcript } from "../../../model/conversation.js";
 import { LocalRuntime } from "../../runtime/local.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
-import { AgentConversation } from "./conversation.js";
-import { agentStateDirectory, hostSessionCommand } from "./hostCommand.js";
+import { AgentConversation, hostOn } from "./conversation.js";
+import {
+	agentStateDirectory,
+	guiAgentCli,
+	hostSessionCommand,
+} from "./hostCommand.js";
 import { HostLink } from "./hostLink.js";
 import { claudeHistoryLines } from "./resume.js";
 
@@ -90,11 +94,15 @@ describe("/resume through a real host", () => {
 			"00000000-0000-4000-8000-0000000000e3",
 		);
 		mkdirSync(directory, { recursive: true });
-		const command = hostSessionCommand(directory, {
-			file: "/bin/sh",
+		const profile = {
+			kind: "claude",
+			command: "/bin/sh",
 			args: [FAKE_AGENT],
-			env: {},
-		});
+			env: new Map<string, string>(),
+		} as const;
+		const command = hostSessionCommand(directory, guiAgentCli(profile));
+		const hosted = (link: HostLink) =>
+			hostOn(link, (session) => guiAgentCli(profile, session));
 		const host = spawn(command.file, [...command.args], {
 			stdio: "ignore",
 			detached: true,
@@ -110,7 +118,7 @@ describe("/resume through a real host", () => {
 		hosts.push(host);
 
 		const conversation = new AgentConversation(
-			new HostLink(new LocalRuntime(), directory),
+			hosted(new HostLink(new LocalRuntime(), directory)),
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
 		);
@@ -158,7 +166,7 @@ describe("/resume through a real host", () => {
 		const link = new HostLink(new LocalRuntime(), directory);
 		const written = (await link.sentLog()).length;
 		const again = new AgentConversation(
-			link,
+			hosted(link),
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
 		);

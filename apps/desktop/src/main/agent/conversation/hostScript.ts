@@ -39,9 +39,14 @@
  *            host is ready when this exists.
  * - `cli`    the running CLI's pid, written (atomically) each time the host
  *            starts it. What DevHub stops to have the CLI started again.
+ * - `version` written before `pid`: `2`, a host whose `again` is
+ *            the CLI's whole argv. A host without it (an earlier DevHub's,
+ *            which added `again` to the argv it was started with) is refused
+ *            a restart rather than started on two sessions' arguments.
  * - `again`  written by DevHub (`RESTART_SCRIPT`) to have the CLI started
- *            again once it ends: the arguments to add to its argv for that
- *            start, one per line. With it, `again.mark`: the lines the host
+ *            again once it ends: the CLI's whole argv for that start, one
+ *            word per line, which replaces the one the host was started
+ *            with. With it, `again.mark`: the lines the host
  *            appends to `out` between the two CLIs' output, so the journal
  *            itself says where the one ended and the other began. The host
  *            removes both when it starts the CLI again.
@@ -68,9 +73,9 @@ export const HOST_NAME = "devhub-agent-host";
  * The CLI runs as an asynchronous command the host waits for, so that its pid
  * is known (`cli`) and DevHub can stop it to have it started again. It stays
  * in the host's process group, so tmux's hang-up on Stop reaches it as it
- * reached the CLI in the foreground. `again` takes its arguments as its own
- * positional parameters, which a function has: the CLI's argv as the host was
- * given it is the same for every start.
+ * reached the CLI in the foreground. `again` makes its own positional
+ * parameters, which a function has, the argv DevHub wrote: each start's argv
+ * is whole, and the one the host was started with is only the first's.
  */
 export const HOST_SCRIPT = `set -u
 D=$1
@@ -82,6 +87,7 @@ refuse() { say "$1"; ended host; exit 70; }
 : >>"$D/out" || refuse "cannot create the journal $D/out"
 mkfifo "$D/in" || refuse "cannot make the input pipe $D/in"
 command exec 3<>"$D/in" || refuse "cannot open the input pipe $D/in"
+printf '2\\n' >"$D/version" || refuse "cannot record the host's version in $D/version"
 { printf '%s\\n' "$$" >"$D/pid.new" && mv -f "$D/pid.new" "$D/pid"; } ||
   refuse "cannot record the host's pid in $D/pid"
 run() {
@@ -92,6 +98,7 @@ run() {
   wait "$c"
 }
 again() {
+  set --
   while IFS= read -r a; do set -- "$@" "$a"; done <"$D/again" ||
     refuse "cannot read the arguments to start the CLI again with from $D/again"
   cat "$D/again.mark" >>"$D/out" ||
@@ -102,7 +109,7 @@ again() {
 run "$@"
 s=$?
 while [ -f "$D/again" ]; do
-  again "$@"
+  again
   s=$?
 done
 ended "$s"
@@ -231,15 +238,16 @@ printf '%s\\n' "\${x#* }" >"$D/in"
 
 /**
  * Have the host start its CLI again. `$1` is the state directory; stdin is the
- * number of arguments to add to the CLI's argv, those arguments one per line,
- * and then the mark: every line left, for the journal. The arguments are read
+ * number of words in the CLI's whole argv for that start, those words one per
+ * line, and then the mark: every line left, for the journal. The arguments are read
  * a line at a time and the mark copied whole, because a mark can be long (a
  * resumed session's past). The CLI is sent SIGTERM; the host, finding `again`
  * when it ends, appends the mark to the journal and starts it again.
  *
  * A host from before restarts (no `cli`) is refused rather than left to end
- * the Agent when its CLI is stopped. Like `WRITE_SCRIPT`'s, no sentence here
- * may say "is not running".
+ * the Agent when its CLI is stopped, and one that would add the argv to its
+ * own (no `version`) rather than started on two sessions' arguments. Like
+ * `WRITE_SCRIPT`'s, no sentence here may say "is not running".
  */
 export const RESTART_SCRIPT = `set -u
 D=$1
@@ -248,6 +256,8 @@ if [ ! -f "$D/pid" ] || [ -f "$D/exit" ] || ! kill -0 "$(cat "$D/pid")" 2>/dev/n
 fi
 [ -f "$D/cli" ] ||
   { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before restarts" >&2; exit 1; }
+[ "$(cat "$D/version" 2>/dev/null)" = 2 ] ||
+  { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before a restart gave the CLI's whole argv. Stop the Agent and start it again" >&2; exit 1; }
 [ ! -f "$D/again" ] || { echo "the CLI in $D is already being started again" >&2; exit 1; }
 IFS= read -r n || { echo "the restart of $D carried nothing" >&2; exit 2; }
 : >"$D/again.new" || exit 1
