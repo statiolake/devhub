@@ -144,8 +144,6 @@ import {
 	requestedLocation,
 	whereRequested,
 	type RequestedWorkspaceLocation,
-	AppError,
-	AppErrorCode,
 	type AgentProfileResolution,
 	type IntentOutcome,
 	type OperationToken,
@@ -303,6 +301,7 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
+import { completionRefusalRoute } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
 	type SettingsUnavailableRuntimeWire,
@@ -2599,28 +2598,12 @@ export class AppController {
 			});
 			this.settle(id, outcome);
 		} catch (error) {
-			// A completion the coordinator refused is a real failure — an operation
-			// that no longer exists, a token that does not match — and it belongs on
-			// screen rather than in a log nobody reads.
-			//
-			// A *stale* completion is the one exception, and it is not an
-			// exception to the rule so much as a different fact: the operation it
-			// answers was already settled by something newer, on purpose. The
-			// reconciler supersedes its own rounds by design, and a person told
-			// "an operation went stale" every time DevHub asked the provider a
-			// fresher question learns nothing and stops reading the error area.
-			if (isUnknownOperation(error)) {
-				// A completion for an operation that was never started cannot be
-				// answered by anybody: there is no request waiting, no surface it
-				// belongs to, and no action to offer. It used to be published as an
-				// app-wide notice — through `errorWire`, so under whatever code that
-				// mapping happened to pick — from inside a loop, which is how one
-				// wiring bug became a sentence that flickered. It is a bug in
-				// DevHub's own flow and it stops the process.
-				crash(error);
-			} else if (!isStaleCompletion(error)) {
-				this.publishError(errorWire(error));
-			}
+			// Where the refusal goes is `completionRefusalRoute`'s decision, for
+			// every completion alike; the request waiting on it is refused either
+			// way.
+			const route = completionRefusalRoute(event, error);
+			if (route === "crash") crash(error);
+			if (route === "publish") this.publishError(errorWire(error));
 			this.reject(id, error);
 		}
 		this.drain();
@@ -6137,27 +6120,6 @@ export class AppController {
 	}
 
 	//#endregion
-}
-
-/** An answer to an operation something newer already replaced. */
-function isStaleCompletion(error: unknown): boolean {
-	return (
-		error instanceof AppError && error.code === AppErrorCode.StaleCompletion
-	);
-}
-
-/**
- * A completion for an operation the coordinator never started.
- *
- * Told apart from a *stale* one, which is ordinary: a stale completion answers
- * an operation something newer already settled, on purpose. An unknown one has
- * no such story — it means main invented a token, or completed one twice, and
- * both are bugs in main.
- */
-function isUnknownOperation(error: unknown): boolean {
-	return (
-		error instanceof AppError && error.code === AppErrorCode.UnknownOperation
-	);
 }
 
 /** How a `--goto` position reads back in the sentence the command prints. */
