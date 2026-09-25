@@ -1424,6 +1424,17 @@
   border-top: 1px solid var(--line-soft);
 }
 
+/* Filling the pane, it lines up with the centred transcript and composer
+   rather than spanning the pane. */
+.conversation-subagent-pane[data-place="maximized"]
+  > .conversation-subagent-message {
+  width: 100%;
+  max-width: calc(var(--conversation-measure) + 2 * var(--conversation-gutter));
+  box-sizing: border-box;
+  padding: var(--space-2) var(--conversation-gutter);
+  margin: 0 auto;
+}
+
 .conversation-subagent-message-input {
   flex: 1;
   min-width: 0;
