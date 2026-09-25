@@ -224,6 +224,18 @@ function portFor(kind: OperationKind): PortName {
   }
 }
 
+/** A stop or termination the Agent port refused, as the request reads it. */
+function stopRefusal(
+  token: OperationToken,
+  result: Extract<AgentStopResult, { kind: "failed" }>,
+): AppError {
+  return new AppError(AppErrorCode.PortUnavailable)
+    .withPort("agent")
+    .withAgentFailure(result.code)
+    .withDetail(result.detail)
+    .withOperation(token.operationId);
+}
+
 type OperationTarget =
   | {
       readonly kind: "location";
@@ -1639,11 +1651,7 @@ export class AppCoordinator {
     const snapshot = this.snapshot();
     this.emit({ kind: "operation_completed", token });
     if (result.kind === "failed") {
-      const error = new AppError(AppErrorCode.PortUnavailable)
-        .withPort("agent")
-        .withOperation(token.operationId);
-      this.emit({ kind: "error", error });
-      throw error;
+      throw stopRefusal(token, result);
     }
     return { kind: "noop", snapshot };
   }
@@ -1934,12 +1942,17 @@ export class AppCoordinator {
       this.model.agentExited(agentId, this.drawn());
       this.invalidateReconciliationAfterAgentRemoval(agentId);
     } else {
-      this.model.markAgentStopFailed(agentId, result.diagnostic);
+      // Still there and still stoppable: the row says so, and the request
+      // is refused with what the port said.
+      this.model.markAgentStopFailed(agentId, "cleanup_failed");
     }
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });
     this.queuePersist(token.operationId);
+    if (result.kind === "failed") {
+      throw stopRefusal(token, result);
+    }
     return { kind: "updated", snapshot };
   }
 

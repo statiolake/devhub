@@ -1281,7 +1281,7 @@ describe("stopping an agent", () => {
     expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 
-  it("keeps a failed stop retryable", () => {
+  it("keeps a failed stop retryable, and refuses it in the port's own words", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
     driver.dispatch({
@@ -1306,16 +1306,86 @@ describe("stopping an agent", () => {
       .drainEffects()
       .find((effect) => effect.kind === "stop_agent");
     if (!stop || stop.kind !== "stop_agent") throw new Error("unexpected");
-    driver.accept({
-      type: "agent_stop_completed",
-      token: stop.token,
-      agentId: AG_A,
-      result: { kind: "failed", diagnostic: "cleanup_failed" },
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "agent_stop_completed",
+        token: stop.token,
+        agentId: AG_A,
+        result: {
+          kind: "failed",
+          code: "tmux_command_timed_out",
+          detail: "tmux did not answer kill-session within 5 seconds.",
+        },
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(errorWire(refusal)).toMatchObject({
+      code: "tmux_command_timed_out",
+      detail: "tmux did not answer kill-session within 5 seconds.",
     });
     const agent = driver.coordinator.snapshot().workspaces[1].agents[0];
     expect(agent.controlState).toEqual({
       kind: "stop-failed",
       diagnostic: "cleanup_failed",
+    });
+  });
+});
+
+describe("an Agent the model could not take after its launch", () => {
+  it("is terminated, and a termination that fails says why in the port's own words", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    // A second launch handed the same id: the model refuses to add it, so
+    // the session the launch started is terminated.
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    let terminate: Effect | undefined;
+    for (let round = 0; round < 8 && !terminate; round += 1) {
+      for (const effect of driver.drainEffects()) {
+        if (effect.kind === "terminate_agent") {
+          terminate = effect;
+          continue;
+        }
+        if (effect.kind === "launch_agent") {
+          // The model refuses to add it; the termination it asks for is next.
+          expect(() => driver.answer(effect)).toThrow(AppError);
+        } else {
+          driver.answer(effect);
+        }
+      }
+    }
+    if (terminate?.kind !== "terminate_agent") throw new Error("unexpected");
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "agent_termination_completed",
+        token: terminate.token,
+        agentId: AG_A,
+        result: {
+          kind: "failed",
+          code: "tmux_command_failed",
+          detail: "tmux kill-session exited with status 1.",
+        },
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(errorWire(refusal)).toMatchObject({
+      code: "tmux_command_failed",
+      detail: "tmux kill-session exited with status 1.",
     });
   });
 });

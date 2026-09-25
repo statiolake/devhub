@@ -756,9 +756,9 @@ async function terminate(
 	try {
 		await stopAgent(machine, agentId);
 		return { kind: "stopped" };
-	} catch {
+	} catch (error: unknown) {
 		// A stop that did not stop leaves the Agent retryable rather than
-		// pretending it is gone.
-		return { kind: "failed", diagnostic: "cleanup_failed" };
+		// pretending it is gone, and says what the port said.
+		return { kind: "failed", ...portRefusal(error) };
 	}
 }

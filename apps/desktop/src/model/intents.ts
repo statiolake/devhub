@@ -532,9 +532,21 @@ export interface IntentEnvelope {
   readonly intent: UserIntent;
 }
 
+/**
+ * A stop or a termination, as the Agent port answered it.
+ *
+ * A failure is the same shape as `AgentLaunchResult`'s — `portRefusal`'s code
+ * and the port's own sentence — because it is the same port refusing the same
+ * kind of call. It used to be `cleanup_failed` alone, and the person read
+ * "the agent runtime is unavailable" about a tmux that had answered.
+ */
 export type AgentStopResult =
   | { readonly kind: "stopped" }
-  | { readonly kind: "failed"; readonly diagnostic: DiagnosticCode };
+  | {
+      readonly kind: "failed";
+      readonly code: AgentFailureCode;
+      readonly detail?: string;
+    };
 
 /**
  * A profile looked up for one launch, on the machine its Agent would run on.
