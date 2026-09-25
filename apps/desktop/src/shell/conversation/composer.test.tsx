@@ -516,6 +516,32 @@ describe("the header", () => {
     ).toBe("5-hour limit 20%\n7-day limit 80%");
   });
 
+  it("says the day of a reset that is not today, as the Sidebar's usage tooltip does", () => {
+    const later = Date.now() + 3 * 24 * 60 * 60 * 1000;
+    draw(
+      withSession([
+        {
+          type: "usage",
+          usage: {
+            inputTokens: undefined,
+            outputTokens: undefined,
+            cachedInputTokens: undefined,
+            contextTokens: undefined,
+            contextWindow: undefined,
+            costUsd: undefined,
+            rateLimits: [{ window: "7-day", usedPercent: 71, resetsAt: later }],
+          },
+        },
+      ]),
+    );
+    const day = new Date(later).toLocaleDateString(undefined, {
+      weekday: "short",
+    });
+    expect(screen.getByLabelText("Usage")).toHaveTextContent(
+      `7-day limit 71%, resets ${day} `,
+    );
+  });
+
   it("has no Continue in terminal of its own: that is the pane's floating button", () => {
     draw(withSession());
     expect(

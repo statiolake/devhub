@@ -16,6 +16,7 @@
 
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
 import { mostUsedRateLimit } from "../../../model/conversation";
+import { resetTime } from "../../resetTime";
 
 type Window = NonNullable<UsageLimitsWire["clis"][number]["windows"]>[number];
 
@@ -93,22 +94,10 @@ function resetLine(window: Window, now: number): TooltipLineWire {
   if (window.resetsAt === undefined) {
     return { text: "Reset time not reported", style: "muted" };
   }
-  const at = when(window.resetsAt, now);
+  const at = resetTime(window.resetsAt, now);
   // A reading from before its window reset is history: the number above is
   // what was used then, and nothing newer has come in.
   return window.resetsAt <= now
     ? { text: `Reset ${at}; nothing reported since`, style: "note" }
     : { text: `Resets ${at}`, style: "muted" };
-}
-
-/** `14:30` today, `Mon 14:30` another day. */
-function when(epochMs: number, now: number): string {
-  const date = new Date(epochMs);
-  const time = date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return new Date(now).toDateString() === date.toDateString()
-    ? time
-    : `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
 }

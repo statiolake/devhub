@@ -11,18 +11,12 @@ import {
   type Transcript,
   type Usage,
 } from "../../model/conversation";
+import { resetTime } from "../resetTime";
 
 function tokens(count: number): string {
   if (count < 1000) return `${count}`;
   if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
   return `${(count / 1_000_000).toFixed(1)}M`;
-}
-
-function clock(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 /** How full the context window is, when the CLI has said: 0–100, or undefined. */
@@ -47,7 +41,7 @@ function limitReadout(limit: RateLimit): string {
     limit.usedPercent === undefined ? "?" : Math.round(limit.usedPercent)
   }%`;
   return limit.resetsAt !== undefined
-    ? `${used}, resets ${clock(limit.resetsAt)}`
+    ? `${used}, resets ${resetTime(limit.resetsAt, Date.now())}`
     : used;
 }
 
