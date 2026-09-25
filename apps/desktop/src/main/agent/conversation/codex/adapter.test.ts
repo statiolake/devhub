@@ -16,6 +16,7 @@ import {
 	childrenOf,
 	conversationStatus,
 	entryId,
+	rewindTargets,
 	type ConversationEvent,
 	type PendingRequest,
 	type Transcript,
@@ -555,8 +556,7 @@ describe("a turn", () => {
 		const harness = ready();
 		harness.command({ kind: "send", text: "go", origin: "person" });
 		const lines = fixture("turn.handwritten.ndjson");
-		harness.receive(lines[0]!);
-		harness.receive(lines[1]!);
+		for (const line of lines.slice(0, 4)) harness.receive(line);
 		harness.command({
 			kind: "send",
 			text: "also check git",
@@ -591,6 +591,8 @@ describe("a turn", () => {
 		expect(harness.entry(`${MAIN}/item-steer`)).toMatchObject({
 			kind: "user",
 			origin: "injection",
+			// Taken into turn-1, which its first message starts: no place to cut.
+			rewindable: false,
 		});
 	});
 
@@ -744,6 +746,69 @@ describe("subagents", () => {
 		expect(harness.entry(`${CHILD}/child-say`)).toMatchObject({
 			parent: `${MAIN}/item-spawn`,
 		});
+	});
+
+	it("takes the person's messages when app-server says its thread does, steered into its turn or starting one", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		const lines = fixture("subagent.handwritten.ndjson").map((line) =>
+			// The fixture's child thread, as app-server prints one that takes direct input.
+			line.replace(
+				'"parentThreadId":"00000000-0000-7000-8000-00000000000a",',
+				'"parentThreadId":"00000000-0000-7000-8000-00000000000a","canAcceptDirectInput":true,',
+			),
+		);
+		const childTurnStarted = lines.findIndex(
+			(line) => line.includes('"turn/started"') && line.includes(CHILD),
+		);
+		for (const line of lines.slice(0, childTurnStarted + 1))
+			harness.receive(line);
+		expect(harness.entry(`${MAIN}/item-spawn`)).toMatchObject({
+			spawns: { takesMessages: true },
+		});
+		harness.command({
+			kind: "instruct",
+			subagent: entryId(`${MAIN}/item-spawn`),
+			text: "look in lib/ too",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/steer",
+			params: {
+				threadId: CHILD,
+				input: [{ type: "text", text: "look in lib/ too", text_elements: [] }],
+				expectedTurnId: "child-turn-1",
+			},
+		});
+		for (const line of lines.slice(childTurnStarted + 1)) harness.receive(line);
+		harness.command({
+			kind: "instruct",
+			subagent: entryId(`${MAIN}/item-spawn`),
+			text: "now summarize",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/start",
+			params: {
+				threadId: CHILD,
+				input: [{ type: "text", text: "now summarize", text_elements: [] }],
+			},
+		});
+	});
+
+	it("takes none when app-server does not say its thread does", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		for (const line of fixture("subagent.handwritten.ndjson"))
+			harness.receive(line);
+		expect(harness.entry(`${MAIN}/item-spawn`)).toMatchObject({
+			spawns: { takesMessages: false },
+		});
+		expect(() =>
+			harness.command({
+				kind: "instruct",
+				subagent: entryId(`${MAIN}/item-spawn`),
+				text: "hello",
+			}),
+		).toThrow(/started no subagent thread that takes the person's messages/);
 	});
 
 	it("shows an item from a thread no call is known to have started, whole, when it completes", () => {
@@ -1267,11 +1332,65 @@ describe("taking back the last turn", () => {
 		);
 	});
 
-	it("refuses a message that is not the person's last one", () => {
+	it("refuses a message that is not a rewind target", () => {
 		const harness = oneTurn();
 		expect(() => harness.adapter.rewind(entryId(`${MAIN}/item-say`))).toThrow(
-			/is not the person's last message/,
+			/is not a message the conversation can be rewound to now/,
 		);
+	});
+
+	it("reverts to before an earlier turn, and every turn from it on goes", () => {
+		const harness = oneTurn();
+		harness.command({ kind: "send", text: "more", origin: "person" });
+		const turn2 = {
+			id: "turn-2",
+			items: [],
+			itemsView: "notLoaded",
+			status: "inProgress",
+			error: null,
+			startedAt: 1790000010,
+			completedAt: null,
+			durationMs: null,
+		};
+		harness.receive({ id: 5, result: { turn: turn2 } });
+		harness.receive({
+			method: "turn/started",
+			params: { threadId: MAIN, turn: turn2 },
+		});
+		harness.receive({
+			method: "item/completed",
+			params: {
+				threadId: MAIN,
+				turnId: "turn-2",
+				completedAtMs: 0,
+				item: {
+					type: "userMessage",
+					id: "item-more",
+					clientId: "devhub-person-1",
+					content: [{ type: "text", text: "more", text_elements: [] }],
+				},
+			},
+		});
+		harness.receive({
+			method: "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: { ...turn2, status: "completed", completedAt: 1790000011 },
+			},
+		});
+		expect([...rewindTargets(harness.transcript)]).toEqual([
+			USER,
+			`${MAIN}/item-more`,
+		]);
+		harness.rewind(USER);
+		expect(harness.lastWrite()).toEqual({
+			id: 6,
+			method: "thread/revert",
+			params: { threadId: MAIN, beforeTurnId: "turn-1" },
+		});
+		harness.receive({ ...REVERTED, id: 6 });
+		expect(harness.transcript.entries).toEqual([]);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
 
 	it("replays to the same rewound transcript and writes nothing", () => {

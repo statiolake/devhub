@@ -15,7 +15,10 @@ import {
 	type ConversationCommandWire,
 	type ConversationEventListener,
 } from "../ipc/conversation.js";
-import type { ConversationEvent, EditOutcome } from "../model/conversation.js";
+import type {
+	ConversationEvent,
+	RewindOutcome,
+} from "../model/conversation.js";
 
 const listeners = new Map<string, ConversationEventListener>();
 
@@ -58,13 +61,20 @@ export const conversationApi: ConversationApi = {
 		await ipcRenderer.invoke(CONVERSATION_CHANNELS.detach, agentId);
 	},
 	send: (agentId, text) => command(agentId, { kind: "send", text }),
-	editLastMessage: (agentId, message, text) =>
+	editPending: (agentId, pending, text) =>
+		command(agentId, { kind: "edit-pending", pending, text }),
+	removePending: (agentId, pending) =>
+		command(agentId, { kind: "remove-pending", pending }),
+	sendPendingNow: (agentId, pending) =>
+		command(agentId, { kind: "send-pending-now", pending }),
+	instruct: (agentId, subagent, text) =>
+		command(agentId, { kind: "instruct", subagent, text }),
+	rewind: (agentId, message) =>
 		ipcRenderer.invoke(
-			CONVERSATION_CHANNELS.editLastMessage,
+			CONVERSATION_CHANNELS.rewind,
 			agentId,
 			message,
-			text,
-		) as Promise<EditOutcome>,
+		) as Promise<RewindOutcome>,
 	continueInTerminal: (agentId) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.continueInTerminal,

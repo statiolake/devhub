@@ -82,6 +82,14 @@ export interface UserEntry {
   readonly images: readonly ImageRef[];
   /** Who made the Agent say it: a person at the composer, or a template injection. */
   readonly origin: "person" | "injection";
+  /**
+   * Whether the CLI can cut the conversation right before this message, when
+   * its session can take turns back at all (`SessionFacts.canRewind`). The
+   * adapter says: a Codex thread is cut by turns, so only the message that
+   * started a turn is a place to cut; a Claude session is cut after any
+   * message it holds.
+   */
+  readonly rewindable: boolean;
 }
 
 export interface AssistantEntry {
@@ -170,6 +178,12 @@ export interface SubagentInfo {
   readonly prompt: string;
   readonly model: string | undefined;
   readonly state: "running" | "completed" | "failed" | "unknown";
+  /**
+   * Whether the person can say something to this subagent directly. The
+   * adapter says, from what its CLI offers: a message then goes to the
+   * subagent, not to the Agent that started it.
+   */
+  readonly takesMessages: boolean;
 }
 
 export interface PendingRequest {
@@ -250,9 +264,9 @@ export interface SessionFacts {
   /** The Agent's own slash commands. */
   readonly commands: readonly SlashCommand[];
   /**
-   * Whether this session can take back its last turn, so the person's last
-   * message can be edited and sent again. The adapter says, from what the CLI
-   * told it; the page offers Edit only when it is true.
+   * Whether this session can take turns back, so the conversation can be
+   * rewound to before one of the person's messages (`rewindTargets`). The
+   * adapter says, from what the CLI told it.
    */
   readonly canRewind: boolean;
 }
@@ -319,8 +333,8 @@ export type ConversationState =
   /** Attaching to the host, handshaking, or replaying the journal. */
   | { readonly phase: "connecting" }
   /**
-   * `rewinding`: the last turn is being taken back (the person edited their
-   * last message). It takes no input until the CLI says it is done.
+   * `rewinding`: turns are being taken back (the person rewound the
+   * conversation). It takes no input until the CLI says it is done.
    */
   | {
       readonly phase: "ready";
@@ -337,6 +351,31 @@ export interface Transcript {
   readonly session: SessionFacts;
   readonly state: ConversationState;
   readonly usage: Usage | undefined;
+  /**
+   * The person's messages DevHub holds because the Agent could not take them
+   * when they were sent (a turn running, still connecting), oldest first.
+   * They are not part of the conversation yet: the CLI has not seen them.
+   */
+  readonly pending: readonly PendingMessage[];
+}
+
+export type PendingId = Brand<string, "PendingId">;
+
+export function pendingId(raw: string): PendingId {
+  return raw as PendingId;
+}
+
+/**
+ * A message the person sent that DevHub has not written to the CLI yet. It
+ * is written when the turn running ends, or at once if the person says so
+ * (which a running turn takes in as it goes). Until then it can be changed
+ * or taken back.
+ */
+export interface PendingMessage {
+  readonly id: PendingId;
+  readonly text: string;
+  /** Why the last try to write it failed, if it did. It is held until the person tries again. */
+  readonly failure: string | undefined;
 }
 
 export type ConversationEvent =
@@ -356,6 +395,8 @@ export type ConversationEvent =
   | { readonly type: "state"; readonly state: ConversationState }
   /** Replaces the conversation's usage whole. */
   | { readonly type: "usage"; readonly usage: Usage }
+  /** Replaces the messages DevHub holds whole. DevHub's own, not an adapter's. */
+  | { readonly type: "pending"; readonly pending: readonly PendingMessage[] }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -400,6 +441,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   session: EMPTY_SESSION,
   state: { phase: "connecting" },
   usage: undefined,
+  pending: [],
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -439,6 +481,8 @@ export function applyEvent(
       return { ...transcript, state: event.state };
     case "usage":
       return { ...transcript, usage: event.usage };
+    case "pending":
+      return { ...transcript, pending: event.pending };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {
@@ -717,27 +761,33 @@ export function conversationActivity(
 }
 
 /**
- * How an edit of the person's last message ended: the new words were sent in
- * place of the old, or the CLI would not take the turn back — the
- * conversation has a notice saying why, and the words are still the person's
- * to send.
+ * How a rewind ended: the conversation was taken back to before the message,
+ * or the CLI would not take it back — the conversation has a notice saying
+ * why, and nothing was dropped.
  */
-export type EditOutcome = "sent" | "refused";
+export type RewindOutcome = "rewound" | "refused";
 
 /**
- * The message the person may edit and send again, if there is one now: their
- * last top-level message, when the session can rewind, nothing is running or
- * waiting, and nothing was said to the Agent after it. Editing it takes back
- * its turn and everything after it.
+ * The messages the conversation can be rewound to before now: the person's
+ * top-level messages the CLI can cut before, when the session can take turns
+ * back, nothing is running or waiting, and DevHub holds no message of the
+ * person's. Rewinding drops the message and everything after it.
  */
-export function editableMessage(transcript: Transcript): UserEntry | undefined {
-  const { state, session, requests, entries } = transcript;
-  if (!session.canRewind || requests.length > 0) return undefined;
-  if (state.phase !== "ready" || state.turn !== "none") return undefined;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]!;
-    if (entry.kind !== "user" || entry.parent !== null) continue;
-    return entry.origin === "person" ? entry : undefined;
-  }
-  return undefined;
+export function rewindTargets(transcript: Transcript): ReadonlySet<EntryId> {
+  const { state, session, requests, entries, pending } = transcript;
+  if (!session.canRewind || requests.length > 0 || pending.length > 0)
+    return NO_TARGETS;
+  if (state.phase !== "ready" || state.turn !== "none") return NO_TARGETS;
+  return new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "user" &&
+      entry.parent === null &&
+      entry.origin === "person" &&
+      entry.rewindable
+        ? [entry.id]
+        : [],
+    ),
+  );
 }
+
+const NO_TARGETS: ReadonlySet<EntryId> = new Set();

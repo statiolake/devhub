@@ -17,7 +17,8 @@ import {
   childrenOf,
   conversationActivity,
   conversationStatus,
-  editableMessage,
+  pendingId,
+  rewindTargets,
   entryId,
   lastTurnFailed,
   requestId,
@@ -54,6 +55,7 @@ function user(
       text,
       images: [],
       origin: "person",
+      rewindable: true,
     },
   };
 }
@@ -429,6 +431,7 @@ describe("subagents", () => {
     prompt: "find the reducer",
     model: "haiku",
     state: "running" as const,
+    takesMessages: false,
   };
 
   const nested = fold(
@@ -924,23 +927,32 @@ describe("a rewind", () => {
     expect(conversationStatus(applyEvent(twoTurns, REWINDING))).toBe("working");
   });
 
-  it("offers the person's last message for editing only when the session can rewind and nothing is running", () => {
-    expect(editableMessage(twoTurns)?.id).toBe("u2");
+  it("can go back to before any of the person's messages, only when the session can rewind and nothing runs, waits or is held", () => {
+    expect([...rewindTargets(twoTurns)]).toEqual(["u1", "u2"]);
     expect(
-      editableMessage(
+      rewindTargets(
         applyEvent(twoTurns, {
           type: "session",
           session: { ...twoTurns.session, canRewind: false },
         }),
-      ),
-    ).toBeUndefined();
-    expect(editableMessage(applyEvent(twoTurns, RUNNING))).toBeUndefined();
-    expect(editableMessage(applyEvent(twoTurns, REWINDING))).toBeUndefined();
-    expect(editableMessage(fold(REWINDABLE, READY))).toBeUndefined();
+      ).size,
+    ).toBe(0);
+    expect(rewindTargets(applyEvent(twoTurns, RUNNING)).size).toBe(0);
+    expect(rewindTargets(applyEvent(twoTurns, REWINDING)).size).toBe(0);
+    expect(
+      rewindTargets(
+        applyEvent(twoTurns, {
+          type: "pending",
+          pending: [
+            { id: pendingId("held:1"), text: "later", failure: undefined },
+          ],
+        }),
+      ).size,
+    ).toBe(0);
   });
 
-  it("does not offer a message an injection followed, nor an injection itself", () => {
-    const injected = applyEvents(twoTurns, [
+  it("does not go back to before an injection, nor a message the CLI cannot cut before", () => {
+    const more = applyEvents(twoTurns, [
       {
         type: "entry",
         entry: {
@@ -950,10 +962,41 @@ describe("a rewind", () => {
           text: "from a template",
           images: [],
           origin: "injection",
+          rewindable: true,
+        },
+      },
+      {
+        type: "entry",
+        entry: {
+          kind: "user",
+          id: entryId("u4"),
+          parent: null,
+          text: "steered into a turn",
+          images: [],
+          origin: "person",
+          rewindable: false,
         },
       },
     ]);
-    expect(editableMessage(injected)).toBeUndefined();
+    expect([...rewindTargets(more)]).toEqual(["u1", "u2"]);
+  });
+});
+
+describe("the messages DevHub holds", () => {
+  it("are replaced whole by each pending event, and start empty", () => {
+    expect(EMPTY_TRANSCRIPT.pending).toEqual([]);
+    const held = [
+      { id: pendingId("held:1"), text: "one", failure: undefined },
+      { id: pendingId("held:2"), text: "two", failure: "the host is gone" },
+    ];
+    const folded = applyEvent(EMPTY_TRANSCRIPT, {
+      type: "pending",
+      pending: held,
+    });
+    expect(folded.pending).toEqual(held);
+    expect(
+      applyEvent(folded, { type: "pending", pending: held.slice(1) }).pending,
+    ).toEqual(held.slice(1));
   });
 });
 

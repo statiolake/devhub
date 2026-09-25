@@ -16,6 +16,7 @@ import {
 	EMPTY_TRANSCRIPT,
 	applyEvent,
 	entryId,
+	rewindTargets,
 	requestId,
 	type ConversationEvent,
 	type Transcript,
@@ -603,137 +604,135 @@ describe("a reply the protocol demands", () => {
 	});
 });
 
-describe("editing the person's last message", () => {
-	/**
-	 * A Claude new enough to resume at a message, answering each message with
-	 * one line of its own; `hold` keeps it from ending the turn.
-	 */
-	function answeringCli(
-		host: FakeHost,
-		version = "2.1.282",
-	): { hold: boolean } {
-		const cli = { hold: false };
-		let said = 0;
-		let started = false;
-		const print = (value: unknown) => host.print(JSON.stringify(value));
-		host.onWrite = (line) => {
-			const message = JSON.parse(line) as {
-				type: string;
-				request_id?: string;
-				request?: { subtype: string };
-				message?: { content: string };
-			};
-			if (message.type === "control_request") {
-				print({
-					type: "control_response",
-					response: {
-						subtype: "success",
-						request_id: message.request_id,
-						response: { commands: [], models: [] },
-					},
-				});
-				return;
-			}
-			if (message.type !== "user") return;
-			said += 1;
-			if (!started) {
-				started = true;
-				print({
-					type: "system",
-					subtype: "init",
-					session_id: "s-1",
-					cwd: "/home/testuser/project",
-					model: "claude-sonnet-5",
-					permissionMode: "default",
-					slash_commands: [],
-					claude_code_version: version,
-				});
-			}
+/**
+ * A Claude new enough to resume at a message, answering each message with
+ * one line of its own; `hold` keeps it from ending the turn.
+ */
+function answeringCli(host: FakeHost, version = "2.1.282"): { hold: boolean } {
+	const cli = { hold: false };
+	let said = 0;
+	let started = false;
+	const print = (value: unknown) => host.print(JSON.stringify(value));
+	host.onWrite = (line) => {
+		const message = JSON.parse(line) as {
+			type: string;
+			request_id?: string;
+			request?: { subtype: string };
+			message?: { content: string };
+		};
+		if (message.type === "control_request") {
 			print({
-				type: "user",
-				message: { role: "user", content: message.message!.content },
-				parent_tool_use_id: null,
-				session_id: "s-1",
-				uuid: `u${said}`,
-			});
-			print({
-				type: "assistant",
-				message: {
-					id: `msg_${said}`,
-					role: "assistant",
-					content: [{ type: "text", text: `answer ${said}` }],
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: message.request_id,
+					response: { commands: [], models: [] },
 				},
-				parent_tool_use_id: null,
-				session_id: "s-1",
-				uuid: `a${said}`,
 			});
-			if (cli.hold) return;
-			print({
-				type: "result",
-				subtype: "success",
-				is_error: false,
-				duration_ms: 100,
-				result: "done",
-				session_id: "s-1",
-			});
-		};
-		host.onRestart = () => {
-			started = false;
-		};
-		return cli;
-	}
-
-	async function twoTurns(version?: string): Promise<{
-		host: FakeHost;
-		conversation: AgentConversation;
-		cli: { hold: boolean };
-	}> {
-		const host = new FakeHost();
-		const cli = answeringCli(host, version);
-		const conversation = new AgentConversation(
-			host,
-			new ClaudeAdapter("boot-a"),
-			() => undefined,
-		);
-		conversation.start();
-		await settle();
-		for (const text of ["first", "second"]) {
-			await conversation.command({ kind: "send", text, origin: "person" });
-			await settle();
+			return;
 		}
-		return { host, conversation, cli };
+		if (message.type !== "user") return;
+		said += 1;
+		if (!started) {
+			started = true;
+			print({
+				type: "system",
+				subtype: "init",
+				session_id: "s-1",
+				cwd: "/home/testuser/project",
+				model: "claude-sonnet-5",
+				permissionMode: "default",
+				slash_commands: [],
+				claude_code_version: version,
+			});
+		}
+		print({
+			type: "user",
+			message: { role: "user", content: message.message!.content },
+			parent_tool_use_id: null,
+			session_id: "s-1",
+			uuid: `u${said}`,
+		});
+		print({
+			type: "assistant",
+			message: {
+				id: `msg_${said}`,
+				role: "assistant",
+				content: [{ type: "text", text: `answer ${said}` }],
+			},
+			parent_tool_use_id: null,
+			session_id: "s-1",
+			uuid: `a${said}`,
+		});
+		if (cli.hold) return;
+		print({
+			type: "result",
+			subtype: "success",
+			is_error: false,
+			duration_ms: 100,
+			result: "done",
+			session_id: "s-1",
+		});
+	};
+	host.onRestart = () => {
+		started = false;
+	};
+	return cli;
+}
+
+async function turns(
+	texts: readonly string[],
+	version?: string,
+): Promise<{
+	host: FakeHost;
+	conversation: AgentConversation;
+	cli: { hold: boolean };
+}> {
+	const host = new FakeHost();
+	const cli = answeringCli(host, version);
+	const conversation = new AgentConversation(
+		host,
+		new ClaudeAdapter("boot-a"),
+		() => undefined,
+	);
+	conversation.start();
+	await settle();
+	for (const text of texts) {
+		await conversation.submit(text);
+		await settle();
 	}
+	return { host, conversation, cli };
+}
 
-	const ids = (conversation: AgentConversation) =>
-		conversation.reading().transcript.entries.map((each) => each.id);
+const ids = (conversation: AgentConversation) =>
+	conversation.reading().transcript.entries.map((each) => each.id);
 
-	it("takes the turn back, sends the new words in its place, and replays to the same after a restart of DevHub", async () => {
-		const { host, conversation } = await twoTurns();
-		expect(ids(conversation)).toEqual([
+const endTurn = (host: FakeHost) =>
+	host.print(
+		JSON.stringify({
+			type: "result",
+			subtype: "success",
+			is_error: false,
+			duration_ms: 100,
+			result: "done",
+			session_id: "s-1",
+		}),
+	);
+
+describe("rewinding", () => {
+	it("goes back to before an earlier message, dropping every turn from it on, and replays to the same after a restart of DevHub", async () => {
+		const { host, conversation } = await turns(["first", "second", "third"]);
+		expect([...rewindTargets(conversation.reading().transcript)]).toEqual([
 			"user:u1",
-			"assistant:msg_1:0",
-			"turn:1",
 			"user:u2",
-			"assistant:msg_2:0",
-			"turn:2",
+			"user:u3",
 		]);
 
-		const outcome = await conversation.editLastMessage(
-			entryId("user:u2"),
-			"second, better",
-		);
+		expect(await conversation.rewind(entryId("user:u2"))).toBe("rewound");
 		await settle();
-		expect(outcome).toBe("sent");
 		expect(host.restarts).toEqual([
 			{
-				args: [
-					"--resume",
-					"s-1",
-					"--resume-session-at",
-					"a1",
-					"--resume-drops-turn",
-					"u2",
-				],
+				args: ["--resume", "s-1", "--resume-session-at", "a1"],
 				mark: [JSON.stringify({ type: "devhub_rewind", message: "user:u2" })],
 			},
 		]);
@@ -741,14 +740,17 @@ describe("editing the person's last message", () => {
 			"user:u1",
 			"assistant:msg_1:0",
 			"turn:1",
-			"user:u3",
-			"assistant:msg_3:0",
-			"turn:3",
 		]);
-		expect(conversation.reading().transcript.state).toEqual({
-			phase: "ready",
-			turn: "none",
-		});
+		await conversation.submit("second, better");
+		await settle();
+		expect(ids(conversation)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+			"user:u4",
+			"assistant:msg_4:0",
+			"turn:4",
+		]);
 		const live = conversation.reading().transcript;
 		await conversation.stop();
 
@@ -766,68 +768,196 @@ describe("editing the person's last message", () => {
 	});
 
 	it("refuses while a turn runs, saying to stop it first, and writes nothing", async () => {
-		const { host, conversation, cli } = await twoTurns();
+		const { host, conversation, cli } = await turns(["first", "second"]);
 		cli.hold = true;
-		await conversation.command({
-			kind: "send",
-			text: "third",
-			origin: "person",
-		});
+		await conversation.submit("third");
 		await settle();
 		const writes = host.inLog.length;
-		await expect(
-			conversation.editLastMessage(entryId("user:u3"), "third, better"),
-		).rejects.toThrow("Stop it before editing your last message.");
+		await expect(conversation.rewind(entryId("user:u1"))).rejects.toThrow(
+			"Stop it before rewinding.",
+		);
 		expect(host.inLog).toHaveLength(writes);
 		expect(host.restarts).toEqual([]);
 		await conversation.stop();
 	});
 
-	it("refuses when the CLI cannot take a turn back", async () => {
-		const { host, conversation } = await twoTurns("2.1.0");
-		await expect(
-			conversation.editLastMessage(entryId("user:u2"), "second, better"),
-		).rejects.toThrow("This Agent's CLI cannot take back a turn");
+	it("refuses when the CLI cannot take turns back", async () => {
+		const { host, conversation } = await turns(["first", "second"], "2.1.0");
+		await expect(conversation.rewind(entryId("user:u2"))).rejects.toThrow(
+			"This Agent's CLI cannot take turns back",
+		);
 		expect(host.restarts).toEqual([]);
 		await conversation.stop();
 	});
 
-	it("is the edit's failure when the host does not start the CLI again, and leaves the conversation usable", async () => {
-		const { host, conversation } = await twoTurns();
+	it("refuses while messages of the person's are held", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("held");
+		// Its write fails as the turn ends: idle, with a message held.
+		host.refuseWrite = true;
+		endTurn(host);
+		await settle();
+		expect(conversation.reading().transcript.pending).toHaveLength(1);
+		await expect(conversation.rewind(entryId("user:u1"))).rejects.toThrow(
+			"Send or remove them before rewinding.",
+		);
+		await conversation.stop();
+	});
+
+	it("is the rewind's failure when the host does not start the CLI again, and leaves the conversation usable", async () => {
+		const { host, conversation } = await turns(["first", "second"]);
 		host.refuseRestart = true;
-		await expect(
-			conversation.editLastMessage(entryId("user:u2"), "second, better"),
-		).rejects.toThrow("the fake host did not start its CLI again");
+		await expect(conversation.rewind(entryId("user:u2"))).rejects.toThrow(
+			"the fake host did not start its CLI again",
+		);
 		expect(ids(conversation)).toContain("user:u2");
-		await conversation.command({
-			kind: "send",
-			text: "third",
-			origin: "person",
-		});
+		await conversation.submit("third");
 		await settle();
 		expect(ids(conversation)).toContain("user:u3");
 		await conversation.stop();
 	});
 
-	it("refuses other input while the edit waits for the CLI", async () => {
-		const { host, conversation } = await twoTurns();
+	it("holds the person's words while the CLI is started again, and refuses every other input", async () => {
+		const { host, conversation } = await turns(["first", "second"]);
 		// The host takes the restart, but no new CLI answers yet.
+		const answer = host.onWrite;
 		host.onWrite = () => undefined;
-		const edit = conversation.editLastMessage(
-			entryId("user:u2"),
-			"second, better",
-		);
+		const rewind = conversation.rewind(entryId("user:u2"));
 		await settle();
-		await expect(
-			conversation.command({
-				kind: "send",
-				text: "meanwhile",
-				origin: "person",
-			}),
-		).rejects.toThrow("Your last message is being edited.");
-		await conversation.stop();
-		await expect(edit).rejects.toThrow(
-			"The conversation stopped before your edited message could be sent.",
+		await expect(conversation.command({ kind: "interrupt" })).rejects.toThrow(
+			"The conversation is being taken back.",
 		);
+		await conversation.submit("meanwhile");
+		expect(
+			conversation.reading().transcript.pending.map((each) => each.text),
+		).toEqual(["meanwhile"]);
+		// The new CLI answers the greeting it was sent: the rewind is over, and
+		// the held message is written.
+		host.onWrite = answer;
+		const greeting = host.inLog.at(-1)!.line;
+		answer(greeting);
+		expect(await rewind).toBe("rewound");
+		await settle();
+		expect(conversation.reading().transcript.pending).toEqual([]);
+		expect(
+			conversation
+				.reading()
+				.transcript.entries.flatMap((each) =>
+					each.kind === "user" ? [each.text] : [],
+				),
+		).toEqual(["first", "meanwhile"]);
+		await conversation.stop();
+	});
+
+	it("rejects when the conversation stops before the CLI has taken the turns back", async () => {
+		const { host, conversation } = await turns(["first", "second"]);
+		host.onWrite = () => undefined;
+		const rewind = conversation.rewind(entryId("user:u2"));
+		await settle();
+		await conversation.stop();
+		await expect(rewind).rejects.toThrow(
+			"The conversation stopped before the CLI had taken the turns back.",
+		);
+	});
+});
+
+describe("the person's messages, held", () => {
+	const pending = (conversation: AgentConversation) =>
+		conversation.reading().transcript.pending.map((each) => each.text);
+	const said = (conversation: AgentConversation) =>
+		conversation
+			.reading()
+			.transcript.entries.flatMap((each) =>
+				each.kind === "user" ? [each.text] : [],
+			);
+
+	it("are written one per turn as each turn ends, as the person left them", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		const writes = host.inLog.length;
+		await conversation.submit("third");
+		await conversation.submit("fourth");
+		await conversation.submit("fifth");
+		expect(host.inLog).toHaveLength(writes);
+		expect(pending(conversation)).toEqual(["third", "fourth", "fifth"]);
+
+		const [third, fourth] = conversation.reading().transcript.pending;
+		await conversation.editPending(third!.id, "third, reworded");
+		await conversation.removePending(fourth!.id);
+		expect(pending(conversation)).toEqual(["third, reworded", "fifth"]);
+
+		endTurn(host);
+		await settle();
+		expect(said(conversation)).toEqual(["first", "second", "third, reworded"]);
+		expect(pending(conversation)).toEqual(["fifth"]);
+		endTurn(host);
+		await settle();
+		expect(said(conversation)).toEqual([
+			"first",
+			"second",
+			"third, reworded",
+			"fifth",
+		]);
+		expect(pending(conversation)).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("is written into the running turn when the person says now", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("steer this way");
+		const [held] = conversation.reading().transcript.pending;
+		await conversation.sendPendingNow(held!.id);
+		expect(JSON.parse(host.inLog.at(-1)!.line)).toMatchObject({
+			type: "user",
+			priority: "next",
+			message: { content: "steer this way" },
+		});
+		expect(pending(conversation)).toEqual([]);
+		await settle();
+		expect(said(conversation)).toContain("steer this way");
+		await conversation.stop();
+	});
+
+	it("stays held, saying why, when its write fails, and is written when the person tries again", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("third");
+		host.refuseWrite = true;
+		endTurn(host);
+		await settle();
+		const [held] = conversation.reading().transcript.pending;
+		expect(held).toMatchObject({
+			text: "third",
+			failure: "the fake host has ended",
+		});
+		await conversation.sendPendingNow(held!.id);
+		await settle();
+		expect(pending(conversation)).toEqual([]);
+		expect(said(conversation)).toContain("third");
+		await conversation.stop();
+	});
+
+	it("says a held message is gone when it was already written", async () => {
+		const { conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("third");
+		const [held] = conversation.reading().transcript.pending;
+		await conversation.removePending(held!.id);
+		await expect(conversation.editPending(held!.id, "x")).rejects.toThrow(
+			"That message is no longer waiting",
+		);
+		await conversation.stop();
 	});
 });

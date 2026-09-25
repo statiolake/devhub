@@ -44,7 +44,7 @@ import {
 	EMPTY_SESSION,
 	EMPTY_TRANSCRIPT,
 	applyEvent,
-	editableMessage,
+	rewindTargets,
 	entryId,
 	requestId,
 	type AssistantBlock,
@@ -319,6 +319,10 @@ export class CodexAdapter implements ProtocolAdapter {
 	/** Child thread → the tool entry that started it. */
 	private readonly threadParents = new Map<string, EntryId>();
 	private readonly threadLabels = new Map<string, string>();
+	/** Child threads app-server says the person may start and steer turns of. */
+	private readonly directInput = new Set<string>();
+	/** The turn each child thread is running, while it runs one. */
+	private readonly childTurns = new Map<string, string>();
 	/** Items of child threads DevHub could not place under a call. */
 	private readonly unplaced = new Set<string>();
 	/** Running tools and streaming messages, by thread: a thread runs one turn at a time. */
@@ -368,6 +372,8 @@ export class CodexAdapter implements ProtocolAdapter {
 			switch (command.kind) {
 				case "send":
 					return this.send(command.text, command.origin);
+				case "instruct":
+					return this.instruct(command.subagent, command.text);
 				case "interrupt":
 					return this.interrupt();
 				case "answer":
@@ -403,9 +409,9 @@ export class CodexAdapter implements ProtocolAdapter {
 					`${this.codexName} cannot take back a turn of this thread: only a paginated thread can be reverted`,
 				);
 			}
-			if (editableMessage(this.current)?.id !== message) {
+			if (!rewindTargets(this.current).has(message)) {
 				throw new Error(
-					`${message} is not the person's last message, so its turn cannot be taken back`,
+					`${message} is not a message the conversation can be rewound to now`,
 				);
 			}
 			const turn = [...this.turnMessages].find(([, id]) => id === message);
@@ -969,7 +975,10 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onTurnStarted(params: unknown): void {
 		const { threadId, turn } = turnNotification(this.reader, params);
-		if (threadId !== this.mainThread) return;
+		if (threadId !== this.mainThread) {
+			this.childTurns.set(threadId, turn.id);
+			return;
+		}
 		this.runningTurn = turn.id;
 		this.totalAtTurnStart = this.total;
 		this.setState({ phase: "ready", turn: "running" });
@@ -1005,7 +1014,10 @@ export class CodexAdapter implements ProtocolAdapter {
 			}
 		}
 		this.unfinished.delete(threadId);
-		if (threadId !== this.mainThread) return;
+		if (threadId !== this.mainThread) {
+			this.childTurns.delete(threadId);
+			return;
+		}
 		const outcome = turn.status === "inProgress" ? "failed" : turn.status;
 		this.emit({
 			type: "entry",
@@ -1123,6 +1135,9 @@ export class CodexAdapter implements ProtocolAdapter {
 								: [],
 						),
 						origin: match?.[1] === "injection" ? "injection" : "person",
+						rewindable:
+							threadId === this.mainThread &&
+							this.turnMessages.get(turnId) === id,
 					},
 					threadId,
 				);
@@ -1409,6 +1424,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						: item.status === "failed"
 							? "failed"
 							: "running",
+				takesMessages: receiver !== undefined && this.directInput.has(receiver),
 			};
 		}
 		this.put(
@@ -1464,6 +1480,16 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.emit({
 			type: "entry",
 			entry: { ...entry, spawns: { ...entry.spawns!, state } },
+		});
+	}
+
+	/** A child thread takes the person's messages: its spawn entry says so, once DevHub knows it. */
+	private takesMessages(threadId: string): void {
+		const entry = this.spawnEntry(threadId);
+		if (entry === undefined || entry.spawns!.takesMessages) return;
+		this.emit({
+			type: "entry",
+			entry: { ...entry, spawns: { ...entry.spawns!, takesMessages: true } },
 		});
 	}
 
@@ -2029,6 +2055,40 @@ export class CodexAdapter implements ProtocolAdapter {
 		} satisfies TurnStartParams);
 	}
 
+	/**
+	 * The person's words to a subagent's thread: steered into the turn it is
+	 * running, or starting one. Its thread is the first the spawn call names,
+	 * the one its entry is drawn for.
+	 */
+	private instruct(subagent: EntryId, text: string): void {
+		const thread = [...this.threadParents].find(
+			([, spawn]) => spawn === subagent,
+		)?.[0];
+		if (thread === undefined || !this.directInput.has(thread)) {
+			throw new Error(
+				`${subagent} started no subagent thread that takes the person's messages`,
+			);
+		}
+		const input: UserInput[] = [{ type: "text", text, text_elements: [] }];
+		const clientUserMessageId = `devhub-person-${this.nextUserMessage}`;
+		this.nextUserMessage += 1;
+		const running = this.childTurns.get(thread);
+		if (running !== undefined) {
+			this.call("turn/steer", {
+				threadId: thread,
+				input,
+				clientUserMessageId,
+				expectedTurnId: running,
+			} satisfies TurnSteerParams);
+			return;
+		}
+		this.call("turn/start", {
+			threadId: thread,
+			input,
+			clientUserMessageId,
+		} satisfies TurnStartParams);
+	}
+
 	/** Interrupting when no turn runs asks for what is already true, and sends nothing. */
 	private interrupt(): void {
 		if (this.runningTurn === undefined || this.mainThread === undefined) return;
@@ -2076,6 +2136,10 @@ export class CodexAdapter implements ProtocolAdapter {
 			const thread = threadStarted(this.reader, params);
 			if (thread.parentThreadId !== null && thread.agentNickname !== null) {
 				this.relabel(thread.id, thread.agentNickname);
+			}
+			if (thread.parentThreadId !== null && thread.takesDirectInput) {
+				this.directInput.add(thread.id);
+				this.takesMessages(thread.id);
 			}
 		},
 		"thread/status/changed": unused(

@@ -42,6 +42,14 @@ export function EditIcon() {
   );
 }
 
+export function RewindIcon() {
+  return (
+    <Icon>
+      <path d="M4 3v3.5h3.5M4.3 6.2A5 5 0 1 1 3 9.5" />
+    </Icon>
+  );
+}
+
 export function StopIcon() {
   return (
     <Icon>

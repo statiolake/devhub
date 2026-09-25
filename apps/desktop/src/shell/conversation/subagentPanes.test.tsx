@@ -41,6 +41,7 @@ function subagent(id: string, label: string, state: Spawns["state"]) {
         prompt: `do ${label}`,
         model: undefined,
         state,
+        takesMessages: false,
       },
     }),
   );

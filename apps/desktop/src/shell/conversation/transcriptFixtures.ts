@@ -52,6 +52,7 @@ export function user(
     text,
     images: [],
     origin,
+    rewindable: true,
   };
 }
 
@@ -289,6 +290,7 @@ export function longTranscript(count = 2_000): Transcript {
               prompt: "List the modules under src/",
               model: "example-model",
               state: "completed",
+              takesMessages: false,
             },
           }),
         ),

@@ -243,6 +243,7 @@ describe("every entry kind", () => {
             prompt: "list src/",
             model: "example-model",
             state: "running",
+            takesMessages: false,
           },
         }),
       ),
@@ -256,6 +257,7 @@ describe("every entry kind", () => {
             prompt: "",
             model: undefined,
             state: "running",
+            takesMessages: false,
           },
         }),
       ),
@@ -290,6 +292,7 @@ describe("every entry kind", () => {
               prompt: "list src/",
               model: "example-model",
               state: "completed",
+              takesMessages: false,
             },
           }),
         ),
@@ -309,6 +312,7 @@ describe("every entry kind", () => {
       prompt: "",
       model: undefined,
       state: "running" as const,
+      takesMessages: false,
     };
     const { redraw } = draw(
       transcriptOf([put(tool("task", "Task", { status: "running", spawns }))]),

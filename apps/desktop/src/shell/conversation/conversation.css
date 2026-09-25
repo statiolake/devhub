@@ -376,7 +376,7 @@
 }
 
 .conversation-copy,
-.conversation-edit {
+.conversation-rewind {
   display: inline-flex;
   align-items: center;
   padding: 2px var(--space-2);
@@ -392,13 +392,13 @@
 }
 
 .conversation-copy:hover,
-.conversation-edit:hover {
+.conversation-rewind:hover {
   background: var(--wash);
   color: var(--primary);
 }
 
 .conversation-copy:focus-visible,
-.conversation-edit:focus-visible {
+.conversation-rewind:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -1316,29 +1316,39 @@
   outline-offset: 1px;
 }
 
-/* The message whose words the composer holds for an edit. */
-.conversation-user[data-editing] .conversation-user-text {
+/* The message a rewind would go back to before, while Rewind asks. */
+.conversation-user[data-confirming] .conversation-user-text {
   opacity: 0.55;
 }
 
-/* Over the composer while it holds an edit of the last message. */
-.conversation-editing {
+/* Rewind asking once more, under the message; the pending list's and the
+   subagent box's small buttons look the same. */
+.conversation-rewind-confirm {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  padding: 0 var(--space-1) var(--space-2);
+  justify-content: flex-end;
+  max-width: 100%;
+  margin-top: var(--space-1);
   color: var(--secondary);
   font-size: 0.85em;
   gap: var(--space-2);
   line-height: 1.4;
 }
 
-.conversation-editing-note {
-  flex: 1;
+.conversation-rewind-note {
+  flex: 1 1 16em;
   min-width: 0;
 }
 
-.conversation-editing-cancel {
+:is(
+  .conversation-rewind-go,
+  .conversation-rewind-cancel,
+  .conversation-pending-footer button
+) {
+  display: inline-flex;
   flex: none;
+  align-items: center;
   padding: 2px var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
@@ -1346,15 +1356,120 @@
   color: var(--primary);
   cursor: pointer;
   font: inherit;
+  gap: 0.4em;
 }
 
-.conversation-editing-cancel:hover {
+:is(
+    .conversation-rewind-go,
+    .conversation-rewind-cancel,
+    .conversation-pending-footer button
+  ):hover:not(:disabled) {
   background: var(--wash);
 }
 
-.conversation-editing-cancel:focus-visible {
+:is(
+  .conversation-rewind-go,
+  .conversation-rewind-cancel,
+  .conversation-pending-footer button,
+  .conversation-subagent-message-send
+):focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
+}
+
+.conversation-pending-footer button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Over the composer: the person's messages DevHub holds, oldest first. */
+.conversation-pending {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.conversation-pending-item {
+  padding: var(--space-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  background: var(--wash);
+}
+
+.conversation-pending-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation-pending-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--primary);
+  font: inherit;
+}
+
+.conversation-pending-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-top: var(--space-1);
+  font-size: 0.85em;
+  gap: var(--space-2);
+}
+
+.conversation-pending-status {
+  flex: 1 1 12em;
+  min-width: 0;
+  color: var(--secondary);
+}
+
+.conversation-pending-item[data-failed] .conversation-pending-status {
+  color: var(--status-error);
+}
+
+/* Under a subagent's work: words for it alone. */
+.conversation-subagent-message {
+  display: flex;
+  align-items: flex-end;
+  margin-top: var(--space-2);
+  gap: var(--space-2);
+}
+
+.conversation-subagent-message-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--primary);
+  font: inherit;
+}
+
+.conversation-subagent-message-send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.conversation-subagent-message-send:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* Docked under the transcript, in the same column. */

@@ -31,12 +31,17 @@ import type {
   UserEntry,
 } from "../../model/conversation";
 import { CopyButton } from "./CopyButton";
-import { useEditMessage } from "./ConversationContext";
+import { REWIND_NOTE } from "./Composer";
+import {
+  useConversationActions,
+  useRewindMessage,
+} from "./ConversationContext";
 import { JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
-import { EditIcon } from "./icons";
+import { RewindIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { RequestCard } from "./RequestCard";
+import { SubagentMessage } from "./SubagentMessage";
 import {
   SUBAGENT_STATE_LABELS,
   SubagentActions,
@@ -62,16 +67,20 @@ const MAX_INDENT = 3;
 
 /**
  * A message from the person: a bubble on the right, as it reads in any chat,
- * with its actions under it on hover — Copy, and Edit on the person's last
- * message while the session can take its turn back.
+ * with its actions under it on hover — Copy, and Rewind on each message the
+ * conversation can be taken back to before (`rewindTargets`), which asks
+ * once more before it drops anything.
  */
 function UserView({ entry }: { readonly entry: UserEntry }) {
-  const { editable, editing, start } = useEditMessage();
+  const { targets, rewind } = useRewindMessage();
+  const { reportFailure } = useConversationActions();
+  const [confirming, setConfirming] = useState(false);
+  const rewindable = targets.has(entry.id);
   return (
     <div
       className="conversation-user"
       data-origin={entry.origin}
-      data-editing={editing === entry.id || undefined}
+      data-confirming={(confirming && rewindable) || undefined}
     >
       {entry.origin === "injection" ? (
         <div className="conversation-user-origin">Sent by a template</div>
@@ -79,19 +88,45 @@ function UserView({ entry }: { readonly entry: UserEntry }) {
       <div className="conversation-user-text">{entry.text}</div>
       <div className="conversation-message-actions">
         <CopyButton text={entry.text} label="Copy message" />
-        {editable === entry.id ? (
+        {rewindable ? (
           <button
             type="button"
-            className="conversation-edit"
-            aria-label="Edit message"
-            title="Edit this message and send it again"
-            onClick={() => start(entry)}
+            className="conversation-rewind"
+            aria-label="Rewind to here"
+            title="Take the conversation back to before this message"
+            onClick={() => setConfirming(true)}
           >
-            <EditIcon />
-            <span className="conversation-copy-text">Edit</span>
+            <RewindIcon />
+            <span className="conversation-copy-text">Rewind</span>
           </button>
         ) : null}
       </div>
+      {confirming && rewindable ? (
+        <div
+          className="conversation-rewind-confirm"
+          role="group"
+          aria-label="Rewind to here"
+        >
+          <span className="conversation-rewind-note">{REWIND_NOTE}</span>
+          <button
+            type="button"
+            className="conversation-rewind-go"
+            onClick={() => {
+              setConfirming(false);
+              void rewind(entry).catch(reportFailure);
+            }}
+          >
+            Rewind
+          </button>
+          <button
+            type="button"
+            className="conversation-rewind-cancel"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -309,6 +344,7 @@ const ToolView = memo(function ToolView({
               {childEntries.map((child) => (
                 <EntryView key={child.id} entry={child} depth={depth + 1} />
               ))}
+              <SubagentMessage entry={entry} />
             </div>
           ) : (
             <SubagentElsewhere place={place} />

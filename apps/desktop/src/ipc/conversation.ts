@@ -13,10 +13,11 @@
 
 import type {
 	ConversationEvent,
-	EditOutcome,
 	EntryId,
+	PendingId,
 	RequestAnswer,
 	RequestId,
+	RewindOutcome,
 	Transcript,
 } from "../model/conversation.js";
 import type {
@@ -34,14 +35,29 @@ export const CONVERSATION_CHANNELS = {
 	listSessions: "devhub:conversation:list-sessions",
 	previewSession: "devhub:conversation:preview-session",
 	resumeSession: "devhub:conversation:resume-session",
-	editLastMessage: "devhub:conversation:edit-last-message",
+	rewind: "devhub:conversation:rewind",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
 
 /** What the page may ask of a conversation. A person's words are always the person's. */
 export type ConversationCommandWire =
+	/** The person's words: written at once when the Agent is idle, else held (`Transcript.pending`). */
 	| { readonly kind: "send"; readonly text: string }
+	| {
+			readonly kind: "edit-pending";
+			readonly pending: PendingId;
+			readonly text: string;
+	  }
+	| { readonly kind: "remove-pending"; readonly pending: PendingId }
+	/** Write a held message now: a running turn takes it in as it goes. */
+	| { readonly kind: "send-pending-now"; readonly pending: PendingId }
+	/** The person's words to a subagent whose `spawns.takesMessages` is true. */
+	| {
+			readonly kind: "instruct";
+			readonly subagent: EntryId;
+			readonly text: string;
+	  }
 	| { readonly kind: "interrupt" }
 	| {
 			readonly kind: "answer";
@@ -77,6 +93,10 @@ export interface ConversationApi {
 	): Promise<ConversationAttachment>;
 	detach(agentId: string): Promise<void>;
 	send(agentId: string, text: string): Promise<void>;
+	editPending(agentId: string, pending: PendingId, text: string): Promise<void>;
+	removePending(agentId: string, pending: PendingId): Promise<void>;
+	sendPendingNow(agentId: string, pending: PendingId): Promise<void>;
+	instruct(agentId: string, subagent: EntryId, text: string): Promise<void>;
 	interrupt(agentId: string): Promise<void>;
 	answer(
 		agentId: string,
@@ -84,15 +104,10 @@ export interface ConversationApi {
 		answer: RequestAnswer,
 	): Promise<void>;
 	/**
-	 * Take back the turn of the person's last message (`editableMessage`) and
-	 * everything after it, and send `text` in its place. Refused, with the
-	 * reason, when that message cannot be edited now.
+	 * Take the conversation back to before `message`, one of `rewindTargets`.
+	 * Refused, with the reason, when it cannot be rewound to now.
 	 */
-	editLastMessage(
-		agentId: string,
-		message: EntryId,
-		text: string,
-	): Promise<EditOutcome>;
+	rewind(agentId: string, message: EntryId): Promise<RewindOutcome>;
 	/**
 	 * Carry the conversation on in a terminal Agent from the same profile,
 	 * resuming the session, and stop this one once that one runs. Refused,

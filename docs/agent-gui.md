@@ -124,10 +124,10 @@ The session's command is not the CLI itself but a small POSIX `sh` script, the
   it ends.
 
 The CLI runs beside the host rather than in its place, and its pid is in
-`cli`. To edit a Claude message, DevHub writes `again` (the arguments to add)
-and `again.mark` (the line for the journal), then stops the CLI. The host
-finds `again`, appends the mark to `out` and starts the CLI again. A host
-started by a DevHub from before this change has no `cli`, and the edit is
+`cli`. To rewind a Claude conversation, DevHub writes `again` (the arguments
+to add) and `again.mark` (the line for the journal), then stops the CLI. The
+host finds `again`, appends the mark to `out` and starts the CLI again. A host
+started by a DevHub from before this change has no `cli`, and the rewind is
 refused.
 
 Everything DevHub writes goes through the FIFO and is also appended to
@@ -175,10 +175,12 @@ Agent.
 
 The GUI draws the transcript and lets you:
 
-- write messages, including mid-turn;
+- write messages at any time: while the Agent is busy they wait, and can be
+  changed, removed or sent into the running turn (below);
 - answer permission and question requests;
 - interrupt a turn;
-- edit your last message and send it again (below);
+- rewind the conversation to before any of your messages (below);
+- message a Codex subagent directly, where app-server allows it (below);
 - change the model, effort and permission mode;
 - use slash commands.
 
@@ -270,44 +272,98 @@ work inside. Its work is drawn in one place at a time:
   version. The transcript up to that point stays readable. This usually means
   the CLI was updated past what DevHub knows.
 
-## Editing your last message
+## Messages that wait, and sending one into a turn
 
-Your last message has an **Edit** action beside Copy while nothing is
-running. Edit puts its words in the composer (what you were typing comes back
-on Cancel or Esc). Sending them takes back that message's turn and everything
-after it, and sends the new words in its place. It is offered only on your
-own last message, not on a template's, and only when the session can take a
-turn back. While a turn runs there is no Edit; stop the turn first. An edit
-that can't be done is refused with the reason, and your words stay in the
-composer.
+A message you send while the Agent is idle is written to the CLI at once. One
+you send while it is busy (a turn running, a request waiting, the CLI still
+connecting or being started again by a rewind) waits instead. Waiting messages
+are listed over the composer, oldest first. The Agent has not seen them yet,
+so each one can be:
 
-**Files are not changed back.** Taking back a turn changes only the
-conversation. Files the Agent edited and commands it ran during that turn
-stay as they are. The composer says so while it holds an edit.
+- **edited** in place (Enter saves, Esc gives up);
+- **removed**, so it is never sent;
+- **sent now**, into the running turn, instead of waiting for it to end.
 
-How each CLI takes a turn back:
+When a turn ends, the oldest waiting message is sent and starts the next
+turn, and the rest keep waiting for their turn. If writing one fails, it stays
+in the list with the reason, and is sent when you press Send now.
+
+"Send now" is the same action for both CLIs:
+
+- **Codex**: `turn/steer` with the running turn's id (`expectedTurnId`).
+  The message joins that turn, as typing during a turn does in Codex's own
+  terminal UI.
+- **Claude Code**: a stream-json user message with `priority: "next"`. The
+  CLI takes it into the running turn at its next step, between tool calls,
+  and does not stop the turn. `now` would stop the turn and `later` would wait
+  for it to end. When `priority` is left out, the CLI assumes `next`. The
+  field is in the CLI's input schema, but Claude's docs don't describe it.
+
+Waiting messages live in DevHub, not in the CLI or the journal. **If DevHub
+quits while a message is waiting, the message is lost.**
+
+## Rewinding to an earlier message
+
+Each of your messages has a **Rewind** action beside Copy while nothing is
+running and nothing is waiting. It asks first. Rewinding drops that message
+and everything after it from the conversation, and puts the message's words
+back in the composer, ahead of anything you had typed. Template messages
+can't be rewound to. While a turn runs there is no Rewind: stop the turn
+first. A rewind that can't be done is refused with the reason.
+
+**Files are not changed back.** Rewinding changes only the conversation.
+Files the Agent edited and commands it ran after that point stay as they are.
+Rewind says so before it does anything.
+
+How each CLI takes turns back:
 
 - **Codex**: `thread/revert` with the turn the message started
-  (`beforeTurnId`), then `turn/start` with the new words. It works only on a
+  (`beforeTurnId`), which drops that turn and every later one. A thread is
+  cut by turns, so only a message that started a turn can be rewound to. A
+  message sent into a running turn has no Rewind. This works only on a
   paginated thread, which is what `thread/start` makes by default
   (`thread.historyMode`). On a legacy thread (an old one resumed) there is no
-  Edit. When app-server refuses, a notice says why and nothing is dropped.
+  Rewind. When app-server refuses, a notice says why and nothing is dropped.
   (`thread/rollback` was removed from app-server; `thread/revert` replaces
   it.)
-- **Claude Code**: stream-json has no documented way to take a turn back, so
-  the host starts the CLI again, resumed at the message before yours:
-  `--resume <session> --resume-session-at <that message> --resume-drops-turn
-  <yours>`. These are the flags behind the Agent SDK's `resumeSessionAt` and
-  `resumeDropsTurn`, which need Claude Code 2.1.223 or later. An older CLI has
-  no Edit. If your message was the first one, there is nothing to resume, and
-  the CLI starts a fresh session instead, with a new session id. The CLI
-  refuses the resume when the turn you are taking back holds anything else,
-  such as a message queued mid-turn or a background task's notice. It then
-  exits, and the Agent ends with its reason, the way any ending is shown.
+- **Claude Code**: stream-json has no documented way to take turns back, so
+  the host starts the CLI again on the session cut after the message before
+  yours: `--resume <session> --resume-session-at <that message>`. This is the
+  flag behind the Agent SDK's `resumeSessionAt`, and it drops everything after
+  the cut. DevHub doesn't pass `--resume-drops-turn` (the SDK's
+  `resumeDropsTurn`). That flag names the one turn a cut is meant to drop, and
+  the CLI refuses a cut that drops content from any other turn. A rewind
+  deliberately drops every later turn. Rewind needs Claude Code 2.1.223 or
+  later, the version that has `--resume-drops-turn`; an older CLI has no
+  Rewind. If your message was the first one, there is nothing to resume, and
+  the CLI starts a fresh session instead, with a new session id.
 
 The host writes a line of DevHub's own, `devhub_rewind`, into the journal
 between the old CLI's output and the new one's. A DevHub that restarts reads
 the journal the same way and gets the same shortened transcript.
+
+## Messaging a subagent
+
+A subagent's card has a message box of its own when its CLI lets you talk to
+it directly. What you send there goes to that subagent, not to the Agent that
+started it. It joins the subagent's running turn, or starts a new turn if it
+has none.
+
+- **Codex**: a subagent is a thread of its own, and `turn/start` and
+  `turn/steer` take any thread's id. DevHub offers the box only when
+  app-server's `thread/started` for that thread says `canAcceptDirectInput:
+  true`. Codex's own terminal UI uses the same field to decide whether a
+  subagent takes input. The field is not in the pinned protocol schema, and
+  a thread that doesn't mention it gets no box. Whether a real multi-agent
+  subagent says true hasn't been seen yet: DevHub has been checked only
+  against a hand-written fixture.
+- **Claude Code**: no box. The Agent messages its own subagents with its
+  `SendMessage` tool. stream-json has no input that reaches a subagent: a
+  user message's `parent_tool_use_id` names where output came from, not where
+  input goes, and no control request addresses a subagent.
+
+The box is drawn in the subagent's inline card. A subagent shown in the
+column or maximized has no box yet.
 
 ## Not signed in, and Continue in terminal
 
@@ -528,11 +584,11 @@ adapter reports: Claude's `rateLimitType` window and Codex's `primary`.
 - **busybox `tail -f` polls once a second.** On a host with busybox, a
   NAS for example, streaming arrives in one-second steps. The BSD tail on macOS
   and GNU tail are immediate.
-- **Editing a message does not change files back.** Neither CLI's way of
-  taking back a turn touches the working tree. Claude Code's file
+- **Rewinding does not change files back.** Neither CLI's way of
+  taking back turns touches the working tree. Claude Code's file
   checkpoints (`--rewind-files`, the SDK's `rewindFiles`) have to be turned on
   when the session starts, and DevHub does not turn them on.
-- **Editing a Claude message restarts the CLI.** MCP servers and background
+- **Rewinding a Claude conversation restarts the CLI.** MCP servers and background
   tasks start again with it. Right after a compaction, the resume point is
   the last message DevHub saw before it, not the compaction summary.
 - **The journal is never trimmed.** Partial messages are journaled too, so a
@@ -583,6 +639,11 @@ read on 2026-09-25:
 - Anthropic legal and compliance, authentication and credential use —
   <https://code.claude.com/docs/en/legal-and-compliance>
 - Anthropic Consumer Terms — <https://www.anthropic.com/legal/consumer-terms>
+- Claude Code 2.1.282's own `--help` text for `--resume-session-at` and
+  `--resume-drops-turn`, and its stream-json input schema (`priority`:
+  `now`, `next`, `later`; `next` when absent), read from the installed CLI
+- Codex's terminal UI, `codex-rs/tui/src/app_server_session.rs`
+  (`thread_blocks_direct_input`, `canAcceptDirectInput`) at `rust-v0.156.1`
 - Claude Agent SDK TypeScript reference, `resumeSessionAt`,
   `resumeDropsTurn`, `forkSession`, `enableFileCheckpointing` —
   <https://code.claude.com/docs/en/agent-sdk/typescript>

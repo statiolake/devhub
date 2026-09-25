@@ -35,7 +35,7 @@ import {
 } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
 import {
-  editableMessage,
+  rewindTargets,
   type Transcript,
   type UserEntry,
 } from "../../model/conversation";
@@ -43,7 +43,7 @@ import { isImeComposing } from "../accessibility/ime";
 import { Composer, inputRefusal } from "./Composer";
 import {
   ConversationActionsProvider,
-  EditMessageProvider,
+  RewindMessageProvider,
   FocusComposerProvider,
   type ConversationActions,
   type SettingName,
@@ -132,12 +132,17 @@ export function ConversationSurface({
     composer.current?.focus();
   }, []);
 
-  const [editing, setEditing] = useState<UserEntry | undefined>(undefined);
-  const endEdit = useCallback(() => setEditing(undefined), []);
-  const editable = editableMessage(transcript)?.id;
-  const editMessage = useMemo(
-    () => ({ editable, editing: editing?.id, start: setEditing }),
-    [editable, editing],
+  // A rewound message's words go back to the composer, each rewind once.
+  const [restored, setRestored] = useState<UserEntry | undefined>(undefined);
+  const targets = useMemo(() => rewindTargets(transcript), [transcript]);
+  const rewindMessage = useMemo(
+    () => ({
+      targets,
+      rewind: async (entry: UserEntry) => {
+        if ((await actions.rewind(entry.id)) === "rewound") setRestored(entry);
+      },
+    }),
+    [targets, actions],
   );
 
   // Being shown is a request to type into it, and so is becoming able to
@@ -228,7 +233,7 @@ export function ConversationSurface({
   return (
     <ConversationActionsProvider value={actions}>
       <FocusComposerProvider value={focusComposer}>
-        <EditMessageProvider value={editMessage}>
+        <RewindMessageProvider value={rewindMessage}>
           <EntryTreeContext.Provider value={tree}>
             <SubagentLayoutProvider value={subagents}>
               <section
@@ -305,8 +310,7 @@ export function ConversationSurface({
                       inputRef={composer}
                       pickers={pickers}
                       openSetting={openSetting}
-                      editing={editing}
-                      endEdit={endEdit}
+                      restored={restored}
                     />
                   </div>
                   <SubagentColumn tree={tree} />
@@ -314,7 +318,7 @@ export function ConversationSurface({
               </section>
             </SubagentLayoutProvider>
           </EntryTreeContext.Provider>
-        </EditMessageProvider>
+        </RewindMessageProvider>
       </FocusComposerProvider>
     </ConversationActionsProvider>
   );

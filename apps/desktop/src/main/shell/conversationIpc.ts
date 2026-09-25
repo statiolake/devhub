@@ -12,7 +12,12 @@ import {
 	type ConversationAttachment,
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
-import { entryId, type EditOutcome } from "../../model/conversation.js";
+import {
+	entryId,
+	pendingId,
+	type PendingId,
+	type RewindOutcome,
+} from "../../model/conversation.js";
 import type { AgentId, AgentPresentation } from "../../model/domain.js";
 import { sessionScope } from "../agent/conversation/resume.js";
 import type {
@@ -125,30 +130,51 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	});
 
 	handle(
-		CONVERSATION_CHANNELS.editLastMessage,
-		async (agentId, message, text): Promise<EditOutcome> => {
-			if (typeof message !== "string" || typeof text !== "string") {
+		CONVERSATION_CHANNELS.rewind,
+		async (agentId, message): Promise<RewindOutcome> => {
+			if (typeof message !== "string") {
 				throw new Error(
-					`${JSON.stringify([message, text])} is not an edit of a message`,
+					`${JSON.stringify(message)} is not a message to rewind to`,
 				);
 			}
 			const conversation = await options.conversations.of(agentId);
-			return conversation.editLastMessage(entryId(message), text);
+			return conversation.rewind(entryId(message));
 		},
 	);
 
 	handle(CONVERSATION_CHANNELS.command, async (agentId, wire) => {
 		const request = requestFrom(wire);
 		const conversation = await options.conversations.of(agentId);
-		await (request.kind === "set-setting"
-			? conversation.configure(request.which, request.id)
-			: conversation.command(request));
+		switch (request.kind) {
+			case "set-setting":
+				return conversation.configure(request.which, request.id);
+			case "submit":
+				return conversation.submit(request.text);
+			case "edit-pending":
+				return conversation.editPending(request.pending, request.text);
+			case "remove-pending":
+				return conversation.removePending(request.pending);
+			case "send-pending-now":
+				return conversation.sendPendingNow(request.pending);
+			default:
+				return conversation.command(request);
+		}
 	});
 }
 
 /** What the page asked for, checked; a person's words are the person's. */
 function requestFrom(wire: unknown):
-	| ConversationCommand
+	| Exclude<ConversationCommand, { readonly kind: "send" }>
+	| { readonly kind: "submit"; readonly text: string }
+	| {
+			readonly kind: "edit-pending";
+			readonly pending: PendingId;
+			readonly text: string;
+	  }
+	| {
+			readonly kind: "remove-pending" | "send-pending-now";
+			readonly pending: PendingId;
+	  }
 	| {
 			readonly kind: "set-setting";
 			readonly which: SettingName;
@@ -158,7 +184,33 @@ function requestFrom(wire: unknown):
 	switch (command?.kind) {
 		case "send":
 			if (typeof command.text !== "string") break;
-			return { kind: "send", text: command.text, origin: "person" };
+			return { kind: "submit", text: command.text };
+		case "edit-pending":
+			if (
+				typeof command.pending !== "string" ||
+				typeof command.text !== "string"
+			)
+				break;
+			return {
+				kind: "edit-pending",
+				pending: pendingId(command.pending),
+				text: command.text,
+			};
+		case "remove-pending":
+		case "send-pending-now":
+			if (typeof command.pending !== "string") break;
+			return { kind: command.kind, pending: pendingId(command.pending) };
+		case "instruct":
+			if (
+				typeof command.subagent !== "string" ||
+				typeof command.text !== "string"
+			)
+				break;
+			return {
+				kind: "instruct",
+				subagent: entryId(command.subagent),
+				text: command.text,
+			};
 		case "interrupt":
 			return { kind: "interrupt" };
 		case "answer":

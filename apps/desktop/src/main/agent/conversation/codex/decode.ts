@@ -120,6 +120,14 @@ export class Reader {
 			: this.mismatch(`${path}.${key}`, "a boolean", value);
 	}
 
+	nullableBoolean(o: Fields, key: string, path: string): boolean | null {
+		const value = o[key];
+		if (value === undefined || value === null) return null;
+		return typeof value === "boolean"
+			? value
+			: this.mismatch(`${path}.${key}`, "a boolean or null", value);
+	}
+
 	oneOf<const T extends string>(
 		o: Fields,
 		key: string,
@@ -286,7 +294,15 @@ export function accountResponse(r: Reader, value: unknown): AccountReading {
 export type ThreadFacts = Pick<
 	Thread,
 	"id" | "parentThreadId" | "agentNickname" | "historyMode"
-> & { readonly turns: readonly TurnFacts[] };
+> & {
+	readonly turns: readonly TurnFacts[];
+	/**
+	 * Whether the person may start or steer this thread's turns themselves:
+	 * `canAcceptDirectInput`, which app-server prints (0.156.1 does) though
+	 * its pinned schema does not list it. Absent is no: nothing says yes.
+	 */
+	readonly takesDirectInput: boolean;
+};
 
 function thread(r: Reader, value: unknown, path: string): ThreadFacts {
 	const o = r.fields(value, path);
@@ -295,6 +311,8 @@ function thread(r: Reader, value: unknown, path: string): ThreadFacts {
 		parentThreadId: r.nullableString(o, "parentThreadId", path),
 		agentNickname: r.nullableString(o, "agentNickname", path),
 		historyMode: r.oneOf(o, "historyMode", path, ["legacy", "paginated"]),
+		takesDirectInput:
+			r.nullableBoolean(o, "canAcceptDirectInput", path) === true,
 		turns:
 			r.nullableArray(o, "turns", path, (value, at) => turn(r, value, at)) ??
 			[],

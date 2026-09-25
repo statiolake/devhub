@@ -35,11 +35,26 @@ import type {
 } from "../../../model/conversation.js";
 
 export type ConversationCommand =
-	/** A user message: a person's words, an injection, or a slash command typed as text. */
+	/**
+	 * A user message: a person's words, an injection, or a slash command typed
+	 * as text. Written while a turn runs, it is taken into that turn (Codex's
+	 * `turn/steer`, Claude's message queued for the turn's next step); written
+	 * while none runs, it starts one.
+	 */
 	| {
 			readonly kind: "send";
 			readonly text: string;
 			readonly origin: "person" | "injection";
+	  }
+	/**
+	 * The person's words to a subagent, named by the call that started it,
+	 * whose `spawns.takesMessages` is true. Taken into its turn if it has one
+	 * running, else starting one of its own.
+	 */
+	| {
+			readonly kind: "instruct";
+			readonly subagent: EntryId;
+			readonly text: string;
 	  }
 	| { readonly kind: "interrupt" }
 	| {
@@ -94,13 +109,13 @@ export interface ProtocolAdapter {
 	 */
 	configure(which: SettingName, id: string): AdapterStep;
 	/**
-	 * How to take back the turns from `message` on: the person's last message,
-	 * which they are editing (`editableMessage`). Changes nothing, like
-	 * `encode`. The adapter emits `rewound` once the CLI has done it, and
-	 * holds the turn `rewinding` in between; a CLI that refused says so in a
-	 * notice and the turn goes back to `none` with nothing dropped. Throws for
-	 * a message that cannot be taken back, which the session's `canRewind` and
-	 * `editableMessage` should have kept from being asked.
+	 * How to take the conversation back to before `message`, one of
+	 * `rewindTargets`: that message and everything after it go. Changes
+	 * nothing, like `encode`. The adapter emits `rewound` once the CLI has
+	 * done it, and holds the turn `rewinding` in between; a CLI that refused
+	 * says so in a notice and the turn goes back to `none` with nothing
+	 * dropped. Throws for a message that is not a rewind target, which the
+	 * page should not have offered.
 	 */
 	rewind(message: EntryId): RewindPlan;
 	/**

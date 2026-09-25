@@ -27,6 +27,7 @@ const SESSION = transcriptOf([
         prompt: "look around",
         model: undefined,
         state: "running",
+        takesMessages: false,
       },
     }),
   ),

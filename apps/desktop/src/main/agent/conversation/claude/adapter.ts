@@ -40,7 +40,7 @@
 import {
 	EMPTY_TRANSCRIPT,
 	applyEvent,
-	editableMessage,
+	rewindTargets,
 	entryId,
 	requestId,
 	type AssistantBlock,
@@ -171,9 +171,11 @@ const SIGNED_OUT = "authentication_failed";
 const DENIED_WITHOUT_WORDS = "The person denied this in DevHub.";
 
 /**
- * The first CLI whose print mode resumes at a message and drops the turn
- * after it (`--resume-session-at`, `--resume-drops-turn`): the Agent SDK's
- * `resumeSessionAt` and `resumeDropsTurn`, documented as needing it.
+ * The first CLI whose print mode resumes a session cut after a message
+ * (`--resume-session-at`, the Agent SDK's `resumeSessionAt`) together with
+ * `--resume-drops-turn`, documented as needing it. DevHub does not pass
+ * `--resume-drops-turn`: it declares the one turn a cut drops and refuses a
+ * cut that drops more, and a rewind drops every turn after the cut.
  */
 const RESUMES_AT_A_MESSAGE = [2, 1, 223] as const;
 
@@ -277,7 +279,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.refuseIfSpent();
 		switch (command.kind) {
 			case "send":
-				return [userLine(command.text, command.origin)];
+				return [userLine(command.text, command.origin, this.running())];
+			case "instruct":
+				throw new Error(
+					"Claude Code's stream-json has no way to say something to a subagent, so no subagent takes the person's messages",
+				);
 			case "interrupt":
 				return [this.controlRequest({ subtype: "interrupt" })];
 			case "answer":
@@ -313,9 +319,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				`claude ${agentVersion ?? "(version unknown)"} cannot take back a turn: resuming at a message needs ${RESUMES_AT_A_MESSAGE.join(".")} or later`,
 			);
 		}
-		if (editableMessage(this.current)?.id !== message) {
+		if (!rewindTargets(this.current).has(message)) {
 			throw new Error(
-				`${message} is not the person's last message, so its turn cannot be taken back`,
+				`${message} is not a message the conversation can be rewound to now`,
 			);
 		}
 		const cut = this.cutBefore.get(message);
@@ -327,16 +333,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		return {
 			kind: "restart",
 			args:
-				cut === null
-					? []
-					: [
-							"--resume",
-							sessionId,
-							"--resume-session-at",
-							cut,
-							"--resume-drops-turn",
-							message.slice("user:".length),
-						],
+				cut === null ? [] : ["--resume", sessionId, "--resume-session-at", cut],
 			mark: [JSON.stringify({ type: "devhub_rewind", message })],
 		};
 	}
@@ -621,6 +618,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * moves a broken conversation: what broke it stays the last word, whatever
 	 * the CLI goes on to print about the turn it was in.
 	 */
+	private running(): boolean {
+		const { state } = this.current;
+		return state.phase === "ready" && state.turn === "running";
+	}
+
 	private turn(turn: "none" | "running" | "rewinding"): void {
 		const { state } = this.current;
 		if (state.phase === "broken") return;
@@ -1242,6 +1244,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				text,
 				images: [],
 				origin,
+				rewindable: line.uuid !== undefined,
 			},
 		});
 		if (when === "live") this.turn("running");
@@ -1361,12 +1364,23 @@ function toolEntryId(toolUseId: string): EntryId {
 	return entryId(`tool:${toolUseId}`);
 }
 
-function userLine(text: string, origin: "person" | "injection"): string {
+/**
+ * A user message for stdin. One written while a turn runs is queued for that
+ * turn's next step (`priority: "next"`, which the CLI also assumes when none
+ * is given): the running turn takes it in between tool calls instead of it
+ * waiting for the turn to end (`later`) or stopping the turn (`now`).
+ */
+function userLine(
+	text: string,
+	origin: "person" | "injection",
+	midTurn = false,
+): string {
 	return JSON.stringify({
 		type: "user",
 		message: { role: "user", content: text },
 		parent_tool_use_id: null,
 		session_id: "",
+		...(midTurn ? { priority: "next" } : {}),
 		[ORIGIN_KEY]: origin,
 	});
 }
@@ -1438,6 +1452,7 @@ function spawnsOf(
 		prompt: text("prompt") ?? "",
 		model: text("model"),
 		state: before?.state ?? "running",
+		takesMessages: false,
 	};
 }
 

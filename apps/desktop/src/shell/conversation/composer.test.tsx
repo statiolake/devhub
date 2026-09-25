@@ -23,12 +23,17 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   EMPTY_SESSION,
   entryId,
+  pendingId,
   type ConversationEvent,
   type ConversationState,
   type SessionFacts,
   type SlashCommand,
 } from "../../model/conversation";
-import { COMPOSER_PLACEHOLDER, EDITING_NOTE } from "./Composer";
+import {
+  COMPOSER_PLACEHOLDER,
+  REWIND_NOTE,
+  composerPlaceholder,
+} from "./Composer";
 import {
   draw,
   entry,
@@ -196,7 +201,6 @@ describe("sending", () => {
 
 describe("when the conversation takes no input", () => {
   const cases: readonly [ConversationState, string][] = [
-    [{ phase: "connecting" }, "Connecting to the Agent…"],
     [
       {
         phase: "broken",
@@ -225,6 +229,29 @@ describe("when the conversation takes no input", () => {
     draw(withSession());
     expect(composer()).toBeEnabled();
     expect(composer()).toHaveAttribute("placeholder", COMPOSER_PLACEHOLDER);
+  });
+
+  it("takes input while the Agent cannot take it yet, saying it waits", () => {
+    for (const state of [
+      { phase: "connecting" },
+      { phase: "ready", turn: "rewinding" },
+    ] as const) {
+      cleanup();
+      const { actions } = draw(withSession([{ type: "state", state }]));
+      expect(composer()).toBeEnabled();
+      expect(composer()).toHaveAttribute(
+        "placeholder",
+        composerPlaceholder(state),
+      );
+      expect(composerPlaceholder(state)).toMatch(
+        /What you send now is sent once/,
+      );
+      // The settings are the CLI's: they wait for it.
+      expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+      type("later");
+      press("Enter");
+      expect(actions.send).toHaveBeenCalledWith("later");
+    }
   });
 });
 
@@ -308,6 +335,7 @@ describe("history", () => {
           prompt: "",
           model: undefined,
           state: "completed",
+          takesMessages: false,
         },
       }),
     ),
@@ -377,15 +405,8 @@ describe("stopping a turn", () => {
 });
 
 describe("focus", () => {
-  it("puts the keyboard in the composer once a shown pane's conversation can take input", () => {
-    const connecting = withSession([
-      { type: "state", state: { phase: "connecting" } },
-    ]);
-    const { redraw } = draw(connecting);
-    // Disabled while connecting: nothing can have the keyboard yet.
-    expect(composer()).toBeDisabled();
-    expect(composer()).not.toHaveFocus();
-    redraw(withSession());
+  it("puts the keyboard in the composer of a shown pane while it connects, since what is typed is held", () => {
+    draw(withSession([{ type: "state", state: { phase: "connecting" } }]));
     expect(composer()).toHaveFocus();
   });
 
@@ -604,109 +625,240 @@ describe("requests from the keyboard", () => {
   });
 });
 
-describe("editing the last message", () => {
+describe("rewinding", () => {
   const REWINDS: SessionFacts = { ...SESSION, canRewind: true };
   const TWO = [put(user("u1", "first")), put(user("u2", "second"))];
 
-  function editButton(id: string) {
-    return within(entry(id)).queryByRole("button", { name: "Edit message" });
+  function rewindButton(id: string) {
+    return within(entry(id)).queryByRole("button", { name: "Rewind to here" });
   }
 
-  it("is offered on the person's last message only, while the session can take a turn back and nothing runs", () => {
+  it("is offered on each of the person's messages, while the session can take turns back and nothing runs", () => {
     const { redraw } = draw(withSession(TWO, REWINDS));
-    expect(editButton("u2")).toBeInTheDocument();
-    expect(editButton("u1")).toBeNull();
+    expect(rewindButton("u1")).toBeInTheDocument();
+    expect(rewindButton("u2")).toBeInTheDocument();
 
     redraw(withSession(TWO, SESSION));
-    expect(editButton("u2")).toBeNull();
+    expect(rewindButton("u2")).toBeNull();
 
     redraw(withSession([...TWO, RUNNING], REWINDS));
-    expect(editButton("u2")).toBeNull();
+    expect(rewindButton("u1")).toBeNull();
   });
 
-  it("puts the message in the composer over the draft, and sends the new words in its place", async () => {
+  it("asks first, saying files are not changed back, and gives up on Cancel", () => {
+    const { actions } = draw(withSession(TWO, REWINDS));
+    fireEvent.click(rewindButton("u1")!);
+    const ask = within(entry("u1")).getByRole("group", {
+      name: "Rewind to here",
+    });
+    expect(ask).toHaveTextContent(REWIND_NOTE);
+    expect(REWIND_NOTE).toContain(
+      "Files the Agent changed are not changed back",
+    );
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(
+      within(entry("u1")).queryByRole("group", { name: "Rewind to here" }),
+    ).toBeNull();
+    expect(actions.rewind).not.toHaveBeenCalled();
+  });
+
+  it("puts the message's words back in the composer, ahead of the draft, once it is rewound", async () => {
     const { actions } = draw(withSession(TWO, REWINDS));
     type("a draft");
-    fireEvent.click(editButton("u2")!);
-    expect(composer()).toHaveValue("second");
+    fireEvent.click(rewindButton("u1")!);
+    fireEvent.click(
+      within(entry("u1")).getByRole("button", { name: "Rewind" }),
+    );
+    expect(actions.rewind).toHaveBeenCalledWith(entryId("u1"));
+    await waitFor(() => expect(composer()).toHaveValue("first\n\na draft"));
     expect(composer()).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent(EDITING_NOTE);
-    expect(EDITING_NOTE).toContain(
-      "files the Agent changed are not changed back",
-    );
-
-    type("second, better");
-    press("Enter");
-    expect(actions.editLastMessage).toHaveBeenCalledWith(
-      entryId("u2"),
-      "second, better",
-    );
-    expect(actions.send).not.toHaveBeenCalled();
-    await waitFor(() => expect(composer()).toHaveValue(""));
-    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
   });
 
-  it("gives the draft back when the edit is given up, by Cancel or Esc, and stops nothing", () => {
-    const { actions } = draw(withSession(TWO, REWINDS));
-    type("a draft");
-    fireEvent.click(editButton("u2")!);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(composer()).toHaveValue("a draft");
-    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
-
-    fireEvent.click(editButton("u2")!);
-    press("Escape");
-    expect(composer()).toHaveValue("a draft");
-    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
-    expect(actions.interrupt).not.toHaveBeenCalled();
-    expect(actions.editLastMessage).not.toHaveBeenCalled();
-  });
-
-  it("keeps the words, still an edit, when the CLI would not take the turn back", async () => {
+  it("leaves the composer alone when the CLI would not rewind", async () => {
     const actions = fakeActions({
-      editLastMessage: vi.fn(() => Promise.resolve("refused" as const)),
+      rewind: vi.fn(() => Promise.resolve("refused" as const)),
     });
     draw(withSession(TWO, REWINDS), actions);
-    fireEvent.click(editButton("u2")!);
-    type("second, better");
-    press("Enter");
-    await waitFor(() => expect(actions.editLastMessage).toHaveBeenCalled());
+    fireEvent.click(rewindButton("u2")!);
+    fireEvent.click(
+      within(entry("u2")).getByRole("button", { name: "Rewind" }),
+    );
+    await waitFor(() => expect(actions.rewind).toHaveBeenCalled());
     await Promise.resolve();
-    expect(composer()).toHaveValue("second, better");
-    expect(screen.getByRole("status")).toHaveTextContent(EDITING_NOTE);
+    expect(composer()).toHaveValue("");
     expect(actions.reportFailure).not.toHaveBeenCalled();
   });
 
-  it("hands a refused edit to the page's root and keeps the words", async () => {
+  it("hands a refused rewind to the page's root", async () => {
     const refused = new Error(
-      "The Agent is in the middle of a turn. Stop it before editing your last message.",
+      "The Agent is in the middle of a turn. Stop it before rewinding.",
     );
     const actions = fakeActions({
-      editLastMessage: vi.fn(() => Promise.reject(refused)),
+      rewind: vi.fn(() => Promise.reject(refused)),
     });
     draw(withSession(TWO, REWINDS), actions);
-    fireEvent.click(editButton("u2")!);
-    press("Enter");
+    fireEvent.click(rewindButton("u2")!);
+    fireEvent.click(
+      within(entry("u2")).getByRole("button", { name: "Rewind" }),
+    );
     await waitFor(() =>
       expect(actions.reportFailure).toHaveBeenCalledWith(refused),
     );
-    expect(composer()).toHaveValue("second");
+  });
+});
+
+describe("messages waiting to be sent", () => {
+  const HELD: ConversationEvent = {
+    type: "pending",
+    pending: [
+      {
+        id: pendingId("held:1"),
+        text: "look at the tests",
+        failure: undefined,
+      },
+      {
+        id: pendingId("held:2"),
+        text: "and the docs",
+        failure: "the host is gone",
+      },
+    ],
+  };
+  function waiting() {
+    return screen.getByRole("list", { name: "Waiting to be sent" });
+  }
+  function item(text: string) {
+    return within(waiting())
+      .getAllByRole("listitem")
+      .find((each) => each.textContent?.includes(text))!;
+  }
+
+  it("lists each one with what it waits for, or why it was not sent", () => {
+    draw(withSession([RUNNING, HELD]));
+    expect(item("look at the tests")).toHaveTextContent(
+      "Waiting: sent when the Agent is ready for it",
+    );
+    expect(item("and the docs")).toHaveTextContent(
+      "Not sent: the host is gone",
+    );
   });
 
-  it("takes no input while the turn is being taken back", () => {
+  it("sends one now, or removes it", () => {
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", {
+        name: "Send now",
+      }),
+    );
+    expect(actions.sendPendingNow).toHaveBeenCalledWith(pendingId("held:1"));
+    fireEvent.click(
+      within(item("and the docs")).getByRole("button", { name: "Remove" }),
+    );
+    expect(actions.removePending).toHaveBeenCalledWith(pendingId("held:2"));
+  });
+
+  it("is changed in place: Enter saves, Esc gives up and stops no turn", async () => {
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    const field = screen.getByLabelText("Waiting message");
+    expect(field).toHaveValue("look at the tests");
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByLabelText("Waiting message")).toBeNull();
+    expect(actions.interrupt).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    fireEvent.change(screen.getByLabelText("Waiting message"), {
+      target: { value: "look at the unit tests" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Waiting message"), {
+      key: "Enter",
+    });
+    expect(actions.editPending).toHaveBeenCalledWith(
+      pendingId("held:1"),
+      "look at the unit tests",
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Waiting message")).toBeNull(),
+    );
+  });
+
+  it("cannot be sent now while the Agent cannot take a message", () => {
     draw(
-      withSession(
-        [
-          ...TWO,
-          { type: "state", state: { phase: "ready", turn: "rewinding" } },
-        ],
-        REWINDS,
+      withSession([{ type: "state", state: { phase: "connecting" } }, HELD]),
+    );
+    expect(
+      within(item("look at the tests")).getByRole("button", {
+        name: "Send now",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("hands a failed action to the page's root", async () => {
+    const failure = new Error("That message is no longer waiting.");
+    const actions = fakeActions({
+      removePending: vi.fn(() => Promise.reject(failure)),
+    });
+    draw(withSession([RUNNING, HELD]), actions);
+    fireEvent.click(
+      within(item("and the docs")).getByRole("button", { name: "Remove" }),
+    );
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(failure),
+    );
+  });
+});
+
+describe("a message to a subagent", () => {
+  const spawned = (takesMessages: boolean) =>
+    withSession([
+      RUNNING,
+      put(
+        tool("task", "spawnAgent: list src/", {
+          status: "running",
+          spawns: {
+            label: "Explorer",
+            prompt: "list src/",
+            model: undefined,
+            state: "running",
+            takesMessages,
+          },
+        }),
       ),
+    ]);
+
+  it("is offered in the card of a subagent that takes the person's messages, and goes to it", async () => {
+    const { actions } = draw(spawned(true));
+    const field = screen.getByLabelText("Message to Explorer");
+    fireEvent.change(field, { target: { value: "look in lib/ too" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(actions.instruct).toHaveBeenCalledWith(
+      entryId("task"),
+      "look in lib/ too",
     );
-    expect(composer()).toBeDisabled();
-    expect(composer()).toHaveAttribute(
-      "placeholder",
-      "Taking back the last turn…",
+    expect(actions.send).not.toHaveBeenCalled();
+    await waitFor(() => expect(field).toHaveValue(""));
+  });
+
+  it("is not offered on one that does not", () => {
+    draw(spawned(false));
+    expect(screen.queryByLabelText("Message to Explorer")).toBeNull();
+  });
+
+  it("hands a failed send to the page's root and keeps the words", async () => {
+    const failure = new Error("app-server did not take the message");
+    const actions = fakeActions({
+      instruct: vi.fn(() => Promise.reject(failure)),
+    });
+    draw(spawned(true), actions);
+    const field = screen.getByLabelText("Message to Explorer");
+    fireEvent.change(field, { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Explorer" }));
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(failure),
     );
+    expect(field).toHaveValue("hello");
   });
 });

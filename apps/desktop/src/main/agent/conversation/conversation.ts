@@ -46,25 +46,40 @@
  * It is not thrown at the round, which would fail every Agent on the machine
  * and show on none of them — the spinner that never ends.
  *
- * # Editing the last message
+ * # Rewinding
  *
- * `editLastMessage` takes back the person's last turn and sends new words in
- * its place: the adapter's plan is carried out (lines written, or the CLI
- * started again by its host), the adapter reports the turn `rewinding` until
- * the CLI has done it, and only then are the new words sent, as any message
- * is. Nothing else may be written meanwhile. The rewind itself is in the
- * journal (a request and its answer, or the host's mark between two CLIs), so
- * a replay rebuilds the rewound transcript like everything else.
+ * `rewind` takes the conversation back to before one of the person's
+ * messages: the adapter's plan is carried out (lines written, or the CLI
+ * started again by its host), and the adapter reports the turn `rewinding`
+ * until the CLI has done it. Nothing else may be written meanwhile. The
+ * rewind itself is in the journal (a request and its answer, or the host's
+ * mark between two CLIs), so a replay rebuilds the rewound transcript like
+ * everything else.
+ *
+ * # The person's messages, held
+ *
+ * The person's words (`submit`) are written at once when the Agent is idle.
+ * Otherwise — a turn running, a request open, the CLI still connecting or
+ * being started again — DevHub holds them (`Transcript.pending`), and the
+ * person can change them, take them back, or have one written at once
+ * (`sendPendingNow`), which a running turn takes in as it goes. Each time the
+ * Agent becomes idle, the oldest held message is written and starts the next
+ * turn. A held message is DevHub's alone, not in the journal: it is lost if
+ * DevHub quits before writing it. A write of one that fails leaves it held,
+ * saying why, until the person tries again.
  */
 
 import {
 	EMPTY_TRANSCRIPT,
 	TranscriptInvariantError,
 	applyEvent,
-	editableMessage,
+	pendingId,
+	rewindTargets,
 	type ConversationEvent,
-	type EditOutcome,
 	type EntryId,
+	type PendingId,
+	type PendingMessage,
+	type RewindOutcome,
 	type Transcript,
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
@@ -162,6 +177,9 @@ export class AgentConversation {
 	#lost: HostLinkFailure | undefined;
 	#crashed: Error | undefined;
 	#rewind: PendingRewind | undefined;
+	/** Whether the Agent was idle after the last event: becoming idle writes a held message. */
+	#idle = false;
+	#heldCount = 0;
 
 	constructor(
 		host: ConversationHost,
@@ -216,16 +234,16 @@ export class AgentConversation {
 	}
 
 	/**
-	 * Take back the turn of the person's last message, `message`, and
-	 * everything after it, then send `text` in its place. Refused, with the
-	 * reason, when that message cannot be edited now; rejects when the plan
-	 * could not be carried out or the conversation stopped before the new
-	 * words were sent.
+	 * Take the conversation back to before `message`, one of `rewindTargets`:
+	 * that message and everything after it go. Refused, with the reason, when
+	 * it cannot be rewound to now; `refused` when the CLI would not (the
+	 * conversation says why, and nothing was dropped); rejects when the plan
+	 * could not be carried out or the conversation stopped first.
 	 */
-	async editLastMessage(message: EntryId, text: string): Promise<EditOutcome> {
+	async rewind(message: EntryId): Promise<RewindOutcome> {
 		const rewound = await this.#serial(async () => {
 			this.#refuseIfBusy();
-			this.#refuseEdit(message);
+			this.#refuseRewind(message);
 			const plan = this.#adapter.rewind(message);
 			const over = new Promise<void>((done, failed) => {
 				this.#rewind = { begun: false, done, failed };
@@ -242,10 +260,134 @@ export class AgentConversation {
 			return { over };
 		});
 		await rewound.over;
-		if (this.#transcript.entries.some((entry) => entry.id === message))
-			return "refused";
-		await this.command({ kind: "send", text, origin: "person" });
-		return "sent";
+		return this.#transcript.entries.some((entry) => entry.id === message)
+			? "refused"
+			: "rewound";
+	}
+
+	/**
+	 * The person's words to the Agent: written at once when it is idle and
+	 * holds nothing of theirs, else held until it is (see the module's doc).
+	 */
+	submit(text: string): Promise<void> {
+		return this.#serial(async () => {
+			this.#refuseIfBroken();
+			if (this.#idleNow() && this.#transcript.pending.length === 0) {
+				await this.#write(
+					this.#adapter.encode({ kind: "send", text, origin: "person" }),
+				);
+				return;
+			}
+			this.#heldCount += 1;
+			this.#setPending([
+				...this.#transcript.pending,
+				{ id: pendingId(`held:${this.#heldCount}`), text, failure: undefined },
+			]);
+		});
+	}
+
+	/** Change the words of a held message. */
+	editPending(id: PendingId, text: string): Promise<void> {
+		return this.#serial(async () => {
+			this.#held(id);
+			this.#setPending(
+				this.#transcript.pending.map((each) =>
+					each.id === id ? { ...each, text, failure: undefined } : each,
+				),
+			);
+		});
+	}
+
+	/** Take a held message back: it is never written. */
+	removePending(id: PendingId): Promise<void> {
+		return this.#serial(async () => {
+			this.#held(id);
+			this.#setPending(
+				this.#transcript.pending.filter((each) => each.id !== id),
+			);
+		});
+	}
+
+	/**
+	 * Write a held message now, without waiting for the Agent to be idle: a
+	 * running turn takes it in as it goes (the adapter's `send`). Refused
+	 * while the CLI cannot take a message at all.
+	 */
+	sendPendingNow(id: PendingId): Promise<void> {
+		return this.#serial(async () => {
+			this.#refuseIfBusy();
+			this.#held(id);
+			const { state } = this.#transcript;
+			if (state.phase !== "ready" || state.turn === "rewinding") {
+				throw new Error(
+					"The Agent cannot take a message yet. It is sent when the Agent is ready.",
+				);
+			}
+			await this.#writeHeld(id);
+		});
+	}
+
+	#held(id: PendingId): PendingMessage {
+		const found = this.#transcript.pending.find((each) => each.id === id);
+		if (found === undefined) {
+			throw new Error(
+				"That message is no longer waiting: it was sent or taken back.",
+			);
+		}
+		return found;
+	}
+
+	/**
+	 * Inside the turnstile only: write a held message and let it go, or keep
+	 * it held with the reason its write failed, which it shows. That is the
+	 * one place a held message's failure is reported.
+	 */
+	async #writeHeld(id: PendingId): Promise<void> {
+		const { text } = this.#held(id);
+		try {
+			await this.#write(
+				this.#adapter.encode({ kind: "send", text, origin: "person" }),
+			);
+		} catch (error: unknown) {
+			if (!(error instanceof HostLinkFailure)) throw error;
+			this.#setPending(
+				this.#transcript.pending.map((each) =>
+					each.id === id ? { ...each, failure: error.message } : each,
+				),
+			);
+			return;
+		}
+		this.#setPending(this.#transcript.pending.filter((each) => each.id !== id));
+	}
+
+	#setPending(pending: readonly PendingMessage[]): void {
+		this.#apply({ type: "pending", pending });
+	}
+
+	/** Nothing running, waiting or being taken back: a message written now starts a turn. */
+	#idleNow(): boolean {
+		const { state, requests } = this.#transcript;
+		return (
+			state.phase === "ready" &&
+			state.turn === "none" &&
+			requests.length === 0 &&
+			this.#rewind === undefined
+		);
+	}
+
+	/**
+	 * The Agent became idle: the oldest held message is written, in the
+	 * turnstile after whatever made it idle. A held message whose last write
+	 * failed waits for the person.
+	 */
+	#writeNextHeld(): void {
+		const next = this.#transcript.pending[0];
+		if (next === undefined || next.failure !== undefined) return;
+		void this.#serial(async () => {
+			if (!this.#idleNow() || this.#transcript.pending[0]?.id !== next.id)
+				return;
+			await this.#writeHeld(next.id);
+		}).catch((error: unknown) => this.#crash(error));
 	}
 
 	/**
@@ -296,12 +438,12 @@ export class AgentConversation {
 		}
 	}
 
-	#refuseEdit(message: EntryId): void {
-		if (editableMessage(this.#transcript)?.id === message) return;
-		const { state, session, requests } = this.#transcript;
+	#refuseRewind(message: EntryId): void {
+		if (rewindTargets(this.#transcript).has(message)) return;
+		const { state, session, requests, pending } = this.#transcript;
 		if (!session.canRewind) {
 			throw new Error(
-				"This Agent's CLI cannot take back a turn, so a message cannot be edited.",
+				"This Agent's CLI cannot take turns back, so the conversation cannot be rewound.",
 			);
 		}
 		if (
@@ -309,11 +451,16 @@ export class AgentConversation {
 			(state.phase === "ready" && state.turn !== "none")
 		) {
 			throw new Error(
-				"The Agent is in the middle of a turn. Stop it before editing your last message.",
+				"The Agent is in the middle of a turn. Stop it before rewinding.",
+			);
+		}
+		if (pending.length > 0) {
+			throw new Error(
+				"Messages of yours are waiting to be sent. Send or remove them before rewinding.",
 			);
 		}
 		throw new Error(
-			"That is no longer your last message, so it cannot be edited.",
+			"The conversation cannot be rewound to before that message.",
 		);
 	}
 
@@ -321,7 +468,7 @@ export class AgentConversation {
 		this.#refuseIfBroken();
 		if (this.#rewind !== undefined) {
 			throw new Error(
-				"Your last message is being edited. Wait until the new one is sent.",
+				"The conversation is being taken back. Wait until that is done.",
 			);
 		}
 	}
@@ -366,7 +513,7 @@ export class AgentConversation {
 			this.#rewind = undefined;
 			rewind?.failed(
 				new Error(
-					"The conversation stopped before your edited message could be sent.",
+					"The conversation stopped before the CLI had taken the turns back.",
 				),
 			);
 		}
@@ -426,13 +573,18 @@ export class AgentConversation {
 				});
 				return;
 			}
-			this.#cancel.cancel();
-			this.#crashed = error instanceof Error ? error : new Error(String(error));
-			console.error(
-				"[devhub] a GUI Agent's conversation stopped on a failure DevHub did not expect:",
-				this.#crashed.stack ?? this.#crashed.message,
-			);
+			this.#crash(error);
 		}
+	}
+
+	/** A failure DevHub did not expect stops the conversation for good (see the module's doc). */
+	#crash(error: unknown): void {
+		this.#cancel.cancel();
+		this.#crashed = error instanceof Error ? error : new Error(String(error));
+		console.error(
+			"[devhub] a GUI Agent's conversation stopped on a failure DevHub did not expect:",
+			this.#crashed.stack ?? this.#crashed.message,
+		);
 	}
 
 	/** Feed back what DevHub wrote after the journal reached `offset`. */
@@ -459,6 +611,9 @@ export class AgentConversation {
 		this.#revision += 1;
 		this.#publish(this.#revision, event);
 		this.#watchRewind();
+		const idle = this.#idleNow();
+		if (idle && !this.#idle) this.#writeNextHeld();
+		this.#idle = idle;
 	}
 
 	/** An edit's rewind is over once the turn has been `rewinding` and is not any more. */
@@ -476,7 +631,7 @@ export class AgentConversation {
 		if (state.phase === "broken") {
 			rewind.failed(
 				new Error(
-					`The conversation stopped before your edited message could be sent: ${state.failure.detail}`,
+					`The conversation stopped before the CLI had taken the turns back: ${state.failure.detail}`,
 				),
 			);
 			return;

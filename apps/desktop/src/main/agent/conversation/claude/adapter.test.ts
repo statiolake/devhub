@@ -17,6 +17,7 @@ import {
 	conversationStatus,
 	entryId,
 	requestId,
+	rewindTargets,
 	type ConversationEvent,
 	type NoticeEntry,
 	type ToolEntry,
@@ -358,6 +359,7 @@ describe("the permission fixture", () => {
 				text: "Run pwd with Bash",
 				images: [],
 				origin: "person",
+				rewindable: true,
 			},
 			{
 				kind: "assistant",
@@ -1844,14 +1846,7 @@ describe("taking back the last turn", () => {
 		const plan = adapter.rewind(entryId("user:u2"));
 		expect(plan).toEqual({
 			kind: "restart",
-			args: [
-				"--resume",
-				SESSION,
-				"--resume-session-at",
-				"a1",
-				"--resume-drops-turn",
-				"u2",
-			],
+			args: ["--resume", SESSION, "--resume-session-at", "a1"],
 			mark: [json({ type: "devhub_rewind", message: "user:u2" })],
 		});
 		// Nothing changes until the host says the CLI was started again.
@@ -1893,14 +1888,7 @@ describe("taking back the last turn", () => {
 		adapter.received(result());
 		const again = adapter.rewind(entryId("user:u3"));
 		expect(again).toMatchObject({
-			args: [
-				"--resume",
-				SESSION,
-				"--resume-session-at",
-				"a1",
-				"--resume-drops-turn",
-				"u3",
-			],
+			args: ["--resume", SESSION, "--resume-session-at", "a1"],
 		});
 	});
 
@@ -1933,14 +1921,7 @@ describe("taking back the last turn", () => {
 		const last = (JSON.parse(history.at(-1)!) as { record: { uuid: string } })
 			.record.uuid;
 		expect(adapter.rewind(entryId("user:u9"))).toMatchObject({
-			args: [
-				"--resume",
-				SESSION,
-				"--resume-session-at",
-				last,
-				"--resume-drops-turn",
-				"u9",
-			],
+			args: ["--resume", SESSION, "--resume-session-at", last],
 		});
 	});
 
@@ -1952,10 +1933,42 @@ describe("taking back the last turn", () => {
 		);
 	});
 
-	it("refuses a message that is not the person's last one", () => {
+	it("goes back to before an earlier message too: the session is cut after the message before it, and every turn from it on is dropped", () => {
 		const adapter = twoTurns();
+		expect([...rewindTargets(adapter.transcript)]).toEqual([
+			"user:u1",
+			"user:u2",
+		]);
+		const plan = adapter.rewind(entryId("user:u1"));
+		// The first message has nothing before it: a fresh session.
+		expect(plan).toMatchObject({ kind: "restart", args: [] });
+		if (plan.kind !== "restart") throw new Error("not a restart");
+		adapter.received(plan.mark[0]!);
+		expect(adapter.transcript.entries).toEqual([]);
+
+		const three = twoTurns();
+		perform(three, { kind: "send", text: "third", origin: "person" });
+		three.received(echo("third", "u3"));
+		three.received(result());
+		const cut = three.rewind(entryId("user:u2"));
+		expect(cut).toMatchObject({
+			args: ["--resume", SESSION, "--resume-session-at", "a1"],
+		});
+		if (cut.kind !== "restart") throw new Error("not a restart");
+		three.received(cut.mark[0]!);
+		expect(three.transcript.entries.map((each) => each.id)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+		]);
+	});
+
+	it("refuses a message that is not a rewind target now", () => {
+		const adapter = twoTurns();
+		perform(adapter, { kind: "send", text: "third", origin: "person" });
+		adapter.received(echo("third", "u3"));
 		expect(() => adapter.rewind(entryId("user:u1"))).toThrow(
-			/user:u1 is not the person's last message/,
+			/user:u1 is not a message the conversation can be rewound to now/,
 		);
 	});
 
@@ -1964,6 +1977,48 @@ describe("taking back the last turn", () => {
 		expect(() =>
 			adapter.received(json({ type: "devhub_rewind", message: "user:nope" })),
 		).toThrow(/user:nope, which is not an entry/);
+	});
+});
+
+describe("a message written while a turn runs", () => {
+	it("is queued for the turn's next step, and one written between turns starts one", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		const idle = adapter.encode({ kind: "send", text: "go", origin: "person" });
+		expect(JSON.parse(idle[0]!)).not.toHaveProperty("priority");
+		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		adapter.received(echo("go", "u1"));
+		const midTurn = adapter.encode({
+			kind: "send",
+			text: "and also this",
+			origin: "person",
+		});
+		expect(JSON.parse(midTurn[0]!)).toMatchObject({
+			type: "user",
+			priority: "next",
+			message: { content: "and also this" },
+		});
+		// It is the person's like any other once the CLI takes it.
+		perform(adapter, { kind: "send", text: "and also this", origin: "person" });
+		adapter.received(echo("and also this", "u2"));
+		expect(entry(adapter, "user:u2")).toMatchObject({
+			origin: "person",
+			rewindable: true,
+		});
+	});
+});
+
+describe("a subagent", () => {
+	it("takes no message from the person: stream-json has no way to reach one", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		expect(() =>
+			adapter.encode({
+				kind: "instruct",
+				subagent: entryId("tool:toolu_1"),
+				text: "look deeper",
+			}),
+		).toThrow(/no way to say something to a subagent/);
 	});
 });
 

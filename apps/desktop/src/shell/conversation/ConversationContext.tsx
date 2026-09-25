@@ -18,10 +18,11 @@
 
 import { createContext, useContext } from "react";
 import type {
-  EditOutcome,
   EntryId,
+  PendingId,
   RequestAnswer,
   RequestId,
+  RewindOutcome,
   UserEntry,
 } from "../../model/conversation";
 
@@ -31,17 +32,22 @@ export type SettingName = "model" | "effort" | "mode";
 export interface ConversationActions {
   readonly writeClipboard: (text: string) => Promise<void>;
   readonly openExternalUrl: (url: string) => Promise<void>;
-  /** Say something to the Agent as the person, mid-turn or not. */
-  readonly send: (text: string) => Promise<void>;
   /**
-   * Take back the turn of the person's last message and send `text` in its
-   * place. `refused` when the CLI would not take it back: the conversation
-   * says why, and the words are still the person's.
+   * Say something to the Agent as the person: written at once when it is
+   * idle, else held as a pending message (`Transcript.pending`).
    */
-  readonly editLastMessage: (
-    message: EntryId,
-    text: string,
-  ) => Promise<EditOutcome>;
+  readonly send: (text: string) => Promise<void>;
+  readonly editPending: (pending: PendingId, text: string) => Promise<void>;
+  readonly removePending: (pending: PendingId) => Promise<void>;
+  /** Write a held message now: a running turn takes it in as it goes. */
+  readonly sendPendingNow: (pending: PendingId) => Promise<void>;
+  /** Say something to a subagent whose `spawns.takesMessages` is true, named by its call. */
+  readonly instruct: (subagent: EntryId, text: string) => Promise<void>;
+  /**
+   * Take the conversation back to before `message`. `refused` when the CLI
+   * would not: the conversation says why, and nothing was dropped.
+   */
+  readonly rewind: (message: EntryId) => Promise<RewindOutcome>;
   /** Stop the turn that is running. */
   readonly interrupt: () => Promise<void>;
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
@@ -85,24 +91,25 @@ export function useFocusComposer(): () => void {
 }
 
 /**
- * Editing the person's last message: which message may be edited now
- * (`editableMessage`), and how to start. Starting puts its words in the
- * composer, which sends them in its place.
+ * Rewinding to before one of the person's messages: which messages can be
+ * rewound to now (`rewindTargets`), and how to do it. A rewind that is done
+ * puts the message's words back in the composer.
  */
-export interface EditMessage {
-  readonly editable: EntryId | undefined;
-  readonly editing: EntryId | undefined;
-  readonly start: (entry: UserEntry) => void;
+export interface RewindMessage {
+  readonly targets: ReadonlySet<EntryId>;
+  readonly rewind: (entry: UserEntry) => Promise<void>;
 }
 
-const EditMessageContext = createContext<EditMessage | undefined>(undefined);
+const RewindMessageContext = createContext<RewindMessage | undefined>(
+  undefined,
+);
 
-export const EditMessageProvider = EditMessageContext.Provider;
+export const RewindMessageProvider = RewindMessageContext.Provider;
 
-export function useEditMessage(): EditMessage {
-  const edit = useContext(EditMessageContext);
-  if (!edit) {
+export function useRewindMessage(): RewindMessage {
+  const rewind = useContext(RewindMessageContext);
+  if (!rewind) {
     throw new Error("a user message was drawn outside a ConversationSurface");
   }
-  return edit;
+  return rewind;
 }

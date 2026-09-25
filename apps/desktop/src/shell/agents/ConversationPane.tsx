@@ -17,6 +17,7 @@ import {
   type ConversationEvent,
   type RequestAnswer,
   type EntryId,
+  type PendingId,
   type RequestId,
   type Transcript,
 } from "../../model/conversation";
@@ -53,8 +54,16 @@ export function ConversationPane({
       writeClipboard: (text: string) => bridge.writeClipboard(text),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),
       send: (text: string) => bridge.conversation.send(agentId, text),
-      editLastMessage: (message: EntryId, text: string) =>
-        bridge.conversation.editLastMessage(agentId, message, text),
+      editPending: (pending: PendingId, text: string) =>
+        bridge.conversation.editPending(agentId, pending, text),
+      removePending: (pending: PendingId) =>
+        bridge.conversation.removePending(agentId, pending),
+      sendPendingNow: (pending: PendingId) =>
+        bridge.conversation.sendPendingNow(agentId, pending),
+      instruct: (subagent: EntryId, text: string) =>
+        bridge.conversation.instruct(agentId, subagent, text),
+      rewind: (message: EntryId) =>
+        bridge.conversation.rewind(agentId, message),
       interrupt: () => bridge.conversation.interrupt(agentId),
       answer: (request: RequestId, answer: RequestAnswer) =>
         bridge.conversation.answer(agentId, request, answer),
