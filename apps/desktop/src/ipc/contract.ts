@@ -1362,6 +1362,7 @@ export const CHANNELS = {
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",
 	getRepositoryStatus: "devhub:get-repository-status",
+	getUsageLimits: "devhub:get-usage-limits",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
@@ -1389,7 +1390,6 @@ export const CHANNELS = {
 	appearanceChanged: "devhub:appearance-changed",
 	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
 	themeChanged: "devhub:theme-changed",
-	getUsageLimits: "devhub:get-usage-limits",
 	/** The window's name moved, and DevHub's own title bar letters it. */
 	windowTitleChanged: "devhub:window-title-changed",
 	agentProfilesChanged: "devhub:agent-profiles-changed",
@@ -1450,6 +1450,8 @@ export const CHANNELS = {
 	editorRestarting: "devhub:editor-restarting",
 	/** The branch, Issue and pull request each workspace is working on. */
 	repositoryStatusChanged: "devhub:repository-status-changed",
+	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
+	usageLimitsChanged: "devhub:usage-limits-changed",
 } as const;
 
 /**
@@ -1477,8 +1479,6 @@ export interface ChordHelpRowWire {
 }
 
 export type ModalRequest =
-	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
-	usageLimitsChanged: "devhub:usage-limits-changed",
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
 	| { readonly kind: "issue-assignment" }

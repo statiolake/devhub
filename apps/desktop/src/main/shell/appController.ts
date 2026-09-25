@@ -914,6 +914,14 @@ export class AppController {
 				}),
 			fail: (error) => asIpcError(errorWire(error)),
 		});
+		// The Sidebar's usage-limits readout, from what the GUI Agents report.
+		this.agentWiring.conversations.registry.onEvent(
+			usageLimitsListener(
+				this.usageLimits,
+				(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
+				(limits) => this.send(CHANNELS.usageLimitsChanged, limits),
+			),
+		);
 		// Everything restored from the state file describes the previous run,
 		// and the sessions on the socket are what is left of it. Nothing has to
 		// be told which session belongs where: each carries its own workspace
@@ -923,14 +931,6 @@ export class AppController {
 		// machine DevHub has ever owned sessions on, which is more than the
 		// machines it still has Workspaces on. See `sessionSweep.ts`.
 		this.sessionSweeper = new SessionSweeper({
-		// The Sidebar's usage-limits readout, from what the GUI Agents report.
-		this.agentWiring.conversations.registry.onEvent(
-			usageLimitsListener(
-				this.usageLimits,
-				(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
-				(limits) => this.send(CHANNELS.usageLimitsChanged, limits),
-			),
-		);
 			adapterFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			hostFilesFor: (machine) =>
 				agentHostFiles(
@@ -2336,6 +2336,9 @@ export class AppController {
 		}
 	}
 
+	/** The Sidebar's usage-limits readout. See `usageLimits.ts`. */
+	private readonly usageLimits = new UsageLimits();
+
 	/**
 	 * The branch and Issue projection, and the watcher that keeps it true.
 	 *
@@ -2352,7 +2355,6 @@ export class AppController {
 		gitCommand: (runtime) => this.gitCommand(runtime),
 		environment: this.launchEnvironment,
 		// Every open Workspace, wherever its folder is. git, the HEAD watcher
-	private readonly usageLimits = new UsageLimits();
 		// and the worktree probe all go through the Workspace's own runtime now,
 		// so a checkout on another machine is read the same way as one here —
 		// the same row, with the same branch, Issue and pull request on it.
@@ -6025,6 +6027,7 @@ export class AppController {
 		});
 
 		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
+		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 
 		// Destructive. `force` says the page already asked and was told to go
 		// ahead; without it git is left to refuse, which is what happens for the
@@ -6085,7 +6088,6 @@ export class AppController {
 					throw asIpcError(errorWire(error));
 				}
 			},
-		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 		);
 		handle(
 			CHANNELS.cancelInjection,
