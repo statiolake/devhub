@@ -448,12 +448,13 @@ export interface Runtime {
 	 * which machine it was talking to — the one question this interface exists
 	 * to stop being asked.
 	 *
-	 * Locally the answer is an absolute path or an `unavailable` naming every
-	 * directory that was searched, because the search happened here and a search
-	 * nobody can see is a search nobody can correct. Remotely it is the name
-	 * itself: the far end resolves it when the command runs, and refuses with
-	 * the same `unavailable` in that machine's own words, so a lookup here would
-	 * be a second answer taken from the wrong disk.
+	 * The answer is an absolute path on *that* machine, or an `unavailable`
+	 * naming every directory that was searched, because a search nobody can see
+	 * is a search nobody can correct. Locally the search is `searchPath`, this
+	 * Mac's launch PATH. Remotely `searchPath` is not read: the far machine runs
+	 * `command -v` under its own login environment and answers with its own
+	 * path or its own PATH's directories, so a lookup here would be a second
+	 * answer taken from the wrong disk.
 	 */
 	resolveProgram(
 		configured: string,
