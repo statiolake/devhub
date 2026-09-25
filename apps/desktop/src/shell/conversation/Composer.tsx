@@ -29,7 +29,7 @@
  * there, or sent now, which a running turn takes in as it goes; the rest are
  * sent one per turn, as each turn ends. One open to be changed is held by
  * main, unsent, from Edit until Save or Cancel, and let go if the composer
- * goes away with it open.
+ * goes away with it open; the caret starts at the end of its words.
  *
  * Rewinding to before a message puts its words back here, ahead of whatever
  * was being typed.
@@ -177,6 +177,10 @@ function PendingItem({
           rows={1}
           value={draft}
           autoFocus
+          onFocus={(event) => {
+            const end = event.currentTarget.value.length;
+            event.currentTarget.setSelectionRange(end, end);
+          }}
           onChange={(event) => setDraft(event.target.value)}
           onCompositionStart={() => {
             composing.current = true;

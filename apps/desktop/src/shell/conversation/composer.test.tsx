@@ -808,6 +808,10 @@ describe("messages waiting to be sent", () => {
     );
     const field = await screen.findByLabelText("Waiting message");
     expect(field).toHaveValue("look at the tests");
+    expect(field).toHaveFocus();
+    const end = "look at the tests".length;
+    expect((field as HTMLTextAreaElement).selectionStart).toBe(end);
+    expect((field as HTMLTextAreaElement).selectionEnd).toBe(end);
     fireEvent.keyDown(field, { key: "Escape" });
     expect(screen.queryByLabelText("Waiting message")).toBeNull();
     expect(actions.stopEditingPending).toHaveBeenCalledWith(
