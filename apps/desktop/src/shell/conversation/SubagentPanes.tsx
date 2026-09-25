@@ -38,6 +38,7 @@ import type {
 import { EntryView } from "./EntryView";
 import { NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
+import { SubagentMessage } from "./SubagentMessage";
 
 /** How wide the pane must be for a column beside the conversation. */
 export const WIDE_PANE_PX = 1040;
@@ -241,7 +242,8 @@ export function SubagentElsewhere({
 /**
  * A subagent's own transcript, in a pane of its own: the column's, or the
  * whole view's when maximized. It follows new output as the conversation
- * does.
+ * does. Its message box goes where its work is drawn, so it is here, under
+ * the transcript, and not in the card.
  */
 export function SubagentPane({
   entry,
@@ -289,6 +291,7 @@ export function SubagentPane({
           ))}
         </div>
       </div>
+      <SubagentMessage entry={entry} />
     </section>
   );
 }

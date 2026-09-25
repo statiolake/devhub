@@ -1442,6 +1442,14 @@
   gap: var(--space-2);
 }
 
+/* In a subagent's own pane, it stays under the scrolling transcript. */
+.conversation-subagent-pane > .conversation-subagent-message {
+  flex: none;
+  margin-top: 0;
+  padding: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+}
+
 .conversation-subagent-message-input {
   flex: 1;
   min-width: 0;

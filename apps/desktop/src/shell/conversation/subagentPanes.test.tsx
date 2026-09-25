@@ -17,9 +17,14 @@ import {
   it,
   vi,
 } from "vitest";
-import type { ToolEntry } from "../../model/conversation";
+import { entryId, type ToolEntry } from "../../model/conversation";
 import { WIDE_PANE_PX } from "./SubagentPanes";
-import { draw, entry, installResizeObserver } from "./surfaceTestKit";
+import {
+  draw,
+  entry,
+  fakeActions,
+  installResizeObserver,
+} from "./surfaceTestKit";
 import {
   assistant,
   opened,
@@ -31,7 +36,12 @@ import {
 
 type Spawns = NonNullable<ToolEntry["spawns"]>;
 
-function subagent(id: string, label: string, state: Spawns["state"]) {
+function subagent(
+  id: string,
+  label: string,
+  state: Spawns["state"],
+  takesMessages = false,
+) {
   return put(
     tool(id, `Task: ${label}`, {
       name: "Task",
@@ -41,7 +51,7 @@ function subagent(id: string, label: string, state: Spawns["state"]) {
         prompt: `do ${label}`,
         model: undefined,
         state,
-        takesMessages: false,
+        takesMessages,
       },
     }),
   );
@@ -254,5 +264,45 @@ describe("a wide pane", () => {
       );
     });
     expect(card).toHaveFocus();
+  });
+});
+
+describe("a message to a subagent that takes the person's messages", () => {
+  const TALKING = transcriptOf([
+    subagent("a", "Alpha", "running", true),
+    put(assistant("a-answer", "alpha is working", { parent: "a" })),
+  ]);
+
+  /** Sends through the one message box drawn, which must be in `where`. */
+  function sendFrom(where: HTMLElement) {
+    const fields = screen.getAllByLabelText("Message to Alpha");
+    expect(fields).toHaveLength(1);
+    expect(where).toContainElement(fields[0]!);
+    fireEvent.change(fields[0]!, { target: { value: "look in lib/ too" } });
+    fireEvent.keyDown(fields[0]!, { key: "Enter" });
+  }
+
+  it("is in the column's pane when the subagent is beside the conversation", () => {
+    paneWidth(WIDE_PANE_PX + 200);
+    const actions = fakeActions();
+    draw(TALKING, actions);
+    sendFrom(screen.getByRole("region", { name: "Subagent: Alpha" }));
+    expect(actions.instruct).toHaveBeenCalledWith(
+      entryId("a"),
+      "look in lib/ too",
+    );
+  });
+
+  it("is in the pane the subagent fills when maximized", () => {
+    paneWidth(600);
+    installResizeObserver();
+    const actions = fakeActions();
+    draw(TALKING, actions);
+    fireEvent.click(screen.getByRole("tab", { name: "Alpha" }));
+    sendFrom(screen.getByRole("region", { name: "Subagent: Alpha" }));
+    expect(actions.instruct).toHaveBeenCalledWith(
+      entryId("a"),
+      "look in lib/ too",
+    );
   });
 });

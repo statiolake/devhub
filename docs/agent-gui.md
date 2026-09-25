@@ -344,8 +344,10 @@ the journal the same way and gets the same shortened transcript.
 
 ## Messaging a subagent
 
-A subagent's card has a message box of its own when its CLI lets you talk to
-it directly. What you send there goes to that subagent, not to the Agent that
+A subagent has a message box of its own when its CLI lets you talk to it
+directly. The box goes with its work: under it in the card, or under its pane
+when it is in the column beside the conversation or filling the pane. What you
+send there goes to that subagent, not to the Agent that
 started it. It joins the subagent's running turn, or starts a new turn if it
 has none.
 
