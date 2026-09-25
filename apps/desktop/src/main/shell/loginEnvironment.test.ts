@@ -338,7 +338,7 @@ describe("runtime resolution in the imported environment", () => {
 		expect(resolved.tmux.kind).toBe("unavailable");
 		if (resolved.tmux.kind !== "unavailable") return;
 		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
-			"DevHub could not find '/opt/nothing/bin/tmux' at /opt/nothing/bin/tmux.",
+			"DevHub could not find /opt/nothing/bin/tmux.",
 		);
 	});
 
@@ -398,6 +398,47 @@ describe("why an executable could not be found", () => {
 		expect(message).toContain("could not find 'tmux' on PATH");
 		expect(message).toContain("/bin/zsh");
 		expect(message).toContain("did not answer within 10 seconds");
+	});
+
+	// A lookup on another machine names that machine, and this Mac's login
+	// import is not a reason for anything there.
+	it("names the machine a search ran on, and leaves this Mac's import out of it", () => {
+		const where = " in the dev container for /src/ws";
+		expect(
+			runtimeUnavailableMessage({
+				kind: "unavailable",
+				configured: "/workspaces/ws/fake-agent.sh",
+				lookup: { kind: "explicit", path: "/workspaces/ws/fake-agent.sh" },
+				where,
+			}),
+		).toBe(
+			"DevHub could not find /workspaces/ws/fake-agent.sh in the dev container for /src/ws.",
+		);
+		const onHost = {
+			kind: "unavailable",
+			configured: "claude",
+			lookup: { kind: "path", directories: ["/usr/bin", "/bin"] },
+			where: " on build-box.example.com",
+		} as const;
+		expect(runtimeUnavailableMessage(onHost)).toBe(
+			"DevHub could not find 'claude' on PATH on build-box.example.com (looked in: /usr/bin, /bin).",
+		);
+		expect(
+			executableMissingMessage(
+				onHost,
+				"DevHub could not read the login environment from /bin/zsh.",
+			),
+		).toBe(runtimeUnavailableMessage(onHost));
+	});
+
+	it("names a configured path once, and what it expanded to when that differs", () => {
+		expect(
+			runtimeUnavailableMessage({
+				kind: "unavailable",
+				configured: "~/bin/agent",
+				lookup: { kind: "explicit", path: "/home/testuser/bin/agent" },
+			}),
+		).toBe("DevHub could not find '~/bin/agent' (/home/testuser/bin/agent).");
 	});
 
 	it("says only what it knows when the import is not the reason", async () => {

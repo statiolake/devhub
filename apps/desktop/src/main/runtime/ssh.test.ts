@@ -904,6 +904,7 @@ describe("the login environment on the host", () => {
 		expect(await runtime.resolveProgram("widget", "")).toEqual({
 			kind: "unavailable",
 			configured: "widget",
+			where: " on build-box.example.com",
 			lookup: { kind: "path", directories: ["/opt/devhub/bin", "/usr/bin"] },
 		});
 	});

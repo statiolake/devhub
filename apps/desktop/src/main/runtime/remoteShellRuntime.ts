@@ -618,6 +618,7 @@ export abstract class RemoteShellRuntime implements Runtime {
 		return {
 			kind: "unavailable",
 			configured,
+			where: this.where,
 			lookup: configured.includes("/")
 				? { kind: "explicit", path: configured }
 				: {

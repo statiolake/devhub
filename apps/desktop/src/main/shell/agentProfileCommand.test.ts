@@ -96,6 +96,7 @@ describe("an Agent profile's command", () => {
 		).toEqual({
 			kind: "unavailable",
 			configured: "missing-agent",
+			where: " in the dev container for /src/ws",
 			lookup: { kind: "path", directories: ["/usr/bin", "/bin"] },
 		});
 	});

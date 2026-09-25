@@ -190,6 +190,12 @@ export interface SettingsUnavailableRuntimeWire {
 	/** The configured value, verbatim: a command name or a path. */
 	readonly configured: string;
 	readonly lookup: SettingsRuntimeLookupWire;
+	/**
+	 * The machine the search ran on, as `Runtime.where` says it (` on
+	 * build-box`, ` in the dev container for /src/api`). Absent for this Mac,
+	 * whose `where` is empty.
+	 */
+	readonly where?: string;
 }
 
 export type SettingsResolvedRuntimeWire =
@@ -211,19 +217,27 @@ export const MAX_SEARCHED_DIRECTORIES = 12;
 export function runtimeUnavailableMessage(
 	resolved: SettingsUnavailableRuntimeWire,
 ): string {
-	const name = `'${resolved.configured}'`;
+	const where = resolved.where ?? "";
 	if (resolved.lookup.kind === "explicit") {
-		return `DevHub could not find ${name} at ${resolved.lookup.path}.`;
+		// The path once: it is usually exactly what was configured, and only a
+		// `~` expanded is worth saying twice.
+		const path = resolved.lookup.path;
+		const named =
+			path === resolved.configured
+				? path
+				: `'${resolved.configured}' (${path})`;
+		return `DevHub could not find ${named}${where}.`;
 	}
+	const name = `'${resolved.configured}'`;
 	const directories = resolved.lookup.directories;
 	if (directories.length === 0) {
-		return `DevHub could not find ${name} on PATH (PATH is empty).`;
+		return `DevHub could not find ${name} on PATH${where} (PATH is empty).`;
 	}
 	const shown = directories.slice(0, MAX_SEARCHED_DIRECTORIES);
 	const more = directories.length - shown.length;
-	const where =
+	const searched =
 		shown.join(", ") + (more > 0 ? `, and ${String(more)} more` : "");
-	return `DevHub could not find ${name} on PATH (looked in: ${where}).`;
+	return `DevHub could not find ${name} on PATH${where} (looked in: ${searched}).`;
 }
 
 /**
@@ -246,7 +260,11 @@ export function executableMissingMessage(
 	loginFailure: string | undefined,
 ): string {
 	const lookup = runtimeUnavailableMessage(resolved);
-	return loginFailure === undefined ? lookup : `${lookup} ${loginFailure}`;
+	// The import is this Mac's: a search on another machine ran under that
+	// machine's own login environment, which this failure says nothing about.
+	return loginFailure === undefined || resolved.where !== undefined
+		? lookup
+		: `${lookup} ${loginFailure}`;
 }
 
 export interface SettingsResolvedRuntimeConfigWire {
