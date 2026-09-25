@@ -249,6 +249,12 @@ export interface SessionFacts {
   readonly mode: Setting;
   /** The Agent's own slash commands. */
   readonly commands: readonly SlashCommand[];
+  /**
+   * Whether this session can take back its last turn, so the person's last
+   * message can be edited and sent again. The adapter says, from what the CLI
+   * told it; the page offers Edit only when it is true.
+   */
+  readonly canRewind: boolean;
 }
 
 export interface Setting {
@@ -310,7 +316,14 @@ export interface ConversationFailure {
 export type ConversationState =
   /** Attaching to the host, handshaking, or replaying the journal. */
   | { readonly phase: "connecting" }
-  | { readonly phase: "ready"; readonly turn: "none" | "running" }
+  /**
+   * `rewinding`: the last turn is being taken back (the person edited their
+   * last message). It takes no input until the CLI says it is done.
+   */
+  | {
+      readonly phase: "ready";
+      readonly turn: "none" | "running" | "rewinding";
+    }
   /** Takes no more input. The Transcript up to here stays readable. */
   | { readonly phase: "broken"; readonly failure: ConversationFailure };
 
@@ -340,7 +353,12 @@ export type ConversationEvent =
   | { readonly type: "session"; readonly session: SessionFacts }
   | { readonly type: "state"; readonly state: ConversationState }
   /** Replaces the conversation's usage whole. */
-  | { readonly type: "usage"; readonly usage: Usage };
+  | { readonly type: "usage"; readonly usage: Usage }
+  /**
+   * The CLI took back the turns from a message of the person's on: that
+   * message and every entry after it are no longer part of the conversation.
+   */
+  | { readonly type: "rewound"; readonly from: EntryId };
 
 /**
  * An event that cannot be true of the Transcript it was applied to. It is the
@@ -364,6 +382,7 @@ export const EMPTY_SESSION: SessionFacts = {
   effort: NO_SETTING,
   mode: NO_SETTING,
   commands: [],
+  canRewind: false,
 };
 
 /** The Transcript before the first event: nothing said, still connecting. */
@@ -412,6 +431,8 @@ export function applyEvent(
       return { ...transcript, state: event.state };
     case "usage":
       return { ...transcript, usage: event.usage };
+    case "rewound":
+      return { ...transcript, entries: rewind(transcript, event.from) };
     default:
       return unknownEvent(event);
   }
@@ -581,6 +602,31 @@ function closeRequest(
   return remaining;
 }
 
+function rewind(
+  transcript: Transcript,
+  from: EntryId,
+): readonly TranscriptEntry[] {
+  const open = transcript.requests[0];
+  if (open !== undefined) {
+    throw new TranscriptInvariantError(
+      `a rewind to ${from} while request ${open.id} is open`,
+    );
+  }
+  const index = indexOfEntry(transcript.entries, from);
+  if (index < 0) {
+    throw new TranscriptInvariantError(
+      `a rewind to ${from}, which is not an entry`,
+    );
+  }
+  const entry = transcript.entries[index]!;
+  if (entry.kind !== "user" || entry.parent !== null) {
+    throw new TranscriptInvariantError(
+      `a rewind to ${from}: ${from} is a ${entry.kind} entry, not a message the person sent`,
+    );
+  }
+  return transcript.entries.slice(0, index);
+}
+
 // ---------------------------------------------------------------------------
 // Readings. Pure derivations the reconcile round and the page both take from
 // a Transcript, so neither works them out a second time.
@@ -616,7 +662,7 @@ export function conversationStatus(transcript: Transcript): AgentStatus {
       return "error";
     case "ready":
       if (transcript.requests.length > 0) return "waiting";
-      if (state.turn === "running") return "working";
+      if (state.turn !== "none") return "working";
       return lastTurnFailed(transcript) ? "error" : "idle";
   }
 }
@@ -644,6 +690,24 @@ export function conversationActivity(
       return candidate.steps.find((step) => step.status === "in_progress")
         ?.text;
     }
+  }
+  return undefined;
+}
+
+/**
+ * The message the person may edit and send again, if there is one now: their
+ * last top-level message, when the session can rewind, nothing is running or
+ * waiting, and nothing was said to the Agent after it. Editing it takes back
+ * its turn and everything after it.
+ */
+export function editableMessage(transcript: Transcript): UserEntry | undefined {
+  const { state, session, requests, entries } = transcript;
+  if (!session.canRewind || requests.length > 0) return undefined;
+  if (state.phase !== "ready" || state.turn !== "none") return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind !== "user" || entry.parent !== null) continue;
+    return entry.origin === "person" ? entry : undefined;
   }
   return undefined;
 }

@@ -81,6 +81,7 @@ const SESSION: SessionFacts = {
   effort: { current: undefined, choices: [] },
   mode: { current: "ask", choices: [] },
   commands: COMMANDS,
+  canRewind: false,
 };
 
 const RUNNING: ConversationEvent = {

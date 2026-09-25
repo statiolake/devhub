@@ -17,6 +17,7 @@ import {
   childrenOf,
   conversationActivity,
   conversationStatus,
+  editableMessage,
   entryId,
   lastTurnFailed,
   requestId,
@@ -658,6 +659,7 @@ describe("session facts and usage", () => {
         route: "model",
       },
     ],
+    canRewind: false,
   };
 
   it("are replaced whole by each session event", () => {
@@ -856,6 +858,104 @@ describe("what the CLI says that DevHub does not know", () => {
     expect(
       childrenOf(noticed, entryId("task1")).map((each) => each.id),
     ).toEqual(["n1"]);
+  });
+});
+
+describe("a rewind", () => {
+  const REWINDABLE: ConversationEvent = {
+    type: "session",
+    session: { ...EMPTY_TRANSCRIPT.session, canRewind: true },
+  };
+  const REWINDING: ConversationEvent = {
+    type: "state",
+    state: { phase: "ready", turn: "rewinding" },
+  };
+  const twoTurns = fold(
+    REWINDABLE,
+    READY,
+    user("u1", "first"),
+    RUNNING,
+    assistant("a1", [{ kind: "text", markdown: "one" }], false),
+    turnEnd("e1", "completed"),
+    READY,
+    user("u2", "second"),
+    RUNNING,
+    tool("t1", { status: "succeeded" }),
+    assistant("a2", [{ kind: "text", markdown: "two" }], false),
+    turnEnd("e2", "completed"),
+    READY,
+  );
+
+  it("drops the message it names and everything after it, and keeps what came before", () => {
+    const rewound = applyEvents(twoTurns, [
+      REWINDING,
+      { type: "rewound", from: entryId("u2") },
+      READY,
+    ]);
+    expect(rewound.entries.map((each) => each.id)).toEqual(["u1", "a1", "e1"]);
+  });
+
+  it("is refused for an entry that is not a top-level user message", () => {
+    refused(
+      twoTurns,
+      { type: "rewound", from: entryId("a2") },
+      /a2 is a assistant entry, not a message the person sent/,
+    );
+    refused(
+      twoTurns,
+      { type: "rewound", from: entryId("nope") },
+      /nope, which is not an entry/,
+    );
+  });
+
+  it("is refused while a request is open: nothing may answer about what it drops", () => {
+    const asking = fold(READY, user("u1", "go"), RUNNING, tool("t1"), {
+      type: "request-opened",
+      request: permission("p1", "t1"),
+    });
+    refused(
+      asking,
+      { type: "rewound", from: entryId("u1") },
+      /while request p1 is open/,
+    );
+  });
+
+  it("reads as working while it is under way", () => {
+    expect(conversationStatus(applyEvent(twoTurns, REWINDING))).toBe(
+      "working",
+    );
+  });
+
+  it("offers the person's last message for editing only when the session can rewind and nothing is running", () => {
+    expect(editableMessage(twoTurns)?.id).toBe("u2");
+    expect(
+      editableMessage(
+        applyEvent(twoTurns, {
+          type: "session",
+          session: { ...twoTurns.session, canRewind: false },
+        }),
+      ),
+    ).toBeUndefined();
+    expect(editableMessage(applyEvent(twoTurns, RUNNING))).toBeUndefined();
+    expect(editableMessage(applyEvent(twoTurns, REWINDING))).toBeUndefined();
+    expect(editableMessage(fold(REWINDABLE, READY))).toBeUndefined();
+  });
+
+  it("does not offer a message an injection followed, nor an injection itself", () => {
+    const injected = applyEvents(twoTurns, [
+      {
+        type: "entry",
+        entry: {
+          kind: "user",
+          id: entryId("u3"),
+          parent: null,
+          text: "from a template",
+          images: [],
+          origin: "injection",
+        },
+      },
+    ]);
+    expect(editableMessage(injected)).toBeUndefined();
   });
 });
 
