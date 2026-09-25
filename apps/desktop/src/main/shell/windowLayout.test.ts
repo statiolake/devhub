@@ -191,12 +191,26 @@ describe("the child list", () => {
 		).toBe(1);
 	});
 
-	it("has the notices and the questions in it only when they have content", () => {
-		const bare = ["shell", "sidebar", "editor", "editor", "agents"];
+	it("has the notices in it only when they have content", () => {
+		const bare = ["shell", "sidebar", "editor", "editor", "agents", "picker"];
 		expect(kinds(windowLayout(input()))).toEqual(bare);
 		expect(
 			kinds(windowLayout(input({ toasts: { width: 0, height: 0 } }))),
 		).toEqual(bare);
+	});
+
+	it("parks the questions in the window's corner while nothing is asked", () => {
+		// In the window's child list, at the window's size and one pixel inside
+		// it, so its page is never hidden and never has to lay itself out when
+		// a question comes; the rest outside the window, so it takes no click.
+		const picker = windowLayout(input()).find(
+			(child) => child.identity.kind === "picker",
+		);
+		expect(picker).toEqual({
+			identity: { kind: "picker" },
+			rect: { x: WINDOW.width - 1, y: WINDOW.height - 1, ...WINDOW },
+			visible: false,
+		});
 	});
 
 	it("clips a workbench's question to that workbench", () => {

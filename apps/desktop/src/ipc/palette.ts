@@ -82,3 +82,33 @@ export function paletteStyleSheet(palette: ShellPalette): string {
 		.join("\n  ");
 	return `:root {\n  ${declarations}\n}`;
 }
+
+/**
+ * The dim behind a question, as the questions layer's own background.
+ *
+ * Not a page's scrim element: the page lays out a frame or two after main
+ * resizes its view, and for those frames the part of the view the page has
+ * not painted yet shows the view's background. With a transparent background
+ * that was a strip of undimmed window along the edges every time the window
+ * grew under a sheet (measured: the page's frame at the new size arrived
+ * 30–35 ms after `setBounds`). The background is drawn by the browser process
+ * in the same step as the bounds, so a dim that *is* the background covers
+ * the whole layer at every size, from the first frame.
+ *
+ * The values are the Mac's sheet dim, one pair for each half of
+ * `light-dark()`, and a stronger pair under Reduce Transparency — the same
+ * numbers the page's `.mac-scrim` uses where a page draws its own.
+ */
+export function scrimColor(
+	base: ShellPaletteBase,
+	reducedTransparency: boolean,
+): string {
+	const alpha = reducedTransparency
+		? base === "dark"
+			? 0.6
+			: 0.35
+		: base === "dark"
+			? 0.42
+			: 0.16;
+	return `rgba(0, 0, 0, ${String(alpha)})`;
+}

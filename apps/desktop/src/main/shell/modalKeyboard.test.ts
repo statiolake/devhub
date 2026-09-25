@@ -58,6 +58,11 @@ const { PickerView } = await import("./pickerView.js");
 /** The rectangle the layout owner gives this layer in these tests. */
 const RECT = { x: 0, y: 0, width: 100, height: 100 };
 
+/** What the window's layout does: over the window while anything is open. */
+function layout(modals: InstanceType<typeof PickerView>): void {
+	modals.place(RECT, modals.scope() !== "none", "rgba(0, 0, 0, 0.16)");
+}
+
 describe("the keyboard while a sheet stands", () => {
 	let modals: InstanceType<typeof PickerView>;
 	/** Every contents `focusModal` was asked to put the keyboard in, in order. */
@@ -90,7 +95,9 @@ describe("the keyboard while a sheet stands", () => {
 				placed.push(fake);
 				if (windowIsFront) fake.focused = true;
 			},
-			modalsChanged: () => modals.place(RECT),
+			modalsChanged: () => {
+				layout(modals);
+			},
 		});
 	});
 
@@ -126,7 +133,7 @@ describe("the keyboard while a sheet stands", () => {
 		expect(overlay().focused).toBe(false);
 
 		windowIsFront = true;
-		modals.place(RECT);
+		layout(modals);
 
 		expect(placed).toHaveLength(2);
 		expect(overlay().focused).toBe(true);
@@ -138,8 +145,8 @@ describe("the keyboard while a sheet stands", () => {
 
 		// Every layout repositions the layer — a window resize, a sidebar drag,
 		// a workbench being revealed behind the sheet.
-		modals.place(RECT);
-		modals.place(RECT);
+		layout(modals);
+		layout(modals);
 
 		expect(placed).toHaveLength(before);
 		expect(added).toBeGreaterThan(before);
@@ -150,7 +157,7 @@ describe("the keyboard while a sheet stands", () => {
 		const before = placed.length;
 
 		modals.closeModal(id);
-		modals.place(RECT);
+		layout(modals);
 
 		expect(modals.isPresent()).toBe(false);
 		expect(placed).toHaveLength(before);

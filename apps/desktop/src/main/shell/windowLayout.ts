@@ -591,6 +591,38 @@ function agentsVisible(state: LayoutState): boolean {
 }
 
 /**
+ * Where the questions layer waits while nothing is being asked: the size of
+ * the window, overlapping it by one pixel — the bottom-right corner, which the
+ * window's rounded corner does not draw.
+ *
+ * Both halves were measured to matter (an isolated instance, a CDP screencast
+ * of the layer's own page, main's calls logged beside it):
+ *
+ * - Taken out of the window, the page is hidden, and a hidden page paints
+ *   nothing. The empty set published as the last sheet closed was never drawn
+ *   (the layer's last frame still held the sheet), so the next question, of a
+ *   different kind, opened on one frame of the *previous* sheet, then a bare
+ *   dim, then its own sheet — the flicker. Never yet in the window, the page
+ *   is 0×0 and hidden, so the first question after launch waited for a first
+ *   layout of the whole page before anything was drawn — the late sheet.
+ * - Placed entirely outside the window, Chromium counts the view occluded and
+ *   hides the page just the same (`visibilityState` went to `hidden` and the
+ *   page stayed 0×0). One pixel inside keeps it visible.
+ *
+ * Parked here, the page's last frame is always what it was last told, at the
+ * size it will be shown at, so bringing it over the window is only a move;
+ * and the one pixel it covers is the one no click reaches.
+ */
+export function parkedRect(windowSize: LayoutSize): LayoutRect {
+	return {
+		x: windowSize.width - 1,
+		y: windowSize.height - 1,
+		width: windowSize.width,
+		height: windowSize.height,
+	};
+}
+
+/**
  * The window's children, in the order they are stacked.
  *
  * The order *is* the z-order, lowest first: the window's own page, the
@@ -600,14 +632,16 @@ function agentsVisible(state: LayoutState): boolean {
  * notice about the application is above the thing it is about, a question is
  * above the notice, and the tooltip is above all of them because it is the
  * only child that neither takes a click nor hides anything. Nothing in this
- * list is conditional on anything but content: `toasts`, `picker` and
- * `tooltip` are in it exactly when they have something to draw, because a
- * layer that is not there cannot take a click.
+ * list is conditional on anything but content: `toasts` and `tooltip` are in
+ * it exactly when they have something to draw, because a layer that is not
+ * there cannot take a click.
  *
  * `sidebar` and `agents` are always in it, because both exist for the life of
  * the window and neither is ever a layer over anything: they are columns
  * beside the workbench, so their being present costs nothing and their
  * ordering against each other never comes up.
+ *
+ * `picker` is always in it too, for a different reason: see `parkedRect`.
  */
 export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const { windowSize, state } = input;
@@ -690,16 +724,20 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: true,
 		});
 	}
-	if (input.picker !== "none") {
-		children.push({
-			identity: { kind: "picker" },
-			// A workbench's question covers that workbench and nothing else, so
-			// the Sidebar and every other workspace stay visible *and*
-			// clickable. Everything else is the application asking.
-			rect: input.picker === "workbench" ? editorRect : shellRect,
-			visible: true,
-		});
-	}
+	children.push({
+		identity: { kind: "picker" },
+		// A workbench's question covers that workbench and nothing else, so
+		// the Sidebar and every other workspace stay visible *and* clickable.
+		// Everything else is the application asking. Nothing asked is the
+		// layer parked in the window's corner, never taken out of it.
+		rect:
+			input.picker === "none"
+				? parkedRect(windowSize)
+				: input.picker === "workbench"
+					? editorRect
+					: shellRect,
+		visible: input.picker !== "none",
+	});
 	// Above everything, the questions included. Not because a tooltip may
 	// stand over a modal — it may not, and in practice cannot: a question
 	// covers the window, which takes the pointer off the row that raised the

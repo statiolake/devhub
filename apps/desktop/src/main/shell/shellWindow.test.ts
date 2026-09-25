@@ -21,7 +21,10 @@ class FakeView {
 	getVisible(): boolean {
 		return this.visible;
 	}
-	setBackgroundColor(): void {}
+	background: string | undefined;
+	setBackgroundColor(color: string): void {
+		this.background = color;
+	}
 	getBounds(): Electron.Rectangle | undefined {
 		return this.bounds;
 	}
@@ -244,6 +247,13 @@ vi.mock("../electron.js", () => ({
 				raised.push("app.focus");
 			},
 		},
+		// What the questions' dim is read from. See `ShellWindow.scrim`.
+		nativeTheme: {
+			shouldUseDarkColors: false,
+			prefersReducedTransparency: false,
+			on: () => undefined,
+			off: () => undefined,
+		},
 		shell: {
 			openExternal: (url: string) => {
 				openedExternally.push(url);
@@ -256,6 +266,7 @@ vi.mock("../electron.js", () => ({
 const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
+const { scrimColor } = await import("../../ipc/palette.js");
 const { WorkbenchView, asBrowserWindow } = await import("./workbenchView.js");
 const { sidebarRect, trafficLightPosition } = await import("./windowLayout.js");
 
@@ -829,10 +840,28 @@ describe("the shell window's modal layer", () => {
 		);
 	});
 
-	it("is not in the window at all while nothing is being asked", () => {
+	/** One pixel inside the window's bottom-right corner, at its size. */
+	const PARKED = { x: 1439, y: 899, width: 1440, height: 900 };
+
+	it("waits in the window's corner while nothing is being asked", () => {
+		// Never taken out of the window: a view that is not in it is a hidden
+		// page, which paints nothing — so the first question after launch
+		// waited for a first layout and every later one opened on a frame of
+		// the previous sheet. All but one pixel is outside, and takes no
+		// click, and it is clear there.
 		show(shell, editor);
-		expect(overlayChild()).toBeUndefined();
+		expect(overlayChild()?.getBounds()).toEqual(PARKED);
+		expect(overlayChild()?.background).toBe("#00000000");
 		expect(shell.picker.isPresent()).toBe(false);
+	});
+
+	it("dims with its own background, in the half of the palette on screen", () => {
+		// The page lays out a frame or two after its view is resized, and what
+		// it has not painted yet is the view's background. A dim drawn by the
+		// page left an undimmed strip along the edges as the window grew.
+		show(shell, editor);
+		shell.picker.openModal({ kind: "workspace-picker" });
+		expect(overlayChild()?.background).toBe(scrimColor("light", false));
 	});
 
 	it("is the topmost child for as long as a modal is open", () => {
@@ -846,7 +875,8 @@ describe("the shell window's modal layer", () => {
 		expect(shell.visibleViews()).toEqual([editor]);
 
 		shell.picker.closeModal(id);
-		expect(overlayChild()).toBeUndefined();
+		expect(overlayChild()?.getBounds()).toEqual(PARKED);
+		expect(shell.picker.isPresent()).toBe(false);
 	});
 
 	it("stays the topmost child through every later layout", () => {

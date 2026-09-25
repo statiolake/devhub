@@ -12,15 +12,18 @@
  * child of the window and therefore the topmost, whose page draws the modals
  * and nothing else.
  *
- * The view is built once, at startup, and never destroyed. Whether it is *in
- * the window's child list* is the thing that follows the modals: it is added
- * when a modal opens and removed when the last one closes, so while nothing is
- * being asked it is not there and cannot take a click. Those used to be one
- * fact — the view was created the first time a modal opened — and that cost
- * the first modal of a session its page: the layer went up, `did-finish-load`
- * had not run, and the sheet was drawn on nothing. Existence and presence are
- * two questions now, and only the second one has anything to do with what is
- * being asked.
+ * The view is built once, at startup, never destroyed, and never taken out
+ * of the window. What follows the modals is *where* it is: over the window
+ * (or one workbench) while something is asked, and parked all but one
+ * pixel outside the window's corner while nothing is, where it takes no click
+ * but is still laid out at the window's size and still painting. It used to be added and
+ * removed instead, and a view out of the window is a hidden page that paints
+ * nothing: the first question of a session waited for a first layout, and
+ * every later one opened on a frame of the previous sheet. See `parkedRect`
+ * in `windowLayout.ts`.
+ *
+ * The dim behind a question is the view's own background, not something the
+ * page draws — see `scrimColor`.
  *
  * Main owns the set that is open, because two unrelated things open modals —
  * the App Shell page, and a workbench asking its own question through Electron
@@ -74,6 +77,9 @@ export interface PickerViewHost {
 	modalsChanged(): void;
 }
 
+/** The layer's background while nothing is asked. */
+const CLEAR = "#00000000";
+
 /** A workbench's question, waiting for the button the person presses. */
 type Settle = (response: number) => void;
 
@@ -109,6 +115,7 @@ export class PickerView {
 	private readonly view: Electron.WebContentsView;
 	private readonly pageUrl: string;
 	private present = false;
+	private background: string = CLEAR;
 	private readonly open: OpenModal[] = [];
 	private readonly pending = new Map<string, Settle>();
 	private published: string | undefined;
@@ -123,8 +130,9 @@ export class PickerView {
 			},
 		});
 		// The layer is a hole with modals in it: everything the person can see
-		// through it is a real, live workbench, not a picture of one.
-		this.view.setBackgroundColor("#00000000");
+		// through it is a real, live workbench, not a picture of one. The dim
+		// is added while a question stands; see `place`.
+		this.view.setBackgroundColor(CLEAR);
 		// This page draws DevHub's own modals and nothing else; a link in one
 		// leaves through the browser like every other link. Every child page
 		// needs this — a page that forgets it can mint a second window wearing
@@ -257,40 +265,54 @@ export class PickerView {
 	}
 
 	/**
-	 * Put the layer where the owner says, or take it out of the window.
+	 * Put the layer where the owner says: over what is being asked about when
+	 * `asking`, parked in the window's corner when not.
 	 *
 	 * Called from the one place that decides what is on screen, so there is no
 	 * arrangement of reveals, resizes and modal opens that leaves the overlay
-	 * at stale bounds or present with nothing to show.
+	 * at stale bounds or over the window with nothing to show.
+	 *
+	 * `scrim` is the dim, as a colour: it is the view's background, and the
+	 * page draws none of its own.
 	 */
-	place(rect: Electron.Rectangle | undefined): void {
+	place(rect: Electron.Rectangle, asking: boolean, scrim: string): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
-		const modals: readonly OpenModal[] = this.open;
-
-		if (!rect || modals.length === 0) {
-			this.withdraw();
-			return;
-		}
-
 		const view = this.view;
+		// Clear while parked: the one pixel of it inside the window is not
+		// something to dim.
+		const background = asking ? scrim : CLEAR;
+		if (background !== this.background) {
+			this.background = background;
+			view.setBackgroundColor(background);
+		}
+		// Told before it moves, so a sheet closing is painted away while the
+		// layer is still over the window rather than never.
+		this.publish(asking ? this.open : []);
 		view.setBounds(rect);
 		// Re-adding an existing child moves it to the end of the list, which is
 		// the top of the stack. Nothing else establishes that order, and the
 		// whole point of this layer is that it is above everything.
 		//
-		// It is re-added on *every* pass, not only when the layer arrives.
+		// It is re-added on *every* pass, not only when a question arrives.
 		// The owner places every child in its own order, and it does so
-		// whenever anything about the arrangement moves — a window resize, a sidebar drag, the split divider, a second
-		// modal opening. Raising this layer once meant the first such layout
-		// after a modal opened put the workbench back on top of it: the sheet
-		// still held the keyboard, but the editor was what was drawn and what
-		// took the clicks over the content area, which is a picker that cannot
-		// be used and an editor that looks like it activates itself.
+		// whenever anything about the arrangement moves — a window resize, a
+		// sidebar drag, the split divider, a second modal opening. Raising this
+		// layer once meant the first such layout after a modal opened put the
+		// workbench back on top of it: the sheet still held the keyboard, but
+		// the editor was what was drawn and what took the clicks over the
+		// content area, which is a picker that cannot be used and an editor
+		// that looks like it activates itself.
 		host.window.contentView.addChildView(view);
+		if (!asking) {
+			if (!this.present) return;
+			this.present = false;
+			host.focusSurface();
+			return;
+		}
 		this.present = true;
-		// The keyboard is placed *after* the view is attached, and on every
-		// pass rather than only on the one where the layer arrived.
+		// The keyboard is placed *after* the view is over the window, and on
+		// every pass rather than only on the one where the layer arrived.
 		//
 		// It used to be only that one, and whether a sheet could be typed into
 		// was decided by whether the window happened to be key at that single
@@ -307,7 +329,7 @@ export class PickerView {
 		//   a modal (`placeTheKeyboard`) rather than serving one.
 		//
 		// Both are the same missing sentence, so it is said once here as a
-		// state rather than as an event: while this layer stands, this layer
+		// state rather than as an event: while a question stands, this layer
 		// has the keyboard, and any pass that finds it elsewhere puts it back.
 		// Asking first is what keeps that idempotent — re-adding a child view
 		// does not disturb focus (measured), so a pass that changes nothing
@@ -315,16 +337,6 @@ export class PickerView {
 		if (!view.webContents.isFocused()) {
 			host.focusModal(view.webContents);
 		}
-		this.publish(modals);
-	}
-
-	private withdraw(): void {
-		this.publish([]);
-		const host = this.host;
-		if (!this.present || !host) return;
-		host.window.contentView.removeChildView(this.view);
-		this.present = false;
-		host.focusSurface();
 	}
 
 	private publish(modals: readonly OpenModal[]): void {
@@ -355,7 +367,7 @@ export class PickerView {
 		return modal.id;
 	}
 
-	/** Whether the layer is in the window's child list right now. */
+	/** Whether a question is over the window right now. */
 	isPresent(): boolean {
 		return this.present;
 	}

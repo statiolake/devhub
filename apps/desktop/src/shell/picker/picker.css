@@ -32,3 +32,16 @@ body,
   position: fixed;
   inset: 0;
 }
+
+/*
+ * The dim behind a question is not drawn here. It is this view's own
+ * background, set by main (`scrimColor` in `ipc/palette.ts`), because this
+ * page paints a frame or two after main resizes the view, and a dim drawn by
+ * the page left an undimmed strip along the window's edges as it grew. The
+ * scrims stay — they lay the sheets out and take the clicks around them — and
+ * are clear, or the dim would be laid twice.
+ */
+#root .mac-scrim,
+#root .view-scoped-alert-scrim {
+  background: transparent;
+}

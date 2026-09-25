@@ -41,7 +41,7 @@ import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
 import { shellTheme } from "./shellTheme.js";
-import type { ShellPalette } from "../../ipc/palette.js";
+import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import type { Landing } from "./chords.js";
 
@@ -363,6 +363,15 @@ export class ShellWindow {
 		this.pageUrl = pageUrl;
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
+		// Light or dark, or Reduce Transparency, changing under a question
+		// changes its dim. See `scrim`.
+		const appearanceChanged = (): void => {
+			this.layout();
+		};
+		electron.nativeTheme.on("updated", appearanceChanged);
+		this.window.once("closed", () => {
+			electron.nativeTheme.off("updated", appearanceChanged);
+		});
 
 		// Coming back to DevHub puts the keyboard where it belongs.
 		//
@@ -438,6 +447,8 @@ export class ShellWindow {
 		if (this.window.isDestroyed()) return;
 		this.window.setVibrancy(null);
 		this.window.setBackgroundColor(palette.canvas);
+		// The questions' dim follows the palette's half; see `scrim`.
+		this.layout();
 	}
 
 	//#region the views
@@ -822,7 +833,7 @@ export class ShellWindow {
 	 *   idle instance: the window went to the background and DevHub called
 	 *   `focus()` on the workbench 5ms later.
 	 * - the window's own `focus` event, coming back from another app.
-	 * - `PickerView.withdraw`, when the last sheet goes.
+	 * - `PickerView.place`, when the last sheet goes.
 	 * - `WorkbenchView.focus`, which is VS Code's `hostService.focus()` →
 	 *   `nativeHostMainService.focusWindow` → `CodeWindow.focus()` arriving
 	 *   through the proxy. VS Code calls it on hover and on drag
@@ -1138,6 +1149,20 @@ export class ShellWindow {
 		return this.workbenchRect();
 	}
 
+	/**
+	 * The dim behind a question, in the half of the palette the pages are
+	 * wearing: the theme's when there is one, and otherwise the system's,
+	 * which is what `color-scheme: light dark` resolves to on a page served
+	 * without one.
+	 */
+	private scrim(): string {
+		const theme = electron.nativeTheme;
+		const base =
+			shellTheme().palette()?.base ??
+			(theme.shouldUseDarkColors ? "dark" : "light");
+		return scrimColor(base, theme.prefersReducedTransparency);
+	}
+
 	private windowSize(): { width: number; height: number } {
 		if (this.window.isDestroyed()) return { width: 0, height: 0 };
 		const [width, height] = this.window.getContentSize();
@@ -1265,7 +1290,6 @@ export class ShellWindow {
 		// what keeps a transparent layer from eating a click.
 		const drawn = new Set(children.map((child) => child.identity.kind));
 		if (!drawn.has("toasts")) this.toasts.place(undefined);
-		if (!drawn.has("picker")) this.picker.place(undefined);
 		if (!drawn.has("tooltip")) this.tooltip.place(undefined);
 		// Then the drawn children, in the list's own order, lowest first. That
 		// order *is* the z-order and this is the one way Electron offers to
@@ -1288,7 +1312,7 @@ export class ShellWindow {
 					this.toasts.place(child.visible ? child.rect : undefined);
 					break;
 				case "picker":
-					this.picker.place(child.visible ? child.rect : undefined);
+					this.picker.place(child.rect, child.visible, this.scrim());
 					break;
 				case "tooltip":
 					this.tooltip.place(child.visible ? child.rect : undefined);
