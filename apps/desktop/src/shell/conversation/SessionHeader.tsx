@@ -4,6 +4,7 @@
  * person is typing when they reach for them.
  */
 
+import type { CSSProperties } from "react";
 import type { Transcript, Usage } from "../../model/conversation";
 import { useConversationActions } from "./ConversationContext";
 
@@ -20,16 +21,26 @@ function clock(epochMs: number): string {
   });
 }
 
-/** What the session has used, as far as its CLI reports it. */
-export function usageReadout(usage: Usage): readonly string[] {
+/** How full the context window is, when the CLI has said: 0–100, or undefined. */
+export function contextPercent(usage: Usage): number | undefined {
+  return usage.contextTokens !== undefined &&
+    usage.contextWindow !== undefined &&
+    usage.contextWindow > 0
+    ? Math.round((usage.contextTokens / usage.contextWindow) * 100)
+    : undefined;
+}
+
+function contextReadout(usage: Usage): string | undefined {
+  if (usage.contextTokens === undefined) return undefined;
+  const percent = contextPercent(usage);
+  return percent !== undefined
+    ? `Context ${percent}% (${tokens(usage.contextTokens)} of ${tokens(usage.contextWindow!)})`
+    : `Context ${tokens(usage.contextTokens)}`;
+}
+
+/** What the session has spent besides its context: money and the rate limit. */
+function spendReadout(usage: Usage): readonly string[] {
   const parts: string[] = [];
-  if (usage.contextTokens !== undefined) {
-    parts.push(
-      usage.contextWindow !== undefined && usage.contextWindow > 0
-        ? `Context ${Math.round((usage.contextTokens / usage.contextWindow) * 100)}% (${tokens(usage.contextTokens)} of ${tokens(usage.contextWindow)})`
-        : `Context ${tokens(usage.contextTokens)}`,
-    );
-  }
   if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(2)}`);
   const limit = usage.rateLimit;
   if (limit?.usedPercent !== undefined) {
@@ -42,20 +53,55 @@ export function usageReadout(usage: Usage): readonly string[] {
   return parts;
 }
 
+/** What the session has used, as far as its CLI reports it. */
+export function usageReadout(usage: Usage): readonly string[] {
+  const context = contextReadout(usage);
+  return [...(context === undefined ? [] : [context]), ...spendReadout(usage)];
+}
+
+/**
+ * The usage line: the context first, with a thin meter of how full it is —
+ * the one number that changes what the person does next — and then what was
+ * spent, in the same quiet type.
+ */
+function UsageLine({ usage }: { readonly usage: Usage }) {
+  const context = contextReadout(usage);
+  const percent = contextPercent(usage);
+  const spend = spendReadout(usage);
+  if (context === undefined && spend.length === 0) return null;
+  return (
+    <div className="conversation-usage" aria-label="Usage">
+      {context !== undefined ? (
+        <span className="conversation-context">
+          {percent !== undefined ? (
+            <span
+              className="conversation-context-meter"
+              aria-hidden="true"
+              style={
+                {
+                  "--context-fill": `${Math.min(percent, 100)}%`,
+                } as CSSProperties
+              }
+            />
+          ) : null}
+          {context}
+        </span>
+      ) : null}
+      {context !== undefined && spend.length > 0 ? " · " : null}
+      {spend.join(" · ")}
+    </div>
+  );
+}
+
 export function SessionHeader({
   transcript,
 }: {
   readonly transcript: Transcript;
 }) {
   const { continueInTerminal, reportFailure } = useConversationActions();
-  const readout = transcript.usage ? usageReadout(transcript.usage) : [];
   return (
     <header className="conversation-header">
-      {readout.length > 0 ? (
-        <div className="conversation-usage" aria-label="Usage">
-          {readout.join(" · ")}
-        </div>
-      ) : null}
+      {transcript.usage ? <UsageLine usage={transcript.usage} /> : null}
       <div className="conversation-header-actions">
         <button
           type="button"

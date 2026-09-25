@@ -14,7 +14,7 @@
  * in `tokens.css`, which still carry the cursor and the styling.
  */
 const SELECTABLE =
-  ".failure-title, .failure-detail, .surface-line, .terminal-surface, input, textarea, [contenteditable]";
+  ".failure-title, .failure-detail, .surface-line, .terminal-surface, .conversation-selectable, input, textarea, [contenteditable]";
 
 /** True when a selection starting at `target` is one the shell allows. */
 export function isSelectable(target: EventTarget | null): boolean {

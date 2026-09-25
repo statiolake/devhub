@@ -4,8 +4,8 @@
  * It reads as a chat: the person's messages are bubbles on the right, the
  * Agent's answers are prose in one centred column of a comfortable measure,
  * and what the Agent did along the way — tool calls, thinking — is a quiet
- * one-line row that opens to the detail. Actions on a message (copy, and later
- * edit) come up under it on hover.
+ * one-line row that opens to the detail. Actions on a message (copy, edit)
+ * stand quietly under it.
  *
  * Every colour is a token from `styles/tokens.css`, so the transcript wears
  * the workbench's theme the way the rest of the chrome does, in light and in
@@ -43,9 +43,31 @@
   flex: none;
 }
 
-/* The transcript's own rectangle, between the header and the composer: what
-   the "New output" button floats in. */
+/* Between the header and the composer: the conversation, and beside it the
+   column of subagents when the pane is wide — or, in its place, the one
+   subagent that fills the pane (`SubagentPanes.tsx`). */
+.conversation-views {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+/* The conversation's own column: what is shown in it, the switcher, and the
+   composer, which talks to the conversation whatever is shown above it. */
+.conversation-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.conversation-body[hidden] {
+  display: none;
+}
+
+/* The transcript's own rectangle: what the "New output" button floats in. */
 .conversation-body {
+  min-width: 0;
   position: relative;
   display: flex;
   min-height: 0;
@@ -72,8 +94,13 @@
   box-sizing: border-box;
   padding: var(--space-5) var(--conversation-gutter) var(--space-8);
   margin: 0 auto;
-  user-select: text;
-  -webkit-user-select: text;
+}
+
+/* The transcript is text to read and quote: it is selectable
+   (`conversation-selectable`, granted in `tokens.css` and let through by the
+   page's selection guard), and only the controls in it are not. */
+.conversation-selectable :is(button, select) {
+  user-select: none;
 }
 
 /* Each entry is laid out and painted only near the viewport. What is skipped
@@ -97,6 +124,170 @@
 
 .conversation-entry[data-kind="tool"] + .conversation-entry[data-kind="tool"] {
   margin-top: 2px;
+}
+
+/* ------------------------------------------------------------ Subagents */
+
+/* The column: a third of the pane, its subagents stacked and sharing its
+   height, each with its own scroll. */
+.conversation-subagent-column {
+  display: flex;
+  width: clamp(320px, 36%, 560px);
+  flex: none;
+  flex-direction: column;
+  border-left: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+.conversation-subagent-pane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.conversation-subagent-pane + .conversation-subagent-pane {
+  border-top: 1px solid var(--line-soft);
+}
+
+/* Filling the pane, it is the conversation's size and in its column. */
+.conversation-subagent-pane[data-place="maximized"] {
+  min-width: 0;
+}
+
+.conversation-subagent-pane-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 0.85em;
+  gap: var(--space-2);
+}
+
+.conversation-subagent-pane-header .conversation-subagent-label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-subagent-pane-header .conversation-subagent-actions {
+  margin-left: auto;
+}
+
+.conversation-subagent-pane[data-place="beside"] .conversation-transcript {
+  padding: var(--space-3) var(--space-4) var(--space-5);
+}
+
+.conversation-subagent-pane[data-place="maximized"]
+  .conversation-subagent-pane-header {
+  justify-content: center;
+}
+
+.conversation-subagent-pane[data-place="maximized"]
+  .conversation-subagent-pane-header
+  .conversation-subagent-actions {
+  margin-left: var(--space-3);
+}
+
+/* Where a card's subagent can go: a quiet row under the card. */
+.conversation-subagent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.conversation-tool-entry > .conversation-subagent-actions {
+  margin-top: 2px;
+}
+
+.conversation-subagent-action {
+  padding: 1px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8em;
+  line-height: 1.5;
+}
+
+.conversation-subagent-pane-header .conversation-subagent-action {
+  font-size: 1em;
+}
+
+.conversation-subagent-action:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.conversation-subagent-action:focus-visible,
+.conversation-switcher-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.conversation-subagent-elsewhere {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  color: var(--tertiary);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+/* The switcher: the conversation and each subagent, as tabs along the
+   bottom of the view. */
+.conversation-switcher {
+  display: flex;
+  overflow-x: auto;
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  font-size: 0.85em;
+  gap: 2px;
+  scrollbar-width: none;
+}
+
+.conversation-switcher-tab {
+  display: inline-flex;
+  max-width: 18em;
+  flex: none;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font: inherit;
+  gap: 0.4em;
+  white-space: nowrap;
+}
+
+.conversation-switcher-tab:hover {
+  background: var(--wash);
+}
+
+.conversation-switcher-tab[aria-selected="true"] {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+.conversation-switcher-mark {
+  width: 0.5em;
+  height: 0.5em;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+.conversation-switcher-tab[data-state="running"] .conversation-switcher-mark {
+  background: var(--status-working);
+}
+
+.conversation-switcher-tab[data-state="failed"] .conversation-switcher-mark {
+  background: var(--status-error);
 }
 
 /* ---------------------------------------------------------- Empty state */
@@ -154,14 +345,16 @@
   background: transparent;
 }
 
-/* Under a message, on hover: its actions. The row keeps its height when
-   hidden, so a hover moves nothing. */
+/* Under a message: its actions, always there and quiet — an icon and a word
+   in the faintest ink, brought up to full strength while the message is
+   pointed at or the row has the keyboard. Nothing to hunt for, nothing that
+   appears and moves the text. */
 .conversation-message-actions {
   display: flex;
   min-height: 1.7em;
   align-items: center;
   gap: 2px;
-  opacity: 0;
+  opacity: 0.7;
   transition: opacity 120ms ease;
 }
 
@@ -169,8 +362,8 @@
   justify-content: flex-end;
 }
 
-/* The message's own hover: a subagent's answers inside a tool call show
-   their actions only when they are pointed at, not the whole call. */
+/* The message's own hover: a subagent's answers inside a tool call come up
+   only when they are pointed at, not the whole call. */
 :is(.conversation-user, .conversation-assistant):hover
   > .conversation-message-actions,
 .conversation-message-actions:focus-within,
@@ -750,11 +943,13 @@
   font-size: 0.85em;
 }
 
-.conversation-subagent[data-state="running"] .conversation-subagent-state {
+:is(.conversation-subagent, .conversation-subagent-pane)[data-state="running"]
+  .conversation-subagent-state {
   color: var(--status-working);
 }
 
-.conversation-subagent[data-state="failed"] .conversation-subagent-state {
+:is(.conversation-subagent, .conversation-subagent-pane)[data-state="failed"]
+  .conversation-subagent-state {
   color: var(--danger);
 }
 
@@ -1045,6 +1240,32 @@
   white-space: nowrap;
 }
 
+/* The context, first and one step stronger than the rest of the line. */
+.conversation-context {
+  display: inline-flex;
+  align-items: center;
+  color: var(--secondary);
+  gap: 0.5em;
+}
+
+.conversation-context-meter {
+  position: relative;
+  overflow: hidden;
+  width: 3em;
+  height: 4px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--wash-strong);
+}
+
+.conversation-context-meter::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--context-fill);
+  background: var(--secondary);
+  content: "";
+}
+
 .conversation-header-actions {
   display: flex;
   flex: none;
@@ -1245,15 +1466,16 @@
   outline-offset: 2px;
 }
 
-/* The settings, as small pickers in the toolbar: a word and a value, with
-   no box until hovered. */
+/* The settings, as pickers in the toolbar: a word and a value, with no box
+   until hovered. They are read at the size of what is typed above them —
+   the value is what the person checks before sending — and kept quiet by
+   ink, not by size. */
 .conversation-settings {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   margin-left: calc(-1 * var(--space-2));
-  font-size: 0.8em;
   gap: 2px;
 }
 
@@ -1296,6 +1518,12 @@
   content: "▾";
   font-size: 0.85em;
   pointer-events: none;
+}
+
+/* A value the session has not named yet reads as a remark, not a value. */
+.conversation-setting[data-unknown] :is(select, .conversation-setting-value) {
+  color: var(--tertiary);
+  font-style: italic;
 }
 
 .conversation-setting select:disabled {

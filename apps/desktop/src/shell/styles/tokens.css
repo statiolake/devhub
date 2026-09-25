@@ -539,12 +539,15 @@ body {
 }
 
 /* Diagnostics exist to be pasted somewhere, provider surfaces own their own
-   selection model, and a text field is a text field. */
+   selection model, a GUI Agent's transcript is read and quoted, and a text
+   field is a text field. */
 .failure-title,
 .failure-detail,
 .surface-line,
 .terminal-surface,
 .terminal-surface *,
+.conversation-selectable,
+.conversation-selectable *,
 input,
 textarea {
   cursor: auto;

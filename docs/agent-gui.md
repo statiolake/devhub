@@ -191,10 +191,47 @@ call that started them, notices, turn ends with duration and cost, usage and
 rate limits in the header, and pending requests as cards with the CLI's own
 choices.
 
+**Reading and copying.** The transcript is text: you can drag-select any of
+it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
+Every message also has a quiet Copy action under it, always shown, and every
+code block has one in its header.
+
+**Settings in the composer.** Model, Effort and Permissions sit under the
+message box at the same size as what you type. A value the CLI has not named
+yet says so instead of standing empty: Claude names its model only when the
+first turn starts (its `system/init`), so until then the model reads *Not
+known yet*; an effort nothing has chosen reads *Default*, the CLI's own
+(Claude never reports the effort it runs at). Codex names its model and
+effort when the thread opens, and a model you pick here shows that model's
+default effort until you choose one.
+
+**Context.** The header's usage line starts with how full the context window
+is, *Context 45% (90k of 200k)*, with a thin meter. Claude's figure is the
+latest top-level message's tokens (input, cache and output), known as soon as
+that message arrives, against the context window the turn's `result` reports
+for the model; before the first turn ends it reads only the tokens. Codex's is
+`thread/tokenUsage/updated`'s last total against its model context window.
+
+**Subagents.** A subagent is a card under the call that started it, with its
+work inside. Its work is drawn in one place at a time:
+
+- When the pane is wide (1040 px or more), a running subagent moves to a
+  column on the right, subagents stacked one above another, and goes back to
+  its card when it finishes. *Beside* on a card puts a finished one there,
+  *Close* on a pane takes one back; once you have done either, your choice
+  stands.
+- *Maximize* fills the pane with one subagent's transcript. A switcher bar
+  under it moves between the conversation and each subagent (arrow keys move
+  along it), and the composer still talks to the conversation.
+- When the pane is narrow there is no column: a subagent is in its card or
+  maximized, and the switcher bar is shown whenever there is a subagent.
+- The waiting line over the composer finds a request card wherever it is,
+  switching back to the conversation if the card is there.
+
 **Claude Code: what does not come across**
 
 - Terminal-only commands. `/login` and `/logout` are not offered. `/model`,
-  `/effort` and `/permissions` open the header's pickers instead of being sent.
+  `/effort` and `/permissions` open the composer's pickers instead of being sent.
 - The terminal UI's own screens: the interactive `/config`, the `/resume`
   picker and the folder-trust dialog (see [Folder trust](#folder-trust-hooks-and-mcpjson-run-without-asking)).
 - Hook events. `--include-hook-events` is not passed, and hook events that
@@ -206,7 +243,7 @@ choices.
 **Codex: what does not come across**
 
 - Only `/model`, `/effort` and `/approvals` are offered as commands. They open
-  the header's pickers. Codex has no protocol-level slash commands, and review,
+  the composer's pickers. Codex has no protocol-level slash commands, and review,
   compact and diff are not wired yet.
 - Permission modes are the terminal UI's presets: Read only, Auto and Full
   access (an approval policy and sandbox pair each).
@@ -349,7 +386,7 @@ A GUI Claude Agent asks what your Claude settings say it should ask, like the
 terminal UI does. DevHub only answers the requests the CLI sends. If your
 `permissions.defaultMode` is `auto`, for example, Claude approves many tool
 calls itself, and no permission card appears for them, in the GUI as in a
-terminal. The header's Permissions picker shows the mode the session reports
+terminal. The composer's Permissions picker shows the mode the session reports
 and changes it for this session.
 
 ## What has been checked against the real CLIs

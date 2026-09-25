@@ -6,6 +6,8 @@
  * guess. A picker shows the session's current value and nothing else: a
  * change is asked for, and the picker moves when the session says it has
  * moved. A change that failed therefore leaves it where it truthfully is.
+ * While the session has not named a value, the picker says so in words
+ * (`UNKNOWN_VALUE`) rather than standing empty.
  */
 
 import type { RefObject } from "react";
@@ -23,6 +25,38 @@ export const SETTING_LABELS: Readonly<Record<SettingName, string>> = {
   mode: "Permissions",
 };
 
+/**
+ * What a picker says while its session has not named its value: the model
+ * and permissions are not known yet (Claude names them only when the first
+ * turn starts), and an effort nothing has chosen is the CLI's own default.
+ */
+export const UNKNOWN_VALUE: Readonly<Record<SettingName, string>> = {
+  model: "Not known yet",
+  effort: "Default",
+  mode: "Not known yet",
+};
+
+const UNKNOWN_HINT: Readonly<Record<SettingName, string>> = {
+  model: "The Agent names its model when its first turn starts",
+  effort: "No effort was chosen here: the Agent runs at its own default",
+  mode: "The Agent names its permissions when its first turn starts",
+};
+
+/**
+ * Whether a setting has anything to show. Each one always does — a value, or
+ * what is said while there is none — except an effort the model is known not
+ * to take: a known model that lists no efforts.
+ */
+function shown(name: SettingName, session: SessionFacts): boolean {
+  const setting = session[name];
+  return !(
+    name === "effort" &&
+    setting.choices.length === 0 &&
+    setting.current === undefined &&
+    session.model.current !== undefined
+  );
+}
+
 function SettingPicker({
   name,
   setting,
@@ -35,14 +69,22 @@ function SettingPicker({
   readonly pickerRef: RefObject<HTMLSelectElement | null>;
 }) {
   const { setSetting, reportFailure } = useConversationActions();
+  const unknown = setting.current === undefined;
   if (setting.choices.length === 0) {
-    // Nothing to choose from: the value is a fact to read, when there is one.
-    return setting.current === undefined ? null : (
-      <span className="conversation-setting" data-setting={name}>
+    // Nothing to choose from: the value is a fact to read.
+    return (
+      <span
+        className="conversation-setting"
+        data-setting={name}
+        data-unknown={unknown || undefined}
+        title={unknown ? UNKNOWN_HINT[name] : undefined}
+      >
         <span className="conversation-setting-label">
           {SETTING_LABELS[name]}
         </span>
-        <span className="conversation-setting-value">{setting.current}</span>
+        <span className="conversation-setting-value">
+          {setting.current ?? UNKNOWN_VALUE[name]}
+        </span>
       </span>
     );
   }
@@ -52,7 +94,12 @@ function SettingPicker({
     (choice) => choice.id === setting.current,
   );
   return (
-    <label className="conversation-setting" data-setting={name}>
+    <label
+      className="conversation-setting"
+      data-setting={name}
+      data-unknown={unknown || undefined}
+      title={unknown ? UNKNOWN_HINT[name] : undefined}
+    >
       <span className="conversation-setting-label">{SETTING_LABELS[name]}</span>
       <select
         ref={pickerRef}
@@ -62,12 +109,12 @@ function SettingPicker({
           void setSetting(name, event.target.value).catch(reportFailure);
         }}
       >
-        {setting.current === undefined ? (
+        {unknown ? (
           <option value="" disabled>
-            —
+            {UNKNOWN_VALUE[name]}
           </option>
         ) : null}
-        {!listed && setting.current !== undefined ? (
+        {!listed && !unknown ? (
           <option value={setting.current}>{setting.current}</option>
         ) : null}
         {setting.choices.map((choice) => (
@@ -93,7 +140,7 @@ export function SettingPickers({
 }) {
   return (
     <div className="conversation-settings">
-      {SETTING_NAMES.map((name) => (
+      {SETTING_NAMES.filter((name) => shown(name, session)).map((name) => (
         <SettingPicker
           key={name}
           name={name}

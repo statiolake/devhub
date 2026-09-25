@@ -37,6 +37,12 @@ import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { EditIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { RequestCard } from "./RequestCard";
+import {
+  SUBAGENT_STATE_LABELS,
+  SubagentActions,
+  SubagentElsewhere,
+  useSubagentPlacement,
+} from "./SubagentPanes";
 
 export const EntryTreeContext = createContext<EntryTree | undefined>(undefined);
 
@@ -169,15 +175,6 @@ const TOOL_STATUS_LABELS: Readonly<Record<ToolEntry["status"], string>> = {
   interrupted: "Interrupted",
 };
 
-const SUBAGENT_STATE_LABELS: Readonly<
-  Record<NonNullable<ToolEntry["spawns"]>["state"], string>
-> = {
-  running: "Running",
-  completed: "Done",
-  failed: "Failed",
-  unknown: "Unknown",
-};
-
 /**
  * A `<details>` whose default follows a condition until the person toggles
  * it. A subagent is open while it runs and closes when it finishes; once the
@@ -264,6 +261,8 @@ const ToolView = memo(function ToolView({
 }) {
   const spawns = entry.spawns;
   const subagent = useDisclosure(spawns?.state === "running");
+  const { placeOf } = useSubagentPlacement();
+  const place = placeOf(entry.id);
   return (
     <div className="conversation-tool-entry" data-status={entry.status}>
       {/* Folded until asked for: output is most of a transcript's bulk, and
@@ -280,6 +279,7 @@ const ToolView = memo(function ToolView({
         <details
           className="conversation-subagent"
           data-state={spawns.state}
+          data-place={place}
           open={subagent.open}
           onToggle={subagent.onToggle}
         >
@@ -294,20 +294,29 @@ const ToolView = memo(function ToolView({
               {SUBAGENT_STATE_LABELS[spawns.state]}
             </span>
           </summary>
-          <div
-            className="conversation-subagent-entries"
-            data-indent={Math.min(depth + 1, MAX_INDENT)}
-          >
-            {spawns.prompt ? (
-              <div className="conversation-subagent-prompt">
-                {spawns.prompt}
-              </div>
-            ) : null}
-            {childEntries.map((child) => (
-              <EntryView key={child.id} entry={child} depth={depth + 1} />
-            ))}
-          </div>
+          {/* Its work is drawn in one place at a time (`SubagentPanes`):
+              here, unless it is in the column or filling the pane. */}
+          {place === "inline" ? (
+            <div
+              className="conversation-subagent-entries"
+              data-indent={Math.min(depth + 1, MAX_INDENT)}
+            >
+              {spawns.prompt ? (
+                <div className="conversation-subagent-prompt">
+                  {spawns.prompt}
+                </div>
+              ) : null}
+              {childEntries.map((child) => (
+                <EntryView key={child.id} entry={child} depth={depth + 1} />
+              ))}
+            </div>
+          ) : (
+            <SubagentElsewhere place={place} />
+          )}
         </details>
+      ) : null}
+      {spawns && place === "inline" ? (
+        <SubagentActions entry={{ ...entry, spawns }} place={place} />
       ) : null}
     </div>
   );
