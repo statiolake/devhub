@@ -93,6 +93,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type RewindPlan,
 	type SettingName,
 } from "./protocolAdapter.js";
 
@@ -244,20 +245,7 @@ export class AgentConversation {
 		const rewound = await this.#serial(async () => {
 			this.#refuseIfBusy();
 			this.#refuseRewind(message);
-			const plan = this.#adapter.rewind(message);
-			const over = new Promise<void>((done, failed) => {
-				this.#rewind = { begun: false, done, failed };
-			});
-			try {
-				if (plan.kind === "write") await this.#write(plan.lines);
-				else await this.#host.restart(plan.args, plan.mark);
-			} catch (error: unknown) {
-				this.#rewind = undefined;
-				throw error;
-			}
-			// Wrapped: returned bare, the turnstile would wait for it, and the
-			// lines that end it could never be read.
-			return { over };
+			return this.#carryOut(this.#adapter.rewind(message));
 		});
 		await rewound.over;
 		return this.#transcript.entries.some((entry) => entry.id === message)
@@ -415,18 +403,7 @@ export class AgentConversation {
 					"The Agent is in the middle of a turn. Stop it before going on with another session.",
 				);
 			}
-			const plan = this.#adapter.resumeSession(session, history);
-			const over = new Promise<void>((done, failed) => {
-				this.#rewind = { begun: false, done, failed };
-			});
-			try {
-				if (plan.kind === "write") await this.#write(plan.lines);
-				else await this.#host.restart(plan.args, plan.mark);
-			} catch (error: unknown) {
-				this.#rewind = undefined;
-				throw error;
-			}
-			return { over };
+			return this.#carryOut(this.#adapter.resumeSession(session, history));
 		});
 		try {
 			await resumed.over;
@@ -436,6 +413,28 @@ export class AgentConversation {
 				{ cause: error },
 			);
 		}
+	}
+
+	/**
+	 * Inside the turnstile only: carry out the adapter's plan for a rewind or
+	 * a `/resume` — its lines written, or the CLI started again — and hand
+	 * back `over`, which settles when the adapter says the switch is done
+	 * (`#rewind`). A plan that could not be carried out leaves nothing under
+	 * way. Wrapped: returned bare, the turnstile would wait for `over`, and
+	 * the lines that settle it could never be read.
+	 */
+	async #carryOut(plan: RewindPlan): Promise<{ readonly over: Promise<void> }> {
+		const over = new Promise<void>((done, failed) => {
+			this.#rewind = { begun: false, done, failed };
+		});
+		try {
+			if (plan.kind === "write") await this.#write(plan.lines);
+			else await this.#host.restart(plan.args, plan.mark);
+		} catch (error: unknown) {
+			this.#rewind = undefined;
+			throw error;
+		}
+		return { over };
 	}
 
 	#refuseRewind(message: EntryId): void {
