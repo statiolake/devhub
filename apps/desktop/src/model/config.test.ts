@@ -17,6 +17,7 @@ import {
   retiredKeysIn,
   titleBarModeIn,
   type ValidationCode,
+  profilePresentation,
 } from "./config.js";
 import { chordKeyId } from "./chordKeys.js";
 import { resolveBindings } from "./commands.js";
@@ -481,7 +482,7 @@ describe("parsing", () => {
   });
 
   it("refuses a version it does not implement", () => {
-    expect(codeOf(() => parseConfig("version = 3\n"))).toBe(
+    expect(codeOf(() => parseConfig("version = 4\n"))).toBe(
       "unsupported_version",
     );
   });
@@ -842,10 +843,79 @@ describe("round trip", () => {
         "",
       ].join("\n");
 
-    it("is a terminal when the file does not say", () => {
+    const current = (source: string) =>
+      source.replace("version = 1", "version = 3");
+    const effective = (source: string) => {
+      const config = parseConfig(source);
+      return profilePresentation(config.agentProfiles[0]!, config.agents);
+    };
+
+    it("follows the app-wide default when the file does not say", () => {
       expect(
-        parseConfig(profile("claude")).agentProfiles[0]?.presentation,
-      ).toBe("tui");
+        parseConfig(current(profile("claude"))).agentProfiles[0]?.presentation,
+      ).toBeUndefined();
+      expect(effective(current(profile("claude")))).toBe("tui");
+      const gui = current(profile("claude")).replace(
+        "version = 3",
+        'version = 3\n[agents]\ndefault_presentation = "gui"',
+      );
+      expect(effective(gui)).toBe("gui");
+    });
+
+    it("is a terminal for a kind without a GUI even when the default is GUI", () => {
+      const source = current(profile("cursor")).replace(
+        "version = 3",
+        'version = 3\n[agents]\ndefault_presentation = "gui"',
+      );
+      expect(effective(source)).toBe("tui");
+    });
+
+    it("overrides the app-wide default when the profile says", () => {
+      const source = current(profile("codex", "tui")).replace(
+        "version = 3",
+        'version = 3\n[agents]\ndefault_presentation = "gui"',
+      );
+      expect(effective(source)).toBe("tui");
+    });
+
+    it("refuses an app-wide default that is neither, naming the key", () => {
+      const source =
+        'version = 3\n[agents]\ndefault_presentation = "sideways"\n';
+      expect(codeOf(() => parseConfig(source))).toBe("invalid_profile");
+      expect(pathOf(() => parseConfig(source))).toBe(
+        "agents.default_presentation",
+      );
+    });
+
+    it("takes the `tui` every older file wrote for the default it was, once", () => {
+      // Before version 3 every save wrote `presentation = "tui"` on every
+      // profile; read as an override it would pin them all to a terminal.
+      const old = profile("claude", "tui").replace(
+        "version = 1",
+        'version = 2\n[agents]\ndefault_presentation = "gui"',
+      );
+      expect(parseConfig(old).agentProfiles[0]?.presentation).toBeUndefined();
+      expect(effective(old)).toBe("gui");
+      // A GUI somebody chose is theirs.
+      expect(
+        parseConfig(profile("claude", "gui")).agentProfiles[0]?.presentation,
+      ).toBe("gui");
+      // And the written file is the current version, so it happens once.
+      const saved = configOntoDocument(old, parseConfig(old));
+      expect(saved).toContain("version = 3");
+      expect(saved).not.toContain('presentation = "tui"');
+    });
+
+    it("writes the app-wide default, and no presentation for a profile that follows it", () => {
+      const source = current(profile("codex"));
+      const config = parseConfig(source);
+      const saved = configOntoDocument(source, {
+        ...config,
+        agents: { default_presentation: "gui" },
+      });
+      expect(saved).toContain('default_presentation = "gui"');
+      expect(saved).not.toMatch(/^presentation = /m);
+      expect(effective(saved)).toBe("gui");
     });
 
     it("is GUI when a Claude or Codex profile asks for it", () => {

@@ -218,7 +218,7 @@ them at read time — and then renamed to `settings.local.toml.migrated`. An
 older `config.toml` is renamed into place the same way.
 
 ```toml
-version = 2
+version = 3
 
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
@@ -229,13 +229,20 @@ directory = "~/dev/new"     # where New Project starts and the first folder Clon
                             # folder source's path (or ~), and Clone offers the parents
                             # of what the sources find
 
+[agents]
+default_presentation = "tui" # how an Agent is shown when its profile does not say:
+                            # "tui", the CLI in a terminal, or "gui", DevHub's
+                            # conversation view. A kind without a GUI (cursor, custom)
+                            # is a terminal either way. Settings > General.
+
 [[agent_profiles]]
 id = "claude"
 display_name = "Claude"
 kind = "claude"             # codex | claude | cursor | custom
-presentation = "tui"        # how its Agents are shown: "tui", the CLI in a terminal, or
-                            # "gui", DevHub's conversation view (claude and codex only).
-                            # Unset, "tui". ⌥Return in New Agent opens one the other way.
+presentation = "gui"        # optional override of [agents] default_presentation
+                            # (gui for claude and codex only). Unset, the default.
+                            # ⌥Return in New Agent, or in Assign Issue, opens one the
+                            # other way.
                             # A GUI Agent runs its CLI in structured mode (`claude -p`
                             # stream-json, `codex app-server`) under a small host in its
                             # tmux session, so it outlives a DevHub restart like a TUI one.

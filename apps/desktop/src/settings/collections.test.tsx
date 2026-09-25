@@ -348,7 +348,39 @@ describe("a collection of agent profiles", () => {
       within(popup)
         .getAllByRole("option")
         .map((one) => one.textContent),
-    ).toEqual(["Terminal (TUI)"]);
+    ).toEqual(["Default (Terminal (TUI))", "Terminal (TUI)"]);
+  });
+
+  it("offers the app-wide default for a profile, saying what it comes to", async () => {
+    const { saves } = await open(
+      "Agents",
+      testConfig({
+        agents: { defaultPresentation: "gui" },
+        agentProfiles: [
+          { ...PROFILES[0]!, kind: "claude", presentation: "tui" },
+        ],
+      }),
+    );
+    const popup = screen.getByLabelText("Agent presentation");
+    expect(
+      within(popup)
+        .getAllByRole("option")
+        .map((one) => one.textContent),
+    ).toEqual(["Default (GUI)", "Terminal (TUI)", "GUI"]);
+    fireEvent.change(popup, { target: { value: "default" } });
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentProfiles[0]?.presentation).toBe("default");
+    });
+  });
+
+  it("edits the app-wide default in General", async () => {
+    const { saves } = await open("General", testConfig({}));
+    fireEvent.change(screen.getByLabelText("Default agent presentation"), {
+      target: { value: "gui" },
+    });
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agents).toEqual({ defaultPresentation: "gui" });
+    });
   });
 
   it("says the collection is empty", async () => {

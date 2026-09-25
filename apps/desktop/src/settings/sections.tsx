@@ -190,6 +190,25 @@ export function GeneralSection({
         </Row>
       </Group>
 
+      <Group heading="Agents">
+        <Row
+          label="Show agents as"
+          help="How a new agent is shown when its profile does not say. Only Claude and Codex have a GUI; other agents open in a terminal either way. Option-Return in New Agent opens one the other way."
+        >
+          <Popup
+            label="Default agent presentation"
+            value={config.agents.defaultPresentation}
+            options={[
+              ["tui", PRESENTATION_NAMES.tui],
+              ["gui", PRESENTATION_NAMES.gui],
+            ]}
+            onChange={(defaultPresentation) => {
+              update({ ...config, agents: { defaultPresentation } });
+            }}
+          />
+        </Row>
+      </Group>
+
       <Group
         heading="Scratch"
         note="Scratch is today's folder: an ordinary workspace, made when it is first needed. At midnight Scratch moves to the new day's folder and yesterday's stays in the sidebar under its own name."
@@ -790,7 +809,7 @@ export function AgentsSection({
               command: "codex",
               args: [],
               env: {},
-              presentation: "tui",
+              presentation: "default",
             },
           ],
         });
@@ -877,26 +896,32 @@ export function AgentsSection({
                   replace({
                     ...profile,
                     kind,
-                    presentation: presentationsFor(kind).includes(
-                      profile.presentation,
-                    )
-                      ? profile.presentation
-                      : "tui",
+                    presentation:
+                      profile.presentation === "default" ||
+                      presentationsFor(kind).includes(profile.presentation)
+                        ? profile.presentation
+                        : "tui",
                   });
                 }}
               />
             </Row>
             <Row
               label="Show as"
-              help="How a new agent from this profile is shown. Option-Return in New Agent opens one the other way. Only Claude and Codex have a GUI."
+              help="How a new agent from this profile is shown. Default follows “Show agents as” in General. Option-Return in New Agent opens one the other way. Only Claude and Codex have a GUI."
             >
               <Popup
                 label="Agent presentation"
                 value={profile.presentation}
-                options={presentationsFor(profile.kind).map(
-                  (presentation) =>
-                    [presentation, PRESENTATION_NAMES[presentation]] as const,
-                )}
+                options={[
+                  [
+                    "default",
+                    `Default (${PRESENTATION_NAMES[defaultPresentationOf(profile.kind, config.agents.defaultPresentation)]})`,
+                  ] as const,
+                  ...presentationsFor(profile.kind).map(
+                    (presentation) =>
+                      [presentation, PRESENTATION_NAMES[presentation]] as const,
+                  ),
+                ]}
                 onChange={(presentation) => {
                   replace({ ...profile, presentation });
                 }}
@@ -942,6 +967,14 @@ const PRESENTATION_NAMES = {
   tui: "Terminal (TUI)",
   gui: "GUI",
 } as const;
+
+/** What `Default` comes to for a kind — `profilePresentation` in `model/config.ts`. */
+function defaultPresentationOf(
+  kind: SettingsAgentProfileWire["kind"],
+  wanted: "tui" | "gui",
+): "tui" | "gui" {
+  return presentationsFor(kind).includes(wanted) ? wanted : "tui";
+}
 
 /**
  * A variable name nobody is using. Underscores, not dashes: an environment

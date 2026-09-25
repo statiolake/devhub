@@ -79,8 +79,13 @@ import {
  * 1 is read with the old default in mind — see `withoutTheOldConfirmDefault` —
  * and comes back as 2, so the answer is migrated once rather than argued with
  * on every load.
+ *
+ * 3 says a profile's `presentation` is an override of `[agents]
+ * default_presentation`. A file older than that wrote `presentation = "tui"`
+ * on every profile because it was the only default there was, and that copy is
+ * dropped once — see `withoutTheOldPresentationDefault`.
  */
-export const CONFIG_SCHEMA_VERSION = 2;
+export const CONFIG_SCHEMA_VERSION = 3;
 
 /** The oldest file shape this build knows how to read. */
 const OLDEST_READABLE_VERSION = 1;
@@ -282,10 +287,34 @@ export interface ConfiguredAgentProfile {
   /**
    * How an Agent from this profile is shown unless its launch says otherwise:
    * `"tui"`, the CLI's own screen in a terminal, or `"gui"`, DevHub's
-   * conversation view. Absent in the file means `"tui"`, which is what every
-   * profile was before there was a choice. Only Claude and Codex have a GUI.
+   * conversation view. Absent means `[agents] default_presentation` — see
+   * `profilePresentation`. Only Claude and Codex have a GUI.
    */
-  readonly presentation: AgentPresentation;
+  readonly presentation: AgentPresentation | undefined;
+}
+
+export interface AgentsConfig {
+  /**
+   * How an Agent is shown when neither its launch nor its profile says. A kind
+   * without that presentation (only Claude and Codex have a GUI) is shown as a
+   * terminal instead: a default is a preference, not a demand on every kind.
+   */
+  readonly default_presentation: AgentPresentation;
+}
+
+/**
+ * The presentation a profile's Agents get unless a launch says otherwise: the
+ * profile's own word, else the app-wide default where its kind has it, else a
+ * terminal. The one place that answer is worked out.
+ */
+export function profilePresentation(
+  profile: Pick<ConfiguredAgentProfile, "kind" | "presentation">,
+  agents: AgentsConfig,
+): AgentPresentation {
+  if (profile.presentation !== undefined) return profile.presentation;
+  return presentationsFor(profile.kind).includes(agents.default_presentation)
+    ? agents.default_presentation
+    : "tui";
 }
 
 export interface GeneralConfig {
@@ -483,6 +512,8 @@ export interface Config {
   readonly scratch: ScratchConfig;
   /** Where a new project or a clone goes by default. */
   readonly projects: ProjectsConfig;
+  /** `[agents]`: what holds for every profile unless the profile says otherwise. */
+  readonly agents: AgentsConfig;
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
   readonly agentActions: readonly ConfiguredAgentAction[];
 }
@@ -645,7 +676,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "codex",
       args: [],
       env: {},
-      presentation: "tui",
+      presentation: undefined,
     },
     {
       id: "claude",
@@ -654,7 +685,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "claude",
       args: [],
       env: {},
-      presentation: "tui",
+      presentation: undefined,
     },
     // Cursor has a manifest now, so `custom` — which used to be the truthful
     // kind here, because DevHub had no idea what a Cursor screen looked like —
@@ -681,7 +712,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       command: "cursor-agent",
       args: [],
       env: {},
-      presentation: "tui",
+      presentation: undefined,
     },
   ];
 }
@@ -725,6 +756,7 @@ export function defaultConfig(): Config {
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
     projects: { directory: undefined },
+    agents: { default_presentation: "tui" },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
   };
@@ -1269,7 +1301,10 @@ function validateAgentProfiles(
     if (profile.args.some((argument) => argument.includes("\0"))) {
       fail("invalid_profile", `${prefix}.args`);
     }
-    if (!presentationsFor(profile.kind).includes(profile.presentation)) {
+    if (
+      profile.presentation !== undefined &&
+      !presentationsFor(profile.kind).includes(profile.presentation)
+    ) {
       fail("invalid_profile", `${prefix}.presentation`);
     }
     for (const [key, value] of Object.entries(profile.env)) {
@@ -1301,6 +1336,13 @@ export function validateConfig(config: Config): void {
   ) {
     fail("invalid_project_directory", "projects.directory");
   }
+  if (
+    !(AGENT_PRESENTATIONS as readonly string[]).includes(
+      config.agents.default_presentation,
+    )
+  ) {
+    fail("invalid_profile", "agents.default_presentation");
+  }
   validateAgentProfiles(config.agentProfiles);
   validateAgentActions(config.agentActions);
 }
@@ -1316,6 +1358,7 @@ const TOP_LEVEL_KEYS = [
   "workspace_sources",
   "scratch",
   "projects",
+  "agents",
   "agent_profiles",
   "agent_actions",
 ] as const;
@@ -1472,7 +1515,7 @@ function withoutTheOldConfirmDefault(
   actions: readonly ConfiguredAgentAction[],
   fileVersion: number,
 ): ConfiguredAgentAction[] {
-  if (fileVersion >= CONFIG_SCHEMA_VERSION) return [...actions];
+  if (fileVersion >= 2) return [...actions];
   return actions.map((action) => {
     const shipped = BUILT_IN_ACTIONS.find(
       (one) => one.id === action.id && one.trigger === action.trigger,
@@ -1487,6 +1530,28 @@ function withoutTheOldConfirmDefault(
       ? { ...action, confirm_before_send: shipped.confirmBeforeSend }
       : action;
   });
+}
+
+/**
+ * The one-time migration of a profile's `presentation`.
+ *
+ * Before `[agents] default_presentation` (version 3), every file DevHub wrote
+ * said `presentation = "tui"` on every profile, because that was the only
+ * default there was. Read as an override, that copy would pin every existing
+ * profile to a terminal and make the new default mean nothing to anybody who
+ * had ever saved Settings. So in an older file `"tui"` is taken for what it
+ * was — the default — and `"gui"`, which somebody chose, stays theirs.
+ */
+function withoutTheOldPresentationDefault(
+  profiles: readonly ConfiguredAgentProfile[],
+  fileVersion: number,
+): ConfiguredAgentProfile[] {
+  if (fileVersion >= 3) return [...profiles];
+  return profiles.map((profile) =>
+    profile.presentation === "tui"
+      ? { ...profile, presentation: undefined }
+      : profile,
+  );
 }
 
 function agentActionsFromValue(
@@ -1682,8 +1747,14 @@ function agentProfileFromTable(
   ) {
     fail("invalid_profile_kind", `${prefix}.kind`);
   }
-  const presentation = optionalString(table, "presentation", prefix, "tui");
-  if (!(AGENT_PRESENTATIONS as readonly string[]).includes(presentation)) {
+  const presentation =
+    table["presentation"] === undefined
+      ? undefined
+      : optionalString(table, "presentation", prefix, "");
+  if (
+    presentation !== undefined &&
+    !(AGENT_PRESENTATIONS as readonly string[]).includes(presentation)
+  ) {
     fail("invalid_profile", `${prefix}.presentation`);
   }
   const rawEnv = table["env"];
@@ -1711,7 +1782,7 @@ function agentProfileFromTable(
         : optionalString(table, "command", prefix, defaultCommandForKind(kind)),
     args: optionalStringArray(table, "args", prefix, []),
     env,
-    presentation: presentation as AgentPresentation,
+    presentation: presentation as AgentPresentation | undefined,
   };
 }
 
@@ -1774,6 +1845,8 @@ export function interpretConfig(document: unknown): Config {
     fail("invalid_type", "projects.directory");
   }
   checkKeys(generalTable, ["import_login_environment"], "general");
+  const agentsTable = requireTable(table["agents"] ?? {}, "agents");
+  checkKeys(agentsTable, ["default_presentation"], "agents");
 
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
   checkKeys(
@@ -1932,6 +2005,14 @@ export function interpretConfig(document: unknown): Config {
       ),
     },
     projects: { directory: projectDirectory },
+    agents: {
+      default_presentation: optionalString(
+        agentsTable,
+        "default_presentation",
+        "agents",
+        defaults.agents.default_presentation,
+      ) as AgentPresentation,
+    },
     workspaceSources:
       rawSources === undefined
         ? defaults.workspaceSources
@@ -1939,7 +2020,10 @@ export function interpretConfig(document: unknown): Config {
     agentProfiles:
       rawProfiles === undefined
         ? defaults.agentProfiles
-        : rawProfiles.map(agentProfileFromTable),
+        : withoutTheOldPresentationDefault(
+            rawProfiles.map(agentProfileFromTable),
+            fileVersion,
+          ),
     // The file's word over the actions DevHub ships, rather than in place of
     // them. See `agentActionsFromValue` for why that is the difference between
     // a configuration that keeps working when DevHub adds an action and one
@@ -2034,6 +2118,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     ...(config.projects.directory === undefined
       ? {}
       : { projects: { directory: config.projects.directory } }),
+    agents: { default_presentation: config.agents.default_presentation },
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
@@ -2042,7 +2127,11 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       command: profile.command,
       args: [...profile.args],
       env: { ...profile.env },
-      presentation: profile.presentation,
+      // Absent rather than written out when it follows the default, so the
+      // default stays one line a person can change.
+      ...(profile.presentation === undefined
+        ? {}
+        : { presentation: profile.presentation }),
     })),
   } as Record<string, TomlValue>;
 }
@@ -2121,6 +2210,7 @@ export type ConfigScopeKey =
   | "workspaceSources"
   | "scratch"
   | "projects"
+  | "agents"
   | "agentProfiles"
   | "agentActions";
 

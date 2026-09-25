@@ -173,8 +173,11 @@ import { seedProfileSettings } from "../profileSeed.js";
 import {
 	ConfigStore,
 	defaultConfigPaths,
+	profilePresentation,
 	withProfileRuntimes,
+	type AgentsConfig,
 	type Config,
+	type ConfiguredAgentProfile,
 } from "../../model/config.js";
 import {
 	applySnapshot,
@@ -2061,7 +2064,9 @@ export class AppController {
 			);
 		}
 		return agentProfilesWire(
-			config.agentProfiles.map(toDomainProfile),
+			config.agentProfiles.map((profile) =>
+				toDomainProfile(profile, config.agents),
+			),
 			this.profileSequence,
 		);
 	}
@@ -3213,7 +3218,10 @@ export class AppController {
 				detail: this.executableMissingMessage(resolved),
 			};
 		}
-		return { kind: "resolved", profile: toDomainProfile(resolved.profile) };
+		return {
+			kind: "resolved",
+			profile: toDomainProfile(resolved.profile, this.config!.agents),
+		};
 	}
 
 	/**
@@ -6282,15 +6290,10 @@ function asIpcError(error: AppErrorWire): Error {
 	return new Error(JSON.stringify(error));
 }
 
-function toDomainProfile(profile: {
-	id: string;
-	display_name: string;
-	kind: AgentProfileKind;
-	command: string;
-	args: readonly string[];
-	env: Readonly<Record<string, string>>;
-	presentation: AgentPresentation;
-}): AgentProfile {
+function toDomainProfile(
+	profile: ConfiguredAgentProfile,
+	agents: AgentsConfig,
+): AgentProfile {
 	return AgentProfile.create(
 		agentProfileId(profile.id),
 		profile.display_name,
@@ -6298,7 +6301,7 @@ function toDomainProfile(profile: {
 		profile.command,
 		profile.args,
 		new Map(Object.entries(profile.env)),
-		profile.presentation,
+		profilePresentation(profile, agents),
 	);
 }
 
@@ -6410,7 +6413,9 @@ export async function createAppController(
 	markStarting(state);
 	await stateStore.saveState(state);
 
-	const profiles = (config?.agentProfiles ?? []).map(toDomainProfile);
+	const profiles = (config?.agentProfiles ?? []).map((profile) =>
+		toDomainProfile(profile, config!.agents),
+	);
 	// Scratch is today's folder, worked out now rather than read from the file:
 	// a file from yesterday names yesterday's folder as an ordinary Workspace,
 	// and today's becomes Scratch. With no readable settings it is the

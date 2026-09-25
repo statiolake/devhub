@@ -31,8 +31,11 @@ export interface SettingsAgentProfileWire {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly env: Record<string, string>;
-	/** How its Agents are shown unless a launch says otherwise. */
-	readonly presentation: "tui" | "gui";
+	/**
+	 * How its Agents are shown unless a launch says otherwise; `default` is
+	 * `[agents] default_presentation`, and is what a profile says by not saying.
+	 */
+	readonly presentation: "default" | "tui" | "gui";
 }
 
 export interface SettingsTerminalPaletteWire {
@@ -169,6 +172,8 @@ export interface SettingsConfigWire {
 	readonly scratch: { readonly daily: string };
 	/** `[projects]`: where new projects go; absent means derived from the sources. */
 	readonly projects: { readonly directory: string | undefined };
+	/** `[agents]`: how an Agent is shown when neither its launch nor its profile says. */
+	readonly agents: { readonly defaultPresentation: "tui" | "gui" };
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];
 }
@@ -429,6 +434,7 @@ export type SettingsScopeKeyWire =
 	| "workspaceSources"
 	| "scratch"
 	| "projects"
+	| "agents"
 	| "agentProfiles"
 	| "agentActions";
 

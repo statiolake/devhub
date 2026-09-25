@@ -13,13 +13,20 @@ structured mode to talk to. Cursor and custom profiles are always terminals.
 ## Choosing a terminal or a GUI
 
 Every Agent is launched as one or the other and stays that way. The choice has
-two places:
+three places, each overriding the one before:
 
+- **The app-wide default.** `[agents] default_presentation = "tui" | "gui"` in
+  `settings.toml` (Settings > General > Show agents as). Absent means `"tui"`.
+  A kind that cannot be a GUI is a terminal under a `"gui"` default, with no
+  error: the default is a preference, not a demand on every kind.
 - **The profile's default.** `presentation = "tui" | "gui"` on an
-  `[[agent_profiles]]` table in `settings.toml`. Absent means `"tui"`. A `"gui"`
-  on a kind that cannot be one is refused as an invalid profile, at the key.
+  `[[agent_profiles]]` table. Absent means the app-wide default. A `"gui"` on a
+  kind that cannot be one is refused as an invalid profile, at the key. A file
+  older than version 3 wrote `presentation = "tui"` on every profile as a copy
+  of the only default there was; that copy is read as absent, once.
 - **This launch, the other way.** In New Agent (the sidebar's sheet, and the
-  Agent step of the workspace picker), each row says `GUI` or `TUI`. Holding ⌥
+  Agent step of the workspace picker) and in Assign Issue's agent step, each
+  row says `GUI` or `TUI`. Holding ⌥
   flips it, and ⌥Return launches the Agent the other way. ⌘Return (beside the
   editor) combines with it. A kind with no GUI does not flip.
 
