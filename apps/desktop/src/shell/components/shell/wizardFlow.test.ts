@@ -31,7 +31,7 @@ const EMPTY: Omit<WizardPrompt, "title"> = {
 };
 
 function answer(id: string): WizardAnswer {
-  return { id, split: false, query: "" };
+  return { id, split: false, alternate: false, query: "" };
 }
 
 /**
