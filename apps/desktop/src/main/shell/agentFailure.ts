@@ -17,6 +17,7 @@
  * they were about.
  */
 
+import { SessionNotResumable } from "../agent/conversation/resume.js";
 import type { AppErrorCodeWire, AppErrorWire } from "../../ipc/appShell.js";
 import type {
 	AgentFailureCode,
@@ -101,6 +102,9 @@ export function portRefusal(error: unknown): {
 	readonly code: AgentFailureCode;
 	readonly detail?: string;
 } {
+	if (error instanceof SessionNotResumable) {
+		return { code: "agent_profile_unavailable", detail: error.message };
+	}
 	if (!(error instanceof PortFailure)) {
 		return { code: "tmux_command_failed" };
 	}

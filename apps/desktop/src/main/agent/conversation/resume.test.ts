@@ -169,7 +169,8 @@ describe("listing a Workspace's sessions", () => {
 	it("asks Codex's app-server, holding its input open until it has answered", async () => {
 		const codex = join(dir, "codex");
 		const requests = join(dir, "requests");
-		// A fake that answers the list a moment later, and at end of input
+		// A fake that answers the list a moment later — in JSON spaced the way
+		// another serializer spaces it — and at end of input
 		// quits without answering what is still in flight — which is what
 		// app-server does, and why the input has to stay open.
 		await writeFile(
@@ -180,7 +181,7 @@ while IFS= read -r line; do
 	printf '%s\\n' "$line" >>"${requests}"
 	case $line in
 	*'"initialize"'*) printf '%s\\n' '{"id":1,"result":{"userAgent":"fake"}}' ;;
-	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id":2,"result":{"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
+	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id": 2, "result": {"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
 	esac
 done
 [ -z "$pending" ] || kill "$pending" 2>/dev/null
@@ -210,6 +211,18 @@ done
 			limit: 50,
 			sortKey: "updated_at",
 		});
+	});
+
+	it("says what was being asked when the machine gives no answer at all", async () => {
+		const runtime = {
+			...fakeRuntime(dir),
+			exec: () => Promise.reject(new Error("terminal runtime timed out")),
+		} as Runtime;
+		await expect(
+			listPastSessions(runtime, CODEX, "/work/project"),
+		).rejects.toThrow(
+			"codex app-server did not list its threads: terminal runtime timed out",
+		);
 	});
 
 	it("says what Codex said when it refuses, or that it ended without answering", () => {

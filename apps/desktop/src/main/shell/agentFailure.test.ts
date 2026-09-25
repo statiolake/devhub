@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { agentId as parseAgentId } from "../../model/domain.js";
 import { portFailure } from "../terminal/ports.js";
 import { agentSubject, portRefusal, refusalWire } from "./agentFailure.js";
+import { SessionNotResumable } from "../agent/conversation/resume.js";
 import { AppError, AppErrorCode } from "../../model/intents.js";
 import { errorWire, errorWireAt } from "../../model/wire.js";
 
@@ -51,6 +52,18 @@ describe("what a port refusal is called", () => {
 	it("treats anything that is not a port failure as a refused command", () => {
 		expect(portRefusal(new Error("boom"))).toEqual({
 			code: "tmux_command_failed",
+		});
+	});
+});
+
+describe("a launch that cannot resume the session it was asked to", () => {
+	// Not tmux: the profile cannot start this Agent the way it was asked to.
+	it("is the profile's refusal, in the words that say which session and where", () => {
+		expect(
+			portRefusal(new SessionNotResumable("Claude has no session s1 in /w")),
+		).toEqual({
+			code: "agent_profile_unavailable",
+			detail: "Claude has no session s1 in /w",
 		});
 	});
 });

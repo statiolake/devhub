@@ -53,6 +53,18 @@ export interface PastSession {
 	readonly updatedAt: number | undefined;
 }
 
+/**
+ * The session a launch was asked to resume cannot be read back: it is not
+ * there, or not whole. The profile cannot start the Agent the way it was
+ * asked to — a refusal of the launch, not of the machine it runs on.
+ */
+export class SessionNotResumable extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "SessionNotResumable";
+	}
+}
+
 type ResumableKind = Extract<AgentProfile["kind"], "claude" | "codex">;
 
 /** How each CLI's terminal mode is told to go on with a session. */
@@ -119,6 +131,27 @@ function resumableKind(kind: AgentProfile["kind"]): ResumableKind {
 	throw new Error(`a ${kind} profile has no sessions DevHub can list`);
 }
 
+/**
+ * `runtime.exec`, with a failure to get an answer at all — a deadline, a
+ * machine that is not there — said as what was being asked, not as the
+ * runtime's own words about itself.
+ */
+function askMachine(
+	runtime: Runtime,
+	what: string,
+): (request: Parameters<Runtime["exec"]>[0]) => ReturnType<Runtime["exec"]> {
+	return async (request) => {
+		try {
+			return await runtime.exec(request);
+		} catch (failure: unknown) {
+			throw new Error(
+				`${what}${runtime.where}: ${failure instanceof Error ? failure.message : String(failure)}`,
+				{ cause: failure },
+			);
+		}
+	};
+}
+
 /** How many sessions a listing offers. */
 const LISTED = 50;
 
@@ -178,7 +211,10 @@ async function listClaudeSessions(
 	cwd: string,
 ): Promise<readonly PastSession[]> {
 	const directory = await claudeProjectDirectory(runtime, profile, cwd);
-	const answer = await runtime.exec({
+	const answer = await askMachine(
+		runtime,
+		`DevHub could not list Claude's sessions in ${directory}`,
+	)({
 		argv: ["sh", "-c", CLAUDE_LISTING_SCRIPT, "sh", directory],
 		env: await runtime.environment(),
 		deadline: OperationDeadline.in(15_000),
@@ -238,7 +274,7 @@ function parsedLine(id: string, line: string): Record<string, unknown> {
 	} catch {
 		// Said below, with the session it is in.
 	}
-	throw new Error(
+	throw new SessionNotResumable(
 		`Claude's session ${id} has a line that is not a JSON object`,
 	);
 }
@@ -301,14 +337,14 @@ export async function claudeHistory(
 		text = await runtime.readTextFile(path, MAX_HISTORY_BYTES + 1);
 	} catch (failure: unknown) {
 		if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
-			throw new Error(
+			throw new SessionNotResumable(
 				`Claude has no session ${session} in ${root}${runtime.where}: there is no ${path}.`,
 			);
 		}
 		throw failure;
 	}
 	if (Buffer.byteLength(text) > MAX_HISTORY_BYTES) {
-		throw new Error(
+		throw new SessionNotResumable(
 			`Claude's session ${session} is larger than DevHub reads back (${MAX_HISTORY_BYTES / 1024 / 1024} MiB): ${path}${runtime.where}`,
 		);
 	}
@@ -347,7 +383,9 @@ export function claudeHistoryLines(
 	for (let at = leaf; at !== undefined; ) {
 		const uuid = at["uuid"] as string;
 		if (seen.has(uuid)) {
-			throw new Error(`Claude's session ${session} has a cycle at ${uuid}`);
+			throw new SessionNotResumable(
+				`Claude's session ${session} has a cycle at ${uuid}`,
+			);
 		}
 		seen.add(uuid);
 		chain.push(at);
@@ -381,14 +419,17 @@ export function claudeHistoryLines(
  * `app-server` answers on stdin that stays open: at end of input it exits
  * without answering what is still in flight. So the requests go in, and the
  * input is held open until the answer to `thread/list` (id 2) has come out —
- * or the server has ended — and then closed, which ends the server.
+ * or the server has ended — and then closed, which ends the server. The
+ * answer is recognised by its top-level id, first or last in the object and
+ * however the JSON is spaced; a pattern tied to one serializer's spacing left
+ * the input open until the deadline.
  */
 const CODEX_LISTING_SCRIPT = `d=$(mktemp -d) || exit 70
 trap 'rm -rf "$d"' EXIT
 { cat; until [ -e "$d/done" ]; do sleep 0.1; done; } | "$@" | {
 	while IFS= read -r l; do
 		printf '%s\\n' "$l"
-		case $l in '{"id":2,'* | *',"id":2}') break ;; esac
+		printf '%s\\n' "$l" | grep -Eq '^[{][[:space:]]*"id"[[:space:]]*:[[:space:]]*2[[:space:]]*[,}]|[,{][[:space:]]*"id"[[:space:]]*:[[:space:]]*2[[:space:]]*[}][[:space:]]*$' && break
 	done
 	: >"$d/done"
 }
@@ -412,7 +453,10 @@ async function listCodexSessions(
 			params: { cwd, limit: LISTED, sortKey: "updated_at" },
 		},
 	];
-	const answer = await runtime.exec({
+	const answer = await askMachine(
+		runtime,
+		`codex app-server did not list its threads`,
+	)({
 		argv: [
 			"sh",
 			"-c",
