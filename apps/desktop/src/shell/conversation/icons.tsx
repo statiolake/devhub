@@ -34,6 +34,14 @@ export function SendIcon() {
   );
 }
 
+export function EditIcon() {
+  return (
+    <Icon>
+      <path d="M10.5 3.5 12.5 5.5M3.5 12.5l.5-2.5 6.5-6.5 2 2L6 12z" />
+    </Icon>
+  );
+}
+
 export function StopIcon() {
   return (
     <Icon>

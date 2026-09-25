@@ -22,13 +22,19 @@ import {
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   EMPTY_SESSION,
+  entryId,
   type ConversationEvent,
   type ConversationState,
   type SessionFacts,
   type SlashCommand,
 } from "../../model/conversation";
-import { COMPOSER_PLACEHOLDER } from "./Composer";
-import { draw, fakeActions, installResizeObserver } from "./surfaceTestKit";
+import { COMPOSER_PLACEHOLDER, EDITING_NOTE } from "./Composer";
+import {
+  draw,
+  entry,
+  fakeActions,
+  installResizeObserver,
+} from "./surfaceTestKit";
 import {
   opened,
   put,
@@ -568,5 +574,112 @@ describe("requests from the keyboard", () => {
         name: /2 requests are waiting for an answer/,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("editing the last message", () => {
+  const REWINDS: SessionFacts = { ...SESSION, canRewind: true };
+  const TWO = [put(user("u1", "first")), put(user("u2", "second"))];
+
+  function editButton(id: string) {
+    return within(entry(id)).queryByRole("button", { name: "Edit message" });
+  }
+
+  it("is offered on the person's last message only, while the session can take a turn back and nothing runs", () => {
+    const { redraw } = draw(withSession(TWO, REWINDS));
+    expect(editButton("u2")).toBeInTheDocument();
+    expect(editButton("u1")).toBeNull();
+
+    redraw(withSession(TWO, SESSION));
+    expect(editButton("u2")).toBeNull();
+
+    redraw(withSession([...TWO, RUNNING], REWINDS));
+    expect(editButton("u2")).toBeNull();
+  });
+
+  it("puts the message in the composer over the draft, and sends the new words in its place", async () => {
+    const { actions } = draw(withSession(TWO, REWINDS));
+    type("a draft");
+    fireEvent.click(editButton("u2")!);
+    expect(composer()).toHaveValue("second");
+    expect(composer()).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent(EDITING_NOTE);
+    expect(EDITING_NOTE).toContain(
+      "files the Agent changed are not changed back",
+    );
+
+    type("second, better");
+    press("Enter");
+    expect(actions.editLastMessage).toHaveBeenCalledWith(
+      entryId("u2"),
+      "second, better",
+    );
+    expect(actions.send).not.toHaveBeenCalled();
+    await waitFor(() => expect(composer()).toHaveValue(""));
+    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
+  });
+
+  it("gives the draft back when the edit is given up, by Cancel or Esc, and stops nothing", () => {
+    const { actions } = draw(withSession(TWO, REWINDS));
+    type("a draft");
+    fireEvent.click(editButton("u2")!);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(composer()).toHaveValue("a draft");
+    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
+
+    fireEvent.click(editButton("u2")!);
+    press("Escape");
+    expect(composer()).toHaveValue("a draft");
+    expect(screen.queryByText(EDITING_NOTE)).toBeNull();
+    expect(actions.interrupt).not.toHaveBeenCalled();
+    expect(actions.editLastMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the words, still an edit, when the CLI would not take the turn back", async () => {
+    const actions = fakeActions({
+      editLastMessage: vi.fn(() => Promise.resolve("refused" as const)),
+    });
+    draw(withSession(TWO, REWINDS), actions);
+    fireEvent.click(editButton("u2")!);
+    type("second, better");
+    press("Enter");
+    await waitFor(() => expect(actions.editLastMessage).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(composer()).toHaveValue("second, better");
+    expect(screen.getByRole("status")).toHaveTextContent(EDITING_NOTE);
+    expect(actions.reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("hands a refused edit to the page's root and keeps the words", async () => {
+    const refused = new Error(
+      "The Agent is in the middle of a turn. Stop it before editing your last message.",
+    );
+    const actions = fakeActions({
+      editLastMessage: vi.fn(() => Promise.reject(refused)),
+    });
+    draw(withSession(TWO, REWINDS), actions);
+    fireEvent.click(editButton("u2")!);
+    press("Enter");
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(refused),
+    );
+    expect(composer()).toHaveValue("second");
+  });
+
+  it("takes no input while the turn is being taken back", () => {
+    draw(
+      withSession(
+        [
+          ...TWO,
+          { type: "state", state: { phase: "ready", turn: "rewinding" } },
+        ],
+        REWINDS,
+      ),
+    );
+    expect(composer()).toBeDisabled();
+    expect(composer()).toHaveAttribute(
+      "placeholder",
+      "Taking back the last turn…",
+    );
   });
 });

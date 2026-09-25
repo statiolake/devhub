@@ -22,9 +22,16 @@
  * What was typed is not cleared until the Agent has it. A send that fails is
  * handed to the page's root, and the text stays where it was, to be sent
  * again.
+ *
+ * Editing the person's last message puts its words here, over whatever was
+ * being typed (which comes back on Cancel or Esc). Sending them then takes
+ * that message's turn back and sends them in its place; a CLI that would not
+ * take it back leaves them here, still being edited, and says why in the
+ * conversation.
  */
 
 import {
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,6 +42,7 @@ import type {
   ConversationState,
   SlashCommand,
   Transcript,
+  UserEntry,
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
@@ -54,7 +62,9 @@ export function inputRefusal(state: ConversationState): string | undefined {
     case "connecting":
       return "Connecting to the Agent…";
     case "ready":
-      return undefined;
+      return state.turn === "rewinding"
+        ? "Taking back the last turn…"
+        : undefined;
     case "broken":
       return BROKEN_REFUSALS[state.failure.code];
   }
@@ -68,6 +78,10 @@ const BROKEN_REFUSALS = {
   refused:
     "This conversation takes no more input: the Agent's CLI refused to start.",
 } as const;
+
+/** What the composer says over itself while it holds an edit of the last message. */
+export const EDITING_NOTE =
+  "Editing your last message. Sending replaces it and everything after it; files the Agent changed are not changed back.";
 
 export const COMPOSER_PLACEHOLDER =
   "Message the Agent — / for commands, Shift+Enter for a new line";
@@ -120,6 +134,8 @@ export function Composer({
   inputRef,
   pickers,
   openSetting,
+  editing,
+  endEdit,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -128,9 +144,16 @@ export function Composer({
   >;
   /** Open the toolbar's picker for a setting a command changes. */
   readonly openSetting: (setting: SettingName) => void;
+  /** The person's message being edited here, if one is. */
+  readonly editing: UserEntry | undefined;
+  /** The edit is over: sent, or given up. */
+  readonly endEdit: () => void;
 }) {
-  const { send, interrupt, reportFailure } = useConversationActions();
+  const { send, editLastMessage, interrupt, reportFailure } =
+    useConversationActions();
   const [text, setText] = useState("");
+  /** What was being typed when an edit began, given back if it is given up. */
+  const draft = useRef("");
   /** Which of the history the composer is showing, while it is showing one. */
   const [recalled, setRecalled] = useState<number | undefined>(undefined);
   const [selected, setSelected] = useState(0);
@@ -155,13 +178,47 @@ export function Composer({
     setSelected(0);
   };
 
+  // An edit begins: its words replace the draft, with the caret at their end.
+  const editingId = editing?.id;
+  useLayoutEffect(() => {
+    if (editing === undefined) return;
+    setText((current) => {
+      draft.current = current;
+      return editing.text;
+    });
+    setRecalled(undefined);
+    const input = inputRef.current;
+    if (input) {
+      input.focus();
+      input.setSelectionRange(editing.text.length, editing.text.length);
+    }
+    // Only a new edit fills the composer, not a new render of the same one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId]);
+
+  const cancelEdit = () => {
+    setText(draft.current);
+    draft.current = "";
+    endEdit();
+  };
+
   const submit = () => {
     const line = text;
     if (line.trim() === "") return;
-    void send(line).then(() => {
+    const cleared = () => {
       // Only what was sent is cleared: anything typed since stays.
       setText((current) => (current === line ? "" : current));
       setRecalled(undefined);
+    };
+    if (editing === undefined) {
+      void send(line).then(cleared, reportFailure);
+      return;
+    }
+    void editLastMessage(editing.id, line).then((outcome) => {
+      if (outcome === "refused") return;
+      cleared();
+      draft.current = "";
+      endEdit();
     }, reportFailure);
   };
 
@@ -219,6 +276,12 @@ export function Composer({
       submit();
       return;
     }
+    if (event.key === "Escape" && editing !== undefined && !running) {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelEdit();
+      return;
+    }
     if ((event.key === "ArrowUp" || event.key === "ArrowDown") && plain) {
       if (recall(event.key === "ArrowUp" ? 1 : -1)) event.preventDefault();
     }
@@ -226,6 +289,18 @@ export function Composer({
 
   return (
     <div className="conversation-composer">
+      {editing !== undefined ? (
+        <div className="conversation-editing" role="status">
+          <span className="conversation-editing-note">{EDITING_NOTE}</span>
+          <button
+            type="button"
+            className="conversation-editing-cancel"
+            onClick={cancelEdit}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
       {offered.length > 0 ? (
         <CompletionList
           commands={offered}
@@ -287,8 +362,14 @@ export function Composer({
             <button
               type="button"
               className="conversation-send"
-              aria-label="Send"
-              title="Send (Enter)"
+              aria-label={
+                editing === undefined ? "Send" : "Send edited message"
+              }
+              title={
+                editing === undefined
+                  ? "Send (Enter)"
+                  : "Send in place of your last message (Enter)"
+              }
               disabled={refusal !== undefined || text.trim() === ""}
               onClick={submit}
             >

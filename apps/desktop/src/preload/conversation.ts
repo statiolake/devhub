@@ -15,10 +15,7 @@ import {
 	type ConversationCommandWire,
 	type ConversationEventListener,
 } from "../ipc/conversation.js";
-import type {
-	ConversationEvent,
-	EditOutcome,
-} from "../model/conversation.js";
+import type { ConversationEvent, EditOutcome } from "../model/conversation.js";
 
 const listeners = new Map<string, ConversationEventListener>();
 

@@ -762,7 +762,11 @@ describe("editing the person's last message", () => {
 	it("refuses while a turn runs, saying to stop it first, and writes nothing", async () => {
 		const { host, conversation, cli } = await twoTurns();
 		cli.hold = true;
-		await conversation.command({ kind: "send", text: "third", origin: "person" });
+		await conversation.command({
+			kind: "send",
+			text: "third",
+			origin: "person",
+		});
 		await settle();
 		const writes = host.inLog.length;
 		await expect(
@@ -789,7 +793,11 @@ describe("editing the person's last message", () => {
 			conversation.editLastMessage(entryId("user:u2"), "second, better"),
 		).rejects.toThrow("the fake host did not start its CLI again");
 		expect(ids(conversation)).toContain("user:u2");
-		await conversation.command({ kind: "send", text: "third", origin: "person" });
+		await conversation.command({
+			kind: "send",
+			text: "third",
+			origin: "person",
+		});
 		await settle();
 		expect(ids(conversation)).toContain("user:u3");
 		await conversation.stop();
@@ -805,7 +813,11 @@ describe("editing the person's last message", () => {
 		);
 		await settle();
 		await expect(
-			conversation.command({ kind: "send", text: "meanwhile", origin: "person" }),
+			conversation.command({
+				kind: "send",
+				text: "meanwhile",
+				origin: "person",
+			}),
 		).rejects.toThrow("Your last message is being edited.");
 		await conversation.stop();
 		await expect(edit).rejects.toThrow(

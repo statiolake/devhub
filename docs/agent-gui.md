@@ -116,6 +116,13 @@ The session's command is not the CLI itself but a small POSIX `sh` script, the
 - its **stderr** appended to `err`, and its exit status written to `exit` when
   it ends.
 
+The CLI runs beside the host rather than in its place, and its pid is in
+`cli`. To edit a Claude message, DevHub writes `again` (the arguments to add)
+and `again.mark` (the line for the journal), then stops the CLI. The host
+finds `again`, appends the mark to `out` and starts the CLI again. A host
+started by a DevHub from before this change has no `cli`, and the edit is
+refused.
+
 Everything DevHub writes goes through the FIFO and is also appended to
 `in.log`, prefixed with the journal offset it followed. The files live in
 `~/.devhub/agents-<profile tag>/<Agent id>/` on the machine the Agent runs on,
@@ -164,6 +171,7 @@ The GUI draws the transcript and lets you:
 - write messages, including mid-turn;
 - answer permission and question requests;
 - interrupt a turn;
+- edit your last message and send it again (below);
 - change the model, effort and permission mode;
 - use slash commands.
 
@@ -216,6 +224,45 @@ choices.
   *protocol mismatch*, naming where in the line it went wrong and the CLI's
   version. The transcript up to that point stays readable. This usually means
   the CLI was updated past what DevHub knows.
+
+## Editing your last message
+
+Your last message has an **Edit** action beside Copy while nothing is
+running. Edit puts its words in the composer (what you were typing comes back
+on Cancel or Esc). Sending them takes back that message's turn and everything
+after it, and sends the new words in its place. It is offered only on your
+own last message, not on a template's, and only when the session can take a
+turn back. While a turn runs there is no Edit; stop the turn first. An edit
+that can't be done is refused with the reason, and your words stay in the
+composer.
+
+**Files are not changed back.** Taking back a turn changes only the
+conversation. Files the Agent edited and commands it ran during that turn
+stay as they are. The composer says so while it holds an edit.
+
+How each CLI takes a turn back:
+
+- **Codex**: `thread/revert` with the turn the message started
+  (`beforeTurnId`), then `turn/start` with the new words. It works only on a
+  paginated thread, which is what `thread/start` makes by default
+  (`thread.historyMode`). On a legacy thread (an old one resumed) there is no
+  Edit. When app-server refuses, a notice says why and nothing is dropped.
+  (`thread/rollback` was removed from app-server; `thread/revert` replaces
+  it.)
+- **Claude Code**: stream-json has no documented way to take a turn back, so
+  the host starts the CLI again, resumed at the message before yours:
+  `--resume <session> --resume-session-at <that message> --resume-drops-turn
+  <yours>`. These are the flags behind the Agent SDK's `resumeSessionAt` and
+  `resumeDropsTurn`, which need Claude Code 2.1.223 or later. An older CLI has
+  no Edit. If your message was the first one, there is nothing to resume, and
+  the CLI starts a fresh session instead, with a new session id. The CLI
+  refuses the resume when the turn you are taking back holds anything else,
+  such as a message queued mid-turn or a background task's notice. It then
+  exits, and the Agent ends with its reason, the way any ending is shown.
+
+The host writes a line of DevHub's own, `devhub_rewind`, into the journal
+between the old CLI's output and the new one's. A DevHub that restarts reads
+the journal the same way and gets the same shortened transcript.
 
 ## Not signed in, and Continue in terminal
 
@@ -362,6 +409,13 @@ and changes it for this session.
 - **busybox `tail -f` polls once a second.** On a host with busybox, a
   NAS for example, streaming arrives in one-second steps. The BSD tail on macOS
   and GNU tail are immediate.
+- **Editing a message does not change files back.** Neither CLI's way of
+  taking back a turn touches the working tree. Claude Code's file
+  checkpoints (`--rewind-files`, the SDK's `rewindFiles`) have to be turned on
+  when the session starts, and DevHub does not turn them on.
+- **Editing a Claude message restarts the CLI.** MCP servers and background
+  tasks start again with it. Right after a compaction, the resume point is
+  the last message DevHub saw before it, not the compaction summary.
 - **The journal is never trimmed.** Partial messages are journaled too, so a
   long session's `out` can reach tens of megabytes, and a restart reads all of
   it once.
@@ -410,6 +464,13 @@ read on 2026-09-25:
 - Anthropic legal and compliance, authentication and credential use —
   <https://code.claude.com/docs/en/legal-and-compliance>
 - Anthropic Consumer Terms — <https://www.anthropic.com/legal/consumer-terms>
+- Claude Agent SDK TypeScript reference, `resumeSessionAt`,
+  `resumeDropsTurn`, `forkSession`, `enableFileCheckpointing` —
+  <https://code.claude.com/docs/en/agent-sdk/typescript>
+- Codex app-server `thread/revert` and the removal of `thread/rollback`:
+  `codex-rs/app-server/README.md` and
+  `app-server-protocol/schema/typescript/v2/ThreadRevertParams.ts` at
+  `rust-v0.156.1` in openai/codex
 - Codex app-server and authentication —
   <https://learn.chatgpt.com/docs/app-server>,
   <https://learn.chatgpt.com/docs/auth>

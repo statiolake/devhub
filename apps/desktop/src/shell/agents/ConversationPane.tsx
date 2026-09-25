@@ -16,6 +16,7 @@ import {
   applyEvent,
   type ConversationEvent,
   type RequestAnswer,
+  type EntryId,
   type RequestId,
   type Transcript,
 } from "../../model/conversation";
@@ -45,6 +46,8 @@ export function ConversationPane({
       writeClipboard: (text: string) => bridge.writeClipboard(text),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),
       send: (text: string) => bridge.conversation.send(agentId, text),
+      editLastMessage: (message: EntryId, text: string) =>
+        bridge.conversation.editLastMessage(agentId, message, text),
       interrupt: () => bridge.conversation.interrupt(agentId),
       answer: (request: RequestId, answer: RequestAnswer) =>
         bridge.conversation.answer(agentId, request, answer),

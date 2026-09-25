@@ -31,8 +31,10 @@ import type {
   UserEntry,
 } from "../../model/conversation";
 import { CopyButton } from "./CopyButton";
+import { useEditMessage } from "./ConversationContext";
 import { JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
+import { EditIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { RequestCard } from "./RequestCard";
 
@@ -54,18 +56,35 @@ const MAX_INDENT = 3;
 
 /**
  * A message from the person: a bubble on the right, as it reads in any chat,
- * with its actions under it on hover. The actions row is also where "edit"
- * will go.
+ * with its actions under it on hover — Copy, and Edit on the person's last
+ * message while the session can take its turn back.
  */
 function UserView({ entry }: { readonly entry: UserEntry }) {
+  const { editable, editing, start } = useEditMessage();
   return (
-    <div className="conversation-user" data-origin={entry.origin}>
+    <div
+      className="conversation-user"
+      data-origin={entry.origin}
+      data-editing={editing === entry.id || undefined}
+    >
       {entry.origin === "injection" ? (
         <div className="conversation-user-origin">Sent by a template</div>
       ) : null}
       <div className="conversation-user-text">{entry.text}</div>
       <div className="conversation-message-actions">
         <CopyButton text={entry.text} label="Copy message" />
+        {editable === entry.id ? (
+          <button
+            type="button"
+            className="conversation-edit"
+            aria-label="Edit message"
+            title="Edit this message and send it again"
+            onClick={() => start(entry)}
+          >
+            <EditIcon />
+            <span className="conversation-copy-text">Edit</span>
+          </button>
+        ) : null}
       </div>
     </div>
   );

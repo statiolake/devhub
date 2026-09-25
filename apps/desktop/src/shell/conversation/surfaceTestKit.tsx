@@ -25,6 +25,7 @@ export function fakeActions(
     writeClipboard: vi.fn(() => Promise.resolve()),
     openExternalUrl: vi.fn(() => Promise.resolve()),
     send: vi.fn(() => Promise.resolve()),
+    editLastMessage: vi.fn(() => Promise.resolve("sent" as const)),
     interrupt: vi.fn(() => Promise.resolve()),
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),

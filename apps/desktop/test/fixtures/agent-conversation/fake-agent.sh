@@ -22,8 +22,18 @@
 # wrote stands in for the fixture's from then on, in both directions. When
 # the fixture runs out it keeps reading, as a CLI waiting for its next turn
 # does.
+#
+# Started again by its host to take a turn back (its argv has
+# --resume-drops-turn, as DevHub's rewind of a Claude session does), it plays
+# FAKE_AGENT_REWIND_SCRIPT instead, which must then be set.
 request_id() { printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p'; }
-if [ -n "${FAKE_AGENT_SCRIPT:-}" ]; then
+script=${FAKE_AGENT_SCRIPT:-}
+for arg in "$@"; do
+  if [ "$arg" = --resume-drops-turn ] && [ -n "$script" ]; then
+    script=${FAKE_AGENT_REWIND_SCRIPT:?fake-agent: started again to take a turn back, but FAKE_AGENT_REWIND_SCRIPT is not set}
+  fi
+done
+if [ -n "$script" ]; then
   ids=
   while IFS= read -r step <&4; do
     step=$(printf '%s' "$step" | sed "s/^/x/;$ids;s/^x//")
@@ -44,7 +54,7 @@ if [ -n "${FAKE_AGENT_SCRIPT:-}" ]; then
         fi
         ;;
     esac
-  done 4<"$FAKE_AGENT_SCRIPT"
+  done 4<"$script"
   while IFS= read -r got; do :; done
   exit 0
 fi

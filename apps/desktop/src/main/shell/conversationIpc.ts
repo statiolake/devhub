@@ -12,10 +12,7 @@ import {
 	type ConversationAttachment,
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
-import {
-	entryId,
-	type EditOutcome,
-} from "../../model/conversation.js";
+import { entryId, type EditOutcome } from "../../model/conversation.js";
 import type { AgentId } from "../../model/domain.js";
 import type {
 	ConversationCommand,

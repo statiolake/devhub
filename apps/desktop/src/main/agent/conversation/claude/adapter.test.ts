@@ -1753,11 +1753,15 @@ describe("taking back the last turn", () => {
 		adapter.received(init({ claude_code_version: version }));
 		perform(adapter, { kind: "send", text: "first", origin: "person" });
 		adapter.received(echo("first", "u1"));
-		adapter.received(assistantLine("msg_1", [TEXT("one")], null, { uuid: "a1" }));
+		adapter.received(
+			assistantLine("msg_1", [TEXT("one")], null, { uuid: "a1" }),
+		);
 		adapter.received(result());
 		perform(adapter, { kind: "send", text: "second", origin: "person" });
 		adapter.received(echo("second", "u2"));
-		adapter.received(assistantLine("msg_2", [TEXT("two")], null, { uuid: "a2" }));
+		adapter.received(
+			assistantLine("msg_2", [TEXT("two")], null, { uuid: "a2" }),
+		);
 		adapter.received(result());
 		return adapter;
 	}
@@ -1855,7 +1859,10 @@ describe("taking back the last turn", () => {
 		const adapter = new ClaudeAdapter("boot");
 		const history = claudeHistoryLines(
 			SESSION,
-			readFileSync(join(FIXTURES, "claude-session-file.handwritten.jsonl"), "utf8"),
+			readFileSync(
+				join(FIXTURES, "claude-session-file.handwritten.jsonl"),
+				"utf8",
+			),
 		);
 		for (const line of history) adapter.received(line);
 		adapter.received(init({ claude_code_version: "2.1.282" }));
@@ -1865,7 +1872,14 @@ describe("taking back the last turn", () => {
 		const last = (JSON.parse(history.at(-1)!) as { record: { uuid: string } })
 			.record.uuid;
 		expect(adapter.rewind(entryId("user:u9"))).toMatchObject({
-			args: ["--resume", SESSION, "--resume-session-at", last, "--resume-drops-turn", "u9"],
+			args: [
+				"--resume",
+				SESSION,
+				"--resume-session-at",
+				last,
+				"--resume-drops-turn",
+				"u9",
+			],
 		});
 	});
 

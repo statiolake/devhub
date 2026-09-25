@@ -182,7 +182,8 @@
   visibility: hidden;
 }
 
-.conversation-copy {
+.conversation-copy,
+.conversation-edit {
   display: inline-flex;
   align-items: center;
   padding: 2px var(--space-2);
@@ -197,12 +198,14 @@
   line-height: 1.4;
 }
 
-.conversation-copy:hover {
+.conversation-copy:hover,
+.conversation-edit:hover {
   background: var(--wash);
   color: var(--primary);
 }
 
-.conversation-copy:focus-visible {
+.conversation-copy:focus-visible,
+.conversation-edit:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -1088,6 +1091,47 @@
 }
 
 .conversation-waiting:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The message whose words the composer holds for an edit. */
+.conversation-user[data-editing] .conversation-user-text {
+  opacity: 0.55;
+}
+
+/* Over the composer while it holds an edit of the last message. */
+.conversation-editing {
+  display: flex;
+  align-items: baseline;
+  padding: 0 var(--space-1) var(--space-2);
+  color: var(--secondary);
+  font-size: 0.85em;
+  gap: var(--space-2);
+  line-height: 1.4;
+}
+
+.conversation-editing-note {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-editing-cancel {
+  flex: none;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.conversation-editing-cancel:hover {
+  background: var(--wash);
+}
+
+.conversation-editing-cancel:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }

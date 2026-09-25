@@ -17,7 +17,13 @@
  */
 
 import { createContext, useContext } from "react";
-import type { RequestAnswer, RequestId } from "../../model/conversation";
+import type {
+  EditOutcome,
+  EntryId,
+  RequestAnswer,
+  RequestId,
+  UserEntry,
+} from "../../model/conversation";
 
 /** The three settings a session offers choices for, as `SessionFacts` names them. */
 export type SettingName = "model" | "effort" | "mode";
@@ -27,6 +33,15 @@ export interface ConversationActions {
   readonly openExternalUrl: (url: string) => Promise<void>;
   /** Say something to the Agent as the person, mid-turn or not. */
   readonly send: (text: string) => Promise<void>;
+  /**
+   * Take back the turn of the person's last message and send `text` in its
+   * place. `refused` when the CLI would not take it back: the conversation
+   * says why, and the words are still the person's.
+   */
+  readonly editLastMessage: (
+    message: EntryId,
+    text: string,
+  ) => Promise<EditOutcome>;
   /** Stop the turn that is running. */
   readonly interrupt: () => Promise<void>;
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
@@ -67,4 +82,27 @@ export function useFocusComposer(): () => void {
     throw new Error("a request card was drawn outside a ConversationSurface");
   }
   return focus;
+}
+
+/**
+ * Editing the person's last message: which message may be edited now
+ * (`editableMessage`), and how to start. Starting puts its words in the
+ * composer, which sends them in its place.
+ */
+export interface EditMessage {
+  readonly editable: EntryId | undefined;
+  readonly editing: EntryId | undefined;
+  readonly start: (entry: UserEntry) => void;
+}
+
+const EditMessageContext = createContext<EditMessage | undefined>(undefined);
+
+export const EditMessageProvider = EditMessageContext.Provider;
+
+export function useEditMessage(): EditMessage {
+  const edit = useContext(EditMessageContext);
+  if (!edit) {
+    throw new Error("a user message was drawn outside a ConversationSurface");
+  }
+  return edit;
 }

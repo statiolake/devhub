@@ -1,0 +1,14 @@
+# HAND-WRITTEN, NOT A CAPTURE: the fake agent's side of editing the last message,
+# the first CLI. Two turns, "Say one" and "Say two". FAKE_AGENT_REWIND_SCRIPT
+# (claude-edit.rewound.ndjson) is what the CLI started again plays.
+> {"type":"control_request","request_id":"fixture:1","request":{"subtype":"initialize"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:1","response":{"commands":[],"models":[]}}}
+> {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000e5","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":[],"claude_code_version":"2.1.282","tools":[]}
+< {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f1"}
+< {"type":"assistant","message":{"id":"msg_e1","role":"assistant","content":[{"type":"text","text":"One."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f2"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"result":"done","session_id":"00000000-0000-4000-8000-0000000000e5"}
+> {"type":"user","message":{"role":"user","content":"Say two"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"user","message":{"role":"user","content":"Say two"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f3"}
+< {"type":"assistant","message":{"id":"msg_e2","role":"assistant","content":[{"type":"text","text":"Two."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f4"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"result":"done","session_id":"00000000-0000-4000-8000-0000000000e5"}

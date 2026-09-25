@@ -27,15 +27,21 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
-import type { Transcript } from "../../model/conversation";
+import {
+  editableMessage,
+  type Transcript,
+  type UserEntry,
+} from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
 import { Composer, inputRefusal } from "./Composer";
 import {
   ConversationActionsProvider,
+  EditMessageProvider,
   FocusComposerProvider,
   type ConversationActions,
   type SettingName,
@@ -111,6 +117,14 @@ export function ConversationSurface({
     composer.current?.focus();
   }, []);
 
+  const [editing, setEditing] = useState<UserEntry | undefined>(undefined);
+  const endEdit = useCallback(() => setEditing(undefined), []);
+  const editable = editableMessage(transcript)?.id;
+  const editMessage = useMemo(
+    () => ({ editable, editing: editing?.id, start: setEditing }),
+    [editable, editing],
+  );
+
   // Being shown is a request to type into it, and so is becoming able to
   // take input while shown: a pane shown while its conversation is still
   // connecting has a disabled composer, which cannot take the keyboard, so the
@@ -184,64 +198,68 @@ export function ConversationSurface({
   return (
     <ConversationActionsProvider value={actions}>
       <FocusComposerProvider value={focusComposer}>
-        <EntryTreeContext.Provider value={tree}>
-          <section
-            className="conversation-surface"
-            aria-label={label}
-            style={style}
-            hidden={hidden}
-            onKeyDown={onKeyDown}
-          >
-            <SessionHeader transcript={transcript} />
-            <div className="conversation-body">
-              <div className="conversation-scroll" ref={scroller}>
-                {topLevel.length === 0 && tree.unattached.length === 0 ? (
-                  <EmptyTranscript />
-                ) : null}
-                <div className="conversation-transcript" ref={content}>
-                  {topLevel.map((entry) => (
-                    <EntryView key={entry.id} entry={entry} depth={0} />
-                  ))}
-                  {tree.unattached.map((request) => (
-                    <div
-                      className="conversation-entry"
-                      data-kind="request"
-                      data-entry-id={`request:${request.id}`}
-                      key={request.id}
-                    >
-                      <RequestCard request={request} />
-                    </div>
-                  ))}
+        <EditMessageProvider value={editMessage}>
+          <EntryTreeContext.Provider value={tree}>
+            <section
+              className="conversation-surface"
+              aria-label={label}
+              style={style}
+              hidden={hidden}
+              onKeyDown={onKeyDown}
+            >
+              <SessionHeader transcript={transcript} />
+              <div className="conversation-body">
+                <div className="conversation-scroll" ref={scroller}>
+                  {topLevel.length === 0 && tree.unattached.length === 0 ? (
+                    <EmptyTranscript />
+                  ) : null}
+                  <div className="conversation-transcript" ref={content}>
+                    {topLevel.map((entry) => (
+                      <EntryView key={entry.id} entry={entry} depth={0} />
+                    ))}
+                    {tree.unattached.map((request) => (
+                      <div
+                        className="conversation-entry"
+                        data-kind="request"
+                        data-entry-id={`request:${request.id}`}
+                        key={request.id}
+                      >
+                        <RequestCard request={request} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
+                {unseen ? (
+                  <button
+                    type="button"
+                    className="conversation-latest"
+                    onClick={jumpToLatest}
+                  >
+                    <ArrowDownIcon />
+                    New output
+                  </button>
+                ) : null}
               </div>
-              {unseen ? (
+              {transcript.requests.length > 0 ? (
                 <button
                   type="button"
-                  className="conversation-latest"
-                  onClick={jumpToLatest}
+                  className="conversation-waiting"
+                  onClick={showFirstRequest}
                 >
-                  <ArrowDownIcon />
-                  New output
+                  {waitingSentence(transcript.requests.length)} ↑
                 </button>
               ) : null}
-            </div>
-            {transcript.requests.length > 0 ? (
-              <button
-                type="button"
-                className="conversation-waiting"
-                onClick={showFirstRequest}
-              >
-                {waitingSentence(transcript.requests.length)} ↑
-              </button>
-            ) : null}
-            <Composer
-              transcript={transcript}
-              inputRef={composer}
-              pickers={pickers}
-              openSetting={openSetting}
-            />
-          </section>
-        </EntryTreeContext.Provider>
+              <Composer
+                transcript={transcript}
+                inputRef={composer}
+                pickers={pickers}
+                openSetting={openSetting}
+                editing={editing}
+                endEdit={endEdit}
+              />
+            </section>
+          </EntryTreeContext.Provider>
+        </EditMessageProvider>
       </FocusComposerProvider>
     </ConversationActionsProvider>
   );

@@ -921,9 +921,7 @@ describe("a rewind", () => {
   });
 
   it("reads as working while it is under way", () => {
-    expect(conversationStatus(applyEvent(twoTurns, REWINDING))).toBe(
-      "working",
-    );
+    expect(conversationStatus(applyEvent(twoTurns, REWINDING))).toBe("working");
   });
 
   it("offers the person's last message for editing only when the session can rewind and nothing is running", () => {

@@ -256,7 +256,10 @@ export class AgentConversation {
 				"This Agent's CLI cannot take back a turn, so a message cannot be edited.",
 			);
 		}
-		if (requests.length > 0 || (state.phase === "ready" && state.turn !== "none")) {
+		if (
+			requests.length > 0 ||
+			(state.phase === "ready" && state.turn !== "none")
+		) {
 			throw new Error(
 				"The Agent is in the middle of a turn. Stop it before editing your last message.",
 			);

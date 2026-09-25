@@ -1219,7 +1219,11 @@ describe("taking back the last turn", () => {
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 
 		// And the next message starts a turn on the reverted thread.
-		harness.command({ kind: "send", text: "go, differently", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "go, differently",
+			origin: "person",
+		});
 		expect(harness.lastWrite()).toMatchObject({
 			id: 6,
 			method: "turn/start",
@@ -1233,7 +1237,10 @@ describe("taking back the last turn", () => {
 		harness.rewind(USER);
 		harness.receive({
 			id: 5,
-			error: { code: -32600, message: "thread/revert only supports paginated threads" },
+			error: {
+				code: -32600,
+				message: "thread/revert only supports paginated threads",
+			},
 		});
 		expect(harness.transcript.entries.slice(0, before.length)).toEqual(before);
 		expect(harness.transcript.entries.at(-1)).toMatchObject({
@@ -1248,7 +1255,9 @@ describe("taking back the last turn", () => {
 		const harness = new Harness();
 		harness.start();
 		for (const line of fixture("handshake.handwritten.ndjson"))
-			harness.receive(line.replaceAll('"historyMode":"paginated"', '"historyMode":"legacy"'));
+			harness.receive(
+				line.replaceAll('"historyMode":"paginated"', '"historyMode":"legacy"'),
+			);
 		expect(harness.transcript.session.canRewind).toBe(false);
 		harness.command({ kind: "send", text: "go", origin: "person" });
 		harness.receive(fixture("turn.handwritten.ndjson")[2]!);
