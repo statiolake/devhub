@@ -1,12 +1,11 @@
 /**
- * The bar over a GUI Agent's transcript: what the session has used, and the
- * way out of the GUI. The settings and Stop live with the composer, where the
+ * The bar over a GUI Agent's transcript: what the session has used. The way
+ * out of the GUI is the pane's floating Continue in terminal. The settings and Stop live with the composer, where the
  * person is typing when they reach for them.
  */
 
 import type { CSSProperties } from "react";
 import type { Transcript, Usage } from "../../model/conversation";
-import { useConversationActions } from "./ConversationContext";
 
 function tokens(count: number): string {
   if (count < 1000) return `${count}`;
@@ -98,22 +97,9 @@ export function SessionHeader({
 }: {
   readonly transcript: Transcript;
 }) {
-  const { continueInTerminal, reportFailure } = useConversationActions();
   return (
     <header className="conversation-header">
       {transcript.usage ? <UsageLine usage={transcript.usage} /> : null}
-      <div className="conversation-header-actions">
-        <button
-          type="button"
-          className="conversation-header-button"
-          title="Go on with this session in a terminal Agent"
-          onClick={() => {
-            void continueInTerminal().catch(reportFailure);
-          }}
-        >
-          Continue in terminal
-        </button>
-      </div>
     </header>
   );
 }

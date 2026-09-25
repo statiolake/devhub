@@ -64,7 +64,8 @@ export type RewindPlan =
 	| {
 			readonly kind: "restart";
 			readonly args: readonly string[];
-			readonly mark: string;
+			/** The lines, one at least, the host puts in the journal between the two CLIs. */
+			readonly mark: readonly string[];
 	  };
 
 export interface AdapterStep {
@@ -102,6 +103,18 @@ export interface ProtocolAdapter {
 	 * `editableMessage` should have kept from being asked.
 	 */
 	rewind(message: EntryId): RewindPlan;
+	/**
+	 * How to go on with another session of the CLI instead of this one
+	 * (`/resume`), the way a rewind is carried out: a request written (Codex's
+	 * `thread/resume`), or the CLI started again on that session (Claude).
+	 * `history` is the session's past as `devhub_history` lines, for a protocol
+	 * whose CLI prints none of it (`claudeHistory`); a protocol that is handed
+	 * its past takes none. Changes nothing, like `encode`. The adapter emits
+	 * `session-switched` once the CLI has the other session, followed by that
+	 * session's past, and holds the turn `rewinding` in between. Throws while
+	 * a turn runs or a request is open.
+	 */
+	resumeSession(session: string, history: readonly string[]): RewindPlan;
 	/** A line DevHub wrote to the CLI's stdin — live, or read back from `in.log`. */
 	sent(line: string): AdapterStep;
 	/** A line the CLI printed on stdout. */

@@ -1302,13 +1302,25 @@ export interface PickerBridge
 	/**
 	 * The earlier sessions of a profile's CLI in a Workspace, newest first, read
 	 * on the Workspace's machine: what "Resume a session…" offers. Throws the
-	 * reason when the CLI's sessions cannot be listed.
+	 * reason when the CLI's sessions cannot be listed. `everywhere` lists
+	 * every directory's, each saying whether the Workspace can go on with it.
 	 */
 	listPastSessions(
 		workspaceId: string,
 		profileId: string,
+		scope: SessionScopeWire,
 	): Promise<readonly PastSessionWire[]>;
+	/** The last exchanges of one listed session, read on demand. */
+	previewPastSession(
+		workspaceId: string,
+		profileId: string,
+		session: string,
+		cwd: string,
+	): Promise<readonly SessionPreviewLineWire[]>;
 }
+
+/** Which earlier sessions a picker lists: the Workspace's directory's, or every directory's. */
+export type SessionScopeWire = "here" | "everywhere";
 
 /** One earlier session of an Agent's CLI, as the resume picker lists it. */
 export interface PastSessionWire {
@@ -1317,6 +1329,20 @@ export interface PastSessionWire {
 	readonly title: string;
 	/** When it last changed, in ms since the epoch, when the CLI says. */
 	readonly updatedAt?: number;
+	/** The directory it ran in, when the CLI says. */
+	readonly cwd?: string;
+	/**
+	 * Whether an Agent in the Workspace can go on with it. Claude resumes a
+	 * session only in the directory it ran in; the picker shows another
+	 * directory's and says so rather than offering it.
+	 */
+	readonly resumableHere: boolean;
+}
+
+/** One message of a session's last exchanges, as the resume picker previews it. */
+export interface SessionPreviewLineWire {
+	readonly role: "person" | "agent";
+	readonly text: string;
 }
 
 /**
@@ -1358,6 +1384,7 @@ export const CHANNELS = {
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
 	listPastSessions: "devhub:list-past-sessions",
+	previewPastSession: "devhub:preview-past-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

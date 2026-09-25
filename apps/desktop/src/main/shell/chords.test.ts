@@ -45,6 +45,7 @@ function agent(
 		id,
 		ordinal,
 		profileId: "profile",
+		profileKind: "claude",
 		presentation: "tui",
 		runtimeHealth: "healthy",
 		status: "idle",

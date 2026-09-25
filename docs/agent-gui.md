@@ -232,8 +232,9 @@ work inside. Its work is drawn in one place at a time:
 
 - Terminal-only commands. `/login` and `/logout` are not offered. `/model`,
   `/effort` and `/permissions` open the composer's pickers instead of being sent.
-- The terminal UI's own screens: the interactive `/config`, the `/resume`
-  picker and the folder-trust dialog (see [Folder trust](#folder-trust-hooks-and-mcpjson-run-without-asking)).
+- The terminal UI's own screens: the interactive `/config` and the
+  folder-trust dialog. `/resume` is DevHub's own picker instead (see
+  [Resuming an earlier session](#resuming-an-earlier-session)) (see [Folder trust](#folder-trust-hooks-and-mcpjson-run-without-asking)).
 - Hook events. `--include-hook-events` is not passed, and hook events that
   arrive anyway are known and not shown.
 - `tool_progress` and `prompt_suggestion`.
@@ -322,7 +323,9 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 
 **Continue in terminal** is the way out of a GUI Agent:
 
-- It is in the pane's header, and on the failure over the pane when the
+- It is a small floating button at the right of the pane, just above the
+  composer, translucent until it is pointed at or focused (the same rule as
+  the Agent shortcuts). It is also on the failure over the pane when the
   conversation broke (the host was lost, a protocol mismatch, or the CLI
   refused to start).
 - It starts a terminal Agent from the same profile, resuming the same
@@ -330,6 +333,29 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 - It selects that Agent, and stops the GUI one once the new one is running.
 - If the conversation has no session yet, it is refused with the reason. If
   the new Agent fails to launch, the GUI Agent keeps running.
+
+**Continue in GUI** is the mirror, for a terminal Claude or Codex Agent: a
+floating button in the top right corner of its pane (the bottom right is the
+shortcuts'). It starts a GUI Agent from the same profile resuming the
+terminal's session, selects it, and stops the terminal Agent once the GUI one
+is running and written down; a launch that fails leaves the terminal running.
+Which session the terminal is in is found this way:
+
+- **Claude**: a terminal Claude Agent is started with a `SessionStart` hook,
+  given through `--settings` (added to your settings, not in place of them),
+  which copies what Claude hands the hook into the Agent's own directory
+  (`~/.devhub/agents-<tag>/<agent id>/claude-session`). It fires on start,
+  on `--resume`, on `/clear` and on `/resume` inside the terminal, so it names
+  the session on screen, and it prints nothing. A terminal Agent started
+  before this existed, or one whose hooks are turned off (`disableAllHooks`,
+  a managed policy), has no record and is refused with the reason; New Agent
+  › Resume a Claude session… still works.
+- **Codex** has no such hook, so it is the newest thread of Codex's terminal
+  mode (`thread/list`, source `cli`) in the Workspace's directory. That is the
+  Agent's only while it is the one Codex terminal there: with another Codex
+  terminal Agent in the same Workspace it is refused, naming the other.
+  Codex run by hand in a terminal of its own in the same directory is not
+  something DevHub can see, and would be taken for it.
 
 ## Resuming an earlier session
 
@@ -370,6 +396,42 @@ a restart of DevHub knows what it resumed.
 A session that is not there (Claude's file is missing) refuses the launch
 with the path, and a listing that fails says why in the sheet instead of
 showing an empty list.
+
+The sheet lists **This project** first; **All projects** lists every
+directory's sessions, as the CLIs' own pickers do: every
+`<config>/projects/*` directory for Claude (newest 50 files across them, by
+modification time), and `thread/list` without `cwd` for Codex. Claude resumes
+a session only in the directory it ran in (its file is kept under that
+directory's name), so another directory's session is listed with that reason
+and cannot be taken; Codex resumes a thread in whatever directory it is given,
+so every thread can. Beside the list, the highlighted session's last few
+messages are previewed: the last 256 KiB of its file (Claude's session file,
+or Codex's rollout, found by its thread id under `$CODEX_HOME/sessions`),
+read when the pointer or the arrows rest on the row, and kept while the sheet
+stands. Only the person's words and the answers are shown, not tools.
+
+**`/resume` inside a GUI Agent** opens the same sheet for the Agent's
+Workspace, and the chosen session is carried on by this Agent, in place of
+the one it is in (which is left as it is, and can be resumed again). Typed out
+whole and sent, or picked from the completions, it is DevHub's command and
+nothing is sent to the CLI. It is refused while a turn runs or a request is
+open.
+
+- **Claude**: the host starts the CLI again with `--resume <id>` added (the
+  mechanism a rewind uses). The mark it puts in the journal between the two
+  CLIs is `devhub_resume` followed by the session's past as `devhub_history`
+  lines, read from its file before the CLI is touched, so a session that
+  cannot be read back is refused and the running one goes on. The adapter
+  drops what the conversation held (`session-switched`), draws the past, and
+  greets the new CLI.
+- **Codex**: `thread/resume` for the other thread on the same app-server. Its
+  answer replaces the conversation with that thread's turns, and the next
+  turn starts on it. A refusal is a notice, and the conversation stays where
+  it was.
+
+Either way it is in the journal, so a restart of DevHub replays to the same
+conversation. The Agent's recorded profile still names what it was launched
+with; the conversation's session is the one Continue in terminal resumes.
 
 ## Folder trust: hooks and `.mcp.json` run without asking
 

@@ -324,7 +324,7 @@ export function threadOpenedResponse(r: Reader, value: unknown): ThreadOpened {
 /** One earlier thread, as `thread/list` names it: what the resume picker shows. */
 export type ListedThread = Pick<
 	Thread,
-	"id" | "preview" | "name" | "updatedAt"
+	"id" | "preview" | "name" | "updatedAt" | "cwd"
 >;
 
 /** `thread/list`'s page of threads, newest first as asked. */
@@ -340,6 +340,7 @@ export function threadListResponse(
 			preview: r.string(t, "preview", at),
 			name: r.nullableString(t, "name", at),
 			updatedAt: r.number(t, "updatedAt", at),
+			cwd: r.string(t, "cwd", at),
 		};
 	});
 }

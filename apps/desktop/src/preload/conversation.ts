@@ -70,6 +70,30 @@ export const conversationApi: ConversationApi = {
 			CONVERSATION_CHANNELS.continueInTerminal,
 			agentId,
 		) as Promise<void>,
+	continueInGui: (agentId) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.continueInGui,
+			agentId,
+		) as Promise<void>,
+	listSessions: (agentId, scope) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.listSessions,
+			agentId,
+			scope,
+		) as ReturnType<ConversationApi["listSessions"]>,
+	previewSession: (agentId, session, cwd) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.previewSession,
+			agentId,
+			session,
+			cwd,
+		) as ReturnType<ConversationApi["previewSession"]>,
+	resumeSession: (agentId, session) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.resumeSession,
+			agentId,
+			session,
+		) as Promise<void>,
 	interrupt: (agentId) => command(agentId, { kind: "interrupt" }),
 	answer: (agentId, request, answer) =>
 		command(agentId, { kind: "answer", request, answer }),

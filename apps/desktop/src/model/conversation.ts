@@ -267,10 +267,12 @@ export interface SlashCommand {
   readonly description: string;
   readonly argumentHint: string | undefined;
   /**
-   * `message`: sent as the text of a user message. Otherwise the header picker
-   * for that setting, which DevHub opens instead of sending (`/model`).
+   * `message`: sent as the text of a user message. `resume`: DevHub's picker
+   * of the Workspace's earlier sessions, one of which this Agent then goes on
+   * with (`/resume`). Otherwise the header picker for that setting, which
+   * DevHub opens instead of sending (`/model`).
    */
-  readonly route: "message" | "model" | "effort" | "mode";
+  readonly route: "message" | "resume" | "model" | "effort" | "mode";
 }
 
 /**
@@ -358,7 +360,13 @@ export type ConversationEvent =
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
    */
-  | { readonly type: "rewound"; readonly from: EntryId };
+  | { readonly type: "rewound"; readonly from: EntryId }
+  /**
+   * The Agent went on with another session of its CLI (`/resume`): every
+   * entry, and the usage, belonged to the one it left. What the other session
+   * holds follows as entries.
+   */
+  | { readonly type: "session-switched"; readonly session: string };
 
 /**
  * An event that cannot be true of the Transcript it was applied to. It is the
@@ -433,6 +441,20 @@ export function applyEvent(
       return { ...transcript, usage: event.usage };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
+    case "session-switched": {
+      const open = transcript.requests[0];
+      if (open !== undefined) {
+        throw new TranscriptInvariantError(
+          `a switch to session ${event.session} while request ${open.id} is open`,
+        );
+      }
+      return {
+        ...transcript,
+        entries: [],
+        usage: undefined,
+        session: { ...transcript.session, sessionId: event.session },
+      };
+    }
     default:
       return unknownEvent(event);
   }

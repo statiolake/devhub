@@ -394,7 +394,7 @@ describe("focus", () => {
     expect(composer()).not.toHaveFocus();
     redraw(withSession(), false);
     expect(composer()).toHaveFocus();
-    screen.getByRole("button", { name: "Continue in terminal" }).focus();
+    screen.getByRole("combobox", { name: "Model" }).focus();
     redraw(withSession(), true);
     redraw(withSession(), false);
     expect(composer()).toHaveFocus();
@@ -485,19 +485,46 @@ describe("the header", () => {
     );
   });
 
-  it("asks to continue in a terminal, and hands a refusal to the page's root", async () => {
-    const notYet = new Error("this conversation has no session to resume yet");
-    const actions = fakeActions({
-      continueInTerminal: vi.fn(() => Promise.reject(notYet)),
-    });
-    draw(withSession(), actions);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Continue in terminal" }),
-    );
-    expect(actions.continueInTerminal).toHaveBeenCalledOnce();
-    await waitFor(() =>
-      expect(actions.reportFailure).toHaveBeenCalledWith(notYet),
-    );
+  it("has no Continue in terminal of its own: that is the pane's floating button", () => {
+    draw(withSession());
+    expect(
+      screen.queryByRole("button", { name: "Continue in terminal" }),
+    ).toBeNull();
+  });
+});
+
+describe("/resume", () => {
+  const resumable = withSession([], {
+    ...SESSION,
+    commands: [
+      ...COMMANDS,
+      {
+        name: "resume",
+        description: "Go on with an earlier session in this Workspace",
+        argumentHint: undefined,
+        route: "resume",
+      },
+    ],
+  });
+
+  it("typed out whole opens DevHub's session picker and sends nothing", () => {
+    const actions = fakeActions();
+    draw(resumable, actions);
+    fireEvent.change(composer(), { target: { value: "/resume" } });
+    fireEvent.keyDown(composer(), { key: "Escape" });
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    expect(actions.openResume).toHaveBeenCalledOnce();
+    expect(actions.send).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue("");
+  });
+
+  it("chosen from the completions opens the picker too", () => {
+    const actions = fakeActions();
+    draw(resumable, actions);
+    fireEvent.change(composer(), { target: { value: "/resu" } });
+    fireEvent.keyDown(composer(), { key: "Enter" });
+    expect(actions.openResume).toHaveBeenCalledOnce();
+    expect(actions.send).not.toHaveBeenCalled();
   });
 });
 

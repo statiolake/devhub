@@ -139,6 +139,12 @@ export type ClaudeLine =
 	 * CLIs' output — not something the CLI printed.
 	 */
 	| { readonly type: "rewind"; readonly message: string }
+	/**
+	 * The host started the CLI again on another session (`/resume`), and put
+	 * this line between the two CLIs' output, followed by that session's past
+	 * as `devhub_history` lines — not something the CLI printed.
+	 */
+	| { readonly type: "resume"; readonly session: string }
 	| {
 			readonly type: "history";
 			readonly message: Extract<ClaudeLine, { type: "assistant" | "user" }>;
@@ -357,6 +363,11 @@ export function decodeReceived(
 			return {
 				type: "rewind",
 				message: f.string(raw.message, "devhub_rewind.message"),
+			};
+		case "devhub_resume":
+			return {
+				type: "resume",
+				session: f.string(raw.session, "devhub_resume.session"),
 			};
 		// `tool_progress`: ticks of a running tool, whose entry already says it
 		// runs. `prompt_suggestion`: suggested next prompts, which v1 does not

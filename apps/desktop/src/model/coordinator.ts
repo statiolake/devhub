@@ -402,9 +402,9 @@ export class AppCoordinator {
     }
   >();
   /**
-   * The GUI Agent each continue-in-terminal launch replaces, by operation: it
-   * is stopped when that launch has an Agent running, and not before — a
-   * launch that fails leaves the conversation where it was.
+   * The Agent each continue launch replaces, by operation: it is stopped when
+   * that launch has an Agent running, and not before — a launch that fails
+   * leaves the session where it was.
    */
   private readonly replacedByLaunch = new Map<OperationId, AgentId>();
   /** The same, once its launch is running: stopped when that launch's save is over. */
@@ -668,8 +668,13 @@ export class AppCoordinator {
           intent.resume,
           id,
         );
-      case "continue_agent_in_terminal":
-        return this.beginContinueInTerminal(intent.agentId, intent.session, id);
+      case "continue_agent":
+        return this.beginContinue(
+          intent.agentId,
+          intent.presentation,
+          intent.session,
+          id,
+        );
       case "rename_agent":
         this.model.renameAgent(intent.agentId, intent.displayName);
         return this.transitionOutcome(beforeRevision, id);
@@ -938,9 +943,9 @@ export class AppCoordinator {
   }
 
   /**
-   * Stop the GUI Agent a continue-in-terminal launch replaced, if this
-   * operation had one — without asking, because nothing is lost: the session
-   * goes on in the terminal. One that went already is left alone.
+   * Stop the Agent a continue launch replaced, if this operation had one —
+   * without asking, because nothing is lost: the session goes on in the new
+   * Agent. One that went already is left alone.
    */
   private stopReplaced(id: OperationId): IntentOutcome | undefined {
     const replaced = this.stopAfterPersist.get(id);
@@ -950,8 +955,9 @@ export class AppCoordinator {
     return this.startAgentStop(replaced, id);
   }
 
-  private beginContinueInTerminal(
+  private beginContinue(
     agentId: AgentId,
+    presentation: AgentPresentation,
     session: string,
     id: OperationId,
   ): IntentOutcome {
@@ -962,17 +968,19 @@ export class AppCoordinator {
         DomainErrorCode.UnknownAgent,
       );
     }
-    if (agent.presentation !== "gui") {
+    if (agent.presentation === presentation) {
       throw new AppError(AppErrorCode.Domain)
         .withDomain(DomainErrorCode.InvalidAgentControlTransition)
-        .withDetail(`“${agent.displayName}” is already a terminal Agent.`);
+        .withDetail(
+          `“${agent.displayName}” is already ${presentation === "tui" ? "a terminal" : "a GUI"} Agent.`,
+        );
     }
     const outcome = this.beginProfileResolution(
       workspace.id,
       agent.profile.id,
       [],
       "full",
-      "tui",
+      presentation,
       session,
       id,
     );

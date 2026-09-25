@@ -82,14 +82,24 @@ import {
 type JsonObject = { readonly [key: string]: JsonValue };
 
 /**
- * Commands DevHub answers with its own header picker rather than sending
- * (design §3.3), and the setting each one opens.
+ * Commands DevHub answers with its own picker rather than sending (design
+ * §3.3): the header picker of a setting, or the Workspace's earlier sessions.
  */
-const PICKED: Readonly<Record<string, "model" | "effort" | "mode">> = {
+const PICKED: Readonly<
+	Record<string, Exclude<SlashCommand["route"], "message">>
+> = {
 	model: "model",
 	effort: "effort",
 	permissions: "mode",
+	resume: "resume",
 };
+
+/** `/resume`, which DevHub offers whether or not the CLI lists it: stream-json has no picker of its own. */
+const RESUME_COMMAND = {
+	name: "resume",
+	description: "Go on with an earlier session in this Workspace",
+	argumentHint: undefined,
+} as const;
 
 /** Commands that only work in the TUI; "continue in terminal" is the way to them. */
 const TUI_ONLY = new Set(["login", "logout"]);
@@ -327,7 +337,26 @@ export class ClaudeAdapter implements ProtocolAdapter {
 							"--resume-drops-turn",
 							message.slice("user:".length),
 						],
-			mark: JSON.stringify({ type: "devhub_rewind", message }),
+			mark: [JSON.stringify({ type: "devhub_rewind", message })],
+		};
+	}
+
+	resumeSession(session: string, history: readonly string[]): RewindPlan {
+		this.refuseIfSpent();
+		const { state, requests } = this.current;
+		if (
+			state.phase !== "ready" ||
+			state.turn !== "none" ||
+			requests.length > 0
+		) {
+			throw new Error(
+				"the Claude conversation is not idle, so it cannot go on with another session now",
+			);
+		}
+		return {
+			kind: "restart",
+			args: ["--resume", session],
+			mark: [JSON.stringify({ type: "devhub_resume", session }), ...history],
 		};
 	}
 
@@ -470,11 +499,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	private commands(): readonly SlashCommand[] {
 		const described = new Set(this.described.map((command) => command.name));
+		const announced = this.announced
+			.filter((name) => !described.has(name))
+			.map((name) => ({ name, description: "", argumentHint: undefined }));
+		const listed = [...this.described, ...announced];
 		return [
-			...this.described,
-			...this.announced
-				.filter((name) => !described.has(name))
-				.map((name) => ({ name, description: "", argumentHint: undefined })),
+			...listed,
+			...(listed.some((command) => command.name === RESUME_COMMAND.name)
+				? []
+				: [RESUME_COMMAND]),
 		]
 			.filter((command) => !TUI_ONLY.has(command.name))
 			.map((command) => ({
@@ -551,6 +584,27 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.ours.clear();
 		this.untaken.length = 0;
 		this.answered.clear();
+		this.streaming.clear();
+		this.interrupting = false;
+		this.turn("rewinding");
+		this.replies.push(this.controlRequest({ subtype: "initialize" }));
+	}
+
+	/**
+	 * The host started the CLI again on another session. Everything DevHub
+	 * kept about the one it left goes; that session's past follows as history
+	 * lines, and the new CLI is greeted as a rewound one is.
+	 */
+	private takeResume(session: string): void {
+		this.emit({ type: "session-switched", session });
+		this.lastUuid = undefined;
+		this.cutBefore.clear();
+		this.ours.clear();
+		this.untaken.length = 0;
+		this.permissions.clear();
+		this.denied.clear();
+		this.answered.clear();
+		this.messages.clear();
 		this.streaming.clear();
 		this.interrupting = false;
 		this.turn("rewinding");
@@ -660,6 +714,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.takeUser(line, "live");
 			case "rewind":
 				return this.takeRewind(entryId(line.message));
+			case "resume":
+				return this.takeResume(line.session);
 			// The resumed session's past: the same messages, drawn the same way,
 			// except that they are not a turn running now.
 			case "history":

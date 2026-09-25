@@ -217,7 +217,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			await link.write('{"to":"the first"}', 0);
 			await readUntil(lines, (seen) => seen.length === 1);
 
-			await link.restart(["--resume", "a session id"], '{"mark":"here"}');
+			await link.restart(["--resume", "a session id"], ['{"mark":"here"}']);
 			const restarted = await readUntil(lines, (seen) => seen.length === 2);
 			expect(restarted.map((each) => each.line)).toEqual([
 				'{"mark":"here"}',
@@ -228,7 +228,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(echo?.line).toBe('{"echo":{"to":"the second"}}');
 
 			// A second start adds its own arguments to the CLI's argv, not to the first start's.
-			await link.restart([], '{"mark":"again"}');
+			await link.restart([], ['{"mark":"again"}']);
 			const again = await readUntil(lines, (seen) => seen.length === 2);
 			expect(again.map((each) => each.line)).toEqual([
 				'{"mark":"again"}',
@@ -241,6 +241,27 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(await link.ending()).toMatchObject({ kind: "exited", code: 3 });
 		}, 20_000);
 
+		it("puts a mark of many lines in the journal whole, in order, before the CLI started again", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (seen) => seen.length === 1);
+
+			const long = `{"history":"${"x".repeat(100_000)}"}`;
+			await link.restart(
+				["--resume", "a session id"],
+				['{"mark":"resume"}', long, '{"history":"last"}'],
+			);
+			const restarted = await readUntil(lines, (seen) => seen.length === 4);
+			expect(restarted.map((each) => each.line)).toEqual([
+				'{"mark":"resume"}',
+				long,
+				'{"history":"last"}',
+				'{"type":"hello","argc":2}',
+			]);
+		}, 20_000);
+
 		it("refuses to start again the CLI of a host that is gone", async () => {
 			const directory = stateDirectory();
 			startHost(directory);
@@ -249,7 +270,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			await readUntil(lines, (seen) => seen.length === 1);
 			await link.write('{"fake":"exit","code":0}', 0);
 			await readAll(lines);
-			const failure = await failureOf(link.restart([], '{"mark":"late"}'));
+			const failure = await failureOf(link.restart([], ['{"mark":"late"}']));
 			expect(failure.code).toBe("host_gone");
 			expect(failure.message).toContain("there is no CLI to start again");
 		}, 20_000);

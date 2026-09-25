@@ -1,0 +1,10 @@
+# HAND-WRITTEN, NOT A CAPTURE: the fake agent's side of /resume, the first CLI.
+# One turn, "Say one". FAKE_AGENT_RESUME_SCRIPT (claude-resume.resumed.ndjson)
+# is what the CLI started again on the other session plays.
+> {"type":"control_request","request_id":"fixture:1","request":{"subtype":"initialize"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:1","response":{"commands":[],"models":[]}}}
+> {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000e5","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":[],"claude_code_version":"2.1.282","tools":[]}
+< {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f1"}
+< {"type":"assistant","message":{"id":"msg_r1","role":"assistant","content":[{"type":"text","text":"One."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f2"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"result":"done","session_id":"00000000-0000-4000-8000-0000000000e5"}

@@ -25,14 +25,24 @@
 #
 # Started again by its host to take a turn back (its argv has
 # --resume-drops-turn, as DevHub's rewind of a Claude session does), it plays
-# FAKE_AGENT_REWIND_SCRIPT instead, which must then be set.
+# FAKE_AGENT_REWIND_SCRIPT instead, which must then be set. Started with
+# --resume and no --resume-drops-turn while FAKE_AGENT_RESUME_SCRIPT is set (as
+# DevHub's /resume of a Claude session does), it plays that one.
 request_id() { printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p'; }
 script=${FAKE_AGENT_SCRIPT:-}
+drops=
+resumes=
 for arg in "$@"; do
-  if [ "$arg" = --resume-drops-turn ] && [ -n "$script" ]; then
-    script=${FAKE_AGENT_REWIND_SCRIPT:?fake-agent: started again to take a turn back, but FAKE_AGENT_REWIND_SCRIPT is not set}
-  fi
+  case "$arg" in
+    --resume-drops-turn) drops=1 ;;
+    --resume) resumes=1 ;;
+  esac
 done
+if [ -n "$drops" ] && [ -n "$script" ]; then
+  script=${FAKE_AGENT_REWIND_SCRIPT:?fake-agent: started again to take a turn back, but FAKE_AGENT_REWIND_SCRIPT is not set}
+elif [ -n "$resumes" ] && [ -n "${FAKE_AGENT_RESUME_SCRIPT:-}" ]; then
+  script=$FAKE_AGENT_RESUME_SCRIPT
+fi
 if [ -n "$script" ]; then
   ids=
   while IFS= read -r step <&4; do

@@ -1348,3 +1348,128 @@ describe("a captured greeting on the owner's signed-in app-server", () => {
 		});
 	});
 });
+
+describe("going on with another thread (/resume)", () => {
+	const OTHER = "00000000-0000-7000-8000-0000000000b2";
+	/** The handshake's thread/start answer, as the answer to a resume of `OTHER` with one past turn. */
+	function resumedAnswer(id: number): object {
+		const start = JSON.parse(fixture("handshake.handwritten.ndjson")[2]!) as {
+			result: { thread: { id: string; turns: unknown[] } };
+		};
+		start.result.thread.id = OTHER;
+		start.result.thread.turns = [
+			{
+				id: "other-turn",
+				items: [
+					{
+						type: "userMessage",
+						id: "other-user",
+						clientId: null,
+						content: [{ type: "text", text: "elsewhere", text_elements: [] }],
+					},
+				],
+				itemsView: "full",
+				status: "completed",
+				error: null,
+				startedAt: null,
+				completedAt: null,
+				durationMs: 5,
+			},
+		];
+		return { id, result: start.result };
+	}
+
+	function resume(harness: Harness): void {
+		const plan = harness.adapter.resumeSession(OTHER, []);
+		if (plan.kind !== "write") throw new Error(`a ${plan.kind} for a resume`);
+		for (const line of plan.lines)
+			(harness as unknown as { write(line: string): void }).write(line);
+	}
+
+	it("resumes the other thread on the same app-server, and draws it in place of this one", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "here", origin: "person" });
+		harness.receive({
+			method: "turn/started",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "full",
+					status: "inProgress",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
+		});
+		harness.receive({
+			method: "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "full",
+					status: "completed",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: 1,
+				},
+			},
+		});
+		const before = harness.written.length;
+		resume(harness);
+		const [asked] = harness.writesSince(before) as { id: number }[];
+		expect(asked).toEqual({
+			id: asked!.id,
+			method: "thread/resume",
+			params: { threadId: OTHER, cwd: CWD },
+		});
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		harness.receive(resumedAnswer(asked!.id));
+		expect(outline(harness.transcript)).toEqual([
+			"user(person): elsewhere",
+			"turn-end completed 5ms",
+		]);
+		expect(harness.transcript.session.sessionId).toBe(OTHER);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+
+		// The next turn is on the other thread.
+		harness.command({ kind: "send", text: "go on", origin: "person" });
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/start",
+			params: { threadId: OTHER },
+		});
+	});
+
+	it("says so and stays on this thread when app-server refuses the other", () => {
+		const harness = ready();
+		const before = harness.written.length;
+		resume(harness);
+		const [asked] = harness.writesSince(before) as { id: number }[];
+		harness.receive({
+			id: asked!.id,
+			error: { code: -32600, message: "no rollout found" },
+		});
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(harness.transcript.session.sessionId).toBe(MAIN);
+		expect(outline(harness.transcript)).toEqual([
+			"notice(error): codex 0.156.1 did not go on with that thread: no rollout found",
+		]);
+	});
+
+	it("offers /resume as DevHub's own picker", () => {
+		expect(
+			ready().transcript.session.commands.find(
+				(command) => command.name === "resume",
+			),
+		).toMatchObject({ route: "resume" });
+	});
+});

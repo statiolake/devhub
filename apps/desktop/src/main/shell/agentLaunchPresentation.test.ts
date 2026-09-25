@@ -25,6 +25,7 @@ import { HOST_NAME, HOST_SCRIPT } from "../agent/conversation/hostScript.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { agents } from "./adapters.js";
+import { claudeSessionRecorder } from "../agent/conversation/resume.js";
 import { wireAgents } from "./agentWiring.js";
 
 const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
@@ -152,7 +153,7 @@ describe("launching a GUI Codex Agent", () => {
 });
 
 describe("launching a terminal Agent", () => {
-	it("runs the profile's own command, with no host and no directory", async () => {
+	it("runs a terminal Claude's own command with the hook that writes down its session in the Agent's directory, and no host", async () => {
 		const { adapter, launchAgent, makeDirectory } = wired();
 
 		const result = await adapter.launch(
@@ -164,9 +165,27 @@ describe("launching a terminal Agent", () => {
 		);
 
 		expect(result).toEqual({ kind: "started" });
+		const directory = `${HOME}/.devhub/agents-0123456789ab/${AGENT}`;
+		expect(makeDirectory).toHaveBeenCalledWith(directory);
 		expect(launchAgent).toHaveBeenCalledWith(
 			expect.anything(),
-			{ file: "claude", args: ["--model", "opus"], env: { EXAMPLE: "1" } },
+			{
+				file: "claude",
+				args: ["--model", "opus", ...claudeSessionRecorder(directory)],
+				env: { EXAMPLE: "1" },
+			},
+			expect.anything(),
+		);
+	});
+
+	it("runs any other kind's own command as it is, with no directory", async () => {
+		const { adapter, launchAgent, makeDirectory } = wired();
+
+		await adapter.launch(WORKSPACE, AGENT, profile("codex"), "tui", "/srv/api");
+
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			{ file: "codex", args: ["--model", "opus"], env: { EXAMPLE: "1" } },
 			expect.anything(),
 		);
 		expect(makeDirectory).not.toHaveBeenCalled();

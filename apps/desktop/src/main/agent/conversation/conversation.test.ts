@@ -58,7 +58,10 @@ class FakeHost implements ConversationHost {
 	onWrite: (line: string) => void = () => undefined;
 	/** Called for a restart, after the mark is in the journal as the real host puts it. */
 	onRestart: (args: readonly string[]) => void = () => undefined;
-	readonly restarts: { args: readonly string[]; mark: string }[] = [];
+	readonly restarts: {
+		args: readonly string[];
+		mark: readonly string[];
+	}[] = [];
 	/** The next restart fails. */
 	refuseRestart = false;
 	/** The next `lines` stream fails after this many lines, once. */
@@ -117,7 +120,10 @@ class FakeHost implements ConversationHost {
 		if (this.slowWrites) await new Promise((resolve) => setImmediate(resolve));
 	}
 
-	async restart(args: readonly string[], mark: string): Promise<void> {
+	async restart(
+		args: readonly string[],
+		mark: readonly string[],
+	): Promise<void> {
 		await Promise.resolve();
 		if (this.refuseRestart) {
 			this.refuseRestart = false;
@@ -128,7 +134,7 @@ class FakeHost implements ConversationHost {
 			);
 		}
 		this.restarts.push({ args, mark });
-		this.print(mark);
+		for (const line of mark) this.print(line);
 		this.onRestart(args);
 	}
 
@@ -728,7 +734,7 @@ describe("editing the person's last message", () => {
 					"--resume-drops-turn",
 					"u2",
 				],
-				mark: JSON.stringify({ type: "devhub_rewind", message: "user:u2" }),
+				mark: [JSON.stringify({ type: "devhub_rewind", message: "user:u2" })],
 			},
 		]);
 		expect(ids(conversation)).toEqual([

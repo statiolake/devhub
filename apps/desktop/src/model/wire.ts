@@ -327,6 +327,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     id: agent.id,
     workspaceId: agent.workspaceId,
     profileId: agent.profileId,
+    profileKind: agent.profileKind,
     presentation: agent.presentation,
     displayName: agent.displayName,
     ordinal: agent.ordinal,

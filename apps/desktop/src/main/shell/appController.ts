@@ -310,7 +310,13 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
-import { listPastSessions, resumeArgs } from "../agent/conversation/resume.js";
+import {
+	listPastSessions,
+	previewPastSession,
+	resumeArgs,
+	sessionScope,
+	type SessionScope,
+} from "../agent/conversation/resume.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -902,16 +908,19 @@ export class AppController {
 			clientVersion: electron.app.getVersion(),
 			profileTag: remoteProfileTag(controlSocketPath(userDataPath)),
 		});
+		const agentWiring = this.agentWiring;
 		registerConversationIpc({
 			ipcMain: electron.ipcMain,
-			conversations: this.agentWiring.conversations,
+			conversations: agentWiring.conversations,
 			agentsPage: () => shellWindow().agents.contents(),
-			continueInTerminal: (agentId, session) =>
+			continueIn: (agentId, presentation, session) =>
 				this.dispatchSettled({
-					type: "continue_agent_in_terminal",
+					type: "continue_agent",
 					agentId,
+					presentation,
 					session,
 				}),
+			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
 			fail: (error) => asIpcError(errorWire(error)),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report.
@@ -3243,7 +3252,31 @@ export class AppController {
 	private async pastSessions(
 		workspaceId: string,
 		profileId: string,
+		scope: SessionScope,
 	): Promise<readonly PastSessionWire[]> {
+		const { workspace, profile } = await this.sessionsProfile(
+			workspaceId,
+			profileId,
+		);
+		const sessions = await listPastSessions(
+			runtimeFor(workspace.location),
+			profile,
+			workspace.root,
+			scope,
+		);
+		return sessions.map((session) => ({
+			id: session.id,
+			title: session.title,
+			...(session.updatedAt === undefined
+				? {}
+				: { updatedAt: session.updatedAt }),
+			...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+			resumableHere: session.resumableHere,
+		}));
+	}
+
+	/** The command a launch from `profileId` would run in the Workspace, for reading its sessions. */
+	private async sessionsProfile(workspaceId: string, profileId: string) {
 		const id = parseWorkspaceId(workspaceId);
 		const resolution = await this.profileResolution(
 			id,
@@ -3259,19 +3292,10 @@ export class AppController {
 				.withAgentFailure(resolution.code)
 				.withDetail(resolution.detail);
 		}
-		const workspace = this.coordinator.model.workspace(id)!;
-		const sessions = await listPastSessions(
-			runtimeFor(workspace.location),
-			resolution.profile,
-			workspace.root,
-		);
-		return sessions.map((session) => ({
-			id: session.id,
-			title: session.title,
-			...(session.updatedAt === undefined
-				? {}
-				: { updatedAt: session.updatedAt }),
-		}));
+		return {
+			workspace: this.coordinator.model.workspace(id)!,
+			profile: resolution.profile,
+		};
 	}
 
 	private async inspect(
@@ -5990,9 +6014,45 @@ export class AppController {
 		});
 		handle(
 			CHANNELS.listPastSessions,
-			async (_event, workspaceId: string, profileId: string) => {
+			async (
+				_event,
+				workspaceId: string,
+				profileId: string,
+				scope: unknown,
+			) => {
 				try {
-					return await this.pastSessions(workspaceId, profileId);
+					return await this.pastSessions(
+						workspaceId,
+						profileId,
+						sessionScope(scope),
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		handle(
+			CHANNELS.previewPastSession,
+			async (
+				_event,
+				workspaceId: string,
+				profileId: string,
+				session: unknown,
+				cwd: unknown,
+			) => {
+				try {
+					if (typeof session !== "string" || typeof cwd !== "string")
+						throw new Error("a preview names no session and directory");
+					const { workspace, profile } = await this.sessionsProfile(
+						workspaceId,
+						profileId,
+					);
+					return await previewPastSession(
+						runtimeFor(workspace.location),
+						profile,
+						session,
+						cwd,
+					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}

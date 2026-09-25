@@ -41,7 +41,7 @@
  *            starts it. What DevHub stops to have the CLI started again.
  * - `again`  written by DevHub (`RESTART_SCRIPT`) to have the CLI started
  *            again once it ends: the arguments to add to its argv for that
- *            start, one per line. With it, `again.mark`: one line the host
+ *            start, one per line. With it, `again.mark`: the lines the host
  *            appends to `out` between the two CLIs' output, so the journal
  *            itself says where the one ended and the other began. The host
  *            removes both when it starts the CLI again.
@@ -231,9 +231,11 @@ printf '%s\\n' "\${x#* }" >"$D/in"
 
 /**
  * Have the host start its CLI again. `$1` is the state directory; stdin is the
- * mark (one line, for the journal), then the arguments to add to the CLI's
- * argv, one per line. The CLI is sent SIGTERM; the host, finding `again` when
- * it ends, appends the mark to the journal and starts it again.
+ * number of arguments to add to the CLI's argv, those arguments one per line,
+ * and then the mark: every line left, for the journal. The arguments are read
+ * a line at a time and the mark copied whole, because a mark can be long (a
+ * resumed session's past). The CLI is sent SIGTERM; the host, finding `again`
+ * when it ends, appends the mark to the journal and starts it again.
  *
  * A host from before restarts (no `cli`) is refused rather than left to end
  * the Agent when its CLI is stopped. Like `WRITE_SCRIPT`'s, no sentence here
@@ -247,9 +249,17 @@ fi
 [ -f "$D/cli" ] ||
   { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before restarts" >&2; exit 1; }
 [ ! -f "$D/again" ] || { echo "the CLI in $D is already being started again" >&2; exit 1; }
-IFS= read -r m || { echo "the restart of $D carried no mark" >&2; exit 2; }
-printf '%s\\n' "$m" >"$D/again.mark" || exit 1
-{ cat >"$D/again.new" && mv -f "$D/again.new" "$D/again"; } || exit 1
+IFS= read -r n || { echo "the restart of $D carried nothing" >&2; exit 2; }
+: >"$D/again.new" || exit 1
+i=0
+while [ "$i" -lt "$n" ]; do
+  IFS= read -r a || { echo "the restart of $D carried fewer arguments than $n" >&2; exit 2; }
+  printf '%s\\n' "$a" >>"$D/again.new" || exit 1
+  i=$((i + 1))
+done
+cat >"$D/again.mark" || exit 1
+[ -s "$D/again.mark" ] || { echo "the restart of $D carried no mark" >&2; exit 2; }
+mv -f "$D/again.new" "$D/again" || exit 1
 kill "$(cat "$D/cli")" ||
   { rm -f "$D/again" "$D/again.mark"; echo "the CLI in $D could not be stopped to start it again" >&2; exit 1; }
 `;

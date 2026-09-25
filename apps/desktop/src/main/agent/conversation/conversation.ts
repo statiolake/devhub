@@ -88,8 +88,8 @@ export interface ConversationHost {
 		cancel: CancellationToken,
 	): AsyncIterable<JournalLine>;
 	write(line: string, afterOffset: number): Promise<void>;
-	/** Have the host start the CLI again with `args` added, `mark` in the journal between the two. */
-	restart(args: readonly string[], mark: string): Promise<void>;
+	/** Have the host start the CLI again with `args` added, the lines of `mark` in the journal between the two. */
+	restart(args: readonly string[], mark: readonly string[]): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
 }
 
@@ -246,6 +246,54 @@ export class AgentConversation {
 			return "refused";
 		await this.command({ kind: "send", text, origin: "person" });
 		return "sent";
+	}
+
+	/**
+	 * Go on with another session of the CLI, `session` (`/resume`), in place
+	 * of this one: the adapter's plan is carried out as an edit's is, and this
+	 * resolves once the CLI has the other session (the adapter emitted
+	 * `session-switched` and the turn is no longer `rewinding`). `history` is
+	 * that session's past, for a protocol whose CLI prints none of it. The
+	 * switch is in the journal like a rewind, so a replay draws the same.
+	 * Refused while a turn runs, a request is open or an edit is under way.
+	 */
+	async resumeSession(
+		session: string,
+		history: readonly string[],
+	): Promise<void> {
+		const resumed = await this.#serial(async () => {
+			this.#refuseIfBusy();
+			const { state, requests } = this.#transcript;
+			if (
+				state.phase !== "ready" ||
+				state.turn !== "none" ||
+				requests.length > 0
+			) {
+				throw new Error(
+					"The Agent is in the middle of a turn. Stop it before going on with another session.",
+				);
+			}
+			const plan = this.#adapter.resumeSession(session, history);
+			const over = new Promise<void>((done, failed) => {
+				this.#rewind = { begun: false, done, failed };
+			});
+			try {
+				if (plan.kind === "write") await this.#write(plan.lines);
+				else await this.#host.restart(plan.args, plan.mark);
+			} catch (error: unknown) {
+				this.#rewind = undefined;
+				throw error;
+			}
+			return { over };
+		});
+		try {
+			await resumed.over;
+		} catch (error: unknown) {
+			throw new Error(
+				`The conversation stopped before it went on with session ${session}: ${error instanceof Error ? error.message : String(error)}`,
+				{ cause: error },
+			);
+		}
 	}
 
 	#refuseEdit(message: EntryId): void {

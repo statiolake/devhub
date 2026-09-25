@@ -30,8 +30,11 @@ import {
 	claudeHistory,
 	claudeHistoryLines,
 	codexStructuredArgs,
+	claudeSessionRecorder,
 	listPastSessions,
 	parseCodexListing,
+	previewPastSession,
+	terminalSession,
 	resumeArgs,
 	resumedSession,
 	type SessionProfile,
@@ -151,13 +154,71 @@ describe("listing a Workspace's sessions", () => {
 				id: "second",
 				title: "Second session",
 				updatedAt: Date.parse("2026-09-21T08:00:00.000Z"),
+				cwd: "/work/my.project",
+				resumableHere: true,
 			},
 			{
 				id: SESSION,
 				title: "List and read the source files",
 				updatedAt: Date.parse("2026-09-20T10:03:01.000Z"),
+				cwd: "/home/testuser/project",
+				resumableHere: true,
 			},
 		]);
+	});
+
+	it("reads every project's sessions when asked for all of them, newest first across directories, and says which can go on here", async () => {
+		const projects = join(dir, ".claude", "projects");
+		const mine = join(projects, "-work-mine");
+		const other = join(projects, "-work-other");
+		await mkdir(mine, { recursive: true });
+		await mkdir(other, { recursive: true });
+		const session = (cwd: string, text: string, stamp: string) =>
+			JSON.stringify({
+				type: "user",
+				uuid: "x",
+				cwd,
+				timestamp: stamp,
+				message: { content: text },
+			});
+		await writeFile(
+			join(mine, "m1.jsonl"),
+			session("/work/mine", "Mine", "2026-09-20T00:00:00.000Z"),
+		);
+		await writeFile(
+			join(other, "o1.jsonl"),
+			session("/work/other", "Other's", "2026-09-22T00:00:00.000Z"),
+		);
+		await touch(join(mine, "m1.jsonl"), 1_000);
+		await touch(join(other, "o1.jsonl"), 2_000);
+
+		const everywhere = await listPastSessions(
+			fakeRuntime(dir),
+			CLAUDE,
+			"/work/mine",
+			"everywhere",
+		);
+		expect(everywhere).toEqual([
+			{
+				id: "o1",
+				title: "Other's",
+				updatedAt: Date.parse("2026-09-22T00:00:00.000Z"),
+				cwd: "/work/other",
+				resumableHere: false,
+			},
+			{
+				id: "m1",
+				title: "Mine",
+				updatedAt: Date.parse("2026-09-20T00:00:00.000Z"),
+				cwd: "/work/mine",
+				resumableHere: true,
+			},
+		]);
+		expect(
+			(await listPastSessions(fakeRuntime(dir), CLAUDE, "/work/mine")).map(
+				(each) => each.id,
+			),
+		).toEqual(["m1"]);
 	});
 
 	it("has none for a directory Claude never ran in", async () => {
@@ -181,7 +242,7 @@ while IFS= read -r line; do
 	printf '%s\\n' "$line" >>"${requests}"
 	case $line in
 	*'"initialize"'*) printf '%s\\n' '{"id":1,"result":{"userAgent":"fake"}}' ;;
-	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id": 2, "result": {"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
+	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id": 2, "result": {"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20,"cwd":"/work/project"},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10,"cwd":"/work/elsewhere"}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
 	esac
 done
 [ -z "$pending" ] || kill "$pending" 2>/dev/null
@@ -194,8 +255,20 @@ done
 			"/work/project",
 		);
 		expect(sessions).toEqual([
-			{ id: "t-new", title: "Named", updatedAt: 20_000 },
-			{ id: "t-old", title: "First message", updatedAt: 10_000 },
+			{
+				id: "t-new",
+				title: "Named",
+				updatedAt: 20_000,
+				cwd: "/work/project",
+				resumableHere: true,
+			},
+			{
+				id: "t-old",
+				title: "First message",
+				updatedAt: 10_000,
+				cwd: "/work/elsewhere",
+				resumableHere: true,
+			},
 		]);
 		const asked = (await readFile(requests, "utf8"))
 			.trim()
@@ -235,6 +308,109 @@ done
 		expect(() => parseCodexListing("", "error: not logged in\n")).toThrow(
 			"codex app-server ended without listing its threads: error: not logged in",
 		);
+	});
+});
+
+describe("a session's preview", () => {
+	let dir: string;
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "devhub-preview-"));
+	});
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("is the last messages of a Claude session, read from the end of its file", async () => {
+		const project = join(dir, ".claude", "projects", "-work-project");
+		await mkdir(project, { recursive: true });
+		const filler = JSON.stringify({
+			type: "progress",
+			data: "x".repeat(300_000),
+		});
+		await writeFile(
+			join(project, `${SESSION}.jsonl`),
+			`${filler}\n${await readFile(FIXTURE, "utf8")}`,
+		);
+		const preview = await previewPastSession(
+			fakeRuntime(dir),
+			CLAUDE,
+			SESSION,
+			"/work/project",
+		);
+		expect(preview.at(-1)).toEqual({ role: "agent", text: "It is empty." });
+		expect(preview.some((line) => line.role === "person")).toBe(true);
+		expect(preview.length).toBeLessThanOrEqual(6);
+	});
+
+	it("is the last messages of a Codex rollout, found by its thread id", async () => {
+		const day = join(dir, ".codex", "sessions", "2026", "09", "20");
+		await mkdir(day, { recursive: true });
+		const line = (type: string, message: string) =>
+			JSON.stringify({ type: "event_msg", payload: { type, message } });
+		await writeFile(
+			join(day, "rollout-2026-09-20T10-00-00-t-1.jsonl"),
+			[
+				JSON.stringify({ type: "session_meta", payload: { id: "t-1" } }),
+				line("user_message", "Fix the title"),
+				JSON.stringify({
+					type: "response_item",
+					payload: { type: "reasoning" },
+				}),
+				line("agent_message", "Fixed."),
+			].join("\n"),
+		);
+		expect(
+			await previewPastSession(fakeRuntime(dir), CODEX, "t-1", "/work/project"),
+		).toEqual([
+			{ role: "person", text: "Fix the title" },
+			{ role: "agent", text: "Fixed." },
+		]);
+	});
+
+	it("refuses an id that is not one, before asking the machine", async () => {
+		await expect(
+			previewPastSession(fakeRuntime(dir), CLAUDE, "../x", "/work/project"),
+		).rejects.toThrow(/not a session id/);
+	});
+});
+
+describe("the session of a terminal Agent", () => {
+	let dir: string;
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "devhub-terminal-session-"));
+	});
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("is what Claude's SessionStart hook wrote down, through the command DevHub gave it", async () => {
+		const agent = join(dir, "agent's dir");
+		await mkdir(agent, { recursive: true });
+		const [flag, settings] = claudeSessionRecorder(agent);
+		expect(flag).toBe("--settings");
+		const hook = (
+			JSON.parse(settings!) as {
+				hooks: { SessionStart: { hooks: { command: string }[] }[] };
+			}
+		).hooks.SessionStart[0]!.hooks[0]!.command;
+		// Run as Claude runs a hook: under a shell, the event's JSON on stdin.
+		await new Promise<void>((resolve, reject) => {
+			const child = execFile("/bin/sh", ["-c", hook], (error) =>
+				error ? reject(error) : resolve(),
+			);
+			child.stdin!.end(
+				JSON.stringify({ session_id: "s-live", source: "clear", cwd: "/w" }),
+			);
+		});
+		expect(await terminalSession(fakeRuntime(dir), CLAUDE, "/w", agent)).toBe(
+			"s-live",
+		);
+	});
+
+	it("is refused, saying why, when Claude never wrote it down", async () => {
+		await expect(
+			terminalSession(fakeRuntime(dir), CLAUDE, "/w", join(dir, "none")),
+		).rejects.toThrow(/has not said which Claude session it is in/);
 	});
 });
 

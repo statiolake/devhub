@@ -111,6 +111,12 @@ export interface PickerItem {
    * would be two answers where the person asked for one.
    */
   readonly accessory?: (alternate: boolean) => ReactNode;
+  /**
+   * Why this row cannot be taken, when it cannot: it is listed with the
+   * reason under its name, and Return or a click on it does nothing. A row
+   * the person expects that is missing would take the reason with it.
+   */
+  readonly unavailable?: string;
 }
 
 /**
@@ -221,6 +227,12 @@ export interface PickerProps {
   readonly queryDelayMs?: number;
   readonly onChoose: (choice: PickerChoice) => void;
   readonly onCancel: () => void;
+  /** Controls between the search field and the list, such as a filter. */
+  readonly toolbar?: ReactNode;
+  /** Told which row the arrows or the pointer are on, for an `aside` about it. */
+  readonly onActiveChange?: (item: PickerItem | undefined) => void;
+  /** Drawn beside the list: something about the row the person is on. */
+  readonly aside?: ReactNode;
 }
 
 function SearchGlyph() {
@@ -255,6 +267,9 @@ export function Picker({
   queryDelayMs = 150,
   onChoose,
   onCancel,
+  toolbar,
+  onActiveChange,
+  aside,
 }: PickerProps) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
@@ -383,6 +398,10 @@ export function Picker({
   useEffect(() => {
     setActive((current) => (current < rows.length ? current : 0));
   }, [rows.length]);
+  const activeRow = rows[active];
+  useEffect(() => {
+    onActiveChange?.(activeRow);
+  }, [onActiveChange, activeRow]);
 
   /**
    * Whether a `mousemove` is the pointer moving. A sheet opening under a
@@ -446,10 +465,12 @@ export function Picker({
   const choose = useCallback(
     (id: string, split: boolean, alternateChoice: boolean) => {
       if (taken !== undefined) return;
+      if (rows.some((row) => row.id === id && row.unavailable !== undefined))
+        return;
       setTaken(id);
       onChoose({ id, split, alternate: alternateChoice, query });
     },
-    [onChoose, query, taken],
+    [onChoose, query, rows, taken],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -577,78 +598,97 @@ export function Picker({
           ) : null}
         </div>
 
+        {toolbar === undefined ? null : (
+          <div className="picker-toolbar">{toolbar}</div>
+        )}
+
         {/* One band whatever it holds. The message and the rows can both be
             here at once — nothing you typed exists yet, but "New Project…"
             still does — so the sheet's seams do not move with its state. */}
-        <div className="picker-body">
-          {showEmpty ? (
-            <p className="picker-empty mac-caption" role="status">
-              {emptyMessage}
-            </p>
-          ) : null}
-          <ul
-            className={`mac-list picker-results${taken === undefined ? "" : " is-answered"}`}
-            role="listbox"
-            aria-label={title}
-            aria-busy={taken === undefined ? undefined : true}
-            ref={listRef}
-            hidden={rows.length === 0}
-          >
-            {rows.map((item, index) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === active}
-                  className="mac-list-row"
-                  tabIndex={-1}
-                  onMouseDown={(event) => {
-                    // The row is a target, not a place to stand: taking focus
-                    // here is what used to leave the sheet deaf to the keyboard.
-                    event.preventDefault();
-                  }}
-                  onMouseMove={(event) => {
-                    if (pointerMoved(event) && taken === undefined) {
-                      setActive(index);
+        <div
+          className={`picker-body${aside === undefined ? "" : " has-aside"}`}
+        >
+          <div className="picker-list">
+            {showEmpty ? (
+              <p className="picker-empty mac-caption" role="status">
+                {emptyMessage}
+              </p>
+            ) : null}
+            <ul
+              className={`mac-list picker-results${taken === undefined ? "" : " is-answered"}`}
+              role="listbox"
+              aria-label={title}
+              aria-busy={taken === undefined ? undefined : true}
+              ref={listRef}
+              hidden={rows.length === 0}
+            >
+              {rows.map((item, index) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index === active}
+                    aria-disabled={
+                      item.unavailable === undefined ? undefined : true
                     }
-                  }}
-                  onClick={(event) => {
-                    // The row taken is the row shown as taken: the spinner and
-                    // the selection must not end up on two different rows when
-                    // one was clicked while another was under the arrows.
-                    setActive(index);
-                    choose(item.id, event.metaKey, event.altKey);
-                  }}
-                >
-                  {item.glyph ? (
-                    <span className="mac-list-glyph">{item.glyph}</span>
-                  ) : null}
-                  <span className="mac-list-text">
-                    <span className="mac-list-title">{item.label}</span>
-                    {item.detail ? (
-                      <span className="mac-list-subtitle mac-caption">
-                        {item.detail}
+                    className="mac-list-row"
+                    tabIndex={-1}
+                    onMouseDown={(event) => {
+                      // The row is a target, not a place to stand: taking focus
+                      // here is what used to leave the sheet deaf to the keyboard.
+                      event.preventDefault();
+                    }}
+                    onMouseMove={(event) => {
+                      if (pointerMoved(event) && taken === undefined) {
+                        setActive(index);
+                      }
+                    }}
+                    onClick={(event) => {
+                      // The row taken is the row shown as taken: the spinner and
+                      // the selection must not end up on two different rows when
+                      // one was clicked while another was under the arrows.
+                      setActive(index);
+                      choose(item.id, event.metaKey, event.altKey);
+                    }}
+                  >
+                    {item.glyph ? (
+                      <span className="mac-list-glyph">{item.glyph}</span>
+                    ) : null}
+                    <span className="mac-list-text">
+                      <span className="mac-list-title">{item.label}</span>
+                      {item.detail ? (
+                        <span className="mac-list-subtitle mac-caption">
+                          {item.detail}
+                        </span>
+                      ) : null}
+                      {item.unavailable === undefined ? null : (
+                        <span className="mac-list-subtitle mac-caption picker-unavailable">
+                          {item.unavailable}
+                        </span>
+                      )}
+                    </span>
+                    {item.accessory ? (
+                      <span className="picker-accessory mac-caption">
+                        {item.accessory(alternate)}
                       </span>
                     ) : null}
-                  </span>
-                  {item.accessory ? (
-                    <span className="picker-accessory mac-caption">
-                      {item.accessory(alternate)}
-                    </span>
-                  ) : null}
-                  {/* On the row that was taken, so the wait is attached to the
+                    {/* On the row that was taken, so the wait is attached to the
                       answer rather than floating at the top of the sheet. */}
-                  {taken === item.id ? (
-                    <span
-                      className="mac-spinner"
-                      role="status"
-                      aria-label="Working"
-                    />
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
+                    {taken === item.id ? (
+                      <span
+                        className="mac-spinner"
+                        role="status"
+                        aria-label="Working"
+                      />
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {aside === undefined ? null : (
+            <aside className="picker-aside">{aside}</aside>
+          )}
         </div>
 
         {/* The note is part of the footer, not a band of its own. It is the

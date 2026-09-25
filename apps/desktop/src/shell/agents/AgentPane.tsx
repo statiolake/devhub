@@ -7,6 +7,7 @@ import { Failure } from "../components/shell/SurfaceState";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { AgentShortcuts } from "../components/shell/AgentShortcuts";
 import { ConversationPane } from "./ConversationPane";
+import { ContinueElsewhere, continuesElsewhere } from "./ContinueElsewhere";
 import { devhub } from "./client";
 import type { SurfaceAction } from "../components/shell/SurfaceState";
 import type { AgentWire } from "../../ipc/appShell";
@@ -57,6 +58,7 @@ export function AgentPane({
         <div
           className="surface-pool-entry"
           key={surface.key}
+          data-surface-key={surface.key}
           hidden={surface.key !== activeKey}
         >
           {/* The one place the two presentations differ on this page: which
@@ -66,6 +68,7 @@ export function AgentPane({
             <ConversationPane
               agentId={surface.agentId}
               label={surface.label}
+              cli={cliName(snapshot, surface.agentId)}
               appearance={appearance}
               hidden={surface.key !== activeKey}
             />
@@ -122,8 +125,36 @@ export function AgentPane({
       {active ? (
         <AgentShortcuts agent={active} repository={repository} />
       ) : null}
+      {/* The way to the other presentation, while the pane is the Agent's
+          own: over a failure, the failure's actions are the way out. */}
+      {active &&
+      active.failure === undefined &&
+      active.controlState.kind === "running" &&
+      continuesElsewhere(active) ? (
+        <ContinueElsewhere key={active.id} agent={active} />
+      ) : null}
     </div>
   );
+}
+
+/** The name of the CLI an Agent runs, as `/resume`'s picker says it. */
+function cliName(snapshot: AppSnapshot, agentId: string): string {
+  const agent = snapshot.workspaces
+    .flatMap((workspace) => workspace.agents)
+    .find((candidate) => candidate.id === agentId);
+  if (agent === undefined) {
+    throw new Error(
+      `the pool has a surface for Agent ${agentId}, which the snapshot does not`,
+    );
+  }
+  switch (agent.profileKind) {
+    case "claude":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    default:
+      return agent.profileKind;
+  }
 }
 
 /**

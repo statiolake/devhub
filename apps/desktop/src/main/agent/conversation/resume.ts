@@ -42,6 +42,8 @@ import { CancellationToken } from "../../terminal/ports.js";
 import { RuntimeFileError, type Runtime } from "../../runtime/runtime.js";
 import { appServerArgs } from "./codex/argv.js";
 import { decodeLine, Reader, threadListResponse } from "./codex/decode.js";
+import type { ThreadListParams } from "./codex/protocol/v2/ThreadListParams.js";
+import type { ThreadSourceKind } from "./codex/protocol/v2/ThreadSourceKind.js";
 
 /** One earlier session, as the resume picker lists it. */
 export interface PastSession {
@@ -51,6 +53,33 @@ export interface PastSession {
 	readonly title: string;
 	/** When it last changed, in ms since the epoch, if the CLI says. */
 	readonly updatedAt: number | undefined;
+	/** The directory it ran in, if the CLI says. */
+	readonly cwd: string | undefined;
+	/**
+	 * Whether an Agent in the Workspace listed for can go on with it. Claude
+	 * resumes a session only in the directory it ran in (its file is kept
+	 * under that directory's name), as its own `/resume` says of another
+	 * project's; Codex resumes a thread in any directory it is given.
+	 */
+	readonly resumableHere: boolean;
+}
+
+/**
+ * Which sessions a listing offers: the Workspace's directory's, or every
+ * directory's on the machine — as the CLIs' own pickers offer both.
+ */
+export type SessionScope = "here" | "everywhere";
+
+/** A listing's scope as a page said it, checked. */
+export function sessionScope(scope: unknown): SessionScope {
+	if (scope === "here" || scope === "everywhere") return scope;
+	throw new Error(`${JSON.stringify(scope)} is not a scope of sessions`);
+}
+
+/** One message of a session's last exchanges, as the picker previews it. */
+export interface PreviewLine {
+	readonly role: "person" | "agent";
+	readonly text: string;
 }
 
 /**
@@ -113,17 +142,277 @@ export type SessionProfile = Pick<
 	"kind" | "command" | "args" | "env"
 >;
 
-/** The sessions of `profile`'s CLI in the directory `root` on `runtime`, newest first. */
+/**
+ * The sessions of `profile`'s CLI on `runtime`, newest first: those that ran
+ * in the directory `root`, or (`everywhere`) in any directory, each saying
+ * whether an Agent in `root` can go on with it.
+ */
 export async function listPastSessions(
 	runtime: Runtime,
 	profile: SessionProfile,
 	root: string,
+	scope: SessionScope = "here",
 ): Promise<readonly PastSession[]> {
 	const kind = resumableKind(profile.kind);
 	const cwd = await runtime.realpath(root);
 	return kind === "claude"
-		? listClaudeSessions(runtime, profile, cwd)
-		: listCodexSessions(runtime, profile, cwd);
+		? listClaudeSessions(runtime, profile, cwd, scope)
+		: listCodexSessions(runtime, profile, {
+				cwd,
+				scope,
+				sourceKinds: undefined,
+			});
+}
+
+/**
+ * The last few messages of session `id` — the person's words and the
+ * Agent's answers, not tools — read on demand from the end of its file, so a
+ * preview costs the same whatever the session's length. `cwd` is the
+ * directory the listing said it ran in (Claude keeps a session under it).
+ */
+export async function previewPastSession(
+	runtime: Runtime,
+	profile: SessionProfile,
+	id: string,
+	cwd: string,
+): Promise<readonly PreviewLine[]> {
+	if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+		throw new Error(`${JSON.stringify(id)} is not a session id`);
+	}
+	const kind = resumableKind(profile.kind);
+	const answer = await askMachine(
+		runtime,
+		`DevHub could not read the end of session ${id}`,
+	)({
+		argv:
+			kind === "claude"
+				? [
+						"sh",
+						"-c",
+						TAIL_SCRIPT,
+						"sh",
+						`${await claudeProjectDirectory(runtime, profile, cwd)}/${id}.jsonl`,
+					]
+				: [
+						"sh",
+						"-c",
+						CODEX_ROLLOUT_TAIL_SCRIPT,
+						"sh",
+						`${await codexHome(runtime, profile)}/sessions`,
+						id,
+					],
+		env: await runtime.environment(),
+		deadline: OperationDeadline.in(10_000),
+		cancel: new CancellationToken(),
+		limits: {
+			stdoutBytes: PREVIEW_BYTES + 1024,
+			stderrBytes: 16 * 1024,
+			overflow: {
+				kind: "fail",
+				failure: () =>
+					new Error(`the end of session ${id} was longer than read`),
+			},
+		},
+	});
+	if (answer.code !== 0) {
+		throw new Error(
+			`DevHub could not read the end of session ${id}${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
+		);
+	}
+	const text = answer.stdout.toString("utf8");
+	return kind === "claude" ? claudePreview(text) : codexPreview(text);
+}
+
+/** How much of a session's end a preview reads. */
+const PREVIEW_BYTES = 256 * 1024;
+/** How many messages a preview shows. */
+const PREVIEWED = 6;
+
+/** The last `PREVIEW_BYTES` of the file `$1`, whole lines only. */
+const TAIL_SCRIPT = `[ -f "$1" ] || { echo "there is no $1" >&2; exit 66; }
+tail -c ${PREVIEW_BYTES} -- "$1"
+`;
+
+/**
+ * The same of thread `$2`'s rollout under `$1`: Codex names each
+ * `rollout-<time>-<thread id>.jsonl`, under a directory per day.
+ */
+const CODEX_ROLLOUT_TAIL_SCRIPT = `f=$(find "$1" -name "rollout-*-$2.jsonl" 2>/dev/null | head -n 1)
+[ -n "$f" ] || { echo "there is no rollout of thread $2 under $1" >&2; exit 66; }
+tail -c ${PREVIEW_BYTES} -- "$f"
+`;
+
+/** The JSON objects among the lines of a file's end; the first, likely cut, is not one. */
+function tailRecords(text: string): Record<string, unknown>[] {
+	const records: Record<string, unknown>[] = [];
+	for (const line of text.split("\n")) {
+		if (line.trim().length === 0) continue;
+		let value: unknown;
+		try {
+			value = JSON.parse(line);
+		} catch {
+			// The first line of a file's end is cut wherever the read began.
+			continue;
+		}
+		if (typeof value === "object" && value !== null && !Array.isArray(value))
+			records.push(value as Record<string, unknown>);
+	}
+	return records;
+}
+
+/** A Claude session file's end, as its last messages. Exported for its tests. */
+export function claudePreview(text: string): readonly PreviewLine[] {
+	const lines: PreviewLine[] = [];
+	for (const record of tailRecords(text)) {
+		if (record["isSidechain"] === true || record["isMeta"] === true) continue;
+		if (record["isCompactSummary"] === true) continue;
+		const content = (record["message"] as { content?: unknown } | undefined)
+			?.content;
+		const said =
+			typeof content === "string"
+				? content
+				: Array.isArray(content)
+					? content
+							.filter(
+								(block): block is { type: "text"; text: string } =>
+									typeof block === "object" &&
+									block !== null &&
+									block.type === "text" &&
+									typeof block.text === "string",
+							)
+							.map((block) => block.text)
+							.join("\n")
+					: "";
+		if (said.trim().length === 0) continue;
+		if (record["type"] === "user") lines.push({ role: "person", text: said });
+		if (record["type"] === "assistant")
+			lines.push({ role: "agent", text: said });
+	}
+	return lines.slice(-PREVIEWED).map(shortened);
+}
+
+/** A Codex rollout's end, as its last messages. Exported for its tests. */
+export function codexPreview(text: string): readonly PreviewLine[] {
+	const lines: PreviewLine[] = [];
+	for (const record of tailRecords(text)) {
+		if (record["type"] !== "event_msg") continue;
+		const payload = record["payload"] as
+			| { type?: unknown; message?: unknown }
+			| undefined;
+		if (typeof payload?.message !== "string") continue;
+		if (payload.type === "user_message")
+			lines.push({ role: "person", text: payload.message });
+		if (payload.type === "agent_message")
+			lines.push({ role: "agent", text: payload.message });
+	}
+	return lines.slice(-PREVIEWED).map(shortened);
+}
+
+function shortened(line: PreviewLine): PreviewLine {
+	const text = line.text.trim();
+	return {
+		role: line.role,
+		text: text.length > 600 ? `${text.slice(0, 599)}…` : text,
+	};
+}
+
+/** Where Codex keeps its state: `CODEX_HOME`, the profile's before the machine's. */
+async function codexHome(
+	runtime: Runtime,
+	profile: SessionProfile,
+): Promise<string> {
+	return (
+		profile.env.get("CODEX_HOME") ??
+		(await runtime.environment())["CODEX_HOME"] ??
+		`${await runtime.home()}/.codex`
+	);
+}
+
+// ---------------------------------------------------------------------------
+// The session of a terminal Agent.
+
+/** Where a terminal Claude Agent's SessionStart hook writes what Claude told it. */
+function claudeSessionRecord(directory: string): string {
+	return `${directory}/claude-session`;
+}
+
+/**
+ * The arguments that have a terminal Claude Agent write down the session it
+ * is in, each time one starts: a SessionStart hook, given through
+ * `--settings` (added to the person's settings, not in place of them), that
+ * copies what Claude hands it — `session_id` among it — into the Agent's own
+ * directory `directory`. It fires on startup, on `--resume`, on `/clear` and
+ * on `/resume` inside the TUI, so the record is the session on screen, and
+ * it prints nothing (a SessionStart hook's output would be read as context).
+ */
+export function claudeSessionRecorder(directory: string): readonly string[] {
+	const record = claudeSessionRecord(directory);
+	const command = `cat >${shellQuote(`${record}.new`)} && mv -f ${shellQuote(`${record}.new`)} ${shellQuote(record)}`;
+	return [
+		"--settings",
+		JSON.stringify({
+			hooks: {
+				SessionStart: [{ hooks: [{ type: "command", command }] }],
+			},
+		}),
+	];
+}
+
+function shellQuote(word: string): string {
+	return `'${word.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The session a terminal Agent's CLI is in, for a GUI Agent to go on with.
+ *
+ * Claude: what its SessionStart hook wrote down (`claudeSessionRecorder`) in
+ * the Agent's directory `directory`. Codex, which has no such hook: the
+ * newest thread its terminal mode (`cli`) keeps for `root` — the one the
+ * Agent's TUI writes to, provided it is the only Codex TUI in that directory,
+ * which the caller checks.
+ */
+export async function terminalSession(
+	runtime: Runtime,
+	profile: SessionProfile,
+	root: string,
+	directory: string,
+): Promise<string> {
+	if (resumableKind(profile.kind) === "claude") {
+		let text: string;
+		try {
+			text = await runtime.readTextFile(
+				claudeSessionRecord(directory),
+				64 * 1024,
+			);
+		} catch (failure: unknown) {
+			if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
+				throw new SessionNotResumable(
+					"This terminal Agent has not said which Claude session it is in: Claude tells DevHub when a session starts, and this one started before DevHub asked it to (or its hooks are turned off). Use New Agent › Resume a Claude session… instead.",
+				);
+			}
+			throw failure;
+		}
+		const record = parsedLine("(the terminal Agent's)", text.trim());
+		const session = record["session_id"];
+		if (typeof session !== "string" || session.length === 0) {
+			throw new Error(
+				`the session Claude wrote down in ${claudeSessionRecord(directory)}${runtime.where} names no session_id`,
+			);
+		}
+		return session;
+	}
+	const [newest] = await listCodexSessions(runtime, profile, {
+		cwd: await runtime.realpath(root),
+		scope: "here",
+		sourceKinds: ["cli"],
+		limit: 1,
+	});
+	if (newest === undefined) {
+		throw new SessionNotResumable(
+			`Codex keeps no terminal thread for ${root}${runtime.where} yet: the terminal Agent names one with its first turn.`,
+		);
+	}
+	return newest.id;
 }
 
 function resumableKind(kind: AgentProfile["kind"]): ResumableKind {
@@ -177,29 +466,37 @@ async function claudeProjectDirectory(
 }
 
 /**
- * The newest session files in `$1`, each as a record separator and its id,
- * then its last timestamp, its last `ai-title` line, and how many candidate
- * first messages follow (the first few `user` lines that are not a tool
- * result or a meta message, each whole). A directory that is not there is a
- * Workspace Claude never ran in: no sessions.
+ * The newest session files in `$1` — down to depth `$2`: 1 for one project's
+ * directory, 2 for every project's under `projects/` — each as a record
+ * separator and its id, the directory its file is in (`.` at depth 1), then
+ * its last timestamp, the directory it ran in, its
+ * last `ai-title` line, and how many candidate first messages follow (the
+ * first few `user` lines that are not a tool result or a meta message, each
+ * whole). A directory that is not there is one Claude never ran in: no
+ * sessions.
  *
- * awk rather than reading every file here, because a session's file can be
- * tens of megabytes and only these few lines of it are wanted.
+ * Newest by modification time, across directories: `stat` in GNU's spelling
+ * or BSD's, through `find -exec +` so that no number of files is an argument
+ * list too long. awk rather than reading every file here, because a session's
+ * file can be tens of megabytes and only these few lines of it are wanted.
  */
 const CLAUDE_LISTING_SCRIPT = `[ -d "$1" ] || exit 0
 cd -- "$1" || exit 71
-ls -t | {
+find . -mindepth "$2" -maxdepth "$2" -name '*.jsonl' -type f -exec sh -c 'stat -c "%Y %n" -- "$@" 2>/dev/null || stat -f "%m %N" -- "$@"' sh {} + |
+	sort -rn | {
 	n=0
-	while IFS= read -r f; do
-		case $f in *.jsonl) ;; *) continue ;; esac
+	while IFS= read -r l; do
+		f=\${l#* }
 		n=$((n + 1))
 		[ "$n" -le ${LISTED} ] || break
-		printf '\\036%s\\n' "\${f%.jsonl}"
+		b=\${f##*/}
+		printf '\\036%s\\n%s\\n' "\${b%.jsonl}" "\${f%/*}"
 		awk '
 /"type":"ai-title"/ && length($0) < 4096 { title = $0 }
 c < 5 && /"type":"user"/ && !/"tool_use_id"/ && !/"isMeta":true/ && !/"isSidechain":true/ && length($0) < 16384 { first[c++] = $0 }
 match($0, /"timestamp":"[^"]*"/) { stamp = substr($0, RSTART + 13, RLENGTH - 14) }
-END { print stamp; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
+cwd == "" && match($0, /"cwd":"([^"\\\\]|\\\\.)*"/) { cwd = substr($0, RSTART, RLENGTH) }
+END { print stamp; print cwd; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
 ' "$f" || exit 72
 	done
 }
@@ -209,13 +506,23 @@ async function listClaudeSessions(
 	runtime: Runtime,
 	profile: SessionProfile,
 	cwd: string,
+	scope: SessionScope,
 ): Promise<readonly PastSession[]> {
-	const directory = await claudeProjectDirectory(runtime, profile, cwd);
+	const here = await claudeProjectDirectory(runtime, profile, cwd);
+	const directory =
+		scope === "here" ? here : here.slice(0, here.lastIndexOf("/"));
 	const answer = await askMachine(
 		runtime,
 		`DevHub could not list Claude's sessions in ${directory}`,
 	)({
-		argv: ["sh", "-c", CLAUDE_LISTING_SCRIPT, "sh", directory],
+		argv: [
+			"sh",
+			"-c",
+			CLAUDE_LISTING_SCRIPT,
+			"sh",
+			directory,
+			scope === "here" ? "1" : "2",
+		],
 		env: await runtime.environment(),
 		deadline: OperationDeadline.in(15_000),
 		cancel: new CancellationToken(),
@@ -234,15 +541,29 @@ async function listClaudeSessions(
 			`DevHub could not list Claude's sessions in ${directory}${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
 		);
 	}
-	return parseClaudeListing(answer.stdout.toString("utf8"));
+	return parseClaudeListing(
+		answer.stdout.toString("utf8"),
+		here.slice(here.lastIndexOf("/") + 1),
+		cwd,
+	);
 }
 
-/** The listing script's output, as sessions. Exported for its tests. */
-export function parseClaudeListing(output: string): readonly PastSession[] {
+/**
+ * The listing script's output, as sessions; `project` is the name of the
+ * Workspace's directory `cwd` under `projects/`, the one a session's file
+ * must be in for Claude to resume it there — and where one that does not say
+ * where it ran did. Exported for its tests.
+ */
+export function parseClaudeListing(
+	output: string,
+	project: string,
+	cwd: string,
+): readonly PastSession[] {
 	const sessions: PastSession[] = [];
 	for (const chunk of output.split("\u001e").slice(1)) {
-		const [id, stamp, titleLine, count, ...candidates] = chunk.split("\n");
-		if (id === undefined || count === undefined) {
+		const [id, folder, stamp, cwdField, titleLine, count, ...candidates] =
+			chunk.split("\n");
+		if (id === undefined || folder === undefined || count === undefined) {
 			throw new Error(
 				`the listing of Claude's sessions is cut short: ${chunk}`,
 			);
@@ -257,10 +578,20 @@ export function parseClaudeListing(output: string): readonly PastSession[] {
 		// with — Claude's own `/resume` leaves those out too.
 		if (title === undefined) continue;
 		const updatedAt = stamp ? Date.parse(stamp) : Number.NaN;
+		// Claude finds a session by the directory its file is kept under,
+		// whatever its lines say.
+		const resumableHere = folder === "." || folder === `./${project}`;
+		const ran = cwdField
+			? (JSON.parse(`{${cwdField}}`) as { cwd: string }).cwd
+			: resumableHere
+				? cwd
+				: undefined;
 		sessions.push({
 			id,
 			title: oneLine(title),
 			updatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
+			cwd: ran,
+			resumableHere,
 		});
 	}
 	return sessions;
@@ -438,7 +769,13 @@ trap 'rm -rf "$d"' EXIT
 async function listCodexSessions(
 	runtime: Runtime,
 	profile: SessionProfile,
-	cwd: string,
+	asked: {
+		readonly cwd: string;
+		readonly scope: SessionScope;
+		/** Only threads of these sources; absent, Codex's own default (the interactive ones). */
+		readonly sourceKinds: readonly ThreadSourceKind[] | undefined;
+		readonly limit?: number;
+	},
 ): Promise<readonly PastSession[]> {
 	const requests = [
 		{
@@ -450,7 +787,14 @@ async function listCodexSessions(
 		{
 			id: 2,
 			method: "thread/list",
-			params: { cwd, limit: LISTED, sortKey: "updated_at" },
+			params: {
+				...(asked.scope === "here" ? { cwd: asked.cwd } : {}),
+				limit: asked.limit ?? LISTED,
+				sortKey: "updated_at",
+				...(asked.sourceKinds === undefined
+					? {}
+					: { sourceKinds: [...asked.sourceKinds] }),
+			} satisfies ThreadListParams,
 		},
 	];
 	const answer = await askMachine(
@@ -463,7 +807,9 @@ async function listCodexSessions(
 			CODEX_LISTING_SCRIPT,
 			"sh",
 			profile.command,
-			...appServerArgs(profile.args),
+			// A resumed Agent's snapshot ends with the thread it resumed, which
+			// app-server takes no argument for.
+			...codexStructuredArgs(profile.args).args,
 		],
 		env: {
 			...(await runtime.environment()),
@@ -509,6 +855,8 @@ export function parseCodexListing(
 				id: thread.id,
 				title: oneLine(thread.name ?? thread.preview),
 				updatedAt: thread.updatedAt * 1000,
+				cwd: thread.cwd,
+				resumableHere: true,
 			}));
 		}
 	}

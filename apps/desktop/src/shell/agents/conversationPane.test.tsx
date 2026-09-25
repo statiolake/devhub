@@ -92,6 +92,7 @@ async function attached(revision = 5) {
     <ConversationPane
       agentId="agent-1"
       label="Agent 1"
+      cli="Claude"
       appearance={undefined}
       hidden={false}
     />,

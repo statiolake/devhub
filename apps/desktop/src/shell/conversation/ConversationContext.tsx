@@ -47,8 +47,8 @@ export interface ConversationActions {
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
   /** Pick one of `SessionFacts[setting].choices` by its id. */
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;
-  /** Carry this conversation on in a terminal Agent. */
-  readonly continueInTerminal: () => Promise<void>;
+  /** Open the picker of earlier sessions this Agent can go on with (`/resume`). */
+  readonly openResume: () => void;
   readonly reportFailure: (error: unknown) => void;
 }
 

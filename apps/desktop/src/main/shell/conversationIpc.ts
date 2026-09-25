@@ -13,7 +13,8 @@ import {
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
 import { entryId, type EditOutcome } from "../../model/conversation.js";
-import type { AgentId } from "../../model/domain.js";
+import type { AgentId, AgentPresentation } from "../../model/domain.js";
+import { sessionScope } from "../agent/conversation/resume.js";
 import type {
 	ConversationCommand,
 	SettingName,
@@ -25,11 +26,14 @@ export interface ConversationIpcOptions {
 	readonly conversations: GuiConversations;
 	/** The Agents page, the one page that draws conversations, once it exists. */
 	readonly agentsPage: () => WebContents | undefined;
-	/** Ask the model to carry a GUI Agent on in a terminal Agent, resuming this session. */
-	readonly continueInTerminal: (
+	/** Ask the model to carry an Agent on in the other presentation, resuming this session. */
+	readonly continueIn: (
 		agentId: AgentId,
+		presentation: AgentPresentation,
 		session: string,
 	) => Promise<unknown>;
+	/** The session a terminal Agent's CLI is in (`AgentWiring.terminalSession`). */
+	readonly terminalSession: (agentId: AgentId) => Promise<string>;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
 }
@@ -96,7 +100,28 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 
 	handle(CONVERSATION_CHANNELS.continueInTerminal, async (agentId) => {
 		const session = await options.conversations.session(agentId);
-		await options.continueInTerminal(agentId, session);
+		await options.continueIn(agentId, "tui", session);
+	});
+
+	handle(CONVERSATION_CHANNELS.continueInGui, async (agentId) => {
+		const session = await options.terminalSession(agentId);
+		await options.continueIn(agentId, "gui", session);
+	});
+
+	handle(CONVERSATION_CHANNELS.listSessions, (agentId, scope) =>
+		options.conversations.pastSessions(agentId, sessionScope(scope)),
+	);
+
+	handle(CONVERSATION_CHANNELS.previewSession, (agentId, session, cwd) => {
+		if (typeof session !== "string" || typeof cwd !== "string")
+			throw new Error("a preview names no session and directory");
+		return options.conversations.previewSession(agentId, session, cwd);
+	});
+
+	handle(CONVERSATION_CHANNELS.resumeSession, (agentId, session) => {
+		if (typeof session !== "string")
+			throw new Error(`${JSON.stringify(session)} is not a session to resume`);
+		return options.conversations.resume(agentId, session);
 	});
 
 	handle(

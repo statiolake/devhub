@@ -15,13 +15,14 @@
  * session…" asks.
  */
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { AgentPresentationWire } from "../../ipc/appShell";
-import type { PastSessionWire } from "../../ipc/contract";
-import { toAppError } from "../failure";
 import { usePicker } from "./PickerContext";
 import { AgentProfilePicker } from "../components/shell/AgentProfilePicker";
-import { Picker } from "../components/shell/Picker";
+import {
+  SessionPicker,
+  type SessionSource,
+} from "../components/shell/SessionPicker";
 
 export interface AgentPickerSheetProps {
   readonly workspaceId: string;
@@ -82,9 +83,8 @@ export function AgentPickerSheet({
 }
 
 /**
- * Which of the Workspace's earlier sessions, newest first — read on its
- * machine when the question is asked. A listing that failed says why in the
- * sheet, where the question is, rather than as "no sessions".
+ * Which earlier session, newest first — read on the Workspace's machine when
+ * the question is asked (`SessionPicker`).
  */
 function PastSessionSheet({
   workspaceId,
@@ -97,59 +97,27 @@ function PastSessionSheet({
   readonly onChoose: (session: string, split: boolean) => void;
   readonly onCancel: () => void;
 }) {
-  const { listPastSessions } = usePicker();
-  const [sessions, setSessions] = useState<readonly PastSessionWire[]>();
-  const [refusal, setRefusal] = useState<string>();
-  useEffect(() => {
-    let live = true;
-    listPastSessions(workspaceId, profileId).then(
-      (answer) => {
-        if (live) setSessions(answer);
-      },
-      (error: unknown) => {
-        if (!live) return;
-        const failure = toAppError(error);
-        setRefusal(
-          failure.detail === undefined
-            ? failure.summary
-            : `${failure.summary} ${failure.detail}`,
-        );
-        setSessions([]);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [listPastSessions, workspaceId, profileId]);
-
+  const { listPastSessions, previewPastSession, agentProfiles } = usePicker();
+  const source: SessionSource = useMemo(
+    () => ({
+      list: (scope) => listPastSessions(workspaceId, profileId, scope),
+      preview: (session, cwd) =>
+        previewPastSession(workspaceId, profileId, session, cwd),
+    }),
+    [listPastSessions, previewPastSession, workspaceId, profileId],
+  );
+  const profile = agentProfiles.profiles.find(
+    (candidate) => candidate.id === profileId,
+  );
   return (
-    <Picker
+    <SessionPicker
       title="Resume a Session"
       question="Which earlier session should the new agent go on with?"
       step={2}
-      items={(sessions ?? []).map((session) => ({
-        id: session.id,
-        label: session.title,
-        detail:
-          session.updatedAt === undefined
-            ? undefined
-            : new Date(session.updatedAt).toLocaleString(),
-      }))}
-      busy={sessions === undefined}
-      note={
-        refusal === undefined ? (
-          "⌘Return opens it beside the editor."
-        ) : (
-          <span className="picker-note-failure">{refusal}</span>
-        )
-      }
-      emptyNoItems={
-        refusal === undefined
-          ? "This workspace has no earlier sessions of this profile."
-          : "The sessions could not be listed."
-      }
-      emptyNoMatch="No earlier session matches."
-      onChoose={(choice) => onChoose(choice.id, choice.split)}
+      cli={profile?.displayName ?? profileId}
+      source={source}
+      hint="⌘Return opens it beside the editor."
+      onChoose={onChoose}
       onCancel={onCancel}
     />
   );

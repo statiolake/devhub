@@ -329,6 +329,12 @@ describe("the handshake", () => {
 				argumentHint: undefined,
 				route: "mode",
 			},
+			{
+				name: "resume",
+				description: "Go on with an earlier session in this Workspace",
+				argumentHint: undefined,
+				route: "resume",
+			},
 		]);
 	});
 });
@@ -435,6 +441,12 @@ describe("the permission fixture", () => {
 				description: "",
 				argumentHint: undefined,
 				route: "message",
+			},
+			{
+				name: "resume",
+				description: "Go on with an earlier session in this Workspace",
+				argumentHint: undefined,
+				route: "resume",
 			},
 		]);
 		expect(session.model).toEqual({
@@ -1840,7 +1852,7 @@ describe("taking back the last turn", () => {
 				"--resume-drops-turn",
 				"u2",
 			],
-			mark: json({ type: "devhub_rewind", message: "user:u2" }),
+			mark: [json({ type: "devhub_rewind", message: "user:u2" })],
 		});
 		// Nothing changes until the host says the CLI was started again.
 		expect(adapter.transcript.entries.map((each) => each.id)).toContain(
@@ -1848,7 +1860,7 @@ describe("taking back the last turn", () => {
 		);
 		if (plan.kind !== "restart") throw new Error("not a restart");
 
-		const step = adapter.received(plan.mark);
+		const step = adapter.received(plan.mark[0]!);
 		expect(step.events).toContainEqual({
 			type: "rewound",
 			from: entryId("user:u2"),
@@ -1952,5 +1964,98 @@ describe("taking back the last turn", () => {
 		expect(() =>
 			adapter.received(json({ type: "devhub_rewind", message: "user:nope" })),
 		).toThrow(/user:nope, which is not an entry/);
+	});
+});
+
+describe("going on with another session (/resume)", () => {
+	const OTHER = "00000000-0000-4000-8000-0000000000a1";
+	function oneTurn(): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		adapter.received(echo("first", "u1"));
+		adapter.received(
+			assistantLine("msg_1", [{ type: "text", text: "one" }], null, {
+				uuid: "a1",
+			}),
+		);
+		adapter.received(result());
+		return adapter;
+	}
+	const history = claudeHistoryLines(
+		OTHER,
+		readFileSync(
+			join(FIXTURES, "claude-session-file.handwritten.jsonl"),
+			"utf8",
+		),
+	);
+
+	it("starts the CLI again on the other session, with its past in the mark after the switch", () => {
+		const adapter = oneTurn();
+		const plan = adapter.resumeSession(OTHER, history);
+		expect(plan).toEqual({
+			kind: "restart",
+			args: ["--resume", OTHER],
+			mark: [json({ type: "devhub_resume", session: OTHER }), ...history],
+		});
+		// Nothing changes until the host puts the mark in the journal.
+		expect(entry(adapter, "user:u1")).toMatchObject({ text: "first" });
+		if (plan.kind !== "restart") throw new Error("not a restart");
+
+		const [switched, ...past] = plan.mark;
+		const step = adapter.received(switched!);
+		expect(step.events).toContainEqual({
+			type: "session-switched",
+			session: OTHER,
+		});
+		expect(adapter.transcript.entries).toEqual([]);
+		expect(adapter.transcript.session.sessionId).toBe(OTHER);
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		expect(step.replies.map((line) => JSON.parse(line))).toEqual([
+			{
+				type: "control_request",
+				request_id: "boot:1",
+				request: { subtype: "initialize" },
+			},
+		]);
+		for (const line of past) adapter.received(line);
+		expect(entry(adapter, "user:u2")).toMatchObject({
+			text: "List the files in src",
+		});
+		for (const line of step.replies) adapter.sent(line);
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: "boot:1",
+					response: { commands: [], models: [] },
+				},
+			}),
+		);
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		// The other session's past is where an edit cuts now.
+		expect(
+			adapter.transcript.entries.some((each) => each.id === "user:u1"),
+		).toBe(false);
+	});
+
+	it("offers /resume as DevHub's own picker, listed or not", () => {
+		expect(
+			oneTurn().transcript.session.commands.find(
+				(command) => command.name === "resume",
+			),
+		).toMatchObject({ route: "resume" });
+	});
+
+	it("is refused while a turn runs", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		adapter.received(echo("first", "u1"));
+		expect(() => adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
 	});
 });

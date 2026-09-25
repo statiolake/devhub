@@ -147,6 +147,8 @@ export interface AgentWire {
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;
+	/** The kind of CLI the Agent runs: which of Continue in GUI / in terminal it has. */
+	readonly profileKind: AgentProfileKindWire;
 	/** Fixed when the Agent was launched. See `AgentPresentationWire`. */
 	readonly presentation: AgentPresentationWire;
 	readonly runtimeHealth: RuntimeHealthWire;

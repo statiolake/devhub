@@ -902,3 +902,92 @@
 .chord-help-footer {
   justify-content: flex-end;
 }
+
+/* A picker's controls over its list (a filter), and what it says beside the
+   list about the row the person is on (a preview). The list keeps the width
+   it would have alone; the aside takes the rest. */
+.picker-toolbar {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+}
+
+.mac-sheet.picker:has(.picker-body.has-aside) {
+  width: min(840px, 94vw);
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.picker-body.has-aside {
+  flex-direction: row;
+}
+
+.picker-aside {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  border-left: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+
+.picker-unavailable {
+  color: var(--secondary);
+}
+
+.mac-list-row[aria-disabled="true"] .mac-list-title {
+  color: var(--secondary);
+}
+
+/* The session picker's scope and preview (`SessionPicker`). */
+.session-picker-scope {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.session-picker-scope .mac-button[aria-pressed="true"] {
+  background: var(--selection);
+}
+
+.session-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-preview li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-preview-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.session-preview-person .session-preview-text {
+  color: var(--primary);
+  font-weight: 510;
+}
+
+.session-preview-agent .session-preview-text {
+  color: var(--secondary);
+}
+
+.session-preview-empty {
+  margin: 0;
+}

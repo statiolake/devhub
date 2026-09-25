@@ -37,8 +37,16 @@ import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
 	claudeHistory,
+	claudeSessionRecorder,
 	codexStructuredArgs,
+	listPastSessions,
+	previewPastSession,
 	resumedSession,
+	SessionNotResumable,
+	terminalSession,
+	type PastSession,
+	type PreviewLine,
+	type SessionScope,
 } from "../agent/conversation/resume.js";
 import type { AgentScreen } from "../agent/detect/detector.js";
 import type { AppModel } from "../../model/appModel.js";
@@ -88,6 +96,12 @@ export interface AgentWiringOptions {
 export interface AgentWiring {
 	readonly sessions: AgentSessions;
 	readonly conversations: GuiConversations;
+	/**
+	 * The session a terminal Claude or Codex Agent's CLI is in, for a GUI
+	 * Agent to go on with (`terminalSession` says how it is found). Refused,
+	 * saying why, when it cannot be told.
+	 */
+	terminalSession(agentId: AgentId): Promise<string>;
 }
 
 export interface GuiConversations {
@@ -103,6 +117,23 @@ export interface GuiConversations {
 	 * turn: there is nothing to resume yet.
 	 */
 	session(agentId: AgentId): Promise<string>;
+	/** The earlier sessions of a GUI Agent's CLI, as its `/resume` offers them: its Workspace's, or every directory's. */
+	pastSessions(
+		agentId: AgentId,
+		scope: SessionScope,
+	): Promise<readonly PastSession[]>;
+	/** The last exchanges of one of them (`cwd` is where the listing said it ran). */
+	previewSession(
+		agentId: AgentId,
+		session: string,
+		cwd: string,
+	): Promise<readonly PreviewLine[]>;
+	/**
+	 * Have a GUI Agent go on with another session of its CLI (`/resume`):
+	 * Claude's past is read from its file first, and a session that cannot be
+	 * read back is refused before the running CLI is touched.
+	 */
+	resume(agentId: AgentId, session: string): Promise<void>;
 	readonly registry: ConversationRegistry;
 }
 
@@ -161,8 +192,45 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				),
 		);
 
+	/** Where an Agent runs and what it runs: what its sessions are read with. */
+	const placeOf = (agentId: AgentId) => {
+		const agent = options.model().agent(agentId);
+		const workspace = options.model().workspaceForAgent(agentId);
+		const machine = machineOfAgent(agentId);
+		if (
+			agent === undefined ||
+			workspace === undefined ||
+			machine === undefined
+		) {
+			throw new Error(`there is no running Agent ${agentId}`);
+		}
+		return {
+			agent,
+			workspace,
+			machine,
+			runtime: options.machineRuntime(machine),
+		};
+	};
+
 	const conversations: GuiConversations = {
 		registry,
+		async pastSessions(agentId, scope) {
+			const { agent, workspace, runtime } = placeOf(agentId);
+			return listPastSessions(runtime, agent.profile, workspace.root, scope);
+		},
+		async previewSession(agentId, session, cwd) {
+			const { agent, runtime } = placeOf(agentId);
+			return previewPastSession(runtime, agent.profile, session, cwd);
+		},
+		async resume(agentId, session) {
+			const conversation = await conversations.of(agentId);
+			const { agent, workspace, runtime } = placeOf(agentId);
+			const history =
+				agent.profile.kind === "claude"
+					? await claudeHistory(runtime, agent.profile, workspace.root, session)
+					: [];
+			await conversation.resumeSession(session, history);
+		},
 		async session(agentId) {
 			const conversation = await conversations.of(agentId);
 			const agent = options.model().agent(agentId)!;
@@ -314,6 +382,16 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				// Everything else about the session — its markers, its tmux, its
 				// Stop — is the same session.
 				let command = cli;
+				// A terminal Claude writes down the session it is in, so that it
+				// can be continued in the GUI (`claudeSessionRecorder`).
+				if (presentation === "tui" && profile.kind === "claude") {
+					const directory = await stateDirectory(machine, agentId);
+					await options.machineRuntime(machine).makeDirectory(directory);
+					command = {
+						...cli,
+						args: [...cli.args, ...claudeSessionRecorder(directory)],
+					};
+				}
 				if (presentation === "gui") {
 					const runtime = options.machineRuntime(machine);
 					const directory = await stateDirectory(machine, agentId);
@@ -590,7 +668,35 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		},
 	});
 
-	return { sessions, conversations };
+	const terminalSessionOf = async (agentId: AgentId): Promise<string> => {
+		const { agent, workspace, machine, runtime } = placeOf(agentId);
+		if (agent.presentation !== "tui") {
+			throw new Error(`${agent.displayName} is not a terminal Agent`);
+		}
+		if (agent.profile.kind === "codex") {
+			// Codex's newest terminal thread in the directory is this Agent's
+			// only while no other Codex terminal runs there.
+			const others = workspace.agents.filter(
+				(other) =>
+					other.id !== agentId &&
+					other.presentation === "tui" &&
+					other.profile.kind === "codex",
+			);
+			if (others.length > 0) {
+				throw new SessionNotResumable(
+					`DevHub cannot tell which Codex thread is “${agent.displayName}”'s: ${others.map((other) => `“${other.displayName}”`).join(", ")} ${others.length === 1 ? "is" : "are"} a Codex terminal in the same Workspace too. Use New Agent › Resume a Codex session… instead.`,
+				);
+			}
+		}
+		return terminalSession(
+			runtime,
+			agent.profile,
+			workspace.root,
+			await stateDirectory(machine, agentId),
+		);
+	};
+
+	return { sessions, conversations, terminalSession: terminalSessionOf };
 }
 
 /**

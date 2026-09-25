@@ -298,6 +298,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly responded = new Set<string>();
 	/** `thread/revert` requests DevHub made, by id: the turn each takes back from. */
 	private readonly reverts = new Map<string, string>();
+	/** `thread/resume` requests made once a thread was open (`/resume`), by id. */
+	private readonly switches = new Set<string>();
 	private readonly chosen: Chosen = {
 		model: undefined,
 		effort: undefined,
@@ -416,6 +418,32 @@ export class CodexAdapter implements ProtocolAdapter {
 				threadId: this.mainThread,
 				beforeTurnId: turn[0],
 			} satisfies ThreadRevertParams);
+		});
+		return { kind: "write", lines };
+	}
+
+	resumeSession(session: string, history: readonly string[]): RewindPlan {
+		if (history.length > 0) {
+			throw new Error(
+				"Codex hands back a thread's past itself: a resume takes no history",
+			);
+		}
+		const lines = this.lines(() => {
+			const { state, requests } = this.current;
+			if (
+				this.broken ||
+				state.phase !== "ready" ||
+				state.turn !== "none" ||
+				requests.length > 0
+			) {
+				throw new Error(
+					"the Codex conversation is not idle, so it cannot go on with another thread now",
+				);
+			}
+			this.call("thread/resume", {
+				threadId: session,
+				cwd: this.options.cwd,
+			} satisfies ThreadResumeParams);
 		});
 		return { kind: "write", lines };
 	}
@@ -544,8 +572,15 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.responded.add(rpcKey(message.id));
 			return;
 		}
+		const threadOpen =
+			this.sentMethods.has("thread/start") ||
+			this.sentMethods.has("thread/resume");
 		this.sentMethods.add(message.method);
 		if (message.id === undefined) return;
+		if (message.method === "thread/resume" && threadOpen) {
+			this.switches.add(rpcKey(message.id));
+			this.setState({ phase: "ready", turn: "rewinding" });
+		}
 		const method = CLIENT_METHODS.find((known) => known === message.method);
 		if (method === undefined)
 			throw new Error(
@@ -668,8 +703,11 @@ export class CodexAdapter implements ProtocolAdapter {
 				return this.openThread();
 			}
 			case "thread/start":
-			case "thread/resume":
-				return this.onThreadOpened(threadOpenedResponse(this.reader, result));
+			case "thread/resume": {
+				const opened = threadOpenedResponse(this.reader, result);
+				if (this.switches.delete(rpcKey(id))) this.leaveThread(opened);
+				return this.onThreadOpened(opened);
+			}
 			case "model/list": {
 				this.models = modelListResponse(this.reader, result);
 				return this.publishSession();
@@ -693,6 +731,14 @@ export class CodexAdapter implements ProtocolAdapter {
 	): void {
 		const method = this.methodOf(id, "message.id");
 		const raw = { code, message, data };
+		if (method === "thread/resume" && this.switches.delete(rpcKey(id!))) {
+			this.notice(
+				"error",
+				`${this.codexName} did not go on with that thread: ${message}`,
+				raw,
+			);
+			return this.setState({ phase: "ready", turn: "none" });
+		}
 		switch (method) {
 			case "initialize":
 			case "thread/start":
@@ -784,6 +830,27 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.callOnce("model/list", {} satisfies ModelListParams);
 	}
 
+	/**
+	 * The thread `/resume` left: everything DevHub kept about it goes, before
+	 * the other one is drawn. The server keeps the old thread loaded; it is
+	 * idle (a resume is refused while a turn runs), so nothing more of it is
+	 * expected.
+	 */
+	private leaveThread(opened: ThreadOpened): void {
+		this.emit({ type: "session-switched", session: opened.thread.id });
+		this.turnMessages.clear();
+		this.runningTurn = undefined;
+		this.threadParents.clear();
+		this.threadLabels.clear();
+		this.unplaced.clear();
+		this.unfinished.clear();
+		this.commandOutput.clear();
+		this.fileChanges.clear();
+		this.total = undefined;
+		this.totalAtTurnStart = undefined;
+		this.usage = undefined;
+	}
+
 	/** A turn `thread/resume` hands back whole: its items as completed, then its end. */
 	private replayTurn(threadId: string, turn: TurnFacts): void {
 		for (const item of turn.items)
@@ -861,6 +928,12 @@ export class CodexAdapter implements ProtocolAdapter {
 					description: "Choose what Codex may do without asking",
 					argumentHint: undefined,
 					route: "mode",
+				},
+				{
+					name: "resume",
+					description: "Go on with an earlier thread in this Workspace",
+					argumentHint: undefined,
+					route: "resume",
 				},
 			],
 		};

@@ -457,16 +457,19 @@ export type UserIntent =
       readonly resume?: string;
     }
   /**
-   * Carry a GUI Agent's conversation on in a terminal: a new terminal Agent in
-   * the same Workspace, from the same profile, resuming the session — and the
-   * GUI Agent stopped once that one is running. An Agent keeps the
-   * presentation it was launched with, so this is a second Agent, not the
-   * first one changing its mind.
+   * Carry an Agent's session on in the other presentation: a GUI Agent's in a
+   * terminal ("Continue in terminal"), a terminal Agent's in DevHub's
+   * conversation view ("Continue in GUI"). A new Agent in the same Workspace,
+   * from the same profile, resuming the session — and the first Agent stopped
+   * once that one is running. An Agent keeps the presentation it was launched
+   * with, so this is a second Agent, not the first one changing its mind.
    */
   | {
-      readonly type: "continue_agent_in_terminal";
+      readonly type: "continue_agent";
       readonly agentId: AgentId;
-      /** The session the GUI Agent's CLI named, which the terminal Agent resumes. */
+      /** The presentation the new Agent has: the other one than `agentId`'s. */
+      readonly presentation: AgentPresentation;
+      /** The session the Agent's CLI is in, which the new Agent resumes. */
       readonly session: string;
     }
   | {

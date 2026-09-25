@@ -29,7 +29,7 @@ export function fakeActions(
     interrupt: vi.fn(() => Promise.resolve()),
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),
-    continueInTerminal: vi.fn(() => Promise.resolve()),
+    openResume: vi.fn(),
     reportFailure: vi.fn(),
     ...overrides,
   };

@@ -21,17 +21,24 @@ import {
   type Transcript,
 } from "../../model/conversation";
 import { ConversationSurface } from "../conversation/ConversationSurface";
+import {
+  SessionPicker,
+  type SessionSource,
+} from "../components/shell/SessionPicker";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 
 export function ConversationPane({
   agentId,
   label,
+  cli,
   appearance,
   hidden,
 }: {
   readonly agentId: string;
   readonly label: string;
+  /** The CLI's name, for what `/resume` says about its sessions. */
+  readonly cli: string;
   readonly appearance: AppAppearance | undefined;
   readonly hidden: boolean;
 }) {
@@ -53,18 +60,50 @@ export function ConversationPane({
         bridge.conversation.answer(agentId, request, answer),
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>
         bridge.conversation.setSetting(agentId, setting, id),
-      continueInTerminal: () => bridge.conversation.continueInTerminal(agentId),
+      openResume: () => setResuming(true),
       reportFailure,
     };
   }, [agentId, reportFailure]);
+  const [resuming, setResuming] = useState(false);
+  const sessions: SessionSource = useMemo(() => {
+    const bridge = devhub().conversation;
+    return {
+      list: (scope) => bridge.listSessions(agentId, scope),
+      preview: (session, cwd) => bridge.previewSession(agentId, session, cwd),
+    };
+  }, [agentId]);
   return (
-    <ConversationSurface
-      transcript={transcript}
-      actions={actions}
-      appearance={appearance}
-      hidden={hidden}
-      label={label}
-    />
+    <>
+      <ConversationSurface
+        transcript={transcript}
+        actions={actions}
+        appearance={appearance}
+        hidden={hidden}
+        label={label}
+      />
+      {/* `/resume`: the Workspace's earlier sessions, one of which this
+          Agent then goes on with in place of the one it is in. */}
+      {resuming && !hidden ? (
+        <SessionPicker
+          title="Resume a Session"
+          question={`Which earlier session should ${label} go on with? The one it is in now is left as it is.`}
+          cli={cli}
+          source={sessions}
+          onChoose={(session) => {
+            void devhub()
+              .conversation.resumeSession(agentId, session)
+              .then(
+                () => setResuming(false),
+                (error: unknown) => {
+                  setResuming(false);
+                  reportFailure(error);
+                },
+              );
+          }}
+          onCancel={() => setResuming(false)}
+        />
+      ) : null}
+    </>
   );
 }
 

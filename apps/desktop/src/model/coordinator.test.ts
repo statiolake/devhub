@@ -1000,8 +1000,9 @@ describe("continuing a GUI Agent in a terminal", () => {
     });
     driver.settle();
     driver.dispatch({
-      type: "continue_agent_in_terminal",
+      type: "continue_agent",
       agentId: AG_A,
+      presentation: "tui",
       session: "thread-1",
     });
     const resolve = driver.drainEffects()[0];
@@ -1095,9 +1096,87 @@ describe("continuing a GUI Agent in a terminal", () => {
     expect(
       errorCode(() =>
         driver.dispatch({
-          type: "continue_agent_in_terminal",
+          type: "continue_agent",
           agentId: AG_A,
+          presentation: "tui",
           session: "thread-1",
+        }),
+      ),
+    ).toBe(AppErrorCode.Domain);
+  });
+});
+
+describe("continuing a terminal Agent in the GUI", () => {
+  const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400b1");
+  it("launches a GUI Agent from the same profile resuming the session, then stops the terminal one", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      agentPresentation: "tui",
+    });
+    driver.settle();
+    driver.dispatch({
+      type: "continue_agent",
+      agentId: AG_A,
+      presentation: "gui",
+      session: "thread-9",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    expect(resolve.resume).toBe("thread-9");
+    driver.answer(resolve);
+    const id = driver.drainEffects()[0];
+    if (id?.kind !== "generate_agent_id") throw new Error("unexpected");
+    driver.accept({
+      type: "agent_id_generated",
+      token: id.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+    });
+    const launch = driver.drainEffects()[0];
+    if (launch?.kind !== "launch_agent") throw new Error("unexpected");
+    expect(launch.agentPresentation).toBe("gui");
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+    driver.accept({
+      type: "agent_launch_completed",
+      token: launch.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+      result: { kind: "started" },
+    });
+    const persist = driver.drainEffects()[0];
+    if (persist?.kind !== "persist_state") throw new Error("unexpected");
+    driver.answer(persist);
+    expect(
+      driver.drainEffects().find((effect) => effect.kind === "stop_agent"),
+    ).toMatchObject({ kind: "stop_agent", agentId: AG_A });
+  });
+
+  it("is refused for an Agent that is already a GUI Agent", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      agentPresentation: "gui",
+    });
+    driver.settle();
+    expect(
+      errorCode(() =>
+        driver.dispatch({
+          type: "continue_agent",
+          agentId: AG_A,
+          presentation: "gui",
+          session: "thread-9",
         }),
       ),
     ).toBe(AppErrorCode.Domain);

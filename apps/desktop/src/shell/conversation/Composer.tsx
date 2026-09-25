@@ -149,7 +149,7 @@ export function Composer({
   /** The edit is over: sent, or given up. */
   readonly endEdit: () => void;
 }) {
-  const { send, editLastMessage, interrupt, reportFailure } =
+  const { send, editLastMessage, interrupt, reportFailure, openResume } =
     useConversationActions();
   const [text, setText] = useState("");
   /** What was being typed when an edit began, given back if it is given up. */
@@ -204,6 +204,16 @@ export function Composer({
 
   const submit = () => {
     const line = text;
+    // A command DevHub answers itself, typed out whole, is that command
+    // chosen, not words for the Agent (`/resume`, `/model`).
+    const answered = transcript.session.commands.find(
+      (command) =>
+        command.route !== "message" && line.trim() === `/${command.name}`,
+    );
+    if (answered !== undefined) {
+      choose(answered);
+      return;
+    }
     if (line.trim() === "") return;
     const cleared = () => {
       // Only what was sent is cleared: anything typed since stays.
@@ -228,7 +238,8 @@ export function Composer({
       return;
     }
     edit("");
-    openSetting(command.route);
+    if (command.route === "resume") openResume();
+    else openSetting(command.route);
   };
 
   const recall = (step: 1 | -1): boolean => {

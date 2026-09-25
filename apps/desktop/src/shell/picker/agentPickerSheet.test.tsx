@@ -31,6 +31,7 @@ function mount(
   const value = {
     dispatch,
     listPastSessions,
+    previewPastSession: vi.fn().mockResolvedValue([]),
     agentProfiles: {
       availability: "available",
       sequence: 1,
@@ -199,13 +200,18 @@ describe("resuming an earlier session", () => {
   it("lists the Workspace's sessions of that profile and launches the one picked", async () => {
     const { dispatch, listPastSessions } = mount(
       vi.fn().mockResolvedValue([
-        { id: "session-new", title: "Fix the login flow", updatedAt: 2000 },
-        { id: "session-old", title: "Write the README" },
+        {
+          id: "session-new",
+          title: "Fix the login flow",
+          updatedAt: 2000,
+          resumableHere: true,
+        },
+        { id: "session-old", title: "Write the README", resumableHere: true },
       ]),
     );
     // Option on the resume row turns its presentation the way it does a profile's.
     fireEvent.click(row(/Resume a Claude session/u), { altKey: true });
-    expect(listPastSessions).toHaveBeenCalledWith(WORKSPACE, "claude");
+    expect(listPastSessions).toHaveBeenCalledWith(WORKSPACE, "claude", "here");
     fireEvent.click(await screen.findByRole("option", { name: /README/u }));
     expect(dispatch).toHaveBeenCalledWith({
       type: "request_create_agent",

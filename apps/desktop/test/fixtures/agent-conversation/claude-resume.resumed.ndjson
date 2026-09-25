@@ -1,0 +1,9 @@
+# HAND-WRITTEN, NOT A CAPTURE: the CLI started again with --resume on the other
+# session (claude-session-file.handwritten.jsonl's), taking "Go on" there.
+> {"type":"control_request","request_id":"fixture:1","request":{"subtype":"initialize"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:1","response":{"commands":[],"models":[]}}}
+> {"type":"user","message":{"role":"user","content":"Go on"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":[],"claude_code_version":"2.1.282","tools":[]}
+< {"type":"user","message":{"role":"user","content":"Go on"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000a1","uuid":"00000000-0000-4000-8000-0000000000f9"}
+< {"type":"assistant","message":{"id":"msg_r2","role":"assistant","content":[{"type":"text","text":"Going on."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000a1","uuid":"00000000-0000-4000-8000-0000000000fa"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":900,"result":"done","session_id":"00000000-0000-4000-8000-0000000000a1"}

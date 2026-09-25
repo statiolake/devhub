@@ -1,0 +1,21 @@
+/* `ContinueElsewhere`: one floating button over an Agent's pane. It borrows
+   the Agent shortcuts' button (`.agent-shortcut` in styles/shell.css) and
+   their rule for strength: at rest 40%, full while the group is pointed at or
+   holds focus. */
+.agent-continue {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-3);
+}
+
+.agent-continue.is-above-composer {
+  top: auto;
+  bottom: var(--space-3);
+}
+
+.agent-continue:hover > .agent-shortcut,
+.agent-continue:focus-within > .agent-shortcut {
+  opacity: 1;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+}
