@@ -27,13 +27,16 @@
  * the conversation being taken back — is held by DevHub and listed over the
  * box, oldest first (`Transcript.pending`). Each can be changed or removed
  * there, or sent now, which a running turn takes in as it goes; the rest are
- * sent one per turn, as each turn ends.
+ * sent one per turn, as each turn ends. One open to be changed is held by
+ * main, unsent, from Edit until Save or Cancel, and let go if the composer
+ * goes away with it open.
  *
  * Rewinding to before a message puts its words back here, ahead of whatever
  * was being typed.
  */
 
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -98,9 +101,10 @@ export const REWIND_NOTE =
 
 /** What a held message says about itself. */
 export function pendingStatus(message: PendingMessage): string {
-  return message.failure === undefined
-    ? "Waiting: sent when the Agent is ready for it"
-    : `Not sent: ${message.failure}`;
+  if (message.failure !== undefined) return `Not sent: ${message.failure}`;
+  return message.editing
+    ? "Being changed: not sent until you save or cancel"
+    : "Waiting: sent when the Agent is ready for it";
 }
 
 /**
@@ -114,10 +118,40 @@ function PendingItem({
   readonly message: PendingMessage;
   readonly canSendNow: boolean;
 }) {
-  const { editPending, removePending, sendPendingNow, reportFailure } =
-    useConversationActions();
+  const {
+    startEditingPending,
+    editPending,
+    stopEditingPending,
+    removePending,
+    sendPendingNow,
+    reportFailure,
+  } = useConversationActions();
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const composing = useRef(false);
+  // Main holds the message while the editor is open; the composer going
+  // away with it open lets go, so it is not held for an edit nobody finishes.
+  const editing = useRef(false);
+  editing.current = draft !== undefined;
+  const release = useRef<() => void>(() => undefined);
+  release.current = () => {
+    void stopEditingPending(message.id).catch(reportFailure);
+  };
+  useEffect(
+    () => () => {
+      if (editing.current) release.current();
+    },
+    [],
+  );
+  const open = () => {
+    void startEditingPending(message.id).then(
+      () => setDraft(message.text),
+      reportFailure,
+    );
+  };
+  const cancel = () => {
+    setDraft(undefined);
+    release.current();
+  };
   const save = () => {
     if (draft === undefined) return;
     if (draft.trim() === "") {
@@ -164,7 +198,7 @@ function PendingItem({
               // Gives the edit up; the turn is not interrupted by the same key.
               event.preventDefault();
               event.stopPropagation();
-              setDraft(undefined);
+              cancel();
             }
           }}
         />
@@ -190,7 +224,7 @@ function PendingItem({
             <button
               type="button"
               className="conversation-pending-edit"
-              onClick={() => setDraft(message.text)}
+              onClick={open}
             >
               <EditIcon />
               Edit
@@ -217,7 +251,7 @@ function PendingItem({
             <button
               type="button"
               className="conversation-pending-cancel"
-              onClick={() => setDraft(undefined)}
+              onClick={cancel}
             >
               Cancel
             </button>

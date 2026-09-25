@@ -967,7 +967,12 @@ describe("a rewind", () => {
         applyEvent(twoTurns, {
           type: "pending",
           pending: [
-            { id: pendingId("held:1"), text: "later", failure: undefined },
+            {
+              id: pendingId("held:1"),
+              text: "later",
+              failure: undefined,
+              editing: false,
+            },
           ],
         }),
       ).size,
@@ -1009,8 +1014,18 @@ describe("the messages DevHub holds", () => {
   it("are replaced whole by each pending event, and start empty", () => {
     expect(EMPTY_TRANSCRIPT.pending).toEqual([]);
     const held = [
-      { id: pendingId("held:1"), text: "one", failure: undefined },
-      { id: pendingId("held:2"), text: "two", failure: "the host is gone" },
+      {
+        id: pendingId("held:1"),
+        text: "one",
+        failure: undefined,
+        editing: false,
+      },
+      {
+        id: pendingId("held:2"),
+        text: "two",
+        failure: "the host is gone",
+        editing: false,
+      },
     ];
     const folded = applyEvent(EMPTY_TRANSCRIPT, {
       type: "pending",

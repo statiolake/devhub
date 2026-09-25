@@ -46,6 +46,29 @@ export interface ConversationIpcOptions {
 export function registerConversationIpc(options: ConversationIpcOptions): void {
 	const attached = new Set<AgentId>();
 
+	/**
+	 * The page no longer has the Agent's held messages open: none of them is
+	 * being changed any more (`AgentConversation.stopEditingAll`), so they are
+	 * written in their turn rather than waiting for an edit nobody can finish.
+	 */
+	const letGoOfEdits = (agentId: AgentId) =>
+		options.conversations.registry.get(agentId)?.stopEditingAll();
+	/** Each page, watched once: its going away, crashing or loading afresh detaches it from everything. */
+	const watched = new WeakSet<WebContents>();
+	const watch = (page: WebContents) => {
+		if (watched.has(page)) return;
+		watched.add(page);
+		const gone = () => {
+			for (const agentId of attached) letGoOfEdits(agentId);
+			attached.clear();
+		};
+		page.once("destroyed", gone);
+		page.on("render-process-gone", gone);
+		page.on("did-start-navigation", (details) => {
+			if (details.isMainFrame && !details.isSameDocument) gone();
+		});
+	};
+
 	options.conversations.registry.onEvent((agentId, revision, event) => {
 		if (!attached.has(agentId)) return;
 		const page = options.agentsPage();
@@ -91,6 +114,10 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	handle(
 		CONVERSATION_CHANNELS.attach,
 		async (agentId): Promise<ConversationAttachment> => {
+			const page = options.agentsPage();
+			if (page === undefined)
+				throw new Error("the Agents page went away while it attached");
+			watch(page);
 			const conversation = await options.conversations.of(agentId);
 			// Subscribed before the snapshot is taken, so no event can fall between
 			// them; the page drops what the snapshot already holds by its revision.
@@ -101,6 +128,7 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 
 	handle(CONVERSATION_CHANNELS.detach, (agentId) => {
 		attached.delete(agentId);
+		letGoOfEdits(agentId);
 	});
 
 	handle(CONVERSATION_CHANNELS.continueInTerminal, async (agentId) => {
@@ -150,8 +178,12 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 				return conversation.configure(request.which, request.id);
 			case "submit":
 				return conversation.submit(request.text);
+			case "start-editing-pending":
+				return conversation.startEditingPending(request.pending);
 			case "edit-pending":
 				return conversation.editPending(request.pending, request.text);
+			case "stop-editing-pending":
+				return conversation.stopEditingPending(request.pending);
 			case "remove-pending":
 				return conversation.removePending(request.pending);
 			case "send-pending-now":
@@ -172,7 +204,11 @@ function requestFrom(wire: unknown):
 			readonly text: string;
 	  }
 	| {
-			readonly kind: "remove-pending" | "send-pending-now";
+			readonly kind:
+				| "remove-pending"
+				| "send-pending-now"
+				| "start-editing-pending"
+				| "stop-editing-pending";
 			readonly pending: PendingId;
 	  }
 	| {
@@ -198,6 +234,8 @@ function requestFrom(wire: unknown):
 			};
 		case "remove-pending":
 		case "send-pending-now":
+		case "start-editing-pending":
+		case "stop-editing-pending":
 			if (typeof command.pending !== "string") break;
 			return { kind: command.kind, pending: pendingId(command.pending) };
 		case "instruct":

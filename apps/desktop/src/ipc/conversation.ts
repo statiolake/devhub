@@ -44,11 +44,16 @@ export const CONVERSATION_CHANNELS = {
 export type ConversationCommandWire =
 	/** The person's words: written at once when the Agent is idle, else held (`Transcript.pending`). */
 	| { readonly kind: "send"; readonly text: string }
+	/** The person opened a held message to change it: it is not written until they save or cancel. */
+	| { readonly kind: "start-editing-pending"; readonly pending: PendingId }
+	/** Save the change: new words, and the message is written again in its turn. */
 	| {
 			readonly kind: "edit-pending";
 			readonly pending: PendingId;
 			readonly text: string;
 	  }
+	/** The person gave the change up: the message is written as it was. */
+	| { readonly kind: "stop-editing-pending"; readonly pending: PendingId }
 	| { readonly kind: "remove-pending"; readonly pending: PendingId }
 	/** Write a held message now: a running turn takes it in as it goes. */
 	| { readonly kind: "send-pending-now"; readonly pending: PendingId }
@@ -93,7 +98,14 @@ export interface ConversationApi {
 	): Promise<ConversationAttachment>;
 	detach(agentId: string): Promise<void>;
 	send(agentId: string, text: string): Promise<void>;
+	/**
+	 * Hold a waiting message while the person changes it: it is not written
+	 * until `editPending` or `stopEditingPending`, or until this page detaches
+	 * or goes away, which gives every such edit up.
+	 */
+	startEditingPending(agentId: string, pending: PendingId): Promise<void>;
 	editPending(agentId: string, pending: PendingId, text: string): Promise<void>;
+	stopEditingPending(agentId: string, pending: PendingId): Promise<void>;
 	removePending(agentId: string, pending: PendingId): Promise<void>;
 	sendPendingNow(agentId: string, pending: PendingId): Promise<void>;
 	instruct(agentId: string, subagent: EntryId, text: string): Promise<void>;

@@ -947,6 +947,60 @@ describe("the person's messages, held", () => {
 		await conversation.stop();
 	});
 
+	it("is not written while the person edits it, and is written as saved once they do", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("third");
+		const [third] = conversation.reading().transcript.pending;
+		await conversation.startEditingPending(third!.id);
+		expect(conversation.reading().transcript.pending[0]).toMatchObject({
+			editing: true,
+		});
+		const writes = host.inLog.length;
+		endTurn(host);
+		await settle();
+		expect(host.inLog).toHaveLength(writes);
+		expect(pending(conversation)).toEqual(["third"]);
+		await expect(conversation.sendPendingNow(third!.id)).rejects.toThrow(
+			"being edited",
+		);
+
+		await conversation.editPending(third!.id, "third, reworded");
+		await settle();
+		expect(said(conversation)).toEqual(["first", "second", "third, reworded"]);
+		expect(pending(conversation)).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("is written unchanged once the person gives the edit up, or the page lets go of it", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second");
+		await settle();
+		await conversation.submit("third");
+		await conversation.submit("fourth");
+		const [third, fourth] = conversation.reading().transcript.pending;
+		await conversation.startEditingPending(third!.id);
+		await conversation.startEditingPending(fourth!.id);
+		endTurn(host);
+		await settle();
+		expect(pending(conversation)).toEqual(["third", "fourth"]);
+
+		await conversation.stopEditingPending(third!.id);
+		await settle();
+		expect(said(conversation)).toEqual(["first", "second", "third"]);
+		endTurn(host);
+		await settle();
+		expect(pending(conversation)).toEqual(["fourth"]);
+
+		conversation.stopEditingAll();
+		await settle();
+		expect(said(conversation)).toEqual(["first", "second", "third", "fourth"]);
+		await conversation.stop();
+	});
+
 	it("says a held message is gone when it was already written", async () => {
 		const { conversation, cli } = await turns(["first"]);
 		cli.hold = true;

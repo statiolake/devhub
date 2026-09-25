@@ -66,7 +66,11 @@
  * Agent becomes idle, the oldest held message is written and starts the next
  * turn. A held message is DevHub's alone, not in the journal: it is lost if
  * DevHub quits before writing it. A write of one that fails leaves it held,
- * saying why, until the person tries again.
+ * saying why, until the person tries again. One the person has open to
+ * change (`startEditingPending`) is not written, nor anything behind it,
+ * until they save the change (`editPending`) or give it up
+ * (`stopEditingPending`); the page that had it open going away gives it up
+ * (`stopEditingAll`).
  */
 
 import {
@@ -269,21 +273,74 @@ export class AgentConversation {
 			this.#heldCount += 1;
 			this.#setPending([
 				...this.#transcript.pending,
-				{ id: pendingId(`held:${this.#heldCount}`), text, failure: undefined },
+				{
+					id: pendingId(`held:${this.#heldCount}`),
+					text,
+					failure: undefined,
+					editing: false,
+				},
 			]);
 		});
 	}
 
-	/** Change the words of a held message. */
+	/**
+	 * The person opened a held message to change it: it is not written until
+	 * they save (`editPending`) or give the edit up (`stopEditingPending`).
+	 */
+	startEditingPending(id: PendingId): Promise<void> {
+		return this.#serial(async () => {
+			this.#held(id);
+			this.#setEditing((each) => each.id === id, true);
+		});
+	}
+
+	/** Change the words of a held message, and let it be written again. */
 	editPending(id: PendingId, text: string): Promise<void> {
 		return this.#serial(async () => {
 			this.#held(id);
 			this.#setPending(
 				this.#transcript.pending.map((each) =>
-					each.id === id ? { ...each, text, failure: undefined } : each,
+					each.id === id
+						? { ...each, text, failure: undefined, editing: false }
+						: each,
 				),
 			);
-		});
+		}).then(() => this.#writeNextHeld());
+	}
+
+	/**
+	 * The person gave up changing a held message: it is written as it was.
+	 * A message no longer waiting has nothing to give up — the page lets go
+	 * of an edit when it closes, and the message may have been taken back.
+	 */
+	stopEditingPending(id: PendingId): Promise<void> {
+		return this.#serial(async () => {
+			this.#setEditing((each) => each.id === id, false);
+		}).then(() => this.#writeNextHeld());
+	}
+
+	/**
+	 * The page that had held messages open went away: none is being changed.
+	 * Nobody waits on this, so a failure in it is the conversation's own.
+	 */
+	stopEditingAll(): void {
+		void this.#serial(async () => {
+			this.#setEditing(() => true, false);
+		})
+			.then(() => this.#writeNextHeld())
+			.catch((error: unknown) => this.#crash(error));
+	}
+
+	#setEditing(
+		which: (message: PendingMessage) => boolean,
+		editing: boolean,
+	): void {
+		const { pending } = this.#transcript;
+		if (!pending.some((each) => which(each) && each.editing !== editing))
+			return;
+		this.#setPending(
+			pending.map((each) => (which(each) ? { ...each, editing } : each)),
+		);
 	}
 
 	/** Take a held message back: it is never written. */
@@ -304,7 +361,11 @@ export class AgentConversation {
 	sendPendingNow(id: PendingId): Promise<void> {
 		return this.#serial(async () => {
 			this.#refuseIfBusy();
-			this.#held(id);
+			if (this.#held(id).editing) {
+				throw new Error(
+					"That message is being edited. Save or cancel the change first.",
+				);
+			}
 			const { state } = this.#transcript;
 			if (state.phase !== "ready" || state.turn === "rewinding") {
 				throw new Error(
@@ -364,16 +425,22 @@ export class AgentConversation {
 	}
 
 	/**
-	 * The Agent became idle: the oldest held message is written, in the
-	 * turnstile after whatever made it idle. A held message whose last write
-	 * failed waits for the person.
+	 * The Agent became idle, or the oldest held message may be written now:
+	 * it is written, in the turnstile after whatever made it so. A held
+	 * message whose last write failed, or that the person has open to change,
+	 * waits for the person, and so does everything behind it.
 	 */
 	#writeNextHeld(): void {
-		const next = this.#transcript.pending[0];
-		if (next === undefined || next.failure !== undefined) return;
+		const writable = () => {
+			const next = this.#transcript.pending[0];
+			return next !== undefined && next.failure === undefined && !next.editing
+				? next
+				: undefined;
+		};
+		if (writable() === undefined) return;
 		void this.#serial(async () => {
-			if (!this.#idleNow() || this.#transcript.pending[0]?.id !== next.id)
-				return;
+			const next = writable();
+			if (next === undefined || !this.#idleNow()) return;
 			await this.#writeHeld(next.id);
 		}).catch((error: unknown) => this.#crash(error));
 	}

@@ -417,6 +417,12 @@ export interface PendingMessage {
   readonly text: string;
   /** Why the last try to write it failed, if it did. It is held until the person tries again. */
   readonly failure: string | undefined;
+  /**
+   * The person has it open to change it: it is not written until they save
+   * the change or give it up, or the page that had it open goes away. A
+   * message behind it waits too, so the order they were sent in holds.
+   */
+  readonly editing: boolean;
 }
 
 export type ConversationEvent =

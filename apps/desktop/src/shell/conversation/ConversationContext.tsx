@@ -37,7 +37,13 @@ export interface ConversationActions {
    * idle, else held as a pending message (`Transcript.pending`).
    */
   readonly send: (text: string) => Promise<void>;
+  /**
+   * The person opened a held message to change it: main holds it, unwritten,
+   * until `editPending` saves the change or `stopEditingPending` gives it up.
+   */
+  readonly startEditingPending: (pending: PendingId) => Promise<void>;
   readonly editPending: (pending: PendingId, text: string) => Promise<void>;
+  readonly stopEditingPending: (pending: PendingId) => Promise<void>;
   readonly removePending: (pending: PendingId) => Promise<void>;
   /** Write a held message now: a running turn takes it in as it goes. */
   readonly sendPendingNow: (pending: PendingId) => Promise<void>;

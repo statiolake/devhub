@@ -54,6 +54,10 @@ export function ConversationPane({
       writeClipboard: (text: string) => bridge.writeClipboard(text),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),
       send: (text: string) => bridge.conversation.send(agentId, text),
+      startEditingPending: (pending: PendingId) =>
+        bridge.conversation.startEditingPending(agentId, pending),
+      stopEditingPending: (pending: PendingId) =>
+        bridge.conversation.stopEditingPending(agentId, pending),
       editPending: (pending: PendingId, text: string) =>
         bridge.conversation.editPending(agentId, pending, text),
       removePending: (pending: PendingId) =>

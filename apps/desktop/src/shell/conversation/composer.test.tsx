@@ -751,11 +751,13 @@ describe("messages waiting to be sent", () => {
         id: pendingId("held:1"),
         text: "look at the tests",
         failure: undefined,
+        editing: false,
       },
       {
         id: pendingId("held:2"),
         text: "and the docs",
         failure: "the host is gone",
+        editing: false,
       },
     ],
   };
@@ -792,21 +794,29 @@ describe("messages waiting to be sent", () => {
     expect(actions.removePending).toHaveBeenCalledWith(pendingId("held:2"));
   });
 
-  it("is changed in place: Enter saves, Esc gives up and stops no turn", async () => {
+  it("is held in main while it is changed in place: Enter saves, Esc gives up and stops no turn", async () => {
     const { actions } = draw(withSession([RUNNING, HELD]));
-    fireEvent.click(
-      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    const edit = () =>
+      fireEvent.click(
+        within(item("look at the tests")).getByRole("button", {
+          name: "Edit",
+        }),
+      );
+    edit();
+    expect(actions.startEditingPending).toHaveBeenCalledWith(
+      pendingId("held:1"),
     );
-    const field = screen.getByLabelText("Waiting message");
+    const field = await screen.findByLabelText("Waiting message");
     expect(field).toHaveValue("look at the tests");
     fireEvent.keyDown(field, { key: "Escape" });
     expect(screen.queryByLabelText("Waiting message")).toBeNull();
+    expect(actions.stopEditingPending).toHaveBeenCalledWith(
+      pendingId("held:1"),
+    );
     expect(actions.interrupt).not.toHaveBeenCalled();
 
-    fireEvent.click(
-      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
-    );
-    fireEvent.change(screen.getByLabelText("Waiting message"), {
+    edit();
+    fireEvent.change(await screen.findByLabelText("Waiting message"), {
       target: { value: "look at the unit tests" },
     });
     fireEvent.keyDown(screen.getByLabelText("Waiting message"), {
@@ -819,6 +829,34 @@ describe("messages waiting to be sent", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("Waiting message")).toBeNull(),
     );
+    expect(actions.stopEditingPending).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets main go of an edit left open when the composer goes away", async () => {
+    const { actions, unmount } = draw(withSession([RUNNING, HELD]));
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    await screen.findByLabelText("Waiting message");
+    unmount();
+    expect(actions.stopEditingPending).toHaveBeenCalledWith(
+      pendingId("held:1"),
+    );
+  });
+
+  it("opens no editor when main would not hold the message, and says why", async () => {
+    const gone = new Error("That message is no longer waiting.");
+    const actions = fakeActions({
+      startEditingPending: vi.fn(() => Promise.reject(gone)),
+    });
+    draw(withSession([RUNNING, HELD]), actions);
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(gone),
+    );
+    expect(screen.queryByLabelText("Waiting message")).toBeNull();
   });
 
   it("cannot be sent now while the Agent cannot take a message", () => {
