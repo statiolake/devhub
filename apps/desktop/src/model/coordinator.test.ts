@@ -849,6 +849,36 @@ describe("launching an agent", () => {
   });
 });
 
+describe("an operation a port could not carry out", () => {
+  it("reaches whoever asked with the port's own sentence, not only the port's name", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    let refusal: unknown;
+    try {
+      driver.accept({
+        type: "operation_failed",
+        token: resolve.token,
+        detail: "There is no agent profile called “codex”.",
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(AppError);
+    expect(errorWire(refusal)).toMatchObject({
+      detail: "There is no agent profile called “codex”.",
+    });
+  });
+});
+
 describe("an Agent whose launch is under way", () => {
   it("is named from the moment its launch starts until the model has it", () => {
     const driver = new Driver();

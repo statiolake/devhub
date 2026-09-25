@@ -698,7 +698,16 @@ export type ProviderEvent =
    * The adapter could not complete an operation. This consumes the token, so a
    * failed call cannot strand the coordinator in an indefinitely pending state.
    */
-  | { readonly type: "operation_failed"; readonly token: OperationToken };
+  | {
+      readonly type: "operation_failed";
+      readonly token: OperationToken;
+      /**
+       * What the failing side said, for whoever asked for the operation. The
+       * refusal is reported at its subject too; this is the same sentence
+       * reaching the request that is still waiting on it.
+       */
+      readonly detail?: string;
+    };
 
 export interface ProviderEventEnvelope {
   readonly eventId: ProviderEventId;

@@ -1239,11 +1239,14 @@ export class AppCoordinator {
       case "state_persistence_failed":
         return this.completePersistFailed(event.token, event.reason);
       case "operation_failed":
-        return this.completeOperationFailed(event.token);
+        return this.completeOperationFailed(event.token, event.detail);
     }
   }
 
-  private completeOperationFailed(token: OperationToken): IntentOutcome {
+  private completeOperationFailed(
+    token: OperationToken,
+    detail: string | undefined,
+  ): IntentOutcome {
     const pending = this.pending.get(token.operationId);
     if (!pending) {
       throw new AppError(
@@ -1262,6 +1265,7 @@ export class AppCoordinator {
     this.rememberCompleted(token);
     throw new AppError(AppErrorCode.PortUnavailable)
       .withPort(portFor(pending.kind))
+      .withDetail(detail)
       .withOperation(token.operationId);
   }
 

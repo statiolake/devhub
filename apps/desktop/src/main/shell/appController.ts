@@ -2504,7 +2504,11 @@ export class AppController {
 		failure: RefusedOperation,
 	): void {
 		this.reportFailure(failure);
-		this.accept({ type: "operation_failed", token });
+		this.accept({
+			type: "operation_failed",
+			token,
+			...(failure.detail === undefined ? {} : { detail: failure.detail }),
+		});
 	}
 
 	/**
