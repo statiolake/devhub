@@ -301,7 +301,7 @@ import type {
 	RuntimeId,
 	TerminalLauncher,
 } from "../runtime/runtime.js";
-import { resolveExecutable } from "./runtimes.js";
+import { resolveAgentProfile } from "./agentProfileCommand.js";
 import {
 	executableMissingMessage,
 	type SettingsUnavailableRuntimeWire,
@@ -3135,27 +3135,17 @@ export class AppController {
 	}
 
 	/**
-	 * The profile an Agent is launched with.
+	 * The profile an Agent is launched with: `resolveAgentProfile` on the
+	 * Workspace's machine, which is where its Agent will run.
 	 *
-	 * The combination rule, in one place: **the profile's own arguments first,
-	 * then the caller's, appended in the order they were given.** Nothing is
-	 * deduplicated and nothing is reordered, because the profile is the base
-	 * command and the extra arguments are what a person added to this one run
-	 * — and an agent command reads its last flag as the winning one.
-	 *
-	 * They go into the profile *snapshot* rather than being carried alongside
-	 * it, because that snapshot is what the Agent keeps for its whole life: an
-	 * Agent's record then says what it was actually started with, and a later
-	 * edit to the configured profile still cannot rewrite a running Agent.
-	 *
-	 * The command is looked up here too, in the launch environment's PATH, and
-	 * the Agent is started from the absolute path that lookup returns. Passing
-	 * the bare name to tmux instead would hand the search to a *different* PATH
-	 * than the one DevHub resolved its own runtimes in — which is how a profile
-	 * whose program is plainly on the person's PATH failed to start while tmux,
-	 * found by the same kind of name, worked. And a name that resolves to
-	 * nothing is said out loud rather than becoming a session that dies on
-	 * `exec` a moment later, with nothing left to read.
+	 * The command is looked up before the launch, and the Agent is started from
+	 * the absolute path that lookup returns. Passing the bare name to tmux
+	 * instead would hand the search to a *different* PATH than the one DevHub
+	 * resolved its own runtimes in — which is how a profile whose program is
+	 * plainly on the person's PATH failed to start while tmux, found by the
+	 * same kind of name, worked. And a name that resolves to nothing is said
+	 * out loud rather than becoming a session that dies on `exec` a moment
+	 * later, with nothing left to read.
 	 */
 	private async resolveProfile(
 		token: OperationToken,
@@ -3175,8 +3165,19 @@ export class AppController {
 			});
 			return;
 		}
-		const resolved = await resolveExecutable(
-			configured.command,
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (!workspace) {
+			this.failOperation(token, {
+				subject: "app",
+				code: "workspace_unavailable",
+				detail: "The workspace this Agent belongs to is no longer open.",
+			});
+			return;
+		}
+		const resolved = await resolveAgentProfile(
+			runtimeFor(workspace.location),
+			configured,
+			extraArgs,
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {
@@ -3192,11 +3193,7 @@ export class AppController {
 			type: "profile_resolved",
 			token,
 			workspaceId,
-			profile: toDomainProfile({
-				...configured,
-				command: resolved.value,
-				args: [...configured.args, ...extraArgs],
-			}),
+			profile: toDomainProfile(resolved.profile),
 		});
 	}
 
