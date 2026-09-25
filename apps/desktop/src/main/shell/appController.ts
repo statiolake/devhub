@@ -278,6 +278,7 @@ import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
+import { UsageLimits, usageLimitsListener } from "./usageLimits.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import {
@@ -922,6 +923,14 @@ export class AppController {
 		// machine DevHub has ever owned sessions on, which is more than the
 		// machines it still has Workspaces on. See `sessionSweep.ts`.
 		this.sessionSweeper = new SessionSweeper({
+		// The Sidebar's usage-limits readout, from what the GUI Agents report.
+		this.agentWiring.conversations.registry.onEvent(
+			usageLimitsListener(
+				this.usageLimits,
+				(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
+				(limits) => this.send(CHANNELS.usageLimitsChanged, limits),
+			),
+		);
 			adapterFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			hostFilesFor: (machine) =>
 				agentHostFiles(
@@ -2343,6 +2352,7 @@ export class AppController {
 		gitCommand: (runtime) => this.gitCommand(runtime),
 		environment: this.launchEnvironment,
 		// Every open Workspace, wherever its folder is. git, the HEAD watcher
+	private readonly usageLimits = new UsageLimits();
 		// and the worktree probe all go through the Workspace's own runtime now,
 		// so a checkout on another machine is read the same way as one here —
 		// the same row, with the same branch, Issue and pull request on it.
@@ -6075,6 +6085,7 @@ export class AppController {
 					throw asIpcError(errorWire(error));
 				}
 			},
+		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 		);
 		handle(
 			CHANNELS.cancelInjection,

@@ -137,6 +137,8 @@ function mount() {
     onAppearance: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
     onRepositoryStatus: () => () => undefined,
+    getUsageLimits: async () => ({ clis: [] }),
+    onUsageLimits: () => () => undefined,
     getAgentProfiles: async () => PROFILES,
     onAgentProfiles: () => () => undefined,
     onTheme: () => () => undefined,

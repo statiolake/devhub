@@ -105,6 +105,7 @@ function mount(
     reportFailure: vi.fn(),
     dismissIntentError: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
+    usageLimits: { clis: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   render(

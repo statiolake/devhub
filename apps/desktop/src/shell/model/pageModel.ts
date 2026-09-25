@@ -38,6 +38,8 @@ import type {
   ProjectionBridge,
   RepositoryStatusBridge,
   RepositoryStatusWire,
+  UsageLimitsBridge,
+  UsageLimitsWire,
 } from "../../ipc/contract";
 import { subscribeToUnhandled, toAppError } from "../failure";
 
@@ -284,6 +286,32 @@ export function useRepositoryStatus(
   }, [attempt, bridge, raiseFailure]);
 
   return status;
+}
+
+/**
+ * Claude's and Codex's rate limits, as main last aggregated them from the GUI
+ * Agents' reports. Nothing is known until main says, which is what the empty
+ * reading below is: every CLI unreported.
+ */
+export function useUsageLimits(
+  bridge: UsageLimitsBridge,
+  raiseFailure: (error: unknown) => void,
+  attempt: number,
+): UsageLimitsWire {
+  const [limits, setLimits] = useState<UsageLimitsWire>({ clis: [] });
+  useEffect(() => {
+    let active = true;
+    const apply = (next: UsageLimitsWire) => {
+      if (active) setLimits(next);
+    };
+    const dispose = bridge.onUsageLimits(apply);
+    void bridge.getUsageLimits().then(apply, raiseFailure);
+    return () => {
+      active = false;
+      dispose();
+    };
+  }, [attempt, bridge, raiseFailure]);
+  return limits;
 }
 
 const PROFILES_UNAVAILABLE: AgentProfiles = {

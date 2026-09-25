@@ -58,6 +58,7 @@ function mount(
       availability: "available",
       profiles: [{ id: "codex", displayName: "Codex" }],
     },
+    usageLimits: { clis: [] },
     repositoryStatus: {
       sequence: 1,
       workspaces: repository ? [repository] : [],

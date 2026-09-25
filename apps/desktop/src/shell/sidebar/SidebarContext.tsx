@@ -27,7 +27,7 @@ import type {
   AppLoadState,
   AppOutcome,
 } from "../../ipc/appShell";
-import type { RepositoryStatusWire } from "../../ipc/contract";
+import type { RepositoryStatusWire, UsageLimitsWire } from "../../ipc/contract";
 import { devhub } from "./client";
 import {
   useAgentProfiles,
@@ -35,6 +35,7 @@ import {
   useProjection,
   useRaiseFailure,
   useRepositoryStatus,
+  useUsageLimits,
   type PendingConfirmation,
 } from "../model/pageModel";
 
@@ -46,6 +47,8 @@ export interface SidebarValue {
   readonly retry: () => void;
   readonly agentProfiles: AgentProfiles;
   readonly repositoryStatus: RepositoryStatusWire;
+  /** Claude's and Codex's rate limits, for the readout at the foot. */
+  readonly usageLimits: UsageLimitsWire;
   /** Get rid of a workspace, whatever kind. **The one path**; see the bridge. */
   readonly closeWorkspace: (workspaceId: string) => void;
   /** Hand a destination a row named to the user's browser. */
@@ -115,6 +118,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const appearance = useAppearance(bridge, reportFailure, attempt);
   const repositoryStatus = useRepositoryStatus(bridge, reportFailure, attempt);
   const agentProfiles = useAgentProfiles(bridge, attempt);
+  const usageLimits = useUsageLimits(bridge, reportFailure, attempt);
 
   const closeWorkspace = useCallback(
     (workspaceId: string) => {
@@ -138,6 +142,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       retry,
       agentProfiles,
       repositoryStatus,
+      usageLimits,
       closeWorkspace,
       openExternalUrl,
       reportFailure,
@@ -152,6 +157,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       repositoryStatus,
       retry,
       state,
+      usageLimits,
     ],
   );
 

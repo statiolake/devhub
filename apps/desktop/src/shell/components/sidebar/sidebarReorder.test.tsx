@@ -138,6 +138,7 @@ function mount(dispatch: (intent: AppIntent) => void) {
     reportFailure: vi.fn(),
     dismissNewestNotice: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
+    usageLimits: { clis: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   render(

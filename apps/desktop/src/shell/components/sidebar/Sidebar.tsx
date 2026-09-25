@@ -19,6 +19,7 @@ import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
 import { useSidebar, useSidebarDispatch } from "../../sidebar/SidebarContext";
+import { UsageLimits } from "./UsageLimits";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
@@ -835,8 +836,14 @@ function ClosingGhostRow({ label }: { label: string }) {
 
 export function Sidebar({ snapshot }: SidebarProps) {
   const dispatchIntent = useSidebarDispatch();
-  const { dispatch, agentProfiles, repositoryStatus, closeWorkspace, retry } =
-    useSidebar();
+  const {
+    dispatch,
+    agentProfiles,
+    repositoryStatus,
+    usageLimits,
+    closeWorkspace,
+    retry,
+  } = useSidebar();
   const repositories = useMemo(
     () =>
       new Map(
@@ -1273,6 +1280,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
           )}
         </ul>
       </div>
+      <UsageLimits limits={usageLimits} />
       {/* A rail has no width to set: it is exactly its glyph column, or — on a
           window with no title bar — exactly what the traffic lights need. The
           handle is absent rather than disabled, because a

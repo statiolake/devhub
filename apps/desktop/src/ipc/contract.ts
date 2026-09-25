@@ -352,6 +352,24 @@ export interface AppConditionWire {
 	readonly summary?: string;
 }
 
+/**
+ * How much of each CLI's rate limit is used, as its GUI Agents last reported
+ * it. One entry per CLI with a GUI, always; `limit` absent means no Agent of
+ * that CLI has reported one yet — not that nothing is used. See
+ * `main/shell/usageLimits.ts`.
+ */
+export interface UsageLimitsWire {
+	readonly clis: readonly {
+		readonly cli: "claude" | "codex";
+		readonly limit?: {
+			/** 0–100. */
+			readonly usedPercent?: number;
+			/** Epoch milliseconds. */
+			readonly resetsAt?: number;
+		};
+	}[];
+}
+
 export interface RepositoryStatusWire {
 	readonly sequence: number;
 	readonly workspaces: readonly WorkspaceRepositoryWire[];
@@ -724,6 +742,12 @@ export interface RepositoryStatusBridge {
 	): () => void;
 }
 
+/** Claude's and Codex's rate limits, as the GUI Agents report them. */
+export interface UsageLimitsBridge {
+	getUsageLimits(): Promise<UsageLimitsWire>;
+	onUsageLimits(listener: (limits: UsageLimitsWire) => void): () => void;
+}
+
 /** The agents Settings knows how to start, and whether discovery could say. */
 export interface AgentProfilesBridge {
 	getAgentProfiles(): Promise<AgentProfiles>;
@@ -961,6 +985,7 @@ export interface SidebarBridge
 		ProjectionBridge,
 		AppearanceBridge,
 		RepositoryStatusBridge,
+		UsageLimitsBridge,
 		AgentProfilesBridge {
 	/**
 	 * The menu commands whose subject is drawn here, and no others.
@@ -1364,6 +1389,7 @@ export const CHANNELS = {
 	appearanceChanged: "devhub:appearance-changed",
 	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
 	themeChanged: "devhub:theme-changed",
+	getUsageLimits: "devhub:get-usage-limits",
 	/** The window's name moved, and DevHub's own title bar letters it. */
 	windowTitleChanged: "devhub:window-title-changed",
 	agentProfilesChanged: "devhub:agent-profiles-changed",
@@ -1451,6 +1477,8 @@ export interface ChordHelpRowWire {
 }
 
 export type ModalRequest =
+	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
+	usageLimitsChanged: "devhub:usage-limits-changed",
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
 	| { readonly kind: "issue-assignment" }

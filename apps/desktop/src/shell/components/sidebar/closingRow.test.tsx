@@ -108,6 +108,7 @@ function mount(snapshot: AppSnapshot) {
     closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
+    usageLimits: { clis: [] },
     repositoryStatus: WORKTREE,
   } as unknown as SidebarValue;
   const view = render(

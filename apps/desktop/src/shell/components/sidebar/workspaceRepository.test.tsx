@@ -87,6 +87,7 @@ function mount(
     reportFailure,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus,
+    usageLimits: { clis: [] },
   } as unknown as SidebarValue;
   const snapshot = {
     ...SNAPSHOT,

@@ -1850,3 +1850,21 @@ body.is-resizing-split {
   flex: 0 0 0;
   padding: 0;
 }
+
+/* Claude's and Codex's rate limits, at the foot of the column: one quiet line,
+   the detail in the tooltip. See `UsageLimits.tsx`. The rail has no room for
+   words, and a number without its CLI's name says nothing. */
+.sidebar-usage {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar[data-collapsed="true"] .sidebar-usage {
+  display: none;
+}

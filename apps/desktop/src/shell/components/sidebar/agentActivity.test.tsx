@@ -109,6 +109,7 @@ function mount(
       // the Agent was started from.
       profiles: [{ id: "claude", displayName: "Claude" }],
     },
+    usageLimits: { clis: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   render(
@@ -133,6 +134,7 @@ function mountNamed(
       availability: "available",
       profiles: [{ id: "claude", displayName: "Claude" }],
     },
+    usageLimits: { clis: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   const snapshot = snapshotWithAgent(activity, unread);

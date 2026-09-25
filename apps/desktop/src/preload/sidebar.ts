@@ -26,6 +26,7 @@ import {
 	previewLayout,
 	projectionBridge,
 	repositoryStatusBridge,
+	usageLimitsBridge,
 } from "./bridge.js";
 
 const api: SidebarBridge = {
@@ -33,6 +34,7 @@ const api: SidebarBridge = {
 	...projectionBridge(),
 	...appearanceBridge(),
 	...repositoryStatusBridge(),
+	...usageLimitsBridge(),
 	...agentProfilesBridge(),
 
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),

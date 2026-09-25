@@ -121,6 +121,7 @@ function mount(snapshot: AppSnapshot) {
     reportFailure: vi.fn(),
     retry,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
+    usageLimits: { clis: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   render(

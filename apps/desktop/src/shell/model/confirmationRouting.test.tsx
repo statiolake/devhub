@@ -72,6 +72,8 @@ function bridge(dispatch: () => Promise<AppOutcome>) {
     onWindowTitle: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
     onRepositoryStatus: () => () => undefined,
+    getUsageLimits: async () => ({ clis: [] }),
+    onUsageLimits: () => () => undefined,
     getAgentProfiles: async () => ({
       sequence: 1,
       availability: "available",

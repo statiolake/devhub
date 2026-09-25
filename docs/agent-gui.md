@@ -437,6 +437,19 @@ and changes it for this session.
 
 - **The pane says "Connecting to the Agent…" and stays there.** The sidebar
   shows the Agent as unknown. Check whether its host is alive: its tmux
+## Usage limits in the Sidebar
+
+The foot of the Sidebar says how much of Claude's and Codex's rate limits is
+used (`Claude 42% · Codex 17%`), with each CLI's percentage and reset time in
+the tooltip. DevHub does not ask the accounts: the numbers are what running
+GUI Agents last reported — Claude's `rate_limit_event`, Codex's
+`account/rateLimits/updated` — kept per CLI in main, the newer of two readings
+being the one with the later reset (or, for the same reset, more used), since
+journals replay in no particular order at startup. A CLI no GUI Agent has
+reported for says so in the tooltip rather than showing zero, and while
+neither has reported nothing is drawn. Each CLI shows the one window its
+adapter reports: Claude's `rateLimitType` window and Codex's `primary`.
+
   session is on the profile's socket (`tmux -L devhub ls` for the installed
   app, `devhub-<profile>` for another profile), and
   `~/.devhub/agents-<tag>/<id>/` has `pid` and no `exit`. A host that is gone
