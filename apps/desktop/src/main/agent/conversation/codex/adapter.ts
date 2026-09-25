@@ -63,6 +63,7 @@ import {
 	type Transcript,
 	type TranscriptEntry,
 	type Usage,
+	withRateLimits,
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
@@ -953,7 +954,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			contextTokens: undefined,
 			contextWindow: undefined,
 			costUsd: undefined,
-			rateLimit: undefined,
+			rateLimits: undefined,
 			...this.usage,
 			...next,
 		};
@@ -1048,7 +1049,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			contextTokens: this.usage?.contextTokens,
 			contextWindow: this.usage?.contextWindow,
 			costUsd: undefined,
-			rateLimit: undefined,
+			rateLimits: undefined,
 		};
 	}
 
@@ -2240,16 +2241,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		),
 		"account/updated": unused("sign-in happens in a terminal"),
 		"account/rateLimits/updated": (params) => {
-			const { primary } = rateLimits(this.reader, params);
-			// A sparse update without the window does not clear the last one seen.
-			if (primary === null) return;
+			const { windows } = rateLimits(this.reader, params);
 			this.publishUsage({
-				rateLimit: {
-					usedPercent: primary.usedPercent,
-					// Unix seconds, as Codex's core protocol keeps it; stage 0 confirms on a real capture.
-					resetsAt:
-						primary.resetsAt === null ? undefined : primary.resetsAt * 1000,
-				},
+				rateLimits: withRateLimits(this.usage?.rateLimits, windows),
 			});
 		},
 		"app/list/updated": unused("DevHub lists no Codex apps"),

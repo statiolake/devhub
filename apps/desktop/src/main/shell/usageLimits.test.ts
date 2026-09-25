@@ -79,14 +79,16 @@ describe("the usage-limits readout", () => {
 		const wire = limits.wire();
 		const claude = wire.clis.find((one) => one.cli === "claude");
 		const codex = wire.clis.find((one) => one.cli === "codex");
-		// The capture's last `rate_limit_event`: 98% of the five-hour window,
-		// its reset in epoch seconds on the wire.
-		expect(claude?.limit).toEqual({
-			usedPercent: 98,
-			resetsAt: 1_790_280_600_000,
-		});
-		expect(codex?.limit?.resetsAt).toBe(1_790_313_079_000);
-		expect(codex?.limit?.usedPercent).toBe(0);
+		// The capture's last `rate_limit_event`: 98% of the five-hour window
+		// and 80% of the seven-day one, resets in epoch seconds on the wire.
+		expect(claude?.windows).toEqual([
+			{ window: "5-hour", usedPercent: 98, resetsAt: 1_790_280_600_000 },
+			{ window: "7-day", usedPercent: 80, resetsAt: 1_790_517_600_000 },
+		]);
+		expect(codex?.windows).toEqual([
+			{ window: "5-hour", usedPercent: 0, resetsAt: 1_790_313_079_000 },
+			{ window: "7-day", usedPercent: 17, resetsAt: 1_790_593_906_000 },
+		]);
 		// Published when it changed, and only then.
 		expect(published.at(-1)).toEqual(wire);
 	});
@@ -96,24 +98,30 @@ describe("the usage-limits readout", () => {
 		// a later window, or more used of the same one, is what makes a
 		// reading newer.
 		const limits = new UsageLimits();
-		expect(limits.observe("claude", { usedPercent: 40, resetsAt: 2_000 })).toBe(
-			true,
-		);
-		expect(limits.observe("claude", { usedPercent: 90, resetsAt: 1_000 })).toBe(
-			false,
-		);
-		expect(limits.observe("claude", { usedPercent: 30, resetsAt: 2_000 })).toBe(
-			false,
-		);
-		expect(limits.observe("claude", { usedPercent: 55, resetsAt: 2_000 })).toBe(
-			true,
-		);
-		expect(limits.observe("claude", { usedPercent: 5, resetsAt: 3_000 })).toBe(
-			true,
-		);
+		const w = (usedPercent: number, resetsAt: number) => ({
+			window: "5-hour",
+			usedPercent,
+			resetsAt,
+		});
+		expect(limits.observe("claude", w(40, 2_000))).toBe(true);
+		expect(limits.observe("claude", w(90, 1_000))).toBe(false);
+		expect(limits.observe("claude", w(30, 2_000))).toBe(false);
+		expect(limits.observe("claude", w(55, 2_000))).toBe(true);
+		expect(limits.observe("claude", w(5, 3_000))).toBe(true);
+		// Another window is its own reading, and does not displace this one.
+		expect(
+			limits.observe("claude", {
+				window: "7-day",
+				usedPercent: 1,
+				resetsAt: 1,
+			}),
+		).toBe(true);
 		expect(limits.wire().clis[0]).toEqual({
 			cli: "claude",
-			limit: { usedPercent: 5, resetsAt: 3_000 },
+			windows: [
+				{ window: "5-hour", usedPercent: 5, resetsAt: 3_000 },
+				{ window: "7-day", usedPercent: 1, resetsAt: 1 },
+			],
 		});
 	});
 
@@ -130,7 +138,7 @@ describe("the usage-limits readout", () => {
 						contextTokens: undefined,
 						contextWindow: undefined,
 						costUsd: undefined,
-						rateLimit: { usedPercent: 1, resetsAt: 1 },
+						rateLimits: [{ window: "5-hour", usedPercent: 1, resetsAt: 1 }],
 					},
 				},
 			]),

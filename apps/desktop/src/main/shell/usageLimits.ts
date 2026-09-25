@@ -2,13 +2,15 @@
  * How much of Claude's and Codex's rate limits is used, app-wide.
  *
  * DevHub does not ask either CLI's account for its limits: it reads what the
- * running GUI Agents already report (`usage.rateLimit` on a conversation's
+ * running GUI Agents already report (`usage.rateLimits` on a conversation's
  * `usage` event — Claude's `rate_limit_event`, Codex's
  * `account/rateLimits/updated`). A limit belongs to the account, not to the
- * Agent, so every Agent of one CLI is reporting on the same limit, and the
- * readout keeps one reading per CLI.
+ * Agent, so every Agent of one CLI is reporting on the same limits, and the
+ * readout keeps one reading per window of each CLI — Claude's five-hour and
+ * seven-day, Codex's primary and secondary — in the order they were first
+ * reported.
  *
- * Which reading is the latest is decided by the reading, not by when it
+ * Which reading of a window is the latest is decided by the reading, not by when it
  * arrived. A conversation replays its journal when DevHub starts, so the order
  * events arrive in across Agents says nothing about which is newer. Within one
  * window usage only grows, and a later window resets later: so the reading
@@ -28,11 +30,13 @@ export const LIMITED_CLIS = ["claude", "codex"] as const;
 export type LimitedCli = (typeof LIMITED_CLIS)[number];
 
 export class UsageLimits {
-	readonly #latest = new Map<LimitedCli, RateLimit>();
+	readonly #latest = new Map<LimitedCli, Map<string, RateLimit>>();
 
-	/** Take a reading; whether it changed what the readout says. */
+	/** Take a reading of one window; whether it changed what the readout says. */
 	observe(cli: LimitedCli, reading: RateLimit): boolean {
-		const current = this.#latest.get(cli);
+		const windows = this.#latest.get(cli) ?? new Map<string, RateLimit>();
+		this.#latest.set(cli, windows);
+		const current = windows.get(reading.window);
 		if (current !== undefined && !supersedes(reading, current)) return false;
 		if (
 			current !== undefined &&
@@ -41,26 +45,27 @@ export class UsageLimits {
 		) {
 			return false;
 		}
-		this.#latest.set(cli, reading);
+		windows.set(reading.window, reading);
 		return true;
 	}
 
 	wire(): UsageLimitsWire {
 		return {
 			clis: LIMITED_CLIS.map((cli) => {
-				const reading = this.#latest.get(cli);
-				return reading === undefined
+				const windows = [...(this.#latest.get(cli)?.values() ?? [])];
+				return windows.length === 0
 					? { cli }
 					: {
 							cli,
-							limit: {
+							windows: windows.map((reading) => ({
+								window: reading.window,
 								...(reading.usedPercent === undefined
 									? {}
 									: { usedPercent: reading.usedPercent }),
 								...(reading.resetsAt === undefined
 									? {}
 									: { resetsAt: reading.resetsAt }),
-							},
+							})),
 						};
 			}),
 		};
@@ -94,8 +99,8 @@ export function usageLimitsListener(
 ): (agentId: AgentId, revision: number, event: ConversationEvent) => void {
 	return (agentId, _revision, event) => {
 		if (event.type !== "usage") return;
-		const reading = event.usage.rateLimit;
-		if (reading === undefined) return;
+		const readings = event.usage.rateLimits;
+		if (readings === undefined || readings.length === 0) return;
 		const kind = kindOf(agentId);
 		if (kind === undefined) return;
 		if (kind !== "claude" && kind !== "codex") {
@@ -103,6 +108,10 @@ export function usageLimitsListener(
 				`a ${kind} Agent reported a rate limit, but only Claude and Codex have a GUI`,
 			);
 		}
-		if (limits.observe(kind, reading)) publish(limits.wire());
+		// Every window is observed, whether or not an earlier one changed.
+		const changed = readings
+			.map((reading) => limits.observe(kind, reading))
+			.includes(true);
+		if (changed) publish(limits.wire());
 	};
 }

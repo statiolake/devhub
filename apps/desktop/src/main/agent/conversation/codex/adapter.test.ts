@@ -480,7 +480,13 @@ describe("a turn", () => {
 			contextTokens: 900,
 			contextWindow: 272000,
 			costUsd: undefined,
-			rateLimit: { usedPercent: 42, resetsAt: (1790000000 + 3600) * 1000 },
+			rateLimits: [
+				{
+					window: "5-hour",
+					usedPercent: 42,
+					resetsAt: (1790000000 + 3600) * 1000,
+				},
+			],
 		});
 		const end = harness.transcript.entries.at(-1)!;
 		expect(end).toMatchObject({
@@ -1457,9 +1463,12 @@ describe("a captured greeting on the owner's signed-in app-server", () => {
 		expect(session.mode.current).toBe("read-only");
 	});
 
-	it("reads the rate limit's reset, which app-server sends in seconds, as milliseconds", () => {
+	it("keeps the primary and secondary windows, their resets sent in seconds read as milliseconds", () => {
 		const { usage } = played("codex-greeting.capture.ndjson").transcript;
-		expect(usage?.rateLimit?.resetsAt).toBe(1_790_313_079_000);
+		expect(usage?.rateLimits).toEqual([
+			{ window: "5-hour", usedPercent: 0, resetsAt: 1_790_313_079_000 },
+			{ window: "7-day", usedPercent: 17, resetsAt: 1_790_593_906_000 },
+		]);
 		expect(usage).toMatchObject({
 			inputTokens: 21669,
 			outputTokens: 8,

@@ -302,14 +302,55 @@ export interface Usage {
   readonly contextTokens: number | undefined;
   readonly contextWindow: number | undefined;
   readonly costUsd: number | undefined;
-  readonly rateLimit: RateLimit | undefined;
+  /**
+   * Every rate-limit window the CLI has reported — Claude's five-hour and
+   * seven-day, Codex's primary and secondary — one entry per window, each
+   * as last reported.
+   */
+  readonly rateLimits: readonly RateLimit[] | undefined;
 }
 
 export interface RateLimit {
+  /** Which window, in words: `5-hour`, `7-day`, or the CLI's own name for it. */
+  readonly window: string;
   /** 0–100. */
   readonly usedPercent: number | undefined;
   /** Epoch milliseconds. */
   readonly resetsAt: number | undefined;
+}
+
+/** A window's name from its length: `5-hour`, `7-day`, `90-minute`. */
+export function rateLimitWindowName(minutes: number): string {
+  if (minutes % 1440 === 0) return `${String(minutes / 1440)}-day`;
+  if (minutes % 60 === 0) return `${String(minutes / 60)}-hour`;
+  return `${String(minutes)}-minute`;
+}
+
+/**
+ * The windows known after a report: each window the report names replaces
+ * the one of the same name, and a window it does not name stays as last seen
+ * — a report that leaves a window out has not said it cleared.
+ */
+export function withRateLimits(
+  known: readonly RateLimit[] | undefined,
+  reported: readonly RateLimit[],
+): readonly RateLimit[] {
+  const byName = new Map((known ?? []).map((one) => [one.window, one]));
+  for (const one of reported) byName.set(one.window, one);
+  return [...byName.values()];
+}
+
+/** The window nearest its limit, which is the one that stops the CLI first. */
+export function mostUsedRateLimit<
+  W extends { readonly usedPercent?: number | undefined },
+>(windows: readonly W[]): W | undefined {
+  return windows.reduce<W | undefined>(
+    (most, one) =>
+      most === undefined || (one.usedPercent ?? -1) > (most.usedPercent ?? -1)
+        ? one
+        : most,
+    undefined,
+  );
 }
 
 export const CONVERSATION_FAILURE_CODES = [

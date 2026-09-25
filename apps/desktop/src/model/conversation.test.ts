@@ -21,6 +21,9 @@ import {
   rewindTargets,
   entryId,
   lastTurnFailed,
+  mostUsedRateLimit,
+  rateLimitWindowName,
+  withRateLimits,
   requestId,
   type AssistantEntry,
   type ConversationEvent,
@@ -690,14 +693,34 @@ describe("session facts and usage", () => {
       contextTokens: 1200,
       contextWindow: 200_000,
       costUsd: 0.01,
-      rateLimit: { usedPercent: 12, resetsAt: 1_800_000_000_000 },
+      rateLimits: [
+        { window: "5-hour", usedPercent: 12, resetsAt: 1_800_000_000_000 },
+      ],
     };
     const counted = fold({ type: "usage", usage });
     expect(counted.usage).toEqual(usage);
-    const later: Usage = { ...usage, costUsd: 0.02, rateLimit: undefined };
+    const later: Usage = { ...usage, costUsd: 0.02, rateLimits: undefined };
     expect(applyEvent(counted, { type: "usage", usage: later }).usage).toEqual(
       later,
     );
+  });
+});
+
+describe("rate-limit windows", () => {
+  it("replace a window of the same name and keep one a report leaves out", () => {
+    const five = { window: "5-hour", usedPercent: 10, resetsAt: 1 };
+    const seven = { window: "7-day", usedPercent: 50, resetsAt: 2 };
+    const later = { window: "5-hour", usedPercent: 60, resetsAt: 1 };
+    expect(
+      withRateLimits(withRateLimits(undefined, [five, seven]), [later]),
+    ).toEqual([later, seven]);
+    expect(mostUsedRateLimit([five, seven, later])).toBe(later);
+  });
+
+  it("are named by their length", () => {
+    expect(rateLimitWindowName(300)).toBe("5-hour");
+    expect(rateLimitWindowName(10080)).toBe("7-day");
+    expect(rateLimitWindowName(90)).toBe("90-minute");
   });
 });
 

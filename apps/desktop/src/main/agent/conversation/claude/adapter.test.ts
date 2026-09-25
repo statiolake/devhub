@@ -407,7 +407,9 @@ describe("the permission fixture", () => {
 					contextTokens: undefined,
 					contextWindow: undefined,
 					costUsd: 0.0123,
-					rateLimit: { usedPercent: 25, resetsAt: 1_800_000_000_000 },
+					rateLimits: [
+						{ window: "5-hour", usedPercent: 25, resetsAt: 1_800_000_000_000 },
+					],
 				},
 				durationMs: 4210,
 			},
@@ -468,7 +470,9 @@ describe("the permission fixture", () => {
 			contextTokens: undefined,
 			contextWindow: undefined,
 			costUsd: 0.0123,
-			rateLimit: { usedPercent: 25, resetsAt: 1_800_000_000_000 },
+			rateLimits: [
+				{ window: "5-hour", usedPercent: 25, resetsAt: 1_800_000_000_000 },
+			],
 		});
 	});
 

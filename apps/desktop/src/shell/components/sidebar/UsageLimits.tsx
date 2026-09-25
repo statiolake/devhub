@@ -1,10 +1,11 @@
 /**
  * Claude's and Codex's rate limits, at the foot of the Sidebar.
  *
- * One quiet line — each CLI that has reported, and how much of its limit is
- * used — with the detail on hover, through the same tooltip every row uses:
- * per CLI, how much is used and when it resets, or that no GUI Agent of that
- * CLI has reported yet. The numbers are what the CLIs' GUI Agents last said
+ * One quiet line — each CLI that has reported, and how much is used of its
+ * window nearest the limit, the one that stops it first — with the detail on
+ * hover, through the same tooltip every row uses: per CLI, every window it
+ * reported (five-hour, seven-day, …), how much of it is used and when it
+ * resets, or that no GUI Agent of that CLI has reported yet. The numbers are what the CLIs' GUI Agents last said
  * (`main/shell/usageLimits.ts`); DevHub does not ask the accounts itself, so
  * a CLI nobody has run as a GUI Agent is unknown, and says so, rather than
  * zero.
@@ -14,6 +15,9 @@
  */
 
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
+import { mostUsedRateLimit } from "../../../model/conversation";
+
+type Window = NonNullable<UsageLimitsWire["clis"][number]["windows"]>[number];
 
 const CLI_NAMES = { claude: "Claude", codex: "Codex" } as const;
 
@@ -25,11 +29,15 @@ export function UsageLimits({
   /** When "reset" is measured from; the clock, except in a test. */
   readonly now?: number;
 }) {
-  const reported = limits.clis.filter((one) => one.limit !== undefined);
-  if (reported.length === 0) return null;
-  const summary = reported
-    .map((one) => `${CLI_NAMES[one.cli]} ${percent(one.limit?.usedPercent)}`)
+  const summary = limits.clis
+    .flatMap((one) => {
+      const most = mostUsedRateLimit(one.windows ?? []);
+      return most === undefined
+        ? []
+        : [`${CLI_NAMES[one.cli]} ${percent(most.usedPercent)}`];
+    })
     .join(" · ");
+  if (summary === "") return null;
   return (
     <div
       className="sidebar-usage"
@@ -55,8 +63,8 @@ function tooltipLines(
       text: `${CLI_NAMES[one.cli]} usage limit`,
       style: "name",
     };
-    const limit = one.limit;
-    if (limit === undefined) {
+    const windows = one.windows;
+    if (windows === undefined) {
       return [
         name,
         {
@@ -65,25 +73,30 @@ function tooltipLines(
         },
       ];
     }
-    const used =
-      limit.usedPercent === undefined
-        ? "Use not reported"
-        : `${percent(limit.usedPercent)} used`;
-    return [name, { text: used, style: "muted" }, resetLine(limit, now)];
+    return [
+      name,
+      ...windows.flatMap((window): TooltipLineWire[] => [
+        {
+          text:
+            window.usedPercent === undefined
+              ? `${window.window}: use not reported`
+              : `${window.window}: ${percent(window.usedPercent)} used`,
+          style: "muted",
+        },
+        resetLine(window, now),
+      ]),
+    ];
   });
 }
 
-function resetLine(
-  limit: NonNullable<UsageLimitsWire["clis"][number]["limit"]>,
-  now: number,
-): TooltipLineWire {
-  if (limit.resetsAt === undefined) {
+function resetLine(window: Window, now: number): TooltipLineWire {
+  if (window.resetsAt === undefined) {
     return { text: "Reset time not reported", style: "muted" };
   }
-  const at = when(limit.resetsAt, now);
+  const at = when(window.resetsAt, now);
   // A reading from before its window reset is history: the number above is
   // what was used then, and nothing newer has come in.
-  return limit.resetsAt <= now
+  return window.resetsAt <= now
     ? { text: `Reset ${at}; nothing reported since`, style: "note" }
     : { text: `Resets ${at}`, style: "muted" };
 }

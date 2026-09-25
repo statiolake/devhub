@@ -21,7 +21,11 @@
  * conversation at its one root.
  */
 
-import type { JsonValue } from "../../../../model/conversation.js";
+import {
+	type JsonValue,
+	type RateLimit,
+	rateLimitWindowName,
+} from "../../../../model/conversation.js";
 import { ProtocolMismatch } from "../protocolAdapter.js";
 import type { InitializeResponse } from "./protocol/InitializeResponse.js";
 import type { RequestId as RpcId } from "./protocol/RequestId.js";
@@ -43,7 +47,6 @@ import type { ModelReroutedNotification } from "./protocol/v2/ModelReroutedNotif
 import type { NetworkPolicyAmendment } from "./protocol/v2/NetworkPolicyAmendment.js";
 import type { PermissionsRequestApprovalParams } from "./protocol/v2/PermissionsRequestApprovalParams.js";
 import type { PlanDeltaNotification } from "./protocol/v2/PlanDeltaNotification.js";
-import type { RateLimitWindow } from "./protocol/v2/RateLimitWindow.js";
 import type { ReasoningSummaryPartAddedNotification } from "./protocol/v2/ReasoningSummaryPartAddedNotification.js";
 import type { ReasoningSummaryTextDeltaNotification } from "./protocol/v2/ReasoningSummaryTextDeltaNotification.js";
 import type { ReasoningTextDeltaNotification } from "./protocol/v2/ReasoningTextDeltaNotification.js";
@@ -950,21 +953,34 @@ export function tokenUsage(r: Reader, params: unknown): TokenUsage {
 }
 
 export type RateLimits = {
-	/** Null in a sparse update: "not reported this time", never "cleared". */
-	readonly primary: Pick<RateLimitWindow, "usedPercent" | "resetsAt"> | null;
+	/**
+	 * The windows the update reports, primary before secondary. A window that
+	 * is null in a sparse update is left out: "not reported this time", never
+	 * "cleared".
+	 */
+	readonly windows: readonly RateLimit[];
 };
 
 export function rateLimits(r: Reader, params: unknown): RateLimits {
 	const o = r.fields(params, "params");
 	const snapshot = r.fields(o["rateLimits"], "params.rateLimits");
-	const primary = snapshot["primary"];
-	if (primary === null || primary === undefined) return { primary: null };
-	const w = r.fields(primary, "params.rateLimits.primary");
 	return {
-		primary: {
-			usedPercent: r.number(w, "usedPercent", "params.rateLimits.primary"),
-			resetsAt: r.nullableNumber(w, "resetsAt", "params.rateLimits.primary"),
-		},
+		windows: (["primary", "secondary"] as const).flatMap((slot) => {
+			const value = snapshot[slot];
+			if (value === null || value === undefined) return [];
+			const at = `params.rateLimits.${slot}`;
+			const w = r.fields(value, at);
+			const minutes = r.nullableNumber(w, "windowDurationMins", at);
+			const resetsAt = r.nullableNumber(w, "resetsAt", at);
+			return [
+				{
+					window: minutes === null ? slot : rateLimitWindowName(minutes),
+					usedPercent: r.number(w, "usedPercent", at),
+					// Unix seconds on the wire, as Codex's core protocol keeps it.
+					resetsAt: resetsAt === null ? undefined : resetsAt * 1000,
+				},
+			];
+		}),
 	};
 }
 

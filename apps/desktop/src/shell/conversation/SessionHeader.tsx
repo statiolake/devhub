@@ -5,7 +5,12 @@
  */
 
 import type { CSSProperties } from "react";
-import type { Transcript, Usage } from "../../model/conversation";
+import {
+  mostUsedRateLimit,
+  type RateLimit,
+  type Transcript,
+  type Usage,
+} from "../../model/conversation";
 
 function tokens(count: number): string {
   if (count < 1000) return `${count}`;
@@ -37,19 +42,34 @@ function contextReadout(usage: Usage): string | undefined {
     : `Context ${tokens(usage.contextTokens)}`;
 }
 
-/** What the session has spent besides its context: money and the rate limit. */
+function limitReadout(limit: RateLimit): string {
+  const used = `${limit.window} limit ${
+    limit.usedPercent === undefined ? "?" : Math.round(limit.usedPercent)
+  }%`;
+  return limit.resetsAt !== undefined
+    ? `${used}, resets ${clock(limit.resetsAt)}`
+    : used;
+}
+
+/**
+ * What the session has spent besides its context: money, and the rate-limit
+ * window nearest its limit — the one that stops the CLI first. Every window
+ * is in `limitsDetail`.
+ */
 function spendReadout(usage: Usage): readonly string[] {
   const parts: string[] = [];
   if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(2)}`);
-  const limit = usage.rateLimit;
-  if (limit?.usedPercent !== undefined) {
-    parts.push(
-      limit.resetsAt !== undefined
-        ? `Limit ${Math.round(limit.usedPercent)}%, resets ${clock(limit.resetsAt)}`
-        : `Limit ${Math.round(limit.usedPercent)}%`,
-    );
-  }
+  const most = mostUsedRateLimit(usage.rateLimits ?? []);
+  if (most !== undefined) parts.push(limitReadout(most));
   return parts;
+}
+
+/** Every rate-limit window the CLI reported, one per line; undefined when none. */
+function limitsDetail(usage: Usage): string | undefined {
+  const windows = usage.rateLimits ?? [];
+  return windows.length === 0
+    ? undefined
+    : windows.map((one) => limitReadout(one)).join("\n");
 }
 
 /** What the session has used, as far as its CLI reports it. */
@@ -87,7 +107,7 @@ function UsageLine({ usage }: { readonly usage: Usage }) {
         </span>
       ) : null}
       {context !== undefined && spend.length > 0 ? " · " : null}
-      {spend.join(" · ")}
+      <span title={limitsDetail(usage)}>{spend.join(" · ")}</span>
     </div>
   );
 }

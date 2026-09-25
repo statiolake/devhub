@@ -558,15 +558,20 @@ and changes it for this session.
 ## Usage limits in the Sidebar
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
-used (`Claude 42% · Codex 17%`), with each CLI's percentage and reset time in
-the tooltip. DevHub does not ask the accounts: the numbers are what running
-GUI Agents last reported — Claude's `rate_limit_event`, Codex's
-`account/rateLimits/updated` — kept per CLI in main, the newer of two readings
-being the one with the later reset (or, for the same reset, more used), since
-journals replay in no particular order at startup. A CLI no GUI Agent has
-reported for says so in the tooltip rather than showing zero, and while
-neither has reported nothing is drawn. Each CLI shows the one window its
-adapter reports: Claude's `rateLimitType` window and Codex's `primary`.
+used (`Claude 42% · Codex 17%`): for each CLI, its window nearest the limit,
+the one that stops it first. The tooltip lists every window each CLI reports —
+Claude's five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`),
+Codex's `primary` and `secondary`, named by their length (`5-hour`, `7-day`) —
+with how much is used and when it resets. DevHub does not ask the accounts:
+the numbers are what running GUI Agents last reported — Claude's
+`rate_limit_event`, Codex's `account/rateLimits/updated` — kept per window of
+each CLI in main, the newer of two readings of a window being the one with the
+later reset (or, for the same reset, more used), since journals replay in no
+particular order at startup. A report that leaves a window out (Codex's sparse
+updates) keeps that window as last seen. A CLI no GUI Agent has reported for
+says so in the tooltip rather than showing zero, and while neither has
+reported nothing is drawn. The conversation header reads the same way: the
+session's window nearest its limit on the line, every window on hover.
 
 ## Known limits
 

@@ -496,14 +496,24 @@ describe("the header", () => {
             contextTokens: 90_000,
             contextWindow: 200_000,
             costUsd: 1.234,
-            rateLimit: { usedPercent: 80.4, resetsAt: undefined },
+            rateLimits: [
+              { window: "5-hour", usedPercent: 20, resetsAt: undefined },
+              { window: "7-day", usedPercent: 80.4, resetsAt: undefined },
+            ],
           },
         },
       ]),
     );
+    // The window nearest its limit on the line; every window on hover.
     expect(screen.getByLabelText("Usage")).toHaveTextContent(
-      "Context 45% (90k of 200k) · $1.23 · Limit 80%",
+      "Context 45% (90k of 200k) · $1.23 · 7-day limit 80%",
     );
+    expect(
+      screen
+        .getByLabelText("Usage")
+        .querySelector("[title]")
+        ?.getAttribute("title"),
+    ).toBe("5-hour limit 20%\n7-day limit 80%");
   });
 
   it("has no Continue in terminal of its own: that is the pane's floating button", () => {

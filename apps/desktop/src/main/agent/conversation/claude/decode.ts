@@ -19,7 +19,12 @@
  * and they never raise the "DevHub does not know this event" notice.
  */
 
-import type { JsonValue, Question } from "../../../../model/conversation.js";
+import {
+	type JsonValue,
+	type Question,
+	type RateLimit,
+	rateLimitWindowName,
+} from "../../../../model/conversation.js";
 import { ProtocolMismatch } from "../protocolAdapter.js";
 
 type JsonObject = { readonly [key: string]: JsonValue };
@@ -126,8 +131,8 @@ export type ClaudeLine =
 	  }
 	| {
 			readonly type: "rate_limit";
-			readonly usedPercent: number | undefined;
-			readonly resetsAt: number | undefined;
+			/** Every window the event reports. */
+			readonly windows: readonly RateLimit[];
 	  }
 	/**
 	 * A message of the session this conversation resumed, put at the head of
@@ -942,26 +947,60 @@ function decodeResult(raw: JsonObject, f: Fields): ClaudeLine {
 	};
 }
 
+/**
+ * A `rate_limit_event`. The CLI reports every window it tracks under
+ * `unifiedWindows`, keyed by its name (`five_hour`, `seven_day`, …); the
+ * top-level fields repeat one of them, named by `rateLimitType`. An event
+ * without `unifiedWindows` reports that one window alone.
+ */
 function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
-	const info = f.object(
-		raw.rate_limit_info,
-		"rate_limit_event.rate_limit_info",
-	);
-	const utilization = f.optionalNumber(
-		info.utilization,
-		"rate_limit_event.rate_limit_info.utilization",
-	);
-	const resetsAt = f.optionalNumber(
-		info.resetsAt,
-		"rate_limit_event.rate_limit_info.resetsAt",
-	);
+	const at = "rate_limit_event.rate_limit_info";
+	const info = f.object(raw.rate_limit_info, at);
+	const windows =
+		info.unifiedWindows === undefined
+			? [
+					[
+						f.string(info.rateLimitType, `${at}.rateLimitType`),
+						info,
+						at,
+					] as const,
+				]
+			: Object.entries(
+					f.object(info.unifiedWindows, `${at}.unifiedWindows`),
+				).map(([key, value]) => {
+					const path = `${at}.unifiedWindows.${key}`;
+					return [key, f.object(value, path), path] as const;
+				});
 	return {
 		type: "rate_limit",
-		// A fraction on the wire; a percentage in the model.
-		usedPercent: utilization === undefined ? undefined : utilization * 100,
-		// Epoch seconds on the wire; milliseconds in the model.
-		resetsAt: resetsAt === undefined ? undefined : resetsAt * 1000,
+		windows: windows.map(([key, window, path]) => {
+			const utilization = f.optionalNumber(
+				window.utilization,
+				`${path}.utilization`,
+			);
+			const resetsAt = f.optionalNumber(window.resetsAt, `${path}.resetsAt`);
+			return {
+				window: claudeWindowName(key),
+				// A fraction on the wire; a percentage in the model.
+				usedPercent: utilization === undefined ? undefined : utilization * 100,
+				// Epoch seconds on the wire; milliseconds in the model.
+				resetsAt: resetsAt === undefined ? undefined : resetsAt * 1000,
+			};
+		}),
 	};
+}
+
+/** The windows whose length the name says, named as Codex's are; any other by its own name. */
+const CLAUDE_WINDOW_MINUTES: Readonly<Record<string, number>> = {
+	five_hour: 5 * 60,
+	seven_day: 7 * 24 * 60,
+};
+
+function claudeWindowName(key: string): string {
+	const minutes = CLAUDE_WINDOW_MINUTES[key];
+	return minutes === undefined
+		? key.replaceAll("_", " ")
+		: rateLimitWindowName(minutes);
 }
 
 /**

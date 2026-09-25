@@ -124,7 +124,7 @@ export const USAGE: Usage = {
   contextTokens: undefined,
   contextWindow: undefined,
   costUsd: 0.042,
-  rateLimit: undefined,
+  rateLimits: undefined,
 };
 
 export function turnEnd(

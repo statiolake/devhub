@@ -353,20 +353,23 @@ export interface AppConditionWire {
 }
 
 /**
- * How much of each CLI's rate limit is used, as its GUI Agents last reported
- * it. One entry per CLI with a GUI, always; `limit` absent means no Agent of
- * that CLI has reported one yet — not that nothing is used. See
- * `main/shell/usageLimits.ts`.
+ * How much of each CLI's rate limits is used, as its GUI Agents last reported
+ * them. One entry per CLI with a GUI, always; `windows` absent means no Agent
+ * of that CLI has reported one yet — not that nothing is used. One window per
+ * limit the CLI keeps (`5-hour`, `7-day`, …), in the order first reported.
+ * See `main/shell/usageLimits.ts`.
  */
 export interface UsageLimitsWire {
 	readonly clis: readonly {
 		readonly cli: "claude" | "codex";
-		readonly limit?: {
+		readonly windows?: readonly {
+			/** Which window, in words. */
+			readonly window: string;
 			/** 0–100. */
 			readonly usedPercent?: number;
 			/** Epoch milliseconds. */
 			readonly resetsAt?: number;
-		};
+		}[];
 	}[];
 }
 

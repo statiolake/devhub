@@ -58,6 +58,7 @@ import {
 	type Transcript,
 	type TranscriptEntry,
 	type Usage,
+	withRateLimits,
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
@@ -143,7 +144,7 @@ const NO_USAGE: Usage = {
 	contextTokens: undefined,
 	contextWindow: undefined,
 	costUsd: undefined,
-	rateLimit: undefined,
+	rateLimits: undefined,
 };
 
 const ALLOW_ONCE: RequestChoice = {
@@ -757,10 +758,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					type: "usage",
 					usage: {
 						...(this.current.usage ?? NO_USAGE),
-						rateLimit: {
-							usedPercent: line.usedPercent,
-							resetsAt: line.resetsAt,
-						},
+						rateLimits: withRateLimits(
+							this.current.usage?.rateLimits,
+							line.windows,
+						),
 					},
 				});
 			case "unused":
@@ -1286,7 +1287,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			outputTokens: line.usage?.outputTokens,
 			cachedInputTokens: line.usage?.cacheReadTokens,
 			costUsd: line.costUsd,
-			rateLimit: this.current.usage?.rateLimit,
+			rateLimits: this.current.usage?.rateLimits,
 			contextTokens: this.current.usage?.contextTokens,
 			contextWindow:
 				(this.mainModel === undefined

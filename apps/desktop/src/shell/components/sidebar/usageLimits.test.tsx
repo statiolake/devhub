@@ -34,14 +34,21 @@ describe("the usage-limits readout", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("says what is used per CLI, and that the other has not reported", () => {
+  it("says the most used window per CLI, every window on hover, and that the other has not reported", () => {
     render(
       <UsageLimits
         limits={{
           clis: [
             {
               cli: "claude",
-              limit: { usedPercent: 97.6, resetsAt: NOW + 2 * HOUR },
+              windows: [
+                { window: "5-hour", usedPercent: 12, resetsAt: NOW + 2 * HOUR },
+                {
+                  window: "7-day",
+                  usedPercent: 97.6,
+                  resetsAt: NOW + 50 * HOUR,
+                },
+              ],
             },
             { cli: "codex" },
           ],
@@ -54,9 +61,11 @@ describe("the usage-limits readout", () => {
     expect(readout).not.toHaveTextContent("Codex");
     const lines = tooltipOf(readout).map((line) => line.text);
     expect(lines[0]).toBe("Claude usage limit");
-    expect(lines[1]).toBe("98% used");
+    expect(lines[1]).toBe("5-hour: 12% used");
     expect(lines[2]).toMatch(/^Resets /u);
-    expect(lines.slice(3)).toEqual([
+    expect(lines[3]).toBe("7-day: 98% used");
+    expect(lines[4]).toMatch(/^Resets /u);
+    expect(lines.slice(5)).toEqual([
       "Codex usage limit",
       "No Codex GUI Agent has reported it yet",
     ]);
@@ -68,7 +77,12 @@ describe("the usage-limits readout", () => {
         limits={{
           clis: [
             { cli: "claude" },
-            { cli: "codex", limit: { usedPercent: 40, resetsAt: NOW - HOUR } },
+            {
+              cli: "codex",
+              windows: [
+                { window: "5-hour", usedPercent: 40, resetsAt: NOW - HOUR },
+              ],
+            },
           ],
         }}
         now={NOW}
