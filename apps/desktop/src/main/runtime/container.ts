@@ -107,6 +107,17 @@ const A_MINUTE = 60 * 1000;
  * Node CLI on the happy path.
  */
 export const LOCAL_FOLDER_LABEL = "devcontainer.local_folder";
+
+/**
+ * The bring-up in flight for each host folder: see `ContainerRuntime.ensureUp`.
+ */
+const BRINGING_UP = new Map<
+	string,
+	Promise<{
+		readonly result: UpResult;
+		readonly remoteUser: string | undefined;
+	}>
+>();
 export const CONFIG_FILE_LABEL = "devcontainer.config_file";
 
 /** How this build runs `docker`. */
@@ -426,6 +437,7 @@ export class ContainerRuntime
 				lastLine(listed.stderr.toString("utf8")),
 			);
 		}
+		const found: { id: string; state: string; image: string }[] = [];
 		for (const line of listed.stdout.toString("utf8").split("\n")) {
 			const [id = "", state = "", image = ""] = line.split("\t");
 			if (id.length === 0) continue;
@@ -433,11 +445,26 @@ export class ContainerRuntime
 			// those too, and adopting one would be adopting a filesystem that is
 			// being deleted underneath every command sent to it.
 			if (state === "removing") continue;
-			return state === "running"
-				? { kind: "running", id, image }
-				: { kind: "stopped", id };
+			found.push({ id, state, image });
 		}
-		return { kind: "absent" };
+		// The label is how the CLI and DevHub both find a folder's container, so
+		// two of them is a folder with two answers. Taking the first would run
+		// every command in one and leave the other going unnoticed — which is
+		// how a second container made by a concurrent `up` went on running.
+		if (found.length > 1) {
+			throw new Error(
+				`${String(found.length)} containers carry the label ` +
+					`${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder} ` +
+					`(${found.map((one) => one.id).join(", ")}), so DevHub cannot ` +
+					`tell which is this Workspace's. Remove the ones that are not ` +
+					`with docker rm -f <id>.`,
+			);
+		}
+		const [only] = found;
+		if (only === undefined) return { kind: "absent" };
+		return only.state === "running"
+			? { kind: "running", id: only.id, image: only.image }
+			: { kind: "stopped", id: only.id };
 	}
 
 	/**
@@ -471,7 +498,11 @@ export class ContainerRuntime
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
-			if (adopted !== undefined) return adopted;
+			if (adopted !== undefined) {
+				this.#noteContainer(adopted.result.containerId);
+				this.#remoteUser = adopted.remoteUser;
+				return adopted.result;
+			}
 		}
 		// Not running, and this is not the path that starts it. Every command
 		// DevHub sends a machine comes through here, including the reconcile
@@ -506,25 +537,52 @@ export class ContainerRuntime
 
 	async ensureUp(): Promise<void> {
 		if (this.#replaced) throw containerReplaced(this.#workspaceFolder);
+		const folder = this.#workspaceFolder;
+		// One bring-up per folder at a time, and every later caller joins it:
+		// two `devcontainer up`s started together each create a container, and
+		// both carry the folder's label. Per folder rather than per instance,
+		// because a runtime replaced after a rebuild and its replacement are two
+		// instances for one folder.
+		let bringUp = BRINGING_UP.get(folder);
+		if (bringUp === undefined) {
+			const started = this.#bringUp();
+			bringUp = started;
+			BRINGING_UP.set(folder, started);
+			const done = () => {
+				if (BRINGING_UP.get(folder) === started) BRINGING_UP.delete(folder);
+			};
+			started.then(done, done);
+		}
+		const { result, remoteUser } = await bringUp;
+		this.#noteContainer(result.containerId);
+		this.#remoteUser = remoteUser;
+		this.#container = Promise.resolve(result);
+	}
+
+	/** The running container adopted, or `devcontainer up`'s. */
+	async #bringUp(): Promise<{
+		readonly result: UpResult;
+		readonly remoteUser: string | undefined;
+	}> {
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
-			if (adopted !== undefined) {
-				this.#container = Promise.resolve(adopted);
-				return;
-			}
+			if (adopted !== undefined) return adopted;
 		}
 		// `devcontainer up` is the one thing that knows how to build an image,
 		// create a container and run the lifecycle commands the definition asks
 		// for, and DevHub has no second opinion about any of that.
 		const up = await this.#up();
-		this.#noteContainer(up.containerId);
-		this.#remoteUser = up.remoteUser;
-		this.#container = Promise.resolve(up);
+		return { result: up, remoteUser: up.remoteUser };
 	}
 
 	/** An already-running container, if `$HOME` can still be read in it. */
-	async #adopt(id: string): Promise<UpResult | undefined> {
+	async #adopt(
+		id: string,
+	): Promise<
+		| { readonly result: UpResult; readonly remoteUser: string | undefined }
+		| undefined
+	> {
 		const user = await this.#inspectRemoteUser(id);
 		const probe = await this.#docker_([
 			"exec",
@@ -536,14 +594,15 @@ export class ContainerRuntime
 			'printf %s "$HOME"',
 		]);
 		if (probe.code !== 0) return undefined;
-		this.#noteContainer(id);
-		this.#remoteUser = user;
 		return {
-			containerId: id,
-			remoteUser: user ?? "",
-			// The path inside is the Workspace's, which the location already
-			// carries; adoption does not need to rediscover it.
-			remoteWorkspaceFolder: "",
+			result: {
+				containerId: id,
+				remoteUser: user ?? "",
+				// The path inside is the Workspace's, which the location already
+				// carries; adoption does not need to rediscover it.
+				remoteWorkspaceFolder: "",
+			},
+			remoteUser: user,
 		};
 	}
 

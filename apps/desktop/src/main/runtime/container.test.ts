@@ -161,6 +161,71 @@ describe("finding the container", () => {
 	});
 });
 
+describe("one Workspace, one container", () => {
+	// Two callers asking for the same folder at once — a restored Workspace's
+	// window resolving and the picker opening it — ran `devcontainer up` twice,
+	// 260 ms apart, and each created a container carrying the same label.
+	it("brings a folder up once however many callers ask at the same moment", async () => {
+		let started = false;
+		const docker = () =>
+			fakeDocker((args) => {
+				if (args[0] === "ps") {
+					return output(0, started ? psLine("c".repeat(64), "running") : "");
+				}
+				if (args[0] === "inspect") return output(0, "");
+				return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+			});
+		const waiting: (() => void)[] = [];
+		const release = () => {
+			started = true;
+			for (const resolve of waiting) resolve();
+		};
+		const devcontainer = fakeDevcontainer(async () => {
+			await new Promise<void>((resolve) => waiting.push(resolve));
+			return output(
+				0,
+				JSON.stringify({
+					outcome: "success",
+					containerId: "c".repeat(64),
+					remoteUser: "vscode",
+					remoteWorkspaceFolder: "/workspaces/api",
+				}),
+			);
+		});
+		const first = runtimeWith(docker(), devcontainer);
+		const second = runtimeWith(docker(), devcontainer);
+		const both = Promise.all([
+			first.ensureUp(),
+			first.ensureUp(),
+			second.ensureUp(),
+		]);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		release();
+		await both;
+		expect(devcontainer.calls.filter((call) => call[0] === "up")).toHaveLength(
+			1,
+		);
+		expect(await first.home()).toBe("/home/vscode");
+		expect(await second.home()).toBe("/home/vscode");
+	});
+
+	it("refuses to pick when two containers carry the folder's label", async () => {
+		const runtime = runtimeWith(
+			fakeDocker(() =>
+				output(
+					0,
+					psLine("a".repeat(64), "running") + psLine("b".repeat(64), "running"),
+				),
+			),
+			fakeDevcontainer(() => output(0)),
+		);
+		await expect(runtime.containerState()).rejects.toThrow(
+			new RegExp(`${"a".repeat(64)}.*${"b".repeat(64)}`, "su"),
+		);
+		await expect(runtime.containerState()).rejects.toThrow(FOLDER);
+	});
+});
+
 describe("a container that is not running is a condition, not a restart", () => {
 	it("refuses a command rather than starting the container behind the person", async () => {
 		// Every command comes through this path, including the reconcile round
