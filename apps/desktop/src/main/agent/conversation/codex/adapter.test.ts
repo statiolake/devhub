@@ -645,8 +645,9 @@ describe("a turn", () => {
 		// choice shows at once.
 		expect(harness.written).toHaveLength(before);
 		expect(harness.transcript.session.model.current).toBe("gpt-5.5-mini");
+		// A model chosen here runs at its own default effort until one is.
 		expect(harness.transcript.session.effort).toEqual({
-			current: undefined,
+			current: "low",
 			choices: [{ id: "low", label: "low" }],
 		});
 		harness.configure("effort", "low");

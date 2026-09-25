@@ -346,6 +346,8 @@ export function threadListResponse(
 
 export type ModelChoice = Pick<Model, "id" | "displayName" | "hidden"> & {
 	readonly efforts: readonly string[];
+	/** The effort a turn on this model runs at when none is given. */
+	readonly defaultEffort: string;
 };
 
 export function modelListResponse(
@@ -362,6 +364,7 @@ export function modelListResponse(
 			efforts: r.array(m, "supportedReasoningEfforts", path, (option, at) =>
 				r.string(r.fields(option, at), "reasoningEffort", at),
 			),
+			defaultEffort: r.string(m, "defaultReasoningEffort", path),
 		};
 	});
 }

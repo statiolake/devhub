@@ -651,6 +651,55 @@ describe("the subagent fixture", () => {
 	});
 });
 
+describe("context usage", () => {
+	function withUsage(
+		messageId: string,
+		parent: string | null,
+		model: string,
+		usage: Record<string, number>,
+	): string {
+		return json({
+			type: "assistant",
+			message: {
+				id: messageId,
+				role: "assistant",
+				model,
+				content: [{ type: "text", text: "ok" }],
+				usage,
+			},
+			parent_tool_use_id: parent,
+			session_id: SESSION,
+		});
+	}
+
+	it("is the latest top-level message's tokens, against the window the turn's result names for its model", () => {
+		const adapter = inTurn();
+		adapter.received(
+			withUsage("m1", null, "claude-example-1", {
+				input_tokens: 10,
+				cache_creation_input_tokens: 1000,
+				cache_read_input_tokens: 20_000,
+				output_tokens: 90,
+			}),
+		);
+		// Known as soon as the message is: before the turn has ended.
+		expect(adapter.transcript.usage?.contextTokens).toBe(21_100);
+		expect(adapter.transcript.usage?.contextWindow).toBeUndefined();
+		adapter.received(
+			result({
+				modelUsage: {
+					"claude-example-1": { contextWindow: 200_000 },
+					"claude-example-small": { contextWindow: 100_000 },
+				},
+			}),
+		);
+		expect(adapter.transcript.usage).toMatchObject({
+			contextTokens: 21_100,
+			contextWindow: 200_000,
+		});
+	});
+});
+
 describe("user messages", () => {
 	it("write the text as a stream-json user message, marked with who made the Agent say it", () => {
 		const adapter = new ClaudeAdapter("boot");

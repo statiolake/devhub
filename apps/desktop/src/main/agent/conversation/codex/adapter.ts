@@ -809,8 +809,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	/** The session as DevHub knows it now, the choices not yet sent included. */
 	private sessionFacts(): SessionFacts {
 		const model = this.chosen.model ?? this.defaults?.model;
-		const efforts =
-			this.models.find((candidate) => candidate.id === model)?.efforts ?? [];
+		const listed = this.models.find((candidate) => candidate.id === model);
+		const efforts = listed?.efforts ?? [];
 		return {
 			...EMPTY_SESSION,
 			agentVersion: this.version,
@@ -827,11 +827,16 @@ export class CodexAdapter implements ProtocolAdapter {
 					})),
 			},
 			effort: {
-				// A newly chosen model starts at its own default effort, which
-				// only the server knows: shown as not set.
+				// What the next turn runs at: the effort chosen here, else the
+				// thread's own while its model is the one it opened with, else the
+				// model's default, which `model/list` names (a turn given no
+				// effort runs at it).
 				current:
 					this.chosen.effort ??
-					(this.chosen.model === undefined ? this.defaults?.effort : undefined),
+					(this.chosen.model === undefined
+						? this.defaults?.effort
+						: undefined) ??
+					listed?.defaultEffort,
 				choices: efforts.map((effort) => ({ id: effort, label: effort })),
 			},
 			mode: {

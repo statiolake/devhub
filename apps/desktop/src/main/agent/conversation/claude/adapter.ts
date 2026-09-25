@@ -232,6 +232,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	private described: InitializeFacts["commands"] = [];
 	private models: InitializeFacts["models"] = [];
+	/** The model the top level last wrote with: whose context window the usage is measured against. */
+	private mainModel: string | undefined;
 	private announced: readonly string[] = [];
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
@@ -916,6 +918,18 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const parent = this.parentOf(line.parent, "assistant");
 		this.placed(line.uuid, parent);
 		if (parent === null && when === "live") this.turn("running");
+		if (parent === null && line.contextTokens !== undefined) {
+			// The conversation's size is its latest top-level message's: a
+			// subagent's messages are its own context, not this one's.
+			this.mainModel = line.model;
+			this.emit({
+				type: "usage",
+				usage: {
+					...(this.current.usage ?? NO_USAGE),
+					contextTokens: line.contextTokens,
+				},
+			});
+		}
 		let message = this.messages.get(line.messageId);
 		if (message === undefined) {
 			message = { id: line.messageId, parent, slots: new Map(), finals: 0 };
@@ -1214,6 +1228,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			cachedInputTokens: line.usage?.cacheReadTokens,
 			costUsd: line.costUsd,
 			rateLimit: this.current.usage?.rateLimit,
+			contextTokens: this.current.usage?.contextTokens,
+			contextWindow:
+				(this.mainModel === undefined
+					? undefined
+					: line.contextWindows[this.mainModel]) ??
+				this.current.usage?.contextWindow,
 		};
 		this.turns += 1;
 		this.emit({

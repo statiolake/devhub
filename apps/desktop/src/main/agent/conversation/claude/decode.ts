@@ -74,6 +74,14 @@ export type ClaudeLine =
 			readonly content: readonly ContentBlock[];
 			/** The API error the message stands for (`authentication_failed`, `rate_limit`, …). */
 			readonly error: string | undefined;
+			/** The model that wrote it, as the API names it. */
+			readonly model: string | undefined;
+			/**
+			 * How much of the context window the conversation filled once this
+			 * message was written: everything the request carried (fresh, cache
+			 * written, cache read) and what it wrote back.
+			 */
+			readonly contextTokens: number | undefined;
 	  }
 	| {
 			readonly type: "user";
@@ -90,6 +98,8 @@ export type ClaudeLine =
 			readonly errors: readonly string[];
 			readonly costUsd: number | undefined;
 			readonly usage: ResultUsage | undefined;
+			/** Each model the turn used (`modelUsage`), and the context window it has. */
+			readonly contextWindows: Readonly<Record<string, number>>;
 	  }
 	| {
 			readonly type: "api_retry";
@@ -775,7 +785,46 @@ function decodeAssistant(
 				),
 			),
 		error: f.optionalString(raw.error, "assistant.error"),
+		model: f.optionalString(message.model, "assistant.message.model"),
+		contextTokens: contextTokens(message.usage, f),
 	};
+}
+
+function contextTokens(
+	value: JsonValue | undefined,
+	f: Fields,
+): number | undefined {
+	if (value === undefined || value === null) return undefined;
+	const usage = f.object(value, "assistant.message.usage");
+	const counts = [
+		"input_tokens",
+		"cache_creation_input_tokens",
+		"cache_read_input_tokens",
+		"output_tokens",
+	].map((key) =>
+		f.optionalNumber(usage[key], `assistant.message.usage.${key}`),
+	);
+	return counts.every((count) => count === undefined)
+		? undefined
+		: counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+}
+
+function contextWindows(
+	value: JsonValue | undefined,
+	f: Fields,
+): Readonly<Record<string, number>> {
+	if (value === undefined || value === null) return {};
+	const models = f.object(value, "result.modelUsage");
+	const windows: Record<string, number> = {};
+	for (const [model, usage] of Object.entries(models)) {
+		const path = `result.modelUsage.${model}`;
+		const window = f.optionalNumber(
+			f.object(usage, path).contextWindow,
+			`${path}.contextWindow`,
+		);
+		if (window !== undefined) windows[model] = window;
+	}
+	return windows;
 }
 
 function decodeUser(
@@ -861,6 +910,7 @@ function decodeResult(raw: JsonObject, f: Fields): ClaudeLine {
 			: f.array(raw.errors, "result.errors")
 		).map((each, index) => f.string(each, `result.errors[${index}]`)),
 		costUsd: f.optionalNumber(raw.total_cost_usd, "result.total_cost_usd"),
+		contextWindows: contextWindows(raw.modelUsage, f),
 		usage:
 			usage === undefined
 				? undefined
