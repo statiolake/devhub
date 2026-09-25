@@ -695,6 +695,14 @@ export function conversationActivity(
 }
 
 /**
+ * How an edit of the person's last message ended: the new words were sent in
+ * place of the old, or the CLI would not take the turn back — the
+ * conversation has a notice saying why, and the words are still the person's
+ * to send.
+ */
+export type EditOutcome = "sent" | "refused";
+
+/**
  * The message the person may edit and send again, if there is one now: their
  * last top-level message, when the session can rewind, nothing is running or
  * waiting, and nothing was said to the Agent after it. Editing it takes back

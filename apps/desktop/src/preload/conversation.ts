@@ -15,7 +15,10 @@ import {
 	type ConversationCommandWire,
 	type ConversationEventListener,
 } from "../ipc/conversation.js";
-import type { ConversationEvent } from "../model/conversation.js";
+import type {
+	ConversationEvent,
+	EditOutcome,
+} from "../model/conversation.js";
 
 const listeners = new Map<string, ConversationEventListener>();
 
@@ -58,6 +61,13 @@ export const conversationApi: ConversationApi = {
 		await ipcRenderer.invoke(CONVERSATION_CHANNELS.detach, agentId);
 	},
 	send: (agentId, text) => command(agentId, { kind: "send", text }),
+	editLastMessage: (agentId, message, text) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.editLastMessage,
+			agentId,
+			message,
+			text,
+		) as Promise<EditOutcome>,
 	continueInTerminal: (agentId) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.continueInTerminal,

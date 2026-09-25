@@ -208,6 +208,52 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(replay[200]?.line).toBe('{"seq":200}');
 		}, 30_000);
 
+		it("starts the CLI again with the arguments it is given, the mark in the journal between the two", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (seen) => seen.length === 1);
+			await link.write('{"to":"the first"}', 0);
+			await readUntil(lines, (seen) => seen.length === 1);
+
+			await link.restart(["--resume", "a session id"], '{"mark":"here"}');
+			const restarted = await readUntil(lines, (seen) => seen.length === 2);
+			expect(restarted.map((each) => each.line)).toEqual([
+				'{"mark":"here"}',
+				'{"type":"hello","argc":2}',
+			]);
+			await link.write('{"to":"the second"}', 0);
+			const [echo] = await readUntil(lines, (seen) => seen.length === 1);
+			expect(echo?.line).toBe('{"echo":{"to":"the second"}}');
+
+			// A second start adds its own arguments to the CLI's argv, not to the first start's.
+			await link.restart([], '{"mark":"again"}');
+			const again = await readUntil(lines, (seen) => seen.length === 2);
+			expect(again.map((each) => each.line)).toEqual([
+				'{"mark":"again"}',
+				'{"type":"hello","argc":0}',
+			]);
+
+			// And the host still ends as its CLI does.
+			await link.write('{"fake":"exit","code":3}', 0);
+			expect(await readAll(lines)).toEqual([]);
+			expect(await link.ending()).toMatchObject({ kind: "exited", code: 3 });
+		}, 20_000);
+
+		it("refuses to start again the CLI of a host that is gone", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (seen) => seen.length === 1);
+			await link.write('{"fake":"exit","code":0}', 0);
+			await readAll(lines);
+			const failure = await failureOf(link.restart([], '{"mark":"late"}'));
+			expect(failure.code).toBe("host_gone");
+			expect(failure.message).toContain("there is no CLI to start again");
+		}, 20_000);
+
 		it("ends the journal when the agent exits, and says with what and why", async () => {
 			const directory = stateDirectory();
 			startHost(directory);
@@ -255,6 +301,9 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(await readAll(lines)).toEqual([]);
 			expect(await link.ending()).toMatchObject({ kind: "vanished" });
 			expect(existsSync(join(directory, "exit"))).toBe(false);
+			// The CLI runs beside the host, not in its place, and the hang-up reaches it too.
+			const cli = Number(readFileSync(join(directory, "cli"), "utf8"));
+			expect(() => process.kill(cli, 0)).toThrow();
 			const refused = await failureOf(link.write('{"after":"death"}', 0));
 			expect(refused.code).toBe("host_gone");
 			expect(refused.message).toContain("nothing is reading its input");

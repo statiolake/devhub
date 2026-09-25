@@ -13,6 +13,8 @@
 
 import type {
 	ConversationEvent,
+	EditOutcome,
+	EntryId,
 	RequestAnswer,
 	RequestId,
 	Transcript,
@@ -23,6 +25,7 @@ export const CONVERSATION_CHANNELS = {
 	detach: "devhub:conversation:detach",
 	command: "devhub:conversation:command",
 	continueInTerminal: "devhub:conversation:continue-in-terminal",
+	editLastMessage: "devhub:conversation:edit-last-message",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -71,6 +74,16 @@ export interface ConversationApi {
 		request: RequestId,
 		answer: RequestAnswer,
 	): Promise<void>;
+	/**
+	 * Take back the turn of the person's last message (`editableMessage`) and
+	 * everything after it, and send `text` in its place. Refused, with the
+	 * reason, when that message cannot be edited now.
+	 */
+	editLastMessage(
+		agentId: string,
+		message: EntryId,
+		text: string,
+	): Promise<EditOutcome>;
 	/**
 	 * Carry the conversation on in a terminal Agent from the same profile,
 	 * resuming the session, and stop this one once that one runs. Refused,

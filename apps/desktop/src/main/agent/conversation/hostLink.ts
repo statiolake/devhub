@@ -25,6 +25,7 @@ import { CancellationToken } from "../../terminal/ports.js";
 import type { ExecLimits, ExecResult, Runtime } from "../../runtime/runtime.js";
 import {
 	ENDING_SCRIPT,
+	RESTART_SCRIPT,
 	SENT_LOG_SCRIPT,
 	STREAM_EXIT,
 	STREAM_NAME,
@@ -282,7 +283,12 @@ export class HostLink {
 			throw new Error(`${String(afterOffset)} is not a journal offset`);
 		}
 		const next = this.#writes.then(() =>
-			this.#write(`${String(afterOffset)} ${line}`),
+			this.#input(
+				WRITE_SCRIPT,
+				"devhub-agent-write",
+				`${String(afterOffset)} ${line}\n`,
+				"did not take a line",
+			),
 		);
 		// Only the order is kept here; the failure itself is `next`'s, and it
 		// goes to the caller that asked for this write.
@@ -293,18 +299,48 @@ export class HostLink {
 		return next;
 	}
 
-	async #write(line: string): Promise<void> {
+	/**
+	 * Have the host start its CLI again, with `args` added to its argv for
+	 * that start, and `mark` in the journal between the two CLIs' output
+	 * (`RESTART_SCRIPT`). Resolves once the old CLI has been told to stop; the
+	 * mark in the journal is how the caller learns the new one started. In
+	 * order with the writes, like one of them.
+	 */
+	restart(args: readonly string[], mark: string): Promise<void> {
+		for (const each of [mark, ...args]) {
+			if (each.includes("\n")) {
+				throw new Error(
+					"a restart's mark and arguments must not contain a newline",
+				);
+			}
+		}
+		const next = this.#writes.then(() =>
+			this.#input(
+				RESTART_SCRIPT,
+				"devhub-agent-restart",
+				[mark, ...args].map((each) => `${each}\n`).join(""),
+				"did not start its CLI again",
+			),
+		);
+		this.#writes = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
+	}
+
+	/** Run one of the host's input scripts with `stdin`; its refusals are `HostLinkFailure`s. */
+	async #input(
+		script: string,
+		name: string,
+		stdin: string,
+		refused: string,
+	): Promise<void> {
 		let result: ExecResult;
 		try {
 			result = await this.#runtime.exec({
-				argv: [
-					"/bin/sh",
-					"-c",
-					WRITE_SCRIPT,
-					"devhub-agent-write",
-					this.#directory,
-				],
-				stdin: Buffer.from(`${line}\n`, "utf8"),
+				argv: ["/bin/sh", "-c", script, name, this.#directory],
+				stdin: Buffer.from(stdin, "utf8"),
 				deadline: OperationDeadline.in(this.#writeTimeoutMs),
 				cancel: new CancellationToken(),
 				limits: limits("the write to", this.#directory),
@@ -312,7 +348,7 @@ export class HostLink {
 		} catch (failure: unknown) {
 			throw new HostLinkFailure(
 				"write_failed",
-				`the Agent host in ${this.#directory}${this.#runtime.where} did not take a line: ${describe(failure)}`,
+				`the Agent host in ${this.#directory}${this.#runtime.where} ${refused}: ${describe(failure)}`,
 				undefined,
 				{ cause: failure },
 			);
@@ -327,7 +363,7 @@ export class HostLink {
 		}
 		throw new HostLinkFailure(
 			"write_failed",
-			`the Agent host in ${this.#directory}${this.#runtime.where} did not take a line (exit ${String(result.code ?? result.signal)}): ${lastLine(result.stderr)}`,
+			`the Agent host in ${this.#directory}${this.#runtime.where} ${refused} (exit ${String(result.code ?? result.signal)}): ${lastLine(result.stderr)}`,
 			undefined,
 		);
 	}

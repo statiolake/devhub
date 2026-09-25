@@ -12,6 +12,10 @@ import {
 	type ConversationAttachment,
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
+import {
+	entryId,
+	type EditOutcome,
+} from "../../model/conversation.js";
 import type { AgentId } from "../../model/domain.js";
 import type {
 	ConversationCommand,
@@ -97,6 +101,19 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 		const session = await options.conversations.session(agentId);
 		await options.continueInTerminal(agentId, session);
 	});
+
+	handle(
+		CONVERSATION_CHANNELS.editLastMessage,
+		async (agentId, message, text): Promise<EditOutcome> => {
+			if (typeof message !== "string" || typeof text !== "string") {
+				throw new Error(
+					`${JSON.stringify([message, text])} is not an edit of a message`,
+				);
+			}
+			const conversation = await options.conversations.of(agentId);
+			return conversation.editLastMessage(entryId(message), text);
+		},
+	);
 
 	handle(CONVERSATION_CHANNELS.command, async (agentId, wire) => {
 		const request = requestFrom(wire);

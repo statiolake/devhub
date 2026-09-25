@@ -37,8 +37,16 @@
  *            back where it was written, which the lines alone cannot say.
  * - `pid`    the host's own pid, written (atomically) once `in` is open: the
  *            host is ready when this exists.
- * - `exit`   written (atomically) once, when the host is over: the CLI's exit
- *            status as a decimal (128 + n for a signal, as `sh` reports it),
+ * - `cli`    the running CLI's pid, written (atomically) each time the host
+ *            starts it. What DevHub stops to have the CLI started again.
+ * - `again`  written by DevHub (`RESTART_SCRIPT`) to have the CLI started
+ *            again once it ends: the arguments to add to its argv for that
+ *            start, one per line. With it, `again.mark`: one line the host
+ *            appends to `out` between the two CLIs' output, so the journal
+ *            itself says where the one ended and the other began. The host
+ *            removes both when it starts the CLI again.
+ * - `exit`   written (atomically) once, when the host is over (the CLI ended
+ *            with no `again` waiting): the CLI's exit status as a decimal (128 + n for a signal, as `sh` reports it),
  *            or the word `host` when the host itself could not start the CLI
  *            — the reason is then the last line of `err`.
  *
@@ -56,6 +64,13 @@ export const HOST_NAME = "devhub-agent-host";
  * `command exec` and not `exec` for the redirections that may fail: a failed
  * redirection on the special builtin `exec` exits a non-interactive shell on
  * the spot, before the `||` could say why.
+ *
+ * The CLI runs as an asynchronous command the host waits for, so that its pid
+ * is known (`cli`) and DevHub can stop it to have it started again. It stays
+ * in the host's process group, so tmux's hang-up on Stop reaches it as it
+ * reached the CLI in the foreground. `again` takes its arguments as its own
+ * positional parameters, which a function has: the CLI's argv as the host was
+ * given it is the same for every start.
  */
 export const HOST_SCRIPT = `set -u
 D=$1
@@ -69,8 +84,28 @@ mkfifo "$D/in" || refuse "cannot make the input pipe $D/in"
 command exec 3<>"$D/in" || refuse "cannot open the input pipe $D/in"
 { printf '%s\\n' "$$" >"$D/pid.new" && mv -f "$D/pid.new" "$D/pid"; } ||
   refuse "cannot record the host's pid in $D/pid"
-"$@" <&3 3<&- >>"$D/out"
-ended "$?"
+run() {
+  "$@" <&3 3<&- >>"$D/out" &
+  c=$!
+  { printf '%s\\n' "$c" >"$D/cli.new" && mv -f "$D/cli.new" "$D/cli"; } ||
+    { kill "$c"; refuse "cannot record the CLI's pid in $D/cli"; }
+  wait "$c"
+}
+again() {
+  while IFS= read -r a; do set -- "$@" "$a"; done <"$D/again" ||
+    refuse "cannot read the arguments to start the CLI again with from $D/again"
+  cat "$D/again.mark" >>"$D/out" ||
+    refuse "cannot write the CLI's new start into the journal $D/out"
+  rm -f "$D/again" "$D/again.mark"
+  run "$@"
+}
+run "$@"
+s=$?
+while [ -f "$D/again" ]; do
+  again "$@"
+  s=$?
+done
+ended "$s"
 `;
 
 /** `$0` of a journal stream. */
@@ -192,6 +227,31 @@ fi
 IFS= read -r x || { echo "the write to $D carried no line" >&2; exit 2; }
 printf '%s\\n' "$x" >>"$D/in.log" || exit 1
 printf '%s\\n' "\${x#* }" >"$D/in"
+`;
+
+/**
+ * Have the host start its CLI again. `$1` is the state directory; stdin is the
+ * mark (one line, for the journal), then the arguments to add to the CLI's
+ * argv, one per line. The CLI is sent SIGTERM; the host, finding `again` when
+ * it ends, appends the mark to the journal and starts it again.
+ *
+ * A host from before restarts (no `cli`) is refused rather than left to end
+ * the Agent when its CLI is stopped. Like `WRITE_SCRIPT`'s, no sentence here
+ * may say "is not running".
+ */
+export const RESTART_SCRIPT = `set -u
+D=$1
+if [ ! -f "$D/pid" ] || [ -f "$D/exit" ] || ! kill -0 "$(cat "$D/pid")" 2>/dev/null; then
+  echo "the host in $D has ended or never started, so there is no CLI to start again" >&2; exit ${WRITE_EXIT.hostGone}
+fi
+[ -f "$D/cli" ] ||
+  { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before restarts" >&2; exit 1; }
+[ ! -f "$D/again" ] || { echo "the CLI in $D is already being started again" >&2; exit 1; }
+IFS= read -r m || { echo "the restart of $D carried no mark" >&2; exit 2; }
+printf '%s\\n' "$m" >"$D/again.mark" || exit 1
+{ cat >"$D/again.new" && mv -f "$D/again.new" "$D/again"; } || exit 1
+kill "$(cat "$D/cli")" ||
+  { rm -f "$D/again" "$D/again.mark"; echo "the CLI in $D could not be stopped to start it again" >&2; exit 1; }
 `;
 
 /** Everything DevHub has written to the host. `$1` is the state directory. */

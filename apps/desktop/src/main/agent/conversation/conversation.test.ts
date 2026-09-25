@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import {
 	EMPTY_TRANSCRIPT,
 	applyEvent,
+	entryId,
 	requestId,
 	type ConversationEvent,
 	type Transcript,
@@ -55,6 +56,11 @@ class FakeHost implements ConversationHost {
 	#wake: (() => void) | undefined;
 	/** Called with each written line; a scripted CLI answers through `print`. */
 	onWrite: (line: string) => void = () => undefined;
+	/** Called for a restart, after the mark is in the journal as the real host puts it. */
+	onRestart: (args: readonly string[]) => void = () => undefined;
+	readonly restarts: { args: readonly string[]; mark: string }[] = [];
+	/** The next restart fails. */
+	refuseRestart = false;
 	/** The next `lines` stream fails after this many lines, once. */
 	failAfter: number | undefined;
 	/** The next write fails. */
@@ -109,6 +115,21 @@ class FakeHost implements ConversationHost {
 		this.inLog.push({ afterOffset, line });
 		this.onWrite(line);
 		if (this.slowWrites) await new Promise((resolve) => setImmediate(resolve));
+	}
+
+	async restart(args: readonly string[], mark: string): Promise<void> {
+		await Promise.resolve();
+		if (this.refuseRestart) {
+			this.refuseRestart = false;
+			throw new HostLinkFailure(
+				"write_failed",
+				"the fake host did not start its CLI again",
+				undefined,
+			);
+		}
+		this.restarts.push({ args, mark });
+		this.print(mark);
+		this.onRestart(args);
 	}
 
 	async sentLog(): Promise<readonly SentRecord[]> {
@@ -573,5 +594,222 @@ describe("a reply the protocol demands", () => {
 			response: { subtype: "error", request_id: "c1" },
 		});
 		await conversation.stop();
+	});
+});
+
+describe("editing the person's last message", () => {
+	/**
+	 * A Claude new enough to resume at a message, answering each message with
+	 * one line of its own; `hold` keeps it from ending the turn.
+	 */
+	function answeringCli(
+		host: FakeHost,
+		version = "2.1.282",
+	): { hold: boolean } {
+		const cli = { hold: false };
+		let said = 0;
+		let started = false;
+		const print = (value: unknown) => host.print(JSON.stringify(value));
+		host.onWrite = (line) => {
+			const message = JSON.parse(line) as {
+				type: string;
+				request_id?: string;
+				request?: { subtype: string };
+				message?: { content: string };
+			};
+			if (message.type === "control_request") {
+				print({
+					type: "control_response",
+					response: {
+						subtype: "success",
+						request_id: message.request_id,
+						response: { commands: [], models: [] },
+					},
+				});
+				return;
+			}
+			if (message.type !== "user") return;
+			said += 1;
+			if (!started) {
+				started = true;
+				print({
+					type: "system",
+					subtype: "init",
+					session_id: "s-1",
+					cwd: "/home/testuser/project",
+					model: "claude-sonnet-5",
+					permissionMode: "default",
+					slash_commands: [],
+					claude_code_version: version,
+				});
+			}
+			print({
+				type: "user",
+				message: { role: "user", content: message.message!.content },
+				parent_tool_use_id: null,
+				session_id: "s-1",
+				uuid: `u${said}`,
+			});
+			print({
+				type: "assistant",
+				message: {
+					id: `msg_${said}`,
+					role: "assistant",
+					content: [{ type: "text", text: `answer ${said}` }],
+				},
+				parent_tool_use_id: null,
+				session_id: "s-1",
+				uuid: `a${said}`,
+			});
+			if (cli.hold) return;
+			print({
+				type: "result",
+				subtype: "success",
+				is_error: false,
+				duration_ms: 100,
+				result: "done",
+				session_id: "s-1",
+			});
+		};
+		host.onRestart = () => {
+			started = false;
+		};
+		return cli;
+	}
+
+	async function twoTurns(version?: string): Promise<{
+		host: FakeHost;
+		conversation: AgentConversation;
+		cli: { hold: boolean };
+	}> {
+		const host = new FakeHost();
+		const cli = answeringCli(host, version);
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+		);
+		conversation.start();
+		await settle();
+		for (const text of ["first", "second"]) {
+			await conversation.command({ kind: "send", text, origin: "person" });
+			await settle();
+		}
+		return { host, conversation, cli };
+	}
+
+	const ids = (conversation: AgentConversation) =>
+		conversation.reading().transcript.entries.map((each) => each.id);
+
+	it("takes the turn back, sends the new words in its place, and replays to the same after a restart of DevHub", async () => {
+		const { host, conversation } = await twoTurns();
+		expect(ids(conversation)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+			"user:u2",
+			"assistant:msg_2:0",
+			"turn:2",
+		]);
+
+		const outcome = await conversation.editLastMessage(
+			entryId("user:u2"),
+			"second, better",
+		);
+		await settle();
+		expect(outcome).toBe("sent");
+		expect(host.restarts).toEqual([
+			{
+				args: [
+					"--resume",
+					"s-1",
+					"--resume-session-at",
+					"a1",
+					"--resume-drops-turn",
+					"u2",
+				],
+				mark: JSON.stringify({ type: "devhub_rewind", message: "user:u2" }),
+			},
+		]);
+		expect(ids(conversation)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+			"user:u3",
+			"assistant:msg_3:0",
+			"turn:3",
+		]);
+		expect(conversation.reading().transcript.state).toEqual({
+			phase: "ready",
+			turn: "none",
+		});
+		const live = conversation.reading().transcript;
+		await conversation.stop();
+
+		const writes = host.inLog.length;
+		const again = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-b"),
+			() => undefined,
+		);
+		again.start();
+		await settle();
+		expect(again.reading().transcript).toEqual(live);
+		expect(host.inLog).toHaveLength(writes);
+		await again.stop();
+	});
+
+	it("refuses while a turn runs, saying to stop it first, and writes nothing", async () => {
+		const { host, conversation, cli } = await twoTurns();
+		cli.hold = true;
+		await conversation.command({ kind: "send", text: "third", origin: "person" });
+		await settle();
+		const writes = host.inLog.length;
+		await expect(
+			conversation.editLastMessage(entryId("user:u3"), "third, better"),
+		).rejects.toThrow("Stop it before editing your last message.");
+		expect(host.inLog).toHaveLength(writes);
+		expect(host.restarts).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("refuses when the CLI cannot take a turn back", async () => {
+		const { host, conversation } = await twoTurns("2.1.0");
+		await expect(
+			conversation.editLastMessage(entryId("user:u2"), "second, better"),
+		).rejects.toThrow("This Agent's CLI cannot take back a turn");
+		expect(host.restarts).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("is the edit's failure when the host does not start the CLI again, and leaves the conversation usable", async () => {
+		const { host, conversation } = await twoTurns();
+		host.refuseRestart = true;
+		await expect(
+			conversation.editLastMessage(entryId("user:u2"), "second, better"),
+		).rejects.toThrow("the fake host did not start its CLI again");
+		expect(ids(conversation)).toContain("user:u2");
+		await conversation.command({ kind: "send", text: "third", origin: "person" });
+		await settle();
+		expect(ids(conversation)).toContain("user:u3");
+		await conversation.stop();
+	});
+
+	it("refuses other input while the edit waits for the CLI", async () => {
+		const { host, conversation } = await twoTurns();
+		// The host takes the restart, but no new CLI answers yet.
+		host.onWrite = () => undefined;
+		const edit = conversation.editLastMessage(
+			entryId("user:u2"),
+			"second, better",
+		);
+		await settle();
+		await expect(
+			conversation.command({ kind: "send", text: "meanwhile", origin: "person" }),
+		).rejects.toThrow("Your last message is being edited.");
+		await conversation.stop();
+		await expect(edit).rejects.toThrow(
+			"The conversation stopped before your edited message could be sent.",
+		);
 	});
 });

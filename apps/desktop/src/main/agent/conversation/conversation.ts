@@ -45,13 +45,26 @@
  * Agent's failure (`crashed`): on its pane and its row, where its subject is.
  * It is not thrown at the round, which would fail every Agent on the machine
  * and show on none of them — the spinner that never ends.
+ *
+ * # Editing the last message
+ *
+ * `editLastMessage` takes back the person's last turn and sends new words in
+ * its place: the adapter's plan is carried out (lines written, or the CLI
+ * started again by its host), the adapter reports the turn `rewinding` until
+ * the CLI has done it, and only then are the new words sent, as any message
+ * is. Nothing else may be written meanwhile. The rewind itself is in the
+ * journal (a request and its answer, or the host's mark between two CLIs), so
+ * a replay rebuilds the rewound transcript like everything else.
  */
 
 import {
 	EMPTY_TRANSCRIPT,
 	TranscriptInvariantError,
 	applyEvent,
+	editableMessage,
 	type ConversationEvent,
+	type EditOutcome,
+	type EntryId,
 	type Transcript,
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
@@ -75,6 +88,8 @@ export interface ConversationHost {
 		cancel: CancellationToken,
 	): AsyncIterable<JournalLine>;
 	write(line: string, afterOffset: number): Promise<void>;
+	/** Have the host start the CLI again with `args` added, `mark` in the journal between the two. */
+	restart(args: readonly string[], mark: string): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
 }
 
@@ -95,6 +110,7 @@ export function openedLater(
 			yield* (await host()).lines(fromOffset, cancel);
 		},
 		write: async (line, afterOffset) => (await host()).write(line, afterOffset),
+		restart: async (args, mark) => (await host()).restart(args, mark),
 		sentLog: async () => (await host()).sentLog(),
 	};
 }
@@ -112,6 +128,14 @@ export type ConversationPublish = (
 	revision: number,
 	event: ConversationEvent,
 ) => void;
+
+/** An edit waiting for its rewind to be over. */
+interface PendingRewind {
+	/** The turn has been `rewinding` since the plan was carried out. */
+	begun: boolean;
+	readonly done: () => void;
+	readonly failed: (error: Error) => void;
+}
 
 export class AgentConversation {
 	readonly #host: ConversationHost;
@@ -137,6 +161,7 @@ export class AgentConversation {
 	#attached = false;
 	#lost: HostLinkFailure | undefined;
 	#crashed: Error | undefined;
+	#rewind: PendingRewind | undefined;
 
 	constructor(
 		host: ConversationHost,
@@ -185,9 +210,69 @@ export class AgentConversation {
 	 */
 	command(command: ConversationCommand): Promise<void> {
 		return this.#serial(async () => {
-			this.#refuseIfBroken();
+			this.#refuseIfBusy();
 			await this.#write(this.#adapter.encode(command));
 		});
+	}
+
+	/**
+	 * Take back the turn of the person's last message, `message`, and
+	 * everything after it, then send `text` in its place. Refused, with the
+	 * reason, when that message cannot be edited now; rejects when the plan
+	 * could not be carried out or the conversation stopped before the new
+	 * words were sent.
+	 */
+	async editLastMessage(message: EntryId, text: string): Promise<EditOutcome> {
+		const rewound = await this.#serial(async () => {
+			this.#refuseIfBusy();
+			this.#refuseEdit(message);
+			const plan = this.#adapter.rewind(message);
+			const over = new Promise<void>((done, failed) => {
+				this.#rewind = { begun: false, done, failed };
+			});
+			try {
+				if (plan.kind === "write") await this.#write(plan.lines);
+				else await this.#host.restart(plan.args, plan.mark);
+			} catch (error: unknown) {
+				this.#rewind = undefined;
+				throw error;
+			}
+			// Wrapped: returned bare, the turnstile would wait for it, and the
+			// lines that end it could never be read.
+			return { over };
+		});
+		await rewound.over;
+		if (this.#transcript.entries.some((entry) => entry.id === message))
+			return "refused";
+		await this.command({ kind: "send", text, origin: "person" });
+		return "sent";
+	}
+
+	#refuseEdit(message: EntryId): void {
+		if (editableMessage(this.#transcript)?.id === message) return;
+		const { state, session, requests } = this.#transcript;
+		if (!session.canRewind) {
+			throw new Error(
+				"This Agent's CLI cannot take back a turn, so a message cannot be edited.",
+			);
+		}
+		if (requests.length > 0 || (state.phase === "ready" && state.turn !== "none")) {
+			throw new Error(
+				"The Agent is in the middle of a turn. Stop it before editing your last message.",
+			);
+		}
+		throw new Error(
+			"That is no longer your last message, so it cannot be edited.",
+		);
+	}
+
+	#refuseIfBusy(): void {
+		this.#refuseIfBroken();
+		if (this.#rewind !== undefined) {
+			throw new Error(
+				"Your last message is being edited. Wait until the new one is sent.",
+			);
+		}
 	}
 
 	#refuseIfBroken(): void {
@@ -207,7 +292,7 @@ export class AgentConversation {
 	 */
 	configure(which: SettingName, id: string): Promise<void> {
 		return this.#serial(async () => {
-			this.#refuseIfBroken();
+			this.#refuseIfBusy();
 			const step = this.#adapter.configure(which, id);
 			this.#take(step);
 			await this.#write(step.replies);
@@ -221,6 +306,22 @@ export class AgentConversation {
 	}
 
 	async #follow(): Promise<void> {
+		try {
+			await this.#followJournal();
+		} finally {
+			// However following ended, an edit waiting on the CLI will not hear
+			// from it now.
+			const rewind = this.#rewind;
+			this.#rewind = undefined;
+			rewind?.failed(
+				new Error(
+					"The conversation stopped before your edited message could be sent.",
+				),
+			);
+		}
+	}
+
+	async #followJournal(): Promise<void> {
 		try {
 			// Queued before this method first awaits, so that no command can be
 			// written between reading `in.log` and greeting: it would be in the
@@ -306,6 +407,30 @@ export class AgentConversation {
 		this.#transcript = applyEvent(this.#transcript, event);
 		this.#revision += 1;
 		this.#publish(this.#revision, event);
+		this.#watchRewind();
+	}
+
+	/** An edit's rewind is over once the turn has been `rewinding` and is not any more. */
+	#watchRewind(): void {
+		const rewind = this.#rewind;
+		if (rewind === undefined) return;
+		const { state } = this.#transcript;
+		const rewinding = state.phase === "ready" && state.turn === "rewinding";
+		if (rewinding) {
+			rewind.begun = true;
+			return;
+		}
+		if (!rewind.begun) return;
+		this.#rewind = undefined;
+		if (state.phase === "broken") {
+			rewind.failed(
+				new Error(
+					`The conversation stopped before your edited message could be sent: ${state.failure.detail}`,
+				),
+			);
+			return;
+		}
+		rewind.done();
 	}
 
 	/** Runs `work` after everything already queued, and before anything queued later. */
