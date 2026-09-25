@@ -252,7 +252,9 @@ describe("the floating Continue buttons", () => {
   });
 
   it("hands a refusal to the page's root", async () => {
-    const unknown = new Error("DevHub cannot tell which Codex thread");
+    const unknown = new Error(
+      "The Codex of this terminal Agent has no thread open yet",
+    );
     bridge.continueInGui.mockImplementationOnce(() => Promise.reject(unknown));
     render(<ContinueElsewhere agent={agent({ profileKind: "codex" })} />);
     fireEvent.click(screen.getByRole("button", { name: "Continue in GUI" }));

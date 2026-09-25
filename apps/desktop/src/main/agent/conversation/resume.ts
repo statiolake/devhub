@@ -413,56 +413,297 @@ function shellQuote(word: string): string {
 }
 
 /**
- * The session a terminal Agent's CLI is in, for a GUI Agent to go on with.
+ * The processes of a terminal Agent's pane — the pane's own (`$1`) and every
+ * one under it, outermost first — and what each holds of its CLI's session:
  *
- * Claude: what its SessionStart hook wrote down (`claudeSessionRecorder`) in
- * the Agent's directory `directory`. Codex, which has no such hook: the
- * newest thread its terminal mode (`cli`) keeps for `root` — the one the
- * Agent's TUI writes to, provided it is the only Codex TUI in that directory,
- * which the caller checks.
+ * - `claude`: the record Claude keeps of each running process,
+ *   `$3/<pid>.json` (`$3` is `<config>/sessions`), which names the session
+ *   the process is in and follows `/clear` and `/resume` inside it;
+ * - `codex`: each Codex rollout (`rollout-*.jsonl`) the process holds open —
+ *   the threads it is writing — with its modification time and first line
+ *   (`session_meta`: the thread's id and what started it).
+ *
+ * Each record is a header line — kind, pid, modification time, path, by tabs
+ * — and the file's first line. The process tree is `ps` where there is one
+ * and `/proc` where not (a slim container); open files are `/proc/<pid>/fd`
+ * or else `lsof`.
+ */
+const PANE_PROCESSES_SCRIPT = `pane=$1 kind=$2 dir=$3
+if command -v ps >/dev/null 2>&1; then
+	table=$(ps -A -o pid= -o ppid=) || exit 70
+elif [ -d /proc/self ]; then
+	table=$(for s in /proc/[0-9]*/stat; do sed -n 's/^\\([0-9]*\\) (.*) [A-Za-z] \\([0-9]*\\) .*/\\1 \\2/p' "$s" 2>/dev/null; done)
+else
+	echo "there is neither ps nor /proc to find the processes under pane $pane" >&2
+	exit 69
+fi
+if [ "$kind" = codex ] && [ ! -d /proc/self/fd ] && ! command -v lsof >/dev/null 2>&1; then
+	echo "there is neither /proc nor lsof to find the files Codex holds open" >&2
+	exit 69
+fi
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
+printf '%s\\n' "$table" | awk -v root="$pane" '
+{ kids[$2] = kids[$2] " " $1 }
+END { q[1] = root; n = 1; for (i = 1; i <= n; i++) { print q[i]; m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) q[++n] = c[j] } }
+' | while read -r pid; do
+	if [ "$kind" = claude ]; then
+		f="$dir/$pid.json"
+		[ -f "$f" ] || continue
+		printf 'claude\\t%s\\t\\t%s\\n' "$pid" "$f"
+		tr -d '\\n' <"$f"
+		echo
+	else
+		# A descriptor or a process that goes away while it is read is gone,
+		# not a failure; lsof failing on a process that is still there is.
+		if [ -d "/proc/$pid/fd" ]; then
+			open=$(for fd in /proc/"$pid"/fd/*; do readlink "$fd" 2>/dev/null; done)
+		elif listed=$(lsof -n -P -Fn -p "$pid"); then
+			open=$(printf '%s\\n' "$listed" | sed -n 's/^n//p')
+		else
+			kill -0 "$pid" 2>/dev/null || continue
+			echo "lsof could not list the files process $pid holds open" >&2
+			exit 71
+		fi
+		printf '%s\\n' "$open" | sort -u | while IFS= read -r f; do
+			case $f in
+			*/rollout-*.jsonl) ;;
+			*) continue ;;
+			esac
+			[ -f "$f" ] || continue
+			printf 'codex\\t%s\\t%s\\t%s\\n' "$pid" "$(mtime "$f")" "$f"
+			head -n 1 "$f" | head -c 1048576 | tr -d '\\n'
+			echo
+		done
+	fi
+done
+`;
+
+/** One record `PANE_PROCESSES_SCRIPT` printed. */
+interface PaneRecord {
+	readonly kind: "claude" | "codex";
+	readonly pid: number;
+	/** Seconds since the epoch; a Codex rollout's only. */
+	readonly mtime: number | undefined;
+	readonly path: string;
+	readonly line: string;
+}
+
+/** What `PANE_PROCESSES_SCRIPT` printed, as records. Exported for its tests. */
+export function parsePaneRecords(text: string): readonly PaneRecord[] {
+	const lines = text.split("\n");
+	if (lines.at(-1) === "") lines.pop();
+	if (lines.length % 2 !== 0) {
+		throw new Error(
+			"the listing of a pane's processes ended between a record's two lines",
+		);
+	}
+	const records: PaneRecord[] = [];
+	for (let i = 0; i < lines.length; i += 2) {
+		const [kind, pid, mtime, ...path] = lines[i]!.split("\t");
+		if ((kind !== "claude" && kind !== "codex") || !/^\d+$/.test(pid ?? "")) {
+			throw new Error(
+				`the listing of a pane's processes has a record DevHub did not ask for: ${JSON.stringify(lines[i])}`,
+			);
+		}
+		records.push({
+			kind,
+			pid: Number(pid),
+			mtime: mtime === undefined || mtime === "" ? undefined : Number(mtime),
+			path: path.join("\t"),
+			line: lines[i + 1]!,
+		});
+	}
+	return records;
+}
+
+/** Where Claude keeps its state: `CLAUDE_CONFIG_DIR`, the profile's before the machine's. */
+async function claudeConfigDirectory(
+	runtime: Runtime,
+	profile: SessionProfile,
+): Promise<string> {
+	return (
+		profile.env.get("CLAUDE_CONFIG_DIR") ??
+		(await runtime.environment())["CLAUDE_CONFIG_DIR"] ??
+		`${await runtime.home()}/.claude`
+	);
+}
+
+/** Ask the machine what the processes of pane `panePid` hold of `kind`'s sessions. */
+async function paneRecords(
+	runtime: Runtime,
+	kind: ResumableKind,
+	panePid: number,
+	directory: string,
+): Promise<readonly PaneRecord[]> {
+	const answer = await askMachine(
+		runtime,
+		`DevHub could not read the processes of the terminal Agent's pane (pid ${String(panePid)})`,
+	)({
+		argv: [
+			"sh",
+			"-c",
+			PANE_PROCESSES_SCRIPT,
+			"sh",
+			String(panePid),
+			kind,
+			directory,
+		],
+		env: await runtime.environment(),
+		deadline: OperationDeadline.in(15_000),
+		cancel: new CancellationToken(),
+		limits: {
+			stdoutBytes: 16 * 1024 * 1024,
+			stderrBytes: 16 * 1024,
+			overflow: {
+				kind: "fail",
+				failure: () =>
+					new Error(
+						`the processes of pane ${String(panePid)} held more than DevHub will read`,
+					),
+			},
+		},
+	});
+	if (answer.code !== 0) {
+		throw new Error(
+			`DevHub could not read the processes of the terminal Agent's pane (pid ${String(panePid)})${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
+		);
+	}
+	return parsePaneRecords(answer.stdout.toString("utf8"));
+}
+
+/**
+ * The session a terminal Agent's CLI is in, for a GUI Agent to go on with,
+ * found from the Agent's own processes — the pane's (`panePid`) and those
+ * under it — so another terminal of the same CLI in the same directory is
+ * never taken for it.
+ *
+ * Claude: the record Claude keeps of its running process,
+ * `<config>/sessions/<pid>.json`, whose `sessionId` follows `/clear` and
+ * `/resume` inside the TUI; the outermost Claude under the pane is the
+ * Agent's (one it runs is under it). Where no process has that record, what
+ * the Agent's SessionStart hook wrote down (`claudeSessionRecorder`) in its
+ * directory `directory`. Both there and different is refused: DevHub does
+ * not guess between two of Claude's own answers.
+ *
+ * Codex: the thread whose rollout the Agent's Codex holds open and which its
+ * terminal mode started (`session_meta.source` is `cli`; a subagent's is
+ * not) — the one written last when the TUI holds several (a thread switched
+ * to with `/new` or `/resume` counts from its first turn).
  */
 export async function terminalSession(
 	runtime: Runtime,
 	profile: SessionProfile,
-	root: string,
 	directory: string,
+	panePid: number,
 ): Promise<string> {
 	if (resumableKind(profile.kind) === "claude") {
-		let text: string;
-		try {
-			text = await runtime.readTextFile(
-				claudeSessionRecord(directory),
-				64 * 1024,
+		const sessions = `${await claudeConfigDirectory(runtime, profile)}/sessions`;
+		const [outermost] = await paneRecords(runtime, "claude", panePid, sessions);
+		const live =
+			outermost === undefined
+				? undefined
+				: {
+						path: outermost.path,
+						session: claudeProcessSession(outermost, runtime),
+					};
+		const hooked = await claudeHookedSession(runtime, directory);
+		if (live !== undefined && hooked !== undefined && live.session !== hooked) {
+			throw new SessionNotResumable(
+				`DevHub cannot tell which Claude session this terminal Agent is in: Claude's record of its process (${live.path}${runtime.where}) says ${live.session}, and its SessionStart hook last wrote ${hooked} (${claudeSessionRecord(directory)}).`,
 			);
-		} catch (failure: unknown) {
-			if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
-				throw new SessionNotResumable(
-					"This terminal Agent has not said which Claude session it is in: Claude tells DevHub when a session starts, and this one started before DevHub asked it to (or its hooks are turned off).",
-				);
-			}
-			throw failure;
 		}
-		const record = parsedLine("(the terminal Agent's)", text.trim());
-		const session = record["session_id"];
-		if (typeof session !== "string" || session.length === 0) {
-			throw new Error(
-				`the session Claude wrote down in ${claudeSessionRecord(directory)}${runtime.where} names no session_id`,
+		const session = live?.session ?? hooked;
+		if (session === undefined) {
+			throw new SessionNotResumable(
+				`DevHub cannot tell which Claude session this terminal Agent is in: no process of its pane (pid ${String(panePid)}) has Claude's record in ${sessions}${runtime.where}, and its SessionStart hook wrote nothing to ${claudeSessionRecord(directory)} (hooks turned off, or the Agent started before DevHub gave it the hook).`,
 			);
 		}
 		return session;
 	}
-	const [newest] = await listCodexSessions(runtime, profile, {
-		cwd: await runtime.realpath(root),
-		scope: "here",
-		sourceKinds: ["cli"],
-		limit: 1,
-	});
+	const threads = (await paneRecords(runtime, "codex", panePid, "")).flatMap(
+		(record) => {
+			const meta = jsonObject(record, runtime);
+			const payload = meta["payload"] as Record<string, unknown> | undefined;
+			if (
+				meta["type"] !== "session_meta" ||
+				typeof payload?.["id"] !== "string"
+			) {
+				throw new Error(
+					`${record.path}${runtime.where} does not begin with a session_meta naming its thread`,
+				);
+			}
+			return payload["source"] === "cli"
+				? [{ id: payload["id"], mtime: record.mtime ?? 0 }]
+				: [];
+		},
+	);
+	const newest = threads.reduce<(typeof threads)[number] | undefined>(
+		(best, thread) =>
+			best === undefined || thread.mtime > best.mtime ? thread : best,
+		undefined,
+	);
 	if (newest === undefined) {
 		throw new SessionNotResumable(
-			`Codex keeps no terminal thread for ${root}${runtime.where} yet: the terminal Agent names one with its first turn.`,
+			`The Codex of this terminal Agent (pane pid ${String(panePid)}${runtime.where}) has no thread open yet: Codex writes a thread from its first turn.`,
 		);
 	}
 	return newest.id;
+}
+
+/** The `sessionId` of Claude's record of one of its processes. */
+function claudeProcessSession(record: PaneRecord, runtime: Runtime): string {
+	const session = jsonObject(record, runtime)["sessionId"];
+	if (typeof session !== "string" || session.length === 0) {
+		throw new Error(
+			`Claude's record ${record.path}${runtime.where} names no sessionId`,
+		);
+	}
+	return session;
+}
+
+/** A record's first line, which the CLI writes as one JSON object. */
+function jsonObject(
+	record: PaneRecord,
+	runtime: Runtime,
+): Record<string, unknown> {
+	try {
+		const value: unknown = JSON.parse(record.line);
+		if (typeof value === "object" && value !== null && !Array.isArray(value))
+			return value as Record<string, unknown>;
+	} catch {
+		// Said below, with the file it is in.
+	}
+	throw new Error(
+		`${record.path}${runtime.where} does not begin with a JSON object`,
+	);
+}
+
+/** What the Agent's SessionStart hook last wrote down, if it ever did. */
+async function claudeHookedSession(
+	runtime: Runtime,
+	directory: string,
+): Promise<string | undefined> {
+	let text: string;
+	try {
+		text = await runtime.readTextFile(
+			claudeSessionRecord(directory),
+			64 * 1024,
+		);
+	} catch (failure: unknown) {
+		if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
+			return undefined;
+		}
+		throw failure;
+	}
+	const session = parsedLine("(the terminal Agent's)", text.trim())[
+		"session_id"
+	];
+	if (typeof session !== "string" || session.length === 0) {
+		throw new Error(
+			`the session Claude wrote down in ${claudeSessionRecord(directory)}${runtime.where} names no session_id`,
+		);
+	}
+	return session;
 }
 
 function resumableKind(kind: AgentProfile["kind"]): ResumableKind {
@@ -508,10 +749,7 @@ async function claudeProjectDirectory(
 	profile: SessionProfile,
 	cwd: string,
 ): Promise<string> {
-	const config =
-		profile.env.get("CLAUDE_CONFIG_DIR") ??
-		(await runtime.environment())["CLAUDE_CONFIG_DIR"] ??
-		`${await runtime.home()}/.claude`;
+	const config = await claudeConfigDirectory(runtime, profile);
 	return `${config}/projects/${cwd.replace(/[^a-zA-Z0-9]/g, "-")}`;
 }
 

@@ -970,6 +970,48 @@ describe.skipIf(TMUX === undefined)(
       );
     });
 
+    /**
+     * The pane's process is the Agent's command itself — where a Continue in
+     * GUI looks for the CLI's session — and it is read with the Agent id the
+     * session carries.
+     */
+    it("names the pid of an Agent's command, and only for that Agent", async () => {
+      const test = fixture("agent-pane-pid");
+      const workspaceId = "00000000-0000-4000-8000-0000000000a4";
+      const agentId = "00000000-0000-4000-8000-0000000000b4";
+      const pidFile = join(test.home, "pid");
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(
+        {
+          machine: "local",
+          agentId,
+          workspaceId,
+          root: realpathSync(test.home),
+        },
+        {
+          file: "/bin/sh",
+          args: ["-c", `echo $$ >'${pidFile}'; exec sleep 30`],
+          env: {},
+        },
+      );
+      const record = {
+        kind: "agent" as const,
+        agentId,
+        workspaceId,
+        sessionName: agentSessionName(agentId),
+      };
+      const pid = await test.runtime.agentPanePid(record);
+      await expect
+        .poll(() => readFileSync(pidFile, "utf8").trim())
+        .toBe(String(pid));
+      await expect(
+        test.runtime.agentPanePid({
+          ...record,
+          agentId: "00000000-0000-4000-8000-0000000000b5",
+        }),
+      ).rejects.toMatchObject({ code: "conflict" });
+    });
+
     /** An Agent profile's own variables sit beside the origin, never over it. */
     it("does not let an Agent profile's environment take the origin's name", async () => {
       const test = fixture("origin-agent-env");

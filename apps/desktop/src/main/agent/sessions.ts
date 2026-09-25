@@ -195,6 +195,25 @@ export class AgentSessions {
 		);
 	}
 
+	/** The pid of the process an Agent's pane runs: its command, and so its CLI's. */
+	async panePid(
+		machine: RuntimeId,
+		agentId: string,
+		workspaceId: string,
+		cancel = new CancellationToken(),
+	): Promise<number> {
+		const runtime = await this.#runtimeFor(machine);
+		return runtime.agentPanePid(
+			{
+				kind: "agent",
+				agentId,
+				workspaceId,
+				sessionName: agentSessionName(agentId),
+			},
+			cancel,
+		);
+	}
+
 	/**
 	 * Kill one Agent's session.
 	 *

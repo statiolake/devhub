@@ -43,7 +43,6 @@ import {
 	listPastSessions,
 	previewPastSession,
 	resumedSession,
-	SessionNotResumable,
 	terminalSession,
 	type PastSession,
 	type PreviewLine,
@@ -673,26 +672,13 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		if (agent.presentation !== "tui") {
 			throw new Error(`${agent.displayName} is not a terminal Agent`);
 		}
-		if (agent.profile.kind === "codex") {
-			// Codex's newest terminal thread in the directory is this Agent's
-			// only while no other Codex terminal runs there.
-			const others = workspace.agents.filter(
-				(other) =>
-					other.id !== agentId &&
-					other.presentation === "tui" &&
-					other.profile.kind === "codex",
-			);
-			if (others.length > 0) {
-				throw new SessionNotResumable(
-					`DevHub cannot tell which Codex thread is “${agent.displayName}”'s: ${others.map((other) => `“${other.displayName}”`).join(", ")} ${others.length === 1 ? "is" : "are"} a Codex terminal in the same Workspace too.`,
-				);
-			}
-		}
+		// Found from the Agent's own processes, so another terminal of the same
+		// CLI in the Workspace is never taken for it.
 		return terminalSession(
 			runtime,
 			agent.profile,
-			workspace.root,
 			await stateDirectory(machine, agentId),
+			await sessions.panePid(machine, agentId, workspace.id),
 		);
 	};
 

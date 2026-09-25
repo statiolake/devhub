@@ -411,22 +411,45 @@ floating button in the top right corner of its pane (the bottom right is the
 shortcuts'). It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
-Which session the terminal is in is found this way:
+Which session the terminal is in is found from the Agent's own processes:
+the one tmux runs in its pane (`#{pane_pid}`, read with the Agent id the
+session carries) and every one under it, read on the Workspace's machine with
+`ps` (or `/proc` where there is no `ps`). Another terminal of the same CLI in
+the same Workspace is never taken for it.
 
-- **Claude**: a terminal Claude Agent is started with a `SessionStart` hook,
-  given through `--settings` (added to your settings, not in place of them),
-  which copies what Claude hands the hook into the Agent's own directory
-  (`~/.devhub/agents-<tag>/<agent id>/claude-session`). It fires on start,
-  on `--resume`, on `/clear` and on `/resume` inside the terminal, so it names
-  the session on screen, and it prints nothing. A terminal Agent started
-  before this existed, or one whose hooks are turned off (`disableAllHooks`,
-  a managed policy), has no record and is refused with the reason.
-- **Codex** has no such hook, so it is the newest thread of Codex's terminal
-  mode (`thread/list`, source `cli`) in the Workspace's directory. That is the
-  Agent's only while it is the one Codex terminal there: with another Codex
-  terminal Agent in the same Workspace it is refused, naming the other.
-  Codex run by hand in a terminal of its own in the same directory is not
-  something DevHub can see, and would be taken for it.
+- **Claude** keeps a record of each process it runs as,
+  `<config>/sessions/<pid>.json` (`~/.claude`, or `$CLAUDE_CONFIG_DIR`),
+  whose `sessionId` is the session on screen: Claude 2.1.282 writes it at
+  start, rewrites it whenever the session changes inside the terminal
+  (`/clear`, `/resume`), and removes it on exit. The outermost Claude under the pane is the Agent's (a
+  Claude it runs is under it). As a second source, a terminal Claude Agent is
+  started with a `SessionStart` hook, given through `--settings` (added to
+  your settings, not in place of them), which copies what Claude hands the
+  hook into the Agent's own directory
+  (`~/.devhub/agents-<tag>/<agent id>/claude-session`); it fires on start,
+  on `--resume`, on `/clear` and on `/resume`, and prints nothing. The
+  process's record is used when there is one, the hook's when there is not.
+  Both there and naming different sessions is refused, naming both; neither
+  there (a Claude that keeps no such record, and hooks turned off or an Agent
+  started before DevHub gave it the hook) is refused, saying where DevHub
+  looked.
+- **Codex** has neither, so it is the rollout the Agent's Codex holds open
+  (`/proc/<pid>/fd`, or `lsof`): the file of the thread it is writing,
+  `rollout-<time>-<thread id>.jsonl`, whose first line says what started the
+  thread. Only its terminal mode's (`source` `cli`) counts, not a subagent's.
+  Codex keeps a thread it has left open too, so when it holds several, the
+  one written last is taken: a thread switched to with `/new` or `/resume`
+  counts from its first turn. A Codex that holds none (no turn yet) is
+  refused.
+
+Not adopted, and why: `claude --session-id <uuid>` names the session at
+start only and not after `/clear` or `/resume`, which the process's record
+follows anyway; no variable in the TUI's own environment names it (Codex
+sets `CODEX_THREAD_ID` for the commands it runs, and the environment another
+process can read, as `ps -E` shows it, is the one the TUI started with, which
+cannot follow `/clear`); the newest session file of the directory, or
+Codex's newest `cli` thread in it, belongs to whichever terminal wrote last,
+not to this Agent.
 
 ## Resuming an earlier session
 
@@ -660,6 +683,12 @@ read on 2026-09-25:
 - Claude Code 2.1.282's own `--help` text for `--resume-session-at` and
   `--resume-drops-turn`, and its stream-json input schema (`priority`:
   `now`, `next`, `later`; `next` when absent), read from the installed CLI
+- A terminal session's own record, observed on 2026-09-26 with a scratch
+  config directory and no prompt sent: Claude Code 2.1.282 run in tmux wrote
+  `<config>/sessions/<pid>.json` (`pid`, `sessionId`, `cwd`, …) at start,
+  rewrote its `sessionId` on `/clear`, and removed it on exit; `--session-id`
+  was reflected in it. Codex 0.154.0's TUI, run as `codex resume <id>`, held
+  the thread's rollout open (`lsof`) and still held it after `/new`
 - Codex's terminal UI, `codex-rs/tui/src/app_server_session.rs`
   (`thread_blocks_direct_input`, `canAcceptDirectInput`) at `rust-v0.156.1`
 - Claude Agent SDK TypeScript reference, `resumeSessionAt`,

@@ -11,7 +11,7 @@
  * `codex` made in a temporary directory.
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import {
 	chmod,
 	mkdir,
@@ -430,15 +430,93 @@ describe("a session's preview", () => {
 
 describe("the session of a terminal Agent", () => {
 	let dir: string;
+	const panes: ChildProcess[] = [];
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), "devhub-terminal-session-"));
 	});
 	afterEach(async () => {
+		for (const pane of panes.splice(0)) pane.kill("SIGKILL");
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("is what Claude's SessionStart hook wrote down, through the command DevHub gave it", async () => {
-		const agent = join(dir, "agent's dir");
+	/**
+	 * A pane running `command` under a shell that does not exec it, as a
+	 * profile's wrapper would: the CLI is a child of the pane's process, not
+	 * the process itself. Ready once the command has touched `ready`.
+	 */
+	async function pane(command: string): Promise<number> {
+		const ready = join(dir, `ready-${String(panes.length)}`);
+		const child = spawn("/bin/sh", ["-c", `${command}; :`], {
+			env: { ...process.env, READY: ready },
+			stdio: "ignore",
+		});
+		panes.push(child);
+		for (let tries = 0; ; tries += 1) {
+			try {
+				await readFile(ready);
+				return child.pid!;
+			} catch (error: unknown) {
+				if (tries > 200) throw error;
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+		}
+	}
+
+	/**
+	 * A fake `claude` that keeps Claude's record of its process the way
+	 * 2.1.282 does: `<config>/sessions/<its pid>.json`, naming its session.
+	 */
+	async function fakeClaude(session: string): Promise<string> {
+		const script = join(dir, `claude-${session}`);
+		await writeFile(
+			script,
+			`#!/bin/sh
+mkdir -p "$CLAUDE_CONFIG_DIR/sessions"
+printf '{"pid":%s,"sessionId":"%s","cwd":"/w","kind":"interactive"}' $$ "${session}" >"$CLAUDE_CONFIG_DIR/sessions/$$.json"
+: >"$READY"
+exec sleep 30
+`,
+		);
+		await chmod(script, 0o755);
+		return `CLAUDE_CONFIG_DIR='${join(dir, ".claude")}' '${script}'`;
+	}
+
+	/**
+	 * A fake `codex` that holds its rollouts open as the TUI does while it
+	 * writes a thread: one of its terminal mode's (`source: cli`) and, when
+	 * asked, a subagent's beside it.
+	 */
+	async function fakeCodex(thread: string, subagent?: string): Promise<string> {
+		const day = join(dir, ".codex", "sessions", "2026", "09", "26");
+		await mkdir(day, { recursive: true });
+		const rollout = (id: string, source: unknown) => {
+			const path = join(day, `rollout-2026-09-26T10-00-00-${id}.jsonl`);
+			return writeFile(
+				path,
+				`${JSON.stringify({ type: "session_meta", payload: { id, source, cwd: "/w" } })}\n`,
+			).then(() => path);
+		};
+		const main = await rollout(thread, "cli");
+		const side =
+			subagent === undefined
+				? undefined
+				: await rollout(subagent, { subagent: { thread_spawn: {} } });
+		const script = join(dir, `codex-${thread}`);
+		await writeFile(
+			script,
+			`#!/bin/sh
+exec 3<'${main}'
+${side === undefined ? "" : `exec 4<'${side}'`}
+: >"$READY"
+exec sleep 30
+`,
+		);
+		await chmod(script, 0o755);
+		return `'${script}'`;
+	}
+
+	/** Run the SessionStart hook DevHub gives a terminal Claude, as Claude runs it. */
+	async function hookWrites(agent: string, session: string): Promise<void> {
 		await mkdir(agent, { recursive: true });
 		const [flag, settings] = claudeSessionRecorder(agent);
 		expect(flag).toBe("--settings");
@@ -447,24 +525,78 @@ describe("the session of a terminal Agent", () => {
 				hooks: { SessionStart: { hooks: { command: string }[] }[] };
 			}
 		).hooks.SessionStart[0]!.hooks[0]!.command;
-		// Run as Claude runs a hook: under a shell, the event's JSON on stdin.
+		// Under a shell, the event's JSON on stdin.
 		await new Promise<void>((resolve, reject) => {
 			const child = execFile("/bin/sh", ["-c", hook], (error) =>
 				error ? reject(error) : resolve(),
 			);
 			child.stdin!.end(
-				JSON.stringify({ session_id: "s-live", source: "clear", cwd: "/w" }),
+				JSON.stringify({ session_id: session, source: "clear", cwd: "/w" }),
 			);
 		});
-		expect(await terminalSession(fakeRuntime(dir), CLAUDE, "/w", agent)).toBe(
+	}
+
+	it("is Claude's record of the process under the Agent's pane, each pane its own", async () => {
+		const first = await pane(await fakeClaude("s-first"));
+		const second = await pane(await fakeClaude("s-second"));
+		const agent = join(dir, "agent");
+		expect(await terminalSession(fakeRuntime(dir), CLAUDE, agent, first)).toBe(
+			"s-first",
+		);
+		expect(await terminalSession(fakeRuntime(dir), CLAUDE, agent, second)).toBe(
+			"s-second",
+		);
+	});
+
+	it("is what Claude's SessionStart hook wrote down when no process of the pane has Claude's record", async () => {
+		const agent = join(dir, "agent's dir");
+		await hookWrites(agent, "s-live");
+		const quiet = await pane(': >"$READY"; exec sleep 30');
+		expect(await terminalSession(fakeRuntime(dir), CLAUDE, agent, quiet)).toBe(
 			"s-live",
 		);
 	});
 
-	it("is refused, saying why, when Claude never wrote it down", async () => {
+	it("agrees with the hook when both are there, and is refused, naming both, when they differ", async () => {
+		const agent = join(dir, "agent");
+		const running = await pane(await fakeClaude("s-now"));
+		await hookWrites(agent, "s-now");
+		expect(
+			await terminalSession(fakeRuntime(dir), CLAUDE, agent, running),
+		).toBe("s-now");
+		await hookWrites(agent, "s-before");
 		await expect(
-			terminalSession(fakeRuntime(dir), CLAUDE, "/w", join(dir, "none")),
-		).rejects.toThrow(/has not said which Claude session it is in/);
+			terminalSession(fakeRuntime(dir), CLAUDE, agent, running),
+		).rejects.toThrow(
+			/says s-now, and its SessionStart hook last wrote s-before/,
+		);
+	});
+
+	it("is refused, saying where DevHub looked, when neither is there", async () => {
+		const quiet = await pane(': >"$READY"; exec sleep 30');
+		await expect(
+			terminalSession(fakeRuntime(dir), CLAUDE, join(dir, "none"), quiet),
+		).rejects.toThrow(
+			/no process of its pane \(pid \d+\) has Claude's record in .*sessions, and its SessionStart hook wrote nothing/,
+		);
+	});
+
+	it("is the Codex thread the Agent's process holds open, each pane its own, never a subagent's", async () => {
+		const first = await pane(await fakeCodex("t-first", "t-helper"));
+		const second = await pane(await fakeCodex("t-second"));
+		expect(await terminalSession(fakeRuntime(dir), CODEX, "", first)).toBe(
+			"t-first",
+		);
+		expect(await terminalSession(fakeRuntime(dir), CODEX, "", second)).toBe(
+			"t-second",
+		);
+	});
+
+	it("is refused when the Agent's Codex holds no thread open yet", async () => {
+		const quiet = await pane(': >"$READY"; exec sleep 30');
+		await expect(
+			terminalSession(fakeRuntime(dir), CODEX, "", quiet),
+		).rejects.toThrow(/has no thread open yet/);
 	});
 });
 

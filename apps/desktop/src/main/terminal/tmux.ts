@@ -1825,6 +1825,50 @@ export class TmuxTerminalRuntime {
 		}
 	}
 
+	/**
+	 * The pid of the process tmux runs in an Agent's pane — the Agent's
+	 * command itself, which is where its CLI's processes are found.
+	 *
+	 * Read with the Agent id the session carries, in one command, so a
+	 * same-named session that is not this Agent's is a conflict rather than
+	 * somebody else's process.
+	 */
+	async agentPanePid(
+		record: OwnedSessionRecord,
+		cancel = new CancellationToken(),
+	): Promise<number> {
+		if (record.kind !== "agent") throw portFailure("failed");
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const answer = await this.runTmux(
+				socket,
+				[
+					"display-message",
+					"-p",
+					"-t",
+					record.sessionName,
+					`#{${AGENT_ID_OPTION}}${FIELD_SEPARATOR}#{pane_pid}`,
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!answer.success) throw answer.refusal();
+			const [agentId, pid] = parseCapture(answer.stdout)
+				.split("\n")[0]!
+				.split(FIELD_SEPARATOR);
+			if (agentId !== record.agentId) throw portFailure("conflict");
+			if (pid === undefined || !/^[1-9]\d*$/.test(pid)) {
+				throw shapeFailure("no pane pid where the pane pid should be");
+			}
+			return Number(pid);
+		} finally {
+			release();
+		}
+	}
+
 	/** Kill one Agent's session, by the same exact-record rule as any other. */
 	async closeAgent(
 		record: OwnedSessionRecord,
