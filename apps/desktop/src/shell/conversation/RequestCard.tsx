@@ -274,6 +274,9 @@ export function RequestCard({ request }: { readonly request: PendingRequest }) {
         button.click();
       }}
     >
+      <div className="conversation-request-eyebrow" aria-hidden="true">
+        Needs your answer
+      </div>
       <Subject request={request} />
       {request.subject.kind === "question" ? (
         <QuestionForm

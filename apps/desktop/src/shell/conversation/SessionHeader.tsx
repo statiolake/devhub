@@ -1,84 +1,11 @@
 /**
- * The bar over a GUI Agent's transcript: its settings, what it has used, and
- * the ways out of the turn and out of the GUI.
- *
- * The pickers list the session's own choices (`SessionFacts`), so the page
- * offers exactly what the adapter says this CLI accepts and nothing it had to
- * guess. A picker shows the session's current value and nothing else: a
- * change is asked for, and the picker moves when the session says it has
- * moved. A change that failed therefore leaves it where it truthfully is.
+ * The bar over a GUI Agent's transcript: what the session has used, and the
+ * way out of the GUI. The settings and Stop live with the composer, where the
+ * person is typing when they reach for them.
  */
 
-import type { RefObject } from "react";
-import type { Setting, Transcript, Usage } from "../../model/conversation";
-import {
-  useConversationActions,
-  type SettingName,
-} from "./ConversationContext";
-import { inputRefusal } from "./Composer";
-
-export const SETTING_LABELS: Readonly<Record<SettingName, string>> = {
-  model: "Model",
-  effort: "Effort",
-  mode: "Permissions",
-};
-
-function SettingPicker({
-  name,
-  setting,
-  disabled,
-  pickerRef,
-}: {
-  readonly name: SettingName;
-  readonly setting: Setting;
-  readonly disabled: boolean;
-  readonly pickerRef: RefObject<HTMLSelectElement | null>;
-}) {
-  const { setSetting, reportFailure } = useConversationActions();
-  if (setting.choices.length === 0) {
-    // Nothing to choose from: the value is a fact to read, when there is one.
-    return setting.current === undefined ? null : (
-      <span className="conversation-setting" data-setting={name}>
-        <span className="conversation-setting-label">
-          {SETTING_LABELS[name]}
-        </span>
-        <span className="conversation-setting-value">{setting.current}</span>
-      </span>
-    );
-  }
-  // A current value the choices do not list is still the truth, so it is an
-  // option too rather than a picker showing something else.
-  const listed = setting.choices.some(
-    (choice) => choice.id === setting.current,
-  );
-  return (
-    <label className="conversation-setting" data-setting={name}>
-      <span className="conversation-setting-label">{SETTING_LABELS[name]}</span>
-      <select
-        ref={pickerRef}
-        value={setting.current ?? ""}
-        disabled={disabled}
-        onChange={(event) => {
-          void setSetting(name, event.target.value).catch(reportFailure);
-        }}
-      >
-        {setting.current === undefined ? (
-          <option value="" disabled>
-            —
-          </option>
-        ) : null}
-        {!listed && setting.current !== undefined ? (
-          <option value={setting.current}>{setting.current}</option>
-        ) : null}
-        {setting.choices.map((choice) => (
-          <option key={choice.id} value={choice.id}>
-            {choice.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
+import type { Transcript, Usage } from "../../model/conversation";
+import { useConversationActions } from "./ConversationContext";
 
 function tokens(count: number): string {
   if (count < 1000) return `${count}`;
@@ -117,63 +44,23 @@ export function usageReadout(usage: Usage): readonly string[] {
 
 export function SessionHeader({
   transcript,
-  pickers,
 }: {
   readonly transcript: Transcript;
-  readonly pickers: Readonly<
-    Record<SettingName, RefObject<HTMLSelectElement | null>>
-  >;
 }) {
-  const { interrupt, continueInTerminal, reportFailure } =
-    useConversationActions();
-  const { session, state, usage } = transcript;
-  const disabled = inputRefusal(state) !== undefined;
-  const running = state.phase === "ready" && state.turn === "running";
-  const readout = usage ? usageReadout(usage) : [];
+  const { continueInTerminal, reportFailure } = useConversationActions();
+  const readout = transcript.usage ? usageReadout(transcript.usage) : [];
   return (
     <header className="conversation-header">
-      <div className="conversation-settings">
-        <SettingPicker
-          name="model"
-          setting={session.model}
-          disabled={disabled}
-          pickerRef={pickers.model}
-        />
-        <SettingPicker
-          name="effort"
-          setting={session.effort}
-          disabled={disabled}
-          pickerRef={pickers.effort}
-        />
-        <SettingPicker
-          name="mode"
-          setting={session.mode}
-          disabled={disabled}
-          pickerRef={pickers.mode}
-        />
-      </div>
       {readout.length > 0 ? (
         <div className="conversation-usage" aria-label="Usage">
           {readout.join(" · ")}
         </div>
       ) : null}
       <div className="conversation-header-actions">
-        {running ? (
-          <button
-            type="button"
-            className="conversation-header-button"
-            data-tone="deny"
-            title="Stop the turn (Esc or Ctrl+C)"
-            onClick={() => {
-              void interrupt().catch(reportFailure);
-            }}
-          >
-            Stop
-          </button>
-        ) : null}
         <button
           type="button"
           className="conversation-header-button"
+          title="Go on with this session in a terminal Agent"
           onClick={() => {
             void continueInTerminal().catch(reportFailure);
           }}

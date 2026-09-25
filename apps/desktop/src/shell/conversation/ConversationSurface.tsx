@@ -13,9 +13,10 @@
  * still reach every word of it and the scroll is the browser's own, pixel for
  * pixel. See `conversation.css`.
  *
- * Around the transcript: the header (settings, usage, Stop, the way out to a
- * terminal) above it, and below it a line naming the requests still waiting
- * and the composer. Esc and Ctrl+C stop a running turn from anywhere in the
+ * Around the transcript: the header (usage, the way out to a terminal) above
+ * it, and below it a line naming the requests still waiting and the composer
+ * (with the settings and Stop in its toolbar). Before the first entry, the
+ * transcript's place says what the pane is for. Esc and Ctrl+C stop a running turn from anywhere in the
  * pane, as they do in a terminal Agent; being shown puts the keyboard in the
  * composer, as being shown puts it in a terminal Agent's xterm. Cmd+Q and
  * the chords after it never reach here — main takes them first.
@@ -42,6 +43,7 @@ import {
 import { EntryTreeContext, EntryView } from "./EntryView";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
+import { ArrowDownIcon } from "./icons";
 import { RequestCard } from "./RequestCard";
 import { SessionHeader } from "./SessionHeader";
 import "./conversation.css";
@@ -50,6 +52,19 @@ export function waitingSentence(count: number): string {
   return count === 1
     ? "1 request is waiting for an answer"
     : `${count} requests are waiting for an answer`;
+}
+
+/** What the transcript's place shows before anything has been said. */
+function EmptyTranscript() {
+  return (
+    <div className="conversation-empty">
+      <div className="conversation-empty-title">What should the Agent do?</div>
+      <div className="conversation-empty-hint">
+        Enter sends, Shift+Enter starts a new line, and / lists the Agent's
+        commands.
+      </div>
+    </div>
+  );
 }
 
 /** The transcript's text size when the page has no appearance yet. */
@@ -177,9 +192,12 @@ export function ConversationSurface({
             hidden={hidden}
             onKeyDown={onKeyDown}
           >
-            <SessionHeader transcript={transcript} pickers={pickers} />
+            <SessionHeader transcript={transcript} />
             <div className="conversation-body">
               <div className="conversation-scroll" ref={scroller}>
+                {topLevel.length === 0 && tree.unattached.length === 0 ? (
+                  <EmptyTranscript />
+                ) : null}
                 <div className="conversation-transcript" ref={content}>
                   {topLevel.map((entry) => (
                     <EntryView key={entry.id} entry={entry} depth={0} />
@@ -202,7 +220,8 @@ export function ConversationSurface({
                   className="conversation-latest"
                   onClick={jumpToLatest}
                 >
-                  ↓ New output
+                  <ArrowDownIcon />
+                  New output
                 </button>
               ) : null}
             </div>
@@ -218,6 +237,7 @@ export function ConversationSurface({
             <Composer
               transcript={transcript}
               inputRef={composer}
+              pickers={pickers}
               openSetting={openSetting}
             />
           </section>

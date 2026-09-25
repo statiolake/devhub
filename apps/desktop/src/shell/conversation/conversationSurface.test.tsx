@@ -158,6 +158,30 @@ describe("every entry kind", () => {
     ]);
   });
 
+  it("says a thought is still being had while its answer streams, and was had once it has not", () => {
+    const thinking = (streaming: boolean) =>
+      transcriptOf([
+        put(
+          assistant("a1", [{ kind: "thinking", text: "weighing it up" }], {
+            streaming,
+          }),
+        ),
+      ]);
+    const { redraw } = draw(thinking(true));
+    const summary = () =>
+      entry("a1").querySelector(".conversation-thinking > summary");
+    expect(summary()).toHaveTextContent("Thinking…");
+    redraw(thinking(false));
+    expect(summary()).toHaveTextContent("Thought");
+  });
+
+  it("says what the pane is for until the first entry, and nothing of it after", () => {
+    const { redraw } = draw(transcriptOf([]));
+    expect(screen.getByText("What should the Agent do?")).toBeInTheDocument();
+    redraw(transcriptOf([put(user("u1", "fix the build"))]));
+    expect(screen.queryByText("What should the Agent do?")).toBeNull();
+  });
+
   it("draws a tool call folded, with its input and each kind of output inside", () => {
     draw(
       transcriptOf([

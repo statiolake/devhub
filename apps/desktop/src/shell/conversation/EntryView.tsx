@@ -52,6 +52,11 @@ const MAX_INDENT = 3;
 // ---------------------------------------------------------------------------
 // User
 
+/**
+ * A message from the person: a bubble on the right, as it reads in any chat,
+ * with its actions under it on hover. The actions row is also where "edit"
+ * will go.
+ */
 function UserView({ entry }: { readonly entry: UserEntry }) {
   return (
     <div className="conversation-user" data-origin={entry.origin}>
@@ -59,6 +64,9 @@ function UserView({ entry }: { readonly entry: UserEntry }) {
         <div className="conversation-user-origin">Sent by a template</div>
       ) : null}
       <div className="conversation-user-text">{entry.text}</div>
+      <div className="conversation-message-actions">
+        <CopyButton text={entry.text} label="Copy message" />
+      </div>
     </div>
   );
 }
@@ -90,7 +98,7 @@ function BlockView({
       if (block.text === "") return null;
       return (
         <details className="conversation-thinking">
-          <summary>Thinking</summary>
+          <summary>{streaming ? "Thinking…" : "Thought"}</summary>
           <div className="conversation-thinking-text">{block.text}</div>
         </details>
       );
@@ -123,7 +131,7 @@ function AssistantView({ entry }: { readonly entry: AssistantEntry }) {
         />
       ))}
       {source.length > 0 ? (
-        <div className="conversation-assistant-actions">
+        <div className="conversation-message-actions">
           <CopyButton text={source} label="Copy answer" />
         </div>
       ) : null}
@@ -187,11 +195,36 @@ const ToolBody = memo(function ToolBody({
   );
 });
 
+/**
+ * A title in the Agent's own form, `Verb: target`, split so the verb reads as
+ * the row's word and the target as its detail. A title without the colon is
+ * drawn whole. The colon stays in the text, so a copy reads as the Agent wrote
+ * it.
+ */
+function ToolTitle({ title }: { readonly title: string }) {
+  const colon = title.indexOf(": ");
+  if (colon <= 0) {
+    return <span className="conversation-tool-title">{title}</span>;
+  }
+  return (
+    <span className="conversation-tool-title">
+      <span className="conversation-tool-verb">
+        {title.slice(0, colon + 1)}
+      </span>{" "}
+      <span className="conversation-tool-target">{title.slice(colon + 2)}</span>
+    </span>
+  );
+}
+
 function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
   return (
     <summary className="conversation-tool-summary">
-      <span className="conversation-tool-mark" data-status={entry.status} />
-      <span className="conversation-tool-title">{entry.title}</span>
+      <span
+        className="conversation-tool-mark"
+        data-status={entry.status}
+        aria-hidden="true"
+      />
+      <ToolTitle title={entry.title} />
       <span className="conversation-tool-status">
         {TOOL_STATUS_LABELS[entry.status]}
       </span>

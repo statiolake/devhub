@@ -10,7 +10,10 @@
  *
  * A line that starts with `/` offers the Agent's own commands. One the Agent
  * takes as a message is completed into the text; one DevHub handles itself
- * opens the header's picker for the setting it changes.
+ * opens the toolbar's picker for the setting it changes.
+ *
+ * The box holds the field and, under it, a toolbar: the session's settings on
+ * the left, Stop (while a turn runs) and Send on the right.
  *
  * On an empty composer ↑ and ↓ walk what the person has already said to this
  * Agent, which is read off its transcript — so the history is per Agent and
@@ -39,6 +42,8 @@ import {
   useConversationActions,
   type SettingName,
 } from "./ConversationContext";
+import { SendIcon, StopIcon } from "./icons";
+import { SettingPickers } from "./SettingPickers";
 
 /**
  * Why the composer takes no input right now, or `undefined` when it does.
@@ -65,7 +70,7 @@ const BROKEN_REFUSALS = {
 } as const;
 
 export const COMPOSER_PLACEHOLDER =
-  "Message the Agent — Enter to send, Shift+Enter for a new line, / for commands";
+  "Message the Agent — / for commands, Shift+Enter for a new line";
 
 function CompletionList({
   commands,
@@ -113,14 +118,18 @@ function CompletionList({
 export function Composer({
   transcript,
   inputRef,
+  pickers,
   openSetting,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
-  /** Open the header's picker for a setting a command changes. */
+  readonly pickers: Readonly<
+    Record<SettingName, RefObject<HTMLSelectElement | null>>
+  >;
+  /** Open the toolbar's picker for a setting a command changes. */
   readonly openSetting: (setting: SettingName) => void;
 }) {
-  const { send, reportFailure } = useConversationActions();
+  const { send, interrupt, reportFailure } = useConversationActions();
   const [text, setText] = useState("");
   /** Which of the history the composer is showing, while it is showing one. */
   const [recalled, setRecalled] = useState<number | undefined>(undefined);
@@ -130,6 +139,8 @@ export function Composer({
   const composing = useRef(false);
 
   const refusal = inputRefusal(transcript.state);
+  const running =
+    transcript.state.phase === "ready" && transcript.state.turn === "running";
   const history = useMemo(() => inputHistory(transcript), [transcript]);
   const query = commandQuery(text);
   const offered =
@@ -222,35 +233,70 @@ export function Composer({
           choose={choose}
         />
       ) : null}
-      <textarea
-        ref={inputRef}
-        className="conversation-composer-input"
-        aria-label="Message to the Agent"
-        rows={1}
-        value={text}
-        disabled={refusal !== undefined}
-        placeholder={refusal ?? COMPOSER_PLACEHOLDER}
-        aria-controls={
-          offered.length > 0 ? "conversation-completions" : undefined
-        }
-        aria-expanded={offered.length > 0}
-        onChange={(event) => edit(event.target.value)}
-        onKeyDown={onKeyDown}
-        onCompositionStart={() => {
-          composing.current = true;
+      <div
+        className="conversation-composer-box"
+        data-disabled={refusal !== undefined || undefined}
+        // A click on the box's padding or toolbar gap is a click on the field.
+        onMouseDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          inputRef.current?.focus();
         }}
-        onCompositionEnd={() => {
-          composing.current = false;
-        }}
-      />
-      <button
-        type="button"
-        className="conversation-send"
-        disabled={refusal !== undefined || text.trim() === ""}
-        onClick={submit}
       >
-        Send
-      </button>
+        <textarea
+          ref={inputRef}
+          className="conversation-composer-input"
+          aria-label="Message to the Agent"
+          rows={1}
+          value={text}
+          disabled={refusal !== undefined}
+          placeholder={refusal ?? COMPOSER_PLACEHOLDER}
+          aria-controls={
+            offered.length > 0 ? "conversation-completions" : undefined
+          }
+          aria-expanded={offered.length > 0}
+          onChange={(event) => edit(event.target.value)}
+          onKeyDown={onKeyDown}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+        />
+        <div className="conversation-composer-toolbar">
+          <SettingPickers
+            session={transcript.session}
+            disabled={refusal !== undefined}
+            pickers={pickers}
+          />
+          <div className="conversation-composer-actions">
+            {running ? (
+              <button
+                type="button"
+                className="conversation-stop"
+                aria-label="Stop"
+                title="Stop the turn (Esc or Ctrl+C)"
+                onClick={() => {
+                  void interrupt().catch(reportFailure);
+                }}
+              >
+                <StopIcon />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="conversation-send"
+              aria-label="Send"
+              title="Send (Enter)"
+              disabled={refusal !== undefined || text.trim() === ""}
+              onClick={submit}
+            >
+              <SendIcon />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

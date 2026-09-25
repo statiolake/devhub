@@ -64,7 +64,7 @@ describe("a real claude session, as the page draws it", () => {
       ...document.querySelectorAll(
         ".conversation-transcript > .conversation-entry[data-kind=user]",
       ),
-    ].map((user) => user.textContent);
+    ].map((user) => user.querySelector(".conversation-user-text")?.textContent);
     expect(SENT_MESSAGES.length).toBeGreaterThanOrEqual(3);
     expect(said).toEqual(SENT_MESSAGES);
   });

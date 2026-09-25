@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useConversationActions } from "./ConversationContext";
+import { CheckIcon, CopyIcon } from "./icons";
 
 /** How long "Copied" stands on the button after a copy lands. */
 export const COPIED_MS = 1500;
@@ -47,7 +48,10 @@ export function CopyButton({
         );
       }}
     >
-      {copiedAt !== undefined ? "Copied" : "Copy"}
+      {copiedAt !== undefined ? <CheckIcon /> : <CopyIcon />}
+      <span className="conversation-copy-text">
+        {copiedAt !== undefined ? "Copied" : "Copy"}
+      </span>
     </button>
   );
 }
