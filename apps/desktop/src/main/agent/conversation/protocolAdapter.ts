@@ -28,6 +28,7 @@
 
 import type {
 	ConversationEvent,
+	EntryId,
 	RequestAnswer,
 	RequestId,
 	Transcript,
@@ -49,6 +50,22 @@ export type ConversationCommand =
 
 /** The three settings a session offers choices for, as `SessionFacts` names them. */
 export type SettingName = "model" | "effort" | "mode";
+
+/**
+ * How a rewind is carried out. Either the protocol has a request for it,
+ * whose lines are written like a command's (Codex), or the CLI has to be
+ * started again by its host on the session cut short (Claude): then `args`
+ * are added to the CLI's own argv for that start, and `mark` is the line the
+ * host puts in the journal between the two CLIs, which is how the adapter —
+ * live or replaying — learns that the conversation was rewound and where.
+ */
+export type RewindPlan =
+	| { readonly kind: "write"; readonly lines: readonly string[] }
+	| {
+			readonly kind: "restart";
+			readonly args: readonly string[];
+			readonly mark: string;
+	  };
 
 export interface AdapterStep {
 	readonly events: readonly ConversationEvent[];
@@ -75,6 +92,16 @@ export interface ProtocolAdapter {
 	 * when the CLI says it has.
 	 */
 	configure(which: SettingName, id: string): AdapterStep;
+	/**
+	 * How to take back the turns from `message` on: the person's last message,
+	 * which they are editing (`editableMessage`). Changes nothing, like
+	 * `encode`. The adapter emits `rewound` once the CLI has done it, and
+	 * holds the turn `rewinding` in between; a CLI that refused says so in a
+	 * notice and the turn goes back to `none` with nothing dropped. Throws for
+	 * a message that cannot be taken back, which the session's `canRewind` and
+	 * `editableMessage` should have kept from being asked.
+	 */
+	rewind(message: EntryId): RewindPlan;
 	/** A line DevHub wrote to the CLI's stdin — live, or read back from `in.log`. */
 	sent(line: string): AdapterStep;
 	/** A line the CLI printed on stdout. */

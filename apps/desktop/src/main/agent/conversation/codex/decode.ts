@@ -285,7 +285,7 @@ export function accountResponse(r: Reader, value: unknown): AccountReading {
 
 export type ThreadFacts = Pick<
 	Thread,
-	"id" | "parentThreadId" | "agentNickname"
+	"id" | "parentThreadId" | "agentNickname" | "historyMode"
 > & { readonly turns: readonly TurnFacts[] };
 
 function thread(r: Reader, value: unknown, path: string): ThreadFacts {
@@ -294,6 +294,7 @@ function thread(r: Reader, value: unknown, path: string): ThreadFacts {
 		id: r.string(o, "id", path),
 		parentThreadId: r.nullableString(o, "parentThreadId", path),
 		agentNickname: r.nullableString(o, "agentNickname", path),
+		historyMode: r.oneOf(o, "historyMode", path, ["legacy", "paginated"]),
 		turns:
 			r.nullableArray(o, "turns", path, (value, at) => turn(r, value, at)) ??
 			[],
@@ -368,6 +369,12 @@ export function modelListResponse(
 /** A response whose content DevHub does not read still has to be an object. */
 export function anyObjectResponse(r: Reader, value: unknown): void {
 	r.fields(value, "result");
+}
+
+/** `thread/revert`'s answer. What it took back is the request's to say; the thread is only checked. */
+export function threadRevertResponse(r: Reader, value: unknown): void {
+	const o = r.fields(value, "result");
+	r.string(r.fields(o["thread"], "result.thread"), "id", "result.thread");
 }
 
 // ---------------------------------------------------------------------------

@@ -68,6 +68,8 @@ export type ClaudeLine =
 	| {
 			readonly type: "assistant";
 			readonly parent: string | null;
+			/** The message's place in the session (its record there), where a resume can cut it. */
+			readonly uuid: string | undefined;
 			readonly messageId: string;
 			readonly content: readonly ContentBlock[];
 			/** The API error the message stands for (`authentication_failed`, `rate_limit`, …). */
@@ -121,6 +123,12 @@ export type ClaudeLine =
 	 * A message of the session this conversation resumed, put at the head of
 	 * the journal by DevHub (`resume.ts`) — not something the CLI printed.
 	 */
+	/**
+	 * The host started the CLI again on the session cut short before
+	 * `message` (the person edited it), and put this line between the two
+	 * CLIs' output — not something the CLI printed.
+	 */
+	| { readonly type: "rewind"; readonly message: string }
 	| {
 			readonly type: "history";
 			readonly message: Extract<ClaudeLine, { type: "assistant" | "user" }>;
@@ -335,6 +343,11 @@ export function decodeReceived(
 			return decodeRateLimit(raw, f);
 		case "devhub_history":
 			return decodeHistory(raw, f);
+		case "devhub_rewind":
+			return {
+				type: "rewind",
+				message: f.string(raw.message, "devhub_rewind.message"),
+			};
 		// `tool_progress`: ticks of a running tool, whose entry already says it
 		// runs. `prompt_suggestion`: suggested next prompts, which v1 does not
 		// offer (design §3.5).
@@ -750,6 +763,7 @@ function decodeAssistant(
 	return {
 		type: "assistant",
 		parent: f.parent(raw, "assistant"),
+		uuid: f.optionalString(raw.uuid, "assistant.uuid"),
 		messageId: f.string(message.id, "assistant.message.id"),
 		content: f
 			.array(message.content, "assistant.message.content")

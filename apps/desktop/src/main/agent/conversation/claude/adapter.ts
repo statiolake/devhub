@@ -40,6 +40,7 @@
 import {
 	EMPTY_TRANSCRIPT,
 	applyEvent,
+	editableMessage,
 	entryId,
 	requestId,
 	type AssistantBlock,
@@ -63,6 +64,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
 import {
@@ -158,6 +160,13 @@ const SIGNED_OUT = "authentication_failed";
 
 const DENIED_WITHOUT_WORDS = "The person denied this in DevHub.";
 
+/**
+ * The first CLI whose print mode resumes at a message and drops the turn
+ * after it (`--resume-session-at`, `--resume-drops-turn`): the Agent SDK's
+ * `resumeSessionAt` and `resumeDropsTurn`, documented as needing it.
+ */
+const RESUMES_AT_A_MESSAGE = [2, 1, 223] as const;
+
 /** One block of a message, as far as it has come. */
 type Slot =
 	| {
@@ -229,6 +238,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private turns = 0;
 	private users = 0;
 
+	/** The uuid of the last top-level message the session holds: where a resume would cut it now. */
+	private lastUuid: string | undefined;
+	/**
+	 * For each of the person's messages that has a uuid, where a resume cuts
+	 * the session to leave that message out: the message before it, or `null`
+	 * for the first, which leaves nothing to resume.
+	 */
+	private readonly cutBefore = new Map<EntryId, string | null>();
+
 	constructor(
 		/** Names this boot of DevHub in the ids of its control requests, so none repeats across restarts. */
 		private readonly bootId: string,
@@ -273,6 +291,42 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					return;
 			}
 		});
+	}
+
+	rewind(message: EntryId): RewindPlan {
+		this.refuseIfSpent();
+		const { sessionId, agentVersion } = this.current.session;
+		if (!this.current.session.canRewind || sessionId === undefined) {
+			throw new Error(
+				`claude ${agentVersion ?? "(version unknown)"} cannot take back a turn: resuming at a message needs ${RESUMES_AT_A_MESSAGE.join(".")} or later`,
+			);
+		}
+		if (editableMessage(this.current)?.id !== message) {
+			throw new Error(
+				`${message} is not the person's last message, so its turn cannot be taken back`,
+			);
+		}
+		const cut = this.cutBefore.get(message);
+		if (cut === undefined) {
+			throw new Error(
+				`${message} has no place in the session DevHub knows of, so its turn cannot be taken back`,
+			);
+		}
+		return {
+			kind: "restart",
+			args:
+				cut === null
+					? []
+					: [
+							"--resume",
+							sessionId,
+							"--resume-session-at",
+							cut,
+							"--resume-drops-turn",
+							message.slice("user:".length),
+						],
+			mark: JSON.stringify({ type: "devhub_rewind", message }),
+		};
 	}
 
 	sent(line: string): AdapterStep {
@@ -468,8 +522,42 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		};
 	}
 
+	/** The CLI is up: a conversation that was connecting, or waiting for a CLI started again, is ready. */
 	private becomeReady(): void {
-		if (this.current.state.phase === "connecting") this.turn("none");
+		const { state } = this.current;
+		if (
+			state.phase === "connecting" ||
+			(state.phase === "ready" && state.turn === "rewinding")
+		)
+			this.turn("none");
+	}
+
+	/**
+	 * The host started the CLI again without the turns from `message` on.
+	 * What DevHub kept about the CLI that is gone goes with it, and the new
+	 * one is greeted as the first was: a reply, so a replay does not greet it
+	 * twice.
+	 */
+	private takeRewind(message: EntryId): void {
+		this.emit({ type: "rewound", from: message });
+		const cut = this.cutBefore.get(message);
+		this.lastUuid = cut ?? undefined;
+		const kept = new Set(this.current.entries.map((each) => each.id));
+		for (const id of [...this.cutBefore.keys()]) {
+			if (!kept.has(id)) this.cutBefore.delete(id);
+		}
+		this.ours.clear();
+		this.untaken.length = 0;
+		this.answered.clear();
+		this.streaming.clear();
+		this.interrupting = false;
+		this.turn("rewinding");
+		this.replies.push(this.controlRequest({ subtype: "initialize" }));
+	}
+
+	/** Where a resume would now cut the session: after this top-level message. */
+	private placed(uuid: string | undefined, parent: EntryId | null): void {
+		if (parent === null && uuid !== undefined) this.lastUuid = uuid;
 	}
 
 	/**
@@ -477,7 +565,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * moves a broken conversation: what broke it stays the last word, whatever
 	 * the CLI goes on to print about the turn it was in.
 	 */
-	private turn(turn: "none" | "running"): void {
+	private turn(turn: "none" | "running" | "rewinding"): void {
 		const { state } = this.current;
 		if (state.phase === "broken") return;
 		if (state.phase === "ready" && state.turn === turn) return;
@@ -548,6 +636,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				this.announced = line.slashCommands;
 				this.setSession({
 					agentVersion: line.version,
+					canRewind: resumesAtAMessage(line.version),
 					sessionId: line.sessionId,
 					cwd: line.cwd,
 					...this.modelSettings(line.model),
@@ -567,6 +656,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.takeAssistant(line, "live");
 			case "user":
 				return this.takeUser(line, "live");
+			case "rewind":
+				return this.takeRewind(entryId(line.message));
 			// The resumed session's past: the same messages, drawn the same way,
 			// except that they are not a turn running now.
 			case "history":
@@ -823,6 +914,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		when: "live" | "history",
 	): void {
 		const parent = this.parentOf(line.parent, "assistant");
+		this.placed(line.uuid, parent);
 		if (parent === null && when === "live") this.turn("running");
 		let message = this.messages.get(line.messageId);
 		if (message === undefined) {
@@ -1035,6 +1127,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		when: "live" | "history",
 	): void {
 		const parent = this.parentOf(line.parent, "user");
+		const before = this.lastUuid;
+		this.placed(line.uuid, parent);
 		const texts: string[] = [];
 		line.content.forEach((block, position) => {
 			switch (block.kind) {
@@ -1067,11 +1161,13 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			];
 		}
 		this.users += 1;
+		const id = entryId(`user:${line.uuid ?? `#${this.users}`}`);
+		if (line.uuid !== undefined) this.cutBefore.set(id, before ?? null);
 		this.emit({
 			type: "entry",
 			entry: {
 				kind: "user",
-				id: entryId(`user:${line.uuid ?? `#${this.users}`}`),
+				id,
 				parent: null,
 				text,
 				images: [],
@@ -1171,6 +1267,18 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			);
 		}
 	}
+}
+
+/** Whether a CLI of this version can be resumed at a message (`RESUMES_AT_A_MESSAGE`). */
+function resumesAtAMessage(version: string | undefined): boolean {
+	const parts = /^(\d+)\.(\d+)\.(\d+)/u.exec(version ?? "");
+	if (parts === null) return false;
+	for (let index = 0; index < RESUMES_AT_A_MESSAGE.length; index += 1) {
+		const have = Number(parts[index + 1]);
+		const need = RESUMES_AT_A_MESSAGE[index]!;
+		if (have !== need) return have > need;
+	}
+	return true;
 }
 
 function toolEntryId(toolUseId: string): EntryId {

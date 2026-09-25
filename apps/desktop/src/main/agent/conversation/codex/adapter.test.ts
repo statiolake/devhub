@@ -85,6 +85,14 @@ class Harness {
 		for (const line of this.adapter.encode(command)) this.write(line);
 	}
 
+	/** Takes back the turns from a message on, as the conversation does with a plan to write. */
+	rewind(message: string): void {
+		const plan = this.adapter.rewind(entryId(message));
+		if (plan.kind !== "write")
+			throw new Error(`Codex planned a ${plan.kind} for a rewind`);
+		for (const line of plan.lines) this.write(line);
+	}
+
 	configure(which: "model" | "effort" | "mode", id: string): void {
 		this.fold(this.adapter.configure(which, id));
 	}
@@ -1159,6 +1167,120 @@ function played(
 	}
 	return adapter;
 }
+
+describe("taking back the last turn", () => {
+	/** A thread past one whole turn, "go", with both approvals accepted. */
+	function oneTurn(): Harness {
+		const harness = ready();
+		harness.command({ kind: "send", text: "go", origin: "person" });
+		for (const line of fixture("turn.handwritten.ndjson")) {
+			for (const event of harness.receive(line).events) {
+				if (event.type === "request-opened") {
+					harness.command({
+						kind: "answer",
+						request: event.request.id,
+						answer: { kind: "choice", choiceId: "accept", text: undefined },
+					});
+				}
+			}
+		}
+		return harness;
+	}
+
+	const USER = `${MAIN}/item-user`;
+	const REVERTED = {
+		id: 5,
+		result: {
+			thread: { id: MAIN, turns: [] },
+			turnsBackwardsCursor: null,
+			itemsBackwardsCursor: null,
+		},
+	};
+
+	it("is offered on a paginated thread, and reverts the thread to before the message's turn", () => {
+		const harness = oneTurn();
+		expect(harness.transcript.session.canRewind).toBe(true);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+
+		harness.rewind(USER);
+		expect(harness.lastWrite()).toEqual({
+			id: 5,
+			method: "thread/revert",
+			params: { threadId: MAIN, beforeTurnId: "turn-1" },
+		});
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+
+		harness.receive({ method: "thread/reverted", params: { threadId: MAIN } });
+		harness.receive(REVERTED);
+		expect(harness.transcript.entries).toEqual([]);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+
+		// And the next message starts a turn on the reverted thread.
+		harness.command({ kind: "send", text: "go, differently", origin: "person" });
+		expect(harness.lastWrite()).toMatchObject({
+			id: 6,
+			method: "turn/start",
+			params: { threadId: MAIN, clientUserMessageId: "devhub-person-1" },
+		});
+	});
+
+	it("says so when app-server refuses, and drops nothing", () => {
+		const harness = oneTurn();
+		const before = harness.transcript.entries;
+		harness.rewind(USER);
+		harness.receive({
+			id: 5,
+			error: { code: -32600, message: "thread/revert only supports paginated threads" },
+		});
+		expect(harness.transcript.entries.slice(0, before.length)).toEqual(before);
+		expect(harness.transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "error",
+			text: "codex 0.156.1 did not take back the last turn: thread/revert only supports paginated threads",
+		});
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+	});
+
+	it("is not offered on a legacy thread, and refused if asked", () => {
+		const harness = new Harness();
+		harness.start();
+		for (const line of fixture("handshake.handwritten.ndjson"))
+			harness.receive(line.replaceAll('"historyMode":"paginated"', '"historyMode":"legacy"'));
+		expect(harness.transcript.session.canRewind).toBe(false);
+		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.receive(fixture("turn.handwritten.ndjson")[2]!);
+		expect(() => harness.adapter.rewind(entryId(USER))).toThrow(
+			/cannot take back a turn of this thread/,
+		);
+	});
+
+	it("refuses a message that is not the person's last one", () => {
+		const harness = oneTurn();
+		expect(() => harness.adapter.rewind(entryId(`${MAIN}/item-say`))).toThrow(
+			/is not the person's last message/,
+		);
+	});
+
+	it("replays to the same rewound transcript and writes nothing", () => {
+		const live = oneTurn();
+		live.rewind(USER);
+		live.receive(REVERTED);
+		live.command({ kind: "send", text: "again", origin: "person" });
+
+		const replayed = new Harness();
+		for (const line of live.written) {
+			for (const event of replayed.adapter.sent(line).events) {
+				replayed.transcript = applyEvent(replayed.transcript, event);
+			}
+		}
+		for (const line of live.received) replayed.receive(line);
+		expect(replayed.written).toEqual([]);
+		expect(replayed.transcript).toEqual(live.transcript);
+	});
+});
 
 describe("a captured app-server that is not signed in", () => {
 	it("stops, naming codex and its version rather than the user agent DevHub is sent back", () => {

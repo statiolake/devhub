@@ -1744,3 +1744,150 @@ describe("a resumed session's history", () => {
 		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
 });
+
+describe("taking back the last turn", () => {
+	const TEXT = (text: string) => ({ type: "text", text });
+	/** Two whole turns, "first" and "second", on a CLI that can resume at a message. */
+	function twoTurns(version = "2.1.282"): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init({ claude_code_version: version }));
+		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		adapter.received(echo("first", "u1"));
+		adapter.received(assistantLine("msg_1", [TEXT("one")], null, { uuid: "a1" }));
+		adapter.received(result());
+		perform(adapter, { kind: "send", text: "second", origin: "person" });
+		adapter.received(echo("second", "u2"));
+		adapter.received(assistantLine("msg_2", [TEXT("two")], null, { uuid: "a2" }));
+		adapter.received(result());
+		return adapter;
+	}
+
+	function initialized(requestId: string): string {
+		return json({
+			type: "control_response",
+			response: {
+				subtype: "success",
+				request_id: requestId,
+				response: { commands: [], models: [] },
+			},
+		});
+	}
+
+	it("starts the CLI again on the session cut short before the message, and drops that turn when the host's mark comes back", () => {
+		const adapter = twoTurns();
+		expect(adapter.transcript.session.canRewind).toBe(true);
+		const plan = adapter.rewind(entryId("user:u2"));
+		expect(plan).toEqual({
+			kind: "restart",
+			args: [
+				"--resume",
+				SESSION,
+				"--resume-session-at",
+				"a1",
+				"--resume-drops-turn",
+				"u2",
+			],
+			mark: json({ type: "devhub_rewind", message: "user:u2" }),
+		});
+		// Nothing changes until the host says the CLI was started again.
+		expect(adapter.transcript.entries.map((each) => each.id)).toContain(
+			"user:u2",
+		);
+		if (plan.kind !== "restart") throw new Error("not a restart");
+
+		const step = adapter.received(plan.mark);
+		expect(step.events).toContainEqual({
+			type: "rewound",
+			from: entryId("user:u2"),
+		});
+		expect(adapter.transcript.entries.map((each) => each.id)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+		]);
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		// The new CLI is greeted, as a reply: once, and not again on a replay.
+		expect(step.replies.map((line) => JSON.parse(line))).toEqual([
+			{
+				type: "control_request",
+				request_id: "boot:1",
+				request: { subtype: "initialize" },
+			},
+		]);
+		for (const line of step.replies) adapter.sent(line);
+		adapter.received(initialized("boot:1"));
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+
+		perform(adapter, { kind: "send", text: "second, again", origin: "person" });
+		adapter.received(echo("second, again", "u3"));
+		expect(entry(adapter, "user:u3")).toMatchObject({ text: "second, again" });
+		// And that message is the one to take back next, from the same anchor.
+		adapter.received(result());
+		const again = adapter.rewind(entryId("user:u3"));
+		expect(again).toMatchObject({
+			args: [
+				"--resume",
+				SESSION,
+				"--resume-session-at",
+				"a1",
+				"--resume-drops-turn",
+				"u3",
+			],
+		});
+	});
+
+	it("starts a fresh session when the message was the first", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init({ claude_code_version: "2.1.282" }));
+		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		adapter.received(echo("first", "u1"));
+		adapter.received(result());
+		expect(adapter.rewind(entryId("user:u1"))).toMatchObject({
+			kind: "restart",
+			args: [],
+		});
+	});
+
+	it("resumes at the last message of a resumed session's past", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const history = claudeHistoryLines(
+			SESSION,
+			readFileSync(join(FIXTURES, "claude-session-file.handwritten.jsonl"), "utf8"),
+		);
+		for (const line of history) adapter.received(line);
+		adapter.received(init({ claude_code_version: "2.1.282" }));
+		perform(adapter, { kind: "send", text: "next", origin: "person" });
+		adapter.received(echo("next", "u9"));
+		adapter.received(result());
+		const last = (JSON.parse(history.at(-1)!) as { record: { uuid: string } })
+			.record.uuid;
+		expect(adapter.rewind(entryId("user:u9"))).toMatchObject({
+			args: ["--resume", SESSION, "--resume-session-at", last, "--resume-drops-turn", "u9"],
+		});
+	});
+
+	it("is not offered by a CLI too old to resume at a message, and refused if asked", () => {
+		const adapter = twoTurns("2.1.222");
+		expect(adapter.transcript.session.canRewind).toBe(false);
+		expect(() => adapter.rewind(entryId("user:u2"))).toThrow(
+			/claude 2.1.222 cannot take back a turn: resuming at a message needs 2.1.223 or later/,
+		);
+	});
+
+	it("refuses a message that is not the person's last one", () => {
+		const adapter = twoTurns();
+		expect(() => adapter.rewind(entryId("user:u1"))).toThrow(
+			/user:u1 is not the person's last message/,
+		);
+	});
+
+	it("refuses a mark for a message that is not in the conversation", () => {
+		const adapter = twoTurns();
+		expect(() =>
+			adapter.received(json({ type: "devhub_rewind", message: "user:nope" })),
+		).toThrow(/user:nope, which is not an entry/);
+	});
+});

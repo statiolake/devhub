@@ -44,6 +44,7 @@ import {
 	EMPTY_SESSION,
 	EMPTY_TRANSCRIPT,
 	applyEvent,
+	editableMessage,
 	entryId,
 	requestId,
 	type AssistantBlock,
@@ -68,6 +69,7 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
+	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
 import {
@@ -95,6 +97,7 @@ import {
 	textDelta,
 	threadClosed,
 	threadOpenedResponse,
+	threadRevertResponse,
 	threadStarted,
 	tokenUsage,
 	turnNotification,
@@ -104,6 +107,7 @@ import {
 	type Item,
 	type ModelChoice,
 	type ReasoningDelta,
+	type ThreadFacts,
 	type ThreadOpened,
 	type TurnFacts,
 } from "./decode.js";
@@ -121,6 +125,7 @@ import type { ModelListParams } from "./protocol/v2/ModelListParams.js";
 import type { PermissionsRequestApprovalResponse } from "./protocol/v2/PermissionsRequestApprovalResponse.js";
 import type { SandboxPolicy } from "./protocol/v2/SandboxPolicy.js";
 import type { ThreadResumeParams } from "./protocol/v2/ThreadResumeParams.js";
+import type { ThreadRevertParams } from "./protocol/v2/ThreadRevertParams.js";
 import type { ThreadStartParams } from "./protocol/v2/ThreadStartParams.js";
 import type { ToolRequestUserInputResponse } from "./protocol/v2/ToolRequestUserInputResponse.js";
 import type { TurnInterruptParams } from "./protocol/v2/TurnInterruptParams.js";
@@ -208,6 +213,7 @@ type ClientMethod =
 	| "account/read"
 	| "thread/start"
 	| "thread/resume"
+	| "thread/revert"
 	| "model/list"
 	| "turn/start"
 	| "turn/steer"
@@ -218,6 +224,7 @@ const CLIENT_METHODS: readonly ClientMethod[] = [
 	"account/read",
 	"thread/start",
 	"thread/resume",
+	"thread/revert",
 	"model/list",
 	"turn/start",
 	"turn/steer",
@@ -289,6 +296,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly calls = new Map<string, ClientMethod>();
 	private readonly sentMethods = new Set<string>();
 	private readonly responded = new Set<string>();
+	/** `thread/revert` requests DevHub made, by id: the turn each takes back from. */
+	private readonly reverts = new Map<string, string>();
 	private readonly chosen: Chosen = {
 		model: undefined,
 		effort: undefined,
@@ -297,6 +306,10 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	// What the server said (from `received`).
 	private mainThread: string | undefined;
+	/** Only a paginated thread can be reverted (`thread/revert`). */
+	private historyMode: ThreadFacts["historyMode"] | undefined;
+	/** The main thread's turns, each by the first message the person sent in it. */
+	private readonly turnMessages = new Map<string, EntryId>();
 	private runningTurn: string | undefined;
 	private defaults: ThreadDefaults | undefined;
 	private models: readonly ModelChoice[] = [];
@@ -374,6 +387,37 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.choose(which, id);
 			this.publishSession();
 		});
+	}
+
+	rewind(message: EntryId): RewindPlan {
+		const lines = this.lines(() => {
+			if (this.broken) {
+				throw new Error(
+					"the Codex conversation is broken and takes no more commands",
+				);
+			}
+			if (this.mainThread === undefined || this.historyMode !== "paginated") {
+				throw new Error(
+					`${this.codexName} cannot take back a turn of this thread: only a paginated thread can be reverted`,
+				);
+			}
+			if (editableMessage(this.current)?.id !== message) {
+				throw new Error(
+					`${message} is not the person's last message, so its turn cannot be taken back`,
+				);
+			}
+			const turn = [...this.turnMessages].find(([, id]) => id === message);
+			if (turn === undefined) {
+				throw new Error(
+					`${message} did not start a turn, so there is no turn to take back from it`,
+				);
+			}
+			this.call("thread/revert", {
+				threadId: this.mainThread,
+				beforeTurnId: turn[0],
+			} satisfies ThreadRevertParams);
+		});
+		return { kind: "write", lines };
 	}
 
 	sent(line: string): AdapterStep {
@@ -520,6 +564,11 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 			}
 		}
+		if (method === "thread/revert") {
+			const params = message.params as ThreadRevertParams;
+			this.reverts.set(rpcKey(message.id), params.beforeTurnId);
+			this.setState({ phase: "ready", turn: "rewinding" });
+		}
 		if (method === "turn/start") {
 			// What a turn was started with is what the next one starts with too.
 			const params = message.params as TurnStartParams;
@@ -625,6 +674,9 @@ export class CodexAdapter implements ProtocolAdapter {
 				this.models = modelListResponse(this.reader, result);
 				return this.publishSession();
 			}
+			case "thread/revert":
+				threadRevertResponse(this.reader, result);
+				return this.onReverted(id);
 			case "turn/start":
 			case "turn/steer":
 			case "turn/interrupt":
@@ -667,6 +719,14 @@ export class CodexAdapter implements ProtocolAdapter {
 					`${this.codexName} could not list its models: ${message}. The model can't be changed here.`,
 					raw,
 				);
+			case "thread/revert":
+				this.reverts.delete(rpcKey(id!));
+				this.notice(
+					"error",
+					`${this.codexName} did not take back the last turn: ${message}`,
+					raw,
+				);
+				return this.setState({ phase: "ready", turn: "none" });
 			case "turn/start":
 				return this.notice(
 					"error",
@@ -708,6 +768,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	private onThreadOpened(opened: ThreadOpened): void {
 		const { thread } = opened;
 		this.mainThread = thread.id;
+		this.historyMode = thread.historyMode;
 		this.defaults = {
 			model: opened.model,
 			effort: opened.reasoningEffort ?? undefined,
@@ -725,7 +786,8 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	/** A turn `thread/resume` hands back whole: its items as completed, then its end. */
 	private replayTurn(threadId: string, turn: TurnFacts): void {
-		for (const item of turn.items) this.onItem(threadId, item, "completed");
+		for (const item of turn.items)
+			this.onItem(threadId, turn.id, item, "completed");
 		if (turn.status === "inProgress") {
 			this.runningTurn = turn.id;
 		} else {
@@ -754,6 +816,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			agentVersion: this.version,
 			sessionId: this.mainThread,
 			cwd: this.defaults?.cwd,
+			canRewind: this.historyMode === "paginated",
 			model: {
 				current: model,
 				choices: this.models
@@ -915,12 +978,34 @@ export class CodexAdapter implements ProtocolAdapter {
 		params: unknown,
 		phase: "started" | "completed",
 	): void {
-		const { threadId, item } = itemNotification(this.reader, params);
-		this.onItem(threadId, item, phase);
+		const { threadId, turnId, item } = itemNotification(this.reader, params);
+		this.onItem(threadId, turnId, item, phase);
+	}
+
+	/** The thread was reverted to before a turn: that turn's first message and all after it go. */
+	private onReverted(id: RpcId): void {
+		const turn = this.reverts.get(rpcKey(id));
+		const from = turn === undefined ? undefined : this.turnMessages.get(turn);
+		if (turn === undefined || from === undefined) {
+			throw new Error(
+				`app-server answered thread/revert ${JSON.stringify(id)}, which names no turn DevHub knows the first message of`,
+			);
+		}
+		this.reverts.delete(rpcKey(id));
+		const gone = this.current.entries.slice(
+			this.current.entries.findIndex((entry) => entry.id === from),
+		);
+		this.emit({ type: "rewound", from });
+		for (const [turnId, message] of [...this.turnMessages]) {
+			if (gone.some((entry) => entry.id === message))
+				this.turnMessages.delete(turnId);
+		}
+		this.setState({ phase: "ready", turn: "none" });
 	}
 
 	private onItem(
 		threadId: string,
+		turnId: string,
 		item: Item,
 		phase: "started" | "completed",
 	): void {
@@ -944,6 +1029,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		switch (item.type) {
 			case "userMessage": {
 				const match = USER_MESSAGE_ID.exec(item.clientId ?? "");
+				if (threadId === this.mainThread && !this.turnMessages.has(turnId))
+					this.turnMessages.set(turnId, id);
 				return this.put(
 					{
 						kind: "user",
@@ -1929,7 +2016,9 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 			}
 		},
-		"thread/reverted": unused("DevHub never rolls a thread back"),
+		"thread/reverted": unused(
+			"the answer to DevHub's thread/revert says the same, for the one thread DevHub reverts",
+		),
 		"skills/changed": unused("DevHub lists no skills yet"),
 		"thread/name/updated": unused("the Agent's name is DevHub's"),
 		"thread/attachment/updated": unused("DevHub attaches nothing"),

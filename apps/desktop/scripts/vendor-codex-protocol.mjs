@@ -38,6 +38,8 @@ const ROOTS = [
   "v2/ThreadStartResponse",
   "v2/ThreadResumeParams",
   "v2/ThreadResumeResponse",
+  "v2/ThreadRevertParams",
+  "v2/ThreadRevertResponse",
   "v2/TurnStartParams",
   "v2/TurnStartResponse",
   "v2/TurnSteerParams",
