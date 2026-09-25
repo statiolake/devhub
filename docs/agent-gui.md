@@ -225,7 +225,9 @@ for the model; before the first turn ends it reads only the tokens. Codex's is
 `thread/tokenUsage/updated`'s last total against its model context window.
 
 **Subagents.** A subagent is a card under the call that started it, with its
-work inside. Its work is drawn in one place at a time:
+work inside. A Codex subagent is running while its thread has a turn running
+and finished when that turn ends, whether or not app-server also sends a
+`subAgentActivity` item about it. Its work is drawn in one place at a time:
 
 - When the pane is wide (1040 px or more), a running subagent moves to a
   column on the right, subagents stacked one above another, and goes back to

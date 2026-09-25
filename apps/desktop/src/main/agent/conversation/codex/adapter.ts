@@ -978,6 +978,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		const { threadId, turn } = turnNotification(this.reader, params);
 		if (threadId !== this.mainThread) {
 			this.childTurns.set(threadId, turn.id);
+			// A subagent's thread taking a turn is the subagent running, whether
+			// or not a `subAgentActivity` item says so too.
+			this.setSpawnState(threadId, "running", undefined);
 			return;
 		}
 		this.runningTurn = turn.id;
@@ -996,7 +999,9 @@ export class CodexAdapter implements ProtocolAdapter {
 	/**
 	 * A turn is over: whatever of it was still running is not any more, and for
 	 * the main thread the turn ends in the transcript. A subagent's turn ends
-	 * only in its `spawns.state`: a turn-end entry has no parent to hang under.
+	 * only in its `spawns.state`, which its thread's turn ending sets — app-server
+	 * does not always follow it with a `subAgentActivity` item: a turn-end entry
+	 * has no parent to hang under.
 	 */
 	private endTurn(
 		threadId: string,
@@ -1017,6 +1022,11 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.unfinished.delete(threadId);
 		if (threadId !== this.mainThread) {
 			this.childTurns.delete(threadId);
+			this.setSpawnState(
+				threadId,
+				turn.status === "completed" ? "completed" : "failed",
+				undefined,
+			);
 			return;
 		}
 		const outcome = turn.status === "inProgress" ? "failed" : turn.status;

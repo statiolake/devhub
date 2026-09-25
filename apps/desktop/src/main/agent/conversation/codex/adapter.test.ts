@@ -746,12 +746,47 @@ describe("subagents", () => {
 		expect([...new Set(states)]).toEqual([
 			"subagent/running",
 			"Explorer/running",
+			// Its thread's turn ended; the activity item then names it again.
+			"Explorer/completed",
 			"explorer/completed",
 		]);
 		// A subagent's turn does not end the conversation's turn.
 		expect(harness.entry(`${CHILD}/child-say`)).toMatchObject({
 			parent: `${MAIN}/item-spawn`,
 		});
+	});
+
+	it("says a subagent is done when its thread's turn ends, with no activity item to say so, and running again when it starts another", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		const state = () => {
+			const spawn = harness.entry(`${MAIN}/item-spawn`);
+			return spawn?.kind === "tool" ? spawn.spawns?.state : undefined;
+		};
+		const lines = fixture("subagent.handwritten.ndjson").filter(
+			(line) => !line.includes('"subAgentActivity"'),
+		);
+		const childEnd = lines.findIndex(
+			(line) =>
+				line.includes('"turn/completed"') && line.includes("child-turn-1"),
+		);
+		for (const line of lines.slice(0, childEnd)) harness.receive(line);
+		expect(state()).toBe("running");
+		harness.receive(lines[childEnd]!);
+		expect(state()).toBe("completed");
+		harness.receive(
+			lines[childEnd]!.replace('"turn/completed"', '"turn/started"')
+				.replaceAll("child-turn-1", "child-turn-2")
+				.replace('"status":"completed"', '"status":"inProgress"'),
+		);
+		expect(state()).toBe("running");
+		harness.receive(
+			lines[childEnd]!.replaceAll("child-turn-1", "child-turn-2").replace(
+				'"status":"completed"',
+				'"status":"failed"',
+			),
+		);
+		expect(state()).toBe("failed");
 	});
 
 	it("takes the person's messages when app-server says its thread does, steered into its turn or starting one", () => {
