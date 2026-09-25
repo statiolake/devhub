@@ -424,6 +424,14 @@ export interface AppErrorWire {
 	readonly runtimeVersion: string;
 	readonly summary: string;
 	readonly timestampMs: number;
+	/**
+	 * Main has already drawn this failure where its subject is — the Agent's
+	 * pane, the Workspace's row, the machine's condition, or the app notice —
+	 * and hands it to the request that was waiting only so that it is answered
+	 * in the same words. Whoever receives it reads it and does not raise it
+	 * again: that would be a second notice for one failure.
+	 */
+	readonly reported?: true;
 }
 export type AppIntentWire =
 	| {

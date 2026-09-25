@@ -10,9 +10,9 @@
 import { describe, expect, it } from "vitest";
 import { agentId as parseAgentId } from "../../model/domain.js";
 import { portFailure } from "../terminal/ports.js";
-import { agentSubject, portRefusal } from "./agentFailure.js";
+import { agentSubject, portRefusal, refusalWire } from "./agentFailure.js";
 import { AppError, AppErrorCode } from "../../model/intents.js";
-import { errorWire } from "../../model/wire.js";
+import { errorWire, errorWireAt } from "../../model/wire.js";
 
 const AGENT = parseAgentId("550e8400-e29b-41d4-a716-4466554400a0");
 
@@ -119,5 +119,45 @@ describe("the code a refused launch reaches the wire with", () => {
 			errorWire(new AppError(AppErrorCode.PortUnavailable).withPort("agent"))
 				.code,
 		).toBe("agent_runtime_unavailable");
+	});
+});
+
+describe("the words a refused operation is answered in", () => {
+	// The same words its subject was drawn with, so the request waiting on it
+	// — the page, or `devhub` printing it — never reads another sentence.
+	it("are the app notice's own for an app-wide refusal", () => {
+		expect(
+			refusalWire({
+				subject: "app",
+				code: "workspace_unavailable",
+				detail: "/src/api could not be opened as a workspace: not a directory",
+			}),
+		).toMatchObject({
+			code: "workspace_unavailable",
+			summary: errorWireAt("workspace_unavailable").summary,
+			detail: "/src/api could not be opened as a workspace: not a directory",
+		});
+	});
+
+	it("name the Agent port's refusal for an Agent or a machine", () => {
+		for (const failure of [
+			{
+				subject: "agent",
+				id: AGENT,
+				code: "tmux_command_timed_out",
+				detail: "tmux did not answer.",
+			},
+			{
+				subject: "machine",
+				id: "ssh:build-box.example.com",
+				code: "tmux_command_timed_out",
+				detail: "tmux did not answer.",
+			},
+		] as const) {
+			expect(refusalWire(failure)).toMatchObject({
+				code: "tmux_command_timed_out",
+				detail: "tmux did not answer.",
+			});
+		}
 	});
 });

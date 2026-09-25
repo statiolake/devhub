@@ -37,7 +37,7 @@ import {
   type UserIntent,
   type WorktreeDisposition,
 } from "./intents.js";
-import { errorWire } from "./wire.js";
+import { errorWire, errorWireAt, withDetail } from "./wire.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
@@ -849,8 +849,13 @@ describe("launching an agent", () => {
   });
 });
 
+const REPORTED = withDetail(
+  errorWireAt("workspace_unavailable"),
+  "/src/api could not be opened as a workspace: not a directory",
+);
+
 describe("an operation a port could not carry out", () => {
-  it("reaches whoever asked with the port's own sentence, not only the port's name", () => {
+  it("reaches whoever asked in the words it was reported in, marked as already drawn", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
     driver.dispatch({
@@ -867,15 +872,13 @@ describe("an operation a port could not carry out", () => {
       driver.accept({
         type: "operation_failed",
         token: resolve.token,
-        detail: "There is no agent profile called “codex”.",
+        failure: REPORTED,
       });
     } catch (error) {
       refusal = error;
     }
-    expect(refusal).toBeInstanceOf(AppError);
-    expect(errorWire(refusal)).toMatchObject({
-      detail: "There is no agent profile called “codex”.",
-    });
+    // In the words it was drawn in at its subject, and marked as drawn.
+    expect(errorWire(refusal)).toEqual({ ...REPORTED, reported: true });
   });
 });
 

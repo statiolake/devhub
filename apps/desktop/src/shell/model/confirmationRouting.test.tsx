@@ -218,3 +218,46 @@ describe("a dispatch that failed", () => {
     });
   }
 });
+
+describe("a dispatch refused with a failure main already drew", () => {
+  for (const page of PAGES) {
+    it(`is not raised again by ${page.name}`, async () => {
+      const raiseFailure = vi.fn();
+      const dispatch = vi.fn(() =>
+        Promise.reject(
+          new Error(
+            JSON.stringify({
+              code: "workspace_unavailable",
+              summary: "The workspace is unavailable.",
+              detail: "/src/api could not be opened as a workspace",
+              module: "workspace",
+              runtimeVersion: "0.0.0",
+              timestampMs: 1,
+              actions: ["retry"],
+              reported: true,
+            }),
+          ),
+        ),
+      );
+      window.devhub = {
+        ...bridge(dispatch),
+        openModal: async () => "modal-1",
+        raiseFailure,
+      } as never;
+      const { Provider, Raise: Trigger } = page;
+      render(
+        <Provider>
+          <Trigger />
+        </Provider>,
+      );
+
+      // It was drawn where its subject is when it happened; a second raise
+      // is a second notice for one failure.
+      await waitFor(() => {
+        expect(dispatch).toHaveBeenCalled();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(raiseFailure).not.toHaveBeenCalled();
+    });
+  }
+});

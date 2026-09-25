@@ -40,6 +40,7 @@ import {
   isCanonicalUuid,
   sshHost,
 } from "./domain.js";
+import type { AppErrorWire } from "../ipc/appShell.js";
 import type { AppSnapshot } from "./appModel.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
 
@@ -733,11 +734,13 @@ export type ProviderEvent =
       readonly type: "operation_failed";
       readonly token: OperationToken;
       /**
-       * What the failing side said, for whoever asked for the operation. The
-       * refusal is reported at its subject too; this is the same sentence
-       * reaching the request that is still waiting on it.
+       * The failure as it was already drawn at its subject — code, sentence
+       * and detail — for whoever asked for the operation. The request is
+       * answered in exactly these words, never in a port's catch-all, and is
+       * told they were drawn already (`reported`), so it does not draw them a
+       * second time.
        */
-      readonly detail?: string;
+      readonly failure: AppErrorWire;
     };
 
 export interface ProviderEventEnvelope {

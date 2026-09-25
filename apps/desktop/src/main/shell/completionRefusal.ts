@@ -5,11 +5,8 @@
  * that no failure has two ways onto the screen.
  */
 
-import {
-	AppError,
-	AppErrorCode,
-	type ProviderEvent,
-} from "../../model/intents.js";
+import { AppError, AppErrorCode } from "../../model/intents.js";
+import { TypedFailure } from "../../model/wire.js";
 
 export type CompletionRefusalRoute =
 	/** A bug in main's own flow: nobody is waiting and nothing can answer it. */
@@ -25,24 +22,23 @@ export type CompletionRefusalRoute =
  * - A *stale* one answers an operation something newer already settled on
  *   purpose (the reconciler supersedes its own rounds), and a person told so
  *   every time learns nothing and stops reading the error area.
- * - `operation_failed` is only ever sent by `failOperation`, which has already
- *   reported the failure at its subject — the Agent's pane, the Workspace's
- *   row, the machine's condition, or the app notice. The coordinator's
- *   refusal of the operation is that same failure coming back, and publishing
- *   it again was a second route to the screen: for an app-wide failure the
- *   second notice replaced the first under the coordinator's port word
- *   instead of the failure's own, and for a machine it put an app notice back
- *   on every round the machine condition exists to say once.
+ * - A failure marked `reported` was already drawn at its subject — the
+ *   Agent's pane, the machine's condition, or the app notice — by
+ *   `failOperation`, and comes back only to answer the request in the same
+ *   words. Publishing it again was a second route to the screen: for an
+ *   app-wide failure the second notice replaced the first under another
+ *   sentence, and for a machine it put an app notice back on every round the
+ *   machine condition exists to say once. The page keeps the same rule for
+ *   the rejection it is handed (`pageModel`'s `dispatch`).
  * - Anything else is a failure nothing has reported yet, and the app notice
  *   is where it is said.
  */
-export function completionRefusalRoute(
-	event: ProviderEvent,
-	error: unknown,
-): CompletionRefusalRoute {
+export function completionRefusalRoute(error: unknown): CompletionRefusalRoute {
 	if (isCode(error, AppErrorCode.UnknownOperation)) return "crash";
 	if (isCode(error, AppErrorCode.StaleCompletion)) return "reject";
-	if (event.type === "operation_failed") return "reject";
+	if (error instanceof TypedFailure && error.wire.reported === true) {
+		return "reject";
+	}
 	return "publish";
 }
 

@@ -156,6 +156,8 @@ import { zoomedTerminalFontSize } from "../../model/terminalZoom.js";
 import {
 	agentSubject,
 	portRefusal,
+	refusalWire,
+	type OperationRefusal,
 	type RefusedOperation,
 } from "./agentFailure.js";
 import { AppModel, type NavigationSelection } from "../../model/appModel.js";
@@ -2501,13 +2503,13 @@ export class AppController {
 	 */
 	private failOperation(
 		token: OperationToken,
-		failure: RefusedOperation,
+		failure: OperationRefusal,
 	): void {
 		this.reportFailure(failure);
 		this.accept({
 			type: "operation_failed",
 			token,
-			...(failure.detail === undefined ? {} : { detail: failure.detail }),
+			failure: refusalWire(failure),
 		});
 	}
 
@@ -2555,11 +2557,7 @@ export class AppController {
 				);
 				return;
 			case "app":
-				this.publishError(
-					failure.detail === undefined
-						? errorWireAt(failure.code)
-						: withDetail(errorWireAt(failure.code), failure.detail),
-				);
+				this.publishError(refusalWire(failure));
 				return;
 		}
 	}
@@ -2601,7 +2599,7 @@ export class AppController {
 			// Where the refusal goes is `completionRefusalRoute`'s decision, for
 			// every completion alike; the request waiting on it is refused either
 			// way.
-			const route = completionRefusalRoute(event, error);
+			const route = completionRefusalRoute(error);
 			if (route === "crash") crash(error);
 			if (route === "publish") this.publishError(errorWire(error));
 			this.reject(id, error);

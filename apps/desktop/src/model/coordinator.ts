@@ -39,6 +39,8 @@ import {
   type WorkspaceId,
   type WorkspaceLocation,
 } from "./domain.js";
+import type { AppErrorWire } from "../ipc/appShell.js";
+import { TypedFailure } from "./wire.js";
 import {
   AppModel,
   type AppSnapshot,
@@ -48,7 +50,6 @@ import {
 import {
   AppError,
   AppErrorCode,
-  type PortName,
   operationToken,
   requestedLocation,
   requestedPath,
@@ -204,25 +205,6 @@ type OperationKind =
   | "terminate_agent"
   | "persist_state"
   | "close_workspace";
-
-/**
- * What an operation was talking to. A port failure means "that side could not
- * do it", and which side it was is exactly what the operation's kind says.
- */
-function portFor(kind: OperationKind): PortName {
-  switch (kind) {
-    case "launch_agent":
-    case "stop_agent":
-    case "terminate_agent":
-    case "reconcile_agent":
-    case "reconcile_agents":
-      return "agent";
-    case "persist_state":
-      return "state";
-    default:
-      return "app";
-  }
-}
 
 /** A stop or termination the Agent port refused, as the request reads it. */
 function stopRefusal(
@@ -1259,13 +1241,13 @@ export class AppCoordinator {
       case "state_persistence_failed":
         return this.completePersistFailed(event.token, event.reason);
       case "operation_failed":
-        return this.completeOperationFailed(event.token, event.detail);
+        return this.completeOperationFailed(event.token, event.failure);
     }
   }
 
   private completeOperationFailed(
     token: OperationToken,
-    detail: string | undefined,
+    failure: AppErrorWire,
   ): IntentOutcome {
     const pending = this.pending.get(token.operationId);
     if (!pending) {
@@ -1283,10 +1265,7 @@ export class AppCoordinator {
     this.pending.delete(token.operationId);
     this.clearOperationAuxiliaryState(token);
     this.rememberCompleted(token);
-    throw new AppError(AppErrorCode.PortUnavailable)
-      .withPort(portFor(pending.kind))
-      .withDetail(detail)
-      .withOperation(token.operationId);
+    throw new TypedFailure({ ...failure, reported: true });
   }
 
   private clearOperationAuxiliaryState(token: OperationToken): void {

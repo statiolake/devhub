@@ -190,7 +190,9 @@ export function useProjection(
         return outcome;
       } catch (error) {
         if (generation.current !== dispatchGeneration) return undefined;
-        raiseFailure(error);
+        // A refusal main already drew where its subject is did not begin on
+        // this page, and raising it would draw it a second time.
+        if (toAppError(error).reported !== true) raiseFailure(error);
         return undefined;
       }
     },
