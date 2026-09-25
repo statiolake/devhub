@@ -529,9 +529,79 @@ describe("the name a branch has on the remote", () => {
 			["branch", "--set-upstream-to=my/fork/release-2", "local-name"],
 			{ cwd: repository },
 		);
+		// Pushed there, so it is the push destination that answers: an upstream
+		// on a remote other than `origin` is not taken on its own.
+		await runGit(command, ["config", "push.default", "upstream"], {
+			cwd: repository,
+		});
 		expect((await readRepository(command, repository))?.pushBranch).toBe(
 			"release-2",
 		);
+	});
+
+	it("is not the trunk a new worktree's branch was started from", async () => {
+		// `git worktree add -b feature/… origin/main` makes the new branch track
+		// `origin/main` (git's default `branch.autoSetupMerge`). Under
+		// `push.default=simple` `%(push)` is then empty, and taking the upstream
+		// in its place answered `main` for every such branch — so the row
+		// showed whatever pull request had ever been opened from `main`.
+		await addRemote("origin");
+		await runGit(command, ["push", "-u", "origin", "main"], {
+			cwd: repository,
+		});
+		await runGit(command, ["remote", "set-head", "origin", "main"], {
+			cwd: repository,
+		});
+		await runGit(command, ["config", "push.default", "simple"], {
+			cwd: repository,
+		});
+		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+		expect((await readRepository(command, path))?.branch).toBe(
+			"feature/128-tidy",
+		);
+		expect((await readRepository(command, path))?.pushBranch).toBeUndefined();
+	});
+
+	it("is not the trunk a branch made by hand was started from", async () => {
+		await addRemote("origin");
+		await runGit(command, ["push", "-u", "origin", "main"], {
+			cwd: repository,
+		});
+		await runGit(command, ["remote", "set-head", "origin", "main"], {
+			cwd: repository,
+		});
+		await runGit(command, ["config", "push.default", "simple"], {
+			cwd: repository,
+		});
+		await runGit(command, ["switch", "--track", "-c", "fix/9", "origin/main"], {
+			cwd: repository,
+		});
+		expect(
+			(await readRepository(command, repository))?.pushBranch,
+		).toBeUndefined();
+	});
+
+	it("is not a branch of a remote other than the one the branch is pushed to", async () => {
+		// A fork's branch tracking `upstream/main` with no push remote set:
+		// `main` there is somebody else's trunk, not this branch's head.
+		await addRemote("origin");
+		await addRemote("upstream");
+		await runGit(command, ["push", "upstream", "main"], { cwd: repository });
+		await runGit(command, ["fetch", "upstream"], { cwd: repository });
+		await runGit(command, ["config", "push.default", "simple"], {
+			cwd: repository,
+		});
+		await runGit(command, ["checkout", "-b", "feature/128-tidy"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			["branch", "--set-upstream-to=upstream/main", "feature/128-tidy"],
+			{ cwd: repository },
+		);
+		expect(
+			(await readRepository(command, repository))?.pushBranch,
+		).toBeUndefined();
 	});
 
 	it("is nothing at all when the branch has neither", async () => {

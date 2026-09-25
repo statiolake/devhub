@@ -276,6 +276,11 @@ export interface RepositoryFacts {
 	 * `main` — the trunk of somebody else's repository — for every branch in
 	 * every fork.
 	 *
+	 * The upstream is only taken when it is a branch of `origin` other than
+	 * `origin`'s default branch: a branch tracking the trunk it was started
+	 * from is not pushed there, and a branch of another remote is not the
+	 * owner's head. See `remoteBranchOf`.
+	 *
 	 * Absent when the branch has neither — nobody has pushed it and it tracks
 	 * nothing — and the caller falls back to the local name, which is what the
 	 * branch will be called the first time somebody pushes it.
@@ -487,10 +492,6 @@ export async function readRepository(
 				directory,
 				cancel,
 			);
-	const pushBranch =
-		branch === undefined || branch === "HEAD"
-			? undefined
-			: await remoteBranchOf(command, directory, branch, cancel);
 	const remote = await remoteNamed(command, directory, "origin", cancel);
 	const upstream = await remoteNamed(command, directory, "upstream", cancel);
 	// `origin/main`, trimmed to `main`. A clone that has never been told what
@@ -504,6 +505,10 @@ export async function readRepository(
 	const defaultBranch = head?.startsWith("origin/")
 		? head.slice("origin/".length)
 		: undefined;
+	const pushBranch =
+		branch === undefined || branch === "HEAD"
+			? undefined
+			: await remoteBranchOf(command, directory, branch, defaultBranch, cancel);
 	return {
 		defaultBranch,
 		mainWorktree,
@@ -533,6 +538,8 @@ async function remoteBranchOf(
 	command: GitCommand,
 	directory: string,
 	branch: string,
+	/** `origin`'s default branch, when the clone knows it. */
+	trunk: string | undefined,
 	cancel?: CancellationToken,
 ): Promise<string | undefined> {
 	const line = await ask(
@@ -547,7 +554,20 @@ async function remoteBranchOf(
 	).catch(() => undefined);
 	if (line === undefined) return undefined;
 	const [pushRemote, push, upstreamRemote, upstream] = line.split("\t");
-	return trimRemote(pushRemote, push) ?? trimRemote(upstreamRemote, upstream);
+	const pushed = trimRemote(pushRemote, push);
+	if (pushed !== undefined) return pushed;
+	// The upstream stands in for the push destination only where it can be
+	// the branch's own head: a branch of `origin` — the remote whose owner a
+	// pull request's head is matched against — that is not `origin`'s trunk.
+	// A branch started with `git worktree add -b feature/x … origin/main` (or
+	// `git switch -c feature/x origin/main`) tracks the trunk it came from,
+	// and `simple` then declines to answer `%(push)`; reading the upstream
+	// answered `main` for it, and the row showed whatever pull request had
+	// ever been opened from `main`. A branch tracking `upstream/main` in a
+	// fork is the same mistake with somebody else's trunk.
+	const tracked = trimRemote(upstreamRemote, upstream);
+	if (upstreamRemote !== "origin" || tracked === trunk) return undefined;
+	return tracked;
 }
 
 /** `refs/remotes/origin/release-2` under `origin`, as `release-2`. */
@@ -913,6 +933,11 @@ export async function ensureWorktree(
 		: [
 				"worktree",
 				"add",
+				// A new branch does not track the trunk it starts from: that is
+				// where it came from, not where it goes, and git's default
+				// `autoSetupMerge` would make `origin/main` its upstream — which
+				// every later question about "this branch on the remote" reads.
+				"--no-track",
 				"-b",
 				name,
 				target,
