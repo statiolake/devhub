@@ -1,9 +1,8 @@
 /**
- * Which earlier session of an Agent's CLI to go on with: what New Agent's
- * "Resume a session…" asks, and what `/resume` asks inside a GUI Agent.
+ * Which earlier session of an Agent's CLI to go on with: what `/resume` asks
+ * inside a GUI Agent.
  *
- * One sheet for both, because it is one question. The Workspace's sessions
- * lead; "All projects" lists every directory's, as the CLIs' own pickers do,
+ * The Workspace's sessions lead; "All projects" lists every directory's, as the CLIs' own pickers do,
  * and a session Claude cannot resume in this Workspace (it ran elsewhere) is
  * listed with that reason rather than hidden. The row the person is on is
  * previewed beside the list — its last few messages, read on demand and kept
@@ -37,13 +36,10 @@ export interface SessionSource {
 export interface SessionPickerProps {
   readonly title: string;
   readonly question: string;
-  readonly step?: number;
   /** The CLI's name, for what the sheet says about its sessions ("Claude"). */
   readonly cli: string;
   readonly source: SessionSource;
-  /** A line of guidance under the list, while nothing has failed. */
-  readonly hint?: string;
-  readonly onChoose: (session: string, split: boolean) => void;
+  readonly onChoose: (session: string) => void;
   readonly onCancel: () => void;
 }
 
@@ -67,10 +63,8 @@ type Preview =
 export function SessionPicker({
   title,
   question,
-  step,
   cli,
   source,
-  hint,
   onChoose,
   onCancel,
 }: SessionPickerProps) {
@@ -189,7 +183,6 @@ export function SessionPicker({
       key={scope}
       title={title}
       question={question}
-      {...(step === undefined ? {} : { step })}
       items={items}
       busy={listed === undefined}
       toolbar={
@@ -221,9 +214,7 @@ export function SessionPicker({
         <SessionPreview preview={shown?.preview} empty={items.length === 0} />
       }
       note={
-        refusal === undefined ? (
-          hint
-        ) : (
+        refusal === undefined ? undefined : (
           <span className="picker-note-failure">{refusal}</span>
         )
       }
@@ -235,7 +226,7 @@ export function SessionPicker({
             : `There are no earlier ${cli} sessions on this machine.`
       }
       emptyNoMatch="No earlier session matches."
-      onChoose={(choice) => onChoose(choice.id, choice.split)}
+      onChoose={(choice) => onChoose(choice.id)}
       onCancel={onCancel}
     />
   );

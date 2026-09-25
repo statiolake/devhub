@@ -489,11 +489,6 @@ export type AppIntentWire =
 			 * means the plain arrangement.
 			 */
 			readonly presentation?: AgentPresentationWire;
-			/**
-			 * An earlier session of the profile's CLI to go on with, by the id
-			 * `listPastSessions` gave it. Absent starts afresh.
-			 */
-			readonly resume?: string;
 			readonly type: "request_create_agent";
 			readonly workspaceId: string;
 	  }

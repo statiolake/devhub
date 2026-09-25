@@ -449,12 +449,6 @@ export type UserIntent =
        * with `presentation` above, which is where the pane sits.
        */
       readonly agentPresentation?: AgentPresentation;
-      /**
-       * An earlier session of the profile's CLI in this Workspace, to go on
-       * with instead of starting afresh: Claude's session id, Codex's thread
-       * id. Only main knows how the CLI is told, so this is the id alone.
-       */
-      readonly resume?: string;
     }
   /**
    * Carry an Agent's session on in the other presentation: a GUI Agent's in a

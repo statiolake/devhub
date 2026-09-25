@@ -22,16 +22,10 @@ afterEach(cleanup);
 
 const WORKSPACE = "550e8400-e29b-41d4-a716-446655440000";
 
-function mount(
-  listPastSessions: PickerValue["listPastSessions"] = vi
-    .fn()
-    .mockResolvedValue([]),
-) {
+function mount() {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const value = {
     dispatch,
-    listPastSessions,
-    previewPastSession: vi.fn().mockResolvedValue([]),
     agentProfiles: {
       availability: "available",
       sequence: 1,
@@ -65,7 +59,7 @@ function mount(
       <AgentPickerSheet workspaceId={WORKSPACE} onDismiss={vi.fn()} />
     </PickerContext.Provider>,
   );
-  return { dispatch, listPastSessions };
+  return { dispatch };
 }
 
 function row(name: RegExp) {
@@ -184,52 +178,5 @@ describe("what the sheet says will happen", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "⌥Return opens it as the other of TUI and GUI.",
     );
-  });
-});
-
-describe("resuming an earlier session", () => {
-  it("offers it for the profiles whose CLI keeps sessions", () => {
-    mount();
-    expect(row(/Resume a Claude session/u)).toBeInTheDocument();
-    expect(row(/Resume a Codex session/u)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: /Resume a Cursor session/u }),
-    ).toBeNull();
-  });
-
-  it("lists the Workspace's sessions of that profile and launches the one picked", async () => {
-    const { dispatch, listPastSessions } = mount(
-      vi.fn().mockResolvedValue([
-        {
-          id: "session-new",
-          title: "Fix the login flow",
-          updatedAt: 2000,
-          resumableHere: true,
-        },
-        { id: "session-old", title: "Write the README", resumableHere: true },
-      ]),
-    );
-    // Option on the resume row turns its presentation the way it does a profile's.
-    fireEvent.click(row(/Resume a Claude session/u), { altKey: true });
-    expect(listPastSessions).toHaveBeenCalledWith(WORKSPACE, "claude", "here");
-    fireEvent.click(await screen.findByRole("option", { name: /README/u }));
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "request_create_agent",
-      workspaceId: WORKSPACE,
-      profileId: "claude",
-      split: false,
-      presentation: "gui",
-      resume: "session-old",
-    });
-  });
-
-  it("says why when the sessions cannot be listed", async () => {
-    mount(vi.fn().mockRejectedValue(new Error("codex app-server ended: boom")));
-    fireEvent.click(row(/Resume a Codex session/u));
-    // The reason, and not "there are none", which would be a different fact.
-    expect(
-      await screen.findByText(/codex app-server ended: boom/u),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/has no earlier sessions/u)).toBeNull();
   });
 });

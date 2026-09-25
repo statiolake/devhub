@@ -133,11 +133,11 @@ argv was given whole has no `version`; either refuses the rewind, and the
 Agent has to be stopped and started again.
 
 Every argv that picks a session is composed by one function, `withSession`
-(`resume.ts`): a resumed launch, Continue in GUI or in terminal, `/resume` and
-a rewind take out every argument already picking one (`--resume`, `-r`,
+(`resume.ts`): Continue in GUI or in terminal, `/resume` and a rewind take
+out every argument already picking one (`--resume`, `-r`,
 `--continue`, `-c`, `--resume-session-at`, `--resume-drops-turn`, Codex's
 `resume <id>` or `resume --last`) and put their own at the end. After a
-resumed launch the CLI is never started on two sessions at once, and a rewind
+continue the CLI is never started on two sessions at once, and a rewind
 to the first message really starts a new session.
 
 Everything DevHub writes goes through the FIFO and is also appended to
@@ -420,8 +420,7 @@ Which session the terminal is in is found this way:
   on `--resume`, on `/clear` and on `/resume` inside the terminal, so it names
   the session on screen, and it prints nothing. A terminal Agent started
   before this existed, or one whose hooks are turned off (`disableAllHooks`,
-  a managed policy), has no record and is refused with the reason; New Agent
-  › Resume a Claude session… still works.
+  a managed policy), has no record and is refused with the reason.
 - **Codex** has no such hook, so it is the newest thread of Codex's terminal
   mode (`thread/list`, source `cli`) in the Workspace's directory. That is the
   Agent's only while it is the one Codex terminal there: with another Codex
@@ -431,28 +430,15 @@ Which session the terminal is in is found this way:
 
 ## Resuming an earlier session
 
-New Agent offers **Resume a Claude session…** and **Resume a Codex
-session…** under the profiles, one row per Claude or Codex profile. Taking one
-asks a second question: which of this Workspace's earlier sessions of that
-profile, newest first, with its title (or its first message) and when it last
-changed. The row launches as the profile's presentation says, and ⌥ turns it
-the other way, as on a profile's own row — so the same list resumes a session
-in a GUI Agent or in a terminal Agent.
+An earlier session is taken up in two ways: **Continue in terminal** and
+**Continue in GUI** (above) start a new Agent on the session the first one is
+in, and **`/resume`** inside a GUI Agent (below) has that Agent go on with
+another session. New Agent starts afresh only.
 
-The list is the CLI's own, read on the Workspace's machine:
-
-- **Codex**: `thread/list` on a short-lived `codex app-server`, filtered to
-  the Workspace's directory (`cwd`), sorted by `updated_at`.
-- **Claude** has no listing command. It keeps each session as JSONL under
-  `~/.claude/projects/<the directory, every non-alphanumeric character as
-  ->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
-  machine's). DevHub reads the newest 50 files there and never writes to
-  them. A title is Claude's own `ai-title` when there is one.
-
-A resumed Agent is an ordinary launch whose arguments end with the terminal
-mode's resume: `--resume <session id>` or `resume <thread id>`, the same ones
-Continue in terminal uses. They are part of the Agent's recorded profile, so
-a restart of DevHub knows what it resumed.
+A launch that resumes is an ordinary launch whose arguments end with the
+terminal mode's resume: `--resume <session id>` or `resume <thread id>`. They
+are part of the Agent's recorded profile, so a restart of DevHub knows what
+it resumed.
 
 - **Claude GUI** runs `claude --resume <id> -p …` in stream-json. stream-json
   prints nothing of the past, so DevHub reads the session's file at launch
@@ -466,9 +452,20 @@ a restart of DevHub knows what it resumed.
   the thread's turns, which are drawn as the conversation.
 
 A session that is not there (Claude's file is missing) refuses the launch
-with the path, and a listing that fails says why in the sheet instead of
-showing an empty list.
+with the path.
 
+`/resume`'s sheet lists the CLI's own sessions, read on the Workspace's
+machine:
+
+- **Codex**: `thread/list` on a short-lived `codex app-server`, filtered to
+  the Workspace's directory (`cwd`), sorted by `updated_at`.
+- **Claude** has no listing command. It keeps each session as JSONL under
+  `~/.claude/projects/<the directory, every non-alphanumeric character as
+  ->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
+  machine's). DevHub reads the newest 50 files there and never writes to
+  them. A title is Claude's own `ai-title` when there is one.
+
+A listing that fails says why in the sheet instead of showing an empty list.
 The sheet lists **This project** first; **All projects** lists every
 directory's sessions, as the CLIs' own pickers do: every
 `<config>/projects/*` directory for Claude (newest 50 files across them, by
@@ -482,7 +479,7 @@ or Codex's rollout, found by its thread id under `$CODEX_HOME/sessions`),
 read when the pointer or the arrows rest on the row, and kept while the sheet
 stands. Only the person's words and the answers are shown, not tools.
 
-**`/resume` inside a GUI Agent** opens the same sheet for the Agent's
+**`/resume` inside a GUI Agent** opens that sheet for the Agent's
 Workspace, and the chosen session is carried on by this Agent, in place of
 the one it is in (which is left as it is, and can be resumed again). Typed out
 whole and sent, or picked from the completions, it is DevHub's command and

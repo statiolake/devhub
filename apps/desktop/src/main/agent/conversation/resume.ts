@@ -437,7 +437,7 @@ export async function terminalSession(
 		} catch (failure: unknown) {
 			if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
 				throw new SessionNotResumable(
-					"This terminal Agent has not said which Claude session it is in: Claude tells DevHub when a session starts, and this one started before DevHub asked it to (or its hooks are turned off). Use New Agent › Resume a Claude session… instead.",
+					"This terminal Agent has not said which Claude session it is in: Claude tells DevHub when a session starts, and this one started before DevHub asked it to (or its hooks are turned off).",
 				);
 			}
 			throw failure;

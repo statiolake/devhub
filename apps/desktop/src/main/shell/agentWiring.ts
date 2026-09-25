@@ -684,7 +684,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			);
 			if (others.length > 0) {
 				throw new SessionNotResumable(
-					`DevHub cannot tell which Codex thread is “${agent.displayName}”'s: ${others.map((other) => `“${other.displayName}”`).join(", ")} ${others.length === 1 ? "is" : "are"} a Codex terminal in the same Workspace too. Use New Agent › Resume a Codex session… instead.`,
+					`DevHub cannot tell which Codex thread is “${agent.displayName}”'s: ${others.map((other) => `“${other.displayName}”`).join(", ")} ${others.length === 1 ? "is" : "are"} a Codex terminal in the same Workspace too.`,
 				);
 			}
 		}

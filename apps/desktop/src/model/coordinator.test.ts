@@ -2055,22 +2055,3 @@ describe("where a close lands", () => {
     expect(selected(driver)).toEqual(workspace(CHARLIE));
   });
 });
-
-describe("a launch that resumes a session", () => {
-  it("asks main for the profile with the session to resume, by id alone", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-    driver.dispatch({
-      type: "create_agent",
-      workspaceId: WS_A,
-      profileId: agentProfileId("claude"),
-      presentation: "full",
-      resume: "session-1",
-    });
-    const resolve = driver.drainEffects()[0];
-    if (resolve?.kind !== "resolve_agent_profile")
-      throw new Error("unexpected");
-    expect(resolve.extraArgs).toEqual([]);
-    expect(resolve.resume).toBe("session-1");
-  });
-});

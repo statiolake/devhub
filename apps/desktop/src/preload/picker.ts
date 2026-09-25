@@ -12,8 +12,6 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
 	type OpenModal,
-	type PastSessionWire,
-	type SessionPreviewLineWire,
 	type PickerBridge,
 } from "../ipc/contract.js";
 import type { AppOutcome } from "../ipc/appShell.js";
@@ -58,21 +56,6 @@ const api: PickerBridge = {
 		) as Promise<AppOutcome>,
 	cancelPickerLookup: () =>
 		ipcRenderer.invoke(CHANNELS.cancelPickerLookup) as Promise<void>,
-	listPastSessions: (workspaceId, profileId, scope) =>
-		ipcRenderer.invoke(
-			CHANNELS.listPastSessions,
-			workspaceId,
-			profileId,
-			scope,
-		) as Promise<readonly PastSessionWire[]>,
-	previewPastSession: (workspaceId, profileId, session, cwd) =>
-		ipcRenderer.invoke(
-			CHANNELS.previewPastSession,
-			workspaceId,
-			profileId,
-			session,
-			cwd,
-		) as Promise<readonly SessionPreviewLineWire[]>,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

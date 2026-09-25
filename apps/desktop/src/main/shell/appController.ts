@@ -68,7 +68,6 @@ import {
 	type RepositoryStatusWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
-	type PastSessionWire,
 } from "../../ipc/contract.js";
 import {
 	appConditionIdentity,
@@ -145,8 +144,6 @@ import {
 	requestedLocation,
 	whereRequested,
 	type RequestedWorkspaceLocation,
-	AppError,
-	AppErrorCode,
 	type AgentProfileResolution,
 	type IntentOutcome,
 	type OperationToken,
@@ -310,14 +307,7 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
-import {
-	listPastSessions,
-	previewPastSession,
-	resumeArgs,
-	withSession,
-	sessionScope,
-	type SessionScope,
-} from "../agent/conversation/resume.js";
+import { resumeArgs, withSession } from "../agent/conversation/resume.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -3257,59 +3247,6 @@ export class AppController {
 		};
 	}
 
-	/**
-	 * A profile's earlier sessions in a Workspace, read on its machine with the
-	 * command a launch from that profile would run there.
-	 */
-	private async pastSessions(
-		workspaceId: string,
-		profileId: string,
-		scope: SessionScope,
-	): Promise<readonly PastSessionWire[]> {
-		const { workspace, profile } = await this.sessionsProfile(
-			workspaceId,
-			profileId,
-		);
-		const sessions = await listPastSessions(
-			runtimeFor(workspace.location),
-			profile,
-			workspace.root,
-			scope,
-		);
-		return sessions.map((session) => ({
-			id: session.id,
-			title: session.title,
-			...(session.updatedAt === undefined
-				? {}
-				: { updatedAt: session.updatedAt }),
-			...(session.cwd === undefined ? {} : { cwd: session.cwd }),
-			resumableHere: session.resumableHere,
-		}));
-	}
-
-	/** The command a launch from `profileId` would run in the Workspace, for reading its sessions. */
-	private async sessionsProfile(workspaceId: string, profileId: string) {
-		const id = parseWorkspaceId(workspaceId);
-		const resolution = await this.profileResolution(
-			id,
-			profileId,
-			[],
-			undefined,
-		);
-		// Refused the way a launch from the profile is, because it is the same
-		// refusal: the profile cannot be run there.
-		if (resolution.kind === "failed") {
-			throw new AppError(AppErrorCode.PortUnavailable)
-				.withPort("agent")
-				.withAgentFailure(resolution.code)
-				.withDetail(resolution.detail);
-		}
-		return {
-			workspace: this.coordinator.model.workspace(id)!,
-			profile: resolution.profile,
-		};
-	}
-
 	private async inspect(
 		token: OperationToken,
 		workspaceId: WorkspaceId,
@@ -6024,52 +5961,6 @@ export class AppController {
 			this.pickerLookup = undefined;
 			return Promise.resolve();
 		});
-		handle(
-			CHANNELS.listPastSessions,
-			async (
-				_event,
-				workspaceId: string,
-				profileId: string,
-				scope: unknown,
-			) => {
-				try {
-					return await this.pastSessions(
-						workspaceId,
-						profileId,
-						sessionScope(scope),
-					);
-				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
-				}
-			},
-		);
-		handle(
-			CHANNELS.previewPastSession,
-			async (
-				_event,
-				workspaceId: string,
-				profileId: string,
-				session: unknown,
-				cwd: unknown,
-			) => {
-				try {
-					if (typeof session !== "string" || typeof cwd !== "string")
-						throw new Error("a preview names no session and directory");
-					const { workspace, profile } = await this.sessionsProfile(
-						workspaceId,
-						profileId,
-					);
-					return await previewPastSession(
-						runtimeFor(workspace.location),
-						profile,
-						session,
-						cwd,
-					);
-				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
-				}
-			},
-		);
 		handle(
 			CHANNELS.cloneRepository,
 			async (_event, url: string, parentDirectory: string) => {

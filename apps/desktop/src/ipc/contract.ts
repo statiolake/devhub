@@ -1302,24 +1302,6 @@ export interface PickerBridge
 	 * has to say this for the case where no new question follows.
 	 */
 	cancelPickerLookup(): Promise<void>;
-	/**
-	 * The earlier sessions of a profile's CLI in a Workspace, newest first, read
-	 * on the Workspace's machine: what "Resume a session…" offers. Throws the
-	 * reason when the CLI's sessions cannot be listed. `everywhere` lists
-	 * every directory's, each saying whether the Workspace can go on with it.
-	 */
-	listPastSessions(
-		workspaceId: string,
-		profileId: string,
-		scope: SessionScopeWire,
-	): Promise<readonly PastSessionWire[]>;
-	/** The last exchanges of one listed session, read on demand. */
-	previewPastSession(
-		workspaceId: string,
-		profileId: string,
-		session: string,
-		cwd: string,
-	): Promise<readonly SessionPreviewLineWire[]>;
 }
 
 /** Which earlier sessions a picker lists: the Workspace's directory's, or every directory's. */
@@ -1327,7 +1309,7 @@ export type SessionScopeWire = "here" | "everywhere";
 
 /** One earlier session of an Agent's CLI, as the resume picker lists it. */
 export interface PastSessionWire {
-	/** What `request_create_agent`'s `resume` names. */
+	/** What `/resume` hands the Agent's CLI: Claude's session id, Codex's thread id. */
 	readonly id: string;
 	readonly title: string;
 	/** When it last changed, in ms since the epoch, when the CLI says. */
@@ -1386,8 +1368,6 @@ export const CHANNELS = {
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
-	listPastSessions: "devhub:list-past-sessions",
-	previewPastSession: "devhub:preview-past-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

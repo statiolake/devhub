@@ -51,67 +51,37 @@ export interface AgentProfilePickerProps {
     split: boolean,
     presentation: AgentPresentationWire,
   ) => void;
-  /**
-   * Offer "Resume a session…" for each profile whose CLI keeps sessions, and
-   * what to do when one is taken. Only a caller whose Workspace is already
-   * open can list its sessions, so only such a caller passes it.
-   */
-  readonly onResume?: (
-    profileId: string,
-    presentation: AgentPresentationWire,
-  ) => void;
   readonly onCancel: () => void;
 }
-
-/** The kinds whose CLI keeps sessions DevHub can list and resume. */
-const RESUMABLE: readonly AgentProfileKindWire[] = ["claude", "codex"];
-const RESUME_ROW = "resume:";
 
 export function AgentProfilePicker({
   question,
   step,
   hint,
   onChoose,
-  onResume,
   onCancel,
 }: AgentProfilePickerProps) {
   const { agentProfiles } = usePicker();
-  const resumable =
-    onResume === undefined
-      ? []
-      : agentProfiles.profiles.filter((profile) =>
-          RESUMABLE.includes(profile.kind),
-        );
 
   return (
     <Picker
       title="New Agent"
       question={question}
       step={step}
-      items={agentProfiles.profiles
-        .map((profile) => {
-          const kind = kindLabel(profile.kind);
-          return {
-            id: profile.id,
-            label: profile.displayName,
-            // A profile usually *is* its kind, and "Codex" under "Codex" says
-            // nothing twice. The line is for the profiles that differ — a second
-            // Claude with its own arguments, or a custom one whose status will
-            // never be known.
-            detail: kind === profile.displayName ? undefined : kind,
-            searchText: `${profile.displayName} ${profile.kind}`,
-            accessory: presentationAccessory(profile),
-          };
-        })
-        .concat(
-          resumable.map((profile) => ({
-            id: `${RESUME_ROW}${profile.id}`,
-            label: `Resume a ${profile.displayName} session…`,
-            detail: "Go on with one of this workspace's earlier sessions",
-            searchText: `resume ${profile.displayName} ${profile.kind}`,
-            accessory: presentationAccessory(profile),
-          })),
-        )}
+      items={agentProfiles.profiles.map((profile) => {
+        const kind = kindLabel(profile.kind);
+        return {
+          id: profile.id,
+          label: profile.displayName,
+          // A profile usually *is* its kind, and "Codex" under "Codex" says
+          // nothing twice. The line is for the profiles that differ — a second
+          // Claude with its own arguments, or a custom one whose status will
+          // never be known.
+          detail: kind === profile.displayName ? undefined : kind,
+          searchText: `${profile.displayName} ${profile.kind}`,
+          accessory: presentationAccessory(profile),
+        };
+      })}
       emptyNoMatch="No agent profiles match."
       emptyNoItems={
         agentProfiles.availability === "unavailable"
@@ -124,12 +94,8 @@ export function AgentProfilePicker({
           : hint
       }
       onChoose={(choice) => {
-        const resuming = choice.id.startsWith(RESUME_ROW);
-        const profileId = resuming
-          ? choice.id.slice(RESUME_ROW.length)
-          : choice.id;
         const profile = agentProfiles.profiles.find(
-          (candidate) => candidate.id === profileId,
+          (candidate) => candidate.id === choice.id,
         );
         if (profile === undefined) {
           // The row taken is one this list drew, from these profiles. Not
@@ -139,9 +105,11 @@ export function AgentProfilePicker({
             `the picker offered a profile it does not have: ${choice.id}`,
           );
         }
-        const presentation = launchPresentation(profile, choice.alternate);
-        if (resuming) onResume!(profileId, presentation);
-        else onChoose(profileId, choice.split, presentation);
+        onChoose(
+          choice.id,
+          choice.split,
+          launchPresentation(profile, choice.alternate),
+        );
       }}
       onCancel={onCancel}
     />

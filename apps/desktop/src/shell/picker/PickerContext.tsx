@@ -37,9 +37,6 @@ import type {
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
-  PastSessionWire,
-  SessionPreviewLineWire,
-  SessionScopeWire,
   SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
@@ -112,19 +109,6 @@ export interface PickerValue {
    * rather than throwing when it cannot say.
    */
   readonly githubLogin: () => Promise<GitHubLoginWire>;
-  /** A profile's earlier sessions in a Workspace. Throws the reason it cannot list them. */
-  readonly listPastSessions: (
-    workspaceId: string,
-    profileId: string,
-    scope: SessionScopeWire,
-  ) => Promise<readonly PastSessionWire[]>;
-  /** The last exchanges of one of them. Throws the reason it cannot read them. */
-  readonly previewPastSession: (
-    workspaceId: string,
-    profileId: string,
-    session: string,
-    cwd: string,
-  ) => Promise<readonly SessionPreviewLineWire[]>;
   /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to
@@ -335,10 +319,6 @@ export function PickerProvider({ children }: { children: ReactNode }) {
         return bridge.cloneParentDirectories();
       },
       githubLogin: () => bridge.githubLogin(),
-      listPastSessions: (workspaceId, profileId, scope) =>
-        bridge.listPastSessions(workspaceId, profileId, scope),
-      previewPastSession: (workspaceId, profileId, session, cwd) =>
-        bridge.previewPastSession(workspaceId, profileId, session, cwd),
       findIssueRepositories: (issueUrl, signal) => {
         // Main keeps one lookup and cancels it by name of being the one that is
         // running, so there is nothing to pass and nothing to match up.

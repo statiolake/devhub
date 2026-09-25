@@ -665,7 +665,7 @@ export class AppCoordinator {
           intent.extraArgs ?? [],
           intent.presentation,
           intent.agentPresentation,
-          intent.resume,
+          undefined,
           id,
         );
       case "continue_agent":
