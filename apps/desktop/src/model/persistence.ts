@@ -481,6 +481,8 @@ export interface EditorRecord {
   kind: "dev_container";
   /** The `devcontainer.json`, on the Workspace's machine. */
   config_path: string;
+  /** See `Workspace.startedContainer`. Absent: DevHub started none. */
+  started_container_id?: string;
 }
 
 export interface WorkspaceStateRecord {
@@ -1268,18 +1270,19 @@ export function hydrateModel(
 
   const restored = state.workspaces.map((record) => {
     const where = `workspace ${record.workspace_id}`;
-    const workspace = refuseRecord(
-      where,
-      () =>
-        new Workspace(
-          parseWorkspaceId(record.workspace_id),
-          workspaceLocation(locationFromRecord(record)),
-          displayPath(record.selected_path),
-          undefined,
-          AVAILABLE,
-          editorFromRecord(record.editor),
-        ),
-    );
+    const workspace = refuseRecord(where, () => {
+      const made = new Workspace(
+        parseWorkspaceId(record.workspace_id),
+        workspaceLocation(locationFromRecord(record)),
+        displayPath(record.selected_path),
+        undefined,
+        AVAILABLE,
+        editorFromRecord(record.editor),
+      );
+      const started = record.editor?.started_container_id;
+      if (started !== undefined) made.noteStartedContainer(started);
+      return made;
+    });
     return { record, where, workspace };
   });
   const scratch =
@@ -1446,7 +1449,7 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       location: locationRecord(workspace.location),
-      ...editorRecord(workspace.editor),
+      ...editorRecord(workspace.editor, workspace.startedContainer),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -1797,13 +1800,22 @@ function locationRecord(location: WorkspaceLocation): WorkspaceLocationRecord {
 }
 
 /** The editor, as the file spells it: nothing at all for the Workspace's own machine. */
-function editorRecord(editor: EditorAttachment): { editor?: EditorRecord } {
+function editorRecord(
+  editor: EditorAttachment,
+  startedContainer: string | undefined,
+): { editor?: EditorRecord } {
   switch (editor.kind) {
     case "host":
       return {};
     case "devContainer":
       return {
-        editor: { kind: "dev_container", config_path: editor.configPath },
+        editor: {
+          kind: "dev_container",
+          config_path: editor.configPath,
+          ...(startedContainer === undefined
+            ? {}
+            : { started_container_id: startedContainer }),
+        },
       };
   }
 }
@@ -1823,6 +1835,14 @@ function decodeEditor(where: string, value: unknown): EditorRecord {
   return {
     kind,
     config_path: decodeString(`${where}.config_path`, object["config_path"]),
+    ...(object["started_container_id"] === undefined
+      ? {}
+      : {
+          started_container_id: decodeString(
+            `${where}.started_container_id`,
+            object["started_container_id"],
+          ),
+        }),
   };
 }
 

@@ -269,6 +269,14 @@ export async function bootstrapShell(
 		// the model. See `resolveRemote.ts`.
 		resolveRemote: (machine, attempt) =>
 			resolveRemoteEndpoint(machine, attempt),
+		// A workbench's own dev container commands: see `extensions/devhub-remote`.
+		devContainerConfigs: (window) =>
+			controller.devContainerConfigsForWindow(window),
+		reattachEditor: (window, to) =>
+			controller.reattachEditorFromWindow(
+				window,
+				"kind" in to ? { kind: "host" } : { configPath: to.configPath },
+			),
 		installCli: () =>
 			Promise.resolve(
 				installLauncher({

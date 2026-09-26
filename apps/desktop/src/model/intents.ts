@@ -324,6 +324,16 @@ export type UserIntent =
       readonly workspaceId: WorkspaceId;
       readonly editor: EditorAttachment;
     }
+  /**
+   * DevHub started the container this Workspace's editor is attached to.
+   * Raised by main whenever one of its bring-ups started it, whoever asked.
+   * See `Workspace.startedContainer`.
+   */
+  | {
+      readonly type: "editor_container_started";
+      readonly workspaceId: WorkspaceId;
+      readonly containerId: string;
+    }
   | {
       readonly type: "adopt_scratch_day";
       readonly workspaceId: WorkspaceId;

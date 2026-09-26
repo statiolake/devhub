@@ -880,35 +880,32 @@ export interface WorkspaceOpeningBridge {
 	): Promise<AppOutcome>;
 
 	/**
-	 * Whether a folder defines a Dev Container, and which file says so.
+	 * Every Dev Container definition a folder has, in the spec's order.
 	 *
 	 * Asked about a folder the person has just chosen, because that is the one
-	 * moment the answer changes what they are offered. It is a `stat` of two
-	 * names and costs nothing, so it is asked every time rather than cached —
-	 * a `.devcontainer.json` added since DevHub started is a folder that can be
-	 * opened in a container now, and a person who just wrote one would not
-	 * think to restart.
+	 * moment the answer changes what they are offered. It is a few `stat`s and
+	 * costs nothing, so it is asked every time rather than cached — a
+	 * definition added since DevHub started is one that can be opened now, and
+	 * a person who just wrote one would not think to restart.
 	 *
-	 * `undefined` means "no definition here", which is not a failure: it is the
+	 * Empty means "no definition here", which is not a failure: it is the
 	 * ordinary answer for most folders, and the picker simply does not offer
 	 * the second way to open it.
 	 */
-	devContainerConfig(path: string): Promise<string | undefined>;
+	devContainerConfigs(path: string): Promise<readonly DevContainerConfigWire[]>;
 
 	/**
-	 * Open a folder as a Dev Container Workspace.
+	 * Open a folder with its editor in one of its Dev Containers.
 	 *
-	 * Beside `openSshWorkspace` and for the same reason it is beside
-	 * `selectWorkspacePicker`: the questions differ. This one has to build or
-	 * start the container before there is a Workspace to open, because the path
-	 * the Workspace is *at* is a path inside it and nothing knows that path
-	 * until the container exists.
-	 *
-	 * They meet one call later at `openFolder`, which is where "this is a
-	 * Workspace now" is decided for every way of opening one.
+	 * The folder is the Workspace, opened like any other; the container is
+	 * where its editor is attached. The container is built or started first,
+	 * so a definition that does not build leaves nothing half-open. A folder
+	 * that is open already keeps its Workspace and has its editor moved.
+	 * `configPath` is one of `devContainerConfigs`; absent, the first of them.
 	 */
 	openContainerWorkspace(
 		workspaceFolder: string,
+		configPath?: string,
 		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 
@@ -1010,6 +1007,16 @@ export interface ShellPageBridge
 	openSettings(): Promise<void>;
 }
 
+/**
+ * One Dev Container definition of a folder: its path on the folder's machine,
+ * and the name that tells it from the folder's others (`.devcontainer/<label>/`),
+ * absent for the folder's default one.
+ */
+export interface DevContainerConfigWire {
+	readonly path: string;
+	readonly label?: string;
+}
+
 /** The Sidebar — `sidebar.html`. Its header states the whole of this. */
 export interface SidebarBridge
 	extends PageBridge,
@@ -1031,6 +1038,11 @@ export interface SidebarBridge
 	openModal(request: ModalRequest): Promise<string>;
 	/** Get rid of a workspace, whatever kind. **The one path**; see above. */
 	closeWorkspace(workspaceId: string): Promise<void>;
+	/**
+	 * Reopen a Workspace's editor on its own machine, out of the dev container
+	 * it is attached to: the row's way out when that editor cannot open.
+	 */
+	reopenEditorLocally(workspaceId: string): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 	/** The sidebar's width under the pointer while a drag lasts; `null` ends it. */
 	previewLayout(preview: LayoutPreviewWire): Promise<void>;
@@ -1403,8 +1415,9 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
 	openSshWorkspace: "devhub:open-ssh-workspace",
-	devContainerConfig: "devhub:dev-container-config",
+	devContainerConfigs: "devhub:dev-container-configs",
 	openContainerWorkspace: "devhub:open-container-workspace",
+	reopenEditorLocally: "devhub:reopen-editor-locally",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",

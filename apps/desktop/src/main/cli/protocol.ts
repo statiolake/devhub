@@ -47,6 +47,33 @@ export interface ControlPosition {
 	readonly column: number;
 }
 
+/**
+ * A workbench window, as it names itself: its folder URI's parts. The same
+ * four fields `editorPlaceFromWorkspaceUri` reads, because that is the one
+ * translation DevHub has from a window to its Workspace.
+ */
+export interface WindowFolderWire {
+	readonly scheme: string;
+	readonly authority: string;
+	readonly path: string;
+	readonly fsPath: string;
+}
+
+/** A Workspace's Dev Container definitions, as a window's commands see them. */
+export interface DevContainerConfigsAnswer {
+	readonly configs: readonly {
+		readonly path: string;
+		readonly label?: string;
+	}[];
+	/** The definition the window's editor is attached to, or nothing. */
+	readonly current: string | undefined;
+}
+
+/** Where a window's editor is to be attached. */
+export type ReattachTargetWire =
+	| { readonly kind: "host" }
+	| { readonly configPath: string };
+
 export type ControlRequest =
 	| {
 			/**
@@ -243,6 +270,21 @@ export type ControlRequest =
 			 * to a matcher that was not told which of them is asking, and the
 			 * answer it gives is a session on the wrong computer.
 			 */
+			/**
+			 * A workbench's own Reopen in Container / Switch Container asking
+			 * which definitions its Workspace's folder has. See
+			 * `extensions/devhub-remote`.
+			 */
+			readonly kind: "dev-container-configs";
+			readonly window: WindowFolderWire;
+	  }
+	| {
+			/** Move a workbench's editor, in or out of a dev container. */
+			readonly kind: "reattach-editor";
+			readonly window: WindowFolderWire;
+			readonly to: ReattachTargetWire;
+	  }
+	| {
 			readonly kind: "terminal-profile";
 			readonly machine: string;
 			readonly root: string | null;
@@ -346,6 +388,8 @@ export interface ControlResponse {
 	 * from its wording.
 	 */
 	readonly retry?: boolean;
+	/** A `dev-container-configs` answer. Data, for the reason `profile` is. */
+	readonly devContainers?: DevContainerConfigsAnswer;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -428,6 +472,17 @@ export function parseControlRequest(line: string): ControlRequest {
 				machine: requireString(record["machine"], "machine"),
 				attempt: requireCount(record["attempt"], "attempt"),
 			};
+		case "dev-container-configs":
+			return {
+				kind: "dev-container-configs",
+				window: requireWindow(record["window"]),
+			};
+		case "reattach-editor":
+			return {
+				kind: "reattach-editor",
+				window: requireWindow(record["window"]),
+				to: requireReattachTarget(record["to"]),
+			};
 		case "terminal-profile":
 			return {
 				kind: "terminal-profile",
@@ -443,6 +498,35 @@ export function parseControlRequest(line: string): ControlRequest {
 		default:
 			throw new Error(`unknown control request: ${String(record["kind"])}`);
 	}
+}
+
+function requireWindow(value: unknown): WindowFolderWire {
+	if (typeof value !== "object" || value === null) {
+		throw new Error("window must be the window's folder URI");
+	}
+	const record = value as Record<string, unknown>;
+	const part = (field: string): string => {
+		const found = record[field];
+		if (typeof found !== "string" || found.includes("\0")) {
+			throw new Error(`window.${field} must be a string`);
+		}
+		return found;
+	};
+	return {
+		scheme: part("scheme"),
+		authority: part("authority"),
+		path: part("path"),
+		fsPath: part("fsPath"),
+	};
+}
+
+function requireReattachTarget(value: unknown): ReattachTargetWire {
+	if (typeof value !== "object" || value === null) {
+		throw new Error("to must say where the editor goes");
+	}
+	const record = value as Record<string, unknown>;
+	if (record["kind"] === "host") return { kind: "host" };
+	return { configPath: requireAbsolute(record["configPath"], "to.configPath") };
 }
 
 function requireString(value: unknown, field: string): string {

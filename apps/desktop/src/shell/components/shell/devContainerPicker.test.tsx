@@ -32,11 +32,13 @@ afterEach(cleanup);
 
 const FOLDER = "/projects/api";
 
-function mount(configPath: string | undefined | Error) {
-  const devContainerConfig =
-    configPath instanceof Error
-      ? vi.fn().mockRejectedValue(configPath)
-      : vi.fn().mockResolvedValue(configPath);
+type Config = { readonly path: string; readonly label?: string };
+
+function mount(configs: readonly Config[] | Error) {
+  const devContainerConfigs =
+    configs instanceof Error
+      ? vi.fn().mockRejectedValue(configs)
+      : vi.fn().mockResolvedValue(configs);
   const openContainerWorkspace = vi.fn().mockResolvedValue(undefined);
   const selectWorkspacePicker = vi.fn().mockResolvedValue(undefined);
   const value = {
@@ -51,7 +53,7 @@ function mount(configPath: string | undefined | Error) {
     chooseWorkspaceFolder: vi.fn(),
     listSshHosts: vi.fn().mockResolvedValue([]),
     openSshWorkspace: vi.fn(),
-    devContainerConfig,
+    devContainerConfigs,
     openContainerWorkspace,
     reportFailure: vi.fn(),
   } as unknown as PickerValue;
@@ -60,7 +62,7 @@ function mount(configPath: string | undefined | Error) {
       <WorkspacePicker onDismiss={vi.fn()} />
     </PickerContext.Provider>,
   );
-  return { devContainerConfig, openContainerWorkspace, selectWorkspacePicker };
+  return { devContainerConfigs, openContainerWorkspace, selectWorkspacePicker };
 }
 
 /** Take the row for the folder, however the list is currently drawn. */
@@ -74,7 +76,7 @@ describe("a folder that defines a Dev Container", () => {
     // Nearly every folder. The probe is two `stat`s, so it costs nothing, and
     // the answer "no definition" is the ordinary one — not a failure, and not
     // a reason to show anybody anything.
-    const { selectWorkspacePicker, openContainerWorkspace } = mount(undefined);
+    const { selectWorkspacePicker, openContainerWorkspace } = mount([]);
     await chooseFolder();
     await waitFor(() => {
       expect(selectWorkspacePicker).toHaveBeenCalledWith(
@@ -88,7 +90,7 @@ describe("a folder that defines a Dev Container", () => {
   });
 
   it("asks which way to open it when it defines one", async () => {
-    mount("/projects/api/.devcontainer/devcontainer.json");
+    mount([{ path: "/projects/api/.devcontainer/devcontainer.json" }]);
     await chooseFolder();
     // Both answers are offered, because neither is wrong: the folder can be
     // worked in here, and the file in it describes somewhere else to work.
@@ -99,7 +101,7 @@ describe("a folder that defines a Dev Container", () => {
   });
 
   it("names the definition it found, so the cost is stated before it is spent", async () => {
-    mount("/projects/api/.devcontainer/devcontainer.json");
+    mount([{ path: "/projects/api/.devcontainer/devcontainer.json" }]);
     await chooseFolder();
     // The first open of a definition that has never been built is an image
     // build, and a person who did not expect one reads a long pause as a hang.
@@ -111,21 +113,25 @@ describe("a folder that defines a Dev Container", () => {
   });
 
   it("builds the container only when that is the answer given", async () => {
-    const { openContainerWorkspace, selectWorkspacePicker } = mount(
-      "/projects/api/.devcontainer.json",
-    );
+    const { openContainerWorkspace, selectWorkspacePicker } = mount([
+      { path: "/projects/api/.devcontainer.json" },
+    ]);
     await chooseFolder();
     fireEvent.click(await screen.findByText("Open in Dev Container"));
     await waitFor(() => {
-      expect(openContainerWorkspace).toHaveBeenCalledWith(FOLDER, undefined);
+      expect(openContainerWorkspace).toHaveBeenCalledWith(
+        FOLDER,
+        "/projects/api/.devcontainer.json",
+        undefined,
+      );
     });
     expect(selectWorkspacePicker).not.toHaveBeenCalled();
   });
 
   it("opens the folder here when that is the answer given", async () => {
-    const { openContainerWorkspace, selectWorkspacePicker } = mount(
-      "/projects/api/.devcontainer.json",
-    );
+    const { openContainerWorkspace, selectWorkspacePicker } = mount([
+      { path: "/projects/api/.devcontainer.json" },
+    ]);
     await chooseFolder();
     fireEvent.click(await screen.findByText("Open the folder"));
     await waitFor(() => {
@@ -138,6 +144,40 @@ describe("a folder that defines a Dev Container", () => {
     // The definition is still there and still not built. Choosing to work here
     // is not choosing to spend a minute building an image.
     expect(openContainerWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("asks which container when the folder defines several", async () => {
+    // `.devcontainer/<name>/devcontainer.json` is the spec's layout for a
+    // folder with several, and each is a different container.
+    const { openContainerWorkspace } = mount([
+      { path: "/projects/api/.devcontainer/devcontainer.json" },
+      {
+        path: "/projects/api/.devcontainer/python/devcontainer.json",
+        label: "python",
+      },
+    ]);
+    await chooseFolder();
+    expect(
+      await screen.findByText("Open in Dev Container"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Open in Dev Container: python"));
+    await waitFor(() => {
+      expect(openContainerWorkspace).toHaveBeenCalledWith(
+        FOLDER,
+        "/projects/api/.devcontainer/python/devcontainer.json",
+        undefined,
+      );
+    });
+  });
+
+  it("says the terminals and agents stay on this Mac, and only the editor moves", async () => {
+    mount([{ path: "/projects/api/.devcontainer/devcontainer.json" }]);
+    await chooseFolder();
+    expect(
+      await screen.findByText(
+        /Where should its editor run\? Its terminals and agents run on this Mac either way\./u,
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -189,7 +229,11 @@ describe("a folder DevHub could not check for a Dev Container", () => {
     await chooseFolder();
     fireEvent.click(await screen.findByText("Open in Dev Container"));
     await waitFor(() => {
-      expect(openContainerWorkspace).toHaveBeenCalledWith(FOLDER, undefined);
+      expect(openContainerWorkspace).toHaveBeenCalledWith(
+        FOLDER,
+        undefined,
+        undefined,
+      );
     });
   });
 });

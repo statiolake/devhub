@@ -41,6 +41,7 @@ export enum DomainErrorCode {
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
   InvalidTerminalZoom = "INVALID_TERMINAL_ZOOM",
+  InvalidEditorAttachment = "INVALID_EDITOR_ATTACHMENT",
 }
 
 /**
@@ -1598,6 +1599,7 @@ export class Workspace {
       this.editorValue,
     );
     copy.closeValue = this.closeValue;
+    copy.startedContainerValue = this.startedContainerValue;
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
     }
@@ -1634,14 +1636,39 @@ export class Workspace {
   /**
    * Attach the editor somewhere else. The Workspace itself does not move:
    * its location, its key, its Agents and its terminals are all untouched.
+   * What DevHub started for the editor it had is forgotten with it.
    */
   attachEditor(next: EditorAttachment): boolean {
     if (sameEditorAttachment(this.editorValue, next)) {
       return false;
     }
     this.editorValue = next;
+    this.startedContainerValue = undefined;
     return true;
   }
+
+  /**
+   * The container DevHub itself started for this editor's dev container, by
+   * id, or nothing when DevHub found it running or the editor is not in one.
+   *
+   * Remembered because it decides what happens when the editor leaves the
+   * container: a container DevHub started is stopped the way its definition
+   * says (`shutdownAction`), and one it only found running is left as it was.
+   */
+  get startedContainer(): string | undefined {
+    return this.startedContainerValue;
+  }
+
+  noteStartedContainer(containerId: string): boolean {
+    if (this.editorValue.kind !== "devContainer") {
+      throw invalid(DomainErrorCode.InvalidEditorAttachment);
+    }
+    if (this.startedContainerValue === containerId) return false;
+    this.startedContainerValue = containerId;
+    return true;
+  }
+
+  private startedContainerValue: string | undefined = undefined;
 
   get selectedPath(): DisplayPath {
     return this.selectedPathValue;

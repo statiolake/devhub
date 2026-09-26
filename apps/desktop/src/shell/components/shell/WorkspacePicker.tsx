@@ -209,7 +209,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     selectWorkspacePicker,
     chooseWorkspaceFolder,
     openSshWorkspace,
-    devContainerConfig,
+    devContainerConfigs,
     openContainerWorkspace,
   } = usePicker();
 
@@ -344,12 +344,12 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
             // answer that opens the folder without a word.
             let definition: DevContainerDefinition;
             try {
-              const configPath = await devContainerConfig(path);
-              if (configPath === undefined) {
+              const configs = await devContainerConfigs(path);
+              if (configs.length === 0) {
                 finish(() => selectWorkspacePicker(path, false, agent));
                 return;
               }
-              definition = { kind: "found", configPath };
+              definition = { kind: "found", configs };
             } catch (error: unknown) {
               const failure = toAppError(error);
               definition = {
@@ -392,7 +392,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     [
       ask,
       cancelWorkspacePicker,
-      devContainerConfig,
+      devContainerConfigs,
       finish,
       openSshWorkspace,
       selectWorkspacePicker,
@@ -459,11 +459,11 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         folder={container.folder}
         definition={container.definition}
         step={projectStep}
-        onChoose={(inContainer) => {
+        onChoose={(choice) => {
           const { folder } = container;
           finish(() =>
-            inContainer
-              ? openContainerWorkspace(folder, withAgent)
+            choice.kind === "container"
+              ? openContainerWorkspace(folder, choice.configPath, withAgent)
               : selectWorkspacePicker(folder, false, withAgent),
           );
         }}

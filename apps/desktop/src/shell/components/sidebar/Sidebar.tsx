@@ -129,6 +129,7 @@ function WorkspaceRow({
   onCloseWorkspace,
   onRenameAgent,
   onAgentMenu,
+  onWorkspaceMenu,
   reorder,
 }: {
   readonly workspace: WorkspaceSnapshot;
@@ -152,6 +153,15 @@ function WorkspaceRow({
   readonly onRenameAgent: (agent: AgentSnapshot) => void;
   readonly onAgentMenu: (
     agent: AgentSnapshot,
+    at: { x: number; y: number },
+  ) => void;
+  /**
+   * A right-click on the row, for the one Workspace action that is not a
+   * control on it: reopening an editor that is in a dev container on the
+   * Workspace's own machine. Only such a row has a menu at all.
+   */
+  readonly onWorkspaceMenu: (
+    workspace: WorkspaceSnapshot,
     at: { x: number; y: number },
   ) => void;
   /** What this row and its Agents need while something is being dragged. */
@@ -227,6 +237,17 @@ function WorkspaceRow({
         // nearer the pointer than this and still wins, which is `closest()`
         // doing exactly what it is for. Scratch has always stated it here.
         data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
+        onContextMenu={
+          workspace.editor.kind === "devContainer" && !closing
+            ? (event) => {
+                event.preventDefault();
+                onWorkspaceMenu(workspace, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }
+            : undefined
+        }
       >
         <div className="row-head">
           {/* Which kind of Workspace this is, in the one column every row's
@@ -1053,6 +1074,23 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const closeAgentMenu = useCallback(() => {
     setAgentMenu(undefined);
   }, []);
+  const [workspaceMenu, setWorkspaceMenu] = useState<
+    | {
+        readonly workspace: WorkspaceSnapshot;
+        readonly at: { x: number; y: number };
+      }
+    | undefined
+  >(undefined);
+  const openWorkspaceMenu = useCallback(
+    (workspace: WorkspaceSnapshot, at: { x: number; y: number }) => {
+      setWorkspaceMenu({ workspace, at });
+    },
+    [],
+  );
+  const closeWorkspaceMenu = useCallback(() => {
+    setWorkspaceMenu(undefined);
+  }, []);
+  const { reopenEditorLocally } = useSidebar();
 
   const resize = useCallback(
     (width: number) => {
@@ -1228,6 +1266,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             onCloseWorkspace={closeWorkspaceRow}
             onRenameAgent={openRename}
             onAgentMenu={openAgentMenu}
+            onWorkspaceMenu={openWorkspaceMenu}
             reorder={reorder}
           />
           {/* Between Scratch and the rest, as a row of the tree that is not
@@ -1291,6 +1330,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                   onCloseWorkspace={closeWorkspaceRow}
                   onRenameAgent={openRename}
                   onAgentMenu={openAgentMenu}
+                  onWorkspaceMenu={openWorkspaceMenu}
                   reorder={reorder}
                 />
               ),
@@ -1328,6 +1368,25 @@ export function Sidebar({ snapshot }: SidebarProps) {
           label={`${agentMenu.agent.displayName} actions`}
           items={agentMenuItems(agentMenu.agent, dispatchIntent, openRename)}
           onDismiss={closeAgentMenu}
+        />
+      ) : null}
+      {workspaceMenu ? (
+        <RowMenu
+          at={workspaceMenu.at}
+          label={`${workspaceMenu.workspace.label} actions`}
+          items={[
+            {
+              // The way out when an editor in a dev container cannot open —
+              // a container never built, a Docker that is not running — and
+              // the same act as the editor's own Reopen Folder Locally.
+              id: "reopen-locally",
+              label: "Reopen Editor Locally",
+              run: () => {
+                reopenEditorLocally(workspaceMenu.workspace.id);
+              },
+            },
+          ]}
+          onDismiss={closeWorkspaceMenu}
         />
       ) : null}
     </aside>

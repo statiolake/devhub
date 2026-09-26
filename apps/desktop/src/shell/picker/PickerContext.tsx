@@ -34,6 +34,7 @@ import type {
 import type {
   AgentActionWire,
   AssignmentBranchWire,
+  DevContainerConfigWire,
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
@@ -80,11 +81,17 @@ export interface PickerValue {
     path: string,
     withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
-  /** Which file makes this folder a Dev Container, if any does. */
-  readonly devContainerConfig: (path: string) => Promise<string | undefined>;
-  /** Build or start this folder's container, then open it as a Workspace. */
+  /** Every Dev Container definition this folder has; empty for most. */
+  readonly devContainerConfigs: (
+    path: string,
+  ) => Promise<readonly DevContainerConfigWire[]>;
+  /**
+   * Build or start one of this folder's containers, then open the folder with
+   * its editor in it. No definition named: the first of them.
+   */
   readonly openContainerWorkspace: (
     workspaceFolder: string,
+    configPath?: string,
     withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
@@ -300,10 +307,14 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       listSshHosts: () => bridge.listSshHosts(),
       openSshWorkspace: async (host, path, withAgent) =>
         applyOpening(await bridge.openSshWorkspace(host, path, withAgent)),
-      devContainerConfig: (path) => bridge.devContainerConfig(path),
-      openContainerWorkspace: async (workspaceFolder, withAgent) =>
+      devContainerConfigs: (path) => bridge.devContainerConfigs(path),
+      openContainerWorkspace: async (workspaceFolder, configPath, withAgent) =>
         applyOpening(
-          await bridge.openContainerWorkspace(workspaceFolder, withAgent),
+          await bridge.openContainerWorkspace(
+            workspaceFolder,
+            configPath,
+            withAgent,
+          ),
         ),
       createProject: async (path, withAgent) =>
         applyOpening(await bridge.createProject(path, withAgent)),

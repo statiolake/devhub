@@ -39,16 +39,18 @@ const required = [
 for (const [source, label, needle] of required) {
   if (!source.includes(needle)) throw new Error(`${label} is missing`);
 }
-// Everything the vendored resolver did that DevHub does instead.
+// Everything the vendored resolver did that DevHub does instead. The one
+// context key there is belongs to the commands (`commands.ts`), never to the
+// resolver or the socket.
 const sources = `${extension}${resolver}${control}`;
-for (const [label, needle] of [
-  ["an SSH client", "ssh2"],
-  ["an ssh config reader", ".ssh/config"],
-  ["a port forwarding surface", "tunnelFactory"],
-  ["a context key", "setContext"],
-  ["a settings reader", "getConfiguration"],
+for (const [label, needle, where] of [
+  ["an SSH client", "ssh2", sources],
+  ["an ssh config reader", ".ssh/config", sources],
+  ["a port forwarding surface", "tunnelFactory", sources],
+  ["a context key", "setContext", `${resolver}${control}`],
+  ["a settings reader", "getConfiguration", sources],
 ]) {
-  if (sources.includes(needle)) {
+  if (where.includes(needle)) {
     throw new Error(`the resolver must not carry ${label}: ${needle}`);
   }
 }
@@ -76,22 +78,51 @@ if (manifest.api !== "none") {
 }
 // One activation event per authority and nothing wider. `*` would make the
 // resolver load in every window, including the local ones it has no answer for.
+// The two resolves, and startup: the dev container commands are offered in
+// every window, local ones included, and nothing else starts this extension.
 const events = [...(manifest.activationEvents ?? [])].sort();
 const expectedEvents = [
   "onResolveRemoteAuthority:dev-container",
   "onResolveRemoteAuthority:ssh-remote",
+  "onStartupFinished",
 ];
 if (events.join(",") !== expectedEvents.join(",")) {
   throw new Error(
-    `activation must be exactly ${expectedEvents.join(" and ")} and nothing wider`,
+    `activation must be exactly ${expectedEvents.join(", ")} and nothing wider`,
   );
 }
-// The manifest contributes one thing: how a remote path is spelled in the UI.
+// The manifest contributes how a remote path is spelled in the UI, and the
+// three dev container commands with the menus that offer them.
 const contributes = manifest.contributes ?? {};
-if (Object.keys(contributes).join(",") !== "resourceLabelFormatters") {
+if (
+  Object.keys(contributes).sort().join(",") !==
+  "commands,menus,resourceLabelFormatters"
+) {
   throw new Error(
-    "the resolver contributes resourceLabelFormatters and nothing else",
+    "the extension contributes resourceLabelFormatters, its dev container commands and their menus, and nothing else",
   );
+}
+const expectedCommands = [
+  "devhub.reopenInContainer",
+  "devhub.reopenLocally",
+  "devhub.switchContainer",
+];
+const commands = (contributes.commands ?? [])
+  .map((entry) => entry.command)
+  .sort();
+if (commands.join(",") !== expectedCommands.join(",")) {
+  throw new Error(
+    `the commands are exactly ${expectedCommands.join(", ")}: ${commands.join(", ")}`,
+  );
+}
+for (const menu of ["commandPalette", "statusBar/remoteIndicator"]) {
+  const entries = contributes.menus?.[menu] ?? [];
+  for (const command of expectedCommands) {
+    const entry = entries.find((candidate) => candidate.command === command);
+    if (typeof entry?.when !== "string" || entry.when.length === 0) {
+      throw new Error(`${command} needs a when clause in ${menu}`);
+    }
+  }
 }
 // One static formatter per authority. Without one, a remote path loses its
 // `~` tildification and the window says nothing about which machine it is on

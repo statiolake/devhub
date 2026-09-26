@@ -18,7 +18,17 @@
 
 import * as vscode from "vscode";
 import {
+  refreshAvailability,
+  reopenInContainer,
+  reopenLocally,
+  switchContainer,
+  type CommandsApi,
+  type DevHubConnection,
+} from "./commands";
+import {
   controlSocketFromGlobalStorage,
+  requestDevContainerConfigs,
+  requestReattachEditor,
   requestResolveRemote,
 } from "./control";
 import {
@@ -106,10 +116,67 @@ function workspaceSuffixFor(authority: string): string {
   return `SSH: ${authority.slice(authority.indexOf("+") + 1)}`;
 }
 
+/** The commands' view of the window, through the real `vscode`. */
+const commandsApi: CommandsApi = {
+  windowFolder: () => {
+    const uri = vscode.workspace.workspaceFolders?.[0]?.uri;
+    return uri === undefined
+      ? undefined
+      : {
+          scheme: uri.scheme,
+          authority: uri.authority,
+          path: uri.path,
+          fsPath: uri.fsPath,
+        };
+  },
+  remoteName: () => vscode.env.remoteName,
+  pick: async (items, placeholder) =>
+    vscode.window.showQuickPick([...items], { placeHolder: placeholder }),
+  showError: (message) => {
+    void vscode.window.showErrorMessage(message);
+  },
+  withProgress: (title, work) =>
+    Promise.resolve(
+      vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title },
+        work,
+      ),
+    ),
+  setContext: (key, value) => {
+    void vscode.commands.executeCommand("setContext", key, value);
+  },
+};
+
 export function activate(context: vscode.ExtensionContext): void {
   const socketPath = controlSocketFromGlobalStorage(
     context.globalStorageUri.fsPath,
   );
+  // Reopen in Container, Reopen Folder Locally, Switch Container: see
+  // `commands.ts`. Registered in every window, the local ones included, which
+  // is why this extension also starts on `onStartupFinished`.
+  if (socketPath !== null) {
+    const devhub: DevHubConnection = {
+      configs: (window) => requestDevContainerConfigs(socketPath, window),
+      reattach: (window, to) => requestReattachEditor(socketPath, window, to),
+    };
+    const report = (failure: unknown): void => {
+      commandsApi.showError(
+        failure instanceof Error ? failure.message : String(failure),
+      );
+    };
+    for (const [id, run] of [
+      ["devhub.reopenInContainer", reopenInContainer],
+      ["devhub.reopenLocally", reopenLocally],
+      ["devhub.switchContainer", switchContainer],
+    ] as const) {
+      context.subscriptions.push(
+        vscode.commands.registerCommand(id, () =>
+          run(commandsApi, devhub).catch(report),
+        ),
+      );
+    }
+    void refreshAvailability(commandsApi, devhub).catch(report);
+  }
   const named = new Set<string>();
   // One resolver, registered for each authority DevHub owns. The same function
   // answers both: which machine an authority names is `machineFromAuthority`'s

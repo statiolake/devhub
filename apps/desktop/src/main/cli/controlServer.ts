@@ -19,8 +19,11 @@ import {
 	type ControlOpenRequest,
 	type ControlRequest,
 	type ControlResponse,
+	type DevContainerConfigsAnswer,
+	type ReattachTargetWire,
 	type RemoteEndpointAnswer,
 	type TerminalProfileAnswer,
+	type WindowFolderWire,
 } from "./protocol.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
@@ -84,6 +87,15 @@ export interface ControlHandlers {
 	 * at from its wording downstream.
 	 */
 	resolveRemote(machine: string, attempt: number): Promise<RemoteResolution>;
+	/** Which definitions a window's Workspace has; see `DevContainerConfigsAnswer`. */
+	devContainerConfigs(
+		window: WindowFolderWire,
+	): Promise<DevContainerConfigsAnswer>;
+	/** Move a window's editor; resolves once the new workbench is open. */
+	reattachEditor(
+		window: WindowFolderWire,
+		to: ReattachTargetWire,
+	): Promise<void>;
 }
 
 /** What `resolveRemote` answers: an endpoint, or a refusal that says whether
@@ -300,6 +312,21 @@ export async function answerControlRequest(
 							retry: resolution.retry,
 						};
 			}
+			case "dev-container-configs": {
+				const devContainers = await handlers.devContainerConfigs(
+					request.window,
+				);
+				return {
+					ok: true,
+					message: devContainers.configs
+						.map((config) => config.path)
+						.join("\n"),
+					devContainers,
+				};
+			}
+			case "reattach-editor":
+				await handlers.reattachEditor(request.window, request.to);
+				return { ok: true, message: "reattached" };
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(
 					request.machine,
@@ -346,7 +373,10 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "wait-ended":
 		case "resolve-remote":
 		case "terminal-profile":
+		case "dev-container-configs":
 			return false;
+		case "reattach-editor":
+			return true;
 	}
 }
 

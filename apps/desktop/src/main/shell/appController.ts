@@ -68,6 +68,7 @@ import {
 	type RepositoryStatusWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
+	type DevContainerConfigWire,
 } from "../../ipc/contract.js";
 import {
 	appConditionIdentity,
@@ -103,6 +104,7 @@ import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type {
 	ControlOpenRequest,
 	ControlPosition,
+	DevContainerConfigsAnswer,
 	TerminalProfileAnswer,
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
@@ -121,7 +123,9 @@ import {
 	locationKey,
 	agentId as parseAgentId,
 	containerHostId,
+	containerTargetFromHostId,
 	containerTargetOf,
+	devContainerConfigLabel,
 	devContainerConfigPath,
 	EDITOR_ON_HOST,
 	editorAuthorityOf,
@@ -133,6 +137,7 @@ import {
 	type AgentReconciliation,
 	type CloseStep,
 	type ContainerHostId,
+	type ContainerTarget,
 	type EditorAttachment,
 	type UnsavedEditorsInspection,
 	type Workspace,
@@ -284,7 +289,14 @@ import { registerConversationIpc } from "./conversationIpc.js";
 import { UsageLimits, usageLimitsListener } from "./usageLimits.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
-import { devContainerConfigIn } from "../runtime/container.js";
+import {
+	devContainerConfigsIn,
+	type ContainerHost,
+} from "../runtime/container.js";
+import {
+	editorPlaceFromWorkspaceUri,
+	type WorkspaceUriParts,
+} from "./editorPlace.js";
 import { MachineConditions } from "./machineConditions.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
@@ -294,6 +306,7 @@ import {
 	liveContainerHosts,
 	liveRuntimes,
 	localRuntime,
+	onContainerStarted,
 	runtimeById,
 	runtimeForRequested,
 	runtimeFor,
@@ -3554,6 +3567,9 @@ export class AppController {
 		// What the close could not stop, because the machine it is on did not
 		// answer. Collected rather than thrown; see `closeSessionsOnMachine`.
 		const leftRunning: string[] = [];
+		// Where the editor was, read before anything is closed: closing the
+		// Workspace is its editor leaving any container it was in.
+		const closing = this.coordinator.model.workspace(workspaceId);
 		try {
 			let vetoed: CloseDiagnosticWire | undefined;
 			try {
@@ -3604,6 +3620,13 @@ export class AppController {
 
 			step = "view";
 			this.disposeEditorView(workspaceId);
+			if (closing !== undefined) {
+				this.releaseContainer(
+					closing.location,
+					closing.editor,
+					closing.startedContainer,
+				);
+			}
 
 			step = "worktree";
 			await withCloseDeadline(
@@ -3957,7 +3980,7 @@ export class AppController {
 	 * `terminalLauncherFor` record every outcome in one place.
 	 */
 	private async installTerminalLauncher(
-		runtime: Runtime,
+		runtime: Pick<Runtime, "terminalLauncher">,
 	): Promise<TerminalLauncher> {
 		const userDataPath = this.userDataPath;
 		if (userDataPath === undefined) {
@@ -4087,7 +4110,9 @@ export class AppController {
 				: await (async () => {
 						const host = containerHostFor(target);
 						await host.prepare();
-						return host.workspacePath();
+						const inside = await host.workspacePath();
+						await this.installContainerCommand(host);
+						return inside;
 					})();
 		const services = await this.services();
 		// Which `devhub-terminal` this window names, decided here because this
@@ -4654,6 +4679,7 @@ export class AppController {
 	private async openFolder(
 		location: RequestedWorkspaceLocation,
 		withAgent?: AgentLaunchWire,
+		editor?: EditorAttachment,
 	): Promise<AppOutcomeWire> {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
@@ -4662,6 +4688,7 @@ export class AppController {
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			location,
+			...(editor === undefined ? {} : { editor }),
 		});
 		if (withAgent === undefined) {
 			await this.syncEditorView();
@@ -4690,6 +4717,78 @@ export class AppController {
 			this.repositoryOf,
 			this.homeOf,
 		);
+	}
+
+	/**
+	 * The `devhub` command inside a dev container, reaching DevHub through the
+	 * container's relay, installed before the window that needs it opens.
+	 *
+	 * A container whose command could not be installed is still a container
+	 * the person asked to edit in, so the window opens anyway — but never in
+	 * silence: the reason is said the way a machine without a terminal
+	 * launcher says it.
+	 */
+	private async installContainerCommand(host: ContainerHost): Promise<void> {
+		let unreachable: string | undefined;
+		try {
+			unreachable = (await this.installTerminalLauncher(host)).unreachable;
+		} catch (error: unknown) {
+			unreachable = error instanceof Error ? error.message : String(error);
+		}
+		if (unreachable === undefined) return;
+		console.error(`[devhub] devhub command in ${host.id}: ${unreachable}`);
+		this.publishError(
+			withDetail(
+				errorWireAt("terminal_launcher_unavailable"),
+				`${host.where.trim()}: ${unreachable}`,
+			),
+		);
+	}
+
+	/**
+	 * `devhub <file>` from inside a dev container: the file opens in the window
+	 * attached to that container, which is the one Workspace whose editor is
+	 * there. The path is the container's, resolved in the container.
+	 */
+	private async openFromContainer(
+		request: ControlOpenRequest,
+		target: ContainerTarget,
+	): Promise<string> {
+		const { path, position, waitMarkerPath } = request;
+		const id = containerHostId(target);
+		const workspace = this.coordinator.model.workspaces.find((candidate) => {
+			const attached = containerTargetOf(candidate.location, candidate.editor);
+			return attached !== undefined && containerHostId(attached) === id;
+		});
+		const host = containerHostFor(target);
+		if (workspace === undefined) {
+			throw new Error(
+				`No Workspace's editor is attached to ${host.where.trim()}, so there is no window to open ${path} in.`,
+			);
+		}
+		const before = this.coordinator.model.selection;
+		const resolved = await canonicalise(host, path);
+		if (resolved.isDirectory) {
+			throw new Error(
+				`${resolved.path} is a folder. From inside a dev container devhub opens files; the folder's Workspace is ${workspace.root}.`,
+			);
+		}
+		await this.dispatchAwaiting({
+			type: "select_context",
+			context: { kind: "workspace", workspaceId: workspace.id },
+			presentation: "full",
+		});
+		await this.syncEditorView();
+		openFileInWorkbench(
+			await this.workbenchWindow(workspace.key),
+			id,
+			resolved,
+			position,
+			waitMarkerPath,
+		);
+		this.rememberWaitReturn(waitMarkerPath, before);
+		this.bringToFront();
+		return `${resolved.path}${at(position)} is open in DevHub.`;
 	}
 
 	/**
@@ -4726,10 +4825,16 @@ export class AppController {
 				"Scratch's editor stays on this Mac: it is today's folder, and there is no dev container to open it in.",
 			);
 		}
+		const leaving = {
+			location: workspace.location,
+			editor: workspace.editor,
+			started: workspace.startedContainer,
+		};
 		const target = containerTargetOf(workspace.location, next);
-		if (target !== undefined) {
-			await containerHostFor(target).ensureUp({ build: true });
-		}
+		const up =
+			target === undefined
+				? undefined
+				: await containerHostFor(target).ensureUp({ build: true });
 		const vetoed = await this.askEditorToClose(workspaceId);
 		if (vetoed === "close_editor_vetoed") return;
 		if (vetoed !== undefined) {
@@ -4743,8 +4848,167 @@ export class AppController {
 			workspaceId,
 			editor: next,
 		});
+		// The bring-up above ran before the attachment moved, so the start it
+		// reported had no Workspace attached to hear it; it is recorded now.
+		if (up?.started === true) {
+			this.dispatchOwn({
+				type: "editor_container_started",
+				workspaceId,
+				containerId: up.containerId,
+			});
+		}
 		const view = await this.ensureEditorView(workspace.key);
 		if (view) shellWindow().assertArrangement();
+		// The editor has left the container it was in: that container goes the
+		// way its definition says, if DevHub was the one that started it.
+		this.releaseContainer(leaving.location, leaving.editor, leaving.started);
+	}
+
+	/**
+	 * Let go of a dev container an editor has left — reopened on its own
+	 * machine, switched to another definition, or its Workspace closed.
+	 *
+	 * The spec's `shutdownAction` is for "when the related tool window is
+	 * closed", and these are the three moments DevHub has that are. Only a
+	 * container DevHub itself started is stopped (`stopIfStarted`); one DevHub
+	 * found running, or one somebody has rebuilt since, is left as it was.
+	 *
+	 * In the background, after the editor has already moved: the person asked
+	 * to leave the container, and that has happened. A stop that fails is a
+	 * separate fact, and it is said as one.
+	 */
+	private releaseContainer(
+		location: WorkspaceLocation,
+		editor: EditorAttachment,
+		started: string | undefined,
+	): void {
+		const target = containerTargetOf(location, editor);
+		if (target === undefined || started === undefined) return;
+		const host = containerHostFor(target);
+		void host.stopIfStarted(started).then(
+			(done) => {
+				if (done !== undefined) console.log(`[devhub] ${done}`);
+			},
+			(failure: unknown) => {
+				this.publishError(
+					withDetail(
+						errorWireAt("dev_container_not_stopped"),
+						failure instanceof Error ? failure.message : String(failure),
+					),
+				);
+			},
+		);
+	}
+
+	/**
+	 * A bring-up started a dev container: whichever Workspaces' editors are
+	 * attached to it remember that DevHub started it. See `releaseContainer`.
+	 */
+	noteContainerStarted(host: ContainerHostId, containerId: string): void {
+		for (const workspace of this.coordinator.model.workspaces) {
+			const target = containerTargetOf(workspace.location, workspace.editor);
+			if (target === undefined || containerHostId(target) !== host) continue;
+			this.dispatchOwn({
+				type: "editor_container_started",
+				workspaceId: workspace.id,
+				containerId,
+			});
+		}
+	}
+
+	/**
+	 * Every definition a Workspace's folder has, for the editor's own
+	 * commands and for the picker: the path, and the name that tells it from
+	 * the folder's others.
+	 */
+	private async devContainerConfigsOf(
+		location: WorkspaceLocation,
+	): Promise<readonly DevContainerConfigWire[]> {
+		const paths = await devContainerConfigsIn(
+			runtimeFor(location),
+			location.path,
+		);
+		return paths.map((path) => {
+			const label = devContainerConfigLabel(
+				location.path,
+				devContainerConfigPath(path),
+			);
+			return label === undefined ? { path } : { path, label };
+		});
+	}
+
+	/**
+	 * The Workspace a workbench window is showing, named by its folder URI —
+	 * the one thing a window knows about itself, and the one translation
+	 * DevHub has for it (`editorPlaceFromWorkspaceUri`).
+	 */
+	private workspaceOfWindow(uri: WorkspaceUriParts): Workspace {
+		const place = editorPlaceFromWorkspaceUri(uri);
+		const workspace =
+			place === undefined
+				? undefined
+				: this.workspaceForEditorKey(locationKey(place.location));
+		if (workspace === undefined) {
+			throw workspaceFailure(
+				"This window is not showing a Workspace DevHub has open.",
+			);
+		}
+		return workspace;
+	}
+
+	/** `dev-container-configs`: see `ControlHandlers.devContainerConfigs`. */
+	async devContainerConfigsForWindow(
+		uri: WorkspaceUriParts,
+	): Promise<DevContainerConfigsAnswer> {
+		const workspace = this.workspaceOfWindow(uri);
+		// Scratch is today's folder and its editor stays on this Mac: nothing
+		// to offer, so nothing is.
+		if (workspace.id === this.coordinator.model.scratchWorkspaceId) {
+			return { configs: [], current: undefined };
+		}
+		return {
+			configs: await this.devContainerConfigsOf(workspace.location),
+			current:
+				workspace.editor.kind === "devContainer"
+					? workspace.editor.configPath
+					: undefined,
+		};
+	}
+
+	/** `reattach-editor`: see `ControlHandlers.reattachEditor`. */
+	async reattachEditorFromWindow(
+		uri: WorkspaceUriParts,
+		to: { readonly kind: "host" } | { readonly configPath: string },
+	): Promise<void> {
+		const workspace = this.workspaceOfWindow(uri);
+		await this.attachEditor(workspace.id, await this.editorFor(workspace, to));
+	}
+
+	/** Reopen a Workspace's editor on its own machine: the row's way out. */
+	async reopenEditorLocally(workspaceId: WorkspaceId): Promise<void> {
+		await this.attachEditor(workspaceId, EDITOR_ON_HOST);
+	}
+
+	/**
+	 * The attachment a request names, checked against the folder: a
+	 * definition the folder does not have is refused, not attached.
+	 */
+	private async editorFor(
+		workspace: Workspace,
+		to: { readonly kind: "host" } | { readonly configPath: string },
+	): Promise<EditorAttachment> {
+		if ("kind" in to) return EDITOR_ON_HOST;
+		const configs = await this.devContainerConfigsOf(workspace.location);
+		const chosen = configs.find((config) => config.path === to.configPath);
+		if (chosen === undefined) {
+			throw workspaceFailure(
+				`${to.configPath} is not one of the dev container definitions in ${workspace.root}.`,
+			);
+		}
+		return {
+			kind: "devContainer",
+			configPath: devContainerConfigPath(chosen.path),
+		};
 	}
 
 	/**
@@ -4917,6 +5181,12 @@ export class AppController {
 
 	private async doOpenFromCli(request: ControlOpenRequest): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
+		// The `devhub` command inside a dev container: the file is in that
+		// container, and the window to open it in is the one attached to it.
+		const container = containerTargetFromHostId(request.machine ?? "");
+		if (container !== undefined) {
+			return this.openFromContainer(request, container);
+		}
 		// A path is a path on one computer, and which one is a fact the
 		// request carries rather than a default this reaches for: an absent
 		// `machine` is every caller that runs on this Mac, and a `devhub` on a
@@ -5923,9 +6193,12 @@ export class AppController {
 		// The two dev container doors, the same shape as the two SSH ones: a
 		// question that costs nothing and is asked every time, and an open that
 		// goes through `openFolder` like everything else.
-		handle(CHANNELS.devContainerConfig, async (_event, path: string) => {
+		handle(CHANNELS.devContainerConfigs, async (_event, path: string) => {
 			try {
-				return await devContainerConfigIn(localRuntime(), path);
+				const folder = await localRuntime().realpath(path);
+				return await this.devContainerConfigsOf(
+					workspaceLocation({ kind: "local", path: folder }),
+				);
 			} catch (error: unknown) {
 				throw asIpcError(errorWire(error));
 			}
@@ -5935,6 +6208,7 @@ export class AppController {
 			async (
 				_event,
 				workspaceFolder: string,
+				configPath: string | undefined,
 				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
@@ -5945,31 +6219,59 @@ export class AppController {
 					// up before either happens, so a definition that does not
 					// build leaves nothing half-open behind it.
 					const folder = await localRuntime().realpath(workspaceFolder);
-					const configPath = await devContainerConfigIn(localRuntime(), folder);
-					if (configPath === undefined) {
+					const location = workspaceLocation({ kind: "local", path: folder });
+					const configs = await this.devContainerConfigsOf(location);
+					// No choice made — the sheet could not list the definitions —
+					// is the CLI's own default order, the first of them.
+					const chosen =
+						configPath === undefined
+							? configs[0]
+							: configs.find((config) => config.path === configPath);
+					if (chosen === undefined) {
 						throw workspaceFailure(
-							`${folder} has no dev container definition, so there is no container to open it in.`,
+							configPath === undefined
+								? `${folder} has no dev container definition, so there is no container to open it in.`
+								: `${configPath} is not one of the dev container definitions in ${folder}.`,
 						);
 					}
 					const editor: EditorAttachment = {
 						kind: "devContainer",
-						configPath: devContainerConfigPath(configPath),
+						configPath: devContainerConfigPath(chosen.path),
 					};
-					const location = workspaceLocation({ kind: "local", path: folder });
 					const target = containerTargetOf(location, editor);
 					if (target === undefined) {
 						throw new Error("a dev container attachment named no container");
 					}
-					await containerHostFor(target).ensureUp({ build: true });
+					const up = await containerHostFor(target).ensureUp({ build: true });
+					// A Workspace this opens is made with its editor attached; one
+					// that was open already has its editor moved.
 					const opened = await this.openFolder(
 						requestedLocation({ kind: "local", path: folder }),
 						withAgent,
-					);
-					await this.attachEditor(
-						this.openedWorkspaceId(requestedLocation(location)),
 						editor,
 					);
+					const workspaceId = this.openedWorkspaceId(
+						requestedLocation(location),
+					);
+					await this.attachEditor(workspaceId, editor);
+					if (up.started) {
+						this.dispatchOwn({
+							type: "editor_container_started",
+							workspaceId,
+							containerId: up.containerId,
+						});
+					}
 					return opened;
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		handle(
+			CHANNELS.reopenEditorLocally,
+			async (_event, workspaceId: string) => {
+				try {
+					await this.reopenEditorLocally(parseWorkspaceId(workspaceId));
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}
@@ -6570,7 +6872,7 @@ export async function createAppController(
 		);
 	}
 
-	current = new AppController(
+	const created = new AppController(
 		configStore,
 		stateStore,
 		cliArgs,
@@ -6581,6 +6883,12 @@ export async function createAppController(
 		load.metadata.origin === "fresh",
 		settingsRefusal,
 	);
+	current = created;
+	// Every bring-up, whoever asked for it, tells the Workspaces attached to
+	// that container that DevHub started it. See `releaseContainer`.
+	onContainerStarted((host, containerId) => {
+		created.noteContainerStarted(host, containerId);
+	});
 	// Before the pages ask for anything: what they are told when they need
 	// settings is this same notice (`requireConfig`).
 	if (launchRefusal !== undefined) current.noteStartupFailure(launchRefusal);

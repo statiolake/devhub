@@ -396,7 +396,16 @@ const SOCKET_WAIT_SECONDS = 60;
  * refuses a fraction, and the machine this exists for is the one with BusyBox
  * on it.
  */
-export function startServerScript(paths: RemoteServerPaths): string {
+export function startServerScript(
+	paths: RemoteServerPaths,
+	/**
+	 * A directory to put in front of the server's `PATH`, when there is one:
+	 * DevHub's `devhub` command in a dev container, which the terminals and
+	 * tasks the server starts inherit. A server already running keeps the PATH
+	 * it was started with, which is the same directory — it is per commit.
+	 */
+	pathPrefix?: string,
+): string {
 	const root = shellQuote(paths.root);
 	const token = shellQuote(paths.token);
 	const socket = shellQuote(paths.socket);
@@ -424,7 +433,7 @@ export function startServerScript(paths: RemoteServerPaths): string {
 		// will not bind over one.
 		`  rm -f -- ${socket}`,
 		`  [ -x ${server} ] || { echo ${shellQuote(`${SERVER_MARKER} ${paths.server} is not there`)} >&2; exit 1; }`,
-		`  nohup ${server} --start-server --host=127.0.0.1 \\`,
+		`  ${pathPrefix === undefined ? "" : `PATH=${shellQuote(pathPrefix)}:"$PATH" `}nohup ${server} --start-server --host=127.0.0.1 \\`,
 		`    --socket-path=${socket} --connection-token-file=${token} \\`,
 		`    --telemetry-level off --accept-server-license-terms \\`,
 		`    --enable-remote-auto-shutdown >> ${log} 2>&1 &`,

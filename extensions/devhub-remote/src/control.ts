@@ -87,3 +87,74 @@ export function requestResolveRemote(
     });
   });
 }
+
+/** A window's folder URI, as DevHub reads it (`WindowFolderWire`). */
+export interface WindowFolder {
+  scheme: string;
+  authority: string;
+  path: string;
+  fsPath: string;
+}
+
+/** One of the window's Workspace's dev container definitions. */
+export interface DevContainerConfig {
+  path: string;
+  label?: string;
+}
+
+/** DevHub's answer to `dev-container-configs`. */
+export interface DevContainerConfigsAnswer {
+  ok: boolean;
+  message: string;
+  devContainers?: { configs: DevContainerConfig[]; current?: string };
+}
+
+/** Where the window's editor is to go: its own machine, or a definition. */
+export type ReattachTarget = { kind: "host" } | { configPath: string };
+
+/**
+ * One request, one line of JSON back — the framing every request on the
+ * socket uses. Nothing is caught: see `requestResolveRemote`.
+ */
+function request<T>(socketPath: string, payload: object): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const socket = connect(socketPath);
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify(payload)}\n`);
+    });
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const line = buffer.split("\n")[0] ?? "";
+      if (line.length === 0) {
+        reject(new Error("DevHub closed the connection without answering."));
+        return;
+      }
+      resolve(JSON.parse(line) as T);
+    });
+  });
+}
+
+/** Which definitions the window's Workspace has, and which one it is in. */
+export function requestDevContainerConfigs(
+  socketPath: string,
+  window: WindowFolder,
+): Promise<DevContainerConfigsAnswer> {
+  return request(socketPath, { kind: "dev-container-configs", window });
+}
+
+/**
+ * Move the window's editor. DevHub closes this very window on the way, so
+ * the answer may never arrive; a refusal does, as a sentence.
+ */
+export function requestReattachEditor(
+  socketPath: string,
+  window: WindowFolder,
+  to: ReattachTarget,
+): Promise<{ ok: boolean; message: string }> {
+  return request(socketPath, { kind: "reattach-editor", window, to });
+}

@@ -44,7 +44,7 @@ import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { FileType } from "code-oss-dev/out/vs/platform/files/common/files.js";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import { remoteAuthorityForMachine } from "../runtime/registry.js";
-import type { RuntimeId } from "../runtime/runtime.js";
+import type { ShellMachineId } from "../runtime/runtime.js";
 import type { ResolvedPath } from "./canonical.js";
 import type { ControlPosition } from "./protocol.js";
 
@@ -60,7 +60,7 @@ import type { ControlPosition } from "./protocol.js";
  */
 export function openFileInWorkbench(
 	window: ICodeWindow,
-	machine: RuntimeId,
+	machine: ShellMachineId,
 	file: ResolvedPath,
 	position: ControlPosition | undefined,
 	waitMarkerPath: string | undefined,
@@ -109,7 +109,7 @@ export function openFileInWorkbench(
  * its wait marker is deleted by cannot come to disagree — which is the whole
  * of the failure this exists to prevent.
  */
-function workbenchUri(machine: RuntimeId, path: string): URI {
+function workbenchUri(machine: ShellMachineId, path: string): URI {
 	const authority = remoteAuthorityForMachine(machine);
 	return authority === undefined
 		? URI.file(path)

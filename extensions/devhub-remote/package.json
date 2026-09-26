@@ -1,7 +1,7 @@
 {
   "name": "devhub-remote",
   "displayName": "DevHub Remote",
-  "description": "DevHub's built-in ssh-remote and dev-container authority resolvers: they ask the running DevHub for the endpoint of a remote extension host and hand VS Code the answer.",
+  "description": "DevHub's built-in ssh-remote and dev-container authority resolvers, and the editor's Reopen in Container / Reopen Folder Locally / Switch Container: they ask the running DevHub over its control socket.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -24,7 +24,8 @@
   },
   "activationEvents": [
     "onResolveRemoteAuthority:ssh-remote",
-    "onResolveRemoteAuthority:dev-container"
+    "onResolveRemoteAuthority:dev-container",
+    "onStartupFinished"
   ],
   "contributes": {
     "resourceLabelFormatters": [
@@ -48,7 +49,57 @@
           "workspaceSuffix": "Dev Container"
         }
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "devhub.reopenInContainer",
+        "title": "Reopen in Container",
+        "category": "Dev Containers"
+      },
+      {
+        "command": "devhub.reopenLocally",
+        "title": "Reopen Folder Locally",
+        "category": "Dev Containers"
+      },
+      {
+        "command": "devhub.switchContainer",
+        "title": "Switch Container",
+        "category": "Dev Containers"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "devhub.reopenInContainer",
+          "when": "remoteName != dev-container && remoteName != ssh-remote && devhub.devContainerConfigs > 0"
+        },
+        {
+          "command": "devhub.reopenLocally",
+          "when": "remoteName == dev-container"
+        },
+        {
+          "command": "devhub.switchContainer",
+          "when": "remoteName == dev-container && devhub.devContainerConfigs > 1"
+        }
+      ],
+      "statusBar/remoteIndicator": [
+        {
+          "command": "devhub.reopenInContainer",
+          "when": "remoteName != dev-container && remoteName != ssh-remote && devhub.devContainerConfigs > 0",
+          "group": "remote_20_devhub@1"
+        },
+        {
+          "command": "devhub.reopenLocally",
+          "when": "remoteName == dev-container",
+          "group": "remote_20_devhub@2"
+        },
+        {
+          "command": "devhub.switchContainer",
+          "when": "remoteName == dev-container && devhub.devContainerConfigs > 1",
+          "group": "remote_20_devhub@3"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

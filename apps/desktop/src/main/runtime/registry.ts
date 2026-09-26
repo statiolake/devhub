@@ -18,6 +18,7 @@
 import {
 	containerHostId,
 	containerTargetFromHostId,
+	DEV_CONTAINER_PREFIX,
 	remoteAuthorityOf,
 	sshHost,
 	workspaceRoot,
@@ -151,6 +152,7 @@ export function setRuntimeProfile(next: RuntimeProfile): void {
 /** For tests, which need a second profile in the same process. */
 export function forgetRuntimeProfile(): void {
 	profile = undefined;
+	containerStarted = undefined;
 	SSH.clear();
 	CONTAINERS.clear();
 }
@@ -194,6 +196,25 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 	}
 }
 
+/** Who hears that a dev container was started: see `onContainerStarted`. */
+let containerStarted:
+	| ((host: ContainerHostId, containerId: string) => void)
+	| undefined;
+
+/**
+ * Say who is told when a bring-up — any of them, whoever asked — started a
+ * dev container. Once, like the profile: main is the one listener, because it
+ * is what remembers which containers DevHub may stop again.
+ */
+export function onContainerStarted(
+	listener: (host: ContainerHostId, containerId: string) => void,
+): void {
+	if (containerStarted !== undefined) {
+		throw new Error("the dev container start listener has already been set");
+	}
+	containerStarted = listener;
+}
+
 /**
  * The host a dev container is reached through.
  *
@@ -229,6 +250,7 @@ export function containerHostFor(target: ContainerTarget): ContainerHost {
 		docker: profile.docker,
 		devcontainer: profile.devcontainer,
 		reh: profile.reh,
+		onStarted: (id, containerId) => containerStarted?.(id, containerId),
 	});
 	CONTAINERS.set(key, host);
 	return host;
@@ -327,8 +349,20 @@ export function editorHostMachine(raw: string): EditorHostId {
  * window is opened with and the string a file in that window is named with
  * come from one function and cannot drift apart.
  */
-export function remoteAuthorityForMachine(id: RuntimeId): string | undefined {
-	return remoteAuthorityOf(locationOnMachine(id, workspaceRoot("/")));
+export function remoteAuthorityForMachine(
+	id: RuntimeId | ContainerHostId,
+): string | undefined {
+	// A dev container's authority is its host id's payload under the
+	// resolver's prefix: the same string the window it is attached to was
+	// opened with (`editorAuthorityOf`), so a file named from inside the
+	// container opens in that window.
+	const target = containerTargetFromHostId(id);
+	if (target !== undefined) {
+		return `${DEV_CONTAINER_PREFIX}${id.slice("container:".length)}`;
+	}
+	return remoteAuthorityOf(
+		locationOnMachine(runtimeMachine(id), workspaceRoot("/")),
+	);
 }
 
 /**

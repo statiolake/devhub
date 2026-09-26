@@ -36,6 +36,7 @@ import {
 	type RepositoryStatusBridge,
 	type UsageLimitsBridge,
 	type SshHostWire,
+	type DevContainerConfigWire,
 	type WorkspaceOpeningBridge,
 	type WorkspacePickerEvent,
 	type WorkspacePlaceWire,
@@ -215,17 +216,19 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 				path,
 				withAgent,
 			) as Promise<AppOutcome>,
-		devContainerConfig: (path: string) =>
-			ipcRenderer.invoke(CHANNELS.devContainerConfig, path) as Promise<
-				string | undefined
+		devContainerConfigs: (path: string) =>
+			ipcRenderer.invoke(CHANNELS.devContainerConfigs, path) as Promise<
+				readonly DevContainerConfigWire[]
 			>,
 		openContainerWorkspace: (
 			workspaceFolder: string,
+			configPath?: string,
 			withAgent?: AgentLaunchWire,
 		) =>
 			ipcRenderer.invoke(
 				CHANNELS.openContainerWorkspace,
 				workspaceFolder,
+				configPath,
 				withAgent,
 			) as Promise<AppOutcome>,
 		findIssueRepositories: (issueUrl: string) =>
@@ -264,6 +267,13 @@ export function closeWorkspace(workspaceId: string): Promise<void> {
 
 export function openSettings(): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.openSettings) as Promise<void>;
+}
+
+export function reopenEditorLocally(workspaceId: string): Promise<void> {
+	return ipcRenderer.invoke(
+		CHANNELS.reopenEditorLocally,
+		workspaceId,
+	) as Promise<void>;
 }
 
 export function openExternalUrl(url: string): Promise<void> {

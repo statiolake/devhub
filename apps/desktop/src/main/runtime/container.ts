@@ -94,6 +94,8 @@ import type {
 	ByteStream,
 	ExecRequest,
 	ExecResult,
+	TerminalLauncher,
+	TerminalLauncherSpec,
 	RuntimeCadence,
 	Runtime,
 	RuntimeReading,
@@ -185,7 +187,16 @@ export interface ContainerHostOptions {
 		port: number;
 		close: () => void;
 	}>;
+	/**
+	 * Told whenever a bring-up of this host's started the container — whoever
+	 * asked for it — so that "DevHub started this one" is known wherever the
+	 * container is later let go of. See `stopIfStarted`.
+	 */
+	readonly onStarted?: (host: ContainerHostId, containerId: string) => void;
 }
+
+/** The spec's `shutdownAction`. See `ContainerHost.shutdownAction`. */
+export type ShutdownAction = "none" | "stopContainer" | "stopCompose";
 
 /**
  * What `docker ps` said about this Workspace's container.
@@ -299,27 +310,37 @@ export const DEV_CONTAINER_CONFIGS = [
 ] as const;
 
 /**
- * Which file, if any, makes this folder a Dev Container.
+ * Every definition a folder has, in the order the spec lists them.
  *
- * Two `stat`s, so it costs nothing and is asked every time rather than cached:
- * a `.devcontainer.json` written since DevHub started is a folder that can be
- * opened in a container now, and the person who just wrote one would not think
- * to restart.
+ * The two default names first (`DEV_CONTAINER_CONFIGS`), then the spec's
+ * layout for a folder with several — `.devcontainer/<name>/devcontainer.json`,
+ * one level deep, by name. Asked every time rather than cached: a definition
+ * written since DevHub started is one that can be opened now, and the person
+ * who just wrote one would not think to restart.
  *
  * It takes a `Runtime` rather than reading the disk directly because the
- * folder is on whichever machine the caller means — today always this Mac, and
- * the day a host's folder is offered the same way, this already asks the right
- * machine.
+ * folder is on whichever machine its Workspace is — this Mac, or a host.
  */
-export async function devContainerConfigIn(
-	runtime: Pick<Runtime, "stat">,
+export async function devContainerConfigsIn(
+	runtime: Pick<Runtime, "stat" | "readdir">,
 	workspaceFolder: string,
-): Promise<string | undefined> {
+): Promise<readonly string[]> {
+	const found: string[] = [];
 	for (const candidate of DEV_CONTAINER_CONFIGS) {
 		const path = posix.join(workspaceFolder, candidate);
-		if ((await runtime.stat(path)) === "file") return path;
+		if ((await runtime.stat(path)) === "file") found.push(path);
 	}
-	return undefined;
+	const directory = posix.join(workspaceFolder, ".devcontainer");
+	if ((await runtime.stat(directory)) !== "directory") return found;
+	const named = (await runtime.readdir(directory))
+		.filter((entry) => entry.directory)
+		.map((entry) => entry.name)
+		.sort();
+	for (const name of named) {
+		const path = posix.join(directory, name, "devcontainer.json");
+		if ((await runtime.stat(path)) === "file") found.push(path);
+	}
+	return found;
 }
 
 /** Where the relay is written inside the container. */
@@ -341,6 +362,7 @@ export class ContainerHost
 	readonly #rehDelivery: RehDelivery | undefined;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
 	readonly #listen: ContainerHostOptions["listen"];
+	readonly #onStarted: ContainerHostOptions["onStarted"];
 
 	readonly #recentExecs = new RollingTally(A_MINUTE);
 	#connected = false;
@@ -365,6 +387,7 @@ export class ContainerHost
 		this.#rehDelivery = options.reh;
 		this.#localEnvironment = options.localEnvironment ?? process.env;
 		this.#listen = options.listen;
+		this.#onStarted = options.onStarted;
 	}
 
 	protected override get machineName(): string {
@@ -586,6 +609,7 @@ export class ContainerHost
 		}
 		const { result, started } = await bringUp;
 		this.#noteContainer(result.containerId);
+		if (started) this.#onStarted?.(this.id, result.containerId);
 		this.#container = Promise.resolve(result);
 		return { containerId: result.containerId, started };
 	}
@@ -688,31 +712,10 @@ export class ContainerHost
 		// `--config` always: the definition is part of which container this
 		// is, and leaving the choice to the CLI would let the next `up` answer a
 		// folder with several definitions differently from this one.
-		const args = [
-			"up",
-			"--workspace-folder",
-			this.#workspaceFolder,
-			"--config",
-			this.#configPath,
-		];
-		const custom = this.#devcontainer.run;
-		const result = custom
-			? await custom(args)
-			: await runBounded(
-					{
-						file: this.#devcontainer.path,
-						args,
-						cwd: undefined,
-						env: this.#localEnvironment,
-					},
-					// Building an image is not a probe: a first `up` pulls a base
-					// image and runs whatever the definition's `postCreateCommand`
-					// is, and a minute is not unusual.
-					OperationDeadline.in(UP_TIMEOUT_MS),
-					new CancellationToken(),
-					{ ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
-					undefined,
-				);
+		// Building an image is not a probe: a first `up` pulls a base image and
+		// runs whatever the definition's `postCreateCommand` is, and a minute is
+		// not unusual.
+		const result = await this.#devcontainerCommand("up", UP_TIMEOUT_MS);
 		const stdout = result.stdout.toString("utf8");
 		// The CLI prints its log on stderr and exactly one JSON object on stdout,
 		// which is the contract this parses. An unrecognised shape is a hard
@@ -731,6 +734,144 @@ export class ContainerHost
 			);
 		}
 		return parsed.result;
+	}
+
+	/** One `devcontainer <verb>` against this folder and definition. */
+	#devcontainerCommand(
+		verb: string,
+		timeoutMs: number,
+	): Promise<CommandOutput> {
+		const args = [
+			verb,
+			"--workspace-folder",
+			this.#workspaceFolder,
+			"--config",
+			this.#configPath,
+		];
+		const custom = this.#devcontainer.run;
+		return custom
+			? custom(args)
+			: runBounded(
+					{
+						file: this.#devcontainer.path,
+						args,
+						cwd: undefined,
+						env: this.#localEnvironment,
+					},
+					OperationDeadline.in(timeoutMs),
+					new CancellationToken(),
+					{ ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
+					undefined,
+				);
+	}
+
+	/**
+	 * What the definition says to do with its container when the tool window
+	 * that used it closes.
+	 *
+	 * The spec's `shutdownAction`: `none`, `stopContainer` or `stopCompose`,
+	 * defaulting to `stopContainer` for an image or Dockerfile definition and
+	 * `stopCompose` for a Docker Compose one. Read with the CLI's own reader
+	 * (`read-configuration`) rather than from the JSON, because the default
+	 * depends on which kind of definition it is and a definition can extend
+	 * others; the CLI is what knows the answer.
+	 */
+	async shutdownAction(): Promise<ShutdownAction> {
+		const result = await this.#devcontainerCommand(
+			"read-configuration",
+			PROBE_TIMEOUT_MS,
+		);
+		const stdout = result.stdout.toString("utf8");
+		const configuration = parseReadConfiguration(stdout);
+		if (configuration === undefined) {
+			throw new Error(
+				`devcontainer read-configuration did not answer with a configuration ` +
+					`DevHub understands for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
+			);
+		}
+		const stated = configuration["shutdownAction"];
+		if (stated === undefined) {
+			return configuration["dockerComposeFile"] === undefined
+				? "stopContainer"
+				: "stopCompose";
+		}
+		if (
+			stated === "none" ||
+			stated === "stopContainer" ||
+			stated === "stopCompose"
+		) {
+			return stated;
+		}
+		throw new Error(
+			`${capitalised(this.machineName)}'s definition says shutdownAction ` +
+				`${JSON.stringify(stated)}, which is not none, stopContainer or stopCompose.`,
+		);
+	}
+
+	/**
+	 * Stop the container if DevHub started it, the way its definition says to.
+	 *
+	 * `startedContainerId` is the container DevHub's own bring-up started. A
+	 * container that is not that one — rebuilt since by somebody else, or one
+	 * DevHub only found running — is left alone: stopping what somebody else
+	 * started is not DevHub's to decide. So is one that is already stopped.
+	 *
+	 * Answers what it did, in a sentence, or nothing when there was nothing to
+	 * do; a stop that fails throws with Docker's own last line.
+	 */
+	async stopIfStarted(startedContainerId: string): Promise<string | undefined> {
+		const state = await this.containerState();
+		if (state.kind !== "running" || state.id !== startedContainerId) {
+			return undefined;
+		}
+		const action = await this.shutdownAction();
+		switch (action) {
+			case "none":
+				return undefined;
+			case "stopContainer": {
+				const stopped = await this.#docker_(["stop", state.id], {
+					deadline: OperationDeadline.in(STOP_TIMEOUT_MS),
+					cancel: new CancellationToken(),
+					limits: PROBE_LIMITS,
+				});
+				if (stopped.code !== 0) {
+					throw new Error(
+						`DevHub could not stop ${this.machineName}: ${lastLine(stopped.stderr.toString("utf8"))}`,
+					);
+				}
+				return `Stopped ${this.machineName}.`;
+			}
+			case "stopCompose": {
+				const project = await this.#docker_([
+					"inspect",
+					"-f",
+					'{{index .Config.Labels "com.docker.compose.project"}}',
+					state.id,
+				]);
+				const name = project.stdout.toString("utf8").trim();
+				if (project.code !== 0 || name.length === 0) {
+					throw new Error(
+						`DevHub could not tell which Compose project ${this.machineName} ` +
+							`belongs to, so it did not stop it.`,
+					);
+				}
+				const stopped = await this.#docker_(
+					["compose", "--project-name", name, "stop"],
+					{
+						deadline: OperationDeadline.in(STOP_TIMEOUT_MS),
+						cancel: new CancellationToken(),
+						limits: PROBE_LIMITS,
+					},
+				);
+				if (stopped.code !== 0) {
+					throw new Error(
+						`DevHub could not stop the Compose project ${name} of ` +
+							`${this.machineName}: ${lastLine(stopped.stderr.toString("utf8"))}`,
+					);
+				}
+				return `Stopped the Compose project ${name} of ${this.machineName}.`;
+			}
+		}
 	}
 
 	/**
@@ -1010,6 +1151,22 @@ export class ContainerHost
 
 	/** Where the server was installed, once it has been. */
 	#serverInstall: string | undefined;
+	/** Where DevHub's `devhub` command is in the container, once installed. */
+	#binDirectory: string | undefined;
+
+	/**
+	 * The `devhub` command in the container, and the relay it reaches DevHub
+	 * through — the same install every machine DevHub shells into gets. The
+	 * directory is remembered so the remote extension host is started with it
+	 * on its PATH: there is no DevHub tmux in a container to put it there.
+	 */
+	override async terminalLauncher(
+		spec: TerminalLauncherSpec,
+	): Promise<TerminalLauncher> {
+		const installed = await super.terminalLauncher(spec);
+		this.#binDirectory = installed.binDirectory;
+		return installed;
+	}
 	/** The socket it is listening on in there, once it has been started. */
 	#serverSocket: string | undefined;
 
@@ -1121,9 +1278,12 @@ export class ContainerHost
 		});
 		await this.#ensureServerInstalled();
 		await this.#clearDeadServer(paths, posix.join(paths.install, "node"));
-		const started = await this.sh(startServerScript(paths), {
-			stdin: Buffer.from(newConnectionToken(), "utf8"),
-		});
+		const started = await this.sh(
+			startServerScript(paths, this.#binDirectory),
+			{
+				stdin: Buffer.from(newConnectionToken(), "utf8"),
+			},
+		);
 		if (started.code !== 0) {
 			throw new Error(
 				`DevHub could not start the remote extension host in ` +
@@ -1298,6 +1458,8 @@ export class ContainerHost
 
 /** How long `devcontainer up` is given: an image pull plus post-create. */
 const UP_TIMEOUT_MS = 10 * 60 * 1000;
+/** `docker stop` waits ten seconds for a container before it kills it. */
+const STOP_TIMEOUT_MS = 60 * 1000;
 const SOCKET_ATTEMPTS = 30;
 const SOCKET_ATTEMPT_MS = 200;
 
@@ -1450,6 +1612,29 @@ function notAWorkspaceMachine(machineName: string, what: string): Error {
 			`owns runs in a dev container — only its editor is attached there. ` +
 			`This is a bug in DevHub.`,
 	);
+}
+
+/**
+ * `devcontainer read-configuration`'s `configuration` object, or `undefined`
+ * for anything else. The CLI prints one JSON object on stdout, as `up` does.
+ */
+export function parseReadConfiguration(
+	stdout: string,
+): Record<string, unknown> | undefined {
+	const line = stdout.trim().split("\n").at(-1) ?? "";
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof parsed !== "object" || parsed === null) return undefined;
+	const configuration = (parsed as { configuration?: unknown }).configuration;
+	return typeof configuration === "object" &&
+		configuration !== null &&
+		!Array.isArray(configuration)
+		? (configuration as Record<string, unknown>)
+		: undefined;
 }
 
 /** `devcontainer up`'s answer, as far as DevHub reads it. */

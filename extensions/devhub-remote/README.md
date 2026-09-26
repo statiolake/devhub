@@ -67,3 +67,24 @@ pnpm --filter devhub-remote check
 
 builds the extension, typechecks it, runs the tests, runs the static checks
 above, packages the VSIX and verifies the VSIX is byte-for-byte reproducible.
+
+## Reopen in Container, Reopen Folder Locally, Switch Container
+
+A Workspace is its folder, and its terminals and Agents run where the folder
+is; whether its _editor_ is attached to one of the folder's dev containers is a
+mode of the editor. This extension offers the three commands that switch it —
+in the command palette and in the remote indicator's menu, the `><` at the
+left of the status bar — because it is `ui`-kind and so runs on this Mac in
+every window, the local ones and the attached ones, next to DevHub's control
+socket. Each asks DevHub:
+
+```
+{"kind":"dev-container-configs","window":{…the window's folder URI…}}
+{"kind":"reattach-editor","window":{…},"to":{"configPath":"…"}|{"kind":"host"}}
+```
+
+DevHub brings the container up, closes the window the way a Workspace close
+does (VS Code's own unsaved-work question included) and opens the Workspace's
+workbench again on the new authority. Which commands are offered is decided
+when the extension starts and again when one runs: `devhub.devContainerConfigs`
+is how many definitions the folder has. See `docs/remote-containers.md`.

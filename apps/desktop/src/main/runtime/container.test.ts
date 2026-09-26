@@ -23,6 +23,7 @@ import {
 	CONFIG_FILE_LABEL,
 	ContainerHost,
 	containerName,
+	devContainerConfigsIn,
 	LOCAL_FOLDER_LABEL,
 	parseUpOutcome,
 	type DevContainerCli,
@@ -706,5 +707,172 @@ describe("what a container is called", () => {
 		expect(containerName(FOLDER, "/src/api/tools/dev.json")).toBe(
 			"the dev container for /src/api (tools/dev.json)",
 		);
+	});
+});
+
+describe("letting go of a container DevHub started", () => {
+	function stopping(options: {
+		readonly state: string;
+		readonly configuration: Record<string, unknown>;
+		readonly project?: string;
+	}) {
+		const docker = fakeDocker((args) => {
+			if (args[0] === "ps") return output(0, psLine("c1", options.state));
+			if (args[0] === "inspect") return output(0, `${options.project ?? ""}\n`);
+			return output(0, "");
+		});
+		const devcontainer = fakeDevcontainer((args) =>
+			args[0] === "read-configuration"
+				? output(0, JSON.stringify({ configuration: options.configuration }))
+				: Promise.reject(new Error(`${args[0] ?? ""} must not run here`)),
+		);
+		return { runtime: runtimeWith(docker, devcontainer), docker, devcontainer };
+	}
+
+	it("stops an image container by default, the spec's stopContainer", async () => {
+		const { runtime, docker } = stopping({
+			state: "running",
+			configuration: { image: "alpine" },
+		});
+		expect(await runtime.stopIfStarted("c1")).toMatch(/^Stopped /u);
+		expect(docker.calls.at(-1)).toEqual(["stop", "c1"]);
+	});
+
+	it("stops a Compose definition's whole project by default, the spec's stopCompose", async () => {
+		const { runtime, docker } = stopping({
+			state: "running",
+			configuration: { dockerComposeFile: "compose.yml", service: "app" },
+			project: "api_devcontainer",
+		});
+		await runtime.stopIfStarted("c1");
+		expect(docker.calls.at(-1)).toEqual([
+			"compose",
+			"--project-name",
+			"api_devcontainer",
+			"stop",
+		]);
+	});
+
+	it("leaves it running when the definition says none", async () => {
+		const { runtime, docker } = stopping({
+			state: "running",
+			configuration: { image: "alpine", shutdownAction: "none" },
+		});
+		expect(await runtime.stopIfStarted("c1")).toBeUndefined();
+		expect(docker.calls.some((call) => call[0] === "stop")).toBe(false);
+	});
+
+	it("leaves a container DevHub did not start alone, whatever the definition says", async () => {
+		// One that was running when DevHub found it, or one somebody rebuilt
+		// since: stopping it is not DevHub's to decide.
+		const { runtime, docker, devcontainer } = stopping({
+			state: "running",
+			configuration: { image: "alpine" },
+		});
+		expect(await runtime.stopIfStarted("someone-elses")).toBeUndefined();
+		expect(docker.calls.some((call) => call[0] === "stop")).toBe(false);
+		expect(devcontainer.calls).toHaveLength(0);
+	});
+
+	it("refuses a shutdownAction the spec does not have, rather than guessing", async () => {
+		const { runtime } = stopping({
+			state: "running",
+			configuration: { image: "alpine", shutdownAction: "stopEverything" },
+		});
+		await expect(runtime.stopIfStarted("c1")).rejects.toThrow(
+			/not none, stopContainer or stopCompose/u,
+		);
+	});
+
+	it("says when docker would not stop it, in docker's words", async () => {
+		const docker = fakeDocker((args) => {
+			if (args[0] === "ps") return output(0, psLine("c1", "running"));
+			if (args[0] === "stop") return output(1, "", "permission denied");
+			return output(0, "");
+		});
+		const runtime = runtimeWith(
+			docker,
+			fakeDevcontainer(() =>
+				output(0, JSON.stringify({ configuration: { image: "a" } })),
+			),
+		);
+		await expect(runtime.stopIfStarted("c1")).rejects.toThrow(
+			/could not stop .*permission denied/u,
+		);
+	});
+});
+
+describe("hearing that a container was started", () => {
+	it("tells the listener only when a bring-up started it", async () => {
+		const heard: string[] = [];
+		let running = false;
+		const make = () =>
+			new ContainerHost({
+				target: target(),
+				docker: fakeDocker((args) => {
+					if (args[0] === "ps") {
+						return output(0, running ? psLine("c".repeat(64), "running") : "");
+					}
+					if (args[0] === "inspect") return output(0, "");
+					return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+				}),
+				devcontainer: fakeDevcontainer(() => {
+					running = true;
+					return upSucceeded("c".repeat(64));
+				}),
+				onStarted: (_host, id) => heard.push(id),
+			});
+		await make().ensureUp({ build: true });
+		await make().ensureUp({ build: true });
+		expect(heard).toEqual(["c".repeat(64)]);
+	});
+});
+
+describe("the definitions a folder has", () => {
+	it("lists the defaults, then the named ones by name", async () => {
+		const files = new Set([
+			"/src/api/.devcontainer/devcontainer.json",
+			"/src/api/.devcontainer.json",
+			"/src/api/.devcontainer/python/devcontainer.json",
+			"/src/api/.devcontainer/go/devcontainer.json",
+		]);
+		const found = await devContainerConfigsIn(
+			{
+				stat: (path) =>
+					Promise.resolve(
+						files.has(path)
+							? "file"
+							: path === "/src/api/.devcontainer"
+								? "directory"
+								: "absent",
+					),
+				readdir: () =>
+					Promise.resolve([
+						{ name: "python", directory: true },
+						{ name: "go", directory: true },
+						{ name: "empty", directory: true },
+						{ name: "notes.md", directory: false },
+					]),
+			},
+			"/src/api",
+		);
+		expect(found).toEqual([
+			"/src/api/.devcontainer/devcontainer.json",
+			"/src/api/.devcontainer.json",
+			"/src/api/.devcontainer/go/devcontainer.json",
+			"/src/api/.devcontainer/python/devcontainer.json",
+		]);
+	});
+
+	it("is nothing for a folder with none", async () => {
+		expect(
+			await devContainerConfigsIn(
+				{
+					stat: () => Promise.resolve("absent"),
+					readdir: () => Promise.reject(new Error("not asked")),
+				},
+				"/src/api",
+			),
+		).toEqual([]);
 	});
 });

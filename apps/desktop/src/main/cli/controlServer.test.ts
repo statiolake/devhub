@@ -38,6 +38,9 @@ function everythingSaysOk(): ControlHandlers {
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
+		devContainerConfigs: () =>
+			Promise.resolve({ configs: [], current: undefined }),
+		reattachEditor: () => Promise.resolve(),
 		personStarted: () => undefined,
 	};
 }
@@ -71,6 +74,25 @@ describe("the DevHub control socket", () => {
 		calls = [];
 		server = await startControlServer(socketPath, {
 			personStarted: () => undefined,
+			devContainerConfigs: (window) => {
+				calls.push(`configs ${window.scheme}:${window.fsPath}`);
+				return Promise.resolve({
+					configs: [
+						{ path: "/work/a/.devcontainer/devcontainer.json" },
+						{
+							path: "/work/a/.devcontainer/py/devcontainer.json",
+							label: "py",
+						},
+					],
+					current: undefined,
+				});
+			},
+			reattachEditor: (window, to) => {
+				calls.push(
+					`reattach ${window.fsPath} ${"kind" in to ? "host" : to.configPath}`,
+				);
+				return Promise.resolve();
+			},
 			activate: () => {
 				calls.push("activate");
 				return Promise.resolve("DevHub is in front.");
@@ -545,6 +567,54 @@ describe("the DevHub control socket", () => {
 		);
 		expect(answer.ok).toBe(false);
 		expect(answer.message).toContain("machine");
+		expect(calls).toEqual([]);
+	});
+
+	it("answers a window's dev container definitions as data", async () => {
+		const window = {
+			scheme: "file",
+			authority: "",
+			path: "/work/a",
+			fsPath: "/work/a",
+		};
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "dev-container-configs", window })}\n`,
+		);
+		expect(answer.ok).toBe(true);
+		expect(answer.devContainers?.configs.map((c) => c.label)).toEqual([
+			undefined,
+			"py",
+		]);
+		await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "reattach-editor",
+				window,
+				to: { configPath: "/work/a/.devcontainer/py/devcontainer.json" },
+			})}\n`,
+		);
+		await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "reattach-editor", window, to: { kind: "host" } })}\n`,
+		);
+		expect(calls).toEqual([
+			"configs file:/work/a",
+			"reattach /work/a /work/a/.devcontainer/py/devcontainer.json",
+			"reattach /work/a host",
+		]);
+	});
+
+	it("refuses a reattach that does not say where the editor goes", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "reattach-editor",
+				window: { scheme: "file", authority: "", path: "/a", fsPath: "/a" },
+				to: { configPath: "relative/devcontainer.json" },
+			})}\n`,
+		);
+		expect(answer.ok).toBe(false);
 		expect(calls).toEqual([]);
 	});
 

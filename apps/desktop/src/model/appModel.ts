@@ -178,6 +178,8 @@ export interface WorkspaceSnapshot {
   readonly key: string;
   /** Where its editor is attached. See `EditorAttachment`. */
   readonly editor: EditorAttachment;
+  /** See `Workspace.startedContainer`. */
+  readonly startedContainer: string | undefined;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
   /** What its close has to say. See `WorkspaceClose`. */
@@ -546,6 +548,22 @@ export class AppModel {
       fail(DomainErrorCode.UnknownWorkspace);
     }
     if (!workspace.attachEditor(editor)) {
+      return false;
+    }
+    this.bumpRevision();
+    return true;
+  }
+
+  /** See `Workspace.noteStartedContainer`. */
+  noteEditorContainerStarted(
+    workspaceId: WorkspaceId,
+    containerId: string,
+  ): boolean {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace) {
+      fail(DomainErrorCode.UnknownWorkspace);
+    }
+    if (!workspace.noteStartedContainer(containerId)) {
       return false;
     }
     this.bumpRevision();
@@ -1468,6 +1486,7 @@ export class AppModel {
       root: workspace.root,
       key: workspace.key,
       editor: workspace.editor,
+      startedContainer: workspace.startedContainer,
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,

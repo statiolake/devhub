@@ -307,7 +307,13 @@ export type AppErrorCodeWire =
 	 * Agents removed. Nothing failed; it is said because it happened without
 	 * them.
 	 */
-	| "state_migrated";
+	| "state_migrated"
+	/**
+	 * A dev container DevHub started could not be stopped when the editor
+	 * left it, as its definition's `shutdownAction` says it should be. The
+	 * editor moved anyway; the container is still running.
+	 */
+	| "dev_container_not_stopped";
 
 /**
  * The sentence each failure is shown as.
@@ -363,6 +369,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	tmux_session_conflict:
 		"The terminal session DevHub needs is not the one that is there.",
 	state_migrated: "DevHub updated its saved Workspaces for this version.",
+	dev_container_not_stopped:
+		"A dev container DevHub started is still running: it could not be stopped.",
 };
 export type AppErrorModuleWire =
 	| "app"
