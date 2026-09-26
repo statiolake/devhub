@@ -33,10 +33,15 @@ describe("today's Scratch folder", () => {
 	});
 
 	it("uses the folder that is already there", async () => {
-		mkdirSync(join(home, "junk", "20260923"), { recursive: true });
-		writeFileSync(join(home, "junk", "20260923", "notes.txt"), "kept");
+		// A folder whose name holds the template's letters, as a random
+		// scratch folder's name may: the literal part of a template is
+		// bracketed, after the `/` it must start with, so it is not read as a
+		// date.
+		const base = join(home, "YYYY-MM-DD");
+		mkdirSync(join(base, "junk", "20260923"), { recursive: true });
+		writeFileSync(join(base, "junk", "20260923", "notes.txt"), "kept");
 		const day = await scratchDay(
-			`${home}/junk/YYYYMMDD`,
+			`/[${base.slice(1)}/junk]/YYYYMMDD`,
 			new Date(2026, 8, 23),
 			"/nowhere",
 		);
