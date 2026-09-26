@@ -41,7 +41,8 @@ export const SSH_PREFIX = "ssh-remote+";
 export const CONTAINER_PREFIX = "dev-container+";
 
 /**
- * The hex payload of a `dev-container+` authority, back into the host folder.
+ * The hex payload of a `dev-container+` authority, read: the folder, the
+ * definition, and the host when the folder is not on this Mac.
  *
  * DevHub wrote it (`encodeContainerAuthority` in `model/domain.ts`), so this is
  * one half of a round trip and not a guess at somebody else's format — the
@@ -50,23 +51,35 @@ export const CONTAINER_PREFIX = "dev-container+";
  * `control.ts` is a copy: an extension is bundled on its own and cannot import
  * from `apps/desktop`.
  */
-function hostFolderFromPayload(payload: string): string | null {
+export function containerFromPayload(payload: string): {
+  readonly hostPath: string;
+  readonly configPath: string;
+  readonly sshHost?: string;
+} | null {
   if (payload.length === 0 || payload.length % 2 !== 0) return null;
   if (!/^[0-9a-fA-F]+$/.test(payload)) return null;
   const bytes = new Uint8Array(payload.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = Number.parseInt(payload.slice(i * 2, i * 2 + 2), 16);
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const hostPath = (parsed as { hostPath?: unknown }).hostPath;
-    return typeof hostPath === "string" && hostPath.length > 0
-      ? hostPath
-      : null;
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const { hostPath, configPath, sshHost } = parsed as {
+    hostPath?: unknown;
+    configPath?: unknown;
+    sshHost?: unknown;
+  };
+  if (typeof hostPath !== "string" || hostPath.length === 0) return null;
+  if (typeof configPath !== "string" || configPath.length === 0) return null;
+  if (sshHost !== undefined && typeof sshHost !== "string") return null;
+  return sshHost === undefined
+    ? { hostPath, configPath }
+    : { hostPath, configPath, sshHost };
 }
 
 /**
@@ -76,13 +89,13 @@ function hostFolderFromPayload(payload: string): string | null {
  * Two prefixes and one answer shape, which is the point of the whole design:
  * main produces a local TCP port that speaks the remote extension host's
  * protocol, whichever transport got it there, and this extension returns a
- * `ResolvedAuthority` pointing at it. Adding dev containers added a prefix
- * here and a runtime in main, and nothing in between.
+ * `ResolvedAuthority` pointing at it.
  *
  * The ssh host is taken whole — it is an alias as DevHub spells it, not
- * something to parse further. The container's payload is decoded because it is
- * hex that DevHub itself wrote, and what comes out is the folder on this Mac,
- * which is what `container:` machine ids are keyed on.
+ * something to parse further. A container is named by its payload, which is
+ * main's own spelling of "this folder, with this definition" and the key its
+ * container hosts are filed under; it is checked here only so that an
+ * authority DevHub did not write is refused before DevHub is asked.
  */
 export function machineFromAuthority(authority: string): string | null {
   if (authority.startsWith(SSH_PREFIX)) {
@@ -90,10 +103,10 @@ export function machineFromAuthority(authority: string): string | null {
     return host.length === 0 ? null : `ssh:${host}`;
   }
   if (authority.startsWith(CONTAINER_PREFIX)) {
-    const folder = hostFolderFromPayload(
-      authority.slice(CONTAINER_PREFIX.length),
-    );
-    return folder === null ? null : `container:${folder}`;
+    const payload = authority.slice(CONTAINER_PREFIX.length);
+    return containerFromPayload(payload) === null
+      ? null
+      : `container:${payload}`;
   }
   return null;
 }

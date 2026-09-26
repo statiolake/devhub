@@ -35,6 +35,7 @@ import {
   type CloseInspection,
   type DiagnosticCode,
   type DisplayPath,
+  type EditorAttachment,
   type NavigationContext,
   type RepositoryId,
   type Repository,
@@ -175,6 +176,8 @@ export interface WorkspaceSnapshot {
   readonly selectedPath: DisplayPath;
   /** What makes this Workspace this one. See `locationKey`. */
   readonly key: string;
+  /** Where its editor is attached. See `EditorAttachment`. */
+  readonly editor: EditorAttachment;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
   /** What its close has to say. See `WorkspaceClose`. */
@@ -525,6 +528,26 @@ export class AppModel {
       return false;
     }
     this.workspaceOrderValue = [...order];
+    this.bumpRevision();
+    return true;
+  }
+
+  /**
+   * Attach a Workspace's editor somewhere else. See `Workspace.attachEditor`.
+   *
+   * An unknown Workspace is a failure, not a no-op: main asks this after it has
+   * brought a container up and closed a workbench for this id, and an id that
+   * is not here any more means the Workspace was closed in between — which the
+   * caller has to hear about rather than believe the editor moved.
+   */
+  attachEditor(workspaceId: WorkspaceId, editor: EditorAttachment): boolean {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace) {
+      fail(DomainErrorCode.UnknownWorkspace);
+    }
+    if (!workspace.attachEditor(editor)) {
+      return false;
+    }
     this.bumpRevision();
     return true;
   }
@@ -1444,6 +1467,7 @@ export class AppModel {
       location: workspace.location,
       root: workspace.root,
       key: workspace.key,
+      editor: workspace.editor,
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,

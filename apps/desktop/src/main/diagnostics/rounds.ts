@@ -17,7 +17,7 @@
  * costs.
  */
 
-import type { RuntimeId } from "../runtime/runtime.js";
+import type { RuntimeId, ShellMachineId } from "../runtime/runtime.js";
 import { RollingTally } from "./rollingTally.js";
 
 const A_MINUTE = 60_000;
@@ -34,7 +34,7 @@ export class ReconcileRounds {
 	}
 
 	/** Rounds this machine completed in the last minute. */
-	lastMinute(id: RuntimeId): number {
+	lastMinute(id: ShellMachineId): number {
 		return this.#rounds.count(id);
 	}
 }

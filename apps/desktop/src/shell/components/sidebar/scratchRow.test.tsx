@@ -56,6 +56,7 @@ const YESTERDAY = {
   id: "w-yesterday",
   label: "20260922",
   location: { kind: "local" },
+  editor: { kind: "host" },
   root: "/home/example/junk/20260922",
   displayRoot: "~/junk/20260922",
   key: "/home/example/junk/20260922",

@@ -43,7 +43,7 @@ import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/
 import type { IOpenEmptyWindowOptions } from "code-oss-dev/out/vs/platform/window/common/window.js";
 import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
 import { locationKey } from "../../model/domain.js";
-import { locationFromWorkspaceUri } from "../shell/editorPlace.js";
+import { editorPlaceFromWorkspaceUri } from "../shell/editorPlace.js";
 import { appController } from "../shell/appController.js";
 
 /** The part of the upstream options DevHub reads, plus the method it replaces. */
@@ -162,7 +162,7 @@ const upstreamOpenInBrowserWindow = (
 	// path at all, and reading `fsPath` off a `vscode-remote://` URI produces
 	// something that looks like one and names nowhere. See `editorPlace.ts`.
 	const location = isSingleFolderWorkspaceIdentifier(workspace)
-		? locationFromWorkspaceUri(workspace.uri)
+		? editorPlaceFromWorkspaceUri(workspace.uri)?.location
 		: undefined;
 	const editorKey = location === undefined ? undefined : locationKey(location);
 

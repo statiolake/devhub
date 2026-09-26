@@ -77,6 +77,7 @@ function workspace(
 		id,
 		label: id,
 		location: { kind: "local" },
+		editor: { kind: "host" },
 		root: `/workspaces/${id}`,
 		displayRoot: `/workspaces/${id}`,
 		key: `/workspaces/${id}`,

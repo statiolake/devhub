@@ -49,9 +49,13 @@ import {
   DomainError,
   validDisplayName,
   Workspace,
+  AVAILABLE,
+  devContainerConfigPath,
+  EDITOR_ON_HOST,
   sshHost,
   workspaceLocation,
   type AgentControlState,
+  type EditorAttachment,
   type DiagnosticCode,
   type AgentPresentation,
   type AgentProfileKind,
@@ -191,8 +195,24 @@ import { isTerminalZoomOffset } from "./terminalZoom.js";
  * GUI Agent would attach a terminal to it and put the conversation host's
  * script on screen as though it were the Agent; with the bump it says the
  * file is from a newer DevHub and leaves it alone.
+ *
+ * Version 12 takes the dev container out of `location` and puts it on the
+ * editor. A Workspace is its folder — on this Mac or on a host — and whether
+ * its editor is attached to a dev container is `editor`, absent for the
+ * Workspace's own machine. A version-11 `container` record becomes the local
+ * record of its host folder with `editor` naming its definition
+ * (`migrateToVersion12`); a definition the file never recorded is read by
+ * `prepare` before that, from the container's own label or the folder. Its
+ * Agents ran inside the container, which DevHub no longer runs Agents in, so
+ * they are removed and the load says so. A container record whose folder is
+ * also open as a local record is the same Workspace twice now: the local one
+ * stays, and everything that named the other is pointed at it.
+ *
+ * The bump is for the other direction: a version-11 DevHub would read `editor`
+ * as nothing and open the container Workspace's editor on this Mac without a
+ * word.
  */
-export const STATE_SCHEMA_VERSION = 11;
+export const STATE_SCHEMA_VERSION = 12;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -321,6 +341,11 @@ export interface LoadMetadata {
   readonly primaryQuarantined: boolean;
   readonly backupQuarantined: boolean;
   readonly migrated: boolean;
+  /**
+   * What a migration changed that the person would otherwise not know about,
+   * one sentence each. Empty for almost every load.
+   */
+  readonly migrationNotes: readonly string[];
 }
 
 export interface StateLoad {
@@ -446,19 +471,17 @@ export interface AgentStateRecord {
  */
 export type WorkspaceLocationRecord =
   | { kind: "local" }
-  | { kind: "ssh"; host: string }
-  | {
-      kind: "container";
-      /**
-       * The folder on this Mac. This is the Workspace's identity, so it is the
-       * field the duplicate check is made on — `canonical_path` for one of
-       * these is the path *inside* the container, and two different host
-       * folders can easily mount at the same one.
-       */
-      workspace_folder: string;
-      /** Only when the person opened a definition other than the default. */
-      config_path?: string;
-    };
+  | { kind: "ssh"; host: string };
+
+/**
+ * Where the Workspace's editor is attached, when it is not the Workspace's own
+ * machine. See `EditorAttachment` and version 12.
+ */
+export interface EditorRecord {
+  kind: "dev_container";
+  /** The `devcontainer.json`, on the Workspace's machine. */
+  config_path: string;
+}
 
 export interface WorkspaceStateRecord {
   workspace_id: string;
@@ -469,6 +492,8 @@ export interface WorkspaceStateRecord {
    * machine. That absence *is* the migration: there is nothing to invent.
    */
   location?: WorkspaceLocationRecord;
+  /** Absent: the editor is on the Workspace's own machine. See version 12. */
+  editor?: EditorRecord;
   repository_id?: string;
   /**
    * There is deliberately no `issue_url` here any more.
@@ -839,22 +864,9 @@ function validateAgentRecord(where: string, record: AgentStateRecord): void {
 }
 
 /**
- * The same identity `locationKey` gives a Workspace, computed on the record.
- *
- * It is a separate function from `locationKey` because it works on the file's
- * spelling rather than the model's, and it is one function rather than an
- * expression at the call site because the identity of a dev container
- * Workspace is *not* its `canonical_path`: that is the path inside the
- * container, and two different host folders mount at `/workspaces/repo` as
- * readily as not. The host folder is what makes it that Workspace.
- */
-/**
  * The place a record names, in the vocabulary the domain constructs from.
  *
- * The inverse of `locationRecord`, and here beside the duplicate check for the
- * same reason: `canonical_path` means a different thing for a dev container
- * than for the other two — the path inside it — and the field that says which
- * machine is `workspace_folder`. A file with no `location` at all is a
+ * The inverse of `locationRecord`. A file with no `location` at all is a
  * version-4 file, where every Workspace was a folder on this machine.
  */
 function locationFromRecord(
@@ -868,25 +880,14 @@ function locationFromRecord(
         host: location.host,
         path: record.canonical_path,
       };
-    case "container":
-      return {
-        kind: "container",
-        workspaceFolder: location.workspace_folder,
-        ...(location.config_path === undefined
-          ? {}
-          : { configPath: location.config_path }),
-        path: record.canonical_path,
-      };
     default:
       return { kind: "local", path: record.canonical_path };
   }
 }
 
+/** The same identity `locationKey` gives a Workspace, computed on the record. */
 function workspaceRecordKey(record: WorkspaceStateRecord): string {
   const location = record.location;
-  if (location?.kind === "container") {
-    return `dev-container\u0000${normalizePathString(location.workspace_folder)}`;
-  }
   const host = location?.kind === "ssh" ? location.host : "";
   return `${host}\u0000${normalizePathString(record.canonical_path)}`;
 }
@@ -910,20 +911,12 @@ function validateWorkspaceRecord(
       sshHost(record.location?.kind === "ssh" ? record.location.host : ""),
     );
   }
-  if (record.location?.kind === "container") {
-    // The host folder is this Workspace's identity, so a file that has lost it
-    // — or had it hand-edited into something relative — is refused here rather
-    // than producing a Workspace keyed on nothing.
+  if (record.editor !== undefined) {
+    decodeEditor(`${where}.editor`, record.editor);
     validateAbsolutePath(
-      `${where}.location.workspace_folder`,
-      record.location.workspace_folder,
+      `${where}.editor.config_path`,
+      record.editor.config_path,
     );
-    if (record.location.config_path !== undefined) {
-      validateAbsolutePath(
-        `${where}.location.config_path`,
-        record.location.config_path,
-      );
-    }
   }
   if (record.repository_id !== undefined) {
     validateUuid(`${where}.repository_id`, record.repository_id);
@@ -1282,6 +1275,9 @@ export function hydrateModel(
           parseWorkspaceId(record.workspace_id),
           workspaceLocation(locationFromRecord(record)),
           displayPath(record.selected_path),
+          undefined,
+          AVAILABLE,
+          editorFromRecord(record.editor),
         ),
     );
     return { record, where, workspace };
@@ -1450,6 +1446,7 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       location: locationRecord(workspace.location),
+      ...editorRecord(workspace.editor),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -1750,7 +1747,8 @@ const LIFECYCLE_KINDS = [
   "closing",
   "closing_failed",
 ] as const;
-const WORKSPACE_LOCATION_KINDS = ["local", "ssh", "container"] as const;
+const WORKSPACE_LOCATION_KINDS = ["local", "ssh"] as const;
+const EDITOR_KINDS = ["dev_container"] as const;
 const NAVIGATION_KINDS = ["workspace", "agent"] as const;
 const OWNED_SESSION_KINDS = ["workspace"] as const;
 const CLEANUP_SESSION_STATUSES = [
@@ -1795,15 +1793,37 @@ function locationRecord(location: WorkspaceLocation): WorkspaceLocationRecord {
       return { kind: "local" };
     case "ssh":
       return { kind: "ssh", host: location.host };
-    case "container":
+  }
+}
+
+/** The editor, as the file spells it: nothing at all for the Workspace's own machine. */
+function editorRecord(editor: EditorAttachment): { editor?: EditorRecord } {
+  switch (editor.kind) {
+    case "host":
+      return {};
+    case "devContainer":
       return {
-        kind: "container",
-        workspace_folder: location.workspaceFolder,
-        ...(location.configPath === undefined
-          ? {}
-          : { config_path: location.configPath }),
+        editor: { kind: "dev_container", config_path: editor.configPath },
       };
   }
+}
+
+function editorFromRecord(record: EditorRecord | undefined): EditorAttachment {
+  return record === undefined
+    ? EDITOR_ON_HOST
+    : {
+        kind: "devContainer",
+        configPath: devContainerConfigPath(record.config_path),
+      };
+}
+
+function decodeEditor(where: string, value: unknown): EditorRecord {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(`${where}.kind`, object["kind"], EDITOR_KINDS);
+  return {
+    kind,
+    config_path: decodeString(`${where}.config_path`, object["config_path"]),
+  };
 }
 
 function decodeWorkspaceLocation(
@@ -1821,22 +1841,6 @@ function decodeWorkspaceLocation(
       return { kind };
     case "ssh":
       return { kind, host: decodeString(`${where}.host`, object["host"]) };
-    case "container":
-      return {
-        kind,
-        workspace_folder: decodeString(
-          `${where}.workspace_folder`,
-          object["workspace_folder"],
-        ),
-        ...(object["config_path"] === undefined
-          ? {}
-          : {
-              config_path: decodeString(
-                `${where}.config_path`,
-                object["config_path"],
-              ),
-            }),
-      };
   }
 }
 
@@ -1937,6 +1941,9 @@ function decodeWorkspaceRecord(
       object["location"] === undefined
         ? { kind: "local" }
         : decodeWorkspaceLocation(at("location"), object["location"]),
+    ...(object["editor"] === undefined
+      ? {}
+      : { editor: decodeEditor(at("editor"), object["editor"]) }),
     repository_id: decodeOptional(object["repository_id"], (entry) =>
       decodeString(at("repository_id"), entry),
     ),
@@ -2157,9 +2164,40 @@ function decodeShutdown(where: string, value: unknown): ShutdownMetadata {
  * what a person was told about a file DevHub had just quarantined.
  */
 type Decoded =
-  | { kind: "state"; state: PersistedAppState; migrated: boolean }
+  | {
+      kind: "state";
+      state: PersistedAppState;
+      migrated: boolean;
+      migrationNotes: readonly string[];
+    }
   | { kind: "corrupt"; detail: string }
   | { kind: "newer_version" };
+
+/** A document read and its version found, before any migration has run. */
+type Parsed =
+  | {
+      kind: "document";
+      object: Record<string, unknown>;
+      version: number;
+      legacy: unknown;
+    }
+  | { kind: "corrupt"; detail: string }
+  | { kind: "newer_version" };
+
+/**
+ * Facts an old document never wrote down, looked up before it is migrated.
+ *
+ * Handed the raw document and its version, and may fill in what a migration
+ * needs and only the outside world knows — which `devcontainer.json` a
+ * version-11 container Workspace was using, from Docker or the folder. It runs
+ * in main, because the model cannot ask a machine anything; the migration
+ * itself stays a pure function of the document. It answers the sentences the
+ * person has to be told about what it could not look up.
+ */
+export type StatePreparation = (
+  document: Record<string, unknown>,
+  version: number,
+) => Promise<readonly string[]>;
 
 /** The words a decode refusal contributes to what the person reads. */
 function detailOf(error: unknown): string {
@@ -2232,7 +2270,167 @@ function migrateToVersion11(object: Record<string, unknown>): void {
   }
 }
 
-function decodeState(bytes: Buffer): Decoded {
+/**
+ * The dev container out of `location` and onto `editor`, before the document
+ * is decoded. See version 12 above.
+ *
+ * On the raw document for the reason `migrateToVersion10` is. It answers the
+ * sentences a person has to be told, because two things happen here that
+ * nobody asked for: Agents that ran in a container are removed, and a
+ * Workspace that was open twice becomes one.
+ */
+export function migrateToVersion12(object: Record<string, unknown>): string[] {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const notes: string[] = [];
+  const workspaces = object["workspaces"];
+  const sessionMachines = object["session_machines"];
+  // A container was never a machine a Workspace is on any more, so a sweep
+  // must not be asked to visit one.
+  if (Array.isArray(sessionMachines)) {
+    object["session_machines"] = sessionMachines.filter(
+      (machine) =>
+        !(typeof machine === "string" && machine.startsWith("container:")),
+    );
+  }
+  if (!Array.isArray(workspaces)) return notes;
+
+  const hostKey = (record: Record<string, unknown>): string | undefined => {
+    const location = record["location"];
+    const host =
+      isRecord(location) && location["kind"] === "ssh" ? location["host"] : "";
+    const path = record["canonical_path"];
+    return typeof host === "string" && typeof path === "string"
+      ? `${host}\u0000${normalizePathString(path)}`
+      : undefined;
+  };
+  // The records that already are the host folder, by key, so a container
+  // record for the same folder can find the Workspace it now is.
+  const plain = new Map<string, Record<string, unknown>>();
+  for (const record of workspaces) {
+    if (!isRecord(record)) continue;
+    const location = record["location"];
+    if (isRecord(location) && location["kind"] === "container") continue;
+    const key = hostKey(record);
+    if (key !== undefined) plain.set(key, record);
+  }
+
+  /** Which workspace a dropped one's references now point at. */
+  const survivorOf = new Map<string, string>();
+  /** Every Agent removed, and the workspace it belonged to. */
+  const removedAgents = new Map<string, string>();
+  const kept: unknown[] = [];
+  for (const record of workspaces) {
+    const location = isRecord(record) ? record["location"] : undefined;
+    if (
+      !isRecord(record) ||
+      !isRecord(location) ||
+      location["kind"] !== "container"
+    ) {
+      kept.push(record);
+      continue;
+    }
+    const folder = location["workspace_folder"];
+    const id = record["workspace_id"];
+    if (typeof folder !== "string" || typeof id !== "string") {
+      // Not a record this migration can read; the decoder will say why.
+      kept.push(record);
+      continue;
+    }
+    const agents = Array.isArray(record["agents"]) ? record["agents"] : [];
+    for (const agent of agents) {
+      if (isRecord(agent) && typeof agent["agent_id"] === "string") {
+        removedAgents.set(agent["agent_id"], id);
+      }
+    }
+    if (agents.length > 0) {
+      notes.push(
+        `${String(agents.length)} Agent${agents.length === 1 ? "" : "s"} ran ` +
+          `inside the dev container for ${folder}. DevHub runs Agents on the ` +
+          `Workspace's own machine now, so ${agents.length === 1 ? "it was" : "they were"} removed.`,
+      );
+    }
+    const configPath = location["config_path"];
+    const existing = plain.get(`\u0000${normalizePathString(folder)}`);
+    if (
+      existing !== undefined &&
+      typeof existing["workspace_id"] === "string"
+    ) {
+      // The same folder, open twice: once as itself and once in its
+      // container. They are one Workspace now, and the one that was the
+      // folder already is the one that stays.
+      survivorOf.set(id, existing["workspace_id"]);
+      notes.push(
+        `${folder} was open both on this Mac and in its dev container. They ` +
+          `are one Workspace now; its editor opens on this Mac, and Reopen in ` +
+          `Container attaches it again.`,
+      );
+      continue;
+    }
+    record["canonical_path"] = folder;
+    record["selected_path"] = folder;
+    record["location"] = { kind: "local" };
+    record["agents"] = [];
+    delete record["last_agent_id"];
+    if (typeof configPath === "string") {
+      record["editor"] = { kind: "dev_container", config_path: configPath };
+    } else {
+      // `prepare` found no definition: no container carries one and the
+      // folder has none. The Workspace is still the folder; there is just no
+      // container for its editor to be in.
+      notes.push(
+        `No dev container definition was found for ${folder}, so its editor ` +
+          `opens on this Mac.`,
+      );
+    }
+    plain.set(`\u0000${normalizePathString(folder)}`, record);
+    kept.push(record);
+  }
+  object["workspaces"] = kept;
+
+  // Everything that named a Workspace that went, or an Agent that went.
+  const navigation = object["navigation"];
+  const context = isRecord(navigation) ? navigation["context"] : undefined;
+  if (isRecord(navigation) && isRecord(context)) {
+    const workspaceId = context["workspace_id"];
+    const agentId = context["agent_id"];
+    if (context["kind"] === "workspace" && typeof workspaceId === "string") {
+      const survivor = survivorOf.get(workspaceId);
+      if (survivor !== undefined) context["workspace_id"] = survivor;
+    }
+    if (context["kind"] === "agent" && typeof agentId === "string") {
+      const owner = removedAgents.get(agentId);
+      if (owner !== undefined) {
+        navigation["context"] = {
+          kind: "workspace",
+          workspace_id: survivorOf.get(owner) ?? owner,
+        };
+      }
+    }
+  }
+  const sidebar = object["sidebar"];
+  if (isRecord(sidebar) && Array.isArray(sidebar["order"])) {
+    sidebar["order"] = sidebar["order"].filter(
+      (id) => !(typeof id === "string" && survivorOf.has(id)),
+    );
+  }
+  const repoint = (value: unknown): void => {
+    if (!isRecord(value)) return;
+    const id = value["workspace_id"];
+    if (typeof id === "string") {
+      const survivor = survivorOf.get(id);
+      if (survivor !== undefined) value["workspace_id"] = survivor;
+    }
+    for (const nested of Object.values(value)) {
+      if (Array.isArray(nested)) nested.forEach(repoint);
+      else repoint(nested);
+    }
+  };
+  repoint(object["tmux"]);
+  return notes;
+}
+
+function parseState(bytes: Buffer): Parsed {
   let value: unknown;
   try {
     value = JSON.parse(bytes.toString("utf8"));
@@ -2264,9 +2462,21 @@ function decodeState(bytes: Buffer): Decoded {
   if (version > STATE_SCHEMA_VERSION) {
     return { kind: "newer_version" };
   }
+  return { kind: "document", object, version, legacy };
+}
+
+/** Decode a document with nothing prepared: see `JsonStateStore.prepare`. */
+function decodeState(bytes: Buffer): Decoded {
+  const parsed = parseState(bytes);
+  return parsed.kind === "document" ? decodeParsed(parsed) : parsed;
+}
+
+function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
+  const { object, version, legacy } = parsed;
   const migrated = version < STATE_SCHEMA_VERSION || legacy !== undefined;
   if (version < 10) migrateToVersion10(object);
   if (version < 11) migrateToVersion11(object);
+  const migrationNotes = version < 12 ? migrateToVersion12(object) : [];
   const fresh = freshState();
   // A key this build reads and the file does not have is the default; a key
   // the file *does* have has to mean what this build reads it as.
@@ -2358,13 +2568,38 @@ function decodeState(bytes: Buffer): Decoded {
     }
     return { kind: "corrupt", detail: detailOf(error) };
   }
-  return { kind: "state", state, migrated };
+  return { kind: "state", state, migrated, migrationNotes };
 }
 
 export class JsonStateStore {
   private writeChain: Promise<unknown> = Promise.resolve();
 
-  constructor(readonly path: string) {}
+  /**
+   * `prepare`: see `StatePreparation`. Absent in tests and tools that read a
+   * file without a machine to ask, where an old document is migrated with
+   * only what it says.
+   */
+  constructor(
+    readonly path: string,
+    private readonly prepare: StatePreparation | undefined = undefined,
+  ) {}
+
+  /** Parse, prepare, migrate and decode one candidate file. */
+  private async decodeCandidate(bytes: Buffer): Promise<Decoded> {
+    const parsed = parseState(bytes);
+    if (parsed.kind !== "document") return parsed;
+    const prepared =
+      this.prepare === undefined
+        ? []
+        : await this.prepare(parsed.object, parsed.version);
+    const decoded = decodeParsed(parsed);
+    return decoded.kind === "state"
+      ? {
+          ...decoded,
+          migrationNotes: [...prepared, ...decoded.migrationNotes],
+        }
+      : decoded;
+  }
 
   get backupPath(): string {
     return `${this.path}.bak`;
@@ -2414,7 +2649,7 @@ export class JsonStateStore {
     if (primary.kind === "unsafe") {
       fail("STATE_UNSAFE_PATH");
     }
-    const decoded = decodeState(primary.bytes);
+    const decoded = await this.decodeCandidate(primary.bytes);
     if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
@@ -2436,6 +2671,7 @@ export class JsonStateStore {
         primaryQuarantined: false,
         backupQuarantined: false,
         migrated: decoded.migrated,
+        migrationNotes: decoded.migrationNotes,
       },
     };
   }
@@ -2459,10 +2695,11 @@ export class JsonStateStore {
           primaryQuarantined,
           backupQuarantined: false,
           migrated: false,
+          migrationNotes: [],
         },
       };
     }
-    const decoded = decodeState(backup.bytes);
+    const decoded = await this.decodeCandidate(backup.bytes);
     if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
@@ -2477,6 +2714,7 @@ export class JsonStateStore {
           primaryQuarantined,
           backupQuarantined,
           migrated: false,
+          migrationNotes: [],
         },
       };
     }
@@ -2492,6 +2730,7 @@ export class JsonStateStore {
         primaryQuarantined,
         backupQuarantined: false,
         migrated: decoded.migrated,
+        migrationNotes: decoded.migrationNotes,
       },
     };
   }

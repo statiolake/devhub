@@ -120,18 +120,24 @@ import {
 	displayPath,
 	locationKey,
 	agentId as parseAgentId,
-	remoteAuthorityOf,
+	containerHostId,
+	containerTargetOf,
+	devContainerConfigPath,
+	EDITOR_ON_HOST,
+	editorAuthorityOf,
+	sameEditorAttachment,
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
+	type ContainerHostId,
+	type EditorAttachment,
 	type UnsavedEditorsInspection,
 	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
-	gitPlaceOf,
 	relocatedOnSameMachine,
 } from "../../model/domain.js";
 import { readSshHosts } from "./sshHosts.js";
@@ -278,16 +284,15 @@ import { registerConversationIpc } from "./conversationIpc.js";
 import { UsageLimits, usageLimitsListener } from "./usageLimits.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
-import {
-	ContainerRuntime,
-	devContainerConfigIn,
-} from "../runtime/container.js";
+import { devContainerConfigIn } from "../runtime/container.js";
 import { MachineConditions } from "./machineConditions.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
+	containerHostFor,
+	disposeContainerHost,
 	disposeRuntime,
+	liveContainerHosts,
 	liveRuntimes,
-	gitRuntimeFor,
 	localRuntime,
 	runtimeById,
 	runtimeForRequested,
@@ -350,6 +355,7 @@ import {
 	readWorktreeFolder,
 } from "./worktreeFolder.js";
 import { findClones } from "./issues.js";
+import { prepareContainerMigration } from "./containerMigration.js";
 import {
 	readGitHubLogin,
 	readGitHubToken,
@@ -463,17 +469,25 @@ function withDeadline<T>(
 /**
  * The folder URI a workbench is opened on.
  *
- * One function for both kinds, because the difference between them *is* this
+ * One function for every place, because the difference between them *is* this
  * URI and nothing else: everything on either side of the open — the view, the
- * supervision, the surface key — is the same code. `remoteAuthorityOf` composes
- * the authority, so the string this hands VS Code and the string Open Remote -
- * SSH is asked to resolve come from one place.
+ * supervision, the surface key — is the same code. `editorAuthorityOf`
+ * composes the authority, so the string this hands VS Code and the string the
+ * resolver is asked to resolve come from one place.
+ *
+ * `path` is where the workbench opens the folder: the folder itself on the
+ * Workspace's own machine, and where it is mounted when the editor is in a dev
+ * container — which only the container can say (`ContainerHost.workspacePath`).
  */
-function folderUriFor(location: WorkspaceLocation): URI {
-	const authority = remoteAuthorityOf(location);
+function folderUriFor(
+	location: WorkspaceLocation,
+	editor: EditorAttachment,
+	path: string,
+): URI {
+	const authority = editorAuthorityOf(location, editor);
 	return authority === undefined
-		? URI.file(location.path)
-		: URI.from({ scheme: "vscode-remote", authority, path: location.path });
+		? URI.file(path)
+		: URI.from({ scheme: "vscode-remote", authority, path });
 }
 
 /**
@@ -1018,6 +1032,7 @@ export class AppController {
 	private watchForWake(): void {
 		const wake = (): void => {
 			for (const runtime of liveRuntimes()) runtime.resumed();
+			for (const host of liveContainerHosts()) host.resumed();
 			this.agentReconcilers.wake();
 			this.checkEditorHealth();
 			// A Mac asleep across midnight wakes to a timer aimed at a moment
@@ -1843,6 +1858,23 @@ export class AppController {
 			// a connection and sessions on, which is worth more than a log line.
 			void disposeRuntime(runtime.id);
 		}
+		// And every dev container no Workspace's editor is attached to any
+		// more: its forward and its relay go, the container itself stays.
+		const attached = new Set(this.attachedContainers());
+		for (const host of liveContainerHosts()) {
+			if (attached.has(host.id)) continue;
+			void disposeContainerHost(host.id);
+		}
+	}
+
+	/** The dev containers Workspaces' editors are attached to right now. */
+	private attachedContainers(): readonly ContainerHostId[] {
+		const attached: ContainerHostId[] = [];
+		for (const workspace of this.coordinator.model.workspaces) {
+			const target = containerTargetOf(workspace.location, workspace.editor);
+			if (target !== undefined) attached.push(containerHostId(target));
+		}
+		return attached;
 	}
 
 	/**
@@ -2359,15 +2391,11 @@ export class AppController {
 		// so a checkout on another machine is read the same way as one here —
 		// the same row, with the same branch, Issue and pull request on it.
 		workspaces: () =>
-			this.coordinator.model.workspaces.map((workspace) => {
-				// Where this Workspace's *git* runs, which is not always where its
-				// terminals do. For a dev container it is this Mac, against the
-				// bind-mounted folder — so a stopped container costs a row its
-				// terminals and not its branch, and the watcher here is a real
-				// `fs.watch` rather than polling `refs` through a `docker exec`.
-				const { runtime, root } = gitRuntimeFor(workspace.location);
-				return { id: workspace.id, root, runtime };
-			}),
+			this.coordinator.model.workspaces.map((workspace) => ({
+				id: workspace.id,
+				root: workspace.root,
+				runtime: runtimeFor(workspace.location),
+			})),
 		publish: (status) => {
 			// The order the rows are in is git's answer to "which repository is
 			// this a checkout of", so a round that changes that answer changes the
@@ -3727,10 +3755,10 @@ export class AppController {
 		// fallback below is allowed to delete, and a folder that stopped being
 		// readable throws from here rather than being mistaken for one that is
 		// already gone.
-		// The worktree is a git fact, so it is read where this Workspace's git
-		// runs — for a dev container, the folder on this Mac and not the path
-		// inside it, which has no `.git` of its own to find.
-		const git = gitRuntimeFor(workspace.location);
+		const git = {
+			runtime: runtimeFor(workspace.location),
+			root: workspace.root,
+		};
 		const folder = await readWorktreeFolder(git.runtime, git.root);
 		const gitSaysWorktree =
 			repository?.mainWorktree !== undefined &&
@@ -3848,12 +3876,10 @@ export class AppController {
 	 * model is where a Workspace's place lives and a second copy is a second
 	 * thing that can be stale.
 	 */
-	private locationForEditorKey(
-		editorKey: string,
-	): WorkspaceLocation | undefined {
+	private workspaceForEditorKey(editorKey: string): Workspace | undefined {
 		return this.coordinator.model.workspaces.find(
 			(workspace) => workspace.key === editorKey,
-		)?.location;
+		);
 	}
 
 	/**
@@ -3992,7 +4018,9 @@ export class AppController {
 	private async openEditorView(
 		editorKey: string,
 	): Promise<WorkbenchView | undefined> {
-		const location = this.locationForEditorKey(editorKey);
+		const workspace = this.workspaceForEditorKey(editorKey);
+		const location = workspace?.location;
+		const editor = workspace?.editor ?? EDITOR_ON_HOST;
 		// Look before asking, for a folder DevHub can look at. VS Code answers an
 		// open for a folder that is not there with a modal box — "The path '…'
 		// does not exist on this computer." — and it answered it on every launch
@@ -4023,13 +4051,34 @@ export class AppController {
 				return undefined;
 			}
 		}
+		// Where the workbench opens the folder. On the Workspace's own machine
+		// that is the folder; in a dev container it is wherever the folder is
+		// mounted, which only the container can say — so it is started first,
+		// and only started: opening a window is the person's standing choice to
+		// have this editor in its container, which is enough to start one that
+		// exists and not enough to spend minutes building an image.
+		const target =
+			location === undefined ? undefined : containerTargetOf(location, editor);
+		const openPath =
+			target === undefined
+				? location?.path
+				: await (async () => {
+						const host = containerHostFor(target);
+						await host.prepare();
+						return host.workspacePath();
+					})();
 		const services = await this.services();
 		// Which `devhub-terminal` this window names, decided here because this
 		// is where the window's machine is already known. This is the *only*
 		// place that decides it: nothing else names one, so a window that is
 		// not told here has none, which is what the patched workbench is
-		// written to say out loud.
-		const launcher = await this.windowTerminalLauncher(location);
+		// written to say out loud. A window attached to a dev container has
+		// none yet: its terminal belongs on the Workspace's machine, and the
+		// workbench cannot yet put one there.
+		const launcher =
+			target === undefined
+				? await this.windowTerminalLauncher(location)
+				: undefined;
 		// Said in the log, every time, because this is the value whose being
 		// wrong is invisible from the outside: a window with another machine's
 		// launcher opens perfectly and only fails when somebody presses Ctrl+`.
@@ -4047,7 +4096,9 @@ export class AppController {
 			cli: this.cliArgs,
 			devhubTerminalLauncher: launcher,
 			urisToOpen:
-				location === undefined ? [] : [{ folderUri: folderUriFor(location) }],
+				location === undefined || openPath === undefined
+					? []
+					: [{ folderUri: folderUriFor(location, editor, openPath) }],
 			forceEmpty: location === undefined,
 			forceNewWindow: true,
 			noRecentEntry: true,
@@ -4603,6 +4654,61 @@ export class AppController {
 	}
 
 	/**
+	 * Attach a Workspace's editor somewhere else, and give it a workbench there.
+	 *
+	 * The Workspace does not move: its location, its key, its Agents and its
+	 * terminals are untouched, and so is the slot its editor is shown in. What
+	 * changes is where the workbench's far end is. So the order is: bring the
+	 * container up — building it if need be, because a person asked for this —
+	 * before the editor they are in is touched, so a definition that does not
+	 * build leaves them where they were; then close the old workbench the way a
+	 * Workspace close does, VS Code's own unsaved-work question included; then
+	 * record the new attachment and open the workbench it names.
+	 *
+	 * A person answering Cancel to the unsaved-work question is an answer, not
+	 * a failure: nothing changes and nothing is reported.
+	 */
+	private async attachEditor(
+		workspaceId: WorkspaceId,
+		next: EditorAttachment,
+	): Promise<void> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (!workspace) {
+			throw new Error(
+				`no workspace ${workspaceId} is open to attach an editor to`,
+			);
+		}
+		if (sameEditorAttachment(workspace.editor, next)) {
+			await this.ensureEditorView(workspace.key);
+			return;
+		}
+		if (workspaceId === this.coordinator.model.scratchWorkspaceId) {
+			throw workspaceFailure(
+				"Scratch's editor stays on this Mac: it is today's folder, and there is no dev container to open it in.",
+			);
+		}
+		const target = containerTargetOf(workspace.location, next);
+		if (target !== undefined) {
+			await containerHostFor(target).ensureUp({ build: true });
+		}
+		const vetoed = await this.askEditorToClose(workspaceId);
+		if (vetoed === "close_editor_vetoed") return;
+		if (vetoed !== undefined) {
+			throw workspaceFailure(
+				`The editor for ${workspace.root} could not be closed to reopen it (${vetoed}).`,
+			);
+		}
+		this.disposeEditorView(workspaceId);
+		await this.dispatchAwaiting({
+			type: "attach_editor",
+			workspaceId,
+			editor: next,
+		});
+		const view = await this.ensureEditorView(workspace.key);
+		if (view) shellWindow().assertArrangement();
+	}
+
+	/**
 	 * Which Workspace an `openFolder` just produced.
 	 *
 	 * The selection: opening a folder selects it, whether it was open already
@@ -5119,7 +5225,9 @@ export class AppController {
 				views,
 				counters: activityCounters.read(),
 				terminalClients,
-				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
+				runtimes: [...liveRuntimes(), ...liveContainerHosts()].map((runtime) =>
+					runtime.reading(),
+				),
 				terminalLauncher: [...this.launcherStatus.values()],
 				pendingSweeps: this.sessionSweeper?.pending ?? [],
 				repositoryRounds: this.repositoryStatus.rounds(),
@@ -5793,41 +5901,36 @@ export class AppController {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				try {
-					const configPath = await devContainerConfigIn(
-						localRuntime(),
-						workspaceFolder,
-					);
-					// The container has to exist before there is a Workspace to
-					// open, because the path the Workspace is *at* is a path inside
-					// it and nothing knows that path until it does. This is the
-					// explicit act `ensureUp` exists for — a person chose this.
-					const runtime = runtimeFor(
-						workspaceLocation({
-							kind: "container",
-							workspaceFolder,
-							...(configPath === undefined ? {} : { configPath }),
-							// A placeholder only for reaching the runtime: the
-							// machine is keyed on the host folder, so the path plays
-							// no part in which runtime this is.
-							path: "/",
-						}),
-					);
-					if (!(runtime instanceof ContainerRuntime)) {
-						throw new Error(
-							`${workspaceFolder} did not resolve to a dev container runtime`,
+					// The folder is the Workspace, opened like any folder; the
+					// container is where its editor goes. The container is brought
+					// up before either happens, so a definition that does not
+					// build leaves nothing half-open behind it.
+					const folder = await localRuntime().realpath(workspaceFolder);
+					const configPath = await devContainerConfigIn(localRuntime(), folder);
+					if (configPath === undefined) {
+						throw workspaceFailure(
+							`${folder} has no dev container definition, so there is no container to open it in.`,
 						);
 					}
-					await runtime.ensureUp();
-					const path = await runtime.workspacePath(workspaceFolder);
-					return await this.openFolder(
-						requestedLocation({
-							kind: "container",
-							workspaceFolder,
-							...(configPath === undefined ? {} : { configPath }),
-							path,
-						}),
+					const editor: EditorAttachment = {
+						kind: "devContainer",
+						configPath: devContainerConfigPath(configPath),
+					};
+					const location = workspaceLocation({ kind: "local", path: folder });
+					const target = containerTargetOf(location, editor);
+					if (target === undefined) {
+						throw new Error("a dev container attachment named no container");
+					}
+					await containerHostFor(target).ensureUp({ build: true });
+					const opened = await this.openFolder(
+						requestedLocation({ kind: "local", path: folder }),
 						withAgent,
 					);
+					await this.attachEditor(
+						this.openedWorkspaceId(requestedLocation(location)),
+						editor,
+					);
+					return opened;
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}
@@ -5943,10 +6046,8 @@ export class AppController {
 						// one used to arrive as a bare path and be read by this Mac's
 						// git, which answered about a directory of the same name here
 						// or about nothing at all.
-						// Where each one's git actually runs — which for a dev
-						// container is the folder on this Mac, not the path inside it.
-						this.coordinator.model.workspaces.map((workspace) =>
-							gitPlaceOf(workspace.location),
+						this.coordinator.model.workspaces.map(
+							(workspace) => workspace.location,
 						),
 						cancel,
 					),
@@ -6378,6 +6479,12 @@ export async function createAppController(
 
 	const stateStore = new JsonStateStore(
 		join(userDataPath, "devhub", "state.json"),
+		// What an older file never wrote down about a dev container, looked up
+		// before it is migrated. See `containerMigration.ts`.
+		prepareContainerMigration({
+			docker: { path: devhubProduct.dockerPath ?? "docker" },
+			stat: (path) => localRuntime().stat(path),
+		}),
 	);
 	const load = await stateStore.loadState();
 	const state = load.state;
@@ -6450,6 +6557,16 @@ export async function createAppController(
 	if (today.failure !== undefined) {
 		current.noteStartupFailure(
 			withDetail(errorWireAt("workspace_unavailable"), today.failure),
+		);
+	}
+	// What moving an older file forward changed without the person: one
+	// notice, every sentence in it.
+	if (load.metadata.migrationNotes.length > 0) {
+		current.noteStartupFailure(
+			withDetail(
+				errorWireAt("state_migrated"),
+				load.metadata.migrationNotes.join(" "),
+			),
 		);
 	}
 	return current;

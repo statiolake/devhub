@@ -1,5 +1,6 @@
 import type {
   AgentSnapshot,
+  EditorAttachmentWire,
   WorkspaceLocationWire,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
@@ -110,15 +111,6 @@ export function workspaceGlyphName(location: WorkspaceLocationWire): GlyphName {
       return "folder";
     case "ssh":
       return "remote";
-    // A dev container is the same distinction the rail already keeps — the
-    // work happens somewhere that is not here — so it takes the same slot
-    // rather than adding a fourth thing to learn. It is a mark of its own and
-    // not the `remote` racks because the two are not the same somewhere: one
-    // is a machine the person has an account on, the other is a box built from
-    // a file in this folder, and what you do when either stops answering is
-    // different.
-    case "container":
-      return "container";
   }
 }
 
@@ -150,23 +142,31 @@ export function rowIdentity(
 }
 
 /**
- * What a dev container is called, in a row's facts.
+ * The quiet line that says a row's editor is in a dev container, or nothing
+ * when it is on the Workspace's own machine.
  *
- * The folder's name and never the container's id: an id is a hash that changes
- * on every rebuild, and a fact that changed whenever somebody rebuilt would be
- * a tooltip that says something new about a Workspace that did not move. The
- * folder is what `locationKey` keys on, for the same reason.
- *
- * The name and not the path. The path fact above already carries where this
- * Workspace is — the path *inside* the container — and this line answers a
- * different question: which folder of mine is this. A second full path would
- * be read as a correction of the first one.
+ * It is the *editor's* fact and says so: the Workspace's terminals and Agents
+ * are where its folder is, and a line that read "in a dev container" would
+ * tell the person their Agents were in there. The definition's name follows
+ * only when the folder has several to choose from.
  */
-function containerName(workspaceFolder: string): string {
-  const trimmed = workspaceFolder.replace(/\/+$/u, "");
-  const cut = trimmed.lastIndexOf("/");
-  const name = cut === -1 ? trimmed : trimmed.slice(cut + 1);
-  return name.length === 0 ? workspaceFolder : name;
+export function editorAttachmentFact(
+  editor: EditorAttachmentWire,
+): { readonly text: string; readonly spoken: string } | undefined {
+  switch (editor.kind) {
+    case "host":
+      return undefined;
+    case "devContainer":
+      return editor.label === undefined
+        ? {
+            text: "editor in dev container",
+            spoken: "editor in its dev container",
+          }
+        : {
+            text: `editor in dev container: ${editor.label}`,
+            spoken: `editor in the ${editor.label} dev container`,
+          };
+  }
 }
 
 /**
@@ -374,18 +374,13 @@ export function workspaceRowFacts(
           style: "muted",
         }
       : undefined,
-    // The same fact for a container: where the terminals and the Agents are.
-    // Worth saying even though the row's mark says it too, because the mark
-    // says *that* it is a container and this says *which* — and because the
-    // path above is the path inside it, which is not a folder the person has.
-    workspace.location.kind === "container"
-      ? {
-          icon: "container",
-          text: `dev container: ${containerName(workspace.location.workspaceFolder)}`,
-          spoken: `in a dev container for ${containerName(workspace.location.workspaceFolder)}`,
-          style: "muted",
-        }
-      : undefined,
+    // Where the editor is, when it is not on the Workspace's machine.
+    ((fact) =>
+      fact === undefined
+        ? undefined
+        : { icon: "container" as const, ...fact, style: "muted" as const })(
+      editorAttachmentFact(workspace.editor),
+    ),
   ]);
 }
 

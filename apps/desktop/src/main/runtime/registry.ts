@@ -16,18 +16,19 @@
  */
 
 import {
-	containerMachine,
-	gitPlaceOf,
+	containerHostId,
+	containerTargetFromHostId,
 	remoteAuthorityOf,
-	workspaceLocation,
 	sshHost,
 	workspaceRoot,
+	type ContainerHostId,
+	type ContainerTarget,
 	type RequestedLocation,
 	type WorkspaceLocation,
 	type WorkspaceRoot,
 } from "../../model/domain.js";
 import {
-	ContainerRuntime,
+	ContainerHost,
 	type DevContainerCli,
 	type DockerCli,
 } from "./container.js";
@@ -56,18 +57,22 @@ const LOCAL = new LocalRuntime();
 const SSH = new Map<string, SshRuntime>();
 
 /**
- * One runtime per dev container Workspace, keyed on the folder on this Mac.
+ * One host per dev container DevHub has been asked to reach, keyed on its
+ * `ContainerHostId` — the folder, its machine and its definition.
  *
- * Keyed on the host folder and not on the container id for the reason
- * `containerMachine` gives: a rebuild hands back a new container and must not
- * hand back a new machine. The runtime behind the key is what notices the
- * container underneath it changed, and `disposeRuntime` is how it is replaced
- * when it has — every "installed once per machine" cache inside a runtime
- * (tmux, the launcher, the server) is keyed on the instance, so a rebuilt
- * container needs a new instance or it will go on believing it installed
- * things into a filesystem that no longer exists.
+ * Keyed on the target and not on the container id: a rebuild hands back a new
+ * container and must not hand back a new key. The host behind the key is what
+ * notices the container underneath it changed, and `containerHostFor` is how it
+ * is replaced when it has — every "installed once" cache inside it (the
+ * server, the relay, the `devhub` command) is keyed on the instance, so a
+ * rebuilt container needs a new instance or it will go on believing it
+ * installed things into a filesystem that no longer exists.
+ *
+ * These are not runtimes. Nothing a Workspace owns runs in a container — its
+ * terminals and Agents run where its folder is — so no `RuntimeId` names one,
+ * and `runtimeFor` never returns one.
  */
-const CONTAINERS = new Map<string, ContainerRuntime>();
+const CONTAINERS = new Map<ContainerHostId, ContainerHost>();
 
 /**
  * Where this DevHub keeps its own files, told rather than discovered.
@@ -109,7 +114,8 @@ export interface RuntimeProfile {
 	 */
 	readonly reh: RehDelivery;
 	/**
-	 * How this DevHub runs `docker`, and how it runs `devcontainer`.
+	 * How this DevHub runs `docker`, and how it runs `devcontainer`, on this
+	 * Mac.
 	 *
 	 * On the profile beside `tmux` and `reh` and for the same reason: both are
 	 * one statement of one product fact — which binary this build drives — made
@@ -185,38 +191,47 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 			SSH.set(location.host, runtime);
 			return runtime;
 		}
-		case "container": {
-			const key = location.workspaceFolder;
-			const existing = CONTAINERS.get(key);
-			// A runtime that has seen its container replaced refuses everything
-			// from that moment on, because its caches describe a filesystem that
-			// has been deleted. Replacing it is this function's job and nothing
-			// else's: the Workspace is still the same Workspace — that is what
-			// keying the machine on the host folder means — so a rebuild costs a
-			// runtime instance and never a row. Without this the refusal would be
-			// permanent and a rebuilt container would never come back.
-			if (existing !== undefined && !existing.replaced) return existing;
-			if (existing !== undefined) {
-				CONTAINERS.delete(key);
-				void existing.dispose();
-			}
-			if (profile === undefined) {
-				throw new Error(
-					"a runtime was asked for before the runtime profile was set",
-				);
-			}
-			const runtime = new ContainerRuntime({
-				workspaceFolder: key,
-				configPath: location.configPath,
-				docker: profile.docker,
-				devcontainer: profile.devcontainer,
-				tmux: profile.tmux,
-				reh: profile.reh,
-			});
-			CONTAINERS.set(key, runtime);
-			return runtime;
-		}
 	}
+}
+
+/**
+ * The host a dev container is reached through.
+ *
+ * A host that has seen its container replaced refuses everything from that
+ * moment on, because its caches describe a filesystem that has been deleted.
+ * Replacing it is this function's job and nothing else's: the target is still
+ * the same target — that is what keying on the folder and the definition
+ * means — so a rebuild costs a host instance and never a Workspace. Without
+ * this the refusal would be permanent and a rebuilt container would never
+ * come back.
+ */
+export function containerHostFor(target: ContainerTarget): ContainerHost {
+	const key = containerHostId(target);
+	const existing = CONTAINERS.get(key);
+	if (existing !== undefined && !existing.replaced) return existing;
+	if (existing !== undefined) {
+		CONTAINERS.delete(key);
+		void existing.dispose();
+	}
+	if (profile === undefined) {
+		throw new Error(
+			"a dev container was asked for before the runtime profile was set",
+		);
+	}
+	if (target.location.kind !== "local") {
+		throw new Error(
+			`a dev container on ${target.location.host} was asked for, and this ` +
+				`DevHub brings dev containers up only on this Mac`,
+		);
+	}
+	const host = new ContainerHost({
+		target,
+		docker: profile.docker,
+		devcontainer: profile.devcontainer,
+		reh: profile.reh,
+	});
+	CONTAINERS.set(key, host);
+	return host;
 }
 
 /**
@@ -231,40 +246,13 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 export function runtimeForRequested(requested: {
 	readonly kind: RequestedLocation["kind"];
 	readonly host?: string;
-	readonly workspaceFolder?: string;
 }): Runtime {
 	switch (requested.kind) {
 		case "local":
 			return LOCAL;
 		case "ssh":
 			return runtimeById(`ssh:${requested.host ?? ""}`);
-		case "container":
-			return runtimeById(
-				containerMachine(workspaceRoot(requested.workspaceFolder ?? "")),
-			);
 	}
-}
-
-/**
- * The machine this Workspace's git runs on, and the folder it runs in.
- *
- * Both halves, from one call, because they are one decision and a caller that
- * took the machine from here and the path from the Workspace would be right
- * for two location kinds and wrong for the third. A dev container's Workspace
- * carries two paths — the folder on this Mac and where it is mounted inside —
- * and git wants the first while everything else wants the second.
- *
- * `gitPlaceOf` in `model/domain.ts` is the decision and its reasons; this is
- * where it becomes a runtime. Terminals, Agents and the folder probe keep
- * using `runtimeFor`, which is the *other* answer and the right one for them:
- * they run where the work runs.
- */
-export function gitRuntimeFor(location: WorkspaceLocation): {
-	readonly runtime: Runtime;
-	readonly root: WorkspaceRoot;
-} {
-	const place = workspaceLocation(gitPlaceOf(location));
-	return { runtime: runtimeFor(place), root: place.path };
 }
 
 /**
@@ -281,8 +269,6 @@ export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
 			return "local";
 		case "ssh":
 			return `ssh:${location.host}`;
-		case "container":
-			return containerMachine(location.workspaceFolder);
 	}
 }
 
@@ -305,14 +291,30 @@ export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
  * adapter for it is found from that name.
  */
 export function runtimeMachine(raw: string): RuntimeId {
-	if (
-		raw === "local" ||
-		raw.startsWith("ssh:") ||
-		raw.startsWith("container:")
-	) {
+	if (raw === "local" || raw.startsWith("ssh:")) {
 		return raw as RuntimeId;
 	}
 	throw new Error(`${raw} does not name a machine DevHub knows`);
+}
+
+/**
+ * Where a remote workbench's extension host is, as the resolver names it: a
+ * host, or a dev container.
+ *
+ * Beside `runtimeMachine` and not inside it, because a container is not a
+ * machine a Workspace is on — only an editor's far end — and a caller that
+ * wanted a runtime must not be handed one.
+ */
+export type EditorHostId = Exclude<RuntimeId, "local"> | ContainerHostId;
+
+export function editorHostMachine(raw: string): EditorHostId {
+	if (raw.startsWith("ssh:")) return raw as EditorHostId;
+	if (containerTargetFromHostId(raw) !== undefined) {
+		return raw as ContainerHostId;
+	}
+	throw new Error(
+		`${raw} does not name a host or a dev container DevHub can open a workbench on`,
+	);
 }
 
 /**
@@ -341,16 +343,6 @@ export function locationOnMachine(
 	path: WorkspaceRoot,
 ): WorkspaceLocation {
 	if (id === "local") return { kind: "local", path };
-	if (id.startsWith("container:")) {
-		// The machine id *is* the host folder, so the location comes back whole
-		// apart from `configPath` — which is not on the id because it is not part
-		// of the identity, and a caller that needs it has the Workspace.
-		return {
-			kind: "container",
-			workspaceFolder: workspaceRoot(id.slice("container:".length)),
-			path,
-		};
-	}
 	return { kind: "ssh", host: sshHost(id.slice("ssh:".length)), path };
 }
 
@@ -367,7 +359,7 @@ export function locationOnMachine(
  * this Mac has no authority to resolve at all, so the refusal is a fact about
  * the design rather than a gap in it, and it says so in those words.
  */
-export function remoteServerFor(id: RuntimeId): {
+export function remoteServerFor(id: EditorHostId): {
 	readonly host: RemoteServerHost;
 	readonly delivery: RehDelivery;
 } {
@@ -376,17 +368,11 @@ export function remoteServerFor(id: RuntimeId): {
 			"a remote endpoint was asked for before the runtime profile was set",
 		);
 	}
-	if (id === "local") {
-		throw new Error(
-			"this machine is the one DevHub is running on, so a workbench on it " +
-				"has no remote authority to resolve and no remote extension host to " +
-				"reach",
-		);
+	const target = containerTargetFromHostId(id);
+	if (target !== undefined) {
+		return { host: containerHostFor(target), delivery: profile.reh };
 	}
-	const runtime = runtimeById(id);
-	if (runtime instanceof ContainerRuntime) {
-		return { host: runtime, delivery: profile.reh };
-	}
+	const runtime = runtimeById(runtimeMachine(id));
 	if (!(runtime instanceof SshRuntime)) {
 		throw new Error(
 			`${id} does not name a machine DevHub can reach a server on`,
@@ -418,12 +404,19 @@ export async function disposeRuntime(id: RuntimeId): Promise<void> {
 		await runtime.dispose();
 		return;
 	}
-	for (const [folder, runtime] of CONTAINERS) {
-		if (runtime.id !== id) continue;
-		CONTAINERS.delete(folder);
-		await runtime.dispose();
-		return;
-	}
+}
+
+/**
+ * Let go of a dev container no Workspace's editor is attached to any more.
+ *
+ * The container itself is untouched: what goes is DevHub's forward into it
+ * and its relay, the same things a closed window would have let go of.
+ */
+export async function disposeContainerHost(id: ContainerHostId): Promise<void> {
+	const host = CONTAINERS.get(id);
+	if (host === undefined) return;
+	CONTAINERS.delete(id);
+	await host.dispose();
 }
 
 /**
@@ -447,5 +440,10 @@ export function localRuntime(): Runtime {
  * order twice running, which is what makes two readings comparable.
  */
 export function liveRuntimes(): readonly Runtime[] {
-	return [LOCAL, ...SSH.values(), ...CONTAINERS.values()];
+	return [LOCAL, ...SSH.values()];
+}
+
+/** Every dev container DevHub is holding a forward into right now. */
+export function liveContainerHosts(): readonly ContainerHost[] {
+	return [...CONTAINERS.values()];
 }

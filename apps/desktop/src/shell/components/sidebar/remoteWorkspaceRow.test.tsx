@@ -87,6 +87,7 @@ const REMOTE = {
   id: "w-1",
   label: "api",
   location: { kind: "ssh", host: "build.example.com" },
+  editor: { kind: "host" },
   root: "/srv/api",
   displayRoot: "/srv/api",
   key: "ssh://build.example.com/srv/api",
@@ -97,19 +98,22 @@ const REMOTE = {
   agents: [],
 };
 
-const CONTAINER = {
+/** A folder on this Mac whose editor is attached to one of its dev containers. */
+const ATTACHED = {
   ...REMOTE,
-  location: { kind: "container", workspaceFolder: "/projects/api" },
-  root: "/workspaces/api",
-  displayRoot: "/workspaces/api",
-  key: "dev-container:///projects/api",
-  selectedPath: "/workspaces/api",
+  location: { kind: "local" },
+  editor: { kind: "devContainer", label: "python" },
+  root: "/projects/api",
+  displayRoot: "/projects/api",
+  key: "/projects/api",
+  selectedPath: "/projects/api",
 };
 
 const LOCAL = {
   ...REMOTE,
   label: "widget",
   location: { kind: "local" },
+  editor: { kind: "host" },
   root: "/projects/widget",
   displayRoot: "/projects/widget",
   key: "/projects/widget",
@@ -203,42 +207,45 @@ describe("a Workspace row whose folder is on another machine", () => {
     });
   });
 
-  it("wears a mark of its own when the folder is in a dev container", () => {
-    // Same slot on the rail, different silhouette. It answers the same
-    // question the racks answer — the work happens somewhere that is not here
-    // — but what you do when either stops answering is not the same, so the
-    // two have to be tellable apart at thirteen pixels.
-    mount(CONTAINER);
+  it("is still a folder on this Mac when its editor is in a dev container", () => {
+    // The Workspace is its folder. Its editor being in a container does not
+    // move it — its Agents and terminals are here — so the row's leading mark
+    // is the folder's, and the container is a quiet mark of its own.
+    mount(ATTACHED);
     expect(
       document.querySelector(".workspace-row:not(.is-scratch) .row-glyph svg"),
-    ).toHaveAttribute("data-glyph", "container");
-    expect(document.querySelectorAll('[data-glyph="container"]')).toHaveLength(
-      1,
+    ).toHaveAttribute("data-glyph", "folder");
+    const mark = document.querySelector(".row-mark-editor");
+    expect(mark?.querySelector("svg")).toHaveAttribute(
+      "data-glyph",
+      "container",
     );
-    // And it is not wearing the ssh machine's mark.
+    expect(mark).toHaveAttribute(
+      "data-tooltip",
+      "editor in dev container: python",
+    );
     expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(0);
   });
 
-  it("names which dev container in the facts, by folder and never by id", () => {
-    mount(CONTAINER);
+  it("says in the facts that the editor, and only the editor, is in the container", () => {
+    mount(ATTACHED);
     const lines = JSON.parse(
       document
         .querySelector("[data-tree-item-id='workspace:w-1']")
         ?.closest("[data-tooltip-lines]")
         ?.getAttribute("data-tooltip-lines") ?? "[]",
     ) as { icon?: string; text: string }[];
-    // The path fact is the path *inside* the container, which is not a folder
-    // the person has...
-    expect(lines).toContainEqual({ text: "/workspaces/api", style: "muted" });
-    // ...so the machine fact answers the other question: which folder of mine.
-    // The name and not the id: an id is a hash that changes on every rebuild,
-    // and a fact that moved when somebody rebuilt would say something new
-    // about a Workspace that did not.
+    expect(lines).toContainEqual({ text: "/projects/api", style: "muted" });
     expect(lines).toContainEqual({
       icon: "container",
-      text: "dev container: api",
+      text: "editor in dev container: python",
       style: "muted",
     });
+  });
+
+  it("wears no editor mark when the editor is on the Workspace's machine", () => {
+    mount(LOCAL);
+    expect(document.querySelector(".row-mark-editor")).toBeNull();
   });
 
   it("changes nothing about a row whose folder is on this machine", () => {

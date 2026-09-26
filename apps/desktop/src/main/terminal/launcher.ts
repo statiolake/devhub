@@ -71,7 +71,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
-import type { RuntimeId } from "../runtime/runtime.js";
+import type { ShellMachineId } from "../runtime/runtime.js";
 import { shellQuote, shellQuoteArgv } from "../runtime/quote.js";
 
 /** The launcher's file name, next to the control socket it talks to. */
@@ -96,8 +96,8 @@ export interface TerminalLauncherRequest {
 	readonly entryScript: string;
 	/** The control socket of the DevHub this launcher belongs to. */
 	readonly socketPath: string;
-	/** The machine this launcher is written for: `local`, or `ssh:<host>`. */
-	readonly machine: RuntimeId;
+	/** The machine this launcher is written for: `local`, `ssh:<host>`, or a container. */
+	readonly machine: ShellMachineId;
 }
 
 export function terminalLauncherScript(
@@ -253,7 +253,7 @@ export function remoteCliScript(request: {
 	readonly execPath: string;
 	readonly cliScript: string;
 	readonly socketPath: string;
-	readonly machine: RuntimeId;
+	readonly machine: ShellMachineId;
 }): string {
 	return [
 		"#!/bin/sh",

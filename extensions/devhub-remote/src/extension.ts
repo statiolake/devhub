@@ -22,7 +22,8 @@ import {
   requestResolveRemote,
 } from "./control";
 import {
-  machineFromAuthority,
+  CONTAINER_PREFIX,
+  containerFromPayload,
   resolveRemote,
   type ResolverApi,
 } from "./resolveRemote";
@@ -80,17 +81,27 @@ function nameTheHost(
  * What the status bar and the window title say this window is on.
  *
  * A host is named by its alias, which is what the person typed and what tells
- * two of them apart. A dev container is named by the folder on this Mac, for
- * the same reason and by the same rule: it is the name the person chose, and
- * it is what `locationKey` keys the Workspace on. The container id would be
+ * two of them apart. A dev container is named by its folder, for the same
+ * reason and by the same rule — and by its definition too when the folder has
+ * several (`.devcontainer/<name>/devcontainer.json`), because then the folder
+ * alone does not say which container this is. The container id would be
  * neither — it is a hash that changes on every rebuild.
  */
 function workspaceSuffixFor(authority: string): string {
-  const machine = machineFromAuthority(authority);
-  if (machine?.startsWith("container:")) {
-    const folder = machine.slice("container:".length);
-    const name = folder.slice(folder.lastIndexOf("/") + 1);
-    return `Dev Container: ${name.length === 0 ? folder : name}`;
+  if (authority.startsWith(CONTAINER_PREFIX)) {
+    const container = containerFromPayload(
+      authority.slice(CONTAINER_PREFIX.length),
+    );
+    if (container !== null) {
+      const folder = container.hostPath;
+      const name = folder.slice(folder.lastIndexOf("/") + 1) || folder;
+      const named = /\/\.devcontainer\/([^/]+)\/devcontainer\.json$/u.exec(
+        container.configPath,
+      );
+      const where =
+        container.sshHost === undefined ? "" : ` on ${container.sshHost}`;
+      return `Dev Container: ${name}${named === null ? "" : ` (${named[1]})`}${where}`;
+    }
   }
   return `SSH: ${authority.slice(authority.indexOf("+") + 1)}`;
 }

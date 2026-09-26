@@ -21,7 +21,7 @@ import type { Runtime } from "./runtime.js";
 const MAX_MARKER_BYTES = 4096;
 
 export async function gitDirectoryOf(
-	runtime: Runtime,
+	runtime: Pick<Runtime, "stat" | "readTextFile">,
 	worktree: string,
 ): Promise<string> {
 	const dotGit = join(worktree, ".git");

@@ -97,28 +97,45 @@ test("an ssh-remote authority names the machine DevHub spells", () => {
 });
 
 /** What `encodeContainerAuthority` in `model/domain.ts` writes. */
-function containerAuthority(hostPath: string): string {
-  const json = JSON.stringify({ hostPath });
+function containerPayload(fields: Record<string, string>): string {
   let hex = "";
-  for (const byte of new TextEncoder().encode(json)) {
+  for (const byte of new TextEncoder().encode(JSON.stringify(fields))) {
     hex += byte.toString(16).padStart(2, "0");
   }
-  return `dev-container+${hex}`;
+  return hex;
 }
 
-test("a dev-container authority names the folder on this Mac", () => {
-  // The machine a container Workspace is on is the *host folder*, not the
-  // container id: a rebuild gives a new container and must not give a new
-  // machine. This is the other half of the round trip main writes.
+test("a dev-container authority names the container by its payload", () => {
+  // The container is named by main's own spelling of "this folder, with this
+  // definition" — the key its container hosts are filed under — so it is
+  // passed through whole rather than taken apart and put back together here.
+  const payload = containerPayload({
+    hostPath: "/src/api (copy)/wörk",
+    configPath: "/src/api (copy)/wörk/.devcontainer/devcontainer.json",
+  });
   strictEqual(
-    machineFromAuthority(containerAuthority("/src/api")),
-    "container:/src/api",
+    machineFromAuthority(`dev-container+${payload}`),
+    `container:${payload}`,
   );
-  // A path with the characters a real one has, so the hex is exercised on
-  // something wider than ASCII letters.
+  const onHost = containerPayload({
+    hostPath: "/srv/api",
+    configPath: "/srv/api/.devcontainer/python/devcontainer.json",
+    sshHost: "build",
+  });
   strictEqual(
-    machineFromAuthority(containerAuthority("/src/api (copy)/wörk")),
-    "container:/src/api (copy)/wörk",
+    machineFromAuthority(`dev-container+${onHost}`),
+    `container:${onHost}`,
+  );
+});
+
+test("a dev-container authority without its definition names no container", () => {
+  // An authority from before the definition was carried in it is one this
+  // DevHub did not write: which container it means would be a guess.
+  strictEqual(
+    machineFromAuthority(
+      `dev-container+${containerPayload({ hostPath: "/src/api" })}`,
+    ),
+    null,
   );
 });
 

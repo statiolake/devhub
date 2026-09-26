@@ -79,6 +79,7 @@ import type {
 	ExecRequest,
 	ExecResult,
 	PtyRequest,
+	Runtime,
 	RuntimeCadence,
 	RuntimeId,
 	RuntimeReading,
@@ -454,7 +455,10 @@ interface HeldForward {
 /** How long a probe of a local forward waits before calling it dead. */
 const FORWARD_PROBE_MS = 3000;
 
-export class SshRuntime extends RemoteShellRuntime implements RemoteServerHost {
+export class SshRuntime
+	extends RemoteShellRuntime
+	implements Runtime, RemoteServerHost
+{
 	readonly id: RuntimeId;
 	readonly where: string;
 

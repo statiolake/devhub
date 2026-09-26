@@ -6,6 +6,7 @@ import {
   AgentProfile,
   agentId,
   agentProfileId,
+  devContainerConfigPath,
   displayPath,
   Workspace,
   workspaceId,
@@ -96,6 +97,28 @@ describe("projection", () => {
       AG_A,
     ]);
     expect(restored.snapshot().selection).toEqual(model.snapshot().selection);
+  });
+
+  it("round-trips where a Workspace's editor is attached", () => {
+    const model = populatedModel();
+    model.attachEditor(WS_B, {
+      kind: "devContainer",
+      configPath: devContainerConfigPath(
+        "/dev/b/.devcontainer/devcontainer.json",
+      ),
+    });
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[1]!.editor).toEqual({
+      kind: "dev_container",
+      config_path: "/dev/b/.devcontainer/devcontainer.json",
+    });
+    // The Workspace's own machine is written as nothing at all.
+    expect("editor" in state.workspaces[0]!).toBe(false);
+    const restored = hydrateModel(state, [codex], today()).snapshot();
+    expect(restored.workspaces[1]!.editor).toEqual(
+      model.snapshot().workspaces[1]!.editor,
+    );
+    expect(restored.workspaces[0]!.editor).toEqual({ kind: "host" });
   });
 
   it("keeps an agent whose profile is gone, marked unavailable", () => {
@@ -680,6 +703,160 @@ describe("store", () => {
     });
   });
 
+  /**
+   * A version-11 document with a container Workspace in it: `WS_B` becomes a
+   * container record for `folder`, and keeps the Agent the populated model
+   * gave `WS_A` as its own, so the Agent removal can be seen.
+   */
+  function version11WithContainer(options: {
+    readonly folder: string;
+    readonly configPath?: string;
+  }): Record<string, unknown> {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    > & {
+      workspaces: Record<string, unknown>[];
+      navigation: Record<string, unknown>;
+    };
+    document["schema_version"] = 11;
+    const container = document.workspaces[1]!;
+    container["canonical_path"] = "/workspaces/inside";
+    container["selected_path"] = "/workspaces/inside";
+    container["location"] = {
+      kind: "container",
+      workspace_folder: options.folder,
+      ...(options.configPath === undefined
+        ? {}
+        : { config_path: options.configPath }),
+    };
+    const moved = (
+      document.workspaces[0]!["agents"] as Record<string, unknown>[]
+    ).map((agent) => ({ ...agent, workspace_id: WS_B }));
+    document.workspaces[0]!["agents"] = [];
+    container["agents"] = moved;
+    document["session_machines"] = ["local", `container:${options.folder}`];
+    document.navigation = { context: { kind: "agent", agent_id: AG_A } };
+    return document;
+  }
+
+  it("turns a version-11 container Workspace into its folder, with its editor attached", async () => {
+    await writeFile(
+      path,
+      JSON.stringify(
+        version11WithContainer({
+          folder: "/dev/c",
+          configPath: "/dev/c/.devcontainer/python/devcontainer.json",
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.origin).toBe("primary");
+    const record = load.state.workspaces[1]!;
+    expect(record.canonical_path).toBe("/dev/c");
+    expect(record.location).toEqual({ kind: "local" });
+    expect(record.editor).toEqual({
+      kind: "dev_container",
+      config_path: "/dev/c/.devcontainer/python/devcontainer.json",
+    });
+    // Its Agent ran inside the container; DevHub runs Agents where the folder
+    // is now, so it is gone — and the person is told.
+    expect(record.agents).toEqual([]);
+    expect(load.metadata.migrationNotes.join(" ")).toMatch(
+      /1 Agent ran inside the dev container for \/dev\/c/u,
+    );
+    // What named that Agent names its Workspace instead, and a container is
+    // no longer a machine the sweep visits.
+    expect(load.state.navigation.context).toEqual({
+      kind: "workspace",
+      workspace_id: WS_B,
+    });
+    expect(load.state.session_machines).toEqual(["local"]);
+    // And the model it hydrates has the editor attached to that definition.
+    const workspace = hydrateModel(load.state, [codex], today())
+      .snapshot()
+      .workspaces.find((candidate) => candidate.id === WS_B)!;
+    expect(workspace.location).toEqual({ kind: "local", path: "/dev/c" });
+    expect(workspace.editor).toEqual({
+      kind: "devContainer",
+      configPath: "/dev/c/.devcontainer/python/devcontainer.json",
+    });
+  });
+
+  it("makes one Workspace of a folder that was open both itself and in its container", async () => {
+    const document = version11WithContainer({
+      folder: "/dev/a",
+      configPath: "/dev/a/.devcontainer/devcontainer.json",
+    });
+    document["navigation"] = {
+      context: { kind: "workspace", workspace_id: WS_B },
+    };
+    (document["sidebar"] as Record<string, unknown>)["order"] = [WS_B, WS_A];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    // The folder that already was itself stays; the container record goes,
+    // and everything that named it names the survivor.
+    expect(load.state.workspaces.map((record) => record.workspace_id)).toEqual([
+      WS_A,
+    ]);
+    expect(load.state.workspaces[0]!.editor).toBeUndefined();
+    expect(load.state.navigation.context).toEqual({
+      kind: "workspace",
+      workspace_id: WS_A,
+    });
+    expect(load.state.sidebar.order).toEqual([WS_A]);
+    expect(load.metadata.migrationNotes.join(" ")).toMatch(
+      /\/dev\/a was open both on this Mac and in its dev container/u,
+    );
+  });
+
+  it("asks main for a definition the version-11 file never wrote down", async () => {
+    await writeFile(
+      path,
+      JSON.stringify(version11WithContainer({ folder: "/dev/c" })),
+      { mode: 0o600 },
+    );
+    const asked: string[] = [];
+    const load = await new JsonStateStore(path, async (document, version) => {
+      expect(version).toBe(11);
+      for (const record of document["workspaces"] as Record<
+        string,
+        unknown
+      >[]) {
+        const location = record["location"] as Record<string, unknown>;
+        if (location["kind"] !== "container") continue;
+        asked.push(location["workspace_folder"] as string);
+        location["config_path"] = "/dev/c/.devcontainer.json";
+      }
+      return ["Docker did not answer."];
+    }).loadState();
+    expect(asked).toEqual(["/dev/c"]);
+    expect(load.state.workspaces[1]!.editor).toEqual({
+      kind: "dev_container",
+      config_path: "/dev/c/.devcontainer.json",
+    });
+    // What the preparation had to say reaches the person too.
+    expect(load.metadata.migrationNotes[0]).toBe("Docker did not answer.");
+  });
+
+  it("opens the editor on this Mac when no definition could be found, and says so", async () => {
+    await writeFile(
+      path,
+      JSON.stringify(version11WithContainer({ folder: "/dev/c" })),
+      { mode: 0o600 },
+    );
+    const load = await new JsonStateStore(path, () =>
+      Promise.resolve([]),
+    ).loadState();
+    expect(load.state.workspaces[1]!.editor).toBeUndefined();
+    expect(load.state.workspaces[1]!.canonical_path).toBe("/dev/c");
+    expect(load.metadata.migrationNotes.join(" ")).toMatch(
+      /No dev container definition was found for \/dev\/c/u,
+    );
+  });
+
   it("refuses a version-10 file that still names Global", async () => {
     const document = JSON.parse(JSON.stringify(freshState())) as Record<
       string,
@@ -707,7 +884,7 @@ describe("store", () => {
     await writeFile(path, JSON.stringify(document), { mode: 0o600 });
     const load = await new JsonStateStore(path).loadState();
     expect(load.metadata.migrated).toBe(true);
-    expect(load.state.schema_version).toBe(11);
+    expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
     const [agent] = load.state.workspaces[0]!.agents;
     expect(agent?.presentation).toBe("tui");
     expect(agent?.profile_presentation).toBe("tui");

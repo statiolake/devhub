@@ -625,6 +625,13 @@
   color: var(--danger);
 }
 
+/* Where the editor is attached, when it is a dev container. Context and not
+   news, so it is quieter than the marks around it at rest and does not take a
+   colour under the pointer: there is nothing to press. */
+.row-mark-editor {
+  opacity: 0.7;
+}
+
 /* The row's name. It does not shrink and it does not ellipsise: it is the one
    field a row cannot be read without, and what happens when there is not room
    for it is the same thing that happens to everything else on the run — it

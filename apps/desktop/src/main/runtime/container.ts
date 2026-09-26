@@ -1,15 +1,19 @@
 /**
- * A Dev Container as a machine DevHub shells into.
+ * A Dev Container as the far end of a Workspace's editor.
  *
- * The claim this file rests on, and the reason it is a fifth of the size of
- * `ssh.ts`: **a container is not a new kind of runtime, it is `SshRuntime` with
- * `docker exec` where `ssh` is.** Both are "run a POSIX `sh` on another
- * machine, over a connection this Mac holds". Everything that was about
- * *shells* rather than about *ssh* already moved into `RemoteShellRuntime` —
- * the login-environment probe, the `sh`-based file operations, the git-refs
- * digest, the terminal launcher, the tmux install — so what is left here is the
- * four members that base class asks for, plus the two things docker does
- * differently from ssh and cannot be given for free.
+ * A container is where an editor may be attached, and nothing else: the
+ * Workspace's terminals and Agents run where its folder is, and so does its
+ * git. What runs in here is the remote extension host (and with it the
+ * workbench's language servers and tasks), and the `devhub` command, which
+ * reaches DevHub back through a relay.
+ *
+ * DevHub still reaches it the way it reaches a host — POSIX `sh` over a
+ * connection this Mac holds — so this is a `RemoteShellRuntime` for the half
+ * that is about shells (the `sh`-based file operations, `$HOME`, the server
+ * install, the `devhub` command), and it refuses the half that is about
+ * running a Workspace's processes (a pty, a stream, tmux) as the invariant
+ * breach it would be. Two things docker does differently from ssh cannot be
+ * given for free:
  *
  * Those two are worth naming up front, because they are the whole design:
  *
@@ -30,24 +34,18 @@
  * side, the `devhub` shim in a tagged bin directory — and re-targets nothing
  * but the transport.
  *
- * **Git is not here.** It runs on this Mac, against the bind-mounted folder;
- * `gitPlaceOf` in `model/domain.ts` is that decision and its reasons. This
- * runtime is what terminals and Agents run on, which is the whole point of a
- * dev container.
- *
  * **The container id is not the identity.** A rebuild is routine — it is what
  * dev containers are *for* — and it produces a new container with a new
- * filesystem and none of what DevHub installed. So the machine is the folder on
- * this Mac (`containerMachine`), and this runtime notices when the container
- * underneath it has been replaced and says so; `registry.ts` disposes it and
- * builds another, because every "installed once per machine" cache in the base
- * class is keyed on the instance.
+ * filesystem and none of what DevHub installed. So a container is addressed by
+ * its `ContainerTarget` — the folder, its machine and its definition — and
+ * this host notices when the container underneath it has been replaced and
+ * says so; `registry.ts` disposes it and builds another, because every
+ * "installed once" cache in the base class is keyed on the instance.
  */
 
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { createServer, connect, type Server, type Socket } from "node:net";
-import { homedir } from "node:os";
 import { posix } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { RollingTally } from "../diagnostics/rollingTally.js";
@@ -57,7 +55,7 @@ import {
 	type CommandOutput,
 } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
-import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
+import type { Pty } from "../terminal/pty.js";
 import type { StreamLaunch } from "./byteStream.js";
 import { LOCAL_CADENCE } from "./local.js";
 import { shellQuote } from "./quote.js";
@@ -83,13 +81,21 @@ import {
 	type RemoteServerEndpoint,
 	type RemoteServerHost,
 } from "./remoteServer.js";
+import {
+	containerHostId,
+	devContainerConfigLabel,
+	devContainerConfigPath,
+	workspaceRoot,
+	type ContainerHostId,
+	type ContainerTarget,
+	type DevContainerConfigPath,
+} from "../../model/domain.js";
 import type {
+	ByteStream,
 	ExecRequest,
 	ExecResult,
-	PtyRequest,
 	RuntimeCadence,
 	Runtime,
-	RuntimeId,
 	RuntimeReading,
 } from "./runtime.js";
 import type { TmuxDelivery } from "./tmuxDelivery.js";
@@ -109,13 +115,15 @@ const A_MINUTE = 60 * 1000;
 export const LOCAL_FOLDER_LABEL = "devcontainer.local_folder";
 
 /**
- * The bring-up in flight for each host folder: see `ContainerRuntime.ensureUp`.
+ * The bring-up in flight for each container, and whether it may build: see
+ * `ContainerHost.ensureUp`.
  */
 const BRINGING_UP = new Map<
 	string,
 	Promise<{
 		readonly result: UpResult;
 		readonly remoteUser: string | undefined;
+		readonly started: boolean;
 	}>
 >();
 export const CONFIG_FILE_LABEL = "devcontainer.config_file";
@@ -131,31 +139,46 @@ export interface DockerCli {
 	) => Promise<CommandOutput>;
 }
 
+/**
+ * One `docker` command on this Mac, bounded like a probe, for callers that
+ * have no container host — the state migration, above all.
+ */
+export function dockerOutput(
+	docker: DockerCli,
+	args: readonly string[],
+	environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<CommandOutput> {
+	const custom = docker.run;
+	if (custom) return custom(args);
+	return runBounded(
+		{ file: docker.path, args: [...args], cwd: undefined, env: environment },
+		OperationDeadline.in(PROBE_TIMEOUT_MS),
+		new CancellationToken(),
+		PROBE_LIMITS,
+		undefined,
+	);
+}
+
 /** How this build runs `devcontainer`. */
 export interface DevContainerCli {
 	readonly path: string;
 	readonly run?: (args: readonly string[]) => Promise<CommandOutput>;
 }
 
-export interface ContainerRuntimeOptions {
-	/** The folder on this Mac, which is this machine's identity. */
-	readonly workspaceFolder: string;
-	/** The definition, when the person chose one other than the default. */
-	readonly configPath?: string | undefined;
+export interface ContainerHostOptions {
+	/** Which container: the folder, its machine, and the definition. */
+	readonly target: ContainerTarget;
 	readonly docker: DockerCli;
 	readonly devcontainer: DevContainerCli;
-	readonly tmux?: TmuxDelivery | undefined;
 	/**
 	 * Where the remote extension host comes from.
 	 *
-	 * Held on the runtime and not only passed to `remoteServer`, because the
-	 * *terminal launcher* needs the server's `node` too — it is the only node a
-	 * dev container image reliably has — and the launcher runs before any
-	 * workbench has resolved. On ssh that ordering holds by luck; here it is
-	 * stated, and `#ensureServerInstalled` is the one place that does it.
+	 * Held on the host and not only passed to `remoteServer`, because the
+	 * `devhub` command needs the server's `node` too — it is the only node a
+	 * dev container image reliably has. `#ensureServerInstalled` is the one
+	 * place that installs it.
 	 */
 	readonly reh?: RehDelivery | undefined;
-	readonly ptyFactory?: PtyFactory;
 	readonly localEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** For tests: how a local port for the bridge is picked. */
 	readonly listen?: (onConnection: (socket: Socket) => void) => Promise<{
@@ -262,19 +285,13 @@ if (mode === "connect") {
 `;
 
 /**
- * The two names a Dev Container definition may have, in the order the spec
- * looks for them.
+ * The two names a default Dev Container definition may have, in the order the
+ * CLI looks for them when it is told none.
  *
  * `.devcontainer/devcontainer.json` first, because it is the one the tooling
  * writes and the one a folder with features and a Dockerfile will have; the
  * single-file `.devcontainer.json` second, for a folder that wanted one line
  * of configuration and no directory.
- *
- * DevHub does not look for `.devcontainer/<name>/devcontainer.json`, the
- * multi-definition layout. Choosing between several is a question, and the
- * picker asks none — a folder with more than one is opened with whichever the
- * CLI itself picks, which is the same answer `devcontainer up` would give
- * without DevHub in the way.
  */
 export const DEV_CONTAINER_CONFIGS = [
 	".devcontainer/devcontainer.json",
@@ -310,22 +327,20 @@ function relayPath(home: string): string {
 	return posix.join(home, ".devhub-server", "relay.cjs");
 }
 
-export class ContainerRuntime
+export class ContainerHost
 	extends RemoteShellRuntime
 	implements RemoteServerHost
 {
-	readonly id: RuntimeId;
+	readonly id: ContainerHostId;
 	readonly where: string;
 
 	readonly #workspaceFolder: string;
-	readonly #configPath: string | undefined;
+	readonly #configPath: DevContainerConfigPath;
 	readonly #docker: DockerCli;
 	readonly #devcontainer: DevContainerCli;
-	readonly #tmuxDelivery: TmuxDelivery | undefined;
 	readonly #rehDelivery: RehDelivery | undefined;
-	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
-	readonly #listen: ContainerRuntimeOptions["listen"];
+	readonly #listen: ContainerHostOptions["listen"];
 
 	readonly #recentExecs = new RollingTally(A_MINUTE);
 	#connected = false;
@@ -333,30 +348,27 @@ export class ContainerRuntime
 	#container: Promise<UpResult> | undefined;
 	/** The id `#container` last resolved to, for noticing a rebuild. */
 	#containerId: string | undefined;
-	#remoteUser: string | undefined;
 	#server: Promise<RemoteServerEndpoint> | undefined;
 	#bridge: { readonly port: number; readonly close: () => void } | undefined;
 	#controlRelay: { readonly stop: () => void } | undefined;
-	/** Set once the container id changed underneath this runtime. */
+	/** Set once the container id changed underneath this host. */
 	#replaced = false;
 
-	constructor(options: ContainerRuntimeOptions) {
+	constructor(options: ContainerHostOptions) {
 		super();
-		this.#workspaceFolder = options.workspaceFolder;
-		this.id = `container:${options.workspaceFolder}`;
-		this.where = ` in the dev container for ${options.workspaceFolder}`;
-		this.#configPath = options.configPath;
+		this.#workspaceFolder = options.target.location.path;
+		this.id = containerHostId(options.target);
+		this.#configPath = options.target.configPath;
+		this.where = ` in ${containerName(this.#workspaceFolder, this.#configPath)}`;
 		this.#docker = options.docker;
 		this.#devcontainer = options.devcontainer;
-		this.#tmuxDelivery = options.tmux;
 		this.#rehDelivery = options.reh;
-		this.#ptyFactory = options.ptyFactory ?? openPty;
 		this.#localEnvironment = options.localEnvironment ?? process.env;
 		this.#listen = options.listen;
 	}
 
 	protected override get machineName(): string {
-		return `the dev container for ${this.#workspaceFolder}`;
+		return containerName(this.#workspaceFolder, this.#configPath);
 	}
 
 	/**
@@ -373,16 +385,13 @@ export class ContainerRuntime
 		return LOCAL_CADENCE;
 	}
 
+	/**
+	 * No tmux goes into a container: a Workspace's terminals run where its
+	 * folder is. Something asking for one is DevHub routing a Workspace's
+	 * process to its editor's far end, which is the bug this refuses.
+	 */
 	protected override delivery(): TmuxDelivery {
-		const delivery = this.#tmuxDelivery;
-		if (delivery === undefined) {
-			throw new Error(
-				`the runtime for ${this.machineName} was built without a tmux ` +
-					`delivery, which is a bug in DevHub and not a fact about that ` +
-					`container`,
-			);
-		}
-		return delivery;
+		throw notAWorkspaceMachine(this.machineName, "tmux");
 	}
 
 	/** One `docker`, with its output bounded like every other command. */
@@ -426,8 +435,13 @@ export class ContainerRuntime
 			// the comparison that decides "has this been rebuilt?" reads every
 			// restart as a rebuild. One canonical spelling, asked for here.
 			"--no-trunc",
+			// Both labels, which is how the CLI itself finds its container: a
+			// folder with two definitions has a container for each, and the
+			// folder alone would name both.
 			"--filter",
 			`label=${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder}`,
+			"--filter",
+			`label=${CONFIG_FILE_LABEL}=${this.#configPath}`,
 			"--format",
 			"{{.ID}}\t{{.State}}\t{{.Image}}",
 		]);
@@ -447,16 +461,18 @@ export class ContainerRuntime
 			if (state === "removing") continue;
 			found.push({ id, state, image });
 		}
-		// The label is how the CLI and DevHub both find a folder's container, so
-		// two of them is a folder with two answers. Taking the first would run
-		// every command in one and leave the other going unnoticed — which is
-		// how a second container made by a concurrent `up` went on running.
+		// The labels are how the CLI and DevHub both find a definition's
+		// container, so two of them is a definition with two answers. Taking the
+		// first would run every command in one and leave the other going
+		// unnoticed — which is how a second container made by a concurrent `up`
+		// went on running.
 		if (found.length > 1) {
 			throw new Error(
-				`${String(found.length)} containers carry the label ` +
-					`${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder} ` +
+				`${String(found.length)} containers carry the labels ` +
+					`${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder} and ` +
+					`${CONFIG_FILE_LABEL}=${this.#configPath} ` +
 					`(${found.map((one) => one.id).join(", ")}), so DevHub cannot ` +
-					`tell which is this Workspace's. Remove the ones that are not ` +
+					`tell which is this editor's. Remove the ones that are not ` +
 					`with docker rm -f <id>.`,
 			);
 		}
@@ -494,86 +510,105 @@ export class ContainerRuntime
 	}
 
 	async #openContainer(): Promise<UpResult> {
-		if (this.#replaced) throw containerReplaced(this.#workspaceFolder);
+		if (this.#replaced) throw containerReplaced(this.machineName);
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
 			if (adopted !== undefined) {
 				this.#noteContainer(adopted.result.containerId);
-				this.#remoteUser = adopted.remoteUser;
 				return adopted.result;
 			}
 		}
 		// Not running, and this is not the path that starts it. Every command
-		// DevHub sends a machine comes through here, including the reconcile
-		// round that runs on a cadence tick for as long as the Workspace has
-		// Agents — so a `devcontainer up` here would restart a container within
-		// seconds of a person running `docker stop`, every time, and they could
-		// never keep it stopped. Worse, `up` is the call that may rebuild an
-		// image, so a background round could start a minutes-long build nobody
-		// asked for.
+		// DevHub sends the container comes through here, including a resolver
+		// retrying a window that lost its connection — so a `devcontainer up`
+		// here would restart a container within seconds of a person running
+		// `docker stop`, every time, and they could never keep it stopped.
+		// Worse, `up` is the call that may rebuild an image, so a retry could
+		// start a minutes-long build nobody asked for.
 		//
-		// So this refuses, in a sentence that names the command, and the refusal
-		// becomes one machine condition through the ordinary path. Starting a
+		// So this refuses, in a sentence that names the command. Starting a
 		// container is an explicit act and lives in `ensureUp`.
 		throw state.kind === "absent"
-			? containerNotBuilt(this.#workspaceFolder)
-			: containerNotRunning(this.#workspaceFolder);
+			? containerNotBuilt(this.#workspaceFolder, this.#configPath)
+			: containerNotRunning(this.#workspaceFolder, this.#configPath);
 	}
 
 	/**
-	 * Build or start this Workspace's container, because somebody asked.
+	 * Start this container if it is stopped, and never build one.
 	 *
-	 * The one place `devcontainer up` is run, and it is deliberately not on any
-	 * path a timer can reach. Opening a Dev Container Workspace is a person
-	 * saying "start this"; a reconcile round is not.
-	 *
-	 * Idempotent: a container that is already running is adopted, which costs
-	 * the one `docker ps` that `#openContainer` would have cost anyway.
+	 * What a window opening asks for — at launch, when DevHub restores the
+	 * editors it had, and on a workbench's first resolve. Those are the
+	 * person's standing choice to have this editor in its container, which is
+	 * enough to start a container that exists; it is not enough to spend
+	 * minutes building an image nobody asked for this time. A container that
+	 * was never built refuses, in a sentence that names the command.
 	 */
 	async prepare(): Promise<void> {
-		return this.ensureUp();
+		await this.ensureUp({ build: false });
 	}
 
-	async ensureUp(): Promise<void> {
-		if (this.#replaced) throw containerReplaced(this.#workspaceFolder);
-		const folder = this.#workspaceFolder;
-		// One bring-up per folder at a time, and every later caller joins it:
+	/**
+	 * Build or start this container, because somebody asked.
+	 *
+	 * The one place `devcontainer up` is run, and it is deliberately not on any
+	 * path a timer can reach. `build: true` is a person saying "reopen this in
+	 * its container"; `build: false` is `prepare`.
+	 *
+	 * Idempotent: a container that is already running is adopted, which costs
+	 * the one `docker ps` that `#openContainer` would have cost anyway. It says
+	 * whether it was this call that started the container, because a container
+	 * DevHub started is one DevHub may stop again (`shutdownAction`), and one it
+	 * found running is not.
+	 */
+	async ensureUp(options: {
+		readonly build: boolean;
+	}): Promise<{ readonly containerId: string; readonly started: boolean }> {
+		if (this.#replaced) throw containerReplaced(this.machineName);
+		// One bring-up per container at a time, and every later caller joins it:
 		// two `devcontainer up`s started together each create a container, and
-		// both carry the folder's label. Per folder rather than per instance,
-		// because a runtime replaced after a rebuild and its replacement are two
-		// instances for one folder.
-		let bringUp = BRINGING_UP.get(folder);
+		// both carry the same labels. Keyed on the target rather than on this
+		// instance, because a host replaced after a rebuild and its replacement
+		// are two instances for one target; and on whether it may build, because
+		// a start-only caller must not be handed a build it did not ask for, nor
+		// a build-allowed one a refusal meant for somebody else. Only the build
+		// can create a container, so the two never make one each.
+		const key = `${this.id}\0${options.build ? "build" : "start"}`;
+		let bringUp = BRINGING_UP.get(key);
 		if (bringUp === undefined) {
-			const started = this.#bringUp();
+			const started = this.#bringUp(options.build);
 			bringUp = started;
-			BRINGING_UP.set(folder, started);
+			BRINGING_UP.set(key, started);
 			const done = () => {
-				if (BRINGING_UP.get(folder) === started) BRINGING_UP.delete(folder);
+				if (BRINGING_UP.get(key) === started) BRINGING_UP.delete(key);
 			};
 			started.then(done, done);
 		}
-		const { result, remoteUser } = await bringUp;
+		const { result, started } = await bringUp;
 		this.#noteContainer(result.containerId);
-		this.#remoteUser = remoteUser;
 		this.#container = Promise.resolve(result);
+		return { containerId: result.containerId, started };
 	}
 
 	/** The running container adopted, or `devcontainer up`'s. */
-	async #bringUp(): Promise<{
+	async #bringUp(build: boolean): Promise<{
 		readonly result: UpResult;
 		readonly remoteUser: string | undefined;
+		readonly started: boolean;
 	}> {
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
-			if (adopted !== undefined) return adopted;
+			if (adopted !== undefined) return { ...adopted, started: false };
+		}
+		if (state.kind === "absent" && !build) {
+			throw containerNotBuilt(this.#workspaceFolder, this.#configPath);
 		}
 		// `devcontainer up` is the one thing that knows how to build an image,
 		// create a container and run the lifecycle commands the definition asks
 		// for, and DevHub has no second opinion about any of that.
 		const up = await this.#up();
-		return { result: up, remoteUser: up.remoteUser };
+		return { result: up, remoteUser: up.remoteUser, started: true };
 	}
 
 	/** An already-running container, if `$HOME` can still be read in it. */
@@ -650,11 +685,15 @@ export class ContainerRuntime
 
 	/** `devcontainer up`, and its JSON read strictly. */
 	async #up(): Promise<UpResult> {
+		// `--config` always: the definition is part of which container this
+		// is, and leaving the choice to the CLI would let the next `up` answer a
+		// folder with several definitions differently from this one.
 		const args = [
 			"up",
 			"--workspace-folder",
 			this.#workspaceFolder,
-			...(this.#configPath === undefined ? [] : ["--config", this.#configPath]),
+			"--config",
+			this.#configPath,
 		];
 		const custom = this.#devcontainer.run;
 		const result = custom
@@ -683,13 +722,12 @@ export class ContainerRuntime
 		if (parsed === undefined) {
 			throw new Error(
 				`devcontainer up did not answer with an outcome DevHub understands ` +
-					`for ${this.#workspaceFolder}. ${describeCliFailure(result, stdout)}`,
+					`for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
 			);
 		}
 		if (parsed.outcome !== "success") {
 			throw new Error(
-				`The dev container for ${this.#workspaceFolder} could not be ` +
-					`started: ${parsed.message}`,
+				`${capitalised(this.machineName)} could not be started: ${parsed.message}`,
 			);
 		}
 		return parsed.result;
@@ -713,12 +751,12 @@ export class ContainerRuntime
 			// filesystem has none of what this instance believes it installed —
 			// and the failure that produced would surface somewhere else
 			// entirely, as a missing tmux or a launcher that is not there.
-			throw containerReplaced(this.#workspaceFolder);
+			throw containerReplaced(this.machineName);
 		}
 		this.#containerId = id;
 	}
 
-	/** Whether the container this runtime was built for has been replaced. */
+	/** Whether the container this host was built for has been replaced. */
 	get replaced(): boolean {
 		return this.#replaced;
 	}
@@ -739,7 +777,8 @@ export class ContainerRuntime
 	 * window opens on a folder that is not there — rather than being the kind
 	 * of silent wrongness this codebase refuses.
 	 */
-	async workspacePath(workspaceFolder: string): Promise<string> {
+	async workspacePath(): Promise<string> {
+		const workspaceFolder = this.#workspaceFolder;
 		const container = await this.#currentContainer();
 		if (container.remoteWorkspaceFolder.length > 0) {
 			return container.remoteWorkspaceFolder;
@@ -797,7 +836,7 @@ export class ContainerRuntime
 			this.#connected = false;
 			this.lastFailure = lastLine(result.stderr.toString("utf8"));
 			console.warn(`[devhub] ${this.id}: ${this.lastFailure}`);
-			throw containerNotRunning(this.#workspaceFolder);
+			throw containerNotRunning(this.#workspaceFolder, this.#configPath);
 		}
 		this.#connected = true;
 		if (result.code === 127) {
@@ -810,85 +849,34 @@ export class ContainerRuntime
 	}
 
 	/**
-	 * A long-lived command in the container: `docker exec -i` and no `-t`.
-	 *
-	 * The stream's form of `run`, and it reads a refusal the same way: a
-	 * container that went away is not a command that failed, and the next
-	 * command must ask for the container again rather than reuse this one.
-	 * Unlike `spawnPty` it waits for the container itself, so there is no
-	 * order in which it can be asked for too early.
+	 * No long-lived Workspace process runs in a container: an Agent's stream
+	 * runs where its Workspace's folder is. Refused before anything is asked
+	 * of the container, not after its login environment has been read. See
+	 * `delivery`.
 	 */
-	protected override async streamLaunch(script: string): Promise<StreamLaunch> {
-		const container = await this.#currentContainer();
-		activityCounters.record(COUNTER.process(`${this.id}/stream`));
-		return {
-			file: this.#docker.path,
-			args: [
-				"exec",
-				...(container.remoteUser.length === 0
-					? []
-					: ["-u", container.remoteUser]),
-				"-i",
-				container.containerId,
-				"/bin/sh",
-				"-c",
-				script,
-			],
-			// The docker client runs here; the `cd` is in the script.
-			cwd: undefined,
-			env: this.#localEnvironment,
-			refusal: (end) => {
-				if (end.code === 0 || !looksLikeContainerGone(end)) return undefined;
-				this.#container = undefined;
-				this.#connected = false;
-				this.lastFailure = lastLine(end.stderr.toString("utf8"));
-				return containerNotRunning(this.#workspaceFolder);
-			},
-		};
+	override spawnStream(): ByteStream {
+		throw notAWorkspaceMachine(this.machineName, "a stream");
 	}
 
-	/**
-	 * A pseudo-terminal in the container.
-	 *
-	 * `docker exec -it` where ssh has `-tt`, and for the same reason: the far
-	 * side needs a real tty or tmux refuses to attach. Everything above `Pty` —
-	 * resize, data, exit — is the same three events it was.
-	 */
-	spawnPty(request: PtyRequest): Pty {
-		const login = this.login;
-		const id = this.#containerId;
-		if (login === undefined || id === undefined) {
-			throw new Error(
-				`a pseudo-terminal was asked for in ${this.machineName} before ` +
-					`DevHub had reached it, so the program in it would run without ` +
-					`the PATH the container's own shell has`,
-			);
-		}
-		const script = remoteScript({
-			argv: [request.file, ...request.args],
-			cwd: request.cwd,
-			env: { ...login, ...request.env },
-		});
-		const user = this.#remoteUser;
-		return this.#ptyFactory({
-			file: this.#docker.path,
-			args: [
-				"exec",
-				...(user === undefined ? [] : ["-u", user]),
-				"-it",
-				id,
-				"/bin/sh",
-				"-c",
-				script,
-			],
-			// The docker client runs here; the `cd` is in the script.
-			cwd: homedir(),
-			cols: request.cols,
-			rows: request.rows,
-			pixelWidth: request.pixelWidth,
-			pixelHeight: request.pixelHeight,
-			env: this.#localEnvironment,
-		});
+	protected override streamLaunch(): Promise<StreamLaunch> {
+		return Promise.reject(notAWorkspaceMachine(this.machineName, "a stream"));
+	}
+
+	/** No terminal runs in a container either. See `delivery`. */
+	spawnPty(): Pty {
+		throw notAWorkspaceMachine(this.machineName, "a pseudo-terminal");
+	}
+
+	/** Nor is an Agent's program looked for in one. See `delivery`. */
+	override resolveProgram(): Promise<never> {
+		return Promise.reject(
+			notAWorkspaceMachine(this.machineName, "an Agent's program"),
+		);
+	}
+
+	/** Nor tmux. See `delivery`. */
+	override tmuxProgram(): Promise<never> {
+		return Promise.reject(notAWorkspaceMachine(this.machineName, "tmux"));
 	}
 
 	/**
@@ -1379,11 +1367,14 @@ export function dockerUnreachable(path: string, said: string): Error {
  * Workspace's folder already in it, so that the remedy is something to copy
  * rather than something to work out.
  */
-export function containerNotRunning(workspaceFolder: string): Error {
+export function containerNotRunning(
+	workspaceFolder: string,
+	configPath: string,
+): Error {
 	return portFailure("unavailable", {
 		detail:
-			`The dev container for ${workspaceFolder} is not running. ` +
-			`Start it with: devcontainer up --workspace-folder ${workspaceFolder}`,
+			`${capitalised(containerName(workspaceFolder, configPath))} is not running. ` +
+			`Start it with: ${upCommand(workspaceFolder, configPath)}`,
 	});
 }
 
@@ -1395,22 +1386,70 @@ export function containerNotRunning(workspaceFolder: string): Error {
  * that is already built — or, worse, tell somebody to start a container that
  * does not exist.
  */
-export function containerNotBuilt(workspaceFolder: string): Error {
+export function containerNotBuilt(
+	workspaceFolder: string,
+	configPath: string,
+): Error {
 	return portFailure("unavailable", {
 		detail:
-			`No dev container has been built for ${workspaceFolder} yet. ` +
-			`Build it with: devcontainer up --workspace-folder ${workspaceFolder}`,
+			`${capitalised(containerName(workspaceFolder, configPath))} has not been built yet. ` +
+			`Build it with: ${upCommand(workspaceFolder, configPath)}`,
 	});
 }
 
-/** The container this runtime was built for has been rebuilt. */
-export function containerReplaced(workspaceFolder: string): Error {
+/** The command a person runs to bring this container up, spelled whole. */
+function upCommand(workspaceFolder: string, configPath: string): string {
+	return `devcontainer up --workspace-folder ${shellQuote(workspaceFolder)} --config ${shellQuote(configPath)}`;
+}
+
+/** The container this host was built for has been rebuilt. */
+export function containerReplaced(machineName: string): Error {
 	return portFailure("unavailable", {
 		detail:
-			`The dev container for ${workspaceFolder} has been rebuilt, so this ` +
-			`connection to the old one cannot be used. DevHub will reconnect to ` +
-			`the new one.`,
+			`${capitalised(machineName)} has been rebuilt, so this connection to ` +
+			`the old one cannot be used. DevHub will reconnect to the new one.`,
 	});
+}
+
+/**
+ * What to call a container in a sentence.
+ *
+ * The folder, which is the name the person chose; and the definition when it
+ * is not the folder's default one, because a folder with two definitions has
+ * two containers and a sentence about "the dev container for api" would not
+ * say which.
+ */
+export function containerName(
+	workspaceFolder: string,
+	configPath: string,
+): string {
+	const label = devContainerConfigLabel(
+		workspaceRoot(workspaceFolder),
+		devContainerConfigPath(configPath),
+	);
+	return label === undefined
+		? `the dev container for ${workspaceFolder}`
+		: `the dev container for ${workspaceFolder} (${label})`;
+}
+
+function capitalised(sentence: string): string {
+	return sentence.length === 0
+		? sentence
+		: `${sentence[0]?.toUpperCase() ?? ""}${sentence.slice(1)}`;
+}
+
+/**
+ * A Workspace's process routed to its editor's container: the invariant this
+ * whole model rests on, broken. Thrown, never answered, because a terminal or
+ * an Agent that quietly ran in the container would be running somewhere other
+ * than the machine every other part of DevHub says it is on.
+ */
+function notAWorkspaceMachine(machineName: string, what: string): Error {
+	return new Error(
+		`DevHub asked for ${what} in ${machineName}, and nothing a Workspace ` +
+			`owns runs in a dev container — only its editor is attached there. ` +
+			`This is a bug in DevHub.`,
+	);
 }
 
 /** `devcontainer up`'s answer, as far as DevHub reads it. */

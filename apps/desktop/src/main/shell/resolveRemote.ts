@@ -19,9 +19,8 @@
  */
 
 import type { RemoteResolution } from "../cli/controlServer.js";
-import { remoteServerFor } from "../runtime/registry.js";
+import { editorHostMachine, remoteServerFor } from "../runtime/registry.js";
 import { isPermanent } from "../runtime/remoteServer.js";
-import { runtimeMachine } from "../runtime/registry.js";
 
 export async function resolveRemoteEndpoint(
 	machine: string,
@@ -31,7 +30,7 @@ export async function resolveRemoteEndpoint(
 	// cannot answer, and no amount of asking again teaches it one.
 	let id;
 	try {
-		id = runtimeMachine(machine);
+		id = editorHostMachine(machine);
 	} catch (failure: unknown) {
 		return { ok: false, message: messageOf(failure), retry: false };
 	}

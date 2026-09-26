@@ -85,6 +85,7 @@ function workspace(
     id,
     label,
     location: { kind: "local" },
+    editor: { kind: "host" },
     root: `/projects/${label}`,
     key: `/projects/${label}`,
     groupKey,

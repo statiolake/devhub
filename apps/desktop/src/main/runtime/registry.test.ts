@@ -5,14 +5,23 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { workspaceLocation } from "../../model/domain.js";
 import {
+	containerHostId,
+	devContainerConfigPath,
+	workspaceLocation,
+	type ContainerTarget,
+} from "../../model/domain.js";
+import {
+	containerHostFor,
+	disposeContainerHost,
 	disposeRuntime,
+	editorHostMachine,
 	forgetRuntimeProfile,
-	gitRuntimeFor,
+	liveContainerHosts,
 	liveRuntimes,
 	localRuntime,
 	runtimeFor,
+	runtimeMachine,
 	setRuntimeProfile,
 } from "./registry.js";
 import type { RehDelivery } from "./remoteServer.js";
@@ -26,6 +35,14 @@ import { tmuxInstallDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
  * delivery that refuses is how a test that started to would say so instead of
  * quietly downloading two megabytes.
  */
+/** A folder on this Mac with its default definition. */
+const TARGET: ContainerTarget = {
+	location: workspaceLocation({ kind: "local", path: "/projects/api" }),
+	configPath: devContainerConfigPath(
+		"/projects/api/.devcontainer/devcontainer.json",
+	),
+};
+
 const NO_TMUX: TmuxDelivery = {
 	version: "0",
 	directory: tmuxInstallDirectory(".devhub-server"),
@@ -140,63 +157,60 @@ describe("runtimeFor", () => {
 		).toThrow(/already been set/u);
 	});
 
-	it("replaces a container runtime whose container was rebuilt", async () => {
-		// The other half of the rebuild invariant, and the half that was
-		// missing: a runtime that has seen its container replaced refuses
-		// everything afterwards, so unless *something* throws it away the
-		// refusal is permanent and a rebuilt container never comes back. That
-		// something is this function, because the Workspace has not changed —
-		// keying the machine on the host folder is what makes a rebuild cost an
-		// instance and not a row.
-		const location = workspaceLocation({
-			kind: "container",
-			workspaceFolder: "/src/api",
-			path: "/workspaces/api",
-		});
-		const first = runtimeFor(location);
-		expect(runtimeFor(location)).toBe(first);
+	it("replaces a container host whose container was rebuilt", async () => {
+		// The other half of the rebuild invariant: a host that has seen its
+		// container replaced refuses everything afterwards, so unless *something*
+		// throws it away the refusal is permanent and a rebuilt container never
+		// comes back. That something is this function, because the target has
+		// not changed — keying on the folder and the definition is what makes a
+		// rebuild cost an instance and not an editor.
+		const first = containerHostFor(TARGET);
+		expect(containerHostFor(TARGET)).toBe(first);
 		// Stand in for what `#noteContainer` does when the id underneath it
 		// changes; `container.test.ts` drives that through the real docker calls.
 		Object.defineProperty(first, "replaced", { get: () => true });
-		const second = runtimeFor(location);
+		const second = containerHostFor(TARGET);
 		expect(second).not.toBe(first);
-		// And the machine is the same machine, which is the whole point.
 		expect(second.id).toBe(first.id);
+		await disposeContainerHost(second.id);
 	});
 
-	it("runs a dev container's git on this Mac, in the folder on this Mac", () => {
-		// The bug this is holding down was visible the first time a container
-		// Workspace drew a row: git ran *in* the container against
-		// `/workspaces/repo`, and the row said it could not read the repository.
-		// Both halves were wrong — the machine and the path — which is why they
-		// come from one call.
-		const location = workspaceLocation({
-			kind: "container",
-			workspaceFolder: "/projects/api",
-			path: "/workspaces/api",
-		});
-		const git = gitRuntimeFor(location);
-		expect(git.runtime).toBe(localRuntime());
-		expect(git.root).toBe("/projects/api");
-		// And the work still happens in the container: terminals and Agents go
-		// through `runtimeFor`, which is the other answer and the right one for
-		// them.
-		expect(runtimeFor(location)).not.toBe(localRuntime());
+	it("keeps one host per definition, not per folder", async () => {
+		// A folder with two definitions has a container for each, and they are
+		// two things to reach.
+		const other: ContainerTarget = {
+			...TARGET,
+			configPath: devContainerConfigPath(
+				"/projects/api/.devcontainer/python/devcontainer.json",
+			),
+		};
+		expect(containerHostFor(other)).not.toBe(containerHostFor(TARGET));
+		await disposeContainerHost(containerHostId(other));
+		await disposeContainerHost(containerHostId(TARGET));
+		expect(liveContainerHosts()).toHaveLength(0);
 	});
 
-	it("leaves the other two kinds exactly where they were", () => {
+	it("never hands a container out as a Workspace's machine", () => {
+		// Nothing a Workspace owns runs in a container, so no runtime id names
+		// one; the resolver's name for it is a separate spelling that only the
+		// editor path accepts.
+		const id = containerHostId(TARGET);
+		expect(() => runtimeMachine(id)).toThrow(/does not name a machine/u);
+		expect(editorHostMachine(id)).toBe(id);
+		expect(editorHostMachine("ssh:build")).toBe("ssh:build");
+		expect(() => editorHostMachine("local")).toThrow();
+		expect(liveRuntimes()).not.toContain(containerHostFor(TARGET));
+	});
+
+	it("runs a Workspace's git where its folder is", () => {
 		const local = workspaceLocation({ kind: "local", path: "/projects/api" });
-		expect(gitRuntimeFor(local).runtime).toBe(localRuntime());
-		expect(gitRuntimeFor(local).root).toBe("/projects/api");
+		expect(runtimeFor(local)).toBe(localRuntime());
 		const ssh = workspaceLocation({
 			kind: "ssh",
 			host: "build",
 			path: "/srv/api",
 		});
-		// A host's git runs on the host, in the folder that is on it — the same
-		// runtime everything else about that Workspace uses.
-		expect(gitRuntimeFor(ssh).runtime).toBe(runtimeFor(ssh));
-		expect(gitRuntimeFor(ssh).root).toBe("/srv/api");
+		expect(runtimeFor(ssh)).not.toBe(localRuntime());
 	});
 
 	it("lists the runtimes that are live, for a reading", async () => {

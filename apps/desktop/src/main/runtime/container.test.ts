@@ -1,5 +1,6 @@
 /**
- * A dev container as a machine, against a `docker` that is a function.
+ * A dev container as an editor's far end, against a `docker` that is a
+ * function.
  *
  * Every test here states what `docker` said and asserts what DevHub did about
  * it. That is the whole seam `DockerCli.run` exists for: the decisions worth
@@ -10,15 +11,18 @@
  */
 
 import { Buffer } from "node:buffer";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
-import { describeHostLink } from "../agent/conversation/hostLink.test.js";
-import type { CommandOutput } from "../terminal/command.js";
-import { CancellationToken, PortFailure } from "../terminal/ports.js";
+import { describe, expect, it } from "vitest";
 import {
-	ContainerRuntime,
+	devContainerConfigPath,
+	workspaceLocation,
+	type ContainerTarget,
+} from "../../model/domain.js";
+import type { CommandOutput } from "../terminal/command.js";
+import { PortFailure } from "../terminal/ports.js";
+import {
+	CONFIG_FILE_LABEL,
+	ContainerHost,
+	containerName,
 	LOCAL_FOLDER_LABEL,
 	parseUpOutcome,
 	type DevContainerCli,
@@ -26,6 +30,27 @@ import {
 } from "./container.js";
 
 const FOLDER = "/src/api";
+const CONFIG = "/src/api/.devcontainer/devcontainer.json";
+
+function target(configPath = CONFIG): ContainerTarget {
+	return {
+		location: workspaceLocation({ kind: "local", path: FOLDER }),
+		configPath: devContainerConfigPath(configPath),
+	};
+}
+
+/** What `devcontainer up` answers with when it succeeds. */
+function upSucceeded(containerId: string): Promise<CommandOutput> {
+	return output(
+		0,
+		JSON.stringify({
+			outcome: "success",
+			containerId,
+			remoteUser: "vscode",
+			remoteWorkspaceFolder: "/workspaces/api",
+		}),
+	);
+}
 
 function output(
 	code: number,
@@ -73,9 +98,10 @@ function fakeDevcontainer(
 function runtimeWith(
 	docker: DockerCli,
 	devcontainer: DevContainerCli,
-): ContainerRuntime {
-	return new ContainerRuntime({
-		workspaceFolder: FOLDER,
+	configPath = CONFIG,
+): ContainerHost {
+	return new ContainerHost({
+		target: target(configPath),
 		docker,
 		devcontainer,
 	});
@@ -105,7 +131,7 @@ function containerShell(script: string): Promise<CommandOutput> | undefined {
 }
 
 describe("finding the container", () => {
-	it("asks docker by the label the devcontainer CLI itself stamps", async () => {
+	it("asks docker by the labels the devcontainer CLI itself stamps", async () => {
 		const docker = fakeDocker(() => output(0, psLine("abc", "running")));
 		const runtime = runtimeWith(
 			docker,
@@ -116,6 +142,9 @@ describe("finding the container", () => {
 		// The filter is the CLI's own contract with itself; if this string ever
 		// drifts, DevHub silently stops finding containers it created.
 		expect(docker.calls[0]).toContain(`label=${LOCAL_FOLDER_LABEL}=${FOLDER}`);
+		// And by the definition: a folder with two has a container for each, and
+		// the folder alone would name both.
+		expect(docker.calls[0]).toContain(`label=${CONFIG_FILE_LABEL}=${CONFIG}`);
 	});
 
 	it("tells a stopped container from one that is not there", async () => {
@@ -195,9 +224,9 @@ describe("one Workspace, one container", () => {
 		const first = runtimeWith(docker(), devcontainer);
 		const second = runtimeWith(docker(), devcontainer);
 		const both = Promise.all([
-			first.ensureUp(),
-			first.ensureUp(),
-			second.ensureUp(),
+			first.ensureUp({ build: true }),
+			first.ensureUp({ build: true }),
+			second.ensureUp({ build: true }),
 		]);
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		release();
@@ -209,7 +238,7 @@ describe("one Workspace, one container", () => {
 		expect(await second.home()).toBe("/home/vscode");
 	});
 
-	it("refuses to pick when two containers carry the folder's label", async () => {
+	it("refuses to pick when two containers carry the definition's labels", async () => {
 		const runtime = runtimeWith(
 			fakeDocker(() =>
 				output(
@@ -260,7 +289,7 @@ describe("a container that is not running is a condition, not a restart", () => 
 		const failure = await runtime.home().catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(PortFailure);
 		expect((failure as PortFailure).detail).toContain(
-			`devcontainer up --workspace-folder ${FOLDER}`,
+			`devcontainer up --workspace-folder '${FOLDER}' --config '${CONFIG}'`,
 		);
 	});
 
@@ -269,9 +298,7 @@ describe("a container that is not running is a condition, not a restart", () => 
 			fakeDocker((args) => (args[0] === "ps" ? output(0, "") : output(0, ""))),
 			fakeDevcontainer(() => output(0)),
 		);
-		await expect(runtime.home()).rejects.toThrow(
-			/No dev container has been built/u,
-		);
+		await expect(runtime.home()).rejects.toThrow(/has not been built yet/u);
 	});
 
 	it("carries a PortFailure, which is what makes the sentence reach a person", async () => {
@@ -315,7 +342,10 @@ describe("a container that is not running is a condition, not a restart", () => 
 			}),
 			devcontainer,
 		);
-		await runtime.ensureUp();
+		expect(await runtime.ensureUp({ build: true })).toEqual({
+			containerId: "c".repeat(64),
+			started: true,
+		});
 		expect(devcontainer.calls[0]?.[0]).toBe("up");
 		// And the container it just brought up is the one commands now go to.
 		expect(await runtime.home()).toBe("/home/vscode");
@@ -366,9 +396,16 @@ describe("the happy path does not spawn the CLI", () => {
 		const runtime = runtimeWith(docker, devcontainer);
 		// `ensureUp` and not `home()`: starting a container is an explicit act,
 		// and no path a timer can reach may do it.
-		await runtime.ensureUp();
+		await runtime.ensureUp({ build: true });
 		expect(await runtime.home()).toBe("/home/vscode");
-		expect(devcontainer.calls[0]).toEqual(["up", "--workspace-folder", FOLDER]);
+		// `--config` always: which definition is part of which container.
+		expect(devcontainer.calls[0]).toEqual([
+			"up",
+			"--workspace-folder",
+			FOLDER,
+			"--config",
+			CONFIG,
+		]);
 	});
 
 	it("passes a chosen config through to the CLI", async () => {
@@ -383,17 +420,16 @@ describe("the happy path does not spawn the CLI", () => {
 				}),
 			),
 		);
-		const runtime = new ContainerRuntime({
-			workspaceFolder: FOLDER,
-			configPath: "/src/api/.devcontainer/alt.json",
-			docker: fakeDocker((args) =>
+		const runtime = runtimeWith(
+			fakeDocker((args) =>
 				args[0] === "ps"
 					? output(0, "")
 					: (containerShell(args.at(-1) ?? "") ?? output(0, "/root")),
 			),
 			devcontainer,
-		});
-		await runtime.ensureUp();
+			"/src/api/.devcontainer/alt.json",
+		);
+		await runtime.ensureUp({ build: true });
 		expect(devcontainer.calls[0]).toEqual([
 			"up",
 			"--workspace-folder",
@@ -573,122 +609,102 @@ describe("a container that goes away mid-command", () => {
 	});
 });
 
-/**
- * A `docker` that is a program, for the one thing a function cannot stand in
- * for: a long-lived `docker exec -i` whose stdout is a pipe. It answers `ps`
- * and `inspect` the way the adopt path needs and runs every `exec` here, as
- * the fake ssh does, so the container is this machine and what is under test
- * is the argv DevHub composes and what it makes of the ending. While the file
- * `$DEVHUB_FAKE_DOCKER_GONE` exists, `exec` answers the way docker does for a
- * container that has stopped.
- */
-const FAKE_DOCKER = `#!/bin/sh
-case "$1" in
-  ps) printf 'abc\\trunning\\timg\\n'; exit 0;;
-  inspect) exit 0;;
-  exec) shift;;
-  *) echo "fake docker: $1 is not something it answers" >&2; exit 2;;
-esac
-while [ $# -gt 0 ]; do
-  case "$1" in -u) shift 2;; -i) shift;; *) break;; esac
-done
-id=$1
-shift
-if [ -f "$DEVHUB_FAKE_DOCKER_GONE" ]; then
-  echo "Error response from daemon: container $id is not running" >&2
-  exit 1
-fi
-exec "$@"
-`;
-
-const dockerHome = mkdtempSync(
-	join(
-		(() => {
-			const root = fileURLToPath(
-				new URL("../../../../../.spike/", import.meta.url),
-			);
-			mkdirSync(root, { recursive: true });
-			return root;
-		})(),
-		"devhub-fake-docker-",
-	),
-);
-const dockerProgram = join(dockerHome, "docker");
-const containerGone = join(dockerHome, "gone");
-writeFileSync(dockerProgram, FAKE_DOCKER, { mode: 0o700 });
-afterAll(() => {
-	rmSync(dockerHome, { recursive: true, force: true });
-});
-
-/**
- * A container runtime whose `docker` really runs, here.
- *
- * `SHELL` is pinned for the reason `ssh.test.ts` pins it: the runtime reads
- * the login environment of the "container", which is this machine, and that
- * must not be whoever is running the suite's own shell profile.
- */
-function streamingRuntime(): ContainerRuntime {
-	return new ContainerRuntime({
-		workspaceFolder: FOLDER,
-		docker: { path: dockerProgram },
-		devcontainer: fakeDevcontainer(() =>
-			Promise.reject(new Error("the CLI must not be spawned on this path")),
-		),
-		localEnvironment: {
-			...process.env,
-			SHELL: "/bin/sh",
-			DEVHUB_FAKE_DOCKER_GONE: containerGone,
-		},
-	});
-}
-
-async function streamed(stdout: AsyncIterable<Buffer>): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of stdout) chunks.push(chunk);
-	return Buffer.concat(chunks).toString("utf8");
-}
-
-describe("a stream in the container", () => {
-	it("runs through docker exec -i, with the environment it was given", async () => {
-		const running = streamingRuntime().spawnStream({
-			argv: ["/bin/sh", "-c", 'printf %s "$DEVHUB_STREAMED"; exit 4'],
-			env: { DEVHUB_STREAMED: "in the container" },
-			cancel: new CancellationToken(),
+describe("opening a window starts a container and never builds one", () => {
+	it("starts a stopped container, and says it was this call that started it", async () => {
+		let running = false;
+		const devcontainer = fakeDevcontainer(() => {
+			running = true;
+			return upSucceeded("c".repeat(64));
 		});
-		expect(await streamed(running.stdout)).toBe("in the container");
-		expect((await running.ended).code).toBe(4);
-	});
-
-	it("says a program is unavailable in the words exec uses", async () => {
-		const running = streamingRuntime().spawnStream({
-			argv: ["devhub-no-such-program"],
-			cancel: new CancellationToken(),
+		const runtime = runtimeWith(
+			fakeDocker((args) => {
+				if (args[0] === "ps") {
+					return output(
+						0,
+						psLine("c".repeat(64), running ? "running" : "exited"),
+					);
+				}
+				if (args[0] === "inspect") return output(0, "");
+				return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+			}),
+			devcontainer,
+		);
+		await runtime.prepare();
+		expect(devcontainer.calls[0]?.[0]).toBe("up");
+		// A second window, or a resolve that comes again, finds it running and
+		// did not start anything.
+		expect(await runtime.ensureUp({ build: false })).toEqual({
+			containerId: "c".repeat(64),
+			started: false,
 		});
-		expect(await streamed(running.stdout)).toBe("");
-		await expect(running.ended).rejects.toMatchObject({ code: "unavailable" });
 	});
 
-	it("says the container stopped, rather than that the program failed", async () => {
-		const runtime = streamingRuntime();
-		// Reached once, so the container is adopted; then it stops.
-		await runtime.home();
-		writeFileSync(containerGone, "");
-		try {
-			const running = runtime.spawnStream({
-				argv: ["/bin/sh", "-c", "echo never"],
-				cancel: new CancellationToken(),
-			});
-			expect(await streamed(running.stdout)).toBe("");
-			const failure = await running.ended.then(
-				() => undefined,
-				(caught: unknown) => caught,
-			);
-			expect(failure).toBeInstanceOf(PortFailure);
-			expect((failure as PortFailure).message).toContain("is not running");
-		} finally {
-			rmSync(containerGone, { force: true });
-		}
+	it("refuses to build one that was never built, in a sentence that names the command", async () => {
+		// Restoring the editors DevHub had at launch is the person's standing
+		// choice to have this one in its container — enough to start a
+		// container that exists, not enough to spend minutes building an image.
+		const devcontainer = fakeDevcontainer(() =>
+			Promise.reject(new Error("up must not run to build on a window open")),
+		);
+		const runtime = runtimeWith(
+			fakeDocker(() => output(0, "")),
+			devcontainer,
+		);
+		const failure = await runtime.prepare().catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(PortFailure);
+		expect((failure as PortFailure).detail).toMatch(
+			/has not been built yet\. Build it with: devcontainer up/u,
+		);
+		expect(devcontainer.calls).toHaveLength(0);
 	});
 });
 
-describeHostLink("container", streamingRuntime);
+describe("nothing a Workspace owns runs in a container", () => {
+	it("refuses a pseudo-terminal, as the bug it would be", () => {
+		const runtime = runtimeWith(
+			fakeDocker(() => output(0, "")),
+			fakeDevcontainer(() => output(0)),
+		);
+		expect(() => runtime.spawnPty()).toThrow(/only its editor is attached/u);
+	});
+
+	it("refuses a stream before asking the container anything", () => {
+		const docker = fakeDocker(() => output(0, psLine("abc", "running")));
+		const runtime = runtimeWith(
+			docker,
+			fakeDevcontainer(() => output(0)),
+		);
+		expect(() => runtime.spawnStream()).toThrow(/only its editor is attached/u);
+		expect(docker.calls).toHaveLength(0);
+	});
+
+	it("refuses to look for an Agent's program or for tmux in it", async () => {
+		const runtime = runtimeWith(
+			fakeDocker(() => output(0, psLine("abc", "running"))),
+			fakeDevcontainer(() => output(0)),
+		);
+		await expect(runtime.resolveProgram()).rejects.toThrow(
+			/only its editor is attached/u,
+		);
+		await expect(runtime.tmuxProgram()).rejects.toThrow(
+			/only its editor is attached/u,
+		);
+	});
+});
+
+describe("what a container is called", () => {
+	it("is its folder, and its definition when that is not the folder's default", () => {
+		expect(containerName(FOLDER, CONFIG)).toBe(
+			"the dev container for /src/api",
+		);
+		expect(containerName(FOLDER, "/src/api/.devcontainer.json")).toBe(
+			"the dev container for /src/api",
+		);
+		expect(
+			containerName(FOLDER, "/src/api/.devcontainer/python/devcontainer.json"),
+		).toBe("the dev container for /src/api (python)");
+		expect(containerName(FOLDER, "/src/api/tools/dev.json")).toBe(
+			"the dev container for /src/api (tools/dev.json)",
+		);
+	});
+});

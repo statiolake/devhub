@@ -70,6 +70,7 @@ function workspace(
     id: "22222222-2222-4222-8222-222222222222",
     label: "example",
     location: { kind: "local", path: "/example" },
+    editor: { kind: "host" },
     root: "/example",
     key: "/example",
     selectedPath: "example",

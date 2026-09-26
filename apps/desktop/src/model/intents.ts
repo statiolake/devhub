@@ -25,6 +25,7 @@ import type {
   DiagnosticCode,
   DisplayPath,
   DomainErrorCode,
+  EditorAttachment,
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
@@ -229,12 +230,6 @@ export type RequestedWorkspaceLocation =
       readonly kind: "ssh";
       readonly host: SshHost;
       readonly path: RequestedPath;
-    }
-  | {
-      readonly kind: "container";
-      readonly workspaceFolder: RequestedPath;
-      readonly configPath?: string;
-      readonly path: RequestedPath;
     };
 
 /** The one way a `RequestedWorkspaceLocation` is made. See `workspaceLocation`. */
@@ -250,15 +245,6 @@ export function requestedLocation(
         host: sshHost(requested.host),
         path: requestedPath(requested.path),
       };
-    case "container":
-      return {
-        kind: "container",
-        workspaceFolder: requestedPath(requested.workspaceFolder),
-        ...(requested.configPath === undefined || requested.configPath === ""
-          ? {}
-          : { configPath: requested.configPath }),
-        path: requestedPath(requested.path),
-      };
   }
 }
 
@@ -268,9 +254,9 @@ export function requestedLocation(
  * The step that resolves a typed path has a request and not a location — that
  * is the whole reason the request type exists — and what it produces is the
  * same request with `~/src` replaced by what `realpath` said. It is a function
- * because "which machine" is one field for a host and two for a container, and
- * a call site that rebuilt the request by hand would keep compiling while
- * dropping one of them.
+ * so that a kind added later is a compile error here, rather than a call site
+ * that rebuilt the request by hand and kept compiling while dropping which
+ * machine it named.
  */
 export function requestedAtPath(
   requested: RequestedWorkspaceLocation,
@@ -281,15 +267,6 @@ export function requestedAtPath(
       return { kind: "local", path };
     case "ssh":
       return { kind: "ssh", host: requested.host, path };
-    case "container":
-      return {
-        kind: "container",
-        workspaceFolder: requested.workspaceFolder,
-        ...(requested.configPath === undefined
-          ? {}
-          : { configPath: requested.configPath }),
-        path,
-      };
   }
 }
 
@@ -300,8 +277,6 @@ export function whereRequested(requested: RequestedWorkspaceLocation): string {
       return "";
     case "ssh":
       return ` on ${requested.host}`;
-    case "container":
-      return ` in the dev container for ${requested.workspaceFolder}`;
   }
 }
 
@@ -336,6 +311,19 @@ export type UserIntent =
    * folder's Workspace, used only when no open Workspace is that folder
    * already. See `AppModel.adoptScratchDay`.
    */
+  /**
+   * Attach a Workspace's editor somewhere else: to one of its dev containers,
+   * or back to its own machine.
+   *
+   * Raised by main, never by the page, and only once the thing it names is
+   * ready — the container is up, the old workbench has closed. The model only
+   * records which; the Workspace does not move, and nothing it owns is touched.
+   */
+  | {
+      readonly type: "attach_editor";
+      readonly workspaceId: WorkspaceId;
+      readonly editor: EditorAttachment;
+    }
   | {
       readonly type: "adopt_scratch_day";
       readonly workspaceId: WorkspaceId;
@@ -394,6 +382,13 @@ export type UserIntent =
   | {
       readonly type: "open_folder";
       readonly location: RequestedWorkspaceLocation;
+      /**
+       * Where a Workspace this open *creates* has its editor attached. Absent
+       * is its own machine, which is where every other open puts it. A folder
+       * already open keeps the attachment it has: moving an existing editor
+       * is `attach_editor`, which closes the workbench it is in first.
+       */
+      readonly editor?: EditorAttachment;
     }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }

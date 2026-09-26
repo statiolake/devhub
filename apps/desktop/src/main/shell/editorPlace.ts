@@ -22,12 +22,14 @@
 import {
 	decodeContainerAuthority,
 	DEV_CONTAINER_PREFIX,
+	EDITOR_ON_HOST,
 	workspaceLocation,
+	type EditorAttachment,
 	type WorkspaceLocation,
 } from "../../model/domain.js";
 
 /**
- * The authority prefix Open Remote - SSH registers.
+ * The authority prefix DevHub's resolver registers for hosts.
  *
  * Its `package.json` says so twice — `onResolveRemoteAuthority:ssh-remote` and
  * the `ssh-remote+*` resource label formatter — and `remoteAuthorityOf`
@@ -45,6 +47,12 @@ export interface WorkspaceUriParts {
 	readonly fsPath: string;
 }
 
+/** A window's place: which Workspace, and where its editor is attached. */
+export interface EditorPlace {
+	readonly location: WorkspaceLocation;
+	readonly editor: EditorAttachment;
+}
+
 /**
  * The place a window's folder URI names, or nothing when it names none DevHub
  * can hold a Workspace for.
@@ -52,34 +60,49 @@ export interface WorkspaceUriParts {
  * `undefined` is not an error: a window with no folder, or one on an authority
  * some other resolver owns, is a window DevHub did not open for a Workspace,
  * and the caller has its own answer for that.
+ *
+ * A window on a dev container names the Workspace's own folder — the one on
+ * this Mac or on the host — and not the path it is mounted at inside: the
+ * authority carries the folder and the definition, and the URI's path is only
+ * where the workbench opened it. So a Workspace's window has the same
+ * `locationKey` whichever way its editor is attached, which is what lets a
+ * reattached editor land in the same slot.
  */
-export function locationFromWorkspaceUri(
+export function editorPlaceFromWorkspaceUri(
 	uri: WorkspaceUriParts,
-): WorkspaceLocation | undefined {
+): EditorPlace | undefined {
 	if (uri.scheme === "file") {
-		return tryLocation({ kind: "local", path: uri.fsPath });
+		return onHost(tryLocation({ kind: "local", path: uri.fsPath }));
 	}
 	if (uri.scheme !== "vscode-remote") return undefined;
 	if (uri.authority.startsWith(SSH_REMOTE_PREFIX)) {
-		return tryLocation({
-			kind: "ssh",
-			host: uri.authority.slice(SSH_REMOTE_PREFIX.length),
-			path: uri.path,
-		});
+		return onHost(
+			tryLocation({
+				kind: "ssh",
+				host: uri.authority.slice(SSH_REMOTE_PREFIX.length),
+				path: uri.path,
+			}),
+		);
 	}
 	if (uri.authority.startsWith(DEV_CONTAINER_PREFIX)) {
-		// Both halves of the place are in the URI and neither is redundant: the
-		// authority says which folder on this Mac, the path says where it is
-		// mounted in there. `configPath` is in neither, and deliberately — it is
-		// not part of the identity, so a window matched back to its Workspace by
-		// `locationKey` matches whether or not one was set.
-		const workspaceFolder = decodeContainerAuthority(
+		const target = decodeContainerAuthority(
 			uri.authority.slice(DEV_CONTAINER_PREFIX.length),
 		);
-		if (workspaceFolder === undefined) return undefined;
-		return tryLocation({ kind: "container", workspaceFolder, path: uri.path });
+		if (target === undefined) return undefined;
+		return {
+			location: target.location,
+			editor: { kind: "devContainer", configPath: target.configPath },
+		};
 	}
 	return undefined;
+}
+
+function onHost(
+	location: WorkspaceLocation | undefined,
+): EditorPlace | undefined {
+	return location === undefined
+		? undefined
+		: { location, editor: EDITOR_ON_HOST };
 }
 
 /**

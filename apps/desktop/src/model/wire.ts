@@ -15,13 +15,16 @@ import {
   DomainErrorCode,
   surfaceKeyName,
   abbreviateHome,
+  devContainerConfigLabel,
   agentPresentation as parseAgentPresentation,
   presentationsFor,
   type AgentFailureCode,
   type AgentProfile,
   type AgentControlState,
+  type EditorAttachment,
   type WorkspaceClose,
   type WorkspaceLocation,
+  type WorkspaceRoot,
   type CloseInspectionProjection,
   type ResourceInspection,
   type UnsavedEditorsInspection,
@@ -84,6 +87,7 @@ import {
   type ReplayWire,
   type LayoutWire,
   type WorkspaceLocationWire,
+  type EditorAttachmentWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
   sidebarWorkspaces,
@@ -275,8 +279,23 @@ function workspaceLocationWire(
       return { kind: "local" };
     case "ssh":
       return { kind: "ssh", host: location.host };
-    case "container":
-      return { kind: "container", workspaceFolder: location.workspaceFolder };
+  }
+}
+
+/** Where the editor is attached, variant for variant. */
+function editorAttachmentWire(
+  root: WorkspaceRoot,
+  editor: EditorAttachment,
+): EditorAttachmentWire {
+  switch (editor.kind) {
+    case "host":
+      return { kind: "host" };
+    case "devContainer": {
+      const label = devContainerConfigLabel(root, editor.configPath);
+      return label === undefined
+        ? { kind: "devContainer" }
+        : { kind: "devContainer", label };
+    }
   }
 }
 
@@ -430,6 +449,7 @@ export function snapshotWire(
     id: workspace.id,
     label: workspace.label,
     location: workspaceLocationWire(workspace.location),
+    editor: editorAttachmentWire(workspace.root, workspace.editor),
     root: workspace.root,
     displayRoot: abbreviateHome(workspace.root, homeOf(workspace.location)),
     key: workspace.key,
@@ -645,6 +665,7 @@ function agentFailureAsAppError(
 function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
   switch (code) {
     case "persistence_degraded":
+    case "state_migrated":
       return "state";
     case "settings_refused":
       return "config";
@@ -689,17 +710,20 @@ export function errorWireAt(
   timestampMs = 0,
 ): AppErrorWire {
   const actions: AppErrorActionWire[] =
-    // Trying again reads the same file; what answers it is fixing the file.
-    code === "settings_refused"
-      ? ["open_settings"]
-      : code === "native_unavailable" ||
-          code === "persistence_degraded" ||
-          code === "editor_provider_missing" ||
-          code === "editor_port_unavailable" ||
-          code === "editor_unavailable" ||
-          code === "editor_restart_exhausted"
-        ? ["retry", "open_settings"]
-        : ["retry"];
+    // Something that already happened: there is nothing to try again.
+    code === "state_migrated"
+      ? []
+      : // Trying again reads the same file; what answers it is fixing the file.
+        code === "settings_refused"
+        ? ["open_settings"]
+        : code === "native_unavailable" ||
+            code === "persistence_degraded" ||
+            code === "editor_provider_missing" ||
+            code === "editor_port_unavailable" ||
+            code === "editor_unavailable" ||
+            code === "editor_restart_exhausted"
+          ? ["retry", "open_settings"]
+          : ["retry"];
   return {
     code,
     summary: SAFE_ERROR_SUMMARY[code],

@@ -69,9 +69,8 @@ import {
 	type ExecResult,
 	type FileKind,
 	type PtyRequest,
-	type Runtime,
 	type RuntimeCadence,
-	type RuntimeId,
+	type ShellMachineId,
 	type RuntimeReading,
 	type StreamEnd,
 	type StreamRequest,
@@ -342,8 +341,8 @@ export function unsupportedPlatformFailure(
  * What a subclass owes is below, and nothing else: four members, of which two
  * are one line each. What it gets is the other twenty-odd, written once.
  */
-export abstract class RemoteShellRuntime implements Runtime {
-	abstract readonly id: RuntimeId;
+export abstract class RemoteShellRuntime {
+	abstract readonly id: ShellMachineId;
 	abstract readonly where: string;
 	abstract readonly cadence: RuntimeCadence;
 	abstract reading(): RuntimeReading;

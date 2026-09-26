@@ -300,7 +300,14 @@ export type AppErrorCodeWire =
 	/** tmux did not answer DevHub's command inside its bound. */
 	| "tmux_command_timed_out"
 	/** The session DevHub needs is not the session that is there. */
-	| "tmux_session_conflict";
+	| "tmux_session_conflict"
+	/**
+	 * The state file was from an older DevHub and moving it forward changed
+	 * something the person did not do — a Workspace merged into another,
+	 * Agents removed. Nothing failed; it is said because it happened without
+	 * them.
+	 */
+	| "state_migrated";
 
 /**
  * The sentence each failure is shown as.
@@ -355,6 +362,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	tmux_command_timed_out: "The terminal runtime did not answer in time.",
 	tmux_session_conflict:
 		"The terminal session DevHub needs is not the one that is there.",
+	state_migrated: "DevHub updated its saved Workspaces for this version.",
 };
 export type AppErrorModuleWire =
 	| "app"
@@ -769,14 +777,21 @@ export type WorkspaceCloseWire =
  */
 export type WorkspaceLocationWire =
 	| { readonly kind: "local" }
-	| { readonly kind: "ssh"; readonly host: string }
-	/**
-	 * The folder on this Mac, which is what the row is named by and what the
-	 * container mark's tooltip says. The container id is deliberately not here:
-	 * it changes on every rebuild, and a row that re-rendered because of that
-	 * would be flickering at something the person did not do.
-	 */
-	| { readonly kind: "container"; readonly workspaceFolder: string };
+	| { readonly kind: "ssh"; readonly host: string };
+
+/**
+ * Where a Workspace's editor is attached, as the page is told it: for the
+ * quiet mark a row wears when its editor is in a dev container.
+ *
+ * `label` names the definition when the folder has more than one layout to
+ * choose from (`.devcontainer/<label>/devcontainer.json`), and is absent for
+ * the folder's default one. The container id is deliberately not here: it
+ * changes on every rebuild, and a row that re-rendered because of that would
+ * be flickering at something the person did not do.
+ */
+export type EditorAttachmentWire =
+	| { readonly kind: "host" }
+	| { readonly kind: "devContainer"; readonly label?: string };
 
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
@@ -784,6 +799,8 @@ export interface WorkspaceWire {
 	readonly id: string;
 	readonly label: string;
 	readonly location: WorkspaceLocationWire;
+	/** Where its editor is attached. */
+	readonly editor: EditorAttachmentWire;
 	/** The folder's path, whichever machine it is on. */
 	readonly root: string;
 	/**

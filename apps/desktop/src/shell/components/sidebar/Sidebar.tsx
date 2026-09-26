@@ -13,6 +13,7 @@ import {
   type AgentSnapshot,
   type AppIntent,
   type AppSnapshot,
+  type EditorAttachmentWire,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
@@ -33,6 +34,7 @@ import {
   agentNote,
   agentRowFacts,
   agentTooltipFacts,
+  editorAttachmentFact,
   issueLabel,
   issueMark,
   pullRequestLabel,
@@ -301,7 +303,9 @@ function WorkspaceRow({
               rail's rule is that the whole entry is the select control, and a
               link that is merely invisible is still a link the pointer can
               find. */}
-          {collapsed ? null : <WorkspaceMarks repository={repository} />}
+          {collapsed ? null : (
+            <WorkspaceMarks repository={repository} editor={workspace.editor} />
+          )}
           {/* The links trail the label rather than leading it, which is the one
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
@@ -646,9 +650,12 @@ function WorkspaceGlyph({
  */
 function WorkspaceMarks({
   repository,
+  editor,
 }: {
   readonly repository: WorkspaceRepositoryWire | undefined;
+  readonly editor: EditorAttachmentWire;
 }) {
+  const editorFact = editorAttachmentFact(editor);
   const { openExternalUrl } = useSidebar();
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
@@ -720,6 +727,21 @@ function WorkspaceMarks({
           <Glyph name="statusError" />
         </span>
       ) : null}
+      {/* Where the editor is, when it is in a dev container. Quiet — the ink
+          every mark here has at rest, and nothing to press — because it is
+          context and not news: the person put it there, and everything else
+          about the row (its Agents, its terminal, its branch) is where the
+          folder is either way. */}
+      {editorFact === undefined ? null : (
+        <span
+          className="row-link-button row-mark-editor"
+          role="img"
+          aria-label={editorFact.spoken}
+          data-tooltip={editorFact.text}
+        >
+          <Glyph name="container" />
+        </span>
+      )}
     </span>
   );
 }
