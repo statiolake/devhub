@@ -313,7 +313,8 @@ are listed over the composer, oldest first. The Agent has not seen them yet,
 so each one can be:
 
 - **edited** in place (Enter saves, Esc gives up), the caret at the end of
-  its words. While the editor is open the message is not sent, and neither is
+  its words, in a field that grows with its text from three lines up to the
+  composer's own limit. While the editor is open the message is not sent, and neither is
   anything behind it: when a turn ends meanwhile, the next turn waits. Saving
   sends the new words in their turn; giving up sends the old ones. Closing
   the pane or the page with the editor open gives the edit up;

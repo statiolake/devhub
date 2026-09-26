@@ -12,6 +12,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
 import {
   cleanup,
   fireEvent,
@@ -815,6 +816,29 @@ describe("messages waiting to be sent", () => {
       expect(screen.queryByLabelText("Waiting message")).toBeNull(),
     );
     expect(actions.stopEditingPending).toHaveBeenCalledTimes(1);
+  });
+
+  it("is changed in a field that grows with its text from three lines, as the composer's does", async () => {
+    draw(withSession([RUNNING, HELD]));
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    const field = await screen.findByLabelText("Waiting message");
+    expect(field).toHaveAttribute("rows", "3");
+    // jsdom applies no stylesheet, so the rule is read where it is written.
+    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+    const rule = (selector: string) =>
+      new RegExp(`\\n${selector.replaceAll(".", "\\.")} \\{([^}]*)\\}`).exec(
+        css,
+      )?.[1] ?? "";
+    const pending = rule(".conversation-pending-input");
+    expect(pending).toMatch(/field-sizing:\s*content/);
+    expect(pending).toMatch(/min-height:\s*calc\(3lh/);
+    expect(pending).toMatch(/resize:\s*none/);
+    // No taller than the composer's field may grow.
+    const composer = rule(".conversation-composer-input");
+    expect(pending).toMatch(/max-height:\s*40vh/);
+    expect(composer).toMatch(/max-height:\s*40vh/);
   });
 
   it("lets main go of an edit left open when the composer goes away", async () => {

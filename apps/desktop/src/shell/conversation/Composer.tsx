@@ -176,7 +176,7 @@ function PendingItem({
         <textarea
           className="conversation-pending-input"
           aria-label="Waiting message"
-          rows={1}
+          rows={3}
           value={draft}
           autoFocus
           onFocus={(event) => {
