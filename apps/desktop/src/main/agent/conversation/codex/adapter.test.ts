@@ -1434,6 +1434,40 @@ describe("taking back the last turn", () => {
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
 
+	it("shows a message as sending from its write until its item comes back", () => {
+		const harness = oneTurn();
+		harness.command({ kind: "send", text: "more", origin: "person" });
+		expect(harness.transcript.sending).toEqual([
+			{ id: "devhub-person-1", text: "more", origin: "person" },
+		]);
+		harness.receive({
+			method: "item/completed",
+			params: {
+				threadId: MAIN,
+				turnId: "turn-2",
+				completedAtMs: 0,
+				item: {
+					type: "userMessage",
+					id: "item-more",
+					clientId: "devhub-person-1",
+					content: [{ type: "text", text: "more", text_elements: [] }],
+				},
+			},
+		});
+		expect(harness.transcript.sending).toEqual([]);
+		expect(harness.transcript.entries.at(-1)).toMatchObject({
+			kind: "user",
+			text: "more",
+		});
+	});
+
+	it("lets go of a sending message whose turn app-server refused", () => {
+		const harness = oneTurn();
+		harness.command({ kind: "send", text: "more", origin: "person" });
+		harness.receive({ id: 5, error: { code: -32600, message: "no" } });
+		expect(harness.transcript.sending).toEqual([]);
+	});
+
 	it("replays to the same rewound transcript and writes nothing", () => {
 		const live = oneTurn();
 		live.rewind(USER);

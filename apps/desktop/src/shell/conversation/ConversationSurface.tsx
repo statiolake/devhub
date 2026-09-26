@@ -48,11 +48,12 @@ import {
   type ConversationActions,
   type SettingName,
 } from "./ConversationContext";
-import { EntryTreeContext, EntryView } from "./EntryView";
+import { EntryTreeContext, EntryView, SendingView } from "./EntryView";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
 import { ArrowDownIcon } from "./icons";
 import { RequestCard } from "./RequestCard";
+import { SessionHeader } from "./SessionHeader";
 import {
   SubagentColumn,
   SubagentLayoutProvider,
@@ -243,6 +244,7 @@ export function ConversationSurface({
                 hidden={hidden}
                 onKeyDown={onKeyDown}
               >
+                <SessionHeader transcript={transcript} />
                 <div className="conversation-views">
                   <div className="conversation-main">
                     <div
@@ -252,6 +254,7 @@ export function ConversationSurface({
                     >
                       <div className="conversation-scroll" ref={scroller}>
                         {topLevel.length === 0 &&
+                        transcript.sending.length === 0 &&
                         tree.unattached.length === 0 ? (
                           <EmptyTranscript />
                         ) : null}
@@ -261,6 +264,9 @@ export function ConversationSurface({
                         >
                           {topLevel.map((entry) => (
                             <EntryView key={entry.id} entry={entry} depth={0} />
+                          ))}
+                          {transcript.sending.map((message) => (
+                            <SendingView key={message.id} message={message} />
                           ))}
                           {tree.unattached.map((request) => (
                             <div

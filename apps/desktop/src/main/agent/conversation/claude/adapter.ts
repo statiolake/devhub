@@ -53,6 +53,7 @@ import {
 	type SessionFacts,
 	type Setting,
 	type SlashCommand,
+	type SendingMessage,
 	type SubagentInfo,
 	type ToolEntry,
 	type Transcript,
@@ -224,10 +225,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	/** Control requests DevHub wrote that the CLI has not answered, by id. */
 	private readonly ours = new Map<string, JsonObject>();
 	/** User messages DevHub wrote that the CLI has not echoed yet, oldest first. */
-	private readonly untaken: {
-		readonly text: string;
-		readonly origin: "person" | "injection";
-	}[] = [];
+	private readonly untaken: SendingMessage[] = [];
+	/** How many user messages DevHub has written: what names each while it is sending. */
+	private written = 0;
 	private readonly permissions = new Map<string, Permission>();
 	private readonly denied = new Set<EntryId>();
 	/**
@@ -368,7 +368,13 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			const sent = decodeSent(line);
 			switch (sent.type) {
 				case "user": {
-					this.untaken.push({ text: sent.text, origin: sent.origin });
+					this.written += 1;
+					this.untaken.push({
+						id: `sent:${this.written}`,
+						text: sent.text,
+						origin: sent.origin,
+					});
+					this.emitSending();
 					const effort = EFFORT_COMMAND.exec(sent.text);
 					if (effort !== null) {
 						this.setSession({
@@ -586,6 +592,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 		this.ours.clear();
 		this.untaken.length = 0;
+		this.emitSending();
 		this.answered.clear();
 		this.streaming.clear();
 		this.interrupting = false;
@@ -605,6 +612,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.cutBefore.clear();
 		this.ours.clear();
 		this.untaken.length = 0;
+		this.emitSending();
 		this.permissions.clear();
 		this.denied.clear();
 		this.answered.clear();
@@ -636,6 +644,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (state.phase === "broken") return;
 		if (state.phase === "ready" && state.turn === turn) return;
 		this.emit({ type: "state", state: { phase: "ready", turn } });
+	}
+
+	/** The messages written and not yet taken, as the transcript shows them sending. */
+	private emitSending(): void {
+		this.emit({ type: "sending", sending: [...this.untaken] });
 	}
 
 	private notice(
@@ -1260,9 +1273,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (when === "live") {
 			const taken = this.untaken.findIndex((each) => each.text === text);
 			if (taken < 0) return this.notice("info", text, undefined);
-			[{ origin }] = this.untaken.splice(taken, 1) as [
-				(typeof this.untaken)[number],
-			];
+			[{ origin }] = this.untaken.splice(taken, 1) as [SendingMessage];
 		}
 		this.users += 1;
 		const id = entryId(`user:${line.uuid ?? `#${this.users}`}`);
@@ -1279,7 +1290,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				rewindable: line.uuid !== undefined,
 			},
 		});
-		if (when === "live") this.turn("running");
+		// The message is in the conversation now, no longer sending: in the
+		// same step, so it is never drawn twice or not at all.
+		if (when === "live") {
+			this.emitSending();
+			this.turn("running");
+		}
 	}
 
 	/**

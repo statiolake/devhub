@@ -1753,6 +1753,46 @@ describe("the captured session", () => {
 	});
 });
 
+describe("a message being sent", () => {
+	it("is sending from its write until the CLI's echo makes it an entry, in one step", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		expect(adapter.transcript.sending).toEqual([
+			{ id: "sent:1", text: "go", origin: "person" },
+		]);
+		expect(adapter.transcript.entries).toEqual([]);
+		const step = adapter.received(echo("go", "u-go"));
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(entry(adapter, "user:u-go")).toMatchObject({ text: "go" });
+		// The entry comes before the sending list lets go of it.
+		expect(step.events.map((event) => event.type).slice(0, 2)).toEqual([
+			"entry",
+			"sending",
+		]);
+	});
+
+	it("is sending again on a replay that has its write and no echo yet", () => {
+		const live = new ClaudeAdapter("boot");
+		const greeting = init();
+		live.received(greeting);
+		const written = perform(live, { kind: "send", text: "go", origin: "person" });
+		const replayed = new ClaudeAdapter("replay");
+		replayed.received(greeting);
+		for (const line of written) replayed.sent(line);
+		expect(replayed.transcript.sending).toEqual(live.transcript.sending);
+		expect(replayed.transcript.sending).toHaveLength(1);
+	});
+
+	it("is dropped with everything else the old CLI had when it is started again", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		adapter.received(json({ type: "devhub_resume", session: "other" }));
+		expect(adapter.transcript.sending).toEqual([]);
+	});
+});
+
 describe("a usage limit", () => {
 	it("is said, and the conversation still takes the person's next message", () => {
 		const adapter = inTurn();

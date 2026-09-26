@@ -57,6 +57,7 @@ import {
 	type RequestChoice,
 	type RequestId,
 	type SessionFacts,
+	type SendingMessage,
 	type SubagentInfo,
 	type ToolEntry,
 	type ToolStatus,
@@ -295,6 +296,11 @@ export class CodexAdapter implements ProtocolAdapter {
 	private nextRpcId = 0;
 	private nextUserMessage = 0;
 	private readonly calls = new Map<string, ClientMethod>();
+	/** The messages written and not yet taken, by the call that wrote each, with the thread it went to. */
+	private readonly sending = new Map<
+		string,
+		{ readonly thread: string; readonly message: SendingMessage }
+	>();
 	private readonly sentMethods = new Set<string>();
 	private readonly responded = new Set<string>();
 	/** `thread/revert` requests DevHub made, by id: the turn each takes back from. */
@@ -565,6 +571,19 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.writes.push(JSON.stringify({ id, result }));
 	}
 
+	/**
+	 * The conversation's messages written and not yet taken, as the transcript
+	 * shows them sending: those to its own thread, not to a subagent's.
+	 */
+	private emitSending(): void {
+		this.emit({
+			type: "sending",
+			sending: [...this.sending.values()].flatMap((each) =>
+				each.thread === this.mainThread ? [each.message] : [],
+			),
+		});
+	}
+
 	private noteSent(line: string): void {
 		const message = JSON.parse(line) as {
 			readonly id?: RpcId;
@@ -604,6 +623,18 @@ export class CodexAdapter implements ProtocolAdapter {
 					this.nextUserMessage,
 					Number(match[2]) + 1,
 				);
+				// Sending until its item comes back.
+				this.sending.set(rpcKey(message.id), {
+					thread: params.threadId,
+					message: {
+						id: params.clientUserMessageId!,
+						text: params.input
+							.flatMap((input) => (input.type === "text" ? [input.text] : []))
+							.join("\n"),
+						origin: match[1] === "injection" ? "injection" : "person",
+					},
+				});
+				this.emitSending();
 			}
 		}
 		if (method === "thread/revert") {
@@ -781,12 +812,16 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 				return this.setState({ phase: "ready", turn: "none" });
 			case "turn/start":
+				this.sending.delete(rpcKey(id!));
+				this.emitSending();
 				return this.notice(
 					"error",
 					`${this.codexName} did not start the turn: ${message}`,
 					raw,
 				);
 			case "turn/steer":
+				this.sending.delete(rpcKey(id!));
+				this.emitSending();
 				return this.notice(
 					"error",
 					`${this.codexName} did not take the message: ${message}`,
@@ -830,6 +865,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		};
 		this.publishSession();
 		for (const turn of thread.turns) this.replayTurn(thread.id, turn);
+		this.emitSending();
 		this.setState({
 			phase: "ready",
 			turn: this.runningTurn === undefined ? "none" : "running",
@@ -845,6 +881,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	 */
 	private leaveThread(opened: ThreadOpened): void {
 		this.emit({ type: "session-switched", session: opened.thread.id });
+		this.sending.clear();
+		this.emitSending();
 		this.turnMessages.clear();
 		this.runningTurn = undefined;
 		this.threadParents.clear();
@@ -1132,7 +1170,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				const match = USER_MESSAGE_ID.exec(item.clientId ?? "");
 				if (threadId === this.mainThread && !this.turnMessages.has(turnId))
 					this.turnMessages.set(turnId, id);
-				return this.put(
+				this.put(
 					{
 						kind: "user",
 						id,
@@ -1152,6 +1190,11 @@ export class CodexAdapter implements ProtocolAdapter {
 					},
 					threadId,
 				);
+				// In the conversation now, no longer sending: in the same step.
+				for (const [call, each] of this.sending) {
+					if (each.message.id === item.clientId) this.sending.delete(call);
+				}
+				return this.emitSending();
 			}
 			case "agentMessage":
 			case "plan":

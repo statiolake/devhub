@@ -410,6 +410,20 @@ export interface Transcript {
    * They are not part of the conversation yet: the CLI has not seen them.
    */
   readonly pending: readonly PendingMessage[];
+  /**
+   * The messages written to the CLI that it has not taken yet (not echoed
+   * back), oldest first. They are drawn where they will land, at the end of
+   * the conversation, as sending; the CLI's echo makes each an entry. The
+   * adapter's, from what was written (`in.log`), so a replay says the same.
+   */
+  readonly sending: readonly SendingMessage[];
+}
+
+export interface SendingMessage {
+  /** Unique among the messages sending; not the entry id the echo will have. */
+  readonly id: string;
+  readonly text: string;
+  readonly origin: "person" | "injection";
 }
 
 export type PendingId = Brand<string, "PendingId">;
@@ -456,6 +470,8 @@ export type ConversationEvent =
   | { readonly type: "usage"; readonly usage: Usage }
   /** Replaces the messages DevHub holds whole. DevHub's own, not an adapter's. */
   | { readonly type: "pending"; readonly pending: readonly PendingMessage[] }
+  /** Replaces the messages written and not yet taken whole. The adapter's. */
+  | { readonly type: "sending"; readonly sending: readonly SendingMessage[] }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -501,6 +517,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   state: { phase: "connecting" },
   usage: undefined,
   pending: [],
+  sending: [],
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -542,6 +559,8 @@ export function applyEvent(
       return { ...transcript, usage: event.usage };
     case "pending":
       return { ...transcript, pending: event.pending };
+    case "sending":
+      return { ...transcript, sending: event.sending };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {

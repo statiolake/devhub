@@ -24,9 +24,11 @@ import type {
   AssistantEntry,
   NoticeEntry,
   PendingRequest,
+  SendingMessage,
   ToolEntry,
   TranscriptEntry,
   TurnEndEntry,
+  Usage,
   UserEntry,
 } from "../../model/conversation";
 import { CopyButton } from "./CopyButton";
@@ -417,40 +419,81 @@ function NoticeView({ entry }: { readonly entry: NoticeEntry }) {
   );
 }
 
-/**
- * A turn that did not complete, and why: the one turn end the transcript draws.
- *
- * A turn that completed says nothing. The Agent's last words already end it,
- * and a divider of durations, tokens and cost under every answer was ink about
- * the meter rather than the work; what a session has used is the context
- * readout under the composer and the Sidebar's rate-limit readout.
- */
-const OUTCOME_LABELS: Readonly<
-  Record<Exclude<TurnEndEntry["outcome"], "completed">, string>
-> = {
+const OUTCOME_LABELS: Readonly<Record<TurnEndEntry["outcome"], string>> = {
+  completed: "Turn completed",
   interrupted: "Turn interrupted",
   failed: "Turn failed",
 };
 
-function TurnEndView({
-  entry,
-  outcome,
-}: {
-  readonly entry: TurnEndEntry;
-  readonly outcome: keyof typeof OUTCOME_LABELS;
-}) {
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+}
+
+function formatTokens(count: number): string {
+  return count < 1000 ? `${count}` : `${(count / 1000).toFixed(1)}k`;
+}
+
+/** What a turn cost, in the terms the CLI reported. Nothing not reported. */
+export function usageFacts(usage: Usage): readonly string[] {
+  const facts: string[] = [];
+  if (usage.inputTokens !== undefined)
+    facts.push(`${formatTokens(usage.inputTokens)} in`);
+  if (usage.outputTokens !== undefined)
+    facts.push(`${formatTokens(usage.outputTokens)} out`);
+  if (usage.costUsd !== undefined) facts.push(`$${usage.costUsd.toFixed(2)}`);
+  return facts;
+}
+
+function TurnEndView({ entry }: { readonly entry: TurnEndEntry }) {
+  const facts = [
+    OUTCOME_LABELS[entry.outcome],
+    ...(entry.durationMs === undefined
+      ? []
+      : [formatDuration(entry.durationMs)]),
+    ...(entry.usage ? usageFacts(entry.usage) : []),
+  ];
   return (
     <div
       className="conversation-turn-end"
-      data-outcome={outcome}
+      data-outcome={entry.outcome}
       role="separator"
     >
-      <div className="conversation-turn-end-facts">
-        {OUTCOME_LABELS[outcome]}
-      </div>
+      <div className="conversation-turn-end-facts">{facts.join(" · ")}</div>
       {entry.detail ? (
         <div className="conversation-turn-end-detail">{entry.detail}</div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * A message written to the Agent that its CLI has not taken yet: the
+ * person's bubble, drawn at once where the message will land, and quieter
+ * until the CLI's echo puts the message itself there.
+ */
+export function SendingView({ message }: { readonly message: SendingMessage }) {
+  return (
+    <div
+      className="conversation-entry"
+      data-kind="user"
+      data-sending=""
+      data-entry-id={`sending:${message.id}`}
+    >
+      <div
+        className="conversation-user"
+        data-origin={message.origin}
+        title="Sending…"
+        aria-busy="true"
+      >
+        {message.origin === "injection" ? (
+          <div className="conversation-user-origin">Sent by a template</div>
+        ) : null}
+        <div className="conversation-user-text">{message.text}</div>
+      </div>
     </div>
   );
 }
@@ -464,9 +507,6 @@ export const EntryView = memo(function EntryView({
   readonly entry: TranscriptEntry;
   readonly depth: number;
 }) {
-  // A completed turn's end is not drawn at all — not even as an empty entry,
-  // which would still take the gap between entries (see `TurnEndView`).
-  if (entry.kind === "turn-end" && entry.outcome === "completed") return null;
   return (
     <div
       className="conversation-entry"
@@ -489,8 +529,6 @@ function entryBody(entry: TranscriptEntry, depth: number) {
     case "notice":
       return <NoticeView entry={entry} />;
     case "turn-end":
-      return entry.outcome === "completed" ? null : (
-        <TurnEndView entry={entry} outcome={entry.outcome} />
-      );
+      return <TurnEndView entry={entry} />;
   }
 }

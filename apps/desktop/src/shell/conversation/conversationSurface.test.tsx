@@ -232,6 +232,29 @@ describe("every entry kind", () => {
     expect(entry("t4").querySelector("summary")).toHaveTextContent("Running");
   });
 
+  it("draws a message being sent at once, at the end, quietly, and its echo in the same place without a second bubble", () => {
+    const said = put(user("u1", "fix the build"));
+    const { redraw } = draw({
+      ...transcriptOf([said]),
+      sending: [{ id: "sent:2", text: "and the tests", origin: "person" }],
+    });
+    const bubbles = () => [
+      ...document.querySelectorAll(
+        '.conversation-transcript > [data-kind="user"]',
+      ),
+    ];
+    expect(bubbles().map((each) => each.textContent)).toEqual([
+      expect.stringContaining("fix the build"),
+      "and the tests",
+    ]);
+    expect(bubbles()[1]).toHaveAttribute("data-sending");
+    expect(bubbles()[0]).not.toHaveAttribute("data-sending");
+    redraw(transcriptOf([said, put(user("u2", "and the tests"))]));
+    expect(bubbles()).toHaveLength(2);
+    expect(bubbles()[1]).toHaveTextContent("and the tests");
+    expect(bubbles()[1]).not.toHaveAttribute("data-sending");
+  });
+
   it("draws a background task's end as one quiet line on the call that started it", () => {
     draw(
       transcriptOf([
@@ -389,7 +412,7 @@ describe("every entry kind", () => {
     );
   });
 
-  it("draws nothing for a completed turn, and how and why a turn that did not complete ended", () => {
+  it("marks where each turn ended, how, how long it took and what it cost", () => {
     draw(
       transcriptOf([
         put(turnEnd("e1")),
@@ -401,14 +424,15 @@ describe("every entry kind", () => {
         ),
       ]),
     );
-    expect(document.querySelector('[data-entry-id="e1"]')).toBeNull();
+    expect(entry("e1")).toHaveTextContent(
+      "Turn completed · 4.2s · 12.4k in · 830 out · $0.04",
+    );
     expect(within(entry("e2")).getByRole("separator")).toHaveAttribute(
       "data-outcome",
       "failed",
     );
-    expect(entry("e2")).toHaveTextContent(
-      /^Turn failedThe API refused the request\.$/u,
-    );
+    expect(entry("e2")).toHaveTextContent("Turn failed · 1m 5s");
+    expect(entry("e2")).toHaveTextContent("The API refused the request.");
   });
 });
 
