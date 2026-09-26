@@ -1027,15 +1027,15 @@ function decodeResult(raw: JsonObject, f: Fields): ClaudeLine {
 function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
 	const at = "rate_limit_event.rate_limit_info";
 	const info = f.object(raw.rate_limit_info, at);
+	// The limiting window is named only when the CLI knows it
+	// (`rateLimitType` is optional): an event that names none says nothing
+	// about any one window.
+	const limiting = f.optionalString(info.rateLimitType, `${at}.rateLimitType`);
 	const windows =
 		info.unifiedWindows === undefined
-			? [
-					[
-						f.string(info.rateLimitType, `${at}.rateLimitType`),
-						info,
-						at,
-					] as const,
-				]
+			? limiting === undefined
+				? []
+				: [[limiting, info, at] as const]
 			: Object.entries(
 					f.object(info.unifiedWindows, `${at}.unifiedWindows`),
 				).map(([key, value]) => {

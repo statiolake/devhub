@@ -393,6 +393,11 @@ has none.
 
 ## Not signed in, and Continue in terminal
 
+A usage limit does not stop the conversation: the CLI says so in the turn
+(its message, and a notice), and the next message is written as the CLI's own
+prompt would take it. A `rate_limit_event` that names no limiting window
+(its `rateLimitType` is optional) changes no window's readout.
+
 When the CLI is not signed in, the conversation stops and the Agent's pane
 says so:
 

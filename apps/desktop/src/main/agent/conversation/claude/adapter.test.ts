@@ -1753,6 +1753,45 @@ describe("the captured session", () => {
 	});
 });
 
+describe("a usage limit", () => {
+	it("is said, and the conversation still takes the person's next message", () => {
+		const adapter = inTurn();
+		// The limit's event names no window when the CLI cannot tell which
+		// one limits (`rateLimitType` is optional in its schema).
+		adapter.received(
+			json({
+				type: "rate_limit_event",
+				rate_limit_info: {
+					status: "rejected",
+					resetsAt: 1_800_000_000,
+					isUsingOverage: false,
+				},
+				session_id: SESSION,
+			}),
+		);
+		adapter.received(
+			assistantLine(
+				"m",
+				[{ type: "text", text: "You've hit your limit · resets 3am" }],
+				null,
+				{ error: "rate_limit" },
+			),
+		);
+		adapter.received(
+			result({ is_error: true, result: "You've hit your limit" }),
+		);
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(
+			adapter.transcript.entries.some(
+				(each) => each.kind === "notice" && each.text.includes("rate_limit"),
+			),
+		).toBe(true);
+		expect(
+			perform(adapter, { kind: "send", text: "again", origin: "person" }),
+		).toHaveLength(1);
+	});
+});
+
 describe("a subagent's end", () => {
 	// `claude-session-background-agents.handwritten.jsonl` is HAND-WRITTEN,
 	// shaped from what claude 2.1.x writes (read from its binary): background
