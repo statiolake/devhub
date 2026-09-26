@@ -198,12 +198,37 @@ It covers what a turn does, not everything a CLI's own terminal UI has.
 
 **Everything that is drawn**: Markdown with tables and code (coloured once
 each block is complete), thinking folded, plans,
-tool calls with their input and output or diff, subagents nested under the
-call that started them, notices, a turn that was interrupted or failed (with
+tool calls with their input and output, subagents nested under the
+call that started them, images, notices, a turn that was interrupted or failed (with
 the CLI's reason), how full the context is under the composer, and pending
 requests as cards with the CLI's own choices. A turn that completed draws no
 divider, and no durations, token counts or cost are drawn anywhere: the rate
 limits are the Sidebar's (below).
+
+**What a tool call gave back** is drawn part by part, in the order the tool
+gave it:
+
+- An edit (Claude's Edit, MultiEdit and Write; Codex's file changes) is a
+  diff: the CLI's own patch with its line numbers when it gives one, else the
+  text the call's input says it replaced. An edit that failed shows the
+  CLI's words instead.
+- A command shows its output, and apart from it what it printed on stderr
+  (Claude keeps the two apart), *Interrupted* when it was stopped, and its
+  exit code when the CLI says it (a failed Claude command's *Exit code N*;
+  a command that succeeded shows none, since Claude does not report 0).
+- Output too large for the conversation, which Claude saved to a file and
+  gave the model only the start of, says so with the file's path and shows
+  the start it kept.
+- A tool the result made available (a tool search's find) is named.
+- An image a tool gave back (a screenshot, a picture it read, an MCP tool's
+  image) is a thumbnail under the call, not folded into it, since the picture
+  is often the result; clicking one shows it whole. An image the page cannot
+  open (a file on the Agent's machine, as Codex's image view names it) is
+  named where it would be.
+- A block of a tool result DevHub does not know is a warning notice, like any
+  unknown event, never dropped in silence.
+
+An image in a message of yours is drawn under its words the same way.
 
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
@@ -267,7 +292,7 @@ is a notice. Its work is drawn in one place at a time:
   arrive anyway are known and not shown.
 - `tool_progress` and `prompt_suggestion`.
 - Thinking the API withholds (it sends the block without its text), redacted
-  thinking, citation deltas, and images inside messages.
+  thinking, and citation deltas.
 
 **Codex: what does not come across**
 

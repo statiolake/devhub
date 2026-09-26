@@ -154,15 +154,19 @@ function outline(
 				line = `tool ${entry.tool} "${entry.title}" ${entry.status}${
 					entry.output === undefined
 						? ""
-						: ` -> ${
-								entry.output.kind === "diff"
-									? entry.output.files.map((file) => file.path).join(",")
-									: JSON.stringify(
-											entry.output.kind === "command"
-												? entry.output.output
-												: entry.output.text,
-										)
-							}`
+						: ` -> ${entry.output
+								.map((part) =>
+									part.kind === "diff"
+										? part.files.map((file) => file.path).join(",")
+										: JSON.stringify(
+												part.kind === "command"
+													? part.output
+													: part.kind === "text"
+														? part.text
+														: part.kind,
+											),
+								)
+								.join(" + ")}`
 				}${entry.spawns === undefined ? "" : ` spawns ${entry.spawns.label}/${entry.spawns.state}`}`;
 				break;
 			case "notice":
@@ -1668,5 +1672,51 @@ describe("going on with another thread (/resume)", () => {
 				(command) => command.name === "resume",
 			),
 		).toMatchObject({ route: "resume" });
+	});
+});
+
+describe("an MCP tool's result", () => {
+	it("keeps its text and its images, in order, as the call's output", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.receive({
+			method: "item/completed",
+			params: {
+				threadId: MAIN,
+				turnId: "turn-1",
+				completedAtMs: 0,
+				item: {
+					type: "mcpToolCall",
+					id: "item-mcp",
+					server: "browser",
+					tool: "screenshot",
+					status: "completed",
+					arguments: { tabId: 1 },
+					result: {
+						content: [
+							{ type: "text", text: "Captured." },
+							{ type: "image", data: "AAAA", mimeType: "image/png" },
+						],
+						structuredContent: null,
+						_meta: null,
+					},
+					error: null,
+					durationMs: 5,
+				},
+			},
+		});
+		expect(harness.entry(`${MAIN}/item-mcp`)).toMatchObject({
+			kind: "tool",
+			output: [
+				{ kind: "text", text: "Captured." },
+				{
+					kind: "image",
+					image: {
+						mediaType: "image/png",
+						source: { kind: "data", base64: "AAAA" },
+					},
+				},
+			],
+		});
 	});
 });

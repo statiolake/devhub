@@ -877,6 +877,83 @@
   color: var(--danger);
 }
 
+.conversation-output[data-stream="stderr"] {
+  color: var(--danger);
+}
+
+.conversation-output-note[data-persisted] {
+  padding-top: var(--space-2);
+}
+
+.conversation-output-reference {
+  padding: var(--space-1) var(--space-3);
+  color: var(--secondary);
+  font-size: 0.85em;
+}
+
+/* ---------------------------------------------------------------- Images */
+
+/* Thumbnails in a row: on the person's message, and on the call of a tool
+   that gave images back (a screenshot), unfolded, since the picture is often
+   the result. Each opens to itself at full width. */
+.conversation-images {
+  display: flex;
+  flex-wrap: wrap;
+  margin: var(--space-1) 0 var(--space-2);
+  gap: var(--space-2);
+}
+
+.conversation-tool-entry > .conversation-images {
+  margin-left: 1.45em;
+}
+
+.conversation-image > summary {
+  display: block;
+  cursor: zoom-in;
+  list-style: none;
+}
+
+.conversation-image > summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversation-image > summary > img {
+  display: block;
+  max-width: 12em;
+  max-height: 8em;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  object-fit: contain;
+}
+
+.conversation-image[open] > summary {
+  cursor: zoom-out;
+}
+
+.conversation-image[open] > summary > img {
+  display: none;
+}
+
+.conversation-image-whole {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+}
+
+.conversation-image[open] {
+  flex-basis: 100%;
+}
+
+.conversation-image-missing {
+  padding: var(--space-1) var(--space-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  color: var(--tertiary);
+  font-size: 0.85em;
+}
+
 .conversation-diff-path {
   padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--line-soft);

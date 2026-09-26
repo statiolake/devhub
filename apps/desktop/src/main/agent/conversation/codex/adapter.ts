@@ -60,6 +60,8 @@ import {
 	type SendingMessage,
 	type SubagentInfo,
 	type ToolEntry,
+	type ToolOutput,
+	type ToolOutputPart,
 	type ToolStatus,
 	type Transcript,
 	type TranscriptEntry,
@@ -1179,9 +1181,7 @@ export class CodexAdapter implements ProtocolAdapter {
 							.flatMap((input) => (input.type === "text" ? [input.text] : []))
 							.join("\n"),
 						images: item.content.flatMap((input) =>
-							input.type === "image"
-								? [{ mediaType: "image/*", label: input.label }]
-								: [],
+							input.type === "image" ? [input.image] : [],
 						),
 						origin: match?.[1] === "injection" ? "injection" : "person",
 						rewindable:
@@ -1240,11 +1240,12 @@ export class CodexAdapter implements ProtocolAdapter {
 					item.aggregatedOutput !== null ||
 					item.exitCode !== null ||
 					streamed !== undefined
-						? {
-								kind: "command" as const,
-								exitCode: item.exitCode ?? undefined,
-								output: item.aggregatedOutput ?? streamed ?? "",
-							}
+						? [
+								commandPart(
+									item.exitCode ?? undefined,
+									item.aggregatedOutput ?? streamed ?? "",
+								),
+							]
 						: undefined;
 				if (phase === "completed") this.commandOutput.delete(id);
 				return this.put(
@@ -1273,9 +1274,12 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 			}
 			case "mcpToolCall": {
-				const text =
-					item.error ??
-					(item.result === null ? undefined : mcpText(item.result));
+				const output: ToolOutput | undefined =
+					item.error !== null
+						? [{ kind: "text", text: item.error }]
+						: item.result === null
+							? undefined
+							: mcpParts(item.result);
 				return this.put(
 					this.tool(
 						id,
@@ -1284,9 +1288,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						`${item.server}: ${item.tool}`,
 						item.arguments,
 						toolCallStatus(item.status),
-						text === undefined
-							? undefined
-							: { kind: "text", text, truncated: false },
+						output,
 					),
 					threadId,
 				);
@@ -1304,11 +1306,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						toolCallStatus(item.status),
 						item.output.length === 0
 							? undefined
-							: {
-									kind: "text",
-									text: item.output.join("\n"),
-									truncated: false,
-								},
+							: [{ kind: "text", text: item.output.join("\n") }],
 					),
 					threadId,
 				);
@@ -1336,11 +1334,12 @@ export class CodexAdapter implements ProtocolAdapter {
 						streaming ? "running" : "succeeded",
 						item.results === null
 							? undefined
-							: {
-									kind: "text",
-									text: JSON.stringify(item.results, null, 2),
-									truncated: false,
-								},
+							: [
+									{
+										kind: "text",
+										text: JSON.stringify(item.results, null, 2),
+									},
+								],
 					),
 					threadId,
 				);
@@ -1353,7 +1352,18 @@ export class CodexAdapter implements ProtocolAdapter {
 						`View image: ${item.path}`,
 						{ path: item.path },
 						streaming ? "running" : "succeeded",
-						undefined,
+						// A file on the Agent's machine, which the page names
+						// rather than opens.
+						[
+							{
+								kind: "image",
+								image: {
+									mediaType: "image/*",
+									source: { kind: "file", path: item.path },
+									label: item.path,
+								},
+							},
+						],
 					),
 					threadId,
 				);
@@ -1441,13 +1451,15 @@ export class CodexAdapter implements ProtocolAdapter {
 				})),
 			},
 			status,
-			{
-				kind: "diff",
-				files: changes.map((change) => ({
-					path: change.path,
-					unifiedDiff: change.diff,
-				})),
-			},
+			[
+				{
+					kind: "diff",
+					files: changes.map((change) => ({
+						path: change.path,
+						unifiedDiff: change.diff,
+					})),
+				},
+			],
 		);
 	}
 
@@ -1644,7 +1656,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			type: "entry",
 			entry: {
 				...entry,
-				output: { kind: "command", exitCode: undefined, output },
+				output: [commandPart(undefined, output)],
 			},
 		});
 	}
@@ -2474,22 +2486,61 @@ function subagentState(status: CollabAgentStatus): SubagentInfo["state"] {
 }
 
 /** An MCP result's text parts, or the result whole when it has none. */
-function mcpText(result: JsonValue): string {
+/** A command's output as Codex gives it: stdout and stderr as one. */
+function commandPart(
+	exitCode: number | undefined,
+	output: string,
+): ToolOutputPart {
+	return {
+		kind: "command",
+		exitCode,
+		output,
+		stderr: undefined,
+		interrupted: false,
+	};
+}
+
+/**
+ * An MCP tool's result, as MCP content: its text and its images (which carry
+ * their pixels inline), in order. A result with neither is shown as the JSON
+ * it is.
+ */
+function mcpParts(result: JsonValue): ToolOutput {
 	const content =
 		typeof result === "object" && result !== null && !Array.isArray(result)
 			? (result as { readonly content?: JsonValue }).content
 			: undefined;
-	const texts = Array.isArray(content)
-		? content.flatMap((part) =>
-				typeof part === "object" &&
-				part !== null &&
-				!Array.isArray(part) &&
-				typeof (part as { text?: unknown }).text === "string"
-					? [(part as { text: string }).text]
-					: [],
-			)
-		: [];
-	return texts.length > 0 ? texts.join("\n") : JSON.stringify(result, null, 2);
+	const parts = (Array.isArray(content) ? content : []).flatMap(
+		(part): ToolOutputPart[] => {
+			if (typeof part !== "object" || part === null || Array.isArray(part))
+				return [];
+			const { type, text, data, mimeType } = part as {
+				readonly [key: string]: JsonValue;
+			};
+			if (type === "text" && typeof text === "string")
+				return [{ kind: "text", text }];
+			if (
+				type === "image" &&
+				typeof data === "string" &&
+				typeof mimeType === "string"
+			) {
+				return [
+					{
+						kind: "image",
+						image: {
+							mediaType: mimeType,
+							source: { kind: "data", base64: data },
+							label: "image",
+						},
+					},
+				];
+			}
+			return [];
+		},
+	);
+	return parts.length > 0
+		? parts
+		: [{ kind: "text", text: JSON.stringify(result, null, 2) }];
 }
 
 /**

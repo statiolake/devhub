@@ -22,6 +22,7 @@
  */
 
 import {
+	type ImageRef,
 	type JsonValue,
 	type RateLimit,
 	rateLimitWindowName,
@@ -493,7 +494,7 @@ const SUBAGENT_ACTIVITY = [
 
 export type UserMessageInput =
 	| { readonly type: "text"; readonly text: string }
-	| { readonly type: "image"; readonly label: string }
+	| { readonly type: "image"; readonly image: ImageRef }
 	| { readonly type: "other"; readonly label: string };
 
 /**
@@ -595,13 +596,40 @@ function userInput(r: Reader, value: unknown, path: string): UserMessageInput {
 	switch (type) {
 		case "text":
 			return { type: "text", text: r.string(o, "text", path) };
-		case "image":
+		case "image": {
+			const url = r.nullableString(o, "url", path);
+			// An image the OpenAI file store holds: named, not drawable here.
+			if (url === null) {
+				const file = r.string(o, "fileId", path);
+				return {
+					type: "image",
+					image: {
+						mediaType: "image/*",
+						source: { kind: "file", path: file },
+						label: file,
+					},
+				};
+			}
 			return {
 				type: "image",
-				label: r.nullableString(o, "url", path) ?? "image",
+				image: {
+					mediaType: /^data:([^;,]+)/u.exec(url)?.[1] ?? "image/*",
+					source: { kind: "url", url },
+					label: url.startsWith("data:") ? "image" : url,
+				},
 			};
-		case "localImage":
-			return { type: "image", label: r.string(o, "path", path) };
+		}
+		case "localImage": {
+			const file = r.string(o, "path", path);
+			return {
+				type: "image",
+				image: {
+					mediaType: "image/*",
+					source: { kind: "file", path: file },
+					label: file,
+				},
+			};
+		}
 		default:
 			return {
 				type: "other",

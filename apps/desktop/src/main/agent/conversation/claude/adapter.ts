@@ -47,6 +47,8 @@ import {
 	type AssistantEntry,
 	type ConversationEvent,
 	type EntryId,
+	type FileDiff,
+	type ImageRef,
 	type JsonValue,
 	type RequestChoice,
 	type RequestId,
@@ -56,6 +58,8 @@ import {
 	type SendingMessage,
 	type SubagentInfo,
 	type ToolEntry,
+	type ToolOutput,
+	type ToolOutputPart,
 	type Transcript,
 	type TranscriptEntry,
 	type Usage,
@@ -77,6 +81,7 @@ import {
 	type ClaudeLine,
 	type ContentBlock,
 	type InitializeFacts,
+	type ToolUseResult,
 	type StreamEvent,
 	type UserBlock,
 } from "./decode.js";
@@ -1236,10 +1241,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (line.content.some((block) => block.kind !== "task_notification"))
 			this.placed(line.uuid, parent);
 		const texts: string[] = [];
+		const images: ImageRef[] = [];
 		line.content.forEach((block, position) => {
 			switch (block.kind) {
 				case "text":
 					texts.push(block.text);
+					return;
+				case "image":
+					images.push(block.image);
 					return;
 				case "task_notification":
 					return this.takeTask({
@@ -1254,7 +1263,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				case "tool_result":
 					return this.takeToolResult(
 						block,
-						line.launchedTask,
+						line.toolResult,
 						`user.message.content[${position}]`,
 					);
 				case "unused":
@@ -1265,7 +1274,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		});
 		// A subagent's first user message is the prompt it was given, which the
 		// Task call that started it already carries (`spawns.prompt`).
-		if (texts.length === 0 || parent !== null) return;
+		if ((texts.length === 0 && images.length === 0) || parent !== null) return;
 		const text = texts.join("\n");
 		// A message of the past is the person's: nothing DevHub wrote this time
 		// is waiting to be matched with it.
@@ -1285,7 +1294,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				id,
 				parent: null,
 				text,
-				images: [],
+				images,
 				origin,
 				rewindable: line.uuid !== undefined,
 			},
@@ -1305,13 +1314,17 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private takeToolResult(
 		block: Extract<UserBlock, { kind: "tool_result" }>,
-		launchedTask: string | undefined,
+		result: ToolUseResult,
 		path: string,
 	): void {
 		const id = toolEntryId(block.toolUseId);
 		const tool = this.tool(id);
 		if (tool === undefined)
 			return this.mismatch(`${path}.tool_use_id`, "a tool call that was made");
+		for (const part of block.parts) {
+			if (part.kind === "unknown") this.unknown(part.key, part.raw);
+		}
+		const { launchedTask } = result;
 		const status = this.denied.has(id)
 			? "denied"
 			: block.isError && this.interrupting
@@ -1326,7 +1339,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			entry: {
 				...tool,
 				status,
-				output: { kind: "text", text: block.text, truncated: false },
+				output: toolOutput(tool, block, result),
 				spawns:
 					tool.spawns === undefined || launchedTask !== undefined
 						? tool.spawns
@@ -1549,6 +1562,121 @@ function toolTitle(name: string, input: JsonObject): string {
 	const value = field === undefined ? undefined : input[field];
 	if (typeof value !== "string" || value === "") return name;
 	return `${name}: ${value.split("\n", 1)[0]}`;
+}
+
+/** The tools whose result is a file they changed. */
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write"]);
+
+const EXIT_CODE = /^Exit code (\d+)\n?/u;
+
+const PERSISTED = /<persisted-output>\n?([\s\S]*?)\n?<\/persisted-output>/u;
+
+/**
+ * A tool call's result, drawn as what it gave back: the blocks the model
+ * read (text, images, tools it made available), with what the tool says of
+ * its own result standing in where it says more — a command's streams and
+ * exit code, a file tool's diff, output too large for the conversation.
+ */
+function toolOutput(
+	tool: ToolEntry,
+	block: Extract<UserBlock, { kind: "tool_result" }>,
+	result: ToolUseResult,
+): ToolOutput {
+	const parts = block.parts.flatMap((part): ToolOutputPart[] =>
+		part.kind === "unknown"
+			? []
+			: part.kind === "text"
+				? [persistedPart(part.text, result)]
+				: [part],
+	);
+	if (parts.some((part) => part.kind === "persisted")) return parts;
+	const text = parts
+		.flatMap((part) => (part.kind === "text" ? [part.text] : []))
+		.join("\n");
+	const others = parts.filter((part) => part.kind !== "text");
+	if (tool.tool === "Bash") {
+		const exit = block.isError ? EXIT_CODE.exec(text) : null;
+		if (exit !== null) {
+			return [
+				{
+					kind: "command",
+					exitCode: Number(exit[1]),
+					output: text.slice(exit[0].length),
+					stderr: undefined,
+					interrupted: false,
+				},
+				...others,
+			];
+		}
+		if (result.stdout !== undefined) {
+			return [
+				{
+					kind: "command",
+					exitCode: undefined,
+					output: result.stdout,
+					stderr: result.stderr === "" ? undefined : result.stderr,
+					interrupted: result.interrupted,
+				},
+				...others,
+			];
+		}
+	}
+	if (FILE_TOOLS.has(tool.tool) && !block.isError) {
+		const diff = fileDiff(tool, result);
+		if (diff !== undefined) return [{ kind: "diff", files: [diff] }];
+	}
+	return parts;
+}
+
+/** A text that is the CLI's note of output it saved to a file, as that note; any other, as itself. */
+function persistedPart(text: string, result: ToolUseResult): ToolOutputPart {
+	const found = PERSISTED.exec(text);
+	if (found === null) return { kind: "text", text };
+	const inner = found[1]!;
+	const preview = /\n\s*Preview[^\n]*:\n/u.exec(inner);
+	return {
+		kind: "persisted",
+		note: (preview === null ? inner : inner.slice(0, preview.index)).trim(),
+		path:
+			result.persistedPath ??
+			/saved to:\s*(\S+)/u.exec(inner)?.[1] ??
+			undefined,
+		preview:
+			preview === null ? "" : inner.slice(preview.index + preview[0].length),
+	};
+}
+
+/**
+ * The change a file tool made: the CLI's own patch when it gives one (with
+ * line numbers), else what the call's input says it replaced.
+ */
+function fileDiff(
+	tool: ToolEntry,
+	result: ToolUseResult,
+): FileDiff | undefined {
+	if (result.patch !== undefined)
+		return { path: result.patch.path, unifiedDiff: result.patch.hunks };
+	const input = tool.input as JsonObject;
+	const path = input.file_path;
+	if (typeof path !== "string") return undefined;
+	const lines = (mark: string, text: JsonValue | undefined) =>
+		typeof text === "string" ? text.split("\n").map((line) => mark + line) : [];
+	const replaced = (edit: JsonValue) => {
+		const { old_string: before, new_string: after } = edit as JsonObject;
+		return [...lines("-", before), ...lines("+", after)];
+	};
+	const hunks =
+		tool.tool === "Write"
+			? [lines("+", input.content)]
+			: tool.tool === "MultiEdit"
+				? (Array.isArray(input.edits) ? input.edits : []).map(replaced)
+				: [replaced(input)];
+	const written = hunks.filter((hunk) => hunk.length > 0);
+	if (written.length === 0) return undefined;
+	return {
+		path,
+		unifiedDiff: written.map((hunk) => ["@@", ...hunk].join("\n")).join("\n"),
+	};
 }
 
 function spawnsOf(

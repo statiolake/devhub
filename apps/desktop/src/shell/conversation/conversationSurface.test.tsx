@@ -188,26 +188,36 @@ describe("every entry kind", () => {
         put(
           tool("t1", "Bash: npm test", {
             input: { command: "npm test" },
-            output: { kind: "command", exitCode: 1, output: "1 failed" },
+            output: [
+              {
+                kind: "command",
+                exitCode: 1,
+                output: "1 failed",
+                stderr: undefined,
+                interrupted: false,
+              },
+            ],
             status: "failed",
           }),
         ),
         put(
           tool("t2", "Read: README.md", {
-            output: { kind: "text", text: "# Title", truncated: true },
+            output: [{ kind: "text", text: "# Title" }],
           }),
         ),
         put(
           tool("t3", "Edit: src/x.ts", {
-            output: {
-              kind: "diff",
-              files: [
-                {
-                  path: "src/x.ts",
-                  unifiedDiff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
-                },
-              ],
-            },
+            output: [
+              {
+                kind: "diff",
+                files: [
+                  {
+                    path: "src/x.ts",
+                    unifiedDiff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
+                  },
+                ],
+              },
+            ],
           }),
         ),
         put(tool("t4", "Bash: sleep 100", { status: "running" })),
@@ -221,7 +231,6 @@ describe("every entry kind", () => {
     expect(bash).toHaveTextContent("1 failed");
     expect(bash).toHaveTextContent("Exit code 1");
     expect(entry("t2")).toHaveTextContent("# Title");
-    expect(entry("t2")).toHaveTextContent("The Agent shortened this output.");
     const lines = entry("t3").querySelectorAll(".conversation-diff-line");
     expect([...lines].map((line) => line.getAttribute("data-line"))).toEqual([
       "hunk",
@@ -230,6 +239,121 @@ describe("every entry kind", () => {
     ]);
     expect(entry("t3")).toHaveTextContent("src/x.ts");
     expect(entry("t4").querySelector("summary")).toHaveTextContent("Running");
+  });
+
+  it("draws what a call gave back part by part: stderr apart, an interruption, output saved to a file, a tool it loaded", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Bash: make", {
+            output: [
+              {
+                kind: "command",
+                exitCode: undefined,
+                output: "built",
+                stderr: "warning: old",
+                interrupted: true,
+              },
+            ],
+          }),
+        ),
+        put(
+          tool("t2", "Bash: cat big.log", {
+            output: [
+              {
+                kind: "persisted",
+                note: "Output too large (60KB). Full output saved to: /tmp/x.txt",
+                path: "/tmp/x.txt",
+                preview: "line 1",
+              },
+            ],
+          }),
+        ),
+        put(
+          tool("t3", "ToolSearch: browser", {
+            output: [{ kind: "reference", name: "mcp__browser__click" }],
+          }),
+        ),
+      ]),
+    );
+    const stderr = entry("t1").querySelector('[data-stream="stderr"]');
+    expect(stderr).toHaveTextContent("warning: old");
+    expect(entry("t1")).toHaveTextContent("Stderr");
+    expect(entry("t1")).toHaveTextContent("Interrupted");
+    expect(entry("t1")).not.toHaveTextContent("Exit code");
+    expect(entry("t2").querySelector("[data-persisted]")).toHaveTextContent(
+      "Full output saved to: /tmp/x.txt",
+    );
+    expect(entry("t2")).toHaveTextContent("line 1");
+    expect(entry("t3")).toHaveTextContent(
+      "Loaded the tool mcp__browser__click",
+    );
+  });
+
+  it("draws the images a call gave back on the call, unfolded, and one it cannot open by name", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "mcp__browser__screenshot", {
+            output: [
+              { kind: "text", text: "Captured." },
+              {
+                kind: "image",
+                image: {
+                  mediaType: "image/png",
+                  source: { kind: "data", base64: "AAAA" },
+                  label: "image",
+                },
+              },
+              {
+                kind: "image",
+                image: {
+                  mediaType: "image/*",
+                  source: { kind: "file", path: "/work/shot.png" },
+                  label: "/work/shot.png",
+                },
+              },
+            ],
+          }),
+        ),
+      ]),
+    );
+    const strip = entry("t1").querySelector(
+      ":scope .conversation-tool-entry > .conversation-images",
+    )!;
+    expect(strip).not.toBeNull();
+    expect(strip.closest("details.conversation-tool")).toBeNull();
+    expect(strip.querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,AAAA",
+    );
+    expect(strip).toHaveTextContent("Image not shown here: /work/shot.png");
+    // Drawn once: not again inside the folded output.
+    expect(
+      entry("t1").querySelectorAll("details.conversation-tool img"),
+    ).toHaveLength(0);
+  });
+
+  it("draws the images a person's message carried under its words", () => {
+    draw(
+      transcriptOf([
+        put({
+          ...user("u1", "what is this?"),
+          images: [
+            {
+              mediaType: "image/jpeg",
+              source: { kind: "data", base64: "BBBB" },
+              label: "photo.jpg",
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(entry("u1")).toHaveTextContent("what is this?");
+    expect(entry("u1").querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/jpeg;base64,BBBB",
+    );
   });
 
   it("draws a message being sent at once, at the end, quietly, and its echo in the same place without a second bubble", () => {

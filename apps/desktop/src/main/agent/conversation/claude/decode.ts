@@ -20,6 +20,7 @@
  */
 
 import {
+	type ImageRef,
 	type JsonValue,
 	type Question,
 	type RateLimit,
@@ -93,12 +94,8 @@ export type ClaudeLine =
 			readonly parent: string | null;
 			readonly uuid: string | undefined;
 			readonly content: readonly UserBlock[];
-			/**
-			 * The task a tool call in this message started in the background
-			 * (`tool_use_result.status` "async_launched"): its result says only
-			 * that it began, and its end arrives later as a task notification.
-			 */
-			readonly launchedTask: string | undefined;
+			/** The tool's own account of the result a tool_result block carries. */
+			readonly toolResult: ToolUseResult;
 	  }
 	| {
 			readonly type: "result";
@@ -216,8 +213,54 @@ export type ContentBlock =
 			readonly raw: JsonObject;
 	  };
 
+/**
+ * What a tool says of its own result (`tool_use_result`), beside the blocks
+ * the model reads: an object for most tools, the error's words for a call
+ * that failed, the content blocks again for an MCP tool. Only an object says
+ * more than the blocks do, so the others read as `NO_TOOL_RESULT`.
+ */
+export interface ToolUseResult {
+	/**
+	 * The task the call started in the background (`status`
+	 * "async_launched"): its result says only that it began, and its end
+	 * arrives later as a task notification.
+	 */
+	readonly launchedTask: string | undefined;
+	/** A command's streams, apart (Bash). */
+	readonly stdout: string | undefined;
+	readonly stderr: string | undefined;
+	readonly interrupted: boolean;
+	/** The edit a file tool made (Edit, MultiEdit, Write), as unified-diff hunks. */
+	readonly patch: { readonly path: string; readonly hunks: string } | undefined;
+	/** Where the CLI saved output too large for the conversation. */
+	readonly persistedPath: string | undefined;
+}
+
+export const NO_TOOL_RESULT: ToolUseResult = {
+	launchedTask: undefined,
+	stdout: undefined,
+	stderr: undefined,
+	interrupted: false,
+	patch: undefined,
+	persistedPath: undefined,
+};
+
+/** A block of a tool result's content. */
+export type ResultPart =
+	| { readonly kind: "text"; readonly text: string }
+	| { readonly kind: "image"; readonly image: ImageRef }
+	/** A tool the result made available to the model (a tool search's find). */
+	| { readonly kind: "reference"; readonly name: string }
+	| {
+			readonly kind: "unknown";
+			readonly key: string;
+			readonly raw: JsonObject;
+	  };
+
 export type UserBlock =
 	| { readonly kind: "text"; readonly text: string }
+	/** An image the person put in the message. */
+	| { readonly kind: "image"; readonly image: ImageRef }
 	| {
 			readonly kind: "task_notification";
 			readonly taskId: string | undefined;
@@ -230,7 +273,7 @@ export type UserBlock =
 			readonly kind: "tool_result";
 			readonly toolUseId: string;
 			readonly isError: boolean;
-			readonly text: string;
+			readonly parts: readonly ResultPart[];
 	  }
 	| { readonly kind: "unused" }
 	| {
@@ -865,14 +908,6 @@ function decodeUser(
 ): Extract<ClaudeLine, { type: "user" }> {
 	const message = f.object(raw.message, "user.message");
 	const content = message.content;
-	// A tool's own account of its result: an object for most tools, a
-	// string for some; only an object says whether a task was launched.
-	const result =
-		typeof raw.tool_use_result === "object" &&
-		raw.tool_use_result !== null &&
-		!Array.isArray(raw.tool_use_result)
-			? (raw.tool_use_result as JsonObject)
-			: undefined;
 	return {
 		type: "user",
 		parent: f.parent(raw, "user"),
@@ -889,11 +924,69 @@ function decodeUser(
 						),
 					)
 		).flat(),
-		launchedTask:
-			result?.status === "async_launched"
-				? f.string(result.agentId, "user.tool_use_result.agentId")
-				: undefined,
+		toolResult: decodeToolUseResult(raw.tool_use_result, f),
 	};
+}
+
+function decodeToolUseResult(
+	value: JsonValue | undefined,
+	f: Fields,
+): ToolUseResult {
+	// A string is the words of a call that failed, and an array an MCP
+	// tool's content blocks again: both are what the tool_result block
+	// already carries, and neither starts a task.
+	if (
+		value === undefined ||
+		value === null ||
+		typeof value === "string" ||
+		Array.isArray(value)
+	)
+		return NO_TOOL_RESULT;
+	const at = "user.tool_use_result";
+	const result = f.object(value, at);
+	const text = (key: string) => f.optionalString(result[key], `${at}.${key}`);
+	const path = text("filePath");
+	const hunks =
+		result.structuredPatch === undefined || result.structuredPatch === null
+			? []
+			: f
+					.array(result.structuredPatch, `${at}.structuredPatch`)
+					.map((each, index) =>
+						unifiedHunk(
+							f.object(each, `${at}.structuredPatch[${index}]`),
+							`${at}.structuredPatch[${index}]`,
+							f,
+						),
+					);
+	return {
+		launchedTask:
+			result.status === "async_launched"
+				? f.string(result.agentId, `${at}.agentId`)
+				: undefined,
+		stdout: text("stdout"),
+		stderr: text("stderr"),
+		interrupted:
+			result.interrupted === undefined
+				? false
+				: f.boolean(result.interrupted, `${at}.interrupted`),
+		patch:
+			path === undefined || hunks.length === 0
+				? undefined
+				: { path, hunks: hunks.join("\n") },
+		persistedPath: text("persistedOutputPath"),
+	};
+}
+
+/** One hunk of a `structuredPatch`, as a unified diff writes it. */
+function unifiedHunk(hunk: JsonObject, at: string, f: Fields): string {
+	const n = (key: string) => f.number(hunk[key], `${at}.${key}`);
+	const lines = f
+		.array(hunk.lines, `${at}.lines`)
+		.map((line, index) => f.string(line, `${at}.lines[${index}]`));
+	return [
+		`@@ -${n("oldStart")},${n("oldLines")} +${n("newStart")},${n("newLines")} @@`,
+		...lines,
+	].join("\n");
 }
 
 /** Whether a text is task notifications: it opens with one, bare or in a system reminder. */
@@ -952,33 +1045,80 @@ function decodeUserBlock(
 					block.is_error === undefined
 						? false
 						: f.boolean(block.is_error, `${at}.is_error`),
-				text: toolResultText(block.content, `${at}.content`, f),
+				parts: toolResultParts(block.content, `${at}.content`, f),
 			};
-		// Images are not drawn in v1 (design §3.5).
 		case "image":
-			return { kind: "unused" };
+			return { kind: "image", image: decodeImage(block, at, f) };
 		default:
 			return { kind: "unknown", key: `content/${type}`, raw: block };
 	}
 }
 
-/** A tool result is a string, or blocks of which the text ones are drawn. */
-function toolResultText(
+/** A tool result's content: a string, or blocks, each read as a message's blocks are. */
+function toolResultParts(
 	content: JsonValue | undefined,
 	at: string,
 	f: Fields,
-): string {
-	if (content === undefined || content === null) return "";
-	if (typeof content === "string") return content;
-	return f
-		.array(content, at)
-		.flatMap((block, index) => {
-			const each = f.object(block, `${at}[${index}]`);
-			return f.string(each.type, `${at}[${index}].type`) === "text"
-				? [f.string(each.text, `${at}[${index}].text`)]
-				: [];
-		})
-		.join("\n");
+): readonly ResultPart[] {
+	if (content === undefined || content === null) return [];
+	if (typeof content === "string") return [{ kind: "text", text: content }];
+	return f.array(content, at).map((each, index): ResultPart => {
+		const path = `${at}[${index}]`;
+		const block = f.object(each, path);
+		const type = f.string(block.type, `${path}.type`);
+		switch (type) {
+			case "text":
+				return { kind: "text", text: f.string(block.text, `${path}.text`) };
+			case "image":
+				return { kind: "image", image: decodeImage(block, path, f) };
+			case "tool_reference":
+				return {
+					kind: "reference",
+					name: f.string(block.tool_name, `${path}.tool_name`),
+				};
+			default:
+				return { kind: "unknown", key: `tool_result/${type}`, raw: block };
+		}
+	});
+}
+
+/** An image block: its pixels inline (base64), or where they are (url). */
+function decodeImage(block: JsonObject, at: string, f: Fields): ImageRef {
+	const source = f.object(block.source, `${at}.source`);
+	const type = f.string(source.type, `${at}.source.type`);
+	switch (type) {
+		case "base64":
+			return {
+				mediaType: f.string(source.media_type, `${at}.source.media_type`),
+				source: {
+					kind: "data",
+					base64: f.string(source.data, `${at}.source.data`),
+				},
+				label: "image",
+			};
+		case "url": {
+			const url = f.string(source.url, `${at}.source.url`);
+			return {
+				mediaType: "image/*",
+				source: { kind: "url", url },
+				label: url,
+			};
+		}
+		// An image the API's file store holds: named by its id, not drawable here.
+		case "file": {
+			const id = f.string(source.file_id, `${at}.source.file_id`);
+			return {
+				mediaType: "image/*",
+				source: { kind: "file", path: id },
+				label: id,
+			};
+		}
+		default:
+			return f.fail(
+				`${at}.source.type`,
+				`"base64", "url" or "file", not ${JSON.stringify(type)}`,
+			);
+	}
 }
 
 function decodeResult(raw: JsonObject, f: Fields): ClaudeLine {

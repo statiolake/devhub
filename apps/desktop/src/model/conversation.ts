@@ -59,13 +59,26 @@ export type JsonValue =
   | { readonly [key: string]: JsonValue };
 
 /**
- * An image a user message carried. v1 sends no images; the type exists so the
- * user entry has the same shape once it does.
+ * An image in the conversation: one the person attached to a message, or one
+ * a tool gave back (a screenshot, a picture it read).
  */
 export interface ImageRef {
+  /** `image/png` and the like; `image/*` when the CLI did not say. */
   readonly mediaType: string;
+  readonly source: ImageSource;
+  /** What the image is called, for a reader who cannot see it: a file name, or `image`. */
   readonly label: string;
 }
+
+/**
+ * Where an image's pixels are. `data` and `url` the page can draw; `file` is
+ * a path on the Agent's machine, which the page cannot open, so it is named
+ * and not drawn.
+ */
+export type ImageSource =
+  | { readonly kind: "data"; readonly base64: string }
+  | { readonly kind: "url"; readonly url: string }
+  | { readonly kind: "file"; readonly path: string };
 
 export type TranscriptEntry =
   | UserEntry
@@ -167,17 +180,41 @@ export interface PlanStep {
   readonly status: "pending" | "in_progress" | "completed";
 }
 
-export type ToolOutput =
-  | {
-      readonly kind: "text";
-      readonly text: string;
-      readonly truncated: boolean;
-    }
+/**
+ * What a tool call gave back: its parts in the order the tool gave them — a
+ * screenshot tool's words and its picture, a command's output and how it
+ * ended, an edit's diff.
+ */
+export type ToolOutput = readonly ToolOutputPart[];
+
+export type ToolOutputPart =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "image"; readonly image: ImageRef }
+  /** A tool the call made available (a tool search's find), by name. */
+  | { readonly kind: "reference"; readonly name: string }
   | { readonly kind: "diff"; readonly files: readonly FileDiff[] }
   | {
       readonly kind: "command";
+      /** Absent when the CLI did not say; never assumed to be 0. */
       readonly exitCode: number | undefined;
+      /** What the command printed: stdout alone when `stderr` is apart, else both. */
       readonly output: string;
+      /** What it printed on stderr, when the CLI keeps it apart. */
+      readonly stderr: string | undefined;
+      /** The command was stopped before it ended on its own. */
+      readonly interrupted: boolean;
+    }
+  /**
+   * Output too large for the conversation, which the CLI saved to a file and
+   * gave the model only the start of.
+   */
+  | {
+      readonly kind: "persisted";
+      /** The CLI's own sentence about it: how large, and where. */
+      readonly note: string;
+      readonly path: string | undefined;
+      /** The start of the output that the conversation holds. */
+      readonly preview: string;
     };
 
 export interface FileDiff {

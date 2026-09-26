@@ -379,11 +379,7 @@ describe("the permission fixture", () => {
 				title: "Bash: pwd",
 				input: { command: "pwd", description: "Print the working directory" },
 				status: "succeeded",
-				output: {
-					kind: "text",
-					text: "/home/testuser/project",
-					truncated: false,
-				},
+				output: [{ kind: "text", text: "/home/testuser/project" }],
 				spawns: undefined,
 			},
 			{
@@ -625,11 +621,7 @@ describe("the subagent fixture", () => {
 			parent: "tool:toolu_task",
 			title: "Grep: applyEvent",
 			status: "succeeded",
-			output: {
-				kind: "text",
-				text: "src/model/conversation.ts",
-				truncated: false,
-			},
+			output: [{ kind: "text", text: "src/model/conversation.ts" }],
 		});
 	});
 
@@ -787,7 +779,7 @@ describe("tool calls", () => {
 		expect(entry(adapter, "tool:toolu_1")).toMatchObject({
 			title: "Read: src/x.ts",
 			status: "failed",
-			output: { kind: "text", text: "File does not exist.", truncated: false },
+			output: [{ kind: "text", text: "File does not exist." }],
 		});
 	});
 
@@ -1716,7 +1708,16 @@ describe("the captured session", () => {
 			tool: "Bash",
 			title: "Bash: pwd",
 			status: "succeeded",
-			output: { kind: "text", text: "/home/testuser/project" },
+			// The captured result carries Bash's own account (stdout apart).
+			output: [
+				{
+					kind: "command",
+					exitCode: undefined,
+					output: "/home/testuser/project",
+					stderr: undefined,
+					interrupted: false,
+				},
+			],
 		});
 	});
 
@@ -1974,7 +1975,7 @@ describe("a resumed session's history", () => {
 		expect(tools).toHaveLength(1);
 		expect(tools[0]).toMatchObject({
 			status: "succeeded",
-			output: { kind: "text", text: "main.ts" },
+			output: [{ kind: "command", output: "main.ts" }],
 		});
 		expect(
 			adapter.transcript.entries.flatMap((each) =>
@@ -2308,5 +2309,329 @@ describe("going on with another session (/resume)", () => {
 		perform(adapter, { kind: "send", text: "first", origin: "person" });
 		adapter.received(echo("first", "u1"));
 		expect(() => adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
+	});
+});
+
+describe("what a tool gave back", () => {
+	/** A tool_result for `toolUseId`, with its content as the CLI gives it and the tool's own account. */
+	function resultOf(
+		toolUseId: string,
+		content: unknown,
+		{
+			isError = false,
+			toolUseResult,
+		}: { isError?: boolean; toolUseResult?: unknown } = {},
+	): string {
+		return json({
+			type: "user",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: toolUseId,
+						content,
+						is_error: isError,
+					},
+				],
+			},
+			parent_tool_use_id: null,
+			session_id: SESSION,
+			...(toolUseResult === undefined
+				? {}
+				: { tool_use_result: toolUseResult }),
+		});
+	}
+
+	function called(name: string, input: Record<string, unknown>): ClaudeAdapter {
+		const adapter = inTurn();
+		adapter.received(assistantLine("msg_t", [toolUse("toolu_t", name, input)]));
+		return adapter;
+	}
+
+	function output(adapter: ClaudeAdapter): ToolEntry["output"] {
+		return (entry(adapter, "tool:toolu_t") as ToolEntry).output;
+	}
+
+	const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
+
+	it("is an Edit's diff from the CLI's patch, with its line numbers", () => {
+		const adapter = called("Edit", {
+			file_path: "/home/testuser/project/src/x.ts",
+			old_string: "const a = 1;",
+			new_string: "const a = 2;",
+		});
+		adapter.received(
+			resultOf("toolu_t", "The file has been updated.", {
+				toolUseResult: {
+					filePath: "/home/testuser/project/src/x.ts",
+					oldString: "const a = 1;",
+					newString: "const a = 2;",
+					structuredPatch: [
+						{
+							oldStart: 3,
+							oldLines: 1,
+							newStart: 3,
+							newLines: 1,
+							lines: ["-const a = 1;", "+const a = 2;"],
+						},
+					],
+				},
+			}),
+		);
+		expect(output(adapter)).toEqual([
+			{
+				kind: "diff",
+				files: [
+					{
+						path: "/home/testuser/project/src/x.ts",
+						unifiedDiff: "@@ -3,1 +3,1 @@\n-const a = 1;\n+const a = 2;",
+					},
+				],
+			},
+		]);
+	});
+
+	it("is an edit's diff from its input when the CLI gave no patch: Edit, MultiEdit, and a Write of a new file", () => {
+		const edit = called("Edit", {
+			file_path: "src/x.ts",
+			old_string: "a\nb",
+			new_string: "c",
+		});
+		edit.received(resultOf("toolu_t", "The file has been updated."));
+		expect(output(edit)).toEqual([
+			{
+				kind: "diff",
+				files: [{ path: "src/x.ts", unifiedDiff: "@@\n-a\n-b\n+c" }],
+			},
+		]);
+		const multi = called("MultiEdit", {
+			file_path: "src/y.ts",
+			edits: [
+				{ old_string: "one", new_string: "1" },
+				{ old_string: "two", new_string: "2" },
+			],
+		});
+		multi.received(resultOf("toolu_t", "Applied 2 edits."));
+		expect(output(multi)).toEqual([
+			{
+				kind: "diff",
+				files: [
+					{ path: "src/y.ts", unifiedDiff: "@@\n-one\n+1\n@@\n-two\n+2" },
+				],
+			},
+		]);
+		const write = called("Write", {
+			file_path: "notes.md",
+			content: "# Notes\nhi",
+		});
+		write.received(
+			resultOf("toolu_t", "File created.", {
+				toolUseResult: {
+					type: "create",
+					filePath: "notes.md",
+					content: "# Notes\nhi",
+					structuredPatch: [],
+				},
+			}),
+		);
+		expect(output(write)).toEqual([
+			{
+				kind: "diff",
+				files: [{ path: "notes.md", unifiedDiff: "@@\n+# Notes\n+hi" }],
+			},
+		]);
+	});
+
+	it("is a failed edit's own words, not a diff that did not happen", () => {
+		const adapter = called("Edit", {
+			file_path: "src/x.ts",
+			old_string: "a",
+			new_string: "b",
+		});
+		adapter.received(
+			resultOf("toolu_t", "String to replace not found in file.", {
+				isError: true,
+				toolUseResult: "Error: String to replace not found in file.",
+			}),
+		);
+		expect(output(adapter)).toEqual([
+			{ kind: "text", text: "String to replace not found in file." },
+		]);
+	});
+
+	it("is a command's output with stderr apart, and whether it was interrupted", () => {
+		const adapter = called("Bash", { command: "make" });
+		adapter.received(
+			resultOf("toolu_t", "built\nwarning: old", {
+				toolUseResult: {
+					stdout: "built",
+					stderr: "warning: old",
+					interrupted: true,
+					isImage: false,
+				},
+			}),
+		);
+		expect(output(adapter)).toEqual([
+			{
+				kind: "command",
+				exitCode: undefined,
+				output: "built",
+				stderr: "warning: old",
+				interrupted: true,
+			},
+		]);
+	});
+
+	it("is a failed command's exit code and output, read from the words the CLI gives the model", () => {
+		const adapter = called("Bash", { command: "npm test" });
+		adapter.received(
+			resultOf("toolu_t", "Exit code 2\n1 test failed", {
+				isError: true,
+				toolUseResult: "Error: Exit code 2\n1 test failed",
+			}),
+		);
+		expect(output(adapter)).toEqual([
+			{
+				kind: "command",
+				exitCode: 2,
+				output: "1 test failed",
+				stderr: undefined,
+				interrupted: false,
+			},
+		]);
+		expect((entry(adapter, "tool:toolu_t") as ToolEntry).status).toBe("failed");
+	});
+
+	it("is output too large for the conversation, as the CLI's note of where it saved it and the start it kept", () => {
+		const adapter = called("Bash", { command: "cat big.log" });
+		adapter.received(
+			resultOf(
+				"toolu_t",
+				"<persisted-output>\nOutput too large (60KB). Full output saved to: /home/testuser/.claude/out/abc.txt\n\nPreview (first 2KB):\nline 1\nline 2\n</persisted-output>",
+				{
+					toolUseResult: {
+						stdout: "line 1\nline 2\n…",
+						stderr: "",
+						interrupted: false,
+						persistedOutputPath: "/home/testuser/.claude/out/abc.txt",
+						persistedOutputSize: 61440,
+					},
+				},
+			),
+		);
+		expect(output(adapter)).toEqual([
+			{
+				kind: "persisted",
+				note: "Output too large (60KB). Full output saved to: /home/testuser/.claude/out/abc.txt",
+				path: "/home/testuser/.claude/out/abc.txt",
+				preview: "line 1\nline 2",
+			},
+		]);
+	});
+
+	it("keeps an image and a tool reference in the order the tool gave them, beside its words", () => {
+		const adapter = called("mcp__browser__screenshot", { tabId: 1 });
+		adapter.received(
+			resultOf(
+				"toolu_t",
+				[
+					{ type: "text", text: "Captured the page." },
+					{
+						type: "image",
+						source: { type: "base64", media_type: "image/png", data: PNG },
+					},
+					{ type: "tool_reference", tool_name: "mcp__browser__click" },
+				],
+				{ toolUseResult: [{ type: "text", text: "Captured the page." }] },
+			),
+		);
+		expect(output(adapter)).toEqual([
+			{ kind: "text", text: "Captured the page." },
+			{
+				kind: "image",
+				image: {
+					mediaType: "image/png",
+					source: { kind: "data", base64: PNG },
+					label: "image",
+				},
+			},
+			{ kind: "reference", name: "mcp__browser__click" },
+		]);
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toEqual([]);
+	});
+
+	it("says once that a tool result held a block DevHub does not know, never dropping it in silence", () => {
+		const adapter = called("Read", { file_path: "a.bin" });
+		adapter.received(
+			resultOf("toolu_t", [
+				{ type: "text", text: "read" },
+				{ type: "hologram", data: "…" },
+			]),
+		);
+		const notices = adapter.transcript.entries.filter(
+			(each): each is NoticeEntry => each.kind === "notice",
+		);
+		expect(notices.map((each) => [each.level, each.text])).toEqual([
+			[
+				"warning",
+				'claude 2.1.0 printed a "tool_result/hologram" event DevHub does not know',
+			],
+		]);
+		expect(output(adapter)).toEqual([{ kind: "text", text: "read" }]);
+	});
+
+	it("reads a result whose own account is the error's words as no launch, not as a mismatch", () => {
+		const adapter = called("Agent", { description: "look", prompt: "look" });
+		adapter.received(
+			resultOf("toolu_t", "User rejected the call.", {
+				isError: true,
+				toolUseResult: "User rejected the call.",
+			}),
+		);
+		expect(entry(adapter, "tool:toolu_t")).toMatchObject({
+			status: "failed",
+			spawns: { state: "failed" },
+		});
+	});
+});
+
+describe("images the person put in a message", () => {
+	const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
+
+	it("are on the message's entry, with its words, when the CLI echoes it", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, { kind: "send", text: "what is this?", origin: "person" });
+		adapter.received(
+			json({
+				type: "user",
+				message: {
+					role: "user",
+					content: [
+						{
+							type: "image",
+							source: { type: "base64", media_type: "image/png", data: PNG },
+						},
+						{ type: "text", text: "what is this?" },
+					],
+				},
+				parent_tool_use_id: null,
+				session_id: SESSION,
+				uuid: "u-img",
+			}),
+		);
+		expect(entry(adapter, "user:u-img")).toMatchObject({
+			text: "what is this?",
+			images: [
+				{
+					mediaType: "image/png",
+					source: { kind: "data", base64: PNG },
+				},
+			],
+		});
+		expect(adapter.transcript.sending).toEqual([]);
 	});
 });

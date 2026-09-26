@@ -275,11 +275,15 @@ export function longTranscript(count = 2_000): Transcript {
       put(
         tool(`t${turn}`, `Bash: npm test -- step${turn}`, {
           input: { command: `npm test -- step${turn}` },
-          output: {
-            kind: "command",
-            exitCode: 0,
-            output: `PASS step${turn}\nTests: 12 passed, 12 total`,
-          },
+          output: [
+            {
+              kind: "command",
+              exitCode: 0,
+              output: `PASS step${turn}\nTests: 12 passed, 12 total`,
+              stderr: undefined,
+              interrupted: false,
+            },
+          ],
         }),
       ),
     );

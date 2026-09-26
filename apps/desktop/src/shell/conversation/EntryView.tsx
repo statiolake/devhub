@@ -22,6 +22,7 @@ import {
 import type {
   AssistantBlock,
   AssistantEntry,
+  ImageRef,
   NoticeEntry,
   PendingRequest,
   SendingMessage,
@@ -36,7 +37,7 @@ import {
   useConversationActions,
   useRewindMessage,
 } from "./ConversationContext";
-import { JsonView, OutputView } from "./EntryParts";
+import { ImageView, JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -85,7 +86,10 @@ function UserView({ entry }: { readonly entry: UserEntry }) {
       {entry.origin === "injection" ? (
         <div className="conversation-user-origin">Sent by a template</div>
       ) : null}
-      <div className="conversation-user-text">{entry.text}</div>
+      {entry.text !== "" ? (
+        <div className="conversation-user-text">{entry.text}</div>
+      ) : null}
+      <ImageStrip images={entry.images} />
       <div className="conversation-message-actions">
         <CopyButton text={entry.text} label="Copy message" />
         {rewindable ? (
@@ -227,19 +231,39 @@ function useDisclosure(openByDefault: boolean) {
   };
 }
 
+/** Images in a row of thumbnails, each opening to itself whole. */
+function ImageStrip({ images }: { readonly images: readonly ImageRef[] }) {
+  if (images.length === 0) return null;
+  return (
+    <div className="conversation-images">
+      {images.map((image, index) => (
+        <ImageView key={index} image={image} />
+      ))}
+    </div>
+  );
+}
+
+/** The images a call gave back, which are drawn on the call rather than folded into its output. */
+function outputImages(entry: ToolEntry): readonly ImageRef[] {
+  return (entry.output ?? []).flatMap((part) =>
+    part.kind === "image" ? [part.image] : [],
+  );
+}
+
 const ToolBody = memo(function ToolBody({
   entry,
 }: {
   readonly entry: ToolEntry;
 }) {
+  const output = entry.output?.filter((part) => part.kind !== "image");
   return (
     <div className="conversation-tool-body">
       <div className="conversation-tool-section">Input</div>
       <JsonView value={entry.input} />
-      {entry.output ? (
+      {output !== undefined && output.length > 0 ? (
         <>
           <div className="conversation-tool-section">Output</div>
-          <OutputView output={entry.output} />
+          <OutputView output={output} />
         </>
       ) : null}
     </div>
@@ -307,6 +331,7 @@ const ToolView = memo(function ToolView({
         <ToolSummary entry={entry} />
         <ToolBody entry={entry} />
       </details>
+      <ImageStrip images={outputImages(entry)} />
       {entry.background ? (
         // A background task the call started, in one quiet line on the call.
         <div

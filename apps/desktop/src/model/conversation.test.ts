@@ -196,7 +196,7 @@ describe("entries", () => {
       assistant("a1", [], false),
       tool("t1", {
         status: "succeeded",
-        output: { kind: "text", text: "/", truncated: false },
+        output: [{ kind: "text", text: "/" }],
       }),
     );
     expect(transcript.entries.map((each) => each.id)).toEqual([
@@ -206,7 +206,7 @@ describe("entries", () => {
     ]);
     expect(entry(transcript, "t1")).toMatchObject({
       status: "succeeded",
-      output: { kind: "text", text: "/" },
+      output: [{ kind: "text", text: "/" }],
     });
   });
 
@@ -388,12 +388,28 @@ describe("a tool call", () => {
       running,
       tool("t1", {
         status: "succeeded",
-        output: { kind: "command", exitCode: 0, output: "/w\n" },
+        output: [
+          {
+            kind: "command",
+            exitCode: 0,
+            output: "/w\n",
+            stderr: undefined,
+            interrupted: false,
+          },
+        ],
       }),
     );
     expect(entry(done, "t1")).toMatchObject({
       status: "succeeded",
-      output: { kind: "command", exitCode: 0, output: "/w\n" },
+      output: [
+        {
+          kind: "command",
+          exitCode: 0,
+          output: "/w\n",
+          stderr: undefined,
+          interrupted: false,
+        },
+      ],
     });
   });
 
@@ -403,7 +419,7 @@ describe("a tool call", () => {
         tool("t1"),
         tool("t1", {
           status,
-          output: { kind: "text", text: "no", truncated: false },
+          output: [{ kind: "text", text: "no" }],
         }),
       );
       expect((entry(ended, "t1") as ToolEntry).status).toBe(status);
@@ -416,16 +432,20 @@ describe("a tool call", () => {
         tool: "Edit",
         title: "Edit: src/x.ts",
         status: "succeeded",
-        output: {
-          kind: "diff",
-          files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
-        },
+        output: [
+          {
+            kind: "diff",
+            files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
+          },
+        ],
       }),
     );
-    expect((entry(edited, "t1") as ToolEntry).output).toEqual({
-      kind: "diff",
-      files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
-    });
+    expect((entry(edited, "t1") as ToolEntry).output).toEqual([
+      {
+        kind: "diff",
+        files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
+      },
+    ]);
   });
 });
 
@@ -1068,7 +1088,7 @@ describe("a replayed journal", () => {
       { type: "request-closed", request: requestId("p1") },
       tool("t1", {
         status: "succeeded",
-        output: { kind: "text", text: "/w", truncated: false },
+        output: [{ kind: "text", text: "/w" }],
       }),
       turnEnd("e1", "completed"),
       READY,
