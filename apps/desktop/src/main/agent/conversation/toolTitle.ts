@@ -10,7 +10,7 @@
  * not as a wall of their names.
  */
 
-import type { JsonValue } from "../../../model/conversation.js";
+import type { JsonValue, PlanStep } from "../../../model/conversation.js";
 
 type JsonObject = { readonly [key: string]: JsonValue };
 
@@ -65,7 +65,12 @@ const TITLES: Readonly<
 	// Tools whose title is their name: they take nothing that says more.
 	ListAgents: () => undefined,
 	ExitPlanMode: () => undefined,
-	TodoWrite: () => undefined,
+	TodoWrite: (input) => {
+		const plan = todoPlan(input);
+		return plan === undefined
+			? undefined
+			: `${plan.filter((step) => step.status === "completed").length} of ${plan.length} done`;
+	},
 };
 
 /** The arguments that most often say what a call does, most telling first. */
@@ -98,6 +103,36 @@ export function toolTitle(name: string, input: JsonObject): string {
 					.map(text)
 					.find((value) => value !== undefined));
 	return what === undefined ? shown : `${shown}: ${what}`;
+}
+
+/**
+ * The plan a TodoWrite call sets: each todo's words — in its present form
+ * while it is under way — and status. Undefined for an input of another
+ * shape, which is then drawn only as the input it is.
+ */
+export function todoPlan(input: JsonObject): readonly PlanStep[] | undefined {
+	if (!Array.isArray(input.todos)) return undefined;
+	const steps: PlanStep[] = [];
+	for (const each of input.todos) {
+		if (typeof each !== "object" || each === null || Array.isArray(each))
+			return undefined;
+		const { content, status, activeForm } = each as JsonObject;
+		if (
+			typeof content !== "string" ||
+			(status !== "pending" &&
+				status !== "in_progress" &&
+				status !== "completed")
+		)
+			return undefined;
+		steps.push({
+			text:
+				status === "in_progress" && typeof activeForm === "string"
+					? activeForm
+					: content,
+			status,
+		});
+	}
+	return steps;
 }
 
 function field(key: string): (input: JsonObject) => string | undefined {

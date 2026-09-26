@@ -485,24 +485,71 @@
   margin-top: var(--space-2);
 }
 
-.conversation-plan {
-  padding: var(--space-2) var(--space-3) var(--space-2) 2.2em;
+/* A plan is a checklist: a box per step that is empty, half filled while
+   the step is under way, and ticked once done. */
+.conversation-checklist {
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-panel);
   margin: var(--space-2) 0;
+  list-style: none;
 }
 
-.conversation-plan > li + li {
+.conversation-tool-entry > .conversation-checklist {
+  margin-left: 1.45em;
+}
+
+.conversation-tool-body > .conversation-checklist {
+  border: none;
+  margin: 0;
+}
+
+.conversation-checklist > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.conversation-checklist > li + li {
   margin-top: 0.15em;
 }
 
-.conversation-plan > li[data-status="completed"] {
+.conversation-checklist-mark {
+  position: relative;
+  top: 0.1em;
+  width: 0.8em;
+  height: 0.8em;
+  box-sizing: border-box;
+  flex: none;
+  border: 1.5px solid var(--tertiary);
+  border-radius: 3px;
+}
+
+.conversation-checklist > li[data-status="in_progress"] {
+  font-weight: 600;
+}
+
+.conversation-checklist
+  > li[data-status="in_progress"]
+  > .conversation-checklist-mark {
+  border-color: var(--status-working);
+  background: linear-gradient(
+    to right,
+    var(--status-working) 50%,
+    transparent 50%
+  );
+}
+
+.conversation-checklist > li[data-status="completed"] {
   color: var(--tertiary);
   text-decoration: line-through;
 }
 
-.conversation-plan > li[data-status="in_progress"] {
-  font-weight: 600;
+.conversation-checklist
+  > li[data-status="completed"]
+  > .conversation-checklist-mark {
+  border-color: var(--status-idle);
+  background: var(--status-idle);
 }
 
 /* ------------------------------------------------------------ Markdown */

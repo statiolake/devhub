@@ -10,11 +10,12 @@
  * props as they were and `memo` can skip them.
  */
 
-import type {
-  EntryId,
-  PendingRequest,
-  Transcript,
-  TranscriptEntry,
+import {
+  latestPlan,
+  type EntryId,
+  type PendingRequest,
+  type Transcript,
+  type TranscriptEntry,
 } from "../../model/conversation";
 
 export interface EntryTree {
@@ -24,6 +25,8 @@ export interface EntryTree {
   readonly requests: ReadonlyMap<EntryId, readonly PendingRequest[]>;
   /** The open requests about no tool call, drawn after the last entry. */
   readonly unattached: readonly PendingRequest[];
+  /** The entry the Agent's plan last stood on (`latestPlan`), whose checklist is drawn unfolded. */
+  readonly latestPlan: EntryId | undefined;
 }
 
 export const NO_ENTRIES: readonly TranscriptEntry[] = [];
@@ -84,5 +87,6 @@ export function entryTree(
       previous && sameItems(previous.unattached, unattached)
         ? previous.unattached
         : unattached,
+    latestPlan: latestPlan(transcript)?.entry,
   };
 }

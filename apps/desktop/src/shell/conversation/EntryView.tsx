@@ -26,6 +26,7 @@ import type {
   ImageRef,
   NoticeEntry,
   PendingRequest,
+  PlanStep,
   SendingMessage,
   ToolEntry,
   TranscriptEntry,
@@ -168,16 +169,32 @@ function BlockView({
         </details>
       );
     case "plan":
-      return (
-        <ol className="conversation-plan">
-          {block.steps.map((step, index) => (
-            <li key={index} data-status={step.status}>
-              {step.text}
-            </li>
-          ))}
-        </ol>
-      );
+      return <PlanChecklist steps={block.steps} />;
   }
+}
+
+const STEP_LABELS: Readonly<Record<PlanStep["status"], string>> = {
+  pending: "To do",
+  in_progress: "Under way",
+  completed: "Done",
+};
+
+/** A plan as a checklist: each step with a box that says how it stands. */
+function PlanChecklist({ steps }: { readonly steps: readonly PlanStep[] }) {
+  return (
+    <ul className="conversation-checklist">
+      {steps.map((step, index) => (
+        <li key={index} data-status={step.status}>
+          <span
+            className="conversation-checklist-mark"
+            role="img"
+            aria-label={STEP_LABELS[step.status]}
+          />
+          {step.text}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function AssistantView({ entry }: { readonly entry: AssistantEntry }) {
@@ -259,6 +276,12 @@ const ToolBody = memo(function ToolBody({
   const output = entry.output?.filter((part) => part.kind !== "image");
   return (
     <div className="conversation-tool-body">
+      {entry.plan !== undefined ? (
+        <>
+          <div className="conversation-tool-section">Plan</div>
+          <PlanChecklist steps={entry.plan} />
+        </>
+      ) : null}
       <div className="conversation-tool-section">Input</div>
       <JsonView value={entry.input} />
       {output !== undefined && output.length > 0 ? (
@@ -322,11 +345,14 @@ const ToolView = memo(function ToolView({
   childEntries,
   requests,
   depth,
+  planShown,
 }: {
   readonly entry: ToolEntry;
   readonly childEntries: readonly TranscriptEntry[];
   readonly requests: readonly PendingRequest[];
   readonly depth: number;
+  /** Its plan is the Agent's latest, drawn unfolded. */
+  readonly planShown: boolean;
 }) {
   const spawns = entry.spawns;
   const subagent = useDisclosure(spawns?.state === "running");
@@ -346,6 +372,10 @@ const ToolView = memo(function ToolView({
         <ToolBody entry={entry} />
       </details>
       <ImageStrip images={outputImages(entry)} />
+      {planShown && entry.plan !== undefined ? (
+        // The plan as it stands now, unfolded; earlier ones stay in their calls.
+        <PlanChecklist steps={entry.plan} />
+      ) : null}
       {entry.background ? (
         // A background task the call started, in one quiet line on the call.
         <div
@@ -432,6 +462,7 @@ function ToolEntryView({
       childEntries={tree.children.get(entry.id) ?? NO_ENTRIES}
       requests={tree.requests.get(entry.id) ?? NO_REQUESTS}
       depth={depth}
+      planShown={tree.latestPlan === entry.id}
     />
   );
 }

@@ -3310,3 +3310,40 @@ describe("a teammate", () => {
 		expect(state(adapter)).toBe("unknown");
 	});
 });
+
+describe("a TodoWrite call", () => {
+	it("carries the plan it sets, each step with its status, the one under way in its present form", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_todo", "TodoWrite", {
+					todos: [
+						{
+							content: "Read the code",
+							status: "completed",
+							activeForm: "Reading the code",
+						},
+						{
+							content: "Fix the bug",
+							status: "in_progress",
+							activeForm: "Fixing the bug",
+						},
+						{
+							content: "Run the tests",
+							status: "pending",
+							activeForm: "Running the tests",
+						},
+					],
+				}),
+			]),
+		);
+		expect(entry(adapter, "tool:toolu_todo")).toMatchObject({
+			title: "TodoWrite: 1 of 3 done",
+			plan: [
+				{ text: "Read the code", status: "completed" },
+				{ text: "Fixing the bug", status: "in_progress" },
+				{ text: "Run the tests", status: "pending" },
+			],
+		});
+	});
+});

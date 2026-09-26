@@ -29,6 +29,7 @@ const running: ConversationEvent[] = [
 			spawns: undefined,
 			background: undefined,
 			outsideSandbox: false,
+			plan: undefined,
 		},
 	},
 ];

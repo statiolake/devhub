@@ -50,6 +50,7 @@ import {
 	type FileDiff,
 	type ImageRef,
 	type JsonValue,
+	type PlanStep,
 	type RequestChoice,
 	type RequestId,
 	type SessionFacts,
@@ -73,7 +74,7 @@ import {
 	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
-import { toolTitle } from "../toolTitle.js";
+import { todoPlan, toolTitle } from "../toolTitle.js";
 import {
 	NO_TOOL_RESULT,
 	ORIGIN_KEY,
@@ -1153,6 +1154,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						spawns: spawnsOf(block.name, block.input, undefined),
 						background: undefined,
 						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
+						plan: planOf(block.name, block.input),
 					},
 				});
 			}
@@ -1222,6 +1224,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						input: block.input,
 						spawns: spawnsOf(block.name, block.input, tool.spawns),
 						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
+						plan: planOf(block.name, block.input),
 					},
 				});
 			}
@@ -1703,6 +1706,14 @@ function answerResponse(
 		updatedInput: permission.input,
 		updatedPermissions: [suggestion],
 	};
+}
+
+/** The plan a call sets: TodoWrite's. */
+function planOf(
+	name: string,
+	input: JsonObject,
+): readonly PlanStep[] | undefined {
+	return name === "TodoWrite" ? todoPlan(input) : undefined;
 }
 
 /** The tools whose result is a file they changed. */

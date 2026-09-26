@@ -214,6 +214,13 @@ any other tool by its most telling argument (a description, command, path,
 URL, query, action or name; else its first argument in words), so calls to
 tools DevHub has never heard of still read as what they did.
 
+**A plan** is a checklist, each step with a box that is empty, half filled
+while the step is under way, or ticked once done: Codex's plan updates, and
+the list a Claude TodoWrite call sets (whose title says how far it has come,
+*TodoWrite: 2 of 5 done*). The latest plan is drawn unfolded under its call;
+an earlier TodoWrite keeps its checklist folded in its call. The step under
+way is also what the Agent's row says it is doing when no call runs.
+
 **What a tool call gave back** is drawn part by part, in the order the tool
 gave it:
 

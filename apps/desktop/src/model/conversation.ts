@@ -199,6 +199,8 @@ export interface ToolEntry {
    * `dangerouslyDisableSandbox`). Drawn quietly: it is an everyday thing.
    */
   readonly outsideSandbox: boolean;
+  /** The plan the call set (Claude's TodoWrite), whole, as it stands after it. */
+  readonly plan: readonly PlanStep[] | undefined;
 }
 
 export interface BackgroundTask {
@@ -928,14 +930,29 @@ export function conversationActivity(
     const entry = entries[index]!;
     if (entry.kind === "tool" && entry.status === "running") return entry.title;
   }
+  const plan = latestPlan(transcript)?.steps;
+  return plan?.find((step) => step.status === "in_progress")?.text;
+}
+
+/**
+ * The Agent's plan as it last stood: the latest plan block of an answer
+ * (Codex) or plan a call set (Claude's TodoWrite), and the entry it is on.
+ */
+export function latestPlan(
+  transcript: Transcript,
+):
+  | { readonly entry: EntryId; readonly steps: readonly PlanStep[] }
+  | undefined {
+  const { entries } = transcript;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
+    if (entry.kind === "tool" && entry.plan !== undefined)
+      return { entry: entry.id, steps: entry.plan };
     if (entry.kind !== "assistant") continue;
     for (let block = entry.blocks.length - 1; block >= 0; block -= 1) {
       const candidate = entry.blocks[block]!;
-      if (candidate.kind !== "plan") continue;
-      return candidate.steps.find((step) => step.status === "in_progress")
-        ?.text;
+      if (candidate.kind === "plan")
+        return { entry: entry.id, steps: candidate.steps };
     }
   }
   return undefined;

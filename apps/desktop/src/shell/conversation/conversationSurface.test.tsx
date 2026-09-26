@@ -151,7 +151,7 @@ describe("every entry kind", () => {
     const thinking = entry("a1").querySelector("details.conversation-thinking");
     expect(thinking).not.toHaveAttribute("open");
     expect(thinking).toHaveTextContent("weighing it up");
-    const steps = entry("a1").querySelectorAll(".conversation-plan > li");
+    const steps = entry("a1").querySelectorAll(".conversation-checklist > li");
     expect([...steps].map((step) => step.getAttribute("data-status"))).toEqual([
       "completed",
       "in_progress",
@@ -389,6 +389,47 @@ describe("every entry kind", () => {
     expect(entry("c2").querySelector(".conversation-command")).toHaveAttribute(
       "data-failed",
     );
+  });
+
+  it("draws a plan as a checklist, the latest one unfolded and the earlier ones only in their calls", () => {
+    const steps = (done: number) =>
+      ["Read", "Fix", "Test"].map((text, index) => ({
+        text,
+        status:
+          index < done
+            ? ("completed" as const)
+            : index === done
+              ? ("in_progress" as const)
+              : ("pending" as const),
+      }));
+    draw(
+      transcriptOf([
+        put(assistant("a1", [{ kind: "plan", steps: steps(2) }])),
+        put(tool("t1", "TodoWrite: 0 of 3 done", { plan: steps(0) })),
+        put(tool("t2", "TodoWrite: 1 of 3 done", { plan: steps(1) })),
+      ]),
+    );
+    const outside = (id: string) =>
+      entry(id).querySelector(
+        ":scope .conversation-tool-entry > .conversation-checklist",
+      );
+    expect(outside("t1")).toBeNull();
+    const latest = outside("t2")!;
+    expect(
+      [...latest.querySelectorAll("li")].map((item) => [
+        item.textContent,
+        item.getAttribute("data-status"),
+      ]),
+    ).toEqual([
+      ["Read", "completed"],
+      ["Fix", "in_progress"],
+      ["Test", "pending"],
+    ]);
+    expect(
+      entry("a1").querySelector(
+        ".conversation-checklist li[data-status='in_progress']",
+      ),
+    ).toHaveTextContent("Test");
   });
 
   it("says a teammate waiting between tasks is idle", () => {

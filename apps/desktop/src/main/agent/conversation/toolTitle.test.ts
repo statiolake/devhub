@@ -77,3 +77,16 @@ describe("a tool call's title", () => {
 		expect(toolTitle("Frobnicate", { level: 3 })).toBe("Frobnicate");
 	});
 });
+
+describe("a TodoWrite call's title", () => {
+	it("says how far the plan has come", () => {
+		expect(
+			toolTitle("TodoWrite", {
+				todos: [
+					{ content: "a", status: "completed" },
+					{ content: "b", status: "pending" },
+				],
+			}),
+		).toBe("TodoWrite: 1 of 2 done");
+	});
+});

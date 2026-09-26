@@ -101,6 +101,7 @@ function tool(
       spawns: undefined,
       background: undefined,
       outsideSandbox: false,
+      plan: undefined,
       ...fields,
     },
   };
@@ -1140,5 +1141,21 @@ describe("attached images", () => {
     expect(() => attachedImages(undefined)).toThrow(
       "attached images are not a list",
     );
+  });
+});
+
+describe("what the Agent is doing, from a plan a call set", () => {
+  it("is the step under way of the latest plan when no call runs", () => {
+    const transcript = applyEvents(EMPTY_TRANSCRIPT, [
+      { type: "state", state: { phase: "ready", turn: "running" } },
+      tool("t1", {
+        status: "succeeded",
+        plan: [
+          { text: "Read", status: "completed" },
+          { text: "Fixing the bug", status: "in_progress" },
+        ],
+      }),
+    ]);
+    expect(conversationActivity(transcript)).toBe("Fixing the bug");
   });
 });

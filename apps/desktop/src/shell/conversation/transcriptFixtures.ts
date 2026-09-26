@@ -17,6 +17,7 @@ import {
   type EntryId,
   type JsonValue,
   type PendingRequest,
+  type PlanStep,
   type RequestChoice,
   type BackgroundTask,
   type SubagentInfo,
@@ -89,6 +90,7 @@ export function tool(
     background,
     parent = null,
     outsideSandbox = false,
+    plan,
   }: {
     name?: string;
     input?: JsonValue;
@@ -98,6 +100,7 @@ export function tool(
     background?: BackgroundTask;
     parent?: string | null;
     outsideSandbox?: boolean;
+    plan?: readonly PlanStep[];
   } = {},
 ): TranscriptEntry {
   return {
@@ -112,6 +115,7 @@ export function tool(
     spawns,
     background,
     outsideSandbox,
+    plan,
   };
 }
 
