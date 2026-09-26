@@ -259,6 +259,14 @@ export type ResultPart =
 
 export type UserBlock =
 	| { readonly kind: "text"; readonly text: string }
+	/** A command the CLI ran itself: `/model sonnet`, `! ls`. */
+	| { readonly kind: "command"; readonly line: string }
+	/** What such a command printed. */
+	| {
+			readonly kind: "command_output";
+			readonly output: string;
+			readonly failed: boolean;
+	  }
 	/** An image the person put in the message. */
 	| { readonly kind: "image"; readonly image: ImageRef }
 	| {
@@ -1006,6 +1014,8 @@ const TASK_NOTIFICATION =
  * reading aid, not something to draw.
  */
 function textBlock(text: string): UserBlock[] {
+	const command = commandBlock(text);
+	if (command !== undefined) return command;
 	if (!isTaskNotificationText(text)) return [{ kind: "text", text }];
 	const notifications = [...text.matchAll(TASK_NOTIFICATION)].map(
 		([, body]): UserBlock => ({
@@ -1018,6 +1028,60 @@ function textBlock(text: string): UserBlock[] {
 		}),
 	);
 	return notifications;
+}
+
+/**
+ * A text the CLI wrote of a command it ran itself, as the session file
+ * records it: the command (`<command-name>` and `<command-args>`, or a
+ * shell-mode `<bash-input>`), what it printed (`<local-command-stdout>` /
+ * `-stderr`, `<bash-stdout>` / `-stderr`), or the caveat it puts before
+ * them, which is for the model and is not drawn.
+ */
+function commandBlock(text: string): UserBlock[] | undefined {
+	const opening = /^\s*<([a-z-]+)>/u.exec(text)?.[1];
+	switch (opening) {
+		case "local-command-caveat":
+			return [];
+		case "command-name":
+		case "command-message": {
+			const name = notificationField(text, "command-name") ?? "";
+			const args = (notificationField(text, "command-args") ?? "").trim();
+			const line = name.startsWith("/") ? name : `/${name}`;
+			return [
+				{ kind: "command", line: args === "" ? line : `${line} ${args}` },
+			];
+		}
+		case "bash-input":
+			return [
+				{
+					kind: "command",
+					line: `! ${notificationField(text, "bash-input") ?? ""}`,
+				},
+			];
+		case "local-command-stdout":
+		case "local-command-stderr":
+		case "bash-stdout":
+		case "bash-stderr": {
+			const family = opening.startsWith("bash") ? "bash" : "local-command";
+			const stdout = plain(notificationField(text, `${family}-stdout`));
+			const stderr = plain(notificationField(text, `${family}-stderr`));
+			return [
+				{
+					kind: "command_output",
+					output: [stdout, stderr].filter((each) => each !== "").join("\n"),
+					failed: stderr !== "",
+				},
+			];
+		}
+		default:
+			return undefined;
+	}
+}
+
+/** A command's printout without the terminal's colours. */
+function plain(text: string | undefined): string {
+	// eslint-disable-next-line no-control-regex
+	return (text ?? "").replace(/\u001b\[[0-9;]*m/gu, "").trim();
 }
 
 /** The first `<name>` of a notification, as written (the CLI escapes nothing it would need undone here). */

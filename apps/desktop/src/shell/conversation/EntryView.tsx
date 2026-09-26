@@ -22,6 +22,7 @@ import {
 import type {
   AssistantBlock,
   AssistantEntry,
+  CommandEntry,
   ImageRef,
   NoticeEntry,
   PendingRequest,
@@ -436,6 +437,31 @@ function ToolEntryView({
 }
 
 // ---------------------------------------------------------------------------
+// Commands the CLI ran itself
+
+/**
+ * A slash command or shell-mode line, as one quiet line: what was typed,
+ * and under it what it printed. It is the CLI's, not a message to the model.
+ */
+function CommandView({ entry }: { readonly entry: CommandEntry }) {
+  return (
+    <div
+      className="conversation-command"
+      data-failed={entry.failed || undefined}
+    >
+      <code className="conversation-command-line">
+        {entry.line ?? "Command output"}
+      </code>
+      {entry.output !== undefined && entry.output !== "" ? (
+        <pre className="conversation-command-output">
+          <code>{entry.output}</code>
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Notices and turn ends
 
 function NoticeView({ entry }: { readonly entry: NoticeEntry }) {
@@ -556,6 +582,8 @@ function entryBody(entry: TranscriptEntry, depth: number) {
       return <AssistantView entry={entry} />;
     case "tool":
       return <ToolEntryView entry={entry} depth={depth} />;
+    case "command":
+      return <CommandView entry={entry} />;
     case "notice":
       return <NoticeView entry={entry} />;
     case "turn-end":

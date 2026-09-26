@@ -118,6 +118,7 @@ export function attachedImages(value: unknown): readonly ImageRef[] {
 
 export type TranscriptEntry =
   | UserEntry
+  | CommandEntry
   | AssistantEntry
   | ToolEntry
   | NoticeEntry
@@ -139,6 +140,22 @@ export interface UserEntry {
    * message it holds.
    */
   readonly rewindable: boolean;
+}
+
+/**
+ * A command the CLI ran itself rather than the model — a slash command
+ * (`/model sonnet`), a shell-mode line (`! ls`) — and what it printed.
+ */
+export interface CommandEntry {
+  readonly kind: "command";
+  readonly id: EntryId;
+  readonly parent: null;
+  /** As typed: `/model sonnet`, `! ls`. Absent when only its output was recorded. */
+  readonly line: string | undefined;
+  /** What it printed, once it has. */
+  readonly output: string | undefined;
+  /** It printed an error. */
+  readonly failed: boolean;
 }
 
 export interface AssistantEntry {

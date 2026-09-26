@@ -172,6 +172,9 @@ function outline(
 			case "notice":
 				line = `notice(${entry.level}): ${entry.text}`;
 				break;
+			case "command":
+				line = `command: ${entry.line ?? ""} -> ${entry.output ?? ""}`;
+				break;
 			case "turn-end":
 				line = `turn-end ${entry.outcome} ${entry.durationMs ?? "-"}ms`;
 				break;

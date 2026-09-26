@@ -237,6 +237,16 @@ gave it:
 
 An image in a message of yours is drawn under its words the same way.
 
+**Commands the CLI ran itself** — a slash command such as `/model sonnet`,
+or a shell-mode `! ls` — are one quiet line each, the command as typed with
+what it printed under it (in red when it printed an error), not a message
+bubble. Claude records them as tagged text (`<command-name>`,
+`<command-args>`, `<local-command-stdout>` and `-stderr`, `<bash-input>`,
+`<bash-stdout>` and `-stderr`); the caveat it writes before them
+(`<local-command-caveat>`) is for the model and is not drawn. Output that no
+recorded command names is drawn as *Command output*. A slash command sent
+from the composer that the CLI echoes in this form is taken as sent then.
+
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
 Every message also has a quiet Copy action under it, always shown, and every

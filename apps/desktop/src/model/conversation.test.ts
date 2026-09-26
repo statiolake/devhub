@@ -100,6 +100,7 @@ function tool(
       output: undefined,
       spawns: undefined,
       background: undefined,
+      outsideSandbox: false,
       ...fields,
     },
   };

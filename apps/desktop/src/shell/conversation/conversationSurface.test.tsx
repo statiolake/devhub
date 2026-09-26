@@ -21,6 +21,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { entryId, type UserEntry } from "../../model/conversation";
 import { COPIED_MS } from "./CopyButton";
 import {
   draw,
@@ -359,11 +360,42 @@ describe("every entry kind", () => {
     ).not.toHaveAttribute("data-sandbox");
   });
 
+  it("draws a slash command as one compact line with what it printed, not as a message", () => {
+    draw(
+      transcriptOf([
+        put({
+          kind: "command",
+          id: entryId("c1"),
+          parent: null,
+          line: "/model sonnet",
+          output: "Set model to sonnet",
+          failed: false,
+        }),
+        put({
+          kind: "command",
+          id: entryId("c2"),
+          parent: null,
+          line: "/nope",
+          output: "Unknown command: /nope",
+          failed: true,
+        }),
+      ]),
+    );
+    expect(entry("c1").querySelector(".conversation-user")).toBeNull();
+    expect(
+      entry("c1").querySelector(".conversation-command-line"),
+    ).toHaveTextContent("/model sonnet");
+    expect(entry("c1")).toHaveTextContent("Set model to sonnet");
+    expect(entry("c2").querySelector(".conversation-command")).toHaveAttribute(
+      "data-failed",
+    );
+  });
+
   it("draws the images a person's message carried under its words", () => {
     draw(
       transcriptOf([
         put({
-          ...user("u1", "what is this?"),
+          ...(user("u1", "what is this?") as UserEntry),
           images: [
             {
               mediaType: "image/jpeg",

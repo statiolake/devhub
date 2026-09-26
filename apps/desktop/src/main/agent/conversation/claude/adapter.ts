@@ -260,6 +260,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private announced: readonly string[] = [];
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
+	private commandCount = 0;
 	private turns = 0;
 	private users = 0;
 
@@ -1260,6 +1261,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				case "image":
 					images.push(block.image);
 					return;
+				case "command":
+					return this.takeCommand(line.uuid, block.line, when, parent);
+				case "command_output":
+					return this.takeCommandOutput(line.uuid, block, parent);
 				case "task_notification":
 					return this.takeTask({
 						type: "task",
@@ -1315,6 +1320,67 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			this.emitSending();
 			this.turn("running");
 		}
+	}
+
+	/**
+	 * A command the CLI ran itself. One DevHub sent (a slash command typed in
+	 * the composer) is echoed in this form, and is taken as sent then.
+	 */
+	private takeCommand(
+		uuid: string | undefined,
+		line: string,
+		when: "live" | "history",
+		parent: EntryId | null,
+	): void {
+		if (parent !== null) return;
+		if (when === "live") {
+			const taken = this.untaken.findIndex((each) => each.text === line);
+			if (taken >= 0) {
+				this.untaken.splice(taken, 1);
+				this.emitSending();
+				this.turn("running");
+			}
+		}
+		this.commandCount += 1;
+		this.emit({
+			type: "entry",
+			entry: {
+				kind: "command",
+				id: entryId(`command:${uuid ?? `#${this.commandCount}`}`),
+				parent: null,
+				line,
+				output: undefined,
+				failed: false,
+			},
+		});
+	}
+
+	/** What a command printed: on the command it follows, or alone when none said what ran. */
+	private takeCommandOutput(
+		uuid: string | undefined,
+		block: Extract<UserBlock, { kind: "command_output" }>,
+		parent: EntryId | null,
+	): void {
+		if (parent !== null) return;
+		const last = this.current.entries.at(-1);
+		if (last?.kind === "command" && last.output === undefined) {
+			return this.emit({
+				type: "entry",
+				entry: { ...last, output: block.output, failed: block.failed },
+			});
+		}
+		this.commandCount += 1;
+		this.emit({
+			type: "entry",
+			entry: {
+				kind: "command",
+				id: entryId(`command:${uuid ?? `#${this.commandCount}`}`),
+				parent: null,
+				line: undefined,
+				output: block.output,
+				failed: block.failed,
+			},
+		});
 	}
 
 	/**
