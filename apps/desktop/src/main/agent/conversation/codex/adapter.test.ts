@@ -1768,6 +1768,7 @@ describe("an MCP tool's result", () => {
 		});
 		expect(harness.entry(`${MAIN}/item-mcp`)).toMatchObject({
 			kind: "tool",
+			title: "browser · screenshot",
 			output: [
 				{ kind: "text", text: "Captured." },
 				{

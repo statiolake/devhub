@@ -206,6 +206,14 @@ requests as cards with the CLI's own choices. A turn that completed draws no
 divider, and no durations, token counts or cost are drawn anywhere: the rate
 limits are the Sidebar's (below).
 
+**A tool call's title** is the tool and what the call does: the argument
+that says it for a tool DevHub knows (`Bash: npm test`, `SendMessage:
+researcher — status`, `TaskUpdate: 3 → completed`, `ToolSearch: …`), an MCP
+tool by its server and tool (`claude-in-chrome · computer: screenshot`), and
+any other tool by its most telling argument (a description, command, path,
+URL, query, action or name; else its first argument in words), so calls to
+tools DevHub has never heard of still read as what they did.
+
 **What a tool call gave back** is drawn part by part, in the order the tool
 gave it:
 

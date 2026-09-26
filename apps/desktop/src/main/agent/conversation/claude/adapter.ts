@@ -73,6 +73,7 @@ import {
 	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
+import { toolTitle } from "../toolTitle.js";
 import {
 	NO_TOOL_RESULT,
 	ORIGIN_KEY,
@@ -123,23 +124,6 @@ const MODES: Setting["choices"] = [
 ];
 
 const EFFORT_COMMAND = /^\/effort\s+(\S+)\s*$/u;
-
-/** The input field that says, in a word, what a call of each well-known tool does. */
-const TITLE_FIELDS: Readonly<Record<string, string>> = {
-	Bash: "command",
-	Read: "file_path",
-	Edit: "file_path",
-	MultiEdit: "file_path",
-	Write: "file_path",
-	NotebookEdit: "notebook_path",
-	Glob: "pattern",
-	Grep: "pattern",
-	WebFetch: "url",
-	WebSearch: "query",
-	Task: "description",
-	Agent: "description",
-	Skill: "skill",
-};
 
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
@@ -1719,14 +1703,6 @@ function answerResponse(
 		updatedInput: permission.input,
 		updatedPermissions: [suggestion],
 	};
-}
-
-/** `Bash: npm test` — the tool, and the one field that says what this call does. */
-function toolTitle(name: string, input: JsonObject): string {
-	const field = TITLE_FIELDS[name];
-	const value = field === undefined ? undefined : input[field];
-	if (typeof value !== "string" || value === "") return name;
-	return `${name}: ${value.split("\n", 1)[0]}`;
 }
 
 /** The tools whose result is a file they changed. */

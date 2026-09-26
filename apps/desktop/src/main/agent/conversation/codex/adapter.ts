@@ -77,6 +77,7 @@ import {
 	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
+import { toolTitle } from "../toolTitle.js";
 import {
 	Reader,
 	accountResponse,
@@ -1291,7 +1292,10 @@ export class CodexAdapter implements ProtocolAdapter {
 						id,
 						parent,
 						`mcp:${item.server}/${item.tool}`,
-						`${item.server}: ${item.tool}`,
+						toolTitle(
+							`mcp__${item.server}__${item.tool}`,
+							argumentsOf(item.arguments),
+						),
 						item.arguments,
 						toolCallStatus(item.status),
 						output,
@@ -1307,7 +1311,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						item.namespace === null
 							? item.tool
 							: `${item.namespace}/${item.tool}`,
-						item.tool,
+						toolTitle(item.tool, argumentsOf(item.arguments)),
 						item.arguments,
 						toolCallStatus(item.status),
 						item.output.length === 0
@@ -2515,6 +2519,13 @@ function subagentState(status: CollabAgentStatus): SubagentInfo["state"] {
 }
 
 /** An MCP result's text parts, or the result whole when it has none. */
+/** A call's arguments, as a title reads them: an object, or nothing to read. */
+function argumentsOf(value: JsonValue): { readonly [key: string]: JsonValue } {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as { readonly [key: string]: JsonValue })
+		: {};
+}
+
 /** An image sent as a data URL, read back as the page draws it. */
 function dataImage(url: string): ImageRef {
 	return {
