@@ -7,10 +7,15 @@
  * (`WebContentsView` has `setBounds`, `setVisible`, `setBackgroundColor`,
  * `setBorderRadius` and `setLayout`, and nothing else — measured). So a layer
  * that is bigger than the notices is a hole in the editor underneath it, and a
- * layer that stays in the window with nothing to say is a permanent one.
+ * layer that stays over the window with nothing to say is a permanent one.
  *
- * Which makes these the two assertions worth having: the bounds are the
- * reported size, and nothing to say means gone.
+ * Nor is it ever taken out of the window: a view out of it is a hidden page
+ * that paints nothing, so it would come back on a frame of the notice it last
+ * showed. With nothing to say it is parked, all but one pixel outside the
+ * window's corner (`parkedRect`).
+ *
+ * Which makes these the assertions worth having: the bounds are the reported
+ * size, and nothing to say means parked — never removed.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +55,7 @@ vi.mock("../electron.js", () => ({
 
 const { ToastsView } = await import("./toastsView.js");
 const { windowLayout } = await import("./windowLayout.js");
+type LayoutChild = import("./windowLayout.js").LayoutChild;
 
 /**
  * Where the layout owner would put this layer, for the size it now reports.
@@ -58,9 +64,7 @@ const { windowLayout } = await import("./windowLayout.js");
  * what is asserted below is the placement DevHub actually makes rather than a
  * second copy of the arithmetic.
  */
-function placementFor(
-	toasts: InstanceType<typeof ToastsView>,
-): Electron.Rectangle | undefined {
+function placementFor(toasts: InstanceType<typeof ToastsView>): LayoutChild {
 	const children = windowLayout({
 		windowSize: { width: 1000, height: 800 },
 		state: {
@@ -77,8 +81,19 @@ function placementFor(
 		picker: "none",
 		tooltip: undefined,
 	});
-	return children.find((child) => child.identity.kind === "toasts")?.rect;
+	const child = children.find((each) => each.identity.kind === "toasts");
+	if (!child) throw new Error("the notices are not in the child list");
+	return child;
 }
+
+/** Place the layer where the window would. */
+function layOut(toasts: InstanceType<typeof ToastsView>): void {
+	const child = placementFor(toasts);
+	toasts.place(child.rect, child.visible);
+}
+
+/** One pixel inside this test window's bottom-right corner, at its size. */
+const PARKED = { x: 999, y: 799, width: 1000, height: 800 };
 
 describe("the notice layer", () => {
 	let toasts: InstanceType<typeof ToastsView>;
@@ -91,7 +106,7 @@ describe("the notice layer", () => {
 		toasts = new ToastsView("preload.js", "devhub-app://shell/toasts.html");
 		toasts.adopt({
 			sizeChanged: () => {
-				toasts.place(placementFor(toasts));
+				layOut(toasts);
 			},
 			window: {
 				isDestroyed: () => false,
@@ -107,12 +122,14 @@ describe("the notice layer", () => {
 		});
 	});
 
-	const view = () => (toasts as unknown as { view: FakeWebContentsView }).view;
+	const view = () =>
+		(toasts as unknown as { layer: { view: FakeWebContentsView } }).layer.view;
 
-	it("is not in the window at all while there is nothing to say", () => {
-		toasts.place(placementFor(toasts));
+	it("waits in the window's corner while there is nothing to say", () => {
+		layOut(toasts);
 		expect(toasts.isPresent()).toBe(false);
-		expect(children).toEqual([]);
+		expect(view().bounds).toEqual(PARKED);
+		expect(children).toEqual(["added"]);
 	});
 
 	it("is exactly the size the page reported, in the window's corner", () => {
@@ -131,11 +148,12 @@ describe("the notice layer", () => {
 		expect(view().bounds).toEqual({ x: 0, y: 0, width: 1000, height: 800 });
 	});
 
-	it("leaves the window when the last notice goes", () => {
+	it("is parked, never taken out of the window, when the last notice goes", () => {
 		toasts.setSize({ width: 320, height: 96 });
 		toasts.setSize({ width: 0, height: 0 });
 		expect(toasts.isPresent()).toBe(false);
-		expect(children).toEqual(["added", "removed"]);
+		expect(view().bounds).toEqual(PARKED);
+		expect(children).toEqual(["added", "added"]);
 	});
 
 	/**
@@ -176,8 +194,8 @@ describe("the notice layer", () => {
 	 */
 	it("raises itself again on every pass, not only on the one it arrived on", () => {
 		toasts.setSize({ width: 320, height: 96 });
-		toasts.place(placementFor(toasts));
-		toasts.place(placementFor(toasts));
+		layOut(toasts);
+		layOut(toasts);
 		expect(children).toEqual(["added", "added", "added"]);
 	});
 });

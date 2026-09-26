@@ -136,6 +136,7 @@ describe("the child list", () => {
 			"agents",
 			"toasts",
 			"picker",
+			"tooltip",
 		]);
 	});
 
@@ -191,33 +192,52 @@ describe("the child list", () => {
 		).toBe(1);
 	});
 
-	it("has the notices in it only when they have content", () => {
-		const bare = ["shell", "sidebar", "editor", "editor", "agents", "picker"];
-		expect(kinds(windowLayout(input()))).toEqual(bare);
-		expect(
-			kinds(windowLayout(input({ toasts: { width: 0, height: 0 } }))),
-		).toEqual(bare);
-	});
-
-	it("parks the questions in the window's corner while nothing is asked", () => {
+	it("parks every layer in the window's corner while it has nothing to show", () => {
 		// In the window's child list, at the window's size and one pixel inside
 		// it, so its page is never hidden and never has to lay itself out when
-		// a question comes; the rest outside the window, so it takes no click.
-		const picker = windowLayout(input()).find(
-			(child) => child.identity.kind === "picker",
-		);
-		expect(picker).toEqual({
-			identity: { kind: "picker" },
+		// it has something to show; the rest outside the window, so it takes
+		// no click. The notices, the questions and the tooltip are one rule.
+		const parked = {
 			rect: { x: WINDOW.width - 1, y: WINDOW.height - 1, ...WINDOW },
 			visible: false,
-		});
+		};
+		for (const arrangement of [
+			input(),
+			input({ toasts: { width: 0, height: 0 } }),
+		]) {
+			const children = windowLayout(arrangement);
+			expect(kinds(children)).toEqual([
+				"shell",
+				"sidebar",
+				"editor",
+				"editor",
+				"agents",
+				"toasts",
+				"picker",
+				"tooltip",
+			]);
+			for (const kind of ["toasts", "picker", "tooltip"] as const) {
+				expect(children.find((child) => child.identity.kind === kind)).toEqual({
+					identity: { kind },
+					...parked,
+				});
+			}
+		}
 	});
 
 	it("clips a workbench's question to that workbench", () => {
-		const children = windowLayout(input({ picker: "workbench" }));
-		expect(children.at(-1)?.rect).toEqual(workbenchRect(WINDOW, state()));
-		const whole = windowLayout(input({ picker: "window" }));
-		expect(whole.at(-1)?.rect).toEqual({ x: 0, y: 0, ...WINDOW });
+		const picker = (arrangement: LayoutInput) =>
+			windowLayout(arrangement).find(
+				(child) => child.identity.kind === "picker",
+			);
+		expect(picker(input({ picker: "workbench" }))?.rect).toEqual(
+			workbenchRect(WINDOW, state()),
+		);
+		expect(picker(input({ picker: "window" }))?.rect).toEqual({
+			x: 0,
+			y: 0,
+			...WINDOW,
+		});
 	});
 
 	it("keeps the z-order picker > toasts > attached > editors > shell in every arrangement", () => {
@@ -611,19 +631,22 @@ describe("where a tooltip goes", () => {
 	});
 
 	/**
-	 * Present exactly when there is a tooltip up — the `toasts` rule, and for
-	 * the same reason: a native view takes every click inside its bounds, so a
-	 * layer that stays in the window with nothing to say is a permanent hole
-	 * in the editor.
+	 * Over the window exactly when there is a tooltip up — the rule of every
+	 * layer: a native view takes every click inside its bounds, so a layer
+	 * over the window with nothing to say is a permanent hole in the editor.
+	 * With nothing to say it is parked (see "parks every layer").
 	 */
-	it("is not in the child list at all while no tooltip is up", () => {
-		expect(kinds(windowLayout(input()))).not.toContain("tooltip");
-	});
-
-	it("is in the child list exactly when one is", () => {
-		expect(kinds(windowLayout(input({ tooltip: placement() })))).toContain(
-			"tooltip",
-		);
+	it("is over the window exactly when a tooltip is up", () => {
+		const tooltip = (arrangement: LayoutInput) =>
+			windowLayout(arrangement).find(
+				(child) => child.identity.kind === "tooltip",
+			);
+		expect(tooltip(input())?.visible).toBe(false);
+		expect(tooltip(input({ tooltip: placement() }))).toEqual({
+			identity: { kind: "tooltip" },
+			rect: tooltipRect(WINDOW, placement()),
+			visible: true,
+		});
 	});
 
 	/**

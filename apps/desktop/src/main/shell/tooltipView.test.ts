@@ -10,8 +10,10 @@
  * The rest is the notices' bargain, which this layer keeps for the notices'
  * reason: a `WebContentsView` is a native view and its hit testing is by
  * rectangle, so a layer bigger than what it draws is a hole in the editor and
- * a layer that lingers with nothing to say is a permanent one. Bounds are the
- * reported size; nothing to say means gone.
+ * a layer that lingers over the window with nothing to say is a permanent
+ * one. Bounds are the reported size; nothing to say means parked, all but one
+ * pixel outside the window's corner — never taken out of the window, whose
+ * hidden page would bring the previous sentence back with the next tooltip.
  *
  * And the arbitration, which is here because this is the only thing in DevHub
  * that can see both views: the row's leave is a request and the box's own
@@ -61,6 +63,7 @@ vi.mock("../electron.js", () => ({
 
 const { TooltipView } = await import("./tooltipView.js");
 const { windowLayout } = await import("./windowLayout.js");
+type LayoutChild = import("./windowLayout.js").LayoutChild;
 
 /** A rail glyph, in the window's coordinates: a 44px column, a row at y 120. */
 const RAIL_GLYPH = { x: 14, y: 120, width: 16, height: 24 };
@@ -72,9 +75,7 @@ const RAIL_GLYPH = { x: 14, y: 120, width: 16, height: 24 };
  * what is asserted below is the placement DevHub actually makes rather than a
  * second copy of the arithmetic.
  */
-function placementFor(
-	tooltip: InstanceType<typeof TooltipView>,
-): Electron.Rectangle | undefined {
+function placementFor(tooltip: InstanceType<typeof TooltipView>): LayoutChild {
 	const children = windowLayout({
 		windowSize: { width: 1000, height: 800 },
 		state: {
@@ -91,8 +92,19 @@ function placementFor(
 		picker: "none",
 		tooltip: tooltip.placement(),
 	});
-	return children.find((child) => child.identity.kind === "tooltip")?.rect;
+	const child = children.find((each) => each.identity.kind === "tooltip");
+	if (!child) throw new Error("the tooltip is not in the child list");
+	return child;
 }
+
+/** Place the layer where the window would. */
+function layOut(tooltip: InstanceType<typeof TooltipView>): void {
+	const child = placementFor(tooltip);
+	tooltip.place(child.rect, child.visible);
+}
+
+/** One pixel inside this test window's bottom-right corner, at its size. */
+const PARKED = { x: 999, y: 799, width: 1000, height: 800 };
 
 describe("the tooltip layer", () => {
 	let tooltip: InstanceType<typeof TooltipView>;
@@ -103,7 +115,7 @@ describe("the tooltip layer", () => {
 		tooltip = new TooltipView("preload.js", "devhub-app://shell/tooltip.html");
 		tooltip.adopt({
 			tooltipChanged: () => {
-				tooltip.place(placementFor(tooltip));
+				layOut(tooltip);
 			},
 			window: {
 				isDestroyed: () => false,
@@ -116,7 +128,8 @@ describe("the tooltip layer", () => {
 		});
 	});
 
-	const view = () => (tooltip as unknown as { view: FakeWebContentsView }).view;
+	const view = () =>
+		(tooltip as unknown as { layer: { view: FakeWebContentsView } }).layer.view;
 	const show = () => {
 		tooltip.show({
 			lines: [{ text: "widget", style: "name" }],
@@ -124,10 +137,11 @@ describe("the tooltip layer", () => {
 		});
 	};
 
-	it("is not in the window at all while no tooltip is up", () => {
-		tooltip.place(placementFor(tooltip));
+	it("waits in the window's corner while no tooltip is up", () => {
+		layOut(tooltip);
 		expect(tooltip.isPresent()).toBe(false);
-		expect(children).toEqual([]);
+		expect(view().bounds).toEqual(PARKED);
+		expect(children).toEqual(["added"]);
 	});
 
 	/**
@@ -138,6 +152,7 @@ describe("the tooltip layer", () => {
 	it("waits for the page to say how big the box came out", () => {
 		show();
 		expect(tooltip.isPresent()).toBe(false);
+		expect(view().bounds).toEqual(PARKED);
 		tooltip.setSize({ width: 220, height: 34 });
 		expect(tooltip.isPresent()).toBe(true);
 	});
@@ -155,18 +170,19 @@ describe("the tooltip layer", () => {
 		expect(bounds!.x + bounds!.width).toBeGreaterThan(44);
 	});
 
-	it("leaves the window when the tooltip goes down", () => {
+	it("is parked, never taken out of the window, when the tooltip goes down", () => {
 		show();
 		tooltip.setSize({ width: 220, height: 34 });
 		tooltip.hide();
 		expect(tooltip.isPresent()).toBe(false);
-		expect(children).toEqual(["added", "removed"]);
+		expect(view().bounds).toEqual(PARKED);
+		expect(children).not.toContain("removed");
 	});
 
 	/**
-	 * Down on the page's side too, and told before this view leaves: a page
-	 * that went on drawing would draw into a view nobody can see, and the next
-	 * tooltip would flash the previous sentence.
+	 * Down on the page's side too, and told before this view is parked, where
+	 * its page still paints: the empty box is drawn there, so the next tooltip
+	 * does not open on a frame of the previous sentence.
 	 */
 	it("tells the page to stop drawing when it goes down", () => {
 		show();
@@ -210,9 +226,10 @@ describe("the tooltip layer", () => {
 	it("raises itself again on every pass, not only on the one it arrived on", () => {
 		show();
 		tooltip.setSize({ width: 220, height: 34 });
-		tooltip.place(placementFor(tooltip));
-		tooltip.place(placementFor(tooltip));
-		expect(children).toEqual(["added", "added", "added"]);
+		const before = children.length;
+		layOut(tooltip);
+		layOut(tooltip);
+		expect(children).toEqual([...Array(before + 2)].map(() => "added"));
 	});
 
 	/**

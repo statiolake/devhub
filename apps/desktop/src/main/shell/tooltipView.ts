@@ -31,8 +31,8 @@
  * So a window-sized transparent tooltip layer would be a window-sized hole in
  * the editor, and the only honest rectangle is the one the words are in. The
  * page measures its own box and says how big it is; this view is exactly that
- * big, where the owner says. With no tooltip up it is not in the window's
- * child list at all — a layer that is not there cannot take a click.
+ * big, where the owner says. With no tooltip up it is parked, all but one
+ * pixel outside the window — the rule every layer keeps; see `layerView.ts`.
  *
  * # What this class holds and what it does not
  *
@@ -70,9 +70,8 @@
  * Escape, so `ToastsView` has to hand focus back when it leaves holding it.
  */
 
-import { electron } from "../electron.js";
 import { CHANNELS, type TooltipLineWire } from "../../ipc/contract.js";
-import { sendLinksToTheBrowser } from "./externalLinks.js";
+import { LayerView } from "./layerView.js";
 import type { LayoutRect, TooltipPlacement } from "./windowLayout.js";
 
 /** How big the page says its box is, in the page's own pixels. */
@@ -106,9 +105,7 @@ export interface TooltipViewHost {
 const RELEASE_GRACE_MS = 150;
 
 export class TooltipView {
-	private readonly view: Electron.WebContentsView;
-	private readonly pageUrl: string;
-	private present = false;
+	private readonly layer: LayerView;
 	private request: TooltipRequest | undefined;
 	private size: TooltipSize = { width: 0, height: 0 };
 	/** The grace a `release` started, still running. */
@@ -117,33 +114,16 @@ export class TooltipView {
 	private pointerInside = false;
 
 	constructor(preloadPath: string, pageUrl: string) {
-		this.view = new electron.WebContentsView({
-			webPreferences: {
-				preload: preloadPath,
-				sandbox: false,
-				contextIsolation: true,
-				nodeIntegration: false,
-			},
-		});
 		// Whatever the box does not cover is the live window seen through it:
 		// the tooltip has rounded corners and a shadow, and a page background
-		// here would be a grey rectangle around both.
-		this.view.setBackgroundColor("#00000000");
-		// Every child page needs this, and a page that forgets it can mint a
-		// second window wearing DevHub's preload. A tooltip draws no links, but
-		// the rule is about what the view *can* be made to do, not about what
-		// this page happens to draw. See `externalLinks.ts`.
-		sendLinksToTheBrowser(this.view.webContents);
-		this.pageUrl = pageUrl;
+		// here would be a grey rectangle around both. The layer's background
+		// is clear for that reason.
+		this.layer = new LayerView(preloadPath, pageUrl);
 	}
 
-	/**
-	 * Run the page. Not at construction: the window owns when its pages run,
-	 * and runs them all at once, when everything they ask for exists — see
-	 * `ShellWindow.openPage`.
-	 */
+	/** Run the page. See `LayerView.openPage`. */
 	openPage(): void {
-		void this.view.webContents.loadURL(this.pageUrl);
+		this.layer.openPage();
 	}
 
 	/**
@@ -168,7 +148,7 @@ export class TooltipView {
 	 *
 	 * The size is *not* cleared here. A tooltip replacing another is the
 	 * ordinary case — the pointer moved from one row to the next — and
-	 * clearing it would take the view out of the window for the frame between
+	 * clearing it would park the view for the frame between
 	 * the text arriving and the page reporting its new box, which reads as a
 	 * flicker. The size that is there is the previous sentence's, which is
 	 * wrong by a few pixels for one frame; absence would be wrong by the whole
@@ -236,8 +216,9 @@ export class TooltipView {
 		if (this.request === undefined) return;
 		this.request = undefined;
 		// The page is told first so that it stops drawing, and it answers with
-		// a size of zero — but this view leaves the window on *this* call
-		// rather than on that answer. A tooltip that lingered until a renderer
+		// a size of zero — but this view is parked on *this* call rather than
+		// on that answer. Parked, the page is still painting, so the empty box
+		// is drawn there and the next tooltip does not open on this one. A tooltip that lingered until a renderer
 		// replied would linger for exactly as long as the renderer was busy.
 		this.send(undefined);
 		this.size = { width: 0, height: 0 };
@@ -273,49 +254,28 @@ export class TooltipView {
 	}
 
 	/**
-	 * Put the layer where the owner says, or take it out of the window.
+	 * Put the layer where the owner says: over the window when `shown`,
+	 * parked when there is no tooltip.
 	 *
-	 * `undefined` is "there is no tooltip", and a layer that is not in the
-	 * child list cannot take a click — which is the whole reason this view is
-	 * the size of the words and not the size of the window.
+	 * This one is last in the owner's order, so anything that lays the window
+	 * out again leaves the tooltip on top rather than under the thing it
+	 * appeared over. The keyboard is deliberately never touched. There is
+	 * nothing here to type into.
 	 */
-	place(rect: Electron.Rectangle | undefined): void {
+	place(rect: Electron.Rectangle, shown: boolean): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
-		if (!rect) {
-			this.withdraw();
-			return;
-		}
-		this.view.setBounds(rect);
-		// Re-added on every pass, because re-adding an existing child moves it
-		// to the end of the list, which is the top of the stack. The owner
-		// places its children in order and this is that order arriving — and
-		// this one is last, so anything that lays the window out again leaves
-		// the tooltip on top rather than under the thing it appeared over.
-		//
-		// The keyboard is deliberately never touched. There is nothing here to
-		// type into.
-		host.window.contentView.addChildView(this.view);
-		this.present = true;
-	}
-
-	private withdraw(): void {
-		const host = this.host;
-		if (!this.present || !host || host.window.isDestroyed()) return;
-		host.window.contentView.removeChildView(this.view);
-		this.present = false;
+		this.layer.place(host.window, rect, shown);
 	}
 
 	/** The page, for the palette and for anything else addressed to it. */
 	contents(): Electron.WebContents | undefined {
-		return this.view.webContents.isDestroyed()
-			? undefined
-			: this.view.webContents;
+		return this.layer.contents();
 	}
 
-	/** Whether the layer is in the window's child list right now. */
+	/** Whether the tooltip is over the window right now, rather than parked. */
 	isPresent(): boolean {
-		return this.present;
+		return this.layer.isShown();
 	}
 
 	private send(

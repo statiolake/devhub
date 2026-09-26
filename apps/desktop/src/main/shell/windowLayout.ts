@@ -591,27 +591,35 @@ function agentsVisible(state: LayoutState): boolean {
 }
 
 /**
- * Where the questions layer waits while nothing is being asked: the size of
- * the window, overlapping it by one pixel — the bottom-right corner, which the
- * window's rounded corner does not draw.
+ * Where a layer waits while it has nothing to show: the size of the window,
+ * overlapping it by one pixel — the bottom-right corner, which the window's
+ * rounded corner does not draw.
  *
- * Both halves were measured to matter (an isolated instance, a CDP screencast
- * of the layer's own page, main's calls logged beside it):
+ * A layer is a child that draws over the others only while it has something
+ * to say — the notices, the questions, the tooltip. None of them is ever taken
+ * out of the window; each is either over it or parked here. Both halves were
+ * measured to matter (an isolated instance, a CDP screencast of the layer's
+ * own page, main's calls logged beside it):
  *
  * - Taken out of the window, the page is hidden, and a hidden page paints
- *   nothing. The empty set published as the last sheet closed was never drawn
- *   (the layer's last frame still held the sheet), so the next question, of a
- *   different kind, opened on one frame of the *previous* sheet, then a bare
- *   dim, then its own sheet — the flicker. Never yet in the window, the page
- *   is 0×0 and hidden, so the first question after launch waited for a first
- *   layout of the whole page before anything was drawn — the late sheet.
+ *   nothing. What it was told as it left — the empty set of sheets, no
+ *   tooltip — was never drawn, so the layer's last frame still held the
+ *   previous content and the next one opened on a frame of it: a question on
+ *   the previous sheet, a tooltip on the previous row's sentence. Never yet
+ *   in the window, the page is 0×0 and hidden, so the first one after launch
+ *   waited for a first layout of the whole page before anything was drawn —
+ *   the late sheet, and a first tooltip 140 ms behind its row where every
+ *   later one took 5.
  * - Placed entirely outside the window, Chromium counts the view occluded and
  *   hides the page just the same (`visibilityState` went to `hidden` and the
  *   page stayed 0×0). One pixel inside keeps it visible.
  *
- * Parked here, the page's last frame is always what it was last told, at the
- * size it will be shown at, so bringing it over the window is only a move;
- * and the one pixel it covers is the one no click reaches.
+ * Parked here, the page's last frame is always what it was last told, laid
+ * out at least as large as it will be shown, so bringing it over the window
+ * is only a move — a notice or a tooltip is drawn at its page's origin, so
+ * the smaller rectangle it is shown in is the corner of a frame already
+ * drawn. The one pixel it covers is the one no click reaches, and an empty
+ * layer's page has nothing under that pixel to answer a pointer.
  */
 export function parkedRect(windowSize: LayoutSize): LayoutRect {
 	return {
@@ -619,6 +627,23 @@ export function parkedRect(windowSize: LayoutSize): LayoutRect {
 		y: windowSize.height - 1,
 		width: windowSize.width,
 		height: windowSize.height,
+	};
+}
+
+/**
+ * A layer's entry in the child list: over the window at `rect` while it has
+ * something to show, parked while it has nothing. Always in the list — see
+ * `parkedRect`. `visible` is whether it is over the window.
+ */
+function layer(
+	identity: ChildIdentity,
+	windowSize: LayoutSize,
+	rect: LayoutRect | undefined,
+): LayoutChild {
+	return {
+		identity,
+		rect: rect ?? parkedRect(windowSize),
+		visible: rect !== undefined,
 	};
 }
 
@@ -632,16 +657,15 @@ export function parkedRect(windowSize: LayoutSize): LayoutRect {
  * notice about the application is above the thing it is about, a question is
  * above the notice, and the tooltip is above all of them because it is the
  * only child that neither takes a click nor hides anything. Nothing in this
- * list is conditional on anything but content: `toasts` and `tooltip` are in
- * it exactly when they have something to draw, because a layer that is not
- * there cannot take a click.
+ * list is conditional on anything but content, and not even that decides who
+ * is *in* it: `toasts`, `picker` and `tooltip` are layers, always in it, over
+ * the window exactly when they have something to draw and parked otherwise —
+ * see `parkedRect`.
  *
  * `sidebar` and `agents` are always in it, because both exist for the life of
  * the window and neither is ever a layer over anything: they are columns
  * beside the workbench, so their being present costs nothing and their
  * ordering against each other never comes up.
- *
- * `picker` is always in it too, for a different reason: see `parkedRect`.
  */
 export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const { windowSize, state } = input;
@@ -717,44 +741,46 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		rect: agentsRect(windowSize, state),
 		visible: agentsVisible(state),
 	});
-	if (input.toasts && input.toasts.width > 0 && input.toasts.height > 0) {
-		children.push({
-			identity: { kind: "toasts" },
-			rect: toastsRect(windowSize, input.toasts),
-			visible: true,
-		});
-	}
-	children.push({
-		identity: { kind: "picker" },
-		// A workbench's question covers that workbench and nothing else, so
-		// the Sidebar and every other workspace stay visible *and* clickable.
-		// Everything else is the application asking. Nothing asked is the
-		// layer parked in the window's corner, never taken out of it.
-		rect:
+	children.push(
+		layer(
+			{ kind: "toasts" },
+			windowSize,
+			input.toasts && input.toasts.width > 0 && input.toasts.height > 0
+				? toastsRect(windowSize, input.toasts)
+				: undefined,
+		),
+	);
+	// A workbench's question covers that workbench and nothing else, so the
+	// Sidebar and every other workspace stay visible *and* clickable.
+	// Everything else is the application asking.
+	children.push(
+		layer(
+			{ kind: "picker" },
+			windowSize,
 			input.picker === "none"
-				? parkedRect(windowSize)
+				? undefined
 				: input.picker === "workbench"
 					? editorRect
 					: shellRect,
-		visible: input.picker !== "none",
-	});
+		),
+	);
 	// Above everything, the questions included. Not because a tooltip may
 	// stand over a modal — it may not, and in practice cannot: a question
 	// covers the window, which takes the pointer off the row that raised the
 	// tooltip, and the page hides it before the sheet is drawn. It is on top
 	// because it is the one child that is never anything but a few words to
-	// read: it takes no click (it is never in the list unless it has
-	// something to say, and what it says is the size of what it draws), it
+	// read: it takes no click (it is parked unless it has something to say,
+	// and what it says is the size of what it draws), it
 	// takes no keys, and nothing is ever meant to be seen *through* it. A
 	// layer with nothing behind it to protect is a layer with no reason to be
 	// underneath anything.
-	if (input.tooltip) {
-		children.push({
-			identity: { kind: "tooltip" },
-			rect: tooltipRect(windowSize, input.tooltip),
-			visible: true,
-		});
-	}
+	children.push(
+		layer(
+			{ kind: "tooltip" },
+			windowSize,
+			input.tooltip ? tooltipRect(windowSize, input.tooltip) : undefined,
+		),
+	);
 	return children;
 }
 

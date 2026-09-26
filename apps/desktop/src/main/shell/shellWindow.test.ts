@@ -821,6 +821,18 @@ describe("the shell window's modal layer", () => {
 				);
 	}
 
+	/**
+	 * The highest child that is over the window. A parked layer — the notices
+	 * or the tooltip with nothing to show — is in the list and above
+	 * everything, but it is all but one pixel outside the window.
+	 */
+	function topmostOverWindow(): FakeView | undefined {
+		const children = shell.window.contentView.children as unknown as FakeView[];
+		return children.findLast(
+			(child) => JSON.stringify(child.getBounds()) !== JSON.stringify(PARKED),
+		);
+	}
+
 	beforeEach(() => {
 		focused = undefined;
 		shell = new ShellWindow(
@@ -868,9 +880,8 @@ describe("the shell window's modal layer", () => {
 		show(shell, editor);
 		const id = shell.picker.openModal({ kind: "workspace-picker" });
 
-		const children = shell.window.contentView.children as unknown as FakeView[];
 		expect(overlayChild()).toBeDefined();
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 		// And the workbench is still on screen underneath, not stood down.
 		expect(shell.visibleViews()).toEqual([editor]);
 
@@ -890,22 +901,21 @@ describe("the shell window's modal layer", () => {
 		// clicks, which reads exactly as an editor that activates itself.
 		show(shell, editor);
 		shell.picker.openModal({ kind: "workspace-picker" });
-		const children = shell.window.contentView.children as unknown as FakeView[];
 
 		shell.setLayoutState({
 			...shell.layoutState(),
 			sidebar: { width: 400, collapsed: false },
 		});
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 
 		shell.picker.openModal({ kind: "issue-assignment" });
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 
 		show(shell, other);
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 
 		showPage(shell);
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 	});
 
 	it("stays above a view the workbench opened beside itself", () => {
@@ -940,7 +950,7 @@ describe("the shell window's modal layer", () => {
 		expect(browser.visible).toBe(true);
 
 		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 
 		// And a later layout moves it with the workbench, with no page asked.
 		shell.setLayoutState({
@@ -948,7 +958,7 @@ describe("the shell window's modal layer", () => {
 			sidebar: { width: 400, collapsed: false },
 		});
 		expect(browser.bounds?.x).toBe(400 + 10);
-		expect(children[children.length - 1]).toBe(overlayChild());
+		expect(topmostOverWindow()).toBe(overlayChild());
 	});
 
 	it("takes a view the workbench opened away with the workbench", () => {

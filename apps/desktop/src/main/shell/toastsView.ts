@@ -29,17 +29,11 @@
  *
  * The page therefore measures its own stack and says how big it is, and this
  * view is exactly that big, in the window's bottom-right corner. With nothing
- * to say the stack has no size, and this view is not in the window's child
- * list at all — the same rule the modal layer has kept since it was written,
- * and for the same reason: a layer that is not there cannot take a click.
- *
- * The view itself is created once, at startup, and never destroyed. Presence
- * in the child list and existence are two different facts; only the first one
- * follows the notices.
+ * to say the stack has no size, and the view is parked, all but one pixel
+ * outside the window — the rule every layer keeps; see `layerView.ts`.
  */
 
-import { electron } from "../electron.js";
-import { sendLinksToTheBrowser } from "./externalLinks.js";
+import { LayerView } from "./layerView.js";
 
 /** How big the page says its notices are, in the page's own pixels. */
 export interface ToastsSize {
@@ -66,47 +60,29 @@ export interface ToastsViewHost {
 }
 
 export class ToastsView {
-	private readonly view: Electron.WebContentsView;
-	private readonly pageUrl: string;
-	private present = false;
+	private readonly layer: LayerView;
 	private size: ToastsSize = { width: 0, height: 0 };
 
 	constructor(preloadPath: string, pageUrl: string) {
-		this.view = new electron.WebContentsView({
-			webPreferences: {
-				preload: preloadPath,
-				sandbox: false,
-				contextIsolation: true,
-				nodeIntegration: false,
-			},
-		});
 		// Whatever the notices do not cover is the live window seen through
 		// them: the stack has rounded corners and a shadow, and a page
-		// background here would be a grey rectangle around both.
-		this.view.setBackgroundColor("#00000000");
-		// A link in a notice leaves through the browser like every other link.
-		// Every child page needs this, and a page that forgets it can mint a
-		// second window wearing DevHub's preload. See `externalLinks.ts`.
-		sendLinksToTheBrowser(this.view.webContents);
-		this.pageUrl = pageUrl;
+		// background here would be a grey rectangle around both. The layer's
+		// background is clear for that reason.
+		this.layer = new LayerView(preloadPath, pageUrl);
 	}
 
-	/**
-	 * Run the page. Not at construction: the window owns when its pages run,
-	 * and runs them all at once, when everything they ask for exists — see
-	 * `ShellWindow.openPage`.
-	 */
+	/** Run the page. See `LayerView.openPage`. */
 	openPage(): void {
-		void this.view.webContents.loadURL(this.pageUrl);
+		this.layer.openPage();
 	}
 
 	/**
 	 * Set the host after construction.
 	 *
 	 * The window builds this view in its own constructor, so there is no
-	 * window to hand it yet. Nothing is drawn before the page has anything to
-	 * say, and nothing can have the keyboard before it is in the child list, so
-	 * there is no window in which the host is needed and missing.
+	 * window to hand it yet. Nothing is placed before the window lays itself
+	 * out, and nothing can have the keyboard before it is placed, so there is
+	 * no window in which the host is needed and missing.
 	 */
 	private host: ToastsViewHost | undefined;
 	adopt(host: ToastsViewHost): void {
@@ -131,43 +107,24 @@ export class ToastsView {
 	}
 
 	/**
-	 * Put the layer where the owner says, or take it out of the window.
+	 * Put the layer where the owner says: over the window when `shown`,
+	 * parked when there is nothing to say.
 	 *
-	 * `undefined` is "there is nothing to say", and a layer that is not in the
-	 * child list cannot take a click — which is the whole reason this view is
-	 * the size of the notices and not the size of the window.
+	 * The keyboard is deliberately *not* placed here. A notice is not a
+	 * question; it arrives while the person is in the middle of something and
+	 * taking the keys from them would make every passing condition an
+	 * interruption. This is the whole of the difference between this layer
+	 * and the picker.
 	 */
-	place(rect: Electron.Rectangle | undefined): void {
+	place(rect: Electron.Rectangle, shown: boolean): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
-		if (!rect) {
-			this.withdraw();
-			return;
-		}
-		this.view.setBounds(rect);
-		// Re-added on every pass, because re-adding an existing child moves it
-		// to the end of the list, which is the top of the stack. The owner
-		// places its children in order and this is that order arriving.
-		//
-		// The keyboard is deliberately *not* placed here. A notice is not a
-		// question; it arrives while the person is in the middle of something
-		// and taking the keys from them would make every passing condition an
-		// interruption. This is the whole of the difference between this layer
-		// and the picker.
-		host.window.contentView.addChildView(this.view);
-		this.present = true;
-	}
-
-	private withdraw(): void {
-		const host = this.host;
-		if (!this.present || !host || host.window.isDestroyed()) return;
-		// Asked before the view leaves, because a view that is gone reports
-		// nothing: this is the "the stack emptied while a toast held the
-		// keyboard" case, and it is the only reason this layer ever touches
-		// focus.
-		const held = this.view.webContents.isFocused();
-		host.window.contentView.removeChildView(this.view);
-		this.present = false;
+		// This is the "the stack emptied while a toast held the keyboard" case,
+		// and it is the only reason this layer ever touches focus. A parked
+		// page must not keep the keys — the one pixel of it in the window is
+		// nothing anyone can see typing into.
+		const held = !shown && this.layer.view.webContents.isFocused();
+		this.layer.place(host.window, rect, shown);
 		if (held) host.focusSurface();
 	}
 
@@ -178,13 +135,11 @@ export class ToastsView {
 	 * other, and why that is a smaller audience than a projection's.
 	 */
 	contents(): Electron.WebContents | undefined {
-		return this.view.webContents.isDestroyed()
-			? undefined
-			: this.view.webContents;
+		return this.layer.contents();
 	}
 
-	/** Whether the layer is in the window's child list right now. */
+	/** Whether the notices are over the window right now, rather than parked. */
 	isPresent(): boolean {
-		return this.present;
+		return this.layer.isShown();
 	}
 }

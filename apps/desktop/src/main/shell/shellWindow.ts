@@ -1284,14 +1284,7 @@ export class ShellWindow {
 			view.view.setBounds(rect);
 			view.view.setVisible(false);
 		}
-		// A chrome layer that is not in the list at all is a layer with nothing
-		// to draw, and it has to be told so: absence from the list is how the
-		// owner says "take yourself out of the window", which is the whole of
-		// what keeps a transparent layer from eating a click.
-		const drawn = new Set(children.map((child) => child.identity.kind));
-		if (!drawn.has("toasts")) this.toasts.place(undefined);
-		if (!drawn.has("tooltip")) this.tooltip.place(undefined);
-		// Then the drawn children, in the list's own order, lowest first. That
+		// The children, in the list's own order, lowest first. That
 		// order *is* the z-order and this is the one way Electron offers to
 		// establish it: re-adding an existing child moves it to the end of the
 		// child list, which is the top of the stack.
@@ -1309,13 +1302,13 @@ export class ShellWindow {
 					this.agents.place(this.window, child.rect, child.visible);
 					break;
 				case "toasts":
-					this.toasts.place(child.visible ? child.rect : undefined);
+					this.toasts.place(child.rect, child.visible);
 					break;
 				case "picker":
 					this.picker.place(child.rect, child.visible, this.scrim());
 					break;
 				case "tooltip":
-					this.tooltip.place(child.visible ? child.rect : undefined);
+					this.tooltip.place(child.rect, child.visible);
 					break;
 				case "editor": {
 					if (!child.visible) break;

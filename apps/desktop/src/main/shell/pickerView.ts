@@ -20,7 +20,8 @@
  * removed instead, and a view out of the window is a hidden page that paints
  * nothing: the first question of a session waited for a first layout, and
  * every later one opened on a frame of the previous sheet. See `parkedRect`
- * in `windowLayout.ts`.
+ * in `windowLayout.ts` and `layerView.ts`, which the notices and the tooltip
+ * share.
  *
  * The dim behind a question is the view's own background, not something the
  * page draws — see `scrimColor`.
@@ -31,8 +32,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { electron } from "../electron.js";
-import { sendLinksToTheBrowser } from "./externalLinks.js";
+import { CLEAR, LayerView } from "./layerView.js";
 import {
 	CHANNELS,
 	type ModalRequest,
@@ -77,9 +77,6 @@ export interface PickerViewHost {
 	modalsChanged(): void;
 }
 
-/** The layer's background while nothing is asked. */
-const CLEAR = "#00000000";
-
 /** A workbench's question, waiting for the button the person presses. */
 type Settle = (response: number) => void;
 
@@ -112,48 +109,28 @@ function identity(request: ModalRequest): string {
 }
 
 export class PickerView {
-	private readonly view: Electron.WebContentsView;
-	private readonly pageUrl: string;
-	private present = false;
+	private readonly layer: LayerView;
 	private background: string = CLEAR;
 	private readonly open: OpenModal[] = [];
 	private readonly pending = new Map<string, Settle>();
 	private published: string | undefined;
 
 	constructor(preloadPath: string, pageUrl: string) {
-		this.view = new electron.WebContentsView({
-			webPreferences: {
-				preload: preloadPath,
-				sandbox: false,
-				contextIsolation: true,
-				nodeIntegration: false,
-			},
-		});
 		// The layer is a hole with modals in it: everything the person can see
 		// through it is a real, live workbench, not a picture of one. The dim
 		// is added while a question stands; see `place`.
-		this.view.setBackgroundColor(CLEAR);
-		// This page draws DevHub's own modals and nothing else; a link in one
-		// leaves through the browser like every other link. Every child page
-		// needs this — a page that forgets it can mint a second window wearing
-		// DevHub's preload. See `externalLinks.ts`.
-		sendLinksToTheBrowser(this.view.webContents);
-		this.view.webContents.on("did-finish-load", () => {
+		this.layer = new LayerView(preloadPath, pageUrl);
+		this.layer.view.webContents.on("did-finish-load", () => {
 			// The page starts empty and is told what to draw; a reload has to
 			// be told again, or the layer is up with nothing on it.
 			this.published = undefined;
 			this.publish(this.open);
 		});
-		this.pageUrl = pageUrl;
 	}
 
-	/**
-	 * Run the page. Not at construction: the window owns when its pages run,
-	 * and runs them all at once, when everything they ask for exists — see
-	 * `ShellWindow.openPage`.
-	 */
+	/** Run the page. See `LayerView.openPage`. */
 	openPage(): void {
-		void this.view.webContents.loadURL(this.pageUrl);
+		this.layer.openPage();
 	}
 
 	/**
@@ -278,7 +255,7 @@ export class PickerView {
 	place(rect: Electron.Rectangle, asking: boolean, scrim: string): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
-		const view = this.view;
+		const view = this.layer.view;
 		// Clear while parked: the one pixel of it inside the window is not
 		// something to dim.
 		const background = asking ? scrim : CLEAR;
@@ -289,7 +266,7 @@ export class PickerView {
 		// Told before it moves, so a sheet closing is painted away while the
 		// layer is still over the window rather than never.
 		this.publish(asking ? this.open : []);
-		view.setBounds(rect);
+		const wasAsking = this.layer.isShown();
 		// Re-adding an existing child moves it to the end of the list, which is
 		// the top of the stack. Nothing else establishes that order, and the
 		// whole point of this layer is that it is above everything.
@@ -303,14 +280,11 @@ export class PickerView {
 		// the editor was what was drawn and what took the clicks over the
 		// content area, which is a picker that cannot be used and an editor
 		// that looks like it activates itself.
-		host.window.contentView.addChildView(view);
+		this.layer.place(host.window, rect, asking);
 		if (!asking) {
-			if (!this.present) return;
-			this.present = false;
-			host.focusSurface();
+			if (wasAsking) host.focusSurface();
 			return;
 		}
-		this.present = true;
 		// The keyboard is placed *after* the view is over the window, and on
 		// every pass rather than only on the one where the layer arrived.
 		//
@@ -340,12 +314,12 @@ export class PickerView {
 	}
 
 	private publish(modals: readonly OpenModal[]): void {
-		const view = this.view;
-		if (view.webContents.isDestroyed()) return;
+		const contents = this.layer.contents();
+		if (!contents) return;
 		const wire = JSON.stringify(modals);
 		if (wire === this.published) return;
 		this.published = wire;
-		view.webContents.send(CHANNELS.modalsChanged, modals);
+		contents.send(CHANNELS.modalsChanged, modals);
 	}
 
 	/**
@@ -369,7 +343,7 @@ export class PickerView {
 
 	/** Whether a question is over the window right now. */
 	isPresent(): boolean {
-		return this.present;
+		return this.layer.isShown();
 	}
 
 	/**
@@ -380,9 +354,7 @@ export class PickerView {
 	 * from, so they are pushed here too rather than being fetched a second way.
 	 */
 	contents(): Electron.WebContents | undefined {
-		return this.view.webContents.isDestroyed()
-			? undefined
-			: this.view.webContents;
+		return this.layer.contents();
 	}
 
 	//#endregion
