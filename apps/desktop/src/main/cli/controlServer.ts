@@ -67,6 +67,7 @@ export interface ControlHandlers {
 	terminalProfile(
 		machine: string,
 		root: string | null,
+		workspace: string | undefined,
 	): Promise<TerminalProfileAnswer>;
 	/**
 	 * Where a workbench on `machine` connects, and with what token.
@@ -303,6 +304,7 @@ export async function answerControlRequest(
 				const profile = await handlers.terminalProfile(
 					request.machine,
 					request.root,
+					request.workspace,
 				);
 				return {
 					ok: true,

@@ -43,6 +43,7 @@ export function requestTerminalProfile(
 	socketPath: string,
 	machine: string,
 	root: string | null,
+	workspace?: string,
 ): Promise<ControlResponse> {
 	return new Promise<ControlResponse>((resolve, reject) => {
 		const socket = connect(socketPath);
@@ -50,7 +51,12 @@ export function requestTerminalProfile(
 		socket.setEncoding("utf8");
 		socket.on("connect", () => {
 			socket.write(
-				`${JSON.stringify({ kind: "terminal-profile", machine, root })}\n`,
+				`${JSON.stringify({
+					kind: "terminal-profile",
+					machine,
+					root,
+					...(workspace === undefined ? {} : { workspace }),
+				})}\n`,
 			);
 		});
 		socket.on("data", (chunk: string) => {
@@ -76,11 +82,36 @@ export function requestTerminalProfile(
 	});
 }
 
+/**
+ * The Workspace a window named, when it named one: `--workspace <key>`.
+ *
+ * A window attached to a dev container starts its DevHub terminal on this Mac
+ * with this argument, because the directory it starts in cannot say which
+ * Workspace it is for. Anything else on the command line is a launcher this
+ * DevHub did not write, and is refused rather than ignored.
+ */
+export function workspaceArgument(argv: readonly string[]): string | undefined {
+	if (argv.length === 0) return undefined;
+	const [flag, key, ...rest] = argv;
+	if (flag !== "--workspace" || key === undefined || key.length === 0) {
+		throw new Error(
+			`devhub-terminal takes --workspace <key> and nothing else, and was given: ${argv.join(" ")}`,
+		);
+	}
+	if (rest.length > 0) {
+		throw new Error(
+			`devhub-terminal takes one --workspace, and was given: ${argv.join(" ")}`,
+		);
+	}
+	return key;
+}
+
 /** What to run, or the sentence saying why there is nothing to run. */
 export async function resolveTerminalCommand(
 	socketPath: string | undefined,
 	machine: string | undefined,
 	directory: string | undefined,
+	workspace?: string,
 ): Promise<TerminalProfileAnswer> {
 	if (socketPath === undefined || socketPath.length === 0) {
 		throw new Error(
@@ -96,6 +127,7 @@ export async function resolveTerminalCommand(
 		socketPath,
 		machine,
 		terminalRoot(directory),
+		workspace,
 	);
 	if (!answer.ok || !answer.profile) {
 		throw new Error(answer.message);
@@ -115,6 +147,7 @@ export async function main(): Promise<number> {
 		process.env["DEVHUB_CONTROL_SOCKET"],
 		process.env[DEVHUB_TERMINAL_MACHINE],
 		process.cwd(),
+		workspaceArgument(process.argv.slice(2)),
 	);
 	process.stdout.write(`${terminalCommandLine(command)}\n`);
 	return 0;

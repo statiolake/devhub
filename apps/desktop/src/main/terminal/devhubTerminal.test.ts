@@ -2,13 +2,13 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import { resolveTerminalCommand } from "./devhubTerminal.js";
+import { resolveTerminalCommand, workspaceArgument } from "./devhubTerminal.js";
 import { terminalCommandLine } from "./launcher.js";
 
 /** A DevHub that answers one `terminal-profile` request, however it likes. */
 function answering(
 	socketPath: string,
-	reply: (root: unknown, machine: unknown) => unknown,
+	reply: (root: unknown, machine: unknown, workspace: unknown) => unknown,
 ): Promise<Server> {
 	const server = createServer((socket) => {
 		socket.setEncoding("utf8");
@@ -16,8 +16,11 @@ function answering(
 			const request = JSON.parse(line.split("\n")[0] ?? "") as {
 				root: unknown;
 				machine: unknown;
+				workspace: unknown;
 			};
-			socket.end(`${JSON.stringify(reply(request.root, request.machine))}\n`);
+			socket.end(
+				`${JSON.stringify(reply(request.root, request.machine, request.workspace))}\n`,
+			);
 		});
 	});
 	return new Promise((resolve) => {
@@ -61,6 +64,22 @@ describe("what a DevHub terminal runs", () => {
 			file: "/opt/tmux",
 			args: ["-L", "devhub", "attach"],
 		});
+	});
+
+	it("names the Workspace when the window did, whatever directory it is in", async () => {
+		// A window attached to a dev container runs this launcher on this Mac,
+		// and the directory it starts in cannot say which Workspace it is for.
+		let asked: unknown;
+		server = await answering(socketPath, (_root, _machine, workspace) => {
+			asked = workspace;
+			return {
+				ok: true,
+				message: "tmux attach",
+				profile: { file: "/opt/tmux", args: [] },
+			};
+		});
+		await resolveTerminalCommand(socketPath, "local", "/Users/x", "/src/api");
+		expect(asked).toBe("/src/api");
 	});
 
 	it("asks for the Scratch session when there is no directory to name", async () => {
@@ -147,5 +166,22 @@ describe("what a DevHub terminal runs", () => {
 		await expect(
 			resolveTerminalCommand(undefined, "local", "/work/project"),
 		).rejects.toThrow("DEVHUB_CONTROL_SOCKET");
+	});
+});
+
+describe("the launcher's own arguments", () => {
+	it("are nothing, or --workspace and a key", () => {
+		expect(workspaceArgument([])).toBeUndefined();
+		expect(workspaceArgument(["--workspace", "ssh://build/srv/api"])).toBe(
+			"ssh://build/srv/api",
+		);
+	});
+
+	it("refuse anything else rather than ignore it", () => {
+		expect(() => workspaceArgument(["--workspace"])).toThrow(/--workspace/u);
+		expect(() => workspaceArgument(["-l"])).toThrow(/--workspace/u);
+		expect(() =>
+			workspaceArgument(["--workspace", "/a", "--workspace", "/b"]),
+		).toThrow(/one --workspace/u);
 	});
 });

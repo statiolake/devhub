@@ -246,6 +246,14 @@ export type ControlRequest =
 			readonly kind: "terminal-profile";
 			readonly machine: string;
 			readonly root: string | null;
+			/**
+			 * The Workspace, by its key, when the window already knows which
+			 * one it is and the directory cannot say: a workbench attached to a
+			 * dev container runs its DevHub terminal on this Mac, in a directory
+			 * that is not necessarily inside the Workspace — a folder on a host
+			 * has no directory here at all. Absent, the directory decides.
+			 */
+			readonly workspace?: string;
 	  };
 
 /**
@@ -428,6 +436,9 @@ export function parseControlRequest(line: string): ControlRequest {
 					record["root"] === null
 						? null
 						: requireAbsolute(record["root"], "root"),
+				...(record["workspace"] === undefined
+					? {}
+					: { workspace: requireString(record["workspace"], "workspace") }),
 			};
 		default:
 			throw new Error(`unknown control request: ${String(record["kind"])}`);

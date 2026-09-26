@@ -1,8 +1,8 @@
 diff --git a/src/vs/base/common/platform.ts b/src/vs/base/common/platform.ts
-index d2072dea83c..7cb61dae4c8 100644
+index d2072dea83c..f9b508f5452 100644
 --- a/src/vs/base/common/platform.ts
 +++ b/src/vs/base/common/platform.ts
-@@ -60,6 +60,34 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
+@@ -60,6 +60,48 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
  	nodeProcess = process;
  }
  
@@ -34,14 +34,28 @@ index d2072dea83c..7cb61dae4c8 100644
 +	? ($globalThis.vscode.context.configuration() as { devhubTerminalLauncher?: string } | undefined)?.devhubTerminalLauncher
 +	: undefined) || undefined;
 +
++// DevHub: where this workbench's DevHub terminal runs when that is not where the
++// workbench is attached, or undefined when it is.
++//
++// A workbench attached to a dev container has its extension host, its tasks
++// and its debugger in the container, and its DevHub terminal on the machine the
++// Workspace is on — the same direction as "Create New Integrated Terminal
++// (Local)". `cwd` is a directory on this Mac for the terminal to start in (a
++// `file:` cwd is what puts a terminal on the local backend); `args` are the
++// launcher's, and name the Workspace, because that directory cannot. Read from
++// the configuration for the reason `devhubTerminalLauncher` is.
++export const devhubTerminalLocal: { readonly cwd: string; readonly args: readonly string[] } | undefined = (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.context !== 'undefined'
++	? ($globalThis.vscode.context.configuration() as { devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] } } | undefined)?.devhubTerminalLocal
++	: undefined) || undefined;
++
  const isElectronProcess = typeof nodeProcess?.versions?.electron === 'string';
  const isElectronRenderer = isElectronProcess && nodeProcess?.type === 'renderer';
  
 diff --git a/src/vs/platform/window/common/window.ts b/src/vs/platform/window/common/window.ts
-index d073d011d56..4c1af75f15f 100644
+index d073d011d56..6547253b5f0 100644
 --- a/src/vs/platform/window/common/window.ts
 +++ b/src/vs/platform/window/common/window.ts
-@@ -460,6 +460,19 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
+@@ -460,6 +460,27 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
  	mainPid: number;
  	handle?: VSBuffer;
  
@@ -58,14 +72,22 @@ index d073d011d56..4c1af75f15f 100644
 +	 */
 +	devhubTerminalLauncher?: string;
 +
++	/**
++	 * DevHub: where the DevHub terminal of a window attached to a dev container
++	 * runs — on this Mac's pty host, in `cwd`, with the launcher given `args`.
++	 * Absent in every other window. Read by `devhubTerminalLocal` in
++	 * `base/common/platform.ts`.
++	 */
++	devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
++
  	machineId: string;
  	sqmId: string;
  	devDeviceId: string;
 diff --git a/src/vs/platform/windows/electron-main/windows.ts b/src/vs/platform/windows/electron-main/windows.ts
-index 7c4f02efdfa..66ac1c16cf5 100644
+index 7c4f02efdfa..6ae9ed93dea 100644
 --- a/src/vs/platform/windows/electron-main/windows.ts
 +++ b/src/vs/platform/windows/electron-main/windows.ts
-@@ -94,6 +94,12 @@ export interface IBaseOpenConfiguration {
+@@ -94,6 +94,14 @@ export interface IBaseOpenConfiguration {
  export interface IOpenConfiguration extends IBaseOpenConfiguration {
  	readonly cli: NativeParsedArgs;
  	readonly userEnv?: IProcessEnvironment;
@@ -75,67 +97,77 @@ index 7c4f02efdfa..66ac1c16cf5 100644
 +	 * `INativeWindowConfiguration.devhubTerminalLauncher`.
 +	 */
 +	readonly devhubTerminalLauncher?: string;
++	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLocal`. */
++	readonly devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
  	readonly urisToOpen?: IWindowOpenable[];
  	readonly waitMarkerFileURI?: URI;
  	readonly preferNewWindow?: boolean;
 diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
-index d8428b529b2..aae40c023ee 100644
+index d8428b529b2..cf1a9d86e24 100644
 --- a/src/vs/platform/windows/electron-main/windowsMainService.ts
 +++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
-@@ -66,6 +66,8 @@ type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
+@@ -66,6 +66,10 @@ type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
  
  interface IOpenBrowserWindowOptions {
  	readonly userEnv?: IProcessEnvironment;
 +	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLauncher`. */
 +	readonly devhubTerminalLauncher?: string;
++	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLocal`. */
++	readonly devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
  	readonly cli?: NativeParsedArgs;
  
  	readonly workspace?: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier;
-@@ -326,6 +328,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -326,6 +330,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  		return {
  			urisToOpen: [{ workspaceUri: agentSessionsWorkspaceUri }],
  			userEnv: openConfig.userEnv,
 +			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
++			devhubTerminalLocal: openConfig.devhubTerminalLocal,
  			cli: openConfig.cli,
  			noRecentEntry: true,
  			context: openConfig.context,
-@@ -625,6 +628,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -625,6 +631,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  			else {
  				addUsedWindow(await this.openInBrowserWindow({
  					userEnv: openConfig.userEnv,
 +			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
++			devhubTerminalLocal: openConfig.devhubTerminalLocal,
  					cli: openConfig.cli,
  					initialStartup: openConfig.initialStartup,
  					filesToOpen,
-@@ -787,6 +791,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -787,6 +795,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  
  		return this.openInBrowserWindow({
  			userEnv: openConfig.userEnv,
 +			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
++			devhubTerminalLocal: openConfig.devhubTerminalLocal,
  			cli: openConfig.cli,
  			initialStartup: openConfig.initialStartup,
  			remoteAuthority,
-@@ -812,6 +817,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -812,6 +822,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  		return this.openInBrowserWindow({
  			workspace: folderOrWorkspace.workspace,
  			userEnv: openConfig.userEnv,
 +			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
++			devhubTerminalLocal: openConfig.devhubTerminalLocal,
  			cli: openConfig.cli,
  			initialStartup: openConfig.initialStartup,
  			remoteAuthority: folderOrWorkspace.remoteAuthority,
-@@ -1500,6 +1506,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -1500,6 +1512,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  			forceNewWindow: true,
  			forceEmpty: !cliArgs.length && !folderUris.length && !fileUris.length,
  			userEnv: openConfig.userEnv,
 +			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
++			devhubTerminalLocal: openConfig.devhubTerminalLocal,
  			noRecentEntry: true,
  			waitMarkerFileURI: openConfig.waitMarkerFileURI,
  			remoteAuthority,
-@@ -1568,6 +1575,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+@@ -1568,6 +1582,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
  			remoteAuthority: options.remoteAuthority,
  			workspace: options.workspace,
  			userEnv: { ...this.initialUserEnv, ...options.userEnv },
 +			devhubTerminalLauncher: options.devhubTerminalLauncher,
++			devhubTerminalLocal: options.devhubTerminalLocal,
  
  			nls: {
  				messages: getNLSMessages(),
@@ -222,7 +254,7 @@ index 275ab34615d..22009a292e4 100644
  		}
  
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
-index d4d6ba9ee53..21ac092103b 100644
+index d4d6ba9ee53..f3142f3c55e 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 @@ -9,7 +9,8 @@ import { AutoOpenBarrier } from '../../../../base/common/async.js';
@@ -230,12 +262,12 @@ index d4d6ba9ee53..21ac092103b 100644
  import { Emitter, Event } from '../../../../base/common/event.js';
  import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 -import { isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
-+import { devhubTerminalLauncher, isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, devhubTerminalLocal, isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
 +import { Codicon } from '../../../../base/common/codicons.js';
  import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
  import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
  import { ITerminalProfile, IExtensionTerminalProfile, TerminalSettingPrefix, TerminalSettingId, ITerminalProfileObject, IShellLaunchConfig, ITerminalExecutable } from '../../../../platform/terminal/common/terminal.js';
-@@ -45,6 +46,26 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -45,6 +46,28 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	private readonly _profileProviders: Map</*ext id*/string, Map</*provider id*/string, ITerminalProfileProvider>> = new Map();
  	private _defaultProfileOverride: { extensionIdentifier: string; id: string } | undefined;
  
@@ -254,7 +286,9 @@ index d4d6ba9ee53..21ac092103b 100644
 +	private readonly _devhubProfile: ITerminalProfile | undefined = devhubTerminalLauncher ? {
 +		profileName: 'DevHub',
 +		path: devhubTerminalLauncher,
-+		args: [],
++		// The launcher's own arguments, when the window names its Workspace
++		// (`devhubTerminalLocal`); none otherwise.
++		args: devhubTerminalLocal ? [...devhubTerminalLocal.args] : [],
 +		isDefault: true,
 +		icon: Codicon.terminalTmux
 +	} : undefined;
@@ -262,7 +296,7 @@ index d4d6ba9ee53..21ac092103b 100644
  	private readonly _onDidChangeAvailableProfiles = this._register(new Emitter<ITerminalProfile[]>());
  	get onDidChangeAvailableProfiles(): Event<ITerminalProfile[]> { return this._onDidChangeAvailableProfiles.event; }
  
-@@ -53,7 +74,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -53,7 +76,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  		if (!this._platformConfigJustRefreshed) {
  			this.refreshAvailableProfiles();
  		}
@@ -276,7 +310,7 @@ index d4d6ba9ee53..21ac092103b 100644
  	}
  	get contributedProfiles(): IExtensionTerminalProfile[] {
  		const userConfiguredProfileNames = this._availableProfiles?.map(p => p.profileName) || [];
-@@ -111,10 +137,19 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -111,10 +139,19 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	}
  
  	getDefaultProfileName(): string | undefined {
@@ -296,7 +330,7 @@ index d4d6ba9ee53..21ac092103b 100644
  		let defaultProfileName: string | undefined;
  		if (os) {
  			defaultProfileName = this._configurationService.getValue(`${TerminalSettingPrefix.DefaultProfile}${this._getOsKey(os)}`);
-@@ -278,6 +313,10 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -278,6 +315,10 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	}
  
  	async getContributedDefaultProfile(shellLaunchConfig: IShellLaunchConfig): Promise<IExtensionTerminalProfile | undefined> {
@@ -307,3 +341,36 @@ index d4d6ba9ee53..21ac092103b 100644
  		// prevents recursion with the MainThreadTerminalService call to create terminal
  		// and defers to the provided launch config when an executable is provided
  		if (shellLaunchConfig && !shellLaunchConfig.extHostTerminalId && !hasKey(shellLaunchConfig, { executable: true })) {
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+index 83ac3261b33..c51f6dd335b 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+@@ -10,7 +10,7 @@ import { debounce, memoize } from '../../../../base/common/decorators.js';
+ import { DynamicListEventMultiplexer, Emitter, Event, IDynamicListEventMultiplexer } from '../../../../base/common/event.js';
+ import { Disposable, DisposableMap, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+ import { Schemas } from '../../../../base/common/network.js';
+-import { isMacintosh, isWeb } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, devhubTerminalLocal, isMacintosh, isWeb } from '../../../../base/common/platform.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { IKeyMods } from '../../../../platform/quickinput/common/quickInput.js';
+ import * as nls from '../../../../nls.js';
+@@ -973,6 +973,19 @@ export class TerminalService extends Disposable implements ITerminalService {
+ 	}
+ 
+ 	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
++		// DevHub: in a window attached to a dev container, the DevHub terminal —
++		// the default, or picked by name — runs on this Mac, where the
++		// Workspace's session is, and never in the container. A `file:` cwd is
++		// what sends a terminal to the local backend (`TerminalProcessManager`),
++		// the same way "Create New Integrated Terminal (Local)" does. Every other
++		// profile, and every task, stays with the container.
++		if (devhubTerminalLocal && devhubTerminalLauncher && options?.cwd === undefined) {
++			const config = options?.config;
++			const isDevhub = config === undefined || (hasKey(config, { path: true }) && (config as { path?: unknown }).path === devhubTerminalLauncher);
++			if (isDevhub) {
++				options = { ...options, config: this._terminalProfileService.getDefaultProfile(), cwd: URI.file(devhubTerminalLocal.cwd) };
++			}
++		}
+ 		// Await the initialization of available profiles as long as this is not a pty terminal or a
+ 		// local terminal in a remote workspace as profile won't be used in those cases and these
+ 		// terminals need to be launched before remote connections are established.

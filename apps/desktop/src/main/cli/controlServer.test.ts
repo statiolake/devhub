@@ -117,8 +117,10 @@ describe("the DevHub control socket", () => {
 				return Promise.resolve('{"processes":[]}');
 			},
 			installCli: () => Promise.resolve("installed"),
-			terminalProfile: (machine, root) => {
-				calls.push(`profile ${machine} ${root ?? "scratch"}`);
+			terminalProfile: (machine, root, workspace) => {
+				calls.push(
+					`profile ${machine} ${root ?? "scratch"}${workspace === undefined ? "" : ` for ${workspace}`}`,
+				);
 				if (root === "/work/gone") {
 					return Promise.reject(
 						new Error("no DevHub workspace is rooted at /work/gone"),
@@ -544,6 +546,19 @@ describe("the DevHub control socket", () => {
 		expect(answer.ok).toBe(false);
 		expect(answer.message).toContain("machine");
 		expect(calls).toEqual([]);
+	});
+
+	it("carries the Workspace a window named through to the answer", async () => {
+		await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "terminal-profile",
+				machine: "local",
+				root: "/Users/dev",
+				workspace: "ssh://build/srv/app",
+			})}\n`,
+		);
+		expect(calls).toEqual(["profile local /Users/dev for ssh://build/srv/app"]);
 	});
 
 	it("carries the machine the launcher is on through to the answer", async () => {

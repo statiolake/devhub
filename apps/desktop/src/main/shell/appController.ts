@@ -1579,9 +1579,31 @@ export class AppController {
 	async terminalProfileFor(
 		machine: string,
 		root: string | null,
+		workspaceKey?: string,
 	): Promise<TerminalProfileAnswer> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
+		// A window that named its Workspace: one attached to a dev container,
+		// whose DevHub terminal runs on this Mac in a directory that need not be
+		// inside the Workspace. The key is the answer, not the directory.
+		if (workspaceKey !== undefined) {
+			const named = this.workspaceForEditorKey(workspaceKey);
+			if (named === undefined) {
+				throw new Error(
+					`No Workspace ${workspaceKey} is open, so there is no terminal session for this window.`,
+				);
+			}
+			const asking = runtimeMachine(machine);
+			const on = runtimeIdFor(named.location);
+			if (on !== asking) {
+				throw new Error(
+					`The terminal session for ${named.root} is on ${on}, and this window asked from ${asking}.`,
+				);
+			}
+			return wiring.service.surfaces.profile(
+				workspaceTarget(asking, named.id, named.root),
+			);
+		}
 		// Only the Workspaces on the machine that is asking. A path is a path on
 		// one computer: `/srv/app` on two hosts is two folders, and a matcher
 		// given both roots would answer one of them with the other's session —
@@ -4072,13 +4094,27 @@ export class AppController {
 		// is where the window's machine is already known. This is the *only*
 		// place that decides it: nothing else names one, so a window that is
 		// not told here has none, which is what the patched workbench is
-		// written to say out loud. A window attached to a dev container has
-		// none yet: its terminal belongs on the Workspace's machine, and the
-		// workbench cannot yet put one there.
-		const launcher =
-			target === undefined
-				? await this.windowTerminalLauncher(location)
-				: undefined;
+		// written to say out loud.
+		//
+		// A window attached to a dev container still has a DevHub terminal, and
+		// it is the Workspace's own session on the Workspace's own machine —
+		// run by this Mac's launcher on this Mac's pty host
+		// (`devhubTerminalLocal`), never in the container. Tasks and the
+		// debugger stay in the container: the patch only moves the DevHub
+		// profile.
+		const launcher = await this.windowTerminalLauncher(
+			target === undefined ? location : undefined,
+		);
+		const terminalLocal =
+			target === undefined || workspace === undefined
+				? undefined
+				: {
+						cwd:
+							workspace.location.kind === "local"
+								? workspace.location.path
+								: homedir(),
+						args: ["--workspace", workspace.key],
+					};
 		// Said in the log, every time, because this is the value whose being
 		// wrong is invisible from the outside: a window with another machine's
 		// launcher opens perfectly and only fails when somebody presses Ctrl+`.
@@ -4095,6 +4131,9 @@ export class AppController {
 			context: OpenContext.API,
 			cli: this.cliArgs,
 			devhubTerminalLauncher: launcher,
+			...(terminalLocal === undefined
+				? {}
+				: { devhubTerminalLocal: terminalLocal }),
 			urisToOpen:
 				location === undefined || openPath === undefined
 					? []

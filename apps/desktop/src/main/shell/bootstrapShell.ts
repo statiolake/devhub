@@ -262,8 +262,8 @@ export async function bootstrapShell(
 			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
 		metrics: () => controller.metricsFromCli(),
-		terminalProfile: (machine, root) =>
-			controller.terminalProfileFor(machine, root),
+		terminalProfile: (machine, root, workspace) =>
+			controller.terminalProfileFor(machine, root, workspace),
 		// Not on the controller: resolving an authority needs the runtime
 		// registry and the REH delivery and nothing about windows, workspaces or
 		// the model. See `resolveRemote.ts`.
