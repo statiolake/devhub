@@ -1361,15 +1361,22 @@
   white-space: pre-wrap;
 }
 
+/* Room to change a message in place: it grows with its text as the
+   composer's field does, from three lines up to the composer's own limit. */
 .conversation-pending-input {
+  field-sizing: content;
   width: 100%;
+  min-height: calc(3lh + 2 * var(--space-2));
+  max-height: 40vh;
   box-sizing: border-box;
-  resize: vertical;
+  padding: var(--space-2);
+  resize: none;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   background: var(--raised);
   color: var(--primary);
   font: inherit;
+  line-height: 1.55;
 }
 
 .conversation-pending-footer {
