@@ -71,7 +71,7 @@
       "commandPalette": [
         {
           "command": "devhub.reopenInContainer",
-          "when": "remoteName != dev-container && remoteName != ssh-remote && devhub.devContainerConfigs > 0"
+          "when": "remoteName != dev-container && devhub.devContainerConfigs > 0"
         },
         {
           "command": "devhub.reopenLocally",
@@ -85,7 +85,7 @@
       "statusBar/remoteIndicator": [
         {
           "command": "devhub.reopenInContainer",
-          "when": "remoteName != dev-container && remoteName != ssh-remote && devhub.devContainerConfigs > 0",
+          "when": "remoteName != dev-container && devhub.devContainerConfigs > 0",
           "group": "remote_20_devhub@1"
         },
         {

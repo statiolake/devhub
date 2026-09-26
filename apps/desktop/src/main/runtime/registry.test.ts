@@ -190,6 +190,26 @@ describe("runtimeFor", () => {
 		expect(liveContainerHosts()).toHaveLength(0);
 	});
 
+	it("reaches a container on a host through that host, as a container of its own", async () => {
+		// The same folder path on a host is a different folder, and so a
+		// different container: the host is part of which container this is.
+		const onHost: ContainerTarget = {
+			location: workspaceLocation({
+				kind: "ssh",
+				host: "build",
+				path: "/projects/api",
+			}),
+			configPath: TARGET.configPath,
+		};
+		const host = containerHostFor(onHost);
+		expect(host).not.toBe(containerHostFor(TARGET));
+		expect(host.id).not.toBe(containerHostId(TARGET));
+		expect(host.where).toBe(" in the dev container for /projects/api on build");
+		await disposeContainerHost(host.id);
+		await disposeContainerHost(containerHostId(TARGET));
+		await disposeRuntime("ssh:build");
+	});
+
 	it("never hands a container out as a Workspace's machine", () => {
 		// Nothing a Workspace owns runs in a container, so no runtime id names
 		// one; the resolver's name for it is a separate spelling that only the

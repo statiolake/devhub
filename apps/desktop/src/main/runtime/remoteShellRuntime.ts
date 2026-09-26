@@ -561,6 +561,17 @@ export abstract class RemoteShellRuntime {
 	 * environment is waited for inside the stream, which is why this can be
 	 * synchronous where `spawnPty` has to find it already read.
 	 */
+	/**
+	 * A long-lived command on this machine as a process on this Mac whose
+	 * stdin and stdout are the command's: the launch, not the process. Under
+	 * the login environment, like `spawnStream`, for a caller that spawns and
+	 * owns the process itself — a relay into a dev container on a host.
+	 */
+	async commandLaunch(argv: readonly string[]): Promise<StreamLaunch> {
+		const { login } = await this.describeRemote();
+		return this.streamLaunch(remoteScript({ argv, env: login }));
+	}
+
 	spawnStream(request: StreamRequest): ByteStream {
 		return openByteStream(async () => {
 			const { login } = await this.describeRemote();

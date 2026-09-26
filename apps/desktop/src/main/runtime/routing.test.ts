@@ -76,6 +76,13 @@ class RecordingRuntime implements Runtime {
 			binDirectory: undefined,
 		});
 	}
+	commandFromHere(command: {
+		file: string;
+		args: readonly string[];
+		env: Readonly<Record<string, string>>;
+	}) {
+		return Promise.resolve(command);
+	}
 	resolveProgram(configured: string) {
 		return Promise.resolve({
 			kind: "command_name" as const,

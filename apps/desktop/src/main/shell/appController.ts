@@ -1606,15 +1606,22 @@ export class AppController {
 					`No Workspace ${workspaceKey} is open, so there is no terminal session for this window.`,
 				);
 			}
+			// Only this Mac's launcher names a Workspace: it is what an attached
+			// window's DevHub terminal runs (`devhubTerminalLocal`).
 			const asking = runtimeMachine(machine);
-			const on = runtimeIdFor(named.location);
-			if (on !== asking) {
+			if (asking !== "local") {
 				throw new Error(
-					`The terminal session for ${named.root} is on ${on}, and this window asked from ${asking}.`,
+					`A terminal on ${asking} named Workspace ${workspaceKey}, and only a terminal on this Mac does that.`,
 				);
 			}
-			return wiring.service.surfaces.profile(
-				workspaceTarget(asking, named.id, named.root),
+			const on = runtimeIdFor(named.location);
+			// The session is where the Workspace is; the terminal is here. On
+			// this Mac that is the session's own command, and on a host it is
+			// that command over ssh — see `Runtime.commandFromHere`.
+			return runtimeById(on).commandFromHere(
+				await wiring.service.surfaces.profile(
+					workspaceTarget(on, named.id, named.root),
+				),
 			);
 		}
 		// Only the Workspaces on the machine that is asking. A path is a path on

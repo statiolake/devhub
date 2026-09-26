@@ -398,6 +398,13 @@ export interface TerminalLauncher {
 	readonly binDirectory: string | undefined;
 }
 
+/** A program, its arguments, and what it needs in its environment. */
+export interface MachineCommand {
+	readonly file: string;
+	readonly args: readonly string[];
+	readonly env: Readonly<Record<string, string>>;
+}
+
 export interface Runtime {
 	/** `local`, or `ssh:<host>`. The key a per-host cache is filed under. */
 	readonly id: RuntimeId;
@@ -544,6 +551,18 @@ export interface Runtime {
 	 * be. Idempotent: one install per machine per DevHub start.
 	 */
 	terminalLauncher(spec: TerminalLauncherSpec): Promise<TerminalLauncher>;
+
+	/**
+	 * A command meant for this machine, as one a pseudo-terminal on the Mac
+	 * DevHub runs on can run.
+	 *
+	 * Itself on this Mac. On a host, `ssh -tt <host> -- <the command>` over
+	 * this host's own master, under the host's login environment — the same
+	 * composition a pane's pty has. It is what lets a window attached to a dev
+	 * container on a host have its DevHub terminal on this Mac and its session
+	 * on the host.
+	 */
+	commandFromHere(command: MachineCommand): Promise<MachineCommand>;
 
 	readonly cadence: RuntimeCadence;
 	/**

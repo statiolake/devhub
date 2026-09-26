@@ -78,6 +78,7 @@ import {
 import type {
 	ExecRequest,
 	ExecResult,
+	MachineCommand,
 	PtyRequest,
 	Runtime,
 	RuntimeCadence,
@@ -692,6 +693,34 @@ export class SshRuntime
 		});
 		pty.onExit(release);
 		return pty;
+	}
+
+	/**
+	 * A command for this host, as a pty on this Mac runs it: `ssh -tt` over this
+	 * host's master, with the host's login environment exported first. See
+	 * `Runtime.commandFromHere`.
+	 *
+	 * The session it opens is the pty's, held for as long as that terminal is
+	 * open, and it is not counted against `MuxSessions`: the process belongs to
+	 * the workbench's pty host, not to DevHub, so DevHub never sees it end.
+	 */
+	async commandFromHere(command: MachineCommand): Promise<MachineCommand> {
+		await this.#ensureControlDirectory();
+		const { login } = await this.describeRemote();
+		return {
+			file: this.#sshPath,
+			args: [
+				...sshOptionArgv(this.#controlDirectory),
+				"-tt",
+				this.#host,
+				"--",
+				remoteScript({
+					argv: [command.file, ...command.args],
+					env: { ...login, ...command.env },
+				}),
+			],
+			env: {},
+		};
 	}
 
 	/**

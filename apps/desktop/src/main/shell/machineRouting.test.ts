@@ -89,6 +89,13 @@ class FakeMachine implements Runtime {
 			binDirectory: `${this.homeDirectory}/.devhub/terminal/bin-tag`,
 		});
 	}
+	commandFromHere(command: {
+		file: string;
+		args: readonly string[];
+		env: Readonly<Record<string, string>>;
+	}) {
+		return Promise.resolve(command);
+	}
 	resolveProgram(configured: string): Promise<SettingsResolvedRuntimeWire> {
 		return Promise.resolve({ kind: "command_name", value: configured });
 	}

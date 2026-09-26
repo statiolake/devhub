@@ -25,6 +25,7 @@ import {
 	containerName,
 	devContainerConfigsIn,
 	LOCAL_FOLDER_LABEL,
+	localContainerMachine,
 	parseUpOutcome,
 	type DevContainerCli,
 	type DockerCli,
@@ -103,8 +104,7 @@ function runtimeWith(
 ): ContainerHost {
 	return new ContainerHost({
 		target: target(configPath),
-		docker,
-		devcontainer,
+		machine: localContainerMachine(docker, devcontainer),
 	});
 }
 
@@ -809,17 +809,24 @@ describe("hearing that a container was started", () => {
 		const make = () =>
 			new ContainerHost({
 				target: target(),
-				docker: fakeDocker((args) => {
-					if (args[0] === "ps") {
-						return output(0, running ? psLine("c".repeat(64), "running") : "");
-					}
-					if (args[0] === "inspect") return output(0, "");
-					return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
-				}),
-				devcontainer: fakeDevcontainer(() => {
-					running = true;
-					return upSucceeded("c".repeat(64));
-				}),
+				machine: localContainerMachine(
+					fakeDocker((args) => {
+						if (args[0] === "ps") {
+							return output(
+								0,
+								running ? psLine("c".repeat(64), "running") : "",
+							);
+						}
+						if (args[0] === "inspect") return output(0, "");
+						return (
+							containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode")
+						);
+					}),
+					fakeDevcontainer(() => {
+						running = true;
+						return upSucceeded("c".repeat(64));
+					}),
+				),
 				onStarted: (_host, id) => heard.push(id),
 			});
 		await make().ensureUp({ build: true });

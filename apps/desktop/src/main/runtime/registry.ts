@@ -30,6 +30,8 @@ import {
 } from "../../model/domain.js";
 import {
 	ContainerHost,
+	hostContainerMachine,
+	localContainerMachine,
 	type DevContainerCli,
 	type DockerCli,
 } from "./container.js";
@@ -239,16 +241,16 @@ export function containerHostFor(target: ContainerTarget): ContainerHost {
 			"a dev container was asked for before the runtime profile was set",
 		);
 	}
-	if (target.location.kind !== "local") {
-		throw new Error(
-			`a dev container on ${target.location.host} was asked for, and this ` +
-				`DevHub brings dev containers up only on this Mac`,
-		);
-	}
+	// Where `docker` runs for it: this Mac, or the host its folder is on,
+	// through that host's own runtime. A container on a host is no different
+	// above the transport, so this is the only place that knows which.
+	const machine = runtimeFor(target.location);
 	const host = new ContainerHost({
 		target,
-		docker: profile.docker,
-		devcontainer: profile.devcontainer,
+		machine:
+			machine instanceof SshRuntime
+				? hostContainerMachine(machine)
+				: localContainerMachine(profile.docker, profile.devcontainer),
 		reh: profile.reh,
 		onStarted: (id, containerId) => containerStarted?.(id, containerId),
 	});

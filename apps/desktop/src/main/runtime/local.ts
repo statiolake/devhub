@@ -54,6 +54,7 @@ import {
 	type PtyRequest,
 	type Runtime,
 	type RuntimeCadence,
+	type MachineCommand,
 	type RuntimeId,
 	type RuntimeReading,
 	type StreamRequest,
@@ -450,6 +451,11 @@ export class LocalRuntime implements Runtime {
 			unreachable: undefined,
 			binDirectory: undefined,
 		};
+	}
+
+	/** Already here. See `Runtime.commandFromHere`. */
+	commandFromHere(command: MachineCommand): Promise<MachineCommand> {
+		return Promise.resolve(command);
 	}
 
 	/** Nothing is multiplexed to this Mac from this Mac. */

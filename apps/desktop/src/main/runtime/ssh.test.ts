@@ -43,6 +43,7 @@ import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import { describeRuntimeContract } from "./runtime.contract.test.js";
 import { describeHostLink } from "../agent/conversation/hostLink.test.js";
+import { hostContainerMachine } from "./container.js";
 import type { TerminalLauncherSpec } from "./runtime.js";
 import {
 	chooseControlDirectory,
@@ -1748,3 +1749,85 @@ function canConnect(port: number): Promise<boolean> {
 		});
 	});
 }
+
+/**
+ * A dev container on a host: `docker` and `devcontainer` run on the host,
+ * through its own runtime, and a DevHub terminal on this Mac reaches the host's
+ * session over ssh. The "host" is this machine behind the fake ssh, with a
+ * `docker` of its own on the host's PATH.
+ */
+describe("a dev container on a host", () => {
+	let hostBin: string;
+	beforeAll(async () => {
+		hostBin = await mkdtemp(join(tmpdir(), "devhub-fake-host-bin-"));
+		// Says what it was asked, and for `exec` echoes its stdin back — which
+		// is what a relay's `docker exec -i` looks like from this side.
+		await writeFile(
+			join(hostBin, "docker"),
+			'#!/bin/sh\nif [ "$1" = exec ]; then printf "exec:"; cat; exit 0; fi\necho "docker $*"\n',
+			{ mode: 0o700 },
+		);
+	});
+	afterAll(async () => {
+		await rm(hostBin, { recursive: true, force: true });
+	});
+
+	function hostRuntime(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...FAKE_ENVIRONMENT,
+				PATH: `${hostBin}:${process.env["PATH"] ?? ""}`,
+			},
+			tmux: FAKE_TMUX,
+		});
+	}
+
+	it("runs docker on the host, found on the host's own PATH", async () => {
+		const machine = hostContainerMachine(hostRuntime());
+		const listed = await machine.docker(["ps", "-a"]);
+		expect(listed.code).toBe(0);
+		expect(listed.stdout.toString("utf8")).toBe("docker ps -a\n");
+		// A sentence about it names the host.
+		expect(machine.where).toBe(" on build-box.example.com");
+		expect(machine.dockerName).toBe("docker on build-box.example.com");
+	});
+
+	it("starts a relay as ssh … docker exec -i, with its stdio as the wire", async () => {
+		const launch = await hostContainerMachine(hostRuntime()).dockerLaunch([
+			"exec",
+			"-i",
+			"c1",
+		]);
+		expect(launch.file).toBe(join(bin, "ssh"));
+		const child = spawn(launch.file, [...launch.args], {
+			env: launch.env as NodeJS.ProcessEnv,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		child.on("close", () => launch.release?.());
+		child.stdin.end("bytes");
+		const chunks: Buffer[] = [];
+		for await (const chunk of child.stdout) chunks.push(chunk as Buffer);
+		expect(Buffer.concat(chunks).toString("utf8")).toBe("exec:bytes");
+	});
+
+	it("gives a terminal on this Mac the host's session over ssh -tt", async () => {
+		const here = await hostRuntime().commandFromHere({
+			file: "/bin/sh",
+			args: ["-c", 'printf %s "$DEVHUB_SESSION"'],
+			env: { DEVHUB_SESSION: "the host's tmux" },
+		});
+		expect(here.file).toBe(join(bin, "ssh"));
+		expect(here.args).toContain("-tt");
+		expect(here.args).toContain("build-box.example.com");
+		const child = spawn(here.file, [...here.args], {
+			env: FAKE_ENVIRONMENT as NodeJS.ProcessEnv,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const chunks: Buffer[] = [];
+		for await (const chunk of child.stdout) chunks.push(chunk as Buffer);
+		expect(Buffer.concat(chunks).toString("utf8")).toBe("the host's tmux");
+	});
+});

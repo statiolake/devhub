@@ -148,17 +148,8 @@ export interface DockerCli {
 export function dockerOutput(
 	docker: DockerCli,
 	args: readonly string[],
-	environment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<CommandOutput> {
-	const custom = docker.run;
-	if (custom) return custom(args);
-	return runBounded(
-		{ file: docker.path, args: [...args], cwd: undefined, env: environment },
-		OperationDeadline.in(PROBE_TIMEOUT_MS),
-		new CancellationToken(),
-		PROBE_LIMITS,
-		undefined,
-	);
+	return localContainerMachine(docker, { path: "devcontainer" }).docker(args);
 }
 
 /** How this build runs `devcontainer`. */
@@ -167,11 +158,128 @@ export interface DevContainerCli {
 	readonly run?: (args: readonly string[]) => Promise<CommandOutput>;
 }
 
+/**
+ * The machine `docker` and `devcontainer` run on for a container: this Mac,
+ * or the host a Workspace's folder is on.
+ *
+ * The one thing a container on a host does differently from one here is how
+ * a command reaches `docker`, so that is the whole of this interface; the
+ * relays, the server install, the bring-up and the shutdown above it are
+ * written once. On a host, `docker` and `devcontainer` are looked for on the
+ * host's login `PATH`, like any program DevHub runs there.
+ */
+export interface ContainerMachine {
+	/** For a sentence: nothing on this Mac, ` on <host>` on a host. */
+	readonly where: string;
+	/** Which `docker` a refusal names. */
+	readonly dockerName: string;
+	docker(
+		args: readonly string[],
+		request?: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+	): Promise<CommandOutput>;
+	devcontainer(
+		args: readonly string[],
+		timeoutMs: number,
+	): Promise<CommandOutput>;
+	/** A long-lived `docker …` whose stdin and stdout are pipes on this Mac. */
+	dockerLaunch(args: readonly string[]): Promise<StreamLaunch>;
+}
+
+/** `docker` and `devcontainer` on this Mac, from the product's paths. */
+export function localContainerMachine(
+	docker: DockerCli,
+	devcontainer: DevContainerCli,
+	environment: Readonly<Record<string, string | undefined>> = process.env,
+): ContainerMachine {
+	const bounded = (
+		file: string,
+		args: readonly string[],
+		request: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+	): Promise<CommandOutput> =>
+		runBounded(
+			{ file, args: [...args], cwd: undefined, env: environment },
+			request.deadline,
+			request.cancel,
+			request.limits,
+			request.stdin,
+		);
+	return {
+		where: "",
+		dockerName: docker.path,
+		docker: (args, request) =>
+			docker.run
+				? docker.run(args, request?.stdin)
+				: bounded(docker.path, args, {
+						deadline:
+							request?.deadline ?? OperationDeadline.in(PROBE_TIMEOUT_MS),
+						cancel: request?.cancel ?? new CancellationToken(),
+						limits: request?.limits ?? PROBE_LIMITS,
+						stdin: request?.stdin,
+					}),
+		devcontainer: (args, timeoutMs) =>
+			devcontainer.run
+				? devcontainer.run(args)
+				: bounded(devcontainer.path, args, {
+						deadline: OperationDeadline.in(timeoutMs),
+						cancel: new CancellationToken(),
+						limits: { ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
+					}),
+		dockerLaunch: (args) =>
+			Promise.resolve({
+				file: docker.path,
+				args: [...args],
+				cwd: undefined,
+				env: environment,
+			}),
+	};
+}
+
+/** What a host's runtime lends a container on it. See `hostContainerMachine`. */
+export interface HostShell {
+	readonly where: string;
+	exec(request: ExecRequest): Promise<ExecResult>;
+	commandLaunch(argv: readonly string[]): Promise<StreamLaunch>;
+}
+
+/**
+ * `docker` and `devcontainer` on a host, through that host's own runtime: its
+ * master connection, its login environment, its refusals. A relay is an
+ * `ssh … docker exec -i` whose stdio are the pipes, which is what `ssh -W`
+ * would be if docker could be forwarded.
+ */
+export function hostContainerMachine(host: HostShell): ContainerMachine {
+	const run = async (
+		argv: readonly string[],
+		request: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+	): Promise<CommandOutput> => {
+		const result = await host.exec({ argv, ...request });
+		return { ...result, success: result.code === 0 };
+	};
+	return {
+		where: host.where,
+		dockerName: `docker${host.where}`,
+		docker: (args, request) =>
+			run(["docker", ...args], {
+				deadline: request?.deadline ?? OperationDeadline.in(PROBE_TIMEOUT_MS),
+				cancel: request?.cancel ?? new CancellationToken(),
+				limits: request?.limits ?? PROBE_LIMITS,
+				stdin: request?.stdin,
+			}),
+		devcontainer: (args, timeoutMs) =>
+			run(["devcontainer", ...args], {
+				deadline: OperationDeadline.in(timeoutMs),
+				cancel: new CancellationToken(),
+				limits: { ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
+			}),
+		dockerLaunch: (args) => host.commandLaunch(["docker", ...args]),
+	};
+}
+
 export interface ContainerHostOptions {
 	/** Which container: the folder, its machine, and the definition. */
 	readonly target: ContainerTarget;
-	readonly docker: DockerCli;
-	readonly devcontainer: DevContainerCli;
+	/** Where `docker` runs for it. See `ContainerMachine`. */
+	readonly machine: ContainerMachine;
 	/**
 	 * Where the remote extension host comes from.
 	 *
@@ -181,7 +289,6 @@ export interface ContainerHostOptions {
 	 * place that installs it.
 	 */
 	readonly reh?: RehDelivery | undefined;
-	readonly localEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** For tests: how a local port for the bridge is picked. */
 	readonly listen?: (onConnection: (socket: Socket) => void) => Promise<{
 		port: number;
@@ -357,10 +464,8 @@ export class ContainerHost
 
 	readonly #workspaceFolder: string;
 	readonly #configPath: DevContainerConfigPath;
-	readonly #docker: DockerCli;
-	readonly #devcontainer: DevContainerCli;
+	readonly #machine: ContainerMachine;
 	readonly #rehDelivery: RehDelivery | undefined;
-	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
 	readonly #listen: ContainerHostOptions["listen"];
 	readonly #onStarted: ContainerHostOptions["onStarted"];
 
@@ -381,17 +486,15 @@ export class ContainerHost
 		this.#workspaceFolder = options.target.location.path;
 		this.id = containerHostId(options.target);
 		this.#configPath = options.target.configPath;
-		this.where = ` in ${containerName(this.#workspaceFolder, this.#configPath)}`;
-		this.#docker = options.docker;
-		this.#devcontainer = options.devcontainer;
+		this.#machine = options.machine;
+		this.where = ` in ${this.machineName}`;
 		this.#rehDelivery = options.reh;
-		this.#localEnvironment = options.localEnvironment ?? process.env;
 		this.#listen = options.listen;
 		this.#onStarted = options.onStarted;
 	}
 
 	protected override get machineName(): string {
-		return containerName(this.#workspaceFolder, this.#configPath);
+		return `${containerName(this.#workspaceFolder, this.#configPath)}${this.#machine.where}`;
 	}
 
 	/**
@@ -422,20 +525,7 @@ export class ContainerHost
 		args: readonly string[],
 		request?: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
 	): Promise<CommandOutput> {
-		const custom = this.#docker.run;
-		if (custom) return custom(args, request?.stdin);
-		return runBounded(
-			{
-				file: this.#docker.path,
-				args: [...args],
-				cwd: undefined,
-				env: this.#localEnvironment,
-			},
-			request?.deadline ?? OperationDeadline.in(PROBE_TIMEOUT_MS),
-			request?.cancel ?? new CancellationToken(),
-			request?.limits ?? PROBE_LIMITS,
-			request?.stdin,
-		);
+		return this.#machine.docker(args, request);
 	}
 
 	/**
@@ -470,7 +560,7 @@ export class ContainerHost
 		]);
 		if (listed.code !== 0) {
 			throw dockerUnreachable(
-				this.#docker.path,
+				this.#machine.dockerName,
 				lastLine(listed.stderr.toString("utf8")),
 			);
 		}
@@ -741,28 +831,16 @@ export class ContainerHost
 		verb: string,
 		timeoutMs: number,
 	): Promise<CommandOutput> {
-		const args = [
-			verb,
-			"--workspace-folder",
-			this.#workspaceFolder,
-			"--config",
-			this.#configPath,
-		];
-		const custom = this.#devcontainer.run;
-		return custom
-			? custom(args)
-			: runBounded(
-					{
-						file: this.#devcontainer.path,
-						args,
-						cwd: undefined,
-						env: this.#localEnvironment,
-					},
-					OperationDeadline.in(timeoutMs),
-					new CancellationToken(),
-					{ ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
-					undefined,
-				);
+		return this.#machine.devcontainer(
+			[
+				verb,
+				"--workspace-folder",
+				this.#workspaceFolder,
+				"--config",
+				this.#configPath,
+			],
+			timeoutMs,
+		);
 	}
 
 	/**
@@ -1051,7 +1129,7 @@ export class ContainerHost
 			);
 		}
 		const container = await this.#currentContainer();
-		const child = this.#spawnRelayExec(container, [
+		const child = await this.#spawnRelayExec(container, [
 			node,
 			relay,
 			"listen",
@@ -1357,17 +1435,29 @@ export class ContainerHost
 	): Promise<number> {
 		this.#closeBridge();
 		const onConnection = (socket: Socket): void => {
-			const child = this.#spawnRelayExec(container, [
+			// A connection that cannot get its relay is a connection the
+			// workbench sees close, and it retries; what went wrong is said in
+			// the log, where the relay's own stderr goes too.
+			void this.#spawnRelayExec(container, [
 				node,
 				relay,
 				"connect",
 				socketPath,
-			]);
-			if (child === undefined) {
-				socket.destroy();
-				return;
-			}
-			child.pipe(socket);
+			]).then(
+				(child) => {
+					if (child === undefined) {
+						socket.destroy();
+						return;
+					}
+					child.pipe(socket);
+				},
+				(failure: unknown) => {
+					console.warn(
+						`[devhub] ${this.id}: a connection's relay could not be started: ${describeFailure(failure)}`,
+					);
+					socket.destroy();
+				},
+			);
 		};
 		const listener = this.#listen
 			? await this.#listen(onConnection)
@@ -1389,13 +1479,12 @@ export class ContainerHost
 	 * multiplexes many sockets over it — and a raw child would have both of them
 	 * reaching into the same three streams in different ways.
 	 */
-	#spawnRelayExec(
+	async #spawnRelayExec(
 		container: UpResult,
 		argv: readonly string[],
-	): RelayExec | undefined {
+	): Promise<RelayExec | undefined> {
 		return spawnRelay(
-			this.#docker.path,
-			[
+			await this.#machine.dockerLaunch([
 				"exec",
 				...(container.remoteUser.length === 0
 					? []
@@ -1403,8 +1492,7 @@ export class ContainerHost
 				"-i",
 				container.containerId,
 				...argv,
-			],
-			this.#localEnvironment,
+			]),
 		);
 	}
 
@@ -1724,15 +1812,14 @@ export interface RelayExec {
  * first workbench connects — which is to say in the packaged app only, and
  * never in a test.
  */
-function spawnRelay(
-	file: string,
-	args: readonly string[],
-	env: Readonly<Record<string, string | undefined>>,
-): RelayExec | undefined {
-	const child = spawn(file, [...args], {
+function spawnRelay(launch: StreamLaunch): RelayExec | undefined {
+	const child = spawn(launch.file, [...launch.args], {
 		stdio: ["pipe", "pipe", "pipe"],
-		env: env as NodeJS.ProcessEnv,
+		env: launch.env as NodeJS.ProcessEnv,
 	});
+	// A relay over a host's master holds one of its sessions for as long as it
+	// runs (`MuxSessions`), and gives it back when it ends however it ends.
+	if (launch.release !== undefined) child.on("close", launch.release);
 	if (child.stdin === null || child.stdout === null) return undefined;
 	const stdin = child.stdin;
 	const stdout = child.stdout;
