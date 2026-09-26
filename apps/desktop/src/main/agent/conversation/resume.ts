@@ -40,6 +40,7 @@ import type { AgentProfile } from "../../../model/domain.js";
 import { OperationDeadline } from "../../terminal/command.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { RuntimeFileError, type Runtime } from "../../runtime/runtime.js";
+import { isTaskNotificationText } from "./claude/decode.js";
 import { appServerArgs } from "./codex/argv.js";
 import { decodeLine, Reader, threadListResponse } from "./codex/decode.js";
 import type { ThreadListParams } from "./codex/protocol/v2/ThreadListParams.js";
@@ -1024,24 +1025,75 @@ export function claudeHistoryLines(
 		}
 		at = above;
 	}
-	return chain
-		.reverse()
-		.filter(
-			(record) =>
-				isMessage(record) &&
-				record["isMeta"] !== true &&
-				record["isCompactSummary"] !== true,
+	return chain.reverse().flatMap((record) => {
+		// A background task's end, which Claude records as a user message it
+		// adds, or as a queued command it took in mid-turn.
+		const notification = taskNotification(record);
+		if (notification !== undefined) {
+			return [
+				JSON.stringify({
+					type: "devhub_history",
+					record: {
+						type: "user",
+						uuid: record["uuid"],
+						message: { role: "user", content: notification },
+					},
+				}),
+			];
+		}
+		if (
+			!isMessage(record) ||
+			record["isMeta"] === true ||
+			record["isCompactSummary"] === true
 		)
-		.map((record) =>
+			return [];
+		return [
 			JSON.stringify({
 				type: "devhub_history",
 				record: {
 					type: record["type"],
 					uuid: record["uuid"],
 					message: record["message"],
+					// Whether a call only started its task in the background, in the
+					// field stream-json prints it in.
+					...(record["toolUseResult"] === undefined
+						? {}
+						: { tool_use_result: record["toolUseResult"] }),
 				},
 			}),
-		);
+		];
+	});
+}
+
+/** The `<task-notification>` a top-level record of a session file carries, if it carries one. */
+function taskNotification(record: Record<string, unknown>): string | undefined {
+	if (record["isSidechain"] === true) return undefined;
+	const content =
+		record["type"] === "user"
+			? (record["message"] as Record<string, unknown> | undefined)?.["content"]
+			: record["type"] === "attachment"
+				? (record["attachment"] as Record<string, unknown> | undefined)?.[
+						"type"
+					] === "queued_command"
+					? (record["attachment"] as Record<string, unknown>)["prompt"]
+					: undefined
+				: undefined;
+	const text =
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? content
+						.flatMap((block: unknown) =>
+							typeof block === "object" &&
+							block !== null &&
+							(block as Record<string, unknown>)["type"] === "text" &&
+							typeof (block as Record<string, unknown>)["text"] === "string"
+								? [(block as Record<string, unknown>)["text"] as string]
+								: [],
+						)
+						.join("\n")
+				: undefined;
+	return text !== undefined && isTaskNotificationText(text) ? text : undefined;
 }
 
 // ---------------------------------------------------------------------------

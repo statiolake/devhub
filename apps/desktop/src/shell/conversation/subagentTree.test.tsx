@@ -251,7 +251,7 @@ describe("a Claude subagent (Task)", () => {
     );
   });
 
-  it("shows a background task finishing where it finished, not as a subagent", () => {
+  it("shows a background task finishing on the call that started it, not as a subagent", () => {
     draw(
       claudeTranscript([
         ...claudeUntil('"isReplay":true'),
@@ -285,13 +285,10 @@ describe("a Claude subagent (Task)", () => {
     expect(
       entry("tool:toolu_bg").querySelector(".conversation-subagent"),
     ).toBeNull();
-    const last = document.querySelector(
-      ".conversation-transcript",
-    )!.lastElementChild!;
-    expect(last).toHaveAttribute("data-kind", "notice");
-    expect(last).toHaveTextContent(
-      "Background task completed: npm test finished",
-    );
+    expect(
+      entry("tool:toolu_bg").querySelector(".conversation-tool-background"),
+    ).toHaveTextContent("In the background: Done — npm test finished");
+    expect(document.querySelector('[data-kind="notice"]')).toBeNull();
   });
 });
 

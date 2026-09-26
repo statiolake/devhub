@@ -98,6 +98,7 @@ function tool(
       status: "running",
       output: undefined,
       spawns: undefined,
+      background: undefined,
       ...fields,
     },
   };

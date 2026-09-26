@@ -238,6 +238,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly answered = new Set<string>();
 	/** DevHub asked the running turn to stop. */
 	private interrupting = false;
+	/**
+	 * The subagent call each background task belongs to, by task id: what a
+	 * notification that names only the task (not its call) is matched by.
+	 */
+	private readonly tasks = new Map<string, EntryId>();
 
 	private readonly messages = new Map<string, MessageState>();
 	/** The message streaming now, per parent (null for the top level). */
@@ -584,6 +589,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.answered.clear();
 		this.streaming.clear();
 		this.interrupting = false;
+		this.processEnded(this.current.entries);
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
 	}
@@ -604,6 +610,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.answered.clear();
 		this.messages.clear();
 		this.streaming.clear();
+		this.tasks.clear();
 		this.interrupting = false;
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
@@ -1008,6 +1015,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				`assistant.message.content[${position}]`,
 			);
 		});
+		// The CLI that made the calls of a message read back from a session
+		// file has ended: none of its subagents runs now.
+		if (when === "history") {
+			this.processEnded(
+				[...message.slots.values()].flatMap((slot) =>
+					slot.kind === "tool" ? [this.tool(slot.entry)!] : [],
+				),
+			);
+		}
 		if (line.error === SIGNED_OUT) {
 			// The one API error no turn can get past: the CLI has no sign-in to
 			// use. What it said stays in the transcript above, in its words.
@@ -1107,6 +1123,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						status: "running",
 						output: undefined,
 						spawns: spawnsOf(block.name, block.input, undefined),
+						background: undefined,
 					},
 				});
 			}
@@ -1201,16 +1218,30 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	): void {
 		const parent = this.parentOf(line.parent, "user");
 		const before = this.lastUuid;
-		this.placed(line.uuid, parent);
+		// A message that only tells of tasks ending is the CLI's, not a
+		// message of the conversation's own: no place for a resume to cut.
+		if (line.content.some((block) => block.kind !== "task_notification"))
+			this.placed(line.uuid, parent);
 		const texts: string[] = [];
 		line.content.forEach((block, position) => {
 			switch (block.kind) {
 				case "text":
 					texts.push(block.text);
 					return;
+				case "task_notification":
+					return this.takeTask({
+						type: "task",
+						subtype: "task_notification",
+						taskId: block.taskId,
+						toolUseId: block.toolUseId,
+						status: block.status,
+						text: block.summary,
+						raw: block.raw,
+					});
 				case "tool_result":
 					return this.takeToolResult(
 						block,
+						line.launchedTask,
 						`user.message.content[${position}]`,
 					);
 				case "unused":
@@ -1251,28 +1282,70 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (when === "live") this.turn("running");
 	}
 
+	/**
+	 * A tool call's result. A subagent call's result is also the subagent's
+	 * end — unless the call only started it in the background
+	 * (`launchedTask`), whose end a task notification tells later.
+	 */
 	private takeToolResult(
 		block: Extract<UserBlock, { kind: "tool_result" }>,
+		launchedTask: string | undefined,
 		path: string,
 	): void {
 		const id = toolEntryId(block.toolUseId);
 		const tool = this.tool(id);
 		if (tool === undefined)
 			return this.mismatch(`${path}.tool_use_id`, "a tool call that was made");
+		const status = this.denied.has(id)
+			? "denied"
+			: block.isError && this.interrupting
+				? "interrupted"
+				: block.isError
+					? "failed"
+					: "succeeded";
+		if (tool.spawns !== undefined && launchedTask !== undefined)
+			this.tasks.set(launchedTask, id);
 		this.emit({
 			type: "entry",
 			entry: {
 				...tool,
-				status: this.denied.has(id)
-					? "denied"
-					: block.isError && this.interrupting
-						? "interrupted"
-						: block.isError
-							? "failed"
-							: "succeeded",
+				status,
 				output: { kind: "text", text: block.text, truncated: false },
+				spawns:
+					tool.spawns === undefined || launchedTask !== undefined
+						? tool.spawns
+						: {
+								...tool.spawns,
+								state: status === "succeeded" ? "completed" : "failed",
+							},
 			},
 		});
+	}
+
+	/**
+	 * The CLI process that ran these calls has ended (it was replaced, or the
+	 * calls are read back from a session file): a subagent or background task
+	 * it was running cannot run now, and how it ended nobody recorded — unless a
+	 * notification or its call's result says so later.
+	 */
+	private processEnded(entries: readonly TranscriptEntry[]): void {
+		for (const each of entries) {
+			if (each.kind !== "tool") continue;
+			if (each.spawns?.state === "running") {
+				this.emit({
+					type: "entry",
+					entry: { ...each, spawns: { ...each.spawns, state: "unknown" } },
+				});
+			} else if (each.background?.state === "running") {
+				this.emit({
+					type: "entry",
+					entry: {
+						...each,
+						background: { state: "unknown", summary: undefined },
+					},
+				});
+			}
+		}
 	}
 
 	private takeResult(line: Extract<ClaudeLine, { type: "result" }>): void {
@@ -1317,35 +1390,57 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.interrupting = false;
 	}
 
+	/**
+	 * A background task's news, from the CLI's `task_*` events or from a
+	 * notification in the conversation (all a session file keeps). A
+	 * subagent's is matched to its call by the call's id, or else by the
+	 * task's.
+	 */
 	private takeTask(line: Extract<ClaudeLine, { type: "task" }>): void {
-		const tool =
-			line.toolUseId === undefined
-				? undefined
-				: this.tool(toolEntryId(line.toolUseId));
-		if (tool?.spawns !== undefined) {
-			const state: SubagentInfo["state"] =
-				line.subtype !== "task_notification"
-					? "running"
-					: line.status === "completed"
-						? "completed"
-						: line.status === "failed" || line.status === "stopped"
-							? "failed"
-							: "unknown";
+		const call =
+			line.toolUseId !== undefined
+				? toolEntryId(line.toolUseId)
+				: line.taskId === undefined
+					? undefined
+					: this.tasks.get(line.taskId);
+		const tool = call === undefined ? undefined : this.tool(call);
+		const state: SubagentInfo["state"] =
+			line.subtype !== "task_notification"
+				? "running"
+				: line.status === "completed"
+					? "completed"
+					: line.status === "failed" ||
+						  line.status === "stopped" ||
+						  line.status === "killed"
+						? "failed"
+						: "unknown";
+		// A task no call DevHub drew started (a session file that never named
+		// it, a check-in about all of them): only its end is news.
+		if (tool === undefined) {
+			if (line.subtype !== "task_notification") return;
+			return this.notice(
+				"info",
+				`Background task ${line.status ?? "ended"}: ${line.text ?? ""}`,
+				line.raw,
+			);
+		}
+		if (line.taskId !== undefined) this.tasks.set(line.taskId, tool.id);
+		if (tool.spawns !== undefined) {
 			if (state === tool.spawns.state) return;
 			return this.emit({
 				type: "entry",
 				entry: { ...tool, spawns: { ...tool.spawns, state } },
 			});
 		}
-		// A background task no subagent owns (a `run_in_background` command):
-		// its call already shows it running, and only its end is news.
-		if (line.subtype === "task_notification") {
-			this.notice(
-				"info",
-				`Background task ${line.status ?? "ended"}: ${line.text ?? ""}`,
-				line.raw,
-			);
-		}
+		// Any other task a call started (a command run in the background)
+		// stands on that call, quietly.
+		const summary = state === "running" ? undefined : line.text;
+		if (tool.background?.state === state && tool.background.summary === summary)
+			return;
+		this.emit({
+			type: "entry",
+			entry: { ...tool, background: { state, summary } },
+		});
 	}
 }
 

@@ -27,6 +27,7 @@ const running: ConversationEvent[] = [
 			status: "running",
 			output: undefined,
 			spawns: undefined,
+			background: undefined,
 		},
 	},
 ];

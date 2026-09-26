@@ -93,6 +93,12 @@ export type ClaudeLine =
 			readonly parent: string | null;
 			readonly uuid: string | undefined;
 			readonly content: readonly UserBlock[];
+			/**
+			 * The task a tool call in this message started in the background
+			 * (`tool_use_result.status` "async_launched"): its result says only
+			 * that it began, and its end arrives later as a task notification.
+			 */
+			readonly launchedTask: string | undefined;
 	  }
 	| {
 			readonly type: "result";
@@ -124,6 +130,7 @@ export type ClaudeLine =
 	| {
 			readonly type: "task";
 			readonly subtype: string;
+			readonly taskId: string | undefined;
 			readonly toolUseId: string | undefined;
 			readonly status: string | undefined;
 			readonly text: string | undefined;
@@ -211,6 +218,14 @@ export type ContentBlock =
 
 export type UserBlock =
 	| { readonly kind: "text"; readonly text: string }
+	| {
+			readonly kind: "task_notification";
+			readonly taskId: string | undefined;
+			readonly toolUseId: string | undefined;
+			readonly status: string | undefined;
+			readonly summary: string | undefined;
+			readonly raw: JsonObject;
+	  }
 	| {
 			readonly kind: "tool_result";
 			readonly toolUseId: string;
@@ -661,6 +676,7 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 			return {
 				type: "task",
 				subtype,
+				taskId: f.optionalString(raw.task_id, `${at}.task_id`),
 				toolUseId: f.optionalString(raw.tool_use_id, `${at}.tool_use_id`),
 				status: f.optionalString(raw.status, `${at}.status`),
 				text:
@@ -849,30 +865,85 @@ function decodeUser(
 ): Extract<ClaudeLine, { type: "user" }> {
 	const message = f.object(raw.message, "user.message");
 	const content = message.content;
+	// A tool's own account of its result: an object for most tools, a
+	// string for some; only an object says whether a task was launched.
+	const result =
+		typeof raw.tool_use_result === "object" &&
+		raw.tool_use_result !== null &&
+		!Array.isArray(raw.tool_use_result)
+			? (raw.tool_use_result as JsonObject)
+			: undefined;
 	return {
 		type: "user",
 		parent: f.parent(raw, "user"),
 		uuid: f.optionalString(raw.uuid, "user.uuid"),
-		content:
-			typeof content === "string"
-				? [{ kind: "text", text: content }]
-				: f
-						.array(content, "user.message.content")
-						.map((block, index) =>
-							decodeUserBlock(
-								f.object(block, `user.message.content[${index}]`),
-								`user.message.content[${index}]`,
-								f,
-							),
+		content: (typeof content === "string"
+			? [textBlock(content)]
+			: f
+					.array(content, "user.message.content")
+					.map((block, index) =>
+						decodeUserBlock(
+							f.object(block, `user.message.content[${index}]`),
+							`user.message.content[${index}]`,
+							f,
 						),
+					)
+		).flat(),
+		launchedTask:
+			result?.status === "async_launched"
+				? f.string(result.agentId, "user.tool_use_result.agentId")
+				: undefined,
 	};
 }
 
-function decodeUserBlock(block: JsonObject, at: string, f: Fields): UserBlock {
+/** Whether a text is task notifications: it opens with one, bare or in a system reminder. */
+export function isTaskNotificationText(text: string): boolean {
+	return /^\s*(?:<system-reminder>[\s\S]*?)?<task-notification>/u.test(text);
+}
+
+const TASK_NOTIFICATION =
+	/<task-notification>([\s\S]*?)<\/task-notification>/gu;
+
+/**
+ * A text the CLI put in the conversation. One made of `<task-notification>`
+ * elements is not anybody's words: it is how the CLI tells the model that a
+ * background task ended (a session file records it so), and each element is
+ * that task's end. Whatever wraps them (a system reminder) is the model's
+ * reading aid, not something to draw.
+ */
+function textBlock(text: string): UserBlock[] {
+	if (!isTaskNotificationText(text)) return [{ kind: "text", text }];
+	const notifications = [...text.matchAll(TASK_NOTIFICATION)].map(
+		([, body]): UserBlock => ({
+			kind: "task_notification",
+			taskId: notificationField(body!, "task-id"),
+			toolUseId: notificationField(body!, "tool-use-id"),
+			status: notificationField(body!, "status"),
+			summary: notificationField(body!, "summary"),
+			raw: { text },
+		}),
+	);
+	return notifications;
+}
+
+/** The first `<name>` of a notification, as written (the CLI escapes nothing it would need undone here). */
+function notificationField(body: string, name: string): string | undefined {
+	const start = body.indexOf(`<${name}>`);
+	if (start < 0) return undefined;
+	const from = start + name.length + 2;
+	const end = body.indexOf(`</${name}>`, from);
+	return end < 0 ? undefined : body.slice(from, end);
+}
+
+function decodeUserBlock(
+	block: JsonObject,
+	at: string,
+	f: Fields,
+): UserBlock | UserBlock[] {
 	const type = f.string(block.type, `${at}.type`);
 	switch (type) {
 		case "text":
-			return { kind: "text", text: f.string(block.text, `${at}.text`) };
+			return textBlock(f.string(block.text, `${at}.text`));
 		case "tool_result":
 			return {
 				kind: "tool_result",

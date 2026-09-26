@@ -953,6 +953,31 @@
   color: var(--danger);
 }
 
+/* A background task on its call: one quiet line, its summary cut to fit. */
+.conversation-tool-background {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-left: var(--space-3);
+  color: var(--tertiary);
+  font-size: 0.8em;
+}
+
+.conversation-tool-background-state {
+  flex: none;
+}
+
+.conversation-tool-background[data-state="failed"]
+  .conversation-tool-background-state {
+  color: var(--danger);
+}
+
+.conversation-tool-background-summary {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .conversation-subagent-entries {
   padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--line-soft);

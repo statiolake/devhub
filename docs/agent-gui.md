@@ -227,7 +227,18 @@ for the model; before the first turn ends it reads only the tokens. Codex's is
 **Subagents.** A subagent is a card under the call that started it, with its
 work inside. A Codex subagent is running while its thread has a turn running
 and finished when that turn ends, whether or not app-server also sends a
-`subAgentActivity` item about it. Its work is drawn in one place at a time:
+`subAgentActivity` item about it. A Claude subagent is running from its call
+until its end is told: its call's result, for one run in the foreground; a
+task notification, for one started in the background (whose call's result
+only says it launched) — a `task_notification` event in stream-json, or a
+`<task-notification>` message in the session file, matched by the call's id
+or else the task's. A subagent runs only inside the CLI process that started
+it: one read back from a session file, or left running when the CLI is
+started again (rewind, `/resume`), is *Unknown* unless its end was recorded.
+Any other background task a call started (a command run in the background)
+follows the same news, told as one quiet line on that call (*In the
+background: Done — its summary*); only a notification no drawn call started
+is a notice. Its work is drawn in one place at a time:
 
 - When the pane is wide (1040 px or more), a running subagent moves to a
   column on the right, subagents stacked one above another, and goes back to
@@ -471,7 +482,10 @@ it resumed.
   it; across a compaction the earlier messages are). A record's parent is the
   last line above it with that uuid: Claude writes some records twice under
   one uuid, and a parent always comes before its child. The adapter draws them as
-  the entries a live turn makes, without a turn running.
+  the entries a live turn makes, without a turn running. The task
+  notifications Claude recorded (as user messages or queued commands) come
+  along, and end the tasks they name; they are nobody's words and draw no
+  message.
 - **Codex GUI** has no argument for it: DevHub takes `resume <id>` off the
   argv and sends `thread/resume` instead of `thread/start`. Its answer carries
   the thread's turns, which are drawn as the conversation.

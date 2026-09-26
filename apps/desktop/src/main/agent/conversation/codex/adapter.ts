@@ -1371,6 +1371,8 @@ export class CodexAdapter implements ProtocolAdapter {
 			status,
 			output,
 			spawns,
+			// Codex tells of no background task but a subagent's.
+			background: undefined,
 		};
 	}
 

@@ -307,6 +307,22 @@ const ToolView = memo(function ToolView({
         <ToolSummary entry={entry} />
         <ToolBody entry={entry} />
       </details>
+      {entry.background ? (
+        // A background task the call started, in one quiet line on the call.
+        <div
+          className="conversation-tool-background"
+          data-state={entry.background.state}
+        >
+          <span className="conversation-tool-background-state">
+            In the background: {SUBAGENT_STATE_LABELS[entry.background.state]}
+          </span>
+          {entry.background.summary ? (
+            <span className="conversation-tool-background-summary">
+              {` — ${entry.background.summary}`}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {requests.map((request) => (
         <RequestCard key={request.id} request={request} />
       ))}

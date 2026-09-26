@@ -232,6 +232,29 @@ describe("every entry kind", () => {
     expect(entry("t4").querySelector("summary")).toHaveTextContent("Running");
   });
 
+  it("draws a background task's end as one quiet line on the call that started it", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Bash: npm test", {
+            background: { state: "completed", summary: "npm test finished" },
+          }),
+        ),
+        put(tool("t2", "Bash: ls")),
+      ]),
+    );
+    const line = entry("t1").querySelector(".conversation-tool-background")!;
+    expect(line).toHaveAttribute("data-state", "completed");
+    expect(line).toHaveTextContent("In the background: Done");
+    expect(line).toHaveTextContent("npm test finished");
+    // Outside the call's fold, so it shows without opening the call.
+    expect(line.closest("details")).toBeNull();
+    expect(
+      entry("t2").querySelector(".conversation-tool-background"),
+    ).toBeNull();
+    expect(document.querySelector(".conversation-notice")).toBeNull();
+  });
+
   it("nests a subagent's entries under its call: open while it runs, closed once it is done", () => {
     const running = transcriptOf([
       put(

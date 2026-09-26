@@ -1316,7 +1316,7 @@ describe("system events", () => {
 		});
 	});
 
-	it("show a background task finishing that no subagent owns", () => {
+	it("show a background task's end on the call that started it, not as a notice", () => {
 		const adapter = inTurn();
 		adapter.received(
 			assistantLine("m", [
@@ -1335,11 +1335,12 @@ describe("system events", () => {
 				summary: "npm test finished",
 			}),
 		);
-		expect(adapter.transcript.entries.at(-1)).toMatchObject({
-			kind: "notice",
-			level: "info",
-			text: "Background task completed: npm test finished",
+		expect(entry(adapter, "tool:toolu_bg")).toMatchObject({
+			background: { state: "completed", summary: "npm test finished" },
 		});
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toEqual([]);
 	});
 
 	it("mark a failed subagent failed", () => {
@@ -1749,6 +1750,114 @@ describe("the captured session", () => {
 			"xhigh",
 			"max",
 		]);
+	});
+});
+
+describe("a subagent's end", () => {
+	// `claude-session-background-agents.handwritten.jsonl` is HAND-WRITTEN,
+	// shaped from what claude 2.1.x writes (read from its binary): background
+	// Agent calls whose results only say they launched (`toolUseResult.status`
+	// "async_launched"), a foreground one whose result is its end, and the
+	// ends of two background ones as `<task-notification>`s — one a meta user
+	// message naming the call, one a queued command naming only the task.
+	// One background subagent's end is recorded nowhere.
+	function resumed(): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		const file = readFileSync(
+			join(FIXTURES, "claude-session-background-agents.handwritten.jsonl"),
+			"utf8",
+		);
+		for (const line of claudeHistoryLines(SESSION, file))
+			adapter.received(line);
+		return adapter;
+	}
+	const states = (adapter: ClaudeAdapter) =>
+		adapter.transcript.entries.flatMap((each) =>
+			each.kind === "tool" && each.spawns !== undefined
+				? [`${each.id} ${each.spawns.state}`]
+				: [],
+		);
+
+	it("is read back from a session file: as recorded, or unknown when nothing recorded it, never running", () => {
+		const adapter = resumed();
+		expect(states(adapter)).toEqual([
+			"tool:toolu_a completed",
+			"tool:toolu_b unknown",
+			"tool:toolu_c completed",
+			"tool:toolu_d failed",
+		]);
+		// A notification is nobody's words: no bubble, no notice.
+		expect(
+			adapter.transcript.entries.flatMap((each) =>
+				each.kind === "user" ? [each.text] : [],
+			),
+		).toEqual(["Survey A to D", "And D?"]);
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toEqual([]);
+	});
+
+	it("is taken from a notification that names only the task a background call launched", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Agent", {
+					description: "d",
+					prompt: "p",
+					subagent_type: "general",
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_bg", "Async agent launched")),
+				tool_use_result: {
+					isAsync: true,
+					status: "async_launched",
+					agentId: "agent-1",
+				},
+			}),
+		);
+		expect(states(adapter)).toEqual(["tool:toolu_bg running"]);
+		adapter.received(
+			json({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "agent-1",
+				status: "completed",
+				summary: "done",
+			}),
+		);
+		expect(states(adapter)).toEqual(["tool:toolu_bg completed"]);
+	});
+
+	it("is unknown once the CLI running it is replaced, when nothing told it", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Agent", {
+					description: "d",
+					prompt: "p",
+					subagent_type: "general",
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_bg", "Async agent launched")),
+				tool_use_result: {
+					isAsync: true,
+					status: "async_launched",
+					agentId: "agent-1",
+				},
+			}),
+		);
+		adapter.received(result());
+		perform(adapter, { kind: "send", text: "next", origin: "person" });
+		adapter.received(echo("next", "u-next"));
+		adapter.received(result());
+		adapter.received(json({ type: "devhub_rewind", message: "user:u-next" }));
+		expect(states(adapter)).toEqual(["tool:toolu_bg unknown"]);
 	});
 });
 

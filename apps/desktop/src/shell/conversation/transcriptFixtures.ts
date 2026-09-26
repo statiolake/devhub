@@ -18,6 +18,7 @@ import {
   type JsonValue,
   type PendingRequest,
   type RequestChoice,
+  type BackgroundTask,
   type SubagentInfo,
   type ToolEntry,
   type ToolOutput,
@@ -85,6 +86,7 @@ export function tool(
     status = "succeeded",
     output,
     spawns,
+    background,
     parent = null,
   }: {
     name?: string;
@@ -92,6 +94,7 @@ export function tool(
     status?: ToolEntry["status"];
     output?: ToolOutput;
     spawns?: SubagentInfo;
+    background?: BackgroundTask;
     parent?: string | null;
   } = {},
 ): TranscriptEntry {
@@ -105,6 +108,7 @@ export function tool(
     status,
     output,
     spawns,
+    background,
   };
 }
 

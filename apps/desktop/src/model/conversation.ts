@@ -122,6 +122,18 @@ export interface ToolEntry {
   readonly output: ToolOutput | undefined;
   /** Set on a call that starts a subagent; that subagent's entries name this one as their parent. */
   readonly spawns: SubagentInfo | undefined;
+  /**
+   * Set on a call that started a background task other than a subagent (a
+   * command run in the background): how that task stands. A subagent's
+   * stands in `spawns.state`; the same news ends either.
+   */
+  readonly background: BackgroundTask | undefined;
+}
+
+export interface BackgroundTask {
+  readonly state: SubagentInfo["state"];
+  /** The CLI's one line about how it ended, once it has. */
+  readonly summary: string | undefined;
 }
 
 export interface NoticeEntry {
