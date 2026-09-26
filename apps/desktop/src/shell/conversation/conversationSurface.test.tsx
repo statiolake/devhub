@@ -840,14 +840,24 @@ describe("copy", () => {
     "Run this:\n\n```ts\nconst answer = 42;\n```\n\nThen **commit**.";
 
   it("copies an answer's Markdown source, and says Copied for a moment once it has", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // The clock moves only when told to, and the write lands inside `act`,
+    // so "Copied" and the timer that takes it back are both in place before
+    // the clock moves — whatever the scheduler of a busy machine does.
+    vi.useFakeTimers();
     const { actions } = draw(transcriptOf([put(assistant("a1", ANSWER))]));
     const button = screen.getByRole("button", { name: "Copy answer" });
-    fireEvent.click(button);
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
     expect(actions.writeClipboard).toHaveBeenCalledWith(ANSWER);
-    await waitFor(() => expect(button).toHaveTextContent("Copied"));
+    expect(button).toHaveTextContent("Copied");
     act(() => {
-      vi.advanceTimersByTime(COPIED_MS);
+      vi.advanceTimersByTime(COPIED_MS - 1);
+    });
+    expect(button).toHaveTextContent("Copied");
+    act(() => {
+      vi.advanceTimersByTime(1);
     });
     expect(button).toHaveTextContent("Copy");
   });
