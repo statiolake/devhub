@@ -494,8 +494,48 @@ function decodeHistory(raw: JsonObject, f: Fields): ClaudeLine {
 			return { type: "history", message: decodeAssistant(record, f) };
 		case "user":
 			return { type: "history", message: decodeUser(record, f) };
+		// A system event the session file kept, in the shape stream-json prints it.
+		case "system":
+			return decodeSystem(record, f);
+		case "attachment":
+			return decodeAttachment(
+				f.object(record.attachment, "devhub_history.record.attachment"),
+				f,
+			);
 		default:
-			return f.fail("devhub_history.record.type", "assistant or user");
+			return f.fail(
+				"devhub_history.record.type",
+				"assistant, user, system or attachment",
+			);
+	}
+}
+
+/**
+ * Something the CLI attached to the conversation that a session file keeps
+ * and stream-json does not print: a file the person attached, and a file
+ * changed outside the conversation. `resume.ts` passes only these.
+ */
+function decodeAttachment(attachment: JsonObject, f: Fields): ClaudeLine {
+	const at = "devhub_history.record.attachment";
+	const type = f.string(attachment.type, `${at}.type`);
+	switch (type) {
+		case "file":
+			return {
+				type: "said",
+				level: "info",
+				text: `Attached ${
+					f.optionalString(attachment.displayPath, `${at}.displayPath`) ??
+					f.string(attachment.filename, `${at}.filename`)
+				}`,
+			};
+		case "edited_text_file":
+			return {
+				type: "said",
+				level: "info",
+				text: `Changed outside the conversation: ${f.string(attachment.filename, `${at}.filename`)}`,
+			};
+		default:
+			return f.fail(`${at}.type`, "file or edited_text_file");
 	}
 }
 

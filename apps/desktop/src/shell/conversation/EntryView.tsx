@@ -23,6 +23,7 @@ import type {
   AssistantBlock,
   AssistantEntry,
   CommandEntry,
+  CompactionEntry,
   ImageRef,
   NoticeEntry,
   PendingRequest,
@@ -492,6 +493,27 @@ function CommandView({ entry }: { readonly entry: CommandEntry }) {
   );
 }
 
+/**
+ * Where the CLI compacted the conversation: a divider across the transcript,
+ * since everything above it is a summary to the model from here on.
+ */
+function CompactionView({ entry }: { readonly entry: CompactionEntry }) {
+  const facts = [
+    entry.trigger,
+    entry.preTokens === undefined
+      ? undefined
+      : `from ${entry.preTokens.toLocaleString("en-US")} tokens`,
+  ].filter((fact): fact is string => fact !== undefined);
+  return (
+    <div className="conversation-compaction" role="separator">
+      <span className="conversation-compaction-text">
+        Conversation compacted
+        {facts.length > 0 ? ` · ${facts.join(" · ")}` : ""}
+      </span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Notices and turn ends
 
@@ -615,6 +637,8 @@ function entryBody(entry: TranscriptEntry, depth: number) {
       return <ToolEntryView entry={entry} depth={depth} />;
     case "command":
       return <CommandView entry={entry} />;
+    case "compaction":
+      return <CompactionView entry={entry} />;
     case "notice":
       return <NoticeView entry={entry} />;
     case "turn-end":

@@ -1394,7 +1394,16 @@ export class CodexAdapter implements ProtocolAdapter {
 					id,
 				);
 			case "contextCompaction":
-				return this.notice("info", "Context compacted", undefined, parent, id);
+				return this.put(
+					{
+						kind: "compaction",
+						id,
+						parent,
+						trigger: undefined,
+						preTokens: undefined,
+					},
+					threadId,
+				);
 			case "other":
 				return this.notice(
 					"info",

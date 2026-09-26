@@ -249,6 +249,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
 	private commandCount = 0;
+	private compactions = 0;
 	private turns = 0;
 	private users = 0;
 
@@ -753,16 +754,17 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			case "api_retry":
 				return this.notice("warning", retrySentence(line), line.raw);
 			case "compact_boundary":
-				return this.notice(
-					"info",
-					`The conversation was compacted${parenthesized([
-						line.trigger,
-						line.preTokens === undefined
-							? undefined
-							: `from ${line.preTokens} tokens`,
-					])}`,
-					undefined,
-				);
+				this.compactions += 1;
+				return this.emit({
+					type: "entry",
+					entry: {
+						kind: "compaction",
+						id: entryId(`compaction:${this.compactions}`),
+						parent: null,
+						trigger: line.trigger,
+						preTokens: line.preTokens,
+					},
+				});
 			case "status":
 				if (line.permissionMode === undefined) return;
 				return this.setSession({
@@ -1890,9 +1892,4 @@ function retrySentence(
 			? ""
 			: ` (attempt ${line.attempt}${line.maxRetries === undefined ? "" : ` of ${line.maxRetries}`})`;
 	return `The API request failed${status}; retrying${delay}${attempt}`;
-}
-
-function parenthesized(parts: readonly (string | undefined)[]): string {
-	const present = parts.filter((part): part is string => part !== undefined);
-	return present.length === 0 ? "" : ` (${present.join(", ")})`;
 }

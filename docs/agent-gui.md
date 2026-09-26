@@ -198,7 +198,9 @@ The GUI draws the transcript and lets you:
 It covers what a turn does, not everything a CLI's own terminal UI has.
 
 **Everything that is drawn**: Markdown with tables and code (coloured once
-each block is complete), thinking folded, plans,
+each block is complete), thinking folded, plans, a compaction as a divider
+across the transcript (*Conversation compacted · auto · from 150,000
+tokens*; Codex's too),
 tool calls with their input and output, subagents nested under the
 call that started them, images, notices, a turn that was interrupted or failed (with
 the CLI's reason), how full the context is under the composer, and pending
@@ -586,7 +588,13 @@ it resumed.
   the entries a live turn makes, without a turn running. The task
   notifications Claude recorded (as user messages or queued commands) come
   along, and end the tasks they name; they are nobody's words and draw no
-  message.
+  message. So does the rest of what a live conversation would have shown:
+  the system events on the chain (the compaction, a command the CLI ran, an
+  away summary; the adapter draws or leaves out each by the same rule as
+  live), a message you queued while a turn ran, and a file you attached or
+  that changed outside the conversation, as a notice. The other attachments
+  are the CLI's notes to the model (reminders, listings, the environment),
+  which nothing live shows either.
 - **Codex GUI** has no argument for it: DevHub takes `resume <id>` off the
   argv and sends `thread/resume` instead of `thread/start`. Its answer carries
   the thread's turns, which are drawn as the conversation.

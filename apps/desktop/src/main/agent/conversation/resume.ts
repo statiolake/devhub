@@ -978,9 +978,14 @@ export async function claudeHistory(
  * abandoned branch in the file. What Claude resumes is the chain from the
  * last message back to the first, so that is what is drawn — across a
  * compaction too, whose boundary names the message before it as its logical
- * parent. Of the chain, only the messages are kept: the person's and the
- * assistant's, not a subagent's (sidechain), not a meta message Claude adds,
- * not the summary a compaction wrote.
+ * parent. Of the chain, what a live conversation would have shown is kept:
+ * the person's and the assistant's messages (not a subagent's, not a meta
+ * message Claude adds, not the summary a compaction wrote), the system
+ * events (the compaction itself, a command the CLI ran, an away summary —
+ * the adapter decides which it draws, as it does live), a message the person
+ * queued mid-turn, and a file the person attached or that changed outside
+ * the conversation. The other attachments are the CLI's notes to the model
+ * (reminders, listings, the environment), which nothing live shows either.
  */
 export function claudeHistoryLines(
 	session: string,
@@ -1025,7 +1030,35 @@ export function claudeHistoryLines(
 		}
 		at = above;
 	}
+	const history = (fields: Record<string, unknown>) =>
+		JSON.stringify({ type: "devhub_history", record: fields });
 	return chain.reverse().flatMap((record) => {
+		if (record["isSidechain"] === true) return [];
+		if (record["type"] === "system") return [history(systemEvent(record))];
+		const attachment = record["attachment"] as
+			| Record<string, unknown>
+			| undefined;
+		if (
+			record["type"] === "attachment" &&
+			(attachment?.["type"] === "file" ||
+				attachment?.["type"] === "edited_text_file")
+		)
+			return [history({ type: "attachment", attachment })];
+		// A message the person wrote while a turn ran, which the CLI took in
+		// as it went: the person's words, like any other message of theirs.
+		if (
+			record["type"] === "attachment" &&
+			attachment?.["type"] === "queued_command" &&
+			taskNotification(record) === undefined
+		) {
+			return [
+				history({
+					type: "user",
+					uuid: record["uuid"],
+					message: { role: "user", content: attachment["prompt"] },
+				}),
+			];
+		}
 		// A background task's end, which Claude records as a user message it
 		// adds, or as a queued command it took in mid-turn.
 		const notification = taskNotification(record);
@@ -1063,6 +1096,23 @@ export function claudeHistoryLines(
 			}),
 		];
 	});
+}
+
+/**
+ * A session file's system record, in the shape stream-json prints the same
+ * event: the compaction's metadata under the name and keys the wire uses.
+ */
+function systemEvent(record: Record<string, unknown>): Record<string, unknown> {
+	const { compactMetadata, ...rest } = record;
+	if (compactMetadata === undefined || compactMetadata === null) return rest;
+	const metadata = compactMetadata as Record<string, unknown>;
+	return {
+		...rest,
+		compact_metadata: {
+			trigger: metadata["trigger"],
+			pre_tokens: metadata["preTokens"],
+		},
+	};
 }
 
 /** The `<task-notification>` a top-level record of a session file carries, if it carries one. */

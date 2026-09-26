@@ -1315,22 +1315,6 @@ describe("system events", () => {
 		});
 	});
 
-	it("show a compaction as information", () => {
-		const adapter = inTurn();
-		adapter.received(
-			json({
-				type: "system",
-				subtype: "compact_boundary",
-				compact_metadata: { trigger: "auto", pre_tokens: 150000 },
-			}),
-		);
-		expect(adapter.transcript.entries.at(-1)).toMatchObject({
-			kind: "notice",
-			level: "info",
-			text: "The conversation was compacted (auto, from 150000 tokens)",
-		});
-	});
-
 	it("show a background task's end on the call that started it, not as a notice", () => {
 		const adapter = inTurn();
 		adapter.received(
@@ -3344,6 +3328,64 @@ describe("a TodoWrite call", () => {
 				{ text: "Fixing the bug", status: "in_progress" },
 				{ text: "Run the tests", status: "pending" },
 			],
+		});
+	});
+});
+
+describe("a resumed session's past, whole", () => {
+	it("draws what was live beside the messages: a queued message, an attached and an edited file, an away summary, a command, and the compaction as a divider", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const file = readFileSync(
+			join(FIXTURES, "claude-session-resume-complete.handwritten.jsonl"),
+			"utf8",
+		);
+		for (const line of claudeHistoryLines(SESSION, file))
+			adapter.received(line);
+		expect(
+			adapter.transcript.entries.map((each) => {
+				switch (each.kind) {
+					case "user":
+						return `user: ${each.text}`;
+					case "assistant":
+						return `assistant: ${each.blocks.map((block) => (block.kind === "text" ? block.markdown : "")).join("")}`;
+					case "notice":
+						return `notice(${each.level}): ${each.text}`;
+					case "command":
+						return `command: ${each.line} -> ${each.output}`;
+					case "compaction":
+						return `compaction: ${each.trigger} ${each.preTokens}`;
+					default:
+						return each.kind;
+				}
+			}),
+		).toEqual([
+			"user: Start on the docs",
+			"assistant: Working on it.",
+			"user: also check the changelog",
+			"notice(info): Attached notes.md",
+			"notice(info): Changed outside the conversation: /home/testuser/project/src/x.ts",
+			"notice(info): While you were away: The docs were checked.",
+			"command: /cost -> Total cost: $0.01",
+			"compaction: manual 1200",
+			"user: Go on",
+			"assistant: Done.",
+		]);
+	});
+
+	it("draws a compaction live as the same divider", () => {
+		const adapter = inTurn();
+		adapter.received(
+			json({
+				type: "system",
+				subtype: "compact_boundary",
+				session_id: SESSION,
+				compact_metadata: { trigger: "auto", pre_tokens: 150000 },
+			}),
+		);
+		expect(adapter.transcript.entries.at(-1)).toMatchObject({
+			kind: "compaction",
+			trigger: "auto",
+			preTokens: 150000,
 		});
 	});
 });

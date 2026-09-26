@@ -122,6 +122,7 @@ export type TranscriptEntry =
   | AssistantEntry
   | ToolEntry
   | NoticeEntry
+  | CompactionEntry
   | TurnEndEntry;
 
 export interface UserEntry {
@@ -217,6 +218,21 @@ export interface NoticeEntry {
   readonly text: string;
   /** The event as the CLI printed it, when the notice is about an event. */
   readonly raw: JsonValue | undefined;
+}
+
+/**
+ * The CLI compacted the conversation here: what came before is, to the
+ * model, a summary of it from now on.
+ */
+export interface CompactionEntry {
+  readonly kind: "compaction";
+  readonly id: EntryId;
+  /** A subagent's own context can be compacted too (Codex). */
+  readonly parent: EntryId | null;
+  /** `manual` (the person asked) or `auto`, as the CLI says. */
+  readonly trigger: string | undefined;
+  /** How many tokens the conversation held before. */
+  readonly preTokens: number | undefined;
 }
 
 export interface TurnEndEntry {

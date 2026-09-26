@@ -432,6 +432,25 @@ describe("every entry kind", () => {
     ).toHaveTextContent("Test");
   });
 
+  it("draws a compaction as a divider saying how it came about", () => {
+    draw(
+      transcriptOf([
+        put({
+          kind: "compaction",
+          id: entryId("c1"),
+          parent: null,
+          trigger: "auto",
+          preTokens: 150000,
+        }),
+      ]),
+    );
+    const divider = entry("c1").querySelector(".conversation-compaction");
+    expect(divider).toHaveAttribute("role", "separator");
+    expect(divider).toHaveTextContent(
+      "Conversation compacted · auto · from 150,000 tokens",
+    );
+  });
+
   it("says a teammate waiting between tasks is idle", () => {
     draw(
       transcriptOf([

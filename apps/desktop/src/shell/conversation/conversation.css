@@ -986,6 +986,23 @@
   color: var(--danger);
 }
 
+/* A compaction: a hairline across the transcript with the words in it. */
+.conversation-compaction {
+  display: flex;
+  align-items: center;
+  color: var(--tertiary);
+  font-size: 0.8em;
+  gap: var(--space-2);
+}
+
+.conversation-compaction::before,
+.conversation-compaction::after {
+  height: 1px;
+  flex: 1;
+  background: var(--line-soft);
+  content: "";
+}
+
 /* ---------------------------------------------------------------- Images */
 
 /* Thumbnails in a row: on the person's message, and on the call of a tool

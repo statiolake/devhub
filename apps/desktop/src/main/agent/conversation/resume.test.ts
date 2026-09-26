@@ -135,8 +135,9 @@ describe("a Claude session read back as history", () => {
 					.uuid,
 		);
 		// Not the meta caveat (u1), the rewound branch (u4, a4), the subagent
-		// (s1), the attachment (t1), the boundary (c1) or the summary (u5).
-		expect(records).toEqual(["u2", "a1", "a2", "u3", "a3", "u6", "a5"]);
+		// (s1), the CLI's note to the model (t1) or the summary (u5); the
+		// boundary (c1) is the compaction, which is drawn.
+		expect(records).toEqual(["u2", "a1", "a2", "u3", "a3", "c1", "u6", "a5"]);
 		expect(JSON.parse(lines[0]!)).toEqual({
 			type: "devhub_history",
 			record: {
@@ -167,7 +168,7 @@ describe("a Claude session read back as history", () => {
 				(line) =>
 					(JSON.parse(line) as { record: { uuid: string } }).record.uuid,
 			),
-		).toEqual(["u1", "a1", "u6", "a6"]);
+		).toEqual(["u1", "a1", "c1", "u6", "a6"]);
 	});
 
 	it("is refused, naming both, when a record's parent is written only after it", () => {
