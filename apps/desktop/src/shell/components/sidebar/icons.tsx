@@ -58,10 +58,7 @@ export type GlyphName =
   | "pullRequestDraft"
   | "pullRequestClosed"
   | "pullRequestMerged"
-  | "commit"
-  | "push"
   | "openIssue"
-  | "openPullRequest"
   | "statusWorking"
   | "statusWaiting"
   | "statusIdle"
@@ -227,52 +224,15 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
     </g>
   ),
 
-  /* The three shortcuts a workspace offers while work is under way. They are
-     drawn on the same grid as everything else here because they appear beside
-     a label rather than alone, and a mark that disagreed with the column would
-     be the one thing in the window drawn to a different rule.
-
-     Commit: a node on a line, which is what a commit is in every graph git has
-     ever been drawn as. Push: the same line with the node leaving it, arrow
-     first — the difference between the two is direction, which is exactly the
-     difference between the two acts. There is no third: opening a pull request
-     is `pullRequest`, the mark the Sidebar already uses for one. */
-  commit: (
-    <>
-      <path d="M8 2.75v2.6M8 10.65v2.6" />
-      <circle cx="8" cy="8" r="2.65" />
-    </>
-  ),
-
-  /* Opening an Issue and opening a pull request, as *acts* rather than as
-     states.
-
-     They are DevHub's drawings and not the Octicons above, and the difference
-     is the whole reason there are two of each. An Octicon reports what GitHub
-     already says about something that exists; these two ask an Agent to make
-     one, they sit in a column beside `commit` and `push`, and a filled
-     16-pixel Octicon next to a 1.5-pixel stroke is the disagreement this file
-     exists to prevent. Same grid, same weight, same column.
-
-     The Issue is a ring with a dot in it and the pull request is the branch
-     proposed at the trunk — the shapes DevHub drew for these before the states
-     went to GitHub's own. */
+  /* Opening an Issue, as an *act* rather than a state (the Sidebar's New
+     from Issue): DevHub's drawing and not the Octicon above, because an
+     Octicon reports what GitHub already says about something that exists and
+     this asks an Agent to make one. Same grid and weight as the rest here: a
+     ring with a dot in it. */
   openIssue: (
     <>
       <circle cx="8" cy="8" r="5.25" />
       <circle className="glyph-fill" cx="8" cy="8" r="1.55" />
-    </>
-  ),
-
-  openPullRequest: (
-    <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H6.6M8.85 3 6.6 5.25 8.85 7.5" />
-  ),
-
-  push: (
-    <>
-      <path d="M8 13.25V5.4" />
-      <path d="M4.9 8.5 8 5.4l3.1 3.1" />
-      <path d="M4.4 2.75h7.2" />
     </>
   ),
 

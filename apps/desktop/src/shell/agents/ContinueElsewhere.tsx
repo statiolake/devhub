@@ -5,12 +5,12 @@
  * profile resuming the session, and stops this one once that one runs (the
  * coordinator's `continue_agent`).
  *
- * A corner control like the Agent shortcuts, under the same rule: it rests
- * translucent over the work and comes up to full when pointed at or focused.
- * Over a conversation it sits at the right of the conversation's own column
- * (never over the subagents beside it), just above the composer; over a
- * terminal, in the top right corner,
- * since the bottom right is the shortcuts'.
+ * A corner control that rests translucent over the work and comes up to full
+ * when pointed at or focused. Over a conversation it sits at the right of the
+ * conversation's own column (never over the subagents beside it), just above
+ * the composer; over a terminal, in the top right corner, since the bottom
+ * right is where the pane says what became of a queued message
+ * (`InjectionStatus.tsx`).
  *
  * What it could not do goes to the page's root like every other failure here.
  */
@@ -46,7 +46,7 @@ export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
     >
       <button
         type="button"
-        className="agent-shortcut"
+        className="agent-continue-button"
         title={
           toTerminal
             ? "Go on with this session in a terminal Agent, and stop this one"
@@ -61,9 +61,7 @@ export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
           ).catch(reportFailure);
         }}
       >
-        <span className="agent-shortcut-label">
-          {toTerminal ? "Continue in terminal" : "Continue in GUI"}
-        </span>
+        {toTerminal ? "Continue in terminal" : "Continue in GUI"}
       </button>
     </div>
   );

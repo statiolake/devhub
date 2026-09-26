@@ -9,13 +9,11 @@
 import { contextBridge } from "electron";
 import type { AgentsBridge } from "../ipc/contract.js";
 import {
-	agentActionsBridge,
 	appearanceBridge,
 	openExternalUrl,
 	openModal,
 	pageBridge,
 	projectionBridge,
-	repositoryStatusBridge,
 	writeClipboard,
 } from "./bridge.js";
 import { conversationApi } from "./conversation.js";
@@ -25,8 +23,6 @@ const api: AgentsBridge = {
 	...pageBridge(),
 	...projectionBridge(),
 	...appearanceBridge(),
-	...repositoryStatusBridge(),
-	...agentActionsBridge(),
 
 	openModal,
 	openExternalUrl,

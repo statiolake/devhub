@@ -1259,176 +1259,46 @@ body.is-resizing-sidebar {
 }
 
 /*
- * The shortcuts a workspace offers the Agent on screen.
+ * What became of a message DevHub queued for the Agent on screen
+ * (`InjectionStatus.tsx`).
  *
  * Over the terminal rather than beside it, in the corner furthest from where
  * anything is being read: a terminal writes from the top and its prompt sits at
  * the bottom-left, so the bottom-right is the one region a pane is least often
- * saying something in. It is `position: absolute` inside the pane, which the
- * pane can afford because it is the page's own DOM — the Agent is xterm and not
- * a native view, so there is nothing here that paints over the page.
- *
- * They are drawn only when their conditions hold, so this stack is usually
- * empty and usually invisible. It never grows a background of its own for that
- * reason: a permanent panel that is empty most of the time is a permanent
- * subtraction from the terminal.
- *
- * `align-items: end` keeps every button as wide as its own label instead of as
- * wide as the widest, so a column of one, two or three of them has a ragged
- * left edge and a straight right one — against the corner it is pinned to.
+ * saying something in. Drawn only while there is something to say, on its own
+ * ground so it reads over a terminal of any colour, and at full strength: it
+ * is the answer to something the person asked for, and a failure among it is
+ * never a suggestion.
  */
-/*
- * A column, and now one that can be long: the buttons are whatever actions a
- * person has written under an offered trigger, not the three DevHub ships. It
- * is capped at half the pane and scrolls past that rather than climbing over
- * the terminal — a stack tall enough to hide the work it is about is worse than
- * one that has to be scrolled, and eliding buttons would hide the very one
- * somebody added.
- */
-.agent-shortcuts {
+.agent-injection-status {
   position: absolute;
   z-index: 2;
   right: var(--space-3);
   bottom: var(--space-3);
   display: flex;
   max-width: calc(100% - var(--space-6));
-  max-height: 50%;
-  overflow-y: auto;
   flex-direction: column;
   align-items: end;
-  gap: var(--space-1);
-  pointer-events: none;
-}
-
-/* The buttons take the pointer back; the stack itself does not, so the terminal
-   under the gaps between them is still selectable. */
-.agent-shortcuts > * {
-  pointer-events: auto;
-}
-
-/*
- * A floating control over a surface that may be any colour, so it carries its
- * own ground rather than relying on the one behind it — the one place in this
- * window where a button cannot inherit its contrast from its container.
- *
- * And it stays out of the way. These sit *on top of the terminal*, in the
- * corner, and the terminal is the thing the person is here to read: a row of
- * opaque chrome buttons with a shadow under them, permanently in the corner of
- * the work, is a permanent subtraction from it. At rest they are a suggestion
- * — the ground, the border and the ink all at 40% — and at rest is where they
- * spend nearly all of their time. There is no shadow at all: a shadow says
- * "this is above the page", which is exactly the claim a resting suggestion
- * should not be making.
- *
- * They come to full strength on the whole group rather than on the button
- * under the pointer, and on keyboard focus inside the group. Reaching for one
- * is a decision about the group — "what can I do here" — and a stack in which
- * one button is bright and the two beside it are ghosts is a stack whose
- * other two look disabled.
- *
- * Not on focus anywhere in the pane. The Agents page *is* the pane now, and
- * the terminal holds the keyboard whenever an Agent is selected in a focused
- * window — so "lit while the pane has focus" meant lit the whole time the
- * person was working, and faint only when they left the window: the resting
- * state, backwards, keyed on something unrelated to the buttons.
- *
- * The transition is short enough to feel like the group answering the pointer
- * rather than fading up: 120ms, and only `opacity`, which composites.
- */
-.agent-shortcut {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 5px var(--space-2) 5px var(--space-1);
+  padding: 3px var(--space-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-row);
   background: var(--chrome);
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 510;
-  white-space: nowrap;
-  opacity: 0.4;
-  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  gap: 2px;
 }
 
-/* Lit, they sit above the terminal and say so with a shadow. At rest they make
-   no such claim.
-
-   One rule for everything in the group, and it is the last word on opacity:
-   the group is reached for, so all of it comes up to be read. Nothing inside
-   states an opacity of its own against the lit state — a disabled button that
-   did (0.45) was a button whose label could not be read however long it was
-   pointed at, and it could not be focused either, so it never came up at all.
-   What a child needs to say beyond "rest" or "lit" it says in ink. */
-.agent-shortcuts:hover > *,
-.agent-shortcuts:focus-within > * {
-  opacity: 1;
-}
-
-.agent-shortcuts:hover .agent-shortcut,
-.agent-shortcuts:focus-within .agent-shortcut {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
-}
-
-.agent-shortcut svg {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  color: var(--accent);
-}
-
-.agent-shortcut:hover:not(:disabled) {
-  background: var(--wash-strong);
-}
-
-.agent-shortcut:active:not(:disabled) {
-  background: var(--selection);
-}
-
-/* Unavailable and still there, with the reason in its tooltip. An agent whose
-   screen nothing can read cannot be typed into safely, and a button that
-   vanished for that would take the explanation with it.
-
-   Said in ink, not in opacity: it comes up with the group like every other
-   button, so its label can be read — in the secondary ink, which is still
-   words — and its mark loses the accent, which is what makes the others read
-   as acts. At rest it looks like any resting button, and it should: neither is
-   asking for anything. */
-.agent-shortcut:disabled {
-  color: var(--secondary);
-}
-
-.agent-shortcut:disabled svg {
-  color: var(--disabled-ink);
-}
-
-/* The notes under the stack are about the buttons, so they keep the buttons'
-   strength and come up with them under the group's one rule above — with one
-   exception below: a failure is never a suggestion. */
-.agent-shortcuts-note,
-.agent-shortcuts-failure {
+.agent-injection-note,
+.agent-injection-failure {
   max-width: 100%;
-  padding: 0 2px;
   margin: 0;
   font-size: 11px;
   text-align: right;
-  opacity: 0.4;
-  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-/* Something the person asked for did not happen. That is not a suggestion and
-   it does not wait to be hovered — every other failure in this window is
-   plainly visible, and one that had to be found by moving the mouse into the
-   corner is one that will not be found. */
-.agent-shortcuts-failure {
-  opacity: 1;
-}
-
-.agent-shortcuts-note {
+.agent-injection-note {
   color: var(--secondary);
 }
 
-.agent-shortcuts-failure {
+.agent-injection-failure {
   color: var(--danger);
 }
 
@@ -1851,20 +1721,87 @@ body.is-resizing-split {
   padding: 0;
 }
 
-/* Claude's and Codex's rate limits, at the foot of the column: one quiet line,
-   the detail in the tooltip. See `UsageLimits.tsx`. The rail has no room for
-   words, and a number without its CLI's name says nothing. */
+/* Claude's and Codex's rate limits, at the foot of the column: a slim row per
+   CLI — name, bar, percentage — in the column's quiet ink, coloured only near
+   the limit (`usageLevel.ts`), the detail in the tooltip. See
+   `UsageLimits.tsx`. On the rail the words go and the bars stay, centred in
+   the glyph column. */
 .sidebar-usage {
+  display: flex;
   flex: 0 0 auto;
-  padding: var(--space-2) var(--space-3);
-  overflow: hidden;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
   color: var(--tertiary);
-  font-size: 11px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  gap: 3px;
+}
+
+.sidebar-usage-cli {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sidebar-usage-name {
+  overflow: hidden;
+  width: 3.6em;
+  flex: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.sidebar-usage-track {
+  position: relative;
+  overflow: hidden;
+  height: 3px;
+  flex: 1 1 auto;
+  border-radius: 2px;
+  background: var(--wash-strong);
+}
+
+.sidebar-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--usage-fill);
+  border-radius: inherit;
+  background: var(--secondary);
+}
+
+.sidebar-usage-value {
+  min-width: 2.6em;
+  flex: none;
+  text-align: right;
+}
+
+.sidebar-usage-cli[data-level="near"] {
+  color: var(--waiting);
+}
+
+.sidebar-usage-cli[data-level="at"] {
+  color: var(--danger);
+}
+
+.sidebar-usage-cli:not([data-level="calm"]) .sidebar-usage-fill {
+  background: currentcolor;
+}
+
+.sidebar-usage-cli[data-stale] {
+  opacity: 0.5;
+}
+
 .sidebar[data-collapsed="true"] .sidebar-usage {
+  align-items: center;
+  padding: var(--space-2) 0;
+  gap: 4px;
+}
+
+.sidebar[data-collapsed="true"] .sidebar-usage-cli {
+  width: 20px;
+}
+
+.sidebar[data-collapsed="true"] .sidebar-usage-name,
+.sidebar[data-collapsed="true"] .sidebar-usage-value {
   display: none;
 }

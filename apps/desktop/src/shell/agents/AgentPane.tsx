@@ -5,7 +5,7 @@ import { runningAgentSurfaces } from "../components/shell/surfacePool";
 import { agentFailureSummary } from "../components/shell/diagnosticLabel";
 import { Failure } from "../components/shell/SurfaceState";
 import { TerminalSurface } from "../terminal/TerminalSurface";
-import { AgentShortcuts } from "../components/shell/AgentShortcuts";
+import { InjectionStatus } from "../components/shell/InjectionStatus";
 import { ConversationPane } from "./ConversationPane";
 import { ContinueElsewhere, continuesElsewhere } from "./ContinueElsewhere";
 import { devhub } from "./client";
@@ -38,20 +38,14 @@ export function AgentPane({
    */
   readonly activeKey: string | undefined;
 }) {
-  const { repositoryStatus, dispatch, reportFailure } = useAgents();
+  const { dispatch, reportFailure } = useAgents();
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
-  // The shortcuts belong to the Agent on screen and to no other. The pool
-  // keeps every running Agent mounted so that coming back to one is unhiding a
-  // pane, and a set of buttons per hidden pane would be three more things
-  // reading the projection for a workspace nobody is looking at.
+  // What floats over the pane belongs to the Agent on screen and to no other.
+  // The pool keeps every running Agent mounted so that coming back to one is
+  // unhiding a pane, not drawing its corner again for each hidden one.
   const active = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
     .find((agent) => `agent:${agent.id}` === activeKey);
-  const repository = active
-    ? repositoryStatus.workspaces.find(
-        (entry) => entry.workspaceId === active.workspaceId,
-      )
-    : undefined;
   return (
     <div className="agent-pane" hidden={activeKey === undefined}>
       {[...pool.values()].map((surface) => (
@@ -122,9 +116,7 @@ export function AgentPane({
           />
         </div>
       ) : null}
-      {active ? (
-        <AgentShortcuts agent={active} repository={repository} />
-      ) : null}
+      {active ? <InjectionStatus agent={active} /> : null}
       {/* The way to the other presentation, while the pane is the Agent's
           own: over a failure, the failure's actions are the way out. */}
       {active &&

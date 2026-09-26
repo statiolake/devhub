@@ -85,7 +85,7 @@ describe("a Claude subagent (Task)", () => {
       "user:00000000-0000-4000-8000-0000000000c1",
       TASK,
       "assistant:msg_11:0",
-      "turn:1",
+      // The turn completed, so its end draws nothing.
     ]);
     const subagent = subagentOf(TASK);
     const inside = [

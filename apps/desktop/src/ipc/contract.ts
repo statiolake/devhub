@@ -515,8 +515,16 @@ export interface TooltipRequestWire {
  * `aria-label`, which is the one place a label word still belongs. See
  * `shell/components/sidebar/rowDescription.ts`, where both come from one list
  * of facts, so the tooltip and the accessible name cannot come to disagree.
+ *
+ * A line is a fact in words (`TooltipFactLineWire`) or a measure drawn as a
+ * bar (`TooltipMeterLineWire`), told apart by `kind`.
  */
-export interface TooltipLineWire {
+export type TooltipLineWire = TooltipFactLineWire | TooltipMeterLineWire;
+
+/** A fact in words, behind the mark the row would have drawn for it. */
+export interface TooltipFactLineWire {
+	/** Absent: a line is a fact unless it says it is something else. */
+	readonly kind?: undefined;
 	readonly icon?: GlyphNameWire;
 	readonly text: string;
 	/**
@@ -547,6 +555,26 @@ export interface TooltipLineWire {
 	 * different. Absent on every fact that is not a place.
 	 */
 	readonly href?: string;
+}
+
+/**
+ * How much of something is used, drawn as a labelled bar: a CLI's rate-limit
+ * window, today the only one.
+ *
+ * The line carries the numbers and not the words, because the words depend on
+ * when the tooltip is read: "resets in 2h 10m" and whether the reading is
+ * already history (its reset has passed, and nothing newer came in) are worked
+ * out by the tooltip page as it draws, from its own clock. Composed at the
+ * row, they would be as old as the Sidebar's last render.
+ */
+export interface TooltipMeterLineWire {
+	readonly kind: "meter";
+	/** What is measured, in words: "5-hour", "7-day", "primary". */
+	readonly label: string;
+	/** 0–100; absent when the CLI did not say. */
+	readonly usedPercent?: number;
+	/** When the measure starts again from zero, epoch milliseconds; absent when not said. */
+	readonly resetsAt?: number;
 }
 
 /**
@@ -1062,9 +1090,7 @@ export interface SidebarBridge
 export interface AgentsBridge
 	extends PageBridge,
 		ProjectionBridge,
-		AppearanceBridge,
-		RepositoryStatusBridge,
-		AgentActionsBridge {
+		AppearanceBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;
@@ -1496,10 +1522,7 @@ export type ModalRequest =
 	/**
 	 * Which of an Agent's configured actions to send it.
 	 *
-	 * `Cmd+Q Shift+A`'s chooser. The buttons a workspace draws
-	 * (`AgentShortcuts`) show only the actions whose condition holds right now;
-	 * a person who has armed a chord for this is asking for the whole list, so
-	 * this one is every enabled action under every trigger. What happens after
+	 * `Cmd+Q Shift+A`'s chooser: every enabled action under every trigger. What happens after
 	 * the choice is not this sheet's business: it runs the same
 	 * `runAgentAction`, so the wording still goes through the review the action
 	 * asks for.

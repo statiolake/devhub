@@ -1,14 +1,11 @@
 /**
  * "Say something to this agent": which of the configured actions to send.
  *
- * `Cmd+Q A`. The buttons a workspace draws (`AgentShortcuts`) show only the
- * actions whose condition holds right now — commit when there is something to
- * commit, push when there is something to push. Somebody who has reached for a
- * chord is asking for the list itself, so this one is *every* enabled action
- * under every trigger, in the order Settings arranges them.
+ * `Cmd+Q A`: *every* enabled action under every trigger, in the order
+ * Settings arranges them.
  *
- * What happens after the choice is not this sheet's business. It runs the same
- * `runAgentAction` the buttons run, so the wording still goes through the
+ * What happens after the choice is not this sheet's business. It runs
+ * `runAgentAction`, the one way an action is said to an Agent, so the wording still goes through the
  * review the action asks for (`confirm_before_send`), still fills in its
  * variables, and still waits for the agent's screen to settle. A second path
  * that queued text directly would be a second answer to "does this get looked

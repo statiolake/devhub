@@ -36,12 +36,10 @@
  * # Its contract with main
  *
  * - **reads**: the snapshot (the running Agents, the selection, each Agent's
- *   `failure`), the appearance (the terminal's font and theme), the repository
- *   status (what `AgentShortcuts` offers), the agent actions, and the palette.
- * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`,
- *   `agentActionsChanged`, `repositoryStatusChanged`.
- * - **asks**: the terminal channels (`ipc/terminal.ts`), `runAgentAction`,
- *   `dispatch`, `openModal` (an injection to review), `writeClipboard` (OSC 52,
+ *   `failure` and `injection`), the appearance (the terminal's font and
+ *   theme), and the palette.
+ * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`.
+ * - **asks**: the terminal channels (`ipc/terminal.ts`), `dispatch`, `openModal` (an injection to review), `writeClipboard` (OSC 52,
  *   which cannot go through `navigator.clipboard` because that is gated on the
  *   document being focused and a PTY writes at a moment nobody chose).
  * - **draws no failure it raised**: what goes wrong here is handed to main and

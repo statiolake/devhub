@@ -1,7 +1,7 @@
-/* `ContinueElsewhere`: one floating button over an Agent's pane. It borrows
-   the Agent shortcuts' button (`.agent-shortcut` in styles/shell.css) and
-   their rule for strength: at rest 40%, full while the group is pointed at or
-   holds focus. */
+/* `ContinueElsewhere`: one floating button over an Agent's pane. A floating
+   control over a surface that may be any colour, so it carries its own ground.
+   It stays out of the way at rest — ground, border and ink at 40%, no shadow —
+   and comes to full strength, lifted, while pointed at or holding focus. */
 .agent-continue {
   position: absolute;
   z-index: 2;
@@ -14,8 +14,31 @@
   bottom: var(--space-3);
 }
 
-.agent-continue:hover > .agent-shortcut,
-.agent-continue:focus-within > .agent-shortcut {
+.agent-continue-button {
+  display: flex;
+  align-items: center;
+  padding: 5px var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-row);
+  background: var(--chrome);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 510;
+  white-space: nowrap;
+  opacity: 0.4;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agent-continue-button:hover {
+  background: var(--wash-strong);
+}
+
+.agent-continue-button:active {
+  background: var(--selection);
+}
+
+.agent-continue:hover > .agent-continue-button,
+.agent-continue:focus-within > .agent-continue-button {
   opacity: 1;
   box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
 }

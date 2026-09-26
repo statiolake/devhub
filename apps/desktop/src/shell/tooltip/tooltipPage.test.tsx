@@ -150,6 +150,57 @@ describe("the tooltip page", () => {
     expect(marks).toEqual([null, null, "branch"]);
   });
 
+  /**
+   * A measure drawn as a bar, with the words about time worked out here from
+   * this page's clock: a reset ahead is "in …", one already past makes the
+   * reading history, faded and said to be.
+   */
+  it("draws a meter line as a labelled bar with its reset, and a reading past its reset faded", () => {
+    const now = Date.now();
+    const minute = 60_000;
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "Claude", style: "name" },
+        {
+          kind: "meter",
+          label: "5-hour",
+          usedPercent: 86.4,
+          resetsAt: now + 130 * minute + 30_000,
+        },
+        {
+          kind: "meter",
+          label: "7-day",
+          usedPercent: 99,
+          resetsAt: now - minute,
+        },
+        { kind: "meter", label: "weekly" },
+      ],
+    });
+    const [ahead, past, unknown] = [
+      ...document.querySelectorAll<HTMLElement>(".tooltip-meter"),
+    ];
+    expect(ahead!.querySelector(".tooltip-meter-head")).toHaveTextContent(
+      "5-hour86%",
+    );
+    expect(ahead).toHaveAttribute("data-level", "near");
+    expect(ahead).not.toHaveAttribute("data-stale");
+    expect(
+      (ahead!.querySelector(".tooltip-meter-fill") as HTMLElement).style.width,
+    ).toBe("86.4%");
+    expect(ahead!.querySelector(".tooltip-meter-reset")).toHaveTextContent(
+      /^Resets in 2h 10m · /u,
+    );
+    expect(past).toHaveAttribute("data-stale", "true");
+    expect(past).toHaveAttribute("data-level", "calm");
+    expect(past!.querySelector(".tooltip-meter-reset")).toHaveTextContent(
+      /nothing reported since$/u,
+    );
+    expect(unknown).toHaveTextContent("weeklynot reported");
+    expect(unknown).toHaveTextContent("Reset time not reported");
+    expect(unknown).toHaveAttribute("data-level", "calm");
+  });
+
   /** A mark this page has no drawing for is no mark, and never a failure. */
   it("draws the fact without a mark when the mark is not one it has", () => {
     render(<TooltipApp />);

@@ -52,9 +52,6 @@ describe("selecting text in a GUI Agent", () => {
 
   it("does not start in the chrome around it", () => {
     draw(SESSION);
-    expect(isSelectable(document.querySelector(".conversation-header"))).toBe(
-      false,
-    );
     expect(
       isSelectable(document.querySelector(".conversation-composer-toolbar")),
     ).toBe(false);

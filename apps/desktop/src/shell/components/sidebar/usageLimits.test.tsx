@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 /**
- * The usage-limits readout at the foot of the Sidebar: quiet until a CLI has
- * reported, one line when one has, and the detail — including the CLI that
- * has not — in the row tooltip's lines.
+ * The usage-limits readout at the foot of the Sidebar: nothing until a CLI has
+ * reported, a slim bar per CLI that has, and the detail — a meter per window,
+ * and the CLI that has not reported — in the row tooltip's lines.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -34,7 +34,7 @@ describe("the usage-limits readout", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("says the most used window per CLI, every window on hover, and that the other has not reported", () => {
+  it("draws a bar per CLI for its window nearest the limit, every window as a meter on hover, and that the other has not reported", () => {
     render(
       <UsageLimits
         limits={{
@@ -57,30 +57,55 @@ describe("the usage-limits readout", () => {
       />,
     );
     const readout = screen.getByRole("status");
-    expect(readout).toHaveTextContent("Claude 98%");
+    expect(readout).toHaveAccessibleName("Usage limits: Claude 98%");
     expect(readout).not.toHaveTextContent("Codex");
-    const lines = tooltipOf(readout).map((line) => line.text);
-    expect(lines[0]).toBe("Claude usage limit");
-    expect(lines[1]).toBe("5-hour: 12% used");
-    expect(lines[2]).toMatch(/^Resets /u);
-    expect(lines[3]).toBe("7-day: 98% used");
-    expect(lines[4]).toMatch(/^Resets /u);
-    expect(lines.slice(5)).toEqual([
-      "Codex usage limit",
-      "No Codex GUI Agent has reported it yet",
+    const claude = readout.querySelector(".sidebar-usage-cli")!;
+    expect(claude).toHaveTextContent("Claude98%");
+    // At its limit: coloured, by the rule every usage meter keeps.
+    expect(claude).toHaveAttribute("data-level", "at");
+    expect(
+      (
+        claude.querySelector(".sidebar-usage-fill") as HTMLElement
+      ).style.getPropertyValue("--usage-fill"),
+    ).toBe("97.6%");
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      {
+        kind: "meter",
+        label: "5-hour",
+        usedPercent: 12,
+        resetsAt: NOW + 2 * HOUR,
+      },
+      {
+        kind: "meter",
+        label: "7-day",
+        usedPercent: 97.6,
+        resetsAt: NOW + 50 * HOUR,
+      },
+      { text: "Codex", style: "name" },
+      {
+        text: "Not reported yet: no Codex GUI Agent has said",
+        style: "note",
+      },
     ]);
   });
 
-  it("says a reading from before its reset is history, not the present", () => {
+  it("shows the current window over one that is history, and a CLI whose readings are all history faded", () => {
     render(
       <UsageLimits
         limits={{
           clis: [
-            { cli: "claude" },
+            {
+              cli: "claude",
+              windows: [
+                { window: "5-hour", usedPercent: 90, resetsAt: NOW - HOUR },
+                { window: "7-day", usedPercent: 30, resetsAt: NOW + HOUR },
+              ],
+            },
             {
               cli: "codex",
               windows: [
-                { window: "5-hour", usedPercent: 40, resetsAt: NOW - HOUR },
+                { window: "5-hour", usedPercent: 96, resetsAt: NOW - HOUR },
               ],
             },
           ],
@@ -88,11 +113,17 @@ describe("the usage-limits readout", () => {
         now={NOW}
       />,
     );
-    const readout = screen.getByRole("status");
-    expect(readout).toHaveTextContent("Codex 40%");
-    expect(tooltipOf(readout).at(-1)).toMatchObject({
-      style: "note",
-      text: expect.stringMatching(/nothing reported since$/u) as string,
-    });
+    const [claude, codex] = [
+      ...screen.getByRole("status").querySelectorAll(".sidebar-usage-cli"),
+    ];
+    expect(claude).toHaveTextContent("Claude30%");
+    expect(claude).not.toHaveAttribute("data-stale");
+    expect(codex).toHaveTextContent("Codex96%");
+    expect(codex).toHaveAttribute("data-stale", "true");
+    // History is not a warning.
+    expect(codex).toHaveAttribute("data-level", "calm");
+    expect(screen.getByRole("status")).toHaveAccessibleName(
+      "Usage limits: Claude 30%, Codex 96% before its last reset",
+    );
   });
 });

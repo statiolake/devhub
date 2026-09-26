@@ -1027,13 +1027,13 @@
   white-space: pre-wrap;
 }
 
+/* A turn that did not complete: its outcome on a rule, and why under it. A
+   completed turn draws nothing (`EntryView.tsx`). */
 .conversation-turn-end {
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: var(--tertiary);
   font-size: 0.75em;
-  font-variant-numeric: tabular-nums;
 }
 
 .conversation-turn-end-facts {
@@ -1243,54 +1243,6 @@
   outline-offset: 1px;
 }
 
-/* --------------------------------------------------------------- Header */
-
-.conversation-header {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: flex-end;
-  padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line-soft);
-  column-gap: var(--space-3);
-  font-size: 0.8em;
-}
-
-.conversation-usage {
-  overflow: hidden;
-  min-width: 0;
-  color: var(--tertiary);
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The context, first and one step stronger than the rest of the line. */
-.conversation-context {
-  display: inline-flex;
-  align-items: center;
-  color: var(--secondary);
-  gap: 0.5em;
-}
-
-.conversation-context-meter {
-  position: relative;
-  overflow: hidden;
-  width: 3em;
-  height: 4px;
-  flex: none;
-  border-radius: 2px;
-  background: var(--wash-strong);
-}
-
-.conversation-context-meter::after {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--context-fill);
-  background: var(--secondary);
-  content: "";
-}
-
 /* ------------------------------------------------------------- Composer */
 
 .conversation-waiting {
@@ -1403,15 +1355,22 @@
   white-space: pre-wrap;
 }
 
+/* Room to change a message in place: it grows with its text as the
+   composer's field does, from three lines up to the composer's own limit. */
 .conversation-pending-input {
+  field-sizing: content;
   width: 100%;
+  min-height: calc(3lh + 2 * var(--space-2));
+  max-height: 40vh;
   box-sizing: border-box;
-  resize: vertical;
+  padding: var(--space-2);
+  resize: none;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   background: var(--raised);
   color: var(--primary);
   font: inherit;
+  line-height: 1.55;
 }
 
 .conversation-pending-footer {
@@ -1511,6 +1470,53 @@
   box-shadow: var(--shadow-raised);
   cursor: text;
   transition: border-color 120ms ease;
+}
+
+/* How full the context is, under the box: quiet type and a thin meter, lined
+   up with the box's inner edge, coloured only near the end (`usageLevel.ts`). */
+.conversation-context {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+  color: var(--tertiary);
+  font-size: 0.75em;
+  font-variant-numeric: tabular-nums;
+  gap: 0.5em;
+  user-select: none;
+}
+
+.conversation-context-meter {
+  position: relative;
+  overflow: hidden;
+  width: 3em;
+  height: 3px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--wash-strong);
+}
+
+.conversation-context-meter::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--context-fill);
+  border-radius: inherit;
+  background: var(--secondary);
+  content: "";
+}
+
+.conversation-context[data-level="near"] {
+  color: var(--waiting);
+}
+
+.conversation-context[data-level="at"] {
+  color: var(--danger);
+}
+
+.conversation-context:not([data-level="calm"])
+  .conversation-context-meter::after {
+  background: currentcolor;
 }
 
 .conversation-composer-box:focus-within {

@@ -53,7 +53,6 @@ import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
 import { ArrowDownIcon } from "./icons";
 import { RequestCard } from "./RequestCard";
-import { SessionHeader } from "./SessionHeader";
 import {
   SubagentColumn,
   SubagentLayoutProvider,
@@ -244,7 +243,6 @@ export function ConversationSurface({
                 hidden={hidden}
                 onKeyDown={onKeyDown}
               >
-                <SessionHeader transcript={transcript} />
                 <div className="conversation-views">
                   <div className="conversation-main">
                     <div

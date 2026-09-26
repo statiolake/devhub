@@ -13,7 +13,8 @@
  * opens the toolbar's picker for the setting it changes.
  *
  * The box holds the field and, under it, a toolbar: the session's settings on
- * the left, Stop (while a turn runs) and Send on the right.
+ * the left, Stop (while a turn runs) and Send on the right. Under the box, how
+ * full the context is (`ContextUsage.tsx`).
  *
  * On an empty composer ↑ and ↓ walk what the person has already said to this
  * Agent, which is read off its transcript — so the history is per Agent and
@@ -53,6 +54,7 @@ import type {
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
+import { ContextUsage } from "./ContextUsage";
 import {
   useConversationActions,
   type SettingName,
@@ -542,6 +544,7 @@ export function Composer({
           </div>
         </div>
       </div>
+      <ContextUsage usage={transcript.usage} />
     </div>
   );
 }

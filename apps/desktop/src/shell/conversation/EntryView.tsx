@@ -27,7 +27,6 @@ import type {
   ToolEntry,
   TranscriptEntry,
   TurnEndEntry,
-  Usage,
   UserEntry,
 } from "../../model/conversation";
 import { CopyButton } from "./CopyButton";
@@ -418,50 +417,37 @@ function NoticeView({ entry }: { readonly entry: NoticeEntry }) {
   );
 }
 
-const OUTCOME_LABELS: Readonly<Record<TurnEndEntry["outcome"], string>> = {
-  completed: "Turn completed",
+/**
+ * A turn that did not complete, and why: the one turn end the transcript draws.
+ *
+ * A turn that completed says nothing. The Agent's last words already end it,
+ * and a divider of durations, tokens and cost under every answer was ink about
+ * the meter rather than the work; what a session has used is the context
+ * readout under the composer and the Sidebar's rate-limit readout.
+ */
+const OUTCOME_LABELS: Readonly<
+  Record<Exclude<TurnEndEntry["outcome"], "completed">, string>
+> = {
   interrupted: "Turn interrupted",
   failed: "Turn failed",
 };
 
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
-}
-
-function formatTokens(count: number): string {
-  return count < 1000 ? `${count}` : `${(count / 1000).toFixed(1)}k`;
-}
-
-/** What a turn cost, in the terms the CLI reported. Nothing not reported. */
-export function usageFacts(usage: Usage): readonly string[] {
-  const facts: string[] = [];
-  if (usage.inputTokens !== undefined)
-    facts.push(`${formatTokens(usage.inputTokens)} in`);
-  if (usage.outputTokens !== undefined)
-    facts.push(`${formatTokens(usage.outputTokens)} out`);
-  if (usage.costUsd !== undefined) facts.push(`$${usage.costUsd.toFixed(2)}`);
-  return facts;
-}
-
-function TurnEndView({ entry }: { readonly entry: TurnEndEntry }) {
-  const facts = [
-    OUTCOME_LABELS[entry.outcome],
-    ...(entry.durationMs === undefined
-      ? []
-      : [formatDuration(entry.durationMs)]),
-    ...(entry.usage ? usageFacts(entry.usage) : []),
-  ];
+function TurnEndView({
+  entry,
+  outcome,
+}: {
+  readonly entry: TurnEndEntry;
+  readonly outcome: keyof typeof OUTCOME_LABELS;
+}) {
   return (
     <div
       className="conversation-turn-end"
-      data-outcome={entry.outcome}
+      data-outcome={outcome}
       role="separator"
     >
-      <div className="conversation-turn-end-facts">{facts.join(" · ")}</div>
+      <div className="conversation-turn-end-facts">
+        {OUTCOME_LABELS[outcome]}
+      </div>
       {entry.detail ? (
         <div className="conversation-turn-end-detail">{entry.detail}</div>
       ) : null}
@@ -478,6 +464,9 @@ export const EntryView = memo(function EntryView({
   readonly entry: TranscriptEntry;
   readonly depth: number;
 }) {
+  // A completed turn's end is not drawn at all — not even as an empty entry,
+  // which would still take the gap between entries (see `TurnEndView`).
+  if (entry.kind === "turn-end" && entry.outcome === "completed") return null;
   return (
     <div
       className="conversation-entry"
@@ -500,6 +489,8 @@ function entryBody(entry: TranscriptEntry, depth: number) {
     case "notice":
       return <NoticeView entry={entry} />;
     case "turn-end":
-      return <TurnEndView entry={entry} />;
+      return entry.outcome === "completed" ? null : (
+        <TurnEndView entry={entry} outcome={entry.outcome} />
+      );
   }
 }

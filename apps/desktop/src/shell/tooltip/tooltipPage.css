@@ -290,3 +290,84 @@ body,
 .tooltip-line[data-tone="unknown"] .tooltip-line-mark {
   color: var(--secondary);
 }
+
+/*
+ * A measure of use, as a labelled bar (`MeterLine` in `TooltipApp.tsx`): what
+ * is measured and how much on one line, a slim bar, and when it resets.
+ *
+ * A fixed width, so the bars of one box line up and share one scale by eye
+ * whatever their labels say. The bar is the box's own ink until the measure is
+ * near its end — the rule every usage meter keeps (`usageLevel.ts`) — and a
+ * reading that is history is faded whole, number and bar together.
+ */
+.tooltip-meter {
+  width: 200px;
+  padding: 3px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tooltip-meter-label {
+  color: var(--secondary);
+}
+
+.tooltip-meter-value {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tooltip-meter-track {
+  overflow: hidden;
+  height: 4px;
+  margin: 3px 0 2px;
+  border-radius: 2px;
+  background: var(--wash-strong);
+}
+
+.tooltip-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--secondary);
+}
+
+.tooltip-meter-reset {
+  color: var(--tertiary);
+  font-size: 10px;
+}
+
+.tooltip-meter[data-level="near"] .tooltip-meter-fill {
+  background: var(--waiting);
+}
+
+.tooltip-meter[data-level="near"] .tooltip-meter-value {
+  color: var(--waiting);
+}
+
+.tooltip-meter[data-level="at"] .tooltip-meter-fill {
+  background: var(--danger);
+}
+
+.tooltip-meter[data-level="at"] .tooltip-meter-value {
+  color: var(--danger);
+}
+
+.tooltip-meter[data-stale] {
+  opacity: 0.5;
+}
+
+/* A second CLI's heading after the first CLI's bars starts a new group. */
+.tooltip-meter + .tooltip-line.is-name,
+.tooltip-line.is-note + .tooltip-line.is-name {
+  margin-top: 6px;
+}
+
+.tooltip-meter-value[data-unknown] {
+  color: var(--tertiary);
+  font-weight: 400;
+}

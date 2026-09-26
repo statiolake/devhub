@@ -22,14 +22,10 @@ import { AgentPane } from "../../agents/AgentPane";
 vi.mock("../../terminal/TerminalSurface", () => ({
   TerminalSurface: () => <div data-testid="terminal" />,
 }));
-vi.mock("./AgentShortcuts", () => ({
-  AgentShortcuts: () => null,
-}));
 const dispatch = vi.fn(() => Promise.resolve(undefined));
 const reportFailure = vi.fn();
 vi.mock("../../agents/AgentsContext", () => ({
   useAgents: () => ({
-    repositoryStatus: { workspaces: [] },
     dispatch,
     reportFailure,
   }),

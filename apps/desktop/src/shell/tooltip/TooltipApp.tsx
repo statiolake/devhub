@@ -60,7 +60,12 @@ import {
   GLYPH_NAMES,
   type GlyphName,
 } from "../components/sidebar/icons";
-import type { TooltipLineWire } from "../../ipc/contract";
+import type {
+  TooltipFactLineWire,
+  TooltipMeterLineWire,
+} from "../../ipc/contract";
+import { resetsIn, resetTime } from "../resetTime";
+import { usageLevel } from "../usageLevel";
 
 /**
  * Whether this is a mark this page can draw.
@@ -135,55 +140,125 @@ export function TooltipApp() {
       onPointerEnter={() => pointer(true)}
       onPointerLeave={() => pointer(false)}
     >
-      {lines.map((line: TooltipLineWire, index: number) => {
-        const icon = glyphName(line.icon);
-        const href = line.href;
-        return (
-          <div
-            className={`tooltip-line${line.style ? ` is-${line.style}` : ""}`}
-            // The lines of one tooltip have no identity of their own: they are
-            // a row's facts in a fixed order, and a row that changes is a new
-            // list from top to bottom. The index is the identity.
-            key={index}
-            data-tone={line.tone}
-          >
-            {/* A line with no mark starts at the box's edge: the name and the
-                path are the heading, and a heading indented past an empty
-                column reads as a gap nobody meant. The marked facts below it
-                keep their column. */}
-            {/* The mark names itself on the element that draws it, so the
-                colour a mark wears is a rule about that mark rather than a
-                colour composed with the fact and sent over the wire. One
-                place decides what an open Issue's green is: this stylesheet,
-                out of the same tokens the row's own marks light up with. */}
-            {icon ? (
-              <span className="tooltip-line-mark" data-mark={icon}>
-                <Glyph name={icon} />
-              </span>
-            ) : null}
-            {/* A fact that names a page is the link to it — the same page
-                the row's own mark leads to, so the box a person is reading is
-                the thing they can act on. Everything else is words. */}
-            {href === undefined ? (
-              <span className="tooltip-line-text">{line.text}</span>
-            ) : (
-              <a
-                className="tooltip-line-text tooltip-line-link"
-                href={href}
-                // Out of the tab order, because the box is out of the
-                // accessibility tree: an anchor that could be tabbed to inside
-                // `aria-hidden` is a stop a reader is taken to and told nothing
-                // about. There is nothing to reach it with anyway — this view
-                // never holds the keyboard (`keyboardChild` never names it).
-                tabIndex={-1}
-                onClick={(event) => follow(href, event)}
-              >
-                {line.text}
-              </a>
-            )}
-          </div>
-        );
-      })}
+      {lines.map((line, index) =>
+        // The lines of one tooltip have no identity of their own: they are a
+        // row's facts in a fixed order, and a row that changes is a new list
+        // from top to bottom. The index is the identity.
+        line.kind === "meter" ? (
+          <MeterLine key={index} line={line} now={Date.now()} />
+        ) : (
+          <FactLine key={index} line={line} follow={follow} />
+        ),
+      )}
     </div>
   );
+}
+
+function FactLine({
+  line,
+  follow,
+}: {
+  readonly line: TooltipFactLineWire;
+  readonly follow: (href: string, event: { preventDefault(): void }) => void;
+}) {
+  const icon = glyphName(line.icon);
+  const href = line.href;
+  return (
+    <div
+      className={`tooltip-line${line.style ? ` is-${line.style}` : ""}`}
+      data-tone={line.tone}
+    >
+      {/* A line with no mark starts at the box's edge: the name and the
+          path are the heading, and a heading indented past an empty
+          column reads as a gap nobody meant. The marked facts below it
+          keep their column. */}
+      {/* The mark names itself on the element that draws it, so the
+          colour a mark wears is a rule about that mark rather than a
+          colour composed with the fact and sent over the wire. One
+          place decides what an open Issue's green is: this stylesheet,
+          out of the same tokens the row's own marks light up with. */}
+      {icon ? (
+        <span className="tooltip-line-mark" data-mark={icon}>
+          <Glyph name={icon} />
+        </span>
+      ) : null}
+      {/* A fact that names a page is the link to it — the same page
+          the row's own mark leads to, so the box a person is reading is
+          the thing they can act on. Everything else is words. */}
+      {href === undefined ? (
+        <span className="tooltip-line-text">{line.text}</span>
+      ) : (
+        <a
+          className="tooltip-line-text tooltip-line-link"
+          href={href}
+          // Out of the tab order, because the box is out of the
+          // accessibility tree: an anchor that could be tabbed to inside
+          // `aria-hidden` is a stop a reader is taken to and told nothing
+          // about. There is nothing to reach it with anyway — this view
+          // never holds the keyboard (`keyboardChild` never names it).
+          tabIndex={-1}
+          onClick={(event) => follow(href, event)}
+        >
+          {line.text}
+        </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A measure of use, as a labelled bar: what is measured and how much of it is
+ * used on one line, the bar under it, and when it starts again under that.
+ *
+ * The words about time are worked out here, as the box is drawn, from this
+ * page's clock (see `TooltipMeterLineWire`). A reading whose reset has passed
+ * is history — what was used then, with nothing newer reported — and the
+ * whole meter is drawn faded and says so, rather than showing an old number
+ * as the present one. The bar's colour follows `usageLevel`, the rule every
+ * usage meter in DevHub keeps.
+ */
+function MeterLine({
+  line,
+  now,
+}: {
+  readonly line: TooltipMeterLineWire;
+  readonly now: number;
+}) {
+  const stale = line.resetsAt !== undefined && line.resetsAt <= now;
+  const used = line.usedPercent;
+  return (
+    <div
+      className="tooltip-meter"
+      // History is not a warning: what was near its limit then is not now.
+      data-level={stale ? "calm" : usageLevel(used)}
+      data-stale={stale || undefined}
+    >
+      <div className="tooltip-meter-head">
+        <span className="tooltip-meter-label">{line.label}</span>
+        <span
+          className="tooltip-meter-value"
+          data-unknown={used === undefined || undefined}
+        >
+          {used === undefined ? "not reported" : `${Math.round(used)}%`}
+        </span>
+      </div>
+      <div className="tooltip-meter-track">
+        <div
+          className="tooltip-meter-fill"
+          style={{ width: `${Math.min(Math.max(used ?? 0, 0), 100)}%` }}
+        />
+      </div>
+      <div className="tooltip-meter-reset">
+        {resetWords(line.resetsAt, now)}
+      </div>
+    </div>
+  );
+}
+
+function resetWords(resetsAt: number | undefined, now: number): string {
+  if (resetsAt === undefined) return "Reset time not reported";
+  const at = resetTime(resetsAt, now);
+  return resetsAt <= now
+    ? `Reset ${at} · nothing reported since`
+    : `Resets ${resetsIn(resetsAt, now)} · ${at}`;
 }

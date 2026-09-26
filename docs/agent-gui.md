@@ -199,9 +199,11 @@ It covers what a turn does, not everything a CLI's own terminal UI has.
 **Everything that is drawn**: Markdown with tables and code (coloured once
 each block is complete), thinking folded, plans,
 tool calls with their input and output or diff, subagents nested under the
-call that started them, notices, turn ends with duration and cost, usage and
-rate limits in the header, and pending requests as cards with the CLI's own
-choices.
+call that started them, notices, a turn that was interrupted or failed (with
+the CLI's reason), how full the context is under the composer, and pending
+requests as cards with the CLI's own choices. A turn that completed draws no
+divider, and no durations, token counts or cost are drawn anywhere: the rate
+limits are the Sidebar's (below).
 
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
@@ -217,8 +219,9 @@ known yet*; an effort nothing has chosen reads *Default*, the CLI's own
 effort when the thread opens, and a model you pick here shows that model's
 default effort until you choose one.
 
-**Context.** The header's usage line starts with how full the context window
-is, *Context 45% (90k of 200k)*, with a thin meter. Claude's figure is the
+**Context.** Under the message box, a quiet line says how full the context
+window is, *Context 45% · 90k of 200k*, with a thin meter that turns orange
+from 80% and red from 95% (the rule every usage meter keeps). Claude's figure is the
 latest top-level message's tokens (input, cache and output), known as soon as
 that message arrives, against the context window the turn's `result` reports
 for the model; before the first turn ends it reads only the tokens. Codex's is
@@ -412,8 +415,7 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 
 - It is a small floating button at the right of the conversation's column,
   just above the composer (left of the subagent column when one is open),
-  translucent until it is pointed at or focused (the same rule as
-  the Agent shortcuts). It is also on the failure over the pane when the
+  translucent until it is pointed at or focused. It is also on the failure over the pane when the
   conversation broke (the host was lost, a protocol mismatch, or the CLI
   refused to start).
 - It starts a terminal Agent from the same profile, resuming the same
@@ -423,8 +425,9 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
   the new Agent fails to launch, the GUI Agent keeps running.
 
 **Continue in GUI** is the mirror, for a terminal Claude or Codex Agent: a
-floating button in the top right corner of its pane (the bottom right is the
-shortcuts'). It starts a GUI Agent from the same profile resuming the
+floating button in the top right corner of its pane (the bottom right is
+where the pane says what became of a message DevHub queued for the Agent,
+from an Issue assignment or the Agent actions sheet). It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
 Which session the terminal is in is found from the Agent's own processes:
@@ -615,20 +618,26 @@ and changes it for this session.
 ## Usage limits in the Sidebar
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
-used (`Claude 42% · Codex 17%`): for each CLI, its window nearest the limit,
-the one that stops it first. The tooltip lists every window each CLI reports —
-Claude's five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`),
-Codex's `primary` and `secondary`, named by their length (`5-hour`, `7-day`) —
-with how much is used and when it resets. DevHub does not ask the accounts:
+used: one slim row per CLI — its name, a bar, the percentage — for its window
+nearest the limit, the one that stops it first. The bar is quiet grey until
+80%, orange to 95%, red beyond. On the collapsed rail the words go and the
+bars stay. The tooltip draws every window each CLI reports — Claude's
+five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
+`primary` and `secondary`, named by their length (`5-hour`, `7-day`) — as a
+labelled bar with the percentage and its reset (*Resets in 2h 10m · 16:40*,
+the weekday when not today), worked out by the tooltip as it opens. A reading
+whose reset has passed is history: faded, and said to be (*nothing reported
+since*); the Sidebar's row shows the window nearest its limit among readings
+still current, and a CLI whose readings are all history faded. DevHub does not ask the accounts:
 the numbers are what running GUI Agents last reported — Claude's
 `rate_limit_event`, Codex's `account/rateLimits/updated` — kept per window of
 each CLI in main, the newer of two readings of a window being the one with the
 later reset (or, for the same reset, more used), since journals replay in no
 particular order at startup. A report that leaves a window out (Codex's sparse
 updates) keeps that window as last seen. A CLI no GUI Agent has reported for
-says so in the tooltip rather than showing zero, and while neither has
-reported nothing is drawn. The conversation header reads the same way: the
-session's window nearest its limit on the line, every window on hover.
+says so in the tooltip (*Not reported yet*) rather than showing zero, and
+while neither has reported nothing is drawn. The conversation itself shows no
+rate limits.
 
 ## Known limits
 
@@ -660,8 +669,9 @@ session's window nearest its limit on the line, every window on hover.
   document: the directory naming, the record fields, `parentUuid` chains.
   A very long directory name, which Claude shortens with a hash, is not
   found; a session file over 32 MiB is refused rather than read in part.
-  Past turns show no usage (neither CLI hands it back), and a Claude history
-  has no turn endings between its messages.
+  Past turns show no context figure until the next turn reports one (neither
+  CLI hands it back), and a Claude history has no turn endings between its
+  messages.
 
 ## Troubleshooting
 

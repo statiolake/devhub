@@ -4,6 +4,7 @@ import type {
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import type {
+  TooltipFactLineWire,
   TooltipLineWire,
   WorkspaceRepositoryWire,
 } from "../../../ipc/contract";
@@ -50,8 +51,8 @@ export interface RowFact {
    * have been. Absent when the fact already says itself.
    */
   readonly spoken?: string;
-  readonly style?: TooltipLineWire["style"];
-  readonly tone?: TooltipLineWire["tone"];
+  readonly style?: TooltipFactLineWire["style"];
+  readonly tone?: TooltipFactLineWire["tone"];
   /**
    * The page this fact names, for the reader who can click it.
    *

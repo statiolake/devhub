@@ -140,10 +140,12 @@ const PULL_REQUEST_TEMPLATE = `{{BRANCH}} からプルリクエストを作成�
  * An id that is not here is an Issue action somebody wrote, which is the
  * extension point working as intended.
  *
- * **Why `confirmBeforeSend` differs between them.** The shortcut buttons in
- * the corner of an Agent pane are the whole sentence: "commit the changes" is
- * what the button says and what it sends, and a review sheet in front of it
- * asks a person to approve the text on the button they just pressed. That is
+ * **Why `confirmBeforeSend` differs between them.** The commit, push and
+ * pull-request actions are the whole sentence: "commit the changes" is what
+ * the Agent actions sheet (`Cmd+Q Shift+A`) lists and what it sends, and a
+ * review sheet after it asks a person to approve the text they just chose.
+ * (These once had buttons of their own in the corner of an Agent pane; the
+ * sheet is now the way to them.) That is
  * not a safeguard, it is a second click — and it is the click that teaches
  * people to press Enter through sheets without reading them. Anybody who wants
  * to say something more particular types it, which is the same keystroke the

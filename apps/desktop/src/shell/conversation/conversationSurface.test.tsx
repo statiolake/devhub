@@ -389,7 +389,7 @@ describe("every entry kind", () => {
     );
   });
 
-  it("marks where each turn ended, how, how long it took and what it cost", () => {
+  it("draws nothing for a completed turn, and how and why a turn that did not complete ended", () => {
     draw(
       transcriptOf([
         put(turnEnd("e1")),
@@ -401,15 +401,14 @@ describe("every entry kind", () => {
         ),
       ]),
     );
-    expect(entry("e1")).toHaveTextContent(
-      "Turn completed · 4.2s · 12.4k in · 830 out · $0.04",
-    );
+    expect(document.querySelector('[data-entry-id="e1"]')).toBeNull();
     expect(within(entry("e2")).getByRole("separator")).toHaveAttribute(
       "data-outcome",
       "failed",
     );
-    expect(entry("e2")).toHaveTextContent("Turn failed · 1m 5s");
-    expect(entry("e2")).toHaveTextContent("The API refused the request.");
+    expect(entry("e2")).toHaveTextContent(
+      /^Turn failedThe API refused the request\.$/u,
+    );
   });
 });
 

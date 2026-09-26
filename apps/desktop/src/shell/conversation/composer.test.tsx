@@ -484,62 +484,43 @@ describe("the header", () => {
     );
   });
 
-  it("reads out what the session has used, as far as it was reported", () => {
+  it("says under the composer how full the context is, and nothing else the session used", () => {
     draw(
       withSession([
         {
           type: "usage",
           usage: {
-            inputTokens: undefined,
-            outputTokens: undefined,
+            inputTokens: 10,
+            outputTokens: 930,
             cachedInputTokens: undefined,
-            contextTokens: 90_000,
+            contextTokens: 170_000,
             contextWindow: 200_000,
             costUsd: 1.234,
             rateLimits: [
               { window: "5-hour", usedPercent: 20, resetsAt: undefined },
-              { window: "7-day", usedPercent: 80.4, resetsAt: undefined },
             ],
           },
         },
       ]),
     );
-    // The window nearest its limit on the line; every window on hover.
-    expect(screen.getByLabelText("Usage")).toHaveTextContent(
-      "Context 45% (90k of 200k) · $1.23 · 7-day limit 80%",
+    const context = screen.getByRole("status", {
+      name: "Context 85% · 170k of 200k",
+    });
+    expect(context).toHaveTextContent("Context 85% · 170k of 200k");
+    // Near the end of the window: coloured, by the rule every meter uses.
+    expect(context).toHaveAttribute("data-level", "near");
+    expect(context.closest(".conversation-composer")?.contains(context)).toBe(
+      true,
     );
-    expect(
-      screen
-        .getByLabelText("Usage")
-        .querySelector("[title]")
-        ?.getAttribute("title"),
-    ).toBe("5-hour limit 20%\n7-day limit 80%");
+    // Money and the rate limits are not the conversation's to draw.
+    expect(document.body).not.toHaveTextContent("$1.23");
+    expect(document.body).not.toHaveTextContent("5-hour");
+    expect(document.querySelector(".conversation-header")).toBeNull();
   });
 
-  it("says the day of a reset that is not today, as the Sidebar's usage tooltip does", () => {
-    const later = Date.now() + 3 * 24 * 60 * 60 * 1000;
-    draw(
-      withSession([
-        {
-          type: "usage",
-          usage: {
-            inputTokens: undefined,
-            outputTokens: undefined,
-            cachedInputTokens: undefined,
-            contextTokens: undefined,
-            contextWindow: undefined,
-            costUsd: undefined,
-            rateLimits: [{ window: "7-day", usedPercent: 71, resetsAt: later }],
-          },
-        },
-      ]),
-    );
-    const day = new Date(later).toLocaleDateString(undefined, {
-      weekday: "short",
-    });
-    expect(screen.getByLabelText("Usage")).toHaveTextContent(
-      `7-day limit 71%, resets ${day} `,
-    );
+  it("draws no context readout until the CLI has said how full it is", () => {
+    draw(withSession());
+    expect(document.querySelector(".conversation-context")).toBeNull();
   });
 
   it("has no Continue in terminal of its own: that is the pane's floating button", () => {
