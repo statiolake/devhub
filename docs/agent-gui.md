@@ -703,28 +703,10 @@ and changes it for this session.
   - Turns, approvals, subagents and everything else are tested only against
     fixtures written by hand from the vendored 0.156.1 protocol types. Expect a
     protocol-mismatch notice where the real CLI differs.
-- **Dev Container Agents** have been checked with a packaged DevHub
-  (the 037e351 nightly), a `mcr.microsoft.com/devcontainers/base:ubuntu`
-  container and the fake agent. Checked for a Claude and a Codex fixture:
-  - the host runs in the container under DevHub's own tmux, and main follows
-    its journal through `docker exec -i`;
-  - the handshake reaches ready;
-  - a turn with its permission cards is answered;
-  - the conversation comes back unchanged after a DevHub restart, with nothing
-    sent again;
-  - Stop removes the host directory in the container.
-
-  The profile's command is looked up on the Workspace's own machine
-  (`Runtime.resolveProgram`, `command -v` there). This was checked with the
-  2fbeb2c nightly and a command that exists only in the container
-  (`/workspaces/ws/fake-agent.sh`). A command that is missing in the container
-  fails only that launch, with "The agent could not start from this profile."
-  and where it looked; the Workspace and its other Agents stay usable. (The
-  first check, on 037e351, predated this and needed a path that existed on
-  both sides.)
-
-  A source run cannot start an Agent in a container at all. It has no commit,
-  so it can install nothing there, tmux included.
+- **Dev Containers** do not run Agents. A Workspace whose editor is attached
+  to a dev container runs its Agents, TUI and GUI, on its own machine — this
+  Mac, or the SSH host its folder is on — exactly as it would with the editor
+  on that machine. See [Dev Container development](remote-containers.md).
 - **SSH Agents** have not been checked on a real remote host.
 
 ## Usage limits in the Sidebar

@@ -19,12 +19,12 @@ Everything between those two — the connection, the install, the server, the
 token and the port — is `main/runtime/remoteServer.ts` and `main/runtime/ssh.ts`,
 over the ControlMaster DevHub is already holding for git, terminals and Agents.
 
-A folder can also be opened inside a **Dev Container**, which is the same
-machinery with `docker exec` where `ssh` is: see
-[Dev Container development](remote-containers.md). Most of this document
-applies there unchanged — the server, the token file, the reconnect behaviour,
-tmux, the `devhub` shim and the PATH rules are all the shared base class — so
-that document describes only what differs.
+A Workspace's **editor** can also be attached to one of its folder's **Dev
+Containers** — on this Mac, or on the host an SSH Workspace is on — while its
+terminals and Agents stay on its own machine: see
+[Dev Container development](remote-containers.md). The remote extension host,
+the token file and the reconnect behaviour are this document's, reached with
+`docker exec` where `ssh` is.
 
 ## Why DevHub resolves its own authorities
 

@@ -1,332 +1,302 @@
 # Dev Container development
 
-A Workspace can be a folder on this Mac that is opened *inside* a Dev
-Container: the editor, the terminals and the Agents run in the container, and
-the folder itself stays here, bind-mounted in.
+A Workspace is its folder: a folder on this Mac, or a folder on an SSH host.
+Its **editor** can be attached to one of that folder's Dev Containers — the
+workbench's extension host, its language servers, its tasks and its debugger
+then run in the container — while everything else DevHub runs for the
+Workspace stays where the folder is: its terminals, its Agents (TUI and GUI)
+and its git.
 
-This is the sibling of [SSH remote development](remote-ssh.md), and most of
-that document applies unchanged — the remote extension host, the token file,
-the reconnect behaviour, tmux, the `devhub` shim, the PATH rules. What follows
-is only what differs. Read that one first.
+So "this folder" and "this folder opened in its dev container" are **one
+Workspace**, not two. The container is a mode of the editor, switched from the
+editor with the same three commands VS Code has: **Reopen in Container**,
+**Reopen Folder Locally** and **Switch Container**.
 
-## What is the same, and why that is not a coincidence
+The transport underneath is the sibling of [SSH remote
+development](remote-ssh.md): the remote extension host, the token file and the
+reconnect behaviour are that document's. What follows is what differs.
 
-DevHub reaches a container the way it reaches a host: it runs POSIX `sh` over a
-connection this Mac holds. `ContainerRuntime` and `SshRuntime` are both
-`RemoteShellRuntime`, and the base class is where the login-environment probe,
-the `sh`-based file operations, the git-refs digest, the terminal launcher and
-the tmux install live. None of them were written twice and none of them know
-which transport they are on.
+## The model
 
-So a container gets exactly what a host gets: DevHub's own static tmux
-delivered into it, the terminal launcher and the `devhub` shim written into a
-tagged bin directory, `DEVHUB_ORIGIN` on the tmux session, the remote extension
-host installed under `~/.devhub-server/bin/<commit>` and started on a unix
-socket with a token file that is the single source of truth.
+`WorkspaceLocation` is `local` or `ssh`, and nothing else. Where the editor is
+attached is `EditorAttachment` on the Workspace:
 
-**This Mac fetches; the container receives.** The same rule as SSH, for a
-sharper reason: a dev container's network egress is whatever its image and the
-person's Docker setup allow, and plenty have none. The remote extension host
-tarball is fetched here and unpacked in there from a stream on `docker exec -i`
-stdin — measured at 96 MB in 1.3 s against a local daemon.
+```ts
+type EditorAttachment =
+  | { kind: "host" } // the Workspace's own machine
+  | { kind: "devContainer"; configPath: DevContainerConfigPath };
+```
 
-## The transport: two relays
+`configPath` is the chosen `devcontainer.json` on the Workspace's machine —
+`<folder>/.devcontainer/devcontainer.json`, `<folder>/.devcontainer.json`, or
+one of `<folder>/.devcontainer/<name>/devcontainer.json`. It is always said,
+because a folder can have several definitions and each is a different
+container; `devcontainer up` is always run with `--config`.
 
-The one thing docker does not give DevHub is a forward, in either direction.
+A container is addressed by `ContainerTarget` — the Workspace's location
+(which machine, which folder) and the definition — and never by its container
+id, which changes on every rebuild. `@devcontainers/cli` finds its own
+containers by the labels `devcontainer.local_folder` and
+`devcontainer.config_file`, and so does DevHub: one `docker ps` with both
+filters.
 
-### Inbound: the extension host's socket, as a local port
-
-`ssh -L` turns a socket on a host into a port on this Mac. Docker has nothing
-of the kind. A container's published ports are fixed **when it is created**,
-which is the `devcontainer.json`'s business and not DevHub's, and an existing
-container cannot gain one without being destroyed — so publishing a port is not
-available to DevHub even in principle.
-
-So DevHub writes the forward itself. It opens a TCP listener on `127.0.0.1`,
-and every connection it accepts gets a `docker exec -i` of its own running a
-small relay against the server's unix socket in the container, with the exec's
-two stdio streams piped to the socket. The resolver then answers
-`ResolvedAuthority("127.0.0.1", <that port>, <token>)`, which is the identical
-answer the SSH path gives — which is why there is one resolver extension with a
-machine parameter and not two extensions.
-
-One `docker exec` per connection sounds extravagant and is not. A workbench
-opens a handful — the management connection, the extension host, one per
-terminal — and against a local daemon a connection costs about **35 ms**.
-
-Loopback and never `0.0.0.0`: the connection token is the only thing between
-that port and an extension host.
-
-### Outbound: DevHub's control socket, inside the container
-
-There is no reverse forward either, so the control socket is relayed the same
-way in the other direction. One long-lived `docker exec` runs the same relay in
-`listen` mode on a socket inside the container, and every connection it accepts
-is carried out over that exec's stdio and connected to DevHub's real socket
-here.
-
-That one exec has to carry many connections, so this direction is framed: each
-connection gets a number and every chunk is prefixed with `[id, length]`. The
-inbound direction needs none of that — it has an exec per connection.
-
-This is what makes the `devhub` command, `--wait` and the terminal launcher
-work from a pane in the container without a single line of them knowing they
-are in one. Everything above the socket is exactly as `remote-ssh.md` describes
-it: one control protocol, one answering side.
-
-### Why node, and which node
-
-The relay runs on the **remote extension host's own `node`**, at
-`~/.devhub-server/bin/<commit>/node`. Not `socat`, which is in approximately no
-dev container image, and not a system `node`, which many images do not have
-either — the `mcr.microsoft.com/devcontainers/base:ubuntu` image has neither.
-Installing a package into somebody's container to move bytes would be DevHub
-changing the thing it was asked to connect to.
-
-That makes the ordering explicit: the server install lands before anything
-needs a relay.
+Everything that is about the Workspace reads the location, and nothing reads
+the attachment except the workbench's open and the commands that change it.
+`locationKey` is the folder's, so a window attached to a container is filed
+under the same key as one on the folder, and a reattached editor lands in the
+same slot.
 
 ## Where things run
 
 | | runs on |
 | --- | --- |
-| the editor and its extension host | the container |
-| terminals, and the tmux server behind them | the container |
-| Agents | the container |
-| **git, worktrees, branch and pull request rows** | **this Mac** |
-| `devcontainer` and `docker` | this Mac |
+| the workbench's remote extension host, extensions, language servers | the container |
+| tasks and the debugger (the automation shell) | the container |
+| the editor's DevHub terminal | the Workspace's machine — see below |
+| DevHub terminals, the tmux server behind them | the Workspace's machine |
+| Agents, TUI and GUI | the Workspace's machine |
+| git, worktrees, branch and pull request rows | the Workspace's machine |
+| `docker` and `devcontainer` | the Workspace's machine |
+| the `devhub` command inside the container | the container, reaching DevHub through a relay |
 
-Git running here is a decision, not an accident, and it lives in one function —
-`gitPlaceOf` in `apps/desktop/src/model/domain.ts`. Three reasons, in order:
+A container is not a `Runtime`. `ContainerHost` (`main/runtime/container.ts`)
+shells into it for the half that is about shells — `$HOME`, the server
+install, the `devhub` command — and refuses a pty, a stream, tmux and an
+Agent's program lookup as the bug they would be: something of the
+Workspace's routed to its editor's far end.
 
-1. Watching a directory here is a real `fs.watch`, not the `cksum`-over-`refs`
-   polling a far machine has to be asked for. That is a fidelity win, not just
-   a cost one.
-2. A Workspace's branch, worktrees and pull request rows are DevHub's own
-   panel, and a stopped container would otherwise take all of it with it — when
-   a stopped container is meant to be a *state*, not a failure.
-3. The container may not have been built yet when the row is first drawn.
+### The editor's terminal
 
-The rule needs no probe because of where these locations come from: DevHub
-makes one out of a folder on this Mac, so the host folder is a path that exists
-here by construction. `gitPlaceOf`'s return type cannot represent a container,
-so a caller that ever tried to send git into one would not compile.
+An attached window keeps a DevHub terminal, and it is the Workspace's own tmux
+session — the direction VS Code calls "Create New Integrated Terminal
+(Local)". Patch 0003 gives the window configuration one field,
+`devhubTerminalLocal { cwd, args }`: when it is set, a terminal created with
+the DevHub profile is created with a `file:` cwd on this Mac, which is what
+puts it on the local backend, and the launcher is this Mac's with
+`--workspace <locationKey>`. `terminal-profile` then answers with that
+Workspace's session through `Runtime.commandFromHere`: the session's own
+command for a folder on this Mac, and `ssh -tt <host> -- <command>` for one on
+a host.
 
-A `devcontainer.json` that clones into a volume rather than bind-mounting is
-not something DevHub offers to open. If that changes, `gitPlaceOf` is the one
-function that has to learn about it.
+Only the DevHub profile moves. Every other profile, every task and the
+debugger stay with the container, and the patch already refuses the DevHub
+profile as the automation shell. From that terminal, `devcontainer exec` is
+how to reach the container by hand.
+
+### `devhub` inside the container
+
+Installed when the attached window opens, the way it is installed on any
+machine DevHub shells into, and reaching DevHub through the control-socket
+relay below. There is no DevHub tmux in the container to put it on a pane's
+`PATH`, so the remote extension host is started with its directory in front
+of `PATH`, and the tasks and terminals the server starts inherit it (in a
+server-started terminal, VS Code's own `remote-cli` is in front of it and
+also opens files in the window). A `devhub <file>` from inside the container
+names the container as its machine, and the file opens in the window attached
+to it.
+
+## The commands
+
+`extensions/devhub-remote` contributes **Reopen in Container**, **Reopen
+Folder Locally** and **Switch Container** to the command palette and to the
+remote indicator's menu. It is `ui`-kind, so it runs on this Mac in every
+window, local or attached, next to DevHub's control socket. It asks DevHub
+two things with the window's folder URI, which `editorPlaceFromWorkspaceUri`
+turns into its Workspace:
+
+- `dev-container-configs` — the folder's definitions and the one the editor
+  is in. Asked when the extension starts, to set `devhub.devContainerConfigs`
+  for the `when` clauses, and again when a command runs. There is no file
+  watcher.
+- `reattach-editor` — move the editor. DevHub brings the container up first
+  (building it if it has to: a person asked), closes the workbench the way a
+  Workspace close does — VS Code's own unsaved-work question included, whose
+  Cancel changes nothing — records the attachment, and opens the workbench
+  again on the new authority.
+
+Outside the editor there is one way in and one way out: the workspace
+picker's **Open in a Dev Container?** sheet, which offers one row per
+definition, and **Reopen Editor Locally** on the context menu of a row whose
+editor is in a container — the way out when that editor cannot open.
+
+The row keeps its folder's mark and wears a quiet crate mark beside its other
+marks; its facts say `editor in dev container`, and the definition's name
+when the folder has several.
 
 ## Lifecycle
 
-### Finding the container costs one `docker ps`
+### Starting: only when a person asks, and only starting when a window opens
 
-`@devcontainers/cli` stamps every container it creates with
-`devcontainer.local_folder` and `devcontainer.config_file`, and looks its own
-containers up by exactly those. So DevHub answers "is this Workspace's
-container up?" with
+`devcontainer up` may build an image, so it runs only on an explicit act: a
+reattach, or the picker's sheet. Restoring an attached editor at launch, a
+workbench rebuilt by the supervisor, and the resolver's first attempt only
+*start* a container that exists (`ContainerHost.prepare`); one that was never
+built refuses with the command that builds it, and the row's Reopen Editor
+Locally is the way out. Nothing on a timer reaches `up`.
 
-```sh
-docker ps -a --no-trunc --filter label=devcontainer.local_folder=<folder> \
-  --format '{{.ID}}\t{{.State}}\t{{.Image}}'
-```
+### Stopping: the definition's `shutdownAction`, for a container DevHub started
 
-`--no-trunc` is load-bearing, not tidiness. Without it `{{.ID}}` is the short
-twelve-character id while `devcontainer up` answers with the full sixty-four,
-so the two ways DevHub learns an id spell the same container differently — and
-the comparison that decides "has this been rebuilt?" reads every restart as a
-rebuild.
+The spec (containers.dev, `devcontainer.json` reference) says `shutdownAction`
+is `none`, `stopContainer` or `stopCompose`, defaulting to `stopContainer` for
+an image or Dockerfile definition and `stopCompose` for a Docker Compose one,
+and that it says whether tools stop the containers "when the related tool
+window is closed / shut down". It says nothing about a container that was
+already running when the tool attached. DevHub's rule fills that in:
 
-and never spawns the CLI on the happy path. `devcontainer up` is a 1.7 MB Node
-bundle and about a second of wall clock; this poll runs every few seconds.
+- A container **DevHub started** — it was absent or stopped when DevHub's own
+  bring-up ran — is stopped the way its definition says when the editor
+  leaves it: Reopen Folder Locally, Switch Container, or the Workspace
+  closed. `stopContainer` is `docker stop <id>`; `stopCompose` is `docker
+  compose --project-name <p> stop` with the project read from the container's
+  `com.docker.compose.project` label; `none` leaves it.
+- A container DevHub **found running** is left running, whatever the
+  definition says.
+- Which container DevHub started is remembered by id on the Workspace's
+  persisted attachment (`started_container_id`), so a DevHub restart in
+  between does not turn it into one DevHub "found". A container rebuilt since
+  has another id and is left alone.
+- `shutdownAction` is read with `devcontainer read-configuration`, because the
+  default depends on the kind of definition.
+- A stop that fails is its own notice (`dev_container_not_stopped`); the
+  editor has moved anyway. Quitting DevHub stops nothing: the attachment is
+  restored at the next launch.
 
-A container whose state is `removing` is skipped — the CLI's own lookup drops
-those too, and adopting one would be adopting a filesystem that is being
-deleted underneath every command sent to it.
+### A stopped container, a stopped daemon, a rebuild
 
-### `devcontainer up` runs only when a person asks
+A container that stops under an open window takes its server with it; the
+window's resolver retries, and `prepare` starts the container again on the
+window's next open. `docker start` brings back a stale socket and pid file,
+which the server start sweeps: the socket is asked whether it still accepts,
+because a container's pids are small and reused. The workbench's existing
+connection cannot be recovered — reconnection is to one server process, and it
+is gone — so the window has to be reloaded, as for an SSH host whose server was
+killed.
 
-Never on a path a timer can reach. Every command DevHub sends a machine goes
-through one place, including the reconcile round that runs on a cadence tick
-for as long as the Workspace has Agents — so an `up` there would restart a
-container within seconds of somebody running `docker stop`, every time, and
-they could never keep it stopped. It is also the call that may *rebuild an
-image*, so a background round could start a minutes-long build nobody asked
-for.
+A rebuild (`devcontainer up --remove-existing-container`) produces a new
+container id. The `ContainerHost` notices the id changed and refuses
+everything from then on, because its caches describe a filesystem that has
+been deleted; `containerHostFor` throws it away and builds another. The
+Workspace is untouched: the target is still the same target.
 
-So starting is an explicit act: opening the Workspace in the picker, or the
-first resolve of its window. Everything else refuses with a sentence.
+## The transport
 
-`devcontainer up` itself is the only thing that knows how to build an image,
-create a container and run the lifecycle commands the definition asks for, and
-DevHub has no second opinion about any of that. On an existing stopped
-container it is fast — measured at **0.77 s** — because it only has to start
-it.
+### `ContainerMachine`: where `docker` runs
 
-Its JSON is read strictly. An `outcome` DevHub does not recognise is a hard
-failure that names the CLI — not something to work around. The alternative is
-carrying on with a `containerId` that is actually an error message.
+`docker` and `devcontainer` run on the Workspace's machine. On this Mac they
+are the product's (`dockerPath`, `devcontainerPath`, else `PATH`); on a host
+they are found on the host's login `PATH` and run over its ssh master
+(`hostContainerMachine`). The registry is the one place that chooses, from the
+target's location, and nothing above the transport differs.
 
-### A stopped container is a state, not a failure
+### Inbound: the extension host's socket, as a local port
 
-So is a Docker daemon that is not running, and so is a folder whose container
-has never been built. All three are `MachineConditions` episodes: raised once
-per episode against the machine, retracted once on sustained recovery.
+Docker has no port forward, and a container's published ports are fixed when
+it is created — the `devcontainer.json`'s business, not DevHub's. So DevHub
+writes the forward itself: a TCP listener on `127.0.0.1`, and every accepted
+connection gets a `docker exec -i` of its own (`ssh … docker exec -i` for a
+container on a host) running a small relay against the server's unix socket
+in the container. The resolver then answers `ResolvedAuthority("127.0.0.1",
+<port>, <token>)`, the same answer the SSH path gives. Loopback and never
+`0.0.0.0`: the connection token is the only thing between that port and an
+extension host.
 
-**A condition carries a sentence and nothing else** — `machineConditions.ts`
-publishes a summary string, and there is nowhere on it for a button. So the
-sentence has to *be* the action, and each of the three names the exact command
-with the Workspace's own folder already in it:
+### Outbound: DevHub's control socket, inside the container
 
-| what is true | what the condition says |
-| --- | --- |
-| no container built yet | `Build it with: devcontainer up --workspace-folder <folder>` |
-| the container is stopped | `Start it with: devcontainer up --workspace-folder <folder>` |
-| the daemon is not answering | `DevHub could not reach the Docker daemon with <path>. Start Docker and it will reconnect by itself.` |
+One long-lived `docker exec` runs the same relay in `listen` mode on a socket
+in the container, and every connection it accepts is carried back over that
+exec's stdio to DevHub's real socket here, framed `[id, length]` because one
+exec carries many connections. That is what the `devhub` command in the
+container talks to.
 
-Three sentences and not one, because folding them together would offer to build
-an image that is already built, or tell somebody to start a container that does
-not exist.
+### Why node, and which node
 
-These are thrown as `PortFailure`s rather than bare errors, and that is what
-decides whether the sentence reaches anyone: `portRefusal` carries a `detail`
-through only from a `PortFailure`, and anything else arrives as the bare
-"DevHub is not getting an answer from container:…" — the machine named, and
-nothing to do about it. Docker's own words go to the log; `PortFailure.detail`
-is DevHub's sentence about its own configuration, never the provider's output.
+The relay runs on the remote extension host's own `node`,
+`~/.devhub-server/bin/<commit>/node` — not `socat` and not a system `node`,
+which few dev container images have. So the server is installed before the
+relay is written, stated in `#relayPaths`: the `devhub` command is installed
+when a window opens, before that window has resolved.
 
-**Conditions ride the Agent reconcile loop.** That loop runs for a machine only
-while a Workspace on it has Agents, so a container Workspace with no Agents is
-not polled and raises no condition when its container stops — its row keeps
-working, because its git is on this Mac. What reports in that case is the
-window: the resolver retries and shows the same sentence.
-
-### A restarted container needs the window reloaded
-
-`docker stop` kills the server with the container, and `docker start` brings
-back a filesystem with a stale socket file and a stale pid file in it. DevHub
-recovers the transport by itself: the socket is asked whether it still accepts
-— a connection, not a pid check, because a container's pids are small enough
-that the one in the file has very likely been reused — and a socket that
-refuses is swept away so the server starts fresh.
-
-What does **not** recover is the workbench's existing connection. VS Code
-reconnects with a token the *previous* server process issued, and the new one
-answers `Unknown reconnection token (never seen)`. That is not something the
-transport can fix: reconnection is between a client and one server process, and
-that process is gone. The window has to be reloaded.
-
-The same is true of an SSH host whose server is killed. It is worth knowing
-here because stopping a container is a thing people do casually.
-
-### A rebuild replaces the machine underneath the Workspace
-
-This is the sharp edge, and it is worth understanding.
-
-A Workspace's **machine id is the host folder** — `container:/src/api` — and
-never the container id. Rebuilding is routine; it is what dev containers are
-*for*. A machine id that carried the container id would make every rebuild a
-brand-new machine, and `locationKey` keys the Workspace on the host folder for
-the same reason: a rebuild must not cost a person their row, its Agents and its
-history.
-
-But a rebuilt container is a new filesystem with none of what DevHub installed,
-and every "installed once per machine" cache in the base class — tmux, the
-launcher, the server — is keyed on the *runtime instance*. So when the runtime
-sees a container id that is not the one it has been talking to, it throws at
-that moment and refuses everything afterwards; `disposeRuntime` throws the
-instance away and the next call builds a fresh one.
-
-It throws at the moment it notices rather than on the next call, deliberately.
-A runtime that answered one more command would answer it against a container
-that has none of what it believes it installed, and the failure that produced
-would surface later and somewhere else — as a missing tmux, or a launcher that
-is not there.
+**This Mac fetches; the container receives.** The server tarball is fetched
+here and unpacked in the container from a stream on `docker exec -i` stdin: a
+container's egress is whatever its image and the person's Docker allow.
 
 ## The authority
 
-`dev-container+<hex>`, where the hex is `{"hostPath": "<folder on this Mac>"}`
-as UTF-8 bytes.
+`dev-container+<hex>`, where the hex is `{"hostPath", "configPath", "sshHost"?}`
+as UTF-8 JSON, composed by `editorAuthorityOf` and read back by
+`decodeContainerAuthority`, one place each. It carries the definition because
+two definitions of one folder are two different editors of one Workspace, and
+the resolver has to know which container to reach. It never carries the
+container id. Hex rather than base64url because an authority is
+case-insensitive in some hands. An authority without a `configPath` — written
+by a DevHub before this — is one this DevHub did not write, and names nothing.
 
-Composed by `remoteAuthorityOf` and read by `locationFromWorkspaceUri`, both in
-one place each, so the URI a window is opened with and the authority the
-resolver is asked to resolve cannot drift apart.
+The resolver passes the payload through as `container:<hex>`, the
+`ContainerHostId` that `ContainerHost`s are filed under; the `devhub` command
+in the container says it is asking from the same id.
 
-Two things it deliberately does **not** carry:
+## Migration from state version 11
 
-- **The container id**, because the authority is a window's identity and a
-  rebuilt container must not change it.
-- **`configPath`**, because it is not part of `locationKey` either — an
-  authority that carried it would be a second identity for one Workspace, and
-  the two would disagree the moment somebody set one.
+Before version 12 a Dev Container Workspace was its own location,
+`container:<host folder>`, whose terminals and Agents ran in the container.
+Version 12 turns each into the local Workspace of its host folder with its
+editor attached:
 
-Hex rather than base64url because a URI authority is case-insensitive in some
-hands and base64 is not.
+- The definition a version-11 file did not record is read before the
+  migration runs (`containerMigration.ts`): from the container's
+  `devcontainer.config_file` label, or, with no container, the CLI's own
+  default order in the folder. Docker not answering is said; no definition at
+  all opens the editor on this Mac and says so. Nothing is guessed.
+- A folder that was open both ways becomes one Workspace: the local record
+  stays and everything that named the other — the selection, the sidebar
+  order — is pointed at it.
+- The Agents of a container Workspace ran inside the container, where DevHub
+  runs no Agents now; they are removed.
+- A `container:` entry in `session_machines` is dropped.
 
-The name `dev-container` is the one Microsoft's closed extension uses, and
-DevHub uses it too — not for compatibility, since nothing is exchanged with it
-and the payload above is DevHub's own shape, but because it is the word
-everything written about dev containers uses.
+What changed is said in one notice (`state_migrated`).
 
 ## Requirements
 
-- **Docker on this Mac.** Docker Desktop, Rancher Desktop, colima — anything
-  whose `docker` CLI talks to a local daemon. A *remote* docker context is not
-  supported: the cadence here assumes a daemon microseconds away, and a
-  container across a network would need the round-trip arithmetic `ssh.ts` has.
-- **The `devcontainer` CLI**, `@devcontainers/cli`. `npm i -g
-  @devcontainers/cli`, or Homebrew's `devcontainer`.
+- **Docker** where the Workspace's folder is: Docker Desktop, Rancher
+  Desktop, colima on this Mac; any `docker` on the host's login `PATH` on a
+  host.
+- **The `devcontainer` CLI**, `@devcontainers/cli`, in the same place.
 - **A packaged DevHub.** A source run states no `commit`, so there is no remote
-  extension host to install or ask for — the same refusal, in the same words,
-  as [a source run cannot connect](remote-ssh.md#a-source-run-cannot-connect).
-
-Both binaries are found on `PATH` unless `product.json` states `dockerPath` or
-`devcontainerPath`. They are named separately because they are separately
-absent: a Mac can have Docker and no `devcontainer` CLI, and the two refusals
-name different things to install.
+  extension host to install — the same refusal as [a source run cannot
+  connect](remote-ssh.md#a-source-run-cannot-connect).
 
 ## Where to look when it does not connect
 
-In order, because each answers a different question:
-
-1. **`docker ps -a --filter label=devcontainer.local_folder=<folder>`** — is
-   there a container, and is it running? This is the exact question DevHub
-   asks.
-2. **`devcontainer up --workspace-folder <folder>`** by hand. Its log goes to
-   stderr and its one JSON object to stdout, so the failure is usually legible
-   there before it is anywhere else.
-3. **The server's own log, in the container:**
-   `docker exec <id> cat ~/.devhub-server/.<commit>.log`. "Extension host agent
-   listening on …" means the server is up and the problem is the transport.
-4. **The relay.** `docker exec <id> ls -l ~/.devhub-server/relay.cjs` — it is
-   written by DevHub on every connect. If the server is listening and the
-   workbench is not connecting, this is the half to suspect.
-5. **The extension host log** in the window (`Developer: Open Extension Host
-   Log`). `CANNOT use API proposal: resolvers.` means the `product.json` grant
-   for `devhub.devhub-remote` did not apply — see
-   [remote-ssh.md](remote-ssh.md#why-devhub-resolves-its-own-authorities).
+1. **`docker ps -a --filter label=devcontainer.local_folder=<folder>
+   --filter label=devcontainer.config_file=<definition>`** — the exact
+   question DevHub asks (on the host, for an SSH Workspace).
+2. **`devcontainer up --workspace-folder <folder> --config <definition>`** by
+   hand; its log is on stderr and its one JSON object on stdout.
+3. **The server's log, in the container:**
+   `docker exec <id> cat ~/.devhub-server/.<commit>.log`.
+4. **The relay:** `docker exec <id> ls -l ~/.devhub-server/relay.cjs`.
+5. **The extension host log** in the window. `CANNOT use API proposal:
+   resolvers.` means the `product.json` grant for `devhub.devhub-remote` did
+   not apply.
 
 ## The checklist
 
-What a change to any of this has to be walked through, the sibling of the
-eleven-step list in `remote-ssh.md`:
-
-1. Open a folder with a `.devcontainer/` as a Dev Container Workspace. The
-   window comes up with `Dev Container: <folder>` in the status bar.
-2. The integrated terminal is DevHub's tmux, running **in the container**:
-   `hostname` is the container's, and the workspace folder is the path inside.
-3. `devhub --version` works from a pane — that is the control-socket relay.
-4. `devhub --wait <file>` blocks and returns when the tab is closed.
-5. An Agent starts, and runs in the container.
-6. Git, the branch and the worktree rows are correct — and they are **this
-   Mac's** git, against the host folder.
-7. Stop the container (`docker stop <id>`). A machine condition appears saying
-   so; the Workspace's git keeps working.
-8. Start it again. The condition retracts, the server is restarted inside the
-   container, and the terminals come back — the window itself needs reloading,
-   for the reason above.
-9. Rebuild it (`devcontainer up --remove-existing-container`). The Workspace
-   survives with its row and its history; the runtime is replaced.
-10. Close the lid, open it. The workbench reconnects without restarting the
-    extension host.
-11. Nothing is left behind: no stray `docker exec` processes, no tmux server
-    outside the container.
+1. Open a folder with two definitions (`.devcontainer/devcontainer.json` and
+   `.devcontainer/<name>/devcontainer.json`). The palette offers **Reopen in
+   Container** and asks which.
+2. The window comes up with `Dev Container: <folder>` (and the definition's
+   name) in the status bar; the explorer shows the bind-mounted folder.
+3. Ctrl+`: the terminal is `tmux - Local` and attached to the Workspace's own
+   session on the Workspace's machine (`tmux -L <socket> list-clients`).
+4. A task runs in the container: its `hostname` is the container's.
+5. `devhub <file>` from inside the container opens in this window.
+6. **Switch Container** to the other definition: the new container comes up,
+   and the old one, if DevHub started it, stops per its `shutdownAction`.
+7. **Reopen Folder Locally**: the editor is on the folder's machine; a
+   container DevHub started stops, one it found running does not.
+8. Restart DevHub with the editor attached: it comes back attached, starting
+   (never building) the container.
+9. The row's **Reopen Editor Locally** does what 7 does.
+10. Close the Workspace: a container DevHub started stops.
+11. Nothing is left behind: no stray `docker exec` or `ssh` processes.
