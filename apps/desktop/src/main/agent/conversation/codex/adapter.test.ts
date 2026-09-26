@@ -175,6 +175,9 @@ function outline(
 			case "command":
 				line = `command: ${entry.line ?? ""} -> ${entry.output ?? ""}`;
 				break;
+			case "compaction":
+				line = `compaction ${entry.trigger ?? "-"}`;
+				break;
 			case "turn-end":
 				line = `turn-end ${entry.outcome} ${entry.durationMs ?? "-"}ms`;
 				break;
