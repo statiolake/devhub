@@ -226,6 +226,12 @@ gave it:
   is often the result; clicking one shows it whole. An image the page cannot
   open (a file on the Agent's machine, as Codex's image view names it) is
   named where it would be.
+- A Claude command run outside the sandbox (its Bash call's
+  `dangerouslyDisableSandbox`) has a faint warm line at the left of its row
+  and a small *unsandboxed* beside its title, which says *Ran outside the
+  sandbox* on hover. It is an everyday thing, so it is only a hint, in the
+  waiting colour of either theme. Codex sandboxes a turn by its permission
+  mode, not a call, so its calls carry no mark.
 - A block of a tool result DevHub does not know is a warning notice, like any
   unknown event, never dropped in silence.
 

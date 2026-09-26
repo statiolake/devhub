@@ -177,6 +177,11 @@ export interface ToolEntry {
    * stands in `spawns.state`; the same news ends either.
    */
   readonly background: BackgroundTask | undefined;
+  /**
+   * The call asked to run outside the CLI's sandbox (Claude's Bash with
+   * `dangerouslyDisableSandbox`). Drawn quietly: it is an everyday thing.
+   */
+  readonly outsideSandbox: boolean;
 }
 
 export interface BackgroundTask {

@@ -88,6 +88,7 @@ export function tool(
     spawns,
     background,
     parent = null,
+    outsideSandbox = false,
   }: {
     name?: string;
     input?: JsonValue;
@@ -96,6 +97,7 @@ export function tool(
     spawns?: SubagentInfo;
     background?: BackgroundTask;
     parent?: string | null;
+    outsideSandbox?: boolean;
   } = {},
 ): TranscriptEntry {
   return {
@@ -109,6 +111,7 @@ export function tool(
     output,
     spawns,
     background,
+    outsideSandbox,
   };
 }
 

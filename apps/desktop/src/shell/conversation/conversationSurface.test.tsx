@@ -334,6 +334,31 @@ describe("every entry kind", () => {
     ).toHaveLength(0);
   });
 
+  it("marks a call that ran outside the sandbox quietly, with a word on hover, and no other call", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Bash: brew install jq", {
+            input: {
+              command: "brew install jq",
+              dangerouslyDisableSandbox: true,
+            },
+            outsideSandbox: true,
+          }),
+        ),
+        put(tool("t2", "Bash: ls")),
+      ]),
+    );
+    const off = entry("t1").querySelector(".conversation-tool-entry")!;
+    expect(off).toHaveAttribute("data-sandbox", "off");
+    expect(
+      off.querySelector('[title="Ran outside the sandbox"]'),
+    ).not.toBeNull();
+    expect(
+      entry("t2").querySelector(".conversation-tool-entry"),
+    ).not.toHaveAttribute("data-sandbox");
+  });
+
   it("draws the images a person's message carried under its words", () => {
     draw(
       transcriptOf([

@@ -841,6 +841,26 @@
   color: var(--status-error);
 }
 
+/* A call that ran outside the sandbox: an everyday thing, so only a warm
+   hairline at its left edge and a small word beside its title, which says
+   what it means on hover. */
+.conversation-tool-entry[data-sandbox="off"]
+  > .conversation-tool
+  > .conversation-tool-summary {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--waiting) 55%, transparent);
+}
+
+.conversation-tool-sandbox {
+  flex: none;
+  order: 3;
+  padding: 0 0.4em;
+  border: 1px solid color-mix(in srgb, var(--waiting) 35%, transparent);
+  border-radius: var(--radius-control);
+  color: color-mix(in srgb, var(--waiting) 80%, var(--secondary));
+  font-size: 0.72em;
+  line-height: 1.5;
+}
+
 .conversation-tool-body {
   overflow: hidden;
   border: 1px solid var(--line-soft);

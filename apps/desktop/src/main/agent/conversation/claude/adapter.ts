@@ -1150,6 +1150,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						output: undefined,
 						spawns: spawnsOf(block.name, block.input, undefined),
 						background: undefined,
+						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
 					},
 				});
 			}
@@ -1218,6 +1219,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						title: toolTitle(block.name, block.input),
 						input: block.input,
 						spawns: spawnsOf(block.name, block.input, tool.spawns),
+						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
 					},
 				});
 			}

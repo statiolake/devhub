@@ -300,6 +300,15 @@ function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
         aria-hidden="true"
       />
       <ToolTitle title={entry.title} />
+      {entry.outsideSandbox ? (
+        <span
+          className="conversation-tool-sandbox"
+          title="Ran outside the sandbox"
+          aria-label="Ran outside the sandbox"
+        >
+          unsandboxed
+        </span>
+      ) : null}
       <span className="conversation-tool-status">
         {TOOL_STATUS_LABELS[entry.status]}
       </span>
@@ -323,7 +332,11 @@ const ToolView = memo(function ToolView({
   const { placeOf } = useSubagentPlacement();
   const place = placeOf(entry.id);
   return (
-    <div className="conversation-tool-entry" data-status={entry.status}>
+    <div
+      className="conversation-tool-entry"
+      data-status={entry.status}
+      data-sandbox={entry.outsideSandbox ? "off" : undefined}
+    >
       {/* Folded until asked for: output is most of a transcript's bulk, and
           a closed `<details>` keeps it out of layout. It is still in the
           document, so Cmd+F finds it and opens the entry it is in. */}

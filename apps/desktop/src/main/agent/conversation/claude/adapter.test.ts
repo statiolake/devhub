@@ -381,6 +381,7 @@ describe("the permission fixture", () => {
 				status: "succeeded",
 				output: [{ kind: "text", text: "/home/testuser/project" }],
 				spawns: undefined,
+				outsideSandbox: false,
 			},
 			{
 				kind: "assistant",
@@ -2836,5 +2837,26 @@ describe("images the person sends", () => {
 				],
 			}),
 		).toThrow(/only an image's own bytes/);
+	});
+});
+
+describe("a command run outside the sandbox", () => {
+	it("is marked on its call, from the call's own input, and no other call is", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("msg_s", [
+				toolUse("toolu_off", "Bash", {
+					command: "brew install jq",
+					dangerouslyDisableSandbox: true,
+				}),
+				toolUse("toolu_on", "Bash", { command: "ls" }),
+			]),
+		);
+		expect(entry(adapter, "tool:toolu_off")).toMatchObject({
+			outsideSandbox: true,
+		});
+		expect(entry(adapter, "tool:toolu_on")).toMatchObject({
+			outsideSandbox: false,
+		});
 	});
 });

@@ -1432,6 +1432,8 @@ export class CodexAdapter implements ProtocolAdapter {
 			spawns,
 			// Codex tells of no background task but a subagent's.
 			background: undefined,
+			// Codex sandboxes a turn, by its policy, not a call.
+			outsideSandbox: false,
 		};
 	}
 
