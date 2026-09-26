@@ -503,7 +503,10 @@ export function SendingView({ message }: { readonly message: SendingMessage }) {
         {message.origin === "injection" ? (
           <div className="conversation-user-origin">Sent by a template</div>
         ) : null}
-        <div className="conversation-user-text">{message.text}</div>
+        {message.text !== "" ? (
+          <div className="conversation-user-text">{message.text}</div>
+        ) : null}
+        <ImageStrip images={message.images} />
       </div>
     </div>
   );

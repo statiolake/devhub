@@ -60,7 +60,8 @@ export const conversationApi: ConversationApi = {
 		listeners.delete(agentId);
 		await ipcRenderer.invoke(CONVERSATION_CHANNELS.detach, agentId);
 	},
-	send: (agentId, text) => command(agentId, { kind: "send", text }),
+	send: (agentId, text, images) =>
+		command(agentId, { kind: "send", text, images }),
 	startEditingPending: (agentId, pending) =>
 		command(agentId, { kind: "start-editing-pending", pending }),
 	stopEditingPending: (agentId, pending) =>

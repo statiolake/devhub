@@ -60,6 +60,7 @@ import {
 	type SendingMessage,
 	type SubagentInfo,
 	type ToolEntry,
+	type ImageRef,
 	type ToolOutput,
 	type ToolOutputPart,
 	type ToolStatus,
@@ -380,7 +381,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			}
 			switch (command.kind) {
 				case "send":
-					return this.send(command.text, command.origin);
+					return this.send(command.text, command.images, command.origin);
 				case "instruct":
 					return this.instruct(command.subagent, command.text);
 				case "interrupt":
@@ -633,6 +634,11 @@ export class CodexAdapter implements ProtocolAdapter {
 						text: params.input
 							.flatMap((input) => (input.type === "text" ? [input.text] : []))
 							.join("\n"),
+						images: params.input.flatMap((input) =>
+							input.type === "image" && "url" in input
+								? [dataImage(input.url)]
+								: [],
+						),
 						origin: match[1] === "injection" ? "injection" : "person",
 					},
 				});
@@ -2085,14 +2091,35 @@ export class CodexAdapter implements ProtocolAdapter {
 	// -------------------------------------------------------------------------
 	// Commands.
 
-	private send(text: string, origin: "person" | "injection"): void {
+	private send(
+		text: string,
+		images: readonly ImageRef[],
+		origin: "person" | "injection",
+	): void {
 		const { state } = this.current;
 		if (state.phase !== "ready" || this.mainThread === undefined) {
 			throw new Error(
 				`cannot send to a Codex conversation that is ${state.phase}`,
 			);
 		}
-		const input: UserInput[] = [{ type: "text", text, text_elements: [] }];
+		// Images as data URLs, which app-server takes as it takes any image
+		// URL: the file is on the page's machine, not necessarily the Agent's.
+		const input: UserInput[] = [
+			...(text === ""
+				? []
+				: [{ type: "text" as const, text, text_elements: [] }]),
+			...images.map((image): UserInput => {
+				if (image.source.kind !== "data") {
+					throw new Error(
+						`Codex is sent only an image's own bytes, not ${image.source.kind} ${JSON.stringify(image.label)}`,
+					);
+				}
+				return {
+					type: "image",
+					url: `data:${image.mediaType};base64,${image.source.base64}`,
+				};
+			}),
+		];
 		const clientUserMessageId = `devhub-${origin}-${this.nextUserMessage}`;
 		this.nextUserMessage += 1;
 		if (this.runningTurn !== undefined) {
@@ -2486,6 +2513,15 @@ function subagentState(status: CollabAgentStatus): SubagentInfo["state"] {
 }
 
 /** An MCP result's text parts, or the result whole when it has none. */
+/** An image sent as a data URL, read back as the page draws it. */
+function dataImage(url: string): ImageRef {
+	return {
+		mediaType: /^data:([^;,]+)/u.exec(url)?.[1] ?? "image/*",
+		source: { kind: "url", url },
+		label: "image",
+	};
+}
+
 /** A command's output as Codex gives it: stdout and stderr as one. */
 function commandPart(
 	exitCode: number | undefined,

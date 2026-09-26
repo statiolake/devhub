@@ -126,6 +126,7 @@ describe("/resume through a real host", () => {
 		await until(conversation, idle);
 		await conversation.command({
 			kind: "send",
+			images: [],
 			text: "Say one",
 			origin: "person",
 		});
@@ -151,6 +152,7 @@ describe("/resume through a real host", () => {
 
 		await conversation.command({
 			kind: "send",
+			images: [],
 			text: "Go on",
 			origin: "person",
 		});

@@ -13,6 +13,7 @@ import {
   EMPTY_TRANSCRIPT,
   TranscriptInvariantError,
   applyEvent,
+  attachedImages,
   applyEvents,
   childrenOf,
   conversationActivity,
@@ -991,6 +992,7 @@ describe("a rewind", () => {
             {
               id: pendingId("held:1"),
               text: "later",
+              images: [],
               failure: undefined,
               editing: false,
             },
@@ -1038,12 +1040,14 @@ describe("the messages DevHub holds", () => {
       {
         id: pendingId("held:1"),
         text: "one",
+        images: [],
         failure: undefined,
         editing: false,
       },
       {
         id: pendingId("held:2"),
         text: "two",
+        images: [],
         failure: "the host is gone",
         editing: false,
       },
@@ -1098,5 +1102,42 @@ describe("a replayed journal", () => {
     expect(applyEvents(EMPTY_TRANSCRIPT, events)).toEqual(live);
     expect(conversationStatus(live)).toBe("idle");
     expect(live.requests).toEqual([]);
+  });
+});
+
+describe("attached images", () => {
+  it("are taken as the page's own bytes of a kind a model takes", () => {
+    const image = {
+      mediaType: "image/webp",
+      source: { kind: "data", base64: "AAAA" },
+      label: "a.webp",
+    };
+    expect(attachedImages([image])).toEqual([image]);
+  });
+
+  it("are refused, naming which, when one is anything else", () => {
+    expect(() =>
+      attachedImages([
+        {
+          mediaType: "image/png",
+          source: { kind: "file", path: "/etc/passwd" },
+          label: "x",
+        },
+      ]),
+    ).toThrow(
+      "attached image 0 is not a PNG, JPEG, GIF or WebP image's own bytes",
+    );
+    expect(() =>
+      attachedImages([
+        {
+          mediaType: "image/svg+xml",
+          source: { kind: "data", base64: "A" },
+          label: "x",
+        },
+      ]),
+    ).toThrow(/attached image 0/);
+    expect(() => attachedImages(undefined)).toThrow(
+      "attached images are not a list",
+    );
   });
 });

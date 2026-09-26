@@ -33,7 +33,12 @@
  * goes away with it open; the caret starts at the end of its words.
  *
  * Rewinding to before a message puts its words back here, ahead of whatever
- * was being typed.
+ * was being typed, and its images back among the attached.
+ *
+ * Images are attached by pasting them or dropping them on the box: each is a
+ * thumbnail over the field with its own Remove, and goes with the next
+ * message (which may be images alone). A file that is not an image a model
+ * takes is refused at the page's root, naming it; nothing is dropped quietly.
  */
 
 import {
@@ -45,12 +50,14 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from "react";
-import type {
-  ConversationState,
-  PendingMessage,
-  SlashCommand,
-  Transcript,
-  UserEntry,
+import {
+  SENDABLE_IMAGE_TYPES,
+  type ConversationState,
+  type ImageRef,
+  type PendingMessage,
+  type SlashCommand,
+  type Transcript,
+  type UserEntry,
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
@@ -59,6 +66,7 @@ import {
   useConversationActions,
   type SettingName,
 } from "./ConversationContext";
+import { ImageView } from "./EntryParts";
 import { EditIcon, SendIcon, StopIcon } from "./icons";
 import { SettingPickers } from "./SettingPickers";
 
@@ -110,6 +118,75 @@ export function pendingStatus(message: PendingMessage): string {
 }
 
 /**
+ * The images among `files`, read into their own bytes. A file of another
+ * kind refuses the whole lot, naming it, so the person knows what was not
+ * attached.
+ */
+export async function readImages(
+  files: readonly File[],
+): Promise<readonly ImageRef[]> {
+  const refused = files.find(
+    (file) => !(SENDABLE_IMAGE_TYPES as readonly string[]).includes(file.type),
+  );
+  if (refused !== undefined) {
+    throw new Error(
+      `${refused.name || "The pasted file"} cannot be attached: the Agent takes PNG, JPEG, GIF or WebP images.`,
+    );
+  }
+  return Promise.all(
+    files.map(
+      (file) =>
+        new Promise<ImageRef>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const url = reader.result as string;
+            resolve({
+              mediaType: file.type,
+              source: { kind: "data", base64: url.slice(url.indexOf(",") + 1) },
+              label: file.name || "image",
+            });
+          };
+          reader.onerror = () =>
+            reject(
+              reader.error ??
+                new Error(`${file.name || "The image"} could not be read.`),
+            );
+          reader.readAsDataURL(file);
+        }),
+    ),
+  );
+}
+
+/** Thumbnails of attached images, each with its own Remove. */
+function Attachments({
+  images,
+  remove,
+}: {
+  readonly images: readonly ImageRef[];
+  readonly remove: (image: ImageRef) => void;
+}) {
+  if (images.length === 0) return null;
+  return (
+    <ul className="conversation-attachments" aria-label="Attached images">
+      {images.map((image, index) => (
+        <li key={index} className="conversation-attachment">
+          <ImageView image={image} />
+          <button
+            type="button"
+            className="conversation-attachment-remove"
+            aria-label={`Remove ${image.label}`}
+            title="Remove"
+            onClick={() => remove(image)}
+          >
+            ×
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
  * One message DevHub holds, with what can be done to it: Send now, Edit (in
  * place: Enter saves, Esc gives it up) and Remove.
  */
@@ -156,7 +233,7 @@ function PendingItem({
   };
   const save = () => {
     if (draft === undefined) return;
-    if (draft.trim() === "") {
+    if (draft.trim() === "" && message.images.length === 0) {
       void removePending(message.id).catch(reportFailure);
       return;
     }
@@ -170,6 +247,13 @@ function PendingItem({
       className="conversation-pending-item"
       data-failed={message.failure !== undefined || undefined}
     >
+      {message.images.length > 0 ? (
+        <div className="conversation-images">
+          {message.images.map((image, index) => (
+            <ImageView key={index} image={image} />
+          ))}
+        </div>
+      ) : null}
       {draft === undefined ? (
         <div className="conversation-pending-text">{message.text}</div>
       ) : (
@@ -334,6 +418,7 @@ export function Composer({
   const { send, interrupt, reportFailure, openResume } =
     useConversationActions();
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<readonly ImageRef[]>([]);
   /** Which of the history the composer is showing, while it is showing one. */
   const [recalled, setRecalled] = useState<number | undefined>(undefined);
   const [selected, setSelected] = useState(0);
@@ -370,6 +455,10 @@ export function Composer({
     setText((current) =>
       current === "" ? restored.text : `${restored.text}\n\n${current}`,
     );
+    setAttachments((current) => [
+      ...restored.images.filter((image) => image.source.kind === "data"),
+      ...current,
+    ]);
     setRecalled(undefined);
     const input = inputRef.current;
     if (input) {
@@ -392,12 +481,25 @@ export function Composer({
       choose(answered);
       return;
     }
-    if (line.trim() === "" || refusal !== undefined) return;
-    void send(line).then(() => {
-      // Only what was sent is cleared: anything typed since stays.
+    const images = attachments;
+    if ((line.trim() === "" && images.length === 0) || refusal !== undefined)
+      return;
+    void send(line, images).then(() => {
+      // Only what was sent is cleared: anything typed or attached since stays.
       setText((current) => (current === line ? "" : current));
+      setAttachments((current) =>
+        current.filter((image) => !images.includes(image)),
+      );
       setRecalled(undefined);
     }, reportFailure);
+  };
+
+  const attach = (files: readonly File[]) => {
+    if (files.length === 0 || refusal !== undefined) return;
+    void readImages(files).then(
+      (images) => setAttachments((current) => [...current, ...images]),
+      reportFailure,
+    );
   };
 
   const choose = (command: SlashCommand) => {
@@ -483,6 +585,15 @@ export function Composer({
       <div
         className="conversation-composer-box"
         data-disabled={refusal !== undefined || undefined}
+        onDragOver={(event) => {
+          if ([...event.dataTransfer.types].includes("Files"))
+            event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (event.dataTransfer.files.length === 0) return;
+          event.preventDefault();
+          attach([...event.dataTransfer.files]);
+        }}
         // A click on the box's padding or toolbar gap is a click on the field.
         onMouseDown={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -490,6 +601,14 @@ export function Composer({
           inputRef.current?.focus();
         }}
       >
+        <Attachments
+          images={attachments}
+          remove={(image) =>
+            setAttachments((current) =>
+              current.filter((each) => each !== image),
+            )
+          }
+        />
         <textarea
           ref={inputRef}
           className="conversation-composer-input"
@@ -504,6 +623,13 @@ export function Composer({
           aria-expanded={offered.length > 0}
           onChange={(event) => edit(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(event) => {
+            // Files pasted (a screenshot) are attached; text pastes as text.
+            const files = [...event.clipboardData.files];
+            if (files.length === 0) return;
+            event.preventDefault();
+            attach(files);
+          }}
           onCompositionStart={() => {
             composing.current = true;
           }}
@@ -536,7 +662,10 @@ export function Composer({
               className="conversation-send"
               aria-label="Send"
               title="Send (Enter)"
-              disabled={refusal !== undefined || text.trim() === ""}
+              disabled={
+                refusal !== undefined ||
+                (text.trim() === "" && attachments.length === 0)
+              }
               onClick={submit}
             >
               <SendIcon />

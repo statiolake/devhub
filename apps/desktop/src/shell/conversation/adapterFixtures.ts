@@ -73,6 +73,7 @@ export function codexTranscript(
   for (const line of adapter.encode({
     kind: "send",
     text: message,
+    images: [],
     origin: "person",
   })) {
     feed(adapter, adapter.sent(line));

@@ -126,7 +126,7 @@ describe("sending", () => {
     const { actions } = draw(withSession());
     type("fix the build");
     press("Enter");
-    expect(actions.send).toHaveBeenCalledWith("fix the build");
+    expect(actions.send).toHaveBeenCalledWith("fix the build", []);
     await waitFor(() => expect(composer()).toHaveValue(""));
   });
 
@@ -196,7 +196,7 @@ describe("sending", () => {
     const { actions } = draw(withSession([RUNNING]));
     type("also check the tests");
     press("Enter");
-    expect(actions.send).toHaveBeenCalledWith("also check the tests");
+    expect(actions.send).toHaveBeenCalledWith("also check the tests", []);
   });
 });
 
@@ -251,7 +251,7 @@ describe("when the conversation takes no input", () => {
       expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
       type("later");
       press("Enter");
-      expect(actions.send).toHaveBeenCalledWith("later");
+      expect(actions.send).toHaveBeenCalledWith("later", []);
     }
   });
 });
@@ -319,7 +319,7 @@ describe("slash commands", () => {
     type("/zzz");
     expect(screen.queryByRole("listbox")).toBeNull();
     press("Enter");
-    expect(actions.send).toHaveBeenCalledWith("/zzz");
+    expect(actions.send).toHaveBeenCalledWith("/zzz", []);
   });
 });
 
@@ -732,12 +732,14 @@ describe("messages waiting to be sent", () => {
       {
         id: pendingId("held:1"),
         text: "look at the tests",
+        images: [],
         failure: undefined,
         editing: false,
       },
       {
         id: pendingId("held:2"),
         text: "and the docs",
+        images: [],
         failure: "the host is gone",
         editing: false,
       },
@@ -943,5 +945,83 @@ describe("a message to a subagent", () => {
       expect(actions.reportFailure).toHaveBeenCalledWith(failure),
     );
     expect(field).toHaveValue("hello");
+  });
+});
+
+describe("images", () => {
+  const png = (name: string) =>
+    new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+  const box = () =>
+    document.querySelector<HTMLElement>(".conversation-composer-box")!;
+
+  it("pasted are attached as thumbnails, each removable, and go with the words", async () => {
+    const { actions } = draw(withSession());
+    fireEvent.paste(composer(), {
+      clipboardData: { files: [png("one.png"), png("two.png")] },
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("list", { name: "Attached images" })
+          .querySelectorAll("img").length,
+      ).toBeGreaterThan(0),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove one.png" }));
+    expect(screen.queryByRole("button", { name: "Remove one.png" })).toBeNull();
+    type("what is this?");
+    press("Enter");
+    expect(actions.send).toHaveBeenCalledWith("what is this?", [
+      {
+        mediaType: "image/png",
+        source: { kind: "data", base64: "iVBORw==" },
+        label: "two.png",
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("list", { name: "Attached images" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("dropped on the box are attached, and can be sent without words", async () => {
+    const { actions } = draw(withSession());
+    fireEvent.drop(box(), {
+      dataTransfer: { files: [png("drop.png")], types: ["Files"] },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Remove drop.png" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    press("Enter");
+    expect(actions.send).toHaveBeenCalledWith("", [
+      expect.objectContaining({ label: "drop.png" }),
+    ]);
+  });
+
+  it("refuses a file that is not an image a model takes, at the page's root, naming it", async () => {
+    const { actions } = draw(withSession());
+    fireEvent.paste(composer(), {
+      clipboardData: {
+        files: [new File(["x"], "notes.pdf", { type: "application/pdf" })],
+      },
+    });
+    await waitFor(() => expect(actions.reportFailure).toHaveBeenCalledOnce());
+    expect(
+      (vi.mocked(actions.reportFailure).mock.calls[0]![0] as Error).message,
+    ).toBe(
+      "notes.pdf cannot be attached: the Agent takes PNG, JPEG, GIF or WebP images.",
+    );
+    expect(screen.queryByRole("list", { name: "Attached images" })).toBeNull();
+  });
+
+  it("leaves text pasted as text", () => {
+    draw(withSession());
+    const event = fireEvent.paste(composer(), {
+      clipboardData: { files: [], getData: () => "hello" },
+    });
+    expect(event).toBe(true);
   });
 });

@@ -287,6 +287,7 @@ export type SentLine =
 	| {
 			readonly type: "user";
 			readonly text: string;
+			readonly images: readonly ImageRef[];
 			readonly origin: "person" | "injection";
 	  }
 	| {
@@ -1230,9 +1231,29 @@ export function decodeSent(line: string): SentLine {
 			if (origin !== "person" && origin !== "injection") {
 				return f.fail(`sent user.${ORIGIN_KEY}`, `"person" or "injection"`);
 			}
+			const content = message.content;
+			if (typeof content === "string")
+				return { type: "user", text: content, images: [], origin };
+			const blocks = f
+				.array(content, "sent user.message.content")
+				.map((each, index): { text: string } | { image: ImageRef } => {
+					const at = `sent user.message.content[${index}]`;
+					const block = f.object(each, at);
+					switch (f.string(block.type, `${at}.type`)) {
+						case "text":
+							return { text: f.string(block.text, `${at}.text`) };
+						case "image":
+							return { image: decodeImage(block, at, f) };
+						default:
+							return f.fail(`${at}.type`, `"text" or "image"`);
+					}
+				});
 			return {
 				type: "user",
-				text: f.string(message.content, "sent user.message.content"),
+				text: blocks
+					.flatMap((each) => ("text" in each ? [each.text] : []))
+					.join("\n"),
+				images: blocks.flatMap((each) => ("image" in each ? [each.image] : [])),
 				origin,
 			};
 		}

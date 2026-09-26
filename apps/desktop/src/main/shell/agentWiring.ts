@@ -585,7 +585,12 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					conversation.reattach();
 					reading = observeConversation(conversation.reading());
 					send = (text) =>
-						conversation.command({ kind: "send", text, origin: "injection" });
+						conversation.command({
+							kind: "send",
+							text,
+							images: [],
+							origin: "injection",
+						});
 				} else {
 					reading = {
 						...observe(

@@ -17,6 +17,7 @@ import {
   type ConversationEvent,
   type RequestAnswer,
   type EntryId,
+  type ImageRef,
   type PendingId,
   type RequestId,
   type Transcript,
@@ -53,7 +54,8 @@ export function ConversationPane({
     return {
       writeClipboard: (text: string) => bridge.writeClipboard(text),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),
-      send: (text: string) => bridge.conversation.send(agentId, text),
+      send: (text: string, images: readonly ImageRef[]) =>
+        bridge.conversation.send(agentId, text, images),
       startEditingPending: (pending: PendingId) =>
         bridge.conversation.startEditingPending(agentId, pending),
       stopEditingPending: (pending: PendingId) =>

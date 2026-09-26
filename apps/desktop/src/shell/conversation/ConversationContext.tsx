@@ -19,6 +19,7 @@
 import { createContext, useContext } from "react";
 import type {
   EntryId,
+  ImageRef,
   PendingId,
   RequestAnswer,
   RequestId,
@@ -36,7 +37,7 @@ export interface ConversationActions {
    * Say something to the Agent as the person: written at once when it is
    * idle, else held as a pending message (`Transcript.pending`).
    */
-  readonly send: (text: string) => Promise<void>;
+  readonly send: (text: string, images: readonly ImageRef[]) => Promise<void>;
   /**
    * The person opened a held message to change it: main holds it, unwritten,
    * until `editPending` saves the change or `stopEditingPending` gives it up.

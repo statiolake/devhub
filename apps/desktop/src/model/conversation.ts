@@ -80,6 +80,42 @@ export type ImageSource =
   | { readonly kind: "url"; readonly url: string }
   | { readonly kind: "file"; readonly path: string };
 
+/** The kinds of image a person can send: the ones both CLIs' models take. */
+export const SENDABLE_IMAGE_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+] as const;
+
+/**
+ * Images a page says the person attached, checked: each its own bytes, of a
+ * kind a model takes. Anything else is refused, with what was wrong.
+ */
+export function attachedImages(value: unknown): readonly ImageRef[] {
+  if (!Array.isArray(value)) throw new Error("attached images are not a list");
+  return value.map((each: unknown, index) => {
+    const image = each as Partial<ImageRef> | null;
+    const source = image?.source as Partial<ImageSource> | undefined;
+    if (
+      typeof image?.mediaType !== "string" ||
+      !(SENDABLE_IMAGE_TYPES as readonly string[]).includes(image.mediaType) ||
+      typeof image.label !== "string" ||
+      source?.kind !== "data" ||
+      typeof (source as { base64?: unknown }).base64 !== "string"
+    ) {
+      throw new Error(
+        `attached image ${index} is not a PNG, JPEG, GIF or WebP image's own bytes`,
+      );
+    }
+    return {
+      mediaType: image.mediaType,
+      source: { kind: "data", base64: (source as { base64: string }).base64 },
+      label: image.label,
+    };
+  });
+}
+
 export type TranscriptEntry =
   | UserEntry
   | AssistantEntry
@@ -460,6 +496,7 @@ export interface SendingMessage {
   /** Unique among the messages sending; not the entry id the echo will have. */
   readonly id: string;
   readonly text: string;
+  readonly images: readonly ImageRef[];
   readonly origin: "person" | "injection";
 }
 
@@ -478,6 +515,8 @@ export function pendingId(raw: string): PendingId {
 export interface PendingMessage {
   readonly id: PendingId;
   readonly text: string;
+  /** The images attached to it, sent with its words. */
+  readonly images: readonly ImageRef[];
   /** Why the last try to write it failed, if it did. It is held until the person tries again. */
   readonly failure: string | undefined;
   /**

@@ -187,6 +187,7 @@ The GUI draws the transcript and lets you:
 
 - write messages at any time: while the Agent is busy they wait, and can be
   changed, removed or sent into the running turn (below);
+- attach images to a message by pasting or dropping them (below);
 - answer permission and question requests;
 - interrupt a turn;
 - rewind the conversation to before any of your messages (below);
@@ -314,7 +315,15 @@ is a notice. Its work is drawn in one place at a time:
 
 **Both CLIs**
 
-- No images can be sent yet.
+- **Images** go with a message: paste one (a screenshot) into the message
+  box or drop image files on it. Each is a thumbnail over the field with its
+  own remove button, and a message can be images alone. PNG, JPEG, GIF and
+  WebP are taken; any other file is refused with a message naming it, not
+  dropped. Claude is sent them as image blocks before the words of its
+  stream-json user message; Codex as `image` inputs holding data URLs (the
+  file is on this Mac, which need not be the Agent's machine). A message that
+  waits keeps its images through an edit of its words, and a rewind puts a
+  message's images back with its words.
 - An event DevHub has never heard of is not dropped. It appears in the
   transcript as a warning notice with the event folded under it, and the
   conversation goes on.

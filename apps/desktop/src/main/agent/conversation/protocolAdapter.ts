@@ -29,6 +29,7 @@
 import type {
 	ConversationEvent,
 	EntryId,
+	ImageRef,
 	RequestAnswer,
 	RequestId,
 	Transcript,
@@ -44,6 +45,8 @@ export type ConversationCommand =
 	| {
 			readonly kind: "send";
 			readonly text: string;
+			/** Images attached to the words, each its own bytes (`source.kind` "data"). */
+			readonly images: readonly ImageRef[];
 			readonly origin: "person" | "injection";
 	  }
 	/**

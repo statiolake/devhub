@@ -217,7 +217,7 @@ function result(fields: Record<string, unknown> = {}): string {
 function inTurn(): ClaudeAdapter {
 	const adapter = new ClaudeAdapter("boot");
 	adapter.received(init());
-	perform(adapter, { kind: "send", text: "go", origin: "person" });
+	perform(adapter, { kind: "send", text: "go", images: [], origin: "person" });
 	adapter.received(echo("go", "u-go"));
 	return adapter;
 }
@@ -564,6 +564,7 @@ describe("the permission fixture", () => {
 		expect(
 			adapter.encode({
 				kind: "send",
+				images: [],
 				text: "Run pwd with Bash",
 				origin: "person",
 			}),
@@ -715,6 +716,7 @@ describe("user messages", () => {
 		const adapter = new ClaudeAdapter("boot");
 		const [line] = adapter.encode({
 			kind: "send",
+			images: [],
 			text: "/review 12",
 			origin: "injection",
 		});
@@ -730,7 +732,12 @@ describe("user messages", () => {
 	it("appear when the CLI takes them, and the turn starts then", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "hello", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "hello",
+			images: [],
+			origin: "person",
+		});
 		expect(adapter.transcript.entries).toEqual([]);
 		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
 		adapter.received(echo("hello", "u1"));
@@ -747,8 +754,18 @@ describe("user messages", () => {
 	it("are matched to what DevHub sent in order, so each keeps its own origin", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "same", origin: "injection" });
-		perform(adapter, { kind: "send", text: "same", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "same",
+			images: [],
+			origin: "injection",
+		});
+		perform(adapter, {
+			kind: "send",
+			text: "same",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("same", "u1"));
 		adapter.received(echo("same", "u2"));
 		expect((entry(adapter, "user:u1") as UserEntry).origin).toBe("injection");
@@ -1055,7 +1072,12 @@ describe("interrupting", () => {
 		adapter.received(
 			result({ subtype: "error_during_execution", is_error: true }),
 		);
-		perform(adapter, { kind: "send", text: "again", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "again",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("again", "u2"));
 		adapter.received(
 			result({
@@ -1758,9 +1780,14 @@ describe("a message being sent", () => {
 	it("is sending from its write until the CLI's echo makes it an entry, in one step", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "go",
+			images: [],
+			origin: "person",
+		});
 		expect(adapter.transcript.sending).toEqual([
-			{ id: "sent:1", text: "go", origin: "person" },
+			{ id: "sent:1", text: "go", images: [], origin: "person" },
 		]);
 		expect(adapter.transcript.entries).toEqual([]);
 		const step = adapter.received(echo("go", "u-go"));
@@ -1779,6 +1806,7 @@ describe("a message being sent", () => {
 		live.received(greeting);
 		const written = perform(live, {
 			kind: "send",
+			images: [],
 			text: "go",
 			origin: "person",
 		});
@@ -1792,7 +1820,12 @@ describe("a message being sent", () => {
 	it("is dropped with everything else the old CLI had when it is started again", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "go",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(json({ type: "devhub_resume", session: "other" }));
 		expect(adapter.transcript.sending).toEqual([]);
 	});
@@ -1832,7 +1865,12 @@ describe("a usage limit", () => {
 			),
 		).toBe(true);
 		expect(
-			perform(adapter, { kind: "send", text: "again", origin: "person" }),
+			perform(adapter, {
+				kind: "send",
+				text: "again",
+				images: [],
+				origin: "person",
+			}),
 		).toHaveLength(1);
 	});
 });
@@ -1937,7 +1975,12 @@ describe("a subagent's end", () => {
 			}),
 		);
 		adapter.received(result());
-		perform(adapter, { kind: "send", text: "next", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "next",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("next", "u-next"));
 		adapter.received(result());
 		adapter.received(json({ type: "devhub_rewind", message: "user:u-next" }));
@@ -2011,13 +2054,23 @@ describe("taking back the last turn", () => {
 	function twoTurns(version = "2.1.282"): ClaudeAdapter {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init({ claude_code_version: version }));
-		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "first",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("first", "u1"));
 		adapter.received(
 			assistantLine("msg_1", [TEXT("one")], null, { uuid: "a1" }),
 		);
 		adapter.received(result());
-		perform(adapter, { kind: "send", text: "second", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "second",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("second", "u2"));
 		adapter.received(
 			assistantLine("msg_2", [TEXT("two")], null, { uuid: "a2" }),
@@ -2078,7 +2131,12 @@ describe("taking back the last turn", () => {
 		adapter.received(initialized("boot:1"));
 		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
 
-		perform(adapter, { kind: "send", text: "second, again", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "second, again",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("second, again", "u3"));
 		expect(entry(adapter, "user:u3")).toMatchObject({ text: "second, again" });
 		// And that message is the one to take back next, from the same anchor.
@@ -2092,7 +2150,12 @@ describe("taking back the last turn", () => {
 	it("starts a fresh session when the message was the first", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init({ claude_code_version: "2.1.282" }));
-		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "first",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("first", "u1"));
 		adapter.received(result());
 		expect(adapter.rewind(entryId("user:u1"))).toMatchObject({
@@ -2112,7 +2175,12 @@ describe("taking back the last turn", () => {
 		);
 		for (const line of history) adapter.received(line);
 		adapter.received(init({ claude_code_version: "2.1.282" }));
-		perform(adapter, { kind: "send", text: "next", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "next",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("next", "u9"));
 		adapter.received(result());
 		const last = (JSON.parse(history.at(-1)!) as { record: { uuid: string } })
@@ -2144,7 +2212,12 @@ describe("taking back the last turn", () => {
 		expect(adapter.transcript.entries).toEqual([]);
 
 		const three = twoTurns();
-		perform(three, { kind: "send", text: "third", origin: "person" });
+		perform(three, {
+			kind: "send",
+			text: "third",
+			images: [],
+			origin: "person",
+		});
 		three.received(echo("third", "u3"));
 		three.received(result());
 		const cut = three.rewind(entryId("user:u2"));
@@ -2162,7 +2235,12 @@ describe("taking back the last turn", () => {
 
 	it("refuses a message that is not a rewind target now", () => {
 		const adapter = twoTurns();
-		perform(adapter, { kind: "send", text: "third", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "third",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("third", "u3"));
 		expect(() => adapter.rewind(entryId("user:u1"))).toThrow(
 			/user:u1 is not a message the conversation can be rewound to now/,
@@ -2181,12 +2259,23 @@ describe("a message written while a turn runs", () => {
 	it("is queued for the turn's next step, and one written between turns starts one", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		const idle = adapter.encode({ kind: "send", text: "go", origin: "person" });
+		const idle = adapter.encode({
+			kind: "send",
+			text: "go",
+			images: [],
+			origin: "person",
+		});
 		expect(JSON.parse(idle[0]!)).not.toHaveProperty("priority");
-		perform(adapter, { kind: "send", text: "go", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "go",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("go", "u1"));
 		const midTurn = adapter.encode({
 			kind: "send",
+			images: [],
 			text: "and also this",
 			origin: "person",
 		});
@@ -2196,7 +2285,12 @@ describe("a message written while a turn runs", () => {
 			message: { content: "and also this" },
 		});
 		// It is the person's like any other once the CLI takes it.
-		perform(adapter, { kind: "send", text: "and also this", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "and also this",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("and also this", "u2"));
 		expect(entry(adapter, "user:u2")).toMatchObject({
 			origin: "person",
@@ -2224,7 +2318,12 @@ describe("going on with another session (/resume)", () => {
 	function oneTurn(): ClaudeAdapter {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "first",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("first", "u1"));
 		adapter.received(
 			assistantLine("msg_1", [{ type: "text", text: "one" }], null, {
@@ -2306,7 +2405,12 @@ describe("going on with another session (/resume)", () => {
 	it("is refused while a turn runs", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "first", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "first",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(echo("first", "u1"));
 		expect(() => adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
 	});
@@ -2604,7 +2708,12 @@ describe("images the person put in a message", () => {
 	it("are on the message's entry, with its words, when the CLI echoes it", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
-		perform(adapter, { kind: "send", text: "what is this?", origin: "person" });
+		perform(adapter, {
+			kind: "send",
+			text: "what is this?",
+			images: [],
+			origin: "person",
+		});
 		adapter.received(
 			json({
 				type: "user",
@@ -2633,5 +2742,99 @@ describe("images the person put in a message", () => {
 			],
 		});
 		expect(adapter.transcript.sending).toEqual([]);
+	});
+});
+
+describe("images the person sends", () => {
+	const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
+	const IMAGE = {
+		mediaType: "image/png",
+		source: { kind: "data", base64: PNG },
+		label: "shot.png",
+	} as const;
+
+	it("are written as image blocks before the words, and the message is sending with them until its echo", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		const [line] = perform(adapter, {
+			kind: "send",
+			text: "what is this?",
+			origin: "person",
+			images: [IMAGE],
+		});
+		expect(JSON.parse(line!)).toMatchObject({
+			type: "user",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "image",
+						source: { type: "base64", media_type: "image/png", data: PNG },
+					},
+					{ type: "text", text: "what is this?" },
+				],
+			},
+		});
+		// What was written is what it is known by: the API's block names no file.
+		expect(adapter.transcript.sending).toEqual([
+			{
+				id: "sent:1",
+				text: "what is this?",
+				images: [{ ...IMAGE, label: "image" }],
+				origin: "person",
+			},
+		]);
+		adapter.received(
+			json({
+				type: "user",
+				message: JSON.parse(line!).message,
+				parent_tool_use_id: null,
+				session_id: SESSION,
+				uuid: "u-img",
+			}),
+		);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(entry(adapter, "user:u-img")).toMatchObject({
+			text: "what is this?",
+			images: [
+				{ mediaType: "image/png", source: { kind: "data", base64: PNG } },
+			],
+		});
+	});
+
+	it("can be sent without words", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		const [line] = perform(adapter, {
+			kind: "send",
+			text: "",
+			origin: "person",
+			images: [IMAGE],
+		});
+		expect(JSON.parse(line!).message.content).toEqual([
+			{
+				type: "image",
+				source: { type: "base64", media_type: "image/png", data: PNG },
+			},
+		]);
+	});
+
+	it("are refused when the image is not the page's own bytes", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		expect(() =>
+			adapter.encode({
+				kind: "send",
+				text: "x",
+				origin: "person",
+				images: [
+					{
+						mediaType: "image/png",
+						source: { kind: "file", path: "/a.png" },
+						label: "/a.png",
+					},
+				],
+			}),
+		).toThrow(/only an image's own bytes/);
 	});
 });

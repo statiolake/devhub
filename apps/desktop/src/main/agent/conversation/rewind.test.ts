@@ -131,7 +131,7 @@ describe("rewinding through a real host", () => {
 			transcript.entries.filter((entry) => entry.kind === "turn-end").length ===
 				count;
 		for (const [index, text] of ["Say one", "Say two", "Say three"].entries()) {
-			await conversation.submit(text);
+			await conversation.submit(text, []);
 			await until(conversation, turnsEnded(index + 1));
 		}
 		const { entries } = conversation.reading().transcript;
@@ -146,7 +146,7 @@ describe("rewinding through a real host", () => {
 		expect(await conversation.rewind(targets[1]!)).toBe("rewound");
 		expect(texts(conversation)).toEqual(["> Say one", "< One."]);
 		await until(conversation, idle);
-		await conversation.submit("Say four");
+		await conversation.submit("Say four", []);
 		await until(conversation, turnsEnded(2));
 		expect(texts(conversation)).toEqual([
 			"> Say one",

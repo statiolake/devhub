@@ -290,7 +290,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.refuseIfSpent();
 		switch (command.kind) {
 			case "send":
-				return [userLine(command.text, command.origin, this.running())];
+				return [
+					userLine(
+						command.text,
+						command.images,
+						command.origin,
+						this.running(),
+					),
+				];
 			case "instruct":
 				throw new Error(
 					"Claude Code's stream-json has no way to say something to a subagent, so no subagent takes the person's messages",
@@ -316,7 +323,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					);
 					return;
 				case "effort":
-					this.replies.push(userLine(`/effort ${id}`, "person"));
+					this.replies.push(userLine(`/effort ${id}`, [], "person"));
 					return;
 			}
 		});
@@ -377,6 +384,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					this.untaken.push({
 						id: `sent:${this.written}`,
 						text: sent.text,
+						images: sent.images,
 						origin: sent.origin,
 					});
 					this.emitSending();
@@ -1497,17 +1505,46 @@ function toolEntryId(toolUseId: string): EntryId {
  */
 function userLine(
 	text: string,
+	images: readonly ImageRef[],
 	origin: "person" | "injection",
 	midTurn = false,
 ): string {
 	return JSON.stringify({
 		type: "user",
-		message: { role: "user", content: text },
+		message: {
+			role: "user",
+			// Plain words stay a string, as the CLI's own messages are; with
+			// images, the images come first, as the API advises.
+			content:
+				images.length === 0
+					? text
+					: [
+							...images.map(imageBlock),
+							...(text === "" ? [] : [{ type: "text", text }]),
+						],
+		},
 		parent_tool_use_id: null,
 		session_id: "",
 		...(midTurn ? { priority: "next" } : {}),
 		[ORIGIN_KEY]: origin,
 	});
+}
+
+/** An image the person attached, as the API's image block. */
+function imageBlock(image: ImageRef): JsonObject {
+	if (image.source.kind !== "data") {
+		throw new Error(
+			`Claude is sent only an image's own bytes, not ${image.source.kind} ${JSON.stringify(image.label)}`,
+		);
+	}
+	return {
+		type: "image",
+		source: {
+			type: "base64",
+			media_type: image.mediaType,
+			data: image.source.base64,
+		},
+	};
 }
 
 function answerResponse(

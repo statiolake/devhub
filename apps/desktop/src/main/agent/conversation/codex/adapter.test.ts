@@ -279,7 +279,12 @@ describe("the handshake", () => {
 			harness.written.map((line) => JSON.parse(line).method),
 		).not.toContain("thread/start");
 		expect(() =>
-			harness.command({ kind: "send", text: "hi", origin: "person" }),
+			harness.command({
+				kind: "send",
+				text: "hi",
+				images: [],
+				origin: "person",
+			}),
 		).toThrow(/broken/);
 	});
 
@@ -378,6 +383,7 @@ describe("a turn", () => {
 		const harness = ready();
 		harness.command({
 			kind: "send",
+			images: [],
 			text: "Run pwd, then fix the README title.",
 			origin: "person",
 		});
@@ -501,7 +507,7 @@ describe("a turn", () => {
 
 	it("streams deltas into the entries they belong to", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		const lines = fixture("turn.handwritten.ndjson");
 		// Up to and including the second agentMessage delta.
 		for (const line of lines.slice(0, 12)) harness.receive(line);
@@ -520,7 +526,7 @@ describe("a turn", () => {
 
 	it("offers an execpolicy amendment as an 'always' choice and spells it back", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		const lines = fixture("turn.handwritten.ndjson");
 		let request: PendingRequest | undefined;
 		for (const line of lines.slice(0, 15)) {
@@ -564,11 +570,12 @@ describe("a turn", () => {
 
 	it("steers a running turn instead of starting another", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		const lines = fixture("turn.handwritten.ndjson");
 		for (const line of lines.slice(0, 4)) harness.receive(line);
 		harness.command({
 			kind: "send",
+			images: [],
 			text: "also check git",
 			origin: "injection",
 		});
@@ -612,7 +619,7 @@ describe("a turn", () => {
 		harness.command({ kind: "interrupt" });
 		expect(harness.written).toHaveLength(before);
 
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		const lines = fixture("turn.handwritten.ndjson");
 		// Up to and including the command's approval request.
 		for (const line of lines.slice(0, 15)) harness.receive(line);
@@ -667,7 +674,7 @@ describe("a turn", () => {
 		expect(() => harness.configure("effort", "extreme")).toThrow(
 			/not a effort/,
 		);
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		expect(harness.lastWrite()).toMatchObject({
 			method: "turn/start",
 			params: {
@@ -681,7 +688,7 @@ describe("a turn", () => {
 
 	it("says when app-server does not start or steer a turn", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		harness.receive({
 			id: 4,
 			error: { code: -32600, message: "model not available" },
@@ -720,7 +727,12 @@ describe("a turn", () => {
 describe("subagents", () => {
 	it("hangs a subagent's thread under the call that started it", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
 		const states: string[] = [];
 		for (const line of fixture("subagent.handwritten.ndjson")) {
 			harness.receive(line);
@@ -762,7 +774,12 @@ describe("subagents", () => {
 
 	it("says a subagent is done when its thread's turn ends, with no activity item to say so, and running again when it starts another", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
 		const state = () => {
 			const spawn = harness.entry(`${MAIN}/item-spawn`);
 			return spawn?.kind === "tool" ? spawn.spawns?.state : undefined;
@@ -795,7 +812,12 @@ describe("subagents", () => {
 
 	it("takes the person's messages when app-server says its thread does, steered into its turn or starting one", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
 		const lines = fixture("subagent.handwritten.ndjson").map((line) =>
 			// The fixture's child thread, as app-server prints one that takes direct input.
 			line.replace(
@@ -841,7 +863,12 @@ describe("subagents", () => {
 
 	it("takes none when app-server does not say its thread does", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "delegate", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
 		for (const line of fixture("subagent.handwritten.ndjson"))
 			harness.receive(line);
 		expect(harness.entry(`${MAIN}/item-spawn`)).toMatchObject({
@@ -1192,7 +1219,7 @@ describe("a protocol DevHub stopped understanding", () => {
 describe("replay", () => {
 	function liveRun(): Harness {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		for (const line of fixture("turn.handwritten.ndjson")) {
 			const step = harness.receive(line);
 			for (const event of step.events) {
@@ -1221,7 +1248,12 @@ describe("replay", () => {
 		expect(replayed.written).toEqual([]);
 		expect(replayed.transcript).toEqual(live.transcript);
 		// And it carries on where the live one left off.
-		replayed.command({ kind: "send", text: "next", origin: "person" });
+		replayed.command({
+			kind: "send",
+			text: "next",
+			images: [],
+			origin: "person",
+		});
 		expect(replayed.lastWrite()).toMatchObject({
 			id: 5,
 			method: "turn/start",
@@ -1283,7 +1315,7 @@ describe("taking back the last turn", () => {
 	/** A thread past one whole turn, "go", with both approvals accepted. */
 	function oneTurn(): Harness {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		for (const line of fixture("turn.handwritten.ndjson")) {
 			for (const event of harness.receive(line).events) {
 				if (event.type === "request-opened") {
@@ -1332,6 +1364,7 @@ describe("taking back the last turn", () => {
 		// And the next message starts a turn on the reverted thread.
 		harness.command({
 			kind: "send",
+			images: [],
 			text: "go, differently",
 			origin: "person",
 		});
@@ -1370,7 +1403,7 @@ describe("taking back the last turn", () => {
 				line.replaceAll('"historyMode":"paginated"', '"historyMode":"legacy"'),
 			);
 		expect(harness.transcript.session.canRewind).toBe(false);
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		harness.receive(fixture("turn.handwritten.ndjson")[2]!);
 		expect(() => harness.adapter.rewind(entryId(USER))).toThrow(
 			/cannot take back a turn of this thread/,
@@ -1386,7 +1419,12 @@ describe("taking back the last turn", () => {
 
 	it("reverts to before an earlier turn, and every turn from it on goes", () => {
 		const harness = oneTurn();
-		harness.command({ kind: "send", text: "more", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
 		const turn2 = {
 			id: "turn-2",
 			items: [],
@@ -1440,9 +1478,14 @@ describe("taking back the last turn", () => {
 
 	it("shows a message as sending from its write until its item comes back", () => {
 		const harness = oneTurn();
-		harness.command({ kind: "send", text: "more", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
 		expect(harness.transcript.sending).toEqual([
-			{ id: "devhub-person-1", text: "more", origin: "person" },
+			{ id: "devhub-person-1", text: "more", images: [], origin: "person" },
 		]);
 		harness.receive({
 			method: "item/completed",
@@ -1467,7 +1510,12 @@ describe("taking back the last turn", () => {
 
 	it("lets go of a sending message whose turn app-server refused", () => {
 		const harness = oneTurn();
-		harness.command({ kind: "send", text: "more", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
 		harness.receive({ id: 5, error: { code: -32600, message: "no" } });
 		expect(harness.transcript.sending).toEqual([]);
 	});
@@ -1476,7 +1524,7 @@ describe("taking back the last turn", () => {
 		const live = oneTurn();
 		live.rewind(USER);
 		live.receive(REVERTED);
-		live.command({ kind: "send", text: "again", origin: "person" });
+		live.command({ kind: "send", text: "again", images: [], origin: "person" });
 
 		const replayed = new Harness();
 		for (const line of live.written) {
@@ -1589,7 +1637,12 @@ describe("going on with another thread (/resume)", () => {
 
 	it("resumes the other thread on the same app-server, and draws it in place of this one", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "here", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "here",
+			images: [],
+			origin: "person",
+		});
 		harness.receive({
 			method: "turn/started",
 			params: {
@@ -1643,7 +1696,12 @@ describe("going on with another thread (/resume)", () => {
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 
 		// The next turn is on the other thread.
-		harness.command({ kind: "send", text: "go on", origin: "person" });
+		harness.command({
+			kind: "send",
+			text: "go on",
+			images: [],
+			origin: "person",
+		});
 		expect(harness.lastWrite()).toMatchObject({
 			method: "turn/start",
 			params: { threadId: OTHER },
@@ -1678,7 +1736,7 @@ describe("going on with another thread (/resume)", () => {
 describe("an MCP tool's result", () => {
 	it("keeps its text and its images, in order, as the call's output", () => {
 		const harness = ready();
-		harness.command({ kind: "send", text: "go", origin: "person" });
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		harness.receive({
 			method: "item/completed",
 			params: {
@@ -1718,5 +1776,46 @@ describe("an MCP tool's result", () => {
 				},
 			],
 		});
+	});
+});
+
+describe("images the person sends", () => {
+	it("go to app-server as data URLs after the words, and the message is sending with them", () => {
+		const harness = ready();
+		harness.command({
+			kind: "send",
+			text: "what is this?",
+			images: [
+				{
+					mediaType: "image/png",
+					source: { kind: "data", base64: "AAAA" },
+					label: "shot.png",
+				},
+			],
+			origin: "person",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/start",
+			params: {
+				input: [
+					{ type: "text", text: "what is this?", text_elements: [] },
+					{ type: "image", url: "data:image/png;base64,AAAA" },
+				],
+			},
+		});
+		expect(harness.transcript.sending).toEqual([
+			{
+				id: "devhub-person-0",
+				text: "what is this?",
+				images: [
+					{
+						mediaType: "image/png",
+						source: { kind: "url", url: "data:image/png;base64,AAAA" },
+						label: "image",
+					},
+				],
+				origin: "person",
+			},
+		]);
 	});
 });

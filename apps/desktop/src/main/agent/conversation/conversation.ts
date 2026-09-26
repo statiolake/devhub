@@ -81,6 +81,7 @@ import {
 	rewindTargets,
 	type ConversationEvent,
 	type EntryId,
+	type ImageRef,
 	type PendingId,
 	type PendingMessage,
 	type RewindOutcome,
@@ -294,12 +295,17 @@ export class AgentConversation {
 	 * The person's words to the Agent: written at once when it is idle and
 	 * holds nothing of theirs, else held until it is (see the module's doc).
 	 */
-	submit(text: string): Promise<void> {
+	submit(text: string, images: readonly ImageRef[]): Promise<void> {
 		return this.#serial(async () => {
 			this.#refuseIfBroken();
 			if (this.#idleNow() && this.#transcript.pending.length === 0) {
 				await this.#write(
-					this.#adapter.encode({ kind: "send", text, origin: "person" }),
+					this.#adapter.encode({
+						kind: "send",
+						text,
+						images,
+						origin: "person",
+					}),
 				);
 				return;
 			}
@@ -309,6 +315,7 @@ export class AgentConversation {
 				{
 					id: pendingId(`held:${this.#heldCount}`),
 					text,
+					images,
 					failure: undefined,
 					editing: false,
 				},
@@ -425,10 +432,15 @@ export class AgentConversation {
 	 * one place a held message's failure is reported.
 	 */
 	async #writeHeld(id: PendingId): Promise<void> {
-		const { text } = this.#held(id);
+		const { text, images } = this.#held(id);
 		try {
 			await this.#write(
-				this.#adapter.encode({ kind: "send", text, origin: "person" }),
+				this.#adapter.encode({
+					kind: "send",
+					text,
+					images,
+					origin: "person",
+				}),
 			);
 		} catch (error: unknown) {
 			if (!(error instanceof HostLinkFailure)) throw error;

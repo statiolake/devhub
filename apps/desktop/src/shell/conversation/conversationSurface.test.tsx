@@ -360,7 +360,9 @@ describe("every entry kind", () => {
     const said = put(user("u1", "fix the build"));
     const { redraw } = draw({
       ...transcriptOf([said]),
-      sending: [{ id: "sent:2", text: "and the tests", origin: "person" }],
+      sending: [
+        { id: "sent:2", text: "and the tests", images: [], origin: "person" },
+      ],
     });
     const bubbles = () => [
       ...document.querySelectorAll(

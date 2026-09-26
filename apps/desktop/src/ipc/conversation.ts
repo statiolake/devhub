@@ -14,6 +14,7 @@
 import type {
 	ConversationEvent,
 	EntryId,
+	ImageRef,
 	PendingId,
 	RequestAnswer,
 	RequestId,
@@ -43,7 +44,12 @@ export const CONVERSATION_CHANNELS = {
 /** What the page may ask of a conversation. A person's words are always the person's. */
 export type ConversationCommandWire =
 	/** The person's words: written at once when the Agent is idle, else held (`Transcript.pending`). */
-	| { readonly kind: "send"; readonly text: string }
+	| {
+			readonly kind: "send";
+			readonly text: string;
+			/** Attached images, each its own bytes (`source.kind` "data"). */
+			readonly images: readonly ImageRef[];
+	  }
 	/** The person opened a held message to change it: it is not written until they save or cancel. */
 	| { readonly kind: "start-editing-pending"; readonly pending: PendingId }
 	/** Save the change: new words, and the message is written again in its turn. */
@@ -97,7 +103,11 @@ export interface ConversationApi {
 		onEvent: ConversationEventListener,
 	): Promise<ConversationAttachment>;
 	detach(agentId: string): Promise<void>;
-	send(agentId: string, text: string): Promise<void>;
+	send(
+		agentId: string,
+		text: string,
+		images: readonly ImageRef[],
+	): Promise<void>;
 	/**
 	 * Hold a waiting message while the person changes it: it is not written
 	 * until `editPending` or `stopEditingPending`, or until this page detaches

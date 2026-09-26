@@ -198,6 +198,7 @@ async function liveTurn(): Promise<{
 	await settle();
 	await conversation.command({
 		kind: "send",
+		images: [],
 		text: "Run pwd with Bash",
 		origin: "person",
 	});
@@ -284,6 +285,7 @@ describe("a conversation attached again after DevHub restarts", () => {
 		await settle();
 		await conversation.command({
 			kind: "send",
+			images: [],
 			text: "Run pwd with Bash",
 			origin: "person",
 		});
@@ -320,6 +322,7 @@ describe("a command", () => {
 		await expect(
 			conversation.command({
 				kind: "send",
+				images: [],
 				text: "Run pwd with Bash",
 				origin: "person",
 			}),
@@ -698,7 +701,7 @@ async function turns(
 	conversation.start();
 	await settle();
 	for (const text of texts) {
-		await conversation.submit(text);
+		await conversation.submit(text, []);
 		await settle();
 	}
 	return { host, conversation, cli };
@@ -741,7 +744,7 @@ describe("rewinding", () => {
 			"assistant:msg_1:0",
 			"turn:1",
 		]);
-		await conversation.submit("second, better");
+		await conversation.submit("second, better", []);
 		await settle();
 		expect(ids(conversation)).toEqual([
 			"user:u1",
@@ -770,7 +773,7 @@ describe("rewinding", () => {
 	it("refuses while a turn runs, saying to stop it first, and writes nothing", async () => {
 		const { host, conversation, cli } = await turns(["first", "second"]);
 		cli.hold = true;
-		await conversation.submit("third");
+		await conversation.submit("third", []);
 		await settle();
 		const writes = host.inLog.length;
 		await expect(conversation.rewind(entryId("user:u1"))).rejects.toThrow(
@@ -793,9 +796,9 @@ describe("rewinding", () => {
 	it("refuses while messages of the person's are held", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("held");
+		await conversation.submit("held", []);
 		// Its write fails as the turn ends: idle, with a message held.
 		host.refuseWrite = true;
 		endTurn(host);
@@ -814,7 +817,7 @@ describe("rewinding", () => {
 			"the fake host did not start its CLI again",
 		);
 		expect(ids(conversation)).toContain("user:u2");
-		await conversation.submit("third");
+		await conversation.submit("third", []);
 		await settle();
 		expect(ids(conversation)).toContain("user:u3");
 		await conversation.stop();
@@ -830,7 +833,7 @@ describe("rewinding", () => {
 		await expect(conversation.command({ kind: "interrupt" })).rejects.toThrow(
 			"The conversation is being taken back.",
 		);
-		await conversation.submit("meanwhile");
+		await conversation.submit("meanwhile", []);
 		expect(
 			conversation.reading().transcript.pending.map((each) => each.text),
 		).toEqual(["meanwhile"]);
@@ -877,12 +880,12 @@ describe("the person's messages, held", () => {
 	it("are written one per turn as each turn ends, as the person left them", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
 		const writes = host.inLog.length;
-		await conversation.submit("third");
-		await conversation.submit("fourth");
-		await conversation.submit("fifth");
+		await conversation.submit("third", []);
+		await conversation.submit("fourth", []);
+		await conversation.submit("fifth", []);
 		expect(host.inLog).toHaveLength(writes);
 		expect(pending(conversation)).toEqual(["third", "fourth", "fifth"]);
 
@@ -907,12 +910,45 @@ describe("the person's messages, held", () => {
 		await conversation.stop();
 	});
 
+	it("keep the images attached to them, through a change of their words, and are written with them", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second", []);
+		await settle();
+		const image = {
+			mediaType: "image/png",
+			source: { kind: "data", base64: "AAAA" },
+			label: "shot.png",
+		} as const;
+		await conversation.submit("look at this", [image]);
+		const [held] = conversation.reading().transcript.pending;
+		expect(held!.images).toEqual([image]);
+		await conversation.editPending(held!.id, "look at this one");
+		expect(conversation.reading().transcript.pending[0]!.images).toEqual([
+			image,
+		]);
+		const writes = host.inLog.length;
+		endTurn(host);
+		await settle();
+		const written = JSON.parse(host.inLog[writes]!.line) as {
+			message: { content: unknown };
+		};
+		expect(written.message.content).toEqual([
+			{
+				type: "image",
+				source: { type: "base64", media_type: "image/png", data: "AAAA" },
+			},
+			{ type: "text", text: "look at this one" },
+		]);
+		await conversation.stop();
+	});
+
 	it("is written into the running turn when the person says now", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("steer this way");
+		await conversation.submit("steer this way", []);
 		const [held] = conversation.reading().transcript.pending;
 		await conversation.sendPendingNow(held!.id);
 		expect(JSON.parse(host.inLog.at(-1)!.line)).toMatchObject({
@@ -929,9 +965,9 @@ describe("the person's messages, held", () => {
 	it("stays held, saying why, when its write fails, and is written when the person tries again", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("third");
+		await conversation.submit("third", []);
 		host.refuseWrite = true;
 		endTurn(host);
 		await settle();
@@ -950,9 +986,9 @@ describe("the person's messages, held", () => {
 	it("is not written while the person edits it, and is written as saved once they do", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("third");
+		await conversation.submit("third", []);
 		const [third] = conversation.reading().transcript.pending;
 		await conversation.startEditingPending(third!.id);
 		expect(conversation.reading().transcript.pending[0]).toMatchObject({
@@ -977,10 +1013,10 @@ describe("the person's messages, held", () => {
 	it("is written unchanged once the person gives the edit up, or the page lets go of it", async () => {
 		const { host, conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("third");
-		await conversation.submit("fourth");
+		await conversation.submit("third", []);
+		await conversation.submit("fourth", []);
 		const [third, fourth] = conversation.reading().transcript.pending;
 		await conversation.startEditingPending(third!.id);
 		await conversation.startEditingPending(fourth!.id);
@@ -1004,9 +1040,9 @@ describe("the person's messages, held", () => {
 	it("says a held message is gone when it was already written", async () => {
 		const { conversation, cli } = await turns(["first"]);
 		cli.hold = true;
-		await conversation.submit("second");
+		await conversation.submit("second", []);
 		await settle();
-		await conversation.submit("third");
+		await conversation.submit("third", []);
 		const [held] = conversation.reading().transcript.pending;
 		await conversation.removePending(held!.id);
 		await expect(conversation.editPending(held!.id, "x")).rejects.toThrow(

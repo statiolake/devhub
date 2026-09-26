@@ -13,8 +13,10 @@ import {
 	type ConversationCommandWire,
 } from "../../ipc/conversation.js";
 import {
+	attachedImages,
 	entryId,
 	pendingId,
+	type ImageRef,
 	type PendingId,
 	type RewindOutcome,
 } from "../../model/conversation.js";
@@ -177,7 +179,7 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 			case "set-setting":
 				return conversation.configure(request.which, request.id);
 			case "submit":
-				return conversation.submit(request.text);
+				return conversation.submit(request.text, request.images);
 			case "start-editing-pending":
 				return conversation.startEditingPending(request.pending);
 			case "edit-pending":
@@ -197,7 +199,11 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 /** What the page asked for, checked; a person's words are the person's. */
 function requestFrom(wire: unknown):
 	| Exclude<ConversationCommand, { readonly kind: "send" }>
-	| { readonly kind: "submit"; readonly text: string }
+	| {
+			readonly kind: "submit";
+			readonly text: string;
+			readonly images: readonly ImageRef[];
+	  }
 	| {
 			readonly kind: "edit-pending";
 			readonly pending: PendingId;
@@ -220,7 +226,11 @@ function requestFrom(wire: unknown):
 	switch (command?.kind) {
 		case "send":
 			if (typeof command.text !== "string") break;
-			return { kind: "submit", text: command.text };
+			return {
+				kind: "submit",
+				text: command.text,
+				images: attachedImages(command.images),
+			};
 		case "edit-pending":
 			if (
 				typeof command.pending !== "string" ||

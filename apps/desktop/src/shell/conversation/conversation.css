@@ -946,6 +946,53 @@
   flex-basis: 100%;
 }
 
+/* Images attached to the next message, over the field, each with a Remove
+   in its corner. */
+.conversation-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0;
+  margin: 0 0 var(--space-2);
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.conversation-attachment {
+  position: relative;
+}
+
+.conversation-attachment .conversation-image > summary > img {
+  max-width: 6em;
+  max-height: 4em;
+}
+
+.conversation-attachment-remove {
+  position: absolute;
+  top: -0.5em;
+  right: -0.5em;
+  display: inline-flex;
+  width: 1.4em;
+  height: 1.4em;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+.conversation-attachment-remove:hover {
+  color: var(--primary);
+}
+
+.conversation-attachment-remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+
 .conversation-image-missing {
   padding: var(--space-1) var(--space-2);
   border: 1px dashed var(--line);
