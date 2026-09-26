@@ -147,6 +147,49 @@ describe("a Claude session read back as history", () => {
 		});
 	});
 
+	it("goes up the file past a record Claude wrote twice under one uuid, across the compaction once", async () => {
+		// HAND-WRITTEN (claude-session-rewritten-uuid.handwritten.jsonl), in
+		// the shape of a long real session: an attachment written again under
+		// its uuid after a compaction, whose boundary names the first copy as
+		// its logical parent. Taking the second copy there closed a loop.
+		const lines = claudeHistoryLines(
+			SESSION,
+			await readFile(
+				join(
+					dirname(FIXTURE),
+					"claude-session-rewritten-uuid.handwritten.jsonl",
+				),
+				"utf8",
+			),
+		);
+		expect(
+			lines.map(
+				(line) =>
+					(JSON.parse(line) as { record: { uuid: string } }).record.uuid,
+			),
+		).toEqual(["u1", "a1", "u6", "a6"]);
+	});
+
+	it("is refused, naming both, when a record's parent is written only after it", () => {
+		const line = (fields: Record<string, unknown>) =>
+			JSON.stringify({
+				type: "user",
+				message: { role: "user", content: "x" },
+				...fields,
+			});
+		expect(() =>
+			claudeHistoryLines(
+				SESSION,
+				[
+					line({ uuid: "u1", parentUuid: null }),
+					line({ uuid: "u3", parentUuid: "u2" }),
+					line({ uuid: "u2", parentUuid: "u1" }),
+					line({ uuid: "u4", parentUuid: "u3" }),
+				].join("\n"),
+			),
+		).toThrow("names u2 as the parent of u3, but writes it only after it");
+	});
+
 	it("is refused with the path when the session is not there", async () => {
 		const runtime = fakeRuntime("/home/testuser");
 		await expect(

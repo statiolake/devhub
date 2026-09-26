@@ -989,27 +989,40 @@ export function claudeHistoryLines(
 		.split("\n")
 		.filter((line) => line.trim().length > 0)
 		.map((line) => parsedLine(session, line));
-	const byUuid = new Map<string, Record<string, unknown>>();
-	for (const record of records) {
-		if (typeof record["uuid"] === "string") byUuid.set(record["uuid"], record);
-	}
+	// Where each uuid is written. Claude writes some records again under the
+	// same uuid (an attachment carried across a compaction), so a uuid can
+	// name more than one line.
+	const byUuid = new Map<string, number[]>();
+	records.forEach((record, position) => {
+		const uuid = record["uuid"];
+		if (typeof uuid !== "string") return;
+		const at = byUuid.get(uuid);
+		if (at === undefined) byUuid.set(uuid, [position]);
+		else at.push(position);
+	});
 	const isMessage = (record: Record<string, unknown>) =>
 		(record["type"] === "user" || record["type"] === "assistant") &&
 		record["isSidechain"] !== true;
-	const leaf = [...records].reverse().find(isMessage);
+	let leaf = records.length - 1;
+	while (leaf >= 0 && !isMessage(records[leaf]!)) leaf -= 1;
+	// A record's parent was written before it: of the lines a parent uuid
+	// names, the chain goes on at the last one above the record. So the walk
+	// only ever goes up the file, and ends.
 	const chain: Record<string, unknown>[] = [];
-	const seen = new Set<string>();
-	for (let at = leaf; at !== undefined; ) {
-		const uuid = at["uuid"] as string;
-		if (seen.has(uuid)) {
+	for (let at = leaf; at >= 0; ) {
+		const record = records[at]!;
+		chain.push(record);
+		const parent = record["parentUuid"] ?? record["logicalParentUuid"];
+		if (typeof parent !== "string") break;
+		const written = byUuid.get(parent);
+		if (written === undefined) break;
+		const above = [...written].reverse().find((position) => position < at);
+		if (above === undefined) {
 			throw new SessionNotResumable(
-				`Claude's session ${session} has a cycle at ${uuid}`,
+				`Claude's session ${session} names ${parent} as the parent of ${String(record["uuid"])}, but writes it only after it`,
 			);
 		}
-		seen.add(uuid);
-		chain.push(at);
-		const parent = at["parentUuid"] ?? at["logicalParentUuid"];
-		at = typeof parent === "string" ? byUuid.get(parent) : undefined;
+		at = above;
 	}
 	return chain
 		.reverse()

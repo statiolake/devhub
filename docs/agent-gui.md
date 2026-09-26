@@ -468,7 +468,9 @@ it resumed.
   and writes its conversation at the head of the journal, before the CLI
   starts, as `devhub_history` lines: the chain of messages from the last one
   back to the first (a rewound branch and a subagent's lines are not part of
-  it; across a compaction the earlier messages are). The adapter draws them as
+  it; across a compaction the earlier messages are). A record's parent is the
+  last line above it with that uuid: Claude writes some records twice under
+  one uuid, and a parent always comes before its child. The adapter draws them as
   the entries a live turn makes, without a turn running.
 - **Codex GUI** has no argument for it: DevHub takes `resume <id>` off the
   argv and sends `thread/resume` instead of `thread/start`. Its answer carries
