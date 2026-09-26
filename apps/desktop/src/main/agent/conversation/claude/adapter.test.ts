@@ -2995,3 +2995,174 @@ describe("a slash command and its output", () => {
 		).toEqual([]);
 	});
 });
+
+describe("the CLI's other system events", () => {
+	function system(
+		subtype: string,
+		fields: Record<string, unknown> = {},
+	): string {
+		return json({ type: "system", subtype, session_id: SESSION, ...fields });
+	}
+
+	function notices(adapter: ClaudeAdapter): [string, string][] {
+		return adapter.transcript.entries.flatMap((each) =>
+			each.kind === "notice" ? [[each.level, each.text]] : [],
+		);
+	}
+
+	it("are drawn as what each says, or left out by a rule, never as an event DevHub does not know", () => {
+		const adapter = inTurn();
+		for (const line of [
+			system("turn_duration", { durationMs: 1200, messageCount: 4 }),
+			system("thinking_tokens", { tokens: 10 }),
+			system("background_tasks_changed", { tasks: [] }),
+			system("bridge_status", {
+				content: "Remote Control on",
+				url: "https://example.com/x",
+			}),
+			system("stop_hook_summary", {
+				hookCount: 1,
+				hookInfos: [{ command: "true", durationMs: 3 }],
+				hookErrors: [],
+				preventedContinuation: false,
+				hasOutput: false,
+				level: "info",
+			}),
+			system("away_summary", {
+				content: "You were away; the tests were fixed.",
+			}),
+			system("informational", {
+				content: "Auto-update installed.",
+				level: "info",
+			}),
+			system("informational", { content: "Low disk space.", level: "warning" }),
+			system("model_refusal_no_fallback", {
+				content: "The model declined to answer.",
+				level: "error",
+				apiRefusalExplanation: "policy",
+			}),
+			system("stop_hook_summary", {
+				hookCount: 1,
+				hookInfos: [],
+				hookErrors: ["lint failed"],
+				preventedContinuation: true,
+				stopReason: "fix lint",
+				hasOutput: true,
+				level: "warning",
+			}),
+		])
+			adapter.received(line);
+		expect(notices(adapter)).toEqual([
+			["info", "While you were away: You were away; the tests were fixed."],
+			["info", "Auto-update installed."],
+			["warning", "Low disk space."],
+			["error", "The model declined to answer. (policy)"],
+			["warning", "A stop hook failed: lint failed"],
+		]);
+	});
+
+	it("draw a local command the CLI ran as that command and its output", () => {
+		const adapter = inTurn();
+		adapter.received(
+			system("local_command", {
+				content:
+					"<command-name>/cost</command-name>\n<command-args></command-args>",
+				level: "info",
+			}),
+		);
+		adapter.received(
+			system("local_command", {
+				content:
+					"<local-command-stdout>Total cost: $0.10</local-command-stdout>",
+				level: "info",
+			}),
+		);
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "command"),
+		).toMatchObject([{ line: "/cost", output: "Total cost: $0.10" }]);
+		expect(notices(adapter)).toEqual([]);
+	});
+
+	it("end a task named only by its id, by the call task_started tied it to", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Bash", {
+					command: "npm run watch",
+					run_in_background: true,
+				}),
+			]),
+		);
+		adapter.received(
+			system("task_started", {
+				task_id: "b7",
+				tool_use_id: "toolu_bg",
+				description: "watch",
+			}),
+		);
+		adapter.received(
+			system("task_notification", {
+				task_id: "b7",
+				status: "stopped",
+				summary: "stopped",
+			}),
+		);
+		expect((entry(adapter, "tool:toolu_bg") as ToolEntry).background).toEqual({
+			state: "failed",
+			summary: "stopped",
+		});
+	});
+
+	it("end a background command read back from a session file, named only by its task id", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const past = (record: Record<string, unknown>) =>
+			adapter.received(json({ type: "devhub_history", record }));
+		past({
+			type: "assistant",
+			uuid: "a1",
+			message: {
+				id: "m1",
+				role: "assistant",
+				content: [
+					toolUse("toolu_bg", "Bash", {
+						command: "sleep 9",
+						run_in_background: true,
+					}),
+				],
+			},
+		});
+		past({
+			type: "user",
+			uuid: "u1",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "toolu_bg",
+						content: "Running in the background with ID: b9",
+					},
+				],
+			},
+			tool_use_result: {
+				stdout: "",
+				stderr: "",
+				interrupted: false,
+				backgroundTaskId: "b9",
+			},
+		});
+		past({
+			type: "user",
+			uuid: "u2",
+			message: {
+				role: "user",
+				content:
+					"<task-notification>\n<task-id>b9</task-id>\n<status>completed</status>\n<summary>sleep ended</summary>\n</task-notification>",
+			},
+		});
+		expect((entry(adapter, "tool:toolu_bg") as ToolEntry).background).toEqual({
+			state: "completed",
+			summary: "sleep ended",
+		});
+	});
+});

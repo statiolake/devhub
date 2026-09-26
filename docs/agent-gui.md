@@ -280,6 +280,10 @@ only says it launched) — a `task_notification` event in stream-json, or a
 or else the task's. A subagent runs only inside the CLI process that started
 it: one read back from a session file, or left running when the CLI is
 started again (rewind, `/resume`), is *Unknown* unless its end was recorded.
+A notification that names only its task is matched through the call that
+task belongs to: the one `task_started` tied it to, or, read back from a
+session file, the call whose result named that task (a background agent's
+id, a background command's `backgroundTaskId`).
 Any other background task a call started (a command run in the background)
 follows the same news, told as one quiet line on that call (*In the
 background: Done — its summary*); only a notification no drawn call started
@@ -308,6 +312,15 @@ is a notice. Its work is drawn in one place at a time:
 - Hook events. `--include-hook-events` is not passed, and hook events that
   arrive anyway are known and not shown.
 - `tool_progress` and `prompt_suggestion`.
+- Of the CLI's other system events, each is drawn as what it says or left
+  out by a rule, never as an event DevHub does not know: `away_summary` is an
+  information notice (*While you were away: …*); `informational` a notice at
+  its own level; `model_refusal_no_fallback` an error notice with the API's
+  reason; `local_command` the command it ran and what it printed, as a
+  command line (above); `stop_hook_summary` a warning only when a hook
+  failed. `turn_duration` (the transcript draws no durations),
+  `bridge_status` (a remote control of the session, not the conversation),
+  `thinking_tokens` and `background_tasks_changed` are not drawn.
 - Thinking the API withholds (it sends the block without its text), redacted
   thinking, and citation deltas.
 

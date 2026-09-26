@@ -74,6 +74,7 @@ import {
 	type SettingName,
 } from "../protocolAdapter.js";
 import {
+	NO_TOOL_RESULT,
 	ORIGIN_KEY,
 	decodeInitialize,
 	decodeReceived,
@@ -785,6 +786,19 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					"A tool call was denied by the permission rules",
 					line.raw,
 				);
+			case "said":
+				return this.notice(line.level, line.text, undefined);
+			case "local_command":
+				return this.takeUser(
+					{
+						type: "user",
+						parent: null,
+						uuid: undefined,
+						content: line.blocks,
+						toolResult: NO_TOOL_RESULT,
+					},
+					"history",
+				);
 			case "task":
 				return this.takeTask(line);
 			case "rate_limit":
@@ -1410,6 +1424,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					: "succeeded";
 		if (tool.spawns !== undefined && launchedTask !== undefined)
 			this.tasks.set(launchedTask, id);
+		if (result.backgroundTask !== undefined)
+			this.tasks.set(result.backgroundTask, id);
 		this.emit({
 			type: "entry",
 			entry: {

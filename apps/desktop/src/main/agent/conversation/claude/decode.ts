@@ -123,6 +123,14 @@ export type ClaudeLine =
 			readonly preTokens: number | undefined;
 	  }
 	| { readonly type: "status"; readonly permissionMode: string | undefined }
+	/** Something the CLI says to the person in so many words: a recap, a warning, a refusal. */
+	| {
+			readonly type: "said";
+			readonly level: "info" | "warning" | "error";
+			readonly text: string;
+	  }
+	/** A command the CLI ran itself, or what it printed, as a system event. */
+	| { readonly type: "local_command"; readonly blocks: readonly UserBlock[] }
 	| { readonly type: "permission_denied"; readonly raw: JsonObject }
 	| {
 			readonly type: "task";
@@ -230,6 +238,11 @@ export interface ToolUseResult {
 	readonly stdout: string | undefined;
 	readonly stderr: string | undefined;
 	readonly interrupted: boolean;
+	/**
+	 * The task a command run in the background is (`backgroundTaskId`), whose
+	 * end a task notification tells by that id.
+	 */
+	readonly backgroundTask: string | undefined;
 	/** The edit a file tool made (Edit, MultiEdit, Write), as unified-diff hunks. */
 	readonly patch: { readonly path: string; readonly hunks: string } | undefined;
 	/** Where the CLI saved output too large for the conversation. */
@@ -241,6 +254,7 @@ export const NO_TOOL_RESULT: ToolUseResult = {
 	stdout: undefined,
 	stderr: undefined,
 	interrupted: false,
+	backgroundTask: undefined,
 	patch: undefined,
 	persistedPath: undefined,
 };
@@ -721,6 +735,49 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 			};
 		case "permission_denied":
 			return { type: "permission_denied", raw };
+		case "away_summary":
+			return {
+				type: "said",
+				level: "info",
+				text: `While you were away: ${f.string(raw.content, `${at}.content`)}`,
+			};
+		case "informational":
+			return {
+				type: "said",
+				level: noticeLevel(raw.level, `${at}.level`, f),
+				text: f.string(raw.content, `${at}.content`),
+			};
+		case "model_refusal_no_fallback": {
+			const why = f.optionalString(
+				raw.apiRefusalExplanation,
+				`${at}.apiRefusalExplanation`,
+			);
+			return {
+				type: "said",
+				level: "error",
+				text: `${f.string(raw.content, `${at}.content`)}${why === undefined ? "" : ` (${why})`}`,
+			};
+		}
+		case "local_command": {
+			const content = f.string(raw.content, `${at}.content`);
+			return { type: "local_command", blocks: textBlock(content) };
+		}
+		// A stop hook's round, drawn only when a hook failed: hooks are the
+		// owner's configuration (below), and one that ran well says nothing.
+		case "stop_hook_summary": {
+			const errors = (
+				raw.hookErrors === undefined
+					? []
+					: f.array(raw.hookErrors, `${at}.hookErrors`)
+			).map((each, index) => f.string(each, `${at}.hookErrors[${index}]`));
+			return errors.length === 0
+				? { type: "unused" }
+				: {
+						type: "said",
+						level: "warning",
+						text: `A stop hook failed: ${errors.join("; ")}`,
+					};
+		}
 		case "task_started":
 		case "task_progress":
 		case "task_updated":
@@ -743,9 +800,15 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 		//   configuration, not the conversation;
 		// - thinking_tokens: an estimate of the thinking while it streams;
 		// - background_tasks_changed: the set of background tasks as a whole,
-		//   whose each task's lifecycle arrives as task_*.
+		//   whose each task's lifecycle arrives as task_*;
+		// - turn_duration: how long a turn took, which the transcript does not
+		//   draw (a turn that completed draws nothing);
+		// - bridge_status: the CLI's link to a remote control of the session,
+		//   which is not the conversation and which DevHub does not offer.
 		case "thinking_tokens":
 		case "background_tasks_changed":
+		case "turn_duration":
+		case "bridge_status":
 		case "hook_started":
 		case "hook_progress":
 		case "hook_response":
@@ -753,6 +816,16 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 		default:
 			return { type: "unknown", key: `system/${subtype}`, raw };
 	}
+}
+
+/** A system event's `level`, as a notice's: anything but a warning or an error is information. */
+function noticeLevel(
+	value: JsonValue | undefined,
+	at: string,
+	f: Fields,
+): "info" | "warning" | "error" {
+	const level = f.optionalString(value, at);
+	return level === "warning" || level === "error" ? level : "info";
 }
 
 function decodeStreamEvent(event: JsonObject, f: Fields): StreamEvent {
@@ -978,6 +1051,7 @@ function decodeToolUseResult(
 			result.interrupted === undefined
 				? false
 				: f.boolean(result.interrupted, `${at}.interrupted`),
+		backgroundTask: text("backgroundTaskId"),
 		patch:
 			path === undefined || hunks.length === 0
 				? undefined
