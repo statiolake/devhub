@@ -1776,7 +1776,11 @@ describe("a message being sent", () => {
 		const live = new ClaudeAdapter("boot");
 		const greeting = init();
 		live.received(greeting);
-		const written = perform(live, { kind: "send", text: "go", origin: "person" });
+		const written = perform(live, {
+			kind: "send",
+			text: "go",
+			origin: "person",
+		});
 		const replayed = new ClaudeAdapter("replay");
 		replayed.received(greeting);
 		for (const line of written) replayed.sent(line);
