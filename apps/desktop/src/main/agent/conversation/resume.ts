@@ -963,10 +963,14 @@ export async function claudeHistory(
 		}
 		throw failure;
 	}
+	// The CLI resumes it whatever its size: the conversation goes on, and
+	// says that its past is not drawn.
 	if (Buffer.byteLength(text) > MAX_HISTORY_BYTES) {
-		throw new SessionNotResumable(
-			`Claude's session ${session} is larger than DevHub reads back (${MAX_HISTORY_BYTES / 1024 / 1024} MiB): ${path}${runtime.where}`,
-		);
+		return [
+			historyWarning(
+				`This session's file is larger than DevHub reads back (${MAX_HISTORY_BYTES / 1024 / 1024} MiB), so its earlier conversation is not drawn here. The CLI has all of it.`,
+			),
+		];
 	}
 	return claudeHistoryLines(session, text);
 }
@@ -1011,90 +1015,125 @@ export function claudeHistoryLines(
 		record["isSidechain"] !== true;
 	let leaf = records.length - 1;
 	while (leaf >= 0 && !isMessage(records[leaf]!)) leaf -= 1;
-	// A record's parent was written before it: of the lines a parent uuid
-	// names, the chain goes on at the last one above the record. So the walk
-	// only ever goes up the file, and ends.
+	// A record's parent is written before it: of the lines a parent uuid
+	// names, the chain goes on at the last one above the record. A parent
+	// written only after its child is still its parent — the CLI finds a
+	// record by its uuid, wherever it is — so the walk takes the last line
+	// with that uuid then. It never visits a line twice: a chain that loops
+	// back is drawn as far as the loop, and says so, rather than refusing a
+	// session the CLI resumes.
 	const chain: Record<string, unknown>[] = [];
+	const visited = new Set<number>();
+	let loop: string | undefined;
 	for (let at = leaf; at >= 0; ) {
 		const record = records[at]!;
+		visited.add(at);
 		chain.push(record);
 		const parent = record["parentUuid"] ?? record["logicalParentUuid"];
 		if (typeof parent !== "string") break;
 		const written = byUuid.get(parent);
 		if (written === undefined) break;
-		const above = [...written].reverse().find((position) => position < at);
-		if (above === undefined) {
-			throw new SessionNotResumable(
-				`Claude's session ${session} names ${parent} as the parent of ${String(record["uuid"])}, but writes it only after it`,
-			);
+		const next =
+			[...written].reverse().find((position) => position < at) ??
+			written.at(-1)!;
+		if (visited.has(next)) {
+			loop = String(record["uuid"]);
+			break;
 		}
-		at = above;
+		at = next;
 	}
 	const history = (fields: Record<string, unknown>) =>
 		JSON.stringify({ type: "devhub_history", record: fields });
-	return chain.reverse().flatMap((record) => {
-		if (record["isSidechain"] === true) return [];
-		if (record["type"] === "system") return [history(systemEvent(record))];
-		const attachment = record["attachment"] as
-			| Record<string, unknown>
-			| undefined;
-		if (
-			record["type"] === "attachment" &&
-			(attachment?.["type"] === "file" ||
-				attachment?.["type"] === "edited_text_file")
-		)
-			return [history({ type: "attachment", attachment })];
-		// A message the person wrote while a turn ran, which the CLI took in
-		// as it went: the person's words, like any other message of theirs.
-		if (
-			record["type"] === "attachment" &&
-			attachment?.["type"] === "queued_command" &&
-			taskNotification(record) === undefined
-		) {
-			return [
-				history({
-					type: "user",
-					uuid: record["uuid"],
-					message: { role: "user", content: attachment["prompt"] },
-				}),
-			];
-		}
-		// A background task's end, which Claude records as a user message it
-		// adds, or as a queued command it took in mid-turn.
-		const notification = taskNotification(record);
-		if (notification !== undefined) {
+	const head =
+		loop === undefined
+			? []
+			: [
+					historyWarning(
+						`DevHub drew this session's history only back to ${loop}: its records loop there, so what came before is not shown.`,
+					),
+				];
+	return [
+		...head,
+		...chain.reverse().flatMap((record) => {
+			if (record["isSidechain"] === true) return [];
+			if (record["type"] === "system") return [history(systemEvent(record))];
+			const attachment = record["attachment"] as
+				| Record<string, unknown>
+				| undefined;
+			if (
+				record["type"] === "attachment" &&
+				(attachment?.["type"] === "file" ||
+					attachment?.["type"] === "edited_text_file")
+			)
+				return [history({ type: "attachment", attachment })];
+			// A message the person wrote while a turn ran, which the CLI took in
+			// as it went: the person's words, like any other message of theirs.
+			if (
+				record["type"] === "attachment" &&
+				attachment?.["type"] === "queued_command" &&
+				taskNotification(record) === undefined
+			) {
+				return [
+					history({
+						type: "user",
+						uuid: record["uuid"],
+						message: { role: "user", content: attachment["prompt"] },
+					}),
+				];
+			}
+			// A background task's end, which Claude records as a user message it
+			// adds, or as a queued command it took in mid-turn.
+			const notification = taskNotification(record);
+			if (notification !== undefined) {
+				return [
+					JSON.stringify({
+						type: "devhub_history",
+						record: {
+							type: "user",
+							uuid: record["uuid"],
+							message: { role: "user", content: notification },
+						},
+					}),
+				];
+			}
+			if (
+				!isMessage(record) ||
+				record["isMeta"] === true ||
+				record["isCompactSummary"] === true
+			)
+				return [];
 			return [
 				JSON.stringify({
 					type: "devhub_history",
 					record: {
-						type: "user",
+						type: record["type"],
 						uuid: record["uuid"],
-						message: { role: "user", content: notification },
+						message: record["message"],
+						// Whether a call only started its task in the background, in the
+						// field stream-json prints it in.
+						...(record["toolUseResult"] === undefined
+							? {}
+							: { tool_use_result: record["toolUseResult"] }),
 					},
 				}),
 			];
-		}
-		if (
-			!isMessage(record) ||
-			record["isMeta"] === true ||
-			record["isCompactSummary"] === true
-		)
-			return [];
-		return [
-			JSON.stringify({
-				type: "devhub_history",
-				record: {
-					type: record["type"],
-					uuid: record["uuid"],
-					message: record["message"],
-					// Whether a call only started its task in the background, in the
-					// field stream-json prints it in.
-					...(record["toolUseResult"] === undefined
-						? {}
-						: { tool_use_result: record["toolUseResult"] }),
-				},
-			}),
-		];
+		}),
+	];
+}
+
+/**
+ * DevHub's own word at the head of a history it could not read whole, as a
+ * warning the adapter draws (an `informational` system event).
+ */
+function historyWarning(content: string): string {
+	return JSON.stringify({
+		type: "devhub_history",
+		record: {
+			type: "system",
+			subtype: "informational",
+			level: "warning",
+			content,
+		},
 	});
 }
 

@@ -600,7 +600,18 @@ it resumed.
   the thread's turns, which are drawn as the conversation.
 
 A session that is not there (Claude's file is missing) refuses the launch
-with the path.
+with the path. Otherwise DevHub never refuses a Claude session the CLI can
+resume on account of reading its history: the CLI resumes it and has all of
+it, whatever DevHub makes of the file. A parent record written only after
+its child is followed all the same (the CLI finds records by uuid); a chain
+that loops back is drawn as far as the loop, with a warning at its head;
+a file over 32 MiB is resumed with a warning that its past is not drawn.
+Nothing public asks the CLI for a session's past messages over stream-json:
+`claude --help` has no such option (`--replay-user-messages` echoes only what
+is written to stdin), and the Agent SDK's `getSessionMessages()` /
+`get_session_messages()` are the SDK's own functions reading the session
+files on disk, not a control request. So DevHub reads the file too, on the
+Workspace's machine, where the CLI runs.
 
 `/resume`'s sheet lists the CLI's own sessions, read on the Workspace's
 machine:
@@ -769,7 +780,8 @@ rate limits.
 - **Resuming a Claude session reads its file's format**, which Claude does not
   document: the directory naming, the record fields, `parentUuid` chains.
   A very long directory name, which Claude shortens with a hash, is not
-  found; a session file over 32 MiB is refused rather than read in part.
+  found; a session file over 32 MiB is resumed without its past drawn rather
+  than read in part.
   Past turns show no context figure until the next turn reports one (neither
   CLI hands it back), and a Claude history has no turn endings between its
   messages.

@@ -171,24 +171,79 @@ describe("a Claude session read back as history", () => {
 		).toEqual(["u1", "a1", "c1", "u6", "a6"]);
 	});
 
-	it("is refused, naming both, when a record's parent is written only after it", () => {
+	it("follows a parent written only after its child, as the CLI's own resume reads the file by uuid, rather than refusing the session", () => {
 		const line = (fields: Record<string, unknown>) =>
 			JSON.stringify({
 				type: "user",
 				message: { role: "user", content: "x" },
 				...fields,
 			});
-		expect(() =>
-			claudeHistoryLines(
-				SESSION,
-				[
-					line({ uuid: "u1", parentUuid: null }),
-					line({ uuid: "u3", parentUuid: "u2" }),
-					line({ uuid: "u2", parentUuid: "u1" }),
-					line({ uuid: "u4", parentUuid: "u3" }),
-				].join("\n"),
+		const lines = claudeHistoryLines(
+			SESSION,
+			[
+				line({ uuid: "u1", parentUuid: null }),
+				line({ uuid: "u3", parentUuid: "u2" }),
+				line({ uuid: "u2", parentUuid: "u1" }),
+				line({ uuid: "u4", parentUuid: "u3" }),
+			].join("\n"),
+		);
+		expect(
+			lines.map(
+				(each) =>
+					(JSON.parse(each) as { record: { uuid: string } }).record.uuid,
 			),
-		).toThrow("names u2 as the parent of u3, but writes it only after it");
+		).toEqual(["u1", "u2", "u3", "u4"]);
+	});
+
+	it("reads a chain that loops back as far as the loop, and says so at its head, rather than refusing the session", () => {
+		const line = (fields: Record<string, unknown>) =>
+			JSON.stringify({
+				type: "user",
+				message: { role: "user", content: "x" },
+				...fields,
+			});
+		const lines = claudeHistoryLines(
+			SESSION,
+			[
+				line({ uuid: "u1", parentUuid: "u3" }),
+				line({ uuid: "u2", parentUuid: "u1" }),
+				line({ uuid: "u3", parentUuid: "u2" }),
+				line({ uuid: "u4", parentUuid: "u3" }),
+			].join("\n"),
+		).map((each) => JSON.parse(each) as { record: Record<string, unknown> });
+		expect(lines[0]!.record).toEqual({
+			type: "system",
+			subtype: "informational",
+			level: "warning",
+			content:
+				"DevHub drew this session's history only back to u1: its records loop there, so what came before is not shown.",
+		});
+		expect(lines.slice(1).map((each) => each.record.uuid)).toEqual([
+			"u1",
+			"u2",
+			"u3",
+			"u4",
+		]);
+	});
+
+	it("resumes a session too large to read back, saying its history is not drawn, rather than refusing it", async () => {
+		const runtime = {
+			...fakeRuntime("/home/testuser"),
+			readTextFile: () => Promise.resolve("x".repeat(33 * 1024 * 1024)),
+		} as Runtime;
+		const lines = await claudeHistory(runtime, CLAUDE, "/work/project", "big");
+		expect(lines.map((each) => JSON.parse(each) as unknown)).toEqual([
+			{
+				type: "devhub_history",
+				record: {
+					type: "system",
+					subtype: "informational",
+					level: "warning",
+					content:
+						"This session's file is larger than DevHub reads back (32 MiB), so its earlier conversation is not drawn here. The CLI has all of it.",
+				},
+			},
+		]);
 	});
 
 	it("is refused with the path when the session is not there", async () => {
