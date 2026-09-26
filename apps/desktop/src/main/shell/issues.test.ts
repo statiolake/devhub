@@ -18,10 +18,21 @@ import { runGit, type GitCommand } from "./git.js";
 import { findClones } from "./issues.js";
 import { CancellationToken } from "../terminal/ports.js";
 
+/**
+ * The `git` on PATH, as git.test.ts and worktreeFolder.test.ts run it — not
+ * `/usr/bin/git`, which on macOS is xcrun's shim: its first lookup on a fresh
+ * CI runner takes seconds, which the first test here paid alone and ran out
+ * of time on. A repository made in a test belongs to nobody, so it reads
+ * neither the machine's identity nor its hooks.
+ */
 const GIT: GitCommand = {
 	runtime: localRuntime(),
-	git: "/usr/bin/git",
-	environment: process.env,
+	git: "git",
+	environment: {
+		...process.env,
+		GIT_CONFIG_GLOBAL: "/dev/null",
+		GIT_CONFIG_SYSTEM: "/dev/null",
+	},
 };
 const ISSUE = { owner: "example", repository: "widget", number: 128 };
 
