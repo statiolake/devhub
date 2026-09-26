@@ -83,7 +83,9 @@ async function definitionOf(
 		"--filter",
 		`label=${LOCAL_FOLDER_LABEL}=${folder}`,
 		"--format",
-		`{{index .Labels "${CONFIG_FILE_LABEL}"}}`,
+		// `.Label`, not `index .Labels`: in `docker ps` the labels are one
+		// string, and only this form reads one of them.
+		`{{.Label "${CONFIG_FILE_LABEL}"}}`,
 	]).catch((failure: unknown) => ({
 		code: 1,
 		stdout: Buffer.alloc(0),

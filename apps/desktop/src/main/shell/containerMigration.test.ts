@@ -62,6 +62,9 @@ describe("the definition a version-11 container Workspace was using", () => {
 		);
 		expect(notes).toEqual([]);
 		expect(asked[0]).toContain("label=devcontainer.local_folder=/src/api");
+		// The format `docker ps` reads one label with; `index .Labels` is a
+		// template error there, found by running it.
+		expect(asked[0]).toContain('{{.Label "devcontainer.config_file"}}');
 	});
 
 	it("is the folder's default one when there is no container", async () => {

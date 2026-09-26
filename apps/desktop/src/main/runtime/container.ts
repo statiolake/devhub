@@ -1103,13 +1103,15 @@ export class ContainerHost
 	 * `docker cp`.
 	 */
 	async #relayPaths(): Promise<{ node: string; relay: string }> {
-		const home = await this.home();
-		const relay = relayPath(home);
+		// The server first: its install is what makes the directory the relay
+		// is written into, and its `node` is what runs the relay. The `devhub`
+		// command is installed before any window has resolved — before the
+		// server has been started once — so the order is stated here rather
+		// than left to whichever came first.
+		const install = await this.#ensureServerInstalled();
+		const relay = relayPath(await this.home());
 		await this.writeTextFile(relay, RELAY_SOURCE, 0o600);
-		return {
-			node: posix.join(await this.#ensureServerInstalled(), "node"),
-			relay,
-		};
+		return { node: posix.join(install, "node"), relay };
 	}
 
 	/**
