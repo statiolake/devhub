@@ -284,7 +284,12 @@ export interface SubagentInfo {
   readonly label: string;
   readonly prompt: string;
   readonly model: string | undefined;
-  readonly state: "running" | "completed" | "failed" | "unknown";
+  /**
+   * `idle`: alive and waiting to be told something (a Claude teammate
+   * between tasks). `unknown`: nothing says how it stands, which is what a
+   * subagent whose CLI has ended is unless its end was recorded.
+   */
+  readonly state: "running" | "idle" | "completed" | "failed" | "unknown";
   /**
    * Whether the person can say something to this subagent directly. The
    * adapter says, from what its CLI offers: a message then goes to the

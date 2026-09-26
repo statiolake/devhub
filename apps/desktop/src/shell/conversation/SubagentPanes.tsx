@@ -53,6 +53,7 @@ export const SUBAGENT_STATE_LABELS: Readonly<
   Record<SubagentEntry["spawns"]["state"], string>
 > = {
   running: "Running",
+  idle: "Idle",
   completed: "Done",
   failed: "Failed",
   unknown: "Unknown",

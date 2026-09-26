@@ -249,6 +249,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * notification that names only the task (not its call) is matched by.
 	 */
 	private readonly tasks = new Map<string, EntryId>();
+	/** The call that spawned each teammate, by the name its messages come from. */
+	private readonly teammates = new Map<string, EntryId>();
 
 	private readonly messages = new Map<string, MessageState>();
 	/** The message streaming now, per parent (null for the top level). */
@@ -634,6 +636,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.messages.clear();
 		this.streaming.clear();
 		this.tasks.clear();
+		this.teammates.clear();
 		this.interrupting = false;
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
@@ -1279,6 +1282,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					return this.takeCommand(line.uuid, block.line, when, parent);
 				case "command_output":
 					return this.takeCommandOutput(line.uuid, block, parent);
+				case "teammate_message":
+					return this.takeTeammateMessage(block);
 				case "task_notification":
 					return this.takeTask({
 						type: "task",
@@ -1398,6 +1403,40 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	/**
+	 * A teammate's message. The team protocol's messages say how it stands —
+	 * idle between tasks, failed, or shut down — and are not drawn; its words
+	 * are a quiet line from it, never the person's.
+	 */
+	private takeTeammateMessage(
+		block: Extract<UserBlock, { kind: "teammate_message" }>,
+	): void {
+		if (block.signal === undefined) {
+			return this.notice(
+				"info",
+				`From ${block.from}: ${block.text}`,
+				undefined,
+			);
+		}
+		const call = this.teammates.get(block.from);
+		const tool = call === undefined ? undefined : this.tool(call);
+		if (tool?.spawns === undefined) return;
+		const state: SubagentInfo["state"] | undefined =
+			block.signal.type === "idle_notification"
+				? block.signal.failure === undefined
+					? "idle"
+					: "failed"
+				: block.signal.type === "shutdown_approved" ||
+					  block.signal.type === "teammate_terminated"
+					? "completed"
+					: undefined;
+		if (state === undefined || state === tool.spawns.state) return;
+		this.emit({
+			type: "entry",
+			entry: { ...tool, spawns: { ...tool.spawns, state } },
+		});
+	}
+
+	/**
 	 * A tool call's result. A subagent call's result is also the subagent's
 	 * end — unless the call only started it in the background
 	 * (`launchedTask`), whose end a task notification tells later.
@@ -1426,6 +1465,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			this.tasks.set(launchedTask, id);
 		if (result.backgroundTask !== undefined)
 			this.tasks.set(result.backgroundTask, id);
+		if (tool.spawns !== undefined && result.teammate !== undefined)
+			this.teammates.set(result.teammate, id);
+		// A call that only started its subagent — in the background, or as
+		// a teammate — does not end it.
+		const started = launchedTask !== undefined || result.teammate !== undefined;
 		this.emit({
 			type: "entry",
 			entry: {
@@ -1433,7 +1477,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				status,
 				output: toolOutput(tool, block, result),
 				spawns:
-					tool.spawns === undefined || launchedTask !== undefined
+					tool.spawns === undefined || started
 						? tool.spawns
 						: {
 								...tool.spawns,
@@ -1452,7 +1496,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private processEnded(entries: readonly TranscriptEntry[]): void {
 		for (const each of entries) {
 			if (each.kind !== "tool") continue;
-			if (each.spawns?.state === "running") {
+			if (each.spawns?.state === "running" || each.spawns?.state === "idle") {
 				this.emit({
 					type: "entry",
 					entry: { ...each, spawns: { ...each.spawns, state: "unknown" } },

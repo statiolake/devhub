@@ -3166,3 +3166,147 @@ describe("the CLI's other system events", () => {
 		});
 	});
 });
+
+describe("a teammate", () => {
+	function spawned(): ClaudeAdapter {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_tm", "Agent", {
+					description: "research",
+					prompt: "look into it",
+					subagent_type: "general",
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_tm", "Spawned successfully.")),
+				tool_use_result: {
+					status: "teammate_spawned",
+					prompt: "look into it",
+					teammate_id: "researcher@team",
+					agent_id: "researcher@team",
+					name: "researcher",
+					team_name: "team",
+				},
+			}),
+		);
+		return adapter;
+	}
+
+	function says(
+		adapter: ClaudeAdapter,
+		body: string,
+		from = "researcher",
+	): void {
+		adapter.received(
+			echo(
+				`<teammate-message teammate_id="${from}" color="blue" summary="a note">\n${body}\n</teammate-message>`,
+				`u-${Math.random()}`,
+			),
+		);
+	}
+
+	const state = (adapter: ClaudeAdapter) =>
+		(entry(adapter, "tool:toolu_tm") as ToolEntry).spawns?.state;
+
+	it("runs once spawned, not completed by its spawn call's result", () => {
+		expect(state(spawned())).toBe("running");
+	});
+
+	it("is idle when it says so, failed when its idleness names a failure, and done when its shutdown is approved", () => {
+		const adapter = spawned();
+		says(
+			adapter,
+			JSON.stringify({
+				type: "idle_notification",
+				from: "researcher",
+				idleReason: "available",
+				timestamp: "t",
+			}),
+		);
+		expect(state(adapter)).toBe("idle");
+		says(
+			adapter,
+			JSON.stringify({
+				type: "shutdown_approved",
+				from: "researcher",
+				requestId: "r",
+				timestamp: "t",
+			}),
+		);
+		expect(state(adapter)).toBe("completed");
+		const failing = spawned();
+		says(
+			failing,
+			JSON.stringify({
+				type: "idle_notification",
+				from: "researcher",
+				idleReason: "failed",
+				failureReason: "crashed",
+				timestamp: "t",
+			}),
+		);
+		expect(state(failing)).toBe("failed");
+	});
+
+	it("draws what it says as a quiet line from it, not as the person's message, and its protocol messages not at all", () => {
+		const adapter = spawned();
+		says(adapter, "Found the cause in parser.ts.");
+		says(
+			adapter,
+			JSON.stringify({
+				type: "idle_notification",
+				from: "researcher",
+				idleReason: "available",
+				timestamp: "t",
+			}),
+		);
+		const drawn = adapter.transcript.entries.filter(
+			(each) => each.kind === "notice" || each.kind === "user",
+		);
+		expect(
+			drawn.map((each) => [each.kind, "text" in each ? each.text : ""]),
+		).toEqual([
+			["user", "go"],
+			["notice", "From researcher: Found the cause in parser.ts."],
+		]);
+	});
+
+	it("is unknown, never running or done, when read back from a session file with nothing after its spawn", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const past = (record: Record<string, unknown>) =>
+			adapter.received(json({ type: "devhub_history", record }));
+		past({
+			type: "assistant",
+			uuid: "a1",
+			message: {
+				id: "m1",
+				role: "assistant",
+				content: [
+					toolUse("toolu_tm", "Agent", {
+						description: "research",
+						prompt: "p",
+					}),
+				],
+			},
+		});
+		past({
+			type: "user",
+			uuid: "u1",
+			message: {
+				role: "user",
+				content: [
+					{ type: "tool_result", tool_use_id: "toolu_tm", content: "Spawned." },
+				],
+			},
+			tool_use_result: {
+				status: "teammate_spawned",
+				name: "researcher",
+				teammate_id: "researcher@team",
+			},
+		});
+		expect(state(adapter)).toBe("unknown");
+	});
+});

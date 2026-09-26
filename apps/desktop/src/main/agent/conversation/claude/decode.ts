@@ -234,6 +234,11 @@ export interface ToolUseResult {
 	 * arrives later as a task notification.
 	 */
 	readonly launchedTask: string | undefined;
+	/**
+	 * The teammate the call spawned (`status` "teammate_spawned"), by the
+	 * name its messages come from. It runs on beside the conversation.
+	 */
+	readonly teammate: string | undefined;
 	/** A command's streams, apart (Bash). */
 	readonly stdout: string | undefined;
 	readonly stderr: string | undefined;
@@ -251,6 +256,7 @@ export interface ToolUseResult {
 
 export const NO_TOOL_RESULT: ToolUseResult = {
 	launchedTask: undefined,
+	teammate: undefined,
 	stdout: undefined,
 	stderr: undefined,
 	interrupted: false,
@@ -275,6 +281,19 @@ export type UserBlock =
 	| { readonly kind: "text"; readonly text: string }
 	/** A command the CLI ran itself: `/model sonnet`, `! ls`. */
 	| { readonly kind: "command"; readonly line: string }
+	/**
+	 * A teammate's message to the conversation, by its name. `signal` is its
+	 * team protocol's word (`idle_notification`, `shutdown_approved`, …) when
+	 * the message is one, with the failure an idle notification names.
+	 */
+	| {
+			readonly kind: "teammate_message";
+			readonly from: string;
+			readonly text: string;
+			readonly signal:
+				| { readonly type: string; readonly failure: string | undefined }
+				| undefined;
+	  }
 	/** What such a command printed. */
 	| {
 			readonly kind: "command_output";
@@ -1045,6 +1064,10 @@ function decodeToolUseResult(
 			result.status === "async_launched"
 				? f.string(result.agentId, `${at}.agentId`)
 				: undefined,
+		teammate:
+			result.status === "teammate_spawned"
+				? f.string(result.name, `${at}.name`)
+				: undefined,
 		stdout: text("stdout"),
 		stderr: text("stderr"),
 		interrupted:
@@ -1090,6 +1113,7 @@ const TASK_NOTIFICATION =
 function textBlock(text: string): UserBlock[] {
 	const command = commandBlock(text);
 	if (command !== undefined) return command;
+	if (/^\s*<teammate-message[\s>]/u.test(text)) return teammateMessages(text);
 	if (!isTaskNotificationText(text)) return [{ kind: "text", text }];
 	const notifications = [...text.matchAll(TASK_NOTIFICATION)].map(
 		([, body]): UserBlock => ({
@@ -1150,6 +1174,56 @@ function commandBlock(text: string): UserBlock[] | undefined {
 		default:
 			return undefined;
 	}
+}
+
+const TEAMMATE_MESSAGE =
+	/<teammate-message([^>]*)>([\s\S]*?)<\/teammate-message>/gu;
+
+/**
+ * Messages from teammates, as the CLI hands them to the model: each in a
+ * `<teammate-message teammate_id="…">` element, its body words or one of the
+ * team protocol's JSON messages (which may have words after it).
+ */
+function teammateMessages(text: string): UserBlock[] {
+	return [...text.matchAll(TEAMMATE_MESSAGE)].map(([, attributes, body]) => {
+		const from = /teammate_id="([^"]*)"/u.exec(attributes!)?.[1] ?? "";
+		const words = body!.trim();
+		return {
+			kind: "teammate_message",
+			from,
+			text: words,
+			signal: teamSignal(words),
+		};
+	});
+}
+
+function teamSignal(
+	words: string,
+): { readonly type: string; readonly failure: string | undefined } | undefined {
+	if (!words.startsWith("{")) return undefined;
+	const firstLine = words.split("\n", 1)[0]!;
+	let value: unknown;
+	try {
+		value = JSON.parse(words);
+	} catch {
+		try {
+			value = JSON.parse(firstLine);
+		} catch {
+			// Words that open with a brace and are not the protocol's JSON:
+			// they are words, drawn as such.
+			return undefined;
+		}
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	const { type, failureReason } = value as Record<string, unknown>;
+	if (typeof type !== "string") return undefined;
+	return {
+		type,
+		failure:
+			typeof failureReason === "string" && failureReason !== ""
+				? failureReason
+				: undefined,
+	};
 }
 
 /** A command's printout without the terminal's colours. */

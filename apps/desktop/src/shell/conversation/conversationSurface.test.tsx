@@ -391,6 +391,27 @@ describe("every entry kind", () => {
     );
   });
 
+  it("says a teammate waiting between tasks is idle", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Agent: research", {
+            spawns: {
+              label: "researcher",
+              prompt: "look into it",
+              model: undefined,
+              state: "idle",
+              takesMessages: false,
+            },
+          }),
+        ),
+      ]),
+    );
+    expect(
+      entry("t1").querySelector(".conversation-subagent-state"),
+    ).toHaveTextContent("Idle");
+  });
+
   it("draws the images a person's message carried under its words", () => {
     draw(
       transcriptOf([

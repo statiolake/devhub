@@ -280,6 +280,14 @@ only says it launched) — a `task_notification` event in stream-json, or a
 or else the task's. A subagent runs only inside the CLI process that started
 it: one read back from a session file, or left running when the CLI is
 started again (rewind, `/resume`), is *Unknown* unless its end was recorded.
+A Claude teammate (an agent team's member, whose Agent call's result says
+`teammate_spawned`) runs beside the conversation rather than inside the call:
+it is *Running* from its spawn, *Idle* when it says it is waiting between
+tasks, *Failed* when its idle notice names a failure, and *Done* once its
+shutdown is approved. Its protocol messages set that and are not drawn; what
+it says in words is a quiet line, *From researcher: …*. Read back from a
+session file, or once the CLI is started again, a teammate nothing more was
+recorded about is *Unknown*.
 A notification that names only its task is matched through the call that
 task belongs to: the one `task_started` tied it to, or, read back from a
 session file, the call whose result named that task (a background agent's
