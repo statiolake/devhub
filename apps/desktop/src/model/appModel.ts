@@ -272,29 +272,43 @@ function sameEditorHost(
  * **One predicate, and this is it.** `setAgentStatus` is its only caller, and
  * the only thing in DevHub that raises an unread mark on its own.
  *
- * The rule is leaving `working`. An Agent that is working is an Agent nobody
- * has to watch; the moment it stops working it is either asking a question,
- * finished, broken, or unreadable, and all four are the person's turn. What
- * matters most is the finish — `working` → `idle` — which the old rule
- * ("entered `waiting`") missed entirely, and which is the case somebody
- * actually waits for.
+ * Unread means *nothing will move here until you act*. So the rule is an
+ * Agent that was moving on its own — `working`, or `background` with
+ * something it started still at work — coming to a stop that is the person's
+ * turn: `idle` (it finished), `waiting` (it asks a question or for a
+ * permission) or `error` (it broke). What matters most is the finish, which
+ * is the case somebody actually waits for, and it is the same finish whether
+ * the turn ends it (`working` → `idle`) or the last background task does
+ * (`background` → `idle`).
  *
- * A turn that ends with background tasks still working — `working` →
- * `background` — is a finish too: the Agent answered, and what it left going
- * is its own business until it takes its turn again.
+ * What is deliberately *not* here:
  *
- * What is deliberately *not* here: anything that does not start from
- * `working`. `unknown` → anything is a first reading of a screen nobody had
- * read, not a change; `idle` → `idle` is nothing; `idle` → `waiting` without a
- * working spell in between is an Agent that never went away. Every one of them
- * would raise a mark for something that did not happen while you were gone.
+ * - `working` → `background`. The turn is over but things are still moving,
+ *   and the Agent usually takes its turn again by itself when they end.
+ * - `unknown`, either way. Into it is a screen that stopped being readable,
+ *   which says nothing about whose turn it is; out of it is a first reading
+ *   of a screen nobody had read, not a change.
+ * - Anything that does not start from a moving status: `idle` → `idle` is
+ *   nothing, and `idle` → `waiting` without a working spell in between is an
+ *   Agent that never went away. Each would raise a mark for something that
+ *   did not happen while you were gone.
  */
 export function wantsAttention(
   previous: AgentStatus,
   next: AgentStatus,
 ): boolean {
-  return previous === "working" && next !== "working";
+  return MOVING.has(previous) && YOUR_TURN.has(next);
 }
+
+/** Statuses in which an Agent gets somewhere without the person. */
+const MOVING: ReadonlySet<AgentStatus> = new Set(["working", "background"]);
+
+/** Statuses in which nothing moves until the person acts. */
+const YOUR_TURN: ReadonlySet<AgentStatus> = new Set([
+  "idle",
+  "waiting",
+  "error",
+]);
 
 export class AppModel {
   private readonly workspaceList: Workspace[] = [];

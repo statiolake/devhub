@@ -621,8 +621,9 @@ describe("duplicates", () => {
 
 describe("wantsAttention", () => {
   /**
-   * The whole rule, in a table: leaving `working` is the only thing that owes
-   * the person a look. Every other pair is something nobody was waiting for.
+   * The whole rule, in a table: an Agent that was moving on its own coming to
+   * a stop where nothing moves until the person acts is the only thing that
+   * owes a look. Every other pair is something nobody was waiting for.
    */
   const statuses: AgentStatus[] = [
     "working",
@@ -633,14 +634,27 @@ describe("wantsAttention", () => {
     "unknown",
   ];
 
-  it("is exactly 'it stopped working'", () => {
+  it("is exactly 'it was moving, and now it is your turn'", () => {
+    const moving = ["working", "background"];
+    const yourTurn = ["idle", "waiting", "error"];
     for (const previous of statuses) {
       for (const next of statuses) {
         expect(wantsAttention(previous, next)).toBe(
-          previous === "working" && next !== "working",
+          moving.includes(previous) && yourTurn.includes(next),
         );
       }
     }
+  });
+
+  it("is the finish however the Agent was moving, and not a turn that leaves work in the background", () => {
+    expect(wantsAttention("working", "idle")).toBe(true);
+    expect(wantsAttention("background", "idle")).toBe(true);
+    expect(wantsAttention("working", "waiting")).toBe(true);
+    expect(wantsAttention("background", "waiting")).toBe(true);
+    expect(wantsAttention("working", "background")).toBe(false);
+    expect(wantsAttention("background", "working")).toBe(false);
+    // A screen that stopped being readable says nothing about whose turn it is.
+    expect(wantsAttention("working", "unknown")).toBe(false);
   });
 
   it("says nothing about a screen nobody had read, or a status standing still", () => {
@@ -676,12 +690,26 @@ describe("unread agents", () => {
     model.setAgentStatus(AG_A, status);
   }
 
-  it("becomes unread whenever it stops working, and says which way", () => {
-    for (const status of ["idle", "waiting", "error", "unknown"] as const) {
+  it("becomes unread whenever it stops working for you to act, and says which way", () => {
+    for (const status of ["idle", "waiting", "error"] as const) {
       const model = withAgent();
       ranAndThen(model, status);
       expect(model.agent(AG_A)?.unread).toBe(status);
     }
+  });
+
+  it("stays read while its background tasks work, and becomes unread when the last one ends", () => {
+    const model = withAgent();
+    ranAndThen(model, "background");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+    model.setAgentStatus(AG_A, "idle");
+    expect(model.agent(AG_A)?.unread).toBe("idle");
+  });
+
+  it("stays read when its screen stops being readable", () => {
+    const model = withAgent();
+    ranAndThen(model, "unknown");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
   });
 
   it("stays read when it stops working in front of you", () => {

@@ -79,15 +79,16 @@ export interface StatusMarkProps {
  * Sidebar draws `unread` — the model's rule for when an Agent *becomes* unread
  * is untouched, this is only what it looks like.
  *
- * `background` is idle in this respect: its turn is over and it is not asking
- * for anybody, so the answer it finished with while nobody was watching is
- * what its mark says until somebody looks, and then the background mark.
+ * `background` is not idle in this respect: unread says nothing will move
+ * until you act, and something in it still moves. An Agent already unread
+ * that goes back to work in the background wears the background mark, and the
+ * unread mark again when it comes to rest.
  */
 export function unreadShows(
   status: AgentStatus,
   unread: AgentStatus | undefined,
 ): boolean {
-  return (status === "idle" || status === "background") && unread !== undefined;
+  return status === "idle" && unread !== undefined;
 }
 
 export function StatusMark({ status, unread }: StatusMarkProps) {

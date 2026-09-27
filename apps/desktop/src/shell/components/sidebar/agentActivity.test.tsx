@@ -352,20 +352,17 @@ describe("how an Agent says it has not been read", () => {
   });
 
   /**
-   * An Agent whose turn is over with background tasks still working is quiet
-   * as an idle one is: the answer it finished with is what it is owed a look
-   * for, and once that is seen it wears its own mark.
+   * Unread says nothing will move until you act, and an Agent with background
+   * tasks still working is still moving: one already unread wears its own
+   * background mark until it comes to rest.
    */
-  it("is the status mark of an Agent working in the background too, and its own mark once seen", () => {
-    mountNamed("Claude 1", undefined, "background", "background");
-    expect(statusGlyph()).toBe("statusUnread");
+  it("leaves an Agent working in the background its own mark, unread or not", () => {
+    mountNamed("Claude 1", undefined, "background", "idle");
+    expect(statusGlyph()).toBe("statusBackground");
     expect(document.querySelector(".agent-row .status-mark")).toHaveAttribute(
       "aria-label",
-      "Background, unread",
+      "Background",
     );
-    cleanup();
-    mountNamed("Claude 1", undefined, "background", undefined);
-    expect(statusGlyph()).toBe("statusBackground");
   });
 
   it("draws the ordinary idle mark when there is nothing owed", () => {
