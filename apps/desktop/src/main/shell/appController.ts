@@ -93,7 +93,6 @@ import {
 	sessionsLeftRunningDetail,
 	withCloseDeadline,
 } from "./cleanupDeadline.js";
-import { asSentence } from "./cliSentence.js";
 import { canonicalise } from "../cli/canonical.js";
 import {
 	installExtensions,
@@ -198,7 +197,6 @@ import {
 	type PersistedAppState,
 } from "../../model/persistence.js";
 import {
-	carriedAcrossIpc,
 	agentProfilesWire,
 	appearanceWire,
 	errorWire,
@@ -209,11 +207,13 @@ import {
 	setRuntimeVersion,
 	snapshotWire,
 	drawnWorkspaceOrder,
-	TypedFailure,
+	NamedFailure,
+	namedFailure,
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
 	InvalidIntent,
+	failureText,
 } from "../../model/wire.js";
 import {
 	isQuitting,
@@ -436,7 +436,7 @@ function isLiveWorkbench(view: WorkbenchView): boolean {
 }
 
 function describeFailure(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return failureText(error);
 }
 
 /**
@@ -941,7 +941,7 @@ export class AppController {
 					session,
 				}),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
-			fail: (error) => carriedAcrossIpc(errorWire(error)),
+			fail: (error) => namedFailure(error),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report.
 		this.agentWiring.conversations.registry.onEvent(
@@ -1731,14 +1731,10 @@ export class AppController {
 			return await run(cancel);
 		} catch (error: unknown) {
 			if (expired) {
-				throw carriedAcrossIpc(
-					errorWire(
-						workspaceFailure(
-							`${what} could not be found within ${String(
-								REPOSITORY_LOOKUP_DEADLINE_MS / 1000,
-							)}s. Something DevHub asked — a workspace source, or git — did not answer.`,
-						),
-					),
+				throw workspaceFailure(
+					`${what} could not be found within ${String(
+						REPOSITORY_LOOKUP_DEADLINE_MS / 1000,
+					)}s. Something DevHub asked — a workspace source, or git — did not answer.`,
 				);
 			}
 			if (cancel.isCancelled) {
@@ -1746,11 +1742,9 @@ export class AppController {
 				// the lookup stopped. It is thrown rather than answered with an
 				// empty list so that a caller who somehow is still listening
 				// cannot mistake "withdrawn" for "there is nothing".
-				throw carriedAcrossIpc(
-					errorWire(workspaceFailure("The lookup was cancelled.")),
-				);
+				throw workspaceFailure("The lookup was cancelled.");
 			}
-			throw carriedAcrossIpc(errorWire(error));
+			throw namedFailure(error);
 		} finally {
 			clearTimeout(timer);
 			if (this.pickerLookup === cancel) this.pickerLookup = undefined;
@@ -2161,7 +2155,7 @@ export class AppController {
 	 * would not parse is reported rather than answered with silent defaults.
 	 */
 	private requireConfig(): Config {
-		if (!this.config) throw carriedAcrossIpc(this.settingsRefusal.required());
+		if (!this.config) throw new NamedFailure(this.settingsRefusal.required());
 		return this.config;
 	}
 
@@ -2733,7 +2727,7 @@ export class AppController {
 		const timer = setTimeout(() => {
 			this.reject(
 				outcome.operationId,
-				new TypedFailure(errorWireAt("operation_timed_out")),
+				new NamedFailure(errorWireAt("operation_timed_out")),
 			);
 		}, OPERATION_TIMEOUT_MS);
 		// A pending page request must never be the reason the process stays alive.
@@ -2952,11 +2946,7 @@ export class AppController {
 		if (error instanceof StateError) {
 			return error.describe(this.stateStore.path);
 		}
-		return `${this.stateStore.path}: ${
-			error instanceof Error && error.message.length > 0
-				? error.message
-				: String(error)
-		}`;
+		return `${this.stateStore.path}: ${failureText(error)}`;
 	}
 
 	private async persist(token: OperationToken): Promise<void> {
@@ -3033,7 +3023,7 @@ export class AppController {
 			this.failOperation(token, {
 				subject: "app",
 				code: "workspace_unavailable",
-				detail: `${path}${whereRequested(requested)} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+				detail: `${path}${whereRequested(requested)} could not be opened as a workspace: ${failureText(error)}`,
 			});
 		}
 	}
@@ -3648,18 +3638,19 @@ export class AppController {
 			// named step, because the alternative — a row that greys out,
 			// breathes, refuses every operation and never stops, with nothing on
 			// screen saying why — is the bug this exists to prevent.
-			// What the tool said, and only what the tool said. `TypedFailure` is
-			// how git's last stderr line and the errno sentences reach here
-			// (`workspaceFailure`), and passing that through is the difference
-			// between "A cleanup step did not finish" and "fatal: '…' contains
-			// modified or untracked files, use --force to delete it". Nothing is
-			// composed here; a failure with no words of its own carries none.
+			// What the tool said, and only what the tool said. `NamedFailure` is
+			// how git's last stderr line, the errno sentences and a machine's
+			// refusals reach here, and passing its words through is the
+			// difference between "A cleanup step did not finish" and "fatal: '…'
+			// contains modified or untracked files, use --force to delete it".
+			// Nothing is composed here; a failure with no words of its own
+			// carries none.
 			this.failClose(
 				token,
 				workspaceId,
 				step,
 				error instanceof CloseTimeout ? error.diagnostic : "cleanup_failed",
-				error instanceof TypedFailure ? error.wire.summary : undefined,
+				error instanceof NamedFailure ? failureText(error) : undefined,
 			);
 			return;
 		}
@@ -3724,9 +3715,7 @@ export class AppController {
 					: sessionsLeftRunning(step, machine, error);
 			if (left === undefined) throw error;
 			console.error(
-				`[devhub] close: ${left} could not be stopped — ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+				`[devhub] close: ${left} could not be stopped — ${failureText(error)}`,
 			);
 			leftRunning.push(left);
 		}
@@ -3970,7 +3959,7 @@ export class AppController {
 					machine: runtime.id,
 					installed: false,
 					path: undefined,
-					reason: error instanceof Error ? error.message : String(error),
+					reason: failureText(error),
 				});
 				if (this.launchers.get(runtime.id) === installed) {
 					this.launchers.delete(runtime.id);
@@ -4062,7 +4051,7 @@ export class AppController {
 			this.publishError(
 				withDetail(
 					errorWireAt("terminal_launcher_unavailable"),
-					`${runtime.id}: ${error instanceof Error ? error.message : String(error)}`,
+					`${runtime.id}: ${failureText(error)}`,
 				),
 			);
 			return windowTerminalLauncher(undefined);
@@ -4742,7 +4731,7 @@ export class AppController {
 		try {
 			unreachable = (await this.installTerminalLauncher(host)).unreachable;
 		} catch (error: unknown) {
-			unreachable = error instanceof Error ? error.message : String(error);
+			unreachable = failureText(error);
 		}
 		if (unreachable === undefined) return;
 		console.error(`[devhub] devhub command in ${host.id}: ${unreachable}`);
@@ -4902,7 +4891,7 @@ export class AppController {
 				this.publishError(
 					withDetail(
 						errorWireAt("dev_container_not_stopped"),
-						failure instanceof Error ? failure.message : String(failure),
+						failureText(failure),
 					),
 				);
 			},
@@ -5050,7 +5039,7 @@ export class AppController {
 	 */
 	private dispatchAwaiting(intent: UserIntent): Promise<IntentOutcome> {
 		return this.dispatchSettled(intent).catch((error: unknown) => {
-			throw carriedAcrossIpc(errorWire(error));
+			throw namedFailure(error);
 		});
 	}
 
@@ -5161,10 +5150,8 @@ export class AppController {
 	 * that finish with nothing in front of it.
 	 */
 	activateFromCli(): Promise<string> {
-		return asSentence(() => {
-			this.bringToFront();
-			return Promise.resolve("DevHub is in front.");
-		});
+		this.bringToFront();
+		return Promise.resolve("DevHub is in front.");
 	}
 
 	/**
@@ -5185,10 +5172,6 @@ export class AppController {
 	 * because a command that opens something you cannot see has not opened it.
 	 */
 	async openFromCli(request: ControlOpenRequest): Promise<string> {
-		return asSentence(() => this.doOpenFromCli(request));
-	}
-
-	private async doOpenFromCli(request: ControlOpenRequest): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
 		// The `devhub` command inside a dev container: the file is in that
 		// container, and the window to open it in is the one attached to it.
@@ -5350,11 +5333,7 @@ export class AppController {
 	 * `focusSurface`). DevHub is deliberately *not* brought to the front: the
 	 * editor was closed by somebody already looking at it.
 	 */
-	waitEndedFromCli(waitMarkerPath: string): Promise<string> {
-		return asSentence(() => this.doWaitEnded(waitMarkerPath));
-	}
-
-	private async doWaitEnded(waitMarkerPath: string): Promise<string> {
+	async waitEndedFromCli(waitMarkerPath: string): Promise<string> {
 		const back = this.waitReturns.take(
 			waitMarkerPath,
 			this.coordinator.model.selection,
@@ -5570,14 +5549,6 @@ export class AppController {
 		args: readonly string[],
 		cwd: string,
 	): Promise<string> {
-		return asSentence(() => this.doAddAgentFromCli(profileId, args, cwd));
-	}
-
-	private async doAddAgentFromCli(
-		profileId: string,
-		args: readonly string[],
-		cwd: string,
-	): Promise<string> {
 		// The profile is checked here rather than left to the resolver, because
 		// a name that is not in the config is a typo on a command line, not an
 		// operation that failed — and the person needs to be told which names
@@ -5789,7 +5760,7 @@ export class AppController {
 		try {
 			intent = intentFromWire(wire);
 		} catch (error) {
-			throw carriedAcrossIpc(
+			throw new NamedFailure(
 				error instanceof InvalidIntent
 					? errorWireAt("invalid_intent")
 					: errorWire(error),
@@ -5852,7 +5823,7 @@ export class AppController {
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (git.kind === "unavailable") {
-			throw new TypedFailure(
+			throw new NamedFailure(
 				withSummary(
 					errorWireAt("workspace_unavailable"),
 					this.executableMissingMessage(git),
@@ -6121,7 +6092,7 @@ export class AppController {
 			this.cancelPicker?.();
 			const config = this.config;
 			if (!config) {
-				throw carriedAcrossIpc(errorWire(new Error("config is unavailable")));
+				throw namedFailure(new Error("config is unavailable"));
 			}
 			const operationId = randomUUID();
 			this.cancelPicker = startWorkspacePicker(
@@ -6163,7 +6134,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6176,7 +6147,7 @@ export class AppController {
 			try {
 				return await readSshHosts();
 			} catch (error: unknown) {
-				throw carriedAcrossIpc(errorWire(error));
+				throw namedFailure(error);
 			}
 		});
 		handle(
@@ -6195,7 +6166,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6209,7 +6180,7 @@ export class AppController {
 					workspaceLocation({ kind: "local", path: folder }),
 				);
 			} catch (error: unknown) {
-				throw carriedAcrossIpc(errorWire(error));
+				throw namedFailure(error);
 			}
 		});
 		handle(
@@ -6272,7 +6243,7 @@ export class AppController {
 					}
 					return opened;
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6282,7 +6253,7 @@ export class AppController {
 				try {
 					await this.reopenEditorLocally(parseWorkspaceId(workspaceId));
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6343,7 +6314,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6366,7 +6337,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6379,10 +6350,8 @@ export class AppController {
 			// repository, and an Issue and a pull request name theirs the same way.
 			const issue = parseGitHubItemUrl(issueUrl);
 			if (!config || !issue) {
-				throw carriedAcrossIpc(
-					errorWire(
-						workspaceFailure("That is not a GitHub Issue or pull request URL."),
-					),
+				throw workspaceFailure(
+					"That is not a GitHub Issue or pull request URL.",
 				);
 			}
 			return this.boundedLookup(
@@ -6418,7 +6387,7 @@ export class AppController {
 				try {
 					return await this.clone(url, parentDirectory);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6429,14 +6398,14 @@ export class AppController {
 					place.path,
 				);
 			} catch (error: unknown) {
-				throw carriedAcrossIpc(errorWire(error));
+				throw namedFailure(error);
 			}
 		});
 		handle(CHANNELS.assignIssue, async (_event, request: IssueAssignment) => {
 			try {
 				return await this.assignIssue(request);
 			} catch (error: unknown) {
-				throw carriedAcrossIpc(errorWire(error));
+				throw namedFailure(error);
 			}
 		});
 
@@ -6454,7 +6423,7 @@ export class AppController {
 				try {
 					return await this.runAgentAction(agentId, actionId);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6474,7 +6443,7 @@ export class AppController {
 				try {
 					return await this.answerWorktreeClose(workspaceId, answer);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6499,7 +6468,7 @@ export class AppController {
 						this.homeOf,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);
@@ -6517,7 +6486,7 @@ export class AppController {
 						this.homeOf,
 					);
 				} catch (error: unknown) {
-					throw carriedAcrossIpc(errorWire(error));
+					throw namedFailure(error);
 				}
 			},
 		);

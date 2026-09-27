@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { errorWire } from "../../model/wire.js";
+import { errorWire, failureText } from "../../model/wire.js";
 import { LocalRuntime } from "../runtime/local.js";
 import { portFailure, type PortErrorCode } from "./ports.js";
 
@@ -31,11 +31,13 @@ describe("a machine's failure, drawn", () => {
 		).toMatchObject({ code, detail: "It said so." });
 	});
 
-	it("keeps its own message, which the rest of main reads", () => {
-		expect(portFailure("unavailable", { detail: "It said so." }).message).toBe(
-			"It said so.",
+	it("reads as its title and its sentence where it is text", () => {
+		expect(
+			failureText(portFailure("unavailable", { detail: "It said so." })),
+		).toBe("The machine is unavailable. It said so.");
+		expect(failureText(portFailure("timed_out"))).toBe(
+			"The machine did not answer in time. terminal runtime timed out",
 		);
-		expect(portFailure("timed_out").message).toBe("terminal runtime timed out");
 	});
 });
 

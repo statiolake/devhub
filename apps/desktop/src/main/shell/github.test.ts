@@ -15,7 +15,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { errorWire } from "../../model/wire.js";
+import { errorWire, failureText } from "../../model/wire.js";
 import {
 	readBranchStatus,
 	readGitHubLogin,
@@ -495,9 +495,17 @@ describe("a refusal", () => {
 			"fetch",
 			vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => ({}) }),
 		);
-		await expect(readBranchStatus(REFERENCE, "secret-token")).rejects.toThrow(
-			/^GitHub answered 500\.$/u,
+		const failure: unknown = await readBranchStatus(
+			REFERENCE,
+			"secret-token",
+		).then(
+			() => undefined,
+			(error: unknown) => error,
 		);
+		expect(failureText(failure)).toBe(
+			"DevHub could not get this from GitHub. GitHub answered 500.",
+		);
+		expect(JSON.stringify(errorWire(failure))).not.toContain("secret-token");
 	});
 });
 

@@ -22,7 +22,7 @@
  */
 
 import type { AgentProfileKind, ConfiguredAgentAction } from "./config.js";
-import { NamedFailure } from "./wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "./wire.js";
 
 /**
  * What makes DevHub say an action.
@@ -279,7 +279,7 @@ export function renderAgentAction(
 /** An agent action whose wording comes to nothing (`renderAgentAction`). */
 export class AgentActionEmpty extends NamedFailure {
   constructor(reason: string) {
-    super("agent_action_empty", reason);
+    super(withDetail(errorWireAt("agent_action_empty"), reason));
     this.name = "AgentActionEmpty";
   }
 }

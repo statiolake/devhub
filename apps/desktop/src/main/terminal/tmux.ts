@@ -89,6 +89,7 @@ import {
 	type ListedAgentSession,
 } from "./ports.js";
 import { requiredTerminalSet } from "./ports.js";
+import { failureText } from "../../model/wire.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -768,9 +769,7 @@ function inspectionFailure(
 	// category; which tmux, on which machine, refused what is the part the
 	// person reading a close confirmation can act on.
 	return unknownInspection(
-		`DevHub could not read the tmux${where}: ${
-			failure instanceof Error ? failure.message : String(failure)
-		}`,
+		`DevHub could not read the tmux${where}: ${failureText(failure)}`,
 	);
 }
 

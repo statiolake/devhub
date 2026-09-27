@@ -27,6 +27,7 @@
 
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import type { Runtime, Watcher } from "../runtime/runtime.js";
+import { failureText } from "../../model/wire.js";
 
 /**
  * How long after the last filesystem event the branch is read.
@@ -136,7 +137,7 @@ export class HeadWatcher {
 				this.#failures.set(key, {
 					key,
 					worktree: repository.worktree,
-					reason: error instanceof Error ? error.message : String(error),
+					reason: failureText(error),
 				});
 			}
 		}

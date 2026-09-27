@@ -33,6 +33,7 @@ import {
 	WRITE_EXIT,
 	WRITE_SCRIPT,
 } from "./hostScript.js";
+import { failureText } from "../../../model/wire.js";
 
 /** Why the link to a host could not do what it was asked. */
 export type HostLinkFailureCode =
@@ -145,7 +146,7 @@ function lastLine(buffer: Buffer): string {
 }
 
 function describe(failure: unknown): string {
-	return failure instanceof Error ? failure.message : String(failure);
+	return failureText(failure);
 }
 
 export class HostLink {

@@ -14,6 +14,7 @@
 import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { failureText } from "../../model/wire.js";
 import {
 	parseControlRequest,
 	type ControlOpenRequest,
@@ -223,7 +224,7 @@ export async function answerControlRequest(
 	try {
 		request = parseControlRequest(line);
 	} catch (error) {
-		return { ok: false, message: messageOf(error) };
+		return { ok: false, message: failureText(error) };
 	}
 	if (typedByPerson(request)) handlers.personStarted();
 	try {
@@ -296,7 +297,7 @@ export async function answerControlRequest(
 						request.attempt,
 					);
 				} catch (error) {
-					return { ok: false, message: messageOf(error), retry: true };
+					return { ok: false, message: failureText(error), retry: true };
 				}
 				return resolution.ok
 					? {
@@ -343,7 +344,7 @@ export async function answerControlRequest(
 			}
 		}
 	} catch (error) {
-		return { ok: false, message: messageOf(error) };
+		return { ok: false, message: failureText(error) };
 	}
 }
 
@@ -378,8 +379,4 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "reattach-editor":
 			return true;
 	}
-}
-
-function messageOf(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }

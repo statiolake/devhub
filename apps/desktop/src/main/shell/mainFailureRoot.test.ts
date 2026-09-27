@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { errorWireAt, TypedFailure } from "../../model/wire.js";
+import { errorWireAt, NamedFailure } from "../../model/wire.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
 
 function processWithListeners() {
@@ -68,7 +68,7 @@ describe("a rejection main already drew", () => {
 
 		host.emit(
 			"unhandledRejection",
-			new TypedFailure({
+			new NamedFailure({
 				...errorWireAt("agent_profile_unavailable"),
 				reported: true,
 			}),

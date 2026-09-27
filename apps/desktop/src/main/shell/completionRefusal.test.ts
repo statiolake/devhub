@@ -10,7 +10,7 @@ import {
 import {
 	errorWire,
 	errorWireAt,
-	TypedFailure,
+	NamedFailure,
 	withDetail,
 } from "../../model/wire.js";
 import { completionRefusal } from "./completionRefusal.js";
@@ -51,7 +51,7 @@ function rejectionWire(refusal: ReturnType<typeof completionRefusal>) {
 
 describe("a completion the coordinator refused", () => {
 	it("is not drawn again when failOperation already drew it at its subject", () => {
-		const refusal = completionRefusal(failed, new TypedFailure(words));
+		const refusal = completionRefusal(failed, new NamedFailure(words));
 		expect(refusal).toMatchObject({ kind: "answer" });
 		expect(refusal).not.toHaveProperty("publish");
 		// The request reads the words that were drawn, marked as drawn.

@@ -30,7 +30,7 @@ import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
-import { NamedFailure } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 
 export type { RuntimeId } from "../../model/domain.js";
 
@@ -185,8 +185,10 @@ export class RuntimeFileError extends NamedFailure {
 		options?: ErrorOptions,
 	) {
 		super(
-			"file_unreadable",
-			`${path} could not be read (${code ?? "unknown"})`,
+			withDetail(
+				errorWireAt("file_unreadable"),
+				`${path} could not be read (${code ?? "unknown"})`,
+			),
 			options,
 		);
 		this.name = "RuntimeFileError";

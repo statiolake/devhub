@@ -22,8 +22,8 @@ import {
 } from "../../model/domain.js";
 import {
 	errorWireAt,
-	TypedFailure,
-	withDetail,
+	failureText,
+	NamedFailure,
 	withSummary,
 } from "../../model/wire.js";
 import { baseName, worktreeDirectory } from "../../model/worktrees.js";
@@ -37,8 +37,8 @@ import { baseName, worktreeDirectory } from "../../model/worktrees.js";
  * app shell is unavailable" with the real sentence buried in a detail nothing
  * draws, which is the same as not saying it.
  */
-export function workspaceFailure(summary: string): TypedFailure {
-	return new TypedFailure(
+export function workspaceFailure(summary: string): NamedFailure {
+	return new NamedFailure(
 		withSummary(errorWireAt("workspace_unavailable"), summary),
 	);
 }
@@ -49,16 +49,13 @@ export function workspaceFailure(summary: string): TypedFailure {
  * Its own failure, and its own code, because it is the only one here that has a
  * second answer: `origin` as of the last successful fetch is still on disk, and
  * whether to start a branch from a copy that may be days old is the person's
- * call. The reason travels as the detail so the question can quote it.
+ * call. The reason is in its title, which is what the question quotes.
  */
-export function fetchFailure(reason: string): TypedFailure {
-	return new TypedFailure(
-		withDetail(
-			withSummary(
-				errorWireAt("git_fetch_failed"),
-				`The latest changes could not be fetched: ${reason}`,
-			),
-			reason,
+export function fetchFailure(reason: string): NamedFailure {
+	return new NamedFailure(
+		withSummary(
+			errorWireAt("git_fetch_failed"),
+			`The latest changes could not be fetched: ${reason}`,
 		),
 	);
 }
@@ -189,7 +186,7 @@ function gitDidNotAnswer(
 	// exactly what this used to report and exactly what names the fix.
 	const cause = failure.cause;
 	return workspaceFailure(
-		cause instanceof Error ? cause.message : failure.message,
+		failureText(cause instanceof Error ? cause : failure),
 	);
 }
 
@@ -211,9 +208,10 @@ async function ask(
 	try {
 		return (await runGit(command, args, { cwd, cancel })).trim();
 	} catch (error: unknown) {
-		if (!(error instanceof TypedFailure)) throw error;
-		const summary = error.wire.summary;
-		return /not a git repository|does not exist|No such file/iu.test(summary)
+		if (!(error instanceof NamedFailure)) throw error;
+		return /not a git repository|does not exist|No such file/iu.test(
+			failureText(error),
+		)
 			? undefined
 			: Promise.reject(error);
 	}
@@ -1048,9 +1046,7 @@ async function fetchOrigin(
 			// Not swallowed: without leave to go on, this is the answer, and the
 			// person is told what git said and asked what to do about it.
 			if (!options.allowStaleBase) {
-				throw fetchFailure(
-					error instanceof Error ? error.message : String(error),
-				);
+				throw fetchFailure(failureText(error));
 			}
 			return false;
 		},

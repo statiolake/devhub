@@ -6,7 +6,7 @@ import {
 	editorRuntimeState,
 	type EditorWindowFacts,
 } from "./editorInspection.js";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withSummary } from "../../model/wire.js";
 
 function window(
 	overrides: Partial<{
@@ -85,7 +85,7 @@ describe("the unsaved-editor inspection", () => {
 		// Never clean: a close would throw the work away without having said so.
 		const refused = (): Promise<readonly string[]> =>
 			Promise.reject(
-				new TypedFailure(
+				new NamedFailure(
 					withSummary(
 						errorWireAt("workspace_unavailable"),
 						"The editor did not answer within 5 seconds.",

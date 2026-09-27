@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 import { localRuntime } from "../runtime/registry.js";
 import {
 	ensureWorktree,
@@ -211,7 +211,7 @@ describe("the worktree for a branch", () => {
 		await mkdir(occupied);
 		await expect(
 			ensureWorktree(command, repository, "feature/128-tidy"),
-		).rejects.toBeInstanceOf(TypedFailure);
+		).rejects.toBeInstanceOf(NamedFailure);
 	});
 
 	it("refuses a branch name that is only whitespace", async () => {

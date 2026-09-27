@@ -64,6 +64,7 @@ import {
 	type UserTmuxConfig,
 	type Watcher,
 } from "./runtime.js";
+import { failureText } from "../../model/wire.js";
 
 /**
  * What the loops cost on this machine.
@@ -110,11 +111,9 @@ function definedOnly(
 
 function fileError(path: string, error: unknown): RuntimeFileError {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
-	return new RuntimeFileError(
-		path,
-		code ?? (error instanceof Error ? error.message : String(error)),
-		{ cause: error },
-	);
+	return new RuntimeFileError(path, code ?? failureText(error), {
+		cause: error,
+	});
 }
 
 export class LocalRuntime implements Runtime {
@@ -248,8 +247,7 @@ export class LocalRuntime implements Runtime {
 			return output;
 		} catch (failure: unknown) {
 			this.#record(startedAt);
-			this.#lastFailure =
-				failure instanceof Error ? failure.message : String(failure);
+			this.#lastFailure = failureText(failure);
 			throw failure;
 		}
 	}

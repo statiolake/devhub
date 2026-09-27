@@ -689,7 +689,8 @@ describe("a launch the Agent port refuses", () => {
 		expect(result).toEqual({
 			kind: "failed",
 			code: "tmux_session_conflict",
-			detail: "terminal runtime conflict",
+			detail:
+				"The machine could not do what DevHub asked. terminal runtime conflict",
 		});
 	});
 });

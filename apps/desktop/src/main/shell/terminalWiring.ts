@@ -42,6 +42,7 @@ import {
 import type { RuntimeId } from "../runtime/runtime.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
 import { registerTerminalAdapter } from "./adapters.js";
+import { failureText } from "../../model/wire.js";
 
 /**
  * A Workspace that is closing answers nothing, and says so.
@@ -216,9 +217,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 				runtime = await runtimeFromId(machine);
 			} catch (failure: unknown) {
 				return unreachable(
-					`DevHub could not reach ${machine}: ${
-						failure instanceof Error ? failure.message : String(failure)
-					}`,
+					`DevHub could not reach ${machine}: ${failureText(failure)}`,
 				);
 			}
 			const missing = runtime.unavailableReason;

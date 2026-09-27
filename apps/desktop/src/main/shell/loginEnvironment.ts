@@ -42,6 +42,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { TerminalLauncher } from "../runtime/runtime.js";
+import { failureText } from "../../model/wire.js";
 
 /** How long the login shell gets before DevHub stops waiting for it. */
 export const LOGIN_ENVIRONMENT_TIMEOUT_MS = 10_000;
@@ -454,5 +455,5 @@ function variablesOf(parsed: unknown): Readonly<Record<string, string>> {
 }
 
 function errorText(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return failureText(error);
 }

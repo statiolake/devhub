@@ -21,6 +21,7 @@
 import type { RemoteResolution } from "../cli/controlServer.js";
 import { editorHostMachine, remoteServerFor } from "../runtime/registry.js";
 import { isPermanent } from "../runtime/remoteServer.js";
+import { failureText } from "../../model/wire.js";
 
 export async function resolveRemoteEndpoint(
 	machine: string,
@@ -71,5 +72,5 @@ export async function resolveRemoteEndpoint(
 }
 
 function messageOf(failure: unknown): string {
-	return failure instanceof Error ? failure.message : String(failure);
+	return failureText(failure);
 }

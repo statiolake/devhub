@@ -12,6 +12,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
+	errorWireAt,
+	NamedFailure,
+	withDetail,
+	withSummary,
+} from "../../model/wire.js";
+import { portFailure } from "../terminal/ports.js";
+import {
 	answerControlRequest,
 	startControlServer,
 	type ControlHandlers,
@@ -861,5 +868,63 @@ describe("a command the person typed", () => {
 			personStarted,
 		});
 		expect(personStarted).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * What `devhub` prints when DevHub refuses: the words the refusal is drawn
+ * with on a page — its title and its detail — and never the failure's
+ * message, which is its wire on its way across IPC.
+ */
+describe("a refusal the devhub command prints", () => {
+	function refusingOpen(failure: unknown): ControlHandlers {
+		return { ...everythingSaysOk(), open: () => Promise.reject(failure) };
+	}
+
+	async function printed(failure: unknown): Promise<string> {
+		const response = await answerControlRequest(
+			JSON.stringify({ kind: "open", path: "/srv/api", cwd: "/srv" }),
+			refusingOpen(failure),
+		);
+		expect(response.ok).toBe(false);
+		return response.message;
+	}
+
+	it("prints a named failure as its title and its detail", async () => {
+		expect(
+			await printed(
+				new NamedFailure(
+					withDetail(
+						errorWireAt("workspace_unavailable"),
+						"/srv/api is not there any more.",
+					),
+				),
+			),
+		).toBe("The workspace is unavailable. /srv/api is not there any more.");
+	});
+
+	it("prints a domain's kind under the title its code gives it", async () => {
+		expect(
+			await printed(
+				portFailure("unavailable", { detail: "build-box did not answer." }),
+			),
+		).toBe("The machine is unavailable. build-box did not answer.");
+	});
+
+	it("prints a failure with a title of its own as that title", async () => {
+		expect(
+			await printed(
+				new NamedFailure(
+					withSummary(
+						errorWireAt("workspace_unavailable"),
+						"fatal: repository 'x' not found",
+					),
+				),
+			),
+		).toBe("fatal: repository 'x' not found");
+	});
+
+	it("prints a failure nobody worded as its own message", async () => {
+		expect(await printed(new Error("boom"))).toBe("boom");
 	});
 });

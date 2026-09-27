@@ -11,7 +11,7 @@ import {
 	AppErrorCode,
 	type ProviderEvent,
 } from "../../model/intents.js";
-import { errorWire, TypedFailure } from "../../model/wire.js";
+import { errorWire, NamedFailure } from "../../model/wire.js";
 
 export type CompletionRefusal =
 	/** A bug in main's own flow: nobody is waiting and nothing can answer it. */
@@ -64,7 +64,7 @@ export function refusalOf(
 		return { kind: "answer", rejection: error };
 	}
 	const drawn = errorWire(error);
-	const rejection = new TypedFailure({ ...drawn, reported: true });
+	const rejection = new NamedFailure({ ...drawn, reported: true });
 	return drawnAtSubject
 		? { kind: "answer", rejection }
 		: { kind: "answer", publish: drawn, rejection };

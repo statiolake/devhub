@@ -47,8 +47,9 @@ import { posix } from "node:path";
 import {
 	errorWireAt,
 	NamedFailure,
-	TypedFailure,
+	withDetail,
 	withSummary,
+	failureText,
 } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
@@ -216,7 +217,7 @@ export function architectureName(uname: string): string {
 }
 
 export function describeFailure(failure: unknown): string {
-	return failure instanceof Error ? failure.message : String(failure);
+	return failureText(failure);
 }
 
 /**
@@ -325,12 +326,12 @@ function scriptRefusal(end: StreamEnd): Error | undefined {
 export function unsupportedPlatformFailure(
 	machine: string,
 	uname: string,
-): TypedFailure {
+): NamedFailure {
 	// Permanent: an architecture is not a thing that changes while a workbench
 	// waits, so a resolve that retried this would retry it five times and then
 	// say the same sentence.
 	return permanent(
-		new TypedFailure(
+		new NamedFailure(
 			withSummary(
 				errorWireAt("workspace_unavailable"),
 				`DevHub supports Linux and macOS hosts, and ${machine} reports ` +
@@ -347,7 +348,7 @@ export function unsupportedPlatformFailure(
  */
 export class LoginEnvironmentUnreadable extends NamedFailure {
 	constructor(reason: string) {
-		super("machine_unavailable", reason);
+		super(withDetail(errorWireAt("machine_unavailable"), reason));
 		this.name = "LoginEnvironmentUnreadable";
 	}
 }

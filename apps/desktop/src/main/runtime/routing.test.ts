@@ -13,7 +13,7 @@
 
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 import { runGit } from "../shell/git.js";
 import { HeadWatcher } from "../shell/headWatcher.js";
 import {
@@ -230,7 +230,7 @@ describe("the folder probes", () => {
 		const refusing = new RecordingRuntime();
 		refusing.stat = () => Promise.reject(new RuntimeFileError("/srv/x", "EIO"));
 		await expect(folderIsDirectory(refusing, "/srv/x")).rejects.toBeInstanceOf(
-			TypedFailure,
+			NamedFailure,
 		);
 		await expect(folderIsDirectory(refusing, "/srv/x")).rejects.toMatchObject({
 			wire: { summary: "/srv/x could not be read (EIO)." },

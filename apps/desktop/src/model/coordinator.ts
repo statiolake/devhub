@@ -43,7 +43,7 @@ import {
   type WorkspaceLocation,
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
-import { TypedFailure } from "./wire.js";
+import { NamedFailure } from "./wire.js";
 import {
   AppModel,
   type AppSnapshot,
@@ -1305,7 +1305,7 @@ export class AppCoordinator {
     this.pending.delete(token.operationId);
     this.clearOperationAuxiliaryState(token);
     this.rememberCompleted(token);
-    throw new TypedFailure(failure);
+    throw new NamedFailure(failure);
   }
 
   private clearOperationAuxiliaryState(token: OperationToken): void {

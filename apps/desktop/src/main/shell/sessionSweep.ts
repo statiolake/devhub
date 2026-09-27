@@ -48,6 +48,7 @@ import {
 	type OwnedSessionRecord,
 } from "../terminal/ports.js";
 import type { RuntimeId } from "../runtime/runtime.js";
+import { failureText } from "../../model/wire.js";
 
 /** As much of a machine's tmux adapter as a sweep uses. */
 export interface SweepAdapter {
@@ -220,7 +221,7 @@ export class SessionSweeper {
 				removed += 1;
 			}
 		} catch (error: unknown) {
-			const reason = error instanceof Error ? error.message : String(error);
+			const reason = failureText(error);
 			this.#pending.add(machine);
 			console.error(
 				`[devhub] sweep: ${machine} could not be swept (${reason}); it will ` +

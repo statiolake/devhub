@@ -224,7 +224,8 @@ describe("what a workspace is about", () => {
 		expect(row?.issue).toBeUndefined();
 		expect(row?.unavailable).toEqual({
 			number: 128,
-			reason: "GitHub has no issue example/widget#128.",
+			reason:
+				"DevHub could not get this from GitHub. GitHub has no issue example/widget#128.",
 		});
 		// And the Sidebar's note does *not* repeat it. It used to, so the ordinary
 		// failure was written twice — in red on the row it belongs to, and again
@@ -306,7 +307,9 @@ describe("what a workspace is about", () => {
 		const after = published.at(-1)?.workspaces[0];
 		expect(after?.issue?.number).toBe(128);
 		expect(after?.unavailable).toBeUndefined();
-		expect(published.at(-1)?.diagnostic).toBe("GitHub answered 502.");
+		expect(published.at(-1)?.diagnostic).toBe(
+			"DevHub could not get this from GitHub. GitHub answered 502.",
+		);
 	});
 
 	it("shows a branch it has just switched to without waiting for GitHub", async () => {
@@ -463,10 +466,10 @@ describe("what a workspace is about", () => {
 		// left the row with no branch, no Issue and no reason — identical to a
 		// workspace nobody had started work in. It is the failure DevHub can
 		// guess at least and the one most worth reading.
-		const { TypedFailure } = await import("../../model/wire.js");
+		const { NamedFailure } = await import("../../model/wire.js");
 		const { errorWireAt, withSummary } = await import("../../model/wire.js");
 		readRepository.mockRejectedValue(
-			new TypedFailure(
+			new NamedFailure(
 				withSummary(
 					errorWireAt("workspace_unavailable"),
 					"fatal: detected dubious ownership in repository at '/projects/widget'",
@@ -568,7 +571,9 @@ describe("the pull request out from a branch", () => {
 		expect(status.workspaces[0]?.unavailable).toBeUndefined();
 		// Not swallowed: it is at the foot of the Sidebar, where one network
 		// failure is said once.
-		expect(status.diagnostic).toBe("GitHub answered 502.");
+		expect(status.diagnostic).toBe(
+			"DevHub could not get this from GitHub. GitHub answered 502.",
+		);
 	});
 
 	it("asks upstream about a fork's branch, and keeps the branch as the fork's", async () => {

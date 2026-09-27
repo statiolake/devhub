@@ -46,6 +46,7 @@ import { appServerArgs } from "./codex/argv.js";
 import { decodeLine, Reader, threadListResponse } from "./codex/decode.js";
 import type { ThreadListParams } from "./codex/protocol/v2/ThreadListParams.js";
 import type { ThreadSourceKind } from "./codex/protocol/v2/ThreadSourceKind.js";
+import { failureText } from "../../../model/wire.js";
 
 /** One earlier session, as the resume picker lists it. */
 export interface PastSession {
@@ -642,7 +643,7 @@ function askMachine(
 			return await runtime.exec(request);
 		} catch (failure: unknown) {
 			throw new SessionsUnreadable(
-				`${what}${runtime.where}: ${failure instanceof Error ? failure.message : String(failure)}`,
+				`${what}${runtime.where}: ${failureText(failure)}`,
 				{ cause: failure },
 			);
 		}

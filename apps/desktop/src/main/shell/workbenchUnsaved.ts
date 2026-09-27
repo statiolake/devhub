@@ -24,7 +24,7 @@
  * that waits for ever, which is the other half of what the hang was.
  */
 
-import { withSummary, errorWireAt, TypedFailure } from "../../model/wire.js";
+import { withSummary, errorWireAt, NamedFailure } from "../../model/wire.js";
 import { InvariantViolation } from "./invariant.js";
 
 /** As much of a workbench's `WebContents` as a request needs. */
@@ -163,8 +163,8 @@ function namesOf(reply: unknown, field: string): readonly string[] {
 	return value;
 }
 
-function unsavedFailure(summary: string): TypedFailure {
-	return new TypedFailure(
+function unsavedFailure(summary: string): NamedFailure {
+	return new NamedFailure(
 		withSummary(errorWireAt("workspace_unavailable"), summary),
 	);
 }

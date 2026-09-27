@@ -784,80 +784,56 @@ export function withSummary(
 }
 
 /**
- * A failure this app raises deliberately, already in the words it should be
- * shown in.
+ * A failure DevHub knows by name, in the words it is shown in.
  *
- * Everything else that reaches `errorWire` is something unexpected, and the
- * one thing that can honestly be said about an unexpected failure is that the
- * app shell could not do what it was asked. A condition DevHub knows by name
- * says so here instead of being flattened into that.
+ * Its whole state is the wire it is drawn as: a code, whose sentence is its
+ * title unless the raiser gave it a sharper one (`withSummary` — git's own
+ * last line, an ssh refusal), and the raiser's own sentence as the detail
+ * (`withDetail`). Each domain names its kinds as subclasses fixing the code —
+ * a conversation's refusals, a machine's failures, GitHub's — so a refusal
+ * written for a person reaches the page under its own title, and the app
+ * shell's catch-all is kept for what DevHub did not expect (`errorWire`).
+ *
+ * Its message is that wire, serialised. Electron carries only a message
+ * across the IPC boundary, so a named failure thrown anywhere in main reaches
+ * the page as itself, which the page unwraps (`shell/failure.ts`), and one
+ * converted again on its way out is still itself. Where a failure has to be
+ * read as text — the `devhub` command, a log, a row's diagnostic, a sentence
+ * that quotes it — it is read with `failureText`, never by its message.
  */
-export class TypedFailure extends Error {
+export class NamedFailure extends Error {
   constructor(
     readonly wire: AppErrorWire,
     options?: ErrorOptions,
   ) {
-    // The detail too: a failure that ends as text — the `devhub` command
-    // prints `message` — would otherwise lose the part that says what to fix.
-    super(
-      wire.detail === undefined
-        ? wire.summary
-        : `${wire.summary} ${wire.detail}`,
-      options,
-    );
-    this.name = "TypedFailure";
+    super(JSON.stringify(wire), options);
+    this.name = "NamedFailure";
   }
 }
 
 /**
- * A failure DevHub knows by name, raised where it happens: a code — which is
- * its title — and the raiser's own sentence, `reason`, which is its detail.
- *
- * Its message is the reason alone, so the code that reads a failure's words
- * (a condition, a log line, a row's diagnostic) reads the same sentence it
- * always did; its title is added only where it is drawn (`errorWire`) or
- * printed (the command line's conversion). Each domain names its own kinds
- * — a conversation's refusals, a machine's failures, GitHub's — as
- * subclasses fixing the code, so a refusal written for a person never
- * reaches the page as the app shell's catch-all, which is kept for what
- * DevHub did not expect.
+ * Any failure as one line of text: a named failure as its title and its
+ * detail — the words it is drawn with — and anything else as its message.
  */
-export abstract class NamedFailure extends Error {
-  constructor(
-    /** The code it is drawn as. */
-    readonly shownAs: AppErrorCodeWire,
-    /** What happened, in the raiser's words. */
-    readonly reason: string,
-    options?: ErrorOptions,
-  ) {
-    super(reason, options);
+export function failureText(failure: unknown): string {
+  if (failure instanceof NamedFailure) {
+    const { summary, detail } = failure.wire;
+    return detail === undefined || detail === null
+      ? summary
+      : `${summary} ${detail}`;
   }
-
-  get wire(): AppErrorWire {
-    return withDetail(errorWireAt(this.shownAs), this.reason);
-  }
+  return failure instanceof Error ? failure.message : String(failure);
 }
 
 /**
- * A failure already converted for the page, on its way across IPC.
- *
- * Electron carries only a message across the IPC boundary, so its message is
- * the wire, which the page unwraps back into the same value
- * (`shell/failure.ts`). It is a `TypedFailure` because it can be converted
- * again before it leaves: a handler that awaited an operation whose failure
- * was already converted converts what it caught, and that has to be the same
- * failure, not the app shell's catch-all wrapped around it.
+ * Any failure as a named one, for a boundary that has to hand it on whole:
+ * itself when it is one, and the app shell's catch-all around it when it is
+ * not.
  */
-class CarriedFailure extends TypedFailure {
-  constructor(wire: AppErrorWire) {
-    super(wire);
-    this.message = JSON.stringify(wire);
-    this.name = "CarriedFailure";
-  }
-}
-
-export function carriedAcrossIpc(wire: AppErrorWire): TypedFailure {
-  return new CarriedFailure(wire);
+export function namedFailure(failure: unknown): NamedFailure {
+  return failure instanceof NamedFailure
+    ? failure
+    : new NamedFailure(errorWire(failure));
 }
 
 export function nativeUnavailable(): AppErrorWire {
@@ -867,15 +843,14 @@ export function nativeUnavailable(): AppErrorWire {
 /**
  * Turn any failure into the stable algebra the App Shell renders.
  *
- * A failure that is not an `AppError` is a broken invariant, not a user-facing
- * condition — it becomes `native_unavailable` with its message as the detail,
- * so it is visible rather than swallowed, and the summary stays a sentence the
- * reader can act on.
+ * A `NamedFailure` is already in these words, and the model's own refusal
+ * (`AppError`) is projected into them here. Anything else is a broken
+ * invariant, not a user-facing condition — it becomes `native_unavailable`
+ * with its message as the detail, so it is visible rather than swallowed, and
+ * the summary stays a sentence the reader can act on.
  */
 export function errorWire(error: unknown): AppErrorWire {
-  if (error instanceof TypedFailure || error instanceof NamedFailure) {
-    return error.wire;
-  }
+  if (error instanceof NamedFailure) return error.wire;
   if (!(error instanceof AppError)) {
     // The stack is for whoever is reading the log, and only there. On screen
     // it is noise that displaces the sentence a reader could act on — and the

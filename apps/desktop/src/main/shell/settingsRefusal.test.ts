@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../../model/config.js";
-import { TypedFailure } from "../../model/wire.js";
+import { failureText, NamedFailure } from "../../model/wire.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
 
 const FILE = "/scratch-test/devhub/settings.toml";
@@ -74,7 +74,7 @@ describe("a settings file DevHub could not use", () => {
 		const launch = new SettingsRefusal(FILE).atLaunch(
 			new ConfigError({ code: "unknown_key", path: "bogus" }),
 		);
-		expect(new TypedFailure(launch).message).toBe(
+		expect(failureText(new NamedFailure(launch))).toBe(
 			`DevHub could not use its settings file. ${launch.detail ?? ""}`,
 		);
 	});

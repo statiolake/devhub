@@ -37,7 +37,7 @@ import {
 	expect,
 	it,
 } from "vitest";
-import { errorWire, TypedFailure } from "../../model/wire.js";
+import { errorWire, failureText, NamedFailure } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
@@ -440,14 +440,12 @@ describe("a host DevHub cannot log into", () => {
 		const failure = await run(runtime, ["/bin/true"]).catch(
 			(error: unknown) => error,
 		);
-		expect(failure).toBeInstanceOf(TypedFailure);
-		expect((failure as TypedFailure).wire.summary).toBe(
-			unauthenticatedFailure("build-box.example.com").message,
+		expect(failure).toBeInstanceOf(NamedFailure);
+		expect((failure as NamedFailure).wire.summary).toBe(
+			unauthenticatedFailure("build-box.example.com").wire.summary,
 		);
-		expect((failure as TypedFailure).message).toContain("ssh-copy-id");
-		expect((failure as TypedFailure).message).toContain(
-			"build-box.example.com",
-		);
+		expect(failureText(failure)).toContain("ssh-copy-id");
+		expect(failureText(failure)).toContain("build-box.example.com");
 	});
 
 	it("tells an unknown host key apart, because it is a different fix", async () => {
@@ -455,8 +453,8 @@ describe("a host DevHub cannot log into", () => {
 		const failure = await run(runtime, ["/bin/true"]).catch(
 			(error: unknown) => error,
 		);
-		expect((failure as TypedFailure).wire.summary).toBe(
-			hostKeyFailure("build-box.example.com").message,
+		expect((failure as NamedFailure).wire.summary).toBe(
+			hostKeyFailure("build-box.example.com").wire.summary,
 		);
 	});
 
@@ -467,13 +465,13 @@ describe("a host DevHub cannot log into", () => {
 		const failure = await run(runtime, ["/bin/true"]).catch(
 			(error: unknown) => error,
 		);
-		expect((failure as TypedFailure).wire.summary).toBe(
+		expect((failure as NamedFailure).wire.summary).toBe(
 			unreachableFailure(
 				"build-box.example.com",
 				"ssh: connect to host build-box.example.com port 22: Connection refused",
-			).message,
+			).wire.summary,
 		);
-		expect((failure as TypedFailure).message).toContain("Connection refused");
+		expect(failureText(failure)).toContain("Connection refused");
 	});
 
 	it("reads as disconnected afterwards, and says what went wrong", async () => {
@@ -1389,7 +1387,7 @@ exec /bin/sh -c "$1"
 		// multiplexing, and it belongs to the caller.
 		const runtime = await muxRefusing(true);
 		await expect(run(runtime, ["/bin/echo", "hi"])).rejects.toBeInstanceOf(
-			TypedFailure,
+			NamedFailure,
 		);
 	});
 });

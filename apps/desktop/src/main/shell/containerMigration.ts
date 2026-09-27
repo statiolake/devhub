@@ -35,6 +35,7 @@ import {
 } from "../runtime/container.js";
 import { lastLine } from "../runtime/remoteShellRuntime.js";
 import type { FileKind } from "../runtime/runtime.js";
+import { failureText } from "../../model/wire.js";
 
 export interface ContainerMigrationSources {
 	readonly docker: DockerCli;
@@ -89,9 +90,7 @@ async function definitionOf(
 	]).catch((failure: unknown) => ({
 		code: 1,
 		stdout: Buffer.alloc(0),
-		stderr: Buffer.from(
-			failure instanceof Error ? failure.message : String(failure),
-		),
+		stderr: Buffer.from(failureText(failure)),
 	}));
 	let dockerNote: string | undefined;
 	if (listed.code === 0) {

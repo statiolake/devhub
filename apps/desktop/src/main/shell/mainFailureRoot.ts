@@ -52,7 +52,7 @@
  * is still worth being able to look up.
  */
 
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 
 /**
  * Whether this is somebody having cancelled something.
@@ -93,7 +93,7 @@ export function installMainFailureRoot(
 		// A refusal main drew when it happened and handed to the request marked
 		// as drawn; nobody awaited the request. Drawing it here would be the
 		// second notice for one failure.
-		if (reason instanceof TypedFailure && reason.wire.reported === true) {
+		if (reason instanceof NamedFailure && reason.wire.reported === true) {
 			return;
 		}
 		root.raiseUnhandled(reason);

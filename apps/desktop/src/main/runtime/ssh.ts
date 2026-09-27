@@ -36,7 +36,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { RollingTally } from "../diagnostics/rollingTally.js";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
+import {
+	errorWireAt,
+	failureText,
+	NamedFailure,
+	withSummary,
+} from "../../model/wire.js";
 import {
 	OperationDeadline,
 	runBounded,
@@ -368,12 +373,12 @@ export function sshOptionArgv(
  * to ask for a password in, and git, terminals and Agents do not — and a reader
  * who meets it twice in two wordings will conclude they are two problems.
  */
-export function unauthenticatedFailure(host: string): TypedFailure {
+export function unauthenticatedFailure(host: string): NamedFailure {
 	// Permanent: DevHub's ssh runs with `BatchMode=yes` and has no pane to
 	// prompt in, so a second attempt asks the same question of the same closed
 	// mouth. What changes it is a key, which is a thing a person does.
 	return permanent(
-		new TypedFailure(
+		new NamedFailure(
 			withSummary(
 				errorWireAt("workspace_unavailable"),
 				`DevHub cannot run commands on ${host} without a password. Set up a ` +
@@ -383,11 +388,11 @@ export function unauthenticatedFailure(host: string): TypedFailure {
 	);
 }
 
-export function hostKeyFailure(host: string): TypedFailure {
+export function hostKeyFailure(host: string): NamedFailure {
 	// Permanent, for the same reason: accepting a host key is something a
 	// person does in a terminal, not something the next attempt does.
 	return permanent(
-		new TypedFailure(
+		new NamedFailure(
 			withSummary(
 				errorWireAt("workspace_unavailable"),
 				`The host key for ${host} is not known to DevHub. Run ssh ${host} ` +
@@ -397,9 +402,9 @@ export function hostKeyFailure(host: string): TypedFailure {
 	);
 }
 
-export function unreachableFailure(host: string, stderr: string): TypedFailure {
+export function unreachableFailure(host: string, stderr: string): NamedFailure {
 	const said = lastLine(stderr);
-	return new TypedFailure(
+	return new NamedFailure(
 		withSummary(
 			errorWireAt("workspace_unavailable"),
 			`DevHub cannot reach ${host}${said.length === 0 ? "" : `: ${said}`}.`,
@@ -419,7 +424,7 @@ export function unreachableFailure(host: string, stderr: string): TypedFailure {
 function clientFailure(
 	host: string,
 	result: ExecResult,
-): TypedFailure | undefined {
+): NamedFailure | undefined {
 	if (result.code !== 255 || result.stdout.byteLength > 0) return undefined;
 	const stderr = result.stderr.toString("utf8");
 	if (stderr.trim().length === 0) return undefined;
@@ -629,7 +634,7 @@ export class SshRuntime
 		const refused = clientFailure(this.#host, result);
 		if (refused) {
 			this.#connected = false;
-			this.lastFailure = refused.message;
+			this.lastFailure = failureText(refused);
 			throw refused;
 		}
 		this.#markConnected();

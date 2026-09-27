@@ -21,7 +21,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 import { localRuntime } from "../runtime/registry.js";
 import { runGit, type GitCommand } from "./git.js";
 import {
@@ -133,7 +133,7 @@ describe("a folder that cannot be read", () => {
 		await chmod(parent, 0o000);
 		await expect(
 			folderIsDirectory(localRuntime(), path),
-		).rejects.toBeInstanceOf(TypedFailure);
+		).rejects.toBeInstanceOf(NamedFailure);
 		await expect(folderIsDirectory(localRuntime(), path)).rejects.toMatchObject(
 			{
 				wire: { summary: expect.stringContaining("EACCES") },
@@ -188,7 +188,7 @@ describe("disposing of a worktree", () => {
 		await writeFile(join(path, "scratch.txt"), "unsaved\n");
 		await expect(
 			disposeWorktreeFolder(command, repository, path, false),
-		).rejects.toBeInstanceOf(TypedFailure);
+		).rejects.toBeInstanceOf(NamedFailure);
 		// Nothing has happened: the refusal is the last check standing between
 		// somebody and work they cannot get back.
 		expect(await stat(join(path, "scratch.txt"))).toBeTruthy();
@@ -245,7 +245,7 @@ describe("disposing of a worktree", () => {
 		await writeFile(join(stranger, "keep.txt"), "mine\n");
 		await expect(
 			disposeWorktreeFolder(command, repository, stranger, true),
-		).rejects.toBeInstanceOf(TypedFailure);
+		).rejects.toBeInstanceOf(NamedFailure);
 		expect(await readFile(join(stranger, "keep.txt"), "utf8")).toBe("mine\n");
 	});
 

@@ -70,6 +70,7 @@ import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import { registerAgentAdapter } from "./adapters.js";
 import { portRefusal } from "./agentFailure.js";
+import { failureText } from "../../model/wire.js";
 
 export interface AgentWiringOptions {
 	/** One tmux adapter per machine, built on first use. */
@@ -297,7 +298,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			await runtime.removeTree(directory);
 		} catch (failure: unknown) {
 			options.report(
-				`DevHub could not remove the files of “${name}” at ${directory}${runtime.where}: ${failure instanceof Error ? failure.message : String(failure)}`,
+				`DevHub could not remove the files of “${name}” at ${directory}${runtime.where}: ${failureText(failure)}`,
 			);
 		}
 	};
@@ -423,8 +424,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					code: refusal.code,
 					...(refusal.detail === undefined
 						? {
-								detail:
-									failure instanceof Error ? failure.message : String(failure),
+								detail: failureText(failure),
 							}
 						: { detail: refusal.detail }),
 				};
@@ -799,10 +799,7 @@ async function deliver(
 		await send(text);
 		injections.sent(agentId);
 	} catch (failure: unknown) {
-		injections.failed(
-			agentId,
-			failure instanceof Error ? failure.message : String(failure),
-		);
+		injections.failed(agentId, failureText(failure));
 	}
 }
 

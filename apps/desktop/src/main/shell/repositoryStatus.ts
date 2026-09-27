@@ -82,7 +82,7 @@ import {
 	readRepository,
 	type GitCommand,
 } from "./git.js";
-import { TypedFailure } from "../../model/wire.js";
+import { failureText } from "../../model/wire.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import {
 	GitHubUnavailable,
@@ -309,18 +309,6 @@ interface LocalReading {
 	readonly number?: number;
 	/** Why this row cannot answer yet, when the local half already knows. */
 	readonly reason?: string;
-}
-
-/**
- * git's own last line, for a person to read.
- *
- * A `TypedFailure` is already a sentence written to be shown — it is what the
- * clone sheet puts in front of people — so it is used as it stands rather than
- * re-worded here. Anything else is an unexpected shape and says what it says.
- */
-function gitReason(error: unknown): string {
-	if (error instanceof TypedFailure) return error.wire.summary;
-	return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -687,7 +675,7 @@ export class RepositoryStatusWatcher {
 		const command = await this.deps
 			.gitCommand(runtime)
 			.catch((error: unknown) => {
-				diagnostic = error instanceof Error ? error.message : String(error);
+				diagnostic = failureText(error);
 				return undefined;
 			});
 		if (command) this.commands.set(runtime.id, command);
@@ -713,7 +701,7 @@ export class RepositoryStatusWatcher {
 					// nobody had started work in. It is the failure this file is least
 					// able to guess at and the one most worth reading, so it is git's
 					// own last line.
-					const reason = `DevHub could not read this repository: ${gitReason(error)}`;
+					const reason = `DevHub could not read this repository: ${failureText(error)}`;
 					// It belongs in the Sidebar's note as well: one workspace whose git
 					// is broken is usually every workspace on that machine, and the
 					// note is where a person looks when the list has gone quiet.
@@ -835,8 +823,8 @@ export class RepositoryStatusWatcher {
 						// else is a bug in DevHub, and it goes to the root handler
 						// rather than being drawn as a status line.
 						if (!(error instanceof GitHubUnavailable)) throw error;
-						diagnostic = error.message;
-						unreadable.set(key, error.message);
+						diagnostic = failureText(error);
+						unreadable.set(key, diagnostic);
 					}
 				}
 			}

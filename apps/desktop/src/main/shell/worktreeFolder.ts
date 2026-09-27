@@ -34,6 +34,7 @@ import {
 	workspaceFailure,
 	type GitCommand,
 } from "./git.js";
+import { failureText } from "../../model/wire.js";
 
 /** A `.git` file naming a gitdir is a line, not a document. */
 const MAX_MARKER_BYTES = 4096;
@@ -52,9 +53,7 @@ function unreadable(path: string, error: unknown): Error {
 	if (error instanceof RuntimeFileError) {
 		return workspaceFailure(`${path} could not be read (${error.code}).`);
 	}
-	return workspaceFailure(
-		`${path} could not be read (${error instanceof Error ? error.message : String(error)}).`,
-	);
+	return workspaceFailure(`${path} could not be read (${failureText(error)}).`);
 }
 
 /**

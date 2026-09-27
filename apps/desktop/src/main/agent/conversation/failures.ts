@@ -2,20 +2,19 @@
  * The failures a GUI Agent's conversation and the sessions of its CLI end in
  * that DevHub knows by name.
  *
- * Each is a `NamedFailure` with its own code, so the one conversion
- * (`errorWire`) draws it with its own title and the sentence it was raised
- * with as the detail, wherever it ends — a toast, the session picker, a
- * launch. A plain `Error` from this part of main is kept for what DevHub did
- * not expect, which is what the app shell's catch-all title is for; a
- * refusal written for the person thrown as one was drawn as "The native app
- * shell is unavailable." over its own words.
+ * Each is a `NamedFailure` with its own code, so it is drawn with its own
+ * title and the sentence it was raised with as the detail, wherever it ends
+ * — a toast, the session picker, a launch. A plain `Error` from this part of
+ * main is kept for what DevHub did not expect, which is what the app shell's
+ * catch-all title is for; a refusal written for the person thrown as one was
+ * drawn as "The native app shell is unavailable." over its own words.
  *
  * Which kind a failure is decides only its title; the words that say what
- * happened are the raiser's, in `reason`.
+ * happened are the raiser's, its detail.
  */
 
 import type { AppErrorCodeWire } from "../../../ipc/appShell.js";
-import { NamedFailure } from "../../../model/wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../../model/wire.js";
 
 type ConversationFailureCode = Extract<
 	AppErrorCodeWire,
@@ -31,7 +30,7 @@ abstract class ConversationFailure extends NamedFailure {
 		reason: string,
 		options?: ErrorOptions,
 	) {
-		super(code, reason, options);
+		super(withDetail(errorWireAt(code), reason), options);
 	}
 }
 

@@ -25,7 +25,7 @@ import {
 	unsavedEditors,
 	type UnsavedEditorsInspection,
 } from "../../model/domain.js";
-import { TypedFailure } from "../../model/wire.js";
+import { failureText, NamedFailure } from "../../model/wire.js";
 import type { CloseDiagnosticWire } from "../../ipc/appShell.js";
 
 /**
@@ -123,11 +123,11 @@ export async function editorInspection(
 			} catch (error) {
 				// Recovered by asking: the sheet shows this, with the workbench's
 				// own reason, in place of the names.
-				if (!(error instanceof TypedFailure)) throw error;
+				if (!(error instanceof NamedFailure)) throw error;
 				return {
 					kind: "unknown",
 					diagnostic: "close_editor_unresponsive",
-					reason: error.wire.summary,
+					reason: failureText(error),
 				};
 			}
 			return unsavedEditors(tabs);

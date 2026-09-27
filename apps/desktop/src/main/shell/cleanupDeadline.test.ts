@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withSummary } from "../../model/wire.js";
 import { unreachableFailure } from "../runtime/ssh.js";
 import {
 	CloseTimeout,
@@ -71,7 +71,7 @@ describe("a close whose machine does not answer", () => {
 		// A tmux that said no is DevHub's own work failing, and trying again is
 		// how a person fixes it. Continuing would throw away a step that could
 		// have succeeded.
-		const refused = new TypedFailure(
+		const refused = new NamedFailure(
 			withSummary(errorWireAt("tmux_command_failed"), "no such session"),
 		);
 		expect(

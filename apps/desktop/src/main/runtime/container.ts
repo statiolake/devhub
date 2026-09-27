@@ -101,7 +101,7 @@ import type {
 	RuntimeReading,
 } from "./runtime.js";
 import type { TmuxDelivery } from "./tmuxDelivery.js";
-import { NamedFailure } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 
 const A_MINUTE = 60 * 1000;
 
@@ -1591,7 +1591,7 @@ function looksLikeContainerGone(result: { readonly stderr: Buffer }): boolean {
  */
 export class DevContainerUnusable extends NamedFailure {
 	constructor(reason: string) {
-		super("dev_container_unusable", reason);
+		super(withDetail(errorWireAt("dev_container_unusable"), reason));
 		this.name = "DevContainerUnusable";
 	}
 }

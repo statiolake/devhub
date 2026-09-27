@@ -28,13 +28,16 @@ import {
 } from "./domain.js";
 import {
   agentProfilesWire,
-  carriedAcrossIpc,
   errorWire,
   errorWireAt,
+  failureText,
   intentFromWire,
   InvalidIntent,
+  NamedFailure,
+  namedFailure,
   snapshotWire,
   withDetail,
+  withSummary,
 } from "./wire.js";
 import type { AppIntentWire } from "../ipc/appShell.js";
 import type {
@@ -417,26 +420,75 @@ describe("how an Agent is shown, across the wire", () => {
 });
 
 /**
- * A failure already converted for the page, on its way across IPC, can be
- * converted again by a handler that awaited the operation that raised it.
- * It used to be a plain `Error` whose message was the JSON, so the second
- * conversion wrapped it as "The native app shell is unavailable." with the
- * first one's JSON as the detail — and the page drew the wrapper.
+ * A failure DevHub knows by name: one class, whose state is the wire it is
+ * drawn as, and whose message is that wire serialised — Electron carries
+ * only a message across IPC — so it reaches the page as itself however many
+ * times main hands it on.
  */
-describe("a failure carried across IPC", () => {
+describe("a named failure", () => {
   const wire = withDetail(
     errorWireAt("workspace_unavailable"),
     "the folder is gone",
   );
 
-  it("is the wire itself as its message, which the page unwraps", () => {
-    expect(JSON.parse(carriedAcrossIpc(wire).message)).toEqual(wire);
+  it("is drawn as its own wire, title and detail", () => {
+    expect(errorWire(new NamedFailure(wire))).toEqual(wire);
+    expect(errorWire(new NamedFailure(wire))).toMatchObject({
+      code: "workspace_unavailable",
+      summary: "The workspace is unavailable.",
+      detail: "the folder is gone",
+    });
   });
 
-  it("converts again to itself, not to the app shell's catch-all", () => {
-    expect(errorWire(carriedAcrossIpc(wire))).toEqual(wire);
-    expect(errorWire(carriedAcrossIpc(carriedAcrossIpc(wire).wire))).toEqual(
-      wire,
+  it("is the wire itself as its message, which the page unwraps", () => {
+    expect(JSON.parse(new NamedFailure(wire).message)).toEqual(wire);
+  });
+
+  it("stays itself when a boundary hands it on again", () => {
+    const failure = new NamedFailure(wire);
+    expect(namedFailure(failure)).toBe(failure);
+    expect(errorWire(namedFailure(namedFailure(failure)))).toEqual(wire);
+    expect(
+      errorWire(
+        new NamedFailure(
+          JSON.parse(new NamedFailure(wire).message) as typeof wire,
+        ),
+      ),
+    ).toEqual(wire);
+  });
+
+  it("reads as its title and its detail where it is text", () => {
+    expect(failureText(new NamedFailure(wire))).toBe(
+      "The workspace is unavailable. the folder is gone",
     );
+    expect(
+      failureText(
+        new NamedFailure(
+          withSummary(errorWireAt("workspace_unavailable"), "fatal: no"),
+        ),
+      ),
+    ).toBe("fatal: no");
+  });
+});
+
+describe("a failure DevHub did not expect", () => {
+  it("is drawn as the app shell's catch-all with its message as the detail", () => {
+    expect(errorWire(new Error("boom"))).toMatchObject({
+      code: "native_unavailable",
+      summary: "The native app shell is unavailable.",
+      detail: "boom",
+    });
+  });
+
+  it("becomes a named failure under that catch-all at a boundary", () => {
+    expect(errorWire(namedFailure(new Error("boom")))).toMatchObject({
+      code: "native_unavailable",
+      detail: "boom",
+    });
+  });
+
+  it("reads as its own message where it is text", () => {
+    expect(failureText(new Error("boom"))).toBe("boom");
+    expect(failureText("boom")).toBe("boom");
   });
 });

@@ -7,7 +7,7 @@ import {
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
 import { InvariantViolation } from "./invariant.js";
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 
 /**
  * A workbench's contents that answer each request with `answer`, or not at
@@ -67,7 +67,7 @@ describe("reading a workbench's unsaved editors", () => {
 		);
 		await vi.advanceTimersByTimeAsync(5_000);
 		await failure;
-		await expect(read).rejects.toBeInstanceOf(TypedFailure);
+		await expect(read).rejects.toBeInstanceOf(NamedFailure);
 		expect(workbench.ipcListeners()).toBe(0);
 	});
 
@@ -86,7 +86,7 @@ describe("reading a workbench's unsaved editors", () => {
 		});
 		workbench.destroy();
 		await expect(readUnsavedEditors(workbench)).rejects.toBeInstanceOf(
-			TypedFailure,
+			NamedFailure,
 		);
 	});
 

@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import type { IssueReference } from "../../model/github.js";
-import { NamedFailure } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 
 /**
  * A workspace's checked-out branch, as GitHub names the things it is about.
@@ -86,11 +86,11 @@ export interface PullRequestStatus {
 /**
  * A failure with words, never carrying the token: GitHub's own, or DevHub's
  * about what GitHub answered. Drawn under its own title with those words as
- * the detail; a row's diagnostic reads the words alone (`message`).
+ * the detail, and read as that title and those words wherever it is text.
  */
 export class GitHubUnavailable extends NamedFailure {
 	constructor(reason: string) {
-		super("github_unavailable", reason);
+		super(withDetail(errorWireAt("github_unavailable"), reason));
 		this.name = "GitHubUnavailable";
 	}
 }

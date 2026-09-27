@@ -37,6 +37,7 @@ import {
 	nextLocalMidnight,
 	scratchDailyPath,
 } from "../../model/scratchDay.js";
+import { failureText } from "../../model/wire.js";
 
 export interface ScratchDay {
 	/** A Workspace for today's folder, with an id nobody has used. */
@@ -71,7 +72,7 @@ export async function scratchDay(
 		// with this sentence.
 		return {
 			workspace: at(path),
-			failure: `Today's Scratch folder ${path} could not be made: ${error instanceof Error ? error.message : String(error)}`,
+			failure: `Today's Scratch folder ${path} could not be made: ${failureText(error)}`,
 		};
 	}
 	return { workspace: at(canonical), failure: undefined };

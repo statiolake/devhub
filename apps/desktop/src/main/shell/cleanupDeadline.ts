@@ -17,7 +17,7 @@
 import type { CloseDiagnosticWire } from "../../ipc/appShell.js";
 import { CLOSE_STEPS, type CloseStep } from "../../model/domain.js";
 import type { RuntimeId } from "../runtime/runtime.js";
-import { TypedFailure } from "../../model/wire.js";
+import { NamedFailure } from "../../model/wire.js";
 
 /**
  * Generous enough that a slow-but-working step still finishes. It is a bound
@@ -113,7 +113,7 @@ export function sessionsLeftRunning(
 	error: unknown,
 ): string | undefined {
 	if (step !== "agents" && step !== "terminal") return undefined;
-	if (!(error instanceof TypedFailure)) return undefined;
+	if (!(error instanceof NamedFailure)) return undefined;
 	if (error.wire.code !== "workspace_unavailable") return undefined;
 	return `${step === "agents" ? "Agent" : "terminal"} sessions on ${machine}`;
 }

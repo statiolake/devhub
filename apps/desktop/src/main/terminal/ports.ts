@@ -15,7 +15,7 @@
 
 import type { AppErrorCodeWire } from "../../ipc/appShell.js";
 import type { ResourceInspection } from "../../model/domain.js";
-import { NamedFailure } from "../../model/wire.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 import type { RuntimeId } from "../runtime/runtime.js";
 
 /** Why a runtime operation could not complete. */
@@ -89,8 +89,10 @@ export class PortFailure extends NamedFailure {
 
 	constructor(code: PortErrorCode, options?: PortFailureOptions) {
 		super(
-			PORT_FAILURE_SHOWN_AS[code],
-			options?.detail ?? `terminal runtime ${code.replaceAll("_", " ")}`,
+			withDetail(
+				errorWireAt(PORT_FAILURE_SHOWN_AS[code]),
+				options?.detail ?? `terminal runtime ${code.replaceAll("_", " ")}`,
+			),
 			{ cause: options?.cause },
 		);
 		this.name = "PortFailure";
