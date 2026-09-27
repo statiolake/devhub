@@ -210,10 +210,14 @@ terminal Agent.
 **Background tasks.** Under the composer, beside the context readout, a quiet
 line says what the Agent has working in the background — *2 background
 tasks · Start the dev server, Research the parser* — while anything is.
-Opened, it lists each task's title, kind (*shell*, *subagent*, *teammate*,
-or the CLI's own name for another kind) and state; a task whose call is known
-goes to that call in the conversation, opened, switching back from a
-maximized subagent first. A task leaves the list when it ends. The list is
+Opened, the list takes the composer's whole width under that row, and gives
+each task the glyph a running tool call has, its title and its kind
+(*shell*, *subagent*, *teammate*, or the CLI's own name for another kind). A
+task whose call is known opens it, by one rule in a narrow pane and a wide
+one: a subagent (or teammate) fills the pane, with ← back to the
+conversation in its header; any other task's call is brought into view in
+the conversation, opened, switching back from a maximized subagent first. A
+task leaves the list when it ends. The list is
 `Transcript.backgroundTasks`, the adapter's one account of it:
 
 - Claude: the CLI's own list, `system/background_tasks_changed`, which it
@@ -449,14 +453,15 @@ names its `backgroundTaskId`) follows the same news on that call; the CLI's
 one line about how it ended is a quiet line under the call. Only a
 notification no drawn call started is a notice. Its work is drawn in one place at a time:
 
-- One rule lists subagents, and the column and the switcher bar both list
-  exactly those, in transcript order: a subagent until it ends (running, or
-  idle and able to run again), unless you took it out with the *Beside*
-  toggle on its card, and the one filling the pane until you leave it. A
-  subagent that ends (done, failed or unknown) leaves, even one you put
-  back; the one filling the pane stays until you leave it. Every subagent is
-  reachable from its card whether it is listed or not, and *Maximize* on the
-  card of one that ended opens it again.
+- One rule lists subagents in the column, in transcript order: a subagent
+  until it ends (running, or idle and able to run again), unless you took it
+  out with the *Beside* toggle on its card. A subagent that ends (done,
+  failed or unknown) leaves, even one you put back; one filling the pane
+  stays there until you leave it. Every subagent is reachable from its card
+  whether it is listed or not, and *Maximize* on the card of one that ended
+  opens it again. One at work is also in the background tasks under the
+  composer (above), which opens it filling the pane; an idle teammate is not
+  a background task, and is reached from its card.
 - When the pane is wide (1040 px or more), the listed subagents are in a
   column on the right, stacked one above another; one goes back to its card
   when it ends. The *Beside* toggle on the card of one that has not ended
@@ -478,13 +483,11 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   with a tooltip): the fold on the left and *Maximize* on the right in the
   column, and ← back to the conversation on the left when the subagent fills
   the pane.
-- *Maximize* fills the pane with one subagent's transcript. A switcher bar
-  under it moves between the conversation and each listed subagent (arrow
-  keys move along it), and the composer still talks to the conversation. The
-  bar wraps onto another line rather than scrolling, so no tab is out of
-  sight.
+- *Maximize* fills the pane with one subagent's transcript, and ← in its
+  header goes back to the conversation; the composer still talks to the
+  conversation.
 - When the pane is narrow there is no column: a subagent is in its card or
-  maximized, and the switcher bar is shown whenever a subagent is listed.
+  maximized.
 - The waiting line over the composer finds a request card wherever it is,
   switching back to the conversation if the card is there.
 

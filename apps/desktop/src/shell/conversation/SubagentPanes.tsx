@@ -11,22 +11,19 @@
  * - Beside: when the pane is wide enough, a listed subagent is in the column.
  * - Inline: everywhere else, in its card, as it always was.
  *
- * One selection says which subagents are listed, and both the column and the
- * switcher bar list exactly those, in transcript order: a subagent until it
- * ends (running, or idle and able to run again), unless the person took it
- * out with the card's Beside toggle, and the one filling the pane until the
- * person leaves it, ended or not. One that ends leaves, whatever the person
- * chose; it is reached from its card, as every other one is.
+ * One selection says which subagents the column lists, in transcript order: a
+ * subagent until it ends (running, or idle and able to run again), unless
+ * the person took it out with the card's Beside toggle. One that ends leaves,
+ * whatever the person chose; it is reached from its card, as every other one
+ * is, and one at work also from the background tasks under the composer.
  *
  * The column is laid out as VS Code lays out its views (`subagentColumn.ts`):
  * a sash on its edge sets its width, a sash between two open panes shares
  * their height, and a pane folds to its header in its place, the open ones
  * taking the room.
  *
- * A narrow pane has no column, so a subagent is either inline or maximized,
- * and the switcher bar under the view moves between the conversation and
- * each listed subagent. A wide pane shows the switcher only while a subagent
- * is maximized: it is the way back.
+ * A narrow pane has no column, so a subagent is either inline or maximized.
+ * A maximized one's header has the way back to the conversation.
  */
 
 import {
@@ -86,19 +83,9 @@ export type SubagentEntry = ToolEntry & {
   readonly spawns: NonNullable<ToolEntry["spawns"]>;
 };
 
-export const SUBAGENT_STATE_LABELS: Readonly<
-  Record<SubagentEntry["spawns"]["state"], string>
-> = {
-  running: "Running",
-  idle: "Idle",
-  completed: "Done",
-  failed: "Failed",
-  unknown: "Unknown",
-};
-
 /**
- * Whether a subagent has ended: it will not run again, so the column and the
- * switcher let it go. An idle one (a teammate waiting between tasks) has not.
+ * Whether a subagent has ended: it will not run again, so the column lets it
+ * go. An idle one (a teammate waiting between tasks) has not.
  */
 export const SUBAGENT_ENDED: Readonly<
   Record<SubagentEntry["spawns"]["state"], boolean>
@@ -119,31 +106,29 @@ export function subagentsOf(transcript: Transcript): readonly SubagentEntry[] {
 }
 
 /**
- * The subagents the column and the switcher list, in transcript order: each
- * one that has not ended, unless the person took it out, and the one filling
- * the pane.
+ * The subagents the column lists, in transcript order: each one that has not
+ * ended, unless the person took it out.
  */
 export function listedSubagents(
   subagents: readonly SubagentEntry[],
   chosen: ReadonlyMap<EntryId, boolean>,
-  maximized: EntryId | undefined,
 ): readonly SubagentEntry[] {
   return subagents.filter(
     (each) =>
-      each.id === maximized ||
-      (!SUBAGENT_ENDED[each.spawns.state] && (chosen.get(each.id) ?? true)),
+      !SUBAGENT_ENDED[each.spawns.state] && (chosen.get(each.id) ?? true),
   );
 }
 
 export interface SubagentLayout {
   readonly wide: boolean;
-  /** The subagents the column and the switcher list: `listedSubagents`. */
+  /** Every call that started a subagent: `subagentsOf`. */
+  readonly all: readonly SubagentEntry[];
+  /** The subagents the column lists: `listedSubagents`. */
   readonly listed: readonly SubagentEntry[];
   /** The subagent filling the pane, or undefined while the conversation does. */
   readonly maximized: SubagentEntry | undefined;
   /** The subagents in the column: the listed ones, while it is shown. */
   readonly beside: readonly SubagentEntry[];
-  readonly switcher: boolean;
   readonly placeOf: (id: EntryId) => SubagentPlace;
   /** Fill the pane with a subagent, or with the conversation (undefined). */
   readonly maximize: (id: EntryId | undefined) => void;
@@ -190,8 +175,8 @@ export function useSubagentLayout(
   // A subagent that is gone (its turn was taken back) fills nothing.
   const maximized = subagents.find((each) => each.id === maximizedId);
   const listed = useMemo(
-    () => listedSubagents(subagents, chosen, maximized?.id),
-    [subagents, chosen, maximized],
+    () => listedSubagents(subagents, chosen),
+    [subagents, chosen],
   );
   const beside = wide && maximized === undefined ? listed : NO_SUBAGENTS;
 
@@ -220,10 +205,10 @@ export function useSubagentLayout(
 
   return {
     wide,
+    all: subagents,
     listed,
     maximized,
     beside,
-    switcher: maximized !== undefined || (!wide && listed.length > 0),
     placeOf,
     maximize,
     setBeside,
@@ -611,78 +596,4 @@ function paneLabel(panes: readonly SubagentEntry[], index: number): string {
   const pane = panes[index];
   if (!pane) throw new Error(`no open pane ${index} in the column`);
   return pane.spawns.label;
-}
-
-/**
- * The bar under the view that moves between the conversation and each
- * listed subagent: a tab strip, with the arrow keys moving along it. It
- * wraps rather than scrolls, so no tab is ever out of sight.
- */
-export function SubagentSwitcher() {
-  const layout = useSubagentPlacement();
-  const bar = useRef<HTMLDivElement>(null);
-  const moved = useRef(false);
-  const current = layout.maximized?.id;
-  // A tab chosen from the keyboard takes the keyboard with it.
-  useLayoutEffect(() => {
-    if (!moved.current) return;
-    moved.current = false;
-    bar.current
-      ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
-      ?.focus();
-  }, [current]);
-  if (!layout.switcher) return null;
-  const views: readonly (EntryId | undefined)[] = [
-    undefined,
-    ...layout.listed.map((each) => each.id),
-  ];
-  const move = (by: number) => {
-    const at = views.indexOf(current);
-    const next = views[(at + by + views.length) % views.length];
-    moved.current = true;
-    layout.maximize(next);
-  };
-  return (
-    <div
-      ref={bar}
-      className="conversation-switcher"
-      role="tablist"
-      aria-label="Conversation and subagents"
-      onKeyDown={(event) => {
-        if (event.key === "ArrowRight") move(1);
-        else if (event.key === "ArrowLeft") move(-1);
-        else return;
-        event.preventDefault();
-      }}
-    >
-      <button
-        type="button"
-        role="tab"
-        className="conversation-switcher-tab"
-        aria-selected={current === undefined}
-        tabIndex={current === undefined ? 0 : -1}
-        onClick={() => layout.maximize(undefined)}
-      >
-        Conversation
-      </button>
-      {layout.listed.map((entry) => (
-        <button
-          key={entry.id}
-          type="button"
-          role="tab"
-          className="conversation-switcher-tab"
-          data-state={entry.spawns.state}
-          aria-selected={current === entry.id}
-          tabIndex={current === entry.id ? 0 : -1}
-          title={`${entry.spawns.label} — ${SUBAGENT_STATE_LABELS[entry.spawns.state]}`}
-          onClick={() => layout.maximize(entry.id)}
-        >
-          <span className="conversation-switcher-mark" aria-hidden="true" />
-          <span className="conversation-switcher-label">
-            {entry.spawns.label}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
 }

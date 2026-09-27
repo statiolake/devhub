@@ -64,7 +64,7 @@ import {
   type UserEntry,
 } from "../../model/conversation";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
-import { BackgroundTasks } from "./BackgroundTasks";
+import { ComposerFooter } from "./BackgroundTasks";
 import { ContextUsage } from "./ContextUsage";
 import {
   useConversationActions,
@@ -428,7 +428,7 @@ export function Composer({
   pickers,
   openSetting,
   restored,
-  showCall,
+  openTask,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -439,8 +439,8 @@ export function Composer({
   readonly openSetting: (setting: SettingName) => void;
   /** The message a rewind took out of the conversation, whose words come back here. */
   readonly restored: UserEntry | undefined;
-  /** Bring a call in the conversation into view, opened: where a background task goes. */
-  readonly showCall: (call: EntryId) => void;
+  /** Open the call a background task was started by (`ComposerFooter`). */
+  readonly openTask: (call: EntryId) => void;
 }) {
   const { send, interrupt, reportFailure, openResume } =
     useConversationActions();
@@ -688,13 +688,11 @@ export function Composer({
           </div>
         </div>
       </div>
-      <div className="conversation-footer">
-        <BackgroundTasks
-          tasks={transcript.backgroundTasks}
-          showCall={showCall}
-        />
-        <ContextUsage usage={transcript.usage} />
-      </div>
+      <ComposerFooter
+        tasks={transcript.backgroundTasks}
+        openTask={openTask}
+        readout={<ContextUsage usage={transcript.usage} />}
+      />
     </div>
   );
 }

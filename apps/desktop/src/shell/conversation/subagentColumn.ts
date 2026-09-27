@@ -7,7 +7,7 @@
  *
  * It lives as long as the conversation's surface does (a pane's own, in
  * memory), and says nothing about which subagents are listed: that is
- * `listedSubagents`, one rule for the column and the switcher alike. It
+ * `listedSubagents`. It
  * keeps sizes and folds only for the listed ones (`withPanesOf`): a pane that
  * leaves takes its own with it, and comes back at an ordinary size, open.
  */

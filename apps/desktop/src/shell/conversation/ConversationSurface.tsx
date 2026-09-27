@@ -18,7 +18,7 @@
  * (with the settings and Stop in its toolbar). Before the first entry, the
  * transcript's place says what the pane is for. Beside the conversation, when
  * the pane is wide, a column of subagents; in its place, a subagent the
- * person maximized; under it, the switcher between them (`SubagentPanes`). Esc and Ctrl+C stop a running turn from anywhere in the
+ * person maximized (`SubagentPanes`). Esc and Ctrl+C stop a running turn from anywhere in the
  * pane, as they do in a terminal Agent; being shown puts the keyboard in the
  * composer, as being shown puts it in a terminal Agent's xterm. Cmd+Q and
  * the chords after it never reach here — main takes them first.
@@ -59,7 +59,6 @@ import {
   SubagentColumn,
   SubagentLayoutProvider,
   SubagentPane,
-  SubagentSwitcher,
   useSubagentLayout,
 } from "./SubagentPanes";
 import "./conversation.css";
@@ -256,27 +255,33 @@ export function ConversationSurface({
     [reveal],
   );
 
-  // A background task's call, opened where it is drawn.
-  const showCall = useCallback(
-    (call: EntryId) =>
+  // A background task's call, opened: a subagent fills the pane, in a narrow
+  // pane and a wide one alike; any other call is opened where it is drawn.
+  const openTask = useCallback(
+    (call: EntryId) => {
+      if (subagents.all.some((each) => each.id === call)) {
+        maximize(call);
+        return;
+      }
       reveal({
         selector: `[data-entry-id="${CSS.escape(call)}"]`,
         missing: `a background task names call ${call}, which is not drawn`,
         open: (entry) => {
-          const call = entry.querySelector<HTMLDetailsElement>(
+          const fold = entry.querySelector<HTMLDetailsElement>(
             ":scope > .conversation-tool-entry > details.conversation-tool",
           );
-          const summary = call?.querySelector<HTMLElement>(":scope > summary");
-          if (!call || !summary) {
+          const summary = fold?.querySelector<HTMLElement>(":scope > summary");
+          if (!fold || !summary) {
             throw new Error(
               `call ${entry.dataset.entryId} is not drawn as a tool call`,
             );
           }
-          call.open = true;
+          fold.open = true;
           return summary;
         },
-      }),
-    [reveal],
+      });
+    },
+    [subagents.all, maximize, reveal],
   );
 
   // One size for the whole page, a step from the terminal's, zoom included,
@@ -359,7 +364,6 @@ export function ConversationSurface({
                         tree={tree}
                       />
                     ) : null}
-                    <SubagentSwitcher />
                     {transcript.requests.length > 0 ? (
                       <button
                         type="button"
@@ -371,7 +375,7 @@ export function ConversationSurface({
                     ) : null}
                     <Composer
                       transcript={transcript}
-                      showCall={showCall}
+                      openTask={openTask}
                       inputRef={composer}
                       pickers={pickers}
                       openSetting={openSetting}

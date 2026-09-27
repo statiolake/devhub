@@ -53,8 +53,7 @@
   flex: 1;
 }
 
-/* The conversation's own column: what is shown in it, the switcher, and the
-   composer, which talks to the conversation whatever is shown above it. */
+/* The conversation's own column: what is shown in it, and the composer, which talks to the conversation whatever is shown above it. */
 .conversation-main {
   display: flex;
   min-width: 0;
@@ -299,8 +298,7 @@
   color: var(--primary);
 }
 
-.conversation-subagent-action:focus-visible,
-.conversation-switcher-tab:focus-visible {
+.conversation-subagent-action:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -310,68 +308,6 @@
   color: var(--tertiary);
   font-size: 0.9em;
   font-style: italic;
-}
-
-/* The switcher: the conversation and each listed subagent, as tabs along
-   the bottom of the view. The row wraps: a tab past the edge would be out
-   of sight with nothing saying it is there. */
-.conversation-switcher {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  padding: var(--space-1) var(--space-3);
-  border-top: 1px solid var(--line-soft);
-  font-size: 0.85em;
-  gap: 2px;
-}
-
-.conversation-switcher-tab {
-  display: inline-flex;
-  max-width: 18em;
-  flex: none;
-  align-items: center;
-  padding: 2px var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--secondary);
-  cursor: pointer;
-  font: inherit;
-  gap: 0.4em;
-  white-space: nowrap;
-}
-
-/* A long label ends in an ellipsis inside its tab; the tab's title has it
-   whole. */
-.conversation-switcher-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.conversation-switcher-tab:hover {
-  background: var(--wash);
-}
-
-.conversation-switcher-tab[aria-selected="true"] {
-  background: var(--wash-strong);
-  color: var(--primary);
-}
-
-.conversation-switcher-mark {
-  width: 0.5em;
-  height: 0.5em;
-  flex: none;
-  border-radius: 50%;
-  background: var(--tertiary);
-}
-
-.conversation-switcher-tab[data-state="running"] .conversation-switcher-mark {
-  background: var(--status-working);
-}
-
-.conversation-switcher-tab[data-state="failed"] .conversation-switcher-mark {
-  background: var(--status-error);
 }
 
 /* ---------------------------------------------------------- Empty state */
@@ -1902,33 +1838,35 @@
 
 /* Under the box, lined up with its inner edge: what works in the background
    on the left, how full the context is on the right. */
+/* Under the composer's box: a row with what works in the background and
+   the context readout, and under that row, across the composer's whole
+   width, the list of background tasks once it is opened. */
 .conversation-footer {
-  display: flex;
-  align-items: flex-start;
   padding: 0 var(--space-3);
   margin-top: var(--space-1);
+}
+
+.conversation-footer-row {
+  display: flex;
+  align-items: center;
   gap: var(--space-3);
 }
 
 /* What the Agent has working in the background: the CLI footer's quiet line,
-   opened into a list whose each line goes to the call that started it. */
-.conversation-background {
-  min-width: 0;
-  flex: 1 1 auto;
-  color: var(--tertiary);
-  font-size: 0.75em;
-}
-
+   opened into a list whose each line goes to what started it. */
 .conversation-background-toggle {
   display: flex;
+  min-width: 0;
   max-width: 100%;
+  flex: 0 1 auto;
+  color: var(--tertiary);
+  font-size: 0.75em;
   align-items: center;
   padding: 0;
   border: 0;
   background: none;
-  color: inherit;
   cursor: pointer;
-  font: inherit;
+  font-family: inherit;
   gap: 0.4em;
   text-align: left;
   user-select: none;
@@ -1974,13 +1912,16 @@
   max-height: 10em;
   padding: 0;
   margin: var(--space-1) 0 0;
+  color: var(--tertiary);
+  font-size: 0.75em;
   list-style: none;
 }
 
 .conversation-background-line {
   display: flex;
   width: 100%;
-  align-items: baseline;
+  box-sizing: border-box;
+  align-items: center;
   padding: 2px var(--space-1);
   border: 0;
   border-radius: var(--radius-row);
@@ -2014,8 +1955,7 @@ button.conversation-background-line:hover {
   white-space: nowrap;
 }
 
-.conversation-background-kind,
-.conversation-background-state {
+.conversation-background-kind {
   flex: none;
   color: var(--tertiary);
 }
