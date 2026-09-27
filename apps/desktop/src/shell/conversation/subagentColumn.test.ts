@@ -16,6 +16,7 @@ import {
   withDefaultWidth,
   withEqualHeights,
   withFold,
+  withPanesOf,
   withSashMoved,
   withWidth,
 } from "./subagentColumn";
@@ -103,5 +104,36 @@ describe("folds", () => {
     ]);
     expect(sashesOf([false, true, false])).toEqual([]);
     expect(sashesOf([true])).toEqual([]);
+  });
+});
+
+describe("a pane that leaves the column", () => {
+  const open = [
+    { id: A, height: 300 },
+    { id: B, height: 100 },
+    { id: C, height: 200 },
+  ];
+
+  it("takes its share and its fold with it, the rest keeping their proportions", () => {
+    const laidOut = withFold(
+      withWidth(withSashMoved(INITIAL_COLUMN, open, 0, 1, 0), 450, 1200),
+      C,
+      true,
+    );
+    const left = withPanesOf(laidOut, new Set([A, B]));
+    expect([...left.weights]).toEqual([
+      [A, 300],
+      [B, 100],
+    ]);
+    expect(left.folded.size).toBe(0);
+    expect(left.width).toBe(450);
+    // Back again, it arrives at an ordinary size, open.
+    expect(weightOf(left, C)).toBe(200);
+    expect(left.folded.has(C)).toBe(false);
+  });
+
+  it("changes nothing while every pane with a size or a fold stays", () => {
+    const folded = withFold(INITIAL_COLUMN, A, true);
+    expect(withPanesOf(folded, new Set([A, B]))).toBe(folded);
   });
 });

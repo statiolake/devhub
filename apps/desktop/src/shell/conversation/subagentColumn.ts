@@ -7,7 +7,9 @@
  *
  * It lives as long as the conversation's surface does (a pane's own, in
  * memory), and says nothing about which subagents are listed: that is
- * `listedSubagents`, one rule for the column and the switcher alike.
+ * `listedSubagents`, one rule for the column and the switcher alike. It
+ * keeps sizes and folds only for the listed ones (`withPanesOf`): a pane that
+ * leaves takes its own with it, and comes back at an ordinary size, open.
  */
 
 import type { EntryId } from "../../model/conversation";
@@ -126,6 +128,27 @@ export function withFold(
   if (folded) next.add(id);
   else next.delete(id);
   return { ...state, folded: next };
+}
+
+/**
+ * The column holding only the panes `listed`: a pane that has left takes its
+ * share and its fold with it, and the panes that stay keep theirs, so they
+ * share the room it leaves in the proportions they had. The same state when
+ * nothing has left.
+ */
+export function withPanesOf(
+  state: ColumnState,
+  listed: ReadonlySet<EntryId>,
+): ColumnState {
+  const gone = (id: EntryId) => !listed.has(id);
+  const weightsGone = [...state.weights.keys()].some(gone);
+  const foldsGone = [...state.folded].some(gone);
+  if (!weightsGone && !foldsGone) return state;
+  return {
+    ...state,
+    weights: new Map([...state.weights].filter(([id]) => listed.has(id))),
+    folded: new Set([...state.folded].filter((id) => listed.has(id))),
+  };
 }
 
 /**

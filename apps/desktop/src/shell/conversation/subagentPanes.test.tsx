@@ -215,20 +215,8 @@ describe("a wide pane", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
   });
 
-  it("puts a subagent beside and takes it back, as the person chooses", () => {
+  it("takes a subagent out of the column and puts it back, as the person chooses", () => {
     draw(TWO);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show Beta beside the conversation" }),
-    );
-    const column = screen.getByRole("complementary", { name: "Subagents" });
-    expect(column).toContainElement(entry("b-answer"));
-    // Stacked in transcript order.
-    expect(
-      [...column.querySelectorAll("[data-view]")].map((pane) =>
-        pane.getAttribute("data-view"),
-      ),
-    ).toEqual(["a", "b"]);
-
     const alphaBeside = screen.getByRole("button", {
       name: "Show Alpha beside the conversation",
     });
@@ -236,7 +224,24 @@ describe("a wide pane", () => {
     fireEvent.click(alphaBeside);
     expect(alphaBeside).toHaveAttribute("aria-pressed", "false");
     expect(entry("a")).toContainElement(entry("a-answer"));
-    expect(column).not.toContainElement(entry("a-answer"));
+    expect(
+      screen.queryByRole("complementary", { name: "Subagents" }),
+    ).toBeNull();
+
+    fireEvent.click(alphaBeside);
+    expect(
+      screen.getByRole("complementary", { name: "Subagents" }),
+    ).toContainElement(entry("a-answer"));
+  });
+
+  it("offers no Beside toggle on a subagent that has ended, only Maximize", () => {
+    draw(TWO);
+    expect(
+      screen.queryByRole("button", {
+        name: "Show Beta beside the conversation",
+      }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Maximize Beta" })).toBeTruthy();
   });
 
   it("fills the pane with one subagent, setting the column aside, and switches back", () => {
@@ -360,6 +365,46 @@ describe("the column, laid out as VS Code lays out its views", () => {
     }
   });
 
+  it("draws the line between two panes over the lower one's header, open or folded, and none over the first", () => {
+    // jsdom lays nothing out, so the lines are read from the rules that match
+    // each header in the stylesheet as written.
+    const sheet = document.createElement("style");
+    sheet.textContent = readFileSync(
+      "src/shell/conversation/conversation.css",
+      "utf8",
+    );
+    document.head.append(sheet);
+    const rules = [...sheet.sheet!.cssRules].filter(
+      (rule): rule is CSSStyleRule =>
+        // The pane's own rules: the rest are about other things, and jsdom
+        // cannot match every selector in them.
+        rule instanceof CSSStyleRule &&
+        rule.selectorText.includes("conversation-subagent-pane"),
+    );
+    sheet.remove();
+    /** The border sides a rule matching `element` draws. */
+    function lines(element: Element): readonly string[] {
+      return rules
+        .filter((rule) => element.matches(rule.selectorText))
+        .flatMap((rule) =>
+          ["border-top", "border-bottom", "border"].filter(
+            (side) => rule.style.getPropertyValue(side) !== "",
+          ),
+        );
+    }
+
+    draw(THREE);
+    fireEvent.click(screen.getByRole("button", { name: "Fold Beta" }));
+    expect(
+      ["Alpha", "Beta", "Gamma"].map((label) =>
+        lines(pane(label).querySelector("header")!),
+      ),
+    ).toEqual([[], ["border-top"], ["border-top"]]);
+    // Nor does a pane draw one of its own under the sash between it and the
+    // next.
+    expect(lines(pane("Alpha"))).toEqual([]);
+  });
+
   it("puts ← back to the conversation on the left of the pane it fills", () => {
     draw(THREE);
     fireEvent.click(screen.getByRole("button", { name: "Maximize Beta" }));
@@ -431,11 +476,43 @@ describe("the column, laid out as VS Code lays out its views", () => {
     expect(pane("Alpha").style.flexGrow).toBe("1");
     expect(pane("Gamma").style.flexGrow).toBe("1");
   });
+
+  it("lets a pane go with its size and fold when it leaves, the rest taking its room", () => {
+    boxes({
+      '[data-view="a"]': { width: 400, height: 300 },
+      '[data-view="b"]': { width: 400, height: 300 },
+      '[data-view="c"]': { width: 400, height: 200 },
+    });
+    const view = draw(THREE);
+    const sash = screen.getByRole("separator", {
+      name: "Resize Alpha and Beta",
+    });
+    fireEvent.pointerDown(sash, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(sash, { clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(sash, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Fold Gamma" }));
+    expect(pane("Beta").style.flexGrow).toBe("350");
+
+    // Beta ends: it leaves, and Alpha and Gamma keep what they had.
+    view.redraw(applyEvents(THREE, [subagent("b", "Beta", "completed")]));
+    expect(screen.queryByRole("region", { name: "Subagent: Beta" })).toBeNull();
+    expect(pane("Alpha").style.flexGrow).toBe("250");
+    expect(pane("Gamma")).toHaveAttribute("data-folded", "true");
+
+    // Gamma taken out and put back comes back open, at an ordinary size.
+    const gammaBeside = screen.getByRole("button", {
+      name: "Show Gamma beside the conversation",
+    });
+    fireEvent.click(gammaBeside);
+    fireEvent.click(gammaBeside);
+    expect(pane("Gamma")).not.toHaveAttribute("data-folded");
+    expect(pane("Gamma").style.flexGrow).toBe("250");
+  });
 });
 
 describe("the subagents listed, whatever the pane's width", () => {
-  // Many that ended, in every way a subagent ends or stops being known, and
-  // two still running.
+  // Many that ended, in every way a subagent ends or stops being known, one
+  // idle (waiting, and able to run again), and two still running.
   const MANY = transcriptOf([
     put(assistant("hello", "Starting many subagents")),
     subagent("d1", "Done1", "completed"),
@@ -473,26 +550,77 @@ describe("the subagents listed, whatever the pane's width", () => {
     draw(MANY);
   }
 
-  it("are the running ones, in the narrow switcher as in the wide column", () => {
+  /** The subagents listed at this width: the column's, else the switcher's. */
+  function listed(width: number): readonly string[] {
+    return width < WIDE_PANE_PX ? inSwitcher() : inColumn();
+  }
+
+  it("are the ones that have not ended, in the narrow switcher as in the wide column", () => {
     drawnAt(WIDE_PANE_PX + 200);
-    expect(inColumn()).toEqual(["r1", "r2"]);
+    expect(inColumn()).toEqual(["r1", "i1", "r2"]);
     drawnAt(600);
-    expect(inSwitcher()).toEqual(["Run1", "Run2"]);
+    expect(inSwitcher()).toEqual(["Run1", "Idle1", "Run2"]);
+  });
+
+  it("let one go when it ends, even one the person put back beside", () => {
+    for (const width of [600, WIDE_PANE_PX + 200]) {
+      cleanup();
+      paneWidth(width);
+      if (width < WIDE_PANE_PX) installResizeObserver();
+      const view = draw(MANY);
+      if (width >= WIDE_PANE_PX) {
+        const beside = screen.getByRole("button", {
+          name: "Show Run1 beside the conversation",
+        });
+        fireEvent.click(beside);
+        fireEvent.click(beside);
+      }
+      view.redraw(
+        applyEvents(MANY, [
+          subagent("r1", "Run1", "completed"),
+          subagent("i1", "Idle1", "running"),
+        ]),
+      );
+      expect(listed(width)).toEqual(
+        width < WIDE_PANE_PX ? ["Idle1", "Run2"] : ["i1", "r2"],
+      );
+      // Still reachable from its call in the transcript.
+      expect(
+        screen.getByRole("button", { name: "Maximize Run1" }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("keep one that ends while it fills the pane until the person leaves it", () => {
+    for (const width of [600, WIDE_PANE_PX + 200]) {
+      cleanup();
+      paneWidth(width);
+      if (width < WIDE_PANE_PX) installResizeObserver();
+      const view = draw(MANY);
+      fireEvent.click(screen.getByRole("button", { name: "Maximize Run1" }));
+      view.redraw(applyEvents(MANY, [subagent("r1", "Run1", "completed")]));
+      expect(
+        screen.getByRole("region", { name: "Subagent: Run1" }),
+      ).toBeTruthy();
+      expect(inSwitcher()).toEqual(["Run1", "Idle1", "Run2"]);
+      fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
+      expect(listed(width)).toEqual(
+        width < WIDE_PANE_PX ? ["Idle1", "Run2"] : ["i1", "r2"],
+      );
+    }
   });
 
   it("keep an ended one the person opened until they leave it", () => {
     for (const width of [600, WIDE_PANE_PX + 200]) {
       drawnAt(width);
       fireEvent.click(screen.getByRole("button", { name: "Maximize Done2" }));
-      expect(inSwitcher()).toEqual(["Run1", "Done2", "Run2"]);
+      expect(inSwitcher()).toEqual(["Run1", "Done2", "Idle1", "Run2"]);
       fireEvent.click(screen.getByRole("tab", { name: "Run1" }));
-      expect(inSwitcher()).toEqual(["Run1", "Run2"]);
+      expect(inSwitcher()).toEqual(["Run1", "Idle1", "Run2"]);
       fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
-      if (width < WIDE_PANE_PX) {
-        expect(inSwitcher()).toEqual(["Run1", "Run2"]);
-      } else {
-        expect(inColumn()).toEqual(["r1", "r2"]);
-      }
+      expect(listed(width)).toEqual(
+        width < WIDE_PANE_PX ? ["Run1", "Idle1", "Run2"] : ["r1", "i1", "r2"],
+      );
       // Still reachable from its call in the transcript.
       expect(
         screen.getByRole("button", { name: "Maximize Done2" }),
@@ -500,19 +628,14 @@ describe("the subagents listed, whatever the pane's width", () => {
     }
   });
 
-  it("are the same whether the person put one beside or took one out", () => {
+  it("are the same in the column and the switcher once the person took one out", () => {
     drawnAt(WIDE_PANE_PX + 200);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Show Done3 beside the conversation",
-      }),
-    );
     fireEvent.click(
       screen.getByRole("button", { name: "Show Run1 beside the conversation" }),
     );
-    expect(inColumn()).toEqual(["r2", "d3"]);
+    expect(inColumn()).toEqual(["i1", "r2"]);
     fireEvent.click(screen.getByRole("button", { name: "Maximize Run2" }));
-    expect(inSwitcher()).toEqual(["Run2", "Done3"]);
+    expect(inSwitcher()).toEqual(["Idle1", "Run2"]);
   });
 
   it("gain one the session launches after the pane was drawn", () => {
@@ -522,11 +645,11 @@ describe("the subagents listed, whatever the pane's width", () => {
       if (width < WIDE_PANE_PX) installResizeObserver();
       const view = draw(MANY);
       view.redraw(applyEvents(MANY, [subagent("r3", "Run3", "running")]));
-      if (width < WIDE_PANE_PX) {
-        expect(inSwitcher()).toEqual(["Run1", "Run2", "Run3"]);
-      } else {
-        expect(inColumn()).toEqual(["r1", "r2", "r3"]);
-      }
+      expect(listed(width)).toEqual(
+        width < WIDE_PANE_PX
+          ? ["Run1", "Idle1", "Run2", "Run3"]
+          : ["r1", "i1", "r2", "r3"],
+      );
     }
   });
 

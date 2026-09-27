@@ -12,11 +12,11 @@
  * - Inline: everywhere else, in its card, as it always was.
  *
  * One selection says which subagents are listed, and both the column and the
- * switcher bar list exactly those, in transcript order: a subagent while it
- * runs, or as the person chose once they put it beside or took it out with
- * the card's Beside toggle (the same rule as the inline card's fold), and the
- * one filling the pane until the person leaves it. Every other one is reached
- * from its card.
+ * switcher bar list exactly those, in transcript order: a subagent until it
+ * ends (running, or idle and able to run again), unless the person took it
+ * out with the card's Beside toggle, and the one filling the pane until the
+ * person leaves it, ended or not. One that ends leaves, whatever the person
+ * chose; it is reached from its card, as every other one is.
  *
  * The column is laid out as VS Code lays out its views (`subagentColumn.ts`):
  * a sash on its edge sets its width, a sash between two open panes shares
@@ -67,6 +67,7 @@ import {
   withDefaultWidth,
   withEqualHeights,
   withFold,
+  withPanesOf,
   withSashMoved,
   withWidth,
   type ColumnState,
@@ -93,6 +94,20 @@ export const SUBAGENT_STATE_LABELS: Readonly<
   unknown: "Unknown",
 };
 
+/**
+ * Whether a subagent has ended: it will not run again, so the column and the
+ * switcher let it go. An idle one (a teammate waiting between tasks) has not.
+ */
+export const SUBAGENT_ENDED: Readonly<
+  Record<SubagentEntry["spawns"]["state"], boolean>
+> = {
+  running: false,
+  idle: false,
+  completed: true,
+  failed: true,
+  unknown: true,
+};
+
 /** Every call that started a subagent, at any depth, in transcript order. */
 export function subagentsOf(transcript: Transcript): readonly SubagentEntry[] {
   return transcript.entries.filter(
@@ -103,7 +118,8 @@ export function subagentsOf(transcript: Transcript): readonly SubagentEntry[] {
 
 /**
  * The subagents the column and the switcher list, in transcript order: each
- * as the person chose, or else while it runs, and the one filling the pane.
+ * one that has not ended, unless the person took it out, and the one filling
+ * the pane.
  */
 export function listedSubagents(
   subagents: readonly SubagentEntry[],
@@ -113,7 +129,7 @@ export function listedSubagents(
   return subagents.filter(
     (each) =>
       each.id === maximized ||
-      (chosen.get(each.id) ?? each.spawns.state === "running"),
+      (!SUBAGENT_ENDED[each.spawns.state] && (chosen.get(each.id) ?? true)),
   );
 }
 
@@ -191,7 +207,14 @@ export function useSubagentLayout(
     setChosen((current) => new Map(current).set(id, value));
   }, []);
 
-  const [column, changeColumn] = useState<ColumnState>(INITIAL_COLUMN);
+  const [storedColumn, changeColumn] = useState<ColumnState>(INITIAL_COLUMN);
+  // A pane that left the column takes its size and fold with it, now, so it
+  // comes back open at an ordinary size.
+  const column = withPanesOf(
+    storedColumn,
+    new Set(listed.map((each) => each.id)),
+  );
+  if (column !== storedColumn) changeColumn(column);
 
   return {
     wide,
@@ -225,8 +248,9 @@ export function useSubagentPlacement(): SubagentLayout {
 
 /**
  * Where else a subagent's work can go, under its card: beside the
- * conversation (a toggle, pressed while it is there), and filling the pane
- * while its work is in the card (in the column, its pane has its own).
+ * conversation until it ends (a toggle, pressed while it is there), and
+ * filling the pane while its work is in the card (in the column, its pane has
+ * its own).
  */
 export function SubagentCardActions({
   entry,
@@ -238,7 +262,7 @@ export function SubagentCardActions({
   const beside = layout.placeOf(entry.id) === "beside";
   return (
     <div className="conversation-subagent-actions">
-      {layout.wide ? (
+      {layout.wide && !SUBAGENT_ENDED[entry.spawns.state] ? (
         <IconAction
           label={`Show ${label} beside the conversation`}
           tip={
