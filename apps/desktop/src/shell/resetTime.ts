@@ -1,18 +1,24 @@
 /**
- * When a rate-limit window resets, as every readout of it says so: `14:30`
- * today, `Mon 14:30` another day. The Sidebar's usage tooltip and the
- * conversation header both use this, so a seven-day window's reset reads the
- * same in both and never as a bare time days away.
+ * When a rate-limit window resets, as every readout of it says so: the time,
+ * `16:50`, when that is later today; the date alone, `10/3` in the reader's
+ * locale, when it is another day. A reset days away is planned around by the
+ * day, not the minute, and a weekly or monthly window reads the same way as a
+ * five-hour one does once its day has come. The Sidebar's usage row and its
+ * tooltip both use this, so one reset never reads two ways.
+ *
+ * Days are the reader's local calendar days; the time is on the 24-hour
+ * clock, so the Sidebar's one-line row never carries an AM/PM it has no room
+ * for.
  */
 export function resetTime(epochMs: number, now: number): string {
   const date = new Date(epochMs);
-  const time = date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
   return new Date(now).toDateString() === date.toDateString()
-    ? time
-    : `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+    ? date.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      })
+    : date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 }
 
 /**

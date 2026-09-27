@@ -2,10 +2,15 @@
  * Claude's and Codex's rate limits, at the foot of the Sidebar.
  *
  * One slim row per CLI that has reported: its name, a bar of how much is used
- * of its window nearest the limit — the one that stops it first — and the
- * percentage. The bar is the column's quiet ink until the window is near its
- * end (`usageLevel.ts`). On the rail the names and numbers go and the bars
- * stay, one per CLI, so a limit coming close still shows.
+ * of its window nearest the limit — the one that stops it first — the
+ * percentage and when that window resets, `79% (until 16:50)`: the time when
+ * the reset is later today, the date alone when it is another day
+ * (`resetTime.ts`, the words the tooltip uses too). A reset that is unknown or
+ * already past has no parenthesis rather than a guess. The row stays one line;
+ * when the column is narrow the parenthesis gives way before the percentage.
+ * The bar is the column's quiet ink until the window is near its end
+ * (`usageLevel.ts`). On the rail the names and numbers go and the bars stay,
+ * one per CLI, so a limit coming close still shows.
  *
  * The detail is on hover, through the same tooltip every row uses: per CLI,
  * every window it reported (five-hour, seven-day, …) as a labelled bar with
@@ -26,6 +31,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
 import { mostUsedRateLimit } from "../../../model/conversation";
+import { resetTime } from "../../resetTime";
 import { usageLevel } from "../../usageLevel";
 
 type Window = NonNullable<UsageLimitsWire["clis"][number]["windows"]>[number];
@@ -71,7 +77,9 @@ export function UsageLimits({
   const at = now ?? clock;
   const rows = limits.clis.flatMap((one) => {
     const shown = shownWindow(one.windows ?? [], at);
-    return shown === undefined ? [] : [{ cli: one.cli, ...shown }];
+    return shown === undefined
+      ? []
+      : [{ cli: one.cli, ...shown, until: until(shown, at) }];
   });
   if (rows.length === 0) return null;
   const spoken = rows
@@ -79,7 +87,7 @@ export function UsageLimits({
       (row) =>
         `${CLI_NAMES[row.cli]} ${percent(row.window.usedPercent)}${
           row.stale ? " before its last reset" : ""
-        }`,
+        }${row.until === undefined ? "" : ` until ${row.until}`}`,
     )
     .join(", ");
   return (
@@ -111,10 +119,26 @@ export function UsageLimits({
           <span className="sidebar-usage-value">
             {percent(row.window.usedPercent)}
           </span>
+          {row.until === undefined ? null : (
+            <span className="sidebar-usage-reset">
+              ({`until ${row.until}`})
+            </span>
+          )}
         </div>
       ))}
     </div>
   );
+}
+
+/** When the shown window resets, while that is known and still ahead. */
+function until(
+  shown: { readonly window: Window; readonly stale: boolean },
+  now: number,
+): string | undefined {
+  const resetsAt = shown.window.resetsAt;
+  return resetsAt === undefined || shown.stale
+    ? undefined
+    : resetTime(resetsAt, now);
 }
 
 function percent(used: number | undefined): string {

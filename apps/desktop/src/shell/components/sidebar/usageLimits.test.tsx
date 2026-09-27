@@ -8,11 +8,23 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { TooltipLineWire } from "../../../ipc/contract";
 import { UsageLimits } from "./UsageLimits";
 
 afterEach(cleanup);
+
+// The reset reads on the local calendar: the zone is pinned, and NOW is
+// 18:00 on 25 September in it.
+let zone: string | undefined;
+beforeAll(() => {
+  zone = process.env["TZ"];
+  process.env["TZ"] = "Asia/Tokyo";
+});
+afterAll(() => {
+  if (zone === undefined) delete process.env["TZ"];
+  else process.env["TZ"] = zone;
+});
 
 const NOW = Date.UTC(2026, 8, 25, 9, 0);
 const HOUR = 60 * 60 * 1000;
@@ -57,10 +69,11 @@ describe("the usage-limits readout", () => {
       />,
     );
     const readout = screen.getByRole("status");
-    expect(readout).toHaveAccessibleName("Usage limits: Claude 98%");
+    expect(readout).toHaveAccessibleName("Usage limits: Claude 98% until 9/27");
     expect(readout).not.toHaveTextContent("Codex");
     const claude = readout.querySelector(".sidebar-usage-cli")!;
-    expect(claude).toHaveTextContent("Claude98%");
+    // The seven-day window resets on another day: the date alone.
+    expect(claude).toHaveTextContent("Claude98%(until 9/27)");
     // At its limit: coloured, by the rule every usage meter keeps.
     expect(claude).toHaveAttribute("data-level", "at");
     expect(
@@ -116,14 +129,62 @@ describe("the usage-limits readout", () => {
     const [claude, codex] = [
       ...screen.getByRole("status").querySelectorAll(".sidebar-usage-cli"),
     ];
-    expect(claude).toHaveTextContent("Claude30%");
+    // Resets within the hour, today: the time.
+    expect(claude).toHaveTextContent("Claude30%(until 19:00)");
     expect(claude).not.toHaveAttribute("data-stale");
-    expect(codex).toHaveTextContent("Codex96%");
+    // Its reset is past: no parenthesis rather than an old time.
+    expect(codex).toHaveTextContent(/^Codex96%$/u);
+    expect(codex.querySelector(".sidebar-usage-reset")).toBeNull();
     expect(codex).toHaveAttribute("data-stale", "true");
     // History is not a warning.
     expect(codex).toHaveAttribute("data-level", "calm");
     expect(screen.getByRole("status")).toHaveAccessibleName(
-      "Usage limits: Claude 30%, Codex 96% before its last reset",
+      "Usage limits: Claude 30% until 19:00, Codex 96% before its last reset",
     );
+  });
+
+  it("leaves the parenthesis out when the reset was not reported", () => {
+    render(
+      <UsageLimits
+        limits={{
+          clis: [
+            { cli: "codex", windows: [{ window: "weekly", usedPercent: 41 }] },
+          ],
+        }}
+        now={NOW}
+      />,
+    );
+    const codex = screen
+      .getByRole("status")
+      .querySelector(".sidebar-usage-cli")!;
+    expect(codex).toHaveTextContent(/^Codex41%$/u);
+    expect(codex.querySelector(".sidebar-usage-reset")).toBeNull();
+  });
+
+  it("colours a row by the shared rule: quiet below 75%, warning from 75%, danger from 90%", () => {
+    const levels = [74, 75, 89, 90].map((usedPercent) => {
+      render(
+        <UsageLimits
+          limits={{
+            clis: [
+              {
+                cli: "claude",
+                windows: [
+                  { window: "5-hour", usedPercent, resetsAt: NOW + HOUR },
+                ],
+              },
+            ],
+          }}
+          now={NOW}
+        />,
+      );
+      const level = screen
+        .getByRole("status")
+        .querySelector(".sidebar-usage-cli")!
+        .getAttribute("data-level");
+      cleanup();
+      return level;
+    });
+    expect(levels).toEqual(["calm", "near", "near", "at"]);
   });
 });

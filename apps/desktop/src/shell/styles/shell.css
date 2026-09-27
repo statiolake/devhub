@@ -1733,10 +1733,11 @@ body.is-resizing-split {
 }
 
 /* Claude's and Codex's rate limits, at the foot of the column: a slim row per
-   CLI — name, bar, percentage — in the column's quiet ink, coloured only near
-   the limit (`usageLevel.ts`), the detail in the tooltip. See
-   `UsageLimits.tsx`. On the rail the words go and the bars stay, centred in
-   the glyph column. */
+   CLI — name, bar, percentage, when it resets — in the column's quiet ink,
+   coloured only near the limit (`usageLevel.ts`), the detail in the tooltip.
+   See `UsageLimits.tsx`. One line whatever the width: the bar keeps a sliver
+   and the reset is what gives way, cut short before the percentage is. On the
+   rail the words go and the bars stay, centred in the glyph column. */
 .sidebar-usage {
   display: flex;
   flex: 0 0 auto;
@@ -1766,6 +1767,7 @@ body.is-resizing-split {
 .sidebar-usage-track {
   position: relative;
   overflow: hidden;
+  min-width: 16px;
   height: 3px;
   flex: 1 1 auto;
   border-radius: 2px;
@@ -1784,6 +1786,16 @@ body.is-resizing-split {
   min-width: 2.6em;
   flex: none;
   text-align: right;
+}
+
+.sidebar-usage-reset {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  /* Closer to its percentage than the row's gap: one reading, not two. */
+  margin-left: calc(var(--space-1) - var(--space-2));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-usage-cli[data-level="near"] {
@@ -1813,6 +1825,7 @@ body.is-resizing-split {
 }
 
 .sidebar[data-collapsed="true"] .sidebar-usage-name,
-.sidebar[data-collapsed="true"] .sidebar-usage-value {
+.sidebar[data-collapsed="true"] .sidebar-usage-value,
+.sidebar[data-collapsed="true"] .sidebar-usage-reset {
   display: none;
 }
