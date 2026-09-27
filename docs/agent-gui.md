@@ -479,6 +479,12 @@ shutdown is approved. Its protocol messages set that and are not drawn; what
 it says in words is a quiet line, *From researcher: …*. Read back from a
 session file, or once the CLI is started again, a teammate nothing more was
 recorded about is *Unknown*.
+A task belongs to the call it was first tied to, for good: a subagent
+woken again by SendMessage keeps its task id, and though the CLI then
+names the SendMessage call on its task events, the news is the subagent's —
+its Agent call runs again, stays in the column and the background tasks,
+and ends with it — while the SendMessage call is only the message, done
+with its own result.
 A notification that names only its task is matched through the call that
 task belongs to: the one `task_started` tied it to, or, read back from a
 session file, the call whose result named that task (a background agent's

@@ -1647,9 +1647,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					? "failed"
 					: "succeeded";
 		if (tool.spawns !== undefined && launchedTask !== undefined)
-			this.tasks.set(launchedTask, id);
+			this.bindTask(launchedTask, id);
 		if (result.backgroundTask !== undefined)
-			this.tasks.set(result.backgroundTask, id);
+			this.bindTask(result.backgroundTask, id);
 		if (tool.spawns !== undefined && result.teammate !== undefined)
 			this.teammates.set(result.teammate, id);
 		// A call that only started its subagent — in the background, or as
@@ -1809,18 +1809,27 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	/**
+	 * Ties a task to the call that started it — once. A subagent's task keeps
+	 * its id when SendMessage wakes it again, and the CLI then names the
+	 * SendMessage call on its task events; the task is still the subagent the
+	 * Agent call started, whose state the news is about.
+	 */
+	private bindTask(task: string, call: EntryId): void {
+		if (!this.tasks.has(task)) this.tasks.set(task, call);
+	}
+
+	/**
 	 * A background task's news, from the CLI's `task_*` events or from a
-	 * notification in the conversation (all a session file keeps). A
-	 * subagent's is matched to its call by the call's id, or else by the
-	 * task's.
+	 * notification in the conversation (all a session file keeps). It is
+	 * matched to the call its task was first tied to (`bindTask`), or else to
+	 * the call it names.
 	 */
 	private takeTask(line: Extract<ClaudeLine, { type: "task" }>): void {
+		const bound =
+			line.taskId === undefined ? undefined : this.tasks.get(line.taskId);
 		const call =
-			line.toolUseId !== undefined
-				? toolEntryId(line.toolUseId)
-				: line.taskId === undefined
-					? undefined
-					: this.tasks.get(line.taskId);
+			bound ??
+			(line.toolUseId !== undefined ? toolEntryId(line.toolUseId) : undefined);
 		const tool = call === undefined ? undefined : this.tool(call);
 		const state: SubagentInfo["state"] =
 			line.subtype !== "task_notification"
@@ -1842,7 +1851,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				line.raw,
 			);
 		}
-		if (line.taskId !== undefined) this.tasks.set(line.taskId, tool.id);
+		if (line.taskId !== undefined) this.bindTask(line.taskId, tool.id);
 		if (tool.spawns !== undefined) {
 			if (state === tool.spawns.state) return;
 			return this.emit({

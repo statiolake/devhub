@@ -4390,3 +4390,120 @@ describe("a call the CLI's own permission check refused", () => {
 		]);
 	});
 });
+
+describe("a subagent woken again by SendMessage", () => {
+	function task(subtype: string, fields: Record<string, unknown>): string {
+		return json({ type: "system", subtype, session_id: SESSION, ...fields });
+	}
+
+	/** Launch in the background, fail, wake it with SendMessage, work, finish. */
+	function play(adapter: ClaudeAdapter): string[] {
+		const seen: string[] = [];
+		const look = () => {
+			const agent = entry(adapter, "tool:toolu_agent") as ToolEntry;
+			const send = adapter.transcript.entries.find(
+				(each) => each.id === "tool:toolu_send",
+			) as ToolEntry | undefined;
+			seen.push(
+				[
+					`agent ${agent.spawns!.state}`,
+					`send ${send?.status ?? "-"}/${send?.background?.state ?? "-"}`,
+					`bar ${adapter.transcript.backgroundTasks.map((each) => each.call ?? "-").join(",")}`,
+				].join(" "),
+			);
+		};
+		adapter.received(
+			assistantLine("m1", [
+				toolUse("toolu_agent", "Agent", {
+					description: "Survey",
+					prompt: "survey it",
+					subagent_type: "general",
+					run_in_background: true,
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_agent", "Async agent launched")),
+				tool_use_result: {
+					isAsync: true,
+					status: "async_launched",
+					agentId: "agent-x",
+				},
+			}),
+		);
+		adapter.received(
+			task("task_notification", {
+				task_id: "agent-x",
+				tool_use_id: "toolu_agent",
+				status: "failed",
+				summary: "It stopped.",
+			}),
+		);
+		look();
+		adapter.received(
+			assistantLine("m2", [
+				toolUse("toolu_send", "SendMessage", {
+					to: "agent-x",
+					message: "try again",
+				}),
+			]),
+		);
+		adapter.received(
+			task("task_started", {
+				task_id: "agent-x",
+				tool_use_id: "toolu_send",
+				task_type: "local_agent",
+				description: "Survey",
+			}),
+		);
+		adapter.received(
+			task("background_tasks_changed", {
+				tasks: [
+					{
+						task_id: "agent-x",
+						task_type: "local_agent",
+						description: "Survey",
+					},
+				],
+			}),
+		);
+		adapter.received(toolResult("toolu_send", "Message sent."));
+		look();
+		adapter.received(
+			task("task_progress", {
+				task_id: "agent-x",
+				tool_use_id: "toolu_send",
+				description: "Survey",
+			}),
+		);
+		look();
+		adapter.received(
+			task("task_notification", {
+				task_id: "agent-x",
+				tool_use_id: "toolu_send",
+				status: "completed",
+				summary: "Done this time.",
+			}),
+		);
+		adapter.received(task("background_tasks_changed", { tasks: [] }));
+		look();
+		return seen;
+	}
+
+	const STATES = [
+		"agent failed send -/- bar ",
+		"agent running send succeeded/- bar tool:toolu_agent",
+		"agent running send succeeded/- bar tool:toolu_agent",
+		"agent completed send succeeded/- bar ",
+	];
+
+	it("is the subagent the Agent call started, running again and then done, and the SendMessage call only a message", () => {
+		expect(play(inTurn())).toEqual(STATES);
+	});
+
+	it("reads the same in a replay", () => {
+		play(inTurn());
+		expect(play(inTurn())).toEqual(STATES);
+	});
+});
