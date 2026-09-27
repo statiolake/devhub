@@ -57,6 +57,11 @@ export interface ConversationActions {
   readonly rewind: (message: EntryId) => Promise<RewindOutcome>;
   /** Stop the turn that is running. */
   readonly interrupt: () => Promise<void>;
+  /**
+   * Stop one of the background tasks, by its `RunningTask.id`, whose
+   * `stoppable` is true. It leaves the list when the CLI says it has ended.
+   */
+  readonly stopTask: (task: string) => Promise<void>;
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
   /** Pick one of `SessionFacts[setting].choices` by its id. */
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;

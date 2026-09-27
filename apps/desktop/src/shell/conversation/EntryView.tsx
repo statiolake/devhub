@@ -264,14 +264,14 @@ function PersonMessageView({
       </div>
       {confirming && rewindable ? (
         <div
-          className="conversation-rewind-confirm"
+          className="conversation-confirm"
           role="group"
           aria-label="Rewind to here"
         >
-          <span className="conversation-rewind-note">{REWIND_NOTE}</span>
+          <span className="conversation-confirm-note">{REWIND_NOTE}</span>
           <button
             type="button"
-            className="conversation-rewind-go"
+            className="conversation-confirm-go"
             onClick={() => {
               setConfirming(false);
               void rewind(entry).catch(reportFailure);
@@ -281,7 +281,7 @@ function PersonMessageView({
           </button>
           <button
             type="button"
-            className="conversation-rewind-cancel"
+            className="conversation-confirm-cancel"
             onClick={() => setConfirming(false)}
           >
             Cancel

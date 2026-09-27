@@ -261,6 +261,9 @@ function requestFrom(wire: unknown):
 			};
 		case "interrupt":
 			return { kind: "interrupt" };
+		case "stop-task":
+			if (typeof command.task !== "string") break;
+			return { kind: "stop-task", task: command.task };
 		case "answer":
 			if (
 				typeof command.request !== "string" ||

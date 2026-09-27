@@ -71,6 +71,7 @@ export function ConversationPane({
       rewind: (message: EntryId) =>
         bridge.conversation.rewind(agentId, message),
       interrupt: () => bridge.conversation.interrupt(agentId),
+      stopTask: (task: string) => bridge.conversation.stopTask(agentId, task),
       answer: (request: RequestId, answer: RequestAnswer) =>
         bridge.conversation.answer(agentId, request, answer),
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>

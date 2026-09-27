@@ -77,6 +77,7 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
@@ -243,6 +244,9 @@ const CLIENT_METHODS: readonly ClientMethod[] = [
 	"turn/interrupt",
 ];
 
+const SUBAGENT_TURN_UNKNOWN =
+	"Codex has not yet said which turn this subagent is running, so there is nothing to interrupt.";
+
 /** JSON-RPC's own "method not found". */
 const METHOD_NOT_FOUND = -32601;
 
@@ -333,6 +337,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly reverts = new Map<string, string>();
 	/** `thread/resume` requests made once a thread was open (`/resume`), by id. */
 	private readonly switches = new Set<string>();
+	/** `turn/interrupt` requests DevHub made, by id: the thread each interrupts. */
+	private readonly interrupts = new Map<string, string>();
 	private readonly chosen: Chosen = {
 		model: undefined,
 		effort: undefined,
@@ -427,6 +433,8 @@ export class CodexAdapter implements ProtocolAdapter {
 					return this.instruct(command.subagent, command.text);
 				case "interrupt":
 					return this.interrupt();
+				case "stop-task":
+					return this.stopSubagent(command.task);
 				case "answer":
 					return this.answer(command.request, command.answer);
 			}
@@ -700,6 +708,10 @@ export class CodexAdapter implements ProtocolAdapter {
 				this.emitSending();
 			}
 		}
+		if (method === "turn/interrupt") {
+			const params = message.params as TurnInterruptParams;
+			this.interrupts.set(rpcKey(message.id), params.threadId);
+		}
 		if (method === "thread/revert") {
 			const params = message.params as ThreadRevertParams;
 			this.reverts.set(rpcKey(message.id), params.beforeTurnId);
@@ -833,9 +845,11 @@ export class CodexAdapter implements ProtocolAdapter {
 			case "thread/revert":
 				threadRevertResponse(this.reader, result);
 				return this.onReverted(id);
+			case "turn/interrupt":
+				this.interrupts.delete(rpcKey(id));
+				return anyObjectResponse(this.reader, result);
 			case "turn/start":
 			case "turn/steer":
-			case "turn/interrupt":
 				// What these say again arrives as `turn/started` and the items.
 				return anyObjectResponse(this.reader, result);
 		}
@@ -909,12 +923,17 @@ export class CodexAdapter implements ProtocolAdapter {
 					`${this.codexName} did not take the message: ${message}`,
 					raw,
 				);
-			case "turn/interrupt":
+			case "turn/interrupt": {
+				const thread = this.interrupts.get(rpcKey(id!));
+				this.interrupts.delete(rpcKey(id!));
 				return this.notice(
 					"error",
-					`${this.codexName} did not interrupt the turn: ${message}`,
+					thread === this.mainThread
+						? `${this.codexName} did not interrupt the turn: ${message}`
+						: `${this.codexName} did not stop the subagent: ${message}`,
 					raw,
 				);
+			}
 		}
 	}
 
@@ -999,6 +1018,11 @@ export class CodexAdapter implements ProtocolAdapter {
 							title: entry.spawns.label,
 							call: entry.id,
 							startedAt: this.itemTimes.get(entry.id),
+							// Stopped by interrupting its threads' turns, once one is known.
+							stoppable:
+								this.runningThreadsOf(entry.id).length > 0
+									? true
+									: { reason: SUBAGENT_TURN_UNKNOWN },
 						},
 					]
 				: [],
@@ -2371,6 +2395,28 @@ export class CodexAdapter implements ProtocolAdapter {
 			threadId: this.mainThread,
 			turnId: this.runningTurn,
 		} satisfies TurnInterruptParams);
+	}
+
+	/**
+	 * A subagent stopped: the turn each of its threads is running is
+	 * interrupted, as the main thread's is. Its row goes when those turns end.
+	 */
+	private stopSubagent(task: string): void {
+		const { call } = requireStoppable(this.current.backgroundTasks, task);
+		for (const [thread, turnId] of this.runningThreadsOf(call!)) {
+			this.call("turn/interrupt", {
+				threadId: thread,
+				turnId,
+			} satisfies TurnInterruptParams);
+		}
+	}
+
+	/** The subagent threads a spawn call started that are running a turn now, with that turn. */
+	private runningThreadsOf(spawn: EntryId): readonly [string, string][] {
+		return [...this.threadParents].flatMap(([thread, parent]) => {
+			const turn = this.childTurns.get(thread);
+			return parent === spawn && turn !== undefined ? [[thread, turn]] : [];
+		});
 	}
 
 	private answer(id: RequestId, answer: RequestAnswer): void {

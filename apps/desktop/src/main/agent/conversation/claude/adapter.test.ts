@@ -3873,6 +3873,7 @@ describe("what works in the background", () => {
 				kind: "shell",
 				title: "Start the dev server",
 				call: undefined,
+				stoppable: true,
 			},
 		]);
 		adapter.received(
@@ -3890,6 +3891,7 @@ describe("what works in the background", () => {
 				title: "Start the dev server",
 				call: entryId("tool:toolu_bg"),
 				startedAt: Date.parse("2026-09-20T10:00:00.500Z"),
+				stoppable: true,
 			},
 		]);
 	});
@@ -3995,8 +3997,13 @@ describe("what works in the background", () => {
 				kind: "teammate",
 				title: "research",
 				call: entryId("tool:toolu_tm"),
+				// `stop_task` is documented for the CLI's own tasks, not teammates.
+				stoppable: { reason: "A teammate can't be stopped from here." },
 			},
 		]);
+		expect(() =>
+			adapter.encode({ kind: "stop-task", task: "teammate:researcher" }),
+		).toThrow(/cannot be stopped from DevHub/);
 		expect(conversationStatus(adapter.transcript)).toBe("background");
 		adapter.received(
 			echo(
@@ -4041,6 +4048,74 @@ describe("what works in the background", () => {
 		adapter.received(plan.mark[0]!);
 		expect(adapter.transcript.backgroundTasks).toEqual([]);
 		expect(adapter.transcript.entries).toEqual([]);
+	});
+
+	it("stops a task the CLI lists with its `stop_task` request, and lets it go only when the CLI says it stopped", () => {
+		const adapter = serverLeftRunning();
+		const [line] = perform(adapter, { kind: "stop-task", task: "b1" });
+		const written = JSON.parse(line!) as {
+			type: string;
+			request_id: string;
+			request: unknown;
+		};
+		expect(written.type).toBe("control_request");
+		expect(written.request).toEqual({ subtype: "stop_task", task_id: "b1" });
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: written.request_id,
+					response: {},
+				},
+			}),
+		);
+		// Asked, not done: the task is listed until the CLI says otherwise.
+		expect(adapter.transcript.backgroundTasks.map((task) => task.id)).toEqual([
+			"b1",
+		]);
+		adapter.received(
+			system("task_notification", {
+				task_id: "b1",
+				status: "stopped",
+				summary: "Start the dev server",
+			}),
+		);
+		adapter.received(listed());
+		expect(adapter.transcript.backgroundTasks).toEqual([]);
+		expect(
+			(entry(adapter, "tool:toolu_bg") as ToolEntry).background?.state,
+		).toBe("failed");
+	});
+
+	it("says so when the CLI refuses to stop a task, and keeps it listed", () => {
+		const adapter = serverLeftRunning();
+		const [line] = perform(adapter, { kind: "stop-task", task: "b1" });
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "error",
+					request_id: (JSON.parse(line!) as { request_id: string }).request_id,
+					error: "No task found with ID: b1",
+				},
+			}),
+		);
+		expect(adapter.transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "error",
+			text: "stop_task was refused: No task found with ID: b1",
+		});
+		expect(adapter.transcript.backgroundTasks.map((task) => task.id)).toEqual([
+			"b1",
+		]);
+	});
+
+	it("refuses to stop a task that is not running", () => {
+		const adapter = serverLeftRunning();
+		expect(() => adapter.encode({ kind: "stop-task", task: "b9" })).toThrow(
+			/b9 is not a background task running now/,
+		);
 	});
 
 	it("breaks the conversation for a list whose task does not say its kind", () => {

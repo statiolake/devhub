@@ -880,10 +880,125 @@ describe("subagents", () => {
 				call: entryId(`${MAIN}/item-spawn`),
 				// The spawn call's own start, as app-server's item/started said it.
 				startedAt: 1_790_000_000_000,
+				stoppable: true,
 			},
 		]);
 		harness.receive(lines[childEnd]!);
 		expect(harness.transcript.backgroundTasks).toEqual([]);
+	});
+
+	describe("stopped from the background tasks", () => {
+		const CHILD = "00000000-0000-7000-8000-00000000000b";
+		const SPAWN = `${MAIN}/item-spawn`;
+
+		function delegated(): { harness: Harness; lines: string[] } {
+			const harness = ready();
+			harness.command({
+				kind: "send",
+				text: "delegate",
+				images: [],
+				origin: "person",
+			});
+			const lines = fixture("subagent.handwritten.ndjson").filter(
+				(line) => !line.includes('"subAgentActivity"'),
+			);
+			return { harness, lines };
+		}
+
+		function upTo(lines: readonly string[], found: (line: string) => boolean) {
+			const index = lines.findIndex(found);
+			if (index < 0) throw new Error("the fixture has no such line");
+			return index;
+		}
+
+		const childStart = (line: string) =>
+			line.includes('"turn/started"') && line.includes("child-turn-1");
+
+		it("cannot be stopped until app-server has said which turn it runs", () => {
+			const { harness, lines } = delegated();
+			for (const line of lines.slice(0, upTo(lines, childStart)))
+				harness.receive(line);
+			expect(harness.transcript.backgroundTasks).toEqual([
+				expect.objectContaining({
+					id: SPAWN,
+					stoppable: {
+						reason:
+							"Codex has not yet said which turn this subagent is running, so there is nothing to interrupt.",
+					},
+				}),
+			]);
+			expect(() =>
+				harness.adapter.encode({ kind: "stop-task", task: SPAWN }),
+			).toThrow(/cannot be stopped from DevHub/);
+		});
+
+		it("interrupts the turn its thread runs, and leaves the list only when that turn ends", () => {
+			const { harness, lines } = delegated();
+			for (const line of lines.slice(0, upTo(lines, childStart) + 1))
+				harness.receive(line);
+			expect(harness.transcript.backgroundTasks[0]!.stoppable).toBe(true);
+			const from = harness.written.length;
+			harness.command({ kind: "stop-task", task: SPAWN });
+			const [written] = harness.writesSince(from) as [
+				{ id: number; method: string; params: unknown },
+			];
+			expect(written.method).toBe("turn/interrupt");
+			expect(written.params).toEqual({
+				threadId: CHILD,
+				turnId: "child-turn-1",
+			});
+			harness.receive({ id: written.id, result: {} });
+			// Not gone on DevHub's say-so: the turn has not ended yet.
+			expect(harness.transcript.backgroundTasks.map((task) => task.id)).toEqual(
+				[SPAWN],
+			);
+			harness.receive({
+				method: "turn/completed",
+				params: {
+					threadId: CHILD,
+					turn: {
+						id: "child-turn-1",
+						items: [],
+						itemsView: "notLoaded",
+						status: "interrupted",
+						error: null,
+						startedAt: 1790000000,
+						completedAt: 1790000002,
+						durationMs: 500,
+					},
+				},
+			});
+			expect(harness.transcript.backgroundTasks).toEqual([]);
+		});
+
+		it("says so when app-server refuses, and the subagent stays listed", () => {
+			const { harness, lines } = delegated();
+			for (const line of lines.slice(0, upTo(lines, childStart) + 1))
+				harness.receive(line);
+			const from = harness.written.length;
+			harness.command({ kind: "stop-task", task: SPAWN });
+			const [written] = harness.writesSince(from) as [{ id: number }];
+			harness.receive({
+				id: written.id,
+				error: { code: -32600, message: "no such turn" },
+			});
+			const notice = harness.transcript.entries.at(-1)!;
+			expect(notice).toMatchObject({
+				kind: "notice",
+				level: "error",
+				text: expect.stringMatching(/did not stop the subagent: no such turn$/),
+			});
+			expect(harness.transcript.backgroundTasks.map((task) => task.id)).toEqual(
+				[SPAWN],
+			);
+		});
+
+		it("refuses a task that is not running", () => {
+			const { harness } = delegated();
+			expect(() =>
+				harness.adapter.encode({ kind: "stop-task", task: "nothing" }),
+			).toThrow(/nothing is not a background task running now/);
+		});
 	});
 
 	it("takes the person's messages when app-server says its thread does, steered into its turn or starting one", () => {

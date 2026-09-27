@@ -70,6 +70,8 @@ export type ConversationCommandWire =
 			readonly text: string;
 	  }
 	| { readonly kind: "interrupt" }
+	/** Stop one of the background tasks, by its `RunningTask.id`, whose `stoppable` is true. */
+	| { readonly kind: "stop-task"; readonly task: string }
 	| {
 			readonly kind: "answer";
 			readonly request: RequestId;
@@ -120,6 +122,7 @@ export interface ConversationApi {
 	sendPendingNow(agentId: string, pending: PendingId): Promise<void>;
 	instruct(agentId: string, subagent: EntryId, text: string): Promise<void>;
 	interrupt(agentId: string): Promise<void>;
+	stopTask(agentId: string, task: string): Promise<void>;
 	answer(
 		agentId: string,
 		request: RequestId,

@@ -11,7 +11,10 @@
  * (`RunningTask.startedAt`), ticking. A task whose
  * call is known opens it: a subagent fills the pane (`SubagentPanes`), any
  * other task's call is brought into view in the conversation, opened — the
- * same in a narrow pane and a wide one.
+ * same in a narrow pane and a wide one. At its right end each has Stop,
+ * which asks once more and then asks the CLI to stop it; a task the adapter
+ * says cannot be stopped (`RunningTask.stoppable`) has it greyed, its tooltip
+ * saying why.
  *
  * What is listed is `Transcript.backgroundTasks` and nothing else: a task
  * that ends leaves the list because the conversation's account of it says so,
@@ -20,7 +23,8 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { EntryId, RunningTask } from "../../model/conversation";
-import { ChevronDownIcon, ChevronRightIcon } from "./icons";
+import { useConversationActions } from "./ConversationContext";
+import { ChevronDownIcon, ChevronRightIcon, StopIcon } from "./icons";
 import { StatusMark } from "./StatusMark";
 
 /**
@@ -115,7 +119,80 @@ export function ComposerFooter({
   );
 }
 
+/**
+ * What pressing Stop asks before it stops, by the task's kind: what stopping
+ * ends, and what it leaves.
+ */
+export function stopQuestion(kind: string): string {
+  switch (kind) {
+    case "shell":
+      return "Stop this background shell? Its command is ended.";
+    case "subagent":
+      return "Stop this subagent? Its work so far stays, and it won't resume on its own.";
+    default:
+      return "Stop this background task?";
+  }
+}
+
 function TaskLine({
+  task,
+  openTask,
+  now,
+}: {
+  readonly task: RunningTask;
+  readonly openTask: (call: EntryId) => void;
+  readonly now: number;
+}) {
+  const { stopTask, reportFailure } = useConversationActions();
+  const [confirming, setConfirming] = useState(false);
+  const { stoppable } = task;
+  return (
+    <>
+      <div className="conversation-background-row">
+        <TaskWords task={task} openTask={openTask} now={now} />
+        <button
+          type="button"
+          className="conversation-background-stop"
+          aria-label="Stop"
+          title={stoppable === true ? "Stop this task" : stoppable.reason}
+          disabled={stoppable !== true}
+          aria-expanded={confirming}
+          onClick={() => setConfirming(true)}
+        >
+          <StopIcon />
+        </button>
+      </div>
+      {/* The task leaves the list only when the CLI says it ended: Stop
+          asks, and the row stays until then. */}
+      {confirming && stoppable === true ? (
+        <div className="conversation-confirm" role="group" aria-label="Stop">
+          <span className="conversation-confirm-note">
+            {stopQuestion(task.kind)}
+          </span>
+          <button
+            type="button"
+            className="conversation-confirm-go"
+            onClick={() => {
+              setConfirming(false);
+              void stopTask(task.id).catch(reportFailure);
+            }}
+          >
+            Stop
+          </button>
+          <button
+            type="button"
+            className="conversation-confirm-cancel"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function TaskWords({
   task,
   openTask,
   now,

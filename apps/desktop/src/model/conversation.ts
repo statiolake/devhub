@@ -343,6 +343,11 @@ export interface RunningTask {
    * known, or when the CLI wrote none.
    */
   readonly startedAt: number | undefined;
+  /**
+   * Whether DevHub can ask the CLI to stop it (the `stop-task` command), or,
+   * when it cannot, why not, in words for the person.
+   */
+  readonly stoppable: true | { readonly reason: string };
 }
 
 export interface NoticeEntry {
@@ -1120,9 +1125,19 @@ export function sameRunningTasks(
         task.kind === other[index]!.kind &&
         task.title === other[index]!.title &&
         task.call === other[index]!.call &&
-        task.startedAt === other[index]!.startedAt,
+        task.startedAt === other[index]!.startedAt &&
+        sameStoppable(task.stoppable, other[index]!.stoppable),
     )
   );
+}
+
+function sameStoppable(
+  one: RunningTask["stoppable"],
+  other: RunningTask["stoppable"],
+): boolean {
+  return one === true || other === true
+    ? one === other
+    : one.reason === other.reason;
 }
 
 /** The entries directly under `parent` (`null` for the top level), in display order. */

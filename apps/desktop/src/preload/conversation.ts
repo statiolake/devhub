@@ -110,6 +110,7 @@ export const conversationApi: ConversationApi = {
 			session,
 		) as Promise<void>,
 	interrupt: (agentId) => command(agentId, { kind: "interrupt" }),
+	stopTask: (agentId, task) => command(agentId, { kind: "stop-task", task }),
 	answer: (agentId, request, answer) =>
 		command(agentId, { kind: "answer", request, answer }),
 	setSetting: (agentId, which, id) =>

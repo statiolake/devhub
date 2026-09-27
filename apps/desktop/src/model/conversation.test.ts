@@ -907,6 +907,7 @@ function shell(id: string, call: string | undefined): RunningTask {
     title: `run ${id}`,
     call: call === undefined ? undefined : entryId(call),
     startedAt: undefined,
+    stoppable: true,
   };
 }
 

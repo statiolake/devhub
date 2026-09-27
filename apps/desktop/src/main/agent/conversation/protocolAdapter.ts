@@ -32,6 +32,7 @@ import type {
 	ImageRef,
 	RequestAnswer,
 	RequestId,
+	RunningTask,
 	Transcript,
 } from "../../../model/conversation.js";
 
@@ -60,6 +61,12 @@ export type ConversationCommand =
 			readonly text: string;
 	  }
 	| { readonly kind: "interrupt" }
+	/**
+	 * Stop one of `Transcript.backgroundTasks`, by its `RunningTask.id`, whose
+	 * `stoppable` is true. The task leaves the list when the CLI says it has
+	 * ended; a CLI that refuses says so in a notice.
+	 */
+	| { readonly kind: "stop-task"; readonly task: string }
 	| {
 			readonly kind: "answer";
 			readonly request: RequestId;
@@ -158,4 +165,24 @@ export class ProtocolMismatch extends Error {
 		);
 		this.name = "ProtocolMismatch";
 	}
+}
+
+/**
+ * The background task a `stop-task` command names, which must be running and
+ * stoppable: the page offers the command for no other, so any other is a bug.
+ */
+export function requireStoppable(
+	tasks: readonly RunningTask[],
+	id: string,
+): RunningTask {
+	const task = tasks.find((each) => each.id === id);
+	if (task === undefined) {
+		throw new Error(`${id} is not a background task running now`);
+	}
+	if (task.stoppable !== true) {
+		throw new Error(
+			`background task ${id} cannot be stopped from DevHub: ${task.stoppable.reason}`,
+		);
+	}
+	return task;
 }

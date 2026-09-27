@@ -1747,9 +1747,10 @@
   opacity: 0.55;
 }
 
-/* Rewind asking once more, under the message; the pending list's and the
+/* Asking once more before something that cannot be taken back: Rewind under
+   the message, Stop under a background task. The pending list's and the
    subagent box's small buttons look the same. */
-.conversation-rewind-confirm {
+.conversation-confirm {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1762,14 +1763,14 @@
   line-height: 1.4;
 }
 
-.conversation-rewind-note {
+.conversation-confirm-note {
   flex: 1 1 16em;
   min-width: 0;
 }
 
 :is(
-  .conversation-rewind-go,
-  .conversation-rewind-cancel,
+  .conversation-confirm-go,
+  .conversation-confirm-cancel,
   .conversation-pending-footer button
 ) {
   display: inline-flex;
@@ -1786,16 +1787,16 @@
 }
 
 :is(
-    .conversation-rewind-go,
-    .conversation-rewind-cancel,
+    .conversation-confirm-go,
+    .conversation-confirm-cancel,
     .conversation-pending-footer button
   ):hover:not(:disabled) {
   background: var(--wash);
 }
 
 :is(
-  .conversation-rewind-go,
-  .conversation-rewind-cancel,
+  .conversation-confirm-go,
+  .conversation-confirm-cancel,
   .conversation-pending-footer button,
   .conversation-subagent-message-send
 ):focus-visible {
@@ -2041,6 +2042,58 @@
   font: inherit;
   gap: var(--space-2);
   text-align: left;
+}
+
+/* A task's line, and at its right end its Stop. */
+.conversation-background-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.conversation-background-row > .conversation-background-line {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.conversation-background-stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: none;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.conversation-background-stop svg {
+  width: 1em;
+  height: 1em;
+}
+
+.conversation-background-stop:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.conversation-background-stop:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.conversation-background-stop:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Stop asking once more, under the task, in the list's own size. */
+.conversation-background-task > .conversation-confirm {
+  margin: 2px 0 var(--space-1);
+  padding: 0 var(--space-1);
+  font-size: inherit;
 }
 
 button.conversation-background-line {

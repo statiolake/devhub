@@ -22,7 +22,12 @@ import {
   type RunningTask,
 } from "../../model/conversation";
 import { elapsedText } from "./BackgroundTasks";
-import { draw, entry, installResizeObserver } from "./surfaceTestKit";
+import {
+  draw,
+  entry,
+  fakeActions,
+  installResizeObserver,
+} from "./surfaceTestKit";
 import { WIDE_PANE_PX } from "./SubagentPanes";
 import {
   assistant,
@@ -44,6 +49,7 @@ const SERVER: RunningTask = {
   title: "Start the dev server",
   call: entryId("tool:dev"),
   startedAt: undefined,
+  stoppable: true,
 };
 const RESEARCH: RunningTask = {
   id: "a1",
@@ -51,6 +57,7 @@ const RESEARCH: RunningTask = {
   title: "Research the parser",
   call: undefined,
   startedAt: undefined,
+  stoppable: true,
 };
 
 function running(...tasks: RunningTask[]): ConversationEvent {
@@ -179,6 +186,7 @@ describe("a subagent among the background tasks", () => {
     title: "Survey the parsers",
     call: entryId("tool:survey"),
     startedAt: undefined,
+    stoppable: true,
   };
   const WORKING = transcriptOf([
     put(
@@ -278,5 +286,126 @@ describe("how long a background task has run", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("stopping a background task", () => {
+  const TEAMMATE: RunningTask = {
+    id: "teammate:reviewer",
+    kind: "teammate",
+    title: "reviewer",
+    call: undefined,
+    startedAt: undefined,
+    stoppable: { reason: "A teammate can't be stopped from here." },
+  };
+
+  function item(title: string): HTMLElement {
+    const list = screen.getByRole("list", { name: "Background tasks" });
+    return within(list)
+      .getAllByRole("listitem")
+      .find((each) => each.textContent?.includes(title))!;
+  }
+
+  it("has Stop at the right end of each task's line", () => {
+    draw(withTasks(SERVER, RESEARCH));
+    fireEvent.click(toggle());
+    for (const title of ["Start the dev server", "Research the parser"]) {
+      const row = item(title).querySelector(".conversation-background-row")!;
+      const stop = within(item(title)).getByRole("button", { name: "Stop" });
+      expect(stop).toBeEnabled();
+      expect(row.lastElementChild).toBe(stop);
+    }
+  });
+
+  it("is greyed for a task that cannot be stopped, its tooltip saying why", () => {
+    const { actions } = draw(withTasks(SERVER, TEAMMATE));
+    fireEvent.click(toggle());
+    const stop = within(item("reviewer")).getByRole("button", {
+      name: "Stop",
+    });
+    expect(stop).toBeDisabled();
+    expect(stop).toHaveAttribute(
+      "title",
+      "A teammate can't be stopped from here.",
+    );
+    fireEvent.click(stop);
+    expect(within(item("reviewer")).queryByRole("group")).toBeNull();
+    expect(actions.stopTask).not.toHaveBeenCalled();
+  });
+
+  it("asks once more, in words for its kind, and stops only when asked to", () => {
+    const { actions } = draw(withTasks(SERVER, RESEARCH));
+    fireEvent.click(toggle());
+    fireEvent.click(
+      within(item("Start the dev server")).getByRole("button", {
+        name: "Stop",
+      }),
+    );
+    const asking = within(item("Start the dev server")).getByRole("group", {
+      name: "Stop",
+    });
+    expect(asking).toHaveTextContent(
+      "Stop this background shell? Its command is ended.",
+    );
+    expect(asking).toHaveClass("conversation-confirm");
+    expect(actions.stopTask).not.toHaveBeenCalled();
+    fireEvent.click(within(asking).getByRole("button", { name: "Cancel" }));
+    expect(
+      within(item("Start the dev server")).queryByRole("group"),
+    ).toBeNull();
+
+    fireEvent.click(
+      within(item("Research the parser")).getByRole("button", { name: "Stop" }),
+    );
+    const again = within(item("Research the parser")).getByRole("group", {
+      name: "Stop",
+    });
+    expect(again).toHaveTextContent(
+      "Stop this subagent? Its work so far stays, and it won't resume on its own.",
+    );
+    fireEvent.click(within(again).getByRole("button", { name: "Stop" }));
+    expect(actions.stopTask).toHaveBeenCalledWith("a1");
+    // The task stays listed until the CLI says it ended.
+    expect(item("Research the parser")).toBeDefined();
+    expect(within(item("Research the parser")).queryByRole("group")).toBeNull();
+  });
+
+  it("leaves the list when the CLI's account of it says it ended", () => {
+    const view = draw(withTasks(SERVER, RESEARCH));
+    fireEvent.click(toggle());
+    fireEvent.click(
+      within(item("Research the parser")).getByRole("button", { name: "Stop" }),
+    );
+    fireEvent.click(
+      within(item("Research the parser"))
+        .getAllByRole("button", { name: "Stop" })
+        .at(-1)!,
+    );
+    view.redraw(applyEvent(withTasks(SERVER, RESEARCH), running(SERVER)));
+    const list = screen.getByRole("list", { name: "Background tasks" });
+    expect(list).not.toHaveTextContent("Research the parser");
+    expect(list).toHaveTextContent("Start the dev server");
+  });
+
+  it("says so when stopping failed", async () => {
+    const refused = new Error("the Agent is not running");
+    const actions = fakeActions({
+      stopTask: vi.fn(() => Promise.reject(refused)),
+    });
+    draw(withTasks(SERVER), actions);
+    fireEvent.click(toggle());
+    fireEvent.click(
+      within(item("Start the dev server")).getByRole("button", {
+        name: "Stop",
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(
+        within(item("Start the dev server"))
+          .getAllByRole("button", { name: "Stop" })
+          .at(-1)!,
+      );
+    });
+    expect(actions.reportFailure).toHaveBeenCalledWith(refused);
   });
 });

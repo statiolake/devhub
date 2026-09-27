@@ -232,6 +232,30 @@ task leaves the list when it ends. The list is
   a command it keeps running after its call has returned (a background
   terminal), so those are not listed.
 
+**Stopping a background task.** Each task in the opened list has a stop
+button at its right end. Pressed, it asks once more under the task, as Rewind
+does — *Stop this background shell? Its command is ended.* for a shell, *Stop
+this subagent? Its work so far stays, and it won't resume on its own.* for a
+subagent — and only then asks the CLI (the `stop-task` command). Nothing is
+taken off the list on DevHub's say-so: the task leaves when the CLI's own
+account says it ended, and a CLI that refuses says so in an error notice
+(*stop_task was refused: …*, *codex did not stop the subagent: …*). Whether
+a task can be stopped is the adapter's to say (`RunningTask.stoppable`); one
+that cannot has its button greyed, the tooltip saying why:
+
+- Claude: every task the CLI lists is stopped with the documented control
+  request `{subtype: "stop_task", task_id}` (the Agent SDK's `stopTask`), which
+  the CLI answers with a `task_notification` of status `stopped` and a new
+  `background_tasks_changed`. A teammate DevHub adds to the list is not one
+  of the CLI's tasks, and `stop_task` is not documented for it: its button is
+  greyed, *A teammate can't be stopped from here.*
+- Codex: a subagent is stopped with the stable `turn/interrupt` on each of
+  its threads that runs a turn; it leaves the list when that turn ends. Until
+  app-server has said which turn a subagent runs, there is nothing to
+  interrupt and its button is greyed. A background terminal could only be
+  stopped with the experimental `thread/backgroundTerminals/terminate`, which
+  DevHub does not use; those are not listed anyway.
+
 Each task in the opened list says how long it has run, ticking, as the CLI
 says it (*45s*, *3m 12s*, *1h 5m*). The start is the time the CLI itself
 wrote on the call that started the task, so a replay after a DevHub restart

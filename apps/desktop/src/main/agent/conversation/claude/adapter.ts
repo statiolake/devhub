@@ -73,6 +73,7 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
 	type ProtocolAdapter,
@@ -362,6 +363,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				);
 			case "interrupt":
 				return [this.controlRequest({ subtype: "interrupt" })];
+			case "stop-task":
+				requireStoppable(this.current.backgroundTasks, command.task);
+				return [
+					this.controlRequest({ subtype: "stop_task", task_id: command.task }),
+				];
 			case "answer":
 				return [this.answerLine(command.request, command.answer)];
 		}
@@ -773,6 +779,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				title: task.description,
 				call: tool?.id,
 				startedAt: tool === undefined ? undefined : this.callTimes.get(tool.id),
+				// The SDK's `stop_task` stops any task the CLI lists.
+				stoppable: true,
 			});
 		}
 		for (const [name, call] of this.teammates) {
@@ -785,6 +793,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				title: tool.spawns.label,
 				call,
 				startedAt: this.callTimes.get(call),
+				// Only the tasks the CLI lists are documented to take `stop_task`.
+				stoppable: { reason: TEAMMATE_UNSTOPPABLE },
 			});
 		}
 		if (sameRunningTasks(tasks, this.current.backgroundTasks)) return;
@@ -1895,6 +1905,8 @@ function denialSummary(
 }
 
 /** The CLI's kinds of background task, in DevHub's word; any other goes by the CLI's own name. */
+const TEAMMATE_UNSTOPPABLE = "A teammate can't be stopped from here.";
+
 const TASK_KINDS: Readonly<Record<string, string>> = {
 	local_bash: "shell",
 	local_agent: "subagent",

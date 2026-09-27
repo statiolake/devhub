@@ -33,6 +33,7 @@ export function fakeActions(
     instruct: vi.fn(() => Promise.resolve()),
     rewind: vi.fn(() => Promise.resolve("rewound" as const)),
     interrupt: vi.fn(() => Promise.resolve()),
+    stopTask: vi.fn(() => Promise.resolve()),
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),
     openResume: vi.fn(),
