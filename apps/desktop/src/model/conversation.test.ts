@@ -104,6 +104,7 @@ function tool(
       background: undefined,
       outsideSandbox: false,
       plan: undefined,
+      denial: undefined,
       ...fields,
     },
   };

@@ -142,7 +142,23 @@ export type ClaudeLine =
 	  }
 	/** A command the CLI ran itself, or what it printed, as a system event. */
 	| { readonly type: "local_command"; readonly blocks: readonly UserBlock[] }
-	| { readonly type: "permission_denied"; readonly raw: JsonObject }
+	/**
+	 * The CLI's own permission check refused a call (a rule, auto mode's
+	 * classifier): which call, in which subagent, and why. Every field is as
+	 * the CLI gave it, when it did.
+	 */
+	| {
+			readonly type: "permission_denied";
+			readonly toolUseId: string | undefined;
+			/** The subagent the call was made in, by its agent id. */
+			readonly agentId: string | undefined;
+			readonly toolName: string | undefined;
+			/** What decided: `classifier`, `rule`, `mode`, … */
+			readonly reasonType: string | undefined;
+			readonly reason: string | undefined;
+			readonly message: string | undefined;
+			readonly raw: JsonObject;
+	  }
 	| {
 			readonly type: "task";
 			readonly subtype: string;
@@ -845,8 +861,19 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					`${at}.permissionMode`,
 				),
 			};
-		case "permission_denied":
-			return { type: "permission_denied", raw };
+		case "permission_denied": {
+			const text = (key: string) => f.optionalString(raw[key], `${at}.${key}`);
+			return {
+				type: "permission_denied",
+				toolUseId: text("tool_use_id"),
+				agentId: text("agent_id"),
+				toolName: text("tool_name"),
+				reasonType: text("decision_reason_type"),
+				reason: text("decision_reason"),
+				message: text("message"),
+				raw,
+			};
+		}
 		case "away_summary":
 			return {
 				type: "said",

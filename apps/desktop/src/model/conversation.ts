@@ -252,6 +252,18 @@ export interface ToolEntry {
   readonly outsideSandbox: boolean;
   /** The plan the call set (Claude's TodoWrite), whole, as it stands after it. */
   readonly plan: readonly PlanStep[] | undefined;
+  /**
+   * The call was refused by the CLI's own permission check (a rule, auto
+   * mode's classifier), not by the person: who refused it and why.
+   */
+  readonly denial: Denial | undefined;
+}
+
+export interface Denial {
+  /** In a line: `Denied by auto mode: Modify Shared Resources`. */
+  readonly summary: string;
+  /** The CLI's whole account of it, when it gave one. */
+  readonly detail: string | undefined;
 }
 
 /**

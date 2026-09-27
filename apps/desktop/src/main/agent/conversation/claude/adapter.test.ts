@@ -4180,3 +4180,123 @@ describe("the person's answer to AskUserQuestion", () => {
 		);
 	});
 });
+
+describe("a call the CLI's own permission check refused", () => {
+	function denied(fields: Record<string, unknown>): string {
+		return json({
+			type: "system",
+			subtype: "permission_denied",
+			session_id: SESSION,
+			tool_name: "Bash",
+			decision_reason_type: "classifier",
+			decision_reason: "[Modify Shared Resources]",
+			message:
+				"The classifier judged that this command changes a shared resource.",
+			...fields,
+		});
+	}
+
+	/** `inTurn`, with an Agent call launched in the background as agent-x. */
+	function withBackgroundAgent(): ClaudeAdapter {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_agent", "Agent", {
+					description: "Survey",
+					prompt: "survey it",
+					subagent_type: "general",
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_agent", "Async agent launched")),
+				tool_use_result: {
+					isAsync: true,
+					status: "async_launched",
+					agentId: "agent-x",
+				},
+			}),
+		);
+		return adapter;
+	}
+
+	it("is said on the call, by who refused it and why, with the CLI's words folded under it", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [toolUse("toolu_1", "Bash", { command: "git push" })]),
+		);
+		adapter.received(denied({ tool_use_id: "toolu_1" }));
+		adapter.received(toolResult("toolu_1", "Permission denied.", true));
+		expect(entry(adapter, "tool:toolu_1")).toMatchObject({
+			status: "denied",
+			denial: {
+				summary: "Denied by auto mode: Modify Shared Resources",
+				detail:
+					"The classifier judged that this command changes a shared resource.",
+			},
+		});
+		expect(adapter.transcript.entries.map((each) => each.kind)).toEqual([
+			"user",
+			"tool",
+		]);
+	});
+
+	it("is said on a subagent's own call, where that call is drawn", () => {
+		const adapter = withBackgroundAgent();
+		adapter.received(
+			assistantLine(
+				"m2",
+				[toolUse("toolu_inner", "Bash", { command: "rm -rf shared" })],
+				"toolu_agent",
+			),
+		);
+		adapter.received(
+			denied({ tool_use_id: "toolu_inner", agent_id: "agent-x" }),
+		);
+		expect(entry(adapter, "tool:toolu_inner")).toMatchObject({
+			parent: "tool:toolu_agent",
+			denial: { summary: "Denied by auto mode: Modify Shared Resources" },
+		});
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toEqual([]);
+	});
+
+	it("is a line in the subagent's transcript when its call is not drawn", () => {
+		const adapter = withBackgroundAgent();
+		adapter.received(
+			denied({ tool_use_id: "toolu_unseen", agent_id: "agent-x" }),
+		);
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toMatchObject([
+			{
+				parent: "tool:toolu_agent",
+				level: "info",
+				text: "Bash: Denied by auto mode: Modify Shared Resources",
+			},
+		]);
+	});
+
+	it("is a line in the conversation only when it names neither a call nor a subagent DevHub knows", () => {
+		const adapter = inTurn();
+		adapter.received(
+			denied({
+				tool_use_id: "toolu_unseen",
+				agent_id: "agent-unknown",
+				decision_reason_type: "rule",
+				decision_reason: "Bash(git push:*)",
+			}),
+		);
+		expect(
+			adapter.transcript.entries.filter((each) => each.kind === "notice"),
+		).toMatchObject([
+			{
+				parent: null,
+				level: "info",
+				text: "Bash: Denied by a permission rule: Bash(git push:*)",
+			},
+		]);
+	});
+});

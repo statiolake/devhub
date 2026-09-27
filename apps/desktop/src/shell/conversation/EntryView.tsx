@@ -27,6 +27,7 @@ import {
   type AssistantEntry,
   type CommandEntry,
   type CompactionEntry,
+  type Denial,
   type ImageRef,
   type NoticeEntry,
   type PendingRequest,
@@ -475,6 +476,7 @@ const ToolView = memo(function ToolView({
           {entry.background.summary}
         </div>
       ) : null}
+      <DenialLine denial={entry.denial} />
       {requests.map((request) => (
         <RequestCard key={request.id} request={request} />
       ))}
@@ -520,6 +522,23 @@ const ToolView = memo(function ToolView({
     </div>
   );
 });
+
+/**
+ * A call the CLI's own permission check refused, said on the call in one
+ * quiet line — who refused it and why — with the CLI's whole account folded
+ * under it.
+ */
+function DenialLine({ denial }: { readonly denial: Denial | undefined }) {
+  if (denial === undefined) return null;
+  if (denial.detail === undefined)
+    return <div className="conversation-tool-denial">{denial.summary}</div>;
+  return (
+    <details className="conversation-tool-denial">
+      <summary>{denial.summary}</summary>
+      <div className="conversation-tool-denial-detail">{denial.detail}</div>
+    </details>
+  );
+}
 
 /**
  * Looks up the tool call's own children and requests, and hands them down as

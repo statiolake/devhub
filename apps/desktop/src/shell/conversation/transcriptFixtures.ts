@@ -8,6 +8,7 @@
  */
 
 import {
+  type Denial,
   applyEvents,
   EMPTY_TRANSCRIPT,
   entryId,
@@ -91,6 +92,7 @@ export function tool(
     parent = null,
     outsideSandbox = false,
     plan,
+    denial,
   }: {
     name?: string;
     input?: JsonValue;
@@ -101,6 +103,7 @@ export function tool(
     parent?: string | null;
     outsideSandbox?: boolean;
     plan?: readonly PlanStep[];
+    denial?: Denial;
   } = {},
 ): TranscriptEntry {
   return {
@@ -116,6 +119,7 @@ export function tool(
     background,
     outsideSandbox,
     plan,
+    denial,
   };
 }
 

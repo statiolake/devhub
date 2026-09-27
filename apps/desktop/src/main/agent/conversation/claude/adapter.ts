@@ -800,6 +800,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		level: "info" | "warning" | "error",
 		text: string,
 		raw: JsonValue | undefined,
+		parent: EntryId | null = null,
 	): void {
 		this.notices += 1;
 		this.emit({
@@ -807,7 +808,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			entry: {
 				kind: "notice",
 				id: entryId(`notice:${this.notices}`),
-				parent: null,
+				parent,
 				level,
 				text,
 				raw,
@@ -941,11 +942,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					mode: { current: line.permissionMode, choices: MODES },
 				});
 			case "permission_denied":
-				return this.notice(
-					"info",
-					"A tool call was denied by the permission rules",
-					line.raw,
-				);
+				return this.takeDenial(line);
 			case "said":
 				return this.notice(line.level, line.text, undefined);
 			case "local_command":
@@ -1332,6 +1329,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						background: undefined,
 						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
 						plan: planOf(block.name, block.input),
+						denial: undefined,
 					},
 				});
 			}
@@ -1749,6 +1747,43 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	/**
+	 * A call the CLI's own permission check refused. It is told on the call,
+	 * wherever that call is drawn; a call not drawn is told in the subagent it
+	 * was made in (`agent_id`), and only one that names neither is told in
+	 * the conversation itself.
+	 */
+	private takeDenial(
+		line: Extract<ClaudeLine, { type: "permission_denied" }>,
+	): void {
+		const denial = {
+			summary: denialSummary(line.reasonType, line.reason),
+			detail: line.message,
+		};
+		const call =
+			line.toolUseId === undefined
+				? undefined
+				: this.tool(toolEntryId(line.toolUseId));
+		if (call !== undefined) {
+			this.denied.add(call.id);
+			return this.emit({ type: "entry", entry: { ...call, denial } });
+		}
+		const text =
+			line.toolName === undefined
+				? denial.summary
+				: `${line.toolName}: ${denial.summary}`;
+		this.notice("info", text, line.raw, this.callOfTask(line.agentId));
+	}
+
+	/**
+	 * The call a task id names — a background command's, or a subagent's by
+	 * its agent id — once a task event or the call's result has said so.
+	 */
+	private callOfTask(task: string | undefined): EntryId | null {
+		const call = task === undefined ? undefined : this.tasks.get(task);
+		return call !== undefined && this.tool(call) !== undefined ? call : null;
+	}
+
+	/**
 	 * A background task's news, from the CLI's `task_*` events or from a
 	 * notification in the conversation (all a session file keeps). A
 	 * subagent's is matched to its call by the call's id, or else by the
@@ -1800,6 +1835,29 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			entry: { ...tool, background: { state, summary } },
 		});
 	}
+}
+
+/** Who refused a call, by the CLI's `decision_reason_type`. */
+const DENIED_BY: Readonly<Record<string, string>> = {
+	classifier: "auto mode",
+	rule: "a permission rule",
+	mode: "the permission mode",
+	hook: "a hook",
+};
+
+/**
+ * A refusal in a line: `Denied by auto mode: Modify Shared Resources`. The
+ * reason's brackets, which the CLI writes around a classifier's category, are
+ * left off.
+ */
+function denialSummary(
+	type: string | undefined,
+	reason: string | undefined,
+): string {
+	const who =
+		type === undefined ? "Denied" : `Denied by ${DENIED_BY[type] ?? type}`;
+	const why = reason?.trim().replace(/^\[(.*)\]$/su, "$1");
+	return why === undefined || why === "" ? who : `${who}: ${why}`;
 }
 
 /** The CLI's kinds of background task, in DevHub's word; any other goes by the CLI's own name. */

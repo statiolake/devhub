@@ -1572,6 +1572,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			outsideSandbox: false,
 			// Codex's plan is an item of its own (`turn/plan/updated`).
 			plan: undefined,
+			denial: undefined,
 		};
 	}
 

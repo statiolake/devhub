@@ -569,6 +569,35 @@ describe("every entry kind", () => {
     expect(document.querySelector(".conversation-notice")).toBeNull();
   });
 
+  it("says on a call that the CLI's own permission check refused it, with its words folded", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Bash: git push", {
+            status: "denied",
+            denial: {
+              summary: "Denied by auto mode: Modify Shared Resources",
+              detail:
+                "The classifier judged that this changes a shared resource.",
+            },
+          }),
+        ),
+        put(tool("t2", "Bash: ls")),
+      ]),
+    );
+    const line = entry("t1").querySelector(".conversation-tool-denial")!;
+    expect(line.tagName).toBe("DETAILS");
+    expect(line).not.toHaveAttribute("open");
+    expect(line.querySelector("summary")).toHaveTextContent(
+      /^Denied by auto mode: Modify Shared Resources$/,
+    );
+    expect(line).toHaveTextContent("changes a shared resource");
+    // On the call, outside its fold.
+    expect(line.closest("details.conversation-tool")).toBeNull();
+    expect(mark("t1")).toHaveAccessibleName("Denied");
+    expect(entry("t2").querySelector(".conversation-tool-denial")).toBeNull();
+  });
+
   it("draws a call whose task still runs in the background as running, and says it is in the background", () => {
     draw(
       transcriptOf([

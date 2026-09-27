@@ -511,6 +511,13 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   merged or rebased) an information notice saying what was done on which
   branch (*Pushed main*, *Committed on feature*), and a kind DevHub has no
   phrase for is named (*Changed the repository (stash) on main*).
+  `permission_denied` (the CLI's own permission check refused a call: a
+  rule, or auto mode's classifier) is said on that call, wherever it is
+  drawn, as one quiet line — *Denied by auto mode: Modify Shared Resources* —
+  with the CLI's whole message folded under it, and the call reads
+  *Denied*; a call not drawn is told as a line in the subagent it was made in
+  (its `agent_id`, matched as a task notification's task id is), and only
+  one that names neither is a line in the conversation.
   `turn_duration` (the transcript draws no durations),
   `bridge_status` (a remote control of the session, not the conversation),
   `thinking_tokens` are not drawn; `background_tasks_changed` is the list of
