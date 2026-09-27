@@ -1076,7 +1076,7 @@ body.is-resizing-sidebar {
   /* The same drop the folder glyph takes: an Agent's status mark is a row's
      leading glyph, and it sits level with the Agent's name for the same
      reason. Carried here rather than on `.status-glyph`, which is the element
-     the working status spins — a transform there would be overwritten by the
+     the moving statuses spin — a transform there would be overwritten by the
      animation on every frame. */
   transform: translateY(var(--sidebar-glyph-optical-shift));
 }
@@ -1136,11 +1136,24 @@ body.is-resizing-sidebar {
   color: var(--secondary);
 }
 
-/* Working is the one status that is going somewhere, so it is the one that
-   moves — the codicon `loading` arc turning, the way VS Code turns it, and
-   not at all for a reader who asked for less motion. */
-.status-mark-working .status-glyph {
-  animation: status-spin 1.5s linear infinite;
+/* The two statuses in which something is still going are the two that move:
+   the codicon `loading` arc turning, the way VS Code turns it, and not at all
+   for a reader who asked for less motion. One turn, told at two speeds.
+   Working is the Agent's own turn and it is brisk; background is something
+   the turn left running, so its four quieter arcs go round at a walk — slow
+   enough that the two are told apart at a glance, by pace as well as by
+   silhouette and ink. */
+.status-mark-working {
+  --status-spin-period: 1.5s;
+}
+
+.status-mark-background {
+  --status-spin-period: 4.5s;
+}
+
+.status-mark-working .status-glyph,
+.status-mark-background .status-glyph {
+  animation: status-spin var(--status-spin-period) linear infinite;
 }
 
 @keyframes status-spin {
@@ -1150,7 +1163,8 @@ body.is-resizing-sidebar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-mark-working .status-glyph {
+  .status-mark-working .status-glyph,
+  .status-mark-background .status-glyph {
     animation: none;
   }
 }

@@ -13,6 +13,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStatus } from "../../../ipc/appShell";
@@ -26,6 +27,66 @@ const STATUSES: readonly AgentStatus[] = [
   "error",
   "unknown",
 ];
+
+// Motion is the stylesheet's, and jsdom does not run it, so the rules are
+// read as written.
+const shellCss = readFileSync("src/shell/styles/shell.css", "utf8");
+
+interface Rule {
+  readonly selectors: string[];
+  readonly body: string;
+}
+
+/** Every rule in `css` as its selector list and its body, flattened. */
+function rulesOf(css: string): Rule[] {
+  const rules: Rule[] = [];
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const match of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.push({
+      selectors: match[1].split(",").map((selector) => selector.trim()),
+      body: match[2],
+    });
+  }
+  return rules;
+}
+
+/** The rules inside every media block whose query is `query`. */
+function rulesUnder(css: string, query: string): Rule[] {
+  const opening = `@media ${query} {`;
+  const rules: Rule[] = [];
+  for (
+    let start = css.indexOf(opening);
+    start >= 0;
+    start = css.indexOf(opening, start + 1)
+  ) {
+    let depth = 0;
+    let end = -1;
+    for (let i = start + opening.length - 1; i < css.length && end < 0; i++) {
+      if (css[i] === "{") depth++;
+      if (css[i] === "}" && --depth === 0) end = i;
+    }
+    if (end < 0) throw new Error(`unterminated @media ${query}`);
+    rules.push(...rulesOf(css.slice(start + opening.length, end)));
+  }
+  return rules;
+}
+
+/** What `selector` sets `property` to, from the one rule that sets it. */
+function declaredOn(selector: string, property: string): string {
+  const values = rulesOf(shellCss)
+    .filter((rule) => rule.selectors.includes(selector))
+    .map((rule) => new RegExp(`${property}:\\s*([^;]+);`).exec(rule.body))
+    .filter((match) => match !== null)
+    .map((match) => match[1].trim());
+  expect(values).toHaveLength(1);
+  return values[0];
+}
+
+function seconds(duration: string): number {
+  const match = /^([\d.]+)s$/.exec(duration);
+  if (match === null) throw new Error(`not a duration in seconds: ${duration}`);
+  return Number(match[1]);
+}
 
 function pathOf(status: AgentStatus): string {
   const { container } = render(<StatusMark status={status} />);
@@ -96,5 +157,42 @@ describe("the Agent status mark", () => {
     cleanup();
     const { container } = render(<StatusMark status="waiting" />);
     expect(container.querySelector("circle")).toBeNull();
+  });
+
+  it("turns the two statuses in which something is still going, on one spin at two paces", () => {
+    // Working and background both mean something is still running, so both
+    // turn — and by one definition, so the two can never drift into two
+    // different motions. They stay apart by pace: background is what the
+    // turn left running, and goes round at well under half working's speed.
+    expect(shellCss.match(/@keyframes\s+status-spin\b/g)).toHaveLength(1);
+    const spinning = rulesOf(shellCss).filter((rule) =>
+      /animation:[^;]*\bstatus-spin\b/.test(rule.body),
+    );
+    expect(spinning).toHaveLength(1);
+    expect(spinning[0].selectors).toEqual([
+      ".status-mark-working .status-glyph",
+      ".status-mark-background .status-glyph",
+    ]);
+    expect(spinning[0].body).toMatch(
+      /animation:\s*status-spin var\(--status-spin-period\) linear infinite;/,
+    );
+
+    const working = seconds(
+      declaredOn(".status-mark-working", "--status-spin-period"),
+    );
+    const background = seconds(
+      declaredOn(".status-mark-background", "--status-spin-period"),
+    );
+    expect(background).toBeGreaterThanOrEqual(working * 2);
+  });
+
+  it("holds both spinning marks still for a reader who asked for less motion", () => {
+    const reduced = rulesUnder(shellCss, "(prefers-reduced-motion: reduce)");
+    for (const status of ["working", "background"]) {
+      const rule = reduced.find((candidate) =>
+        candidate.selectors.includes(`.status-mark-${status} .status-glyph`),
+      );
+      expect(rule?.body).toMatch(/animation:\s*none;/);
+    }
   });
 });
