@@ -208,21 +208,26 @@ Unread, injections and the close question otherwise work exactly as for a
 terminal Agent.
 
 **Find (Cmd+F).** Cmd+F anywhere in a GUI Agent's pane — the composer
-included — opens a small find bar at the top right of the conversation, under
+included, and with the keyboard nowhere in particular, as after a click on the
+transcript's words, which leaves it on the page's body — opens a small find bar at the top right of the conversation, under
 the Continue button: a field, *3 of 12*, *Aa* (match case), ↑ ↓ and ×. Return
 and Shift+Return in the field, and F3 and Shift+F3 anywhere in the pane while
 the bar is open, go to the next and the previous match, around the ends; Cmd+F
 again puts the keyboard back in the field with its words selected; Esc closes
 it and gives the keyboard back to where it was (a running turn is not stopped
-by that Esc). The matches on view are marked, the current one more strongly
+by that Esc). A query starts at its last match, the one nearest the end of
+the conversation, since a search usually goes back up from the latest words:
+Shift+F3 goes up from there, F3 goes down and round to the first. The matches
+on view are marked, the current one more strongly
 (the CSS Custom Highlight API, so the document React draws is not touched),
 and the current one is brought into view.
 
 The count is exact however large — a one-letter query over a long session
 finds millions — and never holds up the page: the search runs in slices of a
 few milliseconds, one task each, so typing, scrolling and streaming go on
-between them. The count grows while it runs (*3 of 120,000…*, *Searching…*
-before the first), a new keystroke drops the running search, and ↑ ↓ step
+between them. It searches from the bottom up, so the last match is current as
+soon as it is found and the count grows above it (*120,000 of 120,000…*,
+*Searching…* before the first found), a new keystroke drops the running search, and ↑ ↓ step
 through the matches found so far. A match is kept as its offset in its
 entry's text, not as a live `Range` (the page keeps every live range up to
 date on each change to its text); ranges are made only for the matches

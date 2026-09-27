@@ -55,6 +55,13 @@ function transcript(sections: number, text: (index: number) => string) {
   return root;
 }
 
+/** The entry a match is in. */
+function entryOf(match: Range): string | null {
+  return match.startContainer
+    .parentElement!.closest("[data-entry-id]")!
+    .getAttribute("data-entry-id");
+}
+
 let searches: TranscriptSearch[] = [];
 /**
  * Each next slice run at once: the search is done when `setQuery` or
@@ -85,13 +92,17 @@ describe("a search over a long transcript", () => {
     const search = searchIn(root, run.schedule);
     search.setQuery("a", false);
     expect(search.status().complete).toBe(false);
-    // The first match is current from the first slice on.
-    expect(search.status().current).toBe(0);
+    // The last match is current from the first slice on, the count growing
+    // above it.
+    const first = search.status();
+    expect(first.total).toBeGreaterThan(0);
+    expect(first.current).toBe(first.total - 1);
+    expect(entryOf(search.currentRange()!)).toBe("e1999");
     expect(run.drain()).toBeGreaterThan(5);
     expect(search.status()).toMatchObject({
       total: 2_000_000,
       complete: true,
-      current: 0,
+      current: 1_999_999,
     });
     // jsdom is slower than the page and a timer check is not free, so
     // generous; a slice that did not stop would take hundreds.
@@ -107,7 +118,12 @@ describe("a search over a long transcript", () => {
     search.setQuery("b1", false);
     run.drain();
     // b1, b10–b19, b100–b199: 111.
-    expect(search.status()).toMatchObject({ total: 111, complete: true });
+    expect(search.status()).toMatchObject({
+      total: 111,
+      complete: true,
+      current: 110,
+    });
+    expect(entryOf(search.currentRange()!)).toBe("e199");
   });
 
   it("steps through the matches found so far while the count still grows", () => {
@@ -117,15 +133,31 @@ describe("a search over a long transcript", () => {
     search.setQuery("a", false);
     const { total } = search.status();
     expect(total).toBeGreaterThan(1);
+    expect(search.status().current).toBe(total - 1);
+    search.step(-1);
+    expect(search.status().current).toBe(total - 2);
     search.step(1);
-    expect(search.status().current).toBe(1);
-    search.step(-1);
-    search.step(-1);
-    // Around the end of what is found so far.
-    expect(search.status().current).toBe(total - 1);
+    search.step(1);
+    // Around the ends of what is found so far: the topmost found.
+    expect(search.status().current).toBe(0);
     run.drain();
-    expect(search.status().current).toBe(total - 1);
-    expect(search.status().total).toBe(2_000_000);
+    // The same match, with every one above it now counted.
+    expect(search.status()).toMatchObject({
+      total: 2_000_000,
+      current: 2_000_000 - total,
+    });
+  });
+
+  it("makes a new query's last match current, and a changed query's last again", () => {
+    const root = transcript(3, (index) => `parse parser ${index}`);
+    const search = searchIn(root);
+    search.setQuery("parser", false);
+    expect(search.status()).toMatchObject({ total: 3, current: 2 });
+    search.step(1);
+    expect(search.status().current).toBe(0);
+    search.setQuery("parse", false);
+    expect(search.status()).toMatchObject({ total: 6, current: 5 });
+    expect(entryOf(search.currentRange()!)).toBe("e2");
   });
 
   it("ignores case unless asked, and finds nothing for an empty query", () => {
@@ -208,7 +240,8 @@ describe("a conversation that grows while the bar is open", () => {
     const root = transcript(1_000, (index) => `step ${index} parser`);
     const search = searchIn(root);
     search.setQuery("parser", false);
-    expect(search.status().total).toBe(1_000);
+    expect(search.status()).toMatchObject({ total: 1_000, current: 999 });
+    search.step(1);
     search.step(1);
     search.step(1);
     const current = search.currentRange()!;
@@ -231,9 +264,8 @@ describe("a conversation that grows while the bar is open", () => {
     const root = transcript(3, (index) => `parser ${index} parser`);
     const search = searchIn(root);
     search.setQuery("parser", false);
-    search.step(1);
-    search.step(1);
-    search.step(1);
+    search.step(-1);
+    search.step(-1);
     expect(search.status().current).toBe(3);
     // Entry 1 streams on: its text node is written again, longer.
     const text = root.children[1]!.querySelector("p")!.firstChild as Text;
@@ -247,7 +279,7 @@ describe("a conversation that grows while the bar is open", () => {
     const root = transcript(3, () => "parser");
     const search = searchIn(root);
     search.setQuery("parser", false);
-    search.step(1);
+    search.step(-1);
     root.children[1]!.remove();
     search.refresh();
     expect(search.status()).toMatchObject({ total: 2, current: 1 });

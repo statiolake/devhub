@@ -22,18 +22,21 @@
  * pane, as they do in a terminal Agent; being shown puts the keyboard in the
  * composer, as being shown puts it in a terminal Agent's xterm. Cmd+F opens
  * the find bar (`FindBar`), and F3 / Shift+F3 step through its matches from
- * anywhere in the pane while it is open. Cmd+Q and
+ * anywhere in the pane while it is open. "Anywhere in the pane" includes the
+ * keyboard being nowhere — on the page's body, where a click on the
+ * transcript's words leaves it — so the pane shown takes those keys from the
+ * document, not from its own element. Cmd+Q and
  * the chords after it never reach here — main takes them first.
  */
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
 } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
 import {
@@ -228,7 +231,7 @@ export function ConversationSurface({
     [maximized],
   );
   /** The find bar's keys; whether this one was one of them. */
-  const findKey = (event: KeyboardEvent<HTMLElement>): boolean => {
+  const findKey = (event: KeyboardEvent): boolean => {
     const onlyCommandOrShift = !event.altKey && !event.ctrlKey;
     if (
       event.metaKey &&
@@ -257,8 +260,8 @@ export function ConversationSurface({
 
   const running =
     transcript.state.phase === "ready" && transcript.state.turn === "running";
-  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (isImeComposing(event.nativeEvent)) return;
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (isImeComposing(event)) return;
     if (findKey(event) || !running) return;
     const stop =
       (event.key === "Escape" &&
@@ -270,6 +273,24 @@ export function ConversationSurface({
     event.preventDefault();
     void actions.interrupt().catch(actions.reportFailure);
   };
+  // The pane's keys are the shown pane's wherever the keyboard is in it —
+  // and also when it is nowhere: a click on the transcript's words, which
+  // take no focus, leaves it on the page's body, outside the pane.
+  const paneKeys = useRef(onKeyDown);
+  paneKeys.current = onKeyDown;
+  useEffect(() => {
+    if (hidden) return;
+    const keyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const inPane =
+        target instanceof Node && surface.current?.contains(target) === true;
+      const nowhere =
+        target === document.body || target === document.documentElement;
+      if (inPane || nowhere) paneKeys.current(event);
+    };
+    document.addEventListener("keydown", keyDown);
+    return () => document.removeEventListener("keydown", keyDown);
+  }, [hidden]);
 
   // Something drawn in the conversation while a subagent fills the pane is
   // shown by switching back first; it is then found once it is drawn.
@@ -371,7 +392,6 @@ export function ConversationSurface({
                   aria-label={label}
                   style={style}
                   hidden={hidden}
-                  onKeyDown={onKeyDown}
                 >
                   <div className="conversation-views">
                     {/* The Agent's own column, whose top right corner the

@@ -19,8 +19,16 @@
  *   drawn again, only those sections are read and searched again
  *   (`refresh`); the rest keep theirs, and the current match stays put.
  *
- * Its matches are in document order, and stepping (`step`) goes through the
- * ones found so far, so it works while the count is still growing.
+ * Sections are searched from the bottom up, and a new query's current match
+ * is its last: the conversation's latest words are where a search usually
+ * starts, going up from there. So the last match is current as soon as the
+ * bottom section holding one is searched, whatever is left above it, and the
+ * count grows above it (`12 of 12…` to `2,805,790 of 2,805,790`). Within a
+ * section the text is searched top down, as the matches do not overlap.
+ *
+ * Its matches are numbered in document order, and stepping (`step`) goes
+ * through the ones found so far, so it works while the count is still
+ * growing.
  */
 
 import { SectionText } from "./findInTranscript";
@@ -166,16 +174,16 @@ export class TranscriptSearch {
   #sections: Section[] = [];
   #query = "";
   #caseSensitive = false;
-  /** The first section not searched to its end. */
-  #next = 0;
+  /** The last section not searched to its end; -1 when all are. */
+  #next = -1;
   /** The current match: where it starts in which section. */
   #current: { section: Section; offset: number } | undefined;
   /** Its place when last counted: kept by it when its section goes away. */
   #currentIndex = 0;
   /** A section of the current match was drawn again: its match is found again. */
   #resettle = false;
-  /** A new query's first match is to become current, and brought into view. */
-  #awaitingFirst = false;
+  /** A new query's last match is to become current, and brought into view. */
+  #awaitingLast = false;
   #moves = 0;
   #cancel: (() => void) | undefined;
   readonly #observer: MutationObserver;
@@ -206,7 +214,7 @@ export class TranscriptSearch {
 
   /**
    * Search for `query` anew: what was found for the old one is dropped, and
-   * the first match becomes current. Case is ignored unless `caseSensitive`.
+   * the last match becomes current. Case is ignored unless `caseSensitive`.
    * An empty query finds nothing.
    */
   setQuery(query: string, caseSensitive: boolean): void {
@@ -217,11 +225,11 @@ export class TranscriptSearch {
     this.#query = caseSensitive ? query : query.toLowerCase();
     this.#caseSensitive = caseSensitive;
     for (const section of this.#sections) this.#restart(section);
-    this.#next = 0;
+    this.#next = this.#sections.length - 1;
     this.#current = undefined;
     this.#currentIndex = 0;
     this.#resettle = false;
-    this.#awaitingFirst = true;
+    this.#awaitingLast = true;
     this.#run();
   }
 
@@ -238,7 +246,7 @@ export class TranscriptSearch {
     return {
       total: this.#total(),
       current: this.#current === undefined ? undefined : this.#indexOfCurrent(),
-      complete: this.#next >= this.#sections.length,
+      complete: this.#next < 0,
       moves: this.#moves,
     };
   }
@@ -464,21 +472,22 @@ export class TranscriptSearch {
       this.#restart(section);
       if (section === this.#current?.section) this.#resettle = true;
     }
-    this.#next = this.#sections.findIndex((section) => !section.complete);
-    if (this.#next < 0) this.#next = this.#sections.length;
+    this.#next = this.#sections.length - 1;
+    while (this.#next >= 0 && this.#sections[this.#next]!.complete)
+      this.#next -= 1;
     this.#run();
   }
 
-  /** Search on for one slice, then again in a task of its own until done. */
+  /** Search on for one slice, from the bottom up, then again in a task of its own until done. */
   #run = (): void => {
     this.#cancel?.();
     this.#cancel = undefined;
     const deadline = this.now() + SLICE_MS;
     const over = () => this.now() >= deadline;
-    while (this.#next < this.#sections.length) {
+    while (this.#next >= 0) {
       const section = this.#sections[this.#next]!;
-      if (section.complete || this.#searchOn(section, over)) this.#next += 1;
-      if (this.#next < this.#sections.length && over()) {
+      if (section.complete || this.#searchOn(section, over)) this.#next -= 1;
+      if (this.#next >= 0 && over()) {
         this.#cancel = this.schedule(this.#run);
         this.onChange();
         return;
@@ -526,15 +535,18 @@ export class TranscriptSearch {
   }
 
   /**
-   * Make a match current once there is one to be: a new query's first, or,
+   * Make a match current once there is one to be: a new query's last — the
+   * bottom section's last once it is searched, as the sections below it are
+   * searched before it and hold none — or,
    * after the current one's section was drawn again, the match at its place
    * or the first after it — the next section's once its own are searched.
    */
   #settle(): void {
-    if (this.#awaitingFirst) {
-      if (this.#total() === 0) return;
-      this.#awaitingFirst = false;
-      this.#current = this.#locate(0);
+    if (this.#awaitingLast) {
+      const total = this.#total();
+      if (total === 0) return;
+      this.#awaitingLast = false;
+      this.#current = this.#locate(total - 1);
       this.#moves += 1;
       return;
     }

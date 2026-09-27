@@ -3,8 +3,10 @@
  * conversation, like VS Code's find widget.
  *
  * It searches what is shown — the conversation, or the subagent that fills
- * the pane — and says which. The count is exact however large, and grows
- * while the search runs on in slices (`transcriptSearch.ts`); the matches on
+ * the pane — and says which. A query starts at its last match, the one
+ * nearest the conversation's end, since a search usually goes back up from
+ * the latest words. The count is exact however large, and grows while the
+ * search runs on in slices from the bottom up (`transcriptSearch.ts`); the matches on
  * view are marked, the current one more strongly, and the current one is
  * brought into view, opening whatever it is folded inside
  * (`findInTranscript.ts`). The count follows the conversation as it grows,
@@ -185,7 +187,7 @@ export const FindBar = forwardRef<
     repaint.current();
   }, [status]);
 
-  // A match made current on purpose — a step, a new query's first — is
+  // A match made current on purpose — a step, a new query's last — is
   // brought into view; one kept as the conversation grows is not.
   useEffect(() => {
     if (search === undefined || status.moves === shownMoves.current) return;

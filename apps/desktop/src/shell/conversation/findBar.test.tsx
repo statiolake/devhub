@@ -123,11 +123,43 @@ describe("the find bar", () => {
     );
   });
 
-  it("counts every match, a collapsed tool output's included, marks them, and makes the first current", async () => {
+  it("opens on Cmd+F with the keyboard nowhere, as a click on the transcript's words leaves it, or on a word of it", async () => {
+    draw(CONVERSATION);
+    openFind(document.body);
+    expect(field()).toHaveFocus();
+    press(field(), "Escape");
+    expect(screen.queryByRole("search")).toBeNull();
+    openFind(entry("a1").querySelector("strong")!);
+    expect(field()).toHaveFocus();
+  });
+
+  it("steps with F3 with the keyboard nowhere", async () => {
+    draw(CONVERSATION);
+    openFind(document.body);
+    search("parser");
+    await counted("4 of 4");
+    document.body.focus();
+    press(document.body, "F3", { shiftKey: true });
+    await counted("3 of 4");
+  });
+
+  it("leaves Cmd+F alone while the pane is not the one shown, or when typed outside it", () => {
+    const view = draw(CONVERSATION);
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    openFind(elsewhere);
+    expect(screen.queryByRole("search")).toBeNull();
+    view.redraw(CONVERSATION, true);
+    openFind(document.body);
+    elsewhere.remove();
+    expect(screen.queryByRole("search", { hidden: true })).toBeNull();
+  });
+
+  it("counts every match, a collapsed tool output's included, marks them, and makes the last current", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
-    await counted("1 of 4");
+    await counted("4 of 4");
     // The question, the answer's word and its file name, and the output.
     await waitFor(() =>
       expect(marked(MATCH_HIGHLIGHT)).toEqual([
@@ -137,37 +169,39 @@ describe("the find bar", () => {
         "parser",
       ]),
     );
-    await waitFor(() => expect(currentEntry()).toBe("u1"));
+    await waitFor(() => expect(currentEntry()).toBe("t1"));
   });
 
   it("goes to the next and the previous match with Return and Shift+Return, around the ends", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
-    press(field(), "Enter");
-    await counted("2 of 4");
-    await waitFor(() => expect(currentEntry()).toBe("a1"));
-    press(field(), "Enter", { shiftKey: true });
-    press(field(), "Enter", { shiftKey: true });
     await counted("4 of 4");
-    await waitFor(() => expect(currentEntry()).toBe("t1"));
     press(field(), "Enter");
     await counted("1 of 4");
+    await waitFor(() => expect(currentEntry()).toBe("u1"));
+    press(field(), "Enter", { shiftKey: true });
+    press(field(), "Enter", { shiftKey: true });
+    await counted("3 of 4");
+    await waitFor(() => expect(currentEntry()).toBe("a1"));
+    press(field(), "Enter");
+    await counted("4 of 4");
   });
 
   it("steps with F3 and Shift+F3 from anywhere in the conversation while open, and with its buttons", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
+    await counted("4 of 4");
     composer().focus();
     press(composer(), "F3");
-    await counted("2 of 4");
+    await counted("1 of 4");
     press(entry("a2"), "F3", { shiftKey: true });
-    await counted("1 of 4");
-    fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
     await counted("4 of 4");
+    fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
+    await counted("3 of 4");
     fireEvent.click(screen.getByRole("button", { name: "Next match" }));
-    await counted("1 of 4");
+    await counted("4 of 4");
   });
 
   it("leaves F3 alone while closed", () => {
@@ -236,7 +270,7 @@ describe("the find bar", () => {
     draw(CONVERSATION);
     openFind();
     search("Parser");
-    await counted("1 of 4");
+    await counted("4 of 4");
     fireEvent.click(screen.getByRole("button", { name: "Match case" }));
     expect(screen.getByRole("button", { name: "Match case" })).toHaveAttribute(
       "aria-pressed",
@@ -250,14 +284,15 @@ describe("the find bar", () => {
     const view = draw(CONVERSATION);
     openFind();
     search("parser");
-    press(field(), "Enter");
+    await counted("4 of 4");
+    press(field(), "Enter", { shiftKey: true });
     await waitFor(() => expect(currentEntry()).toBe("a1"));
     act(() => {
       view.redraw(
         applyEvent(CONVERSATION, put(assistant("a3", "One more parser note."))),
       );
     });
-    await counted("2 of 5");
+    await counted("3 of 5");
     await waitFor(() => expect(currentEntry()).toBe("a1"));
   });
 
@@ -275,6 +310,18 @@ describe("the find bar", () => {
     expect(composer()).toHaveFocus();
     await waitFor(() => expect(marked(MATCH_HIGHLIGHT)).toEqual([]));
     expect(actions.interrupt).not.toHaveBeenCalled();
+  });
+
+  it("starts a changed query at its last match again", async () => {
+    draw(CONVERSATION);
+    openFind();
+    search("parser");
+    await counted("4 of 4");
+    press(field(), "Enter");
+    await counted("1 of 4");
+    search("parse");
+    await counted("4 of 4");
+    await waitFor(() => expect(currentEntry()).toBe("t1"));
   });
 
   it("puts the keyboard back in its field on Cmd+F while open, its words selected", async () => {

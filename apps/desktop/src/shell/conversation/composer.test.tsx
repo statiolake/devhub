@@ -458,14 +458,29 @@ describe("history", () => {
 });
 
 describe("stopping a turn", () => {
-  it("stops a running turn on Esc or Ctrl+C, from the composer or the transcript", () => {
+  it("stops a running turn on Esc or Ctrl+C, from the composer, the transcript, or with the keyboard nowhere", () => {
     const { actions } = draw(withSession([RUNNING, put(user("u1", "go"))]));
     press("Escape");
     fireEvent.keyDown(composer(), { key: "c", ctrlKey: true });
     fireEvent.keyDown(document.querySelector(".conversation-scroll")!, {
       key: "Escape",
     });
-    expect(actions.interrupt).toHaveBeenCalledTimes(3);
+    // A click on the transcript's words leaves the keyboard on the body.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(actions.interrupt).toHaveBeenCalledTimes(4);
+  });
+
+  it("leaves those keys alone while the pane is not the one shown, or when they are typed outside it", () => {
+    const { actions, redraw } = draw(
+      withSession([RUNNING, put(user("u1", "go"))]),
+    );
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    fireEvent.keyDown(elsewhere, { key: "Escape" });
+    redraw(withSession([RUNNING, put(user("u1", "go"))]), true);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    elsewhere.remove();
+    expect(actions.interrupt).not.toHaveBeenCalled();
   });
 
   it("does nothing on those keys when no turn is running, or while composing", () => {
