@@ -1000,9 +1000,12 @@ export class CodexAdapter implements ProtocolAdapter {
 					...(own === undefined ? [] : [{ id: own, label: own }]),
 					...models
 						.filter((candidate) => !candidate.hidden || candidate === listed)
+						// Read by the name the thread reports, in the list and as the
+						// current value alike; Codex's display name goes beside it.
 						.map((candidate) => ({
 							id: candidate.model,
-							label: candidate.displayName,
+							label: candidate.model,
+							detail: candidate.displayName,
 						})),
 				],
 				...(listing.state === "failed" ? { unchangeable } : {}),

@@ -69,6 +69,13 @@ export type ClaudeLine =
 			readonly permissionMode: string | undefined;
 			readonly slashCommands: readonly string[];
 			readonly version: string | undefined;
+			/**
+			 * The effort the session sends on its next request (the SDK's
+			 * `SDKSystemMessage.effort`), when this CLI publishes it: absent on
+			 * CLIs and hosts that do not, and none (`null` on the wire) when no
+			 * effort will be sent.
+			 */
+			readonly effort: string | undefined;
 	  }
 	| {
 			readonly type: "stream";
@@ -764,6 +771,10 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					raw.claude_code_version,
 					`${at}.claude_code_version`,
 				),
+				effort:
+					raw.effort === null
+						? undefined
+						: f.optionalString(raw.effort, `${at}.effort`),
 			};
 		case "api_retry":
 			return {

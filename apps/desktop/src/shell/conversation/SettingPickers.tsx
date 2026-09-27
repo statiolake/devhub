@@ -29,17 +29,19 @@ export const SETTING_LABELS: Readonly<Record<SettingName, string>> = {
 /**
  * What a picker says while its session has not named its value: the model
  * and permissions are not known yet (Claude names them only when the first
- * turn starts), and an effort nothing has chosen is the CLI's own default.
+ * turn starts), and an effort nothing has chosen is the CLI's own default —
+ * which Claude does not report, so it is said as that and not as a level.
  */
 export const UNKNOWN_VALUE: Readonly<Record<SettingName, string>> = {
   model: "Not known yet",
-  effort: "Default",
+  effort: "CLI's default",
   mode: "Not known yet",
 };
 
 const UNKNOWN_HINT: Readonly<Record<SettingName, string>> = {
   model: "The Agent names its model when its first turn starts",
-  effort: "No effort was chosen here: the Agent runs at its own default",
+  effort:
+    "No effort was chosen here, and the Agent does not report the one it runs at: it is the CLI's own, from --effort, its environment, its settings or the model's default",
   mode: "The Agent names its permissions when its first turn starts",
 };
 
@@ -97,7 +99,7 @@ function SettingPicker({
   }
   // A current value the choices do not list is still the truth, so it is an
   // option too rather than a picker showing something else.
-  const listed = setting.choices.some(
+  const current = setting.choices.find(
     (choice) => choice.id === setting.current,
   );
   return (
@@ -105,7 +107,7 @@ function SettingPicker({
       className="conversation-setting"
       data-setting={name}
       data-unknown={unknown || undefined}
-      title={unknown ? UNKNOWN_HINT[name] : undefined}
+      title={unknown ? UNKNOWN_HINT[name] : current?.detail}
     >
       <span className="conversation-setting-label">{SETTING_LABELS[name]}</span>
       <select
@@ -121,11 +123,11 @@ function SettingPicker({
             {UNKNOWN_VALUE[name]}
           </option>
         ) : null}
-        {!listed && !unknown ? (
+        {current === undefined && !unknown ? (
           <option value={setting.current}>{setting.current}</option>
         ) : null}
         {setting.choices.map((choice) => (
-          <option key={choice.id} value={choice.id}>
+          <option key={choice.id} value={choice.id} title={choice.detail}>
             {choice.label}
           </option>
         ))}

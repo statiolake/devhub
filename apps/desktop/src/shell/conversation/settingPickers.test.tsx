@@ -94,6 +94,50 @@ describe("a session that has not named its settings yet", () => {
     expect(screen.queryByRole("combobox", { name: "Effort" })).toBeNull();
   });
 
+  it("says an effort nothing named is the CLI's default, not a level", () => {
+    draw(
+      withSession({
+        ...EMPTY_SESSION,
+        model: { current: "large", choices: MODELS },
+        effort: {
+          current: undefined,
+          choices: [{ id: "high", label: "high" }],
+        },
+      }),
+    );
+    expect(picked("Effort")).toBe("CLI's default");
+    expect(
+      document.querySelector('[data-setting="effort"]')?.getAttribute("title"),
+    ).toMatch(/does not report/);
+  });
+
+  it("reads the current model as its option reads, with the Agent's own words for it beside", () => {
+    draw(
+      withSession({
+        ...EMPTY_SESSION,
+        model: {
+          current: "opus",
+          choices: [
+            { id: "opus", label: "full-opus (opus)", detail: "Opus" },
+            { id: "sonnet", label: "full-sonnet (sonnet)", detail: "Sonnet" },
+          ],
+        },
+      }),
+    );
+    expect(picked("Model")).toBe("full-opus (opus)");
+    const model = document.querySelector('[data-setting="model"]');
+    expect(model).toHaveAttribute("title", "Opus");
+    expect(
+      [...(model?.querySelectorAll("option") ?? [])].map((option) => [
+        option.textContent,
+        option.title,
+      ]),
+    ).toEqual([
+      ["full-opus (opus)", "Opus"],
+      ["full-sonnet (sonnet)", "Sonnet"],
+    ]);
+  });
+
   it("shows the values once the session names them", () => {
     draw(
       withSession({

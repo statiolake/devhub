@@ -456,8 +456,8 @@ describe("the permission fixture", () => {
 			current: "claude-sonnet-5",
 			choices: [
 				{ id: "claude-sonnet-5", label: "claude-sonnet-5" },
-				{ id: "default", label: "Default" },
-				{ id: "sonnet", label: "Sonnet" },
+				{ id: "default", label: "default", detail: "Default" },
+				{ id: "sonnet", label: "sonnet", detail: "Sonnet" },
 			],
 		});
 	});
@@ -1938,6 +1938,47 @@ describe("the model a session reports, against the models the handshake listed",
 		});
 		expect(session.effort.choices).toEqual([]);
 		expect(session.effort.unchangeable).toContain("claude-opus-4-1");
+	});
+
+	it("reads every choice, and so the current one, by the full model name it resolves to, the value /model takes beside it when that differs", () => {
+		const { session } = started(WITH_1M, "claude-opus-5-5[1m]").transcript;
+		expect(session.model.choices).toEqual([
+			{
+				id: "default",
+				label: "claude-opus-5-5[1m] (default)",
+				detail: "default (label)",
+			},
+			{
+				id: "opus[1m]",
+				label: "claude-opus-5-5[1m] (opus[1m])",
+				detail: "opus[1m] (label)",
+			},
+			{
+				id: "sonnet",
+				label: "claude-sonnet-5 (sonnet)",
+				detail: "sonnet (label)",
+			},
+			{
+				id: "haiku",
+				label: "claude-haiku-4-5-20251001 (haiku)",
+				detail: "haiku (label)",
+			},
+		]);
+		expect(
+			session.model.choices.find(
+				(choice) => choice.id === session.model.current,
+			)?.label,
+		).toBe("claude-opus-5-5[1m] (opus[1m])");
+	});
+
+	it("is the effort system/init says the session runs at, when the CLI says it", () => {
+		const adapter = started(WITH_1M, "claude-opus-5-5[1m]");
+		expect(adapter.transcript.session.effort.current).toBeUndefined();
+		adapter.received(init({ model: "claude-opus-5-5[1m]", effort: "xhigh" }));
+		expect(adapter.transcript.session.effort.current).toBe("xhigh");
+		// A later init that does not say keeps what is known.
+		adapter.received(init({ model: "claude-opus-5-5[1m]" }));
+		expect(adapter.transcript.session.effort.current).toBe("xhigh");
 	});
 
 	it("offers no effort, and says nothing, for a listed model that takes none", () => {

@@ -293,10 +293,20 @@ code block has one in its header.
 message box at the same size as what you type. A value the CLI has not named
 yet says so instead of standing empty: Claude names its model only when the
 first turn starts (its `system/init`), so until then the model reads *Not
-known yet*; an effort nothing has chosen reads *Default*, the CLI's own
-(Claude never reports the effort it runs at). Codex names its model and
-effort when the thread opens, and a model you pick here shows that model's
-default effort until you choose one.
+known yet*. Claude's stream-json does not report the effort it runs at
+(`system/init` carries an `effort` only on hosts that publish it, and DevHub
+takes it when it does), so an effort nothing has chosen reads *CLI's
+default*: the level the CLI resolves from `--effort`,
+`CLAUDE_CODE_EFFORT_LEVEL`, the saved settings and the model's own default,
+which DevHub does not guess. Codex names its model and effort when the thread
+opens, and a model you pick here shows that model's default effort
+(`model/list`'s `defaultReasoningEffort`) until you choose one.
+
+A model reads by the full name the session reports for it, in the list and
+as the current value alike: Claude's choices by the name each resolves to,
+with the value `/model` takes beside it when that differs
+(`claude-opus-5-5[1m] (opus[1m])`), Codex's by `model`. The CLI's own
+display name for a choice is its tooltip.
 
 The model the session reports is found in the CLI's own list the same way
 however the session began (fresh, resumed, rewound, or a model picked here):

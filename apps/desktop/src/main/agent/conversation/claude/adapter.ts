@@ -149,6 +149,28 @@ function listedAs(
 	);
 }
 
+/**
+ * How a model choice reads, in the picker's list and as its current value
+ * alike: the full model name the session would report for it, and the value
+ * `/model` is given for it when that is another name (`opus`, `default`),
+ * so two choices that resolve to the same model today still read apart. The
+ * CLI's own display name goes beside it (`detail`).
+ */
+function modelChoice(
+	value: string,
+	resolved: string | undefined,
+	displayName: string | undefined,
+): Setting["choices"][number] {
+	return {
+		id: value,
+		label:
+			resolved === undefined || resolved === value
+				? value
+				: `${resolved} (${value})`,
+		...(displayName === undefined ? {} : { detail: displayName }),
+	};
+}
+
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
@@ -573,9 +595,16 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * effort levels per model, so they are those of the choice the name
 	 * without the suffix resolves to. A model the list names in neither form
 	 * has no effort levels DevHub could offer, and the effort says so.
+	 *
+	 * The effort is the one the session last said it runs at (`system/init`'s
+	 * `effort`, on a CLI that publishes it) or was set to here with `/effort`.
+	 * Claude says nothing else about it: an effort nothing named is whatever
+	 * the CLI resolves from `--effort`, `CLAUDE_CODE_EFFORT_LEVEL`, the saved
+	 * settings and the model's own default, and it stays unnamed.
 	 */
 	private modelSettings(
 		reported: string | undefined,
+		effort: string | undefined = this.current.session.effort.current,
 	): Pick<SessionFacts, "model" | "effort"> {
 		const models = this.models ?? [];
 		const listed =
@@ -593,13 +622,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				? listedAs(models, own.slice(0, -LONG_CONTEXT.length))
 				: undefined);
 		const efforts = model?.efforts ?? [];
-		const effort = this.current.session.effort.current;
 		return {
 			model: {
 				current: listed?.id ?? reported,
 				choices: [
-					...(own === undefined ? [] : [{ id: own, label: own }]),
-					...models.map((each) => ({ id: each.id, label: each.label })),
+					...(own === undefined ? [] : [modelChoice(own, own, undefined)]),
+					...models.map((each) =>
+						modelChoice(each.id, each.resolved, each.label),
+					),
 				],
 			},
 			effort: {
@@ -794,7 +824,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					canRewind: resumesAtAMessage(line.version),
 					sessionId: line.sessionId,
 					cwd: line.cwd,
-					...this.modelSettings(line.model),
+					...this.modelSettings(
+						line.model,
+						line.effort ?? this.current.session.effort.current,
+					),
 					mode: {
 						current: line.permissionMode ?? this.current.session.mode.current,
 						choices: MODES,

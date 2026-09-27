@@ -244,8 +244,12 @@ describe("the handshake", () => {
 		expect(session.model).toEqual({
 			current: "gpt-5.5-codex",
 			choices: [
-				{ id: "gpt-5.5-codex", label: "GPT-5.5 Codex" },
-				{ id: "gpt-5.5-mini", label: "GPT-5.5 mini" },
+				{
+					id: "gpt-5.5-codex",
+					label: "gpt-5.5-codex",
+					detail: "GPT-5.5 Codex",
+				},
+				{ id: "gpt-5.5-mini", label: "gpt-5.5-mini", detail: "GPT-5.5 mini" },
 			],
 		});
 		expect(session.effort).toEqual({
@@ -1893,8 +1897,16 @@ describe("the thread's model, against the models model/list names", () => {
 		expect(session.model).toEqual({
 			current: "older-model",
 			choices: [
-				{ id: "shown-model", label: "shown-model (label)" },
-				{ id: "older-model", label: "older-model (label)" },
+				{
+					id: "shown-model",
+					label: "shown-model",
+					detail: "shown-model (label)",
+				},
+				{
+					id: "older-model",
+					label: "older-model",
+					detail: "older-model (label)",
+				},
 			],
 		});
 		expect(session.effort).toEqual({
@@ -1913,7 +1925,11 @@ describe("the thread's model, against the models model/list names", () => {
 			result: { data: [SHOWN, HIDDEN], nextCursor: null },
 		});
 		expect(harness.transcript.session.model.choices).toEqual([
-			{ id: "shown-model", label: "shown-model (label)" },
+			{
+				id: "shown-model",
+				label: "shown-model",
+				detail: "shown-model (label)",
+			},
 		]);
 	});
 

@@ -403,7 +403,15 @@ export interface SessionFacts {
 
 export interface Setting {
   readonly current: string | undefined;
-  readonly choices: readonly { readonly id: string; readonly label: string }[];
+  /**
+   * What can be chosen: `label` is how a choice reads, in the list and as the
+   * current value alike; `detail` is the Agent's own words for it, if any.
+   */
+  readonly choices: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly detail?: string;
+  }[];
   /**
    * Why the setting can't be changed here, when the Agent listed nothing to
    * choose from for it (its models could not be listed, or its list does not
