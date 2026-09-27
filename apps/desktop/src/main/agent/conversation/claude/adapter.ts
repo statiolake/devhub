@@ -674,17 +674,43 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		});
 	}
 
-	/** Once per kind of event, so a new event the CLI prints often is one line in the transcript, not a flood. */
+	/**
+	 * An event DevHub does not know, said once per kind of event, so a new
+	 * event the CLI prints often is one line in the transcript, not a flood.
+	 * What may have carried part of the conversation is a warning; a system
+	 * event, the CLI's word beside the conversation, is information.
+	 */
 	private unknown(key: string, raw: JsonObject): void {
-		if (this.unknownSeen.has(key)) return;
-		this.unknownSeen.add(key);
-		const version =
-			this.current.session.agentVersion ?? "(version not yet known)";
-		this.notice(
+		this.once(
+			key,
 			"warning",
-			`claude ${version} printed a "${key}" event DevHub does not know`,
+			`claude ${this.versionName()} printed a "${key}" event DevHub does not know`,
 			raw,
 		);
+	}
+
+	private reported(subtype: string, raw: JsonObject): void {
+		this.once(
+			`system/${subtype}`,
+			"info",
+			`claude ${this.versionName()} reported "${subtype}"`,
+			raw,
+		);
+	}
+
+	private once(
+		key: string,
+		level: "info" | "warning",
+		text: string,
+		raw: JsonObject,
+	): void {
+		if (this.unknownSeen.has(key)) return;
+		this.unknownSeen.add(key);
+		this.notice(level, text, raw);
+	}
+
+	private versionName(): string {
+		return this.current.session.agentVersion ?? "(version not yet known)";
 	}
 
 	private take(line: ClaudeLine): void {
@@ -804,6 +830,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				});
 			case "unused":
 				return;
+			case "reported":
+				return this.reported(line.subtype, line.raw);
 			case "unknown":
 				return this.unknown(line.key, line.raw);
 		}

@@ -11,8 +11,12 @@
  * A field DevHub uses is checked, and a line of a known type that lacks it or
  * carries it in another type throws `ProtocolMismatch` with the path. A field
  * DevHub does not use is not looked at, so the CLI adding one is not a
- * mismatch. A `type` (or `subtype`) DevHub has never heard of is not a
- * mismatch either: it decodes as `unknown`, and the adapter shows it.
+ * mismatch. A `type` DevHub has never heard of is not a mismatch either: it
+ * decodes as `unknown`, and the adapter shows it as a warning, since what it
+ * carried may be part of the conversation. A `system` subtype DevHub has
+ * never heard of decodes as `reported`: a system event is the CLI saying
+ * something beside the conversation, and the CLI adds new ones often, so the
+ * adapter shows it quietly, as information, not as something wrong.
  *
  * Some types DevHub knows and deliberately does not use. They decode as
  * `unused` rather than `unknown`, so that knowing them is written down here
@@ -167,6 +171,12 @@ export type ClaudeLine =
 			readonly message: Extract<ClaudeLine, { type: "assistant" | "user" }>;
 	  }
 	| { readonly type: "unused" }
+	/** A system event of a subtype DevHub has never heard of. */
+	| {
+			readonly type: "reported";
+			readonly subtype: string;
+			readonly raw: JsonObject;
+	  }
 	| {
 			readonly type: "unknown";
 			readonly key: string;
@@ -817,6 +827,17 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 				text: `${f.string(raw.content, `${at}.content`)}${why === undefined ? "" : ` (${why})`}`,
 			};
 		}
+		// A change a command of the CLI's made to the repository: which kind
+		// (an open set) and, best effort, on which branch.
+		case "vcs_state_changed":
+			return {
+				type: "said",
+				level: "info",
+				text: vcsChange(
+					f.string(raw.kind, `${at}.kind`),
+					f.optionalString(raw.branch, `${at}.branch`),
+				),
+			};
 		case "local_command": {
 			const content = f.string(raw.content, `${at}.content`);
 			return { type: "local_command", blocks: textBlock(content) };
@@ -873,7 +894,25 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 		case "hook_response":
 			return { type: "unused" };
 		default:
-			return { type: "unknown", key: `system/${subtype}`, raw };
+			return { type: "reported", subtype, raw };
+	}
+}
+
+/** A `vcs_state_changed` event, said as what was done; a kind DevHub has no phrase for is named. */
+function vcsChange(kind: string, branch: string | undefined): string {
+	switch (kind) {
+		case "push":
+			return branch === undefined ? "Pushed" : `Pushed ${branch}`;
+		case "commit":
+			return branch === undefined ? "Committed" : `Committed on ${branch}`;
+		case "merge":
+			return branch === undefined ? "Merged" : `Merged into ${branch}`;
+		case "rebase":
+			return branch === undefined ? "Rebased" : `Rebased ${branch}`;
+		default:
+			return branch === undefined
+				? `Changed the repository (${kind})`
+				: `Changed the repository (${kind}) on ${branch}`;
 	}
 }
 

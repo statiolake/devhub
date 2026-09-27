@@ -28,8 +28,9 @@
  * A known message of the wrong shape, or one that contradicts what the adapter
  * was told before (a reply to a request DevHub never made, a delta for a
  * message that never started), throws the shared `ProtocolMismatch`, and the
- * adapter is spent. A method DevHub does not know is a `notice` and the
- * conversation goes on; a request DevHub does not know is also answered with
+ * adapter is spent. A notification DevHub does not know is an information
+ * `notice` (once per method) and the conversation goes on; an item DevHub
+ * does not know is a warning, since it is part of the conversation not drawn; a request DevHub does not know is also answered with
  * a JSON-RPC error, because leaving it unanswered would stall the turn with
  * nothing on screen saying why. A signed-out account or a refused handshake
  * is not a mismatch: it is `state: broken` with its own code, and the adapter
@@ -341,6 +342,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly commandOutput = new Map<EntryId, string>();
 	private readonly fileChanges = new Map<EntryId, readonly FileChange[]>();
 	private noticeCount = 0;
+	/** The notification methods DevHub does not know that were already reported. */
+	private readonly reported = new Set<string>();
 	private total: Tokens | undefined;
 	private totalAtTurnStart: Tokens | undefined;
 	private usage: Usage | undefined;
@@ -685,10 +688,15 @@ export class CodexAdapter implements ProtocolAdapter {
 				const route = Object.hasOwn(this.notifications, message.method)
 					? this.notifications[message.method as NotificationMethod]
 					: undefined;
+				// A notification is Codex's word about the conversation, whose
+				// content arrives as items; one DevHub does not know is said quietly,
+				// once per method, so a new one Codex sends often is not a flood.
 				if (route === undefined) {
+					if (this.reported.has(message.method)) return;
+					this.reported.add(message.method);
 					return this.notice(
-						"warning",
-						`${this.codexName} sent \`${message.method}\`, which DevHub does not know.`,
+						"info",
+						`${this.codexName} reported \`${message.method}\``,
 						JSON.parse(line) as JsonValue,
 					);
 				}

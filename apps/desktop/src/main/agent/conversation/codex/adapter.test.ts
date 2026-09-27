@@ -1079,11 +1079,12 @@ describe("requests that are not approvals", () => {
 });
 
 describe("what DevHub does not know", () => {
-	it("shows an unknown notification and goes on", () => {
+	it("shows an unknown notification as a quiet report, once per method, and goes on", () => {
 		const harness = ready();
 		harness.receive({ method: "thread/sparkles", params: { threadId: MAIN } });
+		harness.receive({ method: "thread/sparkles", params: { threadId: MAIN } });
 		expect(outline(harness.transcript)).toEqual([
-			"notice(warning): codex 0.156.1 sent `thread/sparkles`, which DevHub does not know.",
+			"notice(info): codex 0.156.1 reported `thread/sparkles`",
 		]);
 		expect(harness.transcript.entries[0]).toMatchObject({
 			raw: { method: "thread/sparkles" },

@@ -1390,9 +1390,8 @@ describe("what DevHub does not know", () => {
 		expect(conversationStatus(adapter.transcript)).toBe("working");
 	});
 
-	it("covers system subtypes, stream events, deltas and content blocks", () => {
+	it("covers stream events, deltas and content blocks", () => {
 		const adapter = inTurn();
-		adapter.received(json({ type: "system", subtype: "weather" }));
 		adapter.received(stream({ type: "message_start", message: { id: "m" } }));
 		adapter.received(
 			stream({
@@ -1419,11 +1418,42 @@ describe("what DevHub does not know", () => {
 			.filter((each): each is NoticeEntry => each.kind === "notice")
 			.map((each) => each.text);
 		expect(texts).toEqual([
-			'claude 2.1.0 printed a "system/weather" event DevHub does not know',
 			'claude 2.1.0 printed a "delta/sparkle_delta" event DevHub does not know',
 			'claude 2.1.0 printed a "stream_event/novel_event" event DevHub does not know',
 			'claude 2.1.0 printed a "content/hologram_block" event DevHub does not know',
 		]);
+	});
+
+	it("is, for a system event, a quiet report of the event, once per subtype, with the event under it", () => {
+		const adapter = inTurn();
+		const raw = {
+			type: "system",
+			subtype: "weather",
+			forecast: "sunny",
+			session_id: "s",
+		};
+		adapter.received(json(raw));
+		adapter.received(json({ ...raw, forecast: "rain" }));
+		const notices = adapter.transcript.entries.filter(
+			(each) => each.kind === "notice",
+		);
+		expect(notices).toEqual([
+			{
+				kind: "notice",
+				id: expect.any(String),
+				parent: null,
+				level: "info",
+				text: 'claude 2.1.0 reported "weather"',
+				raw,
+			},
+		]);
+	});
+
+	it("still breaks the conversation for a system event without a subtype", () => {
+		const adapter = inTurn();
+		expect(() =>
+			adapter.received(json({ type: "system", session_id: "s" })),
+		).toThrow(ProtocolMismatch);
 	});
 
 	it("is not raised for the events DevHub knows and does not use", () => {
@@ -3043,6 +3073,59 @@ describe("the CLI's other system events", () => {
 			["error", "The model declined to answer. (policy)"],
 			["warning", "A stop hook failed: lint failed"],
 		]);
+	});
+
+	it("draw a change the CLI made to the repository as a quiet line saying what it did, on which branch", () => {
+		const adapter = inTurn();
+		const vcs = (fields: Record<string, unknown>) =>
+			system("vcs_state_changed", {
+				cwd: "/home/testuser/project",
+				uuid: "u-vcs",
+				...fields,
+			});
+		for (const line of [
+			vcs({ kind: "push", branch: "main" }),
+			vcs({ kind: "commit", branch: "feature" }),
+			vcs({ kind: "merge", branch: "main" }),
+			vcs({ kind: "rebase", branch: "topic" }),
+			vcs({ kind: "commit" }),
+			vcs({ kind: "stash", branch: "main" }),
+			vcs({ kind: "tag" }),
+		])
+			adapter.received(line);
+		expect(notices(adapter)).toEqual([
+			["info", "Pushed main"],
+			["info", "Committed on feature"],
+			["info", "Merged into main"],
+			["info", "Rebased topic"],
+			["info", "Committed"],
+			["info", "Changed the repository (stash) on main"],
+			["info", "Changed the repository (tag)"],
+		]);
+	});
+
+	it("draw a repository change read back from a session file the same way", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(
+			json({
+				type: "devhub_history",
+				record: {
+					type: "system",
+					subtype: "vcs_state_changed",
+					kind: "push",
+					branch: "main",
+					cwd: "/home/testuser/project",
+				},
+			}),
+		);
+		expect(notices(adapter)).toEqual([["info", "Pushed main"]]);
+	});
+
+	it("break the conversation for a repository change that does not say its kind", () => {
+		const adapter = inTurn();
+		expect(() =>
+			adapter.received(system("vcs_state_changed", { branch: "main" })),
+		).toThrow(ProtocolMismatch);
 	});
 
 	it("draw a local command the CLI ran as that command and its output", () => {

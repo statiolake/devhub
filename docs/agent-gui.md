@@ -250,7 +250,7 @@ gave it:
   waiting colour of either theme. Codex sandboxes a turn by its permission
   mode, not a call, so its calls carry no mark.
 - A block of a tool result DevHub does not know is a warning notice, like any
-  unknown event, never dropped in silence.
+  unknown part of the conversation, never dropped in silence.
 
 An image in a message of yours is drawn under its words the same way.
 
@@ -359,9 +359,14 @@ is a notice. Its work is drawn in one place at a time:
   its own level; `model_refusal_no_fallback` an error notice with the API's
   reason; `local_command` the command it ran and what it printed, as a
   command line (above); `stop_hook_summary` a warning only when a hook
-  failed. `turn_duration` (the transcript draws no durations),
+  failed; `vcs_state_changed` (a command of the CLI's committed, pushed,
+  merged or rebased) an information notice saying what was done on which
+  branch (*Pushed main*, *Committed on feature*), and a kind DevHub has no
+  phrase for is named (*Changed the repository (stash) on main*).
+  `turn_duration` (the transcript draws no durations),
   `bridge_status` (a remote control of the session, not the conversation),
-  `thinking_tokens` and `background_tasks_changed` are not drawn.
+  `thinking_tokens` and `background_tasks_changed` are not drawn. A system
+  event DevHub has never heard of is an information notice (below).
 - Thinking the API withholds (it sends the block without its text), redacted
   thinking, and citation deltas.
 
@@ -818,9 +823,23 @@ rate limits.
 - **"Protocol mismatch".** Note the path and CLI version in the detail, and
   use Continue in terminal to keep working. Updating DevHub, or pinning the
   CLI to the version DevHub knows, fixes it.
-- **A warning notice about an event DevHub does not know.** Nothing is wrong
-  with the conversation. The notice carries the event as the CLI printed it,
-  which is what a bug report needs.
+- **A notice about an event DevHub does not know.** Nothing is wrong with
+  the conversation. The notice carries the event as the CLI printed it
+  (*Event as received*), which is what a bug report needs, and each kind of
+  event is said once, however often it arrives. Its level follows one rule:
+  - An event *beside* the conversation, which the CLIs add with new versions
+    — a Claude `system` event of a subtype DevHub has never heard of, a
+    Codex notification of a method DevHub has never heard of — is a quiet
+    information line, *claude 2.1.0 reported "…"* or *codex … reported `…`*.
+    The CLI is telling DevHub something about itself; the conversation's
+    content does not arrive this way, so nothing of it is missing.
+  - An event that may *be* the conversation — a Claude line of a type,
+    stream event, delta or content block DevHub has never heard of, a Codex
+    item of a type the protocol does not name — is a warning, *… DevHub
+    does not know*: something the Agent said or did may not be drawn.
+  - An event DevHub knows that arrives broken — a line that is not JSON, a
+    known event without a field DevHub reads, a system event with no
+    subtype — is not a notice at all: it is a "Protocol mismatch" (above).
 - **The Agent ended by itself.** The notice has the exit code and the end of
   `err`. A CLI that is not on the host's `PATH` shows up here as `command not
   found`, exactly as it would for a terminal Agent.
