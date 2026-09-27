@@ -878,6 +878,8 @@ describe("subagents", () => {
 				kind: "subagent",
 				title: expect.any(String),
 				call: entryId(`${MAIN}/item-spawn`),
+				// The spawn call's own start, as app-server's item/started said it.
+				startedAt: 1_790_000_000_000,
 			},
 		]);
 		harness.receive(lines[childEnd]!);

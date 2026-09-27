@@ -232,8 +232,15 @@ task leaves the list when it ends. The list is
   a command it keeps running after its call has returned (a background
   terminal), so those are not listed.
 
-Neither CLI says when a background task started, and the journal keeps no
-times, so the list does not say how long each has run.
+Each task in the opened list says how long it has run, ticking, as the CLI
+says it (*45s*, *3m 12s*, *1h 5m*). The start is the time the CLI itself
+wrote on the call that started the task, so a replay after a DevHub restart
+reads the same start from the journal: Claude's `timestamp` on the
+assistant line that carried the call, Codex's `startedAtMs` on the call's
+`item/started`. A task not yet tied to its call, or whose call carries no
+time, says no time rather than one DevHub made up. The time is the clock of
+the machine the CLI runs on, so an Agent on another machine whose clock is
+off reads off by as much.
 
 ## What you can do in the GUI, and what you can't
 

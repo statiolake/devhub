@@ -93,6 +93,8 @@ export type ClaudeLine =
 			readonly error: string | undefined;
 			/** The model that wrote it, as the API names it. */
 			readonly model: string | undefined;
+			/** When the CLI wrote it, in ms since the epoch, if it said (`timestamp`). */
+			readonly timestamp: number | undefined;
 			/**
 			 * How much of the context window the conversation filled once this
 			 * message was written: everything the request carried (fresh, cache
@@ -446,6 +448,14 @@ class Fields {
 	boolean(value: JsonValue | undefined, path: string): boolean {
 		if (typeof value !== "boolean") return this.fail(path, "a boolean");
 		return value;
+	}
+
+	/** An ISO 8601 time, as ms since the epoch. */
+	optionalTime(value: JsonValue | undefined, path: string): number | undefined {
+		const text = this.optionalString(value, path);
+		if (text === undefined) return undefined;
+		const time = Date.parse(text);
+		return Number.isNaN(time) ? this.fail(path, "an ISO 8601 time") : time;
 	}
 
 	optionalString(
@@ -1122,6 +1132,7 @@ function decodeAssistant(
 		error: f.optionalString(raw.error, "assistant.error"),
 		model: f.optionalString(message.model, "assistant.message.model"),
 		contextTokens: contextTokens(message.usage, f),
+		timestamp: f.optionalTime(raw.timestamp, "assistant.timestamp"),
 	};
 }
 

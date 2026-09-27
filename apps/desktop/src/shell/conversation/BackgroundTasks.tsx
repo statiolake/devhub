@@ -6,7 +6,9 @@
  * the same place: a quiet line beside the context readout, drawn only while
  * something is working. It says how many and what they are, in short. Opened,
  * it lists each under that row, across the composer's whole width: its state
- * as the glyph a tool call's row has, its title, and its kind. A task whose
+ * as the glyph a tool call's row has, its title, its kind, and how long it
+ * has run, from the time the CLI wrote on the call that started it
+ * (`RunningTask.startedAt`), ticking. A task whose
  * call is known opens it: a subagent fills the pane (`SubagentPanes`), any
  * other task's call is brought into view in the conversation, opened — the
  * same in a narrow pane and a wide one.
@@ -16,10 +18,36 @@
  * as a subagent that ends leaves the column.
  */
 
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { EntryId, RunningTask } from "../../model/conversation";
 import { ChevronDownIcon, ChevronRightIcon } from "./icons";
 import { StatusMark } from "./StatusMark";
+
+/**
+ * How long something has run, as the CLI says it: `45s`, `3m 12s`,
+ * `1h 5m`. A start the clock has not reached yet (another machine's clock
+ * ahead of this one) reads as `0s`.
+ */
+export function elapsedText(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/** The time now, moving once a second while `ticking`. */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
 
 export function backgroundSentence(count: number): string {
   return count === 1 ? "1 background task" : `${count} background tasks`;
@@ -40,6 +68,9 @@ export function ComposerFooter({
   const list = useId();
   const sentence = backgroundSentence(tasks.length);
   const shown = open && tasks.length > 0;
+  const now = useNow(
+    shown && tasks.some((task) => task.startedAt !== undefined),
+  );
   return (
     <div className="conversation-footer">
       <div className="conversation-footer-row">
@@ -75,7 +106,7 @@ export function ComposerFooter({
         >
           {tasks.map((task) => (
             <li key={task.id} className="conversation-background-task">
-              <TaskLine task={task} openTask={openTask} />
+              <TaskLine task={task} openTask={openTask} now={now} />
             </li>
           ))}
         </ul>
@@ -87,9 +118,11 @@ export function ComposerFooter({
 function TaskLine({
   task,
   openTask,
+  now,
 }: {
   readonly task: RunningTask;
   readonly openTask: (call: EntryId) => void;
+  readonly now: number;
 }) {
   const words = (
     <>
@@ -97,6 +130,14 @@ function TaskLine({
       <StatusMark state="running" />
       <span className="conversation-background-title">{task.title}</span>
       <span className="conversation-background-kind">{task.kind}</span>
+      {task.startedAt === undefined ? null : (
+        <span
+          className="conversation-background-elapsed"
+          title="How long it has run"
+        >
+          {elapsedText(now - task.startedAt)}
+        </span>
+      )}
     </>
   );
   const { call } = task;

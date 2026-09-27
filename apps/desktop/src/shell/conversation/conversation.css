@@ -2001,9 +2001,16 @@ button.conversation-background-line:hover {
   white-space: nowrap;
 }
 
-.conversation-background-kind {
+.conversation-background-kind,
+.conversation-background-elapsed {
   flex: none;
   color: var(--tertiary);
+}
+
+.conversation-background-elapsed {
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* How full the context is, beside it: quiet type and a thin meter, coloured

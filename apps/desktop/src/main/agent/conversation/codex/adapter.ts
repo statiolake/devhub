@@ -365,6 +365,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly open = new Map<RequestId, OpenRequest>();
 	/** Child thread → the tool entry that started it. */
 	private readonly threadParents = new Map<string, EntryId>();
+	/** When each item started, by app-server's clock, as `item/started` said. */
+	private readonly itemTimes = new Map<EntryId, number>();
 	private readonly threadLabels = new Map<string, string>();
 	/** Child threads app-server says the person may start and steer turns of. */
 	private readonly directInput = new Set<string>();
@@ -996,6 +998,7 @@ export class CodexAdapter implements ProtocolAdapter {
 							kind: "subagent",
 							title: entry.spawns.label,
 							call: entry.id,
+							startedAt: this.itemTimes.get(entry.id),
 						},
 					]
 				: [],
@@ -1247,7 +1250,12 @@ export class CodexAdapter implements ProtocolAdapter {
 		params: unknown,
 		phase: "started" | "completed",
 	): void {
-		const { threadId, turnId, item } = itemNotification(this.reader, params);
+		const { threadId, turnId, item, startedAtMs } = itemNotification(
+			this.reader,
+			params,
+		);
+		if (phase === "started" && startedAtMs !== null)
+			this.itemTimes.set(this.idOf(threadId, item.id), startedAtMs);
 		this.onItem(threadId, turnId, item, phase);
 	}
 

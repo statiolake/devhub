@@ -286,6 +286,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * notification that names only the task (not its call) is matched by.
 	 */
 	private readonly tasks = new Map<string, EntryId>();
+	/**
+	 * When each call was made, by the CLI's own clock: the `timestamp` of the
+	 * assistant line that carried it. A background task started by a call
+	 * started then.
+	 */
+	private readonly callTimes = new Map<EntryId, number>();
 	/** The call that spawned each teammate, by the name its messages come from. */
 	private readonly teammates = new Map<string, EntryId>();
 	/**
@@ -718,6 +724,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.streaming.clear();
 		this.tasks.clear();
 		this.teammates.clear();
+		this.callTimes.clear();
 		this.interrupting = false;
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
@@ -765,6 +772,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				kind: TASK_KINDS[task.taskType] ?? task.taskType,
 				title: task.description,
 				call: tool?.id,
+				startedAt: tool === undefined ? undefined : this.callTimes.get(tool.id),
 			});
 		}
 		for (const [name, call] of this.teammates) {
@@ -776,6 +784,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				kind: "teammate",
 				title: tool.spawns.label,
 				call,
+				startedAt: this.callTimes.get(call),
 			});
 		}
 		if (sameRunningTasks(tasks, this.current.backgroundTasks)) return;
@@ -1204,6 +1213,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (message === undefined) {
 			message = { id: line.messageId, parent, slots: new Map(), finals: 0 };
 			this.messages.set(line.messageId, message);
+		}
+		if (line.timestamp !== undefined) {
+			for (const block of line.content) {
+				if (block.kind === "tool_use")
+					this.callTimes.set(toolEntryId(block.id), line.timestamp);
+			}
 		}
 		line.content.forEach((block, position) => {
 			const index = message.finals;

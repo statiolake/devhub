@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	childrenOf,
 	conversationStatus,
@@ -3850,15 +3850,20 @@ describe("what works in the background", () => {
 		return adapter;
 	}
 
-	it("is the CLI's own list, each task tied to its call once a task event names it", () => {
+	it("is the CLI's own list, each task tied to its call once a task event names it, and started when the CLI wrote that call", () => {
 		const adapter = inTurn();
 		adapter.received(
-			assistantLine("m", [
-				toolUse("toolu_bg", "Bash", {
-					command: "npm run dev",
-					run_in_background: true,
-				}),
-			]),
+			assistantLine(
+				"m",
+				[
+					toolUse("toolu_bg", "Bash", {
+						command: "npm run dev",
+						run_in_background: true,
+					}),
+				],
+				null,
+				{ timestamp: "2026-09-20T10:00:00.500Z" },
+			),
 		);
 		adapter.received(listed(["b1", "local_bash", "Start the dev server"]));
 		expect(adapter.transcript.backgroundTasks).toEqual([
@@ -3883,8 +3888,59 @@ describe("what works in the background", () => {
 				kind: "shell",
 				title: "Start the dev server",
 				call: entryId("tool:toolu_bg"),
+				startedAt: Date.parse("2026-09-20T10:00:00.500Z"),
 			},
 		]);
+	});
+
+	it("starts at the same time in a replay, whenever the replay runs: the time is the journal's", () => {
+		const play = () => {
+			const adapter = inTurn();
+			adapter.received(
+				assistantLine(
+					"m",
+					[toolUse("toolu_bg", "Bash", { command: "sleep 99" })],
+					null,
+					{ timestamp: "2026-09-20T10:00:00.000Z" },
+				),
+			);
+			adapter.received(listed(["b1", "local_bash", "sleep"]));
+			adapter.received(
+				system("task_started", { task_id: "b1", tool_use_id: "toolu_bg" }),
+			);
+			return adapter.transcript.backgroundTasks;
+		};
+		const live = play();
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date("2026-09-21T00:00:00Z"));
+			expect(play()).toEqual(live);
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(live[0]!.startedAt).toBe(Date.parse("2026-09-20T10:00:00.000Z"));
+	});
+
+	it("has no start when the CLI wrote no time on the call, and refuses a time that is not one", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Bash", {
+					command: "npm run dev",
+					run_in_background: true,
+				}),
+			]),
+		);
+		adapter.received(listed(["b1", "local_bash", "Start the dev server"]));
+		adapter.received(
+			system("task_started", { task_id: "b1", tool_use_id: "toolu_bg" }),
+		);
+		expect(adapter.transcript.backgroundTasks[0]!.startedAt).toBeUndefined();
+		expect(() =>
+			adapter.received(
+				assistantLine("m2", [], null, { timestamp: "yesterday-ish" }),
+			),
+		).toThrow(/assistant.timestamp/);
 	});
 
 	it("keeps an Agent whose turn ended with a task still working out of idle, and lets it go when the list does", () => {

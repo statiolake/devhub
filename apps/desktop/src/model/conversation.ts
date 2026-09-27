@@ -330,6 +330,12 @@ export interface RunningTask {
   readonly title: string;
   /** The call that started it, once the CLI has said which. */
   readonly call: EntryId | undefined;
+  /**
+   * When it started, in ms since the epoch, by the CLI's own clock: the time
+   * the CLI wrote on the call that started it. Undefined until that call is
+   * known, or when the CLI wrote none.
+   */
+  readonly startedAt: number | undefined;
 }
 
 export interface NoticeEntry {
@@ -1107,7 +1113,8 @@ export function sameRunningTasks(
         task.id === other[index]!.id &&
         task.kind === other[index]!.kind &&
         task.title === other[index]!.title &&
-        task.call === other[index]!.call,
+        task.call === other[index]!.call &&
+        task.startedAt === other[index]!.startedAt,
     )
   );
 }

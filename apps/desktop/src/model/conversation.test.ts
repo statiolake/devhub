@@ -913,6 +913,7 @@ function shell(id: string, call: string | undefined): RunningTask {
     kind: "shell",
     title: `run ${id}`,
     call: call === undefined ? undefined : entryId(call),
+    startedAt: undefined,
   };
 }
 

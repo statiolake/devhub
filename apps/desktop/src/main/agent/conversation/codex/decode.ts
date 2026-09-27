@@ -814,6 +814,8 @@ export type ItemNotification = Pick<
 	"threadId" | "turnId"
 > & {
 	readonly item: Item;
+	/** When the item started, by app-server's clock (`item/started`'s `startedAtMs`). */
+	readonly startedAtMs: number | null;
 };
 
 export function itemNotification(r: Reader, params: unknown): ItemNotification {
@@ -822,6 +824,7 @@ export function itemNotification(r: Reader, params: unknown): ItemNotification {
 		threadId: r.string(o, "threadId", "params"),
 		turnId: r.string(o, "turnId", "params"),
 		item: item(r, o["item"], "params.item"),
+		startedAtMs: r.nullableNumber(o, "startedAtMs", "params"),
 	};
 }
 

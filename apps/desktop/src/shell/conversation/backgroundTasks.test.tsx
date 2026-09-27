@@ -7,7 +7,13 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applyEvent,
@@ -15,6 +21,7 @@ import {
   type ConversationEvent,
   type RunningTask,
 } from "../../model/conversation";
+import { elapsedText } from "./BackgroundTasks";
 import { draw, entry, installResizeObserver } from "./surfaceTestKit";
 import { WIDE_PANE_PX } from "./SubagentPanes";
 import {
@@ -36,12 +43,14 @@ const SERVER: RunningTask = {
   kind: "shell",
   title: "Start the dev server",
   call: entryId("tool:dev"),
+  startedAt: undefined,
 };
 const RESEARCH: RunningTask = {
   id: "a1",
   kind: "subagent",
   title: "Research the parser",
   call: undefined,
+  startedAt: undefined,
 };
 
 function running(...tasks: RunningTask[]): ConversationEvent {
@@ -169,6 +178,7 @@ describe("a subagent among the background tasks", () => {
     kind: "subagent",
     title: "Survey the parsers",
     call: entryId("tool:survey"),
+    startedAt: undefined,
   };
   const WORKING = transcriptOf([
     put(
@@ -234,6 +244,39 @@ describe("a subagent among the background tasks", () => {
       expect(
         document.querySelector('[data-view="conversation"]'),
       ).toBeVisible();
+    }
+  });
+});
+
+describe("how long a background task has run", () => {
+  it("is said as the CLI says it", () => {
+    expect(elapsedText(0)).toBe("0s");
+    expect(elapsedText(45_900)).toBe("45s");
+    expect(elapsedText(192_000)).toBe("3m 12s");
+    expect(elapsedText(3_900_000)).toBe("1h 5m");
+    expect(elapsedText(-5_000)).toBe("0s");
+  });
+
+  it("ticks on each task whose start the CLI wrote, and says nothing for one it did not", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T10:03:12Z"));
+    try {
+      const started = Date.parse("2026-09-20T10:00:00Z");
+      draw(withTasks({ ...SERVER, startedAt: started }, RESEARCH));
+      fireEvent.click(toggle());
+      const items = within(
+        screen.getByRole("list", { name: "Background tasks" }),
+      ).getAllByRole("listitem");
+      const elapsed = (item: HTMLElement) =>
+        item.querySelector(".conversation-background-elapsed");
+      expect(elapsed(items[0]!)).toHaveTextContent("3m 12s");
+      expect(elapsed(items[1]!)).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(elapsed(items[0]!)).toHaveTextContent("3m 17s");
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
