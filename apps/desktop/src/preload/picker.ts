@@ -18,6 +18,7 @@ import type { AppOutcome } from "../ipc/appShell.js";
 import {
 	agentActionsBridge,
 	agentProfilesBridge,
+	appearanceBridge,
 	on,
 	pageBridge,
 	projectionBridge,
@@ -27,6 +28,7 @@ import {
 const api: PickerBridge = {
 	...pageBridge(),
 	...projectionBridge(),
+	...appearanceBridge(),
 	...agentProfilesBridge(),
 	...agentActionsBridge(),
 	...workspaceOpeningBridge(),

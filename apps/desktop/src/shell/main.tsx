@@ -22,7 +22,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell } from "./AppShell";
-import { installPalette } from "./appearance";
+import { installMonoFont, installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
@@ -40,10 +40,12 @@ if (!container) {
 
 // Installed outside React so no remount can drop any of them. The palette is
 // one of these: the page was served wearing it, and this is only what keeps it
-// current when a workbench changes theme.
+// current when a workbench changes theme. The monospace family is another:
+// the terminal's, kept current when the settings change.
 installRootFailureHandler();
 installSelectionGuard(document);
 installPalette(document);
+installMonoFont(document);
 
 // Set, and then ignored: this window's name depends on what is on screen,
 // which only main knows, so main refuses the page's title and names the window

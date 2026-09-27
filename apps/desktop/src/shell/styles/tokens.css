@@ -187,7 +187,12 @@
   --radius-control: 6px;
   --radius-panel: 10px;
 
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* The one monospace family on every page: the terminal's
+     (`terminal_font_family`). This is `terminalFontStack` at the default, and
+     `applyMonoFont` replaces it with the configured stack once the page is
+     told the appearance, and again whenever it changes. No stylesheet names a
+     monospace family of its own. */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   /* Native chrome geometry. */
   /*
@@ -566,6 +571,16 @@ textarea,
 select {
   font: inherit;
   color: inherit;
+}
+
+/* The browser sets these in its own `monospace`, which is not the terminal's
+   face, and a `<code>` inside a styled `<pre>` would take that rather than
+   inherit the `<pre>`'s. */
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
 }
 
 button {

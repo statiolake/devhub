@@ -26,8 +26,9 @@
  * - the projections the sheets read: `snapshotChanged`, `workspacePicker`,
  *   `agentProfilesChanged`, `agentActionsChanged`, `themeChanged`. A modal is
  *   drawn from the same model the sidebar lists, which is why it is told
- *   rather than asking. Not the appearance and not the repository status: no
- *   sheet reads either, and this page's bridge cannot spell them.
+ *   rather than asking. `appearanceChanged` too, for the monospace family
+ *   alone (`installMonoFont`); not the repository status, which no sheet
+ *   reads and this page's bridge cannot spell.
  *
  * **Leaving for main**
  * - `devhub:close-modal`, and the sheets' own invokes: the workspace picker,

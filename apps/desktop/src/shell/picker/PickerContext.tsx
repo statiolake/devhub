@@ -4,9 +4,11 @@
  * The projection the sheets read, the agent profiles and actions they offer,
  * every way of starting a Workspace, the two ends of a reviewed message, and
  * the confirmation this page is the one place in DevHub that can both show and
- * answer. Nothing else — no appearance, no repository status, no window title,
- * no notices: a sheet draws none of them, and its bridge cannot spell them
- * either. See `PickerBridge` in `ipc/contract.ts` and `preload/picker.ts`.
+ * answer. Nothing else — no repository status, no window title, no notices: a
+ * sheet draws none of them. The appearance is on its bridge for one fact only,
+ * the monospace family a reviewed message is set in, and that is the
+ * document's (`installMonoFont` in `main.tsx`), not this context's. See
+ * `PickerBridge` in `ipc/contract.ts` and `preload/picker.ts`.
  *
  * The modal *set* is not here. It is subscribed to as `PickerApp`'s module is
  * evaluated, because main publishes it from the page's `did-finish-load` —

@@ -691,7 +691,7 @@ body {
 
 .keyboard-record {
   min-width: 160px;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 /* While it is listening, so that a person can tell it from a button they have
@@ -704,7 +704,7 @@ body {
 /* The id, because it is what `settings.toml` and the diagnostics name. */
 .keyboard-id {
   margin-inline-start: auto;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
 }

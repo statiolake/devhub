@@ -102,7 +102,7 @@ file main loaded.**
 | the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard` |
 | the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
 | the tooltip | `tooltip.html` | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's. |
-| the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
+| the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings | `settings.html` | its own window | `SETTINGS_CHANNELS` in full, plus the failure contract every page has |
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a

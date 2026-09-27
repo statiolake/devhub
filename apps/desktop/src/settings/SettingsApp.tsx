@@ -57,6 +57,7 @@ import {
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
 import { isImeComposing } from "../shell/accessibility/ime";
+import { applyMonoFont } from "../shell/appearance";
 import { useAlertLifetime } from "../shell/alertLifetime";
 import { useRaiseFailure } from "../shell/model/pageModel";
 import { devhub } from "./client";
@@ -463,6 +464,15 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
     setDraft(clone(next.config));
     setSocketDraft(next.config.runtimes.tmuxSocketName);
   }, []);
+
+  // This window's monospace text is set in the terminal's family, like every
+  // DevHub page's: the one DevHub is on, not a family half-typed in the field.
+  const monoFamily = snapshot?.config.appearance.terminalFontFamily;
+  useEffect(() => {
+    if (monoFamily !== undefined) {
+      applyMonoFont(document.documentElement, monoFamily);
+    }
+  }, [monoFamily]);
 
   /** DevHub has taken everything typed up to `count`. */
   const settle = useCallback((count: number) => {

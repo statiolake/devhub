@@ -19,8 +19,10 @@ import {
   type ShellPalette,
   type ShellPaletteBase,
 } from "../ipc/palette";
-import type { PageBridge } from "../ipc/contract";
+import type { AppearanceBridge, PageBridge } from "../ipc/contract";
+import type { AppAppearance } from "../ipc/appShell";
 import { pageBridge } from "./bridge";
+import { terminalFontStack } from "./terminal/theme";
 
 export function applyPalette(
   root: HTMLElement,
@@ -47,6 +49,43 @@ export function installPalette(document: Document): () => void {
   return pageBridge<PageBridge>("current").onTheme((palette) => {
     applyPalette(document.documentElement, palette);
   });
+}
+
+/**
+ * The one monospace family of every DevHub page: the terminal's.
+ *
+ * There is no second setting. Code in a conversation, a diff, a command's
+ * output, an id in a failure — all of it is what a terminal would have shown,
+ * so it is set in the face `[appearance] terminal_font_family` chose, through
+ * the same stack xterm draws with (`terminalFontStack`: the chosen families
+ * first, then monospace fallbacks). Every stylesheet reads `--font-mono`, and
+ * `tokens.css` declares it as that stack at the default until a page is told.
+ */
+export function applyMonoFont(root: HTMLElement, family: string): void {
+  root.style.setProperty("--font-mono", terminalFontStack(family));
+}
+
+/**
+ * Keep `--font-mono` on the terminal's family for as long as this page is
+ * open, a change in `settings.toml` included.
+ *
+ * Installed outside React beside `installPalette`, for the same reason: the
+ * family is a fact about the document, and every page with the appearance
+ * sets its monospace text from it. An answer older than one already applied
+ * is dropped, the way `useAppearance` drops it. A read that fails is not
+ * caught: it reaches the page's root failure handler as a rejection.
+ */
+export function installMonoFont(document: Document): () => void {
+  const bridge = pageBridge<AppearanceBridge>("current");
+  let lastSequence = -1;
+  const apply = (appearance: AppAppearance) => {
+    if (appearance.sequence < lastSequence) return;
+    lastSequence = appearance.sequence;
+    applyMonoFont(document.documentElement, appearance.terminalFontFamily);
+  };
+  const dispose = bridge.onAppearance(apply);
+  void bridge.getAppearance().then(apply);
+  return dispose;
 }
 
 /** Which half of every two-valued appearance in the page applies. */

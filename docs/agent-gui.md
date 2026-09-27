@@ -208,6 +208,17 @@ requests as cards with the CLI's own choices. A turn that completed draws no
 divider, and no durations, token counts or cost are drawn anywhere: the rate
 limits are the Sidebar's (below).
 
+**Type follows the terminal.** The transcript's text is a step larger than
+`[appearance] terminal_font_size` (15 px at the default 13) and zooms with the
+terminal. Everything fixed-width — code blocks and inline code, diffs, a
+command and its output, a tool's input and output — is set in
+`[appearance] terminal_font_family`, the same family an Agent's terminal draws
+with (Settings > General > Agent panes > Font), followed by the system's
+monospace faces for anything it lacks. There is no separate setting: it is
+DevHub's one monospace face, so the ids in a failure and the fixed-width fields
+in Settings follow it too, and a change to it reaches an open conversation
+without a reload.
+
 **A tool call's title** is the tool and what the call does: the argument
 that says it for a tool DevHub knows (`Bash: npm test`, `SendMessage:
 researcher — status`, `TaskUpdate: 3 → completed`, `ToolSearch: …`), an MCP
@@ -336,24 +347,30 @@ background: Done — its summary*); only a notification no drawn call started
 is a notice. Its work is drawn in one place at a time:
 
 - One rule lists subagents, and the column and the switcher bar both list
-  exactly those, in transcript order: a subagent while it runs (not once it
-  is done, failed, idle or unknown), or as you chose once you have pressed
-  the *Beside* toggle on its card, and the one filling the pane until you
-  leave it. Every subagent is reachable from its card whether it is listed
-  or not.
+  exactly those, in transcript order: a subagent until it ends (running, or
+  idle and able to run again), unless you took it out with the *Beside*
+  toggle on its card, and the one filling the pane until you leave it. A
+  subagent that ends (done, failed or unknown) leaves, even one you put
+  back; the one filling the pane stays until you leave it. Every subagent is
+  reachable from its card whether it is listed or not, and *Maximize* on the
+  card of one that ended opens it again.
 - When the pane is wide (1040 px or more), the listed subagents are in a
-  column on the right, stacked one above another; a running one goes back to
-  its card when it finishes. The *Beside* toggle on a card puts a finished
-  one there, or takes one back; once you have pressed it, your choice stands.
+  column on the right, stacked one above another; one goes back to its card
+  when it ends. The *Beside* toggle on the card of one that has not ended
+  takes it out of the column, or puts it back; one that ended has no toggle.
 - The column is laid out the way VS Code lays out its views. Its left edge
   is a sash: drag it (or focus it and use the arrow keys) to widen or narrow
   the column, between 280 px and whatever leaves the conversation 400 px;
-  double-click it to go back to the default share. Between two open panes is
-  another sash that shares their height (neither under 96 px); double-click
-  it to even them all out. The chevron on a pane's header, or the header
+  double-click it to go back to the default share. The line between two
+  panes is drawn over the lower one's header, where one ends and the next
+  begins; between two open panes it is another sash that shares their
+  height (neither under 96 px); double-click it to even them all out. The
+  chevron on a pane's header, or the header
   itself, folds the pane to that one header row in its place, the open panes
   taking the room, and unfolds it again. The sizes and folds last as long as
-  the Agent's pane does.
+  the Agent's pane does; a pane that leaves the column takes its own with it,
+  the others sharing its room in the proportions they had, and comes back
+  open at an ordinary size.
 - A pane's header actions are icons (each named for the screen reader and
   with a tooltip): the fold on the left and *Maximize* on the right in the
   column, and ← back to the conversation on the left when the subagent fills

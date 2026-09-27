@@ -18,11 +18,15 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FONT_FAMILY_RULE } from "../model/fontFamily";
+import { terminalFontStack } from "../shell/terminal/theme";
 import { SettingsApp } from "./SettingsApp";
 import type { SettingsClient } from "./client";
 import { testClient, testConfig } from "./testHarness";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  document.documentElement.removeAttribute("style");
+});
 
 function harness(terminalFontFamily = "SF Mono") {
   const config = testConfig();
@@ -110,6 +114,25 @@ describe("the agent pane font family field", () => {
 
     await vi.waitFor(() => {
       expect(families()).toEqual(["Menlo"]);
+    });
+  });
+
+  it("sets this window's monospace text in the family DevHub is on", async () => {
+    const { client } = harness("Example Mono");
+    const field = await openFontField(client);
+    const mono = () =>
+      document.documentElement.style.getPropertyValue("--font-mono");
+
+    expect(mono()).toBe(terminalFontStack("Example Mono"));
+
+    // A half-typed family is not one DevHub is on.
+    type(field, "Other");
+    expect(mono()).toBe(terminalFontStack("Example Mono"));
+
+    type(field, "Other Mono");
+    fireEvent.blur(field);
+    await vi.waitFor(() => {
+      expect(mono()).toBe(terminalFontStack("Other Mono"));
     });
   });
 

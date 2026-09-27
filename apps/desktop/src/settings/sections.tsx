@@ -277,7 +277,7 @@ export function GeneralSection({
 
       <Group
         heading="Agent panes"
-        note="The workbench's own terminal is styled by the workbench's settings, not by these: DevHub's terminals are the integrated terminal now, and an Agent's pane is the one text surface DevHub still draws itself."
+        note="The workbench's own terminal is styled by the workbench's settings, not by these: DevHub's terminals are the integrated terminal now, and an Agent's pane is the one text surface DevHub still draws itself. The font family is also DevHub's one monospace face: a GUI Agent's code, diffs and command output, and every other fixed-width line in DevHub's own windows, are set in it."
       >
         <Row label="Font">
           <TextField

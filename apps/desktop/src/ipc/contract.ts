@@ -1267,6 +1267,7 @@ export interface TooltipBridge extends PageBridge {
 export interface PickerBridge
 	extends PageBridge,
 		ProjectionBridge,
+		AppearanceBridge,
 		AgentProfilesBridge,
 		AgentActionsBridge,
 		WorkspaceOpeningBridge {
