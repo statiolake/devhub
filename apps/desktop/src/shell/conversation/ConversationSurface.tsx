@@ -20,7 +20,9 @@
  * the pane is wide, a column of subagents; in its place, a subagent the
  * person maximized (`SubagentPanes`). Esc and Ctrl+C stop a running turn from anywhere in the
  * pane, as they do in a terminal Agent; being shown puts the keyboard in the
- * composer, as being shown puts it in a terminal Agent's xterm. Cmd+Q and
+ * composer, as being shown puts it in a terminal Agent's xterm. Cmd+F opens
+ * the find bar (`FindBar`), and F3 / Shift+F3 step through its matches from
+ * anywhere in the pane while it is open. Cmd+Q and
  * the chords after it never reach here — main takes them first.
  */
 
@@ -51,6 +53,7 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import { EntryTreeContext, EntryView, SendingView } from "./EntryView";
+import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
 import { ArrowDownIcon } from "./icons";
@@ -193,10 +196,70 @@ export function ConversationSurface({
     [pickers],
   );
 
+  // Cmd+F: the find bar, searching what is shown. Closing it gives the
+  // keyboard back to where it was when it opened.
+  const [finding, setFinding] = useState(false);
+  const findBar = useRef<FindBarHandle>(null);
+  const focusBeforeFind = useRef<HTMLElement | null>(null);
+  const closeFind = useCallback(() => {
+    setFinding(false);
+    const before = focusBeforeFind.current;
+    focusBeforeFind.current = null;
+    if (before?.isConnected) before.focus();
+    else focusComposer();
+  }, [focusComposer]);
+  const findRoot = useCallback(
+    () =>
+      maximized === undefined
+        ? content.current
+        : (surface.current?.querySelector<HTMLElement>(
+            `[data-view="${CSS.escape(maximized.id)}"] .conversation-transcript`,
+          ) ?? null),
+    [maximized],
+  );
+  const findScope = useMemo(
+    () =>
+      maximized === undefined
+        ? { key: "conversation", name: "Searching the conversation" }
+        : {
+            key: maximized.id,
+            name: `Searching subagent ${maximized.spawns.label}`,
+          },
+    [maximized],
+  );
+  /** The find bar's keys; whether this one was one of them. */
+  const findKey = (event: KeyboardEvent<HTMLElement>): boolean => {
+    const onlyCommandOrShift = !event.altKey && !event.ctrlKey;
+    if (
+      event.metaKey &&
+      !event.shiftKey &&
+      onlyCommandOrShift &&
+      event.key.toLowerCase() === "f"
+    ) {
+      event.preventDefault();
+      if (finding) findBar.current?.focus();
+      else {
+        focusBeforeFind.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        setFinding(true);
+      }
+      return true;
+    }
+    if (finding && event.key === "F3" && !event.metaKey && onlyCommandOrShift) {
+      event.preventDefault();
+      findBar.current?.step(event.shiftKey ? -1 : 1);
+      return true;
+    }
+    return false;
+  };
+
   const running =
     transcript.state.phase === "ready" && transcript.state.turn === "running";
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!running || isImeComposing(event.nativeEvent)) return;
+    if (isImeComposing(event.nativeEvent)) return;
+    if (findKey(event) || !running) return;
     const stop =
       (event.key === "Escape" &&
         !event.metaKey &&
@@ -314,6 +377,15 @@ export function ConversationSurface({
                     {/* The Agent's own column, whose top right corner the
                       Continue button sits in (`ContinueElsewhere`). */}
                     <div className="conversation-main" data-agent-column="">
+                      {finding ? (
+                        <FindBar
+                          ref={findBar}
+                          root={findRoot}
+                          scope={findScope}
+                          revision={transcript}
+                          onClose={closeFind}
+                        />
+                      ) : null}
                       <div
                         className="conversation-body"
                         data-view="conversation"

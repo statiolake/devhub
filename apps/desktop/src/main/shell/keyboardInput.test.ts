@@ -460,6 +460,21 @@ describe("a chord, as Electron delivers it", () => {
 		expect(calls).toEqual(["terminalZoom out"]);
 	});
 
+	it("leaves the find keys to the Agents page, where a GUI Agent's find bar takes them", () => {
+		const { calls, chordHost } = host();
+		const taken = type(
+			chordHost,
+			[
+				input("KeyF", "f", { meta: true }),
+				input("F3", "F3"),
+				input("F3", "F3", { shift: true }),
+			],
+			`${SHELL_ORIGIN}/agents.html`,
+		);
+		expect(taken).toEqual([false, false, false]);
+		expect(calls).toEqual([]);
+	});
+
 	it("does not zoom from any other surface", () => {
 		for (const url of [
 			`${SHELL_ORIGIN}/picker.html`,

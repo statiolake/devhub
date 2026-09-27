@@ -207,6 +207,40 @@ showing to write a rule from, so its status reads the screen as before.
 Unread, injections and the close question otherwise work exactly as for a
 terminal Agent.
 
+**Find (Cmd+F).** Cmd+F anywhere in a GUI Agent's pane — the composer
+included — opens a small find bar at the top right of the conversation, under
+the Continue button: a field, *3 of 12*, *Aa* (match case), ↑ ↓ and ×. Return
+and Shift+Return in the field, and F3 and Shift+F3 anywhere in the pane while
+the bar is open, go to the next and the previous match, around the ends; Cmd+F
+again puts the keyboard back in the field with its words selected; Esc closes
+it and gives the keyboard back to where it was (a running turn is not stopped
+by that Esc). Every match is marked, the current one more strongly (the CSS
+Custom Highlight API, so the document React draws is not touched), and the
+current one is brought into view.
+
+It searches what the pane shows — the conversation, or the subagent that
+fills the pane — and says which; subagents in the column beside it are not
+searched. What it searches is the drawn transcript's words: the person's
+messages, the Agent's answers as their Markdown is drawn, tool titles, the
+readable views (diffs, checklists, answered questions) and the input and
+output folded inside each tool call. Buttons and what is drawn for the eye
+only (a diff's line numbers) are not, and a match does not run from one block
+into the next. This works because nothing that folds leaves anything out of
+the document: a closed tool call keeps its input and output in its
+`<details>`, the `Clip` keeps a long readable view's end, and a long message
+not from the person keeps its lines past the fold `hidden`. A match that
+becomes current inside a fold opens it — each `<details>` around it, and the
+`Clip` or the long message, which open on the find bar's reveal event. The
+count follows the conversation as it streams, and the current match stays
+where it was.
+
+The keys reach the page untouched: main's chord layer claims only its prefix
+(Cmd+Q) and the chords after it, the editing keys on DevHub's own chrome and
+the Agent panes' zoom, none of which is Cmd+F or F3. In a terminal Agent's
+pane the keys stay as they were: Cmd+F does nothing (xterm sends nothing for a
+Command key and DevHub adds no search there), and F3 goes to the program in
+the terminal as its escape sequence.
+
 **Background tasks.** Under the composer, beside the context readout, a quiet
 line says what the Agent has working in the background — *2 background
 tasks · Start the dev server, Research the parser* — while anything is.

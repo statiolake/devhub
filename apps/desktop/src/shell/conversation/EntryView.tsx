@@ -16,6 +16,8 @@ import {
   createContext,
   memo,
   useContext,
+  useEffect,
+  useRef,
   useState,
   type ReactNode,
   type SyntheticEvent,
@@ -46,6 +48,7 @@ import {
   useRewindMessage,
 } from "./ConversationContext";
 import { Clip } from "./Clip";
+import { REVEAL_EVENT } from "./findInTranscript";
 import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
@@ -195,18 +198,32 @@ export const NOT_FROM_YOU_LINES = 8;
  */
 function NotFromYouView({ entry }: { readonly entry: UserEntry }) {
   const [unfolded, setUnfolded] = useState(false);
-  const long = entry.text.split("\n").length > NOT_FROM_YOU_LINES;
+  const lines = entry.text.split("\n");
+  const long = lines.length > NOT_FROM_YOU_LINES;
   const folded = long && !unfolded;
+  // Folded, its lines past the fold are hidden, not left out: the find bar
+  // reaches them, and a match there unfolds it.
+  const text = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = text.current;
+    if (!element) return;
+    const reveal = () => setUnfolded(true);
+    element.addEventListener(REVEAL_EVENT, reveal);
+    return () => element.removeEventListener(REVEAL_EVENT, reveal);
+  }, []);
   return (
     <div className="conversation-other" data-folded={folded || undefined}>
       <div className="conversation-other-label">
         Message to the Agent (not from you)
       </div>
       {entry.text !== "" ? (
-        <div className="conversation-other-text">
-          {folded
-            ? entry.text.split("\n").slice(0, NOT_FROM_YOU_LINES).join("\n")
-            : entry.text}
+        <div ref={text} className="conversation-other-text" data-find-fold="">
+          {lines.slice(0, NOT_FROM_YOU_LINES).join("\n")}
+          {long ? (
+            <span className="conversation-other-rest" hidden={folded}>
+              {"\n" + lines.slice(NOT_FROM_YOU_LINES).join("\n")}
+            </span>
+          ) : null}
         </div>
       ) : null}
       <ImageStrip images={entry.images} />

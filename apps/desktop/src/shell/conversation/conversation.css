@@ -55,10 +55,114 @@
 
 /* The conversation's own column: what is shown in it, and the composer, which talks to the conversation whatever is shown above it. */
 .conversation-main {
+  position: relative;
   display: flex;
   min-width: 0;
   flex: 1;
   flex-direction: column;
+}
+
+/* ------------------------------------------------------ Find (Cmd+F) */
+
+/* At the top right of the conversation, under the Continue button that
+   holds the very corner (`continueElsewhere.css`), like VS Code's find
+   widget. */
+.conversation-find {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--space-3) + 2.25em);
+  right: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  box-shadow: var(--shadow-dialog);
+  font-size: 0.85em;
+  gap: 2px;
+}
+
+.conversation-find-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.conversation-find-field {
+  width: 16em;
+  padding: 2px var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--surface);
+  color: var(--primary);
+  font: inherit;
+}
+
+.conversation-find-field:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.conversation-find-count {
+  min-width: 5.5em;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.conversation-find-count[data-none] {
+  color: var(--danger);
+}
+
+.conversation-find-button {
+  display: inline-flex;
+  min-width: 1.6em;
+  height: 1.6em;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-row);
+  background: none;
+  color: var(--secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.conversation-find-button:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.conversation-find-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.conversation-find-case[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--primary);
+}
+
+.conversation-find-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.conversation-find-scope {
+  color: var(--tertiary);
+  font-size: 0.9em;
+}
+
+/* Every match, and the current one more strongly (`findHighlights.ts`). */
+::highlight(conversation-find) {
+  background-color: color-mix(in srgb, var(--status-working) 30%, transparent);
+}
+
+::highlight(conversation-find-current) {
+  background-color: var(--status-working);
+  color: var(--surface);
 }
 
 .conversation-body[hidden] {

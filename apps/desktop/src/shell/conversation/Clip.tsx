@@ -14,7 +14,14 @@
  * whether they overflow.
  */
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { REVEAL_EVENT } from "./findInTranscript";
 
 /**
  * Where the scroller must be for an element that moved from `before` to
@@ -52,6 +59,15 @@ export function Clip({ children }: { readonly children: ReactNode }) {
     return () => observer.disconnect();
   }, [children]);
 
+  // A match the find bar makes current inside the cut opens it.
+  useEffect(() => {
+    const element = box.current;
+    if (!element) throw new Error("a clipped view was not mounted");
+    const reveal = () => setOpen(true);
+    element.addEventListener(REVEAL_EVENT, reveal);
+    return () => element.removeEventListener(REVEAL_EVENT, reveal);
+  }, []);
+
   useLayoutEffect(() => {
     const before = closing.current;
     closing.current = undefined;
@@ -76,6 +92,7 @@ export function Clip({ children }: { readonly children: ReactNode }) {
         ref={box}
         className="conversation-clip-box"
         data-open={open || undefined}
+        data-find-fold=""
       >
         {children}
       </div>

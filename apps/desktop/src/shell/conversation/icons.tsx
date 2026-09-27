@@ -83,6 +83,22 @@ export function ArrowDownIcon() {
   );
 }
 
+export function ArrowUpIcon() {
+  return (
+    <Icon>
+      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+    </Icon>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <Icon>
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </Icon>
+  );
+}
+
 export function ArrowLeftIcon() {
   return (
     <Icon>

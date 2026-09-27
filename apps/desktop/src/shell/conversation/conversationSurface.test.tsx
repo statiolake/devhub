@@ -101,11 +101,15 @@ describe("every entry kind", () => {
     ).toBeNull();
     const text = () =>
       entry("o2").querySelector(".conversation-other-text")!.textContent;
+    const rest = () => entry("o2").querySelector(".conversation-other-rest")!;
     expect(text()).toContain("line 8");
-    expect(text()).not.toContain("line 9");
+    // Past the fold, hidden rather than left out: Cmd+F still reaches it.
+    expect(rest()).toHaveTextContent("line 9");
+    expect(rest()).not.toBeVisible();
     fireEvent.click(
       within(entry("o2")).getByRole("button", { name: "Show all" }),
     );
+    expect(rest()).toBeVisible();
     expect(text()).toContain("line 12");
     expect(
       within(entry("o2")).getByRole("button", { name: "Show less" }),
