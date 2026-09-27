@@ -1574,6 +1574,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		status: ToolStatus,
 		output: ToolEntry["output"],
 		spawns: SubagentInfo | undefined = undefined,
+		change: ToolEntry["change"] = undefined,
 	): ToolEntry {
 		return {
 			kind: "tool",
@@ -1592,6 +1593,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			// Codex's plan is an item of its own (`turn/plan/updated`).
 			plan: undefined,
 			denial: undefined,
+			change,
 		};
 	}
 
@@ -1617,15 +1619,12 @@ export class CodexAdapter implements ProtocolAdapter {
 				})),
 			},
 			status,
-			[
-				{
-					kind: "diff",
-					files: changes.map((change) => ({
-						path: change.path,
-						unifiedDiff: change.diff,
-					})),
-				},
-			],
+			undefined,
+			undefined,
+			changes.map((change) => ({
+				path: change.path,
+				unifiedDiff: change.diff,
+			})),
 		);
 	}
 

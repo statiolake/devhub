@@ -127,7 +127,7 @@ describe("a real claude session, as the page draws it", () => {
     // jsdom applies no stylesheet, so the rule is read where it is written.
     const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
     const rule =
-      /\.conversation-json,\s*\.conversation-output,\s*\.conversation-request-command\s*\{([^}]*)\}/.exec(
+      /\*\/\n\.conversation-json,\s*\.conversation-output,\s*\.conversation-request-command\s*\{([^}]*)\}/.exec(
         css,
       );
     expect(rule?.[1]).toMatch(/white-space:\s*pre-wrap/);

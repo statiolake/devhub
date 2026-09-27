@@ -262,6 +262,13 @@ export interface ToolEntry {
   /** The plan the call set (Claude's TodoWrite), whole, as it stands after it. */
   readonly plan: readonly PlanStep[] | undefined;
   /**
+   * The change the call makes to files (Claude's Edit, MultiEdit and Write;
+   * Codex's file changes), as unified diffs: what its input asks for from
+   * the moment it is made, and the CLI's own patch once its result gives
+   * one. Drawn as the call's readable view, whatever its status.
+   */
+  readonly change: readonly FileDiff[] | undefined;
+  /**
    * The call was refused by the CLI's own permission check (a rule, auto
    * mode's classifier), not by the person: who refused it and why.
    */
@@ -396,7 +403,6 @@ export type ToolOutputPart =
   | { readonly kind: "image"; readonly image: ImageRef }
   /** A tool the call made available (a tool search's find), by name. */
   | { readonly kind: "reference"; readonly name: string }
-  | { readonly kind: "diff"; readonly files: readonly FileDiff[] }
   | {
       readonly kind: "command";
       /** Absent when the CLI did not say; never assumed to be 0. */

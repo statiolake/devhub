@@ -160,21 +160,21 @@ function outline(
 				break;
 			case "tool":
 				line = `tool ${entry.tool} "${entry.title}" ${entry.status}${
-					entry.output === undefined
-						? ""
-						: ` -> ${entry.output
-								.map((part) =>
-									part.kind === "diff"
-										? part.files.map((file) => file.path).join(",")
-										: JSON.stringify(
-												part.kind === "command"
-													? part.output
-													: part.kind === "text"
-														? part.text
-														: part.kind,
-											),
-								)
-								.join(" + ")}`
+					entry.change !== undefined
+						? ` -> ${entry.change.map((file) => file.path).join(",")}`
+						: entry.output === undefined
+							? ""
+							: ` -> ${entry.output
+									.map((part) =>
+										JSON.stringify(
+											part.kind === "command"
+												? part.output
+												: part.kind === "text"
+													? part.text
+													: part.kind,
+										),
+									)
+									.join(" + ")}`
 				}${entry.spawns === undefined ? "" : ` spawns ${entry.spawns.label}/${entry.spawns.state}`}`;
 				break;
 			case "notice":

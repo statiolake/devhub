@@ -258,15 +258,10 @@ describe("every entry kind", () => {
         ),
         put(
           tool("t3", "Edit: src/x.ts", {
-            output: [
+            change: [
               {
-                kind: "diff",
-                files: [
-                  {
-                    path: "src/x.ts",
-                    unifiedDiff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
-                  },
-                ],
+                path: "src/x.ts",
+                unifiedDiff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
               },
             ],
           }),
@@ -381,7 +376,7 @@ describe("every entry kind", () => {
       ]),
     );
     const strip = entry("t1").querySelector(
-      ":scope .conversation-tool-entry > .conversation-images",
+      ":scope .conversation-tool-entry > .conversation-readable .conversation-images",
     )!;
     expect(strip).not.toBeNull();
     expect(strip.closest("details.conversation-tool")).toBeNull();
@@ -472,7 +467,7 @@ describe("every entry kind", () => {
     );
     const outside = (id: string) =>
       entry(id).querySelector(
-        ":scope .conversation-tool-entry > .conversation-checklist",
+        ":scope .conversation-tool-entry > .conversation-readable .conversation-checklist",
       );
     expect(outside("t1")).toBeNull();
     const latest = outside("t2")!;

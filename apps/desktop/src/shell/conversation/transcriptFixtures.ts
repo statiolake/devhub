@@ -9,6 +9,7 @@
 
 import {
   type Denial,
+  type FileDiff,
   type UserOrigin,
   applyEvents,
   EMPTY_TRANSCRIPT,
@@ -94,6 +95,7 @@ export function tool(
     outsideSandbox = false,
     plan,
     denial,
+    change,
   }: {
     name?: string;
     input?: JsonValue;
@@ -105,6 +107,7 @@ export function tool(
     outsideSandbox?: boolean;
     plan?: readonly PlanStep[];
     denial?: Denial;
+    change?: readonly FileDiff[];
   } = {},
 ): TranscriptEntry {
   return {
@@ -121,6 +124,7 @@ export function tool(
     outsideSandbox,
     plan,
     denial,
+    change,
   };
 }
 

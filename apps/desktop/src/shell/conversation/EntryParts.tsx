@@ -10,6 +10,7 @@ import type {
   ToolOutput,
   ToolOutputPart,
 } from "../../model/conversation";
+import { useAgentCwd } from "./ConversationContext";
 
 export function JsonView({ value }: { readonly value: JsonValue }) {
   // A bare string is shown as itself: a command line or a path reads better
@@ -23,33 +24,90 @@ export function JsonView({ value }: { readonly value: JsonValue }) {
   );
 }
 
-function lineKind(line: string): "add" | "remove" | "hunk" | "context" {
+type LineKind = "add" | "remove" | "hunk" | "context";
+
+function lineKind(line: string): LineKind {
   if (line.startsWith("@@")) return "hunk";
   if (line.startsWith("+") && !line.startsWith("+++")) return "add";
   if (line.startsWith("-") && !line.startsWith("---")) return "remove";
   return "context";
 }
 
+export interface DiffRow {
+  readonly kind: LineKind;
+  readonly text: string;
+  /** The line's number in the file before and after, where the hunk says. */
+  readonly old: number | undefined;
+  readonly new: number | undefined;
+}
+
+/**
+ * A unified diff as rows, each numbered as its hunk header says: a context
+ * line in both files, a removed one in the old, an added one in the new. A
+ * hunk without numbers (`@@` alone, a diff made from a call's input) numbers
+ * nothing.
+ */
+export function diffRows(unifiedDiff: string): readonly DiffRow[] {
+  let old: number | undefined;
+  let next: number | undefined;
+  return unifiedDiff.split("\n").map((text): DiffRow => {
+    const kind = lineKind(text);
+    if (kind === "hunk") {
+      const numbers = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(text);
+      old = numbers === null ? undefined : Number(numbers[1]);
+      next = numbers === null ? undefined : Number(numbers[2]);
+      return { kind, text, old: undefined, new: undefined };
+    }
+    const row: DiffRow = {
+      kind,
+      text,
+      old: kind === "add" ? undefined : old,
+      new: kind === "remove" ? undefined : next,
+    };
+    if (kind !== "add" && old !== undefined) old += 1;
+    if (kind !== "remove" && next !== undefined) next += 1;
+    return row;
+  });
+}
+
+/** A path inside the Agent's directory, relative to it; any other, whole. */
+export function shownPath(path: string, cwd: string | undefined): string {
+  if (cwd === undefined || cwd === "") return path;
+  const base = cwd.endsWith("/") ? cwd : `${cwd}/`;
+  return path.startsWith(base) ? path.slice(base.length) : path;
+}
+
+/**
+ * Each file's change: its path (relative to the Agent's directory when inside
+ * it) over its lines, one row each, numbered where the diff says, a long line
+ * wrapping under itself rather than running off to the side.
+ */
 export function DiffView({ files }: { readonly files: readonly FileDiff[] }) {
+  const cwd = useAgentCwd();
   return (
     <div className="conversation-diff">
       {files.map((file, index) => (
         <div className="conversation-diff-file" key={`${index}:${file.path}`}>
-          <div className="conversation-diff-path">{file.path}</div>
-          <pre>
-            <code>
-              {file.unifiedDiff.split("\n").map((line, at, lines) => (
-                <span
-                  key={at}
-                  className="conversation-diff-line"
-                  data-line={lineKind(line)}
-                >
-                  {line}
-                  {at < lines.length - 1 ? "\n" : null}
+          <div className="conversation-diff-path" title={file.path}>
+            {shownPath(file.path, cwd)}
+          </div>
+          <div className="conversation-diff-lines">
+            {diffRows(file.unifiedDiff).map((row, at) => (
+              <div
+                key={at}
+                className="conversation-diff-line"
+                data-line={row.kind}
+              >
+                <span className="conversation-diff-number" aria-hidden="true">
+                  {row.old ?? ""}
                 </span>
-              ))}
-            </code>
-          </pre>
+                <span className="conversation-diff-number" aria-hidden="true">
+                  {row.new ?? ""}
+                </span>
+                <span className="conversation-diff-text">{row.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </div>
@@ -117,8 +175,6 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
           Loaded the tool <code>{part.name}</code>
         </div>
       );
-    case "diff":
-      return <DiffView files={part.files} />;
     case "command":
       return (
         <>

@@ -120,3 +120,15 @@ export function useRewindMessage(): RewindMessage {
   }
   return rewind;
 }
+
+/**
+ * The directory the Agent works in, as its session says, when it has said:
+ * a path inside it is drawn relative to it.
+ */
+const AgentCwdContext = createContext<string | undefined>(undefined);
+
+export const AgentCwdProvider = AgentCwdContext.Provider;
+
+export function useAgentCwd(): string | undefined {
+  return useContext(AgentCwdContext);
+}

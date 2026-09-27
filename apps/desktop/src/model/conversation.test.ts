@@ -105,6 +105,7 @@ function tool(
       outsideSandbox: false,
       plan: undefined,
       denial: undefined,
+      change: undefined,
       ...fields,
     },
   };
@@ -432,25 +433,17 @@ describe("a tool call", () => {
     }
   });
 
-  it("carries a diff as its output", () => {
+  it("carries the change it makes to files", () => {
     const edited = fold(
       tool("t1", {
         tool: "Edit",
         title: "Edit: src/x.ts",
         status: "succeeded",
-        output: [
-          {
-            kind: "diff",
-            files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
-          },
-        ],
+        change: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
       }),
     );
-    expect((entry(edited, "t1") as ToolEntry).output).toEqual([
-      {
-        kind: "diff",
-        files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
-      },
+    expect((entry(edited, "t1") as ToolEntry).change).toEqual([
+      { path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" },
     ]);
   });
 });

@@ -31,6 +31,7 @@ const running: ConversationEvent[] = [
 			outsideSandbox: false,
 			plan: undefined,
 			denial: undefined,
+			change: undefined,
 		},
 	},
 ];

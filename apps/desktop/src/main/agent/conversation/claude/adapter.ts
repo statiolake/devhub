@@ -1346,6 +1346,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						outsideSandbox: block.input.dangerouslyDisableSandbox === true,
 						plan: planOf(block.name, block.input),
 						denial: undefined,
+						change: changeOf(block.name, block.input, undefined),
 					},
 				});
 			}
@@ -1660,6 +1661,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				...tool,
 				status,
 				output: toolOutput(tool, block, result),
+				change:
+					result.patch === undefined
+						? tool.change
+						: changeOf(tool.tool, tool.input as JsonObject, result.patch),
 				// A command that went on in the background — asked to, or moved
 				// there when it outran its timeout — runs on from here, until
 				// news of its task says how it ended. One read back from a
@@ -2113,10 +2118,6 @@ function toolOutput(
 			];
 		}
 	}
-	if (FILE_TOOLS.has(tool.tool) && !block.isError) {
-		const diff = fileDiff(tool, result);
-		if (diff !== undefined) return [{ kind: "diff", files: [diff] }];
-	}
 	return parts;
 }
 
@@ -2142,13 +2143,23 @@ function persistedPart(text: string, result: ToolUseResult): ToolOutputPart {
  * The change a file tool made: the CLI's own patch when it gives one (with
  * line numbers), else what the call's input says it replaced.
  */
-function fileDiff(
-	tool: ToolEntry,
-	result: ToolUseResult,
-): FileDiff | undefined {
-	if (result.patch !== undefined)
-		return { path: result.patch.path, unifiedDiff: result.patch.hunks };
-	const input = tool.input as JsonObject;
+/**
+ * The change a file tool's call makes: the CLI's own patch once its result
+ * gives one, else what its input asks for. Undefined for any other tool.
+ */
+function changeOf(
+	name: string,
+	input: JsonObject,
+	patch: ToolUseResult["patch"],
+): readonly FileDiff[] | undefined {
+	if (!FILE_TOOLS.has(name)) return undefined;
+	if (patch !== undefined)
+		return [{ path: patch.path, unifiedDiff: patch.hunks }];
+	const diff = inputDiff(name, input);
+	return diff === undefined ? undefined : [diff];
+}
+
+function inputDiff(name: string, input: JsonObject): FileDiff | undefined {
 	const path = input.file_path;
 	if (typeof path !== "string") return undefined;
 	const lines = (mark: string, text: JsonValue | undefined) =>
@@ -2158,9 +2169,9 @@ function fileDiff(
 		return [...lines("-", before), ...lines("+", after)];
 	};
 	const hunks =
-		tool.tool === "Write"
+		name === "Write"
 			? [lines("+", input.content)]
-			: tool.tool === "MultiEdit"
+			: name === "MultiEdit"
 				? (Array.isArray(input.edits) ? input.edits : []).map(replaced)
 				: [replaced(input)];
 	const written = hunks.filter((hunk) => hunk.length > 0);

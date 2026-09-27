@@ -44,7 +44,8 @@ import {
   useConversationActions,
   useRewindMessage,
 } from "./ConversationContext";
-import { ImageView, JsonView, OutputView } from "./EntryParts";
+import { Clip } from "./Clip";
+import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -483,6 +484,35 @@ function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
   );
 }
 
+/**
+ * A call's readable view: what it did, drawn for reading rather than as its
+ * raw input and output, under its row and outside its fold — the change it
+ * makes to files, the plan it set (the latest one; earlier ones stay in
+ * their calls), the images it gave back. One slot for every tool, cut to a
+ * height by the one `Clip`. A call with none of these has no readable view.
+ */
+function ReadableView({
+  entry,
+  planShown,
+}: {
+  readonly entry: ToolEntry;
+  readonly planShown: boolean;
+}) {
+  const images = outputImages(entry);
+  const plan = planShown ? entry.plan : undefined;
+  if (entry.change === undefined && plan === undefined && images.length === 0)
+    return null;
+  return (
+    <div className="conversation-readable">
+      <Clip>
+        {entry.change !== undefined ? <DiffView files={entry.change} /> : null}
+        {plan !== undefined ? <PlanChecklist steps={plan} /> : null}
+        <ImageStrip images={images} />
+      </Clip>
+    </div>
+  );
+}
+
 const ToolView = memo(function ToolView({
   entry,
   childEntries,
@@ -514,11 +544,7 @@ const ToolView = memo(function ToolView({
         <ToolSummary entry={entry} />
         <ToolBody entry={entry} />
       </details>
-      <ImageStrip images={outputImages(entry)} />
-      {planShown && entry.plan !== undefined ? (
-        // The plan as it stands now, unfolded; earlier ones stay in their calls.
-        <PlanChecklist steps={entry.plan} />
-      ) : null}
+      <ReadableView entry={entry} planShown={planShown} />
       {entry.background?.summary ? (
         // How a background task the call started ended, in the CLI's one
         // line; how it stands is the call's own mark.

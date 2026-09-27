@@ -732,7 +732,6 @@
 .conversation-code pre,
 .conversation-json,
 .conversation-output,
-.conversation-diff pre,
 .conversation-request-command {
   padding: var(--space-2) var(--space-3);
   margin: 0;
@@ -1150,9 +1149,34 @@
   font-size: 0.85em;
 }
 
+.conversation-diff-lines {
+  padding: var(--space-1) 0;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+/* One row per line: two line numbers, then the line, which wraps under
+   itself past its +/- mark instead of running off to the side. */
 .conversation-diff-line {
-  display: inline-block;
-  min-width: 100%;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.conversation-diff-number {
+  min-width: 3ch;
+  padding: 0 var(--space-1);
+  color: var(--tertiary);
+  text-align: right;
+  user-select: none;
+}
+
+.conversation-diff-text {
+  padding: 0 var(--space-3) 0 calc(var(--space-1) + 1ch);
+  overflow-wrap: anywhere;
+  text-indent: -1ch;
+  white-space: pre-wrap;
 }
 
 .conversation-diff-line[data-line="add"] {
@@ -1165,6 +1189,47 @@
 
 .conversation-diff-line[data-line="hunk"] {
   color: var(--secondary);
+}
+
+/* A call's readable view, under its row: its diff, plan or images. */
+.conversation-readable {
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.conversation-readable .conversation-diff {
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+}
+
+/* A long readable view, cut like a chat app's snippet: its last lines fade,
+   and Show all opens it whole. */
+.conversation-clip-box {
+  max-height: 18em;
+  overflow: hidden;
+}
+
+.conversation-clip-box[data-open] {
+  max-height: none;
+}
+
+.conversation-clip[data-long]:not([data-open]) .conversation-clip-box {
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+.conversation-clip-toggle {
+  padding: 2px var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8em;
+}
+
+.conversation-clip-toggle:hover {
+  color: var(--primary);
 }
 
 /* A subagent is a card of its own: its name, model and state on top, its

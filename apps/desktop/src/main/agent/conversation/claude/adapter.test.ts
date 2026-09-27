@@ -2752,12 +2752,21 @@ describe("what a tool gave back", () => {
 
 	const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
 
-	it("is an Edit's diff from the CLI's patch, with its line numbers", () => {
+	const change = (adapter: ClaudeAdapter) =>
+		(entry(adapter, "tool:toolu_t") as ToolEntry).change;
+
+	it("is an Edit's change from its input while it runs, and the CLI's patch, with its line numbers, once done", () => {
 		const adapter = called("Edit", {
 			file_path: "/home/testuser/project/src/x.ts",
 			old_string: "const a = 1;",
 			new_string: "const a = 2;",
 		});
+		expect(change(adapter)).toEqual([
+			{
+				path: "/home/testuser/project/src/x.ts",
+				unifiedDiff: "@@\n-const a = 1;\n+const a = 2;",
+			},
+		]);
 		adapter.received(
 			resultOf("toolu_t", "The file has been updated.", {
 				toolUseResult: {
@@ -2776,31 +2785,27 @@ describe("what a tool gave back", () => {
 				},
 			}),
 		);
-		expect(output(adapter)).toEqual([
+		expect(change(adapter)).toEqual([
 			{
-				kind: "diff",
-				files: [
-					{
-						path: "/home/testuser/project/src/x.ts",
-						unifiedDiff: "@@ -3,1 +3,1 @@\n-const a = 1;\n+const a = 2;",
-					},
-				],
+				path: "/home/testuser/project/src/x.ts",
+				unifiedDiff: "@@ -3,1 +3,1 @@\n-const a = 1;\n+const a = 2;",
 			},
+		]);
+		// The result's words stay its output; the change is not repeated there.
+		expect(output(adapter)).toEqual([
+			{ kind: "text", text: "The file has been updated." },
 		]);
 	});
 
-	it("is an edit's diff from its input when the CLI gave no patch: Edit, MultiEdit, and a Write of a new file", () => {
+	it("is an edit's change from its input when the CLI gave no patch: Edit, MultiEdit, and a Write of a new file", () => {
 		const edit = called("Edit", {
 			file_path: "src/x.ts",
 			old_string: "a\nb",
 			new_string: "c",
 		});
 		edit.received(resultOf("toolu_t", "The file has been updated."));
-		expect(output(edit)).toEqual([
-			{
-				kind: "diff",
-				files: [{ path: "src/x.ts", unifiedDiff: "@@\n-a\n-b\n+c" }],
-			},
+		expect(change(edit)).toEqual([
+			{ path: "src/x.ts", unifiedDiff: "@@\n-a\n-b\n+c" },
 		]);
 		const multi = called("MultiEdit", {
 			file_path: "src/y.ts",
@@ -2810,13 +2815,8 @@ describe("what a tool gave back", () => {
 			],
 		});
 		multi.received(resultOf("toolu_t", "Applied 2 edits."));
-		expect(output(multi)).toEqual([
-			{
-				kind: "diff",
-				files: [
-					{ path: "src/y.ts", unifiedDiff: "@@\n-one\n+1\n@@\n-two\n+2" },
-				],
-			},
+		expect(change(multi)).toEqual([
+			{ path: "src/y.ts", unifiedDiff: "@@\n-one\n+1\n@@\n-two\n+2" },
 		]);
 		const write = called("Write", {
 			file_path: "notes.md",
@@ -2832,15 +2832,12 @@ describe("what a tool gave back", () => {
 				},
 			}),
 		);
-		expect(output(write)).toEqual([
-			{
-				kind: "diff",
-				files: [{ path: "notes.md", unifiedDiff: "@@\n+# Notes\n+hi" }],
-			},
+		expect(change(write)).toEqual([
+			{ path: "notes.md", unifiedDiff: "@@\n+# Notes\n+hi" },
 		]);
 	});
 
-	it("is a failed edit's own words, not a diff that did not happen", () => {
+	it("is a failed edit's own words, beside the change it meant to make", () => {
 		const adapter = called("Edit", {
 			file_path: "src/x.ts",
 			old_string: "a",
@@ -2854,6 +2851,10 @@ describe("what a tool gave back", () => {
 		);
 		expect(output(adapter)).toEqual([
 			{ kind: "text", text: "String to replace not found in file." },
+		]);
+		// What it meant to change is still what the call was.
+		expect(change(adapter)).toEqual([
+			{ path: "src/x.ts", unifiedDiff: "@@\n-a\n+b" },
 		]);
 	});
 

@@ -293,6 +293,19 @@ ends, not *Done* the moment the launch returned (`workState` in
 call that itself failed, was denied or was interrupted is that, whatever it
 started. A subagent's pane header in the column carries the same glyph.
 
+**A call's readable view** is what it did drawn for reading, under its row
+and outside its fold, whatever the call's status; the fold keeps its raw
+input and output. Three things are one: the change a file edit makes (a
+diff, each line its own row with its old and new line numbers, a long line
+wrapping under itself, the file named relative to the Agent's directory when
+inside it), the plan the latest TodoWrite set, and the images a call gave
+back. A readable view taller than a snippet is cut, its end fading, with
+*Show all* to open it whole and *Show less* to cut it again; closing keeps
+the button where it was on screen, so the conversation does not jump to
+what came after. Command output, text results, a question's answer and a
+subagent's work have views of their own (the output in the fold, the
+answer as your message, the subagent's card) and no readable view.
+
 **A tool call's title** is the tool and what the call does: the argument
 that says it for a tool DevHub knows (`Bash: npm test`, `SendMessage:
 researcher — status`, `TaskUpdate: 3 → completed`, `ToolSearch: …`), an MCP
@@ -312,9 +325,10 @@ way is also what the Agent's row says it is doing when no call runs.
 gave it:
 
 - An edit (Claude's Edit, MultiEdit and Write; Codex's file changes) is a
-  diff: the CLI's own patch with its line numbers when it gives one, else the
-  text the call's input says it replaced. An edit that failed shows the
-  CLI's words instead.
+  diff in the call's readable view (below): the text the call's input says
+  it replaces from the moment the call is made, and the CLI's own patch,
+  with its line numbers, once its result gives one. A failed edit shows the
+  change it meant to make, and the CLI's words in its output.
 - A command shows its output, and apart from it what it printed on stderr
   (Claude keeps the two apart), *Interrupted* when it was stopped, and its
   exit code when the CLI says it (a failed Claude command's *Exit code N*;
