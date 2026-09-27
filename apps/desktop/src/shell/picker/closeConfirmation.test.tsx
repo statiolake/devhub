@@ -613,3 +613,31 @@ describe("what a confirmation knows about itself", () => {
     }
   });
 });
+
+/**
+ * Every confirmation this sheet asks has one Cancel. The rows are the
+ * answers, so Cancel is a row, and a footer button saying Cancel again under
+ * "Cancel — Leave the Agent running." was the same answer drawn twice.
+ */
+describe("the one Cancel a confirmation has", () => {
+  afterEach(cleanup);
+
+  for (const [name, purpose] of [
+    ["a stop", STOP_AGENT],
+    [
+      "a continue",
+      { kind: "agent_continue", agentId: AGENT_ID, presentation: "tui" },
+    ],
+    ["a close", CLOSE_WORKSPACE],
+  ] as const) {
+    it(`is its first row, and nothing else, for ${name}`, async () => {
+      mount(snapshotWith(true), vi.fn(), purpose);
+      await waitFor(() => {
+        expect(rows()).toHaveLength(2);
+      });
+      expect(rows()[0]).toBe("Cancel");
+      expect(screen.getAllByText("Cancel")).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    });
+  }
+});

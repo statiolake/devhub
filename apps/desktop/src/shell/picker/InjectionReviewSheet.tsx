@@ -24,6 +24,7 @@ import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { agentAtPrompt } from "../../model/domain";
 import { isImeComposing } from "../accessibility/ime";
+import { spokenFailure } from "../failure";
 import { useInitialFocus } from "./initialFocus";
 import { usePicker } from "./PickerContext";
 
@@ -97,7 +98,15 @@ export function InjectionReviewSheet({
       onDismiss();
     } catch (error: unknown) {
       setBusy(false);
-      setFailure(error instanceof Error ? error.message : String(error));
+      // A refusal worded for the person is said here, under the message they
+      // can send again; anything else is DevHub's to report, at the root.
+      const spoken = spokenFailure(error);
+      if (!spoken) throw error;
+      setFailure(
+        spoken.detail == null
+          ? spoken.summary
+          : `${spoken.summary} ${spoken.detail}`,
+      );
     }
   }, [agentId, busy, confirmInjection, gone, injectionId, onDismiss, value]);
 
@@ -182,19 +191,21 @@ export function InjectionReviewSheet({
           {/* Why it has not gone yet, in the sheet's own voice. The agent is
               starting behind this sheet, so "waiting for the agent" is news
               rather than an excuse — and it is what makes the two waits
-              visible as two. */}
-          <p className="picker-note mac-caption" role="status">
-            {gone ??
-              failure ??
-              (agent !== undefined && agentAtPrompt(agent.status)
+              visible as two. Once it cannot go, or did not, that is what the
+              line says instead, as an alert: one line either way, because the
+              same sentence drawn as the note and again as the alert under it
+              was one thing said twice. */}
+          {gone === undefined && failure === undefined ? (
+            <p className="picker-note mac-caption" role="status">
+              {agent !== undefined && agentAtPrompt(agent.status)
                 ? "The agent is ready. It will be sent as soon as you confirm."
-                : "It is sent once you confirm and the agent's prompt is free.")}
-          </p>
-          {gone !== undefined || failure !== undefined ? (
+                : "It is sent once you confirm and the agent's prompt is free."}
+            </p>
+          ) : (
             <p className="picker-note picker-note-failure" role="alert">
               {gone ?? failure}
             </p>
-          ) : null}
+          )}
           <div className="picker-actions">
             <span />
             <div className="injection-review-buttons">

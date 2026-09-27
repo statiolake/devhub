@@ -371,3 +371,75 @@ describe("the picker", () => {
     expect(screen.queryByText(/^Step /)).toBeNull();
   });
 });
+
+/**
+ * A confirmation's safe answer is a row, and the footer does not repeat it.
+ * The stop, continue and close sheets drew "Cancel — Leave the Agent
+ * running." and a Cancel button under it: one answer, twice.
+ */
+describe("a confirmation's Cancel", () => {
+  const confirm = (
+    overrides: Partial<React.ComponentProps<typeof Picker>> = {},
+  ) =>
+    renderPicker({
+      title: "Stop “api”?",
+      question: "This stops the Agent runtime.",
+      items: [{ id: "stop", label: "Stop the Agent" }],
+      cancelRow: { detail: "Leave the Agent running." },
+      ...overrides,
+    });
+
+  it("is drawn once, as the first row, with no button beside it", () => {
+    confirm();
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Cancel");
+    expect(options[0]).toHaveTextContent("Leave the Agent running.");
+    expect(screen.getAllByText("Cancel")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("is what Return takes, and it cancels rather than choosing", () => {
+    const { onChoose, onCancel } = confirm();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+
+  it("cancels when clicked, as Escape does", () => {
+    const { onChoose, onCancel } = confirm();
+    fireEvent.click(screen.getByRole("option", { name: /Cancel/ }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(2);
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+
+  it("leaves the other answer to onChoose", () => {
+    const { onChoose, onCancel } = confirm();
+    fireEvent.click(screen.getByRole("option", { name: /Stop the Agent/ }));
+    expect(onChoose).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "stop" }),
+    );
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("goes by the question's own name for doing nothing when it has one", () => {
+    confirm({
+      cancelRow: {
+        label: "Keep these settings",
+        detail: "Nothing is written.",
+      },
+    });
+    expect(screen.getAllByRole("option")[0]).toHaveTextContent(
+      "Keep these settings",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByText("Cancel")).toBeNull();
+  });
+
+  it("is the footer's button in a picker that is a choice among things", () => {
+    const { onCancel } = renderPicker({});
+    expect(screen.queryByRole("option", { name: /Cancel/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});

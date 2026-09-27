@@ -297,6 +297,41 @@ describe("reviewing what DevHub is about to say", () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
+  it("says it once: the alert takes the waiting line's place", async () => {
+    mount(snapshotWith("gone"));
+    await screen.findByRole("alert");
+    expect(screen.getAllByText(/agent has ended/u)).toHaveLength(1);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("says a refused send in its own words, once, and keeps the sheet", async () => {
+    const running = snapshotWith("running");
+    // A named failure crosses IPC as its wire, serialised into the message.
+    const confirmInjection = vi.fn(async () => {
+      throw new Error(
+        JSON.stringify({
+          code: "agent_not_connected",
+          summary: "The agent is not connected.",
+          detail: "its prompt never came back",
+          module: "agent",
+          timestampMs: 1,
+          runtimeVersion: "0.1.0",
+          actions: ["retry"],
+        }),
+      );
+    });
+    const { onDismiss } = mount(running, { confirmInjection });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The agent is not connected. its prompt never came back",
+    );
+    expect(screen.getAllByText(/its prompt never came back/u)).toHaveLength(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it("says so when the agent stopped while the sheet stood", async () => {
     mount(snapshotWith("stopped"));
     expect(await screen.findByRole("alert")).toHaveTextContent(

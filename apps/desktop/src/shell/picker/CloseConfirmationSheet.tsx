@@ -14,7 +14,8 @@
  * safe answer was the one furthest from the default. A confirmation is a list
  * with as many rows as there are answers and the safe one first — see
  * `Picker`'s docstring — so Cancel leads, Return takes it, and Escape means
- * what Cancel means.
+ * what Cancel means. The picker draws that row (`cancelRow`), and it is the
+ * sheet's only Cancel.
  *
  * What was going to be closed used to be a table under the message. It is the
  * note under the list now, which is the same place in the sheet and the same
@@ -174,8 +175,6 @@ function collapsed(
   return joined;
 }
 
-/** The safe row, and therefore the first one. */
-const CANCEL = "devhub:cancel";
 /** The row that does the thing being asked about. */
 const CONFIRM = "devhub:confirm";
 
@@ -292,32 +291,30 @@ export function CloseConfirmationSheet({
       key={attempt}
       title={words.title}
       question={words.question}
+      cancelRow={{ detail: words.cancel }}
       items={[
-        { id: CANCEL, label: "Cancel", detail: words.cancel },
         { id: CONFIRM, label: words.confirm, detail: words.confirmDetail },
       ]}
       note={
-        <>
-          {failure ? (
-            <span className="picker-note-failure">{failure}</span>
-          ) : null}
-          {diagnostics.length > 0 ? (
-            <ul className="mac-detail-list">
-              {collapsed(diagnostics).map(([label, text]) => (
-                <li key={label}>
-                  <span>{label}</span>
-                  <span>{text}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </>
+        failure === undefined && diagnostics.length === 0 ? undefined : (
+          <>
+            {failure ? (
+              <span className="picker-note-failure">{failure}</span>
+            ) : null}
+            {diagnostics.length > 0 ? (
+              <ul className="mac-detail-list">
+                {collapsed(diagnostics).map(([label, text]) => (
+                  <li key={label}>
+                    <span>{label}</span>
+                    <span>{text}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        )
       }
-      onChoose={({ id }) => {
-        if (id !== CONFIRM) {
-          dismissCloseConfirmation();
-          return;
-        }
+      onChoose={() => {
         void confirmPending().then((done) => {
           // Done means main consumed the confirmation, and the effect above is
           // what takes the modal off screen. Refused means it is still there

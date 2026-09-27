@@ -803,8 +803,6 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   );
 }
 
-/** The safe row, and therefore the first one. */
-const KEEP_SOCKET = "devhub:keep-socket";
 const CHANGE_SOCKET = "devhub:change-socket";
 
 /**
@@ -830,12 +828,11 @@ function SocketChangeSheet({
     <Picker
       title={question.title}
       question={question.message}
+      cancelRow={{
+        label: "Keep the current socket",
+        detail: "DevHub stays on the socket it is on. Nothing is closed.",
+      }}
       items={[
-        {
-          id: KEEP_SOCKET,
-          label: "Keep the current socket",
-          detail: "DevHub stays on the socket it is on. Nothing is closed.",
-        },
         {
           id: CHANGE_SOCKET,
           label: question.confirm,
@@ -854,10 +851,7 @@ function SocketChangeSheet({
           </li>
         </ul>
       }
-      onChoose={({ id }) => {
-        if (id === CHANGE_SOCKET) onConfirm();
-        else onCancel();
-      }}
+      onChoose={onConfirm}
       onCancel={onCancel}
     />
   );

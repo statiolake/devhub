@@ -51,6 +51,16 @@
  * modal of its own — `InjectionReviewSheet`, the only one there is — and it says
  * so by looking like an editor rather than a list.
  *
+ * **Cancel is drawn once.** A confirmation's safe answer is a row — the
+ * first, so Return takes it — and a Cancel button under the list as well was
+ * the same answer twice, one above the other ("Cancel — Leave the Agent
+ * running." and "Cancel"). So a confirmation does not make that row itself: it
+ * names it (`cancelRow`), the picker draws it first, choosing it is
+ * `onCancel` — the act Escape and a click on the scrim already are — and the
+ * footer, which has nothing left to hold, holds no button. A picker without
+ * one is a choice among things, where cancelling is not one of the answers,
+ * and keeps its footer Cancel.
+ *
  * **The footer holds Cancel and nothing else.** There used to be a second
  * button beside it for the answer no list could carry — "Other…", the native
  * folder chooser — and it was `tabIndex={-1}` like Cancel is, which in a
@@ -227,6 +237,12 @@ export interface PickerProps {
   readonly queryDelayMs?: number;
   readonly onChoose: (choice: PickerChoice) => void;
   readonly onCancel: () => void;
+  /**
+   * The answer that does nothing, as the first row: for a confirmation, whose
+   * other answers do something. Taking it is `onCancel`, never `onChoose`, and
+   * the footer then has no Cancel button — see "Cancel is drawn once" above.
+   */
+  readonly cancelRow?: CancelRow;
   /** Controls between the search field and the list, such as a filter. */
   readonly toolbar?: ReactNode;
   /** Told which row the arrows or the pointer are on, for an `aside` about it. */
@@ -234,6 +250,17 @@ export interface PickerProps {
   /** Drawn beside the list: something about the row the person is on. */
   readonly aside?: ReactNode;
 }
+
+/** What a confirmation's safe row says. */
+export interface CancelRow {
+  /** "Cancel", unless the question has a sharper name for doing nothing. */
+  readonly label?: string;
+  /** What staying put leaves as it is. */
+  readonly detail: ReactNode;
+}
+
+/** The id the picker gives the row it draws for `cancelRow`. */
+const CANCEL_ROW = "devhub:picker-cancel";
 
 function SearchGlyph() {
   return (
@@ -267,6 +294,7 @@ export function Picker({
   queryDelayMs = 150,
   onChoose,
   onCancel,
+  cancelRow,
   toolbar,
   onActiveChange,
   aside,
@@ -301,8 +329,25 @@ export function Picker({
   });
   const listRef = useRef<HTMLUListElement | null>(null);
 
+  // The safe row leads the answers and is filtered with them: typing the
+  // name of the other answer is how a person picks it by keyboard.
+  const answers = useMemo(
+    () =>
+      cancelRow === undefined
+        ? items
+        : [
+            {
+              id: CANCEL_ROW,
+              label: cancelRow.label ?? "Cancel",
+              detail: cancelRow.detail,
+            },
+            ...items,
+          ],
+    [cancelRow, items],
+  );
+
   const ranked = useMemo(() => {
-    const scored = items.flatMap((item) => {
+    const scored = answers.flatMap((item) => {
       const value = score(item.searchText ?? item.label, query);
       return value === 0 ? [] : [{ item, value }];
     });
@@ -323,7 +368,7 @@ export function Picker({
           : right.value - left.value,
       )
       .map((entry) => entry.item);
-  }, [items, query]);
+  }, [answers, query]);
 
   /**
    * Every row there is, in the order it is drawn.
@@ -465,12 +510,16 @@ export function Picker({
   const choose = useCallback(
     (id: string, split: boolean, alternateChoice: boolean) => {
       if (taken !== undefined) return;
+      if (id === CANCEL_ROW) {
+        onCancel();
+        return;
+      }
       if (rows.some((row) => row.id === id && row.unavailable !== undefined))
         return;
       setTaken(id);
       onChoose({ id, split, alternate: alternateChoice, query });
     },
-    [onChoose, query, rows, taken],
+    [onCancel, onChoose, query, rows, taken],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -511,7 +560,7 @@ export function Picker({
   };
 
   const emptyMessage =
-    items.length === 0 && busy
+    answers.length === 0 && busy
       ? "Searching…"
       : query.length > 0
         ? emptyNoMatch
@@ -695,28 +744,35 @@ export function Picker({
             sheet saying something about itself — what the modifier does, why
             the list is short — and giving it its own band would put a rule
             between a caption and the thing it captions, and would make the
-            sheet's seams depend on whether a caller passed one. */}
-        <footer className="picker-footer">
-          {/* A `div` and not a `p`: a note is whatever the caller has to say
+            sheet's seams depend on whether a caller passed one. A
+            confirmation's footer has no button (its Cancel is a row), so with
+            nothing to note it has nothing to hold, and is not drawn as an
+            empty band. */}
+        {note || cancelRow === undefined ? (
+          <footer className="picker-footer">
+            {/* A `div` and not a `p`: a note is whatever the caller has to say
               about the question — a line of guidance, a refusal, the list of
               what a close is about to take with it — and a paragraph cannot
               legally contain a list. */}
-          {note ? (
-            <div className="picker-note mac-caption" role="status">
-              {note}
-            </div>
-          ) : null}
-          <div className="picker-actions">
-            <button
-              type="button"
-              className="mac-button"
-              tabIndex={-1}
-              onClick={onCancel}
-            >
-              Cancel
-            </button>
-          </div>
-        </footer>
+            {note ? (
+              <div className="picker-note mac-caption" role="status">
+                {note}
+              </div>
+            ) : null}
+            {cancelRow === undefined ? (
+              <div className="picker-actions">
+                <button
+                  type="button"
+                  className="mac-button"
+                  tabIndex={-1}
+                  onClick={onCancel}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : null}
+          </footer>
+        ) : null}
       </section>
     </div>,
     document.body,

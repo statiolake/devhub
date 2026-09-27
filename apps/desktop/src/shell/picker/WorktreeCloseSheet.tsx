@@ -61,12 +61,8 @@ export function WorktreeCloseSheet({
             // different decisions.
             `${label} is a worktree, and DevHub could not tell whether there is anything uncommitted in it. What should happen to the folder?`
       }
+      cancelRow={{ detail: "Leave the workspace open." }}
       items={[
-        {
-          id: "cancel",
-          label: "Cancel",
-          detail: "Leave the workspace open.",
-        },
         {
           id: "close",
           label: "Just close the workspace",
@@ -86,7 +82,7 @@ export function WorktreeCloseSheet({
         // force)` — one question carried out down two paths, with the renderer
         // deciding `--force` and the "just close" path going around main's
         // close rule entirely. Cancel is this sheet dismissing itself, so it
-        // is the one answer nothing is sent for.
+        // is `onCancel`, and the one answer nothing is sent for.
         if (id === "close" || id === "delete") {
           void answerWorktreeClose(workspaceId, id);
         }

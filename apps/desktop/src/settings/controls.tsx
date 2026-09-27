@@ -490,8 +490,6 @@ export function PlusGlyph() {
   );
 }
 
-/** The safe row, and therefore the first one. */
-const KEEP_SETTINGS = "devhub:keep-settings";
 const RESET_SETTINGS = "devhub:reset-settings";
 
 /**
@@ -549,21 +547,20 @@ export function ResetLink({
         <Picker
           title={`Reset ${what} to defaults?`}
           question={`This writes DevHub's default ${what} into settings.toml. The rest of the file is left as it is.`}
+          cancelRow={{
+            label: "Keep these settings",
+            detail: "Nothing is written. The file is left exactly as it is.",
+          }}
           items={[
-            {
-              id: KEEP_SETTINGS,
-              label: "Keep these settings",
-              detail: "Nothing is written. The file is left exactly as it is.",
-            },
             {
               id: RESET_SETTINGS,
               label: `Reset ${what}`,
               detail: `Whatever ${what} you have set is replaced by DevHub's, and putting it back means typing it again.`,
             },
           ]}
-          onChoose={({ id }) => {
+          onChoose={() => {
             setAsking(false);
-            if (id === RESET_SETTINGS) onReset();
+            onReset();
           }}
           onCancel={() => {
             setAsking(false);
