@@ -17,7 +17,7 @@
  * they were about.
  */
 
-import { SessionNotResumable } from "../agent/conversation/resume.js";
+import { SessionNotResumable } from "../agent/conversation/failures.js";
 import type { AppErrorCodeWire, AppErrorWire } from "../../ipc/appShell.js";
 import type {
 	AgentFailureCode,

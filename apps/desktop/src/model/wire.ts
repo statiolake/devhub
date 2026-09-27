@@ -680,6 +680,9 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "agent_runtime_unavailable":
     case "agent_attach_timed_out":
     case "conversation_not_resumable":
+    case "conversation_refused":
+    case "conversation_stopped":
+    case "sessions_unreadable":
       return "agent";
     case "terminal_launcher_unavailable":
     case "workspace_sessions_left_running":
@@ -790,16 +793,42 @@ export function withSummary(
  * says so here instead of being flattened into that.
  */
 export class TypedFailure extends Error {
-  constructor(readonly wire: AppErrorWire) {
+  constructor(
+    readonly wire: AppErrorWire,
+    options?: ErrorOptions,
+  ) {
     // The detail too: a failure that ends as text — the `devhub` command
     // prints `message` — would otherwise lose the part that says what to fix.
     super(
       wire.detail === undefined
         ? wire.summary
         : `${wire.summary} ${wire.detail}`,
+      options,
     );
     this.name = "TypedFailure";
   }
+}
+
+/**
+ * A failure already converted for the page, on its way across IPC.
+ *
+ * Electron carries only a message across the IPC boundary, so its message is
+ * the wire, which the page unwraps back into the same value
+ * (`shell/failure.ts`). It is a `TypedFailure` because it can be converted
+ * again before it leaves: a handler that awaited an operation whose failure
+ * was already converted converts what it caught, and that has to be the same
+ * failure, not the app shell's catch-all wrapped around it.
+ */
+class CarriedFailure extends TypedFailure {
+  constructor(wire: AppErrorWire) {
+    super(wire);
+    this.message = JSON.stringify(wire);
+    this.name = "CarriedFailure";
+  }
+}
+
+export function carriedAcrossIpc(wire: AppErrorWire): TypedFailure {
+  return new CarriedFailure(wire);
 }
 
 export function nativeUnavailable(): AppErrorWire {

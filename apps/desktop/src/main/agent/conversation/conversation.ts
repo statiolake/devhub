@@ -88,6 +88,7 @@ import {
 	type Transcript,
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
+import { ConversationRefused, ConversationStopped } from "./failures.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
@@ -188,7 +189,8 @@ interface PendingRewind {
 	/** The turn has been `rewinding` since the plan was carried out. */
 	begun: boolean;
 	readonly done: () => void;
-	readonly failed: (error: Error) => void;
+	/** The conversation stopped first; `why`, when it broke, is what broke it. */
+	readonly stopped: (why: string | undefined) => void;
 }
 
 export class AgentConversation {
@@ -283,7 +285,10 @@ export class AgentConversation {
 		const rewound = await this.#serial(async () => {
 			this.#refuseIfBusy();
 			this.#refuseRewind(message);
-			return this.#carryOut(this.#adapter.rewind(message));
+			return this.#carryOut(
+				this.#adapter.rewind(message),
+				"the CLI had taken the turns back",
+			);
 		});
 		await rewound.over;
 		return this.#transcript.entries.some((entry) => entry.id === message)
@@ -402,13 +407,13 @@ export class AgentConversation {
 		return this.#serial(async () => {
 			this.#refuseIfBusy();
 			if (this.#held(id).editing) {
-				throw new Error(
+				throw new ConversationRefused(
 					"That message is being edited. Save or cancel the change first.",
 				);
 			}
 			const { state } = this.#transcript;
 			if (state.phase !== "ready" || state.turn === "rewinding") {
-				throw new Error(
+				throw new ConversationRefused(
 					"The Agent cannot take a message yet. It is sent when the Agent is ready.",
 				);
 			}
@@ -419,7 +424,7 @@ export class AgentConversation {
 	#held(id: PendingId): PendingMessage {
 		const found = this.#transcript.pending.find((each) => each.id === id);
 		if (found === undefined) {
-			throw new Error(
+			throw new ConversationRefused(
 				"That message is no longer waiting: it was sent or taken back.",
 			);
 		}
@@ -511,20 +516,16 @@ export class AgentConversation {
 				state.turn !== "none" ||
 				requests.length > 0
 			) {
-				throw new Error(
+				throw new ConversationRefused(
 					"The Agent is in the middle of a turn. Stop it before going on with another session.",
 				);
 			}
-			return this.#carryOut(this.#adapter.resumeSession(session, history));
-		});
-		try {
-			await resumed.over;
-		} catch (error: unknown) {
-			throw new Error(
-				`The conversation stopped before it went on with session ${session}: ${error instanceof Error ? error.message : String(error)}`,
-				{ cause: error },
+			return this.#carryOut(
+				this.#adapter.resumeSession(session, history),
+				`it went on with session ${session}`,
 			);
-		}
+		});
+		await resumed.over;
 	}
 
 	/**
@@ -533,11 +534,24 @@ export class AgentConversation {
 	 * back `over`, which settles when the adapter says the switch is done
 	 * (`#rewind`). A plan that could not be carried out leaves nothing under
 	 * way. Wrapped: returned bare, the turnstile would wait for `over`, and
-	 * the lines that settle it could never be read.
+	 * the lines that settle it could never be read. `awaited` is what the
+	 * switch is, as a conversation that stops first says it stopped before.
 	 */
-	async #carryOut(plan: RewindPlan): Promise<{ readonly over: Promise<void> }> {
-		const over = new Promise<void>((done, failed) => {
-			this.#rewind = { begun: false, done, failed };
+	async #carryOut(
+		plan: RewindPlan,
+		awaited: string,
+	): Promise<{ readonly over: Promise<void> }> {
+		const settled = new Promise<void>((done, failed) => {
+			this.#rewind = {
+				begun: false,
+				done,
+				stopped: (why) =>
+					failed(
+						new ConversationStopped(
+							`The conversation stopped before ${awaited}${why === undefined ? "." : `: ${why}`}`,
+						),
+					),
+			};
 		});
 		try {
 			if (plan.kind === "write") await this.#write(plan.lines);
@@ -546,14 +560,14 @@ export class AgentConversation {
 			this.#rewind = undefined;
 			throw error;
 		}
-		return { over };
+		return { over: settled };
 	}
 
 	#refuseRewind(message: EntryId): void {
 		if (rewindTargets(this.#transcript).has(message)) return;
 		const { state, session, requests, pending } = this.#transcript;
 		if (!session.canRewind) {
-			throw new Error(
+			throw new ConversationRefused(
 				"This Agent's CLI cannot take turns back, so the conversation cannot be rewound.",
 			);
 		}
@@ -561,16 +575,16 @@ export class AgentConversation {
 			requests.length > 0 ||
 			(state.phase === "ready" && state.turn !== "none")
 		) {
-			throw new Error(
+			throw new ConversationRefused(
 				"The Agent is in the middle of a turn. Stop it before rewinding.",
 			);
 		}
 		if (pending.length > 0) {
-			throw new Error(
+			throw new ConversationRefused(
 				"Messages of yours are waiting to be sent. Send or remove them before rewinding.",
 			);
 		}
-		throw new Error(
+		throw new ConversationRefused(
 			"The conversation cannot be rewound to before that message.",
 		);
 	}
@@ -578,7 +592,7 @@ export class AgentConversation {
 	#refuseIfBusy(): void {
 		this.#refuseIfBroken();
 		if (this.#rewind !== undefined) {
-			throw new Error(
+			throw new ConversationRefused(
 				"The conversation is being taken back. Wait until that is done.",
 			);
 		}
@@ -588,8 +602,8 @@ export class AgentConversation {
 		if (this.#crashed !== undefined) throw this.#crashed;
 		const { state } = this.#transcript;
 		if (state.phase === "broken") {
-			throw new Error(
-				`this conversation has stopped taking input: ${state.failure.detail}`,
+			throw new ConversationStopped(
+				`This conversation has stopped taking input: ${state.failure.detail}`,
 			);
 		}
 	}
@@ -622,11 +636,7 @@ export class AgentConversation {
 			// from it now.
 			const rewind = this.#rewind;
 			this.#rewind = undefined;
-			rewind?.failed(
-				new Error(
-					"The conversation stopped before the CLI had taken the turns back.",
-				),
-			);
+			rewind?.stopped(undefined);
 		}
 	}
 
@@ -740,11 +750,7 @@ export class AgentConversation {
 		if (!rewind.begun) return;
 		this.#rewind = undefined;
 		if (state.phase === "broken") {
-			rewind.failed(
-				new Error(
-					`The conversation stopped before the CLI had taken the turns back: ${state.failure.detail}`,
-				),
-			);
+			rewind.stopped(state.failure.detail);
 			return;
 		}
 		rewind.done();

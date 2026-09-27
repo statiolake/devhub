@@ -255,6 +255,26 @@ export type AppErrorCodeWire =
 	 * The detail says which (`SessionNotResumable`).
 	 */
 	| "conversation_not_resumable"
+	/**
+	 * A GUI Agent's conversation will not take what it was asked, and says
+	 * why: a turn is running, it is being taken back, a held message is open
+	 * to change or already gone, its CLI cannot take turns back
+	 * (`ConversationRefused`). Nothing is wrong; the person does something
+	 * else first.
+	 */
+	| "conversation_refused"
+	/**
+	 * A GUI Agent's conversation stopped while, or before, it was asked
+	 * something: it stopped taking input, or it stopped before a rewind or a
+	 * `/resume` was over (`ConversationStopped`).
+	 */
+	| "conversation_stopped"
+	/**
+	 * What a CLI keeps of its sessions on the Workspace's machine could not be
+	 * read: the machine did not answer, the CLI would not list them, or a
+	 * file is not in the shape the CLI writes it in (`SessionsUnreadable`).
+	 */
+	| "sessions_unreadable"
 	/** A request DevHub accepted never reached an answer. */
 	| "operation_timed_out"
 	/**
@@ -352,6 +372,9 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	agent_profile_unavailable: "The agent could not start from this profile.",
 	agent_attach_timed_out: "The agent surface did not connect in time.",
 	conversation_not_resumable: "DevHub cannot go on with this session.",
+	conversation_refused: "The Agent's conversation cannot do that.",
+	conversation_stopped: "The Agent's conversation has stopped.",
+	sessions_unreadable: "DevHub could not read the Agent's sessions.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",

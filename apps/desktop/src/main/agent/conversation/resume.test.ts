@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Runtime } from "../../runtime/runtime.js";
 import { RuntimeFileError } from "../../runtime/runtime.js";
+import { errorWire } from "../../../model/wire.js";
 import {
 	claudeHistory,
 	claudeHistoryLines,
@@ -37,10 +38,10 @@ import {
 	terminalSession,
 	resumeArgs,
 	resumedSession,
-	SessionNotResumable,
 	withSession,
 	type SessionProfile,
 } from "./resume.js";
+import { SessionNotResumable } from "./failures.js";
 
 const FIXTURE = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -445,23 +446,55 @@ done
 			...fakeRuntime(dir),
 			exec: () => Promise.reject(new Error("terminal runtime timed out")),
 		} as Runtime;
-		await expect(
-			listPastSessions(runtime, CODEX, "/work/project"),
-		).rejects.toThrow(
-			"codex app-server did not list its threads: terminal runtime timed out",
-		);
+		expect(
+			await drawnAs(listPastSessions(runtime, CODEX, "/work/project")),
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail:
+				"codex app-server did not list its threads: terminal runtime timed out",
+		});
+	});
+
+	it("says the machine's words when it answers Claude's listing with a failure", async () => {
+		const runtime = {
+			...fakeRuntime(dir),
+			exec: () =>
+				Promise.resolve({
+					code: 71,
+					signal: null,
+					stdout: Buffer.alloc(0),
+					stderr: Buffer.from("cd: permission denied"),
+				}),
+		} as Runtime;
+		expect(
+			await drawnAs(listPastSessions(runtime, CLAUDE, "/work/project")),
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail: expect.stringContaining(
+				"DevHub could not list Claude's sessions in",
+			) as string,
+		});
 	});
 
 	it("says what Codex said when it refuses, or that it ended without answering", () => {
-		expect(() =>
-			parseCodexListing(
-				'{"id":1,"result":{}}\n{"id":2,"error":{"code":-32600,"message":"no such cwd"}}\n',
-				"",
+		expect(
+			drawnAsSync(() =>
+				parseCodexListing(
+					'{"id":1,"result":{}}\n{"id":2,"error":{"code":-32600,"message":"no such cwd"}}\n',
+					"",
+				),
 			),
-		).toThrow("codex did not list its threads: no such cwd (-32600)");
-		expect(() => parseCodexListing("", "error: not logged in\n")).toThrow(
-			"codex app-server ended without listing its threads: error: not logged in",
-		);
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail: "codex did not list its threads: no such cwd (-32600)",
+		});
+		expect(
+			drawnAsSync(() => parseCodexListing("", "error: not logged in\n")),
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail:
+				"codex app-server ended without listing its threads: error: not logged in",
+		});
 	});
 });
 
@@ -519,6 +552,19 @@ describe("a session's preview", () => {
 			{ role: "person", text: "Fix the title" },
 			{ role: "agent", text: "Fixed." },
 		]);
+	});
+
+	it("says it could not read the session's end, as its own failure, when the file is not there", async () => {
+		expect(
+			await drawnAs(
+				previewPastSession(fakeRuntime(dir), CLAUDE, SESSION, "/work/project"),
+			),
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail: expect.stringContaining(
+				`DevHub could not read the end of session ${SESSION}`,
+			) as string,
+		});
 	});
 
 	it("refuses an id that is not one, before asking the machine", async () => {
@@ -662,6 +708,32 @@ exec sleep 30
 		);
 	});
 
+	it("says it could not read the pane's processes, as its own failure, when the machine does not answer", async () => {
+		const runtime = {
+			...fakeRuntime(dir),
+			exec: () => Promise.reject(new Error("terminal runtime timed out")),
+		} as Runtime;
+		expect(await drawnAs(terminalSession(runtime, CLAUDE, 1))).toMatchObject({
+			code: "sessions_unreadable",
+			detail: expect.stringContaining(
+				"DevHub could not read the processes of the terminal Agent's pane (pid 1): terminal runtime timed out",
+			) as string,
+		});
+	});
+
+	it("says Claude's record is not what DevHub reads, as its own failure, when it names no session", async () => {
+		const sessions = join(dir, ".claude", "sessions");
+		const running = await pane(
+			`mkdir -p '${sessions}'; printf '{"pid":%s}' $$ >'${sessions}'/$$.json; : >"$READY"; exec sleep 30`,
+		);
+		expect(
+			await drawnAs(terminalSession(fakeRuntime(dir), CLAUDE, running)),
+		).toMatchObject({
+			code: "sessions_unreadable",
+			detail: expect.stringMatching(/names no sessionId$/) as string,
+		});
+	});
+
 	it("is the Codex thread the Agent's process holds open, each pane its own, never a subagent's", async () => {
 		const first = await pane(await fakeCodex("t-first", "t-helper"));
 		const second = await pane(await fakeCodex("t-second"));
@@ -703,6 +775,27 @@ async function touch(path: string, seconds: number): Promise<void> {
  * The parts of a machine these read: its home, a realpath that maps `/work`
  * under it, a file read, and `exec` run here for real.
  */
+/** What a failure is drawn as: its code, and the sentence its raiser wrote. */
+async function drawnAs(settled: Promise<unknown>) {
+	return errorWire(
+		await settled.then(
+			() => {
+				throw new Error("it did not fail");
+			},
+			(failure: unknown) => failure,
+		),
+	);
+}
+
+function drawnAsSync(run: () => unknown) {
+	try {
+		run();
+	} catch (failure: unknown) {
+		return errorWire(failure);
+	}
+	throw new Error("it did not fail");
+}
+
 function fakeRuntime(home: string): Runtime {
 	const runtime: Partial<Runtime> = {
 		where: "",

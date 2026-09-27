@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { agentId as parseAgentId } from "../../model/domain.js";
 import { portFailure } from "../terminal/ports.js";
 import { agentSubject, portRefusal, refusalWire } from "./agentFailure.js";
-import { SessionNotResumable } from "../agent/conversation/resume.js";
+import { SessionNotResumable } from "../agent/conversation/failures.js";
 import { AppError, AppErrorCode } from "../../model/intents.js";
 import { errorWire, errorWireAt } from "../../model/wire.js";
 

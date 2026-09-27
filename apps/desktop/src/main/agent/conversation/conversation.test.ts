@@ -21,6 +21,7 @@ import {
 	type ConversationEvent,
 	type Transcript,
 } from "../../../model/conversation.js";
+import { errorWire } from "../../../model/wire.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
 import {
@@ -417,9 +418,14 @@ describe("a line the adapter cannot read", () => {
 			},
 		});
 		expect(events.at(-1)?.event).toEqual({ type: "state", state });
-		await expect(conversation.command({ kind: "interrupt" })).rejects.toThrow(
-			/stopped taking input: assistant.message.content/,
-		);
+		expect(
+			await drawnAs(conversation.command({ kind: "interrupt" })),
+		).toMatchObject({
+			code: "conversation_stopped",
+			detail: expect.stringMatching(
+				/stopped taking input: assistant.message.content/,
+			) as string,
+		});
 		await conversation.stop();
 	});
 });
@@ -776,9 +782,12 @@ describe("rewinding", () => {
 		await conversation.submit("third", []);
 		await settle();
 		const writes = host.inLog.length;
-		await expect(conversation.rewind(entryId("user:u1"))).rejects.toThrow(
-			"Stop it before rewinding.",
-		);
+		expect(
+			await drawnAs(conversation.rewind(entryId("user:u1"))),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining("Stop it before rewinding.") as string,
+		});
 		expect(host.inLog).toHaveLength(writes);
 		expect(host.restarts).toEqual([]);
 		await conversation.stop();
@@ -786,9 +795,14 @@ describe("rewinding", () => {
 
 	it("refuses when the CLI cannot take turns back", async () => {
 		const { host, conversation } = await turns(["first", "second"], "2.1.0");
-		await expect(conversation.rewind(entryId("user:u2"))).rejects.toThrow(
-			"This Agent's CLI cannot take turns back",
-		);
+		expect(
+			await drawnAs(conversation.rewind(entryId("user:u2"))),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining(
+				"This Agent's CLI cannot take turns back",
+			) as string,
+		});
 		expect(host.restarts).toEqual([]);
 		await conversation.stop();
 	});
@@ -804,9 +818,14 @@ describe("rewinding", () => {
 		endTurn(host);
 		await settle();
 		expect(conversation.reading().transcript.pending).toHaveLength(1);
-		await expect(conversation.rewind(entryId("user:u1"))).rejects.toThrow(
-			"Send or remove them before rewinding.",
-		);
+		expect(
+			await drawnAs(conversation.rewind(entryId("user:u1"))),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining(
+				"Send or remove them before rewinding.",
+			) as string,
+		});
 		await conversation.stop();
 	});
 
@@ -830,9 +849,14 @@ describe("rewinding", () => {
 		host.onWrite = () => undefined;
 		const rewind = conversation.rewind(entryId("user:u2"));
 		await settle();
-		await expect(conversation.command({ kind: "interrupt" })).rejects.toThrow(
-			"The conversation is being taken back.",
-		);
+		expect(
+			await drawnAs(conversation.command({ kind: "interrupt" })),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining(
+				"The conversation is being taken back.",
+			) as string,
+		});
 		await conversation.submit("meanwhile", []);
 		expect(
 			conversation.reading().transcript.pending.map((each) => each.text),
@@ -861,9 +885,44 @@ describe("rewinding", () => {
 		const rewind = conversation.rewind(entryId("user:u2"));
 		await settle();
 		await conversation.stop();
-		await expect(rewind).rejects.toThrow(
-			"The conversation stopped before the CLI had taken the turns back.",
-		);
+		expect(await drawnAs(rewind)).toMatchObject({
+			code: "conversation_stopped",
+			detail:
+				"The conversation stopped before the CLI had taken the turns back.",
+		});
+	});
+});
+
+describe("going on with another session", () => {
+	it("refuses while a turn runs, saying to stop it first", async () => {
+		const { host, conversation, cli } = await turns(["first"]);
+		cli.hold = true;
+		await conversation.submit("second", []);
+		await settle();
+		expect(
+			await drawnAs(conversation.resumeSession("s-other", [])),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining(
+				"Stop it before going on with another session.",
+			) as string,
+		});
+		expect(host.restarts).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("rejects, as the conversation having stopped, when it stops before the CLI is on the other session", async () => {
+		const { host, conversation } = await turns(["first"]);
+		host.onWrite = () => undefined;
+		const resumed = conversation.resumeSession("s-other", []);
+		await settle();
+		await conversation.stop();
+		expect(await drawnAs(resumed)).toMatchObject({
+			code: "conversation_stopped",
+			detail: expect.stringContaining(
+				"The conversation stopped before it went on with session s-other",
+			) as string,
+		});
 	});
 });
 
@@ -999,8 +1058,11 @@ describe("the person's messages, held", () => {
 		await settle();
 		expect(host.inLog).toHaveLength(writes);
 		expect(pending(conversation)).toEqual(["third"]);
-		await expect(conversation.sendPendingNow(third!.id)).rejects.toThrow(
-			"being edited",
+		expect(await drawnAs(conversation.sendPendingNow(third!.id))).toMatchObject(
+			{
+				code: "conversation_refused",
+				detail: expect.stringContaining("being edited") as string,
+			},
 		);
 
 		await conversation.editPending(third!.id, "third, reworded");
@@ -1045,9 +1107,30 @@ describe("the person's messages, held", () => {
 		await conversation.submit("third", []);
 		const [held] = conversation.reading().transcript.pending;
 		await conversation.removePending(held!.id);
-		await expect(conversation.editPending(held!.id, "x")).rejects.toThrow(
-			"That message is no longer waiting",
-		);
+		expect(
+			await drawnAs(conversation.editPending(held!.id, "x")),
+		).toMatchObject({
+			code: "conversation_refused",
+			detail: expect.stringContaining(
+				"That message is no longer waiting",
+			) as string,
+		});
 		await conversation.stop();
 	});
 });
+
+/**
+ * What a refusal is drawn as: its own code and the sentence it was written
+ * in, never the app shell's catch-all, which is for what DevHub did not
+ * expect.
+ */
+async function drawnAs(settled: Promise<unknown>) {
+	return errorWire(
+		await settled.then(
+			() => {
+				throw new Error("it did not fail");
+			},
+			(failure: unknown) => failure,
+		),
+	);
+}

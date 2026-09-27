@@ -28,9 +28,13 @@ import {
 } from "./domain.js";
 import {
   agentProfilesWire,
+  carriedAcrossIpc,
+  errorWire,
+  errorWireAt,
   intentFromWire,
   InvalidIntent,
   snapshotWire,
+  withDetail,
 } from "./wire.js";
 import type { AppIntentWire } from "../ipc/appShell.js";
 import type {
@@ -409,5 +413,30 @@ describe("how an Agent is shown, across the wire", () => {
       () => undefined,
     ).workspaces[0]!.agents[0]!;
     expect(shown.presentation).toBe("gui");
+  });
+});
+
+/**
+ * A failure already converted for the page, on its way across IPC, can be
+ * converted again by a handler that awaited the operation that raised it.
+ * It used to be a plain `Error` whose message was the JSON, so the second
+ * conversion wrapped it as "The native app shell is unavailable." with the
+ * first one's JSON as the detail — and the page drew the wrapper.
+ */
+describe("a failure carried across IPC", () => {
+  const wire = withDetail(
+    errorWireAt("workspace_unavailable"),
+    "the folder is gone",
+  );
+
+  it("is the wire itself as its message, which the page unwraps", () => {
+    expect(JSON.parse(carriedAcrossIpc(wire).message)).toEqual(wire);
+  });
+
+  it("converts again to itself, not to the app shell's catch-all", () => {
+    expect(errorWire(carriedAcrossIpc(wire))).toEqual(wire);
+    expect(errorWire(carriedAcrossIpc(carriedAcrossIpc(wire).wire))).toEqual(
+      wire,
+    );
   });
 });

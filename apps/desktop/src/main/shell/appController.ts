@@ -197,6 +197,7 @@ import {
 	type PersistedAppState,
 } from "../../model/persistence.js";
 import {
+	carriedAcrossIpc,
 	agentProfilesWire,
 	appearanceWire,
 	errorWire,
@@ -939,7 +940,7 @@ export class AppController {
 					session,
 				}),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
-			fail: (error) => asIpcError(errorWire(error)),
+			fail: (error) => carriedAcrossIpc(errorWire(error)),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report.
 		this.agentWiring.conversations.registry.onEvent(
@@ -1729,7 +1730,7 @@ export class AppController {
 			return await run(cancel);
 		} catch (error: unknown) {
 			if (expired) {
-				throw asIpcError(
+				throw carriedAcrossIpc(
 					errorWire(
 						workspaceFailure(
 							`${what} could not be found within ${String(
@@ -1744,11 +1745,11 @@ export class AppController {
 				// the lookup stopped. It is thrown rather than answered with an
 				// empty list so that a caller who somehow is still listening
 				// cannot mistake "withdrawn" for "there is nothing".
-				throw asIpcError(
+				throw carriedAcrossIpc(
 					errorWire(workspaceFailure("The lookup was cancelled.")),
 				);
 			}
-			throw asIpcError(errorWire(error));
+			throw carriedAcrossIpc(errorWire(error));
 		} finally {
 			clearTimeout(timer);
 			if (this.pickerLookup === cancel) this.pickerLookup = undefined;
@@ -2159,7 +2160,7 @@ export class AppController {
 	 * would not parse is reported rather than answered with silent defaults.
 	 */
 	private requireConfig(): Config {
-		if (!this.config) throw asIpcError(this.settingsRefusal.required());
+		if (!this.config) throw carriedAcrossIpc(this.settingsRefusal.required());
 		return this.config;
 	}
 
@@ -5048,7 +5049,7 @@ export class AppController {
 	 */
 	private dispatchAwaiting(intent: UserIntent): Promise<IntentOutcome> {
 		return this.dispatchSettled(intent).catch((error: unknown) => {
-			throw asIpcError(errorWire(error));
+			throw carriedAcrossIpc(errorWire(error));
 		});
 	}
 
@@ -5787,7 +5788,7 @@ export class AppController {
 		try {
 			intent = intentFromWire(wire);
 		} catch (error) {
-			throw asIpcError(
+			throw carriedAcrossIpc(
 				error instanceof InvalidIntent
 					? errorWireAt("invalid_intent")
 					: errorWire(error),
@@ -6119,7 +6120,7 @@ export class AppController {
 			this.cancelPicker?.();
 			const config = this.config;
 			if (!config) {
-				throw asIpcError(errorWire(new Error("config is unavailable")));
+				throw carriedAcrossIpc(errorWire(new Error("config is unavailable")));
 			}
 			const operationId = randomUUID();
 			this.cancelPicker = startWorkspacePicker(
@@ -6161,7 +6162,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6174,7 +6175,7 @@ export class AppController {
 			try {
 				return await readSshHosts();
 			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
+				throw carriedAcrossIpc(errorWire(error));
 			}
 		});
 		handle(
@@ -6193,7 +6194,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6207,7 +6208,7 @@ export class AppController {
 					workspaceLocation({ kind: "local", path: folder }),
 				);
 			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
+				throw carriedAcrossIpc(errorWire(error));
 			}
 		});
 		handle(
@@ -6270,7 +6271,7 @@ export class AppController {
 					}
 					return opened;
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6280,7 +6281,7 @@ export class AppController {
 				try {
 					await this.reopenEditorLocally(parseWorkspaceId(workspaceId));
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6341,7 +6342,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6364,7 +6365,7 @@ export class AppController {
 						withAgent,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6377,7 +6378,7 @@ export class AppController {
 			// repository, and an Issue and a pull request name theirs the same way.
 			const issue = parseGitHubItemUrl(issueUrl);
 			if (!config || !issue) {
-				throw asIpcError(
+				throw carriedAcrossIpc(
 					errorWire(
 						workspaceFailure("That is not a GitHub Issue or pull request URL."),
 					),
@@ -6416,7 +6417,7 @@ export class AppController {
 				try {
 					return await this.clone(url, parentDirectory);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6427,14 +6428,14 @@ export class AppController {
 					place.path,
 				);
 			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
+				throw carriedAcrossIpc(errorWire(error));
 			}
 		});
 		handle(CHANNELS.assignIssue, async (_event, request: IssueAssignment) => {
 			try {
 				return await this.assignIssue(request);
 			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
+				throw carriedAcrossIpc(errorWire(error));
 			}
 		});
 
@@ -6452,7 +6453,7 @@ export class AppController {
 				try {
 					return await this.runAgentAction(agentId, actionId);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6472,7 +6473,7 @@ export class AppController {
 				try {
 					return await this.answerWorktreeClose(workspaceId, answer);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6497,7 +6498,7 @@ export class AppController {
 						this.homeOf,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6515,7 +6516,7 @@ export class AppController {
 						this.homeOf,
 					);
 				} catch (error: unknown) {
-					throw asIpcError(errorWire(error));
+					throw carriedAcrossIpc(errorWire(error));
 				}
 			},
 		);
@@ -6708,12 +6709,6 @@ async function asSentence(run: () => Promise<string>): Promise<string> {
 			wire.detail ? `${wire.summary} ${wire.detail}` : wire.summary,
 		);
 	}
-}
-
-function asIpcError(error: AppErrorWire): Error {
-	// Electron carries only a message across the IPC boundary, so the structured
-	// error travels inside it and the page unwraps it back into the same value.
-	return new Error(JSON.stringify(error));
 }
 
 function toDomainProfile(

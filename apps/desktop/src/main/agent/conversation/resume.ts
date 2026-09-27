@@ -40,8 +40,8 @@ import type { AgentProfile } from "../../../model/domain.js";
 import { OperationDeadline } from "../../terminal/command.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { RuntimeFileError, type Runtime } from "../../runtime/runtime.js";
-import { errorWireAt, TypedFailure, withDetail } from "../../../model/wire.js";
 import { isTaskNotificationText } from "./claude/decode.js";
+import { SessionNotResumable, SessionsUnreadable } from "./failures.js";
 import { appServerArgs } from "./codex/argv.js";
 import { decodeLine, Reader, threadListResponse } from "./codex/decode.js";
 import type { ThreadListParams } from "./codex/protocol/v2/ThreadListParams.js";
@@ -82,24 +82,6 @@ export function sessionScope(scope: unknown): SessionScope {
 export interface PreviewLine {
 	readonly role: "person" | "agent";
 	readonly text: string;
-}
-
-/**
- * A session DevHub was asked to go on with cannot be gone on with: the one a
- * launch or a `/resume` names is not there, or not whole, or the one a
- * terminal Agent is in cannot be told. `reason` says which, and where DevHub
- * looked.
- *
- * A failure DevHub knows by name, so it is drawn as itself
- * (`conversation_not_resumable`) wherever it ends, never as the app shell's
- * catch-all; a launch that ends in one is the profile's refusal instead
- * (`portRefusal`).
- */
-export class SessionNotResumable extends TypedFailure {
-	constructor(readonly reason: string) {
-		super(withDetail(errorWireAt("conversation_not_resumable"), reason));
-		this.name = "SessionNotResumable";
-	}
 }
 
 type ResumableKind = Extract<AgentProfile["kind"], "claude" | "codex">;
@@ -273,7 +255,7 @@ export async function previewPastSession(
 		},
 	});
 	if (answer.code !== 0) {
-		throw new Error(
+		throw new SessionsUnreadable(
 			`DevHub could not read the end of session ${id}${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
 		);
 	}
@@ -541,7 +523,7 @@ async function paneRecords(
 		},
 	});
 	if (answer.code !== 0) {
-		throw new Error(
+		throw new SessionsUnreadable(
 			`DevHub could not read the processes of the terminal Agent's pane (pid ${String(panePid)})${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
 		);
 	}
@@ -591,7 +573,7 @@ export async function terminalSession(
 				meta["type"] !== "session_meta" ||
 				typeof payload?.["id"] !== "string"
 			) {
-				throw new Error(
+				throw new SessionsUnreadable(
 					`${record.path}${runtime.where} does not begin with a session_meta naming its thread`,
 				);
 			}
@@ -617,7 +599,7 @@ export async function terminalSession(
 function claudeProcessSession(record: PaneRecord, runtime: Runtime): string {
 	const session = jsonObject(record, runtime)["sessionId"];
 	if (typeof session !== "string" || session.length === 0) {
-		throw new Error(
+		throw new SessionsUnreadable(
 			`Claude's record ${record.path}${runtime.where} names no sessionId`,
 		);
 	}
@@ -636,7 +618,7 @@ function jsonObject(
 	} catch {
 		// Said below, with the file it is in.
 	}
-	throw new Error(
+	throw new SessionsUnreadable(
 		`${record.path}${runtime.where} does not begin with a JSON object`,
 	);
 }
@@ -659,7 +641,7 @@ function askMachine(
 		try {
 			return await runtime.exec(request);
 		} catch (failure: unknown) {
-			throw new Error(
+			throw new SessionsUnreadable(
 				`${what}${runtime.where}: ${failure instanceof Error ? failure.message : String(failure)}`,
 				{ cause: failure },
 			);
@@ -760,7 +742,7 @@ async function listClaudeSessions(
 		},
 	});
 	if (answer.code !== 0) {
-		throw new Error(
+		throw new SessionsUnreadable(
 			`DevHub could not list Claude's sessions in ${directory}${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
 		);
 	}
@@ -1222,7 +1204,7 @@ export function parseCodexListing(
 		if (line.trim().length === 0) continue;
 		const message = decodeLine(reader, line);
 		if (message.kind === "error" && (message.id === 1 || message.id === 2)) {
-			throw new Error(
+			throw new SessionsUnreadable(
 				`codex did not list its threads: ${message.message} (${message.code})`,
 			);
 		}
@@ -1237,7 +1219,7 @@ export function parseCodexListing(
 		}
 	}
 	const said = stderr.trim().split("\n").at(-1)?.trim();
-	throw new Error(
+	throw new SessionsUnreadable(
 		`codex app-server ended without listing its threads${said ? `: ${said}` : "."}`,
 	);
 }

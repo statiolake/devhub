@@ -34,6 +34,7 @@ import {
 } from "../agent/conversation/hostCommand.js";
 import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
+import { SessionNotResumable } from "../agent/conversation/failures.js";
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
@@ -42,7 +43,6 @@ import {
 	listPastSessions,
 	previewPastSession,
 	resumedSession,
-	SessionNotResumable,
 	terminalSession,
 	type PastSession,
 	type PreviewLine,
