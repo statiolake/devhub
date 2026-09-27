@@ -82,3 +82,46 @@ export function ArrowDownIcon() {
     </Icon>
   );
 }
+
+export function ArrowLeftIcon() {
+  return (
+    <Icon>
+      <path d="M13 8H3M7.5 3.5 3 8l4.5 4.5" />
+    </Icon>
+  );
+}
+
+export function ChevronDownIcon() {
+  return (
+    <Icon>
+      <path d="m4 6 4 4 4-4" />
+    </Icon>
+  );
+}
+
+export function ChevronRightIcon() {
+  return (
+    <Icon>
+      <path d="m6 4 4 4-4 4" />
+    </Icon>
+  );
+}
+
+/** Fill the pane: corners pushed out to the edges. */
+export function MaximizeIcon() {
+  return (
+    <Icon>
+      <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+    </Icon>
+  );
+}
+
+/** A column beside: a frame with its right part set apart. */
+export function ColumnIcon() {
+  return (
+    <Icon>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M9.5 3v10" />
+    </Icon>
+  );
+}

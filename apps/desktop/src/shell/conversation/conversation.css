@@ -129,26 +129,85 @@
 
 /* ------------------------------------------------------------ Subagents */
 
-/* The column: a third of the pane, its subagents stacked and sharing its
-   height, each with its own scroll. */
+/* The column: a third of the pane until its edge is dragged
+   (`subagentColumn.ts`), its subagents stacked and sharing its height, each
+   with its own scroll. However the pane is resized afterwards, it leaves the
+   conversation the least the sash would (MIN_CONVERSATION_PX). */
 .conversation-subagent-column {
+  position: relative;
   display: flex;
-  width: clamp(320px, 36%, 560px);
+  width: var(--subagent-column-width, clamp(320px, 36%, 560px));
+  min-width: 280px;
+  max-width: calc(100% - 400px);
   flex: none;
   flex-direction: column;
   border-left: 1px solid var(--line-soft);
   background: var(--surface);
 }
 
+/* An open pane takes its share of the column (a flex weight, set inline once
+   a sash has moved); a folded one is its header. */
 .conversation-subagent-pane {
   display: flex;
-  min-height: 0;
-  flex: 1;
+  min-height: 96px;
+  flex: 1 1 0;
   flex-direction: column;
+}
+
+.conversation-subagent-pane[data-folded] {
+  min-height: 0;
+  flex: none;
 }
 
 .conversation-subagent-pane + .conversation-subagent-pane {
   border-top: 1px solid var(--line-soft);
+}
+
+/* A line that is dragged: the column's edge, or the line between two open
+   panes. Wider than the hairline it lights, and drawn over its neighbours'
+   edges rather than taking room between them. */
+.conversation-sash {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  outline: none;
+}
+
+.conversation-sash[data-orientation="vertical"] {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.conversation-sash[data-orientation="horizontal"] {
+  height: 8px;
+  margin: -4px 0;
+  cursor: row-resize;
+}
+
+.conversation-sash::after {
+  position: absolute;
+  background: transparent;
+  content: "";
+  inset: 0;
+  transition: background-color 120ms ease;
+}
+
+.conversation-sash[data-orientation="vertical"]::after {
+  inset: 0 3px;
+}
+
+.conversation-sash[data-orientation="horizontal"]::after {
+  inset: 3px 0;
+}
+
+.conversation-sash:hover::after,
+.conversation-sash:active::after,
+.conversation-sash:focus-visible::after {
+  background: var(--accent);
 }
 
 /* Filling the pane, it is the conversation's size and in its column. */
@@ -160,7 +219,7 @@
   display: flex;
   flex: none;
   align-items: center;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--line-soft);
   font-size: 0.85em;
   gap: var(--space-2);
@@ -181,15 +240,15 @@
   padding: var(--space-3) var(--space-4) var(--space-5);
 }
 
-.conversation-subagent-pane[data-place="maximized"]
+/* In the column, the header is the pane's fold: pressing it anywhere but on
+   an action folds or unfolds the pane. */
+.conversation-subagent-pane[data-place="beside"]
   .conversation-subagent-pane-header {
-  justify-content: center;
+  cursor: pointer;
 }
 
-.conversation-subagent-pane[data-place="maximized"]
-  .conversation-subagent-pane-header
-  .conversation-subagent-actions {
-  margin-left: var(--space-3);
+.conversation-subagent-pane[data-folded] .conversation-subagent-pane-header {
+  border-bottom: 0;
 }
 
 /* Where a card's subagent can go: a quiet row under the card. */
@@ -203,24 +262,33 @@
   margin-top: 2px;
 }
 
+/* An icon button: the icon at the text's size, in a square the pointer
+   finds easily. */
 .conversation-subagent-action {
-  padding: 1px var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--tertiary);
   cursor: pointer;
   font: inherit;
-  font-size: 0.8em;
-  line-height: 1.5;
+  line-height: 1;
 }
 
 .conversation-subagent-pane-header .conversation-subagent-action {
-  font-size: 1em;
+  font-size: 1.1em;
 }
 
 .conversation-subagent-action:hover {
   background: var(--wash);
+  color: var(--primary);
+}
+
+.conversation-subagent-action[aria-pressed="true"] {
+  background: var(--wash-strong);
   color: var(--primary);
 }
 

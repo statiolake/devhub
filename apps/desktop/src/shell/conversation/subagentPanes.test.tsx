@@ -91,6 +91,18 @@ function paneWidth(width: number) {
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  // jsdom has no pointer capture; a sash only asks for it.
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.releasePointerCapture = vi.fn();
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  // Nor pointer events: one is a mouse event with a pointer's id.
+  globalThis.PointerEvent ??= class extends MouseEvent {
+    readonly pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  } as unknown as typeof PointerEvent;
 });
 afterEach(cleanup);
 
@@ -217,11 +229,12 @@ describe("a wide pane", () => {
       ),
     ).toEqual(["a", "b"]);
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Put Alpha back in the conversation",
-      }),
-    );
+    const alphaBeside = screen.getByRole("button", {
+      name: "Show Alpha beside the conversation",
+    });
+    expect(alphaBeside).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(alphaBeside);
+    expect(alphaBeside).toHaveAttribute("aria-pressed", "false");
     expect(entry("a")).toContainElement(entry("a-answer"));
     expect(column).not.toContainElement(entry("a-answer"));
   });
@@ -265,6 +278,158 @@ describe("a wide pane", () => {
       );
     });
     expect(card).toHaveFocus();
+  });
+});
+
+describe("the column, laid out as VS Code lays out its views", () => {
+  const THREE = transcriptOf([
+    subagent("a", "Alpha", "running", true),
+    put(assistant("a-answer", "alpha is working", { parent: "a" })),
+    subagent("b", "Beta", "running"),
+    subagent("c", "Gamma", "running"),
+  ]);
+
+  beforeEach(() => paneWidth(WIDE_PANE_PX + 200));
+
+  function pane(label: string): HTMLElement {
+    return screen.getByRole("region", { name: `Subagent: ${label}` });
+  }
+
+  /** Every element's box, as the browser would lay it out, by selector. */
+  function boxes(sizes: Record<string, { width: number; height: number }>) {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        const size = Object.entries(sizes).find(([selector]) =>
+          this.matches(selector),
+        )?.[1] ?? { width: 0, height: 0 };
+        return {
+          ...size,
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+        } as DOMRect;
+      },
+    );
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("folds a pane to its header in its place, and unfolds it from the header", () => {
+    draw(THREE);
+    fireEvent.click(screen.getByRole("button", { name: "Fold Alpha" }));
+    expect(pane("Alpha")).toHaveAttribute("data-folded", "true");
+    // Still in the column, in its place; its work and message box are not.
+    expect(
+      [
+        ...document.querySelectorAll(
+          ".conversation-subagent-column [data-view]",
+        ),
+      ].map((each) => each.getAttribute("data-view")),
+    ).toEqual(["a", "b", "c"]);
+    expect(entry("a-answer")).not.toBeVisible();
+    expect(screen.queryByLabelText("Message to Alpha")).toBeNull();
+    expect(entry("a")).toHaveTextContent(
+      "Shown in the column beside the conversation.",
+    );
+    // The header itself unfolds it.
+    fireEvent.click(pane("Alpha").querySelector("header")!);
+    expect(pane("Alpha")).not.toHaveAttribute("data-folded");
+    expect(entry("a-answer")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Fold Alpha" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("draws the fold on the header's left and Maximize on its right, as icons with names", () => {
+    draw(THREE);
+    const header = pane("Beta").querySelector("header")!;
+    const buttons = [...header.querySelectorAll("button")];
+    expect(buttons.map((each) => each.getAttribute("aria-label"))).toEqual([
+      "Fold Beta",
+      "Maximize Beta",
+    ]);
+    expect(header.firstElementChild).toBe(buttons[0]);
+    for (const button of buttons) {
+      expect(button.textContent).toBe("");
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(button).toHaveAttribute("title");
+    }
+  });
+
+  it("puts ← back to the conversation on the left of the pane it fills", () => {
+    draw(THREE);
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Beta" }));
+    const header = pane("Beta").querySelector("header")!;
+    const back = screen.getByRole("button", {
+      name: "Back to the conversation",
+    });
+    expect(header.firstElementChild).toBe(back);
+    expect(back.textContent).toBe("");
+    fireEvent.click(back);
+    expect(document.querySelector('[data-view="conversation"]')).toBeVisible();
+  });
+
+  it("widens the column from its edge, by the keys too, within its bounds, and puts it back on a double-click", () => {
+    boxes({
+      ".conversation-views": { width: 1200, height: 800 },
+      ".conversation-subagent-column": { width: 400, height: 800 },
+    });
+    draw(THREE);
+    const column = screen.getByRole("complementary", { name: "Subagents" });
+    const edge = screen.getByRole("separator", {
+      name: "Resize the subagent column",
+    });
+    fireEvent.pointerDown(edge, { clientX: 800, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 700, pointerId: 1 });
+    expect(column.style.getPropertyValue("--subagent-column-width")).toBe(
+      "500px",
+    );
+    // No further than leaves the conversation its least.
+    fireEvent.pointerMove(edge, { clientX: 100, pointerId: 1 });
+    expect(column.style.getPropertyValue("--subagent-column-width")).toBe(
+      "800px",
+    );
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(column.style.getPropertyValue("--subagent-column-width")).toBe(
+      "416px",
+    );
+    fireEvent.doubleClick(edge);
+    expect(column.style.getPropertyValue("--subagent-column-width")).toBe("");
+  });
+
+  it("shares the height of two open panes by the sash between them, past a folded one, and evens them on a double-click", () => {
+    boxes({
+      '[data-view="a"]': { width: 400, height: 300 },
+      '[data-view="b"]': { width: 400, height: 200 },
+      '[data-view="c"]': { width: 400, height: 300 },
+    });
+    draw(THREE);
+    fireEvent.click(screen.getByRole("button", { name: "Fold Beta" }));
+    // Alpha and Gamma are next to each other now: one sash, and none by Beta.
+    const sashes = screen.getAllByRole("separator", {
+      name: /^Resize .* and /,
+    });
+    expect(sashes.map((each) => each.getAttribute("aria-label"))).toEqual([
+      "Resize Alpha and Gamma",
+    ]);
+    const sash = sashes[0]!;
+    fireEvent.pointerDown(sash, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(sash, { clientY: 350, pointerId: 1 });
+    fireEvent.pointerUp(sash, { pointerId: 1 });
+    expect(pane("Alpha").style.flexGrow).toBe("350");
+    expect(pane("Gamma").style.flexGrow).toBe("250");
+    // Folded, Beta takes no share.
+    expect(pane("Beta").style.flexGrow).toBe("");
+    fireEvent.keyDown(sash, { key: "ArrowUp" });
+    expect(pane("Alpha").style.flexGrow).toBe("284");
+    fireEvent.doubleClick(sash);
+    expect(pane("Alpha").style.flexGrow).toBe("1");
+    expect(pane("Gamma").style.flexGrow).toBe("1");
   });
 });
 
@@ -343,7 +508,7 @@ describe("the subagents listed, whatever the pane's width", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Put Run1 back in the conversation" }),
+      screen.getByRole("button", { name: "Show Run1 beside the conversation" }),
     );
     expect(inColumn()).toEqual(["r2", "d3"]);
     fireEvent.click(screen.getByRole("button", { name: "Maximize Run2" }));

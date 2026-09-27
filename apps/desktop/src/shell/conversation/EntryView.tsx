@@ -48,7 +48,7 @@ import { RequestCard } from "./RequestCard";
 import { SubagentMessage } from "./SubagentMessage";
 import {
   SUBAGENT_STATE_LABELS,
-  SubagentActions,
+  SubagentCardActions,
   SubagentElsewhere,
   useSubagentPlacement,
 } from "./SubagentPanes";
@@ -437,9 +437,7 @@ const ToolView = memo(function ToolView({
           )}
         </details>
       ) : null}
-      {spawns && place === "inline" ? (
-        <SubagentActions entry={{ ...entry, spawns }} place={place} />
-      ) : null}
+      {spawns ? <SubagentCardActions entry={{ ...entry, spawns }} /> : null}
     </div>
   );
 });
