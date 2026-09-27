@@ -30,21 +30,22 @@ function registry(): HighlightRegistry {
   return CSS.highlights;
 }
 
+/**
+ * The two highlights, rebuilt from every bar's ranges. Added one by one, never
+ * spread into `new Highlight(...)`: a one-letter query over a long
+ * conversation finds millions of matches, and an argument list that long
+ * overflows the stack ("Maximum call stack size exceeded").
+ */
 function repaint(): void {
   const highlights = registry();
-  const all = [...painted.values()];
-  highlights.set(
-    MATCH_HIGHLIGHT,
-    new Highlight(...all.flatMap((each) => each.matches)),
-  );
-  highlights.set(
-    CURRENT_HIGHLIGHT,
-    new Highlight(
-      ...all.flatMap((each) =>
-        each.current === undefined ? [] : [each.current],
-      ),
-    ),
-  );
+  const matches = new Highlight();
+  const current = new Highlight();
+  for (const each of painted.values()) {
+    for (const match of each.matches) matches.add(match);
+    if (each.current !== undefined) current.add(each.current);
+  }
+  highlights.set(MATCH_HIGHLIGHT, matches);
+  highlights.set(CURRENT_HIGHLIGHT, current);
 }
 
 /** What `owner`'s find bar has found now, and which of it is current. */

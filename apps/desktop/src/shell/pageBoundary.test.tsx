@@ -10,9 +10,12 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PageBoundary } from "./PageBoundary";
+import { reloadPage } from "./pageReload";
+
+vi.mock("./pageReload", () => ({ reloadPage: vi.fn() }));
 
 const raiseFailure = vi.fn();
 
@@ -28,6 +31,7 @@ function Breaks(): never {
 afterEach(() => {
   cleanup();
   raiseFailure.mockClear();
+  vi.mocked(reloadPage).mockClear();
 });
 
 describe("a component that threw while rendering", () => {
@@ -64,6 +68,21 @@ describe("a component that threw while rendering", () => {
     expect(raised.detail).toContain("the sidebar could not be drawn");
     // The component stack is the diagnosis, and React hands it over once.
     expect(raised.detail).toContain("Breaks");
+  });
+  it("offers the way back: loading the page again, the same on every page", () => {
+    const quiet = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    render(
+      <PageBoundary>
+        <Breaks />
+      </PageBoundary>,
+    );
+    quiet.mockRestore();
+
+    expect(reloadPage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(reloadPage).toHaveBeenCalledTimes(1);
   });
 });
 

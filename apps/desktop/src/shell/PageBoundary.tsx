@@ -16,8 +16,11 @@
  *
  * It is not a recovery. The tree below it is gone and nothing here puts it
  * back — what is drawn says so, with the words of the failure and the line a
- * report needs. Everything a person can do from here is something they do to
- * the window.
+ * report needs. The way back is the one every page has, whichever page this
+ * is: load it again (`reloadPage`). Main already treats a page loading afresh
+ * as a new page — it detaches the old document's conversations and replaces
+ * its terminal clients as the new one attaches — so what the page shows is
+ * read again from main, and nothing the person had running is lost.
  */
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
@@ -25,6 +28,7 @@ import type { AppError } from "../ipc/appShell";
 import type { PageBridge } from "../ipc/contract";
 import { pageBridge } from "./bridge";
 import { toAppError } from "./failure";
+import { reloadPage } from "./pageReload";
 
 interface PageBoundaryProps {
   readonly children: ReactNode;
@@ -73,6 +77,11 @@ export class PageBoundary extends Component<
           <p className="mac-caption surface-meta">
             {error.module} · {error.code} · {error.runtimeVersion}
           </p>
+          <div>
+            <button type="button" className="mac-button" onClick={reloadPage}>
+              Reload
+            </button>
+          </div>
         </div>
       </section>
     );

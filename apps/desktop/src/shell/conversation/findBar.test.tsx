@@ -23,7 +23,12 @@ import {
   vi,
 } from "vitest";
 import { applyEvent, type ConversationEvent } from "../../model/conversation";
-import { CURRENT_HIGHLIGHT, MATCH_HIGHLIGHT } from "./findHighlights";
+import {
+  clearMatches,
+  CURRENT_HIGHLIGHT,
+  MATCH_HIGHLIGHT,
+  paintMatches,
+} from "./findHighlights";
 import { findMatches } from "./findInTranscript";
 import { draw, entry, installResizeObserver } from "./surfaceTestKit";
 import { assistant, put, tool, transcriptOf, user } from "./transcriptFixtures";
@@ -315,6 +320,30 @@ describe("the find bar", () => {
     search("parser");
     expect(count()).toBe("1 of 1");
     expect(currentEntry()).toBe("s1-a");
+  });
+});
+
+describe("a one-letter search in a long conversation", () => {
+  // A long session holds millions of letters, and a one-letter query finds
+  // a match for most of them: far more than a function call can take as
+  // arguments. Painting them by spreading them into `new Highlight(...)`
+  // broke the Agents page with "Maximum call stack size exceeded" the moment
+  // the first letter was typed.
+  it("paints every match, however many there are", () => {
+    const COUNT = 300_000;
+    const text = document.createTextNode("a".repeat(COUNT));
+    const matches = Array.from({ length: COUNT }, (_, at) => {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + 1);
+      return range;
+    });
+    const owner = {};
+    paintMatches(owner, matches, matches[COUNT - 1]);
+    expect(highlights.get(MATCH_HIGHLIGHT)?.size).toBe(COUNT);
+    expect(highlights.get(CURRENT_HIGHLIGHT)?.size).toBe(1);
+    clearMatches(owner);
+    expect(highlights.get(MATCH_HIGHLIGHT)?.size).toBe(0);
   });
 });
 
