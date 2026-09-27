@@ -269,6 +269,19 @@ DevHub's one monospace face, so the ids in a failure and the fixed-width fields
 in Settings follow it too, and a change to it reaches an open conversation
 without a reload.
 
+**A tool call's state** is the glyph at the left of its row: a spinner while
+it runs, ✓ done, ✕ failed or denied, – interrupted, ◦ idle, ? unknown. The
+glyph carries the word as its accessible name and tooltip, and the right of
+the row says only what the glyph cannot: *In the background*, a command's
+*Exit code N*, *Denied*, *Interrupted*, *Idle*, *Unknown*. A plain running or
+done call has nothing there. A call that set work going apart from the turn
+— a command in the background, a subagent in the background, a teammate —
+stands for that work: it is running while the work runs and ends as the work
+ends, not *Done* the moment the launch returned (`workState` in
+`model/conversation.ts`; every place a call's state is drawn reads it). A
+call that itself failed, was denied or was interrupted is that, whatever it
+started. A subagent's pane header in the column carries the same glyph.
+
 **A tool call's title** is the tool and what the call does: the argument
 that says it for a tool DevHub knows (`Bash: npm test`, `SendMessage:
 researcher — status`, `TaskUpdate: 3 → completed`, `ToolSearch: …`), an MCP
@@ -430,10 +443,11 @@ A notification that names only its task is matched through the call that
 task belongs to: the one `task_started` tied it to, or, read back from a
 session file, the call whose result named that task (a background agent's
 id, a background command's `backgroundTaskId`).
-Any other background task a call started (a command run in the background)
-follows the same news, told as one quiet line on that call (*In the
-background: Done — its summary*); only a notification no drawn call started
-is a notice. Its work is drawn in one place at a time:
+Any other background task a call started (a command run in the background,
+asked to or moved there by the CLI when it outran its timeout, whose result
+names its `backgroundTaskId`) follows the same news on that call; the CLI's
+one line about how it ended is a quiet line under the call. Only a
+notification no drawn call started is a notice. Its work is drawn in one place at a time:
 
 - One rule lists subagents, and the column and the switcher bar both list
   exactly those, in transcript order: a subagent until it ends (running, or

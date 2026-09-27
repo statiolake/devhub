@@ -47,6 +47,18 @@ import {
 
 beforeAll(installResizeObserver);
 
+/** A call's status glyph: the first in its row. */
+function mark(id: string): HTMLElement {
+  return entry(id).querySelector<HTMLElement>(".conversation-tool-mark")!;
+}
+
+/** The words at the right of a call's row, if it has any. */
+function status(id: string): HTMLElement | null {
+  return entry(id).querySelector<HTMLElement>(
+    ".conversation-tool-summary > .conversation-tool-status",
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -230,11 +242,20 @@ describe("every entry kind", () => {
     const bash = entry("t1").querySelector("details.conversation-tool")!;
     expect(bash).not.toHaveAttribute("open");
     expect(bash.querySelector("summary")).toHaveTextContent("Bash: npm test");
-    expect(bash.querySelector("summary")).toHaveTextContent("Failed");
+    // The glyph says Failed; the words at the right only what it cannot.
+    expect(mark("t1")).toHaveAccessibleName("Failed");
+    expect(status("t1")).toHaveTextContent("Exit code 1");
+    expect(bash.querySelector("summary")).not.toHaveTextContent("Failed");
     expect(bash).toHaveTextContent('"command": "npm test"');
     expect(bash).toHaveTextContent("1 failed");
     expect(bash).toHaveTextContent("Exit code 1");
     expect(entry("t2")).toHaveTextContent("# Title");
+    // A plain Done or Running is the glyph alone, named for who cannot see it.
+    expect(mark("t2")).toHaveAccessibleName("Done");
+    expect(mark("t2")).toHaveAttribute("title", "Done");
+    expect(status("t2")).toBeNull();
+    expect(mark("t4")).toHaveAccessibleName("Running");
+    expect(status("t4")).toBeNull();
     const lines = entry("t3").querySelectorAll(".conversation-diff-line");
     expect([...lines].map((line) => line.getAttribute("data-line"))).toEqual([
       "hunk",
@@ -242,7 +263,9 @@ describe("every entry kind", () => {
       "add",
     ]);
     expect(entry("t3")).toHaveTextContent("src/x.ts");
-    expect(entry("t4").querySelector("summary")).toHaveTextContent("Running");
+    expect(entry("t4").querySelector("summary")).not.toHaveTextContent(
+      "Running",
+    );
   });
 
   it("draws what a call gave back part by part: stderr apart, an interruption, output saved to a file, a tool it loaded", () => {
@@ -470,9 +493,8 @@ describe("every entry kind", () => {
         ),
       ]),
     );
-    expect(
-      entry("t1").querySelector(".conversation-subagent-state"),
-    ).toHaveTextContent("Idle");
+    expect(mark("t1")).toHaveAccessibleName("Idle");
+    expect(status("t1")).toHaveTextContent("Idle");
   });
 
   it("draws the images a person's message carried under its words", () => {
@@ -535,14 +557,46 @@ describe("every entry kind", () => {
     );
     const line = entry("t1").querySelector(".conversation-tool-background")!;
     expect(line).toHaveAttribute("data-state", "completed");
-    expect(line).toHaveTextContent("In the background: Done");
-    expect(line).toHaveTextContent("npm test finished");
+    expect(line).toHaveTextContent(/^npm test finished$/);
+    // How it ended is the call's own glyph: the call stands for its task.
+    expect(mark("t1")).toHaveAccessibleName("Done");
+    expect(status("t1")).toBeNull();
     // Outside the call's fold, so it shows without opening the call.
     expect(line.closest("details")).toBeNull();
     expect(
       entry("t2").querySelector(".conversation-tool-background"),
     ).toBeNull();
     expect(document.querySelector(".conversation-notice")).toBeNull();
+  });
+
+  it("draws a call whose task still runs in the background as running, and says it is in the background", () => {
+    draw(
+      transcriptOf([
+        put(
+          tool("t1", "Bash: npm run watch", {
+            background: { state: "running", summary: undefined },
+          }),
+        ),
+        put(
+          tool("t2", "Agent: survey", {
+            spawns: {
+              label: "survey",
+              prompt: "look",
+              model: undefined,
+              state: "running",
+              takesMessages: false,
+            },
+          }),
+        ),
+      ]),
+    );
+    for (const id of ["t1", "t2"]) {
+      expect(mark(id)).toHaveAccessibleName("Running");
+      expect(status(id)).toHaveTextContent("In the background");
+    }
+    expect(
+      entry("t1").querySelector(".conversation-tool-background"),
+    ).toBeNull();
   });
 
   it("nests a subagent's entries under its call: open while it runs, closed once it is done", () => {
@@ -582,7 +636,7 @@ describe("every entry kind", () => {
     )!;
     expect(subagent.open).toBe(true);
     expect(subagent.querySelector("summary")).toHaveTextContent(
-      /Explore.*example-model.*Running/,
+      /Explore.*example-model/,
     );
     // The children are inside the subagent, not beside it at the top level.
     expect(subagent).toContainElement(entry("inner"));

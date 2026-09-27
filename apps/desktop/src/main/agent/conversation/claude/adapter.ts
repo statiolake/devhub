@@ -1463,6 +1463,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						block,
 						line.toolResult,
 						`user.message.content[${position}]`,
+						when,
 					);
 				case "unused":
 					return;
@@ -1609,6 +1610,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		block: Extract<UserBlock, { kind: "tool_result" }>,
 		result: ToolUseResult,
 		path: string,
+		when: "live" | "history",
 	): void {
 		const id = toolEntryId(block.toolUseId);
 		const tool = this.tool(id);
@@ -1640,6 +1642,17 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				...tool,
 				status,
 				output: toolOutput(tool, block, result),
+				// A command that went on in the background — asked to, or moved
+				// there when it outran its timeout — runs on from here, until
+				// news of its task says how it ended. One read back from a
+				// session file ran in a CLI that has ended.
+				background:
+					result.backgroundTask === undefined || tool.background !== undefined
+						? tool.background
+						: {
+								state: when === "live" ? "running" : "unknown",
+								summary: undefined,
+							},
 				spawns:
 					tool.spawns === undefined || started
 						? tool.spawns

@@ -3424,6 +3424,57 @@ describe("the CLI's other system events", () => {
 		});
 	});
 
+	it("run on from a command's result that names its background task, until news of the task ends it", () => {
+		for (const input of [
+			{ command: "npm run watch", run_in_background: true },
+			// One that outran its timeout and was moved to the background.
+			{ command: "npm run build" },
+		]) {
+			const adapter = inTurn();
+			adapter.received(
+				assistantLine("msg_bg", [toolUse("toolu_bg", "Bash", input)]),
+			);
+			adapter.received(
+				json({
+					type: "user",
+					message: {
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "toolu_bg",
+								content: "Moved to the background with ID: b5",
+								is_error: false,
+							},
+						],
+					},
+					parent_tool_use_id: null,
+					session_id: SESSION,
+					tool_use_result: {
+						stdout: "",
+						stderr: "",
+						interrupted: false,
+						backgroundTaskId: "b5",
+					},
+				}),
+			);
+			expect(entry(adapter, "tool:toolu_bg")).toMatchObject({
+				status: "succeeded",
+				background: { state: "running", summary: undefined },
+			});
+			adapter.received(
+				system("task_notification", {
+					task_id: "b5",
+					status: "completed",
+					summary: "build finished",
+				}),
+			);
+			expect((entry(adapter, "tool:toolu_bg") as ToolEntry).background).toEqual(
+				{ state: "completed", summary: "build finished" },
+			);
+		}
+	});
+
 	it("end a background command read back from a session file, named only by its task id", () => {
 		const adapter = new ClaudeAdapter("boot");
 		const past = (record: Record<string, unknown>) =>

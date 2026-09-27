@@ -25,6 +25,7 @@ import {
   mostUsedRateLimit,
   rateLimitWindowName,
   withRateLimits,
+  workState,
   requestId,
   type AssistantEntry,
   type ConversationEvent,
@@ -450,6 +451,55 @@ describe("a tool call", () => {
         files: [{ path: "src/x.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
       },
     ]);
+  });
+});
+
+describe("how a call's work is going", () => {
+  const call = (fields: Partial<ToolEntry>): ToolEntry =>
+    (tool("t1", fields) as Extract<ConversationEvent, { type: "entry" }>)
+      .entry as ToolEntry;
+  const subagent = (state: NonNullable<ToolEntry["spawns"]>["state"]) => ({
+    label: "survey",
+    prompt: "",
+    model: undefined,
+    state,
+    takesMessages: false,
+  });
+
+  it("is the call's own status when it started nothing", () => {
+    for (const status of [
+      "running",
+      "succeeded",
+      "failed",
+      "denied",
+      "interrupted",
+    ] as const)
+      expect(workState(call({ status }))).toBe(status);
+  });
+
+  it("is the work a call started, running while it runs and ending as it ends", () => {
+    const background = (state: NonNullable<ToolEntry["background"]>["state"]) =>
+      call({ status: "succeeded", background: { state, summary: undefined } });
+    expect(workState(background("running"))).toBe("running");
+    expect(workState(background("completed"))).toBe("succeeded");
+    expect(workState(background("failed"))).toBe("failed");
+    expect(workState(background("unknown"))).toBe("unknown");
+    expect(
+      workState(call({ status: "succeeded", spawns: subagent("running") })),
+    ).toBe("running");
+    expect(
+      workState(call({ status: "succeeded", spawns: subagent("idle") })),
+    ).toBe("idle");
+    // The work's end can arrive before the call's own result.
+    expect(
+      workState(call({ status: "running", spawns: subagent("failed") })),
+    ).toBe("failed");
+  });
+
+  it("is the call's own failure, whatever it started", () => {
+    expect(
+      workState(call({ status: "interrupted", spawns: subagent("running") })),
+    ).toBe("interrupted");
   });
 });
 

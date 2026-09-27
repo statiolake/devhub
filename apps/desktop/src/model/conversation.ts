@@ -254,6 +254,36 @@ export interface ToolEntry {
   readonly plan: readonly PlanStep[] | undefined;
 }
 
+/**
+ * How the work a call stands for is going. A call that returned once it had
+ * set something going apart from the turn — a command in the background, a
+ * subagent in the background or as a teammate — stands for that work, so it
+ * is running while the work runs and ends as the work ends; any other call
+ * is its own status. A call that failed, was denied or was interrupted is
+ * that, whatever it started.
+ */
+export type WorkState = ToolStatus | "idle" | "unknown";
+
+const STARTED_WORK: Readonly<Record<SubagentInfo["state"], WorkState>> = {
+  running: "running",
+  idle: "idle",
+  completed: "succeeded",
+  failed: "failed",
+  unknown: "unknown",
+};
+
+export function workState(entry: ToolEntry): WorkState {
+  const started = entry.background?.state ?? entry.spawns?.state;
+  // A call that failed, was denied or was stopped says so itself, whatever
+  // it had started; otherwise the work it started is the news.
+  if (
+    started === undefined ||
+    (entry.status !== "running" && entry.status !== "succeeded")
+  )
+    return entry.status;
+  return STARTED_WORK[started];
+}
+
 export interface BackgroundTask {
   readonly state: SubagentInfo["state"];
   /** The CLI's one line about how it ended, once it has. */

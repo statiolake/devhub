@@ -932,6 +932,15 @@
   content: "–";
 }
 
+.conversation-tool-mark[data-status="idle"]::before {
+  color: var(--status-idle);
+  content: "◦";
+}
+
+.conversation-tool-mark[data-status="unknown"]::before {
+  content: "?";
+}
+
 @media (prefers-reduced-motion: reduce) {
   .conversation-tool-mark[data-status="running"]::before,
   .conversation-markdown[data-streaming] *::after,

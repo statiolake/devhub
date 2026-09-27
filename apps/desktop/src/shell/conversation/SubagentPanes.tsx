@@ -43,11 +43,12 @@ import {
   useState,
   type RefObject,
 } from "react";
-import type {
-  EntryId,
-  ToolEntry,
-  Transcript,
-  TranscriptEntry,
+import {
+  workState,
+  type EntryId,
+  type ToolEntry,
+  type Transcript,
+  type TranscriptEntry,
 } from "../../model/conversation";
 import { EntryView } from "./EntryView";
 import { NO_ENTRIES, type EntryTree } from "./entryTree";
@@ -73,6 +74,7 @@ import {
   type ColumnState,
   type MeasuredPane,
 } from "./subagentColumn";
+import { StatusMark, workNote } from "./StatusMark";
 import { SubagentMessage } from "./SubagentMessage";
 
 /** How wide the pane must be for a column beside the conversation. */
@@ -366,6 +368,7 @@ export function SubagentPane({
   const folded = place === "beside" && layout.column.folded.has(entry.id);
   useFollowScroll({ scroller, content, hidden: folded, revision: tree });
   const { spawns } = entry;
+  const note = workNote(entry);
   const fold = (value: boolean) =>
     layout.changeColumn((state) => withFold(state, entry.id, value));
   return (
@@ -400,13 +403,14 @@ export function SubagentPane({
             {folded ? <ChevronRightIcon /> : <ChevronDownIcon />}
           </IconAction>
         )}
+        <StatusMark state={workState(entry)} />
         <span className="conversation-subagent-label">{spawns.label}</span>
         {spawns.model ? (
           <span className="conversation-subagent-model">{spawns.model}</span>
         ) : null}
-        <span className="conversation-subagent-state">
-          {SUBAGENT_STATE_LABELS[spawns.state]}
-        </span>
+        {note === undefined ? null : (
+          <span className="conversation-subagent-state">{note}</span>
+        )}
         {place === "beside" ? (
           <div className="conversation-subagent-actions">
             <IconAction

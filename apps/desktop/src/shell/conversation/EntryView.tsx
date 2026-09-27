@@ -20,21 +20,22 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
-import type {
-  AnswerEntry,
-  AssistantBlock,
-  AssistantEntry,
-  CommandEntry,
-  CompactionEntry,
-  ImageRef,
-  NoticeEntry,
-  PendingRequest,
-  PlanStep,
-  SendingMessage,
-  ToolEntry,
-  TranscriptEntry,
-  TurnEndEntry,
-  UserEntry,
+import {
+  workState,
+  type AnswerEntry,
+  type AssistantBlock,
+  type AssistantEntry,
+  type CommandEntry,
+  type CompactionEntry,
+  type ImageRef,
+  type NoticeEntry,
+  type PendingRequest,
+  type PlanStep,
+  type SendingMessage,
+  type ToolEntry,
+  type TranscriptEntry,
+  type TurnEndEntry,
+  type UserEntry,
 } from "../../model/conversation";
 import { CopyButton } from "./CopyButton";
 import { REWIND_NOTE } from "./Composer";
@@ -47,9 +48,9 @@ import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { RequestCard } from "./RequestCard";
+import { StatusMark, workNote } from "./StatusMark";
 import { SubagentMessage } from "./SubagentMessage";
 import {
-  SUBAGENT_STATE_LABELS,
   SubagentCardActions,
   SubagentElsewhere,
   useSubagentPlacement,
@@ -323,14 +324,6 @@ function AssistantView({ entry }: { readonly entry: AssistantEntry }) {
 // ---------------------------------------------------------------------------
 // Tool calls and subagents
 
-const TOOL_STATUS_LABELS: Readonly<Record<ToolEntry["status"], string>> = {
-  running: "Running",
-  succeeded: "Done",
-  failed: "Failed",
-  denied: "Denied",
-  interrupted: "Interrupted",
-};
-
 /**
  * A `<details>` whose default follows a condition until the person toggles
  * it. A subagent is open while it runs and closes when it finishes; once the
@@ -415,13 +408,10 @@ function ToolTitle({ title }: { readonly title: string }) {
 }
 
 function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
+  const note = workNote(entry);
   return (
     <summary className="conversation-tool-summary">
-      <span
-        className="conversation-tool-mark"
-        data-status={entry.status}
-        aria-hidden="true"
-      />
+      <StatusMark state={workState(entry)} />
       <ToolTitle title={entry.title} />
       {entry.outsideSandbox ? (
         <span
@@ -432,9 +422,9 @@ function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
           unsandboxed
         </span>
       ) : null}
-      <span className="conversation-tool-status">
-        {TOOL_STATUS_LABELS[entry.status]}
-      </span>
+      {note === undefined ? null : (
+        <span className="conversation-tool-status">{note}</span>
+      )}
     </summary>
   );
 }
@@ -460,7 +450,7 @@ const ToolView = memo(function ToolView({
   return (
     <div
       className="conversation-tool-entry"
-      data-status={entry.status}
+      data-status={workState(entry)}
       data-sandbox={entry.outsideSandbox ? "off" : undefined}
     >
       {/* Folded until asked for: output is most of a transcript's bulk, and
@@ -475,20 +465,14 @@ const ToolView = memo(function ToolView({
         // The plan as it stands now, unfolded; earlier ones stay in their calls.
         <PlanChecklist steps={entry.plan} />
       ) : null}
-      {entry.background ? (
-        // A background task the call started, in one quiet line on the call.
+      {entry.background?.summary ? (
+        // How a background task the call started ended, in the CLI's one
+        // line; how it stands is the call's own mark.
         <div
           className="conversation-tool-background"
           data-state={entry.background.state}
         >
-          <span className="conversation-tool-background-state">
-            In the background: {SUBAGENT_STATE_LABELS[entry.background.state]}
-          </span>
-          {entry.background.summary ? (
-            <span className="conversation-tool-background-summary">
-              {` — ${entry.background.summary}`}
-            </span>
-          ) : null}
+          {entry.background.summary}
         </div>
       ) : null}
       {requests.map((request) => (
@@ -509,9 +493,6 @@ const ToolView = memo(function ToolView({
                 {spawns.model}
               </span>
             ) : null}
-            <span className="conversation-subagent-state">
-              {SUBAGENT_STATE_LABELS[spawns.state]}
-            </span>
           </summary>
           {/* Its work is drawn in one place at a time (`SubagentPanes`):
               here, unless it is in the column or filling the pane. */}

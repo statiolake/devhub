@@ -70,6 +70,13 @@ function subagentOf(id: string): HTMLDetailsElement {
   return found;
 }
 
+/** The status glyph of a call's own row (the first in its entry; its subagent's rows come after). */
+function markOf(id: string): HTMLElement {
+  const found = entry(id).querySelector<HTMLElement>(".conversation-tool-mark");
+  if (!found) throw new Error(`entry ${id} draws no status mark`);
+  return found;
+}
+
 function topLevelIds(): (string | null)[] {
   return [...document.querySelector(".conversation-transcript")!.children].map(
     (child) => child.getAttribute("data-entry-id"),
@@ -111,8 +118,9 @@ describe("a Claude subagent (Task)", () => {
     expect(subagent.open).toBe(false);
     expect(subagent).toHaveAttribute("data-state", "completed");
     expect(subagent.querySelector("summary")).toHaveTextContent(
-      /Explore.*haiku.*Done/,
+      /Explore.*haiku/,
     );
+    expect(markOf(TASK)).toHaveAccessibleName("Done");
     expect(subagent).toHaveTextContent("Look for applyEvent");
     expect(entry(TASK).querySelector("summary")).toHaveTextContent(
       "Task: Find the reducer",
@@ -122,9 +130,7 @@ describe("a Claude subagent (Task)", () => {
   it("is open while its task runs, and folds itself when it finishes", () => {
     const { redraw } = draw(claudeTranscript(claudeUntil("task_progress")));
     expect(subagentOf(TASK).open).toBe(true);
-    expect(subagentOf(TASK).querySelector("summary")).toHaveTextContent(
-      "Running",
-    );
+    expect(markOf(TASK)).toHaveAccessibleName("Running");
     redraw(claudeTranscript(CLAUDE));
     expect(subagentOf(TASK).open).toBe(false);
   });
@@ -246,9 +252,7 @@ describe("a Claude subagent (Task)", () => {
       ]),
     );
     expect(subagentOf(TASK)).toHaveAttribute("data-state", "failed");
-    expect(subagentOf(TASK).querySelector("summary")).toHaveTextContent(
-      "Failed",
-    );
+    expect(markOf(TASK)).toHaveAccessibleName("Failed");
   });
 
   it("shows a background task finishing on the call that started it, not as a subagent", () => {
@@ -287,7 +291,8 @@ describe("a Claude subagent (Task)", () => {
     ).toBeNull();
     expect(
       entry("tool:toolu_bg").querySelector(".conversation-tool-background"),
-    ).toHaveTextContent("In the background: Done — npm test finished");
+    ).toHaveTextContent(/^npm test finished$/);
+    expect(markOf("tool:toolu_bg")).toHaveAccessibleName("Done");
     expect(document.querySelector('[data-kind="notice"]')).toBeNull();
   });
 });
@@ -300,8 +305,9 @@ describe("a Codex subagent (spawnAgent)", () => {
     const subagent = subagentOf(SPAWN);
     expect(subagent.open).toBe(false);
     expect(subagent.querySelector("summary")).toHaveTextContent(
-      /explorer.*gpt-5\.5-mini.*Done/,
+      /explorer.*gpt-5\.5-mini/,
     );
+    expect(markOf(SPAWN)).toHaveAccessibleName("Done");
     expect(subagent).toHaveTextContent("List the files in src/");
     expect(subagent).toContainElement(entry(`${CHILD}/child-say`));
     expect(subagent).toContainElement(entry(`${CHILD}/child-ls`));
@@ -316,7 +322,7 @@ describe("a Codex subagent (spawnAgent)", () => {
     draw(codexTranscript(HANDSHAKE, "delegate", CODEX.slice(0, upToDelta)));
     const subagent = subagentOf(SPAWN);
     expect(subagent.open).toBe(true);
-    expect(subagent.querySelector("summary")).toHaveTextContent("Running");
+    expect(markOf(SPAWN)).toHaveAccessibleName("Running");
     const answer = entry(`${CHILD}/child-say`).querySelector(
       ".conversation-assistant",
     )!;
