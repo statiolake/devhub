@@ -265,28 +265,36 @@ interface CachedDispatch {
   readonly error: AppError | undefined;
 }
 
-type PendingConfirmationState =
+/**
+ * What an Agent is asked about before it is done to it, because it stops the
+ * Agent's CLI where it stands: stopping it, and carrying it on in its other
+ * presentation (which stops it once the new one runs). Both are asked about
+ * on the one rule, `agentIsIdle`.
+ */
+type AgentAct =
+  | { readonly kind: "stop" }
   | {
-      readonly kind: "stop";
-      readonly confirmationId: ConfirmationId;
+      readonly kind: "continue";
+      readonly presentation: AgentPresentation;
+      readonly session: string;
+    };
+
+type PendingConfirmationRequest =
+  | {
+      readonly kind: "agent";
       readonly agentId: AgentId;
+      readonly act: AgentAct;
     }
   | {
       readonly kind: "workspace_close";
-      readonly confirmationId: ConfirmationId;
       readonly workspaceId: WorkspaceId;
       readonly worktree: WorktreeDisposition;
       readonly inspection: CloseInspectionProjection;
     };
 
-type PendingConfirmationRequest =
-  | { readonly kind: "stop"; readonly agentId: AgentId }
-  | {
-      readonly kind: "workspace_close";
-      readonly workspaceId: WorkspaceId;
-      readonly worktree: WorktreeDisposition;
-      readonly inspection: CloseInspectionProjection;
-    };
+type PendingConfirmationState = PendingConfirmationRequest & {
+  readonly confirmationId: ConfirmationId;
+};
 
 /**
  * One reconcile that has been asked for and has not answered yet.
@@ -692,19 +700,27 @@ export class AppCoordinator {
           id,
         );
       case "continue_agent":
-        return this.beginContinue(
+        // Refused before anything is asked: a question about a continue that
+        // cannot happen is one nobody can answer.
+        this.continuable(intent.agentId, intent.presentation);
+        return this.askAbout(
           intent.agentId,
-          intent.presentation,
-          intent.session,
+          {
+            kind: "continue",
+            presentation: intent.presentation,
+            session: intent.session,
+          },
           id,
         );
+      case "confirm_continue_agent":
+        return this.confirmAgentAct(intent.confirmationId, "continue", id);
       case "rename_agent":
         this.model.renameAgent(intent.agentId, intent.displayName);
         return this.transitionOutcome(beforeRevision, id);
       case "stop_agent":
-        return this.beginStopConfirmation(intent.agentId, id);
+        return this.askAbout(intent.agentId, { kind: "stop" }, id);
       case "confirm_stop_agent":
-        return this.confirmStop(intent.confirmationId, id);
+        return this.confirmAgentAct(intent.confirmationId, "stop", id);
       case "retry_stop_agent":
         return this.retryStop(intent.agentId, id);
       case "mark_agent_unread":
@@ -984,12 +1000,15 @@ export class AppCoordinator {
     return this.startAgentStop(replaced, id);
   }
 
-  private beginContinue(
+  /**
+   * Where Agent `agentId` is and what it was started from, when it can be
+   * carried on in `presentation`: it is there, and `presentation` is the
+   * other one than its own.
+   */
+  private continuable(
     agentId: AgentId,
     presentation: AgentPresentation,
-    session: string,
-    id: OperationId,
-  ): IntentOutcome {
+  ): { readonly workspaceId: WorkspaceId; readonly profileId: AgentProfileId } {
     const agent = this.model.agent(agentId);
     const workspace = this.model.workspaceForAgent(agentId);
     if (!agent || !workspace) {
@@ -1004,9 +1023,24 @@ export class AppCoordinator {
           `“${agent.displayName}” is already ${presentation === "tui" ? "a terminal" : "a GUI"} Agent.`,
         );
     }
+    return { workspaceId: workspace.id, profileId: agent.profile.id };
+  }
+
+  /**
+   * Launch a new Agent from `agentId`'s profile in `presentation`, resuming
+   * `session`; the Agent it replaces is stopped once the new one is running
+   * and written down (`stopReplaced`).
+   */
+  private beginContinue(
+    agentId: AgentId,
+    presentation: AgentPresentation,
+    session: string,
+    id: OperationId,
+  ): IntentOutcome {
+    const { workspaceId, profileId } = this.continuable(agentId, presentation);
     const outcome = this.beginProfileResolution(
-      workspace.id,
-      agent.profile.id,
+      workspaceId,
+      profileId,
       [],
       "full",
       presentation,
@@ -1018,16 +1052,20 @@ export class AppCoordinator {
   }
 
   /**
-   * Stop an Agent, asking first only if stopping it would interrupt anything.
+   * Stop an Agent, or carry it on in its other presentation, asking first
+   * only if that would interrupt anything: both stop its CLI where it
+   * stands, and the turn it is in, the question it is holding and the
+   * subagents and background tasks it started stop with it.
    *
    * `agentIsIdle` is the whole of the rule and it lives in one place — the
    * same one the workspace close reads, so "this Agent is busy" cannot mean
-   * two things. An Agent sitting at its prompt is stopped where it stands: a
-   * question whose answer is always yes is what teaches people to dismiss the
-   * ones that matter.
+   * two things. An Agent sitting at its prompt is stopped, or carried on,
+   * where it stands: a question whose answer is always yes is what teaches
+   * people to dismiss the ones that matter.
    */
-  private beginStopConfirmation(
+  private askAbout(
     agent: AgentId,
+    act: AgentAct,
     id: OperationId,
   ): IntentOutcome {
     const found = this.model.agent(agent);
@@ -1036,37 +1074,57 @@ export class AppCoordinator {
         DomainErrorCode.UnknownAgent,
       );
     }
-    if (agentIsIdle(found.status)) return this.startAgentStop(agent, id);
+    if (agentIsIdle(found.status)) return this.doAgentAct(agent, act, id);
     const token = this.startOperation(
       "generate_confirmation_id",
       { kind: "agent", agentId: agent },
       id,
     );
-    this.confirmationRequests.set(id, { kind: "stop", agentId: agent });
+    this.confirmationRequests.set(id, { kind: "agent", agentId: agent, act });
     this.emitEffect({
       kind: "generate_confirmation_id",
       token,
-      purpose: { kind: "stop_agent", agentId: agent },
+      purpose: {
+        kind: act.kind === "stop" ? "stop_agent" : "continue_agent",
+        agentId: agent,
+      },
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
-  private confirmStop(
+  /** The answer to `askAbout`'s question: `act` is the one it asked about. */
+  private confirmAgentAct(
     confirmation: ConfirmationId,
+    act: AgentAct["kind"],
     id: OperationId,
   ): IntentOutcome {
     const index = this.confirmations.findIndex(
       (pending) =>
-        pending.kind === "stop" && pending.confirmationId === confirmation,
+        pending.kind === "agent" &&
+        pending.act.kind === act &&
+        pending.confirmationId === confirmation,
     );
     if (index < 0) {
       throw new AppError(AppErrorCode.ConfirmationExpired);
     }
     const [state] = this.confirmations.splice(index, 1);
-    if (state.kind !== "stop") {
+    if (state.kind !== "agent") {
       throw new AppError(AppErrorCode.ConfirmationExpired);
     }
-    return this.startAgentStop(state.agentId, id);
+    return this.doAgentAct(state.agentId, state.act, id);
+  }
+
+  private doAgentAct(
+    agent: AgentId,
+    act: AgentAct,
+    id: OperationId,
+  ): IntentOutcome {
+    switch (act.kind) {
+      case "stop":
+        return this.startAgentStop(agent, id);
+      case "continue":
+        return this.beginContinue(agent, act.presentation, act.session, id);
+    }
   }
 
   /**
@@ -1765,7 +1823,7 @@ export class AppCoordinator {
           : AppErrorCode.UnknownOperation,
       ).withOperation(token.operationId);
     }
-    if (request.kind === "stop") {
+    if (request.kind === "agent") {
       this.takePending(
         token,
         "generate_confirmation_id",
@@ -1798,34 +1856,25 @@ export class AppCoordinator {
             inspection: request.inspection,
             worktree: request.worktree,
           }
-        : { kind: "agent_stop", agentId: request.agentId };
+        : request.act.kind === "stop"
+          ? { kind: "agent_stop", agentId: request.agentId }
+          : {
+              kind: "agent_continue",
+              agentId: request.agentId,
+              presentation: request.act.presentation,
+            };
 
-    if (request.kind === "stop") {
-      this.confirmations = this.confirmations.filter(
-        (pending) =>
-          !(pending.kind === "stop" && pending.agentId === request.agentId),
-      );
-      this.confirmations.push({
-        kind: "stop",
-        confirmationId: confirmation,
-        agentId: request.agentId,
-      });
-    } else {
-      this.confirmations = this.confirmations.filter(
-        (pending) =>
-          !(
+    // One open question per subject: a newer one about the same Agent or
+    // Workspace replaces the one before it.
+    this.confirmations = this.confirmations.filter((pending) =>
+      request.kind === "agent"
+        ? !(pending.kind === "agent" && pending.agentId === request.agentId)
+        : !(
             pending.kind === "workspace_close" &&
             pending.workspaceId === request.workspaceId
           ),
-      );
-      this.confirmations.push({
-        kind: "workspace_close",
-        confirmationId: confirmation,
-        workspaceId: request.workspaceId,
-        worktree: request.worktree,
-        inspection: request.inspection,
-      });
-    }
+    );
+    this.confirmations.push({ ...request, confirmationId: confirmation });
 
     this.emit({ kind: "operation_completed", token });
     return {
@@ -2215,12 +2264,12 @@ export class AppCoordinator {
       }
     }
     for (const [id, request] of [...this.confirmationRequests]) {
-      if (request.kind === "stop" && request.agentId === agentId) {
+      if (request.kind === "agent" && request.agentId === agentId) {
         this.confirmationRequests.delete(id);
       }
     }
     this.confirmations = this.confirmations.filter(
-      (pending) => !(pending.kind === "stop" && pending.agentId === agentId),
+      (pending) => !(pending.kind === "agent" && pending.agentId === agentId),
     );
     return completedStopTokens;
   }
@@ -2397,7 +2446,7 @@ export class AppCoordinator {
       this.confirmationRequests.delete(id);
     }
     this.confirmations = this.confirmations.filter((pending) =>
-      pending.kind === "stop"
+      pending.kind === "agent"
         ? this.model.workspaceForAgent(pending.agentId)?.id !== workspaceId
         : pending.workspaceId !== workspaceId,
     );

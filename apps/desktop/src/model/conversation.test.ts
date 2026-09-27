@@ -770,6 +770,35 @@ describe("the turn lifecycle, read as a status", () => {
     expect(conversationStatus(resumed)).toBe("working");
   });
 
+  // DevHub's own hold on the person's words is part of what the Agent is
+  // doing: a message written to the CLI and not taken yet starts a turn, and
+  // one DevHub holds at the prompt (open to change, or its write failed)
+  // waits on the person. Stopping the CLI — a stop, a continue — loses both,
+  // so neither is idle.
+  it("is working while a message is written and not taken, waiting while one is held at the prompt", () => {
+    const sending = fold(READY, {
+      type: "sending",
+      sending: [{ id: "s1", text: "go", images: [], origin: "person" }],
+    });
+    expect(conversationStatus(sending)).toBe("working");
+    const held = fold(READY, {
+      type: "pending",
+      pending: [
+        {
+          id: pendingId("held:1"),
+          text: "and then this",
+          images: [],
+          failure: undefined,
+          editing: true,
+        },
+      ],
+    });
+    expect(conversationStatus(held)).toBe("waiting");
+    expect(
+      conversationStatus(applyEvent(held, { type: "pending", pending: [] })),
+    ).toBe("idle");
+  });
+
   it("is idle after a completed turn and an interrupted one", () => {
     expect(
       conversationStatus(

@@ -1,21 +1,22 @@
 /* `ContinueElsewhere`: one floating button over an Agent's pane. A floating
    control over a surface that may be any colour, so it carries its own ground.
    It stays out of the way at rest — ground, border and ink at 40%, no shadow —
-   and comes to full strength, lifted, while pointed at or holding focus. */
+   and comes to full strength, lifted, while pointed at or holding focus.
+
+   One place for both directions: the top right corner of the Agent's own
+   column. `--agent-continue-beside` is how wide whatever is beside that column
+   is (the subagents' beside a conversation, nothing beside a terminal). */
 .agent-continue {
   position: absolute;
   z-index: 2;
   top: var(--space-3);
-  right: var(--space-3);
+  right: calc(var(--agent-continue-beside, 0px) + var(--space-3));
 }
 
-.agent-continue.is-above-composer {
-  top: auto;
-  bottom: var(--space-3);
-}
-
+/* Both labels in the one cell, the one it does not say unseen: the button is
+   as wide as the longer, whichever it says. */
 .agent-continue-button {
-  display: flex;
+  display: grid;
   align-items: center;
   padding: 5px var(--space-2);
   border: 1px solid var(--line-strong);
@@ -27,6 +28,15 @@
   white-space: nowrap;
   opacity: 0.4;
   transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agent-continue-label {
+  grid-area: 1 / 1;
+  text-align: center;
+}
+
+.agent-continue-label[aria-hidden="true"] {
+  visibility: hidden;
 }
 
 .agent-continue-button:hover {

@@ -552,6 +552,12 @@ function confirmationPurposeWire(
       };
     case "agent_stop":
       return { kind: "agent_stop", agentId: purpose.agentId };
+    case "agent_continue":
+      return {
+        kind: "agent_continue",
+        agentId: purpose.agentId,
+        presentation: purpose.presentation,
+      };
   }
 }
 
@@ -1079,6 +1085,13 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
     case "confirm_stop_agent":
       return {
         type: "confirm_stop_agent",
+        confirmationId: tryParse(() =>
+          parseConfirmationId(wire.confirmationId),
+        ),
+      };
+    case "confirm_continue_agent":
+      return {
+        type: "confirm_continue_agent",
         confirmationId: tryParse(() =>
           parseConfirmationId(wire.confirmationId),
         ),

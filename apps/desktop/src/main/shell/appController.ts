@@ -933,13 +933,24 @@ export class AppController {
 			ipcMain: electron.ipcMain,
 			conversations: agentWiring.conversations,
 			agentsPage: () => shellWindow().agents.contents(),
-			continueIn: (agentId, presentation, session) =>
-				this.dispatchSettled({
-					type: "continue_agent",
+			// A continue of an Agent that is not idle is a question first
+			// (`Coordinator.askAbout`), and the button that asked cannot draw
+			// it: it goes to the one sheet a stop's question goes to.
+			continueIn: async (agentId, presentation, session) =>
+				this.raiseCloseConfirmation(
+					outcomeWire(
+						await this.dispatchSettled({
+							type: "continue_agent",
+							agentId,
+							presentation,
+							session,
+						}),
+						this.coordinator.readiness,
+						this.repositoryOf,
+						this.homeOf,
+					),
 					agentId,
-					presentation,
-					session,
-				}),
+				),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
 			fail: (error) => namedFailure(error),
 		});

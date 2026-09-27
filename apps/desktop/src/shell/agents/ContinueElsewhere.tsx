@@ -6,11 +6,23 @@
  * coordinator's `continue_agent`).
  *
  * A corner control that rests translucent over the work and comes up to full
- * when pointed at or focused. Over a conversation it sits at the right of the
- * conversation's own column (never over the subagents beside it), just above
- * the composer; over a terminal, in the top right corner, since the bottom
- * right is where the pane says what became of a queued message
- * (`InjectionStatus.tsx`).
+ * when pointed at or focused. Both directions are this one control in one
+ * place: the top right corner of the Agent's own column, the element its
+ * surface marks `data-agent-column` — a terminal is its own column, a
+ * conversation's is the one beside its subagents, so the button never sits
+ * over them. The one rule is `continueElsewhere.css`'s; the only thing
+ * measured here is how wide whatever is beside that column is, which is
+ * nothing for a terminal. It used to be two rules — over a terminal the top
+ * right corner of the pane, over a conversation just above the composer —
+ * and switching between two Agents moved it (the bottom right is where the
+ * pane says what became of a queued message, `InjectionStatus.tsx`).
+ *
+ * It is the same size in both, too: both labels are laid out in the one
+ * cell, the one it does not say unseen, so it is as wide as the longer.
+ *
+ * It is always offered while the Agent runs. Pressed while the Agent is not
+ * idle, main asks first (`Coordinator.askAbout`), because the continue stops
+ * the CLI and whatever it is in the middle of.
  *
  * What it could not do goes to the page's root like every other failure here.
  */
@@ -26,27 +38,32 @@ export function continuesElsewhere(agent: AgentWire): boolean {
   return agent.profileKind === "claude" || agent.profileKind === "codex";
 }
 
+const LABELS = {
+  toTerminal: "Continue in terminal",
+  toGui: "Continue in GUI",
+} as const;
+
 export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
   const { reportFailure } = useAgents();
   const own = useRef<HTMLDivElement | null>(null);
   const toTerminal = agent.presentation === "gui";
-  const corner = useConversationCorner(own, toTerminal ? agent.id : undefined);
+  const beside = useBesideTheColumn(own, agent.id);
   return (
     <div
       ref={own}
-      className={`agent-continue${toTerminal ? " is-above-composer" : ""}`}
+      className="agent-continue"
       style={
-        corner === undefined
+        beside === undefined
           ? undefined
-          : {
-              right: `calc(${String(corner.right)}px + var(--space-3))`,
-              bottom: `calc(${String(corner.bottom)}px + var(--space-2))`,
-            }
+          : ({
+              "--agent-continue-beside": `${String(beside)}px`,
+            } as React.CSSProperties)
       }
     >
       <button
         type="button"
         className="agent-continue-button"
+        aria-label={toTerminal ? LABELS.toTerminal : LABELS.toGui}
         title={
           toTerminal
             ? "Go on with this session in a terminal Agent, and stop this one"
@@ -61,52 +78,47 @@ export function ContinueElsewhere({ agent }: { readonly agent: AgentWire }) {
           ).catch(reportFailure);
         }}
       >
-        {toTerminal ? "Continue in terminal" : "Continue in GUI"}
+        <span className="agent-continue-label" aria-hidden={!toTerminal}>
+          {LABELS.toTerminal}
+        </span>
+        <span className="agent-continue-label" aria-hidden={toTerminal}>
+          {LABELS.toGui}
+        </span>
       </button>
     </div>
   );
 }
 
 /**
- * Where the conversation's own column leaves room in the pane of Agent
- * `agentId`, from the pane's right and bottom edges: the width of whatever is
- * beside the column (the subagents'), and the composer's height with what is
- * under it. Kept current as either changes; `undefined` for no Agent.
+ * How wide whatever is beside Agent `agentId`'s own column is, from the
+ * pane's right edge: the subagents' column beside a conversation, nothing
+ * beside a terminal. Kept current as either changes.
  */
-function useConversationCorner(
+function useBesideTheColumn(
   own: React.RefObject<HTMLDivElement | null>,
-  agentId: string | undefined,
-): { readonly right: number; readonly bottom: number } | undefined {
-  const [corner, setCorner] = useState<{
-    readonly right: number;
-    readonly bottom: number;
-  }>();
+  agentId: string,
+): number | undefined {
+  const [beside, setBeside] = useState<number>();
   useLayoutEffect(() => {
-    if (agentId === undefined) {
-      setCorner(undefined);
-      return;
-    }
     const pane = own.current?.parentElement;
-    const composer = pane?.querySelector<HTMLElement>(
-      `[data-surface-key="agent:${agentId}"] .conversation-composer`,
+    const column = pane?.querySelector<HTMLElement>(
+      `[data-surface-key="agent:${agentId}"] [data-agent-column], [data-surface-key="agent:${agentId}"][data-agent-column]`,
     );
-    const column = composer?.closest<HTMLElement>(".conversation-main");
-    if (!pane || !composer || !column) {
+    if (!pane || !column) {
       throw new Error(
-        `the conversation of Agent ${agentId} is on screen with no composer in its column to sit above`,
+        `Agent ${agentId} is on screen with no column of its own to sit in the corner of`,
       );
     }
     const measure = () => {
-      const edges = pane.getBoundingClientRect();
-      setCorner({
-        right: edges.right - column.getBoundingClientRect().right,
-        bottom: edges.bottom - composer.getBoundingClientRect().top,
-      });
+      setBeside(
+        pane.getBoundingClientRect().right -
+          column.getBoundingClientRect().right,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
-    for (const each of [pane, column, composer]) observer.observe(each);
+    for (const each of [pane, column]) observer.observe(each);
     return () => observer.disconnect();
   }, [own, agentId]);
-  return corner;
+  return beside;
 }

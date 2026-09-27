@@ -343,6 +343,94 @@ describe("stopping an Agent, asked on the modal layer", () => {
   });
 });
 
+/**
+ * A continue stops the Agent it replaces once the new one runs, so it is asked
+ * about when that Agent is not idle, exactly as a stop is — and says what
+ * stops with it, which is the one thing a person deciding needs to know.
+ */
+describe("continuing an Agent that is not idle, asked on the modal layer", () => {
+  afterEach(cleanup);
+
+  for (const [presentation, where, row] of [
+    ["tui", "in a terminal", "Continue in terminal"],
+    ["gui", "in the GUI", "Continue in GUI"],
+  ] as const) {
+    const purpose: ConfirmationPurposeWire = {
+      kind: "agent_continue",
+      agentId: AGENT_ID,
+      presentation,
+    };
+
+    it(`names the Agent and where it goes on (${presentation}), and what stops`, async () => {
+      mount(snapshotWith(true), vi.fn(), purpose);
+      await waitFor(() => {
+        expect(
+          screen.getByText(`Continue “claude 1” ${where}?`),
+        ).toBeInTheDocument();
+      });
+      expect(
+        screen.getByText(
+          "It is not idle. Its CLI is stopped and the session resumed in a new Agent: the turn it is in, a question it is waiting on, and any subagents or background tasks it started stop with it.",
+        ),
+      ).toBeInTheDocument();
+      expect(rows()).toEqual(["Cancel", row]);
+    });
+
+    it(`continues on the second row (${presentation})`, async () => {
+      const onDismiss = vi.fn();
+      const dispatch = mount(snapshotWith(true), onDismiss, purpose);
+      await waitFor(() => {
+        expect(rows()).toHaveLength(2);
+      });
+      fireEvent.click(screen.getByText(row));
+      await waitFor(() => {
+        expect(dispatch).toHaveBeenCalledWith({
+          type: "confirm_continue_agent",
+          confirmationId: CONFIRMATION_ID,
+        });
+      });
+      await waitFor(() => {
+        expect(onDismiss).toHaveBeenCalled();
+      });
+    });
+  }
+
+  it("stops asking once the Agent it asks about is gone", async () => {
+    const onDismiss = vi.fn();
+    mount(snapshotWith(false), onDismiss, {
+      kind: "agent_continue",
+      agentId: AGENT_ID,
+      presentation: "tui",
+    });
+    await waitFor(() => {
+      expect(onDismiss).toHaveBeenCalled();
+    });
+  });
+
+  it("re-asks, with the reason, when main refuses", async () => {
+    const onDismiss = vi.fn();
+    const refuse = vi.fn(
+      async (): Promise<AppOutcome | undefined> => undefined,
+    );
+    mount(
+      snapshotWith(true),
+      onDismiss,
+      { kind: "agent_continue", agentId: AGENT_ID, presentation: "gui" },
+      refuse,
+    );
+    await waitFor(() => {
+      expect(rows()).toHaveLength(2);
+    });
+    fireEvent.click(screen.getByText("Continue in GUI"));
+    await waitFor(() => {
+      expect(
+        screen.getByText("The Agent could not be continued. Try again."),
+      ).toBeInTheDocument();
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+});
+
 describe("closing a workspace with things open in it", () => {
   afterEach(cleanup);
 
@@ -499,6 +587,14 @@ describe("what a confirmation knows about itself", () => {
       [
         { kind: "agent_stop", agentId: AGENT_ID } as ConfirmationPurposeWire,
         { type: "confirm_stop_agent", confirmationId: CONFIRMATION_ID },
+      ],
+      [
+        {
+          kind: "agent_continue",
+          agentId: AGENT_ID,
+          presentation: "tui",
+        } as ConfirmationPurposeWire,
+        { type: "confirm_continue_agent", confirmationId: CONFIRMATION_ID },
       ],
       [
         CLOSE_WORKSPACE,

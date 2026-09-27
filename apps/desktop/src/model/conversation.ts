@@ -917,6 +917,11 @@ export function lastTurnFailed(transcript: Transcript): boolean {
  * The Agent's status, read off its conversation. A failed turn stays `error`
  * until the next turn starts; a pending request is `waiting` even mid-turn,
  * because somebody has to answer it before the turn goes anywhere.
+ *
+ * DevHub's hold on the person's words counts too, because stopping the CLI
+ * (a stop, a continue) loses them: a message written and not taken yet is
+ * the turn it starts (`working`), and one DevHub holds at the prompt — open
+ * to change, or its write failed — waits on the person (`waiting`).
  */
 export function conversationStatus(transcript: Transcript): AgentStatus {
   const { state } = transcript;
@@ -927,7 +932,9 @@ export function conversationStatus(transcript: Transcript): AgentStatus {
       return "error";
     case "ready":
       if (transcript.requests.length > 0) return "waiting";
-      if (state.turn !== "none") return "working";
+      if (state.turn !== "none" || transcript.sending.length > 0)
+        return "working";
+      if (transcript.pending.length > 0) return "waiting";
       return lastTurnFailed(transcript) ? "error" : "idle";
   }
 }

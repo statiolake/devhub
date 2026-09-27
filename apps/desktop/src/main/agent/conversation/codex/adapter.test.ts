@@ -483,8 +483,10 @@ describe("a turn", () => {
     `);
 		expect(harness.transcript.requests).toEqual([]);
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
-		// idle → working → waiting (approval) → working → … → idle
-		expect(statuses[0]).toBe("idle");
+		// working → waiting (approval) → working → … → idle. Working from the
+		// first answer on: the message is written and not taken yet, which is
+		// the turn it starts, not an Agent at its prompt.
+		expect(statuses[0]).toBe("working");
 		expect(statuses).toContain("waiting");
 		expect(statuses.at(-2)).toBe("working");
 		expect(statuses.at(-1)).toBe("idle");

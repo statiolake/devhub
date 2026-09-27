@@ -999,6 +999,8 @@ describe("continuing a GUI Agent in a terminal", () => {
       agentPresentation: "gui",
     });
     driver.settle();
+    // At its prompt: nothing it is doing is cut off, so nothing is asked.
+    driver.coordinator.model.setAgentStatus(AG_A, "idle");
     driver.dispatch({
       type: "continue_agent",
       agentId: AG_A,
@@ -1119,6 +1121,7 @@ describe("continuing a terminal Agent in the GUI", () => {
       agentPresentation: "tui",
     });
     driver.settle();
+    driver.coordinator.model.setAgentStatus(AG_A, "idle");
     driver.dispatch({
       type: "continue_agent",
       agentId: AG_A,
@@ -1180,6 +1183,177 @@ describe("continuing a terminal Agent in the GUI", () => {
         }),
       ),
     ).toBe(AppErrorCode.Domain);
+  });
+});
+
+describe("continuing an Agent that is not idle", () => {
+  const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400b2");
+
+  /** A `presentation` Agent AG_A in WS_A, read as `status`, asked to continue in the other presentation. */
+  function continuing(
+    presentation: "tui" | "gui",
+    status: "working" | "waiting" | "error" | "unknown",
+  ): { driver: Driver; asked: IntentOutcome; effects: Effect[] } {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      agentPresentation: presentation,
+    });
+    driver.settle();
+    driver.coordinator.model.setAgentStatus(AG_A, status);
+    const asked = driver.dispatch({
+      type: "continue_agent",
+      agentId: AG_A,
+      presentation: presentation === "tui" ? "gui" : "tui",
+      session: "thread-3",
+    });
+    return { driver, asked, effects: driver.drainEffects() };
+  }
+
+  // What the continue does to the Agent it replaces is stop it, unasked,
+  // once the new one runs: the turn it is in, the question it is holding,
+  // the subagents and background tasks it started all stop with its CLI.
+  // So a continue is asked about exactly when a stop is: whenever the Agent
+  // is not at its prompt (`agentIsIdle`), in either direction.
+  for (const presentation of ["tui", "gui"] as const) {
+    for (const status of ["working", "waiting", "error", "unknown"] as const) {
+      it(`asks first when a ${presentation} Agent is ${status}, and launches nothing yet`, () => {
+        const { driver, effects } = continuing(presentation, status);
+        expect(effects.map((effect) => effect.kind)).toEqual([
+          "generate_confirmation_id",
+        ]);
+        const generate = effects[0]!;
+        if (generate.kind !== "generate_confirmation_id")
+          throw new Error("unexpected");
+        const required = driver.accept({
+          type: "confirmation_id_generated",
+          token: generate.token,
+          confirmationId: CONFIRM,
+        });
+        expect(required).toMatchObject({
+          kind: "confirmation_required",
+          confirmationId: CONFIRM,
+          purpose: {
+            kind: "agent_continue",
+            agentId: AG_A,
+            presentation: presentation === "tui" ? "gui" : "tui",
+          },
+        });
+        expect(
+          driver
+            .drainEffects()
+            .some(
+              (effect) =>
+                effect.kind === "resolve_agent_profile" ||
+                effect.kind === "stop_agent",
+            ),
+        ).toBe(false);
+        expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+          "running",
+        );
+      });
+    }
+  }
+
+  it("goes on once confirmed: the same launch resuming the session, then the Agent it replaces is stopped", () => {
+    const { driver, effects } = continuing("tui", "working");
+    const generate = effects[0]!;
+    if (generate.kind !== "generate_confirmation_id")
+      throw new Error("unexpected");
+    driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    driver.drainEffects();
+    driver.dispatch({
+      type: "confirm_continue_agent",
+      confirmationId: CONFIRM,
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    expect(resolve.resume).toBe("thread-3");
+    driver.answer(resolve);
+    const id = driver.drainEffects()[0];
+    if (id?.kind !== "generate_agent_id") throw new Error("unexpected");
+    driver.accept({
+      type: "agent_id_generated",
+      token: id.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+    });
+    const launch = driver.drainEffects()[0];
+    if (launch?.kind !== "launch_agent") throw new Error("unexpected");
+    expect(launch.agentPresentation).toBe("gui");
+    driver.accept({
+      type: "agent_launch_completed",
+      token: launch.token,
+      workspaceId: WS_A,
+      agentId: AG_B,
+      result: { kind: "started" },
+    });
+    const persist = driver.drainEffects()[0];
+    if (persist?.kind !== "persist_state") throw new Error("unexpected");
+    driver.answer(persist);
+    expect(
+      driver.drainEffects().find((effect) => effect.kind === "stop_agent"),
+    ).toMatchObject({ kind: "stop_agent", agentId: AG_A });
+  });
+
+  it("is not answered by a stop's confirmation, nor a stop by its", () => {
+    const { driver, effects } = continuing("gui", "working");
+    const generate = effects[0]!;
+    if (generate.kind !== "generate_confirmation_id")
+      throw new Error("unexpected");
+    driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    expect(
+      errorCode(() =>
+        driver.dispatch({
+          type: "confirm_stop_agent",
+          confirmationId: CONFIRM,
+        }),
+      ),
+    ).toBe(AppErrorCode.ConfirmationExpired);
+  });
+
+  it("is let go of when the Agent it is about exits", () => {
+    const { driver, effects } = continuing("gui", "working");
+    const generate = effects[0]!;
+    if (generate.kind !== "generate_confirmation_id")
+      throw new Error("unexpected");
+    driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
+    const round = driver
+      .drainEffects()
+      .find((effect) => effect.kind === "reconcile_agents");
+    if (round?.kind !== "reconcile_agents") throw new Error("unexpected");
+    driver.accept({
+      type: "agents_reconciled",
+      token: round.token,
+      reconciliation: { observations: [], exited: [AG_A] },
+    });
+    driver.drainEffects();
+    expect(
+      errorCode(() =>
+        driver.dispatch({
+          type: "confirm_continue_agent",
+          confirmationId: CONFIRM,
+        }),
+      ),
+    ).toBe(AppErrorCode.ConfirmationExpired);
   });
 });
 

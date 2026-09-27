@@ -508,8 +508,8 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 
 **Continue in terminal** is the way out of a GUI Agent:
 
-- It is a small floating button at the right of the conversation's column,
-  just above the composer (left of the subagent column when one is open),
+- It is a small floating button in the top right corner of the
+  conversation's column (left of the subagent column when one is open),
   translucent until it is pointed at or focused. It is also on the failure over the pane when the
   conversation broke (the host was lost, a protocol mismatch, or the CLI
   refused to start).
@@ -518,13 +518,34 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 - It selects that Agent, and stops the GUI one once the new one is running.
 - If the conversation has no session yet, it is refused with the reason. If
   the new Agent fails to launch, the GUI Agent keeps running.
+- When the Agent is not idle, it asks first (below).
 
-**Continue in GUI** is the mirror, for a terminal Claude or Codex Agent: a
-floating button in the top right corner of its pane (the bottom right is
-where the pane says what became of a message DevHub queued for the Agent,
-from an Issue assignment or the Agent actions sheet). It starts a GUI Agent from the same profile resuming the
+**Continue in GUI** is the mirror, for a terminal Claude or Codex Agent: the
+same floating button in the same place, the top right corner of its pane (the
+bottom right is where the pane says what became of a message DevHub queued
+for the Agent, from an Issue assignment or the Agent actions sheet). The two
+are one control: the top right corner of the Agent's own column (a terminal
+is its own column), the same distance in, and the same size whichever it
+says. It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
+**Continuing an Agent that is not idle.** A continue is a stop followed by a
+resume elsewhere, in this order: the new Agent is launched on the session
+first, and the one it replaces is stopped once the new one is running and
+written down. Stopping it stops its CLI where it stands, so the turn it is
+in (the tool call running and the answer not yet written to the session),
+a permission question it is waiting on, and any subagents and background
+tasks it started stop with it; a GUI Agent's messages DevHub still holds
+(queued behind a turn, open to change, or written and not yet taken) never
+reach the CLI. So the button is always there, and pressing it while the
+Agent is not idle asks first, on the same sheet and by the same rule as
+stopping it (`agentIsIdle`: working, waiting, error or not yet read all
+ask). The question is main's, not the page's: the continue request is
+answered with the question, and only its Confirm goes on. An idle Agent is
+continued without one. A GUI Agent's status counts DevHub's hold on the
+person's words for this: a message written and not yet taken is `working`,
+one held at the prompt is `waiting`.
+
 Which session the terminal is in is found from the Agent's own processes:
 the one tmux runs in its pane (`#{pane_pid}`, read with the Agent id the
 session carries) and every one under it, read on the Workspace's machine with

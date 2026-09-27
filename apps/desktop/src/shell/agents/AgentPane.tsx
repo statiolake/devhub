@@ -53,6 +53,12 @@ export function AgentPane({
           className="surface-pool-entry"
           key={surface.key}
           data-surface-key={surface.key}
+          // A terminal is its own column; a conversation marks the one it
+          // has beside its subagents. Its top right corner is where the
+          // Continue button sits (`ContinueElsewhere`).
+          {...(surface.presentation === "tui"
+            ? { "data-agent-column": "" }
+            : {})}
           hidden={surface.key !== activeKey}
         >
           {/* The one place the two presentations differ on this page: which
@@ -118,7 +124,8 @@ export function AgentPane({
       ) : null}
       {active ? <InjectionStatus agent={active} /> : null}
       {/* The way to the other presentation, while the pane is the Agent's
-          own: over a failure, the failure's actions are the way out. */}
+          own: over a failure, the failure's actions are the way out. Offered
+          whatever the Agent is doing; main asks first when it is not idle. */}
       {active &&
       active.failure === undefined &&
       active.controlState.kind === "running" &&

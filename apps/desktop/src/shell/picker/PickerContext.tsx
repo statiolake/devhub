@@ -261,9 +261,7 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       // though it had been. The purpose carries its subject now, and there is
       // no such state left to guard.
       const outcome: AppOutcome | undefined = await dispatch(
-        pendingConfirmation.purpose.kind === "agent_stop"
-          ? { type: "confirm_stop_agent", confirmationId }
-          : { type: "confirm_close_workspace", confirmationId },
+        confirmIntent(pendingConfirmation.purpose.kind, confirmationId),
       );
       // Keep the confirmation available when the request itself failed. A
       // successful confirmation consumes the one-shot operation in main; a
@@ -541,4 +539,19 @@ function useWorkspacePickerRun(
     () => ({ candidates, busy, sourceCount, start, cancel, settle }),
     [busy, cancel, candidates, settle, sourceCount, start],
   );
+}
+
+/** The one answer each kind of question has: Confirm, as main takes it. */
+function confirmIntent(
+  purpose: PendingConfirmation["purpose"]["kind"],
+  confirmationId: string,
+): AppIntent {
+  switch (purpose) {
+    case "agent_stop":
+      return { type: "confirm_stop_agent", confirmationId };
+    case "agent_continue":
+      return { type: "confirm_continue_agent", confirmationId };
+    case "workspace_close":
+      return { type: "confirm_close_workspace", confirmationId };
+  }
 }

@@ -1,5 +1,6 @@
 /**
- * "Close this workspace?" and "Stop this agent?", drawn on the modal layer.
+ * "Close this workspace?", "Stop this agent?" and "Continue this agent in a
+ * terminal?", drawn on the modal layer.
  *
  * The question is raised by whatever the person clicked in the App Shell page,
  * answered here, and carried out by main. The sheet adopts the confirmation
@@ -228,7 +229,8 @@ export function CloseConfirmationSheet({
   // confirmation while this sheet stands and the replacement is the current
   // question; the request is what to draw on the frame before adoption lands.
   const purpose = pendingConfirmation?.purpose ?? request.purpose;
-  const agentId = purpose.kind === "agent_stop" ? purpose.agentId : undefined;
+  const agentId =
+    purpose.kind === "workspace_close" ? undefined : purpose.agentId;
   /**
    * Every Agent there is, or nothing when this page does not know yet.
    *
@@ -241,8 +243,7 @@ export function CloseConfirmationSheet({
       ? state.snapshot.workspaces.flatMap((workspace) => workspace.agents)
       : undefined;
   const agent = agents?.find((candidate) => candidate.id === agentId);
-  const agentGone =
-    purpose.kind === "agent_stop" && agents !== undefined && !agent;
+  const agentGone = agentId !== undefined && agents !== undefined && !agent;
 
   // An Agent that exits on its own takes its confirmation with it in main.
   // The question stops being asked the moment its subject is gone.
@@ -254,7 +255,6 @@ export function CloseConfirmationSheet({
 
   const inspection =
     purpose.kind === "workspace_close" ? purpose.inspection : undefined;
-  const stoppingAgent = purpose.kind === "agent_stop";
   const resources: readonly (readonly [string, CloseResourceWire])[] =
     inspection
       ? [
@@ -283,46 +283,18 @@ export function CloseConfirmationSheet({
       : [["Worktree", removedFolder] as const]),
   ];
 
+  const words = questionWords(purpose, agent?.displayName, unsaved);
+
   return (
     <Picker
       // Re-asking is remounting: the picker stops listening the moment a row
       // is taken, so a refused close needs a fresh one to be answered again.
       key={attempt}
-      title={
-        inspection
-          ? `Close “${inspection.workspaceLabel}”?`
-          : stoppingAgent
-            ? // The name is drawn as soon as it is known. Waiting for it would
-              // mean drawing nothing at all on the frame the layer goes up.
-              agent
-              ? `Stop “${agent.displayName}”?`
-              : "Stop this Agent?"
-            : "Confirm this action?"
-      }
-      question={
-        inspection
-          ? "The workspace has resources open. Closing it will close them."
-          : stoppingAgent
-            ? "This stops the Agent runtime. You can retry if cleanup fails."
-            : "This cannot be undone."
-      }
+      title={words.title}
+      question={words.question}
       items={[
-        {
-          id: CANCEL,
-          label: "Cancel",
-          detail: stoppingAgent
-            ? "Leave the Agent running."
-            : "Leave the workspace open.",
-        },
-        {
-          id: CONFIRM,
-          label: stoppingAgent ? "Stop the Agent" : "Close the workspace",
-          detail: stoppingAgent
-            ? "The runtime stops. You can retry if cleanup fails."
-            : unsaved === undefined
-              ? "Everything listed below is closed with it."
-              : "Everything listed below is closed with it. Unsaved changes are discarded.",
-        },
+        { id: CANCEL, label: "Cancel", detail: words.cancel },
+        { id: CONFIRM, label: words.confirm, detail: words.confirmDetail },
       ]}
       note={
         <>
@@ -352,15 +324,76 @@ export function CloseConfirmationSheet({
           // and still retryable — so the sheet is asked again, with the reason
           // written under the list rather than dropped.
           if (done) return;
-          setFailure(
-            stoppingAgent
-              ? "The Agent could not be stopped. Try again."
-              : "The workspace could not be closed. Try again.",
-          );
+          setFailure(words.refused);
           setAttempt((count) => count + 1);
         });
       }}
       onCancel={dismissCloseConfirmation}
     />
   );
+}
+
+/**
+ * Everything the sheet says, for one purpose: the question, its two answers,
+ * and what it says when main refused the answer. The Agent's name is drawn as
+ * soon as it is known; waiting for it would mean drawing nothing at all on
+ * the frame the layer goes up.
+ */
+function questionWords(
+  purpose: ConfirmationPurposeWire,
+  agentName: string | undefined,
+  unsaved: string | undefined,
+): {
+  readonly title: string;
+  readonly question: string;
+  readonly cancel: string;
+  readonly confirm: string;
+  readonly confirmDetail: string;
+  readonly refused: string;
+} {
+  switch (purpose.kind) {
+    case "workspace_close":
+      return {
+        title: `Close “${purpose.inspection.workspaceLabel}”?`,
+        question:
+          "The workspace has resources open. Closing it will close them.",
+        cancel: "Leave the workspace open.",
+        confirm: "Close the workspace",
+        confirmDetail:
+          unsaved === undefined
+            ? "Everything listed below is closed with it."
+            : "Everything listed below is closed with it. Unsaved changes are discarded.",
+        refused: "The workspace could not be closed. Try again.",
+      };
+    case "agent_stop":
+      return {
+        title:
+          agentName === undefined ? "Stop this Agent?" : `Stop “${agentName}”?`,
+        question:
+          "This stops the Agent runtime. You can retry if cleanup fails.",
+        cancel: "Leave the Agent running.",
+        confirm: "Stop the Agent",
+        confirmDetail: "The runtime stops. You can retry if cleanup fails.",
+        refused: "The Agent could not be stopped. Try again.",
+      };
+    case "agent_continue": {
+      const where =
+        purpose.presentation === "tui" ? "in a terminal" : "in the GUI";
+      return {
+        title:
+          agentName === undefined
+            ? `Continue this Agent ${where}?`
+            : `Continue “${agentName}” ${where}?`,
+        question:
+          "It is not idle. Its CLI is stopped and the session resumed in a new Agent: the turn it is in, a question it is waiting on, and any subagents or background tasks it started stop with it.",
+        cancel: "Leave the Agent running.",
+        confirm:
+          purpose.presentation === "tui"
+            ? "Continue in terminal"
+            : "Continue in GUI",
+        confirmDetail: `A new Agent resumes the session ${where}, and this one is stopped once it runs.`,
+        refused: "The Agent could not be continued. Try again.",
+      };
+    }
+  }
 }

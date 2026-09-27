@@ -462,6 +462,10 @@ export type UserIntent =
    * from the same profile, resuming the session — and the first Agent stopped
    * once that one is running. An Agent keeps the presentation it was launched
    * with, so this is a second Agent, not the first one changing its mind.
+   *
+   * Asked about first when the Agent is not idle, exactly as a stop is: the
+   * first Agent's CLI is stopped, and whatever it is in the middle of stops
+   * with it (`confirm_continue_agent`).
    */
   | {
       readonly type: "continue_agent";
@@ -470,6 +474,10 @@ export type UserIntent =
       readonly presentation: AgentPresentation;
       /** The session the Agent's CLI is in, which the new Agent resumes. */
       readonly session: string;
+    }
+  | {
+      readonly type: "confirm_continue_agent";
+      readonly confirmationId: ConfirmationId;
     }
   | {
       readonly type: "rename_agent";
@@ -768,7 +776,13 @@ export type ConfirmationOutcomePurpose =
       /** What Confirm does to the worktree folder, so the sheet can say it. */
       readonly worktree: WorktreeDisposition;
     }
-  | { readonly kind: "agent_stop"; readonly agentId: AgentId };
+  | { readonly kind: "agent_stop"; readonly agentId: AgentId }
+  | {
+      readonly kind: "agent_continue";
+      readonly agentId: AgentId;
+      /** The presentation it goes on in, so the sheet can say where. */
+      readonly presentation: AgentPresentation;
+    };
 
 export type IntentOutcome =
   | { readonly kind: "noop"; readonly snapshot: AppSnapshot }
@@ -789,6 +803,7 @@ export type IntentOutcome =
 
 export type ConfirmationPurpose =
   | { readonly kind: "stop_agent"; readonly agentId: AgentId }
+  | { readonly kind: "continue_agent"; readonly agentId: AgentId }
   | {
       readonly kind: "workspace_close";
       readonly workspaceId: WorkspaceId;

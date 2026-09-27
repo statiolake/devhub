@@ -195,16 +195,30 @@ function agent(extra: Partial<AgentWire>): AgentWire {
   } as AgentWire;
 }
 
+/** A terminal Agent's pane, as `AgentPane` draws it, with its Continue button. */
+function terminalPane(of: AgentWire) {
+  return (
+    <div>
+      <div data-surface-key={`agent:${of.id}`} data-agent-column="" />
+      <ContinueElsewhere agent={of} />
+    </div>
+  );
+}
+
 describe("the floating Continue buttons", () => {
   it("offers a terminal Claude or Codex Agent the GUI, and no other kind anything", () => {
     expect(continuesElsewhere(agent({ profileKind: "codex" }))).toBe(true);
     expect(continuesElsewhere(agent({ profileKind: "cursor" }))).toBe(false);
-    render(<ContinueElsewhere agent={agent({})} />);
+    render(terminalPane(agent({})));
     fireEvent.click(screen.getByRole("button", { name: "Continue in GUI" }));
     expect(bridge.continueInGui).toHaveBeenCalledWith("agent-1");
   });
 
-  it("offers a GUI Agent the terminal, just above its composer and inside the conversation's column", () => {
+  // The two buttons are one control in one place: the top right corner of
+  // the Agent's own column, the same distance in from its edges, and the same
+  // size whichever it says. A terminal is its own column; a conversation's is
+  // the one beside the subagents, so the button never sits over them.
+  it("sits in the top right corner of the Agent's own column, a terminal's or a conversation's, by one rule", () => {
     const observed: (() => void)[] = [];
     vi.stubGlobal(
       "ResizeObserver",
@@ -219,35 +233,50 @@ describe("the floating Continue buttons", () => {
     const { container } = render(
       <div>
         <div data-surface-key="agent:agent-1">
-          <div className="conversation-main">
-            <div className="conversation-composer" />
-          </div>
+          <div className="conversation-main" data-agent-column="" />
           <div className="conversation-subagent-column" />
         </div>
+        <div data-surface-key="agent:agent-2" data-agent-column="" />
         <ContinueElsewhere agent={agent({ presentation: "gui" })} />
+        <ContinueElsewhere
+          agent={agent({ id: "agent-2", presentation: "tui" })}
+        />
       </div>,
     );
-    const button = screen.getByRole("button", { name: "Continue in terminal" });
-    expect(button.parentElement).toHaveClass("is-above-composer");
+    const toTerminal = screen.getByRole("button", {
+      name: "Continue in terminal",
+    });
+    const toGui = screen.getByRole("button", { name: "Continue in GUI" });
     // jsdom lays nothing out: the pane is 1000 × 800, the conversation's
-    // column its left 640 px, the rest the subagents', the composer 120 high.
-    const place = (selector: string, rect: Partial<DOMRect>) => {
-      const element =
-        selector === "pane"
-          ? container.firstElementChild!
-          : container.querySelector(selector)!;
+    // column its left 640 px and the rest the subagents', the terminal the
+    // whole pane.
+    const place = (element: Element, rect: Partial<DOMRect>) => {
       element.getBoundingClientRect = () =>
         ({ left: 0, top: 0, right: 0, bottom: 0, ...rect }) as DOMRect;
     };
-    place("pane", { right: 1000, bottom: 800 });
-    place(".conversation-main", { right: 640, bottom: 800 });
-    place(".conversation-composer", { top: 680, right: 640, bottom: 800 });
-    act(() => observed.forEach((changed) => changed()));
-    expect(button.parentElement).toHaveStyle({
-      right: "calc(360px + var(--space-3))",
-      bottom: "calc(120px + var(--space-2))",
+    place(container.firstElementChild!, { right: 1000, bottom: 800 });
+    place(container.querySelector(".conversation-main")!, { right: 640 });
+    place(container.querySelector('[data-surface-key="agent:agent-2"]')!, {
+      right: 1000,
     });
-    fireEvent.click(button);
+    act(() => observed.forEach((changed) => changed()));
+    for (const [button, beside] of [
+      [toTerminal, "360px"],
+      [toGui, "0px"],
+    ] as const) {
+      expect(button.parentElement!.className).toBe("agent-continue");
+      expect(
+        button.parentElement!.style.getPropertyValue("--agent-continue-beside"),
+      ).toBe(beside);
+      // Both words are laid out in both buttons, one of them unseen, so the
+      // button is the size of the longer one whichever it says.
+      expect(
+        [...button.querySelectorAll(".agent-continue-label")].map(
+          (label) => label.textContent,
+        ),
+      ).toEqual(["Continue in terminal", "Continue in GUI"]);
+    }
+    fireEvent.click(toTerminal);
     expect(bridge.continueInTerminal).toHaveBeenCalledWith("agent-1");
   });
 
@@ -256,7 +285,7 @@ describe("the floating Continue buttons", () => {
       "The Codex of this terminal Agent has no thread open yet",
     );
     bridge.continueInGui.mockImplementationOnce(() => Promise.reject(unknown));
-    render(<ContinueElsewhere agent={agent({ profileKind: "codex" })} />);
+    render(terminalPane(agent({ profileKind: "codex" })));
     fireEvent.click(screen.getByRole("button", { name: "Continue in GUI" }));
     await waitFor(() => expect(reportFailure).toHaveBeenCalledWith(unknown));
   });
