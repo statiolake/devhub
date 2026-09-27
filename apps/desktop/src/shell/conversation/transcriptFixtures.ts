@@ -9,6 +9,7 @@
 
 import {
   type Denial,
+  type UserOrigin,
   applyEvents,
   EMPTY_TRANSCRIPT,
   entryId,
@@ -45,7 +46,7 @@ export function put(entry: TranscriptEntry): ConversationEvent {
 export function user(
   id: string,
   text: string,
-  origin: "person" | "injection" = "person",
+  origin: UserOrigin = "person",
   parent: string | null = null,
 ): TranscriptEntry {
   return {

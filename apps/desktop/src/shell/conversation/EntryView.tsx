@@ -179,6 +179,59 @@ function AnswerView({ entry }: { readonly entry: AnswerEntry }) {
  * once more before it drops anything.
  */
 function UserView({ entry }: { readonly entry: UserEntry }) {
+  if (entry.origin === "other") return <NotFromYouView entry={entry} />;
+  return <PersonMessageView entry={entry} origin={entry.origin} />;
+}
+
+/** Past this many lines, a message not from the person is folded. */
+export const NOT_FROM_YOU_LINES = 8;
+
+/**
+ * A message that reached the Agent as a user message DevHub did not send:
+ * not the person's bubble but a muted card on the left that says so, its
+ * words as they came, folded when they run long.
+ */
+function NotFromYouView({ entry }: { readonly entry: UserEntry }) {
+  const [unfolded, setUnfolded] = useState(false);
+  const long = entry.text.split("\n").length > NOT_FROM_YOU_LINES;
+  const folded = long && !unfolded;
+  return (
+    <div className="conversation-other" data-folded={folded || undefined}>
+      <div className="conversation-other-label">
+        Message to the Agent (not from you)
+      </div>
+      {entry.text !== "" ? (
+        <div className="conversation-other-text">
+          {folded
+            ? entry.text.split("\n").slice(0, NOT_FROM_YOU_LINES).join("\n")
+            : entry.text}
+        </div>
+      ) : null}
+      <ImageStrip images={entry.images} />
+      <div className="conversation-message-actions">
+        {long ? (
+          <button
+            type="button"
+            className="conversation-other-fold"
+            aria-expanded={!folded}
+            onClick={() => setUnfolded(folded)}
+          >
+            {folded ? "Show all" : "Show less"}
+          </button>
+        ) : null}
+        <CopyButton text={entry.text} label="Copy message" />
+      </div>
+    </div>
+  );
+}
+
+function PersonMessageView({
+  entry,
+  origin,
+}: {
+  readonly entry: UserEntry;
+  readonly origin: "person" | "injection";
+}) {
   const { targets, rewind } = useRewindMessage();
   const { reportFailure } = useConversationActions();
   const [confirming, setConfirming] = useState(false);
@@ -186,10 +239,10 @@ function UserView({ entry }: { readonly entry: UserEntry }) {
   return (
     <div
       className="conversation-user"
-      data-origin={entry.origin}
+      data-origin={origin}
       data-confirming={(confirming && rewindable) || undefined}
     >
-      <PersonBubble origin={entry.origin}>
+      <PersonBubble origin={origin}>
         {entry.text !== "" ? entry.text : null}
       </PersonBubble>
       <ImageStrip images={entry.images} />

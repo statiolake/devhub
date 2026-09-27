@@ -126,14 +126,23 @@ export type TranscriptEntry =
   | CompactionEntry
   | TurnEndEntry;
 
+export type UserOrigin = "person" | "injection" | "other";
+
 export interface UserEntry {
   readonly kind: "user";
   readonly id: EntryId;
   readonly parent: EntryId | null;
   readonly text: string;
   readonly images: readonly ImageRef[];
-  /** Who made the Agent say it: a person at the composer, or a template injection. */
-  readonly origin: "person" | "injection";
+  /**
+   * Who made the Agent say it: the person (at the composer, or at the CLI's
+   * terminal in a session read back), a template injection, or `other` —
+   * something that reached the Agent as a user message DevHub did not send
+   * (the CLI or its harness passing on another session's message, a
+   * subagent's report, a plugin's prompt). The adapter says, from what DevHub
+   * knows it sent.
+   */
+  readonly origin: UserOrigin;
   /**
    * Whether the CLI can cut the conversation right before this message, when
    * its session can take turns back at all (`SessionFacts.canRewind`). The

@@ -384,7 +384,7 @@
 
 /* The message's own hover: a subagent's answers inside a tool call come up
    only when they are pointed at, not the whole call. */
-:is(.conversation-user, .conversation-assistant):hover
+:is(.conversation-user, .conversation-assistant, .conversation-other):hover
   > .conversation-message-actions,
 .conversation-message-actions:focus-within,
 .conversation-message-actions:has([data-copied]) {
@@ -1216,6 +1216,46 @@
 :is(.conversation-subagent, .conversation-subagent-pane)[data-state="failed"]
   .conversation-subagent-state {
   color: var(--danger);
+}
+
+/* A message the Agent was given that the person did not send: on the left,
+   muted, in a card that says so — never the person's bubble. */
+.conversation-other {
+  max-width: min(85%, 60ch);
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-panel);
+  color: var(--secondary);
+}
+
+.conversation-other-label {
+  margin-bottom: var(--space-1);
+  color: var(--tertiary);
+  font-size: 0.8em;
+}
+
+.conversation-other-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation-other[data-folded] .conversation-other-text {
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+.conversation-other-fold {
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85em;
+}
+
+.conversation-other-fold:hover {
+  color: var(--primary);
 }
 
 /* The person's answer to the Agent's questions, in their bubble: each

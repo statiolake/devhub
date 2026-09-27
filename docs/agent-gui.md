@@ -371,6 +371,21 @@ record of the answer that is there in every way a conversation is drawn:
   `thread/resume` hands back no record of the request, so a resumed Codex
   thread draws no answer bubble for questions asked before it.
 
+**A message the Agent was given that you did not send** — another session's
+message passed on, a subagent's or teammate's report, a plugin's prompt,
+anything that reaches the CLI as a user message without DevHub writing it —
+is not your bubble. It is a muted card on the left, *Message to the Agent
+(not from you)*, with its words as they came, folded after 8 lines behind
+*Show all*. The rule is only who sent it, never what the words look like:
+Claude's live messages are matched to what DevHub wrote (`in.log` on a
+replay), so anything else is not from you; Codex's carry DevHub's own
+client id, and a message in a subagent's thread without one is its parent
+Agent's. A Claude session read back from its file does not say who sent a
+message, so there every message is drawn as yours; in a Codex thread read
+back, the Agent's own messages without DevHub's id are yours (typed at
+Codex's terminal). What the Agent sends to others is a tool call, and its
+row names the recipient (*SendMessage: researcher — …*).
+
 **Keys.** In every field where you write something to send — the composer,
 a waiting message being edited, a message to a subagent, an answer typed into
 a request — Return (with or without Shift) starts a new line and ⌘Return
@@ -418,7 +433,7 @@ name, and the effort says plainly that its levels are not known here.
 
 **Context.** Under the message box, a quiet line says how full the context
 window is, *Context 45% · 90k of 200k*, with a thin meter that turns orange
-from 80% and red from 95% (the rule every usage meter keeps). Claude's figure is the
+from 75% and red from 90% (the rule every usage meter keeps). Claude's figure is the
 latest top-level message's tokens (input, cache and output), known as soon as
 that message arrives, against the context window the turn's `result` reports
 for the model; before the first turn ends it reads only the tokens. Codex's is
@@ -916,14 +931,18 @@ and changes it for this session.
 ## Usage limits in the Sidebar
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
-used: one slim row per CLI — its name, a bar, the percentage — for its window
-nearest the limit, the one that stops it first. The bar is quiet grey until
-80%, orange to 95%, red beyond. On the collapsed rail the words go and the
+used: one slim row per CLI — its name, a bar, the percentage and when that
+window resets, *79% (until 16:50)* — for its window nearest the limit, the
+one that stops it first. The reset is the time on the 24-hour clock while it
+is later today, and the date alone in the reader's locale (*10/3*) from the
+next day on; an unknown or past reset has no parenthesis, and a narrow
+column cuts the parenthesis before the percentage. The bar is quiet grey
+until 75%, orange to 90%, red beyond. On the collapsed rail the words go and the
 bars stay. The tooltip draws every window each CLI reports — Claude's
 five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
 `primary` and `secondary`, named by their length (`5-hour`, `7-day`) — as a
 labelled bar with the percentage and its reset (*Resets in 2h 10m · 16:40*,
-the weekday when not today), worked out by the tooltip as it opens. A reading
+or the date alone, *10/3*, when not today), worked out by the tooltip as it opens. A reading
 whose reset has passed is history: faded, and said to be (*nothing reported
 since*); the Sidebar's row shows the window nearest its limit among readings
 still current, and a CLI whose readings are all history faded. DevHub does not ask the accounts:

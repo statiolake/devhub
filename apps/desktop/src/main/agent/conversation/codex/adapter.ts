@@ -1313,7 +1313,18 @@ export class CodexAdapter implements ProtocolAdapter {
 						images: item.content.flatMap((input) =>
 							input.type === "image" ? [input.image] : [],
 						),
-						origin: match?.[1] === "injection" ? "injection" : "person",
+						// DevHub's own id says whom it sent the message for. Without
+						// one, a subagent's message is its parent Agent's, not the
+						// person's; the Agent's own is the person's, typed at
+						// Codex's terminal in a thread read back.
+						origin:
+							match !== null
+								? match[1] === "injection"
+									? "injection"
+									: "person"
+								: threadId === this.mainThread
+									? "person"
+									: "other",
 						rewindable:
 							threadId === this.mainThread &&
 							this.turnMessages.get(turnId) === id,

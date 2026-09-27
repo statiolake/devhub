@@ -776,15 +776,48 @@ describe("user messages", () => {
 		expect((entry(adapter, "user:u2") as UserEntry).origin).toBe("person");
 	});
 
-	it("that DevHub did not send are shown as what the CLI said, not as the person's words", () => {
-		const adapter = inTurn();
-		adapter.received(echo("[Request interrupted by user]", "u9"));
-		const notice = adapter.transcript.entries.at(-1) as NoticeEntry;
-		expect(notice).toMatchObject({
-			kind: "notice",
-			level: "info",
-			text: "[Request interrupted by user]",
-		});
+	it("that DevHub did not send are not the person's: live, and the same in a replay", () => {
+		/** What DevHub wrote and what the CLI printed, in the order they happened. */
+		const play = (adapter: ClaudeAdapter) => {
+			adapter.received(init());
+			perform(adapter, {
+				kind: "send",
+				text: "go",
+				images: [],
+				origin: "person",
+			});
+			adapter.received(echo("go", "u-go"));
+			adapter.received(
+				echo("A message another session sent to this one.", "u9"),
+			);
+			return adapter.transcript.entries.map((each) =>
+				each.kind === "user" ? [each.text, each.origin] : [each.kind],
+			);
+		};
+		const drawn = [
+			["go", "person"],
+			["A message another session sent to this one.", "other"],
+		];
+		expect(play(new ClaudeAdapter("boot"))).toEqual(drawn);
+		// A replay feeds the journal and `in.log` back through the same path.
+		expect(play(new ClaudeAdapter("boot"))).toEqual(drawn);
+	});
+
+	it("read back from a session file are the person's: the file does not say who sent them", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(
+			json({
+				type: "devhub_history",
+				record: {
+					type: "user",
+					uuid: "u1",
+					message: { role: "user", content: "an earlier message" },
+				},
+			}),
+		);
+		expect(adapter.transcript.entries).toMatchObject([
+			{ kind: "user", text: "an earlier message", origin: "person" },
+		]);
 	});
 });
 

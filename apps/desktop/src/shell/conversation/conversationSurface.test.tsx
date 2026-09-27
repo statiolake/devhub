@@ -77,6 +77,41 @@ describe("every entry kind", () => {
     expect(entry("u2")).toHaveTextContent("Sent by a template");
   });
 
+  it("draws a message the Agent was given that the person did not send apart from theirs, folded when long", () => {
+    const long = Array.from({ length: 12 }, (_, at) => `line ${at + 1}`).join(
+      "\n",
+    );
+    draw(
+      transcriptOf([
+        put(user("u1", "fix the build")),
+        put(user("o1", "A note from another session.", "other")),
+        put(user("o2", long, "other")),
+      ]),
+    );
+    expect(entry("u1").querySelector(".conversation-user")).not.toBeNull();
+    for (const id of ["o1", "o2"]) {
+      expect(entry(id).querySelector(".conversation-user")).toBeNull();
+      expect(entry(id).querySelector(".conversation-other")).toHaveTextContent(
+        "Message to the Agent (not from you)",
+      );
+    }
+    expect(entry("o1")).toHaveTextContent("A note from another session.");
+    expect(
+      within(entry("o1")).queryByRole("button", { name: "Show all" }),
+    ).toBeNull();
+    const text = () =>
+      entry("o2").querySelector(".conversation-other-text")!.textContent;
+    expect(text()).toContain("line 8");
+    expect(text()).not.toContain("line 9");
+    fireEvent.click(
+      within(entry("o2")).getByRole("button", { name: "Show all" }),
+    );
+    expect(text()).toContain("line 12");
+    expect(
+      within(entry("o2")).getByRole("button", { name: "Show less" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("draws an answer's Markdown: headings, lists, tables, links, inline code, no raw HTML", () => {
     draw(
       transcriptOf([

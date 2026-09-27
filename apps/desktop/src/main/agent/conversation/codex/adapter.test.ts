@@ -790,6 +790,32 @@ describe("subagents", () => {
 		expect(harness.entry(`${CHILD}/child-say`)).toMatchObject({
 			parent: `${MAIN}/item-spawn`,
 		});
+		// A message in the subagent's thread that DevHub did not send is its
+		// parent Agent's, not the person's; one in the Agent's own thread
+		// without DevHub's id is the person's, typed at Codex's terminal.
+		const said = (threadId: string, id: string) =>
+			harness.receive({
+				method: "item/completed",
+				params: {
+					threadId,
+					turnId: "turn-x",
+					completedAtMs: 0,
+					item: {
+						type: "userMessage",
+						id,
+						clientId: null,
+						content: [{ type: "text", text: "and lib/", text_elements: [] }],
+					},
+				},
+			});
+		said(CHILD, "child-told");
+		said(MAIN, "main-told");
+		expect(harness.entry(`${CHILD}/child-told`)).toMatchObject({
+			origin: "other",
+		});
+		expect(harness.entry(`${MAIN}/main-told`)).toMatchObject({
+			origin: "person",
+		});
 	});
 
 	it("says a subagent is done when its thread's turn ends, with no activity item to say so, and running again when it starts another", () => {

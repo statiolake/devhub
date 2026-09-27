@@ -61,6 +61,7 @@ import {
 	type SlashCommand,
 	type SendingMessage,
 	type RunningTask,
+	type UserOrigin,
 	type SubagentInfo,
 	type ToolEntry,
 	type ToolOutput,
@@ -1473,13 +1474,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		// Task call that started it already carries (`spawns.prompt`).
 		if ((texts.length === 0 && images.length === 0) || parent !== null) return;
 		const text = texts.join("\n");
-		// A message of the past is the person's: nothing DevHub wrote this time
-		// is waiting to be matched with it.
-		let origin: "person" | "injection" = "person";
+		// Live, a message is whoever DevHub wrote it for, and one DevHub did not
+		// write is not from the person: only DevHub writes to the CLI. A message
+		// of the past is the person's: nothing DevHub wrote this time is waiting
+		// to be matched with it, and the session file does not say who.
+		let origin: UserOrigin = "person";
 		if (when === "live") {
 			const taken = this.untaken.findIndex((each) => each.text === text);
-			if (taken < 0) return this.notice("info", text, undefined);
-			[{ origin }] = this.untaken.splice(taken, 1) as [SendingMessage];
+			if (taken < 0) origin = "other";
+			else [{ origin }] = this.untaken.splice(taken, 1) as [SendingMessage];
 		}
 		this.users += 1;
 		const id = entryId(`user:${line.uuid ?? `#${this.users}`}`);
@@ -1497,8 +1500,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			},
 		});
 		// The message is in the conversation now, no longer sending: in the
-		// same step, so it is never drawn twice or not at all.
-		if (when === "live") {
+		// same step, so it is never drawn twice or not at all. One DevHub did
+		// not send was never sending, and the model's answer to it starts
+		// whatever turn it starts.
+		if (when === "live" && origin !== "other") {
 			this.emitSending();
 			this.turn("running");
 		}
