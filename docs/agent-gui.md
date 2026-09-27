@@ -175,11 +175,61 @@ screen:
 | broken | error |
 | a request waiting for an answer | waiting |
 | a turn running | working |
+| a message DevHub holds at the prompt | waiting |
 | the last turn failed | error |
+| something it started still working in the background | background |
 | otherwise | idle |
 
-Unread, injections and the close question work exactly as for a terminal
-Agent.
+*Background* is an Agent whose turn is over while a command it ran in the
+background, a subagent it started in the background or a teammate at work is
+still going. It is neither idle nor working, and it has its own quiet mark in
+the Sidebar (the working ring broken into four still arcs, in a quieter
+yellow). Each thing that reads a status treats it on purpose:
+
+- **Stop, Continue and closing the workspace ask first**, as for a working
+  Agent (`agentIsIdle` counts only idle): stopping the CLI stops what it left
+  running.
+- **An injection is sent into it**, as into an idle Agent (`agentAtPrompt`):
+  the CLI reads a message then and starts a turn with it, as it would the
+  person's own, and the tasks go on untouched. Holding it until they end would
+  hold it for good behind a dev server or a watcher, which never end on their
+  own.
+- **Unread** is raised when a turn ends into it (leaving `working`), and the
+  row wears the unread mark until somebody looks, as an idle one does.
+- **The Sidebar's activity line** names the one task, or says how many there
+  are.
+
+A terminal Agent is never *Background*: its screen does show Claude's
+background shells and agents (a `· 1 shell ·` in the footer, one line per
+agent under it), but DevHub has no capture of a prompt at rest with them
+showing to write a rule from, so its status reads the screen as before.
+
+Unread, injections and the close question otherwise work exactly as for a
+terminal Agent.
+
+**Background tasks.** Under the composer, beside the context readout, a quiet
+line says what the Agent has working in the background — *2 background
+tasks · Start the dev server, Research the parser* — while anything is.
+Opened, it lists each task's title, kind (*shell*, *subagent*, *teammate*,
+or the CLI's own name for another kind) and state; a task whose call is known
+goes to that call in the conversation, opened, switching back from a
+maximized subagent first. A task leaves the list when it ends. The list is
+`Transcript.backgroundTasks`, the adapter's one account of it:
+
+- Claude: the CLI's own list, `system/background_tasks_changed`, which it
+  prints whole each time it changes (commands run in the background and
+  subagents started in the background, a subagent's own included). A task is
+  tied to its call by the `task_started` that names both, or the call's
+  result that names the task; until then it has no call. Each running
+  teammate the list does not name is added, and a subagent that sits idle is
+  left out. The list ends with the CLI: a rewind or `/resume` empties it
+  before anything is taken back.
+- Codex: each subagent whose thread is running. app-server reports no end for
+  a command it keeps running after its call has returned (a background
+  terminal), so those are not listed.
+
+Neither CLI says when a background task started, and the journal keeps no
+times, so the list does not say how long each has run.
 
 ## What you can do in the GUI, and what you can't
 
@@ -417,7 +467,8 @@ is a notice. Its work is drawn in one place at a time:
   phrase for is named (*Changed the repository (stash) on main*).
   `turn_duration` (the transcript draws no durations),
   `bridge_status` (a remote control of the session, not the conversation),
-  `thinking_tokens` and `background_tasks_changed` are not drawn. A system
+  `thinking_tokens` are not drawn; `background_tasks_changed` is the list of
+  background tasks under the composer (*Background tasks*, above). A system
   event DevHub has never heard of is an information notice (below).
 - Thinking the API withholds (it sends the block without its text), redacted
   thinking, and citation deltas.
@@ -612,8 +663,8 @@ tasks it started stop with it; a GUI Agent's messages DevHub still holds
 (queued behind a turn, open to change, or written and not yet taken) never
 reach the CLI. So the button is always there, and pressing it while the
 Agent is not idle asks first, on the same sheet and by the same rule as
-stopping it (`agentIsIdle`: working, waiting, error or not yet read all
-ask). The question is main's, not the page's: the continue request is
+stopping it (`agentIsIdle`: working, background, waiting, error or not yet
+read all ask). The question is main's, not the page's: the continue request is
 answered with the question, and only its Confirm goes on. An idle Agent is
 continued without one. A GUI Agent's status counts DevHub's hold on the
 person's words for this: a message written and not yet taken is `working`,
