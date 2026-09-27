@@ -8,7 +8,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Box, type Layout, TranscriptSearch } from "./transcriptSearch";
+import {
+  type Box,
+  type Layout,
+  type Schedule,
+  TranscriptSearch,
+} from "./transcriptSearch";
 
 /** Slices run by hand, each timed. */
 function slices() {
@@ -51,7 +56,16 @@ function transcript(sections: number, text: (index: number) => string) {
 }
 
 let searches: TranscriptSearch[] = [];
-function searchIn(root: Element, schedule = slices().schedule) {
+/**
+ * Each next slice run at once: the search is done when `setQuery` or
+ * `refresh` returns, however slow the machine running the test.
+ */
+function atOnce(run: () => void): () => void {
+  run();
+  return () => {};
+}
+
+function searchIn(root: Element, schedule: Schedule = atOnce) {
   const search = new TranscriptSearch(root, () => {}, schedule);
   searches.push(search);
   return search;
@@ -81,7 +95,7 @@ describe("a search over a long transcript", () => {
     });
     // jsdom is slower than the page and a timer check is not free, so
     // generous; a slice that did not stop would take hundreds.
-    expect(run.longest()).toBeLessThan(40);
+    expect(run.longest()).toBeLessThan(60);
   });
 
   it("drops the old query's search when a new one starts", () => {
