@@ -114,10 +114,11 @@ turns into its Workspace:
   Cancel changes nothing — records the attachment, and opens the workbench
   again on the new authority.
 
-Outside the editor there is one way in and one way out: the workspace
-picker's **Open in a Dev Container?** sheet, which offers one row per
-definition, and **Reopen Editor Locally** on the context menu of a row whose
-editor is in a container — the way out when that editor cannot open.
+These commands are the only way into a container. Opening a Workspace never
+asks about one: a folder always opens with its editor on its own machine, and
+the editor is moved from inside it. Outside the editor there is one way out:
+**Reopen Editor Locally** on the context menu of a row whose editor is in a
+container — the way out when that editor cannot open.
 
 The row keeps its folder's mark and wears a quiet crate mark beside its other
 marks; its facts say `editor in dev container`, and the definition's name
@@ -128,7 +129,7 @@ when the folder has several.
 ### Starting: only when a person asks, and only starting when a window opens
 
 `devcontainer up` may build an image, so it runs only on an explicit act: a
-reattach, or the picker's sheet. Restoring an attached editor at launch, a
+reattach from the editor's commands. Restoring an attached editor at launch, a
 workbench rebuilt by the supervisor, and the resolver's first attempt only
 *start* a container that exists (`ContainerHost.prepare`); one that was never
 built refuses with the command that builds it, and the row's Reopen Editor

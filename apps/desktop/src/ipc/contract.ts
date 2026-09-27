@@ -880,36 +880,6 @@ export interface WorkspaceOpeningBridge {
 	): Promise<AppOutcome>;
 
 	/**
-	 * Every Dev Container definition a folder has, in the spec's order.
-	 *
-	 * Asked about a folder the person has just chosen, because that is the one
-	 * moment the answer changes what they are offered. It is a few `stat`s and
-	 * costs nothing, so it is asked every time rather than cached — a
-	 * definition added since DevHub started is one that can be opened now, and
-	 * a person who just wrote one would not think to restart.
-	 *
-	 * Empty means "no definition here", which is not a failure: it is the
-	 * ordinary answer for most folders, and the picker simply does not offer
-	 * the second way to open it.
-	 */
-	devContainerConfigs(path: string): Promise<readonly DevContainerConfigWire[]>;
-
-	/**
-	 * Open a folder with its editor in one of its Dev Containers.
-	 *
-	 * The folder is the Workspace, opened like any other; the container is
-	 * where its editor is attached. The container is built or started first,
-	 * so a definition that does not build leaves nothing half-open. A folder
-	 * that is open already keeps its Workspace and has its editor moved.
-	 * `configPath` is one of `devContainerConfigs`; absent, the first of them.
-	 */
-	openContainerWorkspace(
-		workspaceFolder: string,
-		configPath?: string,
-		withAgent?: AgentLaunchWire,
-	): Promise<AppOutcome>;
-
-	/**
 	 * Assigning an Issue, one question at a time.
 	 *
 	 * Four calls rather than one, and the seams are where the flow's questions
@@ -1005,16 +975,6 @@ export interface ShellPageBridge
 	/** A split drag in progress; `null` ends it. */
 	previewLayout(preview: LayoutPreviewWire): Promise<void>;
 	openSettings(): Promise<void>;
-}
-
-/**
- * One Dev Container definition of a folder: its path on the folder's machine,
- * and the name that tells it from the folder's others (`.devcontainer/<label>/`),
- * absent for the folder's default one.
- */
-export interface DevContainerConfigWire {
-	readonly path: string;
-	readonly label?: string;
 }
 
 /** The Sidebar — `sidebar.html`. Its header states the whole of this. */
@@ -1416,8 +1376,6 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
 	openSshWorkspace: "devhub:open-ssh-workspace",
-	devContainerConfigs: "devhub:dev-container-configs",
-	openContainerWorkspace: "devhub:open-container-workspace",
 	reopenEditorLocally: "devhub:reopen-editor-locally",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",

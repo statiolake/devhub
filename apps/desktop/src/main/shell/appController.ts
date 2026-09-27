@@ -68,7 +68,6 @@ import {
 	type RepositoryStatusWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
-	type DevContainerConfigWire,
 } from "../../ipc/contract.js";
 import {
 	appConditionIdentity,
@@ -4684,7 +4683,6 @@ export class AppController {
 	private async openFolder(
 		location: RequestedWorkspaceLocation,
 		withAgent?: AgentLaunchWire,
-		editor?: EditorAttachment,
 	): Promise<AppOutcomeWire> {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
@@ -4693,7 +4691,6 @@ export class AppController {
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			location,
-			...(editor === undefined ? {} : { editor }),
 		});
 		if (withAgent === undefined) {
 			await this.syncEditorView();
@@ -4923,12 +4920,11 @@ export class AppController {
 
 	/**
 	 * Every definition a Workspace's folder has, for the editor's own
-	 * commands and for the picker: the path, and the name that tells it from
-	 * the folder's others.
+	 * commands: the path, and the name that tells it from the folder's others.
 	 */
 	private async devContainerConfigsOf(
 		location: WorkspaceLocation,
-	): Promise<readonly DevContainerConfigWire[]> {
+	): Promise<DevContainerConfigsAnswer["configs"]> {
 		const paths = await devContainerConfigsIn(
 			runtimeFor(location),
 			location.path,
@@ -6168,83 +6164,6 @@ export class AppController {
 						requestedLocation({ kind: "ssh", host, path }),
 						withAgent,
 					);
-				} catch (error: unknown) {
-					throw namedFailure(error);
-				}
-			},
-		);
-		// The two dev container doors, the same shape as the two SSH ones: a
-		// question that costs nothing and is asked every time, and an open that
-		// goes through `openFolder` like everything else.
-		handle(CHANNELS.devContainerConfigs, async (_event, path: string) => {
-			try {
-				const folder = await localRuntime().realpath(path);
-				return await this.devContainerConfigsOf(
-					workspaceLocation({ kind: "local", path: folder }),
-				);
-			} catch (error: unknown) {
-				throw namedFailure(error);
-			}
-		});
-		handle(
-			CHANNELS.openContainerWorkspace,
-			async (
-				_event,
-				workspaceFolder: string,
-				configPath: string | undefined,
-				withAgent: AgentLaunchWire | undefined,
-			) => {
-				this.cancelPicker?.();
-				this.cancelPicker = undefined;
-				try {
-					// The folder is the Workspace, opened like any folder; the
-					// container is where its editor goes. The container is brought
-					// up before either happens, so a definition that does not
-					// build leaves nothing half-open behind it.
-					const folder = await localRuntime().realpath(workspaceFolder);
-					const location = workspaceLocation({ kind: "local", path: folder });
-					const configs = await this.devContainerConfigsOf(location);
-					// No choice made — the sheet could not list the definitions —
-					// is the CLI's own default order, the first of them.
-					const chosen =
-						configPath === undefined
-							? configs[0]
-							: configs.find((config) => config.path === configPath);
-					if (chosen === undefined) {
-						throw workspaceFailure(
-							configPath === undefined
-								? `${folder} has no dev container definition, so there is no container to open it in.`
-								: `${configPath} is not one of the dev container definitions in ${folder}.`,
-						);
-					}
-					const editor: EditorAttachment = {
-						kind: "devContainer",
-						configPath: devContainerConfigPath(chosen.path),
-					};
-					const target = containerTargetOf(location, editor);
-					if (target === undefined) {
-						throw new Error("a dev container attachment named no container");
-					}
-					const up = await containerHostFor(target).ensureUp({ build: true });
-					// A Workspace this opens is made with its editor attached; one
-					// that was open already has its editor moved.
-					const opened = await this.openFolder(
-						requestedLocation({ kind: "local", path: folder }),
-						withAgent,
-						editor,
-					);
-					const workspaceId = this.openedWorkspaceId(
-						requestedLocation(location),
-					);
-					await this.attachEditor(workspaceId, editor);
-					if (up.started) {
-						this.dispatchOwn({
-							type: "editor_container_started",
-							workspaceId,
-							containerId: up.containerId,
-						});
-					}
-					return opened;
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}

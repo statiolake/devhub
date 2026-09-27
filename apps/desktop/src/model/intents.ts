@@ -311,13 +311,6 @@ export type UserIntent =
   | {
       readonly type: "open_folder";
       readonly location: RequestedWorkspaceLocation;
-      /**
-       * Where a Workspace this open *creates* has its editor attached. Absent
-       * is its own machine, which is where every other open puts it. A folder
-       * already open keeps the attachment it has: moving an existing editor
-       * is `attach_editor`, which closes the workbench it is in first.
-       */
-      readonly editor?: EditorAttachment;
     }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }

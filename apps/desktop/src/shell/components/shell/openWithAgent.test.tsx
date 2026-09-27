@@ -85,10 +85,6 @@ function mount() {
     chooseWorkspaceFolder: vi.fn(),
     listSshHosts: vi.fn().mockResolvedValue([]),
     openSshWorkspace: vi.fn(),
-    // Most folders define no Dev Container, which is the answer that lets the
-    // open go straight through without the extra question.
-    devContainerConfigs: vi.fn().mockResolvedValue([]),
-    openContainerWorkspace: vi.fn(),
     reportFailure: vi.fn(),
   } as unknown as PickerValue;
   render(

@@ -198,7 +198,7 @@ describe("finding the container", () => {
 
 describe("one Workspace, one container", () => {
 	// Two callers asking for the same folder at once — a restored Workspace's
-	// window resolving and the picker opening it — ran `devcontainer up` twice,
+	// window resolving and a Reopen in Container — ran `devcontainer up` twice,
 	// 260 ms apart, and each created a container carrying the same label.
 	it("brings a folder up once however many callers ask at the same moment", async () => {
 		let started = false;

@@ -36,7 +36,6 @@ import type {
 import type {
   AgentActionWire,
   AssignmentBranchWire,
-  DevContainerConfigWire,
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
@@ -81,19 +80,6 @@ export interface PickerValue {
   readonly openSshWorkspace: (
     host: string,
     path: string,
-    withAgent?: AgentLaunchWire,
-  ) => Promise<AppOutcome | undefined>;
-  /** Every Dev Container definition this folder has; empty for most. */
-  readonly devContainerConfigs: (
-    path: string,
-  ) => Promise<readonly DevContainerConfigWire[]>;
-  /**
-   * Build or start one of this folder's containers, then open the folder with
-   * its editor in it. No definition named: the first of them.
-   */
-  readonly openContainerWorkspace: (
-    workspaceFolder: string,
-    configPath?: string,
     withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
@@ -307,15 +293,6 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       listSshHosts: () => bridge.listSshHosts(),
       openSshWorkspace: async (host, path, withAgent) =>
         applyOpening(await bridge.openSshWorkspace(host, path, withAgent)),
-      devContainerConfigs: (path) => bridge.devContainerConfigs(path),
-      openContainerWorkspace: async (workspaceFolder, configPath, withAgent) =>
-        applyOpening(
-          await bridge.openContainerWorkspace(
-            workspaceFolder,
-            configPath,
-            withAgent,
-          ),
-        ),
       createProject: async (path, withAgent) =>
         applyOpening(await bridge.createProject(path, withAgent)),
       cloneProject: async (url, parentDirectory, withAgent) =>

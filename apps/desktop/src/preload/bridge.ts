@@ -36,7 +36,6 @@ import {
 	type RepositoryStatusBridge,
 	type UsageLimitsBridge,
 	type SshHostWire,
-	type DevContainerConfigWire,
 	type WorkspaceOpeningBridge,
 	type WorkspacePickerEvent,
 	type WorkspacePlaceWire,
@@ -214,21 +213,6 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 				CHANNELS.openSshWorkspace,
 				host,
 				path,
-				withAgent,
-			) as Promise<AppOutcome>,
-		devContainerConfigs: (path: string) =>
-			ipcRenderer.invoke(CHANNELS.devContainerConfigs, path) as Promise<
-				readonly DevContainerConfigWire[]
-			>,
-		openContainerWorkspace: (
-			workspaceFolder: string,
-			configPath?: string,
-			withAgent?: AgentLaunchWire,
-		) =>
-			ipcRenderer.invoke(
-				CHANNELS.openContainerWorkspace,
-				workspaceFolder,
-				configPath,
 				withAgent,
 			) as Promise<AppOutcome>,
 		findIssueRepositories: (issueUrl: string) =>

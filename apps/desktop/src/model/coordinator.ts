@@ -20,7 +20,6 @@ import {
   agentIsIdle,
   AVAILABLE,
   CLEAN_CLOSE_INSPECTION,
-  EDITOR_ON_HOST,
   closeInspectionProjection,
   consolidateCloseInspection,
   DomainError,
@@ -37,7 +36,6 @@ import {
   type CloseInspectionInputs,
   type CloseInspectionProjection,
   type DisplayPath,
-  type EditorAttachment,
   type RuntimeId,
   type SurfacePresentation,
   type WorkspaceId,
@@ -224,14 +222,12 @@ type OperationTarget =
   | {
       readonly kind: "location";
       readonly location: RequestedWorkspaceLocation;
-      readonly editor: EditorAttachment;
     }
   | { readonly kind: "workspace_path"; readonly workspaceId: WorkspaceId }
   | {
       readonly kind: "resolved_location";
       readonly location: WorkspaceLocation;
       readonly selectedPath: DisplayPath;
-      readonly editor: EditorAttachment;
     }
   | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
   | { readonly kind: "agent"; readonly agentId: AgentId }
@@ -410,7 +406,6 @@ export class AppCoordinator {
     {
       location: WorkspaceLocation;
       selectedPath: DisplayPath;
-      editor: EditorAttachment;
     }
   >();
   // The presentation rides along with the profile from the moment the request
@@ -665,16 +660,11 @@ export class AppCoordinator {
         this.model.zoomTerminal(intent.base, intent.direction);
         return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
-        return this.beginWorkspaceResolution(
-          intent.location,
-          intent.editor ?? EDITOR_ON_HOST,
-          id,
-        );
+        return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
           return this.beginWorkspaceResolution(
             { kind: "local", path: intent.path },
-            EDITOR_ON_HOST,
             id,
           );
         }
@@ -825,12 +815,11 @@ export class AppCoordinator {
    */
   private beginWorkspaceResolution(
     location: RequestedWorkspaceLocation,
-    editor: EditorAttachment,
     id: OperationId,
   ): IntentOutcome {
     const token = this.startOperation(
       "resolve_workspace_path",
-      { kind: "location", location, editor },
+      { kind: "location", location },
       id,
     );
     this.emitEffect({ kind: "resolve_workspace_path", token, location });
@@ -843,19 +832,14 @@ export class AppCoordinator {
   private beginWorkspaceIdentity(
     location: WorkspaceLocation,
     selectedPath: DisplayPath,
-    editor: EditorAttachment,
     id: OperationId,
   ): IntentOutcome {
     const token = this.startOperation(
       "generate_workspace_id",
-      { kind: "resolved_location", location, selectedPath, editor },
+      { kind: "resolved_location", location, selectedPath },
       id,
     );
-    this.resolvedLocations.set(token.operationId, {
-      location,
-      selectedPath,
-      editor,
-    });
+    this.resolvedLocations.set(token.operationId, { location, selectedPath });
     this.emitEffect({
       kind: "generate_workspace_id",
       token,
@@ -1396,7 +1380,6 @@ export class AppCoordinator {
     return this.beginWorkspaceIdentity(
       location,
       selectedPath,
-      target.editor,
       pending.token.operationId,
     );
   }
@@ -1447,7 +1430,6 @@ export class AppCoordinator {
         resolved.selectedPath,
         undefined,
         AVAILABLE,
-        resolved.editor,
       ),
     );
     // Opening a folder is choosing it, new or not — the branch above says the
