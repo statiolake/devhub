@@ -43,6 +43,7 @@ import {
 	rewindTargets,
 	entryId,
 	requestId,
+	sameRunningTasks,
 	type AssistantBlock,
 	type AssistantEntry,
 	type ConversationEvent,
@@ -57,6 +58,7 @@ import {
 	type Setting,
 	type SlashCommand,
 	type SendingMessage,
+	type RunningTask,
 	type SubagentInfo,
 	type ToolEntry,
 	type ToolOutput,
@@ -281,6 +283,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly tasks = new Map<string, EntryId>();
 	/** The call that spawned each teammate, by the name its messages come from. */
 	private readonly teammates = new Map<string, EntryId>();
+	/**
+	 * The tasks the CLI last said it has working in the background
+	 * (`background_tasks_changed`), which `reportBackground` makes the
+	 * transcript's.
+	 */
+	private background: Extract<
+		ClaudeLine,
+		{ type: "background_tasks" }
+	>["tasks"] = [];
 
 	private readonly messages = new Map<string, MessageState>();
 	/** The message streaming now, per parent (null for the top level). */
@@ -458,9 +469,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	received(line: string): AdapterStep {
-		return this.step(() =>
-			this.take(decodeReceived(line, this.current.session.agentVersion)),
-		);
+		return this.step(() => {
+			this.take(decodeReceived(line, this.current.session.agentVersion));
+			this.reportBackground();
+		});
 	}
 
 	// -------------------------------------------------------------------------
@@ -662,6 +674,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * twice.
 	 */
 	private takeRewind(message: EntryId): void {
+		this.endBackground();
 		this.emit({ type: "rewound", from: message });
 		const cut = this.cutBefore.get(message);
 		this.lastUuid = cut ?? undefined;
@@ -686,6 +699,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * lines, and the new CLI is greeted as a rewound one is.
 	 */
 	private takeResume(session: string): void {
+		this.endBackground();
 		this.emit({ type: "session-switched", session });
 		this.lastUuid = undefined;
 		this.cutBefore.clear();
@@ -724,6 +738,53 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (state.phase === "broken") return;
 		if (state.phase === "ready" && state.turn === turn) return;
 		this.emit({ type: "state", state: { phase: "ready", turn } });
+	}
+
+	/**
+	 * What works in the background, as the transcript has it, after each line:
+	 * each task the CLI lists, with the call that started it once a task event
+	 * or the call's result has named it, and each teammate at work that the
+	 * list does not already name. A subagent that sits idle waiting to be told
+	 * something is not working, whatever the list says. Re-read after every
+	 * line, because the list, the call a task belongs to and a subagent's state
+	 * each arrive on lines of their own, in no fixed order.
+	 */
+	private reportBackground(): void {
+		const tasks: RunningTask[] = [];
+		for (const task of this.background) {
+			const call = this.tasks.get(task.taskId);
+			const tool = call === undefined ? undefined : this.tool(call);
+			if (tool?.spawns?.state === "idle") continue;
+			tasks.push({
+				id: task.taskId,
+				kind: TASK_KINDS[task.taskType] ?? task.taskType,
+				title: task.description,
+				call: tool?.id,
+			});
+		}
+		for (const [name, call] of this.teammates) {
+			const tool = this.tool(call);
+			if (tool?.spawns?.state !== "running") continue;
+			if (tasks.some((task) => task.call === call)) continue;
+			tasks.push({
+				id: `teammate:${name}`,
+				kind: "teammate",
+				title: tool.spawns.label,
+				call,
+			});
+		}
+		if (sameRunningTasks(tasks, this.current.backgroundTasks)) return;
+		this.emit({ type: "background-tasks", tasks });
+	}
+
+	/**
+	 * The CLI that ran them is being replaced (a rewind, a resume): nothing it
+	 * had working in the background is, before what it started is taken back.
+	 */
+	private endBackground(): void {
+		this.background = [];
+		if (this.current.backgroundTasks.length > 0)
+			this.emit({ type: "background-tasks", tasks: [] });
 	}
 
 	/** The messages written and not yet taken, as the transcript shows them sending. */
@@ -896,6 +957,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				);
 			case "task":
 				return this.takeTask(line);
+			case "background_tasks":
+				this.background = line.tasks;
+				return;
 			case "rate_limit":
 				return this.emit({
 					type: "usage",
@@ -1704,6 +1768,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		});
 	}
 }
+
+/** The CLI's kinds of background task, in DevHub's word; any other goes by the CLI's own name. */
+const TASK_KINDS: Readonly<Record<string, string>> = {
+	local_bash: "shell",
+	local_agent: "subagent",
+};
 
 /** Whether a CLI of this version can be resumed at a message (`RESUMES_AT_A_MESSAGE`). */
 function resumesAtAMessage(version: string | undefined): boolean {

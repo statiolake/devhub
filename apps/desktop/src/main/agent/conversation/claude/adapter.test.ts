@@ -3229,7 +3229,6 @@ describe("the CLI's other system events", () => {
 		for (const line of [
 			system("turn_duration", { durationMs: 1200, messageCount: 4 }),
 			system("thinking_tokens", { tokens: 10 }),
-			system("background_tasks_changed", { tasks: [] }),
 			system("bridge_status", {
 				content: "Remote Control on",
 				url: "https://example.com/x",
@@ -3670,5 +3669,202 @@ describe("a resumed session's past, whole", () => {
 			trigger: "auto",
 			preTokens: 150000,
 		});
+	});
+});
+
+describe("what works in the background", () => {
+	function system(
+		subtype: string,
+		fields: Record<string, unknown> = {},
+	): string {
+		return json({ type: "system", subtype, session_id: SESSION, ...fields });
+	}
+
+	/** The CLI's whole list of background tasks, as `background_tasks_changed` prints it. */
+	function listed(
+		...tasks: [id: string, type: string, description: string][]
+	): string {
+		return system("background_tasks_changed", {
+			uuid: `u-${tasks.length}`,
+			tasks: tasks.map(([task_id, task_type, description]) => ({
+				task_id,
+				task_type,
+				description,
+			})),
+		});
+	}
+
+	/** A turn that ran `npm run dev` in the background (task b1) and ended. */
+	function serverLeftRunning(): ClaudeAdapter {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Bash", {
+					command: "npm run dev",
+					description: "Start the dev server",
+					run_in_background: true,
+				}),
+			]),
+		);
+		// The CLI prints the list before the task's own start, which names the call.
+		adapter.received(listed(["b1", "local_bash", "Start the dev server"]));
+		adapter.received(
+			system("task_started", {
+				task_id: "b1",
+				tool_use_id: "toolu_bg",
+				task_type: "local_bash",
+				description: "Start the dev server",
+				is_backgrounded: true,
+			}),
+		);
+		adapter.received(result());
+		return adapter;
+	}
+
+	it("is the CLI's own list, each task tied to its call once a task event names it", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Bash", {
+					command: "npm run dev",
+					run_in_background: true,
+				}),
+			]),
+		);
+		adapter.received(listed(["b1", "local_bash", "Start the dev server"]));
+		expect(adapter.transcript.backgroundTasks).toEqual([
+			{
+				id: "b1",
+				kind: "shell",
+				title: "Start the dev server",
+				call: undefined,
+			},
+		]);
+		adapter.received(
+			system("task_started", {
+				task_id: "b1",
+				tool_use_id: "toolu_bg",
+				task_type: "local_bash",
+				description: "Start the dev server",
+			}),
+		);
+		expect(adapter.transcript.backgroundTasks).toEqual([
+			{
+				id: "b1",
+				kind: "shell",
+				title: "Start the dev server",
+				call: entryId("tool:toolu_bg"),
+			},
+		]);
+	});
+
+	it("keeps an Agent whose turn ended with a task still working out of idle, and lets it go when the list does", () => {
+		const adapter = serverLeftRunning();
+		expect(conversationStatus(adapter.transcript)).toBe("background");
+		adapter.received(listed());
+		expect(adapter.transcript.backgroundTasks).toEqual([]);
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+	});
+
+	it("names a subagent's task as a subagent and any other kind by the CLI's own name", () => {
+		const adapter = inTurn();
+		adapter.received(
+			listed(
+				["a1", "local_agent", "Research the parser"],
+				["w1", "local_workflow", "Nightly checks"],
+			),
+		);
+		expect(
+			adapter.transcript.backgroundTasks.map((task) => [task.id, task.kind]),
+		).toEqual([
+			["a1", "subagent"],
+			["w1", "local_workflow"],
+		]);
+	});
+
+	it("counts a teammate at work, and not one that sits idle", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_tm", "Agent", {
+					description: "research",
+					prompt: "look into it",
+				}),
+			]),
+		);
+		adapter.received(
+			json({
+				...JSON.parse(toolResult("toolu_tm", "Spawned successfully.")),
+				tool_use_result: {
+					status: "teammate_spawned",
+					name: "researcher",
+					teammate_id: "researcher@team",
+				},
+			}),
+		);
+		adapter.received(result());
+		expect(adapter.transcript.backgroundTasks).toEqual([
+			{
+				id: "teammate:researcher",
+				kind: "teammate",
+				title: "research",
+				call: entryId("tool:toolu_tm"),
+			},
+		]);
+		expect(conversationStatus(adapter.transcript)).toBe("background");
+		adapter.received(
+			echo(
+				`<teammate-message teammate_id="researcher" color="blue" summary="idle">\n${JSON.stringify({ type: "idle_notification", from: "researcher", idleReason: "available", timestamp: "t" })}\n</teammate-message>`,
+				"u-idle",
+			),
+		);
+		expect(adapter.transcript.backgroundTasks).toEqual([]);
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+	});
+
+	it("ends with the CLI that ran it, when the conversation is taken back past its call", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init({ claude_code_version: "2.1.282" }));
+		perform(adapter, {
+			kind: "send",
+			text: "go",
+			images: [],
+			origin: "person",
+		});
+		adapter.received(echo("go", "u-go"));
+		adapter.received(
+			assistantLine(
+				"m",
+				[
+					toolUse("toolu_bg", "Bash", {
+						command: "npm run dev",
+						run_in_background: true,
+					}),
+				],
+				null,
+				{ uuid: "a1" },
+			),
+		);
+		adapter.received(listed(["b1", "local_bash", "dev server"]));
+		adapter.received(
+			system("task_started", { task_id: "b1", tool_use_id: "toolu_bg" }),
+		);
+		adapter.received(result());
+		const plan = adapter.rewind(entryId("user:u-go"));
+		if (plan.kind !== "restart") throw new Error("not a restart");
+		adapter.received(plan.mark[0]!);
+		expect(adapter.transcript.backgroundTasks).toEqual([]);
+		expect(adapter.transcript.entries).toEqual([]);
+	});
+
+	it("breaks the conversation for a list whose task does not say its kind", () => {
+		const adapter = inTurn();
+		expect(() =>
+			adapter.received(
+				system("background_tasks_changed", {
+					tasks: [{ task_id: "b1", description: "x" }],
+				}),
+			),
+		).toThrow(ProtocolMismatch);
 	});
 });

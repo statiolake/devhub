@@ -152,6 +152,19 @@ export type ClaudeLine =
 			readonly text: string | undefined;
 			readonly raw: JsonObject;
 	  }
+	/**
+	 * Every task the CLI has working in the background now (commands, subagents
+	 * started in the background), whole: printed each time the set changes.
+	 */
+	| {
+			readonly type: "background_tasks";
+			readonly tasks: readonly {
+				readonly taskId: string;
+				/** `local_bash`, `local_agent`, or another kind the CLI has. */
+				readonly taskType: string;
+				readonly description: string;
+			}[];
+	  }
 	| {
 			readonly type: "rate_limit";
 			/** Every window the event reports. */
@@ -884,20 +897,30 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					f.optionalString(raw.description, `${at}.description`),
 				raw,
 			};
+		case "background_tasks_changed":
+			return {
+				type: "background_tasks",
+				tasks: f.array(raw.tasks, `${at}.tasks`).map((each, index) => {
+					const path = `${at}.tasks[${index}]`;
+					const task = f.object(each, path);
+					return {
+						taskId: f.string(task.task_id, `${path}.task_id`),
+						taskType: f.string(task.task_type, `${path}.task_type`),
+						description: f.string(task.description, `${path}.description`),
+					};
+				}),
+			};
 		// Known, and not drawn:
 		// - hook_*: a hook the owner configured (SessionStart and the like)
 		//   reports itself whether or not hook events were asked for; v1 does
 		//   not draw hooks (design §3.5), and what a hook prints is the owner's
 		//   configuration, not the conversation;
 		// - thinking_tokens: an estimate of the thinking while it streams;
-		// - background_tasks_changed: the set of background tasks as a whole,
-		//   whose each task's lifecycle arrives as task_*;
 		// - turn_duration: how long a turn took, which the transcript does not
 		//   draw (a turn that completed draws nothing);
 		// - bridge_status: the CLI's link to a remote control of the session,
 		//   which is not the conversation and which DevHub does not offer.
 		case "thinking_tokens":
-		case "background_tasks_changed":
 		case "turn_duration":
 		case "bridge_status":
 		case "hook_started":

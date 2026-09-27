@@ -47,6 +47,7 @@ import {
 	applyEvent,
 	rewindTargets,
 	entryId,
+	sameRunningTasks,
 	requestId,
 	type AssistantBlock,
 	type ConversationEvent,
@@ -60,6 +61,7 @@ import {
 	type SessionFacts,
 	type SendingMessage,
 	type SubagentInfo,
+	type RunningTask,
 	type ToolEntry,
 	type ImageRef,
 	type ToolOutput,
@@ -495,6 +497,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	received(line: string): AdapterStep {
 		return this.step(() => {
 			if (!this.broken) this.dispatch(line);
+			this.reportBackground();
 		});
 	}
 
@@ -931,6 +934,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	 * expected.
 	 */
 	private leaveThread(opened: ThreadOpened): void {
+		this.reportBackground(() => false);
 		this.emit({ type: "session-switched", session: opened.thread.id });
 		this.sending.clear();
 		this.emitSending();
@@ -945,6 +949,33 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.total = undefined;
 		this.totalAtTurnStart = undefined;
 		this.usage = undefined;
+	}
+
+	/**
+	 * What works in the background, as the transcript has it, after each line:
+	 * every subagent running. Codex starts each on a thread of its own that
+	 * runs beside the turn that started it, and tells of no other background
+	 * task — a command it keeps running after its call has returned reports no
+	 * end, so it cannot be listed honestly. `keep` leaves out calls about to be
+	 * taken back.
+	 */
+	private reportBackground(
+		keep: (entry: TranscriptEntry) => boolean = () => true,
+	): void {
+		const tasks: RunningTask[] = this.current.entries.flatMap((entry) =>
+			entry.kind === "tool" && entry.spawns?.state === "running" && keep(entry)
+				? [
+						{
+							id: entry.id,
+							kind: "subagent",
+							title: entry.spawns.label,
+							call: entry.id,
+						},
+					]
+				: [],
+		);
+		if (sameRunningTasks(tasks, this.current.backgroundTasks)) return;
+		this.emit({ type: "background-tasks", tasks });
 	}
 
 	/** A turn `thread/resume` hands back whole: its items as completed, then its end. */
@@ -1207,6 +1238,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		const gone = this.current.entries.slice(
 			this.current.entries.findIndex((entry) => entry.id === from),
 		);
+		// A subagent started in what goes is no longer the conversation's to show.
+		this.reportBackground((entry) => !gone.includes(entry));
 		this.emit({ type: "rewound", from });
 		for (const [turnId, message] of [...this.turnMessages]) {
 			if (gone.some((entry) => entry.id === message))

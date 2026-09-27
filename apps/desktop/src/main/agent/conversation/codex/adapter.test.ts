@@ -822,6 +822,34 @@ describe("subagents", () => {
 		expect(state()).toBe("failed");
 	});
 
+	it("lists a subagent while its thread runs, as working in the background, and lets it go when that ends", () => {
+		const harness = ready();
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
+		const lines = fixture("subagent.handwritten.ndjson").filter(
+			(line) => !line.includes('"subAgentActivity"'),
+		);
+		const childEnd = lines.findIndex(
+			(line) =>
+				line.includes('"turn/completed"') && line.includes("child-turn-1"),
+		);
+		for (const line of lines.slice(0, childEnd)) harness.receive(line);
+		expect(harness.transcript.backgroundTasks).toEqual([
+			{
+				id: `${MAIN}/item-spawn`,
+				kind: "subagent",
+				title: expect.any(String),
+				call: entryId(`${MAIN}/item-spawn`),
+			},
+		]);
+		harness.receive(lines[childEnd]!);
+		expect(harness.transcript.backgroundTasks).toEqual([]);
+	});
+
 	it("takes the person's messages when app-server says its thread does, steered into its turn or starting one", () => {
 		const harness = ready();
 		harness.command({
