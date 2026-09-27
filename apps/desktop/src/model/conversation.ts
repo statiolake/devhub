@@ -276,8 +276,9 @@ export interface ToolEntry {
   readonly change: readonly FileDiff[] | undefined;
   /**
    * The questions the call asked the person (Claude's AskUserQuestion), each
-   * with the answer it was given, once it has one: drawn as the call's
-   * readable view, the chosen option's preview with it.
+   * with the answer it was given, once it has one: drawn in the call's fold
+   * for reference, every option and preview with the chosen ones checked.
+   * The answer itself is drawn once, as the person's (`AnswerEntry`).
    */
   readonly asked: readonly AskedQuestion[] | undefined;
   /**

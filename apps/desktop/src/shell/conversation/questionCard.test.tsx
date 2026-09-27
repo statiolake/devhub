@@ -131,6 +131,27 @@ describe("a question whose options carry previews", () => {
     expect(screen.queryByRole("region", { name: /^Preview: / })).toBeNull();
   });
 
+  it("draws its options as list rows, the picked ones checked, as a picker's selection", () => {
+    draw(asked([{ ...LAYOUT, multiSelect: true }]));
+    const row = (name: RegExp) =>
+      screen.getByRole("checkbox", { name }).closest("label")!;
+    fireEvent.click(screen.getByRole("checkbox", { name: /Sidebar/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Tabs/ }));
+    expect(row(/Sidebar/)).toHaveAttribute("data-picked");
+    expect(row(/Tabs/)).toHaveAttribute("data-picked");
+    expect(row(/Neither/)).not.toHaveAttribute("data-picked");
+    expect(
+      row(/Tabs/).querySelector(".conversation-question-mark"),
+    ).toHaveTextContent("✓");
+    expect(
+      row(/Neither/).querySelector(".conversation-question-mark"),
+    ).toHaveTextContent("");
+    // Its description is one quiet line under the label.
+    expect(
+      row(/Sidebar/).querySelector(".conversation-question-description"),
+    ).toHaveTextContent("a column");
+  });
+
   it("still answers with the option picked", async () => {
     const { actions } = draw(asked([LAYOUT]));
     fireEvent.click(screen.getByRole("radio", { name: /Tabs/ }));
@@ -282,9 +303,9 @@ describe("a claude -p question with multi-line box-drawing previews, from asked 
     expect(lines?.[1]).toMatch(/white-space:\s*pre;/);
   });
 
-  it("keeps, once answered, the answer as the person's bubble and the call's record of what was asked and chosen, the chosen preview with it", () => {
+  it("says the answer once, as the person's bubble, and keeps what was asked in the call's fold: every option, the chosen one checked, its preview beside", () => {
     draw(ANSWERED);
-    expect(document.querySelector(".conversation-question")).toBeNull();
+    expect(document.querySelector(".conversation-request")).toBeNull();
     const bubble = entry("answer:toolu_q1");
     expect(
       [...bubble.querySelectorAll(".conversation-answer-given li")].map(
@@ -293,27 +314,36 @@ describe("a claude -p question with multi-line box-drawing previews, from asked 
     ).toEqual(["タブ", "自動"]);
 
     const call = entry("tool:toolu_q1");
-    const readable = call.querySelector<HTMLElement>(".conversation-readable")!;
-    // Outside the call's fold, cut by the one Clip.
-    expect(readable.closest("details")).toBeNull();
-    expect(readable.querySelector(".conversation-clip-box")).not.toBeNull();
+    // No readable view repeats the answer under the call's row.
+    expect(call.querySelector(".conversation-readable")).toBeNull();
+    const record = call.querySelector<HTMLElement>(
+      ".conversation-question-record",
+    )!;
+    expect(record.closest("details.conversation-tool")).not.toBeNull();
     const [layout, saving] = [
-      ...readable.querySelectorAll<HTMLElement>(".conversation-asked-question"),
+      ...record.querySelectorAll<HTMLElement>(".conversation-question"),
     ];
+    const labels = (question: HTMLElement, rows: string) =>
+      [...question.querySelectorAll(rows)].map(
+        (row) => row.querySelector(".conversation-question-label")!.textContent,
+      );
     expect(layout).toHaveTextContent(LAYOUT_ASKED!.question);
-    expect(
-      within(layout!)
-        .getAllByRole("listitem")
-        .map((item) => item.textContent),
-    ).toEqual(["タブ"]);
+    expect(labels(layout!, ".conversation-question-option")).toEqual(
+      LAYOUT_ASKED!.options.map((option) => option.label),
+    );
+    expect(labels(layout!, "[data-picked]")).toEqual(["タブ"]);
     const shown = within(layout!).getByRole("region");
     expect(shown).toHaveAccessibleName("Preview: タブ");
-    expect(shown).toHaveClass("conversation-question-preview");
     expect(linesOf(shown)).toBe(LAYOUT_ASKED!.options[1]!.preview);
-    // Only the option chosen: the others' previews are not kept on view.
-    expect(within(readable).getAllByRole("region")).toHaveLength(1);
+    // Pointing at another option shows its preview, as on the card.
+    fireEvent.mouseEnter(
+      [...layout!.querySelectorAll(".conversation-question-option")][0]!,
+    );
+    expect(within(layout!).getByRole("region")).toHaveAccessibleName(
+      `Preview: ${LAYOUT_ASKED!.options[0]!.label}`,
+    );
     expect(saving).toHaveTextContent(SAVING_ASKED!.question);
-    expect(within(saving!).getByRole("listitem")).toHaveTextContent("自動");
+    expect(labels(saving!, "[data-picked]")).toEqual(["自動"]);
     expect(within(saving!).queryByRole("region")).toBeNull();
   });
 });

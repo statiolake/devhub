@@ -232,7 +232,7 @@ It searches what the pane shows — the conversation, or the subagent that
 fills the pane — and says which; subagents in the column beside it are not
 searched. What it searches is the drawn transcript's words: the person's
 messages, the Agent's answers as their Markdown is drawn, tool titles, the
-readable views (diffs, checklists, answered questions) and the input and
+readable views (diffs, checklists) and the input and
 output folded inside each tool call. Buttons and what is drawn for the eye
 only (a diff's line numbers) are not, and a match does not run from one block
 into the next. This works because nothing that folds leaves anything out of
@@ -449,14 +449,24 @@ it is as wide as that font makes it, which with the default stack is not
 exactly two columns — a box with Japanese in it lines up only as well as the
 fonts allow.
 
-The answered call keeps a **record of what it asked**
-(`ToolEntry.asked`, read from the same record of the answer as the bubble
-below): under its row, outside its fold, in its readable view, each question
-over the option chosen (or the words written instead) and, for a
-single-select question, the chosen option's preview in the card's box. The
-options not chosen, and their previews, stay in the call's input in the fold.
-Codex's questions are a request of their own rather than a call, carry no
-previews, and have only the bubble.
+The card is a panel of the transcript's own, not a tinted box: its border,
+and *Needs your answer* in the waiting colour. Its controls are the ones the
+rest of DevHub uses. A question's header is a small caption over its words;
+its options are rows of a list as DevHub's pickers draw them — the label, and
+its description on one quiet line under it — the pointer washing a row and a
+chosen one drawn as the picker's selection, with a check (the radio or
+checkbox behind each row is there for the keyboard). *Submit*, and a
+permission's *Allow* / *Deny…*, are the small buttons of an inline
+confirmation such as Rewind's, at the trailing end.
+
+The answer is said **once**, as your message (below). The answered call has
+no readable view; its fold keeps **what it asked** for reference
+(`ToolEntry.asked`, read from the same record of the answer as the bubble),
+over its input and output: each question as the card showed it, every
+option, the chosen ones checked, the words written instead, and for a
+single-select question the previews beside the options — the chosen one's,
+or the one pointed at. Codex's questions are a request of their own rather
+than a call, carry no previews, and have only the bubble.
 
 Once answered, **your answer is your message**: the same bubble on the right
 as a message you wrote, each question quietly over what you chose — every

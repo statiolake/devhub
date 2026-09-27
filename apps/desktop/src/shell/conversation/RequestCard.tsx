@@ -16,8 +16,9 @@
  * new line and ⌘Return answers.
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type {
+  AskedQuestion,
   PendingRequest,
   Question,
   QuestionOption,
@@ -182,10 +183,10 @@ function keepIndentation(source: string): string {
 }
 
 /**
- * The preview of an option, in its monospace box: here beside the options,
- * and in the answered call's record beside the option chosen.
+ * The preview of an option, in its monospace box: beside the options, on the
+ * card and in the answered call's record.
  */
-export function OptionPreview({ option }: { readonly option: QuestionOption }) {
+function OptionPreview({ option }: { readonly option: QuestionOption }) {
   return (
     <div
       className="conversation-question-preview"
@@ -201,10 +202,122 @@ export function OptionPreview({ option }: { readonly option: QuestionOption }) {
   );
 }
 
+/** Whether a question lays its options out beside a preview: single-select, and some option has one. */
+function previewed(question: Question): boolean {
+  return (
+    !question.multiSelect &&
+    question.options.some((option) => option.preview !== undefined)
+  );
+}
+
 /**
- * One question: its options, and — when it is single-select and any option
- * carries a preview — beside them the preview of the option pointed at,
- * focused, or picked (the first option's before any is), as the CLI shows it.
+ * An option as a row of a list, as DevHub's pickers draw one: a check where
+ * it is chosen, its label, and its description on one quiet line under it.
+ * `control` is the card's radio or checkbox, there for the keyboard and
+ * assistive technology; the answered record has none.
+ */
+function OptionRow({
+  label,
+  description,
+  picked,
+  shown,
+  point,
+  control,
+}: {
+  readonly label: string;
+  readonly description: string;
+  readonly picked: boolean;
+  readonly shown: boolean;
+  readonly point: (on: boolean) => void;
+  readonly control?: ReactNode;
+}) {
+  const Row = control === undefined ? "div" : "label";
+  return (
+    <Row
+      className="conversation-question-option"
+      data-picked={picked || undefined}
+      data-shown={shown || undefined}
+      onMouseEnter={() => point(true)}
+      onMouseLeave={() => point(false)}
+    >
+      {control}
+      <span className="conversation-question-mark" aria-hidden="true">
+        {picked ? "✓" : ""}
+      </span>
+      <span className="conversation-question-text">
+        <span className="conversation-question-label">{label}</span>
+        {description === "" ? null : (
+          <span
+            className="conversation-question-description"
+            title={description}
+          >
+            {description}
+          </span>
+        )}
+      </span>
+    </Row>
+  );
+}
+
+/**
+ * A question's header as a small caption over its words, its options as a
+ * list, and — when it is laid out beside a preview — the preview of the
+ * option pointed at, else `resting`'s, as the CLI shows it.
+ */
+function QuestionLayout({
+  question,
+  resting,
+  rows,
+  after,
+  Frame,
+}: {
+  readonly question: Question;
+  readonly resting: string | undefined;
+  readonly rows: (
+    shown: (label: string) => boolean,
+    point: (label: string, on: boolean) => void,
+  ) => ReactNode;
+  readonly after?: ReactNode;
+  readonly Frame: "fieldset" | "div";
+}) {
+  const [pointed, setPointed] = useState<string | undefined>(undefined);
+  const beside = previewed(question);
+  const shownLabel = pointed ?? resting ?? question.options[0]?.label;
+  const shown = question.options.find((option) => option.label === shownLabel);
+  const Header = Frame === "fieldset" ? "legend" : "div";
+  return (
+    <Frame className="conversation-question">
+      {question.header === "" ? null : (
+        <Header className="conversation-question-header">
+          {question.header}
+        </Header>
+      )}
+      <p className="conversation-question-words">{question.text}</p>
+      <div
+        className="conversation-question-body"
+        data-previewed={beside || undefined}
+      >
+        <div className="conversation-question-options">
+          {rows(
+            (label) => beside && label === shown?.label,
+            (label, on) =>
+              setPointed((was) =>
+                on ? label : was === label ? undefined : was,
+              ),
+          )}
+          {after}
+        </div>
+        {beside && shown !== undefined ? (
+          <OptionPreview option={shown} />
+        ) : null}
+      </div>
+    </Frame>
+  );
+}
+
+/**
+ * One question on the card, to answer: its options, picked by a click or
+ * from the keyboard, and a field for words of the person's own.
  */
 function QuestionFields({
   question,
@@ -221,32 +334,24 @@ function QuestionFields({
   readonly setOther: (text: string) => void;
   readonly keys: MessageKeys<HTMLTextAreaElement>;
 }) {
-  const [pointed, setPointed] = useState<string | undefined>(undefined);
   const [focused, setFocused] = useState<string | undefined>(undefined);
-  const previewed =
-    !question.multiSelect &&
-    question.options.some((option) => option.preview !== undefined);
-  const shownLabel =
-    pointed ?? focused ?? picked[0] ?? question.options[0]?.label;
-  const shown = question.options.find((option) => option.label === shownLabel);
   return (
-    <fieldset className="conversation-question">
-      <legend>{question.header}</legend>
-      <p>{question.text}</p>
-      <div
-        className="conversation-question-body"
-        data-previewed={previewed || undefined}
-      >
-        <div className="conversation-question-options">
-          {question.options.map((option) => (
-            <label
-              key={option.label}
-              className="conversation-question-option"
-              data-shown={(previewed && option === shown) || undefined}
-              onMouseEnter={() => setPointed(option.label)}
-              onMouseLeave={() => setPointed(undefined)}
-            >
+    <QuestionLayout
+      Frame="fieldset"
+      question={question}
+      resting={focused ?? picked[0]}
+      rows={(shown, point) =>
+        question.options.map((option) => (
+          <OptionRow
+            key={option.label}
+            label={option.label}
+            description={option.description}
+            picked={picked.includes(option.label)}
+            shown={shown(option.label)}
+            point={(on) => point(option.label, on)}
+            control={
               <input
+                className="conversation-question-control"
                 type={question.multiSelect ? "checkbox" : "radio"}
                 name={question.id}
                 checked={picked.includes(option.label)}
@@ -254,31 +359,83 @@ function QuestionFields({
                 onFocus={() => setFocused(option.label)}
                 onBlur={() => setFocused(undefined)}
               />
-              <span>{option.label}</span>
-              {option.description ? (
-                <span className="conversation-question-description">
-                  {option.description}
-                </span>
-              ) : null}
-            </label>
-          ))}
-          {question.allowsOther ? (
-            <textarea
-              className="conversation-question-other"
-              aria-label={`${question.header}: other`}
-              placeholder="Other"
-              rows={1}
-              value={other}
-              onChange={(event) => setOther(event.target.value)}
-              {...keys}
-            />
-          ) : null}
-        </div>
-        {previewed && shown !== undefined ? (
-          <OptionPreview option={shown} />
-        ) : null}
-      </div>
-    </fieldset>
+            }
+          />
+        ))
+      }
+      after={
+        question.allowsOther ? (
+          <textarea
+            className="conversation-question-other"
+            aria-label={`${question.header}: other`}
+            placeholder="Other"
+            rows={1}
+            value={other}
+            onChange={(event) => setOther(event.target.value)}
+            {...keys}
+          />
+        ) : null
+      }
+    />
+  );
+}
+
+/**
+ * What a call asked the person, kept in its fold for reference once it is
+ * answered: each question as the card showed it — every option, the ones
+ * chosen checked, what was written instead, and the previews. The answer
+ * itself is said once, in the person's bubble (`AnswerView`).
+ */
+export function QuestionRecord({
+  asked,
+}: {
+  readonly asked: readonly AskedQuestion[];
+}) {
+  return (
+    <div className="conversation-question-record">
+      {asked.map(({ question, answer }) => {
+        const chosen = answer.secret ? [] : answer.chosen;
+        return (
+          <QuestionLayout
+            key={question.id}
+            Frame="div"
+            question={question}
+            resting={chosen[0]}
+            rows={(shown, point) => [
+              ...question.options.map((option) => (
+                <OptionRow
+                  key={option.label}
+                  label={option.label}
+                  description={option.description}
+                  picked={chosen.includes(option.label)}
+                  shown={shown(option.label)}
+                  point={(on) => point(option.label, on)}
+                />
+              )),
+              answer.written === undefined || answer.secret ? null : (
+                <OptionRow
+                  key="written"
+                  label={answer.written}
+                  description="Written instead"
+                  picked
+                  shown={false}
+                  point={() => {}}
+                />
+              ),
+            ]}
+            after={
+              answer.secret ? (
+                <p className="conversation-question-note">Answer hidden</p>
+              ) : answer.notes === undefined ? null : (
+                <p className="conversation-question-note">
+                  Note: {answer.notes}
+                </p>
+              )
+            }
+          />
+        );
+      })}
+    </div>
   );
 }
 

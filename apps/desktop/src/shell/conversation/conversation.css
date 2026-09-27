@@ -1486,32 +1486,6 @@
   font-size: 0.9em;
 }
 
-/* An answered AskUserQuestion call's record, in its readable view: each
-   question over what was chosen, and the chosen option's preview in the
-   card's own box. */
-.conversation-asked {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.conversation-asked-chosen {
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.conversation-asked-chosen li::before {
-  color: var(--tertiary);
-  content: "→ ";
-}
-
-.conversation-asked-question > .conversation-question-preview {
-  max-width: 100%;
-  margin-top: var(--space-1);
-  width: fit-content;
-}
-
 /* The person's message on its way to the CLI: the same bubble, quieter,
    until the CLI's echo puts the message itself in its place. */
 .conversation-entry[data-sending] .conversation-user {
@@ -1659,24 +1633,24 @@
 
 /* ------------------------------------------------------------- Requests */
 
-/* Asked of the person: it stands out from the transcript without shouting —
-   a tinted card with its choices as buttons. */
+/* Asked of the person: a panel of the transcript's own, set off by its
+   border and a caption in the waiting colour rather than a tint. Its
+   controls are the conversation's small ones — options as rows of a list,
+   as DevHub's pickers draw them, and the answers as the small buttons of an
+   inline confirmation (`.conversation-confirm`), at the trailing end. */
 .conversation-request {
-  padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--status-waiting) 45%, transparent);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   margin-top: var(--space-2);
-  background: color-mix(in srgb, var(--status-waiting) 6%, var(--surface));
-  box-shadow: var(--shadow-raised);
+  background: var(--raised);
 }
 
 .conversation-request-eyebrow {
   margin-bottom: var(--space-1);
   color: var(--status-waiting);
-  font-size: 0.75em;
+  font-size: 0.85em;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .conversation-request-title {
@@ -1711,24 +1685,30 @@
 .conversation-request-choices {
   display: flex;
   flex-wrap: wrap;
-  margin-top: var(--space-3);
+  align-items: baseline;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+  font-size: 0.85em;
   gap: var(--space-2);
+  line-height: 1.4;
 }
 
 .conversation-request-choice {
   display: inline-flex;
-  align-items: baseline;
-  padding: var(--space-1) var(--space-3);
+  flex: none;
+  align-items: center;
+  padding: 2px var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   background: var(--raised);
   color: var(--primary);
   cursor: pointer;
   font: inherit;
+  gap: 0.4em;
 }
 
 .conversation-request-choice:hover:not(:disabled) {
-  border-color: var(--line-strong);
+  background: var(--wash);
 }
 
 .conversation-request-choice[data-tone="allow"] {
@@ -1738,7 +1718,6 @@
 }
 
 .conversation-request-choice[data-tone="allow"]:hover:not(:disabled) {
-  border-color: transparent;
   background: color-mix(in srgb, var(--accent) 88%, var(--primary));
 }
 
@@ -1757,14 +1736,11 @@
 }
 
 .conversation-request-key {
-  display: inline-block;
-  min-width: 1.2em;
-  margin-right: var(--space-1);
   opacity: 0.6;
   font-family: var(--font-mono);
   text-autospace: no-autospace;
   text-spacing-trim: space-all;
-  font-size: 0.85em;
+  font-size: 0.9em;
 }
 
 .conversation-request:focus-visible {
@@ -1776,38 +1752,126 @@
 .conversation-question-other {
   width: 100%;
   box-sizing: border-box;
-  padding: var(--space-1) var(--space-2);
+  padding: 2px var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  margin-top: var(--space-2);
+  margin-top: var(--space-1);
   background: var(--surface);
   color: var(--primary);
   font: inherit;
+  font-size: 0.92em;
+  resize: vertical;
 }
 
+.conversation-request-text textarea:focus-visible,
+.conversation-question-other:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+/* A question: its header a small caption over its words, then its options. */
 .conversation-question {
+  min-width: 0;
   padding: 0;
   border: 0;
-  margin: 0 0 var(--space-2);
+  margin: var(--space-2) 0 0;
 }
 
-.conversation-question > legend {
+.conversation-question-header {
+  padding: 0;
+  color: var(--secondary);
+  font-size: 0.8em;
   font-weight: 600;
 }
 
-.conversation-question > p {
-  margin: var(--space-1) 0;
+.conversation-question-words {
+  margin: 1px 0 var(--space-1);
 }
 
-.conversation-question-option {
+.conversation-question-options {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+/* An option is a row of a list, as a picker's (`.mac-list-row`): the pointer
+   washes it, and a chosen one is the picker's selection, with its check. */
+.conversation-question-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-row);
   gap: var(--space-2);
 }
 
+label.conversation-question-option:hover,
+.conversation-question-option[data-shown] {
+  background: var(--wash);
+}
+
+.conversation-question-option[data-picked] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The radio or checkbox is there for the keyboard; the row shows its state. */
+.conversation-question-control {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.conversation-question-option:has(
+  .conversation-question-control:focus-visible
+) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.conversation-question-mark {
+  flex: none;
+  width: 1em;
+  color: var(--accent);
+  text-align: center;
+}
+
+.conversation-question-option[data-picked] .conversation-question-mark {
+  color: var(--accent-ink);
+}
+
+.conversation-question-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .conversation-question-description {
+  overflow: hidden;
   color: var(--secondary);
-  font-size: 0.9em;
+  font-size: 0.85em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-question-option[data-picked] .conversation-question-description {
+  color: color-mix(in srgb, var(--accent-ink) 78%, transparent);
+}
+
+.conversation-question-note {
+  margin: var(--space-1) 0 0;
+  color: var(--secondary);
+  font-size: 0.85em;
+}
+
+/* Rows as wide as a picker's, not the card's. */
+.conversation-question-body:not([data-previewed]) {
+  max-width: 36em;
 }
 
 /* A single-select question whose options carry previews: the options on the
@@ -1819,11 +1883,6 @@
   grid-template-columns: minmax(12em, 2fr) minmax(0, 3fr);
 }
 
-.conversation-question-option[data-shown] {
-  border-radius: var(--radius-row);
-  background: var(--wash);
-}
-
 /* A preview is Markdown in a monospace box: an ASCII mockup keeps its columns
    (no line is wrapped or its spaces folded), and a long one scrolls inside
    the box rather than growing the card. */
@@ -1831,7 +1890,7 @@
   max-height: 22em;
   box-sizing: border-box;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-control);
   background: var(--sunken);
   font-family: var(--font-mono);
@@ -1852,6 +1911,15 @@
 .conversation-question-no-preview {
   margin: 0;
   color: var(--tertiary);
+}
+
+/* An answered call's questions, in its fold for reference. */
+.conversation-question-record {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.conversation-question-record > .conversation-question:first-child {
+  margin-top: var(--space-1);
 }
 
 /* ------------------------------------------------------ New output */
