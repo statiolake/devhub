@@ -6,12 +6,9 @@
  */
 
 import type { AppErrorWire } from "../../ipc/appShell.js";
-import {
-	AppError,
-	AppErrorCode,
-	type ProviderEvent,
-} from "../../model/intents.js";
+import { StaleCompletion, type ProviderEvent } from "../../model/intents.js";
 import { errorWire, NamedFailure } from "../../model/wire.js";
+import { isInvariantViolation } from "./invariant.js";
 
 export type CompletionRefusal =
 	/** A bug in main's own flow: nobody is waiting and nothing can answer it. */
@@ -25,8 +22,9 @@ export type CompletionRefusal =
 	  };
 
 /**
- * - A completion for an operation that was never started is a bug in main —
- *   a token invented or completed twice — and stops the process.
+ * - A broken invariant — a completion for an operation that was never
+ *   started, a token invented or completed twice — is a bug in main and
+ *   stops the process.
  * - A *stale* one answers an operation something newer already settled on
  *   purpose (the reconciler supersedes its own rounds), and a person told so
  *   every time learns nothing and stops reading the error area. Nothing is
@@ -59,8 +57,8 @@ export function refusalOf(
 	error: unknown,
 	drawnAtSubject: boolean,
 ): CompletionRefusal {
-	if (isCode(error, AppErrorCode.UnknownOperation)) return { kind: "crash" };
-	if (isCode(error, AppErrorCode.StaleCompletion)) {
+	if (isInvariantViolation(error)) return { kind: "crash" };
+	if (error instanceof StaleCompletion) {
 		return { kind: "answer", rejection: error };
 	}
 	const drawn = errorWire(error);
@@ -68,8 +66,4 @@ export function refusalOf(
 	return drawnAtSubject
 		? { kind: "answer", rejection }
 		: { kind: "answer", publish: drawn, rejection };
-}
-
-function isCode(error: unknown, code: AppErrorCode): boolean {
-	return error instanceof AppError && error.code === code;
 }

@@ -212,7 +212,6 @@ import {
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
-	InvalidIntent,
 	failureText,
 } from "../../model/wire.js";
 import {
@@ -240,11 +239,8 @@ import { WindowAttention, platformDock } from "./windowAttention.js";
  * replaced or retracted by the next look and by nothing else.
  */
 const REPOSITORY_STATUS_CONDITION = "repository_status";
-import {
-	crash,
-	InvariantViolation,
-	isInvariantViolation,
-} from "./invariant.js";
+import { crash, isInvariantViolation } from "./invariant.js";
+import { InvariantViolation } from "../../model/invariant.js";
 import {
 	deadEditorKeys,
 	editorGaveUpFailure,
@@ -2815,7 +2811,7 @@ export class AppController {
 							);
 							break;
 						case "error":
-							this.publishError(errorWire(event.error));
+							this.publishError(event.error.wire);
 							break;
 						case "effect":
 							effects.push(event.effect);
@@ -5771,11 +5767,7 @@ export class AppController {
 		try {
 			intent = intentFromWire(wire);
 		} catch (error) {
-			throw new NamedFailure(
-				error instanceof InvalidIntent
-					? errorWireAt("invalid_intent")
-					: errorWire(error),
-			);
+			throw namedFailure(error);
 		}
 		const settled = await this.dispatchAwaiting(intent);
 

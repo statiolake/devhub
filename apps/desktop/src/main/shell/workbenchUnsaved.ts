@@ -25,7 +25,7 @@
  */
 
 import { withSummary, errorWireAt, NamedFailure } from "../../model/wire.js";
-import { InvariantViolation } from "./invariant.js";
+import { InvariantViolation } from "../../model/invariant.js";
 
 /** As much of a workbench's `WebContents` as a request needs. */
 export interface WorkbenchContents {

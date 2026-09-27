@@ -51,8 +51,6 @@ import {
   MIN_TERMINAL_FONT_SIZE,
 } from "./terminalZoom.js";
 import {
-  AppError,
-  AppErrorCode,
   confirmationId as parseConfirmationId,
   requestedPath,
   type ConfirmationOutcomePurpose,
@@ -635,12 +633,9 @@ const SAFE_ERROR_SUMMARY = APP_ERROR_SUMMARY;
  * `agent_profile_unavailable` has a sentence of its own because a launch can
  * be refused for it before there is any row to draw it on — a profile asking
  * for a presentation it cannot have yet — and "the agent runtime is
- * unavailable" would send the reader to a runtime that was fine. `undefined`
- * is a port failure that never went through `portRefusal` at all.
+ * unavailable" would send the reader to a runtime that was fine.
  */
-function agentFailureAsAppError(
-  failure: AgentFailureCode | undefined,
-): AppErrorCodeWire {
+function agentRefusalCode(failure: AgentFailureCode): AppErrorCodeWire {
   switch (failure) {
     case "tmux_command_failed":
       return "tmux_command_failed";
@@ -653,7 +648,6 @@ function agentFailureAsAppError(
     case "agent_profile_unavailable":
       return "agent_profile_unavailable";
     case "agent_runtime_unavailable":
-    case undefined:
       return "agent_runtime_unavailable";
     case "conversation_host_lost":
     case "conversation_protocol_mismatch":
@@ -796,9 +790,15 @@ export function withSummary(
  * title unless the raiser gave it a sharper one (`withSummary` — git's own
  * last line, an ssh refusal), and the raiser's own sentence as the detail
  * (`withDetail`). Each domain names its kinds as subclasses fixing the code —
- * a conversation's refusals, a machine's failures, GitHub's — so a refusal
- * written for a person reaches the page under its own title, and the app
- * shell's catch-all is kept for what DevHub did not expect (`errorWire`).
+ * a conversation's refusals, a machine's failures, GitHub's — and the model's
+ * coordinator refuses a request with one too (`domainRefusal`,
+ * `agentRefusal`), so a refusal written for a person reaches the page under
+ * its own title, and the app shell's catch-all is kept for what DevHub did
+ * not expect (`errorWire`).
+ *
+ * It is the only failure DevHub shows by name. What is thrown and never shown
+ * is not one: a completion something newer settled (`StaleCompletion`), and
+ * DevHub's own broken assumption (`InvariantViolation`), which crashes.
  *
  * Its message is that wire, serialised. Electron carries only a message
  * across the IPC boundary, so a named failure thrown anywhere in main reaches
@@ -849,87 +849,95 @@ export function nativeUnavailable(): AppErrorWire {
 /**
  * Turn any failure into the stable algebra the App Shell renders.
  *
- * A `NamedFailure` is already in these words, and the model's own refusal
- * (`AppError`) is projected into them here. Anything else is a broken
+ * A `NamedFailure` is already in these words. Anything else is a broken
  * invariant, not a user-facing condition — it becomes `native_unavailable`
  * with its message as the detail, so it is visible rather than swallowed, and
  * the summary stays a sentence the reader can act on.
  */
 export function errorWire(error: unknown): AppErrorWire {
   if (error instanceof NamedFailure) return error.wire;
-  if (!(error instanceof AppError)) {
-    // The stack is for whoever is reading the log, and only there. On screen
-    // it is noise that displaces the sentence a reader could act on — and the
-    // frames name this app's own files, which is not something a person using
-    // it can do anything with.
-    if (error instanceof Error && error.stack !== undefined) {
-      console.error(error.stack);
-    }
-    return withDetail(
-      errorWireAt("native_unavailable"),
-      error instanceof Error ? error.message : String(error),
-    );
+  // The stack is for whoever is reading the log, and only there. On screen
+  // it is noise that displaces the sentence a reader could act on — and the
+  // frames name this app's own files, which is not something a person using
+  // it can do anything with.
+  if (error instanceof Error && error.stack !== undefined) {
+    console.error(error.stack);
   }
-  let code: AppErrorCodeWire;
-  switch (error.code) {
-    case AppErrorCode.Domain:
-      switch (error.domainCode) {
-        case DomainErrorCode.UnknownWorkspace:
-        case DomainErrorCode.UnknownAgent:
-          code = "unknown_context";
-          break;
-        case DomainErrorCode.WorkspaceUnavailable:
-          code = "workspace_unavailable";
-          break;
-        case DomainErrorCode.WorkspaceClosing:
-          code = "workspace_closing";
-          break;
-        case DomainErrorCode.WorkspaceClosingFailed:
-          code = "workspace_close_failed";
-          break;
-        // The one domain refusal about a profile is a launch asking for what
-        // the profile cannot be, and it reads as the launch-time one does.
-        case DomainErrorCode.InvalidProfile:
-          code = "agent_profile_unavailable";
-          break;
-        default:
-          code = "invalid_intent";
-      }
-      break;
-    case AppErrorCode.ConfirmationRequired:
-    case AppErrorCode.OperationInProgress:
-    case AppErrorCode.OperationGenerationExhausted:
-      code = "operation_pending";
-      break;
-    case AppErrorCode.PersistenceDegraded:
-      code = "persistence_degraded";
-      break;
-    case AppErrorCode.PortUnavailable:
-      // Which port could not answer is the whole difference between a
-      // sentence a person can act on and the app shell's catch-all — and for
-      // the Agent port, *what it said*: a session conflict and a tmux that is
-      // not there are two different things to go and do, and both used to
-      // arrive as "the agent runtime is unavailable".
-      code =
-        error.port === "agent"
-          ? agentFailureAsAppError(error.agentFailure)
-          : "native_unavailable";
-      break;
+  return withDetail(
+    errorWireAt("native_unavailable"),
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+/**
+ * A failure named by its code, with the raiser's sentence as its detail — the
+ * shape of every `NamedFailure` that does not need a sharper title.
+ */
+export function namedFailureAt(
+  code: AppErrorCodeWire,
+  detail?: string,
+): NamedFailure {
+  const wire = errorWireAt(code);
+  return new NamedFailure(
+    detail === undefined ? wire : withDetail(wire, detail),
+  );
+}
+
+/**
+ * The model's refusal of a request, as the person is told it.
+ *
+ * `DomainError` is the model's own vocabulary, which parsers branch on (a
+ * record that is not valid, a remote that is not a repository). Where one
+ * refuses a request, this is the one place it becomes words: the coordinator
+ * raises its domain refusals through here, and converts the ones its model
+ * threw here too, so the same refusal reads the same way whichever raised it.
+ */
+export function domainRefusal(
+  code: DomainErrorCode,
+  detail?: string,
+): NamedFailure {
+  return namedFailureAt(domainRefusalCode(code), detail);
+}
+
+function domainRefusalCode(code: DomainErrorCode): AppErrorCodeWire {
+  switch (code) {
+    case DomainErrorCode.UnknownWorkspace:
+    case DomainErrorCode.UnknownAgent:
+      return "unknown_context";
+    case DomainErrorCode.WorkspaceUnavailable:
+      return "workspace_unavailable";
+    case DomainErrorCode.WorkspaceClosing:
+      return "workspace_closing";
+    case DomainErrorCode.WorkspaceClosingFailed:
+      return "workspace_close_failed";
+    // The one domain refusal about a profile is a launch asking for what the
+    // profile cannot be, and it reads as the launch-time one does.
+    case DomainErrorCode.InvalidProfile:
+      return "agent_profile_unavailable";
     default:
-      code = "invalid_intent";
+      return "invalid_intent";
   }
-  // The failing side's own words, when it had any. The summary stays the
-  // sentence chosen for the code, so the same failure reads the same way
-  // wherever it is drawn; the detail is what makes *this* one actionable.
-  return error.detail === undefined
-    ? errorWireAt(code)
-    : withDetail(errorWireAt(code), error.detail);
+}
+
+/**
+ * The Agent port's refusal, in its own name.
+ *
+ * Which refusal it was is the whole difference between a sentence a person
+ * can act on and a catch-all: a session conflict and a tmux that is not there
+ * are two different things to go and do, and both used to arrive as "the
+ * agent runtime is unavailable".
+ */
+export function agentRefusal(
+  code: AgentFailureCode,
+  detail?: string,
+): NamedFailure {
+  return namedFailureAt(agentRefusalCode(code), detail);
 }
 
 /** A wire intent that carries no valid domain command. */
-export class InvalidIntent extends Error {
+export class InvalidIntent extends NamedFailure {
   constructor() {
-    super("INVALID_INTENT");
+    super(errorWireAt("invalid_intent"));
     this.name = "InvalidIntent";
   }
 }

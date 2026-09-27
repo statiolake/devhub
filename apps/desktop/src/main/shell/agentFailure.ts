@@ -26,8 +26,7 @@ import type {
 	RuntimeId,
 	WorkspaceId,
 } from "../../model/domain.js";
-import { AppError, AppErrorCode } from "../../model/intents.js";
-import { errorWire, errorWireAt, withDetail } from "../../model/wire.js";
+import { agentRefusal, namedFailureAt } from "../../model/wire.js";
 import { PortFailure } from "../terminal/ports.js";
 
 /**
@@ -168,16 +167,10 @@ export type OperationRefusal = Exclude<
  * The request that was waiting on it — a page, or `devhub` printing it — is
  * answered with the same code and sentence the failure was drawn with at its
  * subject, so there is one account of it wherever it is read. An Agent's or a
- * machine's refusal is the Agent port's, named as `errorWire` names it.
+ * machine's refusal is the Agent port's, named as `agentRefusal` names it.
  */
 export function refusalWire(failure: OperationRefusal): AppErrorWire {
-	const wire =
-		failure.subject === "app"
-			? errorWireAt(failure.code)
-			: errorWire(
-					new AppError(AppErrorCode.PortUnavailable)
-						.withPort("agent")
-						.withAgentFailure(failure.code),
-				);
-	return failure.detail === undefined ? wire : withDetail(wire, failure.detail);
+	return failure.subject === "app"
+		? namedFailureAt(failure.code, failure.detail).wire
+		: agentRefusal(failure.code, failure.detail).wire;
 }

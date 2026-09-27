@@ -13,7 +13,6 @@ import {
   busy,
   CLEAN_INSPECTION,
   displayPath,
-  DomainErrorCode,
   workspaceId,
   workspaceLocation,
   type AgentId,
@@ -23,10 +22,11 @@ import {
   NO_INJECTION,
   unsavedEditors,
 } from "./domain.js";
+import type { AppErrorCodeWire } from "../ipc/appShell.js";
+import { InvariantViolation } from "./invariant.js";
 import {
-  AppError,
-  AppErrorCode,
   confirmationId,
+  StaleCompletion,
   intentId,
   operationId,
   requestedAtPath,
@@ -37,7 +37,7 @@ import {
   type UserIntent,
   type WorktreeDisposition,
 } from "./intents.js";
-import { errorWire, errorWireAt, withDetail } from "./wire.js";
+import { errorWire, errorWireAt, NamedFailure, withDetail } from "./wire.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
@@ -81,7 +81,7 @@ class Driver {
   }
 
   /** Every error emitted since the last drain, in order. */
-  drainErrors(): AppError[] {
+  drainErrors(): NamedFailure[] {
     const subscription = this.coordinator.subscribeFrom(this.cursor);
     this.cursor = subscription.cursor;
     return subscription.events.flatMap((event) =>
@@ -191,11 +191,20 @@ class Driver {
   }
 }
 
-function errorCode(run: () => unknown): AppErrorCode | undefined {
+/**
+ * How a call was refused: the code a person is shown, or which of the two
+ * refusals nobody is shown it was.
+ */
+function errorCode(
+  run: () => unknown,
+): AppErrorCodeWire | "stale" | "invariant" | undefined {
   try {
     run();
   } catch (error) {
-    return error instanceof AppError ? error.code : undefined;
+    if (error instanceof NamedFailure) return error.wire.code;
+    if (error instanceof StaleCompletion) return "stale";
+    if (error instanceof InvariantViolation) return "invariant";
+    return undefined;
   }
   return undefined;
 }
@@ -253,7 +262,27 @@ describe("dispatch", () => {
           intent: { type: "resize_sidebar", width: 320 },
         }),
       ),
-    ).toBe(AppErrorCode.DuplicateIntent);
+    ).toBe("invalid_intent");
+  });
+
+  it("refuses with its model's own refusal named, and replays the same one", () => {
+    const coordinator = coordinatorFor(scratchModel());
+    const envelope = {
+      intentId: intentId("550e8400-e29b-41d4-a716-4466554400e0"),
+      operationId: operationId("550e8400-e29b-41d4-a716-4466554400e1"),
+      intent: { type: "resize_sidebar", width: 1 } as const,
+    };
+    let first: unknown;
+    try {
+      coordinator.dispatchUser(envelope);
+    } catch (error) {
+      first = error;
+    }
+    // The model threw a `DomainError`; what leaves the coordinator is the
+    // named failure `domainRefusal` makes of it, never the bare code.
+    expect(first).toBeInstanceOf(NamedFailure);
+    expect((first as NamedFailure).wire.code).toBe("invalid_intent");
+    expect(() => coordinator.dispatchUser(envelope)).toThrow(first as Error);
   });
 
   it("refuses an intent with no trusted operation identity", () => {
@@ -266,7 +295,7 @@ describe("dispatch", () => {
           intent: { type: "resize_sidebar", width: 300 },
         }),
       ),
-    ).toBe(AppErrorCode.InvalidIntent);
+    ).toBe("invalid_intent");
   });
 });
 
@@ -445,7 +474,7 @@ describe("tokens", () => {
           selectedPath: displayPath("/dev/project"),
         }),
       ),
-    ).toBe(AppErrorCode.StaleCompletion);
+    ).toBe("stale");
   });
 
   it("rejects a completion for an operation nobody started", () => {
@@ -460,7 +489,7 @@ describe("tokens", () => {
           },
         }),
       ),
-    ).toBe(AppErrorCode.UnknownOperation);
+    ).toBe("invariant");
   });
 });
 
@@ -708,7 +737,7 @@ describe("closing a workspace", () => {
   it("refuses a second close while one is running", () => {
     const { driver } = atTheFirstStep();
     expect(errorCode(() => driver.dispatch(closeIntent()))).toBe(
-      AppErrorCode.Domain,
+      "workspace_closing",
     );
   });
 
@@ -741,8 +770,7 @@ describe("closing a workspace", () => {
     // agents simply could not be confirmed stopped.
     const errors = driver.drainErrors();
     expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe(AppErrorCode.Domain);
-    expect(errors[0].domainCode).toBe(DomainErrorCode.WorkspaceClosingFailed);
+    expect(errors[0].wire.code).toBe("workspace_close_failed");
   });
 
   it("succeeds on the next attempt once the cause is gone", () => {
@@ -796,7 +824,7 @@ describe("closing a workspace", () => {
           confirmationId: CONFIRM,
         }),
       ),
-    ).toBe(AppErrorCode.ConfirmationExpired);
+    ).toBe("invalid_intent");
   });
 });
 
@@ -844,7 +872,7 @@ describe("launching an agent", () => {
           result: { kind: "failed", code: "agent_runtime_unavailable" },
         }),
       ),
-    ).toBe(AppErrorCode.PortUnavailable);
+    ).toBe("agent_runtime_unavailable");
     expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 });
@@ -908,10 +936,10 @@ describe("a refusal the coordinator throws", () => {
           detail: "codex was not found.",
         },
       }),
-    ).toThrow(AppError);
+    ).toThrow(NamedFailure);
     expect(() =>
       driver.dispatch({ type: "stop_agent", agentId: AG_A }),
-    ).toThrow(AppError);
+    ).toThrow(NamedFailure);
     expect(driver.drainErrors()).toEqual([]);
   });
 });
@@ -1076,7 +1104,7 @@ describe("continuing a GUI Agent in a terminal", () => {
           result: { kind: "failed", code: "agent_profile_unavailable" },
         }),
       ),
-    ).toBe(AppErrorCode.PortUnavailable);
+    ).toBe("agent_profile_unavailable");
     expect(
       driver.drainEffects().some((effect) => effect.kind === "stop_agent"),
     ).toBe(false);
@@ -1104,7 +1132,7 @@ describe("continuing a GUI Agent in a terminal", () => {
           session: "thread-1",
         }),
       ),
-    ).toBe(AppErrorCode.Domain);
+    ).toBe("invalid_intent");
   });
 });
 
@@ -1182,7 +1210,7 @@ describe("continuing a terminal Agent in the GUI", () => {
           session: "thread-9",
         }),
       ),
-    ).toBe(AppErrorCode.Domain);
+    ).toBe("invalid_intent");
   });
 });
 
@@ -1328,7 +1356,7 @@ describe("continuing an Agent that is not idle", () => {
           confirmationId: CONFIRM,
         }),
       ),
-    ).toBe(AppErrorCode.ConfirmationExpired);
+    ).toBe("invalid_intent");
   });
 
   it("is let go of when the Agent it is about exits", () => {
@@ -1359,7 +1387,7 @@ describe("continuing an Agent that is not idle", () => {
           confirmationId: CONFIRM,
         }),
       ),
-    ).toBe(AppErrorCode.ConfirmationExpired);
+    ).toBe("invalid_intent");
   });
 });
 
@@ -1433,10 +1461,7 @@ describe("how a launched agent is shown", () => {
 
   it("refuses GUI for a profile whose kind has none, before anything starts", () => {
     const { refusal, next } = requested(cursor, "gui");
-    expect(refusal).toBeInstanceOf(AppError);
-    expect((refusal as AppError).domainCode).toBe(
-      DomainErrorCode.InvalidProfile,
-    );
+    expect(refusal).toBeInstanceOf(NamedFailure);
     // No identity asked for, nothing launched: the refusal is the answer.
     expect(next).toEqual([]);
     const wire = errorWire(refusal);
@@ -1668,7 +1693,7 @@ describe("an Agent the model could not take after its launch", () => {
         }
         if (effect.kind === "launch_agent") {
           // The model refuses to add it; the termination it asks for is next.
-          expect(() => driver.answer(effect)).toThrow(AppError);
+          expect(() => driver.answer(effect)).toThrow(NamedFailure);
         } else {
           driver.answer(effect);
         }
@@ -1752,8 +1777,8 @@ describe("persistence", () => {
     });
     const errors = driver.drainErrors();
     expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe(AppErrorCode.PersistenceDegraded);
-    expect(errors[0].detail).toBe(
+    expect(errors[0].wire.code).toBe("persistence_degraded");
+    expect(errors[0].wire.detail).toBe(
       "/state.json: permission was denied (EACCES)",
     );
   });
@@ -2054,10 +2079,8 @@ describe("Scratch, today's daily folder", () => {
     } catch (error) {
       caught = error;
     }
-    expect(caught).toBeInstanceOf(AppError);
-    expect((caught as AppError).domainCode).toBe(
-      DomainErrorCode.ScratchCannotClose,
-    );
+    expect(caught).toBeInstanceOf(NamedFailure);
+    expect((caught as NamedFailure).wire.code).toBe("invalid_intent");
     expect(driver.coordinator.model.workspace(scratch)).toBeDefined();
   });
 

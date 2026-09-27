@@ -22,13 +22,7 @@
  * the repository's CLAUDE.md.
  */
 
-/** A fact DevHub believed about itself, found to be false. */
-export class InvariantViolation extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "InvariantViolation";
-	}
-}
+import { InvariantViolation } from "../../model/invariant.js";
 
 export function isInvariantViolation(error: unknown): boolean {
 	return error instanceof InvariantViolation;

@@ -6,7 +6,7 @@ import {
 	readUnsavedEditors,
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
-import { InvariantViolation } from "./invariant.js";
+import { InvariantViolation } from "../../model/invariant.js";
 import { NamedFailure } from "../../model/wire.js";
 
 /**

@@ -12,8 +12,7 @@ import { agentId as parseAgentId } from "../../model/domain.js";
 import { portFailure } from "../terminal/ports.js";
 import { agentSubject, portRefusal, refusalWire } from "./agentFailure.js";
 import { SessionNotResumable } from "../agent/conversation/failures.js";
-import { AppError, AppErrorCode } from "../../model/intents.js";
-import { errorWire, errorWireAt } from "../../model/wire.js";
+import { agentRefusal, errorWire, errorWireAt } from "../../model/wire.js";
 
 const AGENT = parseAgentId("550e8400-e29b-41d4-a716-4466554400a0");
 
@@ -135,25 +134,14 @@ describe("the code a refused launch reaches the wire with", () => {
 		const refusal = portRefusal(portFailure("conflict"));
 		expect(refusal.code).toBe("tmux_session_conflict");
 
-		const error = new AppError(AppErrorCode.PortUnavailable)
-			.withPort("agent")
-			.withAgentFailure(refusal.code)
-			.withDetail("the session DevHub needs is not the one that is there");
-
-		const wire = errorWire(error);
+		const wire = agentRefusal(
+			refusal.code,
+			"the session DevHub needs is not the one that is there",
+		).wire;
 		expect(wire.code).toBe("tmux_session_conflict");
 		expect(wire.detail).toBe(
 			"the session DevHub needs is not the one that is there",
 		);
-	});
-
-	// A port failure that never went through `portRefusal` still has to say
-	// something, and "the runtime" is the honest answer for one.
-	it("falls back to the runtime only when nothing chose a code", () => {
-		expect(
-			errorWire(new AppError(AppErrorCode.PortUnavailable).withPort("agent"))
-				.code,
-		).toBe("agent_runtime_unavailable");
 	});
 });
 

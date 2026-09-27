@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { agentId, workspaceId } from "../../model/domain.js";
+import { InvariantViolation } from "../../model/invariant.js";
 import {
-	AppError,
-	AppErrorCode,
 	operationId,
+	StaleCompletion,
 	operationToken,
 	type ProviderEvent,
 } from "../../model/intents.js";
 import {
+	agentRefusal,
 	errorWire,
 	errorWireAt,
 	NamedFailure,
@@ -39,10 +40,7 @@ const launched: ProviderEvent = {
 	result: { kind: "failed", code: "tmux_command_failed", detail: "no tmux" },
 };
 
-const launchRefusal = new AppError(AppErrorCode.PortUnavailable)
-	.withPort("agent")
-	.withAgentFailure("tmux_command_failed")
-	.withDetail("no tmux");
+const launchRefusal = agentRefusal("tmux_command_failed", "no tmux");
 
 function rejectionWire(refusal: ReturnType<typeof completionRefusal>) {
 	if (refusal.kind !== "answer") throw new Error("expected an answer");
@@ -66,7 +64,7 @@ describe("a completion the coordinator refused", () => {
 	});
 
 	it("is only refused, undrawn, when it answers an operation something newer settled", () => {
-		const stale = new AppError(AppErrorCode.StaleCompletion);
+		const stale = new StaleCompletion(token.operationId);
 		expect(completionRefusal(launched, stale)).toEqual({
 			kind: "answer",
 			rejection: stale,
@@ -75,7 +73,10 @@ describe("a completion the coordinator refused", () => {
 
 	it("stops the process when it answers an operation never started", () => {
 		expect(
-			completionRefusal(failed, new AppError(AppErrorCode.UnknownOperation)),
+			completionRefusal(
+				failed,
+				new InvariantViolation("an operation never started was completed"),
+			),
 		).toEqual({ kind: "crash" });
 	});
 });

@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppError, AppErrorCode } from "../../model/intents.js";
-import {
-	crash,
-	InvariantViolation,
-	isInvariantViolation,
-} from "./invariant.js";
+import { InvariantViolation } from "../../model/invariant.js";
+import { StaleCompletion, operationId } from "../../model/intents.js";
+import { namedFailureAt } from "../../model/wire.js";
+import { crash, isInvariantViolation } from "./invariant.js";
 
 describe("what counts as DevHub's own bug", () => {
 	it("is a stated invariant and nothing else", () => {
@@ -14,8 +12,17 @@ describe("what counts as DevHub's own bug", () => {
 		expect(isInvariantViolation(new Error("tmux would not answer"))).toBe(
 			false,
 		);
+		// Nor is a refusal DevHub names for the person, or a completion that
+		// something newer settled first.
+		expect(isInvariantViolation(namedFailureAt("workspace_closing"))).toBe(
+			false,
+		);
 		expect(
-			isInvariantViolation(new AppError(AppErrorCode.UnknownOperation)),
+			isInvariantViolation(
+				new StaleCompletion(
+					operationId("00000000-0000-4000-8000-000000000001"),
+				),
+			),
 		).toBe(false);
 		expect(isInvariantViolation(undefined)).toBe(false);
 	});

@@ -21,6 +21,8 @@ import {
   agentProfileId,
   CLOSE_STEPS,
   DIAGNOSTIC_CODES,
+  DomainError,
+  DomainErrorCode,
   type AgentControlState,
   type DiagnosticCode,
   type WorkspaceClose,
@@ -28,6 +30,8 @@ import {
 } from "./domain.js";
 import {
   agentProfilesWire,
+  agentRefusal,
+  domainRefusal,
   errorWire,
   errorWireAt,
   failureText,
@@ -35,6 +39,7 @@ import {
   InvalidIntent,
   NamedFailure,
   namedFailure,
+  namedFailureAt,
   snapshotWire,
   withDetail,
   withSummary,
@@ -468,6 +473,73 @@ describe("a named failure", () => {
         ),
       ),
     ).toBe("fatal: no");
+  });
+});
+
+/**
+ * The coordinator's refusals are named failures like every other: the model
+ * names what it refused in its own vocabulary, and these are the one place
+ * that vocabulary becomes a title.
+ */
+describe("a refusal the model raises", () => {
+  it("is a named failure under the title its domain code reads as", () => {
+    const cases: readonly [DomainErrorCode, string][] = [
+      [DomainErrorCode.UnknownWorkspace, "unknown_context"],
+      [DomainErrorCode.UnknownAgent, "unknown_context"],
+      [DomainErrorCode.WorkspaceUnavailable, "workspace_unavailable"],
+      [DomainErrorCode.WorkspaceClosing, "workspace_closing"],
+      [DomainErrorCode.WorkspaceClosingFailed, "workspace_close_failed"],
+      [DomainErrorCode.InvalidProfile, "agent_profile_unavailable"],
+      [DomainErrorCode.ScratchCannotClose, "invalid_intent"],
+    ];
+    for (const [code, wire] of cases) {
+      const refusal = domainRefusal(code);
+      expect(refusal).toBeInstanceOf(NamedFailure);
+      expect(errorWire(refusal)).toBe(refusal.wire);
+      expect(refusal.wire.code).toBe(wire);
+    }
+  });
+
+  it("carries the raiser's sentence as its detail", () => {
+    expect(
+      domainRefusal(DomainErrorCode.InvalidProfile, "only as a terminal").wire,
+    ).toMatchObject({
+      code: "agent_profile_unavailable",
+      summary: "The agent could not start from this profile.",
+      detail: "only as a terminal",
+    });
+    expect(namedFailureAt("operation_pending").wire).not.toHaveProperty(
+      "detail",
+    );
+  });
+
+  it("names the Agent port's refusal by what the port said", () => {
+    expect(agentRefusal("tmux_session_conflict", "taken").wire).toMatchObject({
+      code: "tmux_session_conflict",
+      detail: "taken",
+    });
+    expect(agentRefusal("agent_runtime_unavailable").wire.code).toBe(
+      "agent_runtime_unavailable",
+    );
+    // A conversation's reading is drawn on its row, never as a port refusal.
+    expect(() => agentRefusal("conversation_failed")).toThrow(
+      /not a port refusal/,
+    );
+  });
+
+  it("is not a bare DomainError, which only the coordinator converts", () => {
+    // A `DomainError` that escaped the coordinator is a broken invariant, and
+    // is drawn as the catch-all rather than under a title it was never given.
+    expect(
+      errorWire(new DomainError(DomainErrorCode.WorkspaceClosing)).code,
+    ).toBe("native_unavailable");
+  });
+
+  it("includes a wire intent that carries no command", () => {
+    expect(new InvalidIntent()).toBeInstanceOf(NamedFailure);
+    expect(errorWire(namedFailure(new InvalidIntent())).code).toBe(
+      "invalid_intent",
+    );
   });
 });
 

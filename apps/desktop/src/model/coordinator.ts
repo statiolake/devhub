@@ -23,6 +23,7 @@ import {
   EDITOR_ON_HOST,
   closeInspectionProjection,
   consolidateCloseInspection,
+  DomainError,
   DomainErrorCode,
   locationKey,
   presentationsFor,
@@ -43,7 +44,13 @@ import {
   type WorkspaceLocation,
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
-import { NamedFailure } from "./wire.js";
+import {
+  agentRefusal,
+  domainRefusal,
+  NamedFailure,
+  namedFailureAt,
+} from "./wire.js";
+import { InvariantViolation } from "./invariant.js";
 import {
   AppModel,
   type AppSnapshot,
@@ -51,9 +58,8 @@ import {
   type WorkspaceCloseRollback,
 } from "./appModel.js";
 import {
-  AppError,
-  AppErrorCode,
   operationToken,
+  StaleCompletion,
   requestedLocation,
   requestedPath,
   sameToken,
@@ -182,7 +188,7 @@ export type CoordinatorEvent =
   | { readonly kind: "snapshot"; readonly snapshot: AppSnapshot }
   | { readonly kind: "effect"; readonly effect: Effect }
   | { readonly kind: "noop" }
-  | { readonly kind: "error"; readonly error: AppError }
+  | { readonly kind: "error"; readonly error: NamedFailure }
   | { readonly kind: "operation_completed"; readonly token: OperationToken };
 
 export interface SequencedCoordinatorEvent {
@@ -213,18 +219,6 @@ type OperationKind =
   | "terminate_agent"
   | "persist_state"
   | "close_workspace";
-
-/** A stop or termination the Agent port refused, as the request reads it. */
-function stopRefusal(
-  token: OperationToken,
-  result: Extract<AgentStopResult, { kind: "failed" }>,
-): AppError {
-  return new AppError(AppErrorCode.PortUnavailable)
-    .withPort("agent")
-    .withAgentFailure(result.code)
-    .withDetail(result.detail)
-    .withOperation(token.operationId);
-}
 
 type OperationTarget =
   | {
@@ -262,7 +256,7 @@ interface PendingOperation {
 interface CachedDispatch {
   readonly fingerprint: string;
   readonly outcome: IntentOutcome | undefined;
-  readonly error: AppError | undefined;
+  readonly error: NamedFailure | StaleCompletion | undefined;
 }
 
 /**
@@ -361,10 +355,26 @@ function fingerprint(value: unknown): string {
  * workspace as its `stateDiagnostic` rather than in three sentences written
  * three times.
  */
-function closeFailedError(operationId: OperationId): AppError {
-  return new AppError(AppErrorCode.Domain)
-    .withDomain(DomainErrorCode.WorkspaceClosingFailed)
-    .withOperation(operationId);
+function closeFailedError(): NamedFailure {
+  return domainRefusal(DomainErrorCode.WorkspaceClosingFailed);
+}
+
+/**
+ * What a request the coordinator refused is thrown as: the refusal itself, or
+ * a `DomainError` its model threw in the words it is shown in. Anything else
+ * is not a refusal and is thrown on untouched.
+ */
+function refusal(raw: unknown): NamedFailure | StaleCompletion {
+  if (raw instanceof NamedFailure || raw instanceof StaleCompletion) return raw;
+  if (raw instanceof DomainError) return domainRefusal(raw.code);
+  throw raw;
+}
+
+/** A completion for an operation this coordinator never started: its own bug. */
+function unknownOperation(id: OperationId): InvariantViolation {
+  return new InvariantViolation(
+    `a completion arrived for operation ${id}, which was never started`,
+  );
 }
 
 /**
@@ -534,7 +544,7 @@ export class AppCoordinator {
         this.emit({ kind: "noop" });
         return this.replayCached(cached);
       }
-      throw new AppError(AppErrorCode.DuplicateIntent).withIntent(id);
+      throw namedFailureAt("invalid_intent");
     }
 
     if (this.detached !== undefined) {
@@ -548,7 +558,7 @@ export class AppCoordinator {
     }
 
     if (trustedOperationId === undefined) {
-      const error = new AppError(AppErrorCode.InvalidIntent).withIntent(id);
+      const error = namedFailureAt("invalid_intent");
       this.cacheIntent(id, print, undefined, error);
       throw error;
     }
@@ -562,7 +572,7 @@ export class AppCoordinator {
       // drawn, and an `error` event as well was a second route to the screen.
       // The event is for failures nobody is waiting on (a close that failed
       // a step, a save that degraded).
-      const error = AppError.from(raw);
+      const error = refusal(raw);
       this.cacheIntent(id, print, undefined, error);
       throw error;
     }
@@ -577,9 +587,7 @@ export class AppCoordinator {
         this.emit({ kind: "noop" });
         return this.replayCached(cached);
       }
-      throw new AppError(AppErrorCode.DuplicateIntent).withProviderEvent(
-        eventId,
-      );
+      throw namedFailureAt("invalid_intent");
     }
     try {
       const outcome = this.applyProviderEvent(event);
@@ -587,7 +595,7 @@ export class AppCoordinator {
       return outcome;
     } catch (raw) {
       // Thrown and not also emitted, as in `dispatchUser`.
-      const error = AppError.from(raw);
+      const error = refusal(raw);
       this.cacheProviderEvent(eventId, print, undefined, error);
       throw error;
     }
@@ -598,7 +606,9 @@ export class AppCoordinator {
       throw cached.error;
     }
     if (!cached.outcome) {
-      throw new AppError(AppErrorCode.UnknownIntent);
+      throw new InvariantViolation(
+        "a cached dispatch has neither an outcome nor a refusal",
+      );
     }
     return cached.outcome;
   }
@@ -762,12 +772,10 @@ export class AppCoordinator {
 
   requestAgentReconcile(id: OperationId, agent: AgentId): IntentOutcome {
     if (this.pending.has(id)) {
-      throw new AppError(AppErrorCode.OperationInProgress).withOperation(id);
+      throw namedFailureAt("operation_pending");
     }
     if (!this.model.workspaceForAgent(agent)) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownAgent,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
     this.invalidateReconcileScope(`agent:${agent}`);
     const token = this.startOperation(
@@ -782,7 +790,7 @@ export class AppCoordinator {
 
   requestAgentsReconcile(id: OperationId, machine: RuntimeId): IntentOutcome {
     if (this.pending.has(id)) {
-      throw new AppError(AppErrorCode.OperationInProgress).withOperation(id);
+      throw namedFailureAt("operation_pending");
     }
     this.invalidateReconcileScope(`agents:${machine}`);
     const token = this.startOperation(
@@ -878,9 +886,7 @@ export class AppCoordinator {
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     if (
       workspace.state.kind === "available" ||
@@ -897,14 +903,10 @@ export class AppCoordinator {
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     if (workspace.state.kind !== "unavailable") {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceNotUnavailable,
-      );
+      throw domainRefusal(DomainErrorCode.WorkspaceNotUnavailable);
     }
     return this.beginWorkspaceRelocation(
       workspaceId,
@@ -920,14 +922,10 @@ export class AppCoordinator {
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     if (workspace.state.kind !== "unavailable") {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceNotUnavailable,
-      );
+      throw domainRefusal(DomainErrorCode.WorkspaceNotUnavailable);
     }
     const token = this.startOperation(
       "resolve_workspace_path",
@@ -958,14 +956,10 @@ export class AppCoordinator {
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     if (!workspace.canCreateAgent) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceUnavailable,
-      );
+      throw domainRefusal(DomainErrorCode.WorkspaceUnavailable);
     }
     const token = this.startOperation(
       "resolve_agent_profile",
@@ -1012,16 +1006,13 @@ export class AppCoordinator {
     const agent = this.model.agent(agentId);
     const workspace = this.model.workspaceForAgent(agentId);
     if (!agent || !workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownAgent,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
     if (agent.presentation === presentation) {
-      throw new AppError(AppErrorCode.Domain)
-        .withDomain(DomainErrorCode.InvalidAgentControlTransition)
-        .withDetail(
-          `“${agent.displayName}” is already ${presentation === "tui" ? "a terminal" : "a GUI"} Agent.`,
-        );
+      throw domainRefusal(
+        DomainErrorCode.InvalidAgentControlTransition,
+        `“${agent.displayName}” is already ${presentation === "tui" ? "a terminal" : "a GUI"} Agent.`,
+      );
     }
     return { workspaceId: workspace.id, profileId: agent.profile.id };
   }
@@ -1070,9 +1061,7 @@ export class AppCoordinator {
   ): IntentOutcome {
     const found = this.model.agent(agent);
     if (!found || !this.model.workspaceForAgent(agent)) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownAgent,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
     if (agentIsIdle(found.status)) return this.doAgentAct(agent, act, id);
     const token = this.startOperation(
@@ -1105,11 +1094,11 @@ export class AppCoordinator {
         pending.confirmationId === confirmation,
     );
     if (index < 0) {
-      throw new AppError(AppErrorCode.ConfirmationExpired);
+      throw namedFailureAt("invalid_intent");
     }
     const [state] = this.confirmations.splice(index, 1);
     if (state.kind !== "agent") {
-      throw new AppError(AppErrorCode.ConfirmationExpired);
+      throw namedFailureAt("invalid_intent");
     }
     return this.doAgentAct(state.agentId, state.act, id);
   }
@@ -1145,14 +1134,10 @@ export class AppCoordinator {
   private retryStop(agent: AgentId, id: OperationId): IntentOutcome {
     const found = this.model.agent(agent);
     if (!found) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownAgent,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
     if (!found.canRetryStop) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.InvalidAgentControlTransition,
-      );
+      throw domainRefusal(DomainErrorCode.InvalidAgentControlTransition);
     }
     this.model.retryAgentStop(agent);
     const token = this.startOperation(
@@ -1193,11 +1178,11 @@ export class AppCoordinator {
         pending.confirmationId === confirmation,
     );
     if (index < 0) {
-      throw new AppError(AppErrorCode.ConfirmationExpired);
+      throw namedFailureAt("invalid_intent");
     }
     const [state] = this.confirmations.splice(index, 1);
     if (state.kind !== "workspace_close") {
-      throw new AppError(AppErrorCode.ConfirmationExpired);
+      throw namedFailureAt("invalid_intent");
     }
     return this.startClose(
       { workspaceId: state.workspaceId, worktree: state.worktree },
@@ -1246,19 +1231,13 @@ export class AppCoordinator {
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     if (workspaceId === this.model.scratchWorkspaceId) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.ScratchCannotClose,
-      );
+      throw domainRefusal(DomainErrorCode.ScratchCannotClose);
     }
     if (workspace.close.kind === "running") {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceClosing,
-      );
+      throw domainRefusal(DomainErrorCode.WorkspaceClosing);
     }
     return this.beginWorkspaceInspection({ workspaceId, worktree }, id);
   }
@@ -1349,16 +1328,12 @@ export class AppCoordinator {
   ): IntentOutcome {
     const pending = this.pending.get(token.operationId);
     if (!pending) {
-      throw new AppError(
-        this.completedTokens.has(token.operationId)
-          ? AppErrorCode.StaleCompletion
-          : AppErrorCode.UnknownOperation,
-      ).withOperation(token.operationId);
+      throw this.completedTokens.has(token.operationId)
+        ? new StaleCompletion(token.operationId)
+        : unknownOperation(token.operationId);
     }
     if (!sameToken(pending.token, token)) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.pending.delete(token.operationId);
     this.clearOperationAuxiliaryState(token);
@@ -1416,9 +1391,7 @@ export class AppCoordinator {
 
     const target = pending.target;
     if (target.kind !== "location") {
-      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
-        token.operationId,
-      );
+      throw unknownOperation(token.operationId);
     }
     return this.beginWorkspaceIdentity(
       location,
@@ -1440,15 +1413,11 @@ export class AppCoordinator {
     const resolved = this.resolvedLocations.get(token.operationId);
     this.resolvedLocations.delete(token.operationId);
     if (!resolved) {
-      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
-        token.operationId,
-      );
+      throw unknownOperation(token.operationId);
     }
     const key = locationKey(resolved.location);
     if (this.finalizationRoots.has(key)) {
-      throw new AppError(AppErrorCode.Domain)
-        .withDomain(DomainErrorCode.DuplicateWorkspaceRoot)
-        .withOperation(token.operationId);
+      throw domainRefusal(DomainErrorCode.DuplicateWorkspaceRoot);
     }
     const existing = this.model.workspaces.find(
       (workspace) =>
@@ -1509,12 +1478,11 @@ export class AppCoordinator {
     if (!this.workspaceAllowsAgentCreation(workspaceId)) {
       this.resolvedProfiles.delete(id);
       this.replacedByLaunch.delete(id);
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(id);
+      throw new StaleCompletion(id);
     }
     const requested = this.requestedPresentations.get(id);
     this.requestedPresentations.delete(id);
     const agentPresentation = this.resolveAgentPresentation(
-      id,
       profile,
       requested?.agentPresentation,
     );
@@ -1560,11 +1528,7 @@ export class AppCoordinator {
         target.kind === "profile" && target.workspaceId === workspaceId,
     );
     this.clearOperationAuxiliaryState(token);
-    throw new AppError(AppErrorCode.PortUnavailable)
-      .withPort("agent")
-      .withAgentFailure(code)
-      .withDetail(detail)
-      .withOperation(token.operationId);
+    throw agentRefusal(code, detail);
   }
 
   /**
@@ -1577,18 +1541,15 @@ export class AppCoordinator {
    * holds the same rule, and reaching it there would be a bug in this check.
    */
   private resolveAgentPresentation(
-    id: OperationId,
     profile: AgentProfile,
     requested: AgentPresentation | undefined,
   ): AgentPresentation {
     const presentation = requested ?? profile.presentation;
     if (!presentationsFor(profile.kind).includes(presentation)) {
-      throw new AppError(AppErrorCode.Domain)
-        .withDomain(DomainErrorCode.InvalidProfile)
-        .withDetail(
-          `“${profile.displayName}” cannot open as GUI: only Claude and Codex profiles can. It can open as a terminal.`,
-        )
-        .withOperation(id);
+      throw domainRefusal(
+        DomainErrorCode.InvalidProfile,
+        `“${profile.displayName}” cannot open as GUI: only Claude and Codex profiles can. It can open as a terminal.`,
+      );
     }
     return presentation;
   }
@@ -1607,16 +1568,12 @@ export class AppCoordinator {
     if (!this.workspaceAllowsAgentCreation(workspaceId)) {
       this.resolvedProfiles.delete(token.operationId);
       this.replacedByLaunch.delete(token.operationId);
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     const resolved = this.resolvedProfiles.get(token.operationId);
     this.resolvedProfiles.delete(token.operationId);
     if (!resolved) {
-      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
-        token.operationId,
-      );
+      throw unknownOperation(token.operationId);
     }
     this.launchProfiles.set(token.operationId, {
       workspaceId,
@@ -1653,23 +1610,17 @@ export class AppCoordinator {
   ): IntentOutcome {
     if (!this.workspaceAllowsAgentCreation(workspaceId)) {
       this.cancelWorkspaceAgentOperations(workspaceId);
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     const expected = this.launchProfiles.get(token.operationId);
     if (!expected) {
-      throw new AppError(
-        this.pending.has(token.operationId) ||
+      throw this.pending.has(token.operationId) ||
         this.completedTokens.has(token.operationId)
-          ? AppErrorCode.StaleCompletion
-          : AppErrorCode.UnknownOperation,
-      ).withOperation(token.operationId);
+        ? new StaleCompletion(token.operationId)
+        : unknownOperation(token.operationId);
     }
     if (expected.workspaceId !== workspaceId || expected.agentId !== agentId) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.takePending(
       token,
@@ -1686,11 +1637,7 @@ export class AppCoordinator {
     this.replacedByLaunch.delete(token.operationId);
 
     if (result.kind === "failed") {
-      throw new AppError(AppErrorCode.PortUnavailable)
-        .withPort("agent")
-        .withAgentFailure(result.code)
-        .withDetail(result.detail)
-        .withOperation(token.operationId);
+      throw agentRefusal(result.code, result.detail);
     }
 
     try {
@@ -1702,7 +1649,7 @@ export class AppCoordinator {
         presentation,
       );
     } catch (raw) {
-      const error = AppError.from(raw);
+      const error = refusal(raw);
       const terminateToken = this.startOperation(
         "terminate_agent",
         { kind: "agent", agentId },
@@ -1742,7 +1689,7 @@ export class AppCoordinator {
     const snapshot = this.snapshot();
     this.emit({ kind: "operation_completed", token });
     if (result.kind === "failed") {
-      throw stopRefusal(token, result);
+      throw agentRefusal(result.code, result.detail);
     }
     return { kind: "noop", snapshot };
   }
@@ -1753,9 +1700,7 @@ export class AppCoordinator {
   ): IntentOutcome {
     const scope = this.scopeOfToken(token, "agents");
     if (scope === undefined) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.takePending(
       token,
@@ -1765,16 +1710,12 @@ export class AppCoordinator {
     this.activeReconciles.delete(scope);
     for (const observation of reconciliation.observations) {
       if (!this.model.workspaceForAgent(observation.agentId)) {
-        throw new AppError(AppErrorCode.Domain)
-          .withDomain(DomainErrorCode.UnknownAgent)
-          .withOperation(token.operationId);
+        throw domainRefusal(DomainErrorCode.UnknownAgent);
       }
     }
     for (const agentId of reconciliation.exited) {
       if (!this.model.workspaceForAgent(agentId)) {
-        throw new AppError(AppErrorCode.Domain)
-          .withDomain(DomainErrorCode.UnknownAgent)
-          .withOperation(token.operationId);
+        throw domainRefusal(DomainErrorCode.UnknownAgent);
       }
     }
     const canceledStopTokens = reconciliation.exited.flatMap((agentId) =>
@@ -1810,18 +1751,14 @@ export class AppCoordinator {
         (pending) => pending.confirmationId === confirmation,
       )
     ) {
-      throw new AppError(AppErrorCode.DuplicateIntent).withOperation(
-        token.operationId,
-      );
+      throw namedFailureAt("invalid_intent");
     }
     const request = this.confirmationRequests.get(token.operationId);
     if (!request) {
-      throw new AppError(
-        this.pending.has(token.operationId) ||
+      throw this.pending.has(token.operationId) ||
         this.completedTokens.has(token.operationId)
-          ? AppErrorCode.StaleCompletion
-          : AppErrorCode.UnknownOperation,
-      ).withOperation(token.operationId);
+        ? new StaleCompletion(token.operationId)
+        : unknownOperation(token.operationId);
     }
     if (request.kind === "agent") {
       this.takePending(
@@ -1901,9 +1838,7 @@ export class AppCoordinator {
     // close is the one answer that must not be given.
     const request = this.closeRequests.get(token.operationId);
     if (!request) {
-      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
-        token.operationId,
-      );
+      throw unknownOperation(token.operationId);
     }
     this.closeRequests.delete(token.operationId);
 
@@ -1913,9 +1848,7 @@ export class AppCoordinator {
 
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     const confirmationToken = this.startOperation(
       "generate_confirmation_id",
@@ -1950,9 +1883,7 @@ export class AppCoordinator {
       (candidate) => candidate.id === workspaceId,
     );
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     return workspace.label;
   }
@@ -1967,9 +1898,7 @@ export class AppCoordinator {
   private startClose(request: CloseRequest, id: OperationId): IntentOutcome {
     const workspace = this.model.workspace(request.workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw domainRefusal(DomainErrorCode.UnknownWorkspace);
     }
     const token = this.startOperation(
       "close_workspace",
@@ -1981,7 +1910,7 @@ export class AppCoordinator {
     } catch (raw) {
       this.pending.delete(id);
       this.rememberCompleted(token);
-      throw AppError.from(raw);
+      throw refusal(raw);
     }
     this.cancelWorkspaceAgentOperations(request.workspaceId);
     this.invalidateReconciliation();
@@ -2003,9 +1932,7 @@ export class AppCoordinator {
     const naturalExit = this.naturalExitStopTokens.get(tokenKey(token));
     if (naturalExit !== undefined) {
       if (naturalExit !== agentId || this.model.workspaceForAgent(agentId)) {
-        throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-          token.operationId,
-        );
+        throw new StaleCompletion(token.operationId);
       }
       this.emit({ kind: "operation_completed", token });
       return { kind: "noop", snapshot: this.snapshot() };
@@ -2033,7 +1960,7 @@ export class AppCoordinator {
     this.emit({ kind: "operation_completed", token });
     this.queuePersist(token.operationId);
     if (result.kind === "failed") {
-      throw stopRefusal(token, result);
+      throw agentRefusal(result.code, result.detail);
     }
     return { kind: "updated", snapshot };
   }
@@ -2069,7 +1996,7 @@ export class AppCoordinator {
       const snapshot = this.snapshot();
       this.emit({ kind: "snapshot", snapshot });
       this.emit({ kind: "operation_completed", token });
-      this.emit({ kind: "error", error: closeFailedError(token.operationId) });
+      this.emit({ kind: "error", error: closeFailedError() });
       // Not close bookkeeping: the steps that did run changed the model — the
       // Agents they stopped are gone from it — and that is what is saved.
       this.queuePersist(token.operationId);
@@ -2078,9 +2005,7 @@ export class AppCoordinator {
 
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     // Removing an Agent moves no Workspace, so one reading of the order
     // serves the whole close.
@@ -2163,10 +2088,7 @@ export class AppCoordinator {
         }
       }
     }
-    const error = new AppError(AppErrorCode.PersistenceDegraded)
-      .withPort("state")
-      .withDetail(reason)
-      .withOperation(token.operationId);
+    const error = namedFailureAt("persistence_degraded", reason);
     this.emit({ kind: "snapshot", snapshot: this.snapshot() });
     this.emit({ kind: "error", error });
     this.emit({ kind: "operation_completed", token });
@@ -2181,9 +2103,7 @@ export class AppCoordinator {
   ): IntentOutcome {
     const active = this.activeReconciles.get(`agent:${agentId}`);
     if (!active || !sameToken(active.token, token)) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.takePending(
       token,
@@ -2212,9 +2132,7 @@ export class AppCoordinator {
   ): IntentOutcome {
     const active = this.activeReconciles.get(`agent:${agentId}`);
     if (!active || !sameToken(active.token, token)) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.takePending(
       token,
@@ -2327,20 +2245,16 @@ export class AppCoordinator {
   ): PendingOperation {
     const pending = this.pending.get(token.operationId);
     if (!pending) {
-      throw new AppError(
-        this.completedTokens.has(token.operationId)
-          ? AppErrorCode.StaleCompletion
-          : AppErrorCode.UnknownOperation,
-      ).withOperation(token.operationId);
+      throw this.completedTokens.has(token.operationId)
+        ? new StaleCompletion(token.operationId)
+        : unknownOperation(token.operationId);
     }
     if (
       !sameToken(pending.token, token) ||
       pending.kind !== kind ||
       !targetMatches(pending.target)
     ) {
-      throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-        token.operationId,
-      );
+      throw new StaleCompletion(token.operationId);
     }
     this.pending.delete(token.operationId);
     this.rememberCompleted(token);
@@ -2353,13 +2267,11 @@ export class AppCoordinator {
     id: OperationId,
   ): OperationToken {
     if (this.pending.has(id)) {
-      throw new AppError(AppErrorCode.OperationInProgress).withOperation(id);
+      throw namedFailureAt("operation_pending");
     }
     this.nextGeneration += 1;
     if (!Number.isSafeInteger(this.nextGeneration)) {
-      throw new AppError(
-        AppErrorCode.OperationGenerationExhausted,
-      ).withOperation(id);
+      throw namedFailureAt("operation_pending");
     }
     const token = operationToken(id, this.nextGeneration);
     this.pending.set(id, { token, kind, target });
@@ -2504,7 +2416,7 @@ export class AppCoordinator {
     id: IntentId,
     print: string,
     outcome: IntentOutcome | undefined,
-    error: AppError | undefined,
+    error: NamedFailure | StaleCompletion | undefined,
   ): void {
     if (!this.intentCache.has(id)) {
       this.intentOrder.push(id);
@@ -2522,7 +2434,7 @@ export class AppCoordinator {
     id: ProviderEventId,
     print: string,
     outcome: IntentOutcome | undefined,
-    error: AppError | undefined,
+    error: NamedFailure | StaleCompletion | undefined,
   ): void {
     if (!this.providerEventCache.has(id)) {
       this.providerEventOrder.push(id);

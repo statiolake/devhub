@@ -24,7 +24,6 @@ import type {
   CloseInspectionProjection,
   DiagnosticCode,
   DisplayPath,
-  DomainErrorCode,
   EditorAttachment,
   NavigationContext,
   SurfacePresentation,
@@ -103,104 +102,24 @@ export function tokenKey(token: OperationToken): string {
   return `${token.operationId}#${String(token.generation)}`;
 }
 
-/** Stable, content-free application error codes. */
-export enum AppErrorCode {
-  Domain = "DOMAIN_ERROR",
-  DuplicateIntent = "DUPLICATE_INTENT",
-  InvalidIntent = "INVALID_INTENT",
-  UnknownIntent = "UNKNOWN_INTENT",
-  UnknownOperation = "UNKNOWN_OPERATION",
-  StaleCompletion = "STALE_COMPLETION",
-  ConfirmationRequired = "CONFIRMATION_REQUIRED",
-  ConfirmationExpired = "CONFIRMATION_EXPIRED",
-  OperationInProgress = "OPERATION_IN_PROGRESS",
-  OperationGenerationExhausted = "OPERATION_GENERATION_EXHAUSTED",
-  PersistenceDegraded = "PERSISTENCE_DEGRADED",
-  PortUnavailable = "PORT_UNAVAILABLE",
-}
-
 /**
- * Application failure. User content, provider identifiers, paths and command
- * output never enter this type.
- */
-/**
- * Which side of DevHub could not do the thing.
+ * A completion for an operation something newer already settled.
  *
- * A port failure is the same failure everywhere in the model, and it has to
- * become a different sentence on screen depending on what was unreachable —
- * "the agent runtime is unavailable" is something a person can act on, and
- * "the app shell is unavailable" is not, when it was the Agent's own runtime
- * that did not answer. The model carries which port, and the projection picks
- * the words.
+ * Not a failure, and never shown: the reconciler supersedes its own rounds on
+ * purpose, and a launch or a close can overtake the answer to an earlier
+ * step. It is thrown rather than returned only because it ends the call the
+ * same way a refusal does; the one reader that tells it apart is
+ * `completionRefusal`, which answers the request waiting on it and draws
+ * nothing.
+ *
+ * Everything the coordinator refuses that a person *is* told about is a
+ * `NamedFailure` (`model/wire.ts`), and a completion for an operation it never
+ * started is DevHub's own bug, an `InvariantViolation`.
  */
-export type PortName = "app" | "agent" | "terminal" | "editor" | "state";
-
-export class AppError extends Error {
-  domainCode: DomainErrorCode | undefined;
-  port: PortName | undefined;
-  /**
-   * The Agent port's own name for this refusal, when it had one.
-   *
-   * A port failure is not one thing. `withPort("agent")` alone said only
-   * "something about Agents", and the wire had nothing to turn that into but
-   * "the agent runtime is unavailable" — which sent every reader to look at a
-   * tmux that was answering. See `portRefusal`.
-   */
-  agentFailure: AgentFailureCode | undefined;
-  /** What the failing side said, for the reader; never for a branch. */
-  detail: string | undefined;
-  intentId: IntentId | undefined;
-  operationId: OperationId | undefined;
-  providerEventId: ProviderEventId | undefined;
-
-  constructor(readonly code: AppErrorCode) {
-    super(code);
-    this.name = "AppError";
-  }
-
-  static from(error: unknown): AppError {
-    if (error instanceof AppError) {
-      return error;
-    }
-    if (error instanceof DomainError) {
-      return new AppError(AppErrorCode.Domain).withDomain(error.code);
-    }
-    throw error;
-  }
-
-  withPort(port: PortName): AppError {
-    this.port = port;
-    return this;
-  }
-
-  withAgentFailure(code: AgentFailureCode): AppError {
-    this.agentFailure = code;
-    return this;
-  }
-
-  withDetail(detail: string | undefined): AppError {
-    this.detail = detail;
-    return this;
-  }
-
-  withDomain(code: DomainErrorCode): AppError {
-    this.domainCode = code;
-    return this;
-  }
-
-  withIntent(id: IntentId): AppError {
-    this.intentId = id;
-    return this;
-  }
-
-  withOperation(id: OperationId): AppError {
-    this.operationId = id;
-    return this;
-  }
-
-  withProviderEvent(id: ProviderEventId): AppError {
-    this.providerEventId = id;
-    return this;
+export class StaleCompletion extends Error {
+  constructor(readonly operationId: OperationId) {
+    super(`stale completion for operation ${operationId}`);
+    this.name = "StaleCompletion";
   }
 }
 
