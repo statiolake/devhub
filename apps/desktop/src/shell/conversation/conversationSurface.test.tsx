@@ -1113,31 +1113,61 @@ describe("follow-scroll", () => {
   const second = [...first, put(user("u2", "two"))];
   const third = [...second, put(assistant("a2", "reply again"))];
 
-  it("follows new output while at the bottom", () => {
+  /** The way back down, whichever label it has; null when it is not offered. */
+  function wayDown(): HTMLElement | null {
+    return screen.queryByRole("button", { name: /^(New output|Latest)$/ });
+  }
+
+  it("follows new output while at the bottom, offering no way down", () => {
     const { redraw } = draw(transcriptOf(first));
     const box = geometry(scroller());
     box.scrollTo(box.bottom());
+    expect(wayDown()).toBeNull();
     box.grow(300);
     redraw(transcriptOf(second));
     expect(box.top).toBe(box.bottom());
-    expect(screen.queryByRole("button", { name: /New output/ })).toBeNull();
+    expect(wayDown()).toBeNull();
   });
 
-  it("stays where the person scrolled to, and offers the way back", () => {
+  it("offers the way down as soon as the person scrolls away, before anything arrives", () => {
+    draw(transcriptOf(first));
+    const box = geometry(scroller());
+    box.scrollTo(box.bottom());
+    expect(wayDown()).toBeNull();
+    box.scrollTo(120);
+    expect(wayDown()).toHaveAccessibleName("Latest");
+  });
+
+  it("stays where the person scrolled to, and says so when output arrives", () => {
     const { redraw } = draw(transcriptOf(first));
     const box = geometry(scroller());
     box.scrollTo(120);
+    expect(wayDown()).toHaveAccessibleName("Latest");
     box.grow(300);
     redraw(transcriptOf(second));
     expect(box.top).toBe(120);
-    const pill = screen.getByRole("button", { name: /New output/ });
-    fireEvent.click(pill);
+    expect(wayDown()).toHaveAccessibleName("New output");
+    fireEvent.click(wayDown()!);
     expect(box.top).toBe(box.bottom());
-    expect(screen.queryByRole("button", { name: /New output/ })).toBeNull();
+    expect(wayDown()).toBeNull();
     // Following again: the next output is followed.
     box.grow(300);
     redraw(transcriptOf(third));
     expect(box.top).toBe(box.bottom());
+    expect(wayDown()).toBeNull();
+  });
+
+  it("pins the transcript to the end when the plain way down is pressed", () => {
+    const { redraw } = draw(transcriptOf(first));
+    const box = geometry(scroller());
+    box.scrollTo(120);
+    fireEvent.click(screen.getByRole("button", { name: "Latest" }));
+    expect(box.top).toBe(box.bottom());
+    expect(wayDown()).toBeNull();
+    box.grow(300);
+    redraw(transcriptOf(second));
+    expect(box.top).toBe(box.bottom());
+    expect(wayDown()).toBeNull();
   });
 
   it("resumes following when the person scrolls back to the end themselves", () => {
@@ -1146,14 +1176,15 @@ describe("follow-scroll", () => {
     box.scrollTo(0);
     box.grow(300);
     redraw(transcriptOf(second));
-    expect(
-      screen.getByRole("button", { name: /New output/ }),
-    ).toBeInTheDocument();
+    expect(wayDown()).toHaveAccessibleName("New output");
     box.scrollTo(box.bottom());
-    expect(screen.queryByRole("button", { name: /New output/ })).toBeNull();
+    expect(wayDown()).toBeNull();
     box.grow(300);
     redraw(transcriptOf(third));
     expect(box.top).toBe(box.bottom());
+    // Scrolled away again with nothing new since: the plain label.
+    box.scrollTo(0);
+    expect(wayDown()).toHaveAccessibleName("Latest");
   });
 
   it("ignores a parked surface's scrolls, and does not follow while parked", () => {
@@ -1166,9 +1197,7 @@ describe("follow-scroll", () => {
     expect(box.top).toBe(120);
     redraw(transcriptOf(second), false);
     expect(box.top).toBe(120);
-    expect(
-      screen.getByRole("button", { name: /New output/ }),
-    ).toBeInTheDocument();
+    expect(wayDown()).toHaveAccessibleName("New output");
   });
 });
 

@@ -92,9 +92,12 @@ function restore(
 }
 
 export interface FollowScroll {
-  /** Whether new output will be followed. */
+  /**
+   * Whether new output will be followed: the transcript is at its end. When it
+   * is not, the surface offers the way back down (`jumpToLatest`).
+   */
   readonly following: boolean;
-  /** Whether output arrived while the person was reading above it. */
+  /** Whether output arrived since the transcript stopped following. */
   readonly unseen: boolean;
   /** Scroll to the end, which resumes following. */
   readonly jumpToLatest: () => void;

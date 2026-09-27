@@ -139,7 +139,7 @@ export function ConversationSurface({
 
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
-  const { unseen, jumpToLatest } = useFollowScroll({
+  const { following, unseen, jumpToLatest } = useFollowScroll({
     scroller,
     content,
     // Set aside while a subagent fills the pane: held where it was, as a
@@ -423,16 +423,16 @@ export function ConversationSurface({
                             ))}
                           </div>
                         </div>
-                        {unseen ? (
+                        {following ? null : (
                           <button
                             type="button"
                             className="conversation-latest"
                             onClick={jumpToLatest}
                           >
                             <ArrowDownIcon />
-                            New output
+                            {unseen ? "New output" : "Latest"}
                           </button>
-                        ) : null}
+                        )}
                       </div>
                       {maximized !== undefined ? (
                         <SubagentPane

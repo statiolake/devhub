@@ -181,7 +181,7 @@
   display: none;
 }
 
-/* The transcript's own rectangle: what the "New output" button floats in. */
+/* The transcript's own rectangle: what the way-back-down button floats in. */
 .conversation-body {
   min-width: 0;
   position: relative;
@@ -1922,7 +1922,11 @@ label.conversation-question-option:hover,
   margin-top: var(--space-1);
 }
 
-/* ------------------------------------------------------ New output */
+/* --------------------------------------------------- Back to the end */
+
+/* Shown whenever the transcript is not following the end, whatever moved it
+   (the person, a find match, a Clip closing): "New output" if some arrived
+   since, "Latest" otherwise. */
 
 .conversation-latest {
   position: absolute;
