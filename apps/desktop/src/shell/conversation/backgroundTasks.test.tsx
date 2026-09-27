@@ -345,7 +345,7 @@ describe("stopping a background task", () => {
       name: "Stop",
     });
     expect(asking).toHaveTextContent(
-      "Stop this background shell? Its command is ended.",
+      "Stop this background shell? The command it's running will be terminated.",
     );
     expect(asking).toHaveClass("conversation-confirm");
     expect(actions.stopTask).not.toHaveBeenCalled();

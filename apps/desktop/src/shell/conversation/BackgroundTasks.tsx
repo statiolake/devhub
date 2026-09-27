@@ -126,7 +126,7 @@ export function ComposerFooter({
 export function stopQuestion(kind: string): string {
   switch (kind) {
     case "shell":
-      return "Stop this background shell? Its command is ended.";
+      return "Stop this background shell? The command it's running will be terminated.";
     case "subagent":
       return "Stop this subagent? Its work so far stays, and it won't resume on its own.";
     default:

@@ -268,9 +268,9 @@ task leaves the list when it ends. The list is
 
 **Stopping a background task.** Each task in the opened list has a stop
 button at its right end. Pressed, it asks once more under the task, as Rewind
-does — *Stop this background shell? Its command is ended.* for a shell, *Stop
-this subagent? Its work so far stays, and it won't resume on its own.* for a
-subagent — and only then asks the CLI (the `stop-task` command). Nothing is
+does — *Stop this background shell? The command it's running will be
+terminated.* for a shell, *Stop this subagent? Its work so far stays, and it
+won't resume on its own.* for a subagent — and only then asks the CLI (the `stop-task` command). Nothing is
 taken off the list on DevHub's say-so: the task leaves when the CLI's own
 account says it ended, and a CLI that refuses says so in an error notice
 (*stop_task was refused: …*, *codex did not stop the subagent: …*). Whether
