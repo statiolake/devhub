@@ -2,7 +2,7 @@
  * The failures a GUI Agent's conversation and the sessions of its CLI end in
  * that DevHub knows by name.
  *
- * Each is a `TypedFailure` with its own code, so the one conversion
+ * Each is a `NamedFailure` with its own code, so the one conversion
  * (`errorWire`) draws it with its own title and the sentence it was raised
  * with as the detail, wherever it ends — a toast, the session picker, a
  * launch. A plain `Error` from this part of main is kept for what DevHub did
@@ -15,7 +15,7 @@
  */
 
 import type { AppErrorCodeWire } from "../../../ipc/appShell.js";
-import { errorWireAt, TypedFailure, withDetail } from "../../../model/wire.js";
+import { NamedFailure } from "../../../model/wire.js";
 
 type ConversationFailureCode = Extract<
 	AppErrorCodeWire,
@@ -25,14 +25,13 @@ type ConversationFailureCode = Extract<
 	| "sessions_unreadable"
 >;
 
-abstract class ConversationFailure extends TypedFailure {
+abstract class ConversationFailure extends NamedFailure {
 	constructor(
 		code: ConversationFailureCode,
-		/** What happened, in the raiser's words: the failure's detail. */
-		readonly reason: string,
+		reason: string,
 		options?: ErrorOptions,
 	) {
-		super(withDetail(errorWireAt(code), reason), options);
+		super(code, reason, options);
 	}
 }
 

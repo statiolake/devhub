@@ -810,6 +810,35 @@ export class TypedFailure extends Error {
 }
 
 /**
+ * A failure DevHub knows by name, raised where it happens: a code — which is
+ * its title — and the raiser's own sentence, `reason`, which is its detail.
+ *
+ * Its message is the reason alone, so the code that reads a failure's words
+ * (a condition, a log line, a row's diagnostic) reads the same sentence it
+ * always did; its title is added only where it is drawn (`errorWire`) or
+ * printed (the command line's conversion). Each domain names its own kinds
+ * — a conversation's refusals, a machine's failures, GitHub's — as
+ * subclasses fixing the code, so a refusal written for a person never
+ * reaches the page as the app shell's catch-all, which is kept for what
+ * DevHub did not expect.
+ */
+export abstract class NamedFailure extends Error {
+  constructor(
+    /** The code it is drawn as. */
+    readonly shownAs: AppErrorCodeWire,
+    /** What happened, in the raiser's words. */
+    readonly reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(reason, options);
+  }
+
+  get wire(): AppErrorWire {
+    return withDetail(errorWireAt(this.shownAs), this.reason);
+  }
+}
+
+/**
  * A failure already converted for the page, on its way across IPC.
  *
  * Electron carries only a message across the IPC boundary, so its message is
@@ -844,7 +873,7 @@ export function nativeUnavailable(): AppErrorWire {
  * reader can act on.
  */
 export function errorWire(error: unknown): AppErrorWire {
-  if (error instanceof TypedFailure) {
+  if (error instanceof TypedFailure || error instanceof NamedFailure) {
     return error.wire;
   }
   if (!(error instanceof AppError)) {

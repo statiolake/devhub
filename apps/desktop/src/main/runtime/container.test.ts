@@ -19,6 +19,7 @@ import {
 } from "../../model/domain.js";
 import type { CommandOutput } from "../terminal/command.js";
 import { PortFailure } from "../terminal/ports.js";
+import { errorWire } from "../../model/wire.js";
 import {
 	CONFIG_FILE_LABEL,
 	ContainerHost,
@@ -188,6 +189,10 @@ describe("finding the container", () => {
 		await expect(runtime.containerState()).rejects.toThrow(
 			/\/fake\/docker.*Start Docker/su,
 		);
+		expect(await drawnAs(runtime.containerState())).toMatchObject({
+			code: "machine_unavailable",
+			detail: expect.stringMatching(/\/fake\/docker.*Start Docker/su) as string,
+		});
 	});
 });
 
@@ -253,6 +258,10 @@ describe("one Workspace, one container", () => {
 			new RegExp(`${"a".repeat(64)}.*${"b".repeat(64)}`, "su"),
 		);
 		await expect(runtime.containerState()).rejects.toThrow(FOLDER);
+		expect(await drawnAs(runtime.containerState())).toMatchObject({
+			code: "dev_container_unusable",
+			detail: expect.stringContaining("docker rm -f") as string,
+		});
 	});
 });
 
@@ -371,6 +380,38 @@ describe("the happy path does not spawn the CLI", () => {
 		// is idempotent and would have been correct, but it costs a Node process
 		// and a second of wall clock on a path that runs every few seconds.
 		expect(devcontainer.calls).toHaveLength(0);
+	});
+
+	it("says, under its own title, that the container could not be started when devcontainer up fails", async () => {
+		const docker = fakeDocker((args) =>
+			args[0] === "ps" ? output(0, "") : output(0, ""),
+		);
+		const devcontainer = fakeDevcontainer(() =>
+			output(
+				1,
+				JSON.stringify({
+					outcome: "error",
+					message: "the image would not build",
+				}),
+			),
+		);
+		const runtime = runtimeWith(docker, devcontainer);
+		expect(await drawnAs(runtime.ensureUp({ build: true }))).toMatchObject({
+			code: "dev_container_unusable",
+			detail: expect.stringContaining("the image would not build") as string,
+		});
+	});
+
+	it("says, under its own title, when devcontainer up answers in a shape DevHub does not read", async () => {
+		const docker = fakeDocker(() => output(0, ""));
+		const devcontainer = fakeDevcontainer(() => output(0, "not json"));
+		const runtime = runtimeWith(docker, devcontainer);
+		expect(await drawnAs(runtime.ensureUp({ build: true }))).toMatchObject({
+			code: "dev_container_unusable",
+			detail: expect.stringContaining(
+				"did not answer with an outcome DevHub understands",
+			) as string,
+		});
 	});
 
 	it("runs devcontainer up when there is no container", async () => {
@@ -883,3 +924,15 @@ describe("the definitions a folder has", () => {
 		).toEqual([]);
 	});
 });
+
+/** What a failure is drawn as, once whatever raised it has settled. */
+async function drawnAs(settled: Promise<unknown>) {
+	return errorWire(
+		await settled.then(
+			() => {
+				throw new Error("it did not fail");
+			},
+			(failure: unknown) => failure,
+		),
+	);
+}

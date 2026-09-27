@@ -275,6 +275,31 @@ export type AppErrorCodeWire =
 	 * file is not in the shape the CLI writes it in (`SessionsUnreadable`).
 	 */
 	| "sessions_unreadable"
+	/**
+	 * The machine a Workspace is on did not answer, or answered in a way
+	 * DevHub cannot use: a host that is not reachable, a Docker that is not
+	 * running, a container not built or not running, a login environment it
+	 * could not read (`PortFailure` "unavailable", and the like).
+	 */
+	| "machine_unavailable"
+	/** The machine did not answer DevHub's command inside its bound. */
+	| "machine_timed_out"
+	/** The machine ran DevHub's command and refused it. */
+	| "machine_command_failed"
+	/** What was asked was cancelled before it finished. */
+	| "operation_cancelled"
+	/** A file or folder DevHub needs could not be read (`RuntimeFileError`). */
+	| "file_unreadable"
+	/** GitHub did not give DevHub what it asked for (`GitHubUnavailable`). */
+	| "github_unavailable"
+	/**
+	 * A Workspace's dev container could not be used: `devcontainer up` failed
+	 * or answered in a shape DevHub does not read, or two containers carry
+	 * the definition's labels.
+	 */
+	| "dev_container_unusable"
+	/** An agent action's wording is empty, so there is nothing to send. */
+	| "agent_action_empty"
 	/** A request DevHub accepted never reached an answer. */
 	| "operation_timed_out"
 	/**
@@ -375,6 +400,14 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	conversation_refused: "The Agent's conversation cannot do that.",
 	conversation_stopped: "The Agent's conversation has stopped.",
 	sessions_unreadable: "DevHub could not read the Agent's sessions.",
+	machine_unavailable: "The machine is unavailable.",
+	machine_timed_out: "The machine did not answer in time.",
+	machine_command_failed: "The machine could not do what DevHub asked.",
+	operation_cancelled: "The request was cancelled.",
+	file_unreadable: "DevHub could not read a file or folder it needs.",
+	github_unavailable: "DevHub could not get this from GitHub.",
+	dev_container_unusable: "DevHub could not use this dev container.",
+	agent_action_empty: "This agent action has nothing to send.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",

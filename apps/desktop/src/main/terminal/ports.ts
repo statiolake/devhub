@@ -13,7 +13,9 @@
  * in and reads inspections out.
  */
 
+import type { AppErrorCodeWire } from "../../ipc/appShell.js";
 import type { ResourceInspection } from "../../model/domain.js";
+import { NamedFailure } from "../../model/wire.js";
 import type { RuntimeId } from "../runtime/runtime.js";
 
 /** Why a runtime operation could not complete. */
@@ -30,6 +32,19 @@ export type PortErrorCode =
 	| "root_missing"
 	| "root_inaccessible"
 	| "failed";
+
+/** What each kind of runtime failure is drawn as, outside an Agent's pane. */
+const PORT_FAILURE_SHOWN_AS: Readonly<Record<PortErrorCode, AppErrorCodeWire>> =
+	{
+		unavailable: "machine_unavailable",
+		incompatible: "machine_unavailable",
+		timed_out: "machine_timed_out",
+		cancelled: "operation_cancelled",
+		conflict: "machine_command_failed",
+		failed: "machine_command_failed",
+		root_missing: "workspace_unavailable",
+		root_inaccessible: "workspace_unavailable",
+	};
 
 /**
  * A runtime failure: a code, and one optional `detail` sentence.
@@ -59,15 +74,25 @@ export type PortErrorCode =
  * the *shape* of an answer rather than for a refusal carries its own sentence
  * instead, saying which shape rule the answer broke — no provider output is
  * involved in one of those, and there is nothing of tmux's to quote.
+ *
+ * # How it is drawn
+ *
+ * A `NamedFailure`: where it reaches the one conversion outside an Agent's
+ * pane — opening a dev container, a folder on a host — it is drawn as the
+ * machine's failure its code says (`PORT_FAILURE_SHOWN_AS`), with its
+ * sentence as the detail. An Agent's pane names it in the Agent's own words
+ * instead (`portRefusal`), before it gets that far.
  */
-export class PortFailure extends Error {
+export class PortFailure extends NamedFailure {
 	readonly code: PortErrorCode;
 	readonly detail: string | undefined;
 
 	constructor(code: PortErrorCode, options?: PortFailureOptions) {
-		super(options?.detail ?? `terminal runtime ${code.replaceAll("_", " ")}`, {
-			cause: options?.cause,
-		});
+		super(
+			PORT_FAILURE_SHOWN_AS[code],
+			options?.detail ?? `terminal runtime ${code.replaceAll("_", " ")}`,
+			{ cause: options?.cause },
+		);
 		this.name = "PortFailure";
 		this.code = code;
 		this.detail = options?.detail;

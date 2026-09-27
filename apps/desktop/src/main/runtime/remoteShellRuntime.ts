@@ -44,7 +44,12 @@
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
+import {
+	errorWireAt,
+	NamedFailure,
+	TypedFailure,
+	withSummary,
+} from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import type { Pty } from "../terminal/pty.js";
@@ -336,6 +341,18 @@ export function unsupportedPlatformFailure(
 }
 
 /**
+ * A machine none of whose shells would say what its `PATH` is: DevHub refuses
+ * it, by name, rather than running commands in an environment it could not
+ * read — drawn as the machine being unavailable, with that sentence.
+ */
+export class LoginEnvironmentUnreadable extends NamedFailure {
+	constructor(reason: string) {
+		super("machine_unavailable", reason);
+		this.name = "LoginEnvironmentUnreadable";
+	}
+}
+
+/**
  * The half of a `Runtime` that is the same on every machine DevHub shells into.
  *
  * What a subclass owes is below, and nothing else: four members, of which two
@@ -531,7 +548,7 @@ export abstract class RemoteShellRuntime {
 			);
 			if (found["PATH"] !== undefined) return found;
 		}
-		throw new Error(
+		throw new LoginEnvironmentUnreadable(
 			`DevHub could not read the login environment on ${this.machineName}: ` +
 				`neither ${shell === "" ? "the login shell" : shell} nor /bin/sh ` +
 				`answered 'env' with a PATH, so it cannot tell where the programs it ` +

@@ -101,6 +101,7 @@ import type {
 	RuntimeReading,
 } from "./runtime.js";
 import type { TmuxDelivery } from "./tmuxDelivery.js";
+import { NamedFailure } from "../../model/wire.js";
 
 const A_MINUTE = 60 * 1000;
 
@@ -580,7 +581,7 @@ export class ContainerHost
 		// unnoticed — which is how a second container made by a concurrent `up`
 		// went on running.
 		if (found.length > 1) {
-			throw new Error(
+			throw new DevContainerUnusable(
 				`${String(found.length)} containers carry the labels ` +
 					`${LOCAL_FOLDER_LABEL}=${this.#workspaceFolder} and ` +
 					`${CONFIG_FILE_LABEL}=${this.#configPath} ` +
@@ -813,13 +814,13 @@ export class ContainerHost
 		// is carrying on with a container id that is actually an error message.
 		const parsed = parseUpOutcome(stdout);
 		if (parsed === undefined) {
-			throw new Error(
+			throw new DevContainerUnusable(
 				`devcontainer up did not answer with an outcome DevHub understands ` +
 					`for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
 			);
 		}
 		if (parsed.outcome !== "success") {
-			throw new Error(
+			throw new DevContainerUnusable(
 				`${capitalised(this.machineName)} could not be started: ${parsed.message}`,
 			);
 		}
@@ -1580,6 +1581,19 @@ function looksLikeContainerGone(result: { readonly stderr: Buffer }): boolean {
 		stderr.includes("No such container") ||
 		stderr.includes("no such container")
 	);
+}
+
+/**
+ * A Workspace's dev container that cannot be used: `devcontainer up` failed,
+ * or answered in a shape DevHub does not read, or two containers carry the
+ * definition's labels. Drawn under its own title with the sentence that says
+ * which, and what to do.
+ */
+export class DevContainerUnusable extends NamedFailure {
+	constructor(reason: string) {
+		super("dev_container_unusable", reason);
+		this.name = "DevContainerUnusable";
+	}
 }
 
 /**

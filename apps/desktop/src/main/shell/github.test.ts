@@ -15,6 +15,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorWire } from "../../model/wire.js";
 import {
 	readBranchStatus,
 	readGitHubLogin,
@@ -421,12 +422,17 @@ describe("the branch a pull request is from", () => {
 
 	it("is a refusal when GitHub will not say which branch it is", async () => {
 		answers({ data: { repository: { pullRequest: null } } });
-		await expect(
-			readPullRequestHead(
-				{ owner: "example", repository: "widget", number: 7 },
-				"token",
+		expect(
+			await drawnAs(
+				readPullRequestHead(
+					{ owner: "example", repository: "widget", number: 7 },
+					"token",
+				),
 			),
-		).rejects.toThrow(/did not say which branch/u);
+		).toMatchObject({
+			code: "github_unavailable",
+			detail: expect.stringMatching(/did not say which branch/u) as string,
+		});
 	});
 });
 
@@ -475,6 +481,13 @@ describe("a refusal", () => {
 		await expect(readBranchStatus(REFERENCE, "token")).rejects.toThrow(
 			"API rate limit exceeded.",
 		);
+		// Under its own title, not the app shell's catch-all: the Issue sheet
+		// shows the title where the person is typing.
+		expect(await drawnAs(readBranchStatus(REFERENCE, "token"))).toMatchObject({
+			code: "github_unavailable",
+			summary: "DevHub could not get this from GitHub.",
+			detail: "API rate limit exceeded.",
+		});
 	});
 
 	it("never carries the token", async () => {
@@ -487,3 +500,15 @@ describe("a refusal", () => {
 		);
 	});
 });
+
+/** What a failure is drawn as, once whatever raised it has settled. */
+async function drawnAs(settled: Promise<unknown>) {
+	return errorWire(
+		await settled.then(
+			() => {
+				throw new Error("it did not fail");
+			},
+			(failure: unknown) => failure,
+		),
+	);
+}

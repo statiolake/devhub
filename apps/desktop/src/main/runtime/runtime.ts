@@ -30,6 +30,7 @@ import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
+import { NamedFailure } from "../../model/wire.js";
 
 export type { RuntimeId } from "../../model/domain.js";
 
@@ -177,13 +178,17 @@ export type FileKind = "directory" | "file" | "absent";
  * is still sitting there with work in it — so the errno travels with it and
  * the caller quotes it.
  */
-export class RuntimeFileError extends Error {
+export class RuntimeFileError extends NamedFailure {
 	constructor(
 		readonly path: string,
 		readonly code: string | undefined,
 		options?: ErrorOptions,
 	) {
-		super(`${path} could not be read (${code ?? "unknown"})`, options);
+		super(
+			"file_unreadable",
+			`${path} could not be read (${code ?? "unknown"})`,
+			options,
+		);
 		this.name = "RuntimeFileError";
 	}
 }

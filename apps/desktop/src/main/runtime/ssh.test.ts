@@ -37,7 +37,7 @@ import {
 	expect,
 	it,
 } from "vitest";
-import { TypedFailure } from "../../model/wire.js";
+import { errorWire, TypedFailure } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
@@ -855,6 +855,14 @@ describe("the login environment on the host", () => {
 		await expect(run(runtime, ["/bin/sh", "-c", ":"])).rejects.toThrow(
 			/build-box\.example\.com.*login environment|login environment.*build-box\.example\.com/su,
 		);
+		const refused = await run(runtime, ["/bin/sh", "-c", ":"]).then(
+			() => undefined,
+			(failure: unknown) => failure,
+		);
+		expect(errorWire(refused)).toMatchObject({
+			code: "machine_unavailable",
+			detail: expect.stringContaining("build-box.example.com") as string,
+		});
 	});
 
 	it("resolves a configured program under that PATH, to an absolute path", async () => {

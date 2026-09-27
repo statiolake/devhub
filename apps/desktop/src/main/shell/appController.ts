@@ -93,6 +93,7 @@ import {
 	sessionsLeftRunningDetail,
 	withCloseDeadline,
 } from "./cleanupDeadline.js";
+import { asSentence } from "./cliSentence.js";
 import { canonicalise } from "../cli/canonical.js";
 import {
 	installExtensions,
@@ -3149,7 +3150,7 @@ export class AppController {
 		action: ConfiguredAgentAction,
 		values: Readonly<Record<string, string>>,
 	): void {
-		const text = renderAgentAction(action.template, values, kind);
+		const text = renderAgentAction(action, values, kind);
 		const review = action.confirm_before_send;
 		const injectionId = agents()?.queueInjection(agentId, text, review);
 		if (injectionId === undefined || !review) return;
@@ -6671,44 +6672,6 @@ function at(position: ControlPosition | undefined): string {
 	return position === undefined
 		? ""
 		: ` at line ${position.line}, column ${position.column},`;
-}
-
-/**
- * The command line's half of the one error conversion.
- *
- * A failure inside main travels to the page as a JSON payload that the page
- * unwraps and draws on its error surface; a terminal has no such reader, and
- * printing the payload at somebody is not reporting a failure. So the same
- * values are unwrapped here and printed instead of drawn. Nothing new is
- * invented: the summary and the detail the model already produced are exactly
- * what is shown, and anything that is not one of those payloads is passed on
- * with its own message.
- */
-async function asSentence(run: () => Promise<string>): Promise<string> {
-	try {
-		return await run();
-	} catch (error) {
-		if (!(error instanceof Error)) throw error;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(error.message);
-		} catch {
-			// Not one of main's structured failures. Its own message is the
-			// report, and it is already a sentence.
-			throw error;
-		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			typeof (parsed as AppErrorWire).summary !== "string"
-		) {
-			throw error;
-		}
-		const wire = parsed as AppErrorWire;
-		throw new Error(
-			wire.detail ? `${wire.summary} ${wire.detail}` : wire.summary,
-		);
-	}
 }
 
 function toDomainProfile(

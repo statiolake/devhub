@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { errorWire } from "./wire.js";
 import {
   ACTION_VARIABLES,
   applySkillNotation,
@@ -116,10 +117,35 @@ describe("the skill notation", () => {
 });
 
 describe("what is actually sent", () => {
+  // A template somebody wrote empty in settings.toml: there is nothing to
+  // send, and saying so names the action, under its own title — it used to
+  // reach the page as "The native app shell is unavailable."
+  it("is refused, naming the action, when its wording is empty", () => {
+    let thrown: unknown;
+    try {
+      renderAgentAction(
+        { id: "nudge", display_name: "Nudge", template: "  \n" },
+        {},
+        "claude",
+      );
+    } catch (failure: unknown) {
+      thrown = failure;
+    }
+    expect(errorWire(thrown)).toMatchObject({
+      code: "agent_action_empty",
+      detail: expect.stringContaining("“Nudge” (nudge)") as string,
+    });
+  });
+
   it("is the wording, filled in, in that agent's dialect", () => {
     expect(
       renderAgentAction(
-        "$solve-task {{ISSUE_URL}}\nbranch feature/{{ISSUE_NO}}-wip",
+        {
+          id: "solve",
+          display_name: "Solve",
+          template:
+            "$solve-task {{ISSUE_URL}}\nbranch feature/{{ISSUE_NO}}-wip",
+        },
         {
           ISSUE_URL: "https://github.com/example/widget/issues/128",
           ISSUE_NO: "128",

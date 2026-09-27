@@ -21,7 +21,8 @@
  * and the skill notation is translated for whichever agent is being spoken to.
  */
 
-import type { AgentProfileKind } from "./config.js";
+import type { AgentProfileKind, ConfiguredAgentAction } from "./config.js";
+import { NamedFailure } from "./wire.js";
 
 /**
  * What makes DevHub say an action.
@@ -254,11 +255,31 @@ export function applySkillNotation(
   return text.replace(/^\$(?=[A-Za-z][A-Za-z0-9_-]*)/gmu, "/");
 }
 
-/** The whole of what is sent: the wording, filled in, in the agent's dialect. */
+/**
+ * The whole of what is sent: the wording, filled in, in the agent's dialect.
+ *
+ * A wording that comes to nothing — a template somebody left empty in
+ * `settings.toml` — is refused here, naming the action, because there is
+ * nothing to send and the person pressed a button expecting something to be.
+ */
 export function renderAgentAction(
-  template: string,
+  action: Pick<ConfiguredAgentAction, "id" | "display_name" | "template">,
   values: Readonly<Record<string, string>>,
   kind: AgentProfileKind,
 ): string {
-  return applySkillNotation(fillVariables(template, values), kind);
+  const text = applySkillNotation(fillVariables(action.template, values), kind);
+  if (text.trim().length === 0) {
+    throw new AgentActionEmpty(
+      `The agent action “${action.display_name}” (${action.id}) has no wording: its template in settings.toml comes to nothing, so there is nothing to send.`,
+    );
+  }
+  return text;
+}
+
+/** An agent action whose wording comes to nothing (`renderAgentAction`). */
+export class AgentActionEmpty extends NamedFailure {
+  constructor(reason: string) {
+    super("agent_action_empty", reason);
+    this.name = "AgentActionEmpty";
+  }
 }
