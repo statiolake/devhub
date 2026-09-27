@@ -159,10 +159,6 @@
   flex: none;
 }
 
-.conversation-subagent-pane + .conversation-subagent-pane {
-  border-top: 1px solid var(--line-soft);
-}
-
 /* A line that is dragged: the column's edge, or the line between two open
    panes. Wider than the hairline it lights, and drawn over its neighbours'
    edges rather than taking room between them. */
@@ -220,7 +216,6 @@
   flex: none;
   align-items: center;
   padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--line-soft);
   font-size: 0.85em;
   gap: var(--space-2);
 }
@@ -247,8 +242,19 @@
   cursor: pointer;
 }
 
-.conversation-subagent-pane[data-folded] .conversation-subagent-pane-header {
-  border-bottom: 0;
+/* Filling the pane, its header is a bar over its transcript. */
+.conversation-subagent-pane[data-place="maximized"]
+  .conversation-subagent-pane-header {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* In the column, the line between two panes is where one ends and the next
+   begins: over the lower one's header, open or folded, where the sash between
+   them lies. The first pane has none: the column's edge is its only line. */
+.conversation-subagent-pane[data-place="beside"]
+  ~ .conversation-subagent-pane
+  .conversation-subagent-pane-header {
+  border-top: 1px solid var(--line-soft);
 }
 
 /* Where a card's subagent can go: a quiet row under the card. */
@@ -2001,51 +2007,70 @@
   outline-offset: 0;
 }
 
+/*
+ * The `/` command list: DevHub's list rows (`mac-list-row`, as in the Open
+ * Quickly sheets), one line each. The name is never cut; the hint gives way
+ * only past 40% of the row; the description takes what is left and ends in an
+ * ellipsis. The highlighted row's whole description is in the strip under the
+ * list, so no row ever grows to a second line.
+ */
 .conversation-completions {
   position: absolute;
   z-index: 2;
   right: var(--conversation-gutter);
   bottom: calc(100% - var(--space-1));
   left: var(--conversation-gutter);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   max-height: 40vh;
-  padding: var(--space-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
-  margin: 0;
   background: var(--raised);
   box-shadow: var(--shadow-dialog);
-  list-style: none;
+}
+
+.conversation-completion-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-1);
 }
 
 .conversation-completion {
-  display: flex;
-  align-items: baseline;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-row);
-  cursor: pointer;
-  gap: var(--space-2);
-}
-
-.conversation-completion[aria-selected="true"] {
-  background: var(--selection);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .conversation-completion-name {
+  flex: none;
   font-family: var(--font-mono);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .conversation-completion-hint {
-  color: var(--secondary);
+  overflow: hidden;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-completion-description {
   overflow: hidden;
+  flex: 1 1 0;
   min-width: 0;
-  color: var(--secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-completion-detail {
+  flex: none;
+  overflow-y: auto;
+  max-height: 6lh;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  margin: 0;
+  overflow-wrap: anywhere;
 }

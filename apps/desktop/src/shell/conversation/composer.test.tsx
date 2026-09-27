@@ -301,6 +301,54 @@ describe("slash commands", () => {
     expect(options[0]).toHaveAttribute("aria-selected", "true");
   });
 
+  it("says the highlighted command's whole description under the list, and keeps it in view as the arrows move", () => {
+    draw(withSession());
+    type("/");
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView);
+    scrolled.mockClear();
+    press("ArrowDown");
+    const options = within(
+      screen.getByRole("listbox", { name: "Commands" }),
+    ).getAllByRole("option");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[1]).toHaveAccessibleDescription(
+      "Summarize the conversation so far",
+    );
+    expect(options[0]).not.toHaveAccessibleDescription();
+    expect(scrolled.mock.contexts.at(-1)).toBe(options[1]);
+    expect(scrolled).toHaveBeenLastCalledWith({ block: "nearest" });
+  });
+
+  it("draws every command on one line, cutting only the description (and a long hint) with an ellipsis", () => {
+    draw(withSession());
+    type("/");
+    const option = within(screen.getByRole("listbox")).getAllByRole(
+      "option",
+    )[0]!;
+    // Drawn as DevHub's other lists are.
+    expect(option).toHaveClass("mac-list-row");
+    // jsdom applies no stylesheet, so the rules are read where they are written.
+    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+    const rule = (selector: string) =>
+      new RegExp(`\\n${selector.replaceAll(".", "\\.")} \\{([^}]*)\\}`).exec(
+        css,
+      )?.[1] ?? "";
+    expect(rule(".conversation-completion")).toMatch(/white-space:\s*nowrap/);
+    const name = rule(".conversation-completion-name");
+    expect(name).toMatch(/flex:\s*none/);
+    expect(name).toMatch(/white-space:\s*nowrap/);
+    for (const cut of [
+      ".conversation-completion-hint",
+      ".conversation-completion-description",
+    ]) {
+      const each = rule(cut);
+      expect(each, cut).toMatch(/white-space:\s*nowrap/);
+      expect(each, cut).toMatch(/overflow:\s*hidden/);
+      expect(each, cut).toMatch(/text-overflow:\s*ellipsis/);
+      expect(each, cut).toMatch(/min-width:\s*0/);
+    }
+  });
+
   it("narrows the list as the name is typed, and closes once the name is done", () => {
     draw(withSession());
     type("/com");

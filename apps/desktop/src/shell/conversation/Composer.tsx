@@ -342,6 +342,17 @@ function PendingItem({
 
 export const COMPOSER_PLACEHOLDER = `Message the Agent — / for commands, ${SEND_KEY} to send`;
 
+/**
+ * The commands a `/` offers, drawn as DevHub's other lists are (`mac-list`,
+ * the Open Quickly rows): one line a row, the highlighted one in the accent.
+ *
+ * A row is always one line — the name whole, the argument hint, then as much
+ * of the description as fits, cut with an ellipsis — so the list is a column
+ * of equal rows the arrows walk evenly. What a cut description goes on to
+ * say is under the list, for the highlighted row only, as the Open Quickly
+ * sheet says more about the row one is on beside its list (`aside`) rather
+ * than in the row.
+ */
 function CompletionList({
   commands,
   selected,
@@ -351,37 +362,60 @@ function CompletionList({
   readonly selected: number;
   readonly choose: (command: SlashCommand) => void;
 }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected, commands]);
+  const current = commands[selected];
   return (
-    <ul
-      className="conversation-completions"
-      role="listbox"
-      aria-label="Commands"
-      id="conversation-completions"
-    >
-      {commands.map((command, index) => (
-        <li
-          key={command.name}
-          role="option"
-          aria-selected={index === selected}
-          className="conversation-completion"
-          // Pressed before the textarea loses focus to the click.
-          onMouseDown={(event) => {
-            event.preventDefault();
-            choose(command);
-          }}
-        >
-          <span className="conversation-completion-name">/{command.name}</span>
-          {command.argumentHint ? (
-            <span className="conversation-completion-hint">
-              {command.argumentHint}
+    <div className="conversation-completions mac">
+      <ul
+        ref={listRef}
+        className="mac-list conversation-completion-list"
+        role="listbox"
+        aria-label="Commands"
+        id="conversation-completions"
+      >
+        {commands.map((command, index) => (
+          <li
+            key={command.name}
+            role="option"
+            aria-selected={index === selected}
+            aria-describedby={
+              index === selected ? "conversation-completion-detail" : undefined
+            }
+            className="mac-list-row conversation-completion"
+            // Pressed before the textarea loses focus to the click.
+            onMouseDown={(event) => {
+              event.preventDefault();
+              choose(command);
+            }}
+          >
+            <span className="conversation-completion-name">
+              /{command.name}
             </span>
-          ) : null}
-          <span className="conversation-completion-description">
-            {command.description}
-          </span>
-        </li>
-      ))}
-    </ul>
+            {command.argumentHint ? (
+              <span className="conversation-completion-hint mac-caption">
+                {command.argumentHint}
+              </span>
+            ) : null}
+            <span className="conversation-completion-description mac-caption">
+              {command.description}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {current?.description ? (
+        <p
+          className="conversation-completion-detail mac-caption"
+          id="conversation-completion-detail"
+        >
+          {current.description}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
