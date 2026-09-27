@@ -1955,6 +1955,13 @@
   color: var(--secondary);
 }
 
+/* Why a setting with nothing to choose from can't be changed, read beside it. */
+.conversation-setting-note {
+  padding-right: var(--space-2);
+  color: var(--tertiary);
+  font-size: 0.85em;
+}
+
 .conversation-setting select {
   max-width: 14em;
   padding: 2px 0;

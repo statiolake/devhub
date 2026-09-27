@@ -367,21 +367,26 @@ export function threadListResponse(
 	});
 }
 
-export type ModelChoice = Pick<Model, "id" | "displayName" | "hidden"> & {
+/**
+ * A model `model/list` names, by `model`: the name a thread opens with and a
+ * turn is given (`ThreadStartResponse.model`, `TurnStartParams.model`).
+ */
+export type ModelChoice = Pick<Model, "model" | "displayName" | "hidden"> & {
 	readonly efforts: readonly string[];
 	/** The effort a turn on this model runs at when none is given. */
 	readonly defaultEffort: string;
 };
 
+/** One page of `model/list`, and where the next one starts, if there is one. */
 export function modelListResponse(
 	r: Reader,
 	value: unknown,
-): readonly ModelChoice[] {
+): { readonly models: readonly ModelChoice[]; readonly next: string | null } {
 	const o = r.fields(value, "result");
-	return r.array(o, "data", "result", (item, path) => {
+	const models = r.array(o, "data", "result", (item, path) => {
 		const m = r.fields(item, path);
 		return {
-			id: r.string(m, "id", path),
+			model: r.string(m, "model", path),
 			displayName: r.string(m, "displayName", path),
 			hidden: r.boolean(m, "hidden", path),
 			efforts: r.array(m, "supportedReasoningEfforts", path, (option, at) =>
@@ -390,6 +395,7 @@ export function modelListResponse(
 			defaultEffort: r.string(m, "defaultReasoningEffort", path),
 		};
 	});
+	return { models, next: r.nullableString(o, "nextCursor", "result") };
 }
 
 /** A response whose content DevHub does not read still has to be an object. */

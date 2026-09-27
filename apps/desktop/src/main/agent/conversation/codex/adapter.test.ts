@@ -229,7 +229,7 @@ describe("the handshake", () => {
 
 		harness.receive(start!);
 		expect(harness.writesSince(4)).toEqual([
-			{ id: 3, method: "model/list", params: {} },
+			{ id: 3, method: "model/list", params: { includeHidden: true } },
 		]);
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 		expect(conversationStatus(harness.transcript)).toBe("idle");
@@ -1827,5 +1827,140 @@ describe("images the person sends", () => {
 				origin: "person",
 			},
 		]);
+	});
+});
+
+describe("the thread's model, against the models model/list names", () => {
+	function model(name: string, hidden: boolean, efforts: readonly string[]) {
+		return {
+			id: name,
+			model: name,
+			upgrade: null,
+			upgradeInfo: null,
+			availabilityNux: null,
+			displayName: `${name} (label)`,
+			description: "",
+			modelSpecialty: null,
+			hidden,
+			supportedReasoningEfforts: efforts.map((reasoningEffort) => ({
+				reasoningEffort,
+				description: reasoningEffort,
+			})),
+			defaultReasoningEffort: efforts[0],
+			inputModalities: ["text"],
+			supportsPersonality: false,
+			multiAgentVersion: null,
+			additionalSpeedTiers: [],
+			serviceTiers: [],
+			defaultServiceTier: null,
+			availableAccessPrograms: null,
+			isDefault: false,
+		};
+	}
+	const SHOWN = model("shown-model", false, ["low", "high"]);
+	const HIDDEN = model("older-model", true, ["medium", "xhigh"]);
+
+	/** A resumed thread on `thread`, its handshake answered up to `model/list`. */
+	function resumedOn(thread: string): Harness {
+		const harness = new Harness({ ...OPTIONS, resumeThreadId: MAIN });
+		harness.start();
+		const [initialize, account, start] = fixture(
+			"handshake.handwritten.ndjson",
+		);
+		harness.receive(initialize!);
+		harness.receive(account!);
+		const opened = JSON.parse(start!) as {
+			result: { model: string; reasoningEffort: string | null };
+		};
+		opened.result.model = thread;
+		opened.result.reasoningEffort = null;
+		harness.receive(opened);
+		return harness;
+	}
+
+	it("lists hidden models too, and offers the thread's own hidden model with its efforts", () => {
+		const harness = resumedOn("older-model");
+		expect(harness.lastWrite()).toEqual({
+			id: 3,
+			method: "model/list",
+			params: { includeHidden: true },
+		});
+		harness.receive({
+			id: 3,
+			result: { data: [SHOWN, HIDDEN], nextCursor: null },
+		});
+		const { session } = harness.transcript;
+		expect(session.model).toEqual({
+			current: "older-model",
+			choices: [
+				{ id: "shown-model", label: "shown-model (label)" },
+				{ id: "older-model", label: "older-model (label)" },
+			],
+		});
+		expect(session.effort).toEqual({
+			current: "medium",
+			choices: [
+				{ id: "medium", label: "medium" },
+				{ id: "xhigh", label: "xhigh" },
+			],
+		});
+	});
+
+	it("offers no hidden model the thread is not on", () => {
+		const harness = resumedOn("shown-model");
+		harness.receive({
+			id: 3,
+			result: { data: [SHOWN, HIDDEN], nextCursor: null },
+		});
+		expect(harness.transcript.session.model.choices).toEqual([
+			{ id: "shown-model", label: "shown-model (label)" },
+		]);
+	});
+
+	it("reads every page of the list before it names the thread's model", () => {
+		const harness = resumedOn("older-model");
+		harness.receive({ id: 3, result: { data: [SHOWN], nextCursor: "page-2" } });
+		expect(harness.lastWrite()).toEqual({
+			id: 4,
+			method: "model/list",
+			params: { includeHidden: true, cursor: "page-2" },
+		});
+		expect(harness.transcript.session.effort.unchangeable).toBeUndefined();
+		harness.receive({ id: 4, result: { data: [HIDDEN], nextCursor: null } });
+		const { session } = harness.transcript;
+		expect(session.model.current).toBe("older-model");
+		expect(session.effort.choices.map((choice) => choice.id)).toEqual([
+			"medium",
+			"xhigh",
+		]);
+	});
+
+	it("is a choice of its own when the list does not name it, and says why its effort can't be changed", () => {
+		const harness = resumedOn("retired-model");
+		harness.receive({
+			id: 3,
+			result: { data: [SHOWN, HIDDEN], nextCursor: null },
+		});
+		const { session } = harness.transcript;
+		expect(session.model.current).toBe("retired-model");
+		expect(session.model.choices[0]).toEqual({
+			id: "retired-model",
+			label: "retired-model",
+		});
+		expect(session.effort.choices).toEqual([]);
+		expect(session.effort.unchangeable).toContain("retired-model");
+	});
+
+	it("says why neither the model nor the effort can be changed when the list failed", () => {
+		const harness = resumedOn("shown-model");
+		harness.receive({
+			id: 3,
+			error: { code: -32603, message: "catalog unavailable" },
+		});
+		const { session } = harness.transcript;
+		expect(session.model.current).toBe("shown-model");
+		expect(session.model.choices).toEqual([]);
+		expect(session.model.unchangeable).toContain("catalog unavailable");
+		expect(session.effort.unchangeable).toContain("catalog unavailable");
 	});
 });

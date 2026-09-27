@@ -287,6 +287,18 @@ known yet*; an effort nothing has chosen reads *Default*, the CLI's own
 effort when the thread opens, and a model you pick here shows that model's
 default effort until you choose one.
 
+The model the session reports is found in the CLI's own list the same way
+however the session began (fresh, resumed, rewound, or a model picked here):
+Claude's handshake choice by its value or the full name it resolves to
+(`resolvedModel`), Codex's `model/list` entry by `model`, hidden models
+included, every page read. A resumed Claude session keeps the model its
+transcript was saved with, so it can be on a `[1m]` variant the list does
+not offer (`claude-opus-5-5[1m]` beside a plain `opus`): that name is a
+choice of its own, and its efforts are those of the choice the name
+resolves to without `[1m]`, which picks the context window, not the model.
+A model the list names in no form is still shown and offered by its own
+name, and the effort says plainly that its levels are not known here.
+
 **Context.** Under the message box, a quiet line says how full the context
 window is, *Context 45% · 90k of 200k*, with a thin meter that turns orange
 from 80% and red from 95% (the rule every usage meter keeps). Claude's figure is the

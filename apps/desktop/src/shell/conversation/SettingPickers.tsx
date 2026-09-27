@@ -7,7 +7,8 @@
  * change is asked for, and the picker moves when the session says it has
  * moved. A change that failed therefore leaves it where it truthfully is.
  * While the session has not named a value, the picker says so in words
- * (`UNKNOWN_VALUE`) rather than standing empty.
+ * (`UNKNOWN_VALUE`) rather than standing empty, and a setting the session
+ * gave nothing to choose from says why it can't be changed (`unchangeable`).
  */
 
 import type { RefObject } from "react";
@@ -45,7 +46,7 @@ const UNKNOWN_HINT: Readonly<Record<SettingName, string>> = {
 /**
  * Whether a setting has anything to show. Each one always does — a value, or
  * what is said while there is none — except an effort the model is known not
- * to take: a known model that lists no efforts.
+ * to take: a known model that lists no efforts, and nothing said about why.
  */
 function shown(name: SettingName, session: SessionFacts): boolean {
   const setting = session[name];
@@ -53,6 +54,7 @@ function shown(name: SettingName, session: SessionFacts): boolean {
     name === "effort" &&
     setting.choices.length === 0 &&
     setting.current === undefined &&
+    setting.unchangeable === undefined &&
     session.model.current !== undefined
   );
 }
@@ -85,6 +87,11 @@ function SettingPicker({
         <span className="conversation-setting-value">
           {setting.current ?? UNKNOWN_VALUE[name]}
         </span>
+        {setting.unchangeable === undefined ? null : (
+          <span className="conversation-setting-note">
+            {setting.unchangeable}
+          </span>
+        )}
       </span>
     );
   }

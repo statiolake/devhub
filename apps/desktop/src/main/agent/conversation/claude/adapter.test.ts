@@ -450,9 +450,12 @@ describe("the permission fixture", () => {
 				route: "resume",
 			},
 		]);
+		// This handshake names no `resolvedModel`, so no choice is known to be
+		// the session's model: it is a choice of its own.
 		expect(session.model).toEqual({
 			current: "claude-sonnet-5",
 			choices: [
+				{ id: "claude-sonnet-5", label: "claude-sonnet-5" },
 				{ id: "default", label: "Default" },
 				{ id: "sonnet", label: "Sonnet" },
 			],
@@ -1788,6 +1791,162 @@ describe("the captured session", () => {
 			"xhigh",
 			"max",
 		]);
+	});
+});
+
+describe("the model a session reports, against the models the handshake listed", () => {
+	const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+	function listed(
+		value: string,
+		resolvedModel: string,
+		efforts?: readonly string[],
+	) {
+		return {
+			value,
+			displayName: `${value} (label)`,
+			description: "",
+			resolvedModel,
+			...(efforts === undefined ? {} : { supportedEffortLevels: efforts }),
+		};
+	}
+	/** A CLI whose `model` setting is `opus[1m]` lists the 1M variant. */
+	const WITH_1M = [
+		listed("default", "claude-opus-5-5[1m]", EFFORTS),
+		listed("opus[1m]", "claude-opus-5-5[1m]", EFFORTS),
+		listed("sonnet", "claude-sonnet-5", EFFORTS),
+		listed("haiku", "claude-haiku-4-5-20251001"),
+	];
+	/** One whose setting is plain `opus` lists no 1M variant. */
+	const WITHOUT_1M = [
+		listed("default", "claude-opus-5-5", EFFORTS),
+		listed("opus", "claude-opus-5-5", EFFORTS),
+		listed("sonnet", "claude-sonnet-5", EFFORTS),
+		listed("haiku", "claude-haiku-4-5-20251001"),
+	];
+
+	/** Answer the `initialize` DevHub wrote with this list. */
+	function answer(
+		adapter: ClaudeAdapter,
+		written: readonly string[],
+		models: readonly unknown[],
+	): void {
+		for (const line of written) adapter.sent(line);
+		const request = written
+			.map((line) => JSON.parse(line))
+			.find((line) => line.request?.subtype === "initialize");
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: request.request_id,
+					response: { commands: [], models },
+				},
+			}),
+		);
+	}
+
+	function started(models: readonly unknown[], model: string): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		answer(adapter, adapter.opening(), models);
+		adapter.received(init({ model }));
+		return adapter;
+	}
+
+	it("is the listed choice that resolves to it, [1m] included, on a fresh start", () => {
+		const { session } = started(WITH_1M, "claude-opus-5-5[1m]").transcript;
+		expect(session.model.current).toBe("opus[1m]");
+		expect(session.model.choices.map((choice) => choice.id)).toEqual([
+			"default",
+			"opus[1m]",
+			"sonnet",
+			"haiku",
+		]);
+		expect(session.effort).toEqual({
+			current: undefined,
+			choices: EFFORTS.map((level) => ({ id: level, label: level })),
+		});
+	});
+
+	it("is a choice of its own when a resumed session keeps a [1m] model the list does not offer, with that model's effort levels", () => {
+		// Started on a resumed session (Continue in GUI, `--resume`): the
+		// session keeps its transcript's model, whatever the setting is.
+		const { session } = started(WITHOUT_1M, "claude-opus-5-5[1m]").transcript;
+		expect(session.model.current).toBe("claude-opus-5-5[1m]");
+		expect(session.model.choices[0]).toEqual({
+			id: "claude-opus-5-5[1m]",
+			label: "claude-opus-5-5[1m]",
+		});
+		expect(session.model.choices.slice(1).map((choice) => choice.id)).toEqual([
+			"default",
+			"opus",
+			"sonnet",
+			"haiku",
+		]);
+		expect(session.effort).toEqual({
+			current: undefined,
+			choices: EFFORTS.map((level) => ({ id: level, label: level })),
+		});
+	});
+
+	it("reads the same after /resume switches the CLI to a session on a model the list does not offer", () => {
+		const adapter = started(WITHOUT_1M, "claude-opus-5-5");
+		expect(adapter.transcript.session.model.current).toBe("opus");
+		const step = adapter.received(
+			json({ type: "devhub_resume", session: "other" }),
+		);
+		answer(adapter, step.replies, WITHOUT_1M);
+		adapter.received(
+			init({ model: "claude-opus-5-5[1m]", session_id: "other" }),
+		);
+		const { session } = adapter.transcript;
+		expect(session.model.current).toBe("claude-opus-5-5[1m]");
+		expect(session.effort.choices.map((choice) => choice.id)).toEqual(EFFORTS);
+		expect(session.effort.unchangeable).toBeUndefined();
+	});
+
+	it("takes the session's own model back with set_model, and reads it as the resume did", () => {
+		const adapter = started(WITHOUT_1M, "claude-opus-5-5[1m]");
+		const request = (line: string) => JSON.parse(line).request_id as string;
+		const agreed = (line: string) =>
+			adapter.received(
+				json({
+					type: "control_response",
+					response: { subtype: "success", request_id: request(line) },
+				}),
+			);
+		agreed(configure(adapter, "model", "opus")[0]!);
+		expect(adapter.transcript.session.model.current).toBe("opus");
+		expect(adapter.transcript.session.model.choices[0]?.id).toBe("default");
+		const [back] = configure(adapter, "model", "claude-opus-5-5[1m]");
+		expect(JSON.parse(back!).request).toEqual({
+			subtype: "set_model",
+			model: "claude-opus-5-5[1m]",
+		});
+		agreed(back!);
+		const { session } = adapter.transcript;
+		expect(session.model.current).toBe("claude-opus-5-5[1m]");
+		expect(session.effort.choices.map((choice) => choice.id)).toEqual(EFFORTS);
+	});
+
+	it("says why the effort can't be changed for a model the list names in no form", () => {
+		const { session } = started(WITHOUT_1M, "claude-opus-4-1").transcript;
+		expect(session.model.current).toBe("claude-opus-4-1");
+		expect(session.model.choices[0]).toEqual({
+			id: "claude-opus-4-1",
+			label: "claude-opus-4-1",
+		});
+		expect(session.effort.choices).toEqual([]);
+		expect(session.effort.unchangeable).toContain("claude-opus-4-1");
+	});
+
+	it("offers no effort, and says nothing, for a listed model that takes none", () => {
+		const { session } = started(
+			WITH_1M,
+			"claude-haiku-4-5-20251001",
+		).transcript;
+		expect(session.model.current).toBe("haiku");
+		expect(session.effort).toEqual({ current: undefined, choices: [] });
 	});
 });
 

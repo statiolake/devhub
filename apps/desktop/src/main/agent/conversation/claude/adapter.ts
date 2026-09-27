@@ -126,6 +126,29 @@ const MODES: Setting["choices"] = [
 
 const EFFORT_COMMAND = /^\/effort\s+(\S+)\s*$/u;
 
+/**
+ * The suffix that picks a model's 1M token context window, on an alias or a
+ * full model name alike (`opus[1m]`, `claude-opus-4-8[1m]`): Claude Code's
+ * model configuration, "Extended context".
+ */
+const LONG_CONTEXT = "[1m]";
+
+/**
+ * The handshake's choice a model name is: the choice by that value (what
+ * `set_model` was given), else one that resolves to it — a named alias
+ * before `default`, which resolves to whatever the default is today.
+ */
+function listedAs(
+	models: InitializeFacts["models"],
+	name: string,
+): InitializeFacts["models"][number] | undefined {
+	return (
+		models.find((model) => model.id === name) ??
+		models.find((model) => model.id !== "default" && model.resolved === name) ??
+		models.find((model) => model.resolved === name)
+	);
+}
+
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
@@ -242,7 +265,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly streaming = new Map<EntryId | null, MessageState>();
 
 	private described: InitializeFacts["commands"] = [];
-	private models: InitializeFacts["models"] = [];
+	/** The models the handshake listed; none known until it answers. */
+	private models: InitializeFacts["models"] | undefined;
 	/** The model the top level last wrote with: whose context window the usage is measured against. */
 	private mainModel: string | undefined;
 	private announced: readonly string[] = [];
@@ -532,39 +556,61 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	/**
 	 * The model a session reports, as one of the choices the handshake listed,
-	 * and the effort that model takes.
+	 * and the effort that model takes. Every way a session names its model —
+	 * `system/init` on a fresh start, a resume, a rewind; a `set_model` the CLI
+	 * agreed to — comes here, so they all read the same.
 	 *
 	 * A session names its model in full (`claude-haiku-4-5-…`) and the choices
-	 * are aliases (`haiku`), so the choice is found by what it resolves to — a
-	 * named alias before `default`, which resolves to whatever the default is
-	 * today. A model no choice resolves to is shown by its own name, with no
-	 * effort to offer, since nothing says which it takes.
+	 * are aliases (`haiku`), so the choice is found by what it resolves to
+	 * (`listedAs`). A resumed session keeps the model its transcript was saved
+	 * with, whatever the current setting (model-config, "Model on resume"), so
+	 * it can report a model the list does not resolve to — typically the 1M
+	 * context variant (`claude-opus-5-5[1m]`) of a model the list offers only
+	 * as `opus`. That name is itself a value `/model` takes (a full model name,
+	 * with or without the documented `[1m]` suffix), so it is a choice of its
+	 * own, under its own name. Its effort levels are the model's: the `[1m]`
+	 * suffix picks the context window, not the model, and the CLI lists
+	 * effort levels per model, so they are those of the choice the name
+	 * without the suffix resolves to. A model the list names in neither form
+	 * has no effort levels DevHub could offer, and the effort says so.
 	 */
 	private modelSettings(
 		reported: string | undefined,
 	): Pick<SessionFacts, "model" | "effort"> {
-		const chosen =
-			reported === undefined
-				? undefined
-				: (this.models.find((model) => model.id === reported) ??
-					this.models.find(
-						(model) => model.id !== "default" && model.resolved === reported,
-					) ??
-					this.models.find((model) => model.resolved === reported));
-		const efforts = chosen?.efforts ?? [];
+		const models = this.models ?? [];
+		const listed =
+			reported === undefined ? undefined : listedAs(models, reported);
+		// Until the handshake has listed the models, nothing is known to be missing.
+		const own =
+			reported !== undefined &&
+			this.models !== undefined &&
+			listed === undefined
+				? reported
+				: undefined;
+		const model =
+			listed ??
+			(own?.endsWith(LONG_CONTEXT)
+				? listedAs(models, own.slice(0, -LONG_CONTEXT.length))
+				: undefined);
+		const efforts = model?.efforts ?? [];
 		const effort = this.current.session.effort.current;
 		return {
 			model: {
-				current: chosen?.id ?? reported,
-				choices: this.models.map((model) => ({
-					id: model.id,
-					label: model.label,
-				})),
+				current: listed?.id ?? reported,
+				choices: [
+					...(own === undefined ? [] : [{ id: own, label: own }]),
+					...models.map((each) => ({ id: each.id, label: each.label })),
+				],
 			},
 			effort: {
 				current:
 					effort !== undefined && efforts.includes(effort) ? effort : undefined,
 				choices: efforts.map((level) => ({ id: level, label: level })),
+				...(own !== undefined && model === undefined
+					? {
+							unchangeable: `claude's model list does not name ${own}, so its effort levels are not known here`,
+						}
+					: {}),
 			},
 		};
 	}

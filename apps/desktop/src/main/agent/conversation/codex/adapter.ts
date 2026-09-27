@@ -249,6 +249,12 @@ interface OpenRequest {
 	readonly respond: (answer: RequestAnswer) => JsonValue;
 }
 
+/**
+ * `model/list` leaves out the models hidden from the default picker unless
+ * asked (`ModelListParams.includeHidden`), and a thread can be on one.
+ */
+const LIST_EVERY_MODEL = { includeHidden: true } as const;
+
 interface Chosen {
 	model: string | undefined;
 	effort: string | undefined;
@@ -326,7 +332,21 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly turnMessages = new Map<string, EntryId>();
 	private runningTurn: string | undefined;
 	private defaults: ThreadDefaults | undefined;
-	private models: readonly ModelChoice[] = [];
+	/**
+	 * What `model/list` said: the pages so far while it is still listing,
+	 * every model once the last page is in, or why it could not list them.
+	 * Hidden models are listed too, since a thread may be on one (a resumed
+	 * thread keeps the model it was on); the picker offers them only then.
+	 */
+	private listing:
+		| {
+				readonly state: "listing" | "listed";
+				readonly models: readonly ModelChoice[];
+		  }
+		| { readonly state: "failed"; readonly why: string } = {
+		state: "listing",
+		models: [],
+	};
 	private readonly open = new Map<RequestId, OpenRequest>();
 	/** Child thread → the tool entry that started it. */
 	private readonly threadParents = new Map<string, EntryId>();
@@ -764,7 +784,19 @@ export class CodexAdapter implements ProtocolAdapter {
 				return this.onThreadOpened(opened);
 			}
 			case "model/list": {
-				this.models = modelListResponse(this.reader, result);
+				const page = modelListResponse(this.reader, result);
+				const models = [
+					...(this.listing.state === "failed" ? [] : this.listing.models),
+					...page.models,
+				];
+				if (page.next !== null) {
+					this.listing = { state: "listing", models };
+					return this.call("model/list", {
+						...LIST_EVERY_MODEL,
+						cursor: page.next,
+					} satisfies ModelListParams);
+				}
+				this.listing = { state: "listed", models };
 				return this.publishSession();
 			}
 			case "thread/revert":
@@ -815,6 +847,8 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 				return this.openThread();
 			case "model/list":
+				this.listing = { state: "failed", why: message };
+				this.publishSession();
 				return this.notice(
 					"warning",
 					`${this.codexName} could not list its models: ${message}. The model can't be changed here.`,
@@ -887,7 +921,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			phase: "ready",
 			turn: this.runningTurn === undefined ? "none" : "running",
 		});
-		this.callOnce("model/list", {} satisfies ModelListParams);
+		this.callOnce("model/list", LIST_EVERY_MODEL satisfies ModelListParams);
 	}
 
 	/**
@@ -938,7 +972,21 @@ export class CodexAdapter implements ProtocolAdapter {
 	/** The session as DevHub knows it now, the choices not yet sent included. */
 	private sessionFacts(): SessionFacts {
 		const model = this.chosen.model ?? this.defaults?.model;
-		const listed = this.models.find((candidate) => candidate.id === model);
+		const { listing } = this;
+		const models = listing.state === "listed" ? listing.models : [];
+		const listed = models.find((candidate) => candidate.model === model);
+		// A model the whole list does not name is still the thread's: a choice
+		// of its own, with no efforts DevHub could offer for it.
+		const own =
+			listing.state === "listed" && model !== undefined && listed === undefined
+				? model
+				: undefined;
+		const unchangeable =
+			listing.state === "failed"
+				? `${this.codexName} could not list its models: ${listing.why}`
+				: own === undefined
+					? undefined
+					: `${this.codexName}'s model list does not name ${own}, so its reasoning efforts are not known here`;
 		const efforts = listed?.efforts ?? [];
 		return {
 			...EMPTY_SESSION,
@@ -948,12 +996,16 @@ export class CodexAdapter implements ProtocolAdapter {
 			canRewind: this.historyMode === "paginated",
 			model: {
 				current: model,
-				choices: this.models
-					.filter((candidate) => !candidate.hidden)
-					.map((candidate) => ({
-						id: candidate.id,
-						label: candidate.displayName,
-					})),
+				choices: [
+					...(own === undefined ? [] : [{ id: own, label: own }]),
+					...models
+						.filter((candidate) => !candidate.hidden || candidate === listed)
+						.map((candidate) => ({
+							id: candidate.model,
+							label: candidate.displayName,
+						})),
+				],
+				...(listing.state === "failed" ? { unchangeable } : {}),
 			},
 			effort: {
 				// What the next turn runs at: the effort chosen here, else the
@@ -967,6 +1019,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						: undefined) ??
 					listed?.defaultEffort,
 				choices: efforts.map((effort) => ({ id: effort, label: effort })),
+				...(unchangeable === undefined ? {} : { unchangeable }),
 			},
 			mode: {
 				current: this.chosen.mode ?? this.defaults?.mode,

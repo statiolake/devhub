@@ -76,6 +76,24 @@ describe("a session that has not named its settings yet", () => {
     expect(document.querySelector('[data-setting="effort"]')).toBeNull();
   });
 
+  it("says why the effort can't be changed when the Agent listed nothing for the session's model", () => {
+    const why = "the model list does not name old-model";
+    draw(
+      withSession({
+        ...EMPTY_SESSION,
+        model: {
+          current: "old-model",
+          choices: [{ id: "old-model", label: "old-model" }, ...MODELS],
+        },
+        effort: { current: undefined, choices: [], unchangeable: why },
+      }),
+    );
+    expect(picked("Model")).toBe("old-model");
+    const effort = document.querySelector('[data-setting="effort"]');
+    expect(effort).toHaveTextContent(`Effort${UNKNOWN_VALUE.effort}${why}`);
+    expect(screen.queryByRole("combobox", { name: "Effort" })).toBeNull();
+  });
+
   it("shows the values once the session names them", () => {
     draw(
       withSession({

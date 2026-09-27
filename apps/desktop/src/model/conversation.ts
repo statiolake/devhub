@@ -404,6 +404,13 @@ export interface SessionFacts {
 export interface Setting {
   readonly current: string | undefined;
   readonly choices: readonly { readonly id: string; readonly label: string }[];
+  /**
+   * Why the setting can't be changed here, when the Agent listed nothing to
+   * choose from for it (its models could not be listed, or its list does not
+   * name the session's model). Shown beside the value, so a setting with no
+   * choices is never a control that silently does nothing.
+   */
+  readonly unchangeable?: string;
 }
 
 export interface SlashCommand {
