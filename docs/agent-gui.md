@@ -264,6 +264,15 @@ bubble. Claude records them as tagged text (`<command-name>`,
 recorded command names is drawn as *Command output*. A slash command sent
 from the composer that the CLI echoes in this form is taken as sent then.
 
+**Keys.** In every field where you write something to send — the composer,
+a waiting message being edited, a message to a subagent, an answer typed into
+a request — Return (with or without Shift) starts a new line and ⌘Return
+sends, saves or answers, whatever the field's button does. While the `/`
+command list is open, Return (or Tab) takes the highlighted command, as in any
+list, and ⌘Return still sends what is typed. A key an input method is still
+composing is the input method's, so Return confirms a conversion and sends
+nothing. Esc and Ctrl+C stop a running turn from anywhere in the pane.
+
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
 Every message also has a quiet Copy action under it, always shown, and every
@@ -407,7 +416,7 @@ connecting or being started again by a rewind) waits instead. Waiting messages
 are listed over the composer, oldest first. The Agent has not seen them yet,
 so each one can be:
 
-- **edited** in place (Enter saves, Esc gives up), the caret at the end of
+- **edited** in place (⌘Return saves, Esc gives up), the caret at the end of
   its words, in a field that grows with its text from three lines up to the
   composer's own limit. While the editor is open the message is not sent, and neither is
   anything behind it: when a turn ends meanwhile, the next turn waits. Saving

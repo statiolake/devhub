@@ -386,7 +386,7 @@ describe("a message to a subagent that takes the person's messages", () => {
     expect(fields).toHaveLength(1);
     expect(where).toContainElement(fields[0]!);
     fireEvent.change(fields[0]!, { target: { value: "look in lib/ too" } });
-    fireEvent.keyDown(fields[0]!, { key: "Enter" });
+    fireEvent.keyDown(fields[0]!, { key: "Enter", metaKey: true });
   }
 
   it("is in the column's pane when the subagent is beside the conversation", () => {

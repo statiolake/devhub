@@ -11,7 +11,9 @@
  * answer.
  *
  * From the keyboard, as in the CLIs' own dialogs: with the card focused, 1–9
- * press its choices in order, and Esc goes back to the composer.
+ * press its choices in order, and Esc goes back to the composer. What is typed
+ * into it is written under the composer's keys (`messageKeys.ts`): Return is a
+ * new line and ⌘Return answers.
  */
 
 import { useState } from "react";
@@ -26,6 +28,7 @@ import {
   useFocusComposer,
 } from "./ConversationContext";
 import { DiffView, JsonView } from "./EntryParts";
+import { SEND_KEY, useMessageKeys } from "./messageKeys";
 
 function Subject({ request }: { readonly request: PendingRequest }) {
   const { subject } = request;
@@ -79,13 +82,18 @@ function Choices({
 }) {
   const [writing, setWriting] = useState<RequestChoice | undefined>(undefined);
   const [text, setText] = useState("");
+  const answer = () => {
+    if (busy || writing === undefined) return;
+    send({ kind: "choice", choiceId: writing.id, text });
+  };
+  const keys = useMessageKeys(answer);
   if (writing) {
     return (
       <form
         className="conversation-request-text"
         onSubmit={(event) => {
           event.preventDefault();
-          send({ kind: "choice", choiceId: writing.id, text });
+          answer();
         }}
       >
         <textarea
@@ -93,6 +101,7 @@ function Choices({
           value={text}
           autoFocus
           onChange={(event) => setText(event.target.value)}
+          {...keys}
         />
         <div className="conversation-request-choices">
           <button
@@ -107,6 +116,7 @@ function Choices({
             type="submit"
             className="conversation-request-choice"
             data-tone={writing.tone}
+            title={`${writing.label} (${SEND_KEY})`}
             disabled={busy}
           >
             {writing.label}
@@ -168,19 +178,25 @@ function QuestionForm({
       return { ...before, [question.id]: next };
     });
   };
+  const answer = () => {
+    if (busy) return;
+    const values: Record<string, string | readonly string[]> = {};
+    for (const question of questions) {
+      const typed = other[question.id]?.trim();
+      const chosen = picked[question.id] ?? [];
+      const all = typed ? [...chosen, typed] : chosen;
+      values[question.id] = question.multiSelect ? all : (all[0] ?? "");
+    }
+    send({ kind: "answers", values });
+  };
+  // One set for every question's Other: only one of them has the keyboard.
+  const keys = useMessageKeys(answer);
   return (
     <form
       className="conversation-request-questions"
       onSubmit={(event) => {
         event.preventDefault();
-        const values: Record<string, string | readonly string[]> = {};
-        for (const question of questions) {
-          const typed = other[question.id]?.trim();
-          const chosen = picked[question.id] ?? [];
-          const all = typed ? [...chosen, typed] : chosen;
-          values[question.id] = question.multiSelect ? all : (all[0] ?? "");
-        }
-        send({ kind: "answers", values });
+        answer();
       }}
     >
       {questions.map((question) => (
@@ -206,11 +222,11 @@ function QuestionForm({
             </label>
           ))}
           {question.allowsOther ? (
-            <input
-              type="text"
+            <textarea
               className="conversation-question-other"
               aria-label={`${question.header}: other`}
               placeholder="Other"
+              rows={1}
               value={other[question.id] ?? ""}
               onChange={(event) =>
                 setOther((before) => ({
@@ -218,6 +234,7 @@ function QuestionForm({
                   [question.id]: event.target.value,
                 }))
               }
+              {...keys}
             />
           ) : null}
         </fieldset>
@@ -227,6 +244,7 @@ function QuestionForm({
           type="submit"
           className="conversation-request-choice"
           data-tone="allow"
+          title={`Submit (${SEND_KEY})`}
           disabled={busy}
         >
           Submit

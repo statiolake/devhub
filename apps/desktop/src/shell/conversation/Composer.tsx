@@ -1,16 +1,18 @@
 /**
  * Where the person talks to a GUI Agent.
  *
- * The keys mean what they mean in both CLIs' own terminals: Enter sends,
- * Shift+Enter is a new line, and a key pressed while an input method is still
- * composing is the input method's — Enter then confirms the conversion and
- * sends nothing. Esc and Ctrl+C stop a running turn; they are handled by the
- * surface, so they work from anywhere in the pane, and the composer only
- * keeps Esc for itself while it has a completion list open.
+ * Return is a new line and ⌘Return sends, as in every field of a GUI Agent
+ * where something is written to send (`messageKeys.ts`, which also keeps a
+ * key an input method is still composing away from all of them). Esc and
+ * Ctrl+C stop a running turn; they are handled by the surface, so they work
+ * from anywhere in the pane, and the composer only keeps Esc for itself while
+ * it has a completion list open.
  *
- * A line that starts with `/` offers the Agent's own commands. One the Agent
- * takes as a message is completed into the text; one DevHub handles itself
- * opens the toolbar's picker for the setting it changes.
+ * A line that starts with `/` offers the Agent's own commands. While the list
+ * is open Return (or Tab) takes the highlighted one, as it does in any list;
+ * ⌘Return still sends what is typed. One the Agent takes as a message is
+ * completed into the text; one DevHub handles itself opens the toolbar's
+ * picker for the setting it changes.
  *
  * The box holds the field and, under it, a toolbar: the session's settings on
  * the left, Stop (while a turn runs) and Send on the right. Under the box, how
@@ -59,7 +61,6 @@ import {
   type Transcript,
   type UserEntry,
 } from "../../model/conversation";
-import { isImeComposing } from "../accessibility/ime";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
 import { ContextUsage } from "./ContextUsage";
 import {
@@ -68,6 +69,7 @@ import {
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
 import { EditIcon, SendIcon, StopIcon } from "./icons";
+import { SEND_KEY, useMessageKeys } from "./messageKeys";
 import { SettingPickers } from "./SettingPickers";
 
 /**
@@ -188,7 +190,7 @@ function Attachments({
 
 /**
  * One message DevHub holds, with what can be done to it: Send now, Edit (in
- * place: Enter saves, Esc gives it up) and Remove.
+ * place: ⌘Return saves, Esc gives it up) and Remove.
  */
 function PendingItem({
   message,
@@ -206,7 +208,6 @@ function PendingItem({
     reportFailure,
   } = useConversationActions();
   const [draft, setDraft] = useState<string | undefined>(undefined);
-  const composing = useRef(false);
   // Main holds the message while the editor is open; the composer going
   // away with it open lets go, so it is not held for an edit nobody finishes.
   const editing = useRef(false);
@@ -242,6 +243,14 @@ function PendingItem({
       reportFailure,
     );
   };
+  const keys = useMessageKeys(save, (event) => {
+    if (event.key === "Escape") {
+      // Gives the edit up; the turn is not interrupted by the same key.
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+    }
+  });
   return (
     <li
       className="conversation-pending-item"
@@ -268,29 +277,7 @@ function PendingItem({
             event.currentTarget.setSelectionRange(end, end);
           }}
           onChange={(event) => setDraft(event.target.value)}
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          onKeyDown={(event) => {
-            if (isImeComposing(event.nativeEvent, composing.current)) return;
-            const plain =
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.metaKey &&
-              !event.ctrlKey;
-            if (event.key === "Enter" && plain) {
-              event.preventDefault();
-              save();
-            } else if (event.key === "Escape") {
-              // Gives the edit up; the turn is not interrupted by the same key.
-              event.preventDefault();
-              event.stopPropagation();
-              cancel();
-            }
-          }}
+          {...keys}
         />
       )}
       <div className="conversation-pending-footer">
@@ -334,6 +321,7 @@ function PendingItem({
             <button
               type="button"
               className="conversation-pending-save"
+              title={`Save (${SEND_KEY})`}
               onClick={save}
             >
               Save
@@ -352,8 +340,7 @@ function PendingItem({
   );
 }
 
-export const COMPOSER_PLACEHOLDER =
-  "Message the Agent — / for commands, Shift+Enter for a new line";
+export const COMPOSER_PLACEHOLDER = `Message the Agent — / for commands, ${SEND_KEY} to send`;
 
 function CompletionList({
   commands,
@@ -424,7 +411,6 @@ export function Composer({
   const [selected, setSelected] = useState(0);
   /** The text whose completion list Esc closed; typing again reopens it. */
   const [dismissed, setDismissed] = useState<string | undefined>(undefined);
-  const composing = useRef(false);
 
   const refusal = inputRefusal(transcript.state);
   const running =
@@ -528,8 +514,7 @@ export function Composer({
     return true;
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (isImeComposing(event.nativeEvent, composing.current)) return;
+  const ownKeys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const plain =
       !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
     if (offered.length > 0) {
@@ -552,15 +537,11 @@ export function Composer({
         return;
       }
     }
-    if (event.key === "Enter" && plain) {
-      event.preventDefault();
-      submit();
-      return;
-    }
     if ((event.key === "ArrowUp" || event.key === "ArrowDown") && plain) {
       if (recall(event.key === "ArrowUp" ? 1 : -1)) event.preventDefault();
     }
   };
+  const keys = useMessageKeys(submit, ownKeys);
 
   return (
     <div className="conversation-composer">
@@ -622,19 +603,13 @@ export function Composer({
           }
           aria-expanded={offered.length > 0}
           onChange={(event) => edit(event.target.value)}
-          onKeyDown={onKeyDown}
+          {...keys}
           onPaste={(event) => {
             // Files pasted (a screenshot) are attached; text pastes as text.
             const files = [...event.clipboardData.files];
             if (files.length === 0) return;
             event.preventDefault();
             attach(files);
-          }}
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
           }}
         />
         <div className="conversation-composer-toolbar">
@@ -661,7 +636,7 @@ export function Composer({
               type="button"
               className="conversation-send"
               aria-label="Send"
-              title="Send (Enter)"
+              title={`Send (${SEND_KEY})`}
               disabled={
                 refusal !== undefined ||
                 (text.trim() === "" && attachments.length === 0)

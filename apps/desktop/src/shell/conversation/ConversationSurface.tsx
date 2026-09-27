@@ -52,6 +52,7 @@ import { EntryTreeContext, EntryView, SendingView } from "./EntryView";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
 import { ArrowDownIcon } from "./icons";
+import { SEND_KEY } from "./messageKeys";
 import { RequestCard } from "./RequestCard";
 import {
   SubagentColumn,
@@ -74,7 +75,7 @@ function EmptyTranscript() {
     <div className="conversation-empty">
       <div className="conversation-empty-title">What should the Agent do?</div>
       <div className="conversation-empty-hint">
-        Enter sends, Shift+Enter starts a new line, and / lists the Agent's
+        {SEND_KEY} sends, Return starts a new line, and / lists the Agent's
         commands.
       </div>
     </div>

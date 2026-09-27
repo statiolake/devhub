@@ -3,8 +3,9 @@
 /**
  * Talking to a GUI Agent: the composer, the header and the keys.
  *
- * Enter sends and Shift+Enter does not; nothing is sent while an input method
- * is composing; text is cleared only once the Agent has it; `/` offers the
+ * ⌘Return sends and Return (with Shift or without) is a new line, in every
+ * field where something is written to send; nothing is sent while an input
+ * method is composing; text is cleared only once the Agent has it; `/` offers the
  * Agent's own commands; ↑ and ↓ walk what the person said to this Agent; Esc
  * and Ctrl+C stop a running turn and nothing else; the pickers offer the
  * session's own choices and show only what the session says is current; and
@@ -121,39 +122,69 @@ function press(key: string, init: KeyboardEventInit = {}) {
   fireEvent.keyDown(composer(), { key, ...init });
 }
 
+/** The modifiers of the send key, ⌘Return. */
+const SEND = { metaKey: true } as const;
+
 describe("sending", () => {
-  it("sends on Enter and clears the text once the Agent has it", async () => {
+  it("sends on ⌘Return and clears the text once the Agent has it", async () => {
     const { actions } = draw(withSession());
     type("fix the build");
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledWith("fix the build", []);
     await waitFor(() => expect(composer()).toHaveValue(""));
   });
 
-  it("starts a new line on Shift+Enter and sends nothing", () => {
+  it("leaves Return and Shift+Return to the field, as a new line, and sends nothing", () => {
     const { actions } = draw(withSession());
     type("first line");
-    press("Enter", { shiftKey: true });
+    for (const init of [{}, { shiftKey: true }]) {
+      // Not taken: the textarea's own Return puts the new line in.
+      expect(fireEvent.keyDown(composer(), { key: "Enter", ...init })).toBe(
+        true,
+      );
+    }
+    expect(actions.send).not.toHaveBeenCalled();
+  });
+
+  it("sends on no other modifier with Return", () => {
+    const { actions } = draw(withSession());
+    type("not yet");
+    press("Enter", { ctrlKey: true });
+    press("Enter", { altKey: true });
+    press("Enter", { metaKey: true, shiftKey: true });
     expect(actions.send).not.toHaveBeenCalled();
   });
 
   it("sends nothing while an input method is composing", () => {
     const { actions } = draw(withSession());
     type("にほんご");
-    press("Enter", { isComposing: true });
-    press("Enter", { keyCode: 229 });
+    press("Enter", { ...SEND, isComposing: true });
+    press("Enter", { ...SEND, keyCode: 229 });
     fireEvent.compositionStart(composer());
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).not.toHaveBeenCalled();
     fireEvent.compositionEnd(composer());
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledOnce();
+  });
+
+  it("says the send key where it says what the keys do", () => {
+    draw(withSession());
+    expect(COMPOSER_PLACEHOLDER).toMatch(/⌘Return to send/);
+    expect(COMPOSER_PLACEHOLDER).not.toMatch(/Shift\+Enter/);
+    expect(
+      document.querySelector(".conversation-empty-hint"),
+    ).toHaveTextContent("⌘Return sends, Return starts a new line");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute(
+      "title",
+      "Send (⌘Return)",
+    );
   });
 
   it("sends nothing that is only whitespace", () => {
     const { actions } = draw(withSession());
     type("   \n ");
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
@@ -163,7 +194,7 @@ describe("sending", () => {
     const actions = fakeActions({ send: vi.fn(() => Promise.reject(lost)) });
     draw(withSession(), actions);
     type("do not lose this");
-    press("Enter");
+    press("Enter", SEND);
     await waitFor(() =>
       expect(actions.reportFailure).toHaveBeenCalledWith(lost),
     );
@@ -182,7 +213,7 @@ describe("sending", () => {
     });
     draw(withSession(), actions);
     type("first");
-    press("Enter");
+    press("Enter", SEND);
     type("second, typed while the first was on its way");
     deliver();
     await waitFor(() => expect(actions.send).toHaveBeenCalledOnce());
@@ -195,7 +226,7 @@ describe("sending", () => {
   it("sends mid-turn too: the CLI decides what a message during a turn means", () => {
     const { actions } = draw(withSession([RUNNING]));
     type("also check the tests");
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledWith("also check the tests", []);
   });
 });
@@ -250,7 +281,7 @@ describe("when the conversation takes no input", () => {
       // The settings are the CLI's: they wait for it.
       expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
       type("later");
-      press("Enter");
+      press("Enter", SEND);
       expect(actions.send).toHaveBeenCalledWith("later", []);
     }
   });
@@ -292,6 +323,15 @@ describe("slash commands", () => {
     expect(composer()).toHaveValue("/review ");
   });
 
+  it("picks with Return while the list is open, not while an input method is composing, and ⌘Return sends what is typed", () => {
+    const { actions } = draw(withSession());
+    type("/rev");
+    press("Enter", { isComposing: true });
+    expect(composer()).toHaveValue("/rev");
+    press("Enter", SEND);
+    expect(actions.send).toHaveBeenCalledWith("/rev", []);
+  });
+
   it("opens the header's picker for a command DevHub handles itself", () => {
     const { actions } = draw(withSession());
     type("/mod");
@@ -318,7 +358,7 @@ describe("slash commands", () => {
     const { actions } = draw(withSession());
     type("/zzz");
     expect(screen.queryByRole("listbox")).toBeNull();
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledWith("/zzz", []);
   });
 });
@@ -551,7 +591,7 @@ describe("/resume", () => {
     draw(resumable, actions);
     fireEvent.change(composer(), { target: { value: "/resume" } });
     fireEvent.keyDown(composer(), { key: "Escape" });
-    fireEvent.keyDown(composer(), { key: "Enter" });
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
     expect(actions.openResume).toHaveBeenCalledOnce();
     expect(actions.send).not.toHaveBeenCalled();
     expect(composer()).toHaveValue("");
@@ -778,7 +818,7 @@ describe("messages waiting to be sent", () => {
     expect(actions.removePending).toHaveBeenCalledWith(pendingId("held:2"));
   });
 
-  it("is held in main while it is changed in place: Enter saves, Esc gives up and stops no turn", async () => {
+  it("is held in main while it is changed in place: ⌘Return saves, Esc gives up and stops no turn", async () => {
     const { actions } = draw(withSession([RUNNING, HELD]));
     const edit = () =>
       fireEvent.click(
@@ -809,6 +849,7 @@ describe("messages waiting to be sent", () => {
     });
     fireEvent.keyDown(screen.getByLabelText("Waiting message"), {
       key: "Enter",
+      ...SEND,
     });
     expect(actions.editPending).toHaveBeenCalledWith(
       pendingId("held:1"),
@@ -818,6 +859,28 @@ describe("messages waiting to be sent", () => {
       expect(screen.queryByLabelText("Waiting message")).toBeNull(),
     );
     expect(actions.stopEditingPending).toHaveBeenCalledTimes(1);
+  });
+
+  it("is changed under the composer's keys: Return is a new line, and nothing is saved while an input method is composing", async () => {
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    fireEvent.click(
+      within(item("look at the tests")).getByRole("button", { name: "Edit" }),
+    );
+    const field = await screen.findByLabelText("Waiting message");
+    for (const init of [{}, { shiftKey: true }]) {
+      expect(fireEvent.keyDown(field, { key: "Enter", ...init })).toBe(true);
+    }
+    fireEvent.keyDown(field, { key: "Enter", ...SEND, isComposing: true });
+    fireEvent.compositionStart(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    expect(actions.editPending).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    expect(actions.editPending).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "title",
+      "Save (⌘Return)",
+    );
   });
 
   it("is changed in a field that grows with its text from three lines, as the composer's does", async () => {
@@ -918,13 +981,29 @@ describe("a message to a subagent", () => {
     const { actions } = draw(spawned(true));
     const field = screen.getByLabelText("Message to Explorer");
     fireEvent.change(field, { target: { value: "look in lib/ too" } });
-    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
     expect(actions.instruct).toHaveBeenCalledWith(
       entryId("task"),
       "look in lib/ too",
     );
     expect(actions.send).not.toHaveBeenCalled();
     await waitFor(() => expect(field).toHaveValue(""));
+  });
+
+  it("is written under the composer's keys: Return is a new line, ⌘Return sends", () => {
+    const { actions } = draw(spawned(true));
+    const field = screen.getByLabelText("Message to Explorer");
+    fireEvent.change(field, { target: { value: "look in lib/ too" } });
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(true);
+    fireEvent.compositionStart(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    expect(actions.instruct).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    expect(actions.instruct).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "Send to Explorer" }),
+    ).toHaveAttribute("title", "Send to this subagent (⌘Return)");
   });
 
   it("is not offered on one that does not", () => {
@@ -945,6 +1024,70 @@ describe("a message to a subagent", () => {
       expect(actions.reportFailure).toHaveBeenCalledWith(failure),
     );
     expect(field).toHaveValue("hello");
+  });
+});
+
+describe("an answer typed into a request", () => {
+  const DENYING = withSession([
+    put(tool("t1", "Bash: rm -rf build", { status: "running" })),
+    opened(toolRequest("r1", "t1")),
+  ]);
+  const ASKING = withSession([
+    opened({
+      id: "q1" as never,
+      entry: undefined,
+      subject: {
+        kind: "question",
+        questions: [
+          {
+            id: "targets",
+            header: "Targets",
+            text: "Where should it run?",
+            options: [{ label: "macOS", description: "" }],
+            multiSelect: true,
+            allowsOther: true,
+          },
+        ],
+      },
+      choices: [],
+    }),
+  ]);
+
+  it("is written under the composer's keys in a choice that takes text: Return is a new line, ⌘Return answers", async () => {
+    const { actions } = draw(DENYING);
+    fireEvent.click(screen.getByRole("button", { name: "Deny…" }));
+    const field = screen.getByRole("textbox", { name: "Deny" });
+    fireEvent.change(field, { target: { value: "use the clean script" } });
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(true);
+    fireEvent.compositionStart(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    expect(actions.answer).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(field);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    await waitFor(() =>
+      expect(actions.answer).toHaveBeenCalledWith("r1", {
+        kind: "choice",
+        choiceId: "deny",
+        text: "use the clean script",
+      }),
+    );
+  });
+
+  it("is written under the composer's keys in a question's Other: Return is a new line, ⌘Return answers", async () => {
+    const { actions } = draw(ASKING);
+    const field = screen.getByRole("textbox", { name: "Targets: other" });
+    expect(field.tagName).toBe("TEXTAREA");
+    fireEvent.change(field, { target: { value: "FreeBSD" } });
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(true);
+    fireEvent.keyDown(field, { key: "Enter", ...SEND, isComposing: true });
+    expect(actions.answer).not.toHaveBeenCalled();
+    fireEvent.keyDown(field, { key: "Enter", ...SEND });
+    await waitFor(() =>
+      expect(actions.answer).toHaveBeenCalledWith("q1", {
+        kind: "answers",
+        values: { targets: ["FreeBSD"] },
+      }),
+    );
   });
 });
 
@@ -969,7 +1112,7 @@ describe("images", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove one.png" }));
     expect(screen.queryByRole("button", { name: "Remove one.png" })).toBeNull();
     type("what is this?");
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledWith("what is this?", [
       {
         mediaType: "image/png",
@@ -995,7 +1138,7 @@ describe("images", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-    press("Enter");
+    press("Enter", SEND);
     expect(actions.send).toHaveBeenCalledWith("", [
       expect.objectContaining({ label: "drop.png" }),
     ]);
