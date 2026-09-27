@@ -376,6 +376,59 @@ describe("listing a Workspace's sessions", () => {
 		).toEqual(["m1"]);
 	});
 
+	it("titles a Claude session by the name a person gave it, else by Claude's title, else by its first prompt", async () => {
+		const project = join(dir, ".claude", "projects", "-work-titles");
+		await mkdir(project, { recursive: true });
+		const prompt = {
+			type: "user",
+			uuid: "u1",
+			timestamp: "2026-09-20T00:00:00.000Z",
+			message: { content: "The first prompt" },
+		};
+		const aiTitle = (text: string) => ({
+			type: "ai-title",
+			aiTitle: text,
+			sessionId: "s",
+		});
+		const customTitle = (text: string) => ({
+			type: "custom-title",
+			customTitle: text,
+			sessionId: "s",
+		});
+		const files: Record<string, readonly object[]> = {
+			// Renamed twice, and Claude titled it again after: the latest name.
+			named: [
+				prompt,
+				aiTitle("Generated one"),
+				customTitle("Given name"),
+				customTitle("Given name, renamed"),
+				aiTitle("Generated two"),
+			],
+			// Never renamed: Claude's latest title.
+			generated: [prompt, aiTitle("Generated one"), aiTitle("Generated two")],
+			// Neither: the first prompt.
+			bare: [prompt],
+		};
+		let age = 0;
+		for (const [id, lines] of Object.entries(files)) {
+			const file = join(project, `${id}.jsonl`);
+			await writeFile(
+				file,
+				lines.map((each) => JSON.stringify(each)).join("\n"),
+			);
+			await touch(file, (age += 1_000));
+		}
+
+		const titles = (
+			await listPastSessions(fakeRuntime(dir), CLAUDE, "/work/titles")
+		).map((each) => [each.id, each.title]);
+		expect(titles).toEqual([
+			["bare", "The first prompt"],
+			["generated", "Generated two"],
+			["named", "Given name, renamed"],
+		]);
+	});
+
 	it("has none for a directory Claude never ran in", async () => {
 		expect(
 			await listPastSessions(fakeRuntime(dir), CLAUDE, "/work/elsewhere"),

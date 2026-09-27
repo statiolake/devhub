@@ -675,8 +675,9 @@ async function claudeProjectDirectory(
  * The newest session files in `$1` — down to depth `$2`: 1 for one project's
  * directory, 2 for every project's under `projects/` — each as a record
  * separator and its id, the directory its file is in (`.` at depth 1), then
- * its last timestamp, the directory it ran in, its
- * last `ai-title` line, and how many candidate first messages follow (the
+ * its last timestamp, the directory it ran in, its last `custom-title` line
+ * (the name a person gave it with `/rename` or `--name`), its last `ai-title`
+ * line, and how many candidate first messages follow (the
  * first few `user` lines that are not a tool result or a meta message, each
  * whole). A directory that is not there is one Claude never ran in: no
  * sessions.
@@ -698,11 +699,12 @@ find . -mindepth "$2" -maxdepth "$2" -name '*.jsonl' -type f -exec sh -c 'stat -
 		b=\${f##*/}
 		printf '\\036%s\\n%s\\n' "\${b%.jsonl}" "\${f%/*}"
 		awk '
+/"type":"custom-title"/ && length($0) < 4096 { named = $0 }
 /"type":"ai-title"/ && length($0) < 4096 { title = $0 }
 c < 5 && /"type":"user"/ && !/"tool_use_id"/ && !/"isMeta":true/ && !/"isSidechain":true/ && length($0) < 16384 { first[c++] = $0 }
 match($0, /"timestamp":"[^"]*"/) { stamp = substr($0, RSTART + 13, RLENGTH - 14) }
 cwd == "" && match($0, /"cwd":"([^"\\\\]|\\\\.)*"/) { cwd = substr($0, RSTART, RLENGTH) }
-END { print stamp; print cwd; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
+END { print stamp; print cwd; print named; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
 ' "$f" || exit 72
 	done
 }
@@ -767,8 +769,16 @@ export function parseClaudeListing(
 ): readonly PastSession[] {
 	const sessions: PastSession[] = [];
 	for (const chunk of output.split("\u001e").slice(1)) {
-		const [id, folder, stamp, cwdField, titleLine, count, ...candidates] =
-			chunk.split("\n");
+		const [
+			id,
+			folder,
+			stamp,
+			cwdField,
+			namedLine,
+			generatedLine,
+			count,
+			...candidates
+		] = chunk.split("\n");
 		if (id === undefined || folder === undefined || count === undefined) {
 			throw new Error(
 				`the listing of Claude's sessions is cut short: ${chunk}`,
@@ -778,8 +788,7 @@ export function parseClaudeListing(
 			.slice(0, Number(count))
 			.map((line) => promptOf(id, line))
 			.find((text) => text !== undefined);
-		const title =
-			(titleLine ? titleOf(id, titleLine) : undefined) ?? first ?? undefined;
+		const title = titleOf(id, namedLine, generatedLine, first);
 		// A file with no message a person wrote is a session nobody can go on
 		// with — Claude's own `/resume` leaves those out too.
 		if (title === undefined) continue;
@@ -816,10 +825,36 @@ function parsedLine(id: string, line: string): Record<string, unknown> {
 	);
 }
 
-function titleOf(id: string, line: string): string | undefined {
+/**
+ * A session's title, in the precedence the Agent SDK gives a session's
+ * display name: the name a person gave it (its last `custom-title` line),
+ * else the title Claude generated (its last `ai-title` line), else its first
+ * prompt.
+ */
+function titleOf(
+	id: string,
+	namedLine: string | undefined,
+	generatedLine: string | undefined,
+	first: string | undefined,
+): string | undefined {
+	return (
+		recordText(id, namedLine, "custom-title", "customTitle") ??
+		recordText(id, generatedLine, "ai-title", "aiTitle") ??
+		first
+	);
+}
+
+/** The text under `key` of a listed line of type `type`, if there is one. */
+function recordText(
+	id: string,
+	line: string | undefined,
+	type: string,
+	key: string,
+): string | undefined {
+	if (!line) return undefined;
 	const record = parsedLine(id, line);
-	return record["type"] === "ai-title" && typeof record["aiTitle"] === "string"
-		? record["aiTitle"]
+	return record["type"] === type && typeof record[key] === "string"
+		? record[key]
 		: undefined;
 }
 
