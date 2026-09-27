@@ -119,7 +119,8 @@
 /* A person's message opens an exchange: it stands apart from what came
    before. What the Agent did in a row — one call after another — stays
    together as a list. */
-.conversation-entry + .conversation-entry[data-kind="user"] {
+.conversation-entry
+  + .conversation-entry:is([data-kind="user"], [data-kind="answer"]) {
   margin-top: var(--space-5);
 }
 
@@ -1272,6 +1273,35 @@
   color: var(--danger);
 }
 
+/* The person's answer to the Agent's questions, in their bubble: each
+   question quietly over what was chosen or written. */
+.conversation-answer + .conversation-answer {
+  margin-top: var(--space-2);
+}
+
+.conversation-answer-question {
+  color: var(--secondary);
+  font-size: 0.85em;
+  white-space: normal;
+}
+
+.conversation-answer-header {
+  margin-right: var(--space-1);
+  font-weight: 600;
+}
+
+.conversation-answer-given {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.conversation-answer-empty,
+.conversation-answer-notes {
+  color: var(--secondary);
+  font-size: 0.9em;
+}
+
 /* The person's message on its way to the CLI: the same bubble, quieter,
    until the CLI's echo puts the message itself in its place. */
 .conversation-entry[data-sending] .conversation-user {
@@ -1536,6 +1566,48 @@
 .conversation-question-description {
   color: var(--secondary);
   font-size: 0.9em;
+}
+
+/* A single-select question whose options carry previews: the options on the
+   left, the preview of the one pointed at, focused or picked on the right. */
+.conversation-question-body[data-previewed] {
+  display: grid;
+  align-items: start;
+  gap: var(--space-3);
+  grid-template-columns: minmax(12em, 2fr) minmax(0, 3fr);
+}
+
+.conversation-question-option[data-shown] {
+  border-radius: var(--radius-row);
+  background: var(--wash);
+}
+
+/* A preview is Markdown in a monospace box: an ASCII mockup keeps its columns
+   (no line is wrapped or its spaces folded), and a long one scrolls inside
+   the box rather than growing the card. */
+.conversation-question-preview {
+  max-height: 22em;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  overflow: auto;
+}
+
+.conversation-question-preview .conversation-markdown * {
+  font-family: inherit;
+}
+
+.conversation-question-preview .conversation-markdown :is(p, li, td, th) {
+  white-space: pre;
+}
+
+.conversation-question-no-preview {
+  margin: 0;
+  color: var(--tertiary);
 }
 
 /* ------------------------------------------------------ New output */

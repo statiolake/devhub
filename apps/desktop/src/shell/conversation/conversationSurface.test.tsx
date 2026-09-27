@@ -780,8 +780,8 @@ describe("pending requests", () => {
                 header: "Language",
                 text: "Which language?",
                 options: [
-                  { label: "TypeScript", description: "" },
-                  { label: "Rust", description: "fast" },
+                  { label: "TypeScript", description: "", preview: undefined },
+                  { label: "Rust", description: "fast", preview: undefined },
                 ],
                 multiSelect: false,
                 allowsOther: false,
@@ -791,8 +791,8 @@ describe("pending requests", () => {
                 header: "Targets",
                 text: "Where should it run?",
                 options: [
-                  { label: "macOS", description: "" },
-                  { label: "Linux", description: "" },
+                  { label: "macOS", description: "", preview: undefined },
+                  { label: "Linux", description: "", preview: undefined },
                 ],
                 multiSelect: true,
                 allowsOther: true,

@@ -597,8 +597,8 @@ describe("requests", () => {
             header: "Pick",
             text: "Which one?",
             options: [
-              { label: "A", description: "the first" },
-              { label: "B", description: "the second" },
+              { label: "A", description: "the first", preview: undefined },
+              { label: "B", description: "the second", preview: undefined },
             ],
             multiSelect: false,
             allowsOther: true,

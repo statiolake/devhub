@@ -325,6 +325,35 @@ bubble. Claude records them as tagged text (`<command-name>`,
 recorded command names is drawn as *Command output*. A slash command sent
 from the composer that the CLI echoes in this form is taken as sent then.
 
+**Questions the Agent asks** (Claude's AskUserQuestion, Codex's
+requestUserInput) are a card of choices, with an *Other* field where the CLI
+takes words of your own. When a single-select question's options carry a
+`preview` (a mockup, a snippet), the card lays the question out side by side,
+as the CLI does: the options on the left, and on the right the preview of the
+option the pointer is on, else the one the keyboard is on, else the one
+picked, else the first. A preview is Markdown in a monospace box; its lines
+keep their spaces and are never wrapped, so an ASCII mockup's columns stay in
+line, and a long one scrolls inside the box. A multi-select question shows no
+previews, as in the CLI.
+
+Once answered, **your answer is your message**: the same bubble on the right
+as a message you wrote, each question quietly over what you chose — every
+option of a multi-select one — or what you wrote instead, as written, with
+the note you added to a choice in the CLI's own dialog. It is read from the
+record of the answer that is there in every way a conversation is drawn:
+
+- **Claude**: the call's `tool_use_result` (`questions`, `answers`,
+  `annotations`), which the CLI prints live, which a replay reads back from
+  the journal, and which a resumed session's file keeps as `toolUseResult`. A
+  multi-select answer the CLI recorded joined with `", "` is read back option
+  by option, so a label that holds a comma is still one option; a declined
+  question draws no answer. An answered call whose record has no answers
+  breaks the conversation rather than drawing nothing.
+- **Codex**: the reply DevHub wrote to the request, live and from `in.log`
+  on a replay. A question Codex marked secret is drawn as *Hidden*.
+  `thread/resume` hands back no record of the request, so a resumed Codex
+  thread draws no answer bubble for questions asked before it.
+
 **Keys.** In every field where you write something to send — the composer,
 a waiting message being edited, a message to a subagent, an answer typed into
 a request — Return (with or without Shift) starts a new line and ⌘Return
@@ -903,6 +932,13 @@ rate limits.
 - **Rewinding a Claude conversation restarts the CLI.** MCP servers and background
   tasks start again with it. Right after a compaction, the resume point is
   the last message DevHub saw before it, not the compaction summary.
+- **Claude writes no option previews in `claude -p`.** The CLI generates
+  `preview` only when told a preview format, which the Agent SDK's
+  `toolConfig.askUserQuestion.previewFormat` does through an environment
+  variable the CLI does not document; its interactive mode turns Markdown
+  previews on by itself, `-p` does not. DevHub passes nothing undocumented, so
+  a GUI Agent's questions usually arrive without previews; when one carries
+  them, the card shows them.
 - **The journal is never trimmed.** Partial messages are journaled too, so a
   long session's `out` can reach tens of megabytes, and a restart reads all of
   it once.

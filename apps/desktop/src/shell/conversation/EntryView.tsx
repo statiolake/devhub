@@ -17,9 +17,11 @@ import {
   memo,
   useContext,
   useState,
+  type ReactNode,
   type SyntheticEvent,
 } from "react";
 import type {
+  AnswerEntry,
   AssistantBlock,
   AssistantEntry,
   CommandEntry,
@@ -70,6 +72,105 @@ const MAX_INDENT = 3;
 // User
 
 /**
+ * The person's bubble, on the right: their messages, those on their way, and
+ * their answers to the Agent's questions are all this one bubble. A message a
+ * template sent says so above it.
+ */
+function PersonBubble({
+  origin,
+  children,
+}: {
+  readonly origin: "person" | "injection";
+  /** What the bubble holds; none draws no bubble. */
+  readonly children: ReactNode;
+}) {
+  return (
+    <>
+      {origin === "injection" ? (
+        <div className="conversation-user-origin">Sent by a template</div>
+      ) : null}
+      {children === null ? null : (
+        <div className="conversation-user-text">{children}</div>
+      )}
+    </>
+  );
+}
+
+/** What "Copy" on an answer to the Agent's questions copies: each question, then its answer. */
+export function answerText(entry: AnswerEntry): string {
+  return entry.answers
+    .map((answer) =>
+      [
+        answer.header === ""
+          ? answer.question
+          : `${answer.header}: ${answer.question}`,
+        ...answerLines(answer),
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+function answerLines(answer: AnswerEntry["answers"][number]): string[] {
+  if (answer.secret) return ["(hidden)"];
+  const lines = [
+    ...answer.chosen,
+    ...(answer.written === undefined ? [] : [answer.written]),
+  ];
+  return [
+    ...(lines.length === 0 ? ["(no answer)"] : lines),
+    ...(answer.notes === undefined ? [] : [`Note: ${answer.notes}`]),
+  ];
+}
+
+/**
+ * The person's answer to questions the Agent asked, as their message: each
+ * question, quietly, over what was chosen or written — every option of a
+ * multi-select one, and a note when there is one.
+ */
+function AnswerView({ entry }: { readonly entry: AnswerEntry }) {
+  return (
+    <div className="conversation-user" data-origin="person">
+      <PersonBubble origin="person">
+        {entry.answers.map((answer, index) => (
+          <div key={index} className="conversation-answer">
+            <div className="conversation-answer-question">
+              {answer.header === "" ? null : (
+                <span className="conversation-answer-header">
+                  {answer.header}
+                </span>
+              )}
+              {answer.question}
+            </div>
+            {answer.secret ? (
+              <div className="conversation-answer-empty">Hidden</div>
+            ) : answer.chosen.length === 0 && answer.written === undefined ? (
+              <div className="conversation-answer-empty">No answer</div>
+            ) : (
+              <ul className="conversation-answer-given">
+                {answer.chosen.map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+                {answer.written === undefined ? null : (
+                  <li data-written="">{answer.written}</li>
+                )}
+              </ul>
+            )}
+            {answer.notes === undefined || answer.secret ? null : (
+              <div className="conversation-answer-notes">
+                Note: {answer.notes}
+              </div>
+            )}
+          </div>
+        ))}
+      </PersonBubble>
+      <div className="conversation-message-actions">
+        <CopyButton text={answerText(entry)} label="Copy reply" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * A message from the person: a bubble on the right, as it reads in any chat,
  * with its actions under it on hover — Copy, and Rewind on each message the
  * conversation can be taken back to before (`rewindTargets`), which asks
@@ -86,12 +187,9 @@ function UserView({ entry }: { readonly entry: UserEntry }) {
       data-origin={entry.origin}
       data-confirming={(confirming && rewindable) || undefined}
     >
-      {entry.origin === "injection" ? (
-        <div className="conversation-user-origin">Sent by a template</div>
-      ) : null}
-      {entry.text !== "" ? (
-        <div className="conversation-user-text">{entry.text}</div>
-      ) : null}
+      <PersonBubble origin={entry.origin}>
+        {entry.text !== "" ? entry.text : null}
+      </PersonBubble>
       <ImageStrip images={entry.images} />
       <div className="conversation-message-actions">
         <CopyButton text={entry.text} label="Copy message" />
@@ -590,12 +688,9 @@ export function SendingView({ message }: { readonly message: SendingMessage }) {
         title="Sending…"
         aria-busy="true"
       >
-        {message.origin === "injection" ? (
-          <div className="conversation-user-origin">Sent by a template</div>
-        ) : null}
-        {message.text !== "" ? (
-          <div className="conversation-user-text">{message.text}</div>
-        ) : null}
+        <PersonBubble origin={message.origin}>
+          {message.text !== "" ? message.text : null}
+        </PersonBubble>
         <ImageStrip images={message.images} />
       </div>
     </div>
@@ -629,6 +724,8 @@ function entryBody(entry: TranscriptEntry, depth: number) {
   switch (entry.kind) {
     case "user":
       return <UserView entry={entry} />;
+    case "answer":
+      return <AnswerView entry={entry} />;
     case "assistant":
       return <AssistantView entry={entry} />;
     case "tool":

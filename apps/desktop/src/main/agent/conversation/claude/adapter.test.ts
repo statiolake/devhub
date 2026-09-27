@@ -1019,6 +1019,51 @@ describe("permission requests", () => {
 		});
 	});
 
+	it("keep each option's preview", () => {
+		const adapter = inTurn();
+		const input = {
+			questions: [
+				{
+					question: "Which layout?",
+					header: "Layout",
+					options: [
+						{
+							label: "Sidebar",
+							description: "",
+							preview: "+------+----+\n| menu | .. |\n+------+----+",
+						},
+						{ label: "Tabs", description: "" },
+					],
+					multiSelect: false,
+				},
+			],
+		};
+		adapter.received(
+			assistantLine("m", [toolUse("toolu_q", "AskUserQuestion", input)]),
+		);
+		adapter.received(
+			canUseTool("q", {
+				tool_name: "AskUserQuestion",
+				input,
+				tool_use_id: "toolu_q",
+			}),
+		);
+		expect(adapter.transcript.requests[0]!.subject).toMatchObject({
+			kind: "question",
+			questions: [
+				{
+					options: [
+						{
+							label: "Sidebar",
+							preview: "+------+----+\n| menu | .. |\n+------+----+",
+						},
+						{ label: "Tabs", preview: undefined },
+					],
+				},
+			],
+		});
+	});
+
 	it("are refused in a malformed shape", () => {
 		const adapter = inTurn();
 		expect(() =>
@@ -3866,5 +3911,221 @@ describe("what works in the background", () => {
 				}),
 			),
 		).toThrow(ProtocolMismatch);
+	});
+});
+
+describe("the person's answer to AskUserQuestion", () => {
+	const QUESTIONS = [
+		{
+			question: "Which database?",
+			header: "Database",
+			options: [
+				{ label: "SQLite", description: "a file" },
+				{ label: "Postgres", description: "a server" },
+			],
+			multiSelect: false,
+		},
+		{
+			question: "Which features?",
+			header: "Features",
+			options: [
+				{ label: "Auth, SSO", description: "" },
+				{ label: "Search", description: "" },
+				{ label: "Export", description: "" },
+			],
+			multiSelect: true,
+		},
+		{
+			question: "Which name?",
+			header: "Name",
+			options: [
+				{ label: "devhub", description: "" },
+				{ label: "hub", description: "" },
+			],
+			multiSelect: false,
+		},
+	];
+
+	/** What the CLI records of the answer: the questions, each answer by its text, and a note. */
+	const RECORDED = {
+		questions: QUESTIONS,
+		answers: {
+			"Which database?": "Postgres",
+			"Which features?": "Auth, SSO, Search, and CSV, too",
+			"Which name?": "workbench",
+		},
+		annotations: { "Which database?": { notes: "the one we run already" } },
+	};
+
+	const ANSWER = {
+		kind: "answer",
+		id: "answer:toolu_q",
+		parent: null,
+		answers: [
+			{
+				header: "Database",
+				question: "Which database?",
+				chosen: ["Postgres"],
+				written: undefined,
+				notes: "the one we run already",
+				secret: false,
+			},
+			{
+				header: "Features",
+				question: "Which features?",
+				chosen: ["Auth, SSO", "Search"],
+				written: "and CSV, too",
+				notes: undefined,
+				secret: false,
+			},
+			{
+				header: "Name",
+				question: "Which name?",
+				chosen: [],
+				written: "workbench",
+				notes: undefined,
+				secret: false,
+			},
+		],
+	};
+
+	function answered(toolUseResult: unknown): string {
+		return json({
+			type: "user",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "toolu_q",
+						content: "User has answered your questions.",
+						is_error: false,
+					},
+				],
+			},
+			parent_tool_use_id: null,
+			session_id: SESSION,
+			tool_use_result: toolUseResult,
+		});
+	}
+
+	it("is the person's message after the call, read from what the CLI recorded of it", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+			]),
+		);
+		adapter.received(
+			canUseTool("q", {
+				tool_name: "AskUserQuestion",
+				input: { questions: QUESTIONS },
+				tool_use_id: "toolu_q",
+			}),
+		);
+		perform(adapter, {
+			kind: "answer",
+			request: requestId("q"),
+			answer: {
+				kind: "answers",
+				values: {
+					"Which database?": "Postgres",
+					"Which features?": ["Auth, SSO", "Search", "and CSV, too"],
+					"Which name?": "workbench",
+				},
+			},
+		});
+		adapter.received(answered(RECORDED));
+		const entries = adapter.transcript.entries;
+		expect(entries.at(-1)).toEqual(ANSWER);
+		expect(entries.at(-2)).toMatchObject({ id: "tool:toolu_q" });
+	});
+
+	it("is drawn the same by a replay, which reads only what the CLI printed", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+			]),
+		);
+		adapter.received(answered(RECORDED));
+		expect(entry(adapter, "answer:toolu_q")).toEqual(ANSWER);
+	});
+
+	it("is drawn the same from a resumed session's file", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const past = (record: Record<string, unknown>) =>
+			adapter.received(json({ type: "devhub_history", record }));
+		past({
+			type: "assistant",
+			uuid: "a1",
+			message: {
+				id: "m1",
+				role: "assistant",
+				content: [
+					toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+				],
+			},
+		});
+		past({
+			type: "user",
+			uuid: "u1",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "toolu_q",
+						content: "User has answered your questions.",
+					},
+				],
+			},
+			tool_use_result: RECORDED,
+		});
+		expect(entry(adapter, "answer:toolu_q")).toEqual(ANSWER);
+	});
+
+	it("takes a multi-select answer the CLI recorded as a list", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+			]),
+		);
+		adapter.received(
+			answered({
+				questions: [QUESTIONS[1]],
+				answers: { "Which features?": ["Search", "Export"] },
+			}),
+		);
+		expect(entry(adapter, "answer:toolu_q")).toMatchObject({
+			answers: [{ chosen: ["Search", "Export"], written: undefined }],
+		});
+	});
+
+	it("is not drawn for questions the person declined", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+			]),
+		);
+		adapter.received(toolResult("toolu_q", "The user declined.", true));
+		expect(adapter.transcript.entries.map((each) => each.kind)).toEqual([
+			"user",
+			"tool",
+		]);
+	});
+
+	it("breaks the conversation when an answered call's record carries no answers", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
+			]),
+		);
+		expect(() => adapter.received(answered({ questions: QUESTIONS }))).toThrow(
+			/user.tool_use_result.answers/,
+		);
 	});
 });

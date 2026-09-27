@@ -118,6 +118,7 @@ export function attachedImages(value: unknown): readonly ImageRef[] {
 
 export type TranscriptEntry =
   | UserEntry
+  | AnswerEntry
   | CommandEntry
   | AssistantEntry
   | ToolEntry
@@ -141,6 +142,55 @@ export interface UserEntry {
    * message it holds.
    */
   readonly rewindable: boolean;
+}
+
+/**
+ * The person's answer to questions the Agent asked (Claude's AskUserQuestion,
+ * Codex's requestUserInput), drawn as their message. The adapter derives it
+ * from what its CLI records of the answer, so a replay and a resumed session
+ * draw it from the same record the live answer came from.
+ */
+export interface AnswerEntry {
+  readonly kind: "answer";
+  readonly id: EntryId;
+  readonly parent: EntryId | null;
+  /** One per question, in the order they were asked. */
+  readonly answers: readonly QuestionAnswer[];
+}
+
+export interface QuestionAnswer {
+  readonly header: string;
+  readonly question: string;
+  /** The options chosen, by label, in the order the answer gave them. */
+  readonly chosen: readonly string[];
+  /** What the person wrote instead of (or beside) an option, as written. */
+  readonly written: string | undefined;
+  /** The person's note on their choice, when they added one. */
+  readonly notes: string | undefined;
+  /** The question asked for a secret, whose answer is not drawn. */
+  readonly secret: boolean;
+}
+
+/**
+ * An answer as a question's options read it: what names an option is chosen,
+ * and anything else is what the person wrote.
+ */
+export function answerTo(
+  question: Question,
+  given: readonly string[],
+  notes: string | undefined,
+  secret: boolean,
+): QuestionAnswer {
+  const labels = new Set(question.options.map((option) => option.label));
+  const written = given.filter((each) => !labels.has(each) && each !== "");
+  return {
+    header: question.header,
+    question: question.text,
+    chosen: secret ? [] : given.filter((each) => labels.has(each)),
+    written: secret || written.length === 0 ? undefined : written.join("\n"),
+    notes: secret ? undefined : notes,
+    secret,
+  };
 }
 
 /**
@@ -375,13 +425,21 @@ export interface Question {
   readonly id: string;
   readonly header: string;
   readonly text: string;
-  readonly options: readonly {
-    readonly label: string;
-    readonly description: string;
-  }[];
+  readonly options: readonly QuestionOption[];
   readonly multiSelect: boolean;
   /** Whether a free-text "Other" answer is accepted. */
   readonly allowsOther: boolean;
+}
+
+export interface QuestionOption {
+  readonly label: string;
+  readonly description: string;
+  /**
+   * What choosing it would look like — a mockup, a snippet — as Markdown the
+   * card draws in a monospace box beside the options. Only a single-select
+   * question's options are shown with theirs, as the CLI does.
+   */
+  readonly preview: string | undefined;
 }
 
 export interface RequestChoice {

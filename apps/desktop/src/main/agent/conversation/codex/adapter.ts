@@ -44,17 +44,20 @@
 import {
 	EMPTY_SESSION,
 	EMPTY_TRANSCRIPT,
+	answerTo,
 	applyEvent,
 	rewindTargets,
 	entryId,
 	sameRunningTasks,
 	requestId,
+	type AnswerEntry,
 	type AssistantBlock,
 	type ConversationEvent,
 	type ConversationState,
 	type EntryId,
 	type JsonValue,
 	type PendingRequest,
+	type Question,
 	type RequestAnswer,
 	type RequestChoice,
 	type RequestId,
@@ -249,6 +252,16 @@ const USER_MESSAGE_ID = /^devhub-(person|injection)-(\d+)$/;
 interface OpenRequest {
 	readonly rpcId: RpcId;
 	readonly respond: (answer: RequestAnswer) => JsonValue;
+	/** For questions: the person's answer, as the reply DevHub wrote says it. */
+	readonly answered: ((result: JsonValue) => AnswerEntry) | undefined;
+}
+
+/** How a request of questions is answered, and how its answer reads back. */
+interface QuestionReply {
+	readonly build: (
+		values: Extract<RequestAnswer, { kind: "answers" }>["values"],
+	) => JsonValue;
+	readonly answered: (result: JsonValue) => AnswerEntry;
 }
 
 /**
@@ -626,6 +639,19 @@ export class CodexAdapter implements ProtocolAdapter {
 					`DevHub sent Codex a line with neither method nor id: ${line}`,
 				);
 			this.responded.add(rpcKey(message.id));
+			for (const request of this.open.values()) {
+				if (
+					request.answered !== undefined &&
+					rpcKey(request.rpcId) === rpcKey(message.id)
+				) {
+					this.emit({
+						type: "entry",
+						entry: request.answered(
+							(message as { readonly result?: JsonValue }).result ?? null,
+						),
+					});
+				}
+			}
 			return;
 		}
 		const threadOpen =
@@ -1833,11 +1859,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		itemId: string | undefined,
 		subject: PendingRequest["subject"],
 		choices: readonly (RequestChoice & { readonly result?: JsonValue })[],
-		answers:
-			| ((
-					values: Extract<RequestAnswer, { kind: "answers" }>["values"],
-			  ) => JsonValue)
-			| undefined,
+		answers: QuestionReply | undefined,
 	): void {
 		const id = requestId(`codex/${rpcKey(rpcId)}`);
 		const about =
@@ -1853,7 +1875,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				if (answer.kind === "answers") {
 					if (answers === undefined)
 						throw new Error(`request ${id} takes a choice, not answers`);
-					return answers(answer.values);
+					return answers.build(answer.values);
 				}
 				const result = byChoice.get(answer.choiceId);
 				if (result === undefined)
@@ -1864,6 +1886,7 @@ export class CodexAdapter implements ProtocolAdapter {
 					);
 				return result;
 			},
+			answered: answers?.answered,
 		});
 		this.emit({
 			type: "request-opened",
@@ -2084,33 +2107,57 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onUserInput(rpcId: RpcId, params: unknown): void {
 		const request = userInputRequest(this.reader, params);
+		const questions = request.questions.map(
+			(question): Question => ({
+				id: question.id,
+				header: question.header,
+				text: question.question,
+				options: question.options.map((option) => ({
+					...option,
+					preview: undefined,
+				})),
+				multiSelect: false,
+				allowsOther: question.isOther,
+			}),
+		);
+		const parent = this.parentOf(request.threadId) ?? null;
 		this.openRequest(
 			rpcId,
 			request.threadId,
 			request.itemId,
-			{
-				kind: "question",
-				questions: request.questions.map((question) => ({
-					id: question.id,
-					header: question.header,
-					text: question.question,
-					options: question.options,
-					multiSelect: false,
-					allowsOther: question.isOther,
-				})),
-			},
+			{ kind: "question", questions },
 			[],
-			(values) => {
-				const answers: ToolRequestUserInputResponse["answers"] = {};
-				for (const question of request.questions) {
-					const value = values[question.id];
-					if (value === undefined)
-						throw new Error(`no answer to question ${question.id}`);
-					answers[question.id] = {
-						answers: typeof value === "string" ? [value] : [...value],
+			{
+				build: (values) => {
+					const answers: ToolRequestUserInputResponse["answers"] = {};
+					for (const question of request.questions) {
+						const value = values[question.id];
+						if (value === undefined)
+							throw new Error(`no answer to question ${question.id}`);
+						answers[question.id] = {
+							answers: typeof value === "string" ? [value] : [...value],
+						};
+					}
+					return {
+						answers,
+					} satisfies ToolRequestUserInputResponse as JsonValue;
+				},
+				answered: (result) => {
+					const { answers } = result as ToolRequestUserInputResponse;
+					return {
+						kind: "answer",
+						id: entryId(`answer/${rpcKey(rpcId)}`),
+						parent,
+						answers: questions.map((question, index) =>
+							answerTo(
+								question,
+								answers[question.id]?.answers ?? [],
+								undefined,
+								request.questions[index]!.isSecret,
+							),
+						),
 					};
-				}
-				return { answers } satisfies ToolRequestUserInputResponse as JsonValue;
+				},
 			},
 		);
 	}

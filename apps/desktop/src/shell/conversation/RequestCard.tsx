@@ -28,7 +28,8 @@ import {
   useFocusComposer,
 } from "./ConversationContext";
 import { DiffView, JsonView } from "./EntryParts";
-import { SEND_KEY, useMessageKeys } from "./messageKeys";
+import { Markdown } from "./Markdown";
+import { SEND_KEY, useMessageKeys, type MessageKeys } from "./messageKeys";
 
 function Subject({ request }: { readonly request: PendingRequest }) {
   const { subject } = request;
@@ -156,6 +157,123 @@ function Choices({
 
 type Picked = Readonly<Record<string, readonly string[]>>;
 
+/**
+ * A preview's Markdown with each line's leading spaces kept. Markdown drops
+ * the indentation of a paragraph's lines, which would pull an ASCII mockup's
+ * columns out of line; outside a fenced block the spaces become no-break
+ * spaces, which it keeps. A fenced block keeps its lines as they are anyway.
+ */
+function keepIndentation(source: string): string {
+  let fence: string | undefined;
+  return source
+    .split("\n")
+    .map((line) => {
+      const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+      if (marker !== undefined) {
+        if (fence === undefined) fence = marker;
+        else if (marker.startsWith(fence)) fence = undefined;
+        return line;
+      }
+      if (fence !== undefined) return line;
+      return line.replace(/^ +/u, (spaces) => "\u00a0".repeat(spaces.length));
+    })
+    .join("\n");
+}
+
+/**
+ * One question: its options, and — when it is single-select and any option
+ * carries a preview — beside them the preview of the option pointed at,
+ * focused, or picked (the first option's before any is), as the CLI shows it.
+ */
+function QuestionFields({
+  question,
+  picked,
+  pick,
+  other,
+  setOther,
+  keys,
+}: {
+  readonly question: Question;
+  readonly picked: readonly string[];
+  readonly pick: (label: string, on: boolean) => void;
+  readonly other: string;
+  readonly setOther: (text: string) => void;
+  readonly keys: MessageKeys<HTMLTextAreaElement>;
+}) {
+  const [pointed, setPointed] = useState<string | undefined>(undefined);
+  const [focused, setFocused] = useState<string | undefined>(undefined);
+  const previewed =
+    !question.multiSelect &&
+    question.options.some((option) => option.preview !== undefined);
+  const shownLabel =
+    pointed ?? focused ?? picked[0] ?? question.options[0]?.label;
+  const shown = question.options.find((option) => option.label === shownLabel);
+  return (
+    <fieldset className="conversation-question">
+      <legend>{question.header}</legend>
+      <p>{question.text}</p>
+      <div
+        className="conversation-question-body"
+        data-previewed={previewed || undefined}
+      >
+        <div className="conversation-question-options">
+          {question.options.map((option) => (
+            <label
+              key={option.label}
+              className="conversation-question-option"
+              data-shown={(previewed && option === shown) || undefined}
+              onMouseEnter={() => setPointed(option.label)}
+              onMouseLeave={() => setPointed(undefined)}
+            >
+              <input
+                type={question.multiSelect ? "checkbox" : "radio"}
+                name={question.id}
+                checked={picked.includes(option.label)}
+                onChange={(event) => pick(option.label, event.target.checked)}
+                onFocus={() => setFocused(option.label)}
+                onBlur={() => setFocused(undefined)}
+              />
+              <span>{option.label}</span>
+              {option.description ? (
+                <span className="conversation-question-description">
+                  {option.description}
+                </span>
+              ) : null}
+            </label>
+          ))}
+          {question.allowsOther ? (
+            <textarea
+              className="conversation-question-other"
+              aria-label={`${question.header}: other`}
+              placeholder="Other"
+              rows={1}
+              value={other}
+              onChange={(event) => setOther(event.target.value)}
+              {...keys}
+            />
+          ) : null}
+        </div>
+        {previewed && shown !== undefined ? (
+          <div
+            className="conversation-question-preview"
+            role="region"
+            aria-label={`Preview: ${shown.label}`}
+          >
+            {shown.preview === undefined ? (
+              <p className="conversation-question-no-preview">No preview</p>
+            ) : (
+              <Markdown
+                source={keepIndentation(shown.preview)}
+                streaming={false}
+              />
+            )}
+          </div>
+        ) : null}
+      </div>
+    </fieldset>
+  );
+}
+
 function QuestionForm({
   questions,
   busy,
@@ -200,44 +318,17 @@ function QuestionForm({
       }}
     >
       {questions.map((question) => (
-        <fieldset key={question.id} className="conversation-question">
-          <legend>{question.header}</legend>
-          <p>{question.text}</p>
-          {question.options.map((option) => (
-            <label key={option.label} className="conversation-question-option">
-              <input
-                type={question.multiSelect ? "checkbox" : "radio"}
-                name={question.id}
-                checked={(picked[question.id] ?? []).includes(option.label)}
-                onChange={(event) =>
-                  pick(question, option.label, event.target.checked)
-                }
-              />
-              <span>{option.label}</span>
-              {option.description ? (
-                <span className="conversation-question-description">
-                  {option.description}
-                </span>
-              ) : null}
-            </label>
-          ))}
-          {question.allowsOther ? (
-            <textarea
-              className="conversation-question-other"
-              aria-label={`${question.header}: other`}
-              placeholder="Other"
-              rows={1}
-              value={other[question.id] ?? ""}
-              onChange={(event) =>
-                setOther((before) => ({
-                  ...before,
-                  [question.id]: event.target.value,
-                }))
-              }
-              {...keys}
-            />
-          ) : null}
-        </fieldset>
+        <QuestionFields
+          key={question.id}
+          question={question}
+          picked={picked[question.id] ?? []}
+          pick={(label, on) => pick(question, label, on)}
+          other={other[question.id] ?? ""}
+          setOther={(text) =>
+            setOther((before) => ({ ...before, [question.id]: text }))
+          }
+          keys={keys}
+        />
       ))}
       <div className="conversation-request-choices">
         <button

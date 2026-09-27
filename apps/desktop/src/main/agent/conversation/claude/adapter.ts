@@ -39,6 +39,7 @@
 
 import {
 	EMPTY_TRANSCRIPT,
+	answerTo,
 	applyEvent,
 	rewindTargets,
 	entryId,
@@ -52,6 +53,7 @@ import {
 	type ImageRef,
 	type JsonValue,
 	type PlanStep,
+	type Question,
 	type RequestChoice,
 	type RequestId,
 	type SessionFacts,
@@ -78,11 +80,13 @@ import {
 } from "../protocolAdapter.js";
 import { todoPlan, toolTitle } from "../toolTitle.js";
 import {
+	ASK_USER_QUESTION,
 	NO_TOOL_RESULT,
 	ORIGIN_KEY,
 	decodeInitialize,
 	decodeReceived,
 	decodeSent,
+	type AnsweredQuestions,
 	type ClaudeLine,
 	type ContentBlock,
 	type InitializeFacts,
@@ -1645,6 +1649,22 @@ export class ClaudeAdapter implements ProtocolAdapter {
 							},
 			},
 		});
+		if (tool.tool === ASK_USER_QUESTION && status === "succeeded") {
+			if (result.answered === undefined)
+				return this.mismatch(
+					"user.tool_use_result.answers",
+					"the answers to the questions an AskUserQuestion call asked",
+				);
+			this.emit({
+				type: "entry",
+				entry: {
+					kind: "answer",
+					id: entryId(`answer:${block.toolUseId}`),
+					parent: tool.parent,
+					answers: answersOf(result.answered),
+				},
+			});
+		}
 	}
 
 	/**
@@ -1885,6 +1905,56 @@ function answerResponse(
 		updatedInput: permission.input,
 		updatedPermissions: [suggestion],
 	};
+}
+
+/**
+ * What the person answered, question by question, as the CLI recorded it: the
+ * record the live answer, a replay and a resumed session all read.
+ */
+function answersOf(answered: AnsweredQuestions) {
+	return answered.questions.map((question) =>
+		answerTo(
+			question,
+			givenAnswers(question, answered.answers[question.id] ?? ""),
+			answered.notes[question.id],
+			false,
+		),
+	);
+}
+
+/**
+ * A question's answer as the answers it gives. A multi-select one's labels
+ * come joined with `", "` — and a label, or the words written beside them,
+ * may hold a `", "` too — so the joined answer is read back label by label:
+ * the longest run of pieces that names an option is that option, and a run
+ * that names none is what the person wrote.
+ */
+function givenAnswers(
+	question: Question,
+	answer: string | readonly string[],
+): readonly string[] {
+	if (typeof answer !== "string") return answer;
+	if (!question.multiSelect) return [answer];
+	const labels = new Set(question.options.map((option) => option.label));
+	const pieces = answer.split(", ");
+	const given: string[] = [];
+	let written: string[] = [];
+	let at = 0;
+	while (at < pieces.length) {
+		let end = pieces.length;
+		while (end > at && !labels.has(pieces.slice(at, end).join(", "))) end -= 1;
+		if (end === at) {
+			written.push(pieces[at]!);
+			at += 1;
+			continue;
+		}
+		if (written.length > 0) given.push(written.join(", "));
+		written = [];
+		given.push(pieces.slice(at, end).join(", "));
+		at = end;
+	}
+	if (written.length > 0) given.push(written.join(", "));
+	return given;
 }
 
 /** The plan a call sets: TodoWrite's. */

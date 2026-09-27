@@ -1091,7 +1091,7 @@ describe("an answer typed into a request", () => {
             id: "targets",
             header: "Targets",
             text: "Where should it run?",
-            options: [{ label: "macOS", description: "" }],
+            options: [{ label: "macOS", description: "", preview: undefined }],
             multiSelect: true,
             allowsOther: true,
           },

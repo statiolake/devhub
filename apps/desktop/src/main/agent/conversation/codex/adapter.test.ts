@@ -139,6 +139,14 @@ function outline(
 			case "user":
 				line = `user(${entry.origin}): ${entry.text}`;
 				break;
+			case "answer":
+				line = `answer: ${entry.answers
+					.map(
+						(each) =>
+							`${each.header}=${each.secret ? "(secret)" : [...each.chosen, ...(each.written === undefined ? [] : [`"${each.written}"`])].join("|")}`,
+					)
+					.join(", ")}`;
+				break;
 			case "assistant":
 				line = `assistant${entry.streaming ? "(streaming)" : ""}: ${entry.blocks
 					.map((block) =>
@@ -1030,6 +1038,76 @@ describe("requests that are not approvals", () => {
 			id: 7,
 			result: { answers: { lang: { answers: ["Rust"] } } },
 		});
+	});
+
+	/** requestUserInput with a question of each kind: options with Other, and a secret. */
+	const ASKING = {
+		id: 8,
+		method: "item/tool/requestUserInput",
+		params: {
+			threadId: MAIN,
+			turnId: "turn-1",
+			itemId: "ask",
+			isBlocking: true,
+			autoResolutionMs: null,
+			questions: [
+				{
+					id: "lang",
+					header: "Language",
+					question: "Which language?",
+					isOther: true,
+					isSecret: false,
+					options: [
+						{ label: "TypeScript", description: "" },
+						{ label: "Rust", description: "" },
+					],
+				},
+				{
+					id: "token",
+					header: "Token",
+					question: "Your token?",
+					isOther: true,
+					isSecret: true,
+					options: null,
+				},
+			],
+		},
+	};
+
+	it("draws the person's answer as their message once DevHub has written it", () => {
+		const harness = ready();
+		harness.receive(ASKING);
+		expect(harness.transcript.entries).toEqual([]);
+		harness.command({
+			kind: "answer",
+			request: harness.transcript.requests[0]!.id,
+			answer: {
+				kind: "answers",
+				values: { lang: "Zig", token: "not-a-real-token" },
+			},
+		});
+		expect(outline(harness.transcript)).toEqual([
+			'answer: Language="Zig", Token=(secret)',
+		]);
+	});
+
+	it("draws the same answer from a replay of what DevHub wrote", () => {
+		const live = ready();
+		live.receive(ASKING);
+		live.command({
+			kind: "answer",
+			request: live.transcript.requests[0]!.id,
+			answer: { kind: "answers", values: { lang: "Rust", token: "x" } },
+		});
+		const replayed = ready();
+		replayed.receive(ASKING);
+		// A replay feeds `in.log` back to `sent`, as it was written.
+		for (const event of replayed.adapter.sent(live.written.at(-1)!).events)
+			replayed.transcript = applyEvent(replayed.transcript, event);
+		expect(replayed.transcript.entries).toEqual(live.transcript.entries);
+		expect(outline(replayed.transcript)).toEqual([
+			"answer: Language=Rust, Token=(secret)",
+		]);
 	});
 
 	it("grants the permissions asked for, for a turn or the session, or grants none", () => {

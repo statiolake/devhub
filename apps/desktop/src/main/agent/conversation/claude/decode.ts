@@ -282,6 +282,20 @@ export interface ToolUseResult {
 	readonly patch: { readonly path: string; readonly hunks: string } | undefined;
 	/** Where the CLI saved output too large for the conversation. */
 	readonly persistedPath: string | undefined;
+	/**
+	 * What the person answered to AskUserQuestion's questions: the questions
+	 * again, each one's answer by its text (the chosen labels joined with
+	 * `", "`, or the words written instead), and the note the person added to
+	 * one (`annotations[text].notes`).
+	 */
+	readonly answered: AnsweredQuestions | undefined;
+}
+
+export interface AnsweredQuestions {
+	readonly questions: readonly Question[];
+	/** A multi-select answer is its labels joined with `", "`, or a list of them. */
+	readonly answers: Readonly<Record<string, string | readonly string[]>>;
+	readonly notes: Readonly<Record<string, string>>;
 }
 
 export const NO_TOOL_RESULT: ToolUseResult = {
@@ -293,6 +307,7 @@ export const NO_TOOL_RESULT: ToolUseResult = {
 	backgroundTask: undefined,
 	patch: undefined,
 	persistedPath: undefined,
+	answered: undefined,
 };
 
 /** A block of a tool result's content. */
@@ -678,6 +693,10 @@ function decodeQuestions(
 								read.description,
 								`${path}.options[${at}].description`,
 							) ?? "",
+						preview: f.optionalString(
+							read.preview,
+							`${path}.options[${at}].preview`,
+						),
 					};
 				}),
 			multiSelect:
@@ -1193,6 +1212,48 @@ function decodeToolUseResult(
 				? undefined
 				: { path, hunks: hunks.join("\n") },
 		persistedPath: text("persistedOutputPath"),
+		answered:
+			result.answers === undefined
+				? undefined
+				: answeredQuestions(result, at, f),
+	};
+}
+
+function answeredQuestions(
+	result: JsonObject,
+	at: string,
+	f: Fields,
+): AnsweredQuestions {
+	const answers = f.object(result.answers, `${at}.answers`);
+	const annotations =
+		result.annotations === undefined || result.annotations === null
+			? {}
+			: f.object(result.annotations, `${at}.annotations`);
+	const notes: Record<string, string> = {};
+	for (const [question, annotation] of Object.entries(annotations)) {
+		const path = `${at}.annotations[${JSON.stringify(question)}]`;
+		const note = f.optionalString(
+			f.object(annotation, path).notes,
+			`${path}.notes`,
+		);
+		if (note !== undefined && note !== "") notes[question] = note;
+	}
+	return {
+		questions: decodeQuestions(result, at, f),
+		answers: Object.fromEntries(
+			Object.entries(answers).map(([question, answer]) => {
+				const path = `${at}.answers[${JSON.stringify(question)}]`;
+				return [
+					question,
+					Array.isArray(answer)
+						? f
+								.array(answer, path)
+								.map((each, index) => f.string(each, `${path}[${index}]`))
+						: f.string(answer, path),
+				];
+			}),
+		),
+		notes,
 	};
 }
 
