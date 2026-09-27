@@ -167,6 +167,12 @@ export interface AnswerEntry {
   readonly answers: readonly QuestionAnswer[];
 }
 
+/** A question a call asked, as it was asked, and how the person answered it. */
+export interface AskedQuestion {
+  readonly question: Question;
+  readonly answer: QuestionAnswer;
+}
+
 export interface QuestionAnswer {
   readonly header: string;
   readonly question: string;
@@ -268,6 +274,12 @@ export interface ToolEntry {
    * one. Drawn as the call's readable view, whatever its status.
    */
   readonly change: readonly FileDiff[] | undefined;
+  /**
+   * The questions the call asked the person (Claude's AskUserQuestion), each
+   * with the answer it was given, once it has one: drawn as the call's
+   * readable view, the chosen option's preview with it.
+   */
+  readonly asked: readonly AskedQuestion[] | undefined;
   /**
    * The call was refused by the CLI's own permission check (a rule, auto
    * mode's classifier), not by the person: who refused it and why.

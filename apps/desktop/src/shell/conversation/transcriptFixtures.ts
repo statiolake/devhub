@@ -9,6 +9,7 @@
 
 import {
   type Denial,
+  type AskedQuestion,
   type FileDiff,
   type UserOrigin,
   applyEvents,
@@ -96,6 +97,7 @@ export function tool(
     plan,
     denial,
     change,
+    asked,
   }: {
     name?: string;
     input?: JsonValue;
@@ -108,6 +110,7 @@ export function tool(
     plan?: readonly PlanStep[];
     denial?: Denial;
     change?: readonly FileDiff[];
+    asked?: readonly AskedQuestion[];
   } = {},
 ): TranscriptEntry {
   return {
@@ -125,6 +128,7 @@ export function tool(
     plan,
     denial,
     change,
+    asked,
   };
 }
 

@@ -20,6 +20,7 @@ import { useState } from "react";
 import type {
   PendingRequest,
   Question,
+  QuestionOption,
   RequestAnswer,
   RequestChoice,
 } from "../../model/conversation";
@@ -181,6 +182,26 @@ function keepIndentation(source: string): string {
 }
 
 /**
+ * The preview of an option, in its monospace box: here beside the options,
+ * and in the answered call's record beside the option chosen.
+ */
+export function OptionPreview({ option }: { readonly option: QuestionOption }) {
+  return (
+    <div
+      className="conversation-question-preview"
+      role="region"
+      aria-label={`Preview: ${option.label}`}
+    >
+      {option.preview === undefined ? (
+        <p className="conversation-question-no-preview">No preview</p>
+      ) : (
+        <Markdown source={keepIndentation(option.preview)} streaming={false} />
+      )}
+    </div>
+  );
+}
+
+/**
  * One question: its options, and — when it is single-select and any option
  * carries a preview — beside them the preview of the option pointed at,
  * focused, or picked (the first option's before any is), as the CLI shows it.
@@ -254,20 +275,7 @@ function QuestionFields({
           ) : null}
         </div>
         {previewed && shown !== undefined ? (
-          <div
-            className="conversation-question-preview"
-            role="region"
-            aria-label={`Preview: ${shown.label}`}
-          >
-            {shown.preview === undefined ? (
-              <p className="conversation-question-no-preview">No preview</p>
-            ) : (
-              <Markdown
-                source={keepIndentation(shown.preview)}
-                streaming={false}
-              />
-            )}
-          </div>
+          <OptionPreview option={shown} />
         ) : null}
       </div>
     </fieldset>

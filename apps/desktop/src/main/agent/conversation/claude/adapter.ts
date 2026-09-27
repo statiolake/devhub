@@ -45,6 +45,7 @@ import {
 	entryId,
 	requestId,
 	sameRunningTasks,
+	type AskedQuestion,
 	type AssistantBlock,
 	type AssistantEntry,
 	type ConversationEvent,
@@ -1357,6 +1358,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						plan: planOf(block.name, block.input),
 						denial: undefined,
 						change: changeOf(block.name, block.input, undefined),
+						// Known once answered: the result says what was asked and chosen.
+						asked: undefined,
 					},
 				});
 			}
@@ -1665,12 +1668,24 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		// A call that only started its subagent — in the background, or as
 		// a teammate — does not end it.
 		const started = launchedTask !== undefined || result.teammate !== undefined;
+		const asksQuestions =
+			tool.tool === ASK_USER_QUESTION && status === "succeeded";
+		if (asksQuestions && result.answered === undefined)
+			return this.mismatch(
+				"user.tool_use_result.answers",
+				"the answers to the questions an AskUserQuestion call asked",
+			);
+		const asked =
+			asksQuestions && result.answered !== undefined
+				? askedOf(result.answered)
+				: undefined;
 		this.emit({
 			type: "entry",
 			entry: {
 				...tool,
 				status,
 				output: toolOutput(tool, block, result),
+				asked: asked ?? tool.asked,
 				change:
 					result.patch === undefined
 						? tool.change
@@ -1695,19 +1710,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 							},
 			},
 		});
-		if (tool.tool === ASK_USER_QUESTION && status === "succeeded") {
-			if (result.answered === undefined)
-				return this.mismatch(
-					"user.tool_use_result.answers",
-					"the answers to the questions an AskUserQuestion call asked",
-				);
+		// The person's answer is their message, as well as the call's record.
+		if (asked !== undefined) {
 			this.emit({
 				type: "entry",
 				entry: {
 					kind: "answer",
 					id: entryId(`answer:${block.toolUseId}`),
 					parent: tool.parent,
-					answers: answersOf(result.answered),
+					answers: asked.map((each) => each.answer),
 				},
 			});
 		}
@@ -2028,15 +2039,16 @@ function answerResponse(
  * What the person answered, question by question, as the CLI recorded it: the
  * record the live answer, a replay and a resumed session all read.
  */
-function answersOf(answered: AnsweredQuestions) {
-	return answered.questions.map((question) =>
-		answerTo(
+function askedOf(answered: AnsweredQuestions): readonly AskedQuestion[] {
+	return answered.questions.map((question) => ({
+		question,
+		answer: answerTo(
 			question,
 			givenAnswers(question, answered.answers[question.id] ?? ""),
 			answered.notes[question.id],
 			false,
 		),
-	);
+	}));
 }
 
 /**

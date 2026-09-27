@@ -32,6 +32,7 @@ const running: ConversationEvent[] = [
 			plan: undefined,
 			denial: undefined,
 			change: undefined,
+			asked: undefined,
 		},
 	},
 ];

@@ -23,6 +23,7 @@ import {
 import {
   workState,
   type AnswerEntry,
+  type AskedQuestion,
   type AssistantBlock,
   type AssistantEntry,
   type CommandEntry,
@@ -49,7 +50,7 @@ import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { Markdown } from "./Markdown";
-import { RequestCard } from "./RequestCard";
+import { OptionPreview, RequestCard } from "./RequestCard";
 import { StatusMark, workNote } from "./StatusMark";
 import { SubagentMessage } from "./SubagentMessage";
 import {
@@ -500,15 +501,65 @@ function ReadableView({
 }) {
   const images = outputImages(entry);
   const plan = planShown ? entry.plan : undefined;
-  if (entry.change === undefined && plan === undefined && images.length === 0)
+  if (
+    entry.change === undefined &&
+    plan === undefined &&
+    entry.asked === undefined &&
+    images.length === 0
+  )
     return null;
   return (
     <div className="conversation-readable">
       <Clip>
         {entry.change !== undefined ? <DiffView files={entry.change} /> : null}
         {plan !== undefined ? <PlanChecklist steps={plan} /> : null}
+        {entry.asked !== undefined ? <AskedView asked={entry.asked} /> : null}
         <ImageStrip images={images} />
       </Clip>
+    </div>
+  );
+}
+
+/**
+ * What a call asked the person, answered: each question over what was
+ * chosen (or written), and — for a single-select question, as the card had
+ * it — the chosen option's preview in the same monospace box.
+ */
+function AskedView({ asked }: { readonly asked: readonly AskedQuestion[] }) {
+  return (
+    <div className="conversation-asked">
+      {asked.map(({ question, answer }) => {
+        const previewed = question.multiSelect
+          ? []
+          : question.options.filter(
+              (option) =>
+                option.preview !== undefined &&
+                answer.chosen.includes(option.label),
+            );
+        return (
+          <div key={question.id} className="conversation-asked-question">
+            <div className="conversation-answer-question">
+              {question.header === "" ? null : (
+                <span className="conversation-answer-header">
+                  {question.header}
+                </span>
+              )}
+              {question.text}
+            </div>
+            <ul className="conversation-asked-chosen">
+              {answer.chosen.map((label) => (
+                <li key={label}>{label}</li>
+              ))}
+              {answer.written === undefined ? null : (
+                <li data-written="">{answer.written}</li>
+              )}
+            </ul>
+            {previewed.map((option) => (
+              <OptionPreview key={option.label} option={option} />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

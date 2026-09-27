@@ -1618,6 +1618,8 @@ export class CodexAdapter implements ProtocolAdapter {
 			plan: undefined,
 			denial: undefined,
 			change,
+			// Codex's questions are a request of their own, not a call's.
+			asked: undefined,
 		};
 	}
 

@@ -397,6 +397,22 @@ picked, else the first. A preview is Markdown in a monospace box; its lines
 keep their spaces and are never wrapped, so an ASCII mockup's columns stay in
 line, and a long one scrolls inside the box. A multi-select question shows no
 previews, as in the CLI.
+`claude -p` does write previews: a model asking in a GUI Agent may give each
+option a multi-line mockup (box-drawing characters, Japanese text), and the
+card shows it as written. Box-drawing characters take one column of the
+monospace font; a full-width character is drawn by whichever font has it, so
+it is as wide as that font makes it, which with the default stack is not
+exactly two columns — a box with Japanese in it lines up only as well as the
+fonts allow.
+
+The answered call keeps a **record of what it asked**
+(`ToolEntry.asked`, read from the same record of the answer as the bubble
+below): under its row, outside its fold, in its readable view, each question
+over the option chosen (or the words written instead) and, for a
+single-select question, the chosen option's preview in the card's box. The
+options not chosen, and their previews, stay in the call's input in the fold.
+Codex's questions are a request of their own rather than a call, carry no
+previews, and have only the bubble.
 
 Once answered, **your answer is your message**: the same bubble on the right
 as a message you wrote, each question quietly over what you chose — every
@@ -1030,13 +1046,6 @@ rate limits.
 - **Rewinding a Claude conversation restarts the CLI.** MCP servers and background
   tasks start again with it. Right after a compaction, the resume point is
   the last message DevHub saw before it, not the compaction summary.
-- **Claude writes no option previews in `claude -p`.** The CLI generates
-  `preview` only when told a preview format, which the Agent SDK's
-  `toolConfig.askUserQuestion.previewFormat` does through an environment
-  variable the CLI does not document; its interactive mode turns Markdown
-  previews on by itself, `-p` does not. DevHub passes nothing undocumented, so
-  a GUI Agent's questions usually arrive without previews; when one carries
-  them, the card shows them.
 - **The journal is never trimmed.** Partial messages are journaled too, so a
   long session's `out` can reach tens of megabytes, and a restart reads all of
   it once.

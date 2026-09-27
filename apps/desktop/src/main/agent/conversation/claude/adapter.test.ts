@@ -20,6 +20,7 @@ import {
 	rewindTargets,
 	type ConversationEvent,
 	type NoticeEntry,
+	type Question,
 	type ToolEntry,
 	type TranscriptEntry,
 	type UserEntry,
@@ -4343,6 +4344,81 @@ describe("the person's answer to AskUserQuestion", () => {
 		expect(() => adapter.received(answered({ questions: QUESTIONS }))).toThrow(
 			/user.tool_use_result.answers/,
 		);
+	});
+});
+
+describe("an AskUserQuestion whose options carry previews", () => {
+	const LINES = fixture("claude-question-previews.handwritten.ndjson");
+	const ASKING = LINES.findIndex(({ line }) => line.includes("can_use_tool"));
+	const CALL = LINES.find(
+		({ line }) =>
+			line.startsWith('{"type":"assistant"') && line.includes("toolu_q1"),
+	)!;
+	const RESULT = LINES.find(({ line }) => line.includes("tool_use_result"))!;
+	const ASKED = (
+		JSON.parse(CALL.line) as {
+			message: { content: [{ input: { questions: unknown[] } }] };
+		}
+	).message.content[0].input.questions as {
+		question: string;
+		options: { label: string; preview?: string }[];
+	}[];
+	const previews = ASKED[0]!.options.map((option) => option.preview);
+
+	function previewsOf(questions: readonly Question[]) {
+		return questions.map((question) =>
+			question.options.map((option) => option.preview),
+		);
+	}
+
+	function askedOfCall(adapter: ClaudeAdapter) {
+		const call = entry(adapter, "tool:toolu_q1") as ToolEntry;
+		return call.asked!.map(({ question, answer }) => ({
+			previews: question.options.map((option) => option.preview),
+			chosen: answer.chosen,
+		}));
+	}
+
+	const RECORD = [
+		{ previews, chosen: ["タブ"] },
+		{ previews: [undefined, undefined], chosen: ["自動"] },
+	];
+
+	it("hands the card every option's preview as written, lines and box-drawing and all, for each question", () => {
+		expect(previews.every((each) => each!.includes("\n│"))).toBe(true);
+		const adapter = new ClaudeAdapter("boot");
+		play(adapter, LINES.slice(0, ASKING + 1));
+		const [request] = adapter.transcript.requests;
+		expect(request!.subject.kind).toBe("question");
+		if (request!.subject.kind !== "question") return;
+		expect(previewsOf(request!.subject.questions)).toEqual([
+			previews,
+			[undefined, undefined],
+		]);
+		// Before the answer, the call keeps no record of it.
+		expect(
+			(entry(adapter, "tool:toolu_q1") as ToolEntry).asked,
+		).toBeUndefined();
+	});
+
+	it("keeps what was asked and chosen on the call once answered, the previews with it, and the answer as the person's message", () => {
+		const adapter = new ClaudeAdapter("boot");
+		play(adapter, LINES);
+		expect(askedOfCall(adapter)).toEqual(RECORD);
+		expect(entry(adapter, "answer:toolu_q1")).toMatchObject({
+			answers: [{ chosen: ["タブ"] }, { chosen: ["自動"] }],
+		});
+	});
+
+	it("keeps the same record in a resumed session's file", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const past = (line: string) => {
+			const record = JSON.parse(line) as Record<string, unknown>;
+			adapter.received(json({ type: "devhub_history", record }));
+		};
+		past(CALL.line);
+		past(RESULT.line);
+		expect(askedOfCall(adapter)).toEqual(RECORD);
 	});
 });
 

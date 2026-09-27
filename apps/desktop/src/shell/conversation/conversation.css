@@ -1352,6 +1352,32 @@
   font-size: 0.9em;
 }
 
+/* An answered AskUserQuestion call's record, in its readable view: each
+   question over what was chosen, and the chosen option's preview in the
+   card's own box. */
+.conversation-asked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.conversation-asked-chosen {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.conversation-asked-chosen li::before {
+  color: var(--tertiary);
+  content: "→ ";
+}
+
+.conversation-asked-question > .conversation-question-preview {
+  max-width: 100%;
+  margin-top: var(--space-1);
+  width: fit-content;
+}
+
 /* The person's message on its way to the CLI: the same bubble, quieter,
    until the CLI's echo puts the message itself in its place. */
 .conversation-entry[data-sending] .conversation-user {

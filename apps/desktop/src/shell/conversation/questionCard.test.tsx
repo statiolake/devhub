@@ -21,6 +21,8 @@ import {
   type AnswerEntry,
   type Question,
 } from "../../model/conversation";
+import { readFileSync } from "node:fs";
+import { claudeLines, claudeTranscript } from "./adapterFixtures";
 import { draw, entry, installResizeObserver } from "./surfaceTestKit";
 import { opened, put, transcriptOf, user } from "./transcriptFixtures";
 
@@ -216,5 +218,102 @@ describe("the person's answer", () => {
         ].join("\n\n"),
       ),
     );
+  });
+});
+
+describe("a claude -p question with multi-line box-drawing previews, from asked to answered", () => {
+  // Relative to the package, where vitest runs.
+  const LINES = claudeLines(
+    readFileSync(
+      "src/main/agent/conversation/fixtures/claude-question-previews.handwritten.ndjson",
+      "utf8",
+    ),
+  );
+  const ASKING = LINES.findIndex(({ line }) => line.includes("can_use_tool"));
+  const PENDING = claudeTranscript(LINES.slice(0, ASKING + 1));
+  const ANSWERED = claudeTranscript(LINES);
+  const [LAYOUT_ASKED, SAVING_ASKED] = (
+    JSON.parse(LINES[ASKING]!.line) as {
+      request: {
+        input: {
+          questions: {
+            question: string;
+            options: { label: string; preview?: string }[];
+          }[];
+        };
+      };
+    }
+  ).request.input.questions;
+
+  /** A preview box's text as its lines, the kept indentation read back as spaces. */
+  function linesOf(box: HTMLElement): string {
+    return box.querySelector("p")!.textContent!.replaceAll("\u00a0", " ");
+  }
+
+  it("shows the first question's previews beside its options, every line whole, and none for the second", () => {
+    draw(PENDING);
+    const [layout, saving] = [
+      ...document.querySelectorAll<HTMLElement>(".conversation-question"),
+    ];
+    expect(layout).toHaveTextContent(LAYOUT_ASKED!.question);
+    expect(saving).toHaveTextContent(SAVING_ASKED!.question);
+    expect(
+      saving!.querySelector(".conversation-question-body"),
+    ).not.toHaveAttribute("data-previewed");
+    expect(within(saving!).queryByRole("region")).toBeNull();
+    // One paragraph, the preview's lines as they were written, in order.
+    expect(linesOf(preview())).toBe(LAYOUT_ASKED!.options[0]!.preview);
+    fireEvent.mouseEnter(
+      within(layout!).getByRole("radio", { name: /タブ/ }).closest("label")!,
+    );
+    expect(preview()).toHaveAccessibleName("Preview: タブ");
+    expect(linesOf(preview())).toBe(LAYOUT_ASKED!.options[1]!.preview);
+  });
+
+  it("draws a preview monospace, its lines never wrapped, so the boxes stay in line", () => {
+    // jsdom applies no stylesheet, so the rules are read where they are written.
+    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+    const box = /\n\.conversation-question-preview \{([^}]*)\}/.exec(css);
+    expect(box?.[1]).toMatch(/font-family:\s*var\(--font-mono\)/);
+    const lines =
+      /\.conversation-question-preview \.conversation-markdown :is\(p, li, td, th\) \{([^}]*)\}/.exec(
+        css,
+      );
+    expect(lines?.[1]).toMatch(/white-space:\s*pre;/);
+  });
+
+  it("keeps, once answered, the answer as the person's bubble and the call's record of what was asked and chosen, the chosen preview with it", () => {
+    draw(ANSWERED);
+    expect(document.querySelector(".conversation-question")).toBeNull();
+    const bubble = entry("answer:toolu_q1");
+    expect(
+      [...bubble.querySelectorAll(".conversation-answer-given li")].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["タブ", "自動"]);
+
+    const call = entry("tool:toolu_q1");
+    const readable = call.querySelector<HTMLElement>(".conversation-readable")!;
+    // Outside the call's fold, cut by the one Clip.
+    expect(readable.closest("details")).toBeNull();
+    expect(readable.querySelector(".conversation-clip-box")).not.toBeNull();
+    const [layout, saving] = [
+      ...readable.querySelectorAll<HTMLElement>(".conversation-asked-question"),
+    ];
+    expect(layout).toHaveTextContent(LAYOUT_ASKED!.question);
+    expect(
+      within(layout!)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["タブ"]);
+    const shown = within(layout!).getByRole("region");
+    expect(shown).toHaveAccessibleName("Preview: タブ");
+    expect(shown).toHaveClass("conversation-question-preview");
+    expect(linesOf(shown)).toBe(LAYOUT_ASKED!.options[1]!.preview);
+    // Only the option chosen: the others' previews are not kept on view.
+    expect(within(readable).getAllByRole("region")).toHaveLength(1);
+    expect(saving).toHaveTextContent(SAVING_ASKED!.question);
+    expect(within(saving!).getByRole("listitem")).toHaveTextContent("自動");
+    expect(within(saving!).queryByRole("region")).toBeNull();
   });
 });

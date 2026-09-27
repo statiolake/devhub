@@ -106,6 +106,7 @@ function tool(
       plan: undefined,
       denial: undefined,
       change: undefined,
+      asked: undefined,
       ...fields,
     },
   };
