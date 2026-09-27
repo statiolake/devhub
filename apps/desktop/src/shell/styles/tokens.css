@@ -157,6 +157,10 @@
   );
   --focus-ring: var(--accent);
 
+  /* A scrollbar's thumb: a line, and firmer under the pointer. */
+  --ink-scrollbar: 22%;
+  --ink-scrollbar-hover: 38%;
+
   /* Hover/pressed washes that work on any material. */
   --ink-wash: 6%;
   --ink-wash-strong: 12%;
@@ -490,6 +494,8 @@
        fill firms up rather than staying a whisper. */
     --ink-selection: 30%;
     --ink-selection-inactive: 17%;
+    --ink-scrollbar: 45%;
+    --ink-scrollbar-hover: 65%;
   }
 }
 
@@ -580,6 +586,45 @@ a {
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* Every scrollbar on DevHub's own pages is one thin thumb with no track,
+   in the page's ink, a little wider under the pointer: the native bar with
+   its gutter reads as a document's, not a panel's. The thumb is drawn inside
+   a transparent border, which is what widens on hover.
+
+   A terminal's is xterm's own, drawn by xterm (it keeps its theme), so its
+   subtree is left alone. The workbench is a page of its own and never sees
+   this sheet. */
+:not(.xterm, .xterm *)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+
+:not(.xterm, .xterm *)::-webkit-scrollbar-track,
+:not(.xterm, .xterm *)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+:not(.xterm, .xterm *)::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(
+      in srgb,
+      var(--primary) var(--ink-scrollbar),
+      transparent
+    )
+    padding-box;
+}
+
+:not(.xterm, .xterm *)::-webkit-scrollbar-thumb:hover {
+  border-width: 2px;
+  background-color: color-mix(
+    in srgb,
+    var(--primary) var(--ink-scrollbar-hover),
+    transparent
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {
