@@ -1797,14 +1797,134 @@
   transition: border-color 120ms ease;
 }
 
-/* How full the context is, under the box: quiet type and a thin meter, lined
-   up with the box's inner edge, coloured only near the end (`usageLevel.ts`). */
+/* Under the box, lined up with its inner edge: what works in the background
+   on the left, how full the context is on the right. */
+.conversation-footer {
+  display: flex;
+  align-items: flex-start;
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+  gap: var(--space-3);
+}
+
+/* What the Agent has working in the background: the CLI footer's quiet line,
+   opened into a list whose each line goes to the call that started it. */
+.conversation-background {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--tertiary);
+  font-size: 0.75em;
+}
+
+.conversation-background-toggle {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  gap: 0.4em;
+  text-align: left;
+  user-select: none;
+}
+
+.conversation-background-toggle:hover,
+.conversation-background-toggle[aria-expanded="true"] {
+  color: var(--secondary);
+}
+
+.conversation-background-toggle svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+/* The Sidebar's background ink, as a still dot: something is going on. */
+.conversation-background-mark {
+  width: 0.5em;
+  height: 0.5em;
+  flex: none;
+  border-radius: 50%;
+  background: var(--status-background);
+}
+
+.conversation-background-count {
+  flex: none;
+}
+
+.conversation-background-titles {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-background-titles::before {
+  content: "· ";
+}
+
+.conversation-background-list {
+  overflow: auto;
+  max-height: 10em;
+  padding: 0;
+  margin: var(--space-1) 0 0;
+  list-style: none;
+}
+
+.conversation-background-line {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  padding: 2px var(--space-1);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: none;
+  color: var(--secondary);
+  font: inherit;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+button.conversation-background-line {
+  cursor: pointer;
+}
+
+button.conversation-background-line:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.conversation-background-toggle:focus-visible,
+.conversation-background-line:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.conversation-background-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-background-kind,
+.conversation-background-state {
+  flex: none;
+  color: var(--tertiary);
+}
+
+/* How full the context is, beside it: quiet type and a thin meter, coloured
+   only near the end (`usageLevel.ts`). */
 .conversation-context {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 var(--space-3);
-  margin-top: var(--space-1);
+  margin-left: auto;
+  flex: none;
   color: var(--tertiary);
   font-size: 0.75em;
   font-variant-numeric: tabular-nums;

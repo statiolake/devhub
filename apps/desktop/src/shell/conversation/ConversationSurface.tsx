@@ -36,6 +36,7 @@ import {
 import type { AppAppearance } from "../../ipc/appShell";
 import {
   rewindTargets,
+  type EntryId,
   type Transcript,
   type UserEntry,
 } from "../../model/conversation";
@@ -80,6 +81,18 @@ function EmptyTranscript() {
       </div>
     </div>
   );
+}
+
+/**
+ * Something to bring into view in the pane: the first element `selector`
+ * finds, which must be drawn (`missing` says what broke if it is not). `open`
+ * opens what of its own it has folded and says what takes the keyboard; by
+ * default the element itself.
+ */
+interface Reveal {
+  readonly selector: string;
+  readonly missing: string;
+  readonly open?: (found: HTMLElement) => HTMLElement;
 }
 
 /** The terminal's text size when the page has no appearance yet. */
@@ -195,43 +208,76 @@ export function ConversationSurface({
     void actions.interrupt().catch(actions.reportFailure);
   };
 
-  // A request card in the conversation while a subagent fills the pane is
-  // shown by switching back first; the card is then found once it is drawn.
-  const [revealing, setRevealing] = useState(false);
+  // Something drawn in the conversation while a subagent fills the pane is
+  // shown by switching back first; it is then found once it is drawn.
+  const [revealing, setRevealing] = useState<Reveal | undefined>(undefined);
   const { maximize } = subagents;
-  const showFirstRequest = useCallback(() => {
-    const card = surface.current?.querySelector<HTMLElement>(
-      ".conversation-request",
-    );
-    if (!card) {
-      throw new Error(
-        "requests are waiting, but no request card is drawn for any of them",
+  const reveal = useCallback(
+    (wanted: Reveal) => {
+      const found = surface.current?.querySelector<HTMLElement>(
+        wanted.selector,
       );
-    }
-    if (card.closest(".conversation-body[hidden]")) {
-      maximize(undefined);
-      setRevealing(true);
-      return;
-    }
-    // A card inside a subagent the person folded is still the thing to
-    // answer: every fold around it opens, which the subagent records as the
-    // person's own choice.
-    for (
-      let fold = card.parentElement?.closest("details");
-      fold;
-      fold = fold.parentElement?.closest("details")
-    ) {
-      fold.open = true;
-    }
-    card.scrollIntoView({ block: "center" });
-    card.focus();
-  }, [maximize]);
+      if (!found) throw new Error(wanted.missing);
+      if (found.closest(".conversation-body[hidden]")) {
+        maximize(undefined);
+        setRevealing(wanted);
+        return;
+      }
+      // Inside a subagent the person folded it is still the thing asked
+      // for: every fold around it opens, which the subagent records as the
+      // person's own choice.
+      for (
+        let fold = found.parentElement?.closest("details");
+        fold;
+        fold = fold.parentElement?.closest("details")
+      ) {
+        fold.open = true;
+      }
+      const focused = wanted.open?.(found) ?? found;
+      found.scrollIntoView({ block: "center" });
+      focused.focus();
+    },
+    [maximize],
+  );
 
   useLayoutEffect(() => {
-    if (!revealing) return;
-    setRevealing(false);
-    showFirstRequest();
-  }, [revealing, showFirstRequest]);
+    if (revealing === undefined) return;
+    setRevealing(undefined);
+    reveal(revealing);
+  }, [revealing, reveal]);
+
+  const showFirstRequest = useCallback(
+    () =>
+      reveal({
+        selector: ".conversation-request",
+        missing:
+          "requests are waiting, but no request card is drawn for any of them",
+      }),
+    [reveal],
+  );
+
+  // A background task's call, opened where it is drawn.
+  const showCall = useCallback(
+    (call: EntryId) =>
+      reveal({
+        selector: `[data-entry-id="${CSS.escape(call)}"]`,
+        missing: `a background task names call ${call}, which is not drawn`,
+        open: (entry) => {
+          const call = entry.querySelector<HTMLDetailsElement>(
+            ":scope > .conversation-tool-entry > details.conversation-tool",
+          );
+          const summary = call?.querySelector<HTMLElement>(":scope > summary");
+          if (!call || !summary) {
+            throw new Error(
+              `call ${entry.dataset.entryId} is not drawn as a tool call`,
+            );
+          }
+          call.open = true;
+          return summary;
+        },
+      }),
+    [reveal],
+  );
 
   // One size for the whole page, a step from the terminal's, zoom included,
   // so Cmd+- on the Agents page scales a GUI Agent as it does a TUI one.
@@ -325,6 +371,7 @@ export function ConversationSurface({
                     ) : null}
                     <Composer
                       transcript={transcript}
+                      showCall={showCall}
                       inputRef={composer}
                       pickers={pickers}
                       openSetting={openSetting}

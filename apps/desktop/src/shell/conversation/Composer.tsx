@@ -15,7 +15,8 @@
  * picker for the setting it changes.
  *
  * The box holds the field and, under it, a toolbar: the session's settings on
- * the left, Stop (while a turn runs) and Send on the right. Under the box, how
+ * the left, Stop (while a turn runs) and Send on the right. Under the box, what
+ * the Agent has working in the background (`BackgroundTasks.tsx`) and how
  * full the context is (`ContextUsage.tsx`).
  *
  * On an empty composer ↑ and ↓ walk what the person has already said to this
@@ -55,6 +56,7 @@ import {
 import {
   SENDABLE_IMAGE_TYPES,
   type ConversationState,
+  type EntryId,
   type ImageRef,
   type PendingMessage,
   type SlashCommand,
@@ -62,6 +64,7 @@ import {
   type UserEntry,
 } from "../../model/conversation";
 import { commandQuery, completions, inputHistory } from "./commandCompletion";
+import { BackgroundTasks } from "./BackgroundTasks";
 import { ContextUsage } from "./ContextUsage";
 import {
   useConversationActions,
@@ -425,6 +428,7 @@ export function Composer({
   pickers,
   openSetting,
   restored,
+  showCall,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -435,6 +439,8 @@ export function Composer({
   readonly openSetting: (setting: SettingName) => void;
   /** The message a rewind took out of the conversation, whose words come back here. */
   readonly restored: UserEntry | undefined;
+  /** Bring a call in the conversation into view, opened: where a background task goes. */
+  readonly showCall: (call: EntryId) => void;
 }) {
   const { send, interrupt, reportFailure, openResume } =
     useConversationActions();
@@ -682,7 +688,13 @@ export function Composer({
           </div>
         </div>
       </div>
-      <ContextUsage usage={transcript.usage} />
+      <div className="conversation-footer">
+        <BackgroundTasks
+          tasks={transcript.backgroundTasks}
+          showCall={showCall}
+        />
+        <ContextUsage usage={transcript.usage} />
+      </div>
     </div>
   );
 }
