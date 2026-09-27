@@ -1391,6 +1391,28 @@
   white-space: pre-wrap;
 }
 
+/* What the CLI reports beside the conversation — a push it made, an event
+   DevHub has no words for, a retry — is one quiet line, whatever it reports:
+   the faintest ink, smaller than a tool row, no box, close to what comes
+   before it. What it was is behind its fold. Warnings and errors keep their
+   weight. */
+.conversation-notice[data-level="info"] {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--tertiary);
+  font-size: 0.8em;
+}
+
+.conversation-entry
+  + .conversation-entry:has(> .conversation-notice[data-level="info"]) {
+  margin-top: var(--space-1);
+}
+
+.conversation-notice[data-level="info"] .conversation-notice-raw > summary {
+  font-size: 1em;
+}
+
 /* A turn that did not complete: its outcome on a rule, and why under it. A
    completed turn draws nothing (`EntryView.tsx`). */
 .conversation-turn-end {

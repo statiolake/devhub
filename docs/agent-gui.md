@@ -513,6 +513,10 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   `thinking_tokens` are not drawn; `background_tasks_changed` is the list of
   background tasks under the composer (*Background tasks*, above). A system
   event DevHub has never heard of is an information notice (below).
+  Every information notice, whatever it reports, is drawn the one way: a
+  quiet line in the faintest ink, smaller than a tool row, with no box, close
+  to what comes before it, and the event it is about behind its fold.
+  Warnings and errors keep their tinted box.
 - Thinking the API withholds (it sends the block without its text), redacted
   thinking, and citation deltas.
 
