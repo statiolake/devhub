@@ -1,16 +1,15 @@
 /**
- * Finding words in a drawn conversation: the one search behind the find bar
- * (`FindBar.tsx`).
+ * Finding words in a drawn conversation: reading its text, and showing a
+ * match — what the find bar's search (`transcriptSearch.ts`) stands on.
  *
- * It searches the transcript as the page draws it — every word of it, since
+ * It reads the transcript as the page draws it — every word of it, since
  * the whole transcript is always in the document (`ConversationSurface`) and
  * nothing that folds leaves anything out: a closed tool call keeps its input
  * and output in its `<details>`, a cut readable view keeps its end under the
  * `Clip`, a long message not from the person keeps its lines past the fold
- * `hidden`. So what is found is what the conversation says, folded or not,
- * and a match is a DOM `Range` the page can highlight and bring into view.
+ * `hidden`. So what is found is what the conversation says, folded or not.
  *
- * Only the conversation's own words are searched. The page's controls
+ * Only the conversation's own words are read. The page's controls
  * (buttons: Copy, Rewind, Show all) and what is drawn for the eye only
  * (`aria-hidden`: a diff's line numbers) are not, and a match never runs
  * from one block into the next — the end of one paragraph and the start of
@@ -26,6 +25,13 @@ export const FIND_FOLD = "data-find-fold";
 
 /** Dispatched on a `FIND_FOLD` element holding the current match: open. */
 export const REVEAL_EVENT = "conversation-find-reveal";
+
+/**
+ * What stands between two blocks' text in `SectionText.text`. A query never
+ * holds one — the find field is an `<input>`, which drops line breaks — so
+ * no match runs across it.
+ */
+export const BLOCK_BREAK = "\n";
 
 /** Elements whose text is not the conversation's: controls, and what is drawn for the eye only. */
 const SKIPPED = "button, svg, [aria-hidden='true']";
@@ -51,53 +57,12 @@ const INLINE = new Set([
   "U",
 ]);
 
-/** The nearest element around `node` that is a block of its own. */
-function blockOf(node: Node, root: Element): Element {
+/** The nearest element around `node`, up to `top`, that is a block of its own. */
+function blockOf(node: Node, top: Node): Node {
   let element = node.parentElement;
-  while (element !== null && element !== root && INLINE.has(element.tagName))
+  while (element !== null && element !== top && INLINE.has(element.tagName))
     element = element.parentElement;
-  return element ?? root;
-}
-
-/** Each run of text that reads as one block, as its text nodes in order. */
-function textRuns(root: Element): Text[][] {
-  const walker = root.ownerDocument.createTreeWalker(
-    root,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode: (node) =>
-        node.parentElement?.closest(SKIPPED)
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT,
-    },
-  );
-  const runs: Text[][] = [];
-  let block: Element | undefined;
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const text = node as Text;
-    if (text.data === "") continue;
-    const at = blockOf(text, root);
-    if (at !== block || runs.length === 0) runs.push([]);
-    block = at;
-    runs.at(-1)!.push(text);
-  }
-  return runs;
-}
-
-/** Where in a run's text nodes the character at `offset` of their joined text is. */
-function pointAt(
-  nodes: readonly Text[],
-  starts: readonly number[],
-  offset: number,
-  end: boolean,
-): [Text, number] {
-  // An end falls at the end of the node it closes, not the start of the next.
-  for (let index = nodes.length - 1; index >= 0; index -= 1) {
-    const start = starts[index]!;
-    if (end ? offset > start : offset >= start)
-      return [nodes[index]!, offset - start];
-  }
-  throw new Error(`offset ${offset} is outside the text it was found in`);
+  return element ?? top;
 }
 
 /**
@@ -105,48 +70,147 @@ function pointAt(
  * longer (`İ`) is kept as it is, so an offset in the folded text is the same
  * offset in the text.
  */
-function foldCase(text: string): string {
+export function foldCase(text: string): string {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) return lower;
   let folded = "";
   for (const character of text) {
-    const lower = character.toLowerCase();
-    folded += lower.length === character.length ? lower : character;
+    const each = character.toLowerCase();
+    folded += each.length === character.length ? each : character;
   }
   return folded;
 }
 
 /**
- * Every place `query` occurs in what `root` draws, in document order. Case
- * is ignored unless `caseSensitive`. An empty query finds nothing.
+ * The words one part of the transcript draws (a child of the transcript's
+ * root: an entry), read a slice at a time — a long tool output or a subagent's
+ * whole record is too much to read between two frames. Its text nodes in
+ * order, where each starts in the joined `text`, and the joined text, its
+ * blocks apart by `BLOCK_BREAK`.
+ *
+ * It holds as long as the part is not drawn again; the search reads it anew
+ * when it is.
  */
-export function findMatches(
-  root: Element,
-  query: string,
-  caseSensitive: boolean,
-): Range[] {
-  if (query === "") return [];
-  const fold = (text: string) => (caseSensitive ? text : foldCase(text));
-  const wanted = fold(query);
-  const matches: Range[] = [];
-  for (const nodes of textRuns(root)) {
-    const starts: number[] = [];
-    let joined = "";
-    for (const node of nodes) {
-      starts.push(joined.length);
-      joined += node.data;
+export class SectionText {
+  readonly nodes: Text[] = [];
+  /** Where each of `nodes` starts in `text`. */
+  readonly starts: number[] = [];
+  #text: string | undefined;
+  #folded: string | undefined;
+  #parts: string[] = [];
+  #length = 0;
+  #block: Node | undefined;
+  readonly #walker: TreeWalker | undefined;
+
+  constructor(readonly top: Node) {
+    if (top instanceof Text) {
+      if (top.data !== "") this.#add(top, top);
+      this.#finish();
+      return;
     }
-    const haystack = fold(joined);
-    for (
-      let at = haystack.indexOf(wanted);
-      at >= 0;
-      at = haystack.indexOf(wanted, at + wanted.length)
-    ) {
-      const range = root.ownerDocument.createRange();
-      range.setStart(...pointAt(nodes, starts, at, false));
-      range.setEnd(...pointAt(nodes, starts, at + wanted.length, true));
-      matches.push(range);
+    if (top instanceof Element && top.matches(SKIPPED)) {
+      this.#finish();
+      return;
     }
+    this.#walker = top.ownerDocument!.createTreeWalker(
+      top,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) =>
+          node instanceof Text
+            ? NodeFilter.FILTER_ACCEPT
+            : (node as Element).matches(SKIPPED)
+              ? NodeFilter.FILTER_REJECT
+              : NodeFilter.FILTER_SKIP,
+      },
+    );
   }
-  return matches;
+
+  /** Whether it is read to the end. */
+  get read(): boolean {
+    return this.#text !== undefined;
+  }
+
+  /** The joined text; only once `read`. */
+  get text(): string {
+    if (this.#text === undefined)
+      throw new Error(
+        "a part of the transcript was searched before it was read",
+      );
+    return this.#text;
+  }
+
+  /** The joined text in lower case, offset for offset (`foldCase`). */
+  get folded(): string {
+    this.#folded ??= foldCase(this.text);
+    return this.#folded;
+  }
+
+  /** Read on until the end or until `over` says the slice is spent; whether it is read. */
+  readOn(over: () => boolean): boolean {
+    if (this.#text !== undefined) return true;
+    const walker = this.#walker!;
+    let since = 0;
+    for (
+      let node = walker.nextNode();
+      node !== null;
+      node = walker.nextNode()
+    ) {
+      const text = node as Text;
+      if (text.data !== "") this.#add(text, blockOf(text, this.top));
+      since += 1;
+      if (since >= 256) {
+        since = 0;
+        if (over()) return false;
+      }
+    }
+    this.#finish();
+    return true;
+  }
+
+  #add(text: Text, block: Node): void {
+    if (this.nodes.length > 0 && block !== this.#block) {
+      this.#parts.push(BLOCK_BREAK);
+      this.#length += BLOCK_BREAK.length;
+    }
+    this.#block = block;
+    this.nodes.push(text);
+    this.starts.push(this.#length);
+    this.#parts.push(text.data);
+    this.#length += text.data.length;
+  }
+
+  #finish(): void {
+    this.#text = this.#parts.join("");
+    this.#parts = [];
+  }
+
+  /** Which of `nodes` holds the character at `offset` (an `end` closes the node before it, not opens the next). */
+  nodeAt(offset: number, end = false): number {
+    let low = 0;
+    let high = this.starts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      const start = this.starts[middle]!;
+      if (end ? start < offset : start <= offset) low = middle;
+      else high = middle - 1;
+    }
+    return low;
+  }
+
+  /** The characters `offset` to `offset + length` of `text`, as a range of the document. */
+  range(offset: number, length: number): Range {
+    const range = this.top.ownerDocument!.createRange();
+    const first = this.nodeAt(offset);
+    const last = this.nodeAt(offset + length, true);
+    // Placed on its first node before its ends are set: a new range sits at
+    // the top of the document, and moving an end from there to the match
+    // compares the two across the whole document (in jsdom, node by node).
+    range.selectNodeContents(this.nodes[first]!);
+    range.setEnd(this.nodes[last]!, offset + length - this.starts[last]!);
+    range.setStart(this.nodes[first]!, offset - this.starts[first]!);
+    return range;
+  }
 }
 
 /**
@@ -171,34 +235,33 @@ export function revealMatch(match: Range, root: Element): void {
   }
 }
 
-/** Whether two ranges start at the same place. */
-export function sameStart(one: Range, other: Range): boolean {
-  return (
-    one.startContainer === other.startContainer &&
-    one.startOffset === other.startOffset
-  );
-}
-
 /**
- * Which of `matches` is the current one after they were found again, so it
- * stays put while the conversation grows: the one that starts where
- * `previous` did, else the first after it, else the first. A previous match
- * whose text was drawn again (its entry changed) is kept by its place in the
- * list, `previousIndex`. Nothing when there is no match.
+ * Scroll a match to the middle of everything that scrolls around it, from the
+ * inside out: a code block's own sideways scroll, then the transcript's.
+ * Centred on the match itself, not on the element it is in — a tool output
+ * can be many screens tall.
  */
-export function keptCurrent(
-  matches: readonly Range[],
-  previous: Range | undefined,
-  previousIndex: number | undefined,
-): number | undefined {
-  if (matches.length === 0) return undefined;
-  if (previous === undefined || previousIndex === undefined) return 0;
-  if (!previous.startContainer.isConnected)
-    return Math.min(previousIndex, matches.length - 1);
-  const same = matches.findIndex((match) => sameStart(match, previous));
-  if (same >= 0) return same;
-  const after = matches.findIndex(
-    (match) => match.compareBoundaryPoints(Range.START_TO_START, previous) > 0,
-  );
-  return after >= 0 ? after : 0;
+export function scrollMatchIntoView(match: Range): void {
+  for (
+    let element = match.startContainer.parentElement;
+    element !== null;
+    element = element.parentElement
+  ) {
+    const style = getComputedStyle(element);
+    const down =
+      /auto|scroll/.test(style.overflowY) &&
+      element.scrollHeight > element.clientHeight;
+    const across =
+      /auto|scroll/.test(style.overflowX) &&
+      element.scrollWidth > element.clientWidth;
+    if (!down && !across) continue;
+    const box = match.getBoundingClientRect();
+    const view = element.getBoundingClientRect();
+    if (down)
+      element.scrollTop +=
+        box.top + box.height / 2 - (view.top + view.height / 2);
+    if (across)
+      element.scrollLeft +=
+        box.left + box.width / 2 - (view.left + view.width / 2);
+  }
 }

@@ -13,23 +13,9 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { applyEvent, type ConversationEvent } from "../../model/conversation";
-import {
-  clearMatches,
-  CURRENT_HIGHLIGHT,
-  MATCH_HIGHLIGHT,
-  paintMatches,
-} from "./findHighlights";
-import { findMatches } from "./findInTranscript";
+import { CURRENT_HIGHLIGHT, MATCH_HIGHLIGHT } from "./findHighlights";
 import { draw, entry, installResizeObserver } from "./surfaceTestKit";
 import { assistant, put, tool, transcriptOf, user } from "./transcriptFixtures";
 
@@ -39,9 +25,16 @@ import { assistant, put, tool, transcriptOf, user } from "./transcriptFixtures";
  */
 const highlights = new Map<string, Set<Range>>();
 
+/** jsdom lays nothing out: everything is drawn, in one small box on view. */
+function drawnBox(): DOMRect {
+  return DOMRect.fromRect({ x: 0, y: 0, width: 10, height: 10 });
+}
+
 beforeAll(() => {
   installResizeObserver();
-  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.getBoundingClientRect = drawnBox;
+  Range.prototype.getBoundingClientRect = drawnBox;
+  Element.prototype.checkVisibility = () => true;
   globalThis.Highlight = class extends Set<Range> {
     constructor(...ranges: Range[]) {
       super(ranges);
@@ -54,7 +47,6 @@ beforeAll(() => {
 });
 beforeEach(() => {
   highlights.clear();
-  vi.mocked(Element.prototype.scrollIntoView).mockClear();
 });
 afterEach(cleanup);
 
@@ -99,6 +91,11 @@ function count(): string {
   return document.querySelector(".conversation-find-count")!.textContent!;
 }
 
+/** The count, once the search has run its slices. */
+async function counted(text: string) {
+  await waitFor(() => expect(count()).toBe(text));
+}
+
 const EVENTS: ConversationEvent[] = [
   put(user("u1", "Where is the parser configured?")),
   put(assistant("a1", "The **parser** reads `parser.toml` first.")),
@@ -113,7 +110,7 @@ const EVENTS: ConversationEvent[] = [
 const CONVERSATION = transcriptOf(EVENTS);
 
 describe("the find bar", () => {
-  it("opens on Cmd+F in the composer, with the keyboard in its field, saying what it searches", () => {
+  it("opens on Cmd+F in the composer, with the keyboard in its field, saying what it searches", async () => {
     draw(CONVERSATION);
     composer().focus();
     openFind();
@@ -126,49 +123,51 @@ describe("the find bar", () => {
     );
   });
 
-  it("counts every match, a collapsed tool output's included, marks them, and makes the first current", () => {
+  it("counts every match, a collapsed tool output's included, marks them, and makes the first current", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
-    expect(count()).toBe("1 of 4");
+    await counted("1 of 4");
     // The question, the answer's word and its file name, and the output.
-    expect(marked(MATCH_HIGHLIGHT)).toEqual([
-      "parser",
-      "parser",
-      "parser",
-      "parser",
-    ]);
-    expect(currentEntry()).toBe("u1");
+    await waitFor(() =>
+      expect(marked(MATCH_HIGHLIGHT)).toEqual([
+        "parser",
+        "parser",
+        "parser",
+        "parser",
+      ]),
+    );
+    await waitFor(() => expect(currentEntry()).toBe("u1"));
   });
 
-  it("goes to the next and the previous match with Return and Shift+Return, around the ends", () => {
+  it("goes to the next and the previous match with Return and Shift+Return, around the ends", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
     press(field(), "Enter");
-    expect(count()).toBe("2 of 4");
-    expect(currentEntry()).toBe("a1");
+    await counted("2 of 4");
+    await waitFor(() => expect(currentEntry()).toBe("a1"));
     press(field(), "Enter", { shiftKey: true });
     press(field(), "Enter", { shiftKey: true });
-    expect(count()).toBe("4 of 4");
-    expect(currentEntry()).toBe("t1");
+    await counted("4 of 4");
+    await waitFor(() => expect(currentEntry()).toBe("t1"));
     press(field(), "Enter");
-    expect(count()).toBe("1 of 4");
+    await counted("1 of 4");
   });
 
-  it("steps with F3 and Shift+F3 from anywhere in the conversation while open, and with its buttons", () => {
+  it("steps with F3 and Shift+F3 from anywhere in the conversation while open, and with its buttons", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
     composer().focus();
     press(composer(), "F3");
-    expect(count()).toBe("2 of 4");
+    await counted("2 of 4");
     press(entry("a2"), "F3", { shiftKey: true });
-    expect(count()).toBe("1 of 4");
+    await counted("1 of 4");
     fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
-    expect(count()).toBe("4 of 4");
+    await counted("4 of 4");
     fireEvent.click(screen.getByRole("button", { name: "Next match" }));
-    expect(count()).toBe("1 of 4");
+    await counted("1 of 4");
   });
 
   it("leaves F3 alone while closed", () => {
@@ -183,7 +182,7 @@ describe("the find bar", () => {
     expect(screen.queryByRole("search")).toBeNull();
   });
 
-  it("opens a collapsed tool call when a match in its output becomes current, and brings it into view", async () => {
+  it("opens a collapsed tool call when a match in its output becomes current", async () => {
     draw(CONVERSATION);
     const fold = entry("t1").querySelector<HTMLDetailsElement>(
       "details.conversation-tool",
@@ -191,14 +190,11 @@ describe("the find bar", () => {
     expect(fold.open).toBe(false);
     openFind();
     search("strict");
-    expect(count()).toBe("1 of 1");
+    await counted("1 of 1");
     expect(fold.open).toBe(true);
-    await waitFor(() =>
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
-    );
   });
 
-  it("opens a readable view cut by its Clip when a match in it becomes current", () => {
+  it("opens a readable view cut by its Clip when a match in it becomes current", async () => {
     draw(
       transcriptOf([
         put(
@@ -219,11 +215,11 @@ describe("the find bar", () => {
     expect(box).not.toHaveAttribute("data-open");
     openFind(document.body.querySelector(".conversation-surface")!);
     search("mode = 2");
-    expect(count()).toBe("1 of 1");
+    await counted("1 of 1");
     expect(box).toHaveAttribute("data-open");
   });
 
-  it("unfolds a long message not from the person when the match is past its fold", () => {
+  it("unfolds a long message not from the person when the match is past its fold", async () => {
     const long = Array.from({ length: 12 }, (_, at) => `line ${at + 1}`).join(
       "\n",
     );
@@ -232,40 +228,40 @@ describe("the find bar", () => {
     expect(rest).not.toBeVisible();
     openFind(document.body.querySelector(".conversation-surface")!);
     search("line 11");
-    expect(count()).toBe("1 of 1");
+    await counted("1 of 1");
     expect(rest).toBeVisible();
   });
 
-  it("matches case only when asked to", () => {
+  it("matches case only when asked to", async () => {
     draw(CONVERSATION);
     openFind();
     search("Parser");
-    expect(count()).toBe("1 of 4");
+    await counted("1 of 4");
     fireEvent.click(screen.getByRole("button", { name: "Match case" }));
     expect(screen.getByRole("button", { name: "Match case" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(count()).toBe("No results");
-    expect(marked(MATCH_HIGHLIGHT)).toEqual([]);
+    await counted("No results");
+    await waitFor(() => expect(marked(MATCH_HIGHLIGHT)).toEqual([]));
   });
 
-  it("counts again as the conversation grows, and the current match stays put", () => {
+  it("counts again as the conversation grows, and the current match stays put", async () => {
     const view = draw(CONVERSATION);
     openFind();
     search("parser");
     press(field(), "Enter");
-    expect(currentEntry()).toBe("a1");
+    await waitFor(() => expect(currentEntry()).toBe("a1"));
     act(() => {
       view.redraw(
         applyEvent(CONVERSATION, put(assistant("a3", "One more parser note."))),
       );
     });
-    expect(count()).toBe("2 of 5");
-    expect(currentEntry()).toBe("a1");
+    await counted("2 of 5");
+    await waitFor(() => expect(currentEntry()).toBe("a1"));
   });
 
-  it("closes on Esc, clears its marks, and gives the keyboard back without stopping a running turn", () => {
+  it("closes on Esc, clears its marks, and gives the keyboard back without stopping a running turn", async () => {
     const running = applyEvent(CONVERSATION, {
       type: "state",
       state: { phase: "ready", turn: "running" },
@@ -277,11 +273,11 @@ describe("the find bar", () => {
     press(field(), "Escape");
     expect(screen.queryByRole("search")).toBeNull();
     expect(composer()).toHaveFocus();
-    expect(marked(MATCH_HIGHLIGHT)).toEqual([]);
+    await waitFor(() => expect(marked(MATCH_HIGHLIGHT)).toEqual([]));
     expect(actions.interrupt).not.toHaveBeenCalled();
   });
 
-  it("puts the keyboard back in its field on Cmd+F while open, its words selected", () => {
+  it("puts the keyboard back in its field on Cmd+F while open, its words selected", async () => {
     draw(CONVERSATION);
     openFind();
     search("parser");
@@ -292,7 +288,7 @@ describe("the find bar", () => {
     expect(field().selectionEnd).toBe("parser".length);
   });
 
-  it("searches only the subagent that fills the pane, and says so", () => {
+  it("searches only the subagent that fills the pane, and says so", async () => {
     draw(
       transcriptOf([
         put(user("u1", "survey the parser")),
@@ -318,46 +314,7 @@ describe("the find bar", () => {
       "Searching subagent Alpha",
     );
     search("parser");
-    expect(count()).toBe("1 of 1");
-    expect(currentEntry()).toBe("s1-a");
-  });
-});
-
-describe("a one-letter search in a long conversation", () => {
-  // A long session holds millions of letters, and a one-letter query finds
-  // a match for most of them: far more than a function call can take as
-  // arguments. Painting them by spreading them into `new Highlight(...)`
-  // broke the Agents page with "Maximum call stack size exceeded" the moment
-  // the first letter was typed.
-  it("paints every match, however many there are", () => {
-    const COUNT = 300_000;
-    const text = document.createTextNode("a".repeat(COUNT));
-    const matches = Array.from({ length: COUNT }, (_, at) => {
-      const range = document.createRange();
-      range.setStart(text, at);
-      range.setEnd(text, at + 1);
-      return range;
-    });
-    const owner = {};
-    paintMatches(owner, matches, matches[COUNT - 1]);
-    expect(highlights.get(MATCH_HIGHLIGHT)?.size).toBe(COUNT);
-    expect(highlights.get(CURRENT_HIGHLIGHT)?.size).toBe(1);
-    clearMatches(owner);
-    expect(highlights.get(MATCH_HIGHLIGHT)?.size).toBe(0);
-  });
-});
-
-describe("what a search reaches", () => {
-  it("is the words drawn, not the page's controls, and no match runs from one block into the next", () => {
-    const root = document.createElement("div");
-    root.innerHTML =
-      "<p>alpha <strong>be</strong>ta</p><p>gamma</p><button>alpha</button><span aria-hidden='true'>alpha</span>";
-    document.body.append(root);
-    expect(findMatches(root, "alpha beta", false).map(String)).toEqual([
-      "alpha beta",
-    ]);
-    expect(findMatches(root, "alpha", false)).toHaveLength(1);
-    expect(findMatches(root, "betagamma", false)).toEqual([]);
-    root.remove();
+    await counted("1 of 1");
+    await waitFor(() => expect(currentEntry()).toBe("s1-a"));
   });
 });

@@ -6,10 +6,10 @@
  * and a page holds one registry of them — while the Agents page may hold
  * several GUI conversations, each with its own find bar. So every bar owns
  * its own ranges here, and the two named highlights are the union of what
- * every bar has: all matches, and each bar's current one.
+ * every bar has: its matches on view, and its current one.
  */
 
-/** Every match of every open find bar. */
+/** The matches on view of every open find bar. */
 export const MATCH_HIGHLIGHT = "conversation-find";
 /** Each open find bar's current match. */
 export const CURRENT_HIGHLIGHT = "conversation-find-current";
@@ -31,10 +31,9 @@ function registry(): HighlightRegistry {
 }
 
 /**
- * The two highlights, rebuilt from every bar's ranges. Added one by one, never
- * spread into `new Highlight(...)`: a one-letter query over a long
- * conversation finds millions of matches, and an argument list that long
- * overflows the stack ("Maximum call stack size exceeded").
+ * The two highlights, rebuilt from every bar's ranges, added one by one: a
+ * list of any length is never spread into a call's arguments, whose number
+ * the stack bounds.
  */
 function repaint(): void {
   const highlights = registry();
@@ -48,12 +47,36 @@ function repaint(): void {
   highlights.set(CURRENT_HIGHLIGHT, current);
 }
 
-/** What `owner`'s find bar has found now, and which of it is current. */
+/** Whether two ranges cover the same text. */
+function same(one: Range | undefined, other: Range | undefined): boolean {
+  if (one === undefined || other === undefined) return one === other;
+  return (
+    one.startContainer === other.startContainer &&
+    one.startOffset === other.startOffset &&
+    one.endContainer === other.endContainer &&
+    one.endOffset === other.endOffset
+  );
+}
+
+/**
+ * What `owner`'s find bar has found on view now, and its current match.
+ * Nothing is repainted when that is what is painted already — as while a
+ * search counts on far from the view: each change to the registry has the
+ * page repaint every highlight.
+ */
 export function paintMatches(
   owner: object,
   matches: readonly Range[],
   current: Range | undefined,
 ): void {
+  const was = painted.get(owner);
+  if (
+    was !== undefined &&
+    same(was.current, current) &&
+    was.matches.length === matches.length &&
+    was.matches.every((match, index) => same(match, matches[index]))
+  )
+    return;
   painted.set(owner, { matches, current });
   repaint();
 }

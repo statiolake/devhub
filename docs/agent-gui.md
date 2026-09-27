@@ -214,9 +214,19 @@ and Shift+Return in the field, and F3 and Shift+F3 anywhere in the pane while
 the bar is open, go to the next and the previous match, around the ends; Cmd+F
 again puts the keyboard back in the field with its words selected; Esc closes
 it and gives the keyboard back to where it was (a running turn is not stopped
-by that Esc). Every match is marked, the current one more strongly (the CSS
-Custom Highlight API, so the document React draws is not touched), and the
-current one is brought into view.
+by that Esc). The matches on view are marked, the current one more strongly
+(the CSS Custom Highlight API, so the document React draws is not touched),
+and the current one is brought into view.
+
+The count is exact however large — a one-letter query over a long session
+finds millions — and never holds up the page: the search runs in slices of a
+few milliseconds, one task each, so typing, scrolling and streaming go on
+between them. The count grows while it runs (*3 of 120,000…*, *Searching…*
+before the first), a new keystroke drops the running search, and ↑ ↓ step
+through the matches found so far. A match is kept as its offset in its
+entry's text, not as a live `Range` (the page keeps every live range up to
+date on each change to its text); ranges are made only for the matches
+within a screen of the view, again as it scrolls or changes size.
 
 It searches what the pane shows — the conversation, or the subagent that
 fills the pane — and says which; subagents in the column beside it are not
@@ -231,8 +241,8 @@ the document: a closed tool call keeps its input and output in its
 not from the person keeps its lines past the fold `hidden`. A match that
 becomes current inside a fold opens it — each `<details>` around it, and the
 `Clip` or the long message, which open on the find bar's reveal event. The
-count follows the conversation as it streams, and the current match stays
-where it was.
+count follows the conversation as it streams — only the entries added or
+drawn again are searched again — and the current match stays where it was.
 
 The keys reach the page untouched: main's chord layer claims only its prefix
 (Cmd+Q) and the chords after it, the editing keys on DevHub's own chrome and
