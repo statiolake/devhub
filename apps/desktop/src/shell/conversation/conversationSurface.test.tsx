@@ -16,12 +16,15 @@ import {
   act,
   cleanup,
   fireEvent,
+  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { entryId, type UserEntry } from "../../model/conversation";
+import type { AppAppearance } from "../../ipc/appShell";
+import { ConversationSurface } from "./ConversationSurface";
 import { COPIED_MS } from "./CopyButton";
 import {
   draw,
@@ -1049,5 +1052,35 @@ describe("follow-scroll", () => {
     expect(
       screen.getByRole("button", { name: /New output/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("size", () => {
+  function sizeAt(terminalFontSize: number | undefined): string {
+    render(
+      <ConversationSurface
+        transcript={transcriptOf([put(assistant("hello", "hi"))])}
+        actions={fakeActions()}
+        appearance={
+          terminalFontSize === undefined
+            ? undefined
+            : ({ terminalFontSize } as AppAppearance)
+        }
+        hidden={false}
+        label="Agent 1"
+      />,
+    );
+    const surface = document.querySelector<HTMLElement>(
+      ".conversation-surface",
+    );
+    const size = surface?.style.getPropertyValue("--conversation-font-size");
+    cleanup();
+    return size ?? "";
+  }
+
+  it("is a step larger than the terminal's, and follows it as it zooms", () => {
+    expect(sizeAt(undefined)).toBe("15px");
+    expect(sizeAt(13)).toBe("15px");
+    expect(sizeAt(26)).toBe("30px");
   });
 });

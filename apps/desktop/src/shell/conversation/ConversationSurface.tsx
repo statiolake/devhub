@@ -81,8 +81,18 @@ function EmptyTranscript() {
   );
 }
 
-/** The transcript's text size when the page has no appearance yet. */
+/** The terminal's text size when the page has no appearance yet. */
 const DEFAULT_FONT_SIZE = 13;
+
+/**
+ * The conversation's text size, a step larger than the terminal's.
+ * Proportional prose at a terminal's size reads smaller than its monospace
+ * does; at this step the terminal's 13 px is 15 px of prose, and the
+ * transcript's code (0.88em) lands back near the terminal's own size.
+ */
+function conversationFontSize(terminalFontSize: number): number {
+  return (terminalFontSize * 15) / 13;
+}
 
 export function ConversationSurface({
   transcript,
@@ -222,10 +232,13 @@ export function ConversationSurface({
     showFirstRequest();
   }, [revealing, showFirstRequest]);
 
-  // One size for the whole page: the terminal's, zoom included, so Cmd+- on
-  // the Agents page reads the same on a GUI Agent as on a TUI one.
+  // One size for the whole page, a step from the terminal's, zoom included,
+  // so Cmd+- on the Agents page scales a GUI Agent as it does a TUI one.
+  const fontSize = conversationFontSize(
+    appearance?.terminalFontSize ?? DEFAULT_FONT_SIZE,
+  );
   const style = {
-    "--conversation-font-size": `${appearance?.terminalFontSize ?? DEFAULT_FONT_SIZE}px`,
+    "--conversation-font-size": `${fontSize}px`,
   } as CSSProperties;
 
   const topLevel = tree.children.get(null) ?? NO_ENTRIES;

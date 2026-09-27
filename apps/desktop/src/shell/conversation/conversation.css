@@ -14,8 +14,9 @@
  * colours the editor beside it uses — and are picked with `light-dark()` from
  * whichever scheme the page is in.
  *
- * Size is one number, `--conversation-font-size` (the terminal's, zoom
- * included); everything else is in `em` of it.
+ * Size is one number, `--conversation-font-size` (a step larger than the
+ * terminal's, zoom included: `conversationFontSize`); everything else is in
+ * `em` of it.
  */
 
 .conversation-surface {
@@ -31,7 +32,7 @@
   flex-direction: column;
   background: var(--surface);
   color: var(--primary);
-  font-size: var(--conversation-font-size, 13px);
+  font-size: var(--conversation-font-size);
   line-height: 1.6;
 }
 
