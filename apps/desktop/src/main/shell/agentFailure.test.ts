@@ -68,6 +68,28 @@ describe("a launch that cannot resume the session it was asked to", () => {
 	});
 });
 
+/**
+ * The owner's "Continue in GUI" was refused under "The native app shell is
+ * unavailable.": a refusal DevHub words itself went through the one
+ * conversion as an unknown failure. It is drawn as itself, wherever it ends.
+ */
+describe("a session DevHub cannot go on with, on the wire", () => {
+	it("is its own code and title, with the reason as the detail, not the app shell's catch-all", () => {
+		const wire = errorWire(
+			new SessionNotResumable(
+				"DevHub cannot tell which Claude session this terminal Agent is in",
+			),
+		);
+		expect(wire.code).toBe("conversation_not_resumable");
+		expect(wire.summary).toBe("DevHub cannot go on with this session.");
+		expect(wire.summary).not.toBe(errorWireAt("native_unavailable").summary);
+		expect(wire.detail).toBe(
+			"DevHub cannot tell which Claude session this terminal Agent is in",
+		);
+		expect(wire.module).toBe("agent");
+	});
+});
+
 describe("who a refusal is about", () => {
 	it("is the Agent, when the raising site named one", () => {
 		expect(agentSubject(AGENT, { code: "tmux_session_conflict" })).toEqual({

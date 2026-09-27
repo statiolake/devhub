@@ -103,7 +103,7 @@ export function portRefusal(error: unknown): {
 	readonly detail?: string;
 } {
 	if (error instanceof SessionNotResumable) {
-		return { code: "agent_profile_unavailable", detail: error.message };
+		return { code: "agent_profile_unavailable", detail: error.reason };
 	}
 	if (!(error instanceof PortFailure)) {
 		return { code: "tmux_command_failed" };

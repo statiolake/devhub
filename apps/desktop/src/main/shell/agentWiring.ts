@@ -38,11 +38,11 @@ import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
 	claudeHistory,
-	claudeSessionRecorder,
 	codexStructuredArgs,
 	listPastSessions,
 	previewPastSession,
 	resumedSession,
+	SessionNotResumable,
 	terminalSession,
 	type PastSession,
 	type PreviewLine,
@@ -68,7 +68,6 @@ import type {
 import type { AgentSessionCommand } from "../terminal/ports.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
-import { errorWireAt, TypedFailure, withDetail } from "../../model/wire.js";
 import { registerAgentAdapter } from "./adapters.js";
 import { portRefusal } from "./agentFailure.js";
 
@@ -238,11 +237,8 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			const agent = options.model().agent(agentId)!;
 			const session = conversation.reading().transcript.session.sessionId;
 			if (session === undefined) {
-				throw new TypedFailure(
-					withDetail(
-						errorWireAt("conversation_not_resumable"),
-						`“${agent.displayName}” has no session to resume yet: its CLI names one with the first turn. A new terminal Agent from the same profile starts afresh.`,
-					),
+				throw new SessionNotResumable(
+					`“${agent.displayName}” has no session to resume yet: its CLI names one with the first turn. A new terminal Agent from the same profile starts afresh.`,
 				);
 			}
 			return session;
@@ -384,16 +380,6 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				// Everything else about the session — its markers, its tmux, its
 				// Stop — is the same session.
 				let command = cli;
-				// A terminal Claude writes down the session it is in, so that it
-				// can be continued in the GUI (`claudeSessionRecorder`).
-				if (presentation === "tui" && profile.kind === "claude") {
-					const directory = await stateDirectory(machine, agentId);
-					await options.machineRuntime(machine).makeDirectory(directory);
-					command = {
-						...cli,
-						args: [...cli.args, ...claudeSessionRecorder(directory)],
-					};
-				}
 				if (presentation === "gui") {
 					const runtime = options.machineRuntime(machine);
 					const directory = await stateDirectory(machine, agentId);
@@ -682,7 +668,6 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		return terminalSession(
 			runtime,
 			agent.profile,
-			await stateDirectory(machine, agentId),
 			await sessions.panePid(machine, agentId, workspace.id),
 		);
 	};

@@ -25,7 +25,6 @@ import { HOST_NAME, HOST_SCRIPT } from "../agent/conversation/hostScript.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { agents } from "./adapters.js";
-import { claudeSessionRecorder } from "../agent/conversation/resume.js";
 import { wireAgents } from "./agentWiring.js";
 
 const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
@@ -153,41 +152,29 @@ describe("launching a GUI Codex Agent", () => {
 });
 
 describe("launching a terminal Agent", () => {
-	it("runs a terminal Claude's own command with the hook that writes down its session in the Agent's directory, and no host", async () => {
-		const { adapter, launchAgent, makeDirectory } = wired();
+	// A terminal Agent is its CLI as the profile says, nothing added: DevHub
+	// gives the person's Claude no hook, settings or directory of its own (the
+	// session it is in is Claude's own record, `terminalSession`).
+	it.each(["claude", "codex"] as const)(
+		"runs a terminal %s's own command as it is, with no directory",
+		async (kind) => {
+			const { adapter, launchAgent, makeDirectory } = wired();
 
-		const result = await adapter.launch(
-			WORKSPACE,
-			AGENT,
-			profile("claude"),
-			"tui",
-			"/srv/api",
-		);
+			const result = await adapter.launch(
+				WORKSPACE,
+				AGENT,
+				profile(kind),
+				"tui",
+				"/srv/api",
+			);
 
-		expect(result).toEqual({ kind: "started" });
-		const directory = `${HOME}/.devhub/agents-0123456789ab/${AGENT}`;
-		expect(makeDirectory).toHaveBeenCalledWith(directory);
-		expect(launchAgent).toHaveBeenCalledWith(
-			expect.anything(),
-			{
-				file: "claude",
-				args: ["--model", "opus", ...claudeSessionRecorder(directory)],
-				env: { EXAMPLE: "1" },
-			},
-			expect.anything(),
-		);
-	});
-
-	it("runs any other kind's own command as it is, with no directory", async () => {
-		const { adapter, launchAgent, makeDirectory } = wired();
-
-		await adapter.launch(WORKSPACE, AGENT, profile("codex"), "tui", "/srv/api");
-
-		expect(launchAgent).toHaveBeenCalledWith(
-			expect.anything(),
-			{ file: "codex", args: ["--model", "opus"], env: { EXAMPLE: "1" } },
-			expect.anything(),
-		);
-		expect(makeDirectory).not.toHaveBeenCalled();
-	});
+			expect(result).toEqual({ kind: "started" });
+			expect(launchAgent).toHaveBeenCalledWith(
+				expect.anything(),
+				{ file: kind, args: ["--model", "opus"], env: { EXAMPLE: "1" } },
+				expect.anything(),
+			);
+			expect(makeDirectory).not.toHaveBeenCalled();
+		},
+	);
 });

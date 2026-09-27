@@ -535,18 +535,12 @@ the same Workspace is never taken for it.
   `<config>/sessions/<pid>.json` (`~/.claude`, or `$CLAUDE_CONFIG_DIR`),
   whose `sessionId` is the session on screen: Claude 2.1.282 writes it at
   start, rewrites it whenever the session changes inside the terminal
-  (`/clear`, `/resume`), and removes it on exit. The outermost Claude under the pane is the Agent's (a
-  Claude it runs is under it). As a second source, a terminal Claude Agent is
-  started with a `SessionStart` hook, given through `--settings` (added to
-  your settings, not in place of them), which copies what Claude hands the
-  hook into the Agent's own directory
-  (`~/.devhub/agents-<tag>/<agent id>/claude-session`); it fires on start,
-  on `--resume`, on `/clear` and on `/resume`, and prints nothing. The
-  process's record is used when there is one, the hook's when there is not.
-  Both there and naming different sessions is refused, naming both; neither
-  there (a Claude that keeps no such record, and hooks turned off or an Agent
-  started before DevHub gave it the hook) is refused, saying where DevHub
-  looked.
+  (`/clear`, `/resume`, a session it goes on in after a compaction), and
+  removes it on exit. The outermost Claude under the pane is the Agent's (a
+  Claude it runs is under it). It is the only source: DevHub adds nothing to
+  your Claude — no hook, no `--settings` — to find it out. A pane none of
+  whose processes has the record (Claude no longer running there, or a
+  Claude too old to keep one) is refused, saying where DevHub looked.
 - **Codex** has neither, so it is the rollout the Agent's Codex holds open
   (`/proc/<pid>/fd`, or `lsof`): the file of the thread it is writing,
   `rollout-<time>-<thread id>.jsonl`, whose first line says what started the
@@ -563,7 +557,12 @@ sets `CODEX_THREAD_ID` for the commands it runs, and the environment another
 process can read, as `ps -E` shows it, is the one the TUI started with, which
 cannot follow `/clear`); the newest session file of the directory, or
 Codex's newest `cli` thread in it, belongs to whichever terminal wrote last,
-not to this Agent.
+not to this Agent. A `SessionStart` hook given through `--settings`, which
+DevHub once added as a second source, is not one either: it writes only when
+a session starts, so it went stale when Claude went on in a new session
+without one (after a compaction) and then contradicted the process's record,
+and it put DevHub's hook into your Claude for something Claude already
+records.
 
 ## Resuming an earlier session
 

@@ -40,6 +40,7 @@ import type { AgentProfile } from "../../../model/domain.js";
 import { OperationDeadline } from "../../terminal/command.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { RuntimeFileError, type Runtime } from "../../runtime/runtime.js";
+import { errorWireAt, TypedFailure, withDetail } from "../../../model/wire.js";
 import { isTaskNotificationText } from "./claude/decode.js";
 import { appServerArgs } from "./codex/argv.js";
 import { decodeLine, Reader, threadListResponse } from "./codex/decode.js";
@@ -84,13 +85,19 @@ export interface PreviewLine {
 }
 
 /**
- * The session a launch was asked to resume cannot be read back: it is not
- * there, or not whole. The profile cannot start the Agent the way it was
- * asked to — a refusal of the launch, not of the machine it runs on.
+ * A session DevHub was asked to go on with cannot be gone on with: the one a
+ * launch or a `/resume` names is not there, or not whole, or the one a
+ * terminal Agent is in cannot be told. `reason` says which, and where DevHub
+ * looked.
+ *
+ * A failure DevHub knows by name, so it is drawn as itself
+ * (`conversation_not_resumable`) wherever it ends, never as the app shell's
+ * catch-all; a launch that ends in one is the profile's refusal instead
+ * (`portRefusal`).
  */
-export class SessionNotResumable extends Error {
-	constructor(message: string, options?: ErrorOptions) {
-		super(message, options);
+export class SessionNotResumable extends TypedFailure {
+	constructor(readonly reason: string) {
+		super(withDetail(errorWireAt("conversation_not_resumable"), reason));
 		this.name = "SessionNotResumable";
 	}
 }
@@ -382,37 +389,6 @@ async function codexHome(
 // ---------------------------------------------------------------------------
 // The session of a terminal Agent.
 
-/** Where a terminal Claude Agent's SessionStart hook writes what Claude told it. */
-function claudeSessionRecord(directory: string): string {
-	return `${directory}/claude-session`;
-}
-
-/**
- * The arguments that have a terminal Claude Agent write down the session it
- * is in, each time one starts: a SessionStart hook, given through
- * `--settings` (added to the person's settings, not in place of them), that
- * copies what Claude hands it — `session_id` among it — into the Agent's own
- * directory `directory`. It fires on startup, on `--resume`, on `/clear` and
- * on `/resume` inside the TUI, so the record is the session on screen, and
- * it prints nothing (a SessionStart hook's output would be read as context).
- */
-export function claudeSessionRecorder(directory: string): readonly string[] {
-	const record = claudeSessionRecord(directory);
-	const command = `cat >${shellQuote(`${record}.new`)} && mv -f ${shellQuote(`${record}.new`)} ${shellQuote(record)}`;
-	return [
-		"--settings",
-		JSON.stringify({
-			hooks: {
-				SessionStart: [{ hooks: [{ type: "command", command }] }],
-			},
-		}),
-	];
-}
-
-function shellQuote(word: string): string {
-	return `'${word.replace(/'/g, "'\\''")}'`;
-}
-
 /**
  * The processes of a terminal Agent's pane — the pane's own (`$1`) and every
  * one under it, outermost first — and what each holds of its CLI's session:
@@ -579,12 +555,13 @@ async function paneRecords(
  * never taken for it.
  *
  * Claude: the record Claude keeps of its running process,
- * `<config>/sessions/<pid>.json`, whose `sessionId` follows `/clear` and
- * `/resume` inside the TUI; the outermost Claude under the pane is the
- * Agent's (one it runs is under it). Where no process has that record, what
- * the Agent's SessionStart hook wrote down (`claudeSessionRecorder`) in its
- * directory `directory`. Both there and different is refused: DevHub does
- * not guess between two of Claude's own answers.
+ * `<config>/sessions/<pid>.json`, whose `sessionId` follows the session the
+ * TUI is in — `/clear`, `/resume`, and a session it goes on in after a
+ * compaction; the outermost Claude under the pane is the Agent's (one it runs
+ * is under it). It is the one source: Claude's own word, read where Claude
+ * keeps it. A pane none of whose processes has one — no Claude running in it,
+ * or a Claude too old to keep the record — is refused, saying where DevHub
+ * looked.
  *
  * Codex: the thread whose rollout the Agent's Codex holds open and which its
  * terminal mode started (`session_meta.source` is `cli`; a subagent's is
@@ -594,32 +571,17 @@ async function paneRecords(
 export async function terminalSession(
 	runtime: Runtime,
 	profile: SessionProfile,
-	directory: string,
 	panePid: number,
 ): Promise<string> {
 	if (resumableKind(profile.kind) === "claude") {
 		const sessions = `${await claudeConfigDirectory(runtime, profile)}/sessions`;
 		const [outermost] = await paneRecords(runtime, "claude", panePid, sessions);
-		const live =
-			outermost === undefined
-				? undefined
-				: {
-						path: outermost.path,
-						session: claudeProcessSession(outermost, runtime),
-					};
-		const hooked = await claudeHookedSession(runtime, directory);
-		if (live !== undefined && hooked !== undefined && live.session !== hooked) {
+		if (outermost === undefined) {
 			throw new SessionNotResumable(
-				`DevHub cannot tell which Claude session this terminal Agent is in: Claude's record of its process (${live.path}${runtime.where}) says ${live.session}, and its SessionStart hook last wrote ${hooked} (${claudeSessionRecord(directory)}).`,
+				`DevHub cannot tell which Claude session this terminal Agent is in: no process of its pane (pid ${String(panePid)}${runtime.where}) has Claude's record of it in ${sessions}. Claude keeps one (<pid>.json) for as long as it runs in a terminal; there is none when Claude is no longer running in the pane, or when it is a version too old to keep one.`,
 			);
 		}
-		const session = live?.session ?? hooked;
-		if (session === undefined) {
-			throw new SessionNotResumable(
-				`DevHub cannot tell which Claude session this terminal Agent is in: no process of its pane (pid ${String(panePid)}) has Claude's record in ${sessions}${runtime.where}, and its SessionStart hook wrote nothing to ${claudeSessionRecord(directory)} (hooks turned off, or the Agent started before DevHub gave it the hook).`,
-			);
-		}
-		return session;
+		return claudeProcessSession(outermost, runtime);
 	}
 	const threads = (await paneRecords(runtime, "codex", panePid, "")).flatMap(
 		(record) => {
@@ -677,34 +639,6 @@ function jsonObject(
 	throw new Error(
 		`${record.path}${runtime.where} does not begin with a JSON object`,
 	);
-}
-
-/** What the Agent's SessionStart hook last wrote down, if it ever did. */
-async function claudeHookedSession(
-	runtime: Runtime,
-	directory: string,
-): Promise<string | undefined> {
-	let text: string;
-	try {
-		text = await runtime.readTextFile(
-			claudeSessionRecord(directory),
-			64 * 1024,
-		);
-	} catch (failure: unknown) {
-		if (failure instanceof RuntimeFileError && failure.code === "ENOENT") {
-			return undefined;
-		}
-		throw failure;
-	}
-	const session = parsedLine("(the terminal Agent's)", text.trim())[
-		"session_id"
-	];
-	if (typeof session !== "string" || session.length === 0) {
-		throw new Error(
-			`the session Claude wrote down in ${claudeSessionRecord(directory)}${runtime.where} names no session_id`,
-		);
-	}
-	return session;
 }
 
 function resumableKind(kind: AgentProfile["kind"]): ResumableKind {
