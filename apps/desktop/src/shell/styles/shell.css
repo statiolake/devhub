@@ -1385,6 +1385,8 @@ body.is-resizing-split {
   margin: var(--space-4) 0 0;
   color: var(--tertiary);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 11px;
 }
 

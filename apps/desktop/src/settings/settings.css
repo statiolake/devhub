@@ -302,6 +302,8 @@ body {
 
 .sf-mono-field {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 12px;
 }
 
@@ -692,6 +694,8 @@ body {
 .keyboard-record {
   min-width: 160px;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
 }
 
 /* While it is listening, so that a person can tell it from a button they have
@@ -705,6 +709,8 @@ body {
 .keyboard-id {
   margin-inline-start: auto;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 11px;
   color: var(--text-secondary);
 }

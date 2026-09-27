@@ -34,6 +34,18 @@
   color: var(--primary);
   font-size: var(--conversation-font-size);
   line-height: 1.6;
+  /* Japanese typeset the usual way, in the transcript and in every field the
+     person types into (they inherit it: `tokens.css`). `text-autospace:
+     normal` puts a small space between CJK and Latin letters or digits; it is
+     Chromium's own initial `no-autospace` that this turns on. `trim-start`
+     is `normal` — the space collapsed where two full-width punctuation marks
+     meet — with an opening bracket set flush at the start of every line, the
+     first included: prose here has no indent, so a 「 that opened a paragraph
+     half an em in would read as a misaligned edge. Only the rendering
+     changes; no space is in the text, so a copy carries none. Monospace opts
+     out wherever it is set (`--font-mono`). */
+  text-autospace: normal;
+  text-spacing-trim: trim-start;
 }
 
 .conversation-surface[hidden] {
@@ -777,6 +789,8 @@
   border-radius: 4px;
   background: var(--wash);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.88em;
 }
 
@@ -831,6 +845,8 @@
 
 .conversation-code-language {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
 }
 
 .conversation-code pre,
@@ -840,6 +856,8 @@
   padding: var(--space-2) var(--space-3);
   margin: 0;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.88em;
   line-height: 1.5;
   overflow-x: auto;
@@ -1004,6 +1022,8 @@
 
 .conversation-tool-target {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.95em;
 }
 
@@ -1101,6 +1121,8 @@
 
 .conversation-command-line {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
 }
 
 .conversation-command-output {
@@ -1108,6 +1130,8 @@
   border-left: 2px solid var(--line-soft);
   margin: var(--space-1) 0 0;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.9em;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -1250,12 +1274,16 @@
   border-bottom: 1px solid var(--line-soft);
   color: var(--secondary);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.85em;
 }
 
 .conversation-diff-lines {
   padding: var(--space-1) 0;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.88em;
   line-height: 1.5;
   tab-size: 4;
@@ -1369,6 +1397,8 @@
   background: var(--wash);
   color: var(--secondary);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.78em;
 }
 
@@ -1651,6 +1681,8 @@
 
 .conversation-request-title {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.92em;
   font-weight: 600;
 }
@@ -1730,6 +1762,8 @@
   margin-right: var(--space-1);
   opacity: 0.6;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.85em;
 }
 
@@ -1801,6 +1835,8 @@
   border-radius: var(--radius-control);
   background: var(--sunken);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 0.85em;
   overflow: auto;
 }
@@ -2507,6 +2543,8 @@ button.conversation-background-line:hover {
 .conversation-completion-name {
   flex: none;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2517,6 +2555,8 @@ button.conversation-background-line:hover {
   min-width: 0;
   max-width: 40%;
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

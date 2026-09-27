@@ -46,6 +46,8 @@
 
 .mac-mono {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 11px;
 }
 
@@ -811,6 +813,8 @@
   background: var(--surface);
   color: var(--primary);
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 12px;
   line-height: 1.5;
   resize: none;
@@ -881,6 +885,8 @@
 
 .chord-help-keys kbd {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
   font-size: 11px;
   padding: 1px 5px;
   border: 1px solid var(--line-soft);

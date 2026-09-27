@@ -198,7 +198,13 @@
      (`terminal_font_family`). This is `terminalFontStack` at the default, and
      `applyMonoFont` replaces it with the configured stack once the page is
      told the appearance, and again whenever it changes. No stylesheet names a
-     monospace family of its own. */
+     monospace family of its own.
+
+     Every rule that sets it also sets `text-autospace: no-autospace` and
+     `text-spacing-trim: space-all`: a fixed-width line keeps every character
+     on its cell, so a GUI Agent's Japanese typesetting (the autospace between
+     CJK and Latin, the trimmed full-width punctuation — `conversation.css`)
+     never shifts a column of code, a diff, or command output. */
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   /* Native chrome geometry. */
@@ -572,12 +578,17 @@ textarea {
   user-select: text;
 }
 
+/* A control is set in its surroundings' type, which the browser would not
+   give it: `font` for the face, and the text-spacing properties, which are not
+   part of `font`, for the typesetting around it. */
 button,
 input,
 textarea,
 select {
   font: inherit;
   color: inherit;
+  text-autospace: inherit;
+  text-spacing-trim: inherit;
 }
 
 /* The browser sets these in its own `monospace`, which is not the terminal's
@@ -588,6 +599,8 @@ kbd,
 pre,
 samp {
   font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
 }
 
 button {
