@@ -663,7 +663,10 @@ machine:
   `~/.claude/projects/<the directory, every non-alphanumeric character as
   ->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
   machine's). DevHub reads the newest 50 files there and never writes to
-  them. A title is Claude's own `ai-title` when there is one.
+  them. A title follows the Agent SDK's precedence for a session's display
+  name: the latest name a person gave it (`custom-title`, from `/rename` or
+  `--name`), else Claude's latest `ai-title`, else its first prompt. Codex's
+  is likewise the thread's `name` when a person set one, else its `preview`.
 
 A listing that fails says why in the sheet instead of showing an empty list.
 The sheet lists **This project** first; **All projects** lists every
