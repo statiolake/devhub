@@ -1,18 +1,22 @@
+/** How near a reset is still said by the clock rather than by the date. */
+const CLOCK_HORIZON_MS = 12 * 60 * 60_000;
+
 /**
  * When a rate-limit window resets, as every readout of it says so: the time,
- * `16:50`, when that is later today; the date alone, `10/3` in the reader's
- * locale, when it is another day. A reset days away is planned around by the
- * day, not the minute, and a weekly or monthly window reads the same way as a
- * five-hour one does once its day has come. The Sidebar's usage row and its
+ * `16:50`, when the reset is within twelve hours of now, even past midnight;
+ * the date alone, `10/3` in the reader's locale, when it is further off. A
+ * reset hours away is planned around by the clock, one days away by the day,
+ * and a weekly or monthly window reads the same way as a five-hour one does
+ * once it is that close. A reset already past reads by the same distance, so
+ * the one that just went by is still a time. The Sidebar's usage row and its
  * tooltip both use this, so one reset never reads two ways.
  *
- * Days are the reader's local calendar days; the time is on the 24-hour
- * clock, so the Sidebar's one-line row never carries an AM/PM it has no room
- * for.
+ * The time is on the 24-hour clock, so the Sidebar's one-line row never
+ * carries an AM/PM it has no room for.
  */
 export function resetTime(epochMs: number, now: number): string {
   const date = new Date(epochMs);
-  return new Date(now).toDateString() === date.toDateString()
+  return Math.abs(epochMs - now) <= CLOCK_HORIZON_MS
     ? date.toLocaleTimeString(undefined, {
         hour: "2-digit",
         minute: "2-digit",
