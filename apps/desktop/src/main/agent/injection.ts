@@ -25,8 +25,14 @@
  *
  * **Only into an idle prompt.** `idle` is the one state where the Agent is
  * showing a prompt box and waiting for a person to type, which is the only
- * screen on which a sentence is a sentence.
+ * screen on which a sentence is a sentence — and `background` is that same
+ * prompt, with something the Agent started still working beside it (a GUI
+ * Agent's conversation says so; `agentAtPrompt`).
  *
+ * - `background` — the turn is over and the CLI reads what is sent: it starts
+ *   a turn exactly as the person's own message would, and the tasks go on
+ *   untouched. It is sent into. Holding it until they end would hold it for
+ *   good behind a dev server or a watcher, which never end on their own.
  * - `working` — a turn is running. The box accepts text, but the Agent is not
  *   reading it, and the text would sit there until the turn ended and then be
  *   submitted with whatever else had been typed.
@@ -50,6 +56,7 @@
  */
 
 import {
+	agentAtPrompt,
 	NO_INJECTION,
 	type AgentInjection,
 	type AgentInjectionResult,
@@ -207,9 +214,9 @@ export class AgentInjectionQueue {
 	): string | undefined {
 		const entry = this.#entries.get(agentId);
 		if (entry === undefined) return undefined;
-		if (status !== "idle") {
-			// Any reading that is not idle starts the wait over. The Agent has
-			// to be *continuously* idle, not idle as often as not.
+		if (!agentAtPrompt(status)) {
+			// Any reading that is not at the prompt starts the wait over. The
+			// Agent has to be *continuously* idle, not idle as often as not.
 			entry.idleSince = undefined;
 			entry.idleReadings = 0;
 			return undefined;
@@ -299,6 +306,7 @@ export class AgentInjectionQueue {
 function waitFor(status: AgentStatus): AgentInjectionWait {
 	switch (status) {
 		case "idle":
+		case "background":
 			return "settling";
 		case "working":
 			return "agent_busy";

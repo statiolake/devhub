@@ -418,6 +418,7 @@ export function agentNote(agent: AgentSnapshot): string | undefined {
 
 const STATUS_GLYPH: Record<AgentSnapshot["status"], GlyphName> = {
   working: "statusWorking",
+  background: "statusBackground",
   waiting: "statusWaiting",
   idle: "statusIdle",
   error: "statusError",

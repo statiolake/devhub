@@ -114,6 +114,22 @@ describe("the Agent injection queue", () => {
 		).toBe(true);
 	});
 
+	/**
+	 * A turn that is over with a background task still going reads what is
+	 * typed, as an idle prompt does: a dev server or a watcher never ends on its
+	 * own, and holding the text behind it would hold it for good.
+	 */
+	it("types into a prompt whose Agent has background tasks working, as into an idle one", () => {
+		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
+		queue.queue(AGENT, confirmed("do the thing"));
+		expect(queue.state(AGENT, "background").waitingFor).toBe("settling");
+		rounds.step("idle", 2);
+		// Idle and background are one unbroken run at the prompt.
+		const seen = rounds.step("background", ENOUGH - 2);
+		expect(seen.at(-1)).toBe("do the thing");
+	});
+
 	it("never types into a screen it cannot read", () => {
 		const queue = new AgentInjectionQueue();
 		queue.queue(AGENT, confirmed("do the thing"));

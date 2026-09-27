@@ -210,6 +210,27 @@ export interface BackgroundTask {
   readonly summary: string | undefined;
 }
 
+/**
+ * Something the Agent set going that runs on its own, apart from its turn: a
+ * command run in the background, a subagent started in the background, a
+ * teammate at work, a watcher. It stays in `Transcript.backgroundTasks` while
+ * it works and leaves when it ends (or, for a subagent that can be told
+ * something again, when it goes idle).
+ */
+export interface RunningTask {
+  /** The CLI's own name for the task; unique among those running. */
+  readonly id: string;
+  /**
+   * What kind of task it is, in a word: `shell`, `subagent`, or the CLI's own
+   * name for a kind DevHub has no word for.
+   */
+  readonly kind: string;
+  /** The CLI's words for it: the command's description, the subagent's errand. */
+  readonly title: string;
+  /** The call that started it, once the CLI has said which. */
+  readonly call: EntryId | undefined;
+}
+
 export interface NoticeEntry {
   readonly kind: "notice";
   readonly id: EntryId;
@@ -550,6 +571,12 @@ export interface Transcript {
    * adapter's, from what was written (`in.log`), so a replay says the same.
    */
   readonly sending: readonly SendingMessage[];
+  /**
+   * What the Agent set going that is still working apart from its turn,
+   * oldest first. The adapter's, from what its CLI says runs in the
+   * background: the conversation's one account of it.
+   */
+  readonly backgroundTasks: readonly RunningTask[];
 }
 
 export interface SendingMessage {
@@ -608,6 +635,11 @@ export type ConversationEvent =
   | { readonly type: "pending"; readonly pending: readonly PendingMessage[] }
   /** Replaces the messages written and not yet taken whole. The adapter's. */
   | { readonly type: "sending"; readonly sending: readonly SendingMessage[] }
+  /** Replaces the tasks working in the background whole. The adapter's. */
+  | {
+      readonly type: "background-tasks";
+      readonly tasks: readonly RunningTask[];
+    }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -654,6 +686,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   usage: undefined,
   pending: [],
   sending: [],
+  backgroundTasks: [],
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -697,6 +730,11 @@ export function applyEvent(
       return { ...transcript, pending: event.pending };
     case "sending":
       return { ...transcript, sending: event.sending };
+    case "background-tasks":
+      return {
+        ...transcript,
+        backgroundTasks: backgroundTasks(transcript, event.tasks),
+      };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {
@@ -704,6 +742,12 @@ export function applyEvent(
       if (open !== undefined) {
         throw new TranscriptInvariantError(
           `a switch to session ${event.session} while request ${open.id} is open`,
+        );
+      }
+      const running = transcript.backgroundTasks[0];
+      if (running !== undefined) {
+        throw new TranscriptInvariantError(
+          `a switch to session ${event.session} while background task ${running.id} is running`,
         );
       }
       return {
@@ -882,6 +926,28 @@ function closeRequest(
   return remaining;
 }
 
+function backgroundTasks(
+  transcript: Transcript,
+  tasks: readonly RunningTask[],
+): readonly RunningTask[] {
+  const seen = new Set<string>();
+  for (const task of tasks) {
+    if (seen.has(task.id)) {
+      throw new TranscriptInvariantError(
+        `background task ${task.id} is listed twice`,
+      );
+    }
+    seen.add(task.id);
+    if (task.call !== undefined)
+      requireToolEntry(
+        transcript.entries,
+        task.call,
+        `call of background task ${task.id}`,
+      );
+  }
+  return tasks;
+}
+
 function rewind(
   transcript: Transcript,
   from: EntryId,
@@ -904,12 +970,38 @@ function rewind(
       `a rewind to ${from}: ${from} is a ${entry.kind} entry, not a message the person sent`,
     );
   }
-  return transcript.entries.slice(0, index);
+  const kept = transcript.entries.slice(0, index);
+  const orphan = transcript.backgroundTasks.find(
+    (task) => task.call !== undefined && indexOfEntry(kept, task.call) < 0,
+  );
+  if (orphan !== undefined) {
+    throw new TranscriptInvariantError(
+      `a rewind to ${from} takes back ${orphan.call}, which started background task ${orphan.id}, still running`,
+    );
+  }
+  return kept;
 }
 
 // ---------------------------------------------------------------------------
 // Readings. Pure derivations the reconcile round and the page both take from
 // a Transcript, so neither works them out a second time.
+
+/** Whether two lists of background tasks say the same, task for task. */
+export function sameRunningTasks(
+  one: readonly RunningTask[],
+  other: readonly RunningTask[],
+): boolean {
+  return (
+    one.length === other.length &&
+    one.every(
+      (task, index) =>
+        task.id === other[index]!.id &&
+        task.kind === other[index]!.kind &&
+        task.title === other[index]!.title &&
+        task.call === other[index]!.call,
+    )
+  );
+}
 
 /** The entries directly under `parent` (`null` for the top level), in display order. */
 export function childrenOf(
@@ -937,6 +1029,12 @@ export function lastTurnFailed(transcript: Transcript): boolean {
  * (a stop, a continue) loses them: a message written and not taken yet is
  * the turn it starts (`working`), and one DevHub holds at the prompt — open
  * to change, or its write failed — waits on the person (`waiting`).
+ *
+ * With no turn running, what the Agent set going apart from its turn — a
+ * command, a subagent, a teammate still at work — is `background`: it is not
+ * idle, because stopping it stops them, and it is not working, because it
+ * takes the person's next message as an idle Agent does. A failed last turn
+ * still says `error` first: that is the one the person has to read.
  */
 export function conversationStatus(transcript: Transcript): AgentStatus {
   const { state } = transcript;
@@ -950,20 +1048,27 @@ export function conversationStatus(transcript: Transcript): AgentStatus {
       if (state.turn !== "none" || transcript.sending.length > 0)
         return "working";
       if (transcript.pending.length > 0) return "waiting";
-      return lastTurnFailed(transcript) ? "error" : "idle";
+      if (lastTurnFailed(transcript)) return "error";
+      return transcript.backgroundTasks.length > 0 ? "background" : "idle";
   }
 }
 
 /**
  * What the Agent is doing, in its own words: the title of the latest running
- * tool call, else the in-progress step of the latest plan. Nothing outside a
- * turn.
+ * tool call, else the in-progress step of the latest plan. Outside a turn,
+ * what works in the background: the one task's title, or how many there are.
  */
 export function conversationActivity(
   transcript: Transcript,
 ): string | undefined {
-  const { state, entries } = transcript;
-  if (state.phase !== "ready" || state.turn !== "running") return undefined;
+  const { state, entries, backgroundTasks } = transcript;
+  if (state.phase !== "ready") return undefined;
+  if (state.turn !== "running") {
+    if (state.turn !== "none" || backgroundTasks.length === 0) return undefined;
+    return backgroundTasks.length === 1
+      ? backgroundTasks[0]!.title
+      : `${String(backgroundTasks.length)} background tasks`;
+  }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
     if (entry.kind === "tool" && entry.status === "running") return entry.title;

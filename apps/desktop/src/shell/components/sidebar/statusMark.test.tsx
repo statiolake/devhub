@@ -20,6 +20,7 @@ import { StatusMark } from "./StatusMark";
 
 const STATUSES: readonly AgentStatus[] = [
   "working",
+  "background",
   "waiting",
   "idle",
   "error",
@@ -43,6 +44,7 @@ describe("the Agent status mark", () => {
       const mark = screen.getByRole("img");
       const label = {
         working: "Working",
+        background: "Background",
         waiting: "Waiting",
         idle: "Idle",
         error: "Error",

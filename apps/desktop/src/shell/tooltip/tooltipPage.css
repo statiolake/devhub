@@ -273,6 +273,10 @@ body,
   color: var(--status-working);
 }
 
+.tooltip-line[data-tone="background"] .tooltip-line-mark {
+  color: var(--status-background);
+}
+
 .tooltip-line[data-tone="waiting"] .tooltip-line-mark {
   color: var(--status-waiting);
 }

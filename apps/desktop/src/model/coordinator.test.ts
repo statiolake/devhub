@@ -1192,7 +1192,7 @@ describe("continuing an Agent that is not idle", () => {
   /** A `presentation` Agent AG_A in WS_A, read as `status`, asked to continue in the other presentation. */
   function continuing(
     presentation: "tui" | "gui",
-    status: "working" | "waiting" | "error" | "unknown",
+    status: "working" | "background" | "waiting" | "error" | "unknown",
   ): { driver: Driver; asked: IntentOutcome; effects: Effect[] } {
     const driver = new Driver();
     driver.openFolder("/dev/project");
@@ -1220,7 +1220,13 @@ describe("continuing an Agent that is not idle", () => {
   // So a continue is asked about exactly when a stop is: whenever the Agent
   // is not at its prompt (`agentIsIdle`), in either direction.
   for (const presentation of ["tui", "gui"] as const) {
-    for (const status of ["working", "waiting", "error", "unknown"] as const) {
+    for (const status of [
+      "working",
+      "background",
+      "waiting",
+      "error",
+      "unknown",
+    ] as const) {
       it(`asks first when a ${presentation} Agent is ${status}, and launches nothing yet`, () => {
         const { driver, effects } = continuing(presentation, status);
         expect(effects.map((effect) => effect.kind)).toEqual([
@@ -1470,7 +1476,9 @@ describe("how a launched agent is shown", () => {
 
 describe("stopping an agent", () => {
   /** A driver with one Agent in one workspace, reported as `status`. */
-  function withAgent(status: "idle" | "working" | "unknown"): Driver {
+  function withAgent(
+    status: "idle" | "working" | "background" | "unknown",
+  ): Driver {
     const driver = new Driver();
     driver.openFolder("/dev/project");
     driver.dispatch({
@@ -1536,6 +1544,14 @@ describe("stopping an agent", () => {
     expect(required.kind).toBe("confirmation_required");
     // Cancelling is not answering: the Agent is still there.
     expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(1);
+  });
+
+  // Its turn is over, but stopping it stops the commands and subagents it
+  // left working in the background.
+  it("asks before stopping an Agent whose background tasks are still working", () => {
+    const driver = withAgent("background");
+    driver.dispatch({ type: "stop_agent", agentId: AG_A });
+    expect(driver.drainEffects()[0].kind).toBe("generate_confirmation_id");
   });
 
   it("asks about an Agent nobody has read, because not knowing is not idle", () => {

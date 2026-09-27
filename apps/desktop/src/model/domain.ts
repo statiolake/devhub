@@ -883,9 +883,18 @@ export class AgentProfile {
  * detector for its kind says otherwise. Folding it into `error` would tell
  * somebody who deliberately attached a plain command that something is wrong;
  * folding it into `idle` would claim a reading nobody took.
+ *
+ * `background` is an Agent whose turn is over while something it set going
+ * still works apart from it — a command run in the background, a subagent or
+ * a teammate at work. It takes the person's next message as an idle Agent
+ * does, and it is not idle: stopping it stops what is still working, and
+ * the Agent usually takes its turn again by itself when that ends. Only a
+ * conversation can tell it (`conversationStatus`); no screen detector reads
+ * it.
  */
 export const AGENT_STATUSES = [
   "working",
+  "background",
   "waiting",
   "idle",
   "error",
@@ -918,6 +927,8 @@ export type UnreadReason = AgentStatus;
  * only `idle` counts:
  *
  * - `working`: it is mid-task. Stopping it throws that away.
+ * - `background`: its turn is over, but a command, a subagent or a teammate it
+ *   started is still working, and stopping the Agent stops that too.
  * - `waiting`: it asked the person something and is holding for the answer.
  * - `error`: something is on its screen that says what went wrong, and the
  *   only copy of it is the screen.
@@ -927,6 +938,17 @@ export type UnreadReason = AgentStatus;
  */
 export function agentIsIdle(status: AgentStatus): boolean {
   return status === "idle";
+}
+
+/**
+ * Whether the Agent is at a prompt that reads what is typed into it: idle, or
+ * `background` — its turn is over and it takes the next message as it would
+ * idle, while something it started still works. What the injection queue
+ * sends on (`main/agent/injection.ts`) and what the review sheet tells the
+ * person, from this one rule.
+ */
+export function agentAtPrompt(status: AgentStatus): boolean {
+  return status === "idle" || status === "background";
 }
 /**
  * Why an operation on one Agent was refused.

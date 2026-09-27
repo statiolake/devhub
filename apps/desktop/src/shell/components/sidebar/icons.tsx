@@ -60,6 +60,7 @@ export type GlyphName =
   | "pullRequestMerged"
   | "openIssue"
   | "statusWorking"
+  | "statusBackground"
   | "statusWaiting"
   | "statusIdle"
   | "statusError"
@@ -244,6 +245,13 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
      dozen painted pixels, and it was the mark on the busiest status in the
      app. */
   statusWorking: <path d="M8 2.75A5.25 5.25 0 1 1 2.75 8" />,
+
+  /* Background: the working ring broken into four still arcs. The turn is
+     over, so nothing turns; something it started is still going, so the ring
+     is still there, quieter — which is also why it takes a quieter ink. */
+  statusBackground: (
+    <path d="M9.62 3.01A5.25 5.25 0 0 1 12.99 6.38M12.99 9.62A5.25 5.25 0 0 1 9.62 12.99M6.38 12.99A5.25 5.25 0 0 1 3.01 9.62M3.01 6.38A5.25 5.25 0 0 1 6.38 3.01" />
+  ),
 
   /* Waiting: the Agent has stopped to ask you something, so it is a speech
      bubble.

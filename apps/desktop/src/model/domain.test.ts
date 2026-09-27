@@ -5,6 +5,7 @@ import {
   agentPresentation,
   agentProfileId,
   agentId,
+  agentAtPrompt,
   agentIsIdle,
   agentsInspection,
   consolidateCloseInspection,
@@ -407,8 +408,26 @@ describe("close inspection", () => {
 describe("whether stopping an Agent would interrupt anything", () => {
   it("counts only a read that says the Agent is at its prompt", () => {
     expect(agentIsIdle("idle")).toBe(true);
-    for (const status of ["working", "waiting", "error", "unknown"] as const) {
+    for (const status of [
+      "working",
+      "background",
+      "waiting",
+      "error",
+      "unknown",
+    ] as const) {
       expect(agentIsIdle(status)).toBe(false);
+    }
+  });
+});
+
+describe("whether an Agent's prompt reads what is typed into it", () => {
+  // An Agent whose turn is over with background tasks still working takes the
+  // next message as an idle one does; nothing else is at the prompt.
+  it("is idle or background, and nothing else", () => {
+    expect(agentAtPrompt("idle")).toBe(true);
+    expect(agentAtPrompt("background")).toBe(true);
+    for (const status of ["working", "waiting", "error", "unknown"] as const) {
+      expect(agentAtPrompt(status)).toBe(false);
     }
   });
 });
@@ -423,6 +442,10 @@ describe("what the Agents in a workspace amount to for a close", () => {
   it("is clean when every Agent is sitting at its prompt", () => {
     expect(agentsInspection(["idle", "idle"])).toEqual(CLEAN);
     expect(agentsInspection([])).toEqual(CLEAN);
+  });
+
+  it("counts an Agent whose background tasks a close would stop", () => {
+    expect(agentsInspection(["idle", "background"])).toEqual(busy(1));
   });
 
   it("counts an Agent nobody has read, and one that failed", () => {

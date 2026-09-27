@@ -30,6 +30,7 @@ import {
   type ConversationEvent,
   type PendingRequest,
   type SessionFacts,
+  type RunningTask,
   type ToolEntry,
   type Transcript,
   type TranscriptEntry,
@@ -848,6 +849,138 @@ describe("the turn lifecycle, read as a status", () => {
       failure: { code: "protocol_mismatch" },
     });
     expect(broken.entries.map((each) => each.id)).toEqual(["u1"]);
+  });
+});
+
+function running(...tasks: RunningTask[]): ConversationEvent {
+  return { type: "background-tasks", tasks };
+}
+
+function shell(id: string, call: string | undefined): RunningTask {
+  return {
+    id,
+    kind: "shell",
+    title: `run ${id}`,
+    call: call === undefined ? undefined : entryId(call),
+  };
+}
+
+describe("tasks working in the background", () => {
+  it("are replaced whole by each report, oldest first", () => {
+    const two = fold(
+      READY,
+      tool("t1"),
+      running(shell("b1", "t1"), shell("b2", undefined)),
+    );
+    expect(two.backgroundTasks.map((task) => task.id)).toEqual(["b1", "b2"]);
+    const one = applyEvent(two, running(shell("b2", undefined)));
+    expect(one.backgroundTasks.map((task) => task.id)).toEqual(["b2"]);
+  });
+
+  it("refuses a task named twice, or started by a call that is not a tool call", () => {
+    const transcript = fold(READY, tool("t1"), user("u1", "go"));
+    refused(
+      transcript,
+      running(shell("b1", "t1"), shell("b1", "t1")),
+      /listed twice/,
+    );
+    refused(transcript, running(shell("b1", "t9")), /not an entry/);
+    refused(transcript, running(shell("b1", "u1")), /not a tool call/);
+  });
+
+  it("refuses a rewind that takes back the call of a task still running, and a session switch while any runs", () => {
+    const transcript = fold(
+      READY,
+      user("u1", "go"),
+      tool("t1"),
+      running(shell("b1", "t1")),
+    );
+    refused(
+      transcript,
+      { type: "rewound", from: entryId("u1") },
+      /still running/,
+    );
+    refused(
+      transcript,
+      { type: "session-switched", session: "s2" },
+      /background task b1 is running/,
+    );
+    const ended = applyEvent(transcript, running());
+    expect(
+      applyEvent(ended, { type: "rewound", from: entryId("u1") }).entries,
+    ).toEqual([]);
+  });
+});
+
+describe("an Agent whose turn is over with tasks working in the background", () => {
+  it("is background, neither idle nor working, and idle again once they end", () => {
+    const after = fold(
+      READY,
+      RUNNING,
+      tool("t1"),
+      turnEnd("e1", "completed"),
+      READY,
+      running(shell("b1", "t1")),
+    );
+    expect(conversationStatus(after)).toBe("background");
+    expect(conversationStatus(applyEvent(after, running()))).toBe("idle");
+  });
+
+  it("is working while a turn runs, and waiting on a question or a held message, whatever runs beside it", () => {
+    const beside = fold(READY, tool("t1"), running(shell("b1", "t1")));
+    expect(conversationStatus(applyEvent(beside, RUNNING))).toBe("working");
+    expect(
+      conversationStatus(
+        applyEvent(beside, {
+          type: "request-opened",
+          request: permission("p1", "t1"),
+        }),
+      ),
+    ).toBe("waiting");
+    expect(
+      conversationStatus(
+        applyEvent(beside, {
+          type: "pending",
+          pending: [
+            {
+              id: pendingId("held:1"),
+              text: "and then",
+              images: [],
+              failure: undefined,
+              editing: true,
+            },
+          ],
+        }),
+      ),
+    ).toBe("waiting");
+  });
+
+  it("is error after a failed turn, which is the thing to read first", () => {
+    const failed = fold(
+      READY,
+      RUNNING,
+      tool("t1"),
+      turnEnd("e1", "failed"),
+      READY,
+      running(shell("b1", "t1")),
+    );
+    expect(conversationStatus(failed)).toBe("error");
+  });
+
+  it("says what works in the background as its activity: the one task, or how many", () => {
+    const one = fold(READY, tool("t1"), running(shell("b1", "t1")));
+    expect(conversationActivity(one)).toBe("run b1");
+    const two = applyEvent(
+      one,
+      running(shell("b1", "t1"), shell("b2", undefined)),
+    );
+    expect(conversationActivity(two)).toBe("2 background tasks");
+    // Mid-turn the activity is the turn's own.
+    expect(
+      conversationActivity(
+        applyEvents(two, [RUNNING, tool("t2", { title: "Edit: x" })]),
+      ),
+    ).toBe("Edit: x");
   });
 });
 

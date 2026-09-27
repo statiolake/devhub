@@ -7,6 +7,9 @@
  *
  *   DevHub status    means                       theme colour   extension case
  *   working          it is going somewhere       charts.yellow  working
+ *   background       its turn is over, and       (quiet yellow) working
+ *                    something it started is
+ *                    still going
  *   waiting          it has stopped to ask you   charts.blue    done
  *   idle             nothing is wrong here       iconPassed     idle
  *   error            it was read and came back   iconFailed     blocked
@@ -43,6 +46,7 @@ import { statusLabel } from "./status";
 
 const GLYPH_FOR: Record<AgentStatus, GlyphName> = {
   working: "statusWorking",
+  background: "statusBackground",
   waiting: "statusWaiting",
   idle: "statusIdle",
   error: "statusError",
@@ -74,12 +78,16 @@ export interface StatusMarkProps {
  * the unread mark, everything else is drawn as its status. Nothing else in the
  * Sidebar draws `unread` — the model's rule for when an Agent *becomes* unread
  * is untouched, this is only what it looks like.
+ *
+ * `background` is idle in this respect: its turn is over and it is not asking
+ * for anybody, so the answer it finished with while nobody was watching is
+ * what its mark says until somebody looks, and then the background mark.
  */
 export function unreadShows(
   status: AgentStatus,
   unread: AgentStatus | undefined,
 ): boolean {
-  return status === "idle" && unread !== undefined;
+  return (status === "idle" || status === "background") && unread !== undefined;
 }
 
 export function StatusMark({ status, unread }: StatusMarkProps) {

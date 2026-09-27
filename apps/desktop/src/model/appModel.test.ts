@@ -626,6 +626,7 @@ describe("wantsAttention", () => {
    */
   const statuses: AgentStatus[] = [
     "working",
+    "background",
     "waiting",
     "idle",
     "error",

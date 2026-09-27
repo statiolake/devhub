@@ -279,6 +279,10 @@ function sameEditorHost(
  * ("entered `waiting`") missed entirely, and which is the case somebody
  * actually waits for.
  *
+ * A turn that ends with background tasks still working — `working` →
+ * `background` — is a finish too: the Agent answered, and what it left going
+ * is its own business until it takes its turn again.
+ *
  * What is deliberately *not* here: anything that does not start from
  * `working`. `unknown` → anything is a first reading of a screen nobody had
  * read, not a change; `idle` → `idle` is nothing; `idle` → `waiting` without a

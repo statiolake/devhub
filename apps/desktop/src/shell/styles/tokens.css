@@ -125,6 +125,13 @@
    * the translation from a VS Code theme colour key to DevHub ink; the shapes
    * that go with them are in `icons.tsx`, with every other Sidebar mark. */
   --status-working: light-dark(#b25000, #ff9f0a); /* charts.yellow */
+  /* The working ink, set back: an Agent whose turn is over while something it
+     started still runs is on its way somewhere, and asks nothing of you. */
+  --status-background: color-mix(
+    in srgb,
+    var(--status-working) 55%,
+    var(--secondary)
+  );
   --status-waiting: light-dark(#0a66d0, #0a84ff); /* charts.blue */
   --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
   --status-error: var(--danger); /* testing.iconFailed */

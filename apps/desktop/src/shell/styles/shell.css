@@ -1096,6 +1096,10 @@ body.is-resizing-sidebar {
   color: var(--status-working);
 }
 
+.status-mark-background {
+  color: var(--status-background);
+}
+
 /*
  * Waiting is the loudest thing in the window, and it is meant to be.
  *

@@ -82,6 +82,8 @@ export interface AgentProfilesWire {
 }
 export type AgentStatusWire =
 	| "working"
+	/** Its turn is over; something it started still works in the background. */
+	| "background"
 	| "waiting"
 	| "idle"
 	| "error"

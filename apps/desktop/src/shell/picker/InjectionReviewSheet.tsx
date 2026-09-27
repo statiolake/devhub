@@ -22,6 +22,7 @@
 
 import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { agentAtPrompt } from "../../model/domain";
 import { isImeComposing } from "../accessibility/ime";
 import { useInitialFocus } from "./initialFocus";
 import { usePicker } from "./PickerContext";
@@ -185,7 +186,7 @@ export function InjectionReviewSheet({
           <p className="picker-note mac-caption" role="status">
             {gone ??
               failure ??
-              (agent?.status === "idle"
+              (agent !== undefined && agentAtPrompt(agent.status)
                 ? "The agent is ready. It will be sent as soon as you confirm."
                 : "It is sent once you confirm and the agent's prompt is free.")}
           </p>
