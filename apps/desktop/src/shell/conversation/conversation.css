@@ -236,17 +236,17 @@
   font-style: italic;
 }
 
-/* The switcher: the conversation and each subagent, as tabs along the
-   bottom of the view. */
+/* The switcher: the conversation and each listed subagent, as tabs along
+   the bottom of the view. The row wraps: a tab past the edge would be out
+   of sight with nothing saying it is there. */
 .conversation-switcher {
   display: flex;
-  overflow-x: auto;
   flex: none;
+  flex-wrap: wrap;
   padding: var(--space-1) var(--space-3);
   border-top: 1px solid var(--line-soft);
   font-size: 0.85em;
   gap: 2px;
-  scrollbar-width: none;
 }
 
 .conversation-switcher-tab {
@@ -263,6 +263,14 @@
   font: inherit;
   gap: 0.4em;
   white-space: nowrap;
+}
+
+/* A long label ends in an ellipsis inside its tab; the tab's title has it
+   whole. */
+.conversation-switcher-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .conversation-switcher-tab:hover {

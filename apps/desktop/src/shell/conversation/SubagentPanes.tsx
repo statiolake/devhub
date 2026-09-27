@@ -8,15 +8,19 @@
  *
  * - Maximized: the one subagent the person maximized fills the pane, the
  *   conversation and the column set aside until they switch back.
- * - Beside: when the pane is wide enough, a subagent is in the column while
- *   it runs, and once the person has put it there or taken it out, their
- *   choice stands — the same rule as the inline card's fold.
+ * - Beside: when the pane is wide enough, a listed subagent is in the column.
  * - Inline: everywhere else, in its card, as it always was.
+ *
+ * One selection says which subagents are listed, and both the column and the
+ * switcher bar list exactly those, in transcript order: a subagent while it
+ * runs, or as the person chose once they put it beside or took it out (the
+ * same rule as the inline card's fold), and the one filling the pane until
+ * the person leaves it. Every other one is reached from its card.
  *
  * A narrow pane has no column, so a subagent is either inline or maximized,
  * and the switcher bar under the view moves between the conversation and
- * each subagent. A wide pane shows the switcher only while a subagent is
- * maximized: it is the way back.
+ * each listed subagent. A wide pane shows the switcher only while a subagent
+ * is maximized: it is the way back.
  */
 
 import {
@@ -67,12 +71,29 @@ export function subagentsOf(transcript: Transcript): readonly SubagentEntry[] {
   );
 }
 
+/**
+ * The subagents the column and the switcher list, in transcript order: each
+ * as the person chose, or else while it runs, and the one filling the pane.
+ */
+export function listedSubagents(
+  subagents: readonly SubagentEntry[],
+  chosen: ReadonlyMap<EntryId, boolean>,
+  maximized: EntryId | undefined,
+): readonly SubagentEntry[] {
+  return subagents.filter(
+    (each) =>
+      each.id === maximized ||
+      (chosen.get(each.id) ?? each.spawns.state === "running"),
+  );
+}
+
 export interface SubagentLayout {
   readonly wide: boolean;
-  readonly subagents: readonly SubagentEntry[];
+  /** The subagents the column and the switcher list: `listedSubagents`. */
+  readonly listed: readonly SubagentEntry[];
   /** The subagent filling the pane, or undefined while the conversation does. */
   readonly maximized: SubagentEntry | undefined;
-  /** The subagents in the column, in transcript order. */
+  /** The subagents in the column: the listed ones, while it is shown. */
   readonly beside: readonly SubagentEntry[];
   readonly switcher: boolean;
   readonly placeOf: (id: EntryId) => SubagentPlace;
@@ -102,6 +123,8 @@ function useWide(surface: RefObject<HTMLElement | null>): boolean {
   return wide;
 }
 
+const NO_SUBAGENTS: readonly SubagentEntry[] = [];
+
 export function useSubagentLayout(
   transcript: Transcript,
   surface: RefObject<HTMLElement | null>,
@@ -115,15 +138,11 @@ export function useSubagentLayout(
 
   // A subagent that is gone (its turn was taken back) fills nothing.
   const maximized = subagents.find((each) => each.id === maximizedId);
-  const beside = useMemo(
-    () =>
-      wide && maximized === undefined
-        ? subagents.filter(
-            (each) => chosen.get(each.id) ?? each.spawns.state === "running",
-          )
-        : [],
-    [wide, maximized, subagents, chosen],
+  const listed = useMemo(
+    () => listedSubagents(subagents, chosen, maximized?.id),
+    [subagents, chosen, maximized],
   );
+  const beside = wide && maximized === undefined ? listed : NO_SUBAGENTS;
 
   const placeOf = useCallback(
     (id: EntryId): SubagentPlace =>
@@ -141,10 +160,10 @@ export function useSubagentLayout(
 
   return {
     wide,
-    subagents,
+    listed,
     maximized,
     beside,
-    switcher: maximized !== undefined || (!wide && subagents.length > 0),
+    switcher: maximized !== undefined || (!wide && listed.length > 0),
     placeOf,
     maximize,
     setBeside,
@@ -312,7 +331,8 @@ export function SubagentColumn({ tree }: { readonly tree: EntryTree }) {
 
 /**
  * The bar under the view that moves between the conversation and each
- * subagent: a tab strip, with the arrow keys moving along it.
+ * listed subagent: a tab strip, with the arrow keys moving along it. It
+ * wraps rather than scrolls, so no tab is ever out of sight.
  */
 export function SubagentSwitcher() {
   const layout = useSubagentPlacement();
@@ -330,7 +350,7 @@ export function SubagentSwitcher() {
   if (!layout.switcher) return null;
   const views: readonly (EntryId | undefined)[] = [
     undefined,
-    ...layout.subagents.map((each) => each.id),
+    ...layout.listed.map((each) => each.id),
   ];
   const move = (by: number) => {
     const at = views.indexOf(current);
@@ -361,7 +381,7 @@ export function SubagentSwitcher() {
       >
         Conversation
       </button>
-      {layout.subagents.map((entry) => (
+      {layout.listed.map((entry) => (
         <button
           key={entry.id}
           type="button"
@@ -374,7 +394,9 @@ export function SubagentSwitcher() {
           onClick={() => layout.maximize(entry.id)}
         >
           <span className="conversation-switcher-mark" aria-hidden="true" />
-          {entry.spawns.label}
+          <span className="conversation-switcher-label">
+            {entry.spawns.label}
+          </span>
         </button>
       ))}
     </div>

@@ -7,6 +7,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import {
   afterEach,
@@ -17,7 +18,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { entryId, type ToolEntry } from "../../model/conversation";
+import { applyEvents, entryId, type ToolEntry } from "../../model/conversation";
 import { WIDE_PANE_PX } from "./SubagentPanes";
 import {
   draw,
@@ -99,14 +100,14 @@ describe("a narrow pane", () => {
     installResizeObserver();
   });
 
-  it("draws each subagent inline, and offers a switcher to each one", () => {
+  it("draws each subagent inline, and offers a switcher to each running one", () => {
     draw(TWO);
     expect(entry("a")).toContainElement(entry("a-answer"));
     expect(
       screen.queryByRole("complementary", { name: "Subagents" }),
     ).toBeNull();
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
-    expect(tabs).toEqual(["Conversation", "Alpha", "Beta"]);
+    expect(tabs).toEqual(["Conversation", "Alpha"]);
     expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -264,6 +265,112 @@ describe("a wide pane", () => {
       );
     });
     expect(card).toHaveFocus();
+  });
+});
+
+describe("the subagents listed, whatever the pane's width", () => {
+  // Many that ended, in every way a subagent ends or stops being known, and
+  // two still running.
+  const MANY = transcriptOf([
+    put(assistant("hello", "Starting many subagents")),
+    subagent("d1", "Done1", "completed"),
+    subagent("r1", "Run1", "running"),
+    subagent("d2", "Done2", "completed"),
+    subagent("f1", "Failed1", "failed"),
+    subagent("u1", "Unknown1", "unknown"),
+    subagent("i1", "Idle1", "idle"),
+    subagent("r2", "Run2", "running"),
+    subagent("d3", "Done3", "completed"),
+  ]);
+
+  /** The subagents the column lists: its panes, in order. */
+  function inColumn(): readonly string[] {
+    const column = screen.queryByRole("complementary", { name: "Subagents" });
+    return column
+      ? [...column.querySelectorAll("[data-view]")].map(
+          (pane) => pane.getAttribute("data-view") ?? "",
+        )
+      : [];
+  }
+
+  /** The subagents the switcher lists: its tabs after the conversation's. */
+  function inSwitcher(): readonly string[] {
+    return screen
+      .queryAllByRole("tab")
+      .slice(1)
+      .map((tab) => tab.textContent ?? "");
+  }
+
+  function drawnAt(width: number) {
+    cleanup();
+    paneWidth(width);
+    if (width < WIDE_PANE_PX) installResizeObserver();
+    draw(MANY);
+  }
+
+  it("are the running ones, in the narrow switcher as in the wide column", () => {
+    drawnAt(WIDE_PANE_PX + 200);
+    expect(inColumn()).toEqual(["r1", "r2"]);
+    drawnAt(600);
+    expect(inSwitcher()).toEqual(["Run1", "Run2"]);
+  });
+
+  it("keep an ended one the person opened until they leave it", () => {
+    for (const width of [600, WIDE_PANE_PX + 200]) {
+      drawnAt(width);
+      fireEvent.click(screen.getByRole("button", { name: "Maximize Done2" }));
+      expect(inSwitcher()).toEqual(["Run1", "Done2", "Run2"]);
+      fireEvent.click(screen.getByRole("tab", { name: "Run1" }));
+      expect(inSwitcher()).toEqual(["Run1", "Run2"]);
+      fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
+      if (width < WIDE_PANE_PX) {
+        expect(inSwitcher()).toEqual(["Run1", "Run2"]);
+      } else {
+        expect(inColumn()).toEqual(["r1", "r2"]);
+      }
+      // Still reachable from its call in the transcript.
+      expect(
+        screen.getByRole("button", { name: "Maximize Done2" }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("are the same whether the person put one beside or took one out", () => {
+    drawnAt(WIDE_PANE_PX + 200);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Show Done3 beside the conversation",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Put Run1 back in the conversation" }),
+    );
+    expect(inColumn()).toEqual(["r2", "d3"]);
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Run2" }));
+    expect(inSwitcher()).toEqual(["Run2", "Done3"]);
+  });
+
+  it("gain one the session launches after the pane was drawn", () => {
+    for (const width of [600, WIDE_PANE_PX + 200]) {
+      cleanup();
+      paneWidth(width);
+      if (width < WIDE_PANE_PX) installResizeObserver();
+      const view = draw(MANY);
+      view.redraw(applyEvents(MANY, [subagent("r3", "Run3", "running")]));
+      if (width < WIDE_PANE_PX) {
+        expect(inSwitcher()).toEqual(["Run1", "Run2", "Run3"]);
+      } else {
+        expect(inColumn()).toEqual(["r1", "r2", "r3"]);
+      }
+    }
+  });
+
+  it("are never cut off at the switcher's edge: its row wraps", () => {
+    // jsdom applies no stylesheet, so the rule is read where it is written.
+    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+    const bar = /\n\.conversation-switcher \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(bar).toMatch(/flex-wrap:\s*wrap/);
+    expect(bar).not.toMatch(/overflow/);
   });
 });
 

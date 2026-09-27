@@ -314,16 +314,23 @@ follows the same news, told as one quiet line on that call (*In the
 background: Done — its summary*); only a notification no drawn call started
 is a notice. Its work is drawn in one place at a time:
 
-- When the pane is wide (1040 px or more), a running subagent moves to a
-  column on the right, subagents stacked one above another, and goes back to
+- One rule lists subagents, and the column and the switcher bar both list
+  exactly those, in transcript order: a subagent while it runs (not once it
+  is done, failed, idle or unknown), or as you chose once you have used
+  *Beside* or *Close* on it, and the one filling the pane until you leave it.
+  Every subagent is reachable from its card whether it is listed or not.
+- When the pane is wide (1040 px or more), the listed subagents are in a
+  column on the right, stacked one above another; a running one goes back to
   its card when it finishes. *Beside* on a card puts a finished one there,
   *Close* on a pane takes one back; once you have done either, your choice
   stands.
 - *Maximize* fills the pane with one subagent's transcript. A switcher bar
-  under it moves between the conversation and each subagent (arrow keys move
-  along it), and the composer still talks to the conversation.
+  under it moves between the conversation and each listed subagent (arrow
+  keys move along it), and the composer still talks to the conversation. The
+  bar wraps onto another line rather than scrolling, so no tab is out of
+  sight.
 - When the pane is narrow there is no column: a subagent is in its card or
-  maximized, and the switcher bar is shown whenever there is a subagent.
+  maximized, and the switcher bar is shown whenever a subagent is listed.
 - The waiting line over the composer finds a request card wherever it is,
   switching back to the conversation if the card is there.
 
