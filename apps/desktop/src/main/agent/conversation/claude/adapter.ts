@@ -89,12 +89,15 @@ import {
 	NO_TOOL_RESULT,
 	ORIGIN_KEY,
 	decodeInitialize,
+	decodeMcpStatus,
 	decodeReceived,
 	decodeSent,
 	type AnsweredQuestions,
 	type ClaudeLine,
 	type ContentBlock,
 	type InitializeFacts,
+	type McpServerState,
+	type PluginLoadError,
 	type ToolUseResult,
 	type StreamEvent,
 	type UserBlock,
@@ -134,6 +137,35 @@ const DEVHUB_COMMANDS = [
 		argumentHint: undefined,
 	},
 ] as const;
+
+/**
+ * The one line that says which of the session's MCP servers and plugins are
+ * not working: one entry, drawn where it was first needed and changed in
+ * place after that, so it is never a new line per report.
+ */
+const EXTENSIONS_NOTICE = entryId("notice:extensions");
+
+/**
+ * An MCP server that is not working, in words the person can act on. A
+ * `disabled` server is not here: disabling it was the person's own choice.
+ */
+function mcpProblem(server: McpServerState): string | undefined {
+	switch (server.status) {
+		case "connected":
+		case "disabled":
+			return undefined;
+		case "needs-auth":
+			// A -p session cannot run the sign-in itself (MCP docs,
+			// "non-interactive mode"); a terminal can.
+			return `MCP ${server.name}: needs sign-in — run \`claude mcp login ${server.name}\` in a terminal`;
+		case "pending":
+			return `MCP ${server.name}: still connecting`;
+		case "failed":
+			return `MCP ${server.name}: failed${server.error === undefined ? "" : `: ${server.error}`}`;
+		default:
+			return `MCP ${server.name}: ${server.status}${server.error === undefined ? "" : `: ${server.error}`}`;
+	}
+}
 
 /** Commands that only work in the TUI; "continue in terminal" is the way to them. */
 const TUI_ONLY = new Set(["login", "logout"]);
@@ -331,6 +363,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	/** The model the top level last wrote with: whose context window the usage is measured against. */
 	private mainModel: string | undefined;
 	private announced: readonly string[] = [];
+	/** The session's MCP servers as the CLI last reported them (`system/init`, `mcp_status`). */
+	private mcpServers: readonly McpServerState[] = [];
+	/** The plugins the CLI last said did not load (`system/init`). */
+	private pluginErrors: readonly PluginLoadError[] = [];
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
 	private commandCount = 0;
@@ -967,6 +1003,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					},
 					commands: this.commands(),
 				});
+				if (line.mcpServers !== undefined) this.mcpServers = line.mcpServers;
+				this.pluginErrors = line.pluginErrors;
+				this.reportExtensions();
 				return this.becomeReady();
 			case "stream":
 				return this.takeStream(
@@ -1101,8 +1140,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					},
 					commands: this.commands(),
 				});
+				this.askMcpStatus();
 				return this.becomeReady();
 			}
+			case "mcp_status":
+				this.mcpServers = decodeMcpStatus(
+					line.outcome.payload,
+					this.current.session.agentVersion,
+				);
+				return this.reportExtensions();
 			case "set_model":
 				return this.setSession(this.modelSettings(request.model as string));
 			case "set_permission_mode":
@@ -1845,6 +1891,52 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.emit({ type: "usage", usage });
 		this.turn("none");
 		this.interrupting = false;
+		// A server still connecting when the turn began (`system/init`) has
+		// settled one way or the other by now, most likely.
+		this.askMcpStatus();
+	}
+
+	/**
+	 * Ask the CLI how its MCP servers stand now (`mcp_status`, the SDK's
+	 * `mcpServerStatus()`): once it is up, before anyone has said anything, so
+	 * a server that cannot work is seen before it is missed, and after each
+	 * turn, since `system/init` reports them only as each turn begins.
+	 */
+	private askMcpStatus(): void {
+		this.replies.push(this.controlRequest({ subtype: "mcp_status" }));
+	}
+
+	/**
+	 * The one line on the MCP servers and plugins that are not working. It
+	 * appears only once something is not working; once it has, it says how
+	 * they stand from then on, all working included, rather than going
+	 * silent.
+	 */
+	private reportExtensions(): void {
+		const problems = [
+			...this.mcpServers.flatMap((server) => mcpProblem(server) ?? []),
+			...this.pluginErrors.map(
+				(error) => `plugin ${error.plugin} did not load: ${error.message}`,
+			),
+		];
+		const shown = this.find(EXTENSIONS_NOTICE);
+		if (shown === undefined && problems.length === 0) return;
+		const text =
+			problems.length === 0
+				? "MCP servers and plugins: all working now"
+				: problems.join(" · ");
+		if (shown?.kind === "notice" && shown.text === text) return;
+		this.emit({
+			type: "entry",
+			entry: {
+				kind: "notice",
+				id: EXTENSIONS_NOTICE,
+				parent: null,
+				level: "info",
+				text,
+				raw: undefined,
+			},
+		});
 	}
 
 	/**

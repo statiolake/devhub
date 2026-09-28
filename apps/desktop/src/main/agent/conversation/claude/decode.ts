@@ -76,6 +76,13 @@ export type ClaudeLine =
 			 * effort will be sent.
 			 */
 			readonly effort: string | undefined;
+			/**
+			 * The MCP servers of the session and how each stands
+			 * (`mcp_servers`); undefined on a CLI that does not say.
+			 */
+			readonly mcpServers: readonly McpServerState[] | undefined;
+			/** The plugins that did not load, and why (`plugin_errors`). */
+			readonly pluginErrors: readonly PluginLoadError[];
 	  }
 	| {
 			readonly type: "stream";
@@ -226,6 +233,24 @@ export type ClaudeLine =
 			readonly key: string;
 			readonly raw: JsonObject;
 	  };
+
+/**
+ * One MCP server as the CLI reports it, in `system/init`'s `mcp_servers` and
+ * in the answer to `mcp_status` alike. `status` is the CLI's word
+ * (`connected`, `failed`, `needs-auth`, `pending`, `disabled` today), kept as
+ * a string so a word a later CLI adds is shown rather than refused.
+ */
+export interface McpServerState {
+	readonly name: string;
+	readonly status: string;
+	/** Why it failed, when the CLI says. */
+	readonly error: string | undefined;
+}
+
+export interface PluginLoadError {
+	readonly plugin: string;
+	readonly message: string;
+}
 
 export interface ResultUsage {
 	readonly inputTokens: number | undefined;
@@ -818,6 +843,33 @@ export function decodeInitialize(
 	};
 }
 
+function decodeMcpServers(
+	value: JsonValue | undefined,
+	at: string,
+	f: Fields,
+): readonly McpServerState[] {
+	return f.array(value, at).map((each, index) => {
+		const path = `${at}[${index}]`;
+		const server = f.object(each, path);
+		return {
+			name: f.string(server.name, `${path}.name`),
+			status: f.string(server.status, `${path}.status`),
+			error: f.optionalString(server.error, `${path}.error`),
+		};
+	});
+}
+
+/** The payload of the CLI's success response to DevHub's `mcp_status`. */
+export function decodeMcpStatus(
+	payload: JsonObject | undefined,
+	version: string | undefined,
+): readonly McpServerState[] {
+	const f = new Fields(version);
+	const at = "control_response(mcp_status).response.response";
+	const body = f.object(payload, at);
+	return decodeMcpServers(body.mcpServers, `${at}.mcpServers`, f);
+}
+
 function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 	const subtype = f.string(raw.subtype, "system.subtype");
 	const at = `system/${subtype}`;
@@ -846,6 +898,21 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					raw.effort === null
 						? undefined
 						: f.optionalString(raw.effort, `${at}.effort`),
+				mcpServers:
+					raw.mcp_servers === undefined
+						? undefined
+						: decodeMcpServers(raw.mcp_servers, `${at}.mcp_servers`, f),
+				pluginErrors: (raw.plugin_errors === undefined
+					? []
+					: f.array(raw.plugin_errors, `${at}.plugin_errors`)
+				).map((each, index) => {
+					const path = `${at}.plugin_errors[${index}]`;
+					const error = f.object(each, path);
+					return {
+						plugin: f.string(error.plugin, `${path}.plugin`),
+						message: f.string(error.message, `${path}.message`),
+					};
+				}),
 			};
 		case "api_retry":
 			return {

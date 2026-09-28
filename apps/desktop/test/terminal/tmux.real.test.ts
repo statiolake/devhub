@@ -2237,12 +2237,19 @@ describe.skipIf(TMUX === undefined)(
       expect(reading).toMatchObject({ status: "idle", failure: undefined });
       const after = (await second.wiring.conversations.of(AGENT)).snapshot();
       expect(after.transcript).toEqual(before.transcript);
-      // It was not greeted a second time.
+      // It was not greeted a second time: the greeting, and the one
+      // question about its MCP servers the greeting's answer asked.
       const sent = await new HostLink(
         localRuntime(),
         agentStateDirectory(home, "0123456789ab", AGENT),
       ).sentLog();
-      expect(sent).toHaveLength(1);
+      expect(
+        sent.map(
+          (each) =>
+            (JSON.parse(each.line) as { request?: { subtype?: string } })
+              .request?.subtype,
+        ),
+      ).toEqual(["initialize", "mcp_status"]);
 
       await second.wiring.conversations.registry.close(AGENT);
       await second.wiring.sessions.terminate("local", AGENT);

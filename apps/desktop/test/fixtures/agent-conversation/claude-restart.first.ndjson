@@ -5,11 +5,15 @@
 # started again with --resume on the same session plays.
 > {"type":"control_request","request_id":"fixture:1","request":{"subtype":"initialize"}}
 < {"type":"control_response","response":{"subtype":"success","request_id":"fixture:1","response":{"commands":[],"models":[]}}}
+> {"type":"control_request","request_id":"fixture:2","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:2","response":{"mcpServers":[]}}}
 > {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
 < {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000e5","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":[],"claude_code_version":"2.1.282","tools":[]}
 < {"type":"user","message":{"role":"user","content":"Say one"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f1"}
 < {"type":"assistant","message":{"id":"msg_s1","role":"assistant","content":[{"type":"text","text":"One."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f2"}
 < {"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"result":"done","session_id":"00000000-0000-4000-8000-0000000000e5"}
+> {"type":"control_request","request_id":"fixture:3","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:3","response":{"mcpServers":[]}}}
 > {"type":"user","message":{"role":"user","content":"Keep going"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
 < {"type":"user","message":{"role":"user","content":"Keep going"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f3"}
 < {"type":"assistant","message":{"id":"msg_s2","role":"assistant","content":[{"type":"tool_use","id":"toolu_s1","name":"Bash","input":{"command":"sleep 600","description":"Wait"}}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000e5","uuid":"00000000-0000-4000-8000-0000000000f4"}

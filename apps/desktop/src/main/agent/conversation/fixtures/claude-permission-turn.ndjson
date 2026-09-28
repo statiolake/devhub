@@ -10,6 +10,8 @@
 # allowed once, the tool's result, the answer, the result of the turn.
 > {"type":"control_request","request_id":"boot-a:1","request":{"subtype":"initialize"}}
 < {"type":"control_response","response":{"subtype":"success","request_id":"boot-a:1","response":{"commands":[{"name":"review","description":"Review a pull request","argumentHint":"<pr>"},{"name":"model","description":"Set the AI model","argumentHint":""},{"name":"login","description":"Sign in","argumentHint":""},{"name":"compact","description":"Compact the conversation","argumentHint":"[instructions]"}],"models":[{"value":"default","displayName":"Default","description":"Recommended"},{"value":"sonnet","displayName":"Sonnet","description":"Everyday tasks"}]}}}
+> {"type":"control_request","request_id":"boot-a:2","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"boot-a:2","response":{"mcpServers":[]}}}
 < {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000001","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":["review","model","login","compact","init"],"claude_code_version":"2.1.0","tools":["Bash","Read","Task"],"uuid":"00000000-0000-4000-8000-0000000000a0"}
 > {"type":"user","message":{"role":"user","content":"Run pwd with Bash"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
 < {"type":"user","message":{"role":"user","content":"Run pwd with Bash"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000001","uuid":"00000000-0000-4000-8000-0000000000a1","isReplay":true}
@@ -41,3 +43,5 @@
 < {"type":"stream_event","event":{"type":"message_stop"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000001","uuid":"00000000-0000-4000-8000-0000000000b9"}
 < {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.25,"resetsAt":1800000000},"session_id":"00000000-0000-4000-8000-000000000001","uuid":"00000000-0000-4000-8000-0000000000ba"}
 < {"type":"result","subtype":"success","is_error":false,"duration_ms":4210,"duration_api_ms":3900,"num_turns":2,"result":"You are in `/home/testuser/project`.","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0.0123,"usage":{"input_tokens":1500,"cache_creation_input_tokens":0,"cache_read_input_tokens":1200,"output_tokens":80},"permission_denials":[],"uuid":"00000000-0000-4000-8000-0000000000bb"}
+> {"type":"control_request","request_id":"boot-a:3","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"boot-a:3","response":{"mcpServers":[]}}}

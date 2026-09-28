@@ -232,10 +232,14 @@ describe("a conversation followed live", () => {
 			"turn:1",
 		]);
 		// Each write names how far into the journal the conversation was.
+		const after = (text: string) =>
+			host.journal.find((each) => each.line.includes(text))!.offset;
 		expect(host.inLog.map((each) => each.afterOffset)).toEqual([
 			0,
-			host.journal[1]!.offset,
-			host.journal.find((each) => each.line.includes("can_use_tool"))!.offset,
+			after('"commands"'),
+			after('"subtype":"init"'),
+			after("can_use_tool"),
+			after('"type":"result"'),
 		]);
 		await conversation.stop();
 	});
@@ -635,7 +639,10 @@ function answeringCli(host: FakeHost, version = "2.1.282"): { hold: boolean } {
 				response: {
 					subtype: "success",
 					request_id: message.request_id,
-					response: { commands: [], models: [] },
+					response:
+						message.request?.subtype === "mcp_status"
+							? { mcpServers: [] }
+							: { commands: [], models: [] },
 				},
 			});
 			return;
@@ -1053,10 +1060,12 @@ describe("the person's messages, held", () => {
 		expect(conversation.reading().transcript.pending[0]).toMatchObject({
 			editing: true,
 		});
-		const writes = host.inLog.length;
+		const messages = () =>
+			host.inLog.filter((each) => JSON.parse(each.line).type === "user");
+		const writes = messages().length;
 		endTurn(host);
 		await settle();
-		expect(host.inLog).toHaveLength(writes);
+		expect(messages()).toHaveLength(writes);
 		expect(pending(conversation)).toEqual(["third"]);
 		expect(await drawnAs(conversation.sendPendingNow(third!.id))).toMatchObject(
 			{
