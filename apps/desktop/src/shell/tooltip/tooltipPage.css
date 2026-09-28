@@ -214,7 +214,6 @@ body,
    before the pointer finds out. Hover only brightens the ink. */
 .tooltip-line-link {
   color: inherit;
-  cursor: pointer;
   text-decoration: underline;
   text-decoration-color: var(--line-strong);
   text-underline-offset: 2px;

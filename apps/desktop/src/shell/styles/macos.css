@@ -71,7 +71,6 @@
   color: var(--primary);
   font-size: 13px;
   font-weight: 400;
-  cursor: default;
 }
 
 .mac-button:hover:not(:disabled) {
@@ -128,7 +127,6 @@
   border-radius: 5px;
   background: none;
   color: var(--secondary);
-  cursor: default;
 }
 
 .mac-icon-button:hover:not(:disabled) {
@@ -181,7 +179,6 @@
   background-repeat: no-repeat;
   background-position: right 6px center;
   background-size: 10px 16px;
-  cursor: default;
 }
 
 :root:not([data-theme="light"]) .mac-popup {
@@ -214,7 +211,6 @@
   appearance: none;
   border-radius: 11px;
   background: var(--wash-strong);
-  cursor: default;
   transition: background 120ms ease;
 }
 
@@ -269,7 +265,6 @@
   background: none;
   text-align: left;
   color: var(--primary);
-  cursor: default;
 }
 
 .mac-list-row:hover {

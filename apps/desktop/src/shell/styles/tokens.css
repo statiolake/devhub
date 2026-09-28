@@ -543,8 +543,9 @@ body {
   color: var(--primary);
 }
 
-/* A native app is not a document: the pointer is an arrow, labels are not
-   draggable text, and nothing turns into an I-beam on the way past.
+/* A native app is not a document: the pointer is an arrow over what is only
+   drawn, labels are not draggable text, and nothing turns into an I-beam on
+   the way past but text that can be selected (below).
  *
  * This is declared on every element rather than inherited from the root,
  * because a UA stylesheet rule beats an inherited value: WebKit gives form
@@ -564,7 +565,9 @@ body {
 
 /* Diagnostics exist to be pasted somewhere, provider surfaces own their own
    selection model, a GUI Agent's transcript is read and quoted, and a text
-   field is a text field. */
+   field is a text field. Their text shows the I-beam: `auto` is set where
+   the text starts and inherited below it, so a link or a button inside the
+   transcript keeps the hand (below) for itself and what it holds. */
 .failure-title,
 .failure-detail,
 .surface-line,
@@ -574,8 +577,18 @@ body {
 .conversation-selectable *,
 input,
 textarea {
-  cursor: auto;
   user-select: text;
+}
+
+.failure-title,
+.failure-detail,
+.surface-line,
+.terminal-surface,
+.terminal-surface *,
+.conversation-selectable,
+input,
+textarea {
+  cursor: auto;
 }
 
 /* A control is set in its surroundings' type, which the browser would not
@@ -605,16 +618,54 @@ samp {
 
 button {
   margin: 0;
-  cursor: default;
 }
 
-button:disabled {
+/* Whatever does something when it is clicked says so with the hand, on every
+   page DevHub draws: a link, a button, a row or tab of a list, a toggle, a
+   fold, a popup — and what is inside it, which inherits it. Said once, here,
+   by what the element is (its element or its role), so a new control needs
+   no cursor of its own, and a clickable thing that is neither a control nor
+   has a role is a thing to make one. One that cannot be used now is only
+   drawn, and has the arrow (below). `:where()` weighs nothing and
+   the `:not()` one attribute, which outweighs a text field's I-beam (a
+   checkbox is an `input`) and is outweighed by nothing that is not about the
+   pointer itself: no component sets a cursor over this. */
+:where(
+  a[href],
+  button,
+  summary,
+  select,
+  label:has(> input:is([type="checkbox"], [type="radio"]):enabled),
+  input:is(
+    [type="checkbox"],
+    [type="radio"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="file"],
+    [type="color"],
+    [type="range"]
+  ),
+  [role="button"],
+  [role="link"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="option"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"]
+):not(:disabled, [aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+:is(:disabled, [aria-disabled="true"]) {
   cursor: default;
 }
 
 a {
   color: var(--accent);
-  cursor: pointer;
   text-underline-offset: 2px;
 }
 

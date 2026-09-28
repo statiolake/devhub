@@ -138,7 +138,6 @@
   border-radius: var(--radius-row);
   background: none;
   color: var(--secondary);
-  cursor: pointer;
   font: inherit;
 }
 
@@ -148,7 +147,6 @@
 }
 
 .conversation-find-button:disabled {
-  cursor: default;
   opacity: 0.4;
 }
 
@@ -395,7 +393,6 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--tertiary);
-  cursor: pointer;
   font: inherit;
   line-height: 1;
 }
@@ -520,7 +517,6 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--tertiary);
-  cursor: pointer;
   font: inherit;
   font-size: 0.8em;
   gap: 0.4em;
@@ -583,7 +579,6 @@
   display: inline-flex;
   align-items: center;
   color: var(--tertiary);
-  cursor: pointer;
   font-size: 0.9em;
   gap: 0.35em;
   list-style: none;
@@ -890,7 +885,6 @@
   border-radius: var(--radius-row);
   margin: 0 calc(-1 * var(--space-2));
   color: var(--secondary);
-  cursor: pointer;
   gap: var(--space-2);
   list-style: none;
 }
@@ -1248,7 +1242,6 @@
   border-radius: 50%;
   background: var(--raised);
   color: var(--secondary);
-  cursor: pointer;
   font-size: 0.85em;
   line-height: 1;
 }
@@ -1355,7 +1348,6 @@
   border: 0;
   background: none;
   color: var(--tertiary);
-  cursor: pointer;
   font: inherit;
   font-size: 0.8em;
 }
@@ -1378,7 +1370,6 @@
   align-items: baseline;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-panel);
-  cursor: pointer;
   gap: var(--space-2);
   list-style: none;
 }
@@ -1448,7 +1439,6 @@
   border: 0;
   background: none;
   color: var(--tertiary);
-  cursor: pointer;
   font: inherit;
   font-size: 0.85em;
 }
@@ -1499,10 +1489,6 @@
   margin-top: 2px;
   color: color-mix(in srgb, var(--danger) 75%, var(--secondary));
   font-size: 0.8em;
-}
-
-.conversation-tool-denial > summary {
-  cursor: pointer;
 }
 
 .conversation-tool-denial-detail {
@@ -1702,7 +1688,6 @@
   border-radius: var(--radius-control);
   background: var(--raised);
   color: var(--primary);
-  cursor: pointer;
   font: inherit;
   gap: 0.4em;
 }
@@ -1726,7 +1711,6 @@
 }
 
 .conversation-request-choice:disabled {
-  cursor: default;
   opacity: 0.5;
 }
 
@@ -1940,7 +1924,6 @@ label.conversation-question-option:hover,
   background: var(--raised);
   box-shadow: var(--shadow-dialog);
   color: var(--primary);
-  cursor: pointer;
   font: inherit;
   font-size: 0.85em;
   gap: var(--space-1);
@@ -1969,7 +1952,6 @@ label.conversation-question-option:hover,
   margin: 0 auto var(--space-2);
   background: color-mix(in srgb, var(--status-waiting) 8%, var(--surface));
   color: var(--primary);
-  cursor: pointer;
   font: inherit;
   font-size: 0.85em;
   text-align: center;
@@ -2019,7 +2001,6 @@ label.conversation-question-option:hover,
   border-radius: var(--radius-control);
   background: var(--raised);
   color: var(--primary);
-  cursor: pointer;
   font: inherit;
   gap: 0.4em;
 }
@@ -2043,7 +2024,6 @@ label.conversation-question-option:hover,
 }
 
 .conversation-pending-footer button:disabled {
-  cursor: default;
   opacity: 0.5;
 }
 
@@ -2155,11 +2135,9 @@ label.conversation-question-option:hover,
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--secondary);
-  cursor: pointer;
 }
 
 .conversation-subagent-message-send:disabled {
-  cursor: default;
   opacity: 0.5;
 }
 
@@ -2215,7 +2193,6 @@ label.conversation-question-option:hover,
   padding: 0;
   border: 0;
   background: none;
-  cursor: pointer;
   font-family: inherit;
   gap: 0.4em;
   text-align: left;
@@ -2304,7 +2281,6 @@ label.conversation-question-option:hover,
   border-radius: var(--radius-row);
   background: none;
   color: var(--tertiary);
-  cursor: pointer;
 }
 
 .conversation-background-stop svg {
@@ -2318,7 +2294,6 @@ label.conversation-question-option:hover,
 }
 
 .conversation-background-stop:disabled {
-  cursor: default;
   opacity: 0.4;
 }
 
@@ -2332,10 +2307,6 @@ label.conversation-question-option:hover,
   margin: 2px 0 var(--space-1);
   padding: 0 var(--space-1);
   font-size: inherit;
-}
-
-button.conversation-background-line {
-  cursor: pointer;
 }
 
 button.conversation-background-line:hover {
@@ -2477,7 +2448,6 @@ button.conversation-background-line:hover {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  cursor: pointer;
   font: inherit;
 }
 
@@ -2489,7 +2459,6 @@ button.conversation-background-line:hover {
 .conversation-send:disabled {
   background: var(--wash-strong);
   color: var(--tertiary);
-  cursor: default;
 }
 
 .conversation-stop {
@@ -2547,7 +2516,6 @@ button.conversation-background-line:hover {
   appearance: none;
   background: transparent;
   color: var(--secondary);
-  cursor: pointer;
   field-sizing: content;
   font: inherit;
   outline: none;
@@ -2570,7 +2538,6 @@ button.conversation-background-line:hover {
 }
 
 .conversation-setting select:disabled {
-  cursor: default;
   opacity: 0.6;
 }
 
