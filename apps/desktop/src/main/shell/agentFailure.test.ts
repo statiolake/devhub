@@ -27,6 +27,10 @@ describe("what a port refusal is called", () => {
 		["conflict", "tmux_session_conflict"],
 		["root_missing", "workspace_unavailable"],
 		["root_inaccessible", "workspace_unavailable"],
+		// No server was reached, so the runtime is what cannot be reached; the
+		// detail says which socket and why.
+		["socket_path_too_long", "agent_runtime_unavailable"],
+		["socket_unusable", "agent_runtime_unavailable"],
 	] as const)("calls a %s port failure %s", (kind, code) => {
 		expect(portRefusal(portFailure(kind)).code).toBe(code);
 	});

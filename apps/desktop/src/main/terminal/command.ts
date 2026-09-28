@@ -462,13 +462,40 @@ function decodeUtf8(output: Buffer): string {
 }
 
 /**
- * The one stderr classification the runtime makes: "there is no server".
+ * What a failed tmux client said about the server it tried to reach.
  *
- * Everything it does not match is read as a *foreign* server, which is the
- * fail-closed answer — DevHub refuses a socket it cannot prove is its own. That
- * makes the exact set here load-bearing in both directions, and it has to cover
- * every way tmux says the server is gone, not only the ways it says so before
- * connecting:
+ * - `no_server`: nothing is listening — an answer, not a failure.
+ * - `socket_unusable`: the client never got as far as a server, because the
+ *   socket it would connect through cannot be used; `failure` says why.
+ * - `reached`: anything else. The client reached *a* server and that server
+ *   refused, which the caller reads for itself — a marker probe as a foreign
+ *   server, any other command as its own refusal.
+ */
+export type ServerReach =
+	| { readonly kind: "no_server" }
+	| { readonly kind: "socket_unusable"; readonly failure: PortFailure }
+	| { readonly kind: "reached" };
+
+/** tmux's own line for a path it could not connect to, create or make. */
+const SOCKET_ERROR =
+	/^(?:error connecting to|error creating|couldn't create directory) (.+) \((.+)\)$/u;
+const UNSAFE_DIRECTORY = /^directory .+ has unsafe permissions$/u;
+/** As long as a line of tmux's may be in a detail: one line, bounded. */
+const MAX_SOCKET_LINE = 512;
+
+/**
+ * The one stderr classification the runtime makes, at the one place every tmux
+ * DevHub runs goes through (`runTmuxSpec`, in `tmux.ts`).
+ *
+ * Everything it reads as `reached` is, to a marker probe, a *foreign* server,
+ * which is the fail-closed answer — DevHub refuses a socket it cannot prove is
+ * its own. That makes both of the other sets load-bearing: a way of saying
+ * "there is no server" that is missing here declares DevHub's own socket
+ * somebody else's, and so does a way of saying "the socket cannot be used" —
+ * which is how a `TMUX_TMPDIR` too deep for a socket address used to reach the
+ * person as a conflict with another DevHub that did not exist.
+ *
+ * There is no server when tmux says:
  *
  * - "no server running on <socket>" — the socket is absent, or stale after a
  *   server was killed.
@@ -482,14 +509,76 @@ function decodeUtf8(output: Buffer): string {
  *
  * Calling any of them "absent" costs no safety: the caller bootstraps a server
  * and verifies the marker on it before using it.
+ *
+ * The socket cannot be used when tmux says (its `client.c`, `server.c` and
+ * `tmux.c`, as tmux 3.x prints them):
+ *
+ * - "error connecting to <socket> (File name too long)", or "error creating
+ *   <socket> (…)" from a server that could not bind it — the path does not fit
+ *   in `sun_path`, 104 bytes on macOS with its NUL. Named, because it is the
+ *   one with a fix to give: a shorter `TMUX_TMPDIR`.
+ * - "error connecting to <socket> (<any other reason>)" — permission denied,
+ *   not a socket, …
+ * - "couldn't create directory <dir> (…)", "error creating <dir> (…)",
+ *   "directory <dir> has unsafe permissions", "no suitable socket path" — the
+ *   `tmux-<uid>` directory itself cannot be used.
+ *
+ * The last line is the one read, because tmux prints the reason it stopped
+ * last; a line before it is a warning out of a sourced config.
  */
-export function isNoServerError(stderr: Buffer): boolean {
-	const text = stderr.toString("utf8").trim().toLowerCase();
-	return (
-		text.includes("no server running") ||
-		text === "no server" ||
-		text.includes("server exited unexpectedly") ||
-		(text.startsWith("error connecting") &&
-			text.includes("no such file or directory"))
-	);
+export function serverReach(stderr: Buffer): ServerReach {
+	const said = stderr
+		.toString("utf8")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0)
+		.at(-1);
+	if (said === undefined) return { kind: "reached" };
+	const lower = said.toLowerCase();
+	if (
+		lower.startsWith("no server running") ||
+		lower === "no server" ||
+		lower.includes("server exited unexpectedly")
+	) {
+		return { kind: "no_server" };
+	}
+	const socket = SOCKET_ERROR.exec(said);
+	if (socket !== null) {
+		const [, path = "", reason = ""] = socket;
+		if (
+			reason === "No such file or directory" &&
+			said.startsWith("error connecting")
+		) {
+			return { kind: "no_server" };
+		}
+		if (reason === "File name too long") {
+			return {
+				kind: "socket_unusable",
+				failure: portFailure("socket_path_too_long", {
+					detail: `${path} is ${String(Buffer.byteLength(path, "utf8"))} bytes; macOS allows 103 and Linux 107. Set TMUX_TMPDIR to a shorter directory.`,
+				}),
+			};
+		}
+		return unusableSocket(said);
+	}
+	if (UNSAFE_DIRECTORY.test(said) || said === "no suitable socket path") {
+		return unusableSocket(said);
+	}
+	return { kind: "reached" };
+}
+
+/**
+ * The socket failure that is not about length, in tmux's own words.
+ *
+ * tmux's line is quoted rather than paraphrased because it already names the
+ * path and the operating system's reason, which is everything to go and look
+ * at; see `PortFailure` for why a detail may.
+ */
+function unusableSocket(said: string): ServerReach {
+	return {
+		kind: "socket_unusable",
+		failure: portFailure("socket_unusable", {
+			detail: `tmux could not use its socket: ${said.slice(0, MAX_SOCKET_LINE)}`,
+		}),
+	};
 }

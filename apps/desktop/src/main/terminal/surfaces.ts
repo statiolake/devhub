@@ -49,7 +49,11 @@ export function terminalFailureFromPort(failure: unknown): TerminalFailure {
 	// executable and the search, which is what the code alone cannot say.
 	const options = { cause: failure, summary: failure.detail };
 	switch (failure.code) {
+		// A socket tmux cannot use is the runtime not being reachable, and the
+		// detail — which socket, and why — is the summary.
 		case "unavailable":
+		case "socket_path_too_long":
+		case "socket_unusable":
 			return new TerminalFailure("runtime_unavailable", options);
 		// Not "unavailable". A command that ran out of its budget says nothing
 		// about whether the runtime is there — it is usually there and busy —

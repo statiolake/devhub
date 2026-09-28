@@ -726,6 +726,8 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "tmux_command_failed":
     case "tmux_command_timed_out":
     case "tmux_session_conflict":
+    case "terminal_socket_path_too_long":
+    case "terminal_socket_unusable":
       return "terminal";
     default:
       return "app";

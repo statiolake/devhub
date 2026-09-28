@@ -13,6 +13,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -69,6 +70,7 @@ import {
 } from "../../src/main/agent/injection";
 import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
 import { scratchDirectory } from "./scratch";
+import { makeSocketDir } from "../../src/model/testScratch";
 import {
   TMUX,
   killTmuxServer,
@@ -1179,6 +1181,71 @@ describe.skipIf(TMUX === undefined)(
       expect((await test.runtime.preflight(test.socket)).state).toBe(
         "wrong_marker",
       );
+    });
+
+    /**
+     * The report this was written for, against the tmux that produced it. A
+     * `TMUX_TMPDIR` deep enough that `<dir>/tmux-<uid>/<socket>` does not fit
+     * in a socket address used to reach the person as a conflict with another
+     * DevHub. There is no server there at all; tmux says why, and so does
+     * DevHub.
+     *
+     * The directory is made under `/tmp` and removed here, so nothing this
+     * case does can reach the run's socket directory or anybody else's.
+     */
+    it("names a socket path too long for a socket address instead of a conflict", async () => {
+      const root = makeSocketDir("toolong");
+      try {
+        const deep = join(root, "a".repeat(90));
+        mkdirSync(deep);
+        const test = fixture("toolong", { TMUX_TMPDIR: deep });
+        const socketPath = join(
+          realpathSync(deep),
+          `tmux-${process.getuid?.() ?? 0}`,
+          test.socket,
+        );
+        expect(Buffer.byteLength(socketPath)).toBeGreaterThan(103);
+        const tooLong = expect.objectContaining({
+          code: "socket_path_too_long",
+          detail: `${socketPath} is ${String(Buffer.byteLength(socketPath))} bytes; macOS allows 103 and Linux 107. Set TMUX_TMPDIR to a shorter directory.`,
+        }) as unknown as Error;
+        await expect(test.runtime.agentRound([])).rejects.toThrowError(tooLong);
+        await expect(test.runtime.preflight(test.socket)).rejects.toThrowError(
+          tooLong,
+        );
+        // Bringing a server up is refused the same way, not taken for a
+        // server somebody else started.
+        await expect(test.runtime.ensure(SCRATCH_TARGET)).rejects.toThrowError(
+          tooLong,
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("names a socket directory it may not create instead of a conflict", async () => {
+      const root = makeSocketDir("locked");
+      const locked = join(root, "locked");
+      try {
+        mkdirSync(locked, { mode: 0o500 });
+        const test = fixture("locked", { TMUX_TMPDIR: locked });
+        const unusable = expect.objectContaining({
+          code: "socket_unusable",
+          detail: `tmux could not use its socket: couldn't create directory ${join(
+            realpathSync(locked),
+            `tmux-${process.getuid?.() ?? 0}`,
+          )} (Permission denied)`,
+        }) as unknown as Error;
+        await expect(test.runtime.agentRound([])).rejects.toThrowError(
+          unusable,
+        );
+        await expect(test.runtime.ensure(SCRATCH_TARGET)).rejects.toThrowError(
+          unusable,
+        );
+      } finally {
+        chmodSync(locked, 0o700);
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it("never claims a Scratch a trusted user config created first", async () => {

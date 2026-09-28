@@ -113,7 +113,12 @@ export function portRefusal(error: unknown): {
 	}
 	const detail = error.detail;
 	const code: AgentFailureCode =
-		error.code === "unavailable" || error.code === "incompatible"
+		// A socket tmux cannot use is the runtime not being reachable at all,
+		// and its detail says which socket and why.
+		error.code === "unavailable" ||
+		error.code === "incompatible" ||
+		error.code === "socket_path_too_long" ||
+		error.code === "socket_unusable"
 			? "agent_runtime_unavailable"
 			: error.code === "timed_out"
 				? "tmux_command_timed_out"

@@ -360,6 +360,21 @@ export type AppErrorCodeWire =
 	/** The session DevHub needs is not the session that is there. */
 	| "tmux_session_conflict"
 	/**
+	 * tmux's socket path does not fit in a socket address (`sun_path`: 104
+	 * bytes on macOS, with its NUL), so no tmux client can reach a server.
+	 *
+	 * Its own code because it used to be read as a conflict — "another DevHub
+	 * owns it" — which sent the reader looking for a second DevHub that did not
+	 * exist. The detail names the path, its length and the fix.
+	 */
+	| "terminal_socket_path_too_long"
+	/**
+	 * tmux could not use its socket or the directory it lives in — permission
+	 * denied, unsafe permissions, something that is not a socket — so no tmux
+	 * client can reach a server. The detail is tmux's own line naming the path.
+	 */
+	| "terminal_socket_unusable"
+	/**
 	 * The state file was from an older DevHub and moving it forward changed
 	 * something the person did not do — a Workspace merged into another,
 	 * Agents removed. Nothing failed; it is said because it happened without
@@ -449,6 +464,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	tmux_command_timed_out: "The terminal runtime did not answer in time.",
 	tmux_session_conflict:
 		"The terminal session DevHub needs is not the one that is there.",
+	terminal_socket_path_too_long: "The terminal socket path is too long.",
+	terminal_socket_unusable: "DevHub cannot use the terminal socket.",
 	state_migrated: "DevHub updated its saved Workspaces for this version.",
 	dev_container_not_stopped:
 		"A dev container DevHub started is still running: it could not be stopped.",

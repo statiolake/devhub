@@ -54,11 +54,11 @@ import {
 	MAX_OUTPUT_BYTES,
 	MAX_STDERR_BYTES,
 	RECORD_SEPARATOR,
-	isNoServerError,
 	parseLines,
 	parseOptionValue,
 	parseCapture,
 	parseRecords,
+	serverReach,
 	shapeFailure,
 	splitRecords,
 	type CommandOutput,
@@ -1074,12 +1074,18 @@ function tmuxSilence(
  * The refusal is built at the one place that knows both what was asked for and
  * what tmux said about it; a throw site forty lines away knows neither. Every
  * caller reads `success` itself — a non-zero exit is sometimes an answer
- * rather than a failure (`isNoServerError`) — and raises this when it decides
- * the exit really was a failure.
+ * rather than a failure (`noServer`) — and raises this when it decides the
+ * exit really was a failure.
+ *
+ * A client that never reached a server because its socket cannot be used is
+ * not a result at all: `runTmuxSpec` throws that failure instead of returning
+ * one, so no caller can read it as a foreign server's answer.
  *
  * Lazy, because a refusal is rare and a `PortFailure` captures a stack.
  */
 export interface TmuxOutput extends CommandOutput {
+	/** The command failed because there is no server (`serverReach`). */
+	readonly noServer: boolean;
 	refusal(): PortFailure;
 }
 
@@ -1663,9 +1669,11 @@ export class TmuxTerminalRuntime {
 			// The marker probe itself did not answer. An absent server says so
 			// on stderr; anything else is a reachable server this command could
 			// not read, which is the same fail-closed conflict as a wrong
-			// marker.
+			// marker. A socket that could not be used at all never gets here —
+			// `runTmuxSpec` throws what `serverReach` says about it — because
+			// no server was reached to be anybody's.
 			return {
-				marker: isNoServerError(output.stderr) ? "absent" : "wrong",
+				marker: output.noServer ? "absent" : "wrong",
 				...nothing,
 			};
 		}
@@ -1693,8 +1701,7 @@ export class TmuxTerminalRuntime {
 		if (!listed) {
 			// The server was DevHub's and went away between the two commands,
 			// which is the same answer an absent server gives: nothing is on it.
-			if (isNoServerError(output.stderr))
-				return { marker: "owned", ...nothing };
+			if (output.noServer) return { marker: "owned", ...nothing };
 			throw output.refusal();
 		}
 		const agents = sessionsFrom(sessions)
@@ -2284,7 +2291,7 @@ export class TmuxTerminalRuntime {
 			deadline,
 		);
 		if (!output.success) {
-			if (isNoServerError(output.stderr)) return "absent";
+			if (output.noServer) return "absent";
 			// A reachable server without this option is an existing foreign
 			// server, not an absent one. A missing marker is the same
 			// fail-closed conflict as an explicitly wrong marker.
@@ -2669,7 +2676,7 @@ export class TmuxTerminalRuntime {
 			deadline,
 		);
 		if (!output.success) {
-			if (isNoServerError(output.stderr)) return [];
+			if (output.noServer) return [];
 			throw output.refusal();
 		}
 		return sessionsFrom(parseRecords(output.stdout, SESSION_FIELDS.length));
@@ -2701,7 +2708,7 @@ export class TmuxTerminalRuntime {
 			deadline,
 		);
 		if (!output.success) {
-			if (isNoServerError(output.stderr)) return [];
+			if (output.noServer) return [];
 			throw output.refusal();
 		}
 		return parseRecords(output.stdout, CLIENT_FIELDS.length).map((record) => ({
@@ -2759,9 +2766,11 @@ export class TmuxTerminalRuntime {
 			// The marker probe itself did not answer. An absent server says so
 			// on stderr; anything else is a reachable server this command could
 			// not read, which is the same fail-closed conflict as a wrong
-			// marker.
+			// marker. A socket that could not be used at all never gets here —
+			// `runTmuxSpec` throws what `serverReach` says about it — because
+			// no server was reached to be anybody's.
 			return {
-				marker: isNoServerError(output.stderr) ? "absent" : "wrong",
+				marker: output.noServer ? "absent" : "wrong",
 				sessions: [],
 			};
 		}
@@ -2775,7 +2784,7 @@ export class TmuxTerminalRuntime {
 		if (!output.success) {
 			// The server was DevHub's and went away between the two commands,
 			// which is the same answer an absent server gives: nothing is on it.
-			if (isNoServerError(output.stderr)) return { marker, sessions: [] };
+			if (output.noServer) return { marker, sessions: [] };
 			throw output.refusal();
 		}
 		return { marker, sessions: sessionsFrom(records.slice(1)) };
@@ -3075,7 +3084,8 @@ export class TmuxTerminalRuntime {
 	 * Both halves of "what went wrong" are known here and only here — the
 	 * subcommand, from the argv about to be run, and tmux's own words, from the
 	 * stderr that comes back — so both halves of the diagnostic are composed
-	 * here: a timeout is named on the way out, and a refusal is carried on the
+	 * here: a timeout is named on the way out, a socket tmux could not use is
+	 * thrown on the way out (`serverReach`), and a refusal is carried on the
 	 * result for whichever caller decides the exit was a failure.
 	 */
 	private async runTmuxSpec(
@@ -3096,9 +3106,13 @@ export class TmuxTerminalRuntime {
 			.catch((error: unknown) => {
 				throw tmuxSilence(error, subcommand, deadline);
 			});
+		const success = answer.code === 0 && answer.signal === null;
+		const reach = success ? undefined : serverReach(answer.stderr);
+		if (reach?.kind === "socket_unusable") throw reach.failure;
 		return {
 			...answer,
-			success: answer.code === 0 && answer.signal === null,
+			success,
+			noServer: reach?.kind === "no_server",
 			refusal: () => tmuxRefusal(subcommand, answer.stderr),
 		};
 	}

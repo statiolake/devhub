@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   OperationDeadline,
-  isNoServerError,
   MAX_OUTPUT_BYTES,
   MAX_STDERR_BYTES,
   parseLines,
@@ -20,6 +19,7 @@ import {
   parseRecords,
   resolveExecutable,
   runBounded,
+  serverReach,
 } from "../../src/main/terminal/command";
 import type { ExecLimits } from "../../src/main/runtime/runtime";
 import {
@@ -34,6 +34,7 @@ import {
   workspaceTarget,
 } from "../../src/main/terminal/ports";
 import { terminalFailureFromPort } from "../../src/main/terminal/surfaces";
+import { APP_ERROR_SUMMARY } from "../../src/ipc/appShell";
 import {
   TmuxTerminalRuntime,
   isMarked,
@@ -579,11 +580,13 @@ describe("scratch directories", () => {
   });
 });
 
-describe("the absent-server classification", () => {
+describe("what a failed tmux client says about its server", () => {
+  const reach = (stderr: string) => serverReach(Buffer.from(stderr, "utf8"));
+
   /**
-   * Everything this does not match is read as a foreign server and refuses
-   * the socket, so each of these sentences is one way DevHub could declare
-   * its own tmux somebody else's.
+   * Everything read as `reached` is a foreign server to a marker probe and
+   * refuses the socket, so each of these sentences is one way DevHub could
+   * declare its own tmux somebody else's.
    */
   it("covers every way tmux says the server is gone", () => {
     for (const stderr of [
@@ -594,7 +597,48 @@ describe("the absent-server classification", () => {
       // prints exactly this, and it means the same thing as the two above.
       "server exited unexpectedly",
     ]) {
-      expect(isNoServerError(Buffer.from(`${stderr}\n`, "utf8"))).toBe(true);
+      expect(reach(`${stderr}\n`)).toEqual({ kind: "no_server" });
+    }
+  });
+
+  /**
+   * The case that used to be a conflict: a `TMUX_TMPDIR` deep enough that
+   * the socket's path does not fit in a socket address. There is no server
+   * on the other end to be another DevHub's.
+   */
+  it("names a socket path too long for a socket address, with its length and the fix", () => {
+    const path = `/private/tmp/${"a".repeat(90)}/tmux-501/devhub`;
+    for (const stderr of [
+      `error connecting to ${path} (File name too long)\n`,
+      // What a server that could not bind the socket says instead.
+      `error creating ${path} (File name too long)\n`,
+    ]) {
+      const answer = reach(stderr);
+      expect(answer.kind).toBe("socket_unusable");
+      if (answer.kind !== "socket_unusable") return;
+      expect(answer.failure.code).toBe("socket_path_too_long");
+      expect(answer.failure.detail).toBe(
+        `${path} is ${String(Buffer.byteLength(path))} bytes; macOS allows 103 and Linux 107. Set TMUX_TMPDIR to a shorter directory.`,
+      );
+    }
+  });
+
+  it("reads every other socket tmux could not use as that, in tmux's words", () => {
+    for (const stderr of [
+      "couldn't create directory /tmp/locked/tmux-501 (Permission denied)",
+      "error creating /tmp/locked/tmux-501 (Permission denied)",
+      "error connecting to /tmp/x/tmux-501/devhub (Permission denied)",
+      "error connecting to /tmp/x/tmux-501/devhub (Socket operation on non-socket)",
+      "directory /tmp/x/tmux-501 has unsafe permissions",
+      "no suitable socket path",
+    ]) {
+      const answer = reach(`${stderr}\n`);
+      expect(answer.kind, stderr).toBe("socket_unusable");
+      if (answer.kind !== "socket_unusable") return;
+      expect(answer.failure.code).toBe("socket_unusable");
+      expect(answer.failure.detail).toBe(
+        `tmux could not use its socket: ${stderr}`,
+      );
     }
   });
 
@@ -605,8 +649,16 @@ describe("the absent-server classification", () => {
       "lost server",
       "unknown command: show-options",
     ]) {
-      expect(isNoServerError(Buffer.from(stderr, "utf8"))).toBe(false);
+      expect(reach(stderr)).toEqual({ kind: "reached" });
     }
+  });
+
+  it("reads the last line, which is the one tmux stopped on", () => {
+    expect(
+      reach(
+        "/home/alice/.tmux.conf:3: unknown option: foo\nno server running on /tmp/tmux-501/devhub\n",
+      ),
+    ).toEqual({ kind: "no_server" });
   });
 });
 
@@ -656,6 +708,32 @@ describe("naming a runtime failure for the person who reads it", () => {
     expect(terminalFailureFromPort(portFailure("incompatible")).code).toBe(
       "runtime_incompatible",
     );
+  });
+
+  /**
+   * A socket tmux cannot use is drawn under its own title, never as a
+   * conflict: there was no server on the other end to be another DevHub's.
+   */
+  it("gives a socket tmux cannot use its own title, and calls it the runtime not being there", () => {
+    const tooLong = portFailure("socket_path_too_long", {
+      detail:
+        "/tmp/x/tmux-501/devhub is 120 bytes; macOS allows 103 and Linux 107. Set TMUX_TMPDIR to a shorter directory.",
+    });
+    expect(tooLong.wire.code).toBe("terminal_socket_path_too_long");
+    expect(APP_ERROR_SUMMARY[tooLong.wire.code]).toBe(
+      "The terminal socket path is too long.",
+    );
+    expect(tooLong.wire.detail).toBe(tooLong.detail);
+    expect(portFailure("socket_unusable").wire.code).toBe(
+      "terminal_socket_unusable",
+    );
+    for (const code of ["socket_path_too_long", "socket_unusable"] as const) {
+      const drawn = terminalFailureFromPort(
+        portFailure(code, { detail: "which socket, and why" }),
+      );
+      expect(drawn.code).toBe("runtime_unavailable");
+      expect(drawn.summary).toBe("which socket, and why");
+    }
   });
 
   /** Unchanged, and the reason lifecycle code can still tell an abort apart. */
@@ -716,6 +794,50 @@ describe("what a tmux command says when it goes wrong", () => {
       code: "failed",
       detail: "tmux `kill-session` failed: can't find session: nope",
     });
+  });
+
+  /**
+   * The report this was written for: a socket path too long for a socket
+   * address reached the person as a conflict with "another DevHub", because
+   * the marker probe read every failure that was not "no server" as a
+   * foreign server. The round now says what tmux said.
+   */
+  it("reports a socket it could not connect through as that, not as a conflict", async () => {
+    const path = `/private/tmp/${"a".repeat(90)}/tmux-501/devhub`;
+    for (const [said, code] of [
+      [
+        `error connecting to ${path} (File name too long)`,
+        "socket_path_too_long",
+      ],
+      [
+        "couldn't create directory /tmp/locked/tmux-501 (Permission denied)",
+        "socket_unusable",
+      ],
+    ] as const) {
+      const runner = runtime({
+        timeoutMs: 5_000,
+        tmux: fakeTmux(
+          `[ "$3" = "-V" ] && { echo "tmux 3.4"; exit 0; }\necho ${JSON.stringify(said)} >&2\nexit 1`,
+        ),
+      });
+      await expect(runner.agentRound([])).rejects.toMatchObject({ code });
+      await expect(
+        runner.preflight(socketName("devhub")),
+      ).rejects.toMatchObject({ code });
+    }
+  });
+
+  it("still reads a server that refused the marker probe as a conflict", async () => {
+    const runner = runtime({
+      timeoutMs: 5_000,
+      tmux: fakeTmux(
+        '[ "$3" = "-V" ] && { echo "tmux 3.4"; exit 0; }\necho "unknown command: display-message" >&2\nexit 1',
+      ),
+    });
+    expect((await runner.agentRound([])).marker).toBe("wrong");
+    expect((await runner.preflight(socketName("devhub"))).state).toBe(
+      "wrong_marker",
+    );
   });
 
   it("says which command fell silent, and how long DevHub waited", async () => {

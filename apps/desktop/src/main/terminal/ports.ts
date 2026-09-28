@@ -31,6 +31,14 @@ export type PortErrorCode =
 	// look at tmux, which is working perfectly.
 	| "root_missing"
 	| "root_inaccessible"
+	// A tmux client that never reached a server, because the socket it would
+	// connect through cannot be used. Never a conflict: there is no server on
+	// the other end to be somebody else's. Its own two conditions, because
+	// what to do next differs — a path too long for a socket address is fixed
+	// by a shorter `TMUX_TMPDIR`, anything else about the socket by looking at
+	// the directory tmux names. See `serverReach` in `command.ts`.
+	| "socket_path_too_long"
+	| "socket_unusable"
 	| "failed";
 
 /** What each kind of runtime failure is drawn as, outside an Agent's pane. */
@@ -44,6 +52,8 @@ const PORT_FAILURE_SHOWN_AS: Readonly<Record<PortErrorCode, AppErrorCodeWire>> =
 		failed: "machine_command_failed",
 		root_missing: "workspace_unavailable",
 		root_inaccessible: "workspace_unavailable",
+		socket_path_too_long: "terminal_socket_path_too_long",
+		socket_unusable: "terminal_socket_unusable",
 	};
 
 /**
