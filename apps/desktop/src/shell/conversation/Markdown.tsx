@@ -53,7 +53,8 @@ function languageOf(code: Element): string | undefined {
   return undefined;
 }
 
-function ExternalLink({
+/** A link the Agent gave, opened outside DevHub, never in place of the page. */
+export function ExternalLink({
   href,
   children,
 }: {

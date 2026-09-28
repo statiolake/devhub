@@ -10,13 +10,17 @@
  * the card stays: the request is still open, so it is still the thing to
  * answer.
  *
+ * A request answered by filling something in — questions, an elicitation's
+ * fields, which may be none — has a form, whose submit is the first answer
+ * in the row, before the adapter's choices.
+ *
  * From the keyboard, as in the CLIs' own dialogs: with the card focused, 1–9
- * press its choices in order, and Esc goes back to the composer. What is typed
+ * press its answers in order, and Esc goes back to the composer. What is typed
  * into it is written under the composer's keys (`messageKeys.ts`): Return is a
  * new line and ⌘Return answers.
  */
 
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type {
   AskedQuestion,
   PendingRequest,
@@ -26,11 +30,17 @@ import type {
   RequestChoice,
 } from "../../model/conversation";
 import {
+  formContent,
+  initialValues,
+  type FormField,
+  type FormValues,
+} from "../../model/elicitationForm";
+import {
   useConversationActions,
   useFocusComposer,
 } from "./ConversationContext";
 import { DiffView, JsonView } from "./EntryParts";
-import { Markdown } from "./Markdown";
+import { ExternalLink, Markdown } from "./Markdown";
 import { SEND_KEY, useMessageKeys, type MessageKeys } from "./messageKeys";
 
 function Subject({ request }: { readonly request: PendingRequest }) {
@@ -64,21 +74,35 @@ function Subject({ request }: { readonly request: PendingRequest }) {
       // The questions are the form below; the card has no other subject.
       return null;
     case "elicitation":
+      // Its fields are the form below.
       return (
         <>
           <div className="conversation-request-title">{subject.server}</div>
           <p className="conversation-request-reason">{subject.message}</p>
-          <JsonView value={subject.schema} />
+          {subject.url === undefined ? null : (
+            <p className="conversation-request-url">
+              <ExternalLink href={subject.url}>{subject.url}</ExternalLink>
+            </p>
+          )}
         </>
       );
   }
 }
 
+/**
+ * The card's answers in one row, numbered in order: the submit of its form
+ * first, when it has one (`submit`, the form's element id and the word on
+ * its button), then the adapter's choices.
+ */
 function Choices({
+  submit,
   choices,
   busy,
   send,
 }: {
+  readonly submit:
+    | { readonly form: string; readonly label: string }
+    | undefined;
   readonly choices: readonly RequestChoice[];
   readonly busy: boolean;
   readonly send: (answer: RequestAnswer) => void;
@@ -128,33 +152,58 @@ function Choices({
       </form>
     );
   }
+  const first = submit === undefined ? 0 : 1;
   return (
     <div className="conversation-request-choices">
-      {choices.map((choice, index) => (
+      {submit === undefined ? null : (
         <button
-          key={choice.id}
-          type="button"
+          type="submit"
+          form={submit.form}
           className="conversation-request-choice"
-          data-tone={choice.tone}
-          data-choice-index={index}
-          aria-keyshortcuts={index < 9 ? `${index + 1}` : undefined}
+          data-tone="allow"
+          data-choice-index={0}
+          aria-keyshortcuts="1"
+          title={`${submit.label} (${SEND_KEY})`}
           disabled={busy}
-          onClick={() => {
-            if (choice.takesText) setWriting(choice);
-            else send({ kind: "choice", choiceId: choice.id, text: undefined });
-          }}
         >
-          {index < 9 ? (
-            <span className="conversation-request-key" aria-hidden>
-              {index + 1}
-            </span>
-          ) : null}
-          {choice.label}
-          {choice.takesText ? "…" : null}
+          <ChoiceKey index={0} />
+          {submit.label}
         </button>
-      ))}
+      )}
+      {choices.map((choice, at) => {
+        const index = first + at;
+        return (
+          <button
+            key={choice.id}
+            type="button"
+            className="conversation-request-choice"
+            data-tone={choice.tone}
+            data-choice-index={index}
+            aria-keyshortcuts={index < 9 ? `${index + 1}` : undefined}
+            disabled={busy}
+            onClick={() => {
+              if (choice.takesText) setWriting(choice);
+              else
+                send({ kind: "choice", choiceId: choice.id, text: undefined });
+            }}
+          >
+            <ChoiceKey index={index} />
+            {choice.label}
+            {choice.takesText ? "…" : null}
+          </button>
+        );
+      })}
     </div>
   );
+}
+
+/** The digit that presses an answer from the keyboard: the first nine have one. */
+function ChoiceKey({ index }: { readonly index: number }) {
+  return index < 9 ? (
+    <span className="conversation-request-key" aria-hidden>
+      {index + 1}
+    </span>
+  ) : null;
 }
 
 type Picked = Readonly<Record<string, readonly string[]>>;
@@ -440,10 +489,12 @@ export function QuestionRecord({
 }
 
 function QuestionForm({
+  id,
   questions,
   busy,
   send,
 }: {
+  readonly id: string;
   readonly questions: readonly Question[];
   readonly busy: boolean;
   readonly send: (answer: RequestAnswer) => void;
@@ -476,6 +527,7 @@ function QuestionForm({
   const keys = useMessageKeys(answer);
   return (
     <form
+      id={id}
       className="conversation-request-questions"
       onSubmit={(event) => {
         event.preventDefault();
@@ -495,19 +547,236 @@ function QuestionForm({
           keys={keys}
         />
       ))}
-      <div className="conversation-request-choices">
-        <button
-          type="submit"
-          className="conversation-request-choice"
-          data-tone="allow"
-          title={`Submit (${SEND_KEY})`}
-          disabled={busy}
-        >
-          Submit
-        </button>
-      </div>
     </form>
   );
+}
+
+/**
+ * An elicitation's form: a control for each field, and under a field what is
+ * wrong with it once the person has tried to accept. With no fields it is
+ * nothing to see, and accepting it sends nothing filled in.
+ */
+function ElicitationForm({
+  id,
+  fields,
+  busy,
+  send,
+}: {
+  readonly id: string;
+  readonly fields: readonly FormField[];
+  readonly busy: boolean;
+  readonly send: (answer: RequestAnswer) => void;
+}) {
+  const [values, setValues] = useState<FormValues>(() => initialValues(fields));
+  const [problems, setProblems] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
+  const set = (key: string, value: string | readonly string[]) =>
+    setValues((before) => ({ ...before, [key]: value }));
+  return (
+    <form
+      id={id}
+      className="conversation-request-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (busy) return;
+        const found = formContent(fields, values).problems;
+        setProblems(found);
+        if (Object.keys(found).length === 0) send({ kind: "answers", values });
+      }}
+    >
+      {fields.map((field) => (
+        <FieldControl
+          key={field.key}
+          field={field}
+          value={values[field.key]!}
+          problem={problems[field.key]}
+          set={(value) => set(field.key, value)}
+        />
+      ))}
+    </form>
+  );
+}
+
+function FieldControl({
+  field,
+  value,
+  problem,
+  set,
+}: {
+  readonly field: FormField;
+  readonly value: string | readonly string[];
+  readonly problem: string | undefined;
+  readonly set: (value: string | readonly string[]) => void;
+}) {
+  const id = useId();
+  const { input } = field;
+  const label = field.required ? `${field.label} *` : field.label;
+  const said = (
+    <>
+      {field.description === undefined ? null : (
+        <p className="conversation-form-description" id={`${id}-description`}>
+          {field.description}
+        </p>
+      )}
+      {problem === undefined ? null : (
+        <p className="conversation-form-problem" id={`${id}-problem`}>
+          {problem}
+        </p>
+      )}
+    </>
+  );
+  const describedBy =
+    [
+      field.description === undefined ? undefined : `${id}-description`,
+      problem === undefined ? undefined : `${id}-problem`,
+    ]
+      .filter((part) => part !== undefined)
+      .join(" ") || undefined;
+  if (input.kind === "choice") {
+    const chosen = typeof value === "string" ? [value] : value;
+    return (
+      <fieldset
+        className="conversation-question conversation-form-field"
+        data-invalid={problem === undefined ? undefined : true}
+        aria-describedby={describedBy}
+      >
+        <legend className="conversation-question-header">{label}</legend>
+        <div className="conversation-question-options">
+          {input.options.map((option) => (
+            <OptionRow
+              key={option.value}
+              label={option.label}
+              description=""
+              picked={chosen.includes(option.value)}
+              shown={false}
+              point={() => {}}
+              control={
+                <input
+                  className="conversation-question-control"
+                  type={input.multiple ? "checkbox" : "radio"}
+                  name={`${id}-${field.key}`}
+                  checked={chosen.includes(option.value)}
+                  onChange={(event) =>
+                    set(
+                      !input.multiple
+                        ? option.value
+                        : event.target.checked
+                          ? [...chosen, option.value]
+                          : chosen.filter((item) => item !== option.value),
+                    )
+                  }
+                />
+              }
+            />
+          ))}
+        </div>
+        {said}
+      </fieldset>
+    );
+  }
+  if (typeof value !== "string")
+    throw new Error(`field ${field.key} holds a list, but takes one value`);
+  if (input.kind === "boolean") {
+    return (
+      <div
+        className="conversation-form-field"
+        data-invalid={problem === undefined ? undefined : true}
+      >
+        <label className="conversation-form-check">
+          <input
+            type="checkbox"
+            checked={value === "true"}
+            aria-describedby={describedBy}
+            onChange={(event) => set(String(event.target.checked))}
+          />
+          {label}
+        </label>
+        {said}
+      </div>
+    );
+  }
+  return (
+    <div
+      className="conversation-form-field"
+      data-invalid={problem === undefined ? undefined : true}
+    >
+      <label className="conversation-question-header" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        className="conversation-form-input"
+        type={inputType(input)}
+        step={input.kind === "number" && !input.integer ? "any" : undefined}
+        min={input.kind === "number" ? input.minimum : undefined}
+        max={input.kind === "number" ? input.maximum : undefined}
+        value={value}
+        aria-invalid={problem === undefined ? undefined : true}
+        aria-describedby={describedBy}
+        onChange={(event) => set(event.target.value)}
+      />
+      {said}
+    </div>
+  );
+}
+
+function inputType(
+  input: Extract<FormField["input"], { kind: "text" | "number" }>,
+): string {
+  if (input.kind === "number") return "number";
+  switch (input.format) {
+    case "email":
+      return "email";
+    case "uri":
+      return "url";
+    case "date":
+      return "date";
+    case "date-time":
+    case undefined:
+      return "text";
+  }
+}
+
+/** The form a request is answered by filling in, and the word on its submit. */
+function formOf(
+  request: PendingRequest,
+  id: string,
+  busy: boolean,
+  send: (answer: RequestAnswer) => void,
+): { readonly element: ReactNode; readonly submit: string } | undefined {
+  const { subject } = request;
+  switch (subject.kind) {
+    case "question":
+      return {
+        element: (
+          <QuestionForm
+            id={id}
+            questions={subject.questions}
+            busy={busy}
+            send={send}
+          />
+        ),
+        submit: "Submit",
+      };
+    case "elicitation":
+      return {
+        element: (
+          <ElicitationForm
+            id={id}
+            fields={subject.fields}
+            busy={busy}
+            send={send}
+          />
+        ),
+        submit: "Accept",
+      };
+    case "tool":
+    case "command":
+    case "file-change":
+      return undefined;
+  }
 }
 
 export function RequestCard({ request }: { readonly request: PendingRequest }) {
@@ -520,6 +789,8 @@ export function RequestCard({ request }: { readonly request: PendingRequest }) {
       .catch(reportFailure)
       .finally(() => setBusy(false));
   };
+  const formId = useId();
+  const form = formOf(request, formId, busy, send);
   return (
     <div
       className="conversation-request"
@@ -552,15 +823,18 @@ export function RequestCard({ request }: { readonly request: PendingRequest }) {
         Needs your answer
       </div>
       <Subject request={request} />
-      {request.subject.kind === "question" ? (
-        <QuestionForm
-          questions={request.subject.questions}
+      {form?.element}
+      {form !== undefined || request.choices.length > 0 ? (
+        <Choices
+          submit={
+            form === undefined
+              ? undefined
+              : { form: formId, label: form.submit }
+          }
+          choices={request.choices}
           busy={busy}
           send={send}
         />
-      ) : null}
-      {request.choices.length > 0 ? (
-        <Choices choices={request.choices} busy={busy} send={send} />
       ) : null}
     </div>
   );

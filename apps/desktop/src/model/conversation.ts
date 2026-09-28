@@ -34,6 +34,7 @@
  */
 
 import type { AgentStatus } from "./domain.js";
+import type { FormField } from "./elicitationForm.js";
 
 declare const brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [brand]: B };
@@ -493,11 +494,19 @@ export type RequestSubject =
     }
   | { readonly kind: "file-change"; readonly files: readonly FileDiff[] }
   | { readonly kind: "question"; readonly questions: readonly Question[] }
+  /**
+   * An MCP server asking the person something through the Agent. It is
+   * always answered by accepting its form — no fields at all for a plain
+   * confirmation, or for a page to visit (`url`) — or by the adapter's other
+   * choices (decline, cancel).
+   */
   | {
       readonly kind: "elicitation";
       readonly server: string;
       readonly message: string;
-      readonly schema: JsonValue;
+      /** The page the server asks the person to visit, for a URL elicitation. */
+      readonly url: string | undefined;
+      readonly fields: readonly FormField[];
     };
 
 /** One question of an AskUserQuestion / requestUserInput. */

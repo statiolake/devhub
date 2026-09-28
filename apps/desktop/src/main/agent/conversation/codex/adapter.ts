@@ -75,6 +75,7 @@ import {
 	type Usage,
 	withRateLimits,
 } from "../../../../model/conversation.js";
+import { formContent } from "../../../../model/elicitationForm.js";
 import {
 	ProtocolMismatch,
 	RESTARTED,
@@ -288,12 +289,16 @@ interface OpenRequest {
 	readonly answered: ((result: JsonValue) => AnswerEntry) | undefined;
 }
 
-/** How a request of questions is answered, and how its answer reads back. */
-interface QuestionReply {
+/**
+ * How a request answered by filling something in — questions, an
+ * elicitation's form — is answered, and, for questions, how the answer reads
+ * back.
+ */
+interface FormReply {
 	readonly build: (
 		values: Extract<RequestAnswer, { kind: "answers" }>["values"],
 	) => JsonValue;
-	readonly answered: (result: JsonValue) => AnswerEntry;
+	readonly answered: ((result: JsonValue) => AnswerEntry) | undefined;
 }
 
 /**
@@ -2219,7 +2224,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		itemId: string | undefined,
 		subject: PendingRequest["subject"],
 		choices: readonly (RequestChoice & { readonly result?: JsonValue })[],
-		answers: QuestionReply | undefined,
+		answers: FormReply | undefined,
 	): void {
 		const id = requestId(`codex/${this.serverKey(rpcId)}`);
 		const about =
@@ -2522,14 +2527,20 @@ export class CodexAdapter implements ProtocolAdapter {
 		);
 	}
 
+	/**
+	 * An elicitation is accepted by submitting its form, whatever fields it
+	 * has: none makes it a plain confirmation, accepted with empty content,
+	 * and a URL elicitation, whose accepting carries no content at all.
+	 */
 	private onElicitation(rpcId: RpcId, params: unknown): void {
 		const request = elicitation(this.reader, params);
-		const act = (
+		const reply = (
 			action: McpServerElicitationRequestResponse["action"],
+			content: McpServerElicitationRequestResponse["content"],
 		): JsonValue =>
 			({
 				action,
-				content: null,
+				content,
 				_meta: null,
 			}) satisfies McpServerElicitationRequestResponse as JsonValue;
 		this.openRequest(
@@ -2540,37 +2551,41 @@ export class CodexAdapter implements ProtocolAdapter {
 				kind: "elicitation",
 				server: request.serverName,
 				message: request.message,
-				schema: request.schema,
+				url: request.url,
+				fields: request.fields,
 			},
 			[
-				// A form needs its content filled in, which DevHub has no UI for yet.
-				...(request.mode === "url"
-					? [
-							{
-								id: "accept",
-								label: "Done",
-								tone: "allow" as const,
-								takesText: false,
-								result: act("accept"),
-							},
-						]
-					: []),
 				{
 					id: "decline",
 					label: "Decline",
 					tone: "deny",
 					takesText: false,
-					result: act("decline"),
+					result: reply("decline", null),
 				},
 				{
 					id: "cancel",
 					label: "Cancel",
 					tone: "neutral",
 					takesText: false,
-					result: act("cancel"),
+					result: reply("cancel", null),
 				},
 			],
-			undefined,
+			{
+				build: (values) => {
+					const { content, problems } = formContent(request.fields, values);
+					if (Object.keys(problems).length > 0)
+						throw new Error(
+							`the form of elicitation ${JSON.stringify(rpcId)} was sent unfinished: ${JSON.stringify(problems)}`,
+						);
+					return reply(
+						"accept",
+						request.url === undefined
+							? (content as McpServerElicitationRequestResponse["content"])
+							: null,
+					);
+				},
+				answered: undefined,
+			},
 		);
 	}
 

@@ -1811,8 +1811,7 @@ describe("requests that are not approvals", () => {
 		});
 	});
 
-	it("offers only decline and cancel for a form elicitation DevHub cannot fill in", () => {
-		const harness = ready();
+	function elicit(harness: ReturnType<typeof ready>, params: object) {
 		harness.receive({
 			id: 8,
 			method: "mcpServer/elicitation/request",
@@ -1820,18 +1819,26 @@ describe("requests that are not approvals", () => {
 				threadId: MAIN,
 				turnId: null,
 				serverName: "tickets",
-				mode: "form",
 				_meta: null,
-				message: "Which project?",
-				requestedSchema: { type: "object", properties: {} },
+				...params,
 			},
 		});
-		const request = harness.transcript.requests[0]!;
+		return harness.transcript.requests[0]!;
+	}
+
+	it("offers a form elicitation of no fields as a confirmation, accepted with empty content", () => {
+		const harness = ready();
+		const request = elicit(harness, {
+			mode: "form",
+			message: "Allow the tickets server to file one?",
+			requestedSchema: { type: "object", properties: {} },
+		});
 		expect(request.subject).toEqual({
 			kind: "elicitation",
 			server: "tickets",
-			message: "Which project?",
-			schema: { type: "object", properties: {} },
+			message: "Allow the tickets server to file one?",
+			url: undefined,
+			fields: [],
 		});
 		expect(request.choices.map((choice) => choice.id)).toEqual([
 			"decline",
@@ -1840,11 +1847,172 @@ describe("requests that are not approvals", () => {
 		harness.command({
 			kind: "answer",
 			request: request.id,
-			answer: { kind: "choice", choiceId: "decline", text: undefined },
+			answer: { kind: "answers", values: {} },
 		});
 		expect(harness.lastWrite()).toEqual({
 			id: 8,
-			result: { action: "decline", content: null, _meta: null },
+			result: { action: "accept", content: {}, _meta: null },
+		});
+	});
+
+	it.each(["decline", "cancel"] as const)(
+		"answers an elicitation's %s with no content",
+		(action) => {
+			const harness = ready();
+			const request = elicit(harness, {
+				mode: "form",
+				message: "Go on?",
+				requestedSchema: { type: "object", properties: {} },
+			});
+			harness.command({
+				kind: "answer",
+				request: request.id,
+				answer: { kind: "choice", choiceId: action, text: undefined },
+			});
+			expect(harness.lastWrite()).toEqual({
+				id: 8,
+				result: { action, content: null, _meta: null },
+			});
+		},
+	);
+
+	it("reads a form's fields from its schema and accepts it with their values, typed as the schema says", () => {
+		const harness = ready();
+		const request = elicit(harness, {
+			mode: "form",
+			message: "File a ticket",
+			requestedSchema: {
+				type: "object",
+				properties: {
+					title: { type: "string", title: "Title", maxLength: 80 },
+					email: { type: "string", format: "email" },
+					count: { type: "integer", minimum: 1, default: 2 },
+					urgent: { type: "boolean", description: "Page someone" },
+					team: { type: "string", enum: ["web", "api"] },
+					area: {
+						type: "string",
+						oneOf: [
+							{ const: "ui", title: "User interface" },
+							{ const: "db", title: "Database" },
+						],
+					},
+					labels: {
+						type: "array",
+						items: { type: "string", enum: ["bug", "chore"] },
+						maxItems: 2,
+					},
+				},
+				required: ["title", "team"],
+			},
+		});
+		expect(request.subject).toMatchObject({
+			kind: "elicitation",
+			fields: [
+				{
+					key: "title",
+					label: "Title",
+					required: true,
+					input: { kind: "text", maxLength: 80 },
+				},
+				{
+					key: "email",
+					label: "email",
+					required: false,
+					input: { kind: "text", format: "email" },
+				},
+				{
+					key: "count",
+					input: { kind: "number", integer: true, minimum: 1, default: 2 },
+				},
+				{
+					key: "urgent",
+					description: "Page someone",
+					input: { kind: "boolean", default: undefined },
+				},
+				{
+					key: "team",
+					required: true,
+					input: {
+						kind: "choice",
+						multiple: false,
+						options: [
+							{ value: "web", label: "web" },
+							{ value: "api", label: "api" },
+						],
+					},
+				},
+				{
+					key: "area",
+					input: {
+						kind: "choice",
+						multiple: false,
+						options: [
+							{ value: "ui", label: "User interface" },
+							{ value: "db", label: "Database" },
+						],
+					},
+				},
+				{
+					key: "labels",
+					input: { kind: "choice", multiple: true, maxItems: 2 },
+				},
+			],
+		});
+		harness.command({
+			kind: "answer",
+			request: request.id,
+			answer: {
+				kind: "answers",
+				values: {
+					title: "Login fails",
+					email: "",
+					count: "3",
+					urgent: "true",
+					team: "api",
+					area: "",
+					labels: ["bug"],
+				},
+			},
+		});
+		expect(harness.lastWrite()).toEqual({
+			id: 8,
+			result: {
+				action: "accept",
+				content: {
+					title: "Login fails",
+					count: 3,
+					urgent: true,
+					team: "api",
+					labels: ["bug"],
+				},
+				_meta: null,
+			},
+		});
+	});
+
+	it("accepts a URL elicitation, which carries no content, and shows its page", () => {
+		const harness = ready();
+		const request = elicit(harness, {
+			mode: "url",
+			message: "Sign in to the tracker",
+			url: "https://tracker.example.com/auth",
+			elicitationId: "e-1",
+		});
+		expect(request.subject).toEqual({
+			kind: "elicitation",
+			server: "tickets",
+			message: "Sign in to the tracker",
+			url: "https://tracker.example.com/auth",
+			fields: [],
+		});
+		harness.command({
+			kind: "answer",
+			request: request.id,
+			answer: { kind: "answers", values: {} },
+		});
+		expect(harness.lastWrite()).toEqual({
+			id: 8,
+			result: { action: "accept", content: null, _meta: null },
 		});
 	});
 });
