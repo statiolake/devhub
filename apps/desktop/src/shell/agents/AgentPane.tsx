@@ -39,7 +39,6 @@ export function AgentPane({
    */
   readonly activeKey: string | undefined;
 }) {
-  const { dispatch, reportFailure } = useAgents();
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
   // What floats over the pane belongs to the Agent on screen and to no other.
   // The pool keeps every running Agent mounted so that coming back to one is
@@ -86,6 +85,31 @@ export function AgentPane({
           )}
         </div>
       ))}
+      {active ? (
+        <OverThePane key={active.id} agent={active} snapshot={snapshot} />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What floats over the pane, all of it the Agent on screen's: one subtree
+ * keyed by that Agent, so switching Agents draws it afresh, and no two of its
+ * parts can share a key among the pane's children — which the Smart Buttons
+ * and the Continue button once did, both keyed by the Agent's id, and React
+ * left the old box behind and mounted a new one on every snapshot after a
+ * drag.
+ */
+function OverThePane({
+  agent: active,
+  snapshot,
+}: {
+  readonly agent: AgentWire;
+  readonly snapshot: AppSnapshot;
+}) {
+  const { dispatch, reportFailure } = useAgents();
+  return (
+    <>
       {/* A failure about this Agent is drawn over this Agent's pane, because
           that is where its subject is. It covers nothing else: the sidebar,
           the workbench and every other Agent stay usable, which is the whole
@@ -95,7 +119,7 @@ export function AgentPane({
           reconcile that reads this Agent, so the pane simply stops drawing it
           when the condition stops being true — and goes on saying it for as
           long as it is true, which a dismissible banner could not. */}
-      {active?.failure ? (
+      {active.failure ? (
         <div className="agent-pane-failure">
           {/* The code's own sentence leads, and the detail is whatever the
               raising site was allowed to carry. A fixed summary over the top
@@ -123,12 +147,11 @@ export function AgentPane({
           />
         </div>
       ) : null}
-      {active ? <InjectionStatus agent={active} /> : null}
+      <InjectionStatus agent={active} />
       {/* After the status, so a terminal's buttons can stand on it. Not over
           a failure: the failure's actions are what the pane offers then. */}
-      {active && active.failure === undefined ? (
+      {active.failure === undefined ? (
         <SmartButtons
-          key={active.id}
           agent={active}
           stored={snapshot.smartButtons[active.presentation]}
         />
@@ -136,13 +159,12 @@ export function AgentPane({
       {/* The way to the other presentation, while the pane is the Agent's
           own: over a failure, the failure's actions are the way out. Offered
           whatever the Agent is doing; main asks first when it is not idle. */}
-      {active &&
-      active.failure === undefined &&
+      {active.failure === undefined &&
       active.controlState.kind === "running" &&
       continuesElsewhere(active) ? (
-        <ContinueElsewhere key={active.id} agent={active} />
+        <ContinueElsewhere agent={active} />
       ) : null}
-    </div>
+    </>
   );
 }
 

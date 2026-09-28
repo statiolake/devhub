@@ -10,16 +10,29 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentWire } from "../../ipc/appShell";
+import type { AgentWire, AppSnapshot } from "../../ipc/appShell";
 import type {
   AgentActionWire,
   WorkspaceRepositoryWire,
 } from "../../ipc/contract";
 import type { SmartButtonsOffset } from "../../model/smartButtons";
+import { AgentPane } from "./AgentPane";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
 import { SmartButtons } from "./SmartButtons";
+
+// The pane mounts a live terminal per running Agent, which wants a channel to
+// main; what floats over it is what is under test here.
+vi.mock("../terminal/TerminalSurface", () => ({
+  TerminalSurface: () => <div data-testid="terminal" />,
+}));
 
 const ACTIONS: readonly AgentActionWire[] = [
   {
@@ -352,5 +365,90 @@ describe("dragging the box", () => {
       type: "place_smart_buttons",
       presentation: "gui",
     });
+  });
+});
+
+/**
+ * The box as the Agent pane draws it, beside everything else floating over
+ * the pane — which is where the owner saw the buttons come twice, three
+ * times, once more for every drag: each drop is a new snapshot, and a new
+ * snapshot is the pane drawn again.
+ */
+describe("the box in an Agent's pane", () => {
+  function snapshotWith(stored: SmartButtonsOffset | undefined): AppSnapshot {
+    return {
+      smartButtons: stored === undefined ? {} : { tui: stored },
+      workspaces: [
+        {
+          id: "w-1",
+          label: "example",
+          root: "/example",
+          displayRoot: "/example",
+          state: { kind: "available" },
+          close: { kind: "idle" },
+          agents: [
+            agent({
+              ordinal: 1,
+              profileId: "claude",
+              profileKind: "claude",
+              runtimeHealth: "healthy",
+              controlState: { kind: "running" },
+            } as Partial<AgentWire>),
+          ],
+        },
+      ],
+    } as unknown as AppSnapshot;
+  }
+
+  it("stays one box with the same buttons however many times it is dragged", async () => {
+    const value = {
+      repositoryStatus: { sequence: 1, workspaces: [DIRTY] },
+      agentActions: ACTIONS,
+      runAgentAction: vi.fn(() => Promise.resolve({})),
+      dispatch: vi.fn(() => Promise.resolve(undefined)),
+      reportFailure: vi.fn(),
+    } as unknown as AgentsValue;
+    const pane = (stored: SmartButtonsOffset | undefined) => (
+      <AgentsContext.Provider value={value}>
+        <AgentPane
+          snapshot={snapshotWith(stored)}
+          appearance={undefined}
+          activeKey="agent:a-1"
+        />
+      </AgentsContext.Provider>
+    );
+    const { container, rerender } = render(pane(undefined));
+    const drawn = () =>
+      [...container.querySelectorAll(".smart-button")].map(
+        (button) => button.textContent,
+      );
+    expect(drawn()).toEqual(["Commit the changes"]);
+
+    for (const step of [1, 2, 3]) {
+      const handle = box().querySelector(
+        ".smart-buttons-handle",
+      ) as HTMLElement;
+      fireEvent.pointerDown(handle, {
+        button: 0,
+        clientX: 900,
+        clientY: 580,
+        pointerId: 1,
+      });
+      fireEvent.pointerMove(handle, {
+        clientX: 900 - 20 * step,
+        clientY: 580,
+        pointerId: 1,
+      });
+      fireEvent.pointerUp(handle, { pointerId: 1 });
+      // Main's snapshot, with the offset the drop placed.
+      await act(async () => {
+        rerender(pane({ right: 12 + 20 * step, bottom: 12 }));
+        await Promise.resolve();
+      });
+      expect(
+        screen.getAllByRole("toolbar", { name: "Smart Buttons" }),
+      ).toHaveLength(1);
+      expect(drawn()).toEqual(["Commit the changes"]);
+    }
   });
 });
