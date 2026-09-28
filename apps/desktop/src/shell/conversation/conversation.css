@@ -2485,65 +2485,92 @@ button.conversation-background-line:hover {
 }
 
 .conversation-setting {
+  position: relative;
   display: inline-flex;
-  align-items: center;
-  padding: 0 0 0 var(--space-2);
-  border-radius: var(--radius-control);
-  color: var(--tertiary);
-  gap: 0.3em;
 }
 
-.conversation-setting:has(select:not(:disabled)):hover {
-  background: var(--wash);
+/* The closed picker, and a setting with nothing to choose from, alike: one
+   line of the composer's words, each part centred in the box, so the value,
+   the note and the arrow sit on the line the label does. */
+.conversation-setting-face {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--tertiary);
+  font: inherit;
+  gap: 0.3em;
+  line-height: 1.55;
 }
 
 .conversation-setting-value {
-  padding-right: var(--space-2);
+  overflow: hidden;
+  max-width: 14em;
   color: var(--secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Why a setting with nothing to choose from can't be changed, read beside it. */
 .conversation-setting-note {
-  padding-right: var(--space-2);
   color: var(--tertiary);
   font-size: 0.85em;
 }
 
-.conversation-setting select {
-  max-width: 14em;
-  padding: 2px 0;
-  border: 0;
-  appearance: none;
-  background: transparent;
-  color: var(--secondary);
-  field-sizing: content;
-  font: inherit;
-  outline: none;
+/* The picker's arrow, a drawn chevron centred on the line (a text "▾" sat
+   on the baseline, under the words' middle). */
+.conversation-setting-chevron {
+  display: inline-flex;
+  font-size: 0.75em;
 }
 
-/* The picker's own arrow, drawn after the value: `appearance: none` took the
-   platform's, which would have sat at the far end of a stretched box. */
-.conversation-setting:has(select)::after {
-  padding-right: var(--space-2);
-  color: var(--tertiary);
-  content: "▾";
-  font-size: 0.85em;
-  pointer-events: none;
+button.conversation-setting-face:not(:disabled):is(
+    :hover,
+    [aria-expanded="true"]
+  ) {
+  background: var(--wash);
 }
 
 /* A value the session has not named yet reads as a remark, not a value. */
-.conversation-setting[data-unknown] :is(select, .conversation-setting-value) {
+.conversation-setting[data-unknown] .conversation-setting-value {
   color: var(--tertiary);
   font-style: italic;
 }
 
-.conversation-setting select:disabled {
+button.conversation-setting-face:disabled {
   opacity: 0.6;
 }
 
-.conversation-setting:has(select:focus-visible) {
+button.conversation-setting-face:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 0;
+}
+
+/* The open picker: DevHub's list rows in the panel the `/` command list is
+   drawn in, over the picker it opened from. */
+.conversation-setting-menu {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + var(--space-1));
+  left: 0;
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  max-width: 24em;
+  max-height: 40vh;
+  flex-direction: column;
+}
+
+.conversation-setting-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-1);
+}
+
+.conversation-setting-choice {
+  white-space: nowrap;
 }
 
 /*
@@ -2562,6 +2589,12 @@ button.conversation-background-line:hover {
   display: flex;
   flex-direction: column;
   max-height: 40vh;
+}
+
+/* The composer's popups — the `/` command list and an open setting picker —
+   are one panel. */
+.conversation-completions,
+.conversation-setting-menu {
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background: var(--raised);

@@ -41,6 +41,9 @@ import {
   entry,
   fakeActions,
   installResizeObserver,
+  openSetting,
+  settingPicker,
+  settingValue,
 } from "./surfaceTestKit";
 import {
   opened,
@@ -53,8 +56,6 @@ import {
 
 beforeAll(() => {
   installResizeObserver();
-  // jsdom has no native picker to open; this records that one was asked for.
-  HTMLSelectElement.prototype.showPicker = vi.fn();
   // Nor any layout to scroll.
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -387,9 +388,10 @@ describe("slash commands", () => {
     const { actions } = draw(withSession());
     type("/mod");
     press("Enter");
-    const picker = screen.getByRole("combobox", { name: "Model" });
+    const picker = settingPicker("Model");
     expect(picker).toHaveFocus();
-    expect(HTMLSelectElement.prototype.showPicker).toHaveBeenCalled();
+    expect(picker).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("listbox", { name: "Model" })).toBeVisible();
     expect(composer()).toHaveValue("");
     expect(actions.send).not.toHaveBeenCalled();
   });
@@ -591,13 +593,11 @@ describe("focus", () => {
 describe("the header", () => {
   it("offers the session's own choices and shows the current one", () => {
     draw(withSession());
-    const model = screen.getByRole("combobox", { name: "Model" });
-    expect(model).toHaveValue("large");
-    expect(
-      within(model)
-        .getAllByRole("option")
-        .map((option) => option.textContent),
-    ).toEqual(["Large", "Small"]);
+    expect(settingValue("Model")).toBe("Large");
+    expect(openSetting("Model").map((row) => row.textContent)).toEqual([
+      "Large",
+      "Small",
+    ]);
     // No choices: a fact to read, not a picker.
     expect(screen.queryByRole("combobox", { name: "Permissions" })).toBeNull();
     expect(screen.getByText("Permissions").parentElement).toHaveTextContent(
@@ -610,18 +610,18 @@ describe("the header", () => {
   it("asks for a change and moves only when the session says it has", async () => {
     const actions = fakeActions();
     const { redraw } = draw(withSession(), actions);
-    const model = () => screen.getByRole("combobox", { name: "Model" });
-    fireEvent.change(model(), { target: { value: "small" } });
+    fireEvent.click(openSetting("Model")[1]!);
     expect(actions.setSetting).toHaveBeenCalledWith("model", "small");
+    expect(screen.queryByRole("listbox")).toBeNull();
     // Until the session reports the change, the picker says what is true.
-    expect(model()).toHaveValue("large");
+    expect(settingValue("Model")).toBe("Large");
     redraw(
       withSession([], {
         ...SESSION,
         model: { ...SESSION.model, current: "small" },
       }),
     );
-    expect(model()).toHaveValue("small");
+    expect(settingValue("Model")).toBe("Small");
   });
 
   it("reports a change that failed and stays on the current value", async () => {
@@ -630,24 +630,31 @@ describe("the header", () => {
       setSetting: vi.fn(() => Promise.reject(refused)),
     });
     draw(withSession(), actions);
-    const model = screen.getByRole("combobox", { name: "Model" });
-    fireEvent.change(model, { target: { value: "small" } });
+    fireEvent.click(openSetting("Model")[1]!);
     await waitFor(() =>
       expect(actions.reportFailure).toHaveBeenCalledWith(refused),
     );
-    expect(model).toHaveValue("large");
+    expect(settingValue("Model")).toBe("Large");
   });
 
-  it("keeps a current value the choices do not list as an option", () => {
+  it("keeps a current value the choices do not list as a row, checked", () => {
     draw(
       withSession([], {
         ...SESSION,
         model: { ...SESSION.model, current: "experimental" },
       }),
     );
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
-      "experimental",
-    );
+    expect(settingValue("Model")).toBe("experimental");
+    expect(
+      openSetting("Model").map((row) => [
+        row.textContent,
+        row.getAttribute("aria-checked"),
+      ]),
+    ).toEqual([
+      ["experimental", "true"],
+      ["Large", "false"],
+      ["Small", "false"],
+    ]);
   });
 
   it("says under the composer how full the context is, and nothing else the session used", () => {

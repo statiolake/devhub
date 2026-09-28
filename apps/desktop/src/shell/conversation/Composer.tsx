@@ -78,7 +78,7 @@ import {
 import { ImageView } from "./EntryParts";
 import { EditIcon, SendIcon, StopIcon } from "./icons";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
-import { SettingPickers } from "./SettingPickers";
+import { SettingPickers, type SettingPickerHandle } from "./SettingPickers";
 
 /**
  * Why the composer takes no input right now, or `undefined` when it does:
@@ -439,7 +439,7 @@ export function Composer({
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
   readonly pickers: Readonly<
-    Record<SettingName, RefObject<HTMLSelectElement | null>>
+    Record<SettingName, RefObject<SettingPickerHandle | null>>
   >;
   /** Open the toolbar's picker for a setting a command changes. */
   readonly openSetting: (setting: SettingName) => void;

@@ -3,7 +3,7 @@
  * transcript to draw and draw again.
  */
 
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import type { Transcript } from "../../model/conversation";
 import type { ConversationActions } from "./ConversationContext";
@@ -73,4 +73,23 @@ export function entry(id: string): HTMLElement {
   );
   if (!element) throw new Error(`no entry ${id} was drawn`);
   return element;
+}
+
+/** A setting's picker in the composer's toolbar, by the word it is named with. */
+export function settingPicker(name: string): HTMLElement {
+  return screen.getByRole("combobox", { name });
+}
+
+/** The value a setting's picker shows closed. */
+export function settingValue(name: string): string | undefined {
+  return (
+    settingPicker(name).querySelector(".conversation-setting-value")
+      ?.textContent ?? undefined
+  );
+}
+
+/** Open a setting's picker with the pointer and read its rows' words. */
+export function openSetting(name: string): readonly HTMLElement[] {
+  fireEvent.click(settingPicker(name));
+  return within(screen.getByRole("listbox", { name })).getAllByRole("option");
 }

@@ -62,6 +62,7 @@ import { useFollowScroll } from "./followScroll";
 import { ArrowDownIcon } from "./icons";
 import { SEND_KEY } from "./messageKeys";
 import { RequestCard } from "./RequestCard";
+import type { SettingPickerHandle } from "./SettingPickers";
 import {
   SubagentColumn,
   SubagentLayoutProvider,
@@ -152,9 +153,9 @@ export function ConversationSurface({
   });
 
   const composer = useRef<HTMLTextAreaElement>(null);
-  const model = useRef<HTMLSelectElement>(null);
-  const effort = useRef<HTMLSelectElement>(null);
-  const mode = useRef<HTMLSelectElement>(null);
+  const model = useRef<SettingPickerHandle>(null);
+  const effort = useRef<SettingPickerHandle>(null);
+  const mode = useRef<SettingPickerHandle>(null);
   const pickers = useMemo(() => ({ model, effort, mode }), []);
 
   const focusComposer = useCallback(() => {
@@ -193,8 +194,7 @@ export function ConversationSurface({
           `a command opens the ${setting} picker, but the session offers no ${setting} choices`,
         );
       }
-      picker.focus();
-      picker.showPicker();
+      picker.open();
     },
     [pickers],
   );
