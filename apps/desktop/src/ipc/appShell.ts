@@ -362,7 +362,18 @@ export type AppErrorCodeWire =
 	 * left it, as its definition's `shutdownAction` says it should be. The
 	 * editor moved anyway; the container is still running.
 	 */
-	| "dev_container_not_stopped";
+	| "dev_container_not_stopped"
+	/**
+	 * A chord could not put an ASCII-capable input source in place, so with an
+	 * input method on, a chord's second key goes to the input method instead
+	 * (`main/shell/chordInputSource.ts`).
+	 *
+	 * Its own code because, like the settings file, the consequence is a
+	 * missing feature and not a failed action: chords still work while the
+	 * input source is already ASCII-capable, and only this one thing is gone.
+	 * Said once; DevHub does not try again until it is started again.
+	 */
+	| "input_source_unavailable";
 
 /**
  * The sentence each failure is shown as.
@@ -430,6 +441,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	state_migrated: "DevHub updated its saved Workspaces for this version.",
 	dev_container_not_stopped:
 		"A dev container DevHub started is still running: it could not be stopped.",
+	input_source_unavailable:
+		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
 };
 export type AppErrorModuleWire =
 	| "app"

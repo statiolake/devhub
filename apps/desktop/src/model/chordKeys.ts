@@ -44,12 +44,16 @@
  * Command, Control and Option stay as flags on all of them. They do not change
  * which character a key produces on a Mac, so there is nothing to fold.
  *
- * # `input.code`, only where there is no character
+ * # Never the physical key
  *
- * An input method that is composing reports `Process` for the key — that is the
- * whole of what `code` is still needed for, and it is why a chord works
- * mid-composition at all. See `charactersForCode`, and the layout ambiguity it
- * cannot resolve.
+ * `input.code` is not a fallback for a missing character either. It used to
+ * be — read from two layouts at once, for a key an input method was composing
+ * — but on macOS that key never reaches DevHub at all: the input method takes
+ * it before Electron's `before-input-event` is raised. What a chord does about
+ * an input method is take it out of the way while the chord is armed
+ * (`main/shell/chordInputSource.ts`), after which the second stroke arrives
+ * with its character like any other. A key that still arrives with no
+ * character — a dead key half-way through an accent — is no stroke at all.
  */
 
 /** One stroke: the character it produces, and the modifiers that are not in it. */
@@ -137,60 +141,6 @@ const US_SHIFTED: Readonly<Record<string, string>> = {
 };
 
 /**
- * What each physical key produces, when only the physical key is known.
- *
- * **Two layouts, written down, because there is no way to ask.** macOS knows
- * which keyboard layout is active, and neither Electron nor Node exposes it: the
- * answer lives behind Carbon's `TISCopyCurrentKeyboardLayoutInputSource`, which
- * needs a native binding this app does not have. Reading
- * `AppleCurrentKeyboardLayoutInputSourceID` out of the HIToolbox preferences
- * would be a guess wearing an API's clothes — it names the *input source*, and a
- * Japanese input source says nothing about whether the hardware under it is JIS
- * or ANSI, which is the only thing in question here.
- *
- * So both readings are candidates and the first one that is actually bound wins.
- * That resolves every case except one: a punctuation key whose two readings are
- * *both* bound to something. `BracketRight` is `]`/`}` on a US keyboard and
- * `[`/`{` on a JIS one, and DevHub binds all four — the Agent cycle and its
- * unread narrowing — so under composition, and only under composition, that key
- * is genuinely ambiguous in both its shifted and its unshifted reading, and the
- * US one is taken. On a JIS keyboard that means it steps forward where it
- * should have stepped back; the other half of each pair is unambiguous, because
- * `BracketLeft` and `Backslash` each have only one bound reading.
- * The practical cost is small and worth stating plainly: this table is
- * consulted **only** while an input method is composing, letters and digits are
- * unambiguous on both layouts, and every chord whose second stroke is
- * punctuation can still be typed by finishing or cancelling the composition
- * first.
- *
- * The rows are `[unshifted, shifted]` per layout. Keys that produce nothing on a
- * layout are left out of that layout's row.
- */
-const LAYOUT_CHARACTERS: Readonly<
-  Record<
-    string,
-    {
-      readonly us?: readonly [string, string];
-      readonly jis?: readonly [string, string];
-    }
-  >
-> = {
-  Backquote: { us: ["`", "~"] },
-  Minus: { us: ["-", "_"], jis: ["-", "="] },
-  Equal: { us: ["=", "+"], jis: ["^", "~"] },
-  BracketLeft: { us: ["[", "{"], jis: ["@", "`"] },
-  BracketRight: { us: ["]", "}"], jis: ["[", "{"] },
-  Backslash: { us: ["\\", "|"], jis: ["]", "}"] },
-  Semicolon: { us: [";", ":"], jis: [";", "+"] },
-  Quote: { us: ["'", '"'], jis: [":", "*"] },
-  Comma: { us: [",", "<"], jis: [",", "<"] },
-  Period: { us: [".", ">"], jis: [".", ">"] },
-  Slash: { us: ["/", "?"], jis: ["/", "?"] },
-  IntlYen: { jis: ["\\", "|"] },
-  IntlRo: { jis: ["\\", "_"] },
-};
-
-/**
  * Whether this stroke is a modifier and nothing else.
  *
  * It matters because of a bug this rule is the fix for. Chromium delivers a
@@ -210,57 +160,19 @@ export function isModifierKey(code: string): boolean {
   );
 }
 
-/**
- * The characters a physical key could have produced, best guess first.
- *
- * Only for a key event that carries no character of its own. Letters and digits
- * are one answer, because every layout DevHub can meet puts them in the same
- * places; punctuation is up to two, for the reason in `LAYOUT_CHARACTERS`.
- */
-export function charactersForCode(
-  code: string,
-  shift: boolean,
-): readonly string[] {
-  const letter = /^Key([A-Z])$/u.exec(code);
-  if (letter) {
-    const lower = letter[1].toLowerCase();
-    return [shift ? letter[1] : lower];
-  }
-  const digit = /^Digit([0-9])$/u.exec(code);
-  if (digit) {
-    return [shift ? (US_SHIFTED[digit[1]] ?? digit[1]) : digit[1]];
-  }
-  const layouts = LAYOUT_CHARACTERS[code];
-  if (layouts) {
-    const at = shift ? 1 : 0;
-    // Deduplicated: the two layouts agree about `,` `.` and `/`, and one
-    // candidate offered twice is a candidate that looks ambiguous and is not.
-    return [...new Set([layouts.us?.[at], layouts.jis?.[at]])].filter(
-      (character): character is string => character !== undefined,
-    );
-  }
-  return [];
-}
-
-/** The names Chromium gives a key whose character it cannot report yet. */
+/** The names Chromium gives a key that produced no character. */
 const NO_CHARACTER = new Set(["Process", "Dead", "Unidentified", ""]);
 
 /**
- * What a key event could be, as chord identities, best first.
+ * What a key event is, as a chord identity — or nothing, for a key that
+ * produced no character and has no name of its own.
  *
- * The character it produced, when it produced one — which is almost always, and
- * is the whole model. Otherwise the physical key's readings, which is the
- * composing case and the only reason `code` is here at all.
+ * One character is a character. Anything longer is a key with a name, and
+ * names are compared without regard to case.
  */
-export function strokeKeys(
-  key: string,
-  code: string,
-  shift: boolean,
-): readonly string[] {
-  if (NO_CHARACTER.has(key)) return charactersForCode(code, shift);
-  // One character is a character. Anything longer is a key with a name, and
-  // names are compared without regard to case.
-  return [key.length === 1 ? key : key.toLowerCase()];
+export function strokeKey(key: string): string | undefined {
+  if (NO_CHARACTER.has(key)) return undefined;
+  return key.length === 1 ? key : key.toLowerCase();
 }
 
 /** Whether this identity is a key with a name rather than a character. */

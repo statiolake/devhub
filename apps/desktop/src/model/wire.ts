@@ -715,8 +715,9 @@ export function errorWireAt(
   timestampMs = 0,
 ): AppErrorWire {
   const actions: AppErrorActionWire[] =
-    // Something that already happened: there is nothing to try again.
-    code === "state_migrated"
+    // Something that already happened, or that trying again cannot change:
+    // there is nothing to try again.
+    code === "state_migrated" || code === "input_source_unavailable"
       ? []
       : // Trying again reads the same file; what answers it is fixing the file.
         code === "settings_refused"

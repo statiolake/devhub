@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strokeKeys } from "../../model/chordKeys.js";
+import { strokeKey } from "../../model/chordKeys.js";
 import type { CommandId } from "../../model/commands.js";
 import {
 	defaultChordTable,
@@ -837,7 +837,7 @@ describe("the default table", () => {
 	function press(
 		key: string,
 		code: string,
-		modifiers: Partial<Omit<KeyStroke, "keys" | "code">> = {},
+		modifiers: Partial<Omit<KeyStroke, "key" | "code">> = {},
 	) {
 		const flags = {
 			command: false,
@@ -848,7 +848,7 @@ describe("the default table", () => {
 			...modifiers,
 		};
 		return matchChord(defaultChordTable(), {
-			keys: strokeKeys(key, code, flags.shift),
+			key: strokeKey(key),
 			code,
 			...flags,
 		})?.commandId;
@@ -1114,10 +1114,10 @@ describe("moving the row that is selected", () => {
 	it("is reached by Option and an arrow, on any keyboard", () => {
 		// An arrow key carries a name rather than a character, so there is no
 		// layout for the two to differ under: a US and a JIS keyboard both report
-		// `ArrowUp`, and the physical-key table is never consulted for it.
+		// `ArrowUp`.
 		const press = (key: string) =>
 			matchChord(defaultChordTable(), {
-				keys: strokeKeys(key, key, false),
+				key: strokeKey(key),
 				code: key,
 				command: false,
 				shift: false,

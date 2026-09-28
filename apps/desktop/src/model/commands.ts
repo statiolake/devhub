@@ -270,23 +270,21 @@
  * - **A stroke is the character, so the same binding is right on every
  *   layout.** `{` is `{` whether the key that made it sits where a US keyboard
  *   puts it or where a JIS one does.
- * - **The bracket cycles need a character, so they wait for a composition to
- *   end.** While an input method is composing there is no character to read and
- *   only the physical key is known, and `BracketRight` is `]`/`}` on a US
- *   keyboard and `[`/`{` on a JIS one — both readings now being bound, the US
- *   one is taken (see `LAYOUT_CHARACTERS`). So on a JIS keyboard, mid-
- *   composition, that key steps forward where it should have stepped back.
- *   Finishing or cancelling the composition first makes it right, which is the
- *   same answer punctuation chords have always had here; nothing else is
- *   affected, because `[` from `BracketLeft` and `]` from `Backslash` each have
- *   only one bound reading.
+ * - **An input method is switched out for the length of the chord.** On
+ *   macOS a key an input method takes never reaches DevHub, so while the prefix
+ *   is armed the input source is an ASCII-capable one, and the one before it is
+ *   put back when the chord is over (`main/shell/chordInputSource.ts`). A second
+ *   key typed within the few milliseconds the switch takes still goes to the
+ *   input method; that is accepted, and said there.
  * - **A second key that is not in the table cancels the chord and is *not*
  *   forwarded.** Once the prefix is armed the keyboard belongs to the chord
  *   layer, so a mistyped chord does nothing at all rather than firing whatever
  *   the surface would have done with that key. Only `forward_prefix` is ever
  *   forwarded, and that is a table entry.
  * - A chord whose command has nothing to act on is a no-op, not an error.
- * - Changing focus disarms, so the second stroke cannot land somewhere else.
+ * - Leaving DevHub for another application disarms. Moving the keyboard
+ *   between DevHub's own views does not: the chord is the application's, and
+ *   completes wherever its second stroke lands (`KeyRouter.disarm`).
  */
 
 import {

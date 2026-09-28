@@ -367,8 +367,37 @@ that it stepped from nowhere, which is Scratch's first Agent.
 
 `keyboard.ts` installs `before-input-event` on every WebContents DevHub owns,
 through `app.on("web-contents-created")`. That is the only place a chord can
-work: it sits in front of every surface and is the only key event seen *before*
-the IME, so a half-eaten chord never becomes preedit.
+work: it sits in front of every surface, and a completed chord is
+`preventDefault`ed there so its keys never reach the surface underneath.
+
+It is not in front of an input method. On macOS Chromium hands a key to the
+input method first (`interpretKeyEvents:`), and a key the input method takes
+comes back as a process key that is never raised as `before-input-event` — with
+Japanese input on, the second stroke of a chord would become preedit and DevHub
+would never see it. The prefix is Command-modified, which input methods leave
+alone, so it always arrives; what DevHub does with that moment is take the
+input method out of the way. While a chord is armed the input source is an
+ASCII-capable one, and when the chord is over — run, cancelled, timed out, the
+table changed, or DevHub left for another application — the source that was
+there before is selected again, unless the person has switched to another one
+in the meantime (`chordInputSource.ts`).
+
+The switch is done by `devhub-input-source`, a small C program on Carbon's Text
+Input Sources API (`main/native/inputSource.c`), compiled by the desktop build
+into `out/native` and shipped there inside the bundle. It is started once and
+kept, and each switch is a line on its stdin. It needs no accessibility
+permission. If it cannot be started or stops, that is said once as
+`input_source_unavailable`, and chords go on working for anyone whose input
+source is already ASCII-capable.
+
+The switch is not instant: `TISSelectInputSource` took 2–27 ms, median about
+15 ms, measured on an Apple Silicon Mac (the pipe to the helper adds hundredths
+of a millisecond). A second key pressed within that window after the prefix
+still goes to the input method, and the chord then times out. That is accepted
+— the gap between releasing Cmd+Q and the next key is several times longer —
+and there is no guessing the key back from its physical position. Nor is a key
+that arrives with no character (`Process`, `Dead`) read from its position: it
+completes nothing and cancels the chord.
 
 Because the handler is per WebContents and installed for all of them, arming a
 chord in one view and completing it in another is one chord, and the split into

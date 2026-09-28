@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  charactersForCode,
   ChordKeyError,
   chordKeyId,
   describeChordKey,
@@ -8,7 +7,7 @@ import {
   isModifierKey,
   parseChordKey,
   sameChordKey,
-  strokeKeys,
+  strokeKey,
 } from "./chordKeys.js";
 
 describe("the key-string grammar", () => {
@@ -122,52 +121,31 @@ describe("the key-string grammar", () => {
 /**
  * What a key event says it is.
  *
- * The character, whenever there is one — which is what makes a binding right on
- * a keyboard whose punctuation sits somewhere else. The physical key is a
- * fallback for the one case that has no character, and it is where the layouts
- * have to be guessed at.
+ * The character — which is what makes a binding right on a keyboard whose
+ * punctuation sits somewhere else — and never the physical key.
  */
 describe("reading a key event", () => {
   it("takes the character, whatever key produced it", () => {
     // US: `{` is Shift and the key at BracketLeft. JIS: the same character
     // from the key at BracketRight. One binding matches both, because both
     // events say `{`.
-    expect(strokeKeys("{", "BracketLeft", true)).toEqual(["{"]);
-    expect(strokeKeys("{", "BracketRight", true)).toEqual(["{"]);
-    expect(strokeKeys("}", "BracketRight", true)).toEqual(["}"]);
-    expect(strokeKeys("}", "Backslash", true)).toEqual(["}"]);
+    expect(strokeKey("{")).toBe("{");
+    expect(strokeKey("}")).toBe("}");
     // And the JIS key at BracketLeft is `@`, which is not a chord at all.
-    expect(strokeKeys("@", "BracketLeft", true)).toEqual(["@"]);
+    expect(strokeKey("@")).toBe("@");
   });
 
   it("keeps a named key by its name, without regard to case", () => {
-    expect(strokeKeys("Escape", "Escape", false)).toEqual(["escape"]);
-    expect(strokeKeys("ArrowLeft", "ArrowLeft", false)).toEqual(["arrowleft"]);
+    expect(strokeKey("Escape")).toBe("escape");
+    expect(strokeKey("ArrowLeft")).toBe("arrowleft");
   });
 
-  it("falls back to the physical key only when there is no character", () => {
+  it("makes no stroke of a key that produced no character", () => {
+    // Not read from the physical key instead: that was a guess between two
+    // layouts, for a composing key that on macOS never reaches DevHub.
     for (const absent of ["Process", "Dead", "Unidentified", ""]) {
-      expect(strokeKeys(absent, "KeyF", false), absent).toEqual(["f"]);
-      expect(strokeKeys(absent, "KeyP", true), absent).toEqual(["P"]);
-      expect(strokeKeys(absent, "Digit1", false), absent).toEqual(["1"]);
+      expect(strokeKey(absent), absent).toBeUndefined();
     }
-  });
-
-  it("offers both layouts' readings of a punctuation key it can only place", () => {
-    // The ambiguity this cannot resolve, written down rather than hidden:
-    // shifted BracketRight is `}` on a US keyboard and `{` on a JIS one.
-    expect(charactersForCode("BracketRight", true)).toEqual(["}", "{"]);
-    expect(charactersForCode("BracketLeft", true)).toEqual(["{", "`"]);
-    expect(charactersForCode("Backslash", true)).toEqual(["|", "}"]);
-    // Where the two layouts agree there is one candidate, not one twice.
-    expect(charactersForCode("Comma", true)).toEqual(["<"]);
-    expect(charactersForCode("Slash", true)).toEqual(["?"]);
-    expect(charactersForCode("Comma", false)).toEqual([","]);
-  });
-
-  it("has nothing to say about a key it has never placed", () => {
-    expect(charactersForCode("F13", false)).toEqual([]);
-    expect(strokeKeys("Process", "F13", false)).toEqual([]);
   });
 
   it("knows a bare modifier when it sees one", () => {

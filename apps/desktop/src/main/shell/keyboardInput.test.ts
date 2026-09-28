@@ -2,9 +2,9 @@
  * The chord layer against the events Electron actually delivers.
  *
  * `keyRouter.test.ts` tests the decision; this tests the whole path from an
- * `Input` object to a command, including the two things only the real event
- * shape can show: that a completed chord is `preventDefault`ed, and that a
- * chord still completes while an input method is composing.
+ * `Input` object to a command, including what only the real event shape can
+ * show: that a completed chord is `preventDefault`ed, and that the character
+ * Chromium reports — not the physical key — is what a chord is matched by.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -273,16 +273,11 @@ describe("a chord, as Electron delivers it", () => {
 	});
 
 	/**
-	 * The same chord on two keyboards, and mid-composition on each.
+	 * The same chord on two keyboards.
 	 *
 	 * A JIS keyboard does not put punctuation where a US one does, and matching
 	 * the physical key therefore selected the key one to the left of the one the
 	 * person was looking at. The character does not move.
-	 *
-	 * Composition is where the character is not there to read, and where the
-	 * physical key has to be guessed at from two layouts — so the punctuation
-	 * rows say which reading wins and the letters, which both layouts agree
-	 * about, say that the ordinary case is not a guess at all.
 	 */
 	describe.each([
 		{
@@ -295,17 +290,6 @@ describe("a chord, as Electron delivers it", () => {
 				{ key: "<", code: "Comma", reaches: "open_settings" },
 				{ key: "?", code: "Slash", reaches: "show_chord_help" },
 				{ key: "f", code: "KeyF", reaches: "add_workspace" },
-			],
-			// Composing: no character, so the physical key is read. The US
-			// reading is taken first where the two layouts disagree.
-			composing: [
-				{ code: "BracketLeft", reaches: "previous_unread_agent", shift: true },
-				{ code: "BracketRight", reaches: "next_unread_agent", shift: true },
-				{ code: "BracketLeft", reaches: "previous_agent", shift: false },
-				{ code: "BracketRight", reaches: "next_agent", shift: false },
-				{ code: "Comma", reaches: "open_settings", shift: true },
-				{ code: "Slash", reaches: "show_chord_help", shift: true },
-				{ code: "KeyF", reaches: "add_workspace", shift: false },
 			],
 		},
 		{
@@ -322,23 +306,8 @@ describe("a chord, as Electron delivers it", () => {
 				{ key: "?", code: "Slash", reaches: "show_chord_help" },
 				{ key: "f", code: "KeyF", reaches: "add_workspace" },
 			],
-			composing: [
-				// The one key the fallback cannot resolve: BracketRight is `]`/`}`
-				// on US and `[`/`{` on JIS, all four are bound, and the US reading
-				// wins — so on a JIS keyboard, mid-composition, it steps forward
-				// where it should have stepped back. Letters and digits are
-				// unambiguous, and so is the other half of each pair, which is why
-				// the rest of the chords keep working mid-composition on both.
-				{ code: "BracketRight", reaches: "next_unread_agent", shift: true },
-				{ code: "Backslash", reaches: "next_unread_agent", shift: true },
-				{ code: "BracketRight", reaches: "next_agent", shift: false },
-				{ code: "Backslash", reaches: "next_agent", shift: false },
-				{ code: "Comma", reaches: "open_settings", shift: true },
-				{ code: "Slash", reaches: "show_chord_help", shift: true },
-				{ code: "KeyF", reaches: "add_workspace", shift: false },
-			],
 		},
-	])("on a $layout keyboard", ({ rows, composing }) => {
+	])("on a $layout keyboard", ({ rows }) => {
 		it.each(rows)("$key ($code) reaches $reaches", ({ key, code, reaches }) => {
 			resetChordRouterForTests();
 			const { calls, chordHost } = host();
@@ -349,22 +318,27 @@ describe("a chord, as Electron delivers it", () => {
 			]);
 			expect(calls).toEqual(reaches === undefined ? [] : [named(reaches)]);
 		});
-
-		it.each(composing)(
-			"$code composing reaches $reaches",
-			({ code, reaches, shift }) => {
-				// Chromium reports `Process` for the key while an input method is
-				// composing, and still fills in the code.
-				resetChordRouterForTests();
-				const { calls, chordHost } = host();
-				type(chordHost, [
-					PREFIX,
-					input(code, "Process", { shift, isComposing: true }),
-				]);
-				expect(calls).toEqual([named(reaches)]);
-			},
-		);
 	});
+
+	/**
+	 * A key that arrives with no character is no stroke, whatever key it was.
+	 *
+	 * On macOS a key an input method takes never arrives here at all, so these
+	 * are what is left: a dead key half-way through an accent, and the names
+	 * Chromium gives a key it cannot report. They are not read from their
+	 * physical key — that reading was a guess between two layouts — so they
+	 * complete nothing, and like any key that completes nothing they end the
+	 * chord and are swallowed.
+	 */
+	it.each(["Process", "Dead", "Unidentified"])(
+		"cancels the chord on a key reported as %s",
+		(key) => {
+			const { calls, chordHost } = host();
+			const taken = type(chordHost, [PREFIX, input("KeyF", key)]);
+			expect(taken).toEqual([true, true]);
+			expect(calls).toEqual([]);
+		},
+	);
 
 	it("swallows a mistyped second stroke rather than letting it through", () => {
 		const { calls, chordHost } = host();

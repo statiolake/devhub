@@ -236,6 +236,9 @@ def check_inputs() -> None:
 		(VSCODE_DIR / "out-vscode-min" / "main.js", "scripts/provision-vscode.sh"),
 		(DESKTOP_DIR / "out" / "main" / "main.js", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "dist" / "shell" / "index.html", "pnpm --filter @devhub/desktop build"),
+		# The helper that switches the input source while a chord is armed. A
+		# bundle without it starts, and loses chords under an input method.
+		(DESKTOP_DIR / "out" / "native" / "devhub-input-source", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/bridge build"),
 		# Without this the packaged app has no `ssh-remote` resolver, and every
 		# SSH Workspace opens a workbench that waits for an authority nothing

@@ -45,7 +45,7 @@ import {
   formatChordKey,
   isModifierKey,
   parseChordKey,
-  strokeKeys,
+  strokeKey,
   type ChordKey,
 } from "../model/chordKeys";
 import {
@@ -1712,12 +1712,8 @@ function KeyboardRow({
             // The character the key produced, worked out by exactly the
             // function the chord layer uses, so what is recorded here is what
             // will match there. A key that produced no character at all — a
-            // dead key part-way through composing — is not a stroke to record.
-            const [character] = strokeKeys(
-              event.key,
-              event.code,
-              event.shiftKey,
-            );
+            // dead key part-way through an accent — is not a stroke to record.
+            const character = strokeKey(event.key);
             if (character === undefined) return;
             const key: ChordKey = {
               key: character,

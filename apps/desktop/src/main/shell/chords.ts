@@ -74,15 +74,14 @@ export function defaultChordTable(): readonly ChordBinding[] {
 /**
  * One keystroke as the main process sees it.
  *
- * `keys` is what the stroke could be, best first — one entry for anything that
- * produced a character, which is nearly everything, and up to two for a
- * punctuation key read from its position while an input method is composing
- * (see `charactersForCode`). `shift` is the raw flag, still needed by the
- * editing keys and by a named key; `code` is here for one question only, which
- * is whether this was a bare modifier.
+ * `key` is the character it produced, or the name of a key that produces none
+ * — and nothing at all for a key that arrived with neither, which completes no
+ * chord (see `strokeKey`). `shift` is the raw flag, still needed by the editing
+ * keys and by a named key; `code` is here for the few questions only the
+ * physical key answers — whether this was a bare modifier, and the zoom keys.
  */
 export interface KeyStroke {
-	readonly keys: readonly string[];
+	readonly key: string | undefined;
 	readonly code: string;
 	readonly command: boolean;
 	readonly control: boolean;
@@ -91,37 +90,29 @@ export interface KeyStroke {
 	readonly isAutoRepeat: boolean;
 }
 
-/** One candidate identity of a stroke, as a binding would spell it. */
-export function strokeAs(stroke: KeyStroke, key: string): ChordKey {
+/** The stroke as a binding would spell it, when it has a key to spell. */
+export function strokeAs(stroke: KeyStroke): ChordKey | undefined {
+	if (stroke.key === undefined) return undefined;
 	return {
-		key,
+		key: stroke.key,
 		command: stroke.command,
 		control: stroke.control,
 		option: stroke.option,
 		// Shift is in the character already, unless there is no character to be
 		// in — which is `chordKeys.ts`'s rule and not a second one.
-		shift: key.length > 1 ? stroke.shift : false,
+		shift: stroke.key.length > 1 ? stroke.shift : false,
 	};
 }
 
-/**
- * The binding this stroke completes, if any.
- *
- * Candidates in order, first bound one wins. Ordinarily there is one candidate
- * and the order says nothing; it matters only for a punctuation key read from
- * its position mid-composition, where two layouts disagree about what it
- * produces and only one of the two readings is usually bound to anything.
- */
+/** The binding this stroke completes, if any. */
 export function matchChord(
 	table: readonly ChordBinding[],
 	stroke: KeyStroke,
 ): ChordBinding | undefined {
-	for (const key of stroke.keys) {
-		const wanted = chordKeyId(strokeAs(stroke, key));
-		const found = table.find((binding) => chordKeyId(binding.key) === wanted);
-		if (found) return found;
-	}
-	return undefined;
+	const spelled = strokeAs(stroke);
+	if (spelled === undefined) return undefined;
+	const wanted = chordKeyId(spelled);
+	return table.find((binding) => chordKeyId(binding.key) === wanted);
 }
 
 /**

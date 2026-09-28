@@ -127,9 +127,7 @@ export function editingCommandFor(
 	return EDITING_COMMAND_GROUPS.flat().find(
 		(command) =>
 			command.key !== undefined &&
-			stroke.keys.some(
-				(key) => command.key?.toLowerCase() === key.toLowerCase(),
-			) &&
+			command.key.toLowerCase() === stroke.key?.toLowerCase() &&
 			(command.shift ?? false) === stroke.shift,
 	);
 }

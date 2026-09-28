@@ -96,7 +96,7 @@ describe("the keyboard screen", () => {
     fireEvent.click(button);
     // `f` is the workspace picker's. Taking it is allowed; being told is the
     // point, and being told *before* the save is what makes it useful.
-    fireEvent.keyDown(button, { code: "KeyF" });
+    fireEvent.keyDown(button, { key: "f", code: "KeyF" });
     expect(await screen.findByText(/currently does/u)).toHaveTextContent(
       "Add Workspace…",
     );

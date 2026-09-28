@@ -19,6 +19,11 @@
  * Outside an armed prefix this router has no power at all: it never invents a
  * key event, and composition, marked text and every shortcut a surface defines
  * travel as they always did.
+ *
+ * It says when the prefix is armed and when it stops being (`ArmingListener`),
+ * every time and for every reason, because one thing outside it has to follow
+ * the arming exactly: the input source, which is ASCII-capable for as long as
+ * a chord is armed (`chordInputSource.ts`).
  */
 
 import {
@@ -28,6 +33,7 @@ import {
 	type ChordKey,
 } from "../../model/chordKeys.js";
 import { DEFAULT_CHORD_PREFIX, type CommandId } from "../../model/commands.js";
+import type { ArmingListener } from "./chordInputSource.js";
 import {
 	defaultChordTable,
 	matchChord,
@@ -72,7 +78,10 @@ export class KeyRouter {
 	private armedUntil: number | undefined;
 	private layout: ChordLayout;
 
-	constructor(layout: ChordLayout = defaultChordLayout()) {
+	constructor(
+		layout: ChordLayout,
+		private readonly listener: ArmingListener,
+	) {
 		this.layout = layout;
 	}
 
@@ -89,11 +98,25 @@ export class KeyRouter {
 	}
 
 	/**
+	 * Forget an armed prefix, because DevHub stopped being the application in
+	 * front.
+	 *
+	 * The chord belonged to the application, and the application has been left:
+	 * a key pressed in another app is not DevHub's to complete it with, and the
+	 * input source put in place for the chord is given back now rather than
+	 * left in another application's hands for the rest of the second.
+	 */
+	leave(): void {
+		this.disarm();
+	}
+
+	/**
 	 * Forget an armed prefix.
 	 *
-	 * The table changing is the only thing in the application that does this,
-	 * and it is not a *focus* rule: an armed prefix deliberately survives the
-	 * keyboard moving between DevHub's own children.
+	 * The table changing and the application being left (`leave`) are the only
+	 * things besides a key and the deadline that do this, and neither is a
+	 * *focus* rule: an armed prefix deliberately survives the keyboard moving
+	 * between DevHub's own children.
 	 *
 	 * It used to be disarmed on every `focus` of every web contents DevHub
 	 * owns, against a window that held two pages and N workbenches — where an
@@ -111,9 +134,20 @@ export class KeyRouter {
 	 * one-second window (`PREFIX_TIMEOUT_MS`) is what bounds it, and it always
 	 * was: what the person armed against is the table and the second, not the
 	 * view.
+	 *
+	 * The listener hears it whenever something was armed, even a deadline that
+	 * has already passed: it keeps its own timer for the deadline, and being
+	 * told twice that a chord is over costs it nothing.
 	 */
 	private disarm(): void {
+		if (this.armedUntil === undefined) return;
 		this.armedUntil = undefined;
+		this.listener.disarmed();
+	}
+
+	private arm(deadline: number): void {
+		this.armedUntil = deadline;
+		this.listener.armed(deadline);
 	}
 
 	/** For tests only: start the next case with nothing armed. */
@@ -126,9 +160,8 @@ export class KeyRouter {
 	}
 
 	private isPrefix(stroke: KeyStroke): boolean {
-		return stroke.keys.some((key) =>
-			sameChordKey(this.layout.prefix, strokeAs(stroke, key)),
-		);
+		const spelled = strokeAs(stroke);
+		return spelled !== undefined && sameChordKey(this.layout.prefix, spelled);
 	}
 
 	route(stroke: KeyStroke, now: number): RouteDecision {
@@ -146,12 +179,12 @@ export class KeyRouter {
 		// A held-down prefix is one intention, not many. Holding it must not arm
 		// and fire in the same press.
 		if (stroke.isAutoRepeat && this.isPrefix(stroke)) {
-			this.armedUntil = undefined;
+			this.disarm();
 			return { kind: "consume" };
 		}
 
 		const deadline = this.armedUntil;
-		this.armedUntil = undefined;
+		this.disarm();
 		if (deadline !== undefined && now <= deadline) {
 			const binding = matchChord(this.layout.table, stroke);
 			if (!binding) {
@@ -167,7 +200,7 @@ export class KeyRouter {
 
 		if (this.isPrefix(stroke)) {
 			const armed = now + PREFIX_TIMEOUT_MS;
-			this.armedUntil = armed;
+			this.arm(armed);
 			return { kind: "armed", deadline: armed };
 		}
 		return { kind: "pass" };

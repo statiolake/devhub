@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseChordKey, strokeKeys } from "../../model/chordKeys.js";
+import { parseChordKey, strokeKey } from "../../model/chordKeys.js";
 import {
 	defaultChordLayout,
 	KeyRouter,
 	PREFIX_TIMEOUT_MS,
 	type KeyStroke,
 } from "./keyRouter.js";
+import type { ArmingListener } from "./chordInputSource.js";
 
 /**
  * A stroke, from the character and the physical key Electron reports.
@@ -16,7 +17,7 @@ import {
 function press(
 	key: string,
 	code: string,
-	modifiers: Partial<Omit<KeyStroke, "keys" | "code">> = {},
+	modifiers: Partial<Omit<KeyStroke, "key" | "code">> = {},
 ): KeyStroke {
 	const flags = {
 		command: false,
@@ -26,7 +27,7 @@ function press(
 		isAutoRepeat: false,
 		...modifiers,
 	};
-	return { keys: strokeKeys(key, code, flags.shift), code, ...flags };
+	return { key: strokeKey(key), code, ...flags };
 }
 
 /** A key whose character is its own lower-case letter or digit. */
@@ -38,11 +39,17 @@ function stroke(code: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
 
 const commandQ = stroke("KeyQ", { command: true });
 
+/** For the cases that are not about what the router says of its arming. */
+const IGNORED: ArmingListener = {
+	armed: () => undefined,
+	disarmed: () => undefined,
+};
+
 describe("the Command-Q chord", () => {
 	let router: KeyRouter;
 
 	beforeEach(() => {
-		router = new KeyRouter();
+		router = new KeyRouter(defaultChordLayout(), IGNORED);
 	});
 
 	it("swallows the first Command-Q and arms instead of quitting", () => {
@@ -109,10 +116,13 @@ describe("the Command-Q chord", () => {
 	});
 
 	it("takes its layout as data, so an override is another table", () => {
-		const overridden = new KeyRouter({
-			prefix: parseChordKey("Ctrl+q"),
-			table: [{ key: parseChordKey("s"), commandId: "open_settings" }],
-		});
+		const overridden = new KeyRouter(
+			{
+				prefix: parseChordKey("Ctrl+q"),
+				table: [{ key: parseChordKey("s"), commandId: "open_settings" }],
+			},
+			IGNORED,
+		);
 		expect(overridden.route(commandQ, 0)).toEqual({ kind: "pass" });
 		overridden.route(stroke("KeyQ", { control: true }), 10);
 		expect(overridden.route(stroke("KeyS"), 20)).toEqual({
@@ -160,7 +170,7 @@ describe("a modifier pressed after the prefix", () => {
 	let router: KeyRouter;
 
 	beforeEach(() => {
-		router = new KeyRouter();
+		router = new KeyRouter(defaultChordLayout(), IGNORED);
 	});
 
 	function chord(modifierCode: string, second: KeyStroke) {
@@ -239,7 +249,7 @@ describe("a chord on a US and a JIS keyboard", () => {
 	let router: KeyRouter;
 
 	beforeEach(() => {
-		router = new KeyRouter();
+		router = new KeyRouter(defaultChordLayout(), IGNORED);
 	});
 
 	function second(key: string, code: string, shift = true) {
@@ -293,4 +303,80 @@ describe("a chord on a US and a JIS keyboard", () => {
 			});
 		}
 	}
+});
+
+/**
+ * What the router says about its arming, which the input source follows.
+ *
+ * Every way a chord ends is a `disarmed`, whatever ended it, so the input
+ * source put in place for the chord is given back on each of them.
+ */
+describe("the arming, as the router reports it", () => {
+	let heard: string[];
+	let router: KeyRouter;
+
+	beforeEach(() => {
+		heard = [];
+		router = new KeyRouter(defaultChordLayout(), {
+			armed: (deadline) => heard.push(`armed ${deadline}`),
+			disarmed: () => heard.push("disarmed"),
+		});
+	});
+
+	it("reports the prefix with its deadline", () => {
+		router.route(commandQ, 0);
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`]);
+	});
+
+	it.each([
+		["a chord that runs", stroke("KeyF")],
+		["a key that completes nothing", stroke("KeyY")],
+		["the prefix again, which is passed on", commandQ],
+	])("reports the end of the chord on %s", (_name, second) => {
+		router.route(commandQ, 0);
+		router.route(second, 10);
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+	});
+
+	it("does not end the chord on a bare modifier", () => {
+		router.route(commandQ, 0);
+		router.route(press("Shift", "ShiftLeft", { shift: true }), 5);
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`]);
+	});
+
+	it("reports the end when the table changes", () => {
+		router.route(commandQ, 0);
+		router.setLayout(defaultChordLayout());
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+	});
+
+	it("reports the end when DevHub is left, and ends the chord", () => {
+		router.route(commandQ, 0);
+		router.leave();
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+		expect(router.route(stroke("KeyF"), 10)).toEqual({ kind: "pass" });
+	});
+
+	it("says nothing when nothing was armed", () => {
+		router.leave();
+		router.setLayout(defaultChordLayout());
+		router.route(stroke("KeyF"), 10);
+		expect(heard).toEqual([]);
+	});
+
+	it("reports a lapsed prefix as over before arming the next", () => {
+		router.route(commandQ, 0);
+		router.route(commandQ, PREFIX_TIMEOUT_MS + 1);
+		expect(heard).toEqual([
+			`armed ${PREFIX_TIMEOUT_MS}`,
+			"disarmed",
+			`armed ${PREFIX_TIMEOUT_MS * 2 + 1}`,
+		]);
+	});
+
+	it("reports a held-down prefix as over", () => {
+		router.route(commandQ, 0);
+		router.route({ ...commandQ, isAutoRepeat: true }, 10);
+		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+	});
 });

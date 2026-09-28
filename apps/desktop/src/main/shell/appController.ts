@@ -388,6 +388,10 @@ import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
+import {
+	InputSourceHelper,
+	inputSourceHelperPath,
+} from "./inputSourceHelper.js";
 import type { Landing } from "./chords.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
@@ -1140,7 +1144,13 @@ export class AppController {
 	 * See `chords.ts` for the table and `keyboard.ts` for where it is caught.
 	 */
 	installChords(): void {
-		installKeyboard({
+		// The input source a chord switches, and the root surface it says a
+		// failure on. See `chordInputSource.ts`.
+		const inputSource = new InputSourceHelper(inputSourceHelperPath(APP_ROOT));
+		const report = (failure: unknown) => {
+			this.publishError(errorWire(failure));
+		};
+		installKeyboard(inputSource, report, {
 			snapshot: () => this.snapshot(),
 			selectContext: (context, presentation, focus) => {
 				this.arrive(

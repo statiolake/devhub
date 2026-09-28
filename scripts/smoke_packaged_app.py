@@ -108,6 +108,10 @@ SPAWNED_BINARIES = (
 # cannot show you: in `pnpm dev` every one of these paths resolves either way.
 UNPACKED_DIR = "node_modules.asar.unpacked"
 
+# Under `Contents/Resources/app`, where packaging copies `apps/desktop/out`.
+# The path `inputSourceHelperPath` in main/shell/inputSourceHelper.ts computes.
+DEVHUB_SPAWNED_BINARY = "out/native/devhub-input-source"
+
 
 def check_bundle_layout(app: Path) -> list[str]:
 	"""Faults that a running app would not report, so the app cannot be asked.
@@ -141,6 +145,15 @@ def check_bundle_layout(app: Path) -> list[str]:
 			faults.append(f"the app spawns {spawned}, and it is not in {UNPACKED_DIR}")
 		elif not os.access(path, os.X_OK):
 			faults.append(f"the app spawns {spawned}, and it is not executable")
+
+	# DevHub's own helper, which switches the input source while a chord is
+	# armed. It lives with DevHub's code rather than in the archive, and a
+	# bundle without it starts fine and says so only at the first chord.
+	helper = app / "Contents" / "Resources" / "app" / DEVHUB_SPAWNED_BINARY
+	if not helper.is_file():
+		faults.append(f"the app spawns {DEVHUB_SPAWNED_BINARY}, and it is not in the bundle")
+	elif not os.access(helper, os.X_OK):
+		faults.append(f"the app spawns {DEVHUB_SPAWNED_BINARY}, and it is not executable")
 
 	# The archive is only reachable if product.json says this is a built app,
 	# and `commit` is what says it — `isBuilt = Boolean(commit)` in
@@ -217,7 +230,7 @@ def smoke(app: Path, timeout: float) -> int:
 		return 1
 	print(
 		f"    the archive is paired with its sidecar, and everything the app "
-		f"fetches or spawns is in it ({len(FETCHED_ASSETS) + len(SPAWNED_BINARIES)} checked)"
+		f"fetches or spawns is in it ({len(FETCHED_ASSETS) + len(SPAWNED_BINARIES) + 1} checked)"
 	)
 
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))

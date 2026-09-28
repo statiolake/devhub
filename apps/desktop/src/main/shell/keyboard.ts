@@ -17,15 +17,19 @@
  * have cancelled chords for going on with the work. The prefix belongs to the
  * application for one second; see `KeyRouter.disarm`.
  *
- * `before-input-event` is the only place this can work, and for two reasons.
- * A chord typed over a workbench or an xterm has to be caught before that
- * surface sees it, and only the main process sits in front of every surface at
- * once. And it is the only key event DevHub sees **before an input method gets
- * involved**: with a Japanese IME active the second stroke of a chord would
- * otherwise go into the preedit and never arrive at all. That is why the stroke
- * is built from `input.code` — the physical key, which Chromium fills in even
- * when composition has turned `input.key` into `Process` — and why a completed
- * chord is `preventDefault`ed rather than merely acted on.
+ * `before-input-event` is the only place this can work. A chord typed over a
+ * workbench or an xterm has to be caught before that surface sees it, and only
+ * the main process sits in front of every surface at once. A completed chord
+ * is `preventDefault`ed rather than merely acted on, so its keys never reach
+ * the surface underneath.
+ *
+ * It is **not** in front of an input method. On macOS Chromium lets the input
+ * method see a key first, and a key the input method takes is never raised as
+ * `before-input-event` at all — with Japanese input on, the second stroke of a
+ * chord would simply become preedit text. The prefix is Command-modified,
+ * which an input method leaves alone, so it always arrives; and while it is
+ * armed the input source is an ASCII-capable one (`chordInputSource.ts`), so
+ * the second stroke arrives too, as the character it is.
  *
  * Sitting in front of every surface is also what lets this module answer the
  * Mac's editing keys for the one surface that cannot answer them itself. See
@@ -41,11 +45,17 @@
  */
 
 import { electron } from "../electron.js";
-import { strokeKeys } from "../../model/chordKeys.js";
+import { strokeKey } from "../../model/chordKeys.js";
+import { ChordInputSource, type InputSourcePort } from "./chordInputSource.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
 import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
-import { KeyRouter, type ChordLayout, type KeyStroke } from "./keyRouter.js";
+import {
+	defaultChordLayout,
+	KeyRouter,
+	type ChordLayout,
+	type KeyStroke,
+} from "./keyRouter.js";
 import type { TerminalZoomDirection } from "../../model/terminalZoom.js";
 import type {
 	AppSnapshotWire,
@@ -135,7 +145,17 @@ export interface ChordHost {
 	openSettings(): void;
 }
 
-const router = new KeyRouter();
+/**
+ * The input source that follows the arming, once the keyboard is installed.
+ *
+ * Nothing routes a key before `installKeyboard` attaches the handler, so the
+ * only arming it can miss is a test's driving `handleInput` directly.
+ */
+let inputSource: ChordInputSource | undefined;
+const router = new KeyRouter(defaultChordLayout(), {
+	armed: (deadline) => inputSource?.armed(deadline),
+	disarmed: () => inputSource?.disarmed(),
+});
 let installed = false;
 
 /**
@@ -144,11 +164,11 @@ let installed = false;
  * The identity is the *character* the key produced, because Chromium has
  * already applied the modifiers and the layout to work it out — see
  * `model/chordKeys.ts`, which also says why the physical `code` cannot be that
- * identity and what it is still needed for.
+ * identity.
  */
 function strokeOf(input: Electron.Input): KeyStroke {
 	return {
-		keys: strokeKeys(input.key, input.code, input.shift),
+		key: strokeKey(input.key),
 		code: input.code,
 		command: input.meta,
 		shift: input.shift,
@@ -227,9 +247,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
  * Decide one key event and, when the chord layer wants it, take it.
  *
  * Exported so the whole decision can be tested against the exact `Input`
- * objects Electron delivers — including the ones an input method produces —
- * without an Electron window to attach to. `take` is what `preventDefault`
- * would do; `contents` is only consulted for the editing keys.
+ * objects Electron delivers without an Electron window to attach to. `take`
+ * is what `preventDefault` would do; `contents` is only consulted for the
+ * editing keys.
  */
 export function handleInput(
 	host: ChordHost,
@@ -270,9 +290,7 @@ export function handleInput(
 	// Everything else is the chord layer's: armed, cancelled, consumed or run.
 	// Taken *before* the command is resolved, so a chord whose command has
 	// nothing to act on is still swallowed — a half-eaten chord reaching a
-	// surface would be worse than one that did nothing. This is also what keeps
-	// the stroke away from an input method: a completed chord never becomes
-	// preedit text.
+	// surface would be worse than one that did nothing.
 	take();
 	if (decision.kind !== "run") return;
 	// Before the first projection there is no model to resolve against, and a
@@ -312,10 +330,24 @@ export function setChordLayout(layout: ChordLayout): void {
 	router.setLayout(layout);
 }
 
-/** Install once, for every web contents this process will ever own. */
-export function installKeyboard(host: ChordHost): void {
+/**
+ * Install once, for every web contents this process will ever own.
+ *
+ * `port` is the input source the chords switch (see `chordInputSource.ts`), and
+ * `report` is the root surface its failure is said on.
+ */
+export function installKeyboard(
+	port: InputSourcePort,
+	report: (failure: unknown) => void,
+	host: ChordHost,
+): void {
 	if (installed) return;
 	installed = true;
+	inputSource = new ChordInputSource(port, report);
+	// Leaving DevHub ends a chord. See `KeyRouter.leave`.
+	electron.app.on("did-resign-active", () => {
+		router.leave();
+	});
 	electron.app.on("web-contents-created", (_event, contents) => {
 		attach(contents, host);
 	});

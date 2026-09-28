@@ -19,7 +19,7 @@ function stroke(
 	overrides: Partial<KeyStroke> = {},
 ): KeyStroke {
 	return {
-		keys: [key],
+		key,
 		code,
 		command: true,
 		shift: false,
