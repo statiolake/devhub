@@ -1,15 +1,14 @@
 /*
- * The pointer on every page DevHub draws: the hand over whatever does
- * something when it is clicked, the I-beam over text that can be selected,
- * the arrow over the rest.
+ * The pointer on every page DevHub draws, as on the Mac: the pointing hand
+ * over a link, the I-beam over text that can be selected, and the arrow over
+ * the rest — a button, a fold, a tab, a menu, a toggle and a row of a list
+ * (a sidebar's) included.
  *
- * The hand is written once, in `styles/tokens.css`, which every page imports,
- * by what an element is — its element or its role — and nowhere else, so a
- * new control has it without asking and no component can take it away. Text
- * that can be selected sets `auto` where it starts and lets it be inherited,
- * so a link inside a GUI Agent's transcript keeps the hand for its words too
- * (it used to show the I-beam: the transcript set `auto` on every element in
- * it, the link's own included).
+ * It is written once, in `styles/tokens.css`, which every page imports, by
+ * what an element is — its element or its role — and nowhere else, so a new
+ * control has it without asking. Text that can be selected sets `auto` where
+ * it starts and lets it be inherited, so a link inside a GUI Agent's
+ * transcript keeps the hand for its words, and a control there the arrow.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -46,17 +45,13 @@ function cursorOf(body: string): string | undefined {
 
 const TOKENS = "shell/styles/tokens.css";
 
-/** The clickable things the one rule names, as it names them. */
-const CLICKABLE = [
-  "a[href]",
+/** The controls the arrow rule names, as it names them. */
+const CONTROLS = [
   "button",
   "summary",
   "select",
-  'label:has(> input:is([type="checkbox"], [type="radio"]):enabled)',
-  '[type="checkbox"]',
-  '[type="radio"]',
+  'label:has(> input:is([type="checkbox"], [type="radio"]))',
   '[role="button"]',
-  '[role="link"]',
   '[role="tab"]',
   '[role="menuitem"]',
   '[role="option"]',
@@ -66,22 +61,33 @@ const CLICKABLE = [
 ];
 
 describe("the pointer", () => {
-  it("is the hand over every clickable thing, in one rule of tokens.css, and not over one that is disabled", () => {
-    const hands = rules(read(TOKENS)).filter(
-      (rule) => cursorOf(rule.body) === "pointer",
-    );
-    expect(hands).toHaveLength(1);
-    const { selector } = hands[0]!;
-    expect(selector).toMatch(/^:where\(/);
-    for (const clickable of CLICKABLE) expect(selector).toContain(clickable);
-    expect(selector).toMatch(/\):not\(:disabled, \[aria-disabled="true"\]\)$/);
-    const disabled = rules(read(TOKENS)).filter(
+  it("is the hand over a link only, in one rule of tokens.css, and not over one that is disabled", () => {
+    const css = rules(read(TOKENS));
+    const hands = css.filter((rule) => cursorOf(rule.body) === "pointer");
+    expect(hands.map((rule) => rule.selector)).toEqual([
+      ':where(a[href], [role="link"]):not(:disabled, [aria-disabled="true"])',
+    ]);
+    const disabled = css.filter(
       (rule) => rule.selector === ':is(:disabled, [aria-disabled="true"])',
     );
     expect(disabled.map((rule) => cursorOf(rule.body))).toEqual(["default"]);
   });
 
-  it("is set by no component: every other hand or arrow is the one rule's", () => {
+  it("is the arrow over every control, even inside selectable text, in one rule of tokens.css", () => {
+    const arrows = rules(read(TOKENS)).filter(
+      (rule) =>
+        cursorOf(rule.body) === "default" &&
+        rule.selector.startsWith(":where("),
+    );
+    expect(arrows).toHaveLength(1);
+    const { selector } = arrows[0]!;
+    for (const control of CONTROLS) expect(selector).toContain(control);
+    expect(selector).not.toContain("a[href]");
+    expect(selector).not.toContain('[role="link"]');
+    expect(selector).toMatch(/\)$/);
+  });
+
+  it("is set by no component: every hand or arrow is one of tokens.css's", () => {
     const others: string[] = [];
     for (const path of stylesheets(SRC)) {
       if (path === join(SRC, TOKENS)) continue;
@@ -91,11 +97,7 @@ describe("the pointer", () => {
           others.push(`${relative(SRC, path)}: ${rule.selector}`);
       }
     }
-    // A subagent's header folds its pane only while the pane sits beside
-    // the conversation: clickable in one place, and said so there.
-    expect(others).toEqual([
-      'shell/conversation/conversation.css: .conversation-subagent-pane[data-place="beside"] .conversation-subagent-pane-header',
-    ]);
+    expect(others).toEqual([]);
   });
 
   it("is the I-beam over selectable text by inheritance, so a link inside it keeps the hand for what it holds", () => {

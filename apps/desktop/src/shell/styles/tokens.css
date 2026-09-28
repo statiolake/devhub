@@ -566,8 +566,8 @@ body {
 /* Diagnostics exist to be pasted somewhere, provider surfaces own their own
    selection model, a GUI Agent's transcript is read and quoted, and a text
    field is a text field. Their text shows the I-beam: `auto` is set where
-   the text starts and inherited below it, so a link or a button inside the
-   transcript keeps the hand (below) for itself and what it holds. */
+   the text starts and inherited below it, so a link inside the transcript
+   keeps the hand, and a control the arrow (below), for what it holds. */
 .failure-title,
 .failure-detail,
 .surface-line,
@@ -620,34 +620,22 @@ button {
   margin: 0;
 }
 
-/* Whatever does something when it is clicked says so with the hand, on every
-   page DevHub draws: a link, a button, a row or tab of a list, a toggle, a
-   fold, a popup — and what is inside it, which inherits it. Said once, here,
-   by what the element is (its element or its role), so a new control needs
-   no cursor of its own, and a clickable thing that is neither a control nor
-   has a role is a thing to make one. One that cannot be used now is only
-   drawn, and has the arrow (below). `:where()` weighs nothing and
-   the `:not()` one attribute, which outweighs a text field's I-beam (a
-   checkbox is an `input`) and is outweighed by nothing that is not about the
-   pointer itself: no component sets a cursor over this. */
+/* The pointer follows the Mac: the pointing hand is a hyperlink's, and a
+   button, a fold, a popup, a toggle, a tab, a menu item or a row of a list —
+   a sidebar's included — keeps the arrow. Said once, here, by what the element
+   is (its element or its role), so a new control needs no cursor of its own.
+
+   A control is the arrow even inside selectable text, whose I-beam it would
+   otherwise inherit; an `input` of any type keeps the text field's `auto`
+   (above), which is the arrow over one that holds no text. `:where()` weighs
+   nothing, so a component that means a pointer of its own (a grip's `grab`,
+   a divider's resize) sets it over these. */
 :where(
-  a[href],
   button,
   summary,
   select,
-  label:has(> input:is([type="checkbox"], [type="radio"]):enabled),
-  input:is(
-    [type="checkbox"],
-    [type="radio"],
-    [type="button"],
-    [type="submit"],
-    [type="reset"],
-    [type="file"],
-    [type="color"],
-    [type="range"]
-  ),
+  label:has(> input:is([type="checkbox"], [type="radio"])),
   [role="button"],
-  [role="link"],
   [role="tab"],
   [role="menuitem"],
   [role="menuitemcheckbox"],
@@ -656,7 +644,14 @@ button {
   [role="switch"],
   [role="checkbox"],
   [role="radio"]
-):not(:disabled, [aria-disabled="true"]) {
+) {
+  cursor: default;
+}
+
+/* A link has the hand, over its words too, which inherit it, so a link inside
+   a GUI Agent's transcript is not the transcript's I-beam. One that cannot be
+   followed now is only drawn, and has the arrow (below). */
+:where(a[href], [role="link"]):not(:disabled, [aria-disabled="true"]) {
   cursor: pointer;
 }
 

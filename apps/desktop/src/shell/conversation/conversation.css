@@ -349,13 +349,6 @@
   padding: var(--space-3) var(--space-4) var(--space-5);
 }
 
-/* In the column, the header is the pane's fold: pressing it anywhere but on
-   an action folds or unfolds the pane. */
-.conversation-subagent-pane[data-place="beside"]
-  .conversation-subagent-pane-header {
-  cursor: pointer;
-}
-
 /* Filling the pane, its header is a bar over its transcript. */
 .conversation-subagent-pane[data-place="maximized"]
   .conversation-subagent-pane-header {
