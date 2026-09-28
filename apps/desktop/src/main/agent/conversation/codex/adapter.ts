@@ -251,6 +251,15 @@ const CLIENT_METHODS: readonly ClientMethod[] = [
 	"turn/interrupt",
 ];
 
+/**
+ * How many words (an item, a turn's start or end) DevHub keeps of a child
+ * thread it cannot place yet. Many more than a subagent says in the moment
+ * between its thread starting and the call that started it being reported;
+ * a bound so a thread that is never placed cannot grow without end. A thread
+ * that says more is given up (`abandoned`).
+ */
+const HELD_LIMIT = 1000;
+
 const SUBAGENT_TURN_UNKNOWN =
 	"Codex has not yet said which turn this subagent is running, so there is nothing to interrupt.";
 
@@ -407,15 +416,27 @@ export class CodexAdapter implements ProtocolAdapter {
 	private readonly directInput = new Set<string>();
 	/** The turn each child thread is running, while it runs one. */
 	private readonly childTurns = new Map<string, string>();
-	/** Items of child threads DevHub could not place under a call. */
-	private readonly unplaced = new Set<string>();
+	/**
+	 * What child threads said before DevHub knew which call started them, by
+	 * thread, to be drawn once each is linked (`link`): each item's latest
+	 * word and each turn's start and end, in the order first said, at most
+	 * `HELD_LIMIT` of them a thread. Deltas are not kept: the item's
+	 * completion carries what they add up to.
+	 */
+	private readonly held = new Map<string, Map<string, () => void>>();
+	/**
+	 * Child threads that said more than `HELD_LIMIT` before being placed:
+	 * what they say is not drawn, even once the call that started one is
+	 * named, since part of it is gone. One warning says so.
+	 */
+	private readonly abandoned = new Set<string>();
 	/** Running tools and streaming messages, by thread: a thread runs one turn at a time. */
 	private readonly unfinished = new Map<string, Set<EntryId>>();
 	private readonly commandOutput = new Map<EntryId, string>();
 	private readonly fileChanges = new Map<EntryId, readonly FileChange[]>();
 	private noticeCount = 0;
-	/** The notification methods DevHub does not know that were already reported. */
-	private readonly reported = new Set<string>();
+	/** The keys of the notices said once (`noticeOnce`). */
+	private readonly said = new Set<string>();
 	private total: Tokens | undefined;
 	private totalAtTurnStart: Tokens | undefined;
 	private usage: Usage | undefined;
@@ -645,6 +666,21 @@ export class CodexAdapter implements ProtocolAdapter {
 		});
 	}
 
+	/**
+	 * A notice said once per `key` for the adapter's life: news that every
+	 * message carrying it would otherwise repeat, a flood saying one thing.
+	 */
+	private noticeOnce(
+		key: string,
+		level: "info" | "warning" | "error",
+		text: string,
+		raw: JsonValue | undefined,
+	): void {
+		if (this.said.has(key)) return;
+		this.said.add(key);
+		this.notice(level, text, raw);
+	}
+
 	private get codexName(): string {
 		return this.version === undefined ? "codex" : `codex ${this.version}`;
 	}
@@ -800,9 +836,8 @@ export class CodexAdapter implements ProtocolAdapter {
 				// content arrives as items; one DevHub does not know is said quietly,
 				// once per method, so a new one Codex sends often is not a flood.
 				if (route === undefined) {
-					if (this.reported.has(message.method)) return;
-					this.reported.add(message.method);
-					return this.notice(
+					return this.noticeOnce(
+						`method/${message.method}`,
 						"info",
 						`${this.codexName} reported \`${message.method}\``,
 						JSON.parse(line) as JsonValue,
@@ -851,6 +886,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.runningTurn = undefined;
 		this.childTurns.clear();
 		this.directInput.clear();
+		this.held.clear();
+		this.abandoned.clear();
 		this.unfinished.clear();
 		this.listing = { state: "listing", models: [] };
 		this.setState({ phase: "ready", turn: "rewinding" });
@@ -1086,7 +1123,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.runningTurn = undefined;
 		this.threadParents.clear();
 		this.threadLabels.clear();
-		this.unplaced.clear();
+		this.held.clear();
+		this.abandoned.clear();
 		this.unfinished.clear();
 		this.commandOutput.clear();
 		this.fileChanges.clear();
@@ -1281,12 +1319,74 @@ export class CodexAdapter implements ProtocolAdapter {
 		return this.threadParents.get(threadId);
 	}
 
+	/**
+	 * Whether what `threadId` says can be drawn now: the main thread's always,
+	 * a child thread's once it is linked to the call that started it, unless
+	 * it was given up before that.
+	 */
+	private placed(threadId: string): boolean {
+		return (
+			!this.abandoned.has(threadId) && this.parentOf(threadId) !== undefined
+		);
+	}
+
+	/**
+	 * Whether what `threadId` says is not to be drawn now. If the thread
+	 * waits for its link, `replay` waits under `key`: a later word under the
+	 * same key (an item's completion after its start) takes the earlier one's
+	 * place.
+	 */
+	private waits(threadId: string, key: string, replay: () => void): boolean {
+		if (this.placed(threadId)) return false;
+		if (this.abandoned.has(threadId)) return true;
+		const waiting = this.held.get(threadId) ?? new Map<string, () => void>();
+		if (!waiting.has(key) && waiting.size === HELD_LIMIT) {
+			this.held.delete(threadId);
+			this.abandoned.add(threadId);
+			this.noticeOnce(
+				`unplaced/${threadId}`,
+				"warning",
+				`${this.codexName} said more on subagent thread ${threadId} than DevHub keeps before it knows which call started the thread, so what that thread did is not shown.`,
+				undefined,
+			);
+			return true;
+		}
+		waiting.set(key, replay);
+		this.held.set(threadId, waiting);
+		return true;
+	}
+
+	/**
+	 * A child thread is the work of the call `spawn`: its entries hang under
+	 * that call's, and what it said before DevHub knew so is drawn now, in the
+	 * order it said it. Codex names the call either way it reports one — a
+	 * `collabAgentToolCall` `spawnAgent` naming the thread, or a
+	 * `subAgentActivity` `started` (multi-agent v2, which draws no call
+	 * item) — and the first call named for a thread keeps it.
+	 */
+	private link(threadId: string, spawn: EntryId): void {
+		if (this.threadParents.has(threadId)) return;
+		this.threadParents.set(threadId, spawn);
+		// Given up: how the subagent stands is not known either.
+		if (this.abandoned.has(threadId))
+			return this.setSpawnState(threadId, "unknown", undefined);
+		const waiting = this.held.get(threadId);
+		this.held.delete(threadId);
+		for (const replay of waiting?.values() ?? []) replay();
+	}
+
 	private idOf(threadId: string, itemId: string): EntryId {
 		return entryId(`${threadId}/${itemId}`);
 	}
 
 	private onTurnStarted(params: unknown): void {
 		const { threadId, turn } = turnNotification(this.reader, params);
+		if (
+			this.waits(threadId, `turn/started/${turn.id}`, () =>
+				this.onTurnStarted(params),
+			)
+		)
+			return;
 		if (threadId !== this.mainThread) {
 			this.childTurns.set(threadId, turn.id);
 			// A subagent's thread taking a turn is the subagent running, whether
@@ -1304,6 +1404,12 @@ export class CodexAdapter implements ProtocolAdapter {
 		if (turn.status === "inProgress") {
 			this.mismatch("params.turn.status", "a finished turn, got inProgress");
 		}
+		if (
+			this.waits(threadId, `turn/completed/${turn.id}`, () =>
+				this.onTurnCompleted(params),
+			)
+		)
+			return;
 		this.endTurn(threadId, turn, this.turnUsage());
 	}
 
@@ -1339,6 +1445,16 @@ export class CodexAdapter implements ProtocolAdapter {
 				undefined,
 			);
 			return;
+		}
+		// Every call a turn made is reported by its end, so a child thread
+		// still waiting to be placed was started by none DevHub was told of.
+		for (const thread of this.held.keys()) {
+			this.noticeOnce(
+				`unplaced/${thread}`,
+				"warning",
+				`${this.codexName} ran subagent thread ${thread} but never said which call started it, so what that thread did is not shown.`,
+				undefined,
+			);
 		}
 		const outcome = turn.status === "inProgress" ? "failed" : turn.status;
 		this.emit({
@@ -1394,6 +1510,12 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.reader,
 			params,
 		);
+		if (
+			this.waits(threadId, `item/${item.id}`, () =>
+				this.onItemNotification(params, phase),
+			)
+		)
+			return;
 		if (phase === "started" && startedAtMs !== null)
 			this.itemTimes.set(this.idOf(threadId, item.id), startedAtMs);
 		this.onItem(threadId, turnId, item, phase);
@@ -1431,18 +1553,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		const id = this.idOf(threadId, item.id);
 		const parent = this.parentOf(threadId);
 		if (parent === undefined) {
-			// Stage 0 has not yet shown in which order a subagent's first items and
-			// the call that started it arrive. Until it has, an item DevHub cannot
-			// place is shown whole at the top level when it completes.
-			this.unplaced.add(id);
-			if (phase === "completed") {
-				this.notice(
-					"warning",
-					`A ${item.type === "other" || item.type === "unknown" ? item.itemType : item.type} item from subagent thread ${threadId} arrived before DevHub knew which call started that thread.`,
-					item as unknown as JsonValue,
-				);
-			}
-			return;
+			throw new Error(
+				`item ${item.id} of thread ${threadId} was drawn before that thread was placed`,
+			);
 		}
 		const streaming = phase === "started";
 		switch (item.type) {
@@ -1605,16 +1718,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			case "collabAgentToolCall":
 				return this.onCollab(id, parent, threadId, item);
 			case "subAgentActivity":
-				this.relabel(item.agentThreadId, item.agentPath);
-				return this.setSpawnState(
-					item.agentThreadId,
-					item.kind === "completed"
-						? "completed"
-						: item.kind === "interrupted"
-							? "failed"
-							: "running",
-					item,
-				);
+				return this.onSubagentActivity(id, parent, threadId, item);
 			case "webSearch":
 				return this.put(
 					this.tool(
@@ -1779,10 +1883,6 @@ export class CodexAdapter implements ProtocolAdapter {
 	): void {
 		let spawns: SubagentInfo | undefined;
 		if (item.tool === "spawnAgent") {
-			for (const receiver of item.receiverThreadIds) {
-				if (!this.threadParents.has(receiver))
-					this.threadParents.set(receiver, id);
-			}
 			const receiver = item.receiverThreadIds[0];
 			const agentState =
 				receiver === undefined ? undefined : item.agentsStates[receiver];
@@ -1821,10 +1921,84 @@ export class CodexAdapter implements ProtocolAdapter {
 			),
 			threadId,
 		);
+		if (item.tool === "spawnAgent") {
+			for (const receiver of item.receiverThreadIds) this.link(receiver, id);
+		}
 		// Any collab call may report on agents another call started.
 		for (const [agent, status] of Object.entries(item.agentsStates)) {
 			if (this.threadParents.get(agent) !== id)
 				this.setSpawnState(agent, subagentState(status), undefined);
+		}
+	}
+
+	/**
+	 * A subagent's news in the thread of the agent that runs it, as
+	 * multi-agent v2 reports its calls instead of a `collabAgentToolCall`.
+	 * `started` is the spawn call itself, by its call id: the subagent's card,
+	 * and the link from its thread to that card. `interacted` (a message or a
+	 * follow-up task) and `interrupted` are calls about a subagent already
+	 * started, drawn as such; the subagent's state follows its thread's turns,
+	 * since a message need not start one. `completed` is not a call but a
+	 * turn of the subagent's having ended, which its own `turn/completed`
+	 * says too; it counts unless the subagent is running a later turn.
+	 */
+	private onSubagentActivity(
+		id: EntryId,
+		parent: EntryId | null,
+		threadId: string,
+		item: Extract<Item, { type: "subAgentActivity" }>,
+	): void {
+		const child = item.agentThreadId;
+		this.relabel(child, item.agentPath);
+		const input = { agentThreadId: child, agentPath: item.agentPath };
+		switch (item.kind) {
+			case "started": {
+				// Its start and its completion each say it: the second keeps
+				// what the subagent's thread said in between.
+				const drawn = this.entry(id);
+				this.put(
+					this.tool(
+						id,
+						parent,
+						"spawnAgent",
+						`${COLLAB_TITLES["spawnAgent"]!}: ${item.agentPath}`,
+						input,
+						"succeeded",
+						undefined,
+						drawn?.kind === "tool" && drawn.spawns !== undefined
+							? drawn.spawns
+							: {
+									label: item.agentPath,
+									prompt: "",
+									model: undefined,
+									state: "running",
+									takesMessages: this.directInput.has(child),
+								},
+					),
+					threadId,
+				);
+				return this.link(child, id);
+			}
+			case "interacted":
+			case "interrupted": {
+				const tool =
+					item.kind === "interacted" ? "sendMessage" : "interruptAgent";
+				return this.put(
+					this.tool(
+						id,
+						parent,
+						tool,
+						`${COLLAB_TITLES[tool]!}: ${item.agentPath}`,
+						input,
+						"succeeded",
+						undefined,
+					),
+					threadId,
+				);
+			}
+			case "completed":
+				if (this.childTurns.has(child)) return;
+				return this.setSpawnState(child, "completed", item);
 		}
 	}
 
@@ -1845,7 +2019,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		const entry = this.spawnEntry(threadId);
 		if (entry === undefined) {
 			if (about === undefined) return; // a status report about an agent DevHub never saw started
-			return this.notice(
+			return this.noticeOnce(
+				`unstarted/${threadId}`,
 				"warning",
 				`${this.codexName} reported on subagent thread ${threadId}, which DevHub never saw started.`,
 				about as unknown as JsonValue,
@@ -1881,13 +2056,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	// -------------------------------------------------------------------------
 	// Deltas.
 
-	/** The streaming assistant entry a delta is for, or undefined for an item DevHub could not place. */
+	/** The streaming assistant entry a delta is for. */
 	private streamingEntry(
 		threadId: string,
 		itemId: string,
 		entry: EntryId = this.idOf(threadId, itemId),
 	) {
-		if (this.unplaced.has(this.idOf(threadId, itemId))) return undefined;
 		const found = this.entry(entry);
 		if (found?.kind !== "assistant" || !found.streaming) {
 			this.mismatch(
@@ -1900,8 +2074,9 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onTextDelta(params: unknown): void {
 		const { threadId, itemId, delta } = textDelta(this.reader, params);
+		// A thread not yet placed: its item's completion, held, says it whole.
+		if (!this.placed(threadId)) return;
 		const entry = this.streamingEntry(threadId, itemId);
-		if (entry === undefined) return;
 		this.emit({ type: "text-delta", entry: entry.id, block: 0, text: delta });
 	}
 
@@ -1912,15 +2087,14 @@ export class CodexAdapter implements ProtocolAdapter {
 		index: number,
 		raw: boolean,
 	) {
+		if (!this.placed(threadId)) return undefined;
 		const base = this.idOf(threadId, itemId);
-		if (this.unplaced.has(base)) return undefined;
 		const id = raw ? entryId(`${base}#raw`) : base;
 		if (raw && this.entry(id) === undefined) {
 			const summary = this.streamingEntry(threadId, itemId);
-			if (summary === undefined) return undefined;
 			this.put({ ...summary, id, blocks: [] }, threadId);
 		}
-		const entry = this.streamingEntry(threadId, itemId, id)!;
+		const entry = this.streamingEntry(threadId, itemId, id);
 		if (entry.blocks.length <= index) {
 			const blocks: AssistantBlock[] = [...entry.blocks];
 			while (blocks.length <= index)
@@ -1948,8 +2122,8 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onCommandOutput(params: unknown): void {
 		const { threadId, itemId, delta } = textDelta(this.reader, params);
+		if (!this.placed(threadId)) return;
 		const id = this.idOf(threadId, itemId);
-		if (this.unplaced.has(id)) return;
 		const entry = this.entry(id);
 		if (entry?.kind !== "tool" || entry.status !== "running") {
 			this.mismatch(
@@ -1970,8 +2144,8 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onPatchUpdated(params: unknown): void {
 		const { threadId, itemId, changes } = patchUpdated(this.reader, params);
+		if (!this.placed(threadId)) return;
 		const id = this.idOf(threadId, itemId);
-		if (this.unplaced.has(id)) return;
 		const entry = this.entry(id);
 		if (entry?.kind !== "tool") {
 			this.mismatch(
@@ -1988,8 +2162,11 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onPlanUpdated(params: unknown): void {
 		const { threadId, turnId, plan } = planUpdated(this.reader, params);
-		const parent = this.parentOf(threadId);
-		if (parent === undefined) return;
+		if (
+			this.waits(threadId, `plan/${turnId}`, () => this.onPlanUpdated(params))
+		)
+			return;
+		const parent = this.parentOf(threadId)!;
 		this.emit({
 			type: "entry",
 			entry: {
@@ -2698,6 +2875,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			"MCP server events are not drawn in v1",
 		),
 		"account/updated": unused("sign-in happens in a terminal"),
+		"account/gatewayOAuth/changed": unused("sign-in happens in a terminal"),
 		"account/rateLimits/updated": (params) => {
 			const { windows } = rateLimits(this.reader, params);
 			this.publishUsage({

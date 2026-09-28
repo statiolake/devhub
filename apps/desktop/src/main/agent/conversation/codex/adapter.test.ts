@@ -1176,19 +1176,22 @@ describe("subagents", () => {
 		).toThrow(/started no subagent thread that takes the person's messages/);
 	});
 
-	it("shows an item from a thread no call is known to have started, whole, when it completes", () => {
-		const harness = ready();
-		const stray = "00000000-0000-7000-8000-00000000000c";
-		harness.receive({
-			method: "item/started",
+	describe("a thread no call is known to have started", () => {
+		const STRAY = "00000000-0000-7000-8000-00000000000c";
+		const said = (
+			phase: "started" | "completed",
+			id: string,
+			text: string,
+		) => ({
+			method: `item/${phase}`,
 			params: {
-				threadId: stray,
+				threadId: STRAY,
 				turnId: "t",
-				startedAtMs: 0,
+				[phase === "started" ? "startedAtMs" : "completedAtMs"]: 0,
 				item: {
 					type: "agentMessage",
-					id: "m",
-					text: "",
+					id,
+					text,
 					phase: null,
 					memoryCitation: null,
 					delivery: null,
@@ -1196,31 +1199,372 @@ describe("subagents", () => {
 				},
 			},
 		});
-		harness.receive({
-			method: "item/agentMessage/delta",
-			params: { threadId: stray, turnId: "t", itemId: "m", delta: "hi" },
+		const mainTurn = (status: "inProgress" | "completed") => ({
+			method: status === "inProgress" ? "turn/started" : "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "turn-2",
+					items: [],
+					itemsView: "notLoaded",
+					status,
+					error: null,
+					startedAt: 1790000000,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
 		});
-		expect(harness.transcript.entries).toEqual([]);
-		harness.receive({
+		const startedBy = (call: string) => ({
 			method: "item/completed",
 			params: {
-				threadId: stray,
-				turnId: "t",
+				threadId: MAIN,
+				turnId: "turn-2",
 				completedAtMs: 0,
 				item: {
-					type: "agentMessage",
-					id: "m",
-					text: "hi",
-					phase: null,
-					memoryCitation: null,
-					delivery: null,
-					questions: null,
+					type: "subAgentActivity",
+					id: call,
+					kind: "started",
+					agentThreadId: STRAY,
+					agentPath: "/root/late",
 				},
 			},
 		});
-		expect(outline(harness.transcript)).toEqual([
-			`notice(warning): A agentMessage item from subagent thread ${stray} arrived before DevHub knew which call started that thread.`,
+
+		it("holds what it says, and says once, when the turn ends, that it is not shown", () => {
+			const harness = ready();
+			harness.receive(mainTurn("inProgress"));
+			for (let n = 0; n < 100; n += 1) {
+				harness.receive(said("started", `m${n}`, ""));
+				harness.receive({
+					method: "item/agentMessage/delta",
+					params: {
+						threadId: STRAY,
+						turnId: "t",
+						itemId: `m${n}`,
+						delta: "hi",
+					},
+				});
+				harness.receive(said("completed", `m${n}`, "hi"));
+			}
+			expect(harness.transcript.entries).toEqual([]);
+			harness.receive(mainTurn("completed"));
+			harness.receive(mainTurn("inProgress"));
+			harness.receive(said("completed", "later", "again"));
+			harness.receive(mainTurn("completed"));
+			expect(
+				outline(harness.transcript).filter((line) => line.startsWith("notice")),
+			).toEqual([
+				`notice(warning): codex 0.156.1 ran subagent thread ${STRAY} but never said which call started it, so what that thread did is not shown.`,
+			]);
+		});
+
+		it("draws what it held under the call once one is named, in the order it said it", () => {
+			const harness = ready();
+			harness.receive(said("started", "first", ""));
+			harness.receive(said("completed", "first", "one"));
+			harness.receive(said("started", "second", ""));
+			harness.receive(said("completed", "second", "two"));
+			harness.receive(startedBy("call_late"));
+			expect(outline(harness.transcript)).toEqual([
+				'tool spawnAgent "Start a subagent: /root/late" succeeded spawns /root/late/running',
+				"  assistant: one",
+				"  assistant: two",
+			]);
+		});
+
+		it("is given up once it says more than DevHub keeps, said once, and drawn as a card whose state is not known", () => {
+			const harness = ready();
+			for (let n = 0; n < 1005; n += 1)
+				harness.receive(said("completed", `m${n}`, `${n}`));
+			harness.receive(startedBy("call_late"));
+			harness.receive(said("started", "after", ""));
+			harness.receive({
+				method: "item/agentMessage/delta",
+				params: { threadId: STRAY, turnId: "t", itemId: "after", delta: "x" },
+			});
+			harness.receive(mainTurn("completed"));
+			expect(outline(harness.transcript)).toEqual([
+				`notice(warning): codex 0.156.1 said more on subagent thread ${STRAY} than DevHub keeps before it knows which call started the thread, so what that thread did is not shown.`,
+				'tool spawnAgent "Start a subagent: /root/late" succeeded spawns /root/late/unknown',
+				"turn-end completed -ms",
+			]);
+			expect(harness.transcript.backgroundTasks).toEqual([]);
+		});
+
+		it("says once that app-server reported on it, however often it does", () => {
+			const harness = ready();
+			for (let n = 0; n < 50; n += 1) {
+				harness.receive({
+					method: "item/completed",
+					params: {
+						threadId: MAIN,
+						turnId: "turn-2",
+						completedAtMs: 0,
+						item: {
+							type: "subAgentActivity",
+							id: `subagent-completed-t${n}`,
+							kind: "completed",
+							agentThreadId: STRAY,
+							agentPath: "/root/gone",
+						},
+					},
+				});
+			}
+			expect(outline(harness.transcript)).toEqual([
+				`notice(warning): codex 0.156.1 reported on subagent thread ${STRAY}, which DevHub never saw started.`,
+			]);
+		});
+	});
+});
+
+/**
+ * Multi-agent v2, which codex-cli 0.158.0 runs: a spawn call is reported as
+ * a `subAgentActivity` `started` item named by the call's id, with no
+ * `collabAgentToolCall`, and the subagent's thread may have begun before it.
+ */
+describe("multi-agent v2 subagents", () => {
+	const A = "00000000-0000-7000-8000-00000000000b";
+	const B = "00000000-0000-7000-8000-00000000000c";
+	const SPAWN_A = `${MAIN}/call_spawn_a`;
+	const SPAWN_B = `${MAIN}/call_spawn_b`;
+
+	function delegated(
+		lines: readonly string[] = fixture("subagent-v2.handwritten.ndjson"),
+		each: (harness: Harness) => void = () => {},
+	): Harness {
+		const harness = ready();
+		harness.command({
+			kind: "send",
+			text: "delegate",
+			images: [],
+			origin: "person",
+		});
+		for (const line of lines) {
+			harness.receive(line);
+			each(harness);
+		}
+		return harness;
+	}
+
+	it("draws each subagent's card from its started activity, what its thread said before that placed under it", () => {
+		const harness = delegated();
+		expect(outline(harness.transcript)).toMatchInlineSnapshot(`
+			[
+			  "tool spawnAgent "Start a subagent: /root/reader" succeeded spawns /root/reader/completed",
+			  "  assistant: Reading src.",
+			  "  tool commandExecution "ls src" succeeded -> "main.ts\\n"",
+			  "tool spawnAgent "Start a subagent: /root/tester" succeeded spawns /root/tester/failed",
+			  "  tool commandExecution "make test" succeeded -> "ok\\n"",
+			  "tool wait "Wait for subagents" succeeded",
+			  "assistant: src/ has main.ts; the tests could not finish.",
+			  "turn-end completed 2100ms",
+			]
+		`);
+		expect(harness.entry(`${A}/a-say`)).toMatchObject({ parent: SPAWN_A });
+	});
+
+	it("follows each subagent from running to done or failed, and lists it in the background while it runs", () => {
+		const states = new Map<string, string[]>();
+		const tasks: string[] = [];
+		delegated(undefined, (harness) => {
+			for (const spawn of [SPAWN_A, SPAWN_B]) {
+				const entry = harness.transcript.entries.find(
+					(each) => each.id === spawn,
+				);
+				if (entry?.kind !== "tool" || entry.spawns === undefined) continue;
+				const seen = states.get(spawn) ?? [];
+				if (seen.at(-1) !== entry.spawns.state) seen.push(entry.spawns.state);
+				states.set(spawn, seen);
+			}
+			const listed = harness.transcript.backgroundTasks
+				.map((task) => task.id)
+				.join(",");
+			if (tasks.at(-1) !== listed) tasks.push(listed);
+		});
+		expect(states.get(SPAWN_A)).toEqual(["running", "completed"]);
+		expect(states.get(SPAWN_B)).toEqual(["running", "failed"]);
+		expect(tasks).toEqual(["", SPAWN_A, `${SPAWN_A},${SPAWN_B}`, SPAWN_B, ""]);
+	});
+
+	it("stops a subagent by interrupting its thread's turn, and takes the person's words when its thread does", () => {
+		const lines = fixture("subagent-v2.handwritten.ndjson").map((line) =>
+			line.replace(
+				`"parentThreadId":"${MAIN}",`,
+				`"parentThreadId":"${MAIN}","canAcceptDirectInput":true,`,
+			),
+		);
+		const running = lines.findIndex(
+			(line) => line.includes('"turn/started"') && line.includes("child-b-1"),
+		);
+		const harness = delegated(lines.slice(0, running + 1));
+		expect(harness.entry(SPAWN_B)).toMatchObject({
+			spawns: { takesMessages: true, state: "running" },
+		});
+		expect(
+			harness.transcript.backgroundTasks.find((task) => task.id === SPAWN_B),
+		).toMatchObject({ stoppable: true });
+		const from = harness.written.length;
+		harness.command({ kind: "stop-task", task: SPAWN_B });
+		expect(harness.writesSince(from)).toEqual([
+			{
+				id: expect.any(Number),
+				method: "turn/interrupt",
+				params: { threadId: B, turnId: "child-b-1" },
+			},
 		]);
+		harness.command({
+			kind: "instruct",
+			subagent: entryId(SPAWN_A),
+			text: "look in lib/ too",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/steer",
+			params: { threadId: A, expectedTurnId: "child-a-1" },
+		});
+	});
+
+	it("gives many parallel subagents a card each, whichever comes first of a thread's words and its call", () => {
+		const count = 40;
+		const thread = (n: number) =>
+			`00000000-0000-7000-8000-${(0x100 + n).toString(16).padStart(12, "0")}`;
+		const item = (
+			threadId: string,
+			phase: "started" | "completed",
+			value: object,
+		) =>
+			JSON.stringify({
+				method: `item/${phase}`,
+				params: {
+					threadId,
+					turnId: threadId === MAIN ? "turn-2" : "child",
+					[phase === "started" ? "startedAtMs" : "completedAtMs"]: 0,
+					item: value,
+				},
+			});
+		const childTurn = (threadId: string, status: "inProgress" | "completed") =>
+			JSON.stringify({
+				method: status === "inProgress" ? "turn/started" : "turn/completed",
+				params: {
+					threadId,
+					turn: {
+						id: "child",
+						items: [],
+						itemsView: "notLoaded",
+						status,
+						error: null,
+						startedAt: 1790000000,
+						completedAt: null,
+						durationMs: null,
+					},
+				},
+			});
+		const message = (n: number) => ({
+			type: "agentMessage",
+			id: `say-${n}`,
+			text: `helper ${n}`,
+			phase: null,
+			memoryCitation: null,
+			delivery: null,
+			questions: null,
+		});
+		const started = (n: number) => ({
+			type: "subAgentActivity",
+			id: `call_${n}`,
+			kind: "started",
+			agentThreadId: thread(n),
+			agentPath: `/root/helper_${n}`,
+		});
+		// Every thread starts and speaks; its call comes after its words for
+		// an even thread, before them for an odd one.
+		const lines: string[] = [];
+		for (let n = 0; n < count; n += 1) {
+			if (n % 2 === 1)
+				lines.push(
+					item(MAIN, "started", started(n)),
+					item(MAIN, "completed", started(n)),
+				);
+			lines.push(
+				childTurn(thread(n), "inProgress"),
+				item(thread(n), "completed", message(n)),
+			);
+		}
+		for (let n = 0; n < count; n += 2)
+			lines.push(
+				item(MAIN, "started", started(n)),
+				item(MAIN, "completed", started(n)),
+			);
+		const harness = delegated(lines);
+		expect(harness.transcript.backgroundTasks).toHaveLength(count);
+		for (let n = 0; n < count; n += 1)
+			harness.receive(childTurn(thread(n), "completed"));
+		expect(harness.transcript.backgroundTasks).toEqual([]);
+		expect(
+			outline(harness.transcript).filter((line) => line.includes("notice")),
+		).toEqual([]);
+		for (let n = 0; n < count; n += 1) {
+			expect(harness.entry(`${thread(n)}/say-${n}`)).toMatchObject({
+				parent: `${MAIN}/call_${n}`,
+			});
+			expect(harness.entry(`${MAIN}/call_${n}`)).toMatchObject({
+				spawns: { label: `/root/helper_${n}`, state: "completed" },
+			});
+		}
+	});
+
+	it("rebuilds the same transcript from the journals and writes nothing", () => {
+		const live = delegated();
+		const replayed = new Harness();
+		for (const line of live.written) {
+			for (const event of replayed.adapter.sent(line).events)
+				replayed.transcript = applyEvent(replayed.transcript, event);
+		}
+		for (const line of live.received) replayed.receive(line);
+		expect(replayed.written).toEqual([]);
+		expect(replayed.transcript).toEqual(live.transcript);
+	});
+
+	it("draws a resumed thread's past subagents from its history, done once its history says so", () => {
+		const harness = new Harness({ ...OPTIONS, resumeThreadId: MAIN });
+		harness.start();
+		const [initialize, account, start] = fixture(
+			"handshake.handwritten.ndjson",
+		);
+		harness.receive(initialize!);
+		harness.receive(account!);
+		const opened = JSON.parse(start!) as {
+			result: { thread: { turns: unknown[] } };
+		};
+		const activity = (id: string, kind: string) => ({
+			type: "subAgentActivity",
+			id,
+			kind,
+			agentThreadId: A,
+			agentPath: "/root/reader",
+		});
+		opened.result.thread.turns = [
+			{
+				id: "old-turn",
+				items: [
+					activity("call_spawn_a", "started"),
+					activity("call_ask_a", "interacted"),
+					activity("subagent-completed-old", "completed"),
+				],
+				itemsView: "full",
+				status: "completed",
+				error: null,
+				startedAt: null,
+				completedAt: null,
+				durationMs: 10,
+			},
+		];
+		harness.receive(opened);
+		expect(outline(harness.transcript)).toEqual([
+			'tool spawnAgent "Start a subagent: /root/reader" succeeded spawns /root/reader/completed',
+			'tool sendMessage "Message a subagent: /root/reader" succeeded',
+			"turn-end completed 10ms",
+		]);
+		expect(harness.transcript.backgroundTasks).toEqual([]);
 	});
 });
 

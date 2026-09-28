@@ -575,7 +575,14 @@ for the model; before the first turn ends it reads only the tokens. Codex's is
 **Subagents.** A subagent is a card under the call that started it, with its
 work inside. A Codex subagent is running while its thread has a turn running
 and finished when that turn ends, whether or not app-server also sends a
-`subAgentActivity` item about it. A Claude subagent is running from its call
+`subAgentActivity` item about it. Codex names the call that started a
+subagent one of two ways — a `collabAgentToolCall` `spawnAgent` naming the
+subagent's thread, or, under multi-agent v2 (which codex 0.158 runs), a
+`subAgentActivity` `started` item whose id is the spawn call's — and the
+card is linked to the thread by whichever comes first. What the thread says
+before its call is named waits, and is drawn under the card once it is; a
+thread no call is named for by the end of the conversation's turn is one
+warning, not one per item. A Claude subagent is running from its call
 until its end is told: its call's result, for one run in the foreground; a
 task notification, for one started in the background (whose call's result
 only says it launched) — a `task_notification` event in stream-json, or a
@@ -1095,12 +1102,13 @@ and changes it for this session.
   - A live pass in DevHub with the real CLI drew and copied that kind of answer,
     nested a subagent, and brought the conversation back unchanged after a
     DevHub restart, sending the CLI nothing again.
-- **Codex** (codex 0.156.1):
+- **Codex** (codex 0.156.1; protocol types vendored at 0.158.0):
   - Only the real `app-server` handshake and the not-signed-in path have been
     checked against the real CLI, from a signed-out capture
     (`codex/fixtures/signed-out.capture.ndjson`).
   - Turns, approvals, subagents and everything else are tested only against
-    fixtures written by hand from the vendored 0.156.1 protocol types. Expect a
+    fixtures written by hand from the vendored protocol types (multi-agent v2
+    subagents from the 0.158.0 sources). Expect a
     protocol-mismatch notice where the real CLI differs.
 - **Dev Containers** do not run Agents. A Workspace whose editor is attached
   to a dev container runs its Agents, TUI and GUI, on its own machine — this
