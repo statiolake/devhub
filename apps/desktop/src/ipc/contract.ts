@@ -280,6 +280,16 @@ export interface WorkspaceRepositoryWire {
 		readonly url: string;
 		readonly title: string;
 		readonly state: "open" | "draft" | "closed" | "merged";
+		/**
+		 * Its review conversations nobody has resolved. `uncounted` is how many
+		 * threads were past the page the count was read from — nought unless the
+		 * pull request has more than a hundred — so a count that is only a lower
+		 * bound is never drawn as the whole of it.
+		 */
+		readonly conversations: {
+			readonly unresolved: number;
+			readonly uncounted: number;
+		};
 	};
 	/**
 	 * Why this row cannot say what the workspace is working on.

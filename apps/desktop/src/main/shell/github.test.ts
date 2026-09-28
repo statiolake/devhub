@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorWire, failureText } from "../../model/wire.js";
 import {
+	GitHubUnavailable,
 	readBranchStatus,
 	readGitHubLogin,
 	readGitHubToken,
@@ -160,6 +161,7 @@ function pullRequest(over: Record<string, unknown>) {
 		state: "OPEN",
 		isDraft: false,
 		headRepositoryOwner: { login: "example" },
+		reviewThreads: { totalCount: 0, nodes: [] },
 		...over,
 	};
 }
@@ -183,6 +185,7 @@ describe("the pull request a branch is about", () => {
 			url: "p",
 			title: "Tidy the picker",
 			state: "open",
+			conversations: { unresolved: 0, uncounted: 0 },
 		});
 	});
 
@@ -298,6 +301,105 @@ describe("the pull request a branch is about", () => {
 		expect(
 			(await readBranchStatus(REFERENCE, "token")).pullRequest?.number,
 		).toBe(4);
+	});
+});
+
+/** Review threads, as GitHub lists them: oldest first, resolved or not. */
+function threads(resolved: readonly boolean[], totalCount = resolved.length) {
+	return {
+		totalCount,
+		nodes: resolved.map((isResolved) => ({ isResolved })),
+	};
+}
+
+/**
+ * Whether anybody is still waiting on an answer in the pull request: its
+ * unresolved review conversations, read on the same query as the pull request
+ * itself so there is one request per branch per minute and not two.
+ */
+describe("the conversations in a branch's pull request", () => {
+	it("is asked on the same query as the pull request, one page of threads", async () => {
+		const fetchMock = withPullRequests([]);
+		await readBranchStatus(REFERENCE, "token");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { query: string; variables: { threads: number } };
+		expect(body.query).toMatch(
+			/reviewThreads\(first:\$threads\)\{ totalCount nodes\{ isResolved \} \}/,
+		);
+		expect(body.variables.threads).toBe(100);
+	});
+
+	it("counts the threads nobody has resolved", async () => {
+		withPullRequests([
+			pullRequest({ reviewThreads: threads([false, true, false, false]) }),
+		]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.conversations,
+		).toEqual({ unresolved: 3, uncounted: 0 });
+	});
+
+	it("is nought when every thread is resolved", async () => {
+		withPullRequests([pullRequest({ reviewThreads: threads([true, true]) })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.conversations,
+		).toEqual({ unresolved: 0, uncounted: 0 });
+	});
+
+	it("says how many threads were past the page it counted", async () => {
+		// Two hundred and fifty threads, the first hundred read: the count is a
+		// lower bound and says so rather than passing for the whole of it.
+		withPullRequests([
+			pullRequest({
+				reviewThreads: threads(
+					Array.from({ length: 100 }, (_, index) => index % 10 !== 0),
+					250,
+				),
+			}),
+		]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.conversations,
+		).toEqual({ unresolved: 10, uncounted: 150 });
+	});
+
+	it("does not count a thread GitHub would not show as resolved", async () => {
+		withPullRequests([
+			pullRequest({
+				reviewThreads: {
+					totalCount: 3,
+					nodes: [{ isResolved: false }, null, { isResolved: true }],
+				},
+			}),
+		]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.conversations,
+		).toEqual({ unresolved: 1, uncounted: 1 });
+	});
+
+	it("counts the chosen pull request's threads, not another's", async () => {
+		withPullRequests([
+			pullRequest({
+				number: 3,
+				state: "CLOSED",
+				reviewThreads: threads([false, false]),
+			}),
+			pullRequest({ number: 4, reviewThreads: threads([false]) }),
+		]);
+		const chosen = (await readBranchStatus(REFERENCE, "token")).pullRequest;
+		expect(chosen?.number).toBe(4);
+		expect(chosen?.conversations.unresolved).toBe(1);
+	});
+
+	it("is a failure, not a nought, when GitHub leaves the threads out", async () => {
+		withPullRequests([pullRequest({ number: 5, reviewThreads: null })]);
+		const failure = await readBranchStatus(REFERENCE, "token").catch(
+			(error: unknown) => error,
+		);
+		expect(failure).toBeInstanceOf(GitHubUnavailable);
+		expect(failureText(failure)).toContain(
+			"GitHub did not list the review conversations of example/widget#5.",
+		);
 	});
 });
 

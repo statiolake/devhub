@@ -37,8 +37,9 @@ import {
   editorAttachmentFact,
   issueLabel,
   issueMark,
-  pullRequestLabel,
-  pullRequestMark,
+  hasUnresolvedConversations,
+  markLines,
+  pullRequestFacts,
   tooltipLines,
   describe,
   pullRequestGlyphName,
@@ -706,18 +707,23 @@ function WorkspaceMarks({
         <button
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
-          aria-label={pullRequestLabel(pullRequest)}
-          data-tooltip-lines={JSON.stringify([
-            {
-              icon: pullRequestGlyphName(pullRequest.state),
-              text: pullRequestMark(pullRequest),
-            },
-          ])}
+          aria-label={describe(pullRequestFacts(pullRequest))}
+          data-tooltip-lines={JSON.stringify(
+            markLines(pullRequestFacts(pullRequest)),
+          )}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}
         >
           <Glyph name={pullRequestGlyphName(pullRequest.state)} />
+          {/* Somebody is waiting on an answer in it. On the mark and not
+              beside it, because it is about this pull request and nothing
+              else on the row; coloured at rest, because a conversation you
+              have to hover to find out about is one nobody answers. The count
+              is in the words above. */}
+          {hasUnresolvedConversations(pullRequest) ? (
+            <Glyph name="conversation" className="row-mark-badge" />
+          ) : null}
         </button>
       ) : null}
       {/* Asking. The branch is read every couple of seconds and GitHub once a

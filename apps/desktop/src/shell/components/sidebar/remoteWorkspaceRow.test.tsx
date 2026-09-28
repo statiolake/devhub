@@ -165,6 +165,7 @@ describe("a Workspace row whose folder is on another machine", () => {
         number: 131,
         title: "Tidy the widget",
         state: "open",
+        conversations: { unresolved: 0, uncounted: 0 },
         url: "https://github.com/example/widget/pull/131",
       },
     });

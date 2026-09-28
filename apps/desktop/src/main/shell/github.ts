@@ -81,6 +81,22 @@ export interface PullRequestStatus {
 	readonly url: string;
 	readonly title: string;
 	readonly state: "open" | "draft" | "closed" | "merged";
+	readonly conversations: ConversationCount;
+}
+
+/**
+ * A pull request's review conversations nobody has resolved yet.
+ *
+ * Counted from the first `MAX_REVIEW_THREADS` of them, which GitHub lists
+ * oldest first, and `uncounted` says how many were past that and not looked
+ * at. Nearly always nought: a pull request with more than a hundred review
+ * threads is rare, and paging through the rest would be a second request per
+ * branch per minute for it. Carried rather than dropped so that a count that is
+ * a lower bound is never said as the whole of it.
+ */
+export interface ConversationCount {
+	readonly unresolved: number;
+	readonly uncounted: number;
 }
 
 /**
@@ -107,6 +123,11 @@ const REQUEST_TIMEOUT_MS = 20 * 1000;
  * onto a second pull request, and no more, because the query runs every minute.
  */
 const MAX_PULL_REQUESTS = 10;
+/**
+ * How many of a pull request's review threads are read to count the unresolved
+ * ones. GitHub's own ceiling for one page; see `ConversationCount`.
+ */
+const MAX_REVIEW_THREADS = 100;
 
 /**
  * What a branch is about, in one round trip.
@@ -134,15 +155,24 @@ const MAX_PULL_REQUESTS = 10;
  * still open, only in repositories small enough to page through, and only where
  * somebody had written `Closes #128` at all.
  *
+ * Its review threads are on the same query, for the same reason: whether
+ * anybody is still waiting on an answer in the pull request is part of what the
+ * row says about it, and a second request per branch per minute would be a
+ * second cadence to keep in step with this one. Only `isResolved` is read, and
+ * `totalCount` beside it is what says whether the page held all of them.
+ *
  * The Issue is on the same query and skipped when the branch does not name one,
  * so a branch is one request whether or not it is about an Issue. `$number` is
  * still declared and still sent when skipped, because GraphQL validates a
  * variable's type whether or not the field that uses it is included.
  */
-const QUERY = `query($owner:String!,$name:String!,$branch:String!,$number:Int!,$wantIssue:Boolean!,$prs:Int!){
+const QUERY = `query($owner:String!,$name:String!,$branch:String!,$number:Int!,$wantIssue:Boolean!,$prs:Int!,$threads:Int!){
   repository(owner:$owner,name:$name){
     pullRequests(headRefName:$branch, first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
-      nodes{ number url title state isDraft headRepositoryOwner{ login } }
+      nodes{
+        number url title state isDraft headRepositoryOwner{ login }
+        reviewThreads(first:$threads){ totalCount nodes{ isResolved } }
+      }
     }
     issue(number:$number) @include(if:$wantIssue){ number title state url }
   }
@@ -305,6 +335,11 @@ interface GraphQlPullRequest {
 	readonly isDraft: boolean;
 	/** Whose copy of the repository the branch is in. Null once a fork is gone. */
 	readonly headRepositoryOwner: { readonly login: string } | null;
+	/** Absent only when GitHub did not answer the field it was asked for. */
+	readonly reviewThreads?: {
+		readonly totalCount: number;
+		readonly nodes: readonly ({ readonly isResolved: boolean } | null)[];
+	} | null;
 }
 
 /**
@@ -416,6 +451,35 @@ function pullRequestState(
 }
 
 /**
+ * How many of a pull request's review threads are still open, from the page of
+ * them the query read.
+ *
+ * A pull request GitHub answered without the threads it was asked for is a
+ * failure and not a zero: nought is a claim that nobody is waiting, and the
+ * answer did not say that.
+ */
+function conversationCount(
+	node: GraphQlPullRequest,
+	reference: BranchReference,
+): ConversationCount {
+	const threads = node.reviewThreads;
+	if (!threads) {
+		throw new GitHubUnavailable(
+			`GitHub did not list the review conversations of ${reference.owner}/${reference.repository}#${String(node.number)}.`,
+		);
+	}
+	// A null in the page is a thread GitHub would not show this token, which
+	// is a thread not counted rather than one counted as resolved.
+	const read = threads.nodes.filter(
+		(thread): thread is { readonly isResolved: boolean } => thread !== null,
+	);
+	return {
+		unresolved: read.filter((thread) => !thread.isResolved).length,
+		uncounted: Math.max(0, threads.totalCount - read.length),
+	};
+}
+
+/**
  * Read what a branch is about: the pull request out from it, and the Issue it
  * names, if it names one.
  */
@@ -436,6 +500,7 @@ export async function readBranchStatus(
 				number: reference.issueNumber ?? 0,
 				wantIssue,
 				prs: MAX_PULL_REQUESTS,
+				threads: MAX_REVIEW_THREADS,
 			},
 		},
 		token,
@@ -475,6 +540,7 @@ export async function readBranchStatus(
 					url: chosen.url,
 					title: chosen.title,
 					state: pullRequestState(chosen),
+					conversations: conversationCount(chosen, reference),
 				}
 			: undefined,
 	};

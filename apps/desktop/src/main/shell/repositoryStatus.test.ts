@@ -509,6 +509,7 @@ describe("the pull request out from a branch", () => {
 				url: "https://github.com/example/widget/pull/7",
 				title: "Rework the picker",
 				state: "open",
+				conversations: { unresolved: 0, uncounted: 0 },
 			},
 		});
 
@@ -530,6 +531,7 @@ describe("the pull request out from a branch", () => {
 			url: "https://github.com/example/widget/pull/7",
 			title: "Rework the picker",
 			state: "open",
+			conversations: { unresolved: 0, uncounted: 0 },
 		});
 	});
 
@@ -546,6 +548,7 @@ describe("the pull request out from a branch", () => {
 				url: "p",
 				title: "Tidy the picker",
 				state: "merged",
+				conversations: { unresolved: 0, uncounted: 0 },
 			},
 		});
 

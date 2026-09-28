@@ -58,6 +58,7 @@ export type GlyphName =
   | "pullRequestDraft"
   | "pullRequestClosed"
   | "pullRequestMerged"
+  | "conversation"
   | "openIssue"
   | "statusWorking"
   | "statusBackground"
@@ -223,6 +224,19 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
     <g className="glyph-fill">
       <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
     </g>
+  ),
+
+  /* A review conversation nobody has resolved: somebody said something in the
+     pull request and is waiting on an answer. The same silhouette as
+     `statusWaiting`, because it is the same fact about a different party — an
+     Agent that has stopped to ask you something, a reviewer who has — and a
+     second bubble drawn differently would only invite the question of how the
+     two differ. It is a name of its own so that the two can part if they ever
+     have to. Drawn outlined in a tooltip line; the pull request mark's badge
+     fills it (`.row-mark-badge` in `shell.css`), because an outline at the
+     badge's size is a smudge. */
+  conversation: (
+    <path d="M4 3.5h8a1.75 1.75 0 0 1 1.75 1.75v3.5A1.75 1.75 0 0 1 12 10.5H7.2L4 13v-2.5A1.75 1.75 0 0 1 2.25 8.75v-3.5A1.75 1.75 0 0 1 4 3.5Z" />
   ),
 
   /* Opening an Issue, as an *act* rather than a state (the Sidebar's New

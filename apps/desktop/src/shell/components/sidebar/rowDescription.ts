@@ -87,6 +87,18 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
 }
 
 /**
+ * The same facts, as a mark's own hover: each behind its mark, and nothing
+ * else. The row's styling and links are the row's — the mark the pointer is on
+ * is already the link, and the box beside it is only saying what it is.
+ */
+export function markLines(facts: readonly RowFact[]): TooltipLineWire[] {
+  return facts.map((fact) => ({
+    ...(fact.icon === undefined ? {} : { icon: fact.icon }),
+    text: fact.text,
+  }));
+}
+
+/**
  * Which silhouette a Workspace wears: a folder, or a folder somewhere else.
  *
  * Two, where there were four. A repository and a worktree of one used to have
@@ -207,6 +219,63 @@ export function pullRequestLabel(
   pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
 ): string {
   return `Pull request #${String(pullRequest.number)}, ${pullRequest.state}: ${pullRequest.title}`;
+}
+
+/**
+ * A pull request's unresolved review conversations, in words — or nothing,
+ * when there are none and none went uncounted.
+ *
+ * A count read from only the first page of threads says so, rather than being
+ * drawn as the whole of it: "2 unresolved conversations" about a pull request
+ * with two hundred threads, most of them never looked at, would be a number
+ * that is merely what fitted.
+ */
+export function unresolvedConversationsText(
+  conversations: NonNullable<
+    WorkspaceRepositoryWire["pullRequest"]
+  >["conversations"],
+): string | undefined {
+  const { unresolved, uncounted } = conversations;
+  if (unresolved === 0 && uncounted === 0) return undefined;
+  const counted = `${String(unresolved)} unresolved conversation${unresolved === 1 ? "" : "s"}`;
+  return uncounted === 0
+    ? counted
+    : `${counted}, ${String(uncounted)} more not counted`;
+}
+
+/**
+ * Whether the pull request mark carries the badge that says somebody is still
+ * waiting on an answer in it: at least one conversation known to be unresolved.
+ * One that went uncounted is not known to be, so it is said in words and not
+ * drawn.
+ */
+export function hasUnresolvedConversations(
+  pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
+): boolean {
+  return pullRequest.conversations.unresolved > 0;
+}
+
+/**
+ * The pull request, as facts: the pull request itself, and then its unresolved
+ * conversations when it has any. One list, used by the row's tooltip and by the
+ * pull request mark's own, so the two cannot come to count differently.
+ */
+export function pullRequestFacts(
+  pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
+): RowFact[] {
+  const conversations = unresolvedConversationsText(pullRequest.conversations);
+  return said([
+    {
+      icon: PULL_REQUEST_GLYPH[pullRequest.state],
+      text: pullRequestMark(pullRequest),
+      spoken: pullRequestLabel(pullRequest),
+      style: "muted",
+      href: pullRequest.url,
+    },
+    conversations === undefined
+      ? undefined
+      : { icon: "conversation", text: conversations, style: "muted" },
+  ]);
 }
 
 /** Why the row cannot say what it is working on, in the words the row draws. */
@@ -341,15 +410,7 @@ export function workspaceRowFacts(
           href: issue.url,
         }
       : undefined,
-    pullRequest
-      ? {
-          icon: PULL_REQUEST_GLYPH[pullRequest.state],
-          text: pullRequestMark(pullRequest),
-          spoken: pullRequestLabel(pullRequest),
-          style: "muted",
-          href: pullRequest.url,
-        }
-      : undefined,
+    ...(pullRequest ? pullRequestFacts(pullRequest) : []),
     repository?.pending
       ? {
           text: `Reading #${String(repository.pending.number)}`,

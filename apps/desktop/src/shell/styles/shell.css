@@ -735,6 +735,54 @@
 }
 
 /*
+ * A pull request somebody is waiting on an answer in: the conversation mark,
+ * small and filled, over the pull request mark's top-right corner.
+ *
+ * A bubble and not a dot, chosen by drawing both at the row's real size: at
+ * this size the bubble's tail still reads on a Retina display, in either
+ * appearance, and where it does not (a 1x display) it is a blob no smaller
+ * than the dot would have been. A dot would also have said the wrong thing
+ * here — a blue disc is what an unread Agent wears in the rail.
+ *
+ * Coloured at rest, like the unavailable mark and for its reason: it is news
+ * rather than context, and a conversation nobody sees without hovering is one
+ * nobody answers. The blue is `--status-waiting`, which is what the same
+ * bubble wears on an Agent that has stopped to ask you something — the same
+ * fact about a different party.
+ *
+ * The pull request mark is cut away under it rather than drawn over, so the
+ * two never merge into one shape whatever the row's background is: a ring in
+ * the Sidebar's colour would have had to know the colour of a vibrant, hovered
+ * or selected row, and a mask does not. The badge sits partly outside the
+ * button, in the padding the row already has above it, which is what lets it
+ * be large enough to be a bubble while leaving the pull request's own drawing
+ * recognisable.
+ */
+.row-mark-badge {
+  position: absolute;
+  top: -3px;
+  right: -3.5px;
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+  color: var(--status-waiting);
+}
+
+.row-link-button svg.row-mark-badge {
+  width: 11px;
+  height: 11px;
+}
+
+.row-mark-badge path {
+  fill: currentcolor;
+  stroke: none;
+}
+
+.row-link-button:has(> .row-mark-badge) > .sidebar-glyph:not(.row-mark-badge) {
+  mask: radial-gradient(circle at 14px 0, transparent 5.5px, #000 6px);
+}
+
+/*
  * Where a row's words start.
  *
  * Every row clears the icon column; an Agent clears the connector column as

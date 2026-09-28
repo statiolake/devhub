@@ -117,6 +117,7 @@ const REPOSITORY = {
   pullRequest: {
     number: 131,
     state: "draft",
+    conversations: { unresolved: 0, uncounted: 0 },
     title: "Tidy the rail",
     url: "https://github.com/example/widget/pull/131",
   },

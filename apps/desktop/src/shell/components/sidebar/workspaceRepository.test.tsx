@@ -128,6 +128,7 @@ const WORKING_ON: RepositoryStatusWire = {
         url: "https://github.com/example/widget/pull/210",
         title: "Tidy the picker, at last",
         state: "draft",
+        conversations: { unresolved: 0, uncounted: 0 },
       },
     },
   ],
@@ -207,6 +208,7 @@ describe("a workspace row", () => {
             url: "https://github.com/example/widget/pull/7",
             title: "Rework the picker",
             state: "open",
+            conversations: { unresolved: 0, uncounted: 0 },
           },
         },
       ],
@@ -247,6 +249,7 @@ describe("a workspace row", () => {
             url: "p",
             title: "Tidy the picker",
             state,
+            conversations: { unresolved: 0, uncounted: 0 },
           },
         },
       ],
@@ -292,7 +295,13 @@ describe("a workspace row", () => {
         workspaces: [
           {
             workspaceId: "w-1",
-            pullRequest: { number: 9, url: "p", title: "t", state },
+            pullRequest: {
+              number: 9,
+              url: "p",
+              title: "t",
+              state,
+              conversations: { unresolved: 0, uncounted: 0 },
+            },
           },
         ],
       });
@@ -302,6 +311,117 @@ describe("a workspace row", () => {
       );
     }
     expect(drawn.size).toBe(4);
+  });
+});
+
+/**
+ * Whether anybody is still waiting on an answer in the pull request.
+ *
+ * A pull request whose review conversations are all resolved says nothing
+ * about them, and one with any left open wears a small conversation mark over
+ * its own and says how many in the mark's hover — the same words the row's
+ * tooltip and its spoken name carry, from one list of facts.
+ */
+describe("a pull request's unresolved conversations", () => {
+  function withConversations(unresolved: number, uncounted = 0) {
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          pullRequest: {
+            number: 7,
+            url: "https://github.com/example/widget/pull/7",
+            title: "Rework the picker",
+            state: "open",
+            conversations: { unresolved, uncounted },
+          },
+        },
+      ],
+    });
+    return document.querySelector(".row-link-button.is-pr-open");
+  }
+
+  it("puts the conversation mark on the pull request mark", () => {
+    const mark = withConversations(3);
+    const badge = mark?.querySelector(".row-mark-badge");
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("data-glyph")).toBe("conversation");
+    // The pull request's own drawing is still the mark's first, untouched.
+    expect(mark?.querySelector("svg")?.getAttribute("data-glyph")).toBe(
+      "pullRequest",
+    );
+  });
+
+  it("says how many in the mark's own hover, and to a reader", () => {
+    const mark = withConversations(3);
+    expect(
+      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toEqual([
+      { icon: "pullRequest", text: "#7 Rework the picker" },
+      { icon: "conversation", text: "3 unresolved conversations" },
+    ]);
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "Pull request #7, open: Rework the picker\n3 unresolved conversations",
+    );
+  });
+
+  it("says one conversation in the singular", () => {
+    const mark = withConversations(1);
+    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
+      '"1 unresolved conversation"',
+    );
+  });
+
+  it("says it in the row's own tooltip too", () => {
+    withConversations(2);
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
+    expect(
+      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toContainEqual({
+      icon: "conversation",
+      text: "2 unresolved conversations",
+      style: "muted",
+    });
+  });
+
+  it("draws nothing and says nothing when every conversation is resolved", () => {
+    const mark = withConversations(0);
+    expect(mark?.querySelector(".row-mark-badge")).toBeNull();
+    expect(
+      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toEqual([{ icon: "pullRequest", text: "#7 Rework the picker" }]);
+    expect(
+      document
+        .querySelector(".workspace-row:not(.is-scratch)")
+        ?.getAttribute("data-tooltip-lines"),
+    ).not.toContain("conversation");
+  });
+
+  it("draws nothing when there is no pull request to be about", () => {
+    mount({
+      sequence: 1,
+      workspaces: [{ workspaceId: "w-1", branch: "feature/128-tidy" }],
+    });
+    expect(document.querySelector(".row-mark-badge")).toBeNull();
+  });
+
+  it("says a count read from one page of threads is only that", () => {
+    const mark = withConversations(4, 150);
+    expect(mark?.querySelector(".row-mark-badge")).not.toBeNull();
+    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
+      '"4 unresolved conversations, 150 more not counted"',
+    );
+  });
+
+  it("does not draw a conversation it did not count, but says it went uncounted", () => {
+    const mark = withConversations(0, 150);
+    expect(mark?.querySelector(".row-mark-badge")).toBeNull();
+    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
+      '"0 unresolved conversations, 150 more not counted"',
+    );
   });
 });
 

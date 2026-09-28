@@ -177,6 +177,12 @@ body,
   color: var(--danger);
 }
 
+/* Unresolved review conversations: the blue the badge on the pull request mark
+   wears, so the line and the badge it explains are one colour. */
+.tooltip-line-mark[data-mark="conversation"] {
+  color: var(--status-waiting);
+}
+
 .tooltip-line-mark .sidebar-glyph {
   display: block;
   width: 13px;
