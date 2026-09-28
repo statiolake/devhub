@@ -49,6 +49,7 @@ import {
   HostLink,
   type JournalLine,
 } from "../../src/main/agent/conversation/hostLink";
+import type { ConversationReading } from "../../src/main/agent/conversation/conversation";
 import { localRuntime } from "../../src/main/runtime/registry";
 import { AppModel } from "../../src/model/appModel";
 import {
@@ -231,16 +232,22 @@ function sessionOrigin(socket: string, session: string): string | undefined {
  * The pane is a process tmux started, so there is a moment between the session
  * existing and its command having run. Polling for the file rather than
  * sleeping: the question is whether the pane got there, not how long it took.
+ *
+ * The pane writes beside the file and renames it into place (`published`), so
+ * the file exists only once it is whole. A shell's `>` creates the file before
+ * anything is written to it; a file that merely exists could still be empty.
  */
 async function paneWrote(path: string): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (existsSync(path)) {
-      const text = readFileSync(path, "utf8");
-      if (text.length > 0) return text;
-    }
+    if (existsSync(path)) return readFileSync(path, "utf8");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`the pane never wrote ${path}`);
+}
+
+/** A pane's shell writing `value` to `path` whole, for `paneWrote` to read. */
+function published(value: string, path: string): string {
+  return `printf '%s' ${value} > "${path}.part" && mv "${path}.part" "${path}"`;
 }
 
 function tmuxOutside(socket: string, args: readonly string[]): void {
@@ -546,6 +553,10 @@ describe.skipIf(TMUX === undefined)(
     it("recreates a Scratch that disappeared from a server it owns", async () => {
       const test = fixture("recreate");
       await test.runtime.ensure(SCRATCH_TARGET);
+      // Scratch must not be the server's last session: tmux ends a server
+      // whose last session goes, so killing it would leave a server on its way
+      // out rather than one that is up without its Scratch.
+      tmuxOutside(test.socket, ["new-session", "-d", "-s", "keeps-it-up"]);
       await test.runtime.runTmux(
         test.socket,
         ["kill-session", "-t", SCRATCH_SESSION],
@@ -1088,7 +1099,7 @@ describe.skipIf(TMUX === undefined)(
         },
         {
           file: "/bin/sh",
-          args: ["-c", `printf '%s' "$PATH" > ${written}; sleep 30`],
+          args: ["-c", `${published('"$PATH"', written)}; sleep 30`],
           env: {},
         },
       );
@@ -1120,7 +1131,7 @@ describe.skipIf(TMUX === undefined)(
         },
         {
           file: "/bin/sh",
-          args: ["-c", `printf '%s' "$PATH" > ${written}; sleep 30`],
+          args: ["-c", `${published('"$PATH"', written)}; sleep 30`],
           env: {},
         },
       );
@@ -1411,15 +1422,12 @@ describe.skipIf(TMUX === undefined)(
           file: "/bin/sh",
           args: [
             "-c",
-            'printf %s "$DEVHUB_TEST_VALUE" > "$1"; sleep 30',
-            "sh",
-            marker,
+            `${published('"$DEVHUB_TEST_VALUE"', marker)}; sleep 30`,
           ],
           env: { DEVHUB_TEST_VALUE: "carried" },
         },
       });
-      await untilFile(marker);
-      expect(readFileSync(marker, "utf8")).toBe("carried");
+      expect(await paneWrote(marker)).toBe("carried");
 
       // Terminating is the exact-record kill, and it takes the pane with it.
       await sessions.terminate("local", agentId);
@@ -1642,7 +1650,9 @@ describe.skipIf(TMUX === undefined)(
           "            enter_at = time.time()",
           "            break",
           "gap = -1 if (closed_at is None or enter_at is None) else int((enter_at - closed_at) * 1000)",
-          "open(sys.argv[2], 'wb').write(buf + b'\\n--GAP--' + str(gap).encode())",
+          // Renamed into place, so the file exists only once it is whole.
+          "open(sys.argv[2] + '.part', 'wb').write(buf + b'\\n--GAP--' + str(gap).encode())",
+          "os.replace(sys.argv[2] + '.part', sys.argv[2])",
           "time.sleep(30)",
           "",
         ].join("\n"),
@@ -1950,14 +1960,6 @@ async function untilTitle(
   throw new Error("the Agent never set a title");
 }
 
-async function untilFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (existsSync(path)) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("the Agent never wrote its marker file");
-}
-
 /** One pane's title, read from outside the runtime under test. */
 function paneTitle(socket: string, session: string): string {
   return execFileSync(
@@ -2243,23 +2245,46 @@ describe.skipIf(TMUX === undefined)(
       return { wiring, adapter, reports };
     }
 
-    /** Rounds until the Agent reads as `status`, or the reason it never did. */
+    /** The session the fixture's `system/init` names. */
+    const SESSION = "00000000-0000-4000-8000-000000000001";
+
+    /**
+     * Rounds until the Agent reads as `status` and `also` holds of its
+     * conversation, or the reason it never did.
+     */
     async function roundsUntil(
-      adapter: NonNullable<ReturnType<typeof agents>>,
+      one: ReturnType<typeof devhub>,
       status: string,
+      also: (reading: ConversationReading) => boolean = () => true,
     ) {
       let last: unknown;
       for (let round = 0; round < 60; round += 1) {
-        const reconciliation = await adapter.reconcile("local");
-        last = reconciliation.observations.find((one) => one.agentId === AGENT);
-        if ((last as { status?: string } | undefined)?.status === status) {
+        const reconciliation = await one.adapter.reconcile("local");
+        last = reconciliation.observations.find(
+          (each) => each.agentId === AGENT,
+        );
+        if (
+          (last as { status?: string } | undefined)?.status === status &&
+          also((await one.wiring.conversations.of(AGENT)).reading())
+        ) {
           return last;
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw new Error(
-        `the Agent never read as ${status}: ${JSON.stringify(last)}`,
+        `the Agent never read as ${status} with its conversation where it was waited for: ${JSON.stringify(last)}`,
       );
+    }
+
+    /**
+     * The conversation has read all the fake CLI prints before it waits for a
+     * turn. `idle` alone is not that: the Agent is idle from the answer to
+     * `initialize` on, and the answer to `mcp_status` and then `system/init`
+     * — the line that names the session, and the last one — come after it, in
+     * the journal the round may be reading while they are written.
+     */
+    function sessionNamed(reading: ConversationReading): boolean {
+      return reading.transcript.session.sessionId === SESSION;
     }
 
     async function launchedGui(label: string) {
@@ -2292,17 +2317,16 @@ describe.skipIf(TMUX === undefined)(
 
     it("finds its conversation again from the journal, and reads as it did", async () => {
       const { test, home, model, first } = await launchedGui("gui-restart");
-      await roundsUntil(first.adapter, "idle");
+      await roundsUntil(first, "idle", sessionNamed);
       const before = (await first.wiring.conversations.of(AGENT)).snapshot();
-      expect(before.transcript.session.sessionId).toBe(
-        "00000000-0000-4000-8000-000000000001",
-      );
 
       // DevHub goes: its conversation stops following, the host keeps running.
       await first.wiring.conversations.registry.close(AGENT);
 
+      // The journal holds nothing after `system/init` until a turn is sent, so
+      // a conversation that has named the session has replayed all of it.
       const second = devhub(model, test.runtime, machineAt(home));
-      const reading = await roundsUntil(second.adapter, "idle");
+      const reading = await roundsUntil(second, "idle", sessionNamed);
       expect(reading).toMatchObject({ status: "idle", failure: undefined });
       const after = (await second.wiring.conversations.of(AGENT)).snapshot();
       expect(after.transcript).toEqual(before.transcript);
@@ -2326,11 +2350,11 @@ describe.skipIf(TMUX === undefined)(
 
     it("says on the Agent, not in a failed round, when the conversation cannot be opened", async () => {
       const { test, home, model, first } = await launchedGui("gui-unopenable");
-      await roundsUntil(first.adapter, "idle");
+      await roundsUntil(first, "idle", sessionNamed);
       await first.wiring.conversations.registry.close(AGENT);
 
       const second = devhub(model, test.runtime, machineAt(home, true));
-      const reading = await roundsUntil(second.adapter, "error");
+      const reading = await roundsUntil(second, "error");
       expect(reading).toMatchObject({
         status: "error",
         failure: {
