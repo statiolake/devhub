@@ -72,6 +72,12 @@ export interface ConversationActions {
    * asked about first on the confirmation sheet when the Agent is not idle.
    */
   readonly restart: () => Promise<void>;
+  /**
+   * The unsent draft is now `text` (empty: none): what the composer holds,
+   * with any waiting message's words being changed ahead of it. Main keeps
+   * the last one across a restart and hands it back on the next attach.
+   */
+  readonly saveDraft: (text: string) => Promise<void>;
   readonly reportFailure: (error: unknown) => void;
 }
 

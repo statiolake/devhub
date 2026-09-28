@@ -26,11 +26,14 @@ import type {
 	ConversationCommand,
 	SettingName,
 } from "../agent/conversation/protocolAdapter.js";
+import type { AgentDrafts } from "../agent/conversation/drafts.js";
 import type { GuiConversations } from "./agentWiring.js";
 
 export interface ConversationIpcOptions {
 	readonly ipcMain: IpcMain;
 	readonly conversations: GuiConversations;
+	/** Each GUI Agent's unsent draft, handed out with the attachment and kept as the page reports it. */
+	readonly drafts: AgentDrafts;
 	/** The Agents page, the one page that draws conversations, once it exists. */
 	readonly agentsPage: () => WebContents | undefined;
 	/** Ask the model to carry an Agent on in the other presentation, resuming this session. */
@@ -126,13 +129,22 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 			// Subscribed before the snapshot is taken, so no event can fall between
 			// them; the page drops what the snapshot already holds by its revision.
 			attached.add(agentId);
-			return conversation.snapshot();
+			return {
+				...conversation.snapshot(),
+				draft: options.drafts.get(agentId),
+			};
 		},
 	);
 
 	handle(CONVERSATION_CHANNELS.detach, (agentId) => {
 		attached.delete(agentId);
 		letGoOfEdits(agentId);
+	});
+
+	handle(CONVERSATION_CHANNELS.saveDraft, (agentId, text) => {
+		if (typeof text !== "string")
+			throw new Error(`${JSON.stringify(text)} is not a draft`);
+		options.drafts.set(agentId, text);
 	});
 
 	handle(CONVERSATION_CHANNELS.continueInTerminal, async (agentId) => {

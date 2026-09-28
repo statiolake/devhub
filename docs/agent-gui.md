@@ -780,6 +780,27 @@ in the list with the reason, and is sent when you press Send now.
 Waiting messages live in DevHub, not in the CLI or the journal. **If DevHub
 quits while a message is waiting, the message is lost.**
 
+### The unsent draft
+
+What you have typed and not sent is kept, though: each GUI Agent has one
+*draft*, the words in its composer with the words of any waiting message
+you are changing ahead of them. The Agents page tells main a moment
+(400 ms) after typing pauses, and at once when the composer loses the
+keyboard, a send clears it, the pane goes away or the page unloads. Main
+keeps it in `drafts.json` beside `state.json` and hands it back when the
+pane attaches again, after a restart of DevHub or of the page, and it comes
+back into the composer ahead of anything typed since. The waiting message
+you were changing goes as any waiting message does (lost with a restart of
+DevHub, sent as it was when only the page went away); the words you were
+typing into it come back, in the composer. Sending, or emptying the field, clears the
+draft. Only words are kept: attached images are not, so they do not come
+back. The draft lives exactly as long as its Agent: closing the Agent, or
+the Agent ending, drops it, and a report that arrives after that is
+dropped too. It is kept on this Mac rather than in the Agent's host
+directory, which is on the Agent's machine and would be a round trip per
+pause in typing. There is one draft per Agent, so if two places ever type to
+the same Agent, the last report wins.
+
 ## Rewinding to an earlier message
 
 Each of your messages has a **Rewind** action beside Copy while nothing is

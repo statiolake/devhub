@@ -38,6 +38,7 @@ export const CONVERSATION_CHANNELS = {
 	resumeSession: "devhub:conversation:resume-session",
 	restartSession: "devhub:conversation:restart-session",
 	rewind: "devhub:conversation:rewind",
+	saveDraft: "devhub:conversation:save-draft",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -88,6 +89,12 @@ export interface ConversationAttachment {
 	readonly transcript: Transcript;
 	/** The number of the last event folded into `transcript`; the next event is one more. */
 	readonly revision: number;
+	/**
+	 * What the person was typing to this Agent and had not sent, as last
+	 * reported by `saveDraft` — before a restart of DevHub too. Empty when
+	 * there is none.
+	 */
+	readonly draft: string;
 }
 
 export type ConversationEventListener = (
@@ -174,4 +181,10 @@ export interface ConversationApi {
 		which: "model" | "effort" | "mode",
 		id: string,
 	): Promise<void>;
+	/**
+	 * The Agent's unsent draft is now `text` (empty: none). Main keeps the last
+	 * one it is told, across restarts, for as long as the Agent exists
+	 * (`main/agent/conversation/drafts.ts`).
+	 */
+	saveDraft(agentId: string, text: string): Promise<void>;
 }

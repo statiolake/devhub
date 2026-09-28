@@ -28,9 +28,17 @@ import {
 import { ConversationPane } from "./ConversationPane";
 
 const drawn: Transcript[] = [];
+const drafts: (string | undefined)[] = [];
 vi.mock("../conversation/ConversationSurface", () => ({
-  ConversationSurface: ({ transcript }: { transcript: Transcript }) => {
+  ConversationSurface: ({
+    transcript,
+    savedDraft,
+  }: {
+    transcript: Transcript;
+    savedDraft: string | undefined;
+  }) => {
     drawn.push(transcript);
+    drafts.push(savedDraft);
     return null;
   },
 }));
@@ -56,6 +64,7 @@ let answerAttach: (attachment: ConversationAttachment) => void = () => {};
 
 beforeEach(() => {
   drawn.length = 0;
+  drafts.length = 0;
   reportFailure.mockReset();
   frames = new Map();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -87,7 +96,7 @@ afterEach(() => {
 
 const STREAMING = transcriptOf([put(assistant("a1", "", { streaming: true }))]);
 
-async function attached(revision = 5) {
+async function attached(revision = 5, draft = "") {
   const view = render(
     <ConversationPane
       agentId="agent-1"
@@ -98,7 +107,7 @@ async function attached(revision = 5) {
     />,
   );
   await act(async () => {
-    answerAttach({ transcript: STREAMING, revision });
+    answerAttach({ transcript: STREAMING, revision, draft });
   });
   return view;
 }
@@ -176,5 +185,13 @@ describe("drawing once per frame", () => {
     expect(frames.size).toBe(1);
     view.unmount();
     expect(frames.size).toBe(0);
+  });
+});
+
+describe("the kept draft", () => {
+  it("is not known to the surface until the attachment answers, then is the one main kept", async () => {
+    await attached(5, "half a thought");
+    expect(drafts[0]).toBeUndefined();
+    expect(drafts.at(-1)).toBe("half a thought");
   });
 });

@@ -121,9 +121,16 @@ export function ConversationSurface({
   appearance,
   hidden,
   label,
+  savedDraft,
 }: {
   readonly transcript: Transcript;
   readonly actions: ConversationActions;
+  /**
+   * What the person had typed to this Agent and not sent, as main kept it
+   * (`ConversationAttachment.draft`); `undefined` until main has said. It
+   * comes back into the composer once.
+   */
+  readonly savedDraft: string | undefined;
   readonly appearance: AppAppearance | undefined;
   /** Parked in the pool: mounted, not shown. */
   readonly hidden: boolean;
@@ -478,6 +485,7 @@ export function ConversationSurface({
                         pickers={pickers}
                         openSetting={openSetting}
                         restored={restored}
+                        savedDraft={savedDraft}
                       />
                     </div>
                     <SubagentColumn tree={tree} />

@@ -38,31 +38,52 @@ export function fakeActions(
     setSetting: vi.fn(() => Promise.resolve()),
     openResume: vi.fn(),
     restart: vi.fn(() => Promise.resolve()),
+    saveDraft: vi.fn(() => Promise.resolve()),
     reportFailure: vi.fn(),
     ...overrides,
   };
 }
 
+/** `draw`'s saved draft before main has said what it is. */
+export const NOT_YET = Symbol("not yet");
+
 export function draw(
   transcript: Transcript,
   actions = fakeActions(),
   hidden = false,
+  /** What main kept, or `NOT_YET` while the attachment has not answered. */
+  savedDraft: string | typeof NOT_YET = "",
 ) {
-  const surface = (next: Transcript, nextHidden: boolean) => (
+  const surface = (
+    next: Transcript,
+    nextHidden: boolean,
+    nextDraft: string | undefined,
+  ) => (
     <ConversationSurface
       transcript={next}
       actions={actions}
       appearance={undefined}
       hidden={nextHidden}
       label="Agent 1"
+      savedDraft={nextDraft}
     />
   );
-  const view = render(surface(transcript, hidden));
+  let draft = savedDraft === NOT_YET ? undefined : savedDraft;
+  const view = render(surface(transcript, hidden, draft));
+  let current = transcript;
+  let currentHidden = hidden;
   return {
     ...view,
     actions,
     redraw(next: Transcript, nextHidden = false) {
-      view.rerender(surface(next, nextHidden));
+      current = next;
+      currentHidden = nextHidden;
+      view.rerender(surface(next, nextHidden, draft));
+    },
+    /** Main answering the attachment with the saved draft. */
+    answerDraft(next: string) {
+      draft = next;
+      view.rerender(surface(current, currentHidden, draft));
     },
   };
 }

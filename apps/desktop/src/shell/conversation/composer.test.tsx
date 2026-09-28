@@ -15,13 +15,22 @@
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
 import {
+  act,
   cleanup,
   fireEvent,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   EMPTY_SESSION,
   entryId,
@@ -33,6 +42,7 @@ import {
 } from "../../model/conversation";
 import {
   COMPOSER_PLACEHOLDER,
+  DRAFT_PAUSE_MS,
   REWIND_NOTE,
   composerPlaceholder,
 } from "./Composer";
@@ -41,6 +51,7 @@ import {
   entry,
   fakeActions,
   installResizeObserver,
+  NOT_YET,
   openSetting,
   settingPicker,
   settingValue,
@@ -1341,5 +1352,136 @@ describe("images", () => {
       clipboardData: { files: [], getData: () => "hello" },
     });
     expect(event).toBe(true);
+  });
+});
+
+describe("the unsent draft", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Let a resolved call's `then` run. */
+  async function settle() {
+    await act(async () => {});
+  }
+
+  it("is reported once typing pauses, not on every keystroke", () => {
+    const { actions } = draw(withSession());
+    type("fix");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS - 1));
+    type("fix the");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS - 1));
+    type("fix the build");
+    expect(actions.saveDraft).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    expect(actions.saveDraft).toHaveBeenCalledTimes(1);
+    expect(actions.saveDraft).toHaveBeenCalledWith("fix the build");
+  });
+
+  it("is reported at once when the page is unloaded, the composer loses the keyboard, or it goes away", () => {
+    const { actions, unmount } = draw(withSession());
+    type("one");
+    fireEvent(window, new Event("pagehide"));
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("one");
+    type("two");
+    fireEvent(window, new Event("beforeunload"));
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("two");
+    type("three");
+    fireEvent.blur(composer());
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("three");
+    type("four");
+    unmount();
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("four");
+    expect(actions.saveDraft).toHaveBeenCalledTimes(4);
+    // Nothing is said twice: the pause that was pending has nothing new.
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS * 2));
+    expect(actions.saveDraft).toHaveBeenCalledTimes(4);
+  });
+
+  it("comes back into the composer when main says what it kept, ahead of anything typed since", () => {
+    const actions = fakeActions();
+    const { answerDraft } = draw(withSession(), actions, false, NOT_YET);
+    type("and the docs");
+    // Until main has said, an empty or new composer must not replace its copy.
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS * 2));
+    fireEvent(window, new Event("pagehide"));
+    expect(actions.saveDraft).not.toHaveBeenCalled();
+    answerDraft("look at the tests");
+    expect(composer()).toHaveValue("look at the tests\n\nand the docs");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    expect(actions.saveDraft).toHaveBeenCalledWith(
+      "look at the tests\n\nand the docs",
+    );
+  });
+
+  it("restored as it was is not reported again", () => {
+    const { actions } = draw(withSession(), fakeActions(), false, "kept");
+    expect(composer()).toHaveValue("kept");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS * 2));
+    fireEvent(window, new Event("pagehide"));
+    expect(actions.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("is cleared at once by sending it, and by emptying the field", async () => {
+    const { actions } = draw(withSession(), fakeActions(), false, "kept");
+    press("Enter", SEND);
+    expect(actions.send).toHaveBeenCalledWith("kept", []);
+    await settle();
+    expect(composer()).toHaveValue("");
+    expect(actions.saveDraft).toHaveBeenCalledTimes(1);
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("");
+
+    type("second thoughts");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    type("");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("");
+  });
+
+  it("carries the words of a waiting message being changed, ahead of the field's", async () => {
+    const HELD: ConversationEvent = {
+      type: "pending",
+      pending: [
+        {
+          id: pendingId("held:1"),
+          text: "look at the tests",
+          images: [],
+          failure: undefined,
+          editing: false,
+        },
+      ],
+    };
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    type("and the docs");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await settle();
+    fireEvent.change(screen.getByLabelText("Waiting message"), {
+      target: { value: "look at the unit tests" },
+    });
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    expect(actions.saveDraft).toHaveBeenLastCalledWith(
+      "look at the unit tests\n\nand the docs",
+    );
+    // Given up, the change is no longer part of it.
+    fireEvent.keyDown(screen.getByLabelText("Waiting message"), {
+      key: "Escape",
+    });
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    expect(actions.saveDraft).toHaveBeenLastCalledWith("and the docs");
+  });
+
+  it("hands a report that failed to the page's root", async () => {
+    const refused = new Error("drafts.json: disk full");
+    const actions = fakeActions({
+      saveDraft: vi.fn(() => Promise.reject(refused)),
+    });
+    draw(withSession(), actions);
+    type("words");
+    act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
+    await settle();
+    expect(actions.reportFailure).toHaveBeenCalledWith(refused);
   });
 });

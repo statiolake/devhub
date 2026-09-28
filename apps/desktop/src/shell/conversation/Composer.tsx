@@ -38,6 +38,15 @@
  * Rewinding to before a message puts its words back here, ahead of whatever
  * was being typed, and its images back among the attached.
  *
+ * What is typed and not sent is the Agent's draft, which main keeps across a
+ * restart of DevHub (`main/agent/conversation/drafts.ts`): the words in the
+ * field, with the words of any waiting message being changed ahead of them.
+ * It is reported a moment after typing pauses, at once when the composer
+ * loses the keyboard, a send clears it, the pane goes away or the page is
+ * unloaded, and it comes back here, ahead of anything already typed, when the
+ * pane attaches. Only words: attached images are not kept, so they do not
+ * come back.
+ *
  * Images are attached by pasting them or dropping them on the box: each is a
  * thumbnail over the field with its own Remove, and goes with the next
  * message (which may be images alone). A file that is not an image a model
@@ -45,6 +54,7 @@
  */
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -58,6 +68,7 @@ import {
   type ConversationState,
   type EntryId,
   type ImageRef,
+  type PendingId,
   type PendingMessage,
   type SlashCommand,
   type Transcript,
@@ -203,9 +214,12 @@ function Attachments({
 function PendingItem({
   message,
   canSendNow,
+  reportEdit,
 }: {
   readonly message: PendingMessage;
   readonly canSendNow: boolean;
+  /** Its changed words while it is open to be changed, else `undefined`: part of the draft. */
+  readonly reportEdit: (pending: PendingId, words: string | undefined) => void;
 }) {
   const {
     startEditingPending,
@@ -216,6 +230,13 @@ function PendingItem({
     reportFailure,
   } = useConversationActions();
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    reportEdit(message.id, draft);
+  }, [reportEdit, message.id, draft]);
+  useEffect(
+    () => () => reportEdit(message.id, undefined),
+    [reportEdit, message.id],
+  );
   // Main holds the message while the editor is open; the composer going
   // away with it open lets go, so it is not held for an edit nobody finishes.
   const editing = useRef(false);
@@ -348,6 +369,77 @@ function PendingItem({
   );
 }
 
+/** How long typing pauses before the draft is reported to main. */
+export const DRAFT_PAUSE_MS = 400;
+
+/**
+ * Tell main the draft (`ConversationActions.saveDraft`): `DRAFT_PAUSE_MS`
+ * after it last changed, or at once when `flush` is called, the composer goes
+ * away or the page is unloaded. Nothing is reported until main's own copy is
+ * `known`, so an empty composer drawn before the attachment answers cannot
+ * wipe the draft it is about to be given; and nothing that main already has
+ * is reported again. `flushNext` makes the next change go at once.
+ */
+function useDraftReport(
+  words: string,
+  known: string | undefined,
+): { readonly flush: () => void; readonly flushNext: () => void } {
+  const { saveDraft, reportFailure } = useConversationActions();
+  const latest = useRef(words);
+  latest.current = words;
+  /** What main was last told, or `undefined` before its copy is known. */
+  const told = useRef<string | undefined>(undefined);
+  if (told.current === undefined && known !== undefined) told.current = known;
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const soon = useRef(false);
+  const flush = useCallback(() => {
+    if (timer.current !== undefined) clearTimeout(timer.current);
+    timer.current = undefined;
+    soon.current = false;
+    const text = latest.current;
+    if (told.current === undefined || text === told.current) return;
+    told.current = text;
+    void saveDraft(text).catch(reportFailure);
+  }, [saveDraft, reportFailure]);
+  useEffect(() => {
+    if (soon.current) {
+      flush();
+      return;
+    }
+    if (told.current === undefined || words === told.current) return;
+    timer.current = setTimeout(flush, DRAFT_PAUSE_MS);
+    return () => {
+      clearTimeout(timer.current);
+      timer.current = undefined;
+    };
+  }, [words, flush]);
+  useEffect(() => {
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      flush();
+    };
+  }, [flush]);
+  const flushNext = useCallback(() => {
+    soon.current = true;
+  }, []);
+  return { flush, flushNext };
+}
+
+/** The draft: the words of the waiting messages being changed, oldest first, then the field's. */
+function draftWords(
+  pending: readonly PendingMessage[],
+  edits: ReadonlyMap<PendingId, string>,
+  text: string,
+): string {
+  return [...pending.map((message) => edits.get(message.id)), text]
+    .filter((words): words is string => words !== undefined)
+    .filter((words) => words.trim() !== "")
+    .join("\n\n");
+}
+
 export const COMPOSER_PLACEHOLDER = `Message the Agent — / for commands, ${SEND_KEY} to send`;
 
 /**
@@ -434,6 +526,7 @@ export function Composer({
   pickers,
   openSetting,
   restored,
+  savedDraft,
   openTask,
 }: {
   readonly transcript: Transcript;
@@ -445,6 +538,8 @@ export function Composer({
   readonly openSetting: (setting: SettingName) => void;
   /** The message a rewind took out of the conversation, whose words come back here. */
   readonly restored: UserEntry | undefined;
+  /** The draft main kept for this Agent, once it has said (`ConversationSurface`). */
+  readonly savedDraft: string | undefined;
   /** Open the call a background task was started by (`ComposerFooter`). */
   readonly openTask: (call: EntryId) => void;
 }) {
@@ -457,6 +552,25 @@ export function Composer({
   const [selected, setSelected] = useState(0);
   /** The text whose completion list Esc closed; typing again reopens it. */
   const [dismissed, setDismissed] = useState<string | undefined>(undefined);
+  /** The words of each waiting message open to be changed. */
+  const [edits, setEdits] = useState<ReadonlyMap<PendingId, string>>(
+    () => new Map(),
+  );
+  const reportEdit = useCallback(
+    (pending: PendingId, words: string | undefined) =>
+      setEdits((current) => {
+        if (current.get(pending) === words) return current;
+        const next = new Map(current);
+        if (words === undefined) next.delete(pending);
+        else next.set(pending, words);
+        return next;
+      }),
+    [],
+  );
+  const draft = useDraftReport(
+    draftWords(transcript.pending, edits, text),
+    savedDraft,
+  );
 
   const refusal = inputRefusal(transcript.state);
   const running =
@@ -479,27 +593,34 @@ export function Composer({
     setSelected(0);
   };
 
-  // A rewound message's words come back ahead of what was being typed, with
-  // the caret at their end.
-  const restoredId = restored?.id;
-  useLayoutEffect(() => {
-    if (restored === undefined) return;
-    setText((current) =>
-      current === "" ? restored.text : `${restored.text}\n\n${current}`,
-    );
-    setAttachments((current) => [
-      ...restored.images.filter((image) => image.source.kind === "data"),
-      ...current,
-    ]);
+  // Words that come back — a rewound message's, or the draft main kept —
+  // come back ahead of what was being typed, with the caret at their end.
+  const bringBack = (words: string, images: readonly ImageRef[]) => {
+    setText((current) => (current === "" ? words : `${words}\n\n${current}`));
+    setAttachments((current) => [...images, ...current]);
     setRecalled(undefined);
     const input = inputRef.current;
     if (input) {
       input.focus();
-      input.setSelectionRange(restored.text.length, restored.text.length);
+      input.setSelectionRange(words.length, words.length);
     }
+  };
+  const restoredId = restored?.id;
+  useLayoutEffect(() => {
+    if (restored === undefined) return;
+    bringBack(
+      restored.text,
+      restored.images.filter((image) => image.source.kind === "data"),
+    );
     // Only a new rewind fills the composer, not a new render of the same one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoredId]);
+  // The kept draft, once, when main says what it is.
+  useLayoutEffect(() => {
+    if (savedDraft === undefined || savedDraft === "") return;
+    bringBack(savedDraft, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedDraft]);
 
   const submit = () => {
     const line = text;
@@ -519,6 +640,8 @@ export function Composer({
       return;
     void send(line, images).then(() => {
       // Only what was sent is cleared: anything typed or attached since stays.
+      // Main is told at once, so a restart right after cannot bring it back.
+      draft.flushNext();
       setText((current) => (current === line ? "" : current));
       setAttachments((current) =>
         current.filter((image) => !images.includes(image)),
@@ -596,7 +719,7 @@ export function Composer({
   const keys = useMessageKeys(submit, ownKeys);
 
   return (
-    <div className="conversation-composer">
+    <div className="conversation-composer" onBlur={draft.flush}>
       {transcript.pending.length > 0 ? (
         <ol className="conversation-pending" aria-label="Waiting to be sent">
           {transcript.pending.map((message) => (
@@ -604,6 +727,7 @@ export function Composer({
               key={message.id}
               message={message}
               canSendNow={canSendNow}
+              reportEdit={reportEdit}
             />
           ))}
         </ol>

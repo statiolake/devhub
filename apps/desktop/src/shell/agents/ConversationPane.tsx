@@ -45,7 +45,7 @@ export function ConversationPane({
   readonly hidden: boolean;
 }) {
   const { reportFailure } = useAgents();
-  const transcript = useConversation(agentId, reportFailure);
+  const { transcript, draft } = useConversation(agentId, reportFailure);
   // Not declared as `ConversationActions`: that interface grows with the
   // surface (the composer, the header), and what this pane binds is every
   // call the bridge can make for one Agent — the surface takes what it uses.
@@ -78,6 +78,7 @@ export function ConversationPane({
         bridge.conversation.setSetting(agentId, setting, id),
       openResume: () => setResuming(true),
       restart: () => bridge.conversation.restartSession(agentId),
+      saveDraft: (text: string) => bridge.conversation.saveDraft(agentId, text),
       reportFailure,
     };
   }, [agentId, reportFailure]);
@@ -97,6 +98,7 @@ export function ConversationPane({
         appearance={appearance}
         hidden={hidden}
         label={label}
+        savedDraft={draft}
       />
       {/* `/resume`: the Workspace's earlier sessions, one of which this
           Agent then goes on with in place of the one it is in. */}
@@ -127,6 +129,9 @@ export function ConversationPane({
 /**
  * The Agent's transcript as main holds it, kept current.
  *
+ * With it, the unsent draft main kept for this Agent, `undefined` until the
+ * attachment answers.
+ *
  * Until the attachment answers it is the empty transcript, which is
  * `connecting` — exactly what the Agent is to this page until then. Events
  * that arrive before the answer are held and folded after it; an event the
@@ -142,8 +147,9 @@ export function ConversationPane({
 function useConversation(
   agentId: string,
   reportFailure: (error: unknown) => void,
-): Transcript {
+): { readonly transcript: Transcript; readonly draft: string | undefined } {
   const [transcript, setTranscript] = useState<Transcript>(EMPTY_TRANSCRIPT);
+  const [draft, setDraft] = useState<string | undefined>(undefined);
   useEffect(() => {
     const bridge = devhub();
     let current: { transcript: Transcript; revision: number } | undefined;
@@ -189,6 +195,7 @@ function useConversation(
         if (!attached) return;
         current = attachment;
         setTranscript(attachment.transcript);
+        setDraft(attachment.draft);
         for (const [revision, event] of early.splice(0)) fold(revision, event);
       })
       .catch(reportFailure);
@@ -198,5 +205,5 @@ function useConversation(
       bridge.conversation.detach(agentId).catch(reportFailure);
     };
   }, [agentId, reportFailure]);
-  return transcript;
+  return { transcript, draft };
 }

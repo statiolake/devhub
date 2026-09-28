@@ -120,4 +120,10 @@ export const conversationApi: ConversationApi = {
 		command(agentId, { kind: "answer", request, answer }),
 	setSetting: (agentId, which, id) =>
 		command(agentId, { kind: "set-setting", which, id }),
+	saveDraft: (agentId, text) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.saveDraft,
+			agentId,
+			text,
+		) as Promise<void>,
 };

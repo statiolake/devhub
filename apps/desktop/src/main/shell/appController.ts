@@ -285,6 +285,7 @@ import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
+import { AgentDrafts } from "../agent/conversation/drafts.js";
 import { UsageLimits, usageLimitsListener } from "./usageLimits.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
@@ -654,6 +655,8 @@ export class AppController {
 		TerminalLauncherStatus
 	>();
 	private agentWiring: AgentWiring | undefined;
+	/** Each GUI Agent's unsent draft, beside `state.json`. See `drafts.ts`. */
+	private readonly drafts: AgentDrafts;
 	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
 	private sessionSweeper: SessionSweeper | undefined;
 	private stopHearingReconnections: (() => void) | undefined;
@@ -776,6 +779,19 @@ export class AppController {
 		shellWindow().onTitleChanged(() => {
 			this.refreshWindowTitle();
 		});
+		// Loaded before any page exists, so a file that would not read is said
+		// with the other startup failures. Pruned to the Agents the model has:
+		// a draft goes when its Agent does.
+		const drafts = AgentDrafts.load(
+			join(dirname(stateStore.path), "drafts.json"),
+			() => this.modelAgentIds(),
+		);
+		this.drafts = drafts.drafts;
+		if (drafts.refused !== undefined) {
+			this.noteStartupFailure(
+				withDetail(errorWireAt("persistence_degraded"), drafts.refused),
+			);
+		}
 		this.registerIpc();
 		this.watchConfig();
 	}
@@ -934,6 +950,7 @@ export class AppController {
 		registerConversationIpc({
 			ipcMain: electron.ipcMain,
 			conversations: agentWiring.conversations,
+			drafts: this.drafts,
 			agentsPage: () => shellWindow().agents.contents(),
 			// A continue of an Agent that is not idle is a question first
 			// (`Coordinator.askAbout`), and the button that asked cannot draw
@@ -1017,6 +1034,15 @@ export class AppController {
 		this.repositoryStatus.start();
 		this.watchForWake();
 		this.scratch.start();
+	}
+
+	/** Every Agent the model has, by id. */
+	private modelAgentIds(): ReadonlySet<string> {
+		return new Set(
+			this.coordinator.model.workspaces.flatMap((workspace) =>
+				workspace.agents.map((agent) => agent.id),
+			),
+		);
 	}
 
 	/**
@@ -2273,6 +2299,9 @@ export class AppController {
 		// and compares before it acts, so this is a nudge like the line above it.
 		this.agentReconcilers.follow(this.agentHosts());
 		this.releaseIdleMachines();
+		// A draft lives as long as its Agent: one that has just gone takes its
+		// draft with it. `prune` compares before it writes.
+		this.drafts.prune();
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
