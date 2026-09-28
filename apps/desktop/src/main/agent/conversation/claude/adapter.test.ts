@@ -20,7 +20,9 @@ import {
 	rewindTargets,
 	type ConversationEvent,
 	type NoticeEntry,
+	type PendingRequest,
 	type Question,
+	type RequestAnswer,
 	type ToolEntry,
 	type TranscriptEntry,
 	type UserEntry,
@@ -1628,6 +1630,227 @@ describe("what DevHub does not know", () => {
 			level: "warning",
 		});
 		expect(adapter.sent(step.replies[0]!).events).toEqual([]);
+	});
+});
+
+describe("an MCP server's elicitation", () => {
+	function elicit(
+		adapter: ClaudeAdapter,
+		request: Record<string, unknown>,
+	): PendingRequest {
+		const step = adapter.received(
+			json({
+				type: "control_request",
+				request_id: "el-1",
+				request: {
+					subtype: "elicitation",
+					mcp_server_name: "tickets",
+					...request,
+				},
+			}),
+		);
+		expect(step.replies).toEqual([]);
+		return adapter.transcript.requests[0]!;
+	}
+
+	function answered(adapter: ClaudeAdapter, answer: RequestAnswer): unknown {
+		const [line] = perform(adapter, {
+			kind: "answer",
+			request: requestId("el-1"),
+			answer,
+		});
+		return JSON.parse(line!);
+	}
+
+	it("is the card Codex's is: its form, then Decline and Cancel, and no remembering", () => {
+		const adapter = inTurn();
+		const request = elicit(adapter, {
+			message: "File a ticket",
+			mode: "form",
+			requested_schema: {
+				type: "object",
+				properties: {
+					title: { type: "string", title: "Title" },
+					count: { type: "integer", minimum: 1 },
+				},
+				required: ["title"],
+			},
+		});
+		expect(request).toEqual({
+			id: requestId("el-1"),
+			entry: undefined,
+			subject: {
+				kind: "elicitation",
+				server: "tickets",
+				message: "File a ticket",
+				url: undefined,
+				fields: [
+					{
+						key: "title",
+						label: "Title",
+						description: undefined,
+						required: true,
+						input: {
+							kind: "text",
+							format: undefined,
+							minLength: undefined,
+							maxLength: undefined,
+							default: undefined,
+						},
+					},
+					{
+						key: "count",
+						label: "count",
+						description: undefined,
+						required: false,
+						input: {
+							kind: "number",
+							integer: true,
+							minimum: 1,
+							maximum: undefined,
+							default: undefined,
+						},
+					},
+				],
+			},
+			choices: [
+				{ id: "decline", label: "Decline", tone: "deny", takesText: false },
+				{ id: "cancel", label: "Cancel", tone: "neutral", takesText: false },
+			],
+		});
+	});
+
+	it("is accepted by its form, answered as an ElicitResult with the content typed, and closes", () => {
+		const adapter = inTurn();
+		elicit(adapter, {
+			message: "File a ticket",
+			requested_schema: {
+				type: "object",
+				properties: {
+					title: { type: "string" },
+					count: { type: "integer" },
+				},
+			},
+		});
+		expect(
+			answered(adapter, {
+				kind: "answers",
+				values: { title: "Login fails", count: "3" },
+			}),
+		).toEqual({
+			type: "control_response",
+			response: {
+				subtype: "success",
+				request_id: "el-1",
+				response: {
+					action: "accept",
+					content: { title: "Login fails", count: 3 },
+				},
+			},
+		});
+		expect(adapter.transcript.requests).toEqual([]);
+	});
+
+	it("with no schema is a plain confirmation, accepted with empty content", () => {
+		const adapter = inTurn();
+		const request = elicit(adapter, { message: "Go on?" });
+		expect(request.subject).toMatchObject({ fields: [], url: undefined });
+		expect(answered(adapter, { kind: "answers", values: {} })).toMatchObject({
+			response: { response: { action: "accept", content: {} } },
+		});
+	});
+
+	it.each(["decline", "cancel"] as const)(
+		"answers %s with no content",
+		(action) => {
+			const adapter = inTurn();
+			elicit(adapter, {
+				message: "Go on?",
+				requested_schema: { type: "object", properties: {} },
+			});
+			expect(
+				answered(adapter, {
+					kind: "choice",
+					choiceId: action,
+					text: undefined,
+				}),
+			).toMatchObject({ response: { response: { action } } });
+			expect(adapter.transcript.requests).toEqual([]);
+		},
+	);
+
+	it("of a page to visit shows the page and is accepted with no content", () => {
+		const adapter = inTurn();
+		const request = elicit(adapter, {
+			message: "Sign in to the tracker",
+			mode: "url",
+			url: "https://tracker.example.com/auth",
+			elicitation_id: "e-1",
+		});
+		expect(request.subject).toEqual({
+			kind: "elicitation",
+			server: "tickets",
+			message: "Sign in to the tracker",
+			url: "https://tracker.example.com/auth",
+			fields: [],
+		});
+		expect(answered(adapter, { kind: "answers", values: {} })).toMatchObject({
+			response: { response: { action: "accept" } },
+		});
+	});
+
+	it("refuses an answer it did not offer, and a form sent unfinished", () => {
+		const adapter = inTurn();
+		elicit(adapter, {
+			message: "File a ticket",
+			requested_schema: {
+				type: "object",
+				properties: { title: { type: "string" } },
+				required: ["title"],
+			},
+		});
+		expect(() =>
+			adapter.encode({
+				kind: "answer",
+				request: requestId("el-1"),
+				answer: {
+					kind: "choice",
+					choiceId: "remember:session",
+					text: undefined,
+				},
+			}),
+		).toThrow(/has no choice/);
+		const fresh = inTurn();
+		elicit(fresh, {
+			message: "File a ticket",
+			requested_schema: {
+				type: "object",
+				properties: { title: { type: "string" } },
+				required: ["title"],
+			},
+		});
+		expect(() =>
+			fresh.encode({
+				kind: "answer",
+				request: requestId("el-1"),
+				answer: { kind: "answers", values: { title: "" } },
+			}),
+		).toThrow(/sent unfinished/);
+	});
+
+	it("closes when the CLI cancels it", () => {
+		const adapter = inTurn();
+		elicit(adapter, { message: "Go on?" });
+		adapter.received(
+			json({ type: "control_cancel_request", request_id: "el-1" }),
+		);
+		expect(adapter.transcript.requests).toEqual([]);
+	});
+
+	it("of a mode DevHub does not know is a mismatch, not a refusal", () => {
+		expect(() =>
+			elicit(inTurn(), { message: "Go on?", mode: "openai/form" }),
+		).toThrow(/control_request\.request\.mode/);
 	});
 });
 

@@ -27,11 +27,7 @@ import {
 	type RateLimit,
 	rateLimitWindowName,
 } from "../../../../model/conversation.js";
-import type {
-	FormField,
-	FormInput,
-	FormOption,
-} from "../../../../model/elicitationForm.js";
+import { type Elicitation, formFields, type Remember } from "../elicitation.js";
 import { ProtocolMismatch } from "../protocolAdapter.js";
 import type { InitializeResponse } from "./protocol/InitializeResponse.js";
 import type { RequestId as RpcId } from "./protocol/RequestId.js";
@@ -1308,161 +1304,52 @@ export function userInputRequest(r: Reader, params: unknown): UserInputRequest {
 	};
 }
 
-export type Elicitation = Pick<
-	McpServerElicitationRequestParams,
-	"threadId" | "serverName"
-> & {
-	readonly message: string;
-	/** The page to visit, for a URL elicitation; its form then has no fields. */
-	readonly url: string | undefined;
-	readonly fields: readonly FormField[];
-};
-
 /**
  * An elicitation of the modes DevHub takes: a form, or a page to visit. The
  * `openai/form` modes come only to a client that opts into them at
  * `initialize`, which DevHub does not.
+ *
+ * A plain confirmation (a form of no fields) may offer to remember its
+ * acceptance: `_meta.persist` names how long, as one mode or a list of them
+ * (`codex_protocol::mcp_approval_meta`). A mode DevHub does not know is not
+ * offered, as Codex's own terminal UI does not offer it.
  */
-export function elicitation(r: Reader, params: unknown): Elicitation {
+export function elicitation(
+	r: Reader,
+	params: unknown,
+): Pick<McpServerElicitationRequestParams, "threadId"> & {
+	readonly elicitation: Elicitation;
+} {
 	const o = r.fields(params, "params");
 	const mode = r.oneOf(o, "mode", "params", ["form", "url"]);
+	const fields =
+		mode === "url"
+			? []
+			: formFields(r, o.requestedSchema, "params.requestedSchema");
 	return {
 		threadId: r.string(o, "threadId", "params"),
-		serverName: r.string(o, "serverName", "params"),
-		message: r.string(o, "message", "params"),
-		url: mode === "url" ? r.string(o, "url", "params") : undefined,
-		fields:
-			mode === "url"
-				? []
-				: formFields(r, o.requestedSchema, "params.requestedSchema"),
+		elicitation: {
+			server: r.string(o, "serverName", "params"),
+			message: r.string(o, "message", "params"),
+			url: mode === "url" ? r.string(o, "url", "params") : undefined,
+			fields,
+			remember:
+				mode === "form" && fields.length === 0 ? persistModes(r, o._meta) : [],
+		},
 	};
 }
 
-/** A form's fields from its schema (`McpElicitationSchema`), in the schema's order. */
-function formFields(r: Reader, value: unknown, path: string): FormField[] {
-	const schema = r.fields(value, path);
-	r.oneOf(schema, "type", path, ["object"]);
-	const required = new Set(
-		r.nullableArray(schema, "required", path, r.stringItem) ?? [],
-	);
-	const properties = r.fields(schema.properties, `${path}.properties`);
-	return Object.entries(properties).map(([key, property]) => {
-		const at = `${path}.properties.${key}`;
-		const p = r.fields(property, at);
-		return {
-			key,
-			label: r.nullableString(p, "title", at) ?? key,
-			description: r.nullableString(p, "description", at) ?? undefined,
-			required: required.has(key),
-			input: formInput(r, p, at),
-		};
-	});
+/** The ways of remembering an acceptance `_meta.persist` offers, in DevHub's order. */
+function persistModes(r: Reader, meta: unknown): Remember[] {
+	if (meta === undefined || meta === null) return [];
+	const m = r.fields(meta, "params._meta");
+	const persist = m.persist;
+	if (persist === undefined || persist === null) return [];
+	const offered =
+		typeof persist === "string"
+			? [persist]
+			: r.array(m, "persist", "params._meta", r.stringItem);
+	return REMEMBER_ORDER.filter((mode) => offered.includes(mode));
 }
 
-/** One property of a form (`McpElicitationPrimitiveSchema`) as the control that fills it in. */
-function formInput(
-	r: Reader,
-	p: Readonly<Record<string, unknown>>,
-	at: string,
-): FormInput {
-	const optional = (key: string) => r.nullableNumber(p, key, at) ?? undefined;
-	const type = r.oneOf(p, "type", at, [
-		"string",
-		"number",
-		"integer",
-		"boolean",
-		"array",
-	]);
-	switch (type) {
-		case "string": {
-			const byDefault = r.nullableString(p, "default", at);
-			const chosen = byDefault === null ? [] : [byDefault];
-			if (p.oneOf !== undefined)
-				return choice(
-					false,
-					constOptions(r, p, "oneOf", at),
-					chosen,
-					undefined,
-					undefined,
-				);
-			if (p.enum !== undefined) {
-				const names = r.nullableArray(p, "enumNames", at, r.stringItem);
-				const options = r
-					.array(p, "enum", at, r.stringItem)
-					.map((value, index) => ({ value, label: names?.[index] ?? value }));
-				return choice(false, options, chosen, undefined, undefined);
-			}
-			const format = p.format;
-			return {
-				kind: "text",
-				format:
-					format === undefined || format === null
-						? undefined
-						: r.oneOf(p, "format", at, ["email", "uri", "date", "date-time"]),
-				minLength: optional("minLength"),
-				maxLength: optional("maxLength"),
-				default: byDefault ?? undefined,
-			};
-		}
-		case "number":
-		case "integer":
-			return {
-				kind: "number",
-				integer: type === "integer",
-				minimum: optional("minimum"),
-				maximum: optional("maximum"),
-				default: optional("default"),
-			};
-		case "boolean":
-			return {
-				kind: "boolean",
-				default: r.nullableBoolean(p, "default", at) ?? undefined,
-			};
-		case "array": {
-			const items = r.fields(p.items, `${at}.items`);
-			const options =
-				items.anyOf !== undefined
-					? constOptions(r, items, "anyOf", `${at}.items`)
-					: r
-							.array(items, "enum", `${at}.items`, r.stringItem)
-							.map((value) => ({ value, label: value }));
-			return choice(
-				true,
-				options,
-				r.nullableArray(p, "default", at, r.stringItem) ?? [],
-				optional("minItems"),
-				optional("maxItems"),
-			);
-		}
-	}
-}
-
-function choice(
-	multiple: boolean,
-	options: readonly FormOption[],
-	chosen: readonly string[],
-	minItems: number | undefined,
-	maxItems: number | undefined,
-): FormInput {
-	return {
-		kind: "choice",
-		multiple,
-		options,
-		minItems,
-		maxItems,
-		default: chosen,
-	};
-}
-
-/** Options given as `{ const, title }` (`McpElicitationConstOption`). */
-function constOptions(
-	r: Reader,
-	o: Readonly<Record<string, unknown>>,
-	key: string,
-	path: string,
-): FormOption[] {
-	return r.array(o, key, path, (option, at) => {
-		const c = r.fields(option, at);
-		return { value: r.string(c, "const", at), label: r.string(c, "title", at) };
-	});
-}
+const REMEMBER_ORDER: readonly Remember[] = ["session", "always"];

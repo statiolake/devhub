@@ -30,6 +30,7 @@ import {
 	type RateLimit,
 	rateLimitWindowName,
 } from "../../../../model/conversation.js";
+import { type Elicitation, formFields } from "../elicitation.js";
 import { ProtocolMismatch } from "../protocolAdapter.js";
 
 type JsonObject = { readonly [key: string]: JsonValue };
@@ -52,6 +53,12 @@ export type ClaudeLine =
 			readonly toolUseId: string | undefined;
 			/** AskUserQuestion's questions; undefined for every other tool. */
 			readonly questions: readonly Question[] | undefined;
+	  }
+	/** An MCP server asking the person something (`SDKControlElicitationRequest`). */
+	| {
+			readonly type: "elicitation";
+			readonly requestId: string;
+			readonly elicitation: Elicitation;
 	  }
 	/** A control request from the CLI of a subtype DevHub does not serve. */
 	| {
@@ -417,6 +424,9 @@ export type UserBlock =
 			readonly raw: JsonObject;
 	  };
 
+/** DevHub's answer to a request of the CLI's: a permission's behavior, or an elicitation's action. */
+export type SentAnswer = "allow" | "deny" | "accept" | "decline" | "cancel";
+
 /** What DevHub writes, read back: the lines of `in.log`. */
 export type SentLine =
 	| {
@@ -434,7 +444,7 @@ export type SentLine =
 	| {
 			readonly type: "control_response";
 			readonly requestId: string;
-			readonly behavior: "allow" | "deny";
+			readonly answer: SentAnswer;
 	  }
 	/** DevHub's refusal of a control request it does not serve. */
 	| { readonly type: "control_refusal"; readonly requestId: string };
@@ -692,10 +702,17 @@ function decodeControlRequest(raw: JsonObject, f: Fields): ClaudeLine {
 	const requestId = f.string(raw.request_id, "control_request.request_id");
 	const request = f.object(raw.request, "control_request.request");
 	const subtype = f.string(request.subtype, "control_request.request.subtype");
+	const at = "control_request.request";
+	if (subtype === "elicitation") {
+		return {
+			type: "elicitation",
+			requestId,
+			elicitation: decodeElicitation(request, at, f),
+		};
+	}
 	if (subtype !== "can_use_tool") {
 		return { type: "control_request_unserved", requestId, subtype, raw };
 	}
-	const at = "control_request.request";
 	const suggestions = request.permission_suggestions;
 	const toolName = f.string(request.tool_name, `${at}.tool_name`);
 	const input = f.object(request.input, `${at}.input`);
@@ -723,6 +740,36 @@ function decodeControlRequest(raw: JsonObject, f: Fields): ClaudeLine {
 				? request.decision_reason
 				: undefined,
 		toolUseId: f.optionalString(request.tool_use_id, `${at}.tool_use_id`),
+	};
+}
+
+/**
+ * An elicitation: a form (the default mode), or a page to visit. A form with
+ * no schema asks for nothing, so it is a plain confirmation. Claude documents
+ * no way of remembering an acceptance, so none is offered.
+ */
+function decodeElicitation(
+	request: JsonObject,
+	at: string,
+	f: Fields,
+): Elicitation {
+	const mode =
+		request.mode === undefined || request.mode === null
+			? "form"
+			: f.string(request.mode, `${at}.mode`);
+	if (mode !== "form" && mode !== "url") {
+		return f.fail(`${at}.mode`, `"form" or "url", not ${JSON.stringify(mode)}`);
+	}
+	const schema = request.requested_schema;
+	return {
+		server: f.string(request.mcp_server_name, `${at}.mcp_server_name`),
+		message: f.string(request.message, `${at}.message`),
+		url: mode === "url" ? f.string(request.url, `${at}.url`) : undefined,
+		fields:
+			mode === "url" || schema === undefined || schema === null
+				? []
+				: formFields(f, schema, `${at}.requested_schema`),
+		remember: [],
 	};
 }
 
@@ -1829,17 +1876,22 @@ export function decodeSent(line: string): SentLine {
 				response.response,
 				"sent control_response.response.response",
 			);
-			const behavior = f.string(
-				inner.behavior,
-				"sent control_response.response.response.behavior",
-			);
-			if (behavior !== "allow" && behavior !== "deny") {
-				return f.fail(
-					"sent control_response.response.response.behavior",
-					`"allow" or "deny"`,
-				);
+			// A permission's answer says how it behaves; an elicitation's, what
+			// the person did with it.
+			const [key, answers] =
+				inner.behavior !== undefined
+					? (["behavior", ["allow", "deny"]] as const)
+					: (["action", ["accept", "decline", "cancel"]] as const);
+			const path = `sent control_response.response.response.${key}`;
+			const answer = f.string(inner[key], path);
+			if (!(answers as readonly string[]).includes(answer)) {
+				return f.fail(path, answers.map((each) => `"${each}"`).join(" or "));
 			}
-			return { type: "control_response", requestId, behavior };
+			return {
+				type: "control_response",
+				requestId,
+				answer: answer as SentAnswer,
+			};
 		}
 		default:
 			return f.fail(

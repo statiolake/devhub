@@ -23,7 +23,11 @@ const CHOICES: readonly RequestChoice[] = [
   { id: "cancel", label: "Cancel", tone: "neutral", takesText: false },
 ];
 
-function elicitation(fields: readonly FormField[], url?: string) {
+function elicitation(
+  fields: readonly FormField[],
+  url?: string,
+  choices: readonly RequestChoice[] = CHOICES,
+) {
   return transcriptOf([
     opened({
       id: requestId("e1"),
@@ -35,7 +39,7 @@ function elicitation(fields: readonly FormField[], url?: string) {
         url,
         fields,
       },
-      choices: CHOICES,
+      choices,
     }),
   ]);
 }
@@ -123,6 +127,51 @@ describe("an elicitation with no fields", () => {
       );
     },
   );
+});
+
+describe("a confirmation that offers to remember its acceptance", () => {
+  const REMEMBERING: readonly RequestChoice[] = [
+    {
+      id: "remember:session",
+      label: "Accept for this session",
+      tone: "allow",
+      takesText: false,
+    },
+    {
+      id: "remember:always",
+      label: "Always accept",
+      tone: "allow",
+      takesText: false,
+    },
+    ...CHOICES,
+  ];
+
+  it("offers each way of remembering after Accept and before Decline", () => {
+    draw(elicitation([], undefined, REMEMBERING));
+    expect(
+      [...card().querySelectorAll("button")].map(
+        (button) => button.textContent,
+      ),
+    ).toEqual([
+      "1Accept",
+      "2Accept for this session",
+      "3Always accept",
+      "4Decline",
+      "5Cancel",
+    ]);
+  });
+
+  it("answers a way of remembering with that choice", async () => {
+    const { actions } = draw(elicitation([], undefined, REMEMBERING));
+    fireEvent.keyDown(card(), { key: "3" });
+    await waitFor(() =>
+      expect(actions.answer).toHaveBeenCalledWith("e1", {
+        kind: "choice",
+        choiceId: "remember:always",
+        text: undefined,
+      }),
+    );
+  });
 });
 
 describe("an elicitation with fields", () => {

@@ -75,7 +75,11 @@ import {
 	type Usage,
 	withRateLimits,
 } from "../../../../model/conversation.js";
-import { formContent } from "../../../../model/elicitationForm.js";
+import {
+	elicitationChoices,
+	elicitationReply,
+	elicitationSubject,
+} from "../elicitation.js";
 import {
 	ProtocolMismatch,
 	RESTARTED,
@@ -2528,62 +2532,34 @@ export class CodexAdapter implements ProtocolAdapter {
 	}
 
 	/**
-	 * An elicitation is accepted by submitting its form, whatever fields it
-	 * has: none makes it a plain confirmation, accepted with empty content,
-	 * and a URL elicitation, whose accepting carries no content at all.
+	 * An elicitation, answered by the one rule both CLIs' are
+	 * (`../elicitation.ts`), in app-server's words: remembering an acceptance
+	 * is `_meta.persist`, as Codex's own terminal UI sends it.
 	 */
 	private onElicitation(rpcId: RpcId, params: unknown): void {
-		const request = elicitation(this.reader, params);
-		const reply = (
-			action: McpServerElicitationRequestResponse["action"],
-			content: McpServerElicitationRequestResponse["content"],
-		): JsonValue =>
-			({
-				action,
-				content,
-				_meta: null,
-			}) satisfies McpServerElicitationRequestResponse as JsonValue;
+		const { threadId, elicitation: request } = elicitation(this.reader, params);
+		const name = JSON.stringify(rpcId);
+		const wire = (answer: RequestAnswer): JsonValue => {
+			const reply = elicitationReply(request, answer, name);
+			return {
+				action: reply.action,
+				content: (reply.content ??
+					null) as McpServerElicitationRequestResponse["content"],
+				_meta:
+					reply.remember === undefined ? null : { persist: reply.remember },
+			} satisfies McpServerElicitationRequestResponse as JsonValue;
+		};
 		this.openRequest(
 			rpcId,
-			request.threadId,
+			threadId,
 			undefined,
+			elicitationSubject(request),
+			elicitationChoices(request).map((choice) => ({
+				...choice,
+				result: wire({ kind: "choice", choiceId: choice.id, text: undefined }),
+			})),
 			{
-				kind: "elicitation",
-				server: request.serverName,
-				message: request.message,
-				url: request.url,
-				fields: request.fields,
-			},
-			[
-				{
-					id: "decline",
-					label: "Decline",
-					tone: "deny",
-					takesText: false,
-					result: reply("decline", null),
-				},
-				{
-					id: "cancel",
-					label: "Cancel",
-					tone: "neutral",
-					takesText: false,
-					result: reply("cancel", null),
-				},
-			],
-			{
-				build: (values) => {
-					const { content, problems } = formContent(request.fields, values);
-					if (Object.keys(problems).length > 0)
-						throw new Error(
-							`the form of elicitation ${JSON.stringify(rpcId)} was sent unfinished: ${JSON.stringify(problems)}`,
-						);
-					return reply(
-						"accept",
-						request.url === undefined
-							? (content as McpServerElicitationRequestResponse["content"])
-							: null,
-					);
-				},
+				build: (values) => wire({ kind: "answers", values }),
 				answered: undefined,
 			},
 		);

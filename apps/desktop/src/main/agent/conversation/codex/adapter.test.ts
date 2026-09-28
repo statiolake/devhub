@@ -2015,6 +2015,90 @@ describe("requests that are not approvals", () => {
 			result: { action: "accept", content: null, _meta: null },
 		});
 	});
+
+	it.each([
+		["session", "remember:session"],
+		["always", "remember:always"],
+	] as const)(
+		"offers a confirmation's remembering for %s after Accept, and accepts it with _meta.persist",
+		(persist, choiceId) => {
+			const harness = ready();
+			const request = elicit(harness, {
+				mode: "form",
+				message: "Allow the tickets server to run file_ticket?",
+				requestedSchema: { type: "object", properties: {} },
+				_meta: {
+					codex_approval_kind: "mcp_tool_call",
+					persist: ["session", "always"],
+				},
+			});
+			expect(request.choices).toEqual([
+				{
+					id: "remember:session",
+					label: "Accept for this session",
+					tone: "allow",
+					takesText: false,
+				},
+				{
+					id: "remember:always",
+					label: "Always accept",
+					tone: "allow",
+					takesText: false,
+				},
+				{ id: "decline", label: "Decline", tone: "deny", takesText: false },
+				{ id: "cancel", label: "Cancel", tone: "neutral", takesText: false },
+			]);
+			harness.command({
+				kind: "answer",
+				request: request.id,
+				answer: { kind: "choice", choiceId, text: undefined },
+			});
+			expect(harness.lastWrite()).toEqual({
+				id: 8,
+				result: { action: "accept", content: {}, _meta: { persist } },
+			});
+		},
+	);
+
+	it("offers only the remembering _meta.persist names, as one mode or a list, and none it does not know", () => {
+		const ids = (meta: unknown) =>
+			elicit(ready(), {
+				mode: "form",
+				message: "Go on?",
+				requestedSchema: { type: "object", properties: {} },
+				_meta: meta,
+			}).choices.map((choice) => choice.id);
+		expect(ids({ persist: "always" })).toEqual([
+			"remember:always",
+			"decline",
+			"cancel",
+		]);
+		expect(ids({ persist: ["forever", "session"] })).toEqual([
+			"remember:session",
+			"decline",
+			"cancel",
+		]);
+		expect(ids({ codex_approval_kind: "mcp_tool_call" })).toEqual([
+			"decline",
+			"cancel",
+		]);
+	});
+
+	it("offers no remembering for a form with fields, as Codex's own UI does not", () => {
+		const request = elicit(ready(), {
+			mode: "form",
+			message: "File a ticket",
+			requestedSchema: {
+				type: "object",
+				properties: { title: { type: "string" } },
+			},
+			_meta: { persist: ["session", "always"] },
+		});
+		expect(request.choices.map((choice) => choice.id)).toEqual([
+			"decline",
+			"cancel",
+		]);
+	});
 });
 
 describe("what DevHub does not know", () => {

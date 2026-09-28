@@ -83,6 +83,12 @@ import {
 	type RewindPlan,
 	type SettingName,
 } from "../protocolAdapter.js";
+import {
+	type Elicitation,
+	elicitationChoices,
+	elicitationReply,
+	elicitationSubject,
+} from "../elicitation.js";
 import { todoPlan, toolTitle } from "../toolTitle.js";
 import {
 	ASK_USER_QUESTION,
@@ -298,13 +304,24 @@ interface MessageState {
 	finals: number;
 }
 
-/** A permission request of the CLI's that DevHub has not answered. */
+/** A request of the CLI's that DevHub has not answered. */
+type Pending = Permission | PendingElicitation;
+
+/** A permission request (`can_use_tool`). */
 interface Permission {
+	readonly kind: "permission";
 	readonly input: JsonObject;
 	readonly suggestions: readonly JsonObject[];
 	readonly choices: readonly RequestChoice[];
 	readonly asksQuestions: boolean;
 	readonly entry: EntryId | undefined;
+}
+
+/** An MCP server's elicitation, which is about no call. */
+interface PendingElicitation {
+	readonly kind: "elicitation";
+	readonly elicitation: Elicitation;
+	readonly entry: undefined;
 }
 
 export class ClaudeAdapter implements ProtocolAdapter {
@@ -320,7 +337,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly untaken: SendingMessage[] = [];
 	/** How many user messages DevHub has written: what names each while it is sending. */
 	private written = 0;
-	private readonly permissions = new Map<string, Permission>();
+	private readonly pending = new Map<string, Pending>();
 	private readonly denied = new Set<EntryId>();
 	/**
 	 * The CLI's requests DevHub has answered. The CLI prints each answer back
@@ -528,12 +545,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					return;
 				case "control_response": {
 					this.answered.add(sent.requestId);
-					const permission = this.permissions.get(sent.requestId);
+					const pending = this.pending.get(sent.requestId);
 					// Cancelled by the CLI before the answer reached it: already closed.
-					if (permission === undefined) return;
-					this.permissions.delete(sent.requestId);
-					if (sent.behavior === "deny" && permission.entry !== undefined) {
-						this.denied.add(permission.entry);
+					if (pending === undefined) return;
+					this.pending.delete(sent.requestId);
+					if (sent.answer === "deny" && pending.entry !== undefined) {
+						this.denied.add(pending.entry);
 					}
 					this.emit({
 						type: "request-closed",
@@ -598,8 +615,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		request: RequestId,
 		answer: Parameters<typeof answerResponse>[1],
 	): string {
-		const permission = this.permissions.get(request);
-		if (permission === undefined) {
+		const pending = this.pending.get(request);
+		if (pending === undefined) {
 			throw new Error(
 				`request ${request} is not pending, so it cannot be answered`,
 			);
@@ -609,7 +626,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			response: {
 				subtype: "success",
 				request_id: request,
-				response: answerResponse(permission, answer, request),
+				response:
+					pending.kind === "permission"
+						? answerResponse(pending, answer, request)
+						: elicitationResponse(pending.elicitation, answer, request),
 			},
 		});
 	}
@@ -786,7 +806,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.ours.clear();
 		this.untaken.length = 0;
 		this.emitSending();
-		this.permissions.clear();
+		this.pending.clear();
 		this.denied.clear();
 		this.answered.clear();
 		this.messages.clear();
@@ -811,7 +831,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.notice("info", RESTARTED, undefined);
 		this.ours.clear();
 		this.untaken.length = 0;
-		this.permissions.clear();
+		this.pending.clear();
 		this.answered.clear();
 		this.streaming.clear();
 		this.interrupting = false;
@@ -964,6 +984,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.takeControlResponse(line);
 			case "can_use_tool":
 				return this.takePermission(line);
+			case "elicitation":
+				this.pending.set(line.requestId, {
+					kind: "elicitation",
+					elicitation: line.elicitation,
+					entry: undefined,
+				});
+				return this.emit({
+					type: "request-opened",
+					request: {
+						id: requestId(line.requestId),
+						entry: undefined,
+						subject: elicitationSubject(line.elicitation),
+						choices: elicitationChoices(line.elicitation),
+					},
+				});
 			case "control_request_unserved":
 				this.replies.push(
 					JSON.stringify({
@@ -981,7 +1016,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					line.raw,
 				);
 			case "control_cancel_request":
-				if (!this.permissions.delete(line.requestId)) return;
+				if (!this.pending.delete(line.requestId)) return;
 				return this.emit({
 					type: "request-closed",
 					request: requestId(line.requestId),
@@ -1182,7 +1217,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					),
 					DENY,
 				];
-		this.permissions.set(line.requestId, {
+		this.pending.set(line.requestId, {
+			kind: "permission",
 			input: line.input,
 			suggestions: line.suggestions,
 			choices,
@@ -2188,6 +2224,26 @@ function answerResponse(
 		updatedInput: permission.input,
 		updatedPermissions: [suggestion],
 	};
+}
+
+/**
+ * An elicitation's answer, by the one rule both CLIs' are
+ * (`../elicitation.ts`), as the SDK's `ElicitationResult`: MCP's
+ * `ElicitResult`, whose `content` is there only for an accepted form.
+ */
+function elicitationResponse(
+	elicitation: Elicitation,
+	answer: Extract<ConversationCommand, { kind: "answer" }>["answer"],
+	request: RequestId,
+): JsonObject {
+	const reply = elicitationReply(elicitation, answer, request);
+	if (reply.remember !== undefined)
+		throw new Error(
+			`elicitation ${request} was answered with remembering, which Claude never offers`,
+		);
+	return reply.content === undefined
+		? { action: reply.action }
+		: { action: reply.action, content: reply.content };
 }
 
 /**

@@ -498,7 +498,9 @@ export type RequestSubject =
    * An MCP server asking the person something through the Agent. It is
    * always answered by accepting its form — no fields at all for a plain
    * confirmation, or for a page to visit (`url`) — or by the adapter's other
-   * choices (decline, cancel).
+   * choices: accepting and remembering it, when the CLI offers that, then
+   * decline and cancel. Both CLIs' follow one rule
+   * (`main/agent/conversation/elicitation.ts`).
    */
   | {
       readonly kind: "elicitation";
