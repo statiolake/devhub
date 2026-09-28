@@ -73,6 +73,9 @@ function mount(overrides: Partial<PickerValue> = {}) {
       .fn()
       .mockResolvedValue(["/projects", "/code/github"]),
     assignmentBranch,
+    // No earlier sessions unless a test says so.
+    listAgentSessions: vi.fn().mockResolvedValue([]),
+    previewAgentSession: vi.fn().mockResolvedValue([]),
     // The URL step's rows are the person's own actions.
     agentActions: vi.fn().mockResolvedValue([
       { id: "implement", displayName: "Work on it", trigger: "issue" },
@@ -101,7 +104,14 @@ function mount(overrides: Partial<PickerValue> = {}) {
 function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
   const value = {
     agentProfiles,
-    findIssueRepositories: vi.fn().mockResolvedValue([]),
+    findIssueRepositories: vi.fn().mockResolvedValue([
+      {
+        place: { kind: "local", path: "/projects/widget" },
+        worktrees: [],
+      },
+    ]),
+    listAgentSessions: vi.fn().mockResolvedValue([]),
+    previewAgentSession: vi.fn().mockResolvedValue([]),
     listBranches: vi.fn().mockResolvedValue([]),
     cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
     assignIssue: vi.fn().mockResolvedValue(undefined),
@@ -158,17 +168,17 @@ async function answer(
 
 describe("assigning an Issue", () => {
   it("asks three questions and sends what they add up to", async () => {
-    // The Issue, the agent, and which branch. The repository is not asked
+    // The Issue, which branch, and the agent. The repository is not asked
     // because there is exactly one clone, and the Issue has no branch of its
     // own: DevHub offers `feature/128-wip` and the agent is told to rename it.
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for example\/widget#128/u);
     await choose(
       /Where to work on example\/widget#128/u,
       /New branch feature\/128-wip/u,
     );
+    await answer(/Agent for example\/widget#128/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -188,6 +198,10 @@ describe("assigning an Issue", () => {
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /New branch feature\/128-wip/u,
+    );
     const dialog = await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
     });
@@ -205,10 +219,6 @@ describe("assigning an Issue", () => {
     );
     fireEvent.keyUp(dialog, { key: "Alt", altKey: false });
     await answer(/Agent for example\/widget#128/u, undefined, { altKey: true });
-    await choose(
-      /Where to work on example\/widget#128/u,
-      /New branch feature\/128-wip/u,
-    );
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -236,9 +246,9 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     await choose(/Which example\/widget/u, /\/other\/widget/u);
     await choose(/Where to work on/u, /root checkout/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -263,8 +273,8 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await answer(/Agent for/u);
     await choose(/Where to work on/u, /Open widget_alice_fix-the-crash/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -299,8 +309,8 @@ describe("assigning an Issue", () => {
       assignmentBranch,
     } as unknown as Partial<PickerValue>);
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     await choose(/Where to work on/u, /New branch/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -327,7 +337,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await answer(/Agent for/u);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(
@@ -348,8 +357,8 @@ describe("assigning an Issue", () => {
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     await choose(/Where to work on/u, /root checkout/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -387,9 +396,10 @@ describe("assigning an Issue", () => {
       } as unknown as PickerValue["agentProfiles"],
     });
     await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /root checkout/u);
 
     expect(
-      await screen.findByRole("option", { name: /Claude/u }),
+      await screen.findByRole("option", { name: /New Claude Session/u }),
     ).toBeInTheDocument();
   });
 
@@ -436,11 +446,11 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await answer(/Agent for example\/widget#128/u);
     await choose(
       /Where to work on example\/widget#128/u,
       /Check out alice\/fix-the-crash/u,
     );
+    await answer(/Agent for example\/widget#128/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -469,8 +479,8 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await answer(/Agent for/u);
     await choose(/Where to work on/u, /root checkout/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -495,7 +505,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await answer(/Agent for/u);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(
@@ -526,7 +535,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
 
     expect(
       await screen.findByRole("dialog", { name: "Clone example/widget" }),
@@ -536,17 +544,22 @@ describe("assigning an Issue", () => {
         /No clone of example\/widget was found on this machine, so it has to be cloned before the agent can start\. Choose the folder to clone it into\./u,
       ),
     ).toBeVisible();
-    // And it is the third question, not the first: Escape has somewhere to go.
-    expect(screen.getByText("Step 3")).toBeVisible();
+    // And it is the second question, not the first: Escape has somewhere to go.
+    expect(screen.getByText("Step 2")).toBeVisible();
   });
 
   it("takes Escape back to the question before, with its answers still true", async () => {
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /root checkout/u);
+    // Escape from the agent question goes back to where to work.
+    fireEvent.keyDown(
+      await screen.findByRole("dialog", { name: /Agent for/u }),
+      { key: "Escape" },
+    );
     // Escape from the question *after* the repository step, which decided for
-    // itself and asked nothing. It must reach the agent question rather than
+    // itself and asked nothing. It must reach the Issue question rather than
     // the step that would only decide the same way again.
     fireEvent.keyDown(
       await screen.findByRole("dialog", { name: /Where to work on/u }),
@@ -556,7 +569,7 @@ describe("assigning an Issue", () => {
     );
 
     expect(
-      await screen.findByRole("dialog", { name: /Agent for/u }),
+      await screen.findByRole("dialog", { name: "Assign Issue" }),
     ).toBeVisible();
     expect(assignIssue).not.toHaveBeenCalled();
   });
@@ -579,11 +592,11 @@ describe("assigning an Issue", () => {
     mount({ assignIssue } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     await choose(
       /Where to work on example\/widget#128/u,
       /New branch feature\/128-wip/u,
     );
+    await answer(/Agent for/u);
 
     expect(
       await screen.findByText(
@@ -605,7 +618,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     // Nothing was found, so the repository question has no answers to put and
     // is skipped: cloning is where the flow goes. The folders offered are the
     // parents of everything the workspace sources find.
@@ -613,6 +625,7 @@ describe("assigning an Issue", () => {
     // A fresh clone is checked out in one place, and that place plus a new
     // worktree is the same location question everybody else gets.
     await choose(/Where to work on/u, /root checkout/u);
+    await answer(/Agent for/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -633,7 +646,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
     await screen.findByRole("dialog", { name: /Clone example\/widget/u });
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "/elsewhere/scratch" },
@@ -672,7 +684,6 @@ describe("assigning an Issue", () => {
     mount({ findIssueRepositories } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
 
     const sheet = await screen.findByRole("dialog", {
       name: /Looking for example\/widget/u,
@@ -711,7 +722,6 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
 
     const sheet = await screen.findByRole("dialog", {
       name: /Clone example\/widget/u,
@@ -749,7 +759,6 @@ describe("assigning an Issue", () => {
     mount({ findIssueRepositories } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await answer(/Agent for/u);
 
     const working = await screen.findByRole("dialog", {
       name: /Looking for example\/widget/u,
@@ -767,8 +776,79 @@ describe("assigning an Issue", () => {
     // And it goes back to the question before it rather than re-running the
     // step, which would start the very lookup the person just escaped.
     expect(
-      await screen.findByRole("dialog", { name: /Agent for/u }),
+      await screen.findByRole("dialog", { name: "Assign Issue" }),
     ).toBeVisible();
     expect(findIssueRepositories).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("going on with an earlier session", () => {
+  it("offers the sessions of the checkout the work is in, and resumes the one taken before the Issue is said", async () => {
+    // Review comments on a pull request whose branch is already checked out:
+    // the session that wrote it is there, and is what the person goes on with.
+    const checkout = {
+      kind: "local",
+      path: "/projects/widget_alice_fix-the-crash",
+    };
+    const listAgentSessions = vi.fn((_place: unknown, profileId: string) =>
+      Promise.resolve(
+        profileId === "claude"
+          ? [
+              {
+                id: "session-1",
+                title: "Fix the crash",
+                cwd: checkout.path,
+                branch: "alice/fix-the-crash",
+                resumableHere: true,
+              },
+            ]
+          : [],
+      ),
+    );
+    const { assignIssue } = mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "alice/fix-the-crash",
+        reachable: true,
+        checkedOutAt: checkout.path,
+      }),
+      listAgentSessions,
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", PULL_REQUEST);
+    await choose(/Where to work on/u, /Open widget_alice_fix-the-crash/u);
+    await choose(/Agent for/u, /^Claude Session: Fix the crash/u);
+
+    // Listed where the Agent will run, not the repository's root.
+    expect(listAgentSessions).toHaveBeenCalledWith(checkout, "claude");
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith({
+        issueUrl: PULL_REQUEST,
+        place: checkout,
+        branch: undefined,
+        profileId: "claude",
+        // The Issue's action is still said, into the resumed session.
+        actionId: "implement",
+        split: false,
+        presentation: "tui",
+        resume: "session-1",
+        allowStaleBase: false,
+      });
+    });
+  });
+
+  it("offers only new sessions for a worktree the flow is about to make", async () => {
+    const listAgentSessions = vi.fn().mockResolvedValue([]);
+    mount({ listAgentSessions } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /New branch feature\/128-wip/u);
+    await screen.findByRole("dialog", { name: /Agent for/u });
+
+    expect(listAgentSessions).not.toHaveBeenCalled();
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.querySelector(".mac-list-title")?.textContent),
+    ).toEqual(["New Claude Session", "New Cursor Session"]);
   });
 });

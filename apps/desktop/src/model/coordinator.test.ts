@@ -37,7 +37,14 @@ import {
   type UserIntent,
   type WorktreeDisposition,
 } from "./intents.js";
-import { errorWire, errorWireAt, NamedFailure, withDetail } from "./wire.js";
+import {
+  errorWire,
+  errorWireAt,
+  intentFromWire,
+  InvalidIntent,
+  NamedFailure,
+  withDetail,
+} from "./wire.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
@@ -2416,5 +2423,48 @@ describe("where a close lands", () => {
     });
     driver.settle();
     expect(selected(driver)).toEqual(workspace(CHARLIE));
+  });
+});
+
+describe("a launch that resumes a session", () => {
+  it("asks main for the profile with the session to resume, by id alone", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("claude"),
+      presentation: "full",
+      agentPresentation: "gui",
+      resume: "session-1",
+    });
+    const resolve = driver.drainEffects()[0];
+    if (resolve?.kind !== "resolve_agent_profile")
+      throw new Error("unexpected");
+    expect(resolve.extraArgs).toEqual([]);
+    expect(resolve.resume).toBe("session-1");
+  });
+
+  it("takes the session a past-session row names off the wire", () => {
+    const request = (resume: unknown) =>
+      intentFromWire({
+        type: "request_create_agent",
+        workspaceId: WS_A,
+        profileId: "codex",
+        presentation: "tui",
+        resume,
+      } as never);
+    expect(request("0199a1b2-thread")).toMatchObject({
+      type: "create_agent",
+      agentPresentation: "tui",
+      resume: "0199a1b2-thread",
+    });
+    // It goes onto a command line as one argument of its own, so nothing that
+    // could read as an option or split into two gets that far.
+    expect(() => request("--dangerously-skip-permissions")).toThrow(
+      InvalidIntent,
+    );
+    expect(() => request("a b")).toThrow(InvalidIntent);
+    expect(() => request(7)).toThrow(InvalidIntent);
   });
 });

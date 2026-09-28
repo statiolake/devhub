@@ -132,6 +132,7 @@ import {
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
+	sessionId,
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
@@ -208,6 +209,7 @@ import {
 	drawnWorkspaceOrder,
 	NamedFailure,
 	namedFailure,
+	namedFailureAt,
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
@@ -325,7 +327,12 @@ import type {
 	TerminalLauncher,
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
-import { resumeArgs, withSession } from "../agent/conversation/resume.js";
+import {
+	listPastSessions,
+	previewPastSession,
+	resumeArgs,
+	withSession,
+} from "../agent/conversation/resume.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -3322,6 +3329,34 @@ export class AppController {
 		extraArgs: readonly string[],
 		resume: string | undefined,
 	): Promise<AgentProfileResolution> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (!workspace) {
+			return {
+				kind: "failed",
+				code: "workspace_unavailable",
+				detail: "The workspace this Agent belongs to is no longer open.",
+			};
+		}
+		return this.profileOn(workspace.location, profileId, extraArgs, resume);
+	}
+
+	/**
+	 * The profile as a launch on `location`'s machine runs it: the command
+	 * resolved there, with the session it resumes, if it resumes one.
+	 */
+	private async profileOn(
+		location: WorkspaceLocation,
+		profileId: string,
+		extraArgs: readonly string[],
+		resume: string | undefined,
+	): Promise<
+		| Extract<AgentProfileResolution, { kind: "resolved" }>
+		| {
+				readonly kind: "failed";
+				readonly code: "agent_profile_unavailable";
+				readonly detail: string;
+		  }
+	> {
 		const configured = this.config?.agentProfiles.find(
 			(profile) => profile.id === profileId,
 		);
@@ -3330,14 +3365,6 @@ export class AppController {
 				kind: "failed",
 				code: "agent_profile_unavailable",
 				detail: `There is no agent profile called “${profileId}”.`,
-			};
-		}
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (!workspace) {
-			return {
-				kind: "failed",
-				code: "workspace_unavailable",
-				detail: "The workspace this Agent belongs to is no longer open.",
 			};
 		}
 		if (
@@ -3355,7 +3382,7 @@ export class AppController {
 		// arguments pick (`withSession`), so its record says exactly one.
 		const args = [...configured.args, ...extraArgs];
 		const resolved = await resolveAgentProfile(
-			runtimeFor(workspace.location),
+			runtimeFor(location),
 			{
 				...configured,
 				args:
@@ -3381,6 +3408,20 @@ export class AppController {
 			kind: "resolved",
 			profile: toDomainProfile(resolved.profile, this.config!.agents),
 		};
+	}
+
+	/**
+	 * The command a launch from `profileId` in `place` would run, for reading
+	 * the sessions its CLI keeps there — refused the way that launch is,
+	 * because it is the same refusal: the profile cannot be run there.
+	 */
+	private async sessionsProfile(place: WorkspacePlaceWire, profileId: string) {
+		const location = workspaceLocation(place);
+		const resolution = await this.profileOn(location, profileId, [], undefined);
+		if (resolution.kind === "failed") {
+			throw namedFailureAt(resolution.code, resolution.detail);
+		}
+		return { runtime: runtimeFor(location), profile: resolution.profile };
 	}
 
 	private async inspect(
@@ -6008,12 +6049,17 @@ export class AppController {
 				workspace.agents.map((agent) => agent.id),
 			),
 		);
+		// A past session is resumed and then told about the Issue, through the
+		// same queue a new Agent's first message goes through.
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId,
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 			agentPresentation: agentPresentation(request.presentation),
+			...(request.resume === undefined
+				? {}
+				: { resume: sessionId(request.resume) }),
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId);
 		await this.syncEditorView();
@@ -6406,6 +6452,44 @@ export class AppController {
 			this.pickerLookup = undefined;
 			return Promise.resolve();
 		});
+		// The agent picker's past sessions: the ones that ran in the place, read
+		// on its machine with the command a launch there would run.
+		handle(
+			CHANNELS.listAgentSessions,
+			async (_event, place: WorkspacePlaceWire, profileId: string) => {
+				try {
+					const { runtime, profile } = await this.sessionsProfile(
+						place,
+						profileId,
+					);
+					return await listPastSessions(runtime, profile, place.path);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
+		handle(
+			CHANNELS.previewAgentSession,
+			async (
+				_event,
+				place: WorkspacePlaceWire,
+				profileId: string,
+				session: unknown,
+				cwd: unknown,
+			) => {
+				try {
+					if (typeof session !== "string" || typeof cwd !== "string")
+						throw new Error("a preview names no session and directory");
+					const { runtime, profile } = await this.sessionsProfile(
+						place,
+						profileId,
+					);
+					return await previewPastSession(runtime, profile, session, cwd);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
 		handle(
 			CHANNELS.cloneRepository,
 			async (_event, url: string, parentDirectory: string) => {

@@ -175,6 +175,12 @@ export interface IssueAssignment {
 	/** TUI or GUI, as the agent row said when it was taken (⌥ flips it). */
 	readonly presentation: "tui" | "gui";
 	/**
+	 * An earlier session of the profile's CLI in the place worked in, which
+	 * the agent goes on with and is then told about the Issue. Absent starts
+	 * afresh.
+	 */
+	readonly resume?: string;
+	/**
 	 * Start the branch from the `origin` already on disk, the fetch having
 	 * failed and the person having been asked and said to go on.
 	 *
@@ -1332,20 +1338,42 @@ export interface PickerBridge
 	 * has to say this for the case where no new question follows.
 	 */
 	cancelPickerLookup(): Promise<void>;
+	/**
+	 * The earlier sessions of a profile's CLI that ran in `place`, newest
+	 * first, read on its machine: the past-session rows of the agent picker.
+	 * Throws the reason (`sessions_unreadable`, or the profile's own refusal)
+	 * when they cannot be listed.
+	 */
+	listAgentSessions(
+		place: WorkspacePlaceWire,
+		profileId: string,
+	): Promise<readonly PastSessionWire[]>;
+	/** The last exchanges of one listed session, read on demand. */
+	previewAgentSession(
+		place: WorkspacePlaceWire,
+		profileId: string,
+		session: string,
+		cwd: string,
+	): Promise<readonly SessionPreviewLineWire[]>;
 }
 
 /** Which earlier sessions a picker lists: the Workspace's directory's, or every directory's. */
 export type SessionScopeWire = "here" | "everywhere";
 
-/** One earlier session of an Agent's CLI, as the resume picker lists it. */
+/** One earlier session of an Agent's CLI, as the resume picker and the agent picker list it. */
 export interface PastSessionWire {
-	/** What `/resume` hands the Agent's CLI: Claude's session id, Codex's thread id. */
+	/**
+	 * What resuming it hands the CLI — `/resume`, or a launch's `resume`:
+	 * Claude's session id, Codex's thread id.
+	 */
 	readonly id: string;
 	readonly title: string;
 	/** When it last changed, in ms since the epoch, when the CLI says. */
 	readonly updatedAt?: number;
 	/** The directory it ran in, when the CLI says. */
 	readonly cwd?: string;
+	/** The git branch it was last on, when the CLI recorded one. */
+	readonly branch?: string;
 	/**
 	 * Whether an Agent in the Workspace can go on with it. Claude resumes a
 	 * session only in the directory it ran in; the picker shows another
@@ -1398,6 +1426,8 @@ export const CHANNELS = {
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
+	listAgentSessions: "devhub:list-agent-sessions",
+	previewAgentSession: "devhub:preview-agent-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

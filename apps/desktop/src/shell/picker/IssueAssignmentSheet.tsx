@@ -1,7 +1,7 @@
 /**
  * "Assign Issue": the four questions, as a wizard.
  *
- * Which Issue and what to do with it, which agent, which clone, which branch —
+ * Which Issue and what to do with it, which clone, which branch, which agent —
  * and each answer decides the next question, which is why this is a chain of
  * steps rather than four sheets that open each other. Escape goes back one
  * question the whole way down, because that is the runner's rule and no step
@@ -15,14 +15,10 @@
  * it back to whichever step caused it.
  */
 
-import { useMemo, useRef, type ReactNode } from "react";
-import type {
-  AgentPresentationWire,
-  AgentProfilesWire,
-} from "../../ipc/appShell";
+import { useMemo, type ReactNode } from "react";
 import {
-  launchPresentation,
-  presentationAccessory,
+  AgentProfilePicker,
+  type AgentChoice,
 } from "../components/shell/AgentProfilePicker";
 import type { AssignmentBranchWire } from "../../ipc/contract";
 import {
@@ -91,7 +87,6 @@ function itemLabel(item: GitHubItem): string {
 
 export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
   const {
-    agentProfiles,
     findIssueRepositories,
     cloneRepository,
     assignIssue,
@@ -100,23 +95,9 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     agentActions,
   } = usePicker();
 
-  /**
-   * The profiles as they are *now*, not as they were when the flow started.
-   *
-   * The flow is built once and walked over several seconds; the profiles are a
-   * projection that arrives after the page mounts. Closing over the value
-   * caught the sheet asking "which agent?" over an empty list and answering
-   * "profiles are unavailable" — true at mount, false by the time anyone read
-   * it. Everything else the flow needs is a stable callback, so this is the
-   * only reading that has to be taken late.
-   */
-  const profiles = useRef(agentProfiles);
-  profiles.current = agentProfiles;
-
   const start = useMemo<WizardStep>(
     () =>
       issueUrlStep({
-        agentProfiles: () => profiles.current,
         findIssueRepositories,
         cloneRepository,
         assignIssue,
@@ -138,7 +119,6 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
 }
 
 interface FlowServices {
-  readonly agentProfiles: () => AgentProfilesWire;
   readonly findIssueRepositories: (
     url: string,
     signal?: AbortSignal,
@@ -151,7 +131,8 @@ interface FlowServices {
     readonly profileId: string;
     readonly actionId?: string;
     readonly split: boolean;
-    readonly presentation: AgentPresentationWire;
+    readonly presentation: AgentChoice["presentation"];
+    readonly resume?: string;
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly cloneParentDirectories: (
@@ -228,58 +209,14 @@ function issueUrlStep(services: FlowServices): WizardStep {
     const actionId = answer.id.startsWith(ACTION_PREFIX)
       ? answer.id.slice(ACTION_PREFIX.length)
       : undefined;
-    return agentStep(services, item, actionId);
+    return repositoryStep(services, { item, actionId });
   };
   return (input) => ask(input, "", false);
 }
 
-/** Which agent starts on it. */
-function agentStep(
-  services: FlowServices,
-  item: GitHubItem,
-  actionId: string | undefined,
-): WizardStep {
-  return async (input) => {
-    const answer = await input.ask({
-      ...SHEET,
-      title: `Agent for ${itemLabel(item)}`,
-      question: `Which agent should start on ${itemLabel(item)}?`,
-      items: services.agentProfiles().profiles.map((profile) => ({
-        id: profile.id,
-        label: profile.displayName,
-        searchText: `${profile.displayName} ${profile.kind}`,
-        accessory: presentationAccessory(profile),
-      })),
-      note: "⌘Return opens the agent beside the editor; ⌥Return opens it as the other of TUI and GUI.",
-      emptyNoItems:
-        services.agentProfiles().availability === "unavailable"
-          ? "Agent profiles are unavailable until the configuration is readable again."
-          : "No agent profiles are enabled.",
-      emptyNoMatch: "No agent profiles match.",
-    });
-    const profile = services
-      .agentProfiles()
-      .profiles.find((candidate) => candidate.id === answer.id);
-    if (profile === undefined) {
-      // The row taken is one this step drew from these profiles.
-      throw new Error(
-        `the Issue sheet offered a profile it does not have: ${answer.id}`,
-      );
-    }
-    return repositoryStep(services, item, {
-      profileId: answer.id,
-      split: answer.split,
-      presentation: launchPresentation(profile, answer.alternate),
-      actionId,
-    });
-  };
-}
-
-interface AgentChoice {
-  readonly profileId: string;
-  readonly split: boolean;
-  /** TUI or GUI, as the row said when it was taken — the New Agent rule. */
-  readonly presentation: AgentPresentationWire;
+/** The Issue, and what the agent is to do with it. */
+interface Work {
+  readonly item: GitHubItem;
   /** Which of the person's actions the agent is being started for. */
   readonly actionId: string | undefined;
 }
@@ -301,11 +238,8 @@ interface AgentChoice {
  * remembers, so Escape from the question after this one reaches the question
  * before it. See `runWizard`.
  */
-function repositoryStep(
-  services: FlowServices,
-  item: GitHubItem,
-  agent: AgentChoice,
-): WizardStep {
+function repositoryStep(services: FlowServices, work: Work): WizardStep {
+  const { item } = work;
   return async (input) => {
     let repositories: readonly IssueRepository[];
     try {
@@ -349,19 +283,18 @@ function repositoryStep(
         ],
       });
       return answer.id === LOOK_AGAIN
-        ? repositoryStep(services, item, agent)
+        ? repositoryStep(services, work)
         : cloneDestinationStep(
             services,
-            item,
-            agent,
+            work,
             `${item.owner}/${item.repository} is being cloned because the search for it did not finish.`,
           );
     }
     if (repositories.length === 0) {
-      return cloneDestinationStep(services, item, agent, nothingCloned(item));
+      return cloneDestinationStep(services, work, nothingCloned(item));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
-    if (only) return branchStep(services, item, agent, only.place);
+    if (only) return branchStep(services, work, only.place);
     const answer = await input.ask({
       ...SHEET,
       title: `Which ${item.owner}/${item.repository}`,
@@ -385,8 +318,7 @@ function repositoryStep(
     if (answer.id === CLONE_ELSEWHERE) {
       return cloneDestinationStep(
         services,
-        item,
-        agent,
+        work,
         `${item.owner}/${item.repository} is being cloned again rather than worked on where it already is.`,
       );
     }
@@ -394,8 +326,8 @@ function repositoryStep(
       (repository) => placeLabel(repository.place) === answer.id,
     );
     return chosen
-      ? branchStep(services, item, agent, chosen.place)
-      : cloneDestinationStep(services, item, agent, nothingCloned(item));
+      ? branchStep(services, work, chosen.place)
+      : cloneDestinationStep(services, work, nothingCloned(item));
   };
 }
 
@@ -443,10 +375,10 @@ function worktreeCount(places: number): string {
  */
 function branchStep(
   services: FlowServices,
-  item: GitHubItem,
-  agent: AgentChoice,
+  work: Work,
   place: WorkspacePlaceWire,
 ): WizardStep {
+  const { item } = work;
   const root = place.path;
   return async (input) => {
     // A refusal here loses the *plan* and not the question: the three answers
@@ -495,18 +427,16 @@ function branchStep(
     if (answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined) {
       // Somewhere the same repository is checked out, so the same machine: git
       // answered from there and could not have named a folder anywhere else.
-      return finishStep(
+      return agentStep(
         services,
-        item,
-        agent,
+        work,
         { ...place, path: plan.checkedOutAt },
         undefined,
       );
     }
-    return finishStep(
+    return agentStep(
       services,
-      item,
-      agent,
+      work,
       place,
       answer.id === NEW_WORKTREE
         ? wip
@@ -581,10 +511,10 @@ function unreachableBranch(plan: AssignmentBranchWire): ReactNode {
  */
 function cloneDestinationStep(
   services: FlowServices,
-  item: GitHubItem,
-  agent: AgentChoice,
+  work: Work,
   reason: string,
 ): WizardStep {
+  const { item } = work;
   return async (input) => {
     // The folders this person already keeps projects in, and where they were
     // last told new ones go. The same rows the "Clone Project…" sheet offers,
@@ -648,10 +578,54 @@ function cloneDestinationStep(
     // place, so the location question is asked over that one place and a new
     // worktree — which is the same question everybody else gets, from the same
     // step, rather than a second arrangement of it.
-    return branchStep(services, item, agent, {
+    return branchStep(services, work, {
       kind: "local",
       path: directory,
     });
+  };
+}
+
+/**
+ * Which agent works on it, now that where is known: a new session of one of
+ * the profiles, or — where the folder is already there — one of the earlier
+ * sessions that ran in it, which goes on and is then told about the Issue.
+ *
+ * Asked last, and not first as it once was, because the earlier sessions are
+ * the folder's: a pull request whose branch is already checked out is where
+ * review comments are answered, and the session that wrote it is there. A
+ * worktree the flow is about to make has had no session yet, so it is asked
+ * with the New rows only.
+ */
+function agentStep(
+  services: FlowServices,
+  work: Work,
+  place: WorkspacePlaceWire,
+  branch: string | undefined,
+): WizardStep {
+  const { item } = work;
+  return async (input) => {
+    const agent = await input.sheet<AgentChoice>((controls) => (
+      <AgentProfilePicker
+        title={`Agent for ${itemLabel(item)}`}
+        question={
+          branch === undefined
+            ? `Which agent should work on ${itemLabel(item)}? Start a new session, or go on with an earlier one in ${folderName(place.path)}.`
+            : `Which agent should work on ${itemLabel(item)} in the new worktree for ${branch}?`
+        }
+        step={controls.step}
+        hint={
+          controls.failure === undefined ? (
+            "⌘Return opens the agent beside the editor; ⌥Return opens it as the other of TUI and GUI."
+          ) : (
+            <Wrong what={controls.failure} />
+          )
+        }
+        sessionsIn={branch === undefined ? place : undefined}
+        onChoose={controls.answer}
+        onCancel={controls.back}
+      />
+    ));
+    return finishStep(services, work, agent, place, branch);
   };
 }
 
@@ -667,12 +641,13 @@ function cloneDestinationStep(
  */
 function finishStep(
   services: FlowServices,
-  item: GitHubItem,
+  work: Work,
   agent: AgentChoice,
   place: WorkspacePlaceWire,
   branch: string | undefined,
   allowStaleBase = false,
 ): WizardStep {
+  const { item } = work;
   return async (input) => {
     try {
       await input.working(`Setting up ${itemLabel(item)}…`, () =>
@@ -681,15 +656,16 @@ function finishStep(
           place,
           branch,
           profileId: agent.profileId,
-          actionId: agent.actionId,
+          actionId: work.actionId,
           split: agent.split,
           presentation: agent.presentation,
+          ...(agent.resume === undefined ? {} : { resume: agent.resume }),
           allowStaleBase,
         }),
       );
     } catch (error: unknown) {
       if (toAppError(error).code !== "git_fetch_failed") throw error;
-      return staleBaseStep(services, item, agent, place, branch, error);
+      return staleBaseStep(services, work, agent, place, branch, error);
     }
     return undefined;
   };
@@ -698,7 +674,7 @@ function finishStep(
 /** The fetch failed: start from the copy on disk, or not at all. */
 function staleBaseStep(
   services: FlowServices,
-  item: GitHubItem,
+  work: Work,
   agent: AgentChoice,
   place: WorkspacePlaceWire,
   branch: string | undefined,
@@ -722,7 +698,7 @@ function staleBaseStep(
     // Escape is the other answer, and it is the runner's: back to the branch,
     // where a branch that already exists needs no fetch at all.
     return answer.id === USE_STALE_BASE
-      ? finishStep(services, item, agent, place, branch, true)
+      ? finishStep(services, work, agent, place, branch, true)
       : undefined;
   };
 }

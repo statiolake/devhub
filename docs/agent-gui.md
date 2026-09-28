@@ -26,7 +26,7 @@ three places, each overriding the one before:
   of the only default there was; that copy is read as absent, once.
 - **This launch, the other way.** In New Agent (the sidebar's sheet, and the
   Agent step of the workspace picker) and in Assign Issue's agent step, each
-  row says `GUI` or `TUI`. Holding ⌥
+  row — a new session or an earlier one — says `GUI` or `TUI`. Holding ⌥
   flips it, and ⌥Return launches the Agent the other way. ⌘Return (beside the
   editor) combines with it. A kind with no GUI does not flip.
 
@@ -979,10 +979,46 @@ records.
 
 ## Resuming an earlier session
 
-An earlier session is taken up in two ways: **Continue in terminal** and
-**Continue in GUI** (above) start a new Agent on the session the first one is
-in, and **`/resume`** inside a GUI Agent (below) has that Agent go on with
-another session. New Agent starts afresh only.
+An earlier session is taken up in three ways: **New Agent** (and Assign
+Issue's agent step) offers the folder's earlier sessions under its new ones
+(below), **Continue in terminal** and **Continue in GUI** (above) start a new
+Agent on the session the first one is in, and **`/resume`** inside a GUI
+Agent (below) has that Agent go on with another session.
+
+**The agent picker.** New Agent's rows are "New Claude Session", "New Codex
+Session", … — one per profile, in the settings' order — and under them the
+earlier sessions of each Claude or Codex profile that ran in the folder the
+Agent is for: "Claude Session: …", "Codex Session: …", newest first across
+profiles, each with its title (the precedence below), how long ago it last
+changed, and the git branch it was on when the CLI recorded one (Claude's
+`gitBranch`, Codex's `gitInfo.branch`). A session two profiles of one kind
+both list is offered once, under the first. Cursor and custom profiles keep no
+sessions DevHub can list, so they have their New row only.
+
+- **Which folder.** The Workspace's own: its root, on its machine. A sibling
+  worktree of the same repository is not included, because a session is its
+  checkout's work, on that checkout's branch, and Claude goes on with a
+  session only in the directory it ran in. Codex is asked with that `cwd`;
+  Claude's listing is that directory's `projects/` folder.
+- **Typing** narrows the rows by title (and by profile and branch), the New
+  rows too. The highlighted session is previewed beside the list, as
+  `/resume` previews it.
+- **Not waiting.** The New rows are drawn at once; the sessions are read on
+  the folder's machine after the sheet is up, and fill in as each profile's
+  listing answers, with a quiet "Earlier sessions — Reading…" row at the end
+  until they all have. A listing that fails says why in the sheet's note
+  (`sessions_unreadable`, or the profile's own refusal), and the New rows stay.
+- **Taking one.** Return starts a new Agent from that profile resuming the
+  session (a launch that resumes, below), ⌥Return in the other presentation,
+  ⌘Return beside the editor, exactly as a New row does.
+- **Assign Issue** asks which agent last, once it knows where the work
+  happens, so the same rows are offered for that folder: the root checkout,
+  or the checkout a pull request's branch is already in — where the session
+  that wrote it is, when review comments arrive. A worktree the flow is about
+  to make has had no session yet, so it offers the New rows only. A resumed
+  session is told about the Issue the way a new Agent is: the action's
+  template is queued for it (after the review sheet, when the action asks for
+  one) and sent when the resumed CLI is idle.
 
 A launch that resumes is an ordinary launch whose arguments end with the
 terminal mode's resume: `--resume <session id>` or `resume <thread id>`. They
@@ -1025,8 +1061,8 @@ is written to stdin), and the Agent SDK's `getSessionMessages()` /
 files on disk, not a control request. So DevHub reads the file too, on the
 Workspace's machine, where the CLI runs.
 
-`/resume`'s sheet lists the CLI's own sessions, read on the Workspace's
-machine:
+The agent picker and `/resume`'s sheet list the CLI's own sessions, read on
+the Workspace's machine:
 
 - **Codex**: `thread/list` on a short-lived `codex app-server`, filtered to
   the Workspace's directory (`cwd`), sorted by `updated_at`.

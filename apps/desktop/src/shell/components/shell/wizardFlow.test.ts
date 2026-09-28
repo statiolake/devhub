@@ -54,6 +54,9 @@ function scripted(script: readonly (string | typeof WIZARD_BACK)[]) {
         ? Promise.reject(WIZARD_BACK)
         : Promise.resolve(answer(reply));
     },
+    sheet: () => {
+      throw new Error("these flows ask with rows, never with a sheet");
+    },
     // Nothing in the runner's own tests is abandoned part-way, so the signal
     // handed over is one that never fires.
     working: (_message, task) => task(new AbortController().signal),
@@ -130,6 +133,55 @@ describe("the wizard runner", () => {
       { title: "url", failure: "Repository not found.", step: 1 },
     ]);
     expect(clone).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks a step's own sheet as a question like any other", async () => {
+    // A sheet the step draws itself is on the stack, counted, and re-asked
+    // with the reason when what follows it fails — exactly as a prompt is.
+    const seen: { step: number; failure: string | undefined }[] = [];
+    const presenter: WizardPresenter = {
+      prompt: () => Promise.resolve(answer("url")),
+      sheet: <T>(
+        draw: (controls: {
+          step: number;
+          failure: string | undefined;
+          answer: (value: T) => void;
+          back: () => void;
+        }) => unknown,
+        asking: { step: number; failure: string | undefined },
+      ) =>
+        new Promise<T>((resolve) => {
+          seen.push(asking);
+          draw({ ...asking, answer: resolve, back: () => undefined });
+        }),
+      working: (_message, task) => task(new AbortController().signal),
+    };
+    const launch = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(
+        new UserFacingFailure("The worktree is in the way."),
+      )
+      .mockResolvedValueOnce(undefined);
+    const agent: WizardStep = async (input) => {
+      const chosen = await input.sheet<string>((controls) => {
+        controls.answer("claude");
+        return null;
+      });
+      expect(chosen).toBe("claude");
+      await input.working("Starting…", launch);
+      return undefined;
+    };
+    const first: WizardStep = async (input) => {
+      await input.ask({ ...EMPTY, title: "url" });
+      return agent;
+    };
+
+    await runWizard(first, presenter);
+
+    expect(seen).toEqual([
+      { step: 2, failure: undefined },
+      { step: 2, failure: "The worktree is in the way." },
+    ]);
   });
 
   it("forgets the reason once the re-asked question is answered", async () => {

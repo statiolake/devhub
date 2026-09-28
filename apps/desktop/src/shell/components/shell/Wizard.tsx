@@ -8,7 +8,7 @@
  * a flow can be tested without a screen.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Picker } from "./Picker";
 import {
@@ -16,7 +16,10 @@ import {
   WIZARD_ABANDONED,
   WIZARD_BACK,
   type WizardAnswer,
+  type WizardAsking,
   type WizardPrompt,
+  type WizardSheet,
+  type WizardSheetControls,
   type WizardStep,
 } from "./wizardFlow";
 
@@ -29,15 +32,10 @@ export interface WizardProps {
 
 type Screen =
   | {
-      readonly kind: "prompt";
-      /** Which drawing this is: the picker's identity, so a new one remounts. */
+      readonly kind: "sheet";
+      /** Which drawing this is: the sheet's identity, so a new one remounts. */
       readonly drawing: number;
-      /** Which question this is, counting from one and counting back down. */
-      readonly step: number;
-      readonly prompt: WizardPrompt;
-      readonly failure: string | undefined;
-      readonly answer: (answer: WizardAnswer) => void;
-      readonly back: () => void;
+      readonly sheet: ReactNode;
     }
   | {
       readonly kind: "working";
@@ -64,22 +62,31 @@ export function Wizard({ start, onFinished }: WizardProps) {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void runWizard(start, {
-      prompt: (prompt, asking) =>
-        new Promise<WizardAnswer>((resolve, reject) => {
-          drawn.current += 1;
-          setScreen({
-            kind: "prompt",
-            drawing: drawn.current,
+    // Every question is a sheet: a prompt is the sheet that draws its rows,
+    // so both are asked, answered and left the same way.
+    const sheet = <T,>(draw: WizardSheet<T>, asking: WizardAsking) =>
+      new Promise<T>((resolve, reject) => {
+        drawn.current += 1;
+        setScreen({
+          kind: "sheet",
+          drawing: drawn.current,
+          sheet: draw({
             step: asking.step,
-            prompt,
             failure: asking.failure,
             answer: resolve,
             back: () => {
               reject(WIZARD_BACK);
             },
-          });
-        }),
+          }),
+        });
+      });
+    void runWizard(start, {
+      prompt: (prompt, asking) =>
+        sheet<WizardAnswer>(
+          (controls) => <PromptSheet prompt={prompt} controls={controls} />,
+          asking,
+        ),
+      sheet,
       // A slow step is still a question the person is inside, so Escape has to
       // mean here what it means everywhere else in the wizard: one step back.
       // It did not — the working panel had no key handling at all — so a lookup
@@ -146,34 +153,44 @@ export function Wizard({ start, onFinished }: WizardProps) {
     );
   }
 
+  // A new question is a new sheet: the remount is what clears what was typed
+  // into the last one, and what puts the caret after a starting value the new
+  // step supplied.
+  return <Fragment key={screen.drawing}>{screen.sheet}</Fragment>;
+}
+
+/** A prompt's rows, as the picker draws them. */
+function PromptSheet({
+  prompt,
+  controls,
+}: {
+  readonly prompt: WizardPrompt;
+  readonly controls: WizardSheetControls<WizardAnswer>;
+}) {
   return (
     <Picker
-      // A new question is a new field: the remount is what clears what was
-      // typed into the last one, and what puts the caret after a starting
-      // value the new step supplied.
-      key={screen.drawing}
-      title={screen.prompt.title}
-      question={screen.prompt.question}
-      step={screen.step}
-      placeholder={screen.prompt.placeholder}
-      initialQuery={screen.prompt.initialQuery}
-      items={screen.prompt.items}
-      pinned={screen.prompt.pinned}
-      busy={screen.prompt.busy}
-      emptyNoMatch={screen.prompt.emptyNoMatch}
-      emptyNoItems={screen.prompt.emptyNoItems}
+      title={prompt.title}
+      question={prompt.question}
+      step={controls.step}
+      placeholder={prompt.placeholder}
+      initialQuery={prompt.initialQuery}
+      items={prompt.items}
+      pinned={prompt.pinned}
+      busy={prompt.busy}
+      emptyNoMatch={prompt.emptyNoMatch}
+      emptyNoItems={prompt.emptyNoItems}
       note={
-        screen.failure ? (
-          <span className="picker-note-failure">{screen.failure}</span>
+        controls.failure ? (
+          <span className="picker-note-failure">{controls.failure}</span>
         ) : (
-          screen.prompt.note
+          prompt.note
         )
       }
-      onChoose={screen.answer}
+      onChoose={controls.answer}
       // Escape is one step back, wherever it is pressed. On the first question
       // there is nothing behind it, so the flow ends — which is what Escape
       // does in every other sheet DevHub has.
-      onCancel={screen.back}
+      onCancel={controls.back}
     />
   );
 }

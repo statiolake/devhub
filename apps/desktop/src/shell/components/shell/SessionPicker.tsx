@@ -13,14 +13,19 @@
  * in the note, a preview that could not be read in the preview's place.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   PastSessionWire,
   SessionPreviewLineWire,
   SessionScopeWire,
 } from "../../../ipc/contract";
-import { toAppError } from "../../failure";
 import { Picker, type PickerItem } from "./Picker";
+import {
+  said,
+  sessionDetail,
+  SessionPreview,
+  useSessionPreview,
+} from "./sessionRows";
 
 /** Where the sheet reads what it lists, bound to the Workspace or the Agent it asks for. */
 export interface SessionSource {
@@ -44,21 +49,6 @@ export interface SessionPickerProps {
 }
 
 const NO_SESSIONS: readonly PastSessionWire[] = [];
-
-/** How long the pointer or the arrows rest on a row before its preview is read. */
-const PREVIEW_DELAY_MS = 150;
-
-function said(error: unknown): string {
-  const failure = toAppError(error);
-  return failure.detail === undefined
-    ? failure.summary
-    : `${failure.summary} ${failure.detail}`;
-}
-
-type Preview =
-  | { readonly kind: "reading" }
-  | { readonly kind: "read"; readonly lines: readonly SessionPreviewLineWire[] }
-  | { readonly kind: "failed"; readonly reason: string };
 
 export function SessionPicker({
   title,
@@ -98,17 +88,16 @@ export function SessionPicker({
   const items: readonly PickerItem[] = useMemo(
     () =>
       sessions.map((session) => {
-        const when =
-          session.updatedAt === undefined
-            ? undefined
-            : new Date(session.updatedAt).toLocaleString();
-        const where = scope === "everywhere" ? session.cwd : undefined;
-        const detail = [when, where].filter(Boolean).join(" · ");
+        const detail = sessionDetail(
+          session,
+          Date.now(),
+          scope === "everywhere",
+        );
         return {
           id: session.id,
           label: session.title,
-          ...(detail === "" ? {} : { detail }),
-          searchText: `${session.title} ${session.cwd ?? ""}`,
+          ...(detail === undefined ? {} : { detail }),
+          searchText: `${session.title} ${session.branch ?? ""} ${session.cwd ?? ""}`,
           ...(session.resumableHere
             ? {}
             : {
@@ -119,62 +108,22 @@ export function SessionPicker({
     [sessions, scope, cli],
   );
 
-  // The preview of the row the person is on: read after they rest on it,
-  // once per session for as long as the sheet stands.
-  const previews = useRef(new Map<string, Preview>());
-  const [shown, setShown] = useState<{
-    readonly id: string;
-    readonly preview: Preview;
-  }>();
+  // The preview of the row the person is on.
   const [activeId, setActiveId] = useState<string>();
   const onActiveChange = useCallback((item: PickerItem | undefined) => {
     setActiveId(item?.id);
   }, []);
-  useEffect(() => {
-    const session = activeId === undefined ? undefined : byId.get(activeId);
-    if (session === undefined) {
-      setShown(undefined);
-      return;
-    }
-    const known = previews.current.get(session.id);
-    if (known !== undefined) {
-      setShown({ id: session.id, preview: known });
-      return;
-    }
-    setShown({ id: session.id, preview: { kind: "reading" } });
-    const cwd = session.cwd;
-    if (cwd === undefined) {
-      const failed: Preview = {
-        kind: "failed",
-        reason: `${cli} does not say where this session ran, so it cannot be previewed.`,
-      };
-      previews.current.set(session.id, failed);
-      setShown({ id: session.id, preview: failed });
-      return;
-    }
-    let live = true;
-    const timer = window.setTimeout(() => {
-      source.preview(session.id, cwd).then(
-        (lines) => {
-          const read: Preview = { kind: "read", lines };
-          previews.current.set(session.id, read);
-          if (live) setShown({ id: session.id, preview: read });
+  const active = activeId === undefined ? undefined : byId.get(activeId);
+  const preview = useSessionPreview(
+    active === undefined
+      ? undefined
+      : {
+          key: active.id,
+          cli,
+          cwd: active.cwd,
+          read: (cwd) => source.preview(active.id, cwd),
         },
-        (error: unknown) => {
-          // Not kept: a preview that failed is tried again when the row is.
-          if (live)
-            setShown({
-              id: session.id,
-              preview: { kind: "failed", reason: said(error) },
-            });
-        },
-      );
-    }, PREVIEW_DELAY_MS);
-    return () => {
-      live = false;
-      window.clearTimeout(timer);
-    };
-  }, [activeId, byId, source, cli]);
+  );
 
   const refusal = listed?.refusal;
   return (
@@ -210,9 +159,7 @@ export function SessionPicker({
         </div>
       }
       onActiveChange={onActiveChange}
-      aside={
-        <SessionPreview preview={shown?.preview} empty={items.length === 0} />
-      }
+      aside={<SessionPreview preview={preview} empty={items.length === 0} />}
       note={
         refusal === undefined ? undefined : (
           <span className="picker-note-failure">{refusal}</span>
@@ -230,49 +177,4 @@ export function SessionPicker({
       onCancel={onCancel}
     />
   );
-}
-
-function SessionPreview({
-  preview,
-  empty,
-}: {
-  readonly preview: Preview | undefined;
-  readonly empty: boolean;
-}) {
-  if (preview === undefined) {
-    return empty ? null : (
-      <p className="session-preview-empty mac-caption">
-        Point at a session to see how it ended.
-      </p>
-    );
-  }
-  switch (preview.kind) {
-    case "reading":
-      return (
-        <span className="mac-spinner" role="status" aria-label="Reading" />
-      );
-    case "failed":
-      return (
-        <p className="picker-note-failure" role="alert">
-          {preview.reason}
-        </p>
-      );
-    case "read":
-      return preview.lines.length === 0 ? (
-        <p className="session-preview-empty mac-caption">
-          Nothing was said in this session&apos;s last part.
-        </p>
-      ) : (
-        <ol className="session-preview" aria-label="How the session ended">
-          {preview.lines.map((line, index) => (
-            <li key={index} className={`session-preview-${line.role}`}>
-              <span className="session-preview-who mac-caption">
-                {line.role === "person" ? "You" : "Agent"}
-              </span>
-              <span className="session-preview-text">{line.text}</span>
-            </li>
-          ))}
-        </ol>
-      );
-  }
 }

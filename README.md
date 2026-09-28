@@ -242,7 +242,9 @@ kind = "claude"             # codex | claude | cursor | custom
 presentation = "gui"        # optional override of [agents] default_presentation
                             # (gui for claude and codex only). Unset, the default.
                             # ⌥Return in New Agent, or in Assign Issue, opens one the
-                            # other way.
+                            # other way. Both list "New Claude Session" first, then
+                            # the earlier Claude and Codex sessions that ran in the
+                            # folder, to go on with (--resume / thread resume).
                             # A GUI Agent runs its CLI in structured mode (`claude -p`
                             # stream-json, `codex app-server`) under a small host in its
                             # tmux session, so it outlives a DevHub restart like a TUI one.

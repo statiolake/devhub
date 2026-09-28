@@ -110,6 +110,22 @@ export function agentProfileId(raw: string): AgentProfileId {
 }
 
 /**
+ * An earlier session of an Agent's CLI, by the id the CLI gave it — Claude's
+ * session id, Codex's thread id — to be resumed. It goes onto a command line
+ * as one argument of its own, so one that could read as an option or carry a
+ * NUL is refused here.
+ */
+export function sessionId(raw: unknown): string {
+  if (
+    typeof raw !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(raw)
+  ) {
+    throw invalid(DomainErrorCode.InvalidId);
+  }
+  return raw;
+}
+
+/**
  * Lexical normalisation, exactly as the Rust did it: `.` drops out, `..` pops,
  * and a `..` that would escape the root is rejected rather than clamped.
  */

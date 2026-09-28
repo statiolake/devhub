@@ -397,10 +397,14 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   if (asking === "agent")
     return (
       <AgentProfilePicker
+        title="New Agent"
         question="Which agent profile should start in the workspace being opened?"
         step={2}
         hint="The agent starts at the workspace root, once it is open. ⌥Return opens it as the other of TUI and GUI."
-        onChoose={(profileId, _split, presentation) => {
+        // The Agent starts with the Workspace this opens, and that opening
+        // starts one afresh: only the New rows.
+        sessionsIn={undefined}
+        onChoose={({ profileId, presentation }) => {
           if (chosen === undefined) {
             // This question is only ever asked with a row behind it. Standing
             // here without one means the two states disagree, and going on

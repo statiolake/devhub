@@ -39,6 +39,8 @@ import type {
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
+  PastSessionWire,
+  SessionPreviewLineWire,
   SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
@@ -133,6 +135,21 @@ export interface PickerValue {
     place: WorkspacePlaceWire,
   ) => Promise<readonly string[]>;
   readonly assignIssue: (request: IssueAssignment) => Promise<AppOutcome>;
+  /**
+   * The earlier sessions of a profile's CLI that ran in `place`, newest
+   * first. Throws the reason they cannot be listed.
+   */
+  readonly listAgentSessions: (
+    place: WorkspacePlaceWire,
+    profileId: string,
+  ) => Promise<readonly PastSessionWire[]>;
+  /** The last exchanges of one of them. Throws the reason it cannot read them. */
+  readonly previewAgentSession: (
+    place: WorkspacePlaceWire,
+    profileId: string,
+    session: string,
+    cwd: string,
+  ) => Promise<readonly SessionPreviewLineWire[]>;
 
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
@@ -326,6 +343,10 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       listBranches: (place) => bridge.listBranches(place),
       assignIssue: async (request) =>
         applyOpening(await bridge.assignIssue(request)),
+      listAgentSessions: (place, profileId) =>
+        bridge.listAgentSessions(place, profileId),
+      previewAgentSession: (place, profileId, session, cwd) =>
+        bridge.previewAgentSession(place, profileId, session, cwd),
 
       agentActions: () => bridge.agentActions(),
       runAgentAction: async (agentId, actionId) => {

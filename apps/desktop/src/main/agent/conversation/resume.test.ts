@@ -317,6 +317,8 @@ describe("listing a Workspace's sessions", () => {
 				title: "List and read the source files",
 				updatedAt: Date.parse("2026-09-20T10:03:01.000Z"),
 				cwd: "/home/testuser/project",
+				// The branch its last line was on.
+				branch: "main",
 				resumableHere: true,
 			},
 		]);
@@ -450,7 +452,7 @@ while IFS= read -r line; do
 	printf '%s\\n' "$line" >>"${requests}"
 	case $line in
 	*'"initialize"'*) printf '%s\\n' '{"id":1,"result":{"userAgent":"fake"}}' ;;
-	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id": 2, "result": {"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20,"cwd":"/work/project"},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10,"cwd":"/work/elsewhere"}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
+	*'"thread/list"'*) { sleep 0.3; printf '%s\\n' '{"method":"note","params":{}}' '{"id": 2, "result": {"data":[{"id":"t-new","preview":"Fix it","name":"Named","updatedAt":20,"cwd":"/work/project","gitInfo":{"sha":null,"branch":"feature/128-wip","originUrl":null}},{"id":"t-old","preview":"First\\nmessage","name":null,"updatedAt":10,"cwd":"/work/elsewhere"}],"nextCursor":null,"backwardsCursor":null}}'; } & pending=$! ;;
 	esac
 done
 [ -z "$pending" ] || kill "$pending" 2>/dev/null
@@ -468,6 +470,7 @@ done
 				title: "Named",
 				updatedAt: 20_000,
 				cwd: "/work/project",
+				branch: "feature/128-wip",
 				resumableHere: true,
 			},
 			{

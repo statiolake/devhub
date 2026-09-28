@@ -1,8 +1,8 @@
 /**
  * A question that takes more than one answer.
  *
- * Assigning an Issue asks five things — the URL, the agent, which clone, one
- * workspace or a worktree, which branch — and each answer decides what the next
+ * Assigning an Issue asks four things — the URL, which clone, which branch
+ * (the root checkout or a worktree), which agent — and each answer decides what the next
  * question is. Written as five sheets that open each other, the going-back is
  * what falls apart: Escape on the third would have to know that the second was
  * a picker of clones and not the agent list, and every new step would have to
@@ -81,12 +81,34 @@ export interface WizardAnswer {
   readonly query: string;
 }
 
+/**
+ * What the runner hands a sheet a step draws itself: which question it is,
+ * why its last attempt failed, and the two ways out of it.
+ */
+export interface WizardSheetControls<T> {
+  readonly step: number;
+  readonly failure: string | undefined;
+  readonly answer: (value: T) => void;
+  /** Escape: the question before this one. */
+  readonly back: () => void;
+}
+
+/** A question whose sheet is more than a list of rows known when it is asked. */
+export type WizardSheet<T> = (controls: WizardSheetControls<T>) => ReactNode;
+
 export interface WizardInput {
   /**
    * Ask, and answer with the row taken. Rejects with `WIZARD_BACK` when the
    * person escapes, which the runner reads and nothing else has to.
    */
   ask(prompt: WizardPrompt): Promise<WizardAnswer>;
+  /**
+   * Ask with a sheet of the step's own — one whose rows arrive while it is up,
+   * or that previews the row the person is on — and answer with what it
+   * answers. The same question to the runner as `ask`: on the stack, counted,
+   * re-asked with the reason when what follows it fails, and left by Escape.
+   */
+  sheet<T>(draw: WizardSheet<T>): Promise<T>;
   /**
    * Do something slow with the person watching — a clone, a worktree, a
    * search. The message is what is being done, in the present tense.
@@ -130,6 +152,7 @@ export interface WizardAsking {
 /** What the runner needs from whoever is drawing. */
 export interface WizardPresenter {
   prompt(prompt: WizardPrompt, asking: WizardAsking): Promise<WizardAnswer>;
+  sheet<T>(draw: WizardSheet<T>, asking: WizardAsking): Promise<T>;
   working<T>(
     message: string,
     task: (signal: AbortSignal) => Promise<T>,
@@ -156,22 +179,23 @@ export async function runWizard(
     // trying to leave. So it is taken off the stack once it is done, and going
     // back reaches the last question that was really asked.
     let asked = false;
+    const question = async <T>(
+      present: (asking: WizardAsking) => Promise<T>,
+    ): Promise<T> => {
+      asked = true;
+      // The step is already on the stack, so its depth is the stack's — and
+      // a step that asks twice over (a URL that did not parse) is still the
+      // same question, at the same depth, which is what the person sees.
+      const answer = await present({ failure, step: walked.length });
+      // The reason belongs to the attempt that failed. Once the person has
+      // answered the re-asked question it is history, and carrying it into
+      // the next step would report a failure that step never had.
+      failure = undefined;
+      return answer;
+    };
     const input: WizardInput = {
-      ask: async (prompt) => {
-        asked = true;
-        // The step is already on the stack, so its depth is the stack's — and
-        // a step that asks twice over (a URL that did not parse) is still the
-        // same question, at the same depth, which is what the person sees.
-        const answer = await presenter.prompt(prompt, {
-          failure,
-          step: walked.length,
-        });
-        // The reason belongs to the attempt that failed. Once the person has
-        // answered the re-asked question it is history, and carrying it into
-        // the next step would report a failure that step never had.
-        failure = undefined;
-        return answer;
-      },
+      ask: (prompt) => question((asking) => presenter.prompt(prompt, asking)),
+      sheet: (draw) => question((asking) => presenter.sheet(draw, asking)),
       working: (message, task) => presenter.working(message, task),
     };
     walked.push(step);

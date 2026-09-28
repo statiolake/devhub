@@ -58,6 +58,8 @@ export interface PastSession {
 	readonly updatedAt: number | undefined;
 	/** The directory it ran in, if the CLI says. */
 	readonly cwd: string | undefined;
+	/** The git branch it was last on, if the CLI recorded one. */
+	readonly branch: string | undefined;
 	/**
 	 * Whether an Agent in the Workspace listed for can go on with it. Claude
 	 * resumes a session only in the directory it ran in (its file is kept
@@ -675,7 +677,8 @@ async function claudeProjectDirectory(
  * The newest session files in `$1` — down to depth `$2`: 1 for one project's
  * directory, 2 for every project's under `projects/` — each as a record
  * separator and its id, the directory its file is in (`.` at depth 1), then
- * its last timestamp, the directory it ran in, its last `custom-title` line
+ * its last timestamp, the directory it ran in, the git branch it was last on
+ * (the last `gitBranch`), its last `custom-title` line
  * (the name a person gave it with `/rename` or `--name`), its last `ai-title`
  * line, and how many candidate first messages follow (the
  * first few `user` lines that are not a tool result or a meta message, each
@@ -704,7 +707,8 @@ find . -mindepth "$2" -maxdepth "$2" -name '*.jsonl' -type f -exec sh -c 'stat -
 c < 5 && /"type":"user"/ && !/"tool_use_id"/ && !/"isMeta":true/ && !/"isSidechain":true/ && length($0) < 16384 { first[c++] = $0 }
 match($0, /"timestamp":"[^"]*"/) { stamp = substr($0, RSTART + 13, RLENGTH - 14) }
 cwd == "" && match($0, /"cwd":"([^"\\\\]|\\\\.)*"/) { cwd = substr($0, RSTART, RLENGTH) }
-END { print stamp; print cwd; print named; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
+match($0, /"gitBranch":"([^"\\\\]|\\\\.)*"/) { branch = substr($0, RSTART, RLENGTH) }
+END { print stamp; print cwd; print branch; print named; print title; print c + 0; for (i = 0; i < c; i++) print first[i] }
 ' "$f" || exit 72
 	done
 }
@@ -774,6 +778,7 @@ export function parseClaudeListing(
 			folder,
 			stamp,
 			cwdField,
+			branchField,
 			namedLine,
 			generatedLine,
 			count,
@@ -801,11 +806,16 @@ export function parseClaudeListing(
 			: resumableHere
 				? cwd
 				: undefined;
+		const branch = branchField
+			? (JSON.parse(`{${branchField}}`) as { gitBranch: string }).gitBranch
+			: "";
 		sessions.push({
 			id,
 			title: oneLine(title),
 			updatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
 			cwd: ran,
+			// Claude records an empty branch where there is no repository.
+			branch: branch === "" ? undefined : branch,
 			resumableHere,
 		});
 	}
@@ -1245,11 +1255,13 @@ export function parseCodexListing(
 			);
 		}
 		if (message.kind === "response" && message.id === 2) {
+			const branches = threadBranches(reader, message.result);
 			return threadListResponse(reader, message.result).map((thread) => ({
 				id: thread.id,
 				title: oneLine(thread.name ?? thread.preview),
 				updatedAt: thread.updatedAt * 1000,
 				cwd: thread.cwd,
+				branch: branches.get(thread.id),
 				resumableHere: true,
 			}));
 		}
@@ -1258,4 +1270,28 @@ export function parseCodexListing(
 	throw new SessionsUnreadable(
 		`codex app-server ended without listing its threads${said ? `: ${said}` : "."}`,
 	);
+}
+
+/**
+ * The branch each listed thread was on, by id: `gitInfo.branch`, which Codex
+ * leaves null (or the whole `gitInfo`) outside a repository.
+ */
+function threadBranches(
+	reader: Reader,
+	result: unknown,
+): ReadonlyMap<string, string> {
+	const branches = new Map<string, string>();
+	const listed = reader.fields(result, "result");
+	reader.array(listed, "data", "result", (each, at) => {
+		const thread = reader.fields(each, at);
+		const git = thread["gitInfo"];
+		if (git === undefined || git === null) return;
+		const branch = reader.nullableString(
+			reader.fields(git, `${at}.gitInfo`),
+			"branch",
+			`${at}.gitInfo`,
+		);
+		if (branch !== null) branches.set(reader.string(thread, "id", at), branch);
+	});
+	return branches;
 }

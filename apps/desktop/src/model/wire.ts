@@ -10,6 +10,7 @@
 import {
   agentId as parseAgentId,
   agentProfileId as parseAgentProfileId,
+  sessionId as parseSessionId,
   workspaceId as parseWorkspaceId,
   DomainError,
   DomainErrorCode,
@@ -1079,11 +1080,15 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       // Absent is the profile's own default, the way an absent `split` is
       // the plain arrangement.
       const requested = wire.presentation;
+      const resume = wire.resume;
       return {
         type: "create_agent",
         workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
         profileId: tryParse(() => parseAgentProfileId(wire.profileId)),
         presentation: presentationFrom(wire.split),
+        ...(resume === undefined
+          ? {}
+          : { resume: tryParse(() => parseSessionId(resume)) }),
         ...(requested === undefined
           ? {}
           : {
