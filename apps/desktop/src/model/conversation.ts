@@ -127,7 +127,20 @@ export type TranscriptEntry =
   | CompactionEntry
   | TurnEndEntry;
 
-export type UserOrigin = "person" | "injection" | "other";
+/**
+ * Whom DevHub wrote a user message for: the person (at the composer), a
+ * template (an injection), or the person again, by DevHub on their behalf,
+ * once a usage limit that stopped the Agent had reset (`after-limit`, see
+ * `LimitResume`). Written into the line itself, so a replay says the same.
+ */
+export const SENT_ORIGINS = ["person", "injection", "after-limit"] as const;
+export type SentOrigin = (typeof SENT_ORIGINS)[number];
+
+export function isSentOrigin(value: unknown): value is SentOrigin {
+  return (SENT_ORIGINS as readonly unknown[]).includes(value);
+}
+
+export type UserOrigin = SentOrigin | "other";
 
 export interface UserEntry {
   readonly kind: "user";
@@ -137,7 +150,8 @@ export interface UserEntry {
   readonly images: readonly ImageRef[];
   /**
    * Who made the Agent say it: the person (at the composer, or at the CLI's
-   * terminal in a session read back), a template injection, or `other` —
+   * terminal in a session read back), a template injection, DevHub for the
+   * person once a usage limit reset (`after-limit`), or `other` —
    * something that reached the Agent as a user message DevHub did not send
    * (the CLI or its harness passing on another session's message, a
    * subagent's report, a plugin's prompt). The adapter says, from what DevHub
@@ -396,6 +410,40 @@ export interface TurnEndEntry {
   readonly detail: string | undefined;
   readonly usage: Usage | undefined;
   readonly durationMs: number | undefined;
+  /**
+   * The turn ended because a usage or rate limit of the CLI's plan stopped
+   * it, by the CLI's own documented signals (the adapter says which). Set
+   * only on a turn that did not complete.
+   */
+  readonly limit: LimitStop | undefined;
+}
+
+/** What stopped a turn at a usage limit. */
+export interface LimitStop {
+  /**
+   * When the window that stopped it resets, in epoch ms, as the CLI reported
+   * it; undefined while it has not said. An adapter fills it in on the same
+   * entry when the CLI says it after the turn ended.
+   */
+  readonly resetsAt: number | undefined;
+}
+
+/**
+ * The reset of the window a usage limit stopped the CLI at, from the windows
+ * it reports: one that is used up (100%). With more than one, the latest
+ * reset, since the CLI cannot go on before every one of them has reset.
+ */
+export function usedUpReset(
+  windows: readonly RateLimit[] | undefined,
+): number | undefined {
+  let latest: number | undefined;
+  for (const window of windows ?? []) {
+    if ((window.usedPercent ?? 0) < 100 || window.resetsAt === undefined)
+      continue;
+    if (latest === undefined || window.resetsAt > latest)
+      latest = window.resetsAt;
+  }
+  return latest;
 }
 
 export type TurnOutcome = "completed" | "interrupted" | "failed";
@@ -854,6 +902,33 @@ export interface Transcript {
   readonly mcp: McpState;
   /** The MCP sign-in running or run last (DevHub's). */
   readonly mcpSignIn: McpSignIn | undefined;
+  /**
+   * What DevHub will do about the usage limit the last turn stopped at, while
+   * that turn's end is the last thing in the conversation (`limitStop`).
+   * DevHub's own, like `pending`.
+   */
+  readonly limitResume: LimitResume | undefined;
+}
+
+/**
+ * DevHub going on with a conversation a usage limit stopped, once the limit
+ * has reset: by writing a fixed message (`[agents]
+ * resume_after_limit_message`) for the person, at `at`. `unscheduled` is a
+ * limit whose reset the CLI did not say, so nothing is written; `failed` is a
+ * write that did not happen, and why. Each is one quiet line at the end of
+ * the conversation.
+ */
+export type LimitResume =
+  | { readonly kind: "scheduled"; readonly at: number }
+  | { readonly kind: "unscheduled"; readonly reason: string }
+  | { readonly kind: "failed"; readonly failure: string };
+
+/** What a GUI Agent is told, for the person, once a usage limit it stopped at has reset. */
+export const DEFAULT_RESUME_MESSAGE = "続けて";
+
+/** Whether `text` cannot be the message written after a usage limit: empty, or with a null character. */
+export function resumeMessageProblem(text: string): boolean {
+  return text.trim().length === 0 || text.includes("\0");
 }
 
 export interface SendingMessage {
@@ -861,7 +936,7 @@ export interface SendingMessage {
   readonly id: string;
   readonly text: string;
   readonly images: readonly ImageRef[];
-  readonly origin: "person" | "injection";
+  readonly origin: SentOrigin;
 }
 
 export type PendingId = Brand<string, "PendingId">;
@@ -921,6 +996,8 @@ export type ConversationEvent =
   | { readonly type: "mcp"; readonly mcp: McpState }
   /** Replaces the MCP sign-in whole. DevHub's own, not an adapter's. */
   | { readonly type: "mcp-sign-in"; readonly signIn: McpSignIn | undefined }
+  /** Replaces what DevHub will do about a usage limit whole. DevHub's own. */
+  | { readonly type: "limit-resume"; readonly resume: LimitResume | undefined }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -979,6 +1056,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   backgroundTasks: [],
   mcp: NO_MCP,
   mcpSignIn: undefined,
+  limitResume: undefined,
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -1031,6 +1109,8 @@ export function applyEvent(
       return { ...transcript, mcp: event.mcp };
     case "mcp-sign-in":
       return { ...transcript, mcpSignIn: event.signIn };
+    case "limit-resume":
+      return { ...transcript, limitResume: event.resume };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {
@@ -1358,6 +1438,34 @@ export function childrenOf(
   return transcript.entries.filter((entry) => parentOf(entry) === parent);
 }
 
+/**
+ * The usage limit the conversation stands stopped at, if it does: its last
+ * top-level entry is the end of a turn a limit stopped (`TurnEndEntry.limit`),
+ * and nothing has happened since — no turn running, nothing written and not
+ * taken, nothing held, no question open. Anything that moves the
+ * conversation on — the person's words, a turn the Agent starts, a restart,
+ * a rewind, another session — ends it, which is the one rule that ends a
+ * `LimitResume`.
+ */
+export function limitStop(
+  transcript: Transcript,
+):
+  | { readonly entry: EntryId; readonly resetsAt: number | undefined }
+  | undefined {
+  const { state, requests, pending, sending, entries } = transcript;
+  if (state.phase !== "ready" || state.turn !== "none") return undefined;
+  if (requests.length > 0 || pending.length > 0 || sending.length > 0)
+    return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (parentOf(entry) !== null) continue;
+    return entry.kind === "turn-end" && entry.limit !== undefined
+      ? { entry: entry.id, resetsAt: entry.limit.resetsAt }
+      : undefined;
+  }
+  return undefined;
+}
+
 /** Whether the most recent turn ended in failure. False before any turn has ended. */
 export function lastTurnFailed(transcript: Transcript): boolean {
   for (let index = transcript.entries.length - 1; index >= 0; index -= 1) {
@@ -1457,7 +1565,8 @@ export type RewindOutcome = "rewound" | "refused";
 
 /**
  * The messages the conversation can be rewound to before now: the person's
- * top-level messages the CLI can cut before, when the session can take turns
+ * top-level messages, those DevHub sent for them after a usage limit
+ * included, that the CLI can cut before, when the session can take turns
  * back, nothing is running or waiting, and DevHub holds no message of the
  * person's. Rewinding drops the message and everything after it.
  */
@@ -1470,7 +1579,7 @@ export function rewindTargets(transcript: Transcript): ReadonlySet<EntryId> {
     entries.flatMap((entry) =>
       entry.kind === "user" &&
       entry.parent === null &&
-      entry.origin === "person" &&
+      (entry.origin === "person" || entry.origin === "after-limit") &&
       entry.rewindable
         ? [entry.id]
         : [],

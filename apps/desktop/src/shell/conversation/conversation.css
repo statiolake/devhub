@@ -1573,6 +1573,28 @@
   font-size: 1em;
 }
 
+/* What DevHub will do about the usage limit the conversation stopped at
+   (`LimitResumeView`): a notice line like the others, with its one button
+   after the words. */
+.conversation-entry[data-kind="limit-resume"] > .conversation-notice {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.conversation-notice-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--secondary);
+  font: inherit;
+  text-decoration: underline;
+}
+
+.conversation-notice-action:hover {
+  color: var(--primary);
+}
+
 /* A turn that did not complete: its outcome on a rule, and why under it. A
    completed turn draws nothing (`EntryView.tsx`). */
 .conversation-turn-end {

@@ -3376,3 +3376,131 @@ describe("the MCP servers", () => {
 		expect(harness.transcript.mcp.failure).toBeUndefined();
 	});
 });
+
+describe("a turn the plan's usage limit stopped", () => {
+	const RESETS = 1_790_003_600;
+	/** A turn started by "go": its answer, its start and the message, as app-server gives them. */
+	function started(): Harness {
+		const harness = ready();
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
+		for (const line of fixture("turn.handwritten.ndjson").slice(0, 4))
+			harness.receive(line);
+		return harness;
+	}
+	const limits = (usedPercent: number) => ({
+		method: "account/rateLimits/updated",
+		params: {
+			rateLimits: {
+				limitId: "codex",
+				limitName: null,
+				normalModelSlug: null,
+				primary: { usedPercent, windowDurationMins: 300, resetsAt: RESETS },
+				secondary: {
+					usedPercent: 20,
+					windowDurationMins: 10080,
+					resetsAt: RESETS + 99,
+				},
+				credits: null,
+				individualLimit: null,
+				spendControlReached: null,
+				planType: null,
+				rateLimitReachedType: usedPercent >= 100 ? "rate_limit_reached" : null,
+			},
+		},
+	});
+	const failed = (codexErrorInfo: unknown) => ({
+		method: "turn/completed",
+		params: {
+			threadId: MAIN,
+			turn: {
+				id: "turn-1",
+				items: [],
+				itemsView: "notLoaded",
+				status: "failed",
+				error: {
+					message: "You've hit your usage limit.",
+					codexErrorInfo,
+					additionalDetails: null,
+				},
+				startedAt: null,
+				completedAt: null,
+				durationMs: null,
+			},
+		},
+	});
+	const lastEnd = (harness: Harness) =>
+		harness.transcript.entries.findLast((each) => each.kind === "turn-end");
+
+	it("ends with the limit, reset when the used-up window resets", () => {
+		const harness = started();
+		harness.receive(limits(100));
+		harness.receive(failed("usageLimitExceeded"));
+		expect(lastEnd(harness)).toMatchObject({
+			outcome: "failed",
+			limit: { resetsAt: RESETS * 1000 },
+		});
+	});
+
+	it("learns the reset from the rate limits Codex reports after the turn", () => {
+		const harness = started();
+		harness.receive(limits(60));
+		harness.receive(failed("usageLimitExceeded"));
+		expect(lastEnd(harness)).toMatchObject({ limit: { resetsAt: undefined } });
+		harness.receive(limits(100));
+		expect(lastEnd(harness)).toMatchObject({
+			limit: { resetsAt: RESETS * 1000 },
+		});
+	});
+
+	it("is not a turn that failed for another reason", () => {
+		for (const info of [
+			null,
+			"serverOverloaded",
+			{ httpConnectionFailed: { httpStatusCode: 429 } },
+		]) {
+			const harness = started();
+			harness.receive(limits(100));
+			harness.receive(failed(info));
+			expect(lastEnd(harness), JSON.stringify(info)).toMatchObject({
+				limit: undefined,
+			});
+		}
+	});
+
+	it("goes on with a message sent for the person, which says so", () => {
+		const harness = started();
+		harness.receive(limits(100));
+		harness.receive(failed("usageLimitExceeded"));
+		harness.command({
+			kind: "send",
+			text: "続けて",
+			images: [],
+			origin: "after-limit",
+		});
+		const clientUserMessageId = (
+			harness.lastWrite() as { params: { clientUserMessageId: string } }
+		).params.clientUserMessageId;
+		expect(clientUserMessageId).toMatch(/^devhub-after-limit-\d+$/);
+		expect(harness.transcript.sending).toMatchObject([
+			{ text: "続けて", origin: "after-limit" },
+		]);
+		harness.receive({
+			method: "item/completed",
+			params: {
+				item: {
+					type: "userMessage",
+					id: "item-resume",
+					clientId: clientUserMessageId,
+					content: [{ type: "text", text: "続けて", text_elements: [] }],
+				},
+				threadId: MAIN,
+				turnId: "turn-2",
+				completedAtMs: 1790000000000,
+			},
+		});
+		expect(harness.entry(`${MAIN}/item-resume`)).toMatchObject({
+			kind: "user",
+			origin: "after-limit",
+		});
+	});
+});

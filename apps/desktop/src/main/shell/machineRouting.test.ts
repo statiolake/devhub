@@ -27,6 +27,10 @@ import {
 	type WorkspaceId,
 } from "../../model/domain.js";
 import { agents } from "./adapters.js";
+import {
+	memoryRecords,
+	RESUME_OFF,
+} from "../agent/conversation/limitResumeTestKit.js";
 import { wireAgents } from "./agentWiring.js";
 import { LOCAL_CADENCE } from "../runtime/local.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
@@ -625,6 +629,8 @@ describe("a reconcile round is about one machine's Agents", () => {
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
 			profileTag: "0123456789ab",
+			resumeAfterLimit: () => RESUME_OFF,
+			limitResumes: memoryRecords(),
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");
@@ -670,6 +676,8 @@ describe("a launch the Agent port refuses", () => {
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
 			profileTag: "0123456789ab",
+			resumeAfterLimit: () => RESUME_OFF,
+			limitResumes: memoryRecords(),
 		});
 		const adapter = agents();
 		if (!adapter) throw new Error("the Agent adapter was not registered");

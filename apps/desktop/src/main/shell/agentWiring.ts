@@ -39,6 +39,12 @@ import {
 	SessionNotResumable,
 } from "../agent/conversation/failures.js";
 import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
+import type { AgentRecordStore } from "../agent/conversation/agentRecords.js";
+import {
+	REAL_CLOCK,
+	type LimitResumeRecord,
+	type LimitResumeSettings,
+} from "../agent/conversation/limitResume.js";
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
@@ -94,6 +100,10 @@ export interface AgentWiringOptions {
 	readonly clientVersion: string;
 	/** This DevHub profile's tag, which keeps its host files apart from another profile's. */
 	readonly profileTag: string;
+	/** `[agents] resume_after_limit` and its message, as the config says now. */
+	readonly resumeAfterLimit: () => LimitResumeSettings;
+	/** What each GUI Agent's conversation decided about a usage limit, kept across restarts. */
+	readonly limitResumes: AgentRecordStore<LimitResumeRecord>;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -211,6 +221,14 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						clientVersion: options.clientVersion,
 					}),
 					publish,
+					{
+						settings: options.resumeAfterLimit,
+						record: {
+							get: () => options.limitResumes.get(agentId),
+							set: (record) => options.limitResumes.set(agentId, record),
+						},
+						clock: REAL_CLOCK,
+					},
 				),
 		);
 

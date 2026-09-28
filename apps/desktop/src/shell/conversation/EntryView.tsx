@@ -31,10 +31,12 @@ import {
   type CompactionEntry,
   type Denial,
   type ImageRef,
+  type LimitResume,
   type NoticeEntry,
   type PendingRequest,
   type PlanStep,
   type SendingMessage,
+  type SentOrigin,
   type ToolEntry,
   type TranscriptEntry,
   type TurnEndEntry,
@@ -51,6 +53,7 @@ import { REVEAL_EVENT } from "./findInTranscript";
 import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
+import { clockTime } from "../resetTime";
 import { Markdown } from "./Markdown";
 import { QuestionRecord, RequestCard } from "./RequestCard";
 import { StatusMark, workNote } from "./StatusMark";
@@ -79,22 +82,30 @@ const MAX_INDENT = 3;
 
 /**
  * The person's bubble, on the right: their messages, those on their way, and
- * their answers to the Agent's questions are all this one bubble. A message a
- * template sent says so above it.
+ * their answers to the Agent's questions are all this one bubble. A message
+ * DevHub sent for them — a template's, or the one that goes on after a usage
+ * limit — says so above it.
  */
+const ORIGIN_NOTES: Readonly<Record<SentOrigin, string | undefined>> = {
+  person: undefined,
+  injection: "Sent by a template",
+  "after-limit": "Sent automatically after the limit reset",
+};
+
 function PersonBubble({
   origin,
   children,
 }: {
-  readonly origin: "person" | "injection";
+  readonly origin: SentOrigin;
   /** What the bubble holds; none draws no bubble. */
   readonly children: ReactNode;
 }) {
+  const note = ORIGIN_NOTES[origin];
   return (
     <>
-      {origin === "injection" ? (
-        <div className="conversation-user-origin">Sent by a template</div>
-      ) : null}
+      {note === undefined ? null : (
+        <div className="conversation-user-origin">{note}</div>
+      )}
       {children === null ? null : (
         <div className="conversation-user-text">{children}</div>
       )}
@@ -248,7 +259,7 @@ function PersonMessageView({
   origin,
 }: {
   readonly entry: UserEntry;
-  readonly origin: "person" | "injection";
+  readonly origin: SentOrigin;
 }) {
   const { targets, rewind } = useRewindMessage();
   const { reportFailure } = useConversationActions();
@@ -797,6 +808,63 @@ export function SendingView({ message }: { readonly message: SendingMessage }) {
       </div>
     </div>
   );
+}
+
+/**
+ * What DevHub will do about the usage limit the conversation stopped at
+ * (`Transcript.limitResume`): one quiet line at its end, as the CLI's own
+ * information is, with the one thing that can be done about it — Cancel the
+ * message that is to go on, or Dismiss the line that says why none will. A
+ * write that failed keeps a warning's weight.
+ */
+export function LimitResumeView({ resume }: { readonly resume: LimitResume }) {
+  const { cancelLimitResume, reportFailure } = useConversationActions();
+  const [text, level, action] = limitResumeLine(resume, Date.now());
+  return (
+    <div
+      className="conversation-entry"
+      data-kind="limit-resume"
+      data-entry-id="limit-resume"
+    >
+      <div className="conversation-notice" data-level={level}>
+        <span className="conversation-notice-text">{text}</span>
+        <button
+          type="button"
+          className="conversation-notice-action"
+          onClick={() => void cancelLimitResume().catch(reportFailure)}
+        >
+          {action}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The line's words, its level, and what its button says. */
+export function limitResumeLine(
+  resume: LimitResume,
+  now: number,
+): readonly [string, "info" | "warning", "Cancel" | "Dismiss"] {
+  switch (resume.kind) {
+    case "scheduled":
+      return [
+        `Rate limited — resuming at ${clockTime(resume.at, now)}`,
+        "info",
+        "Cancel",
+      ];
+    case "unscheduled":
+      return [
+        `Rate limited — not resuming by itself: ${resume.reason}`,
+        "info",
+        "Dismiss",
+      ];
+    case "failed":
+      return [
+        `Rate limited — could not resume: ${resume.failure}`,
+        "warning",
+        "Dismiss",
+      ];
+  }
 }
 
 // ---------------------------------------------------------------------------

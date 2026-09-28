@@ -288,6 +288,11 @@ import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
+import { AgentRecords } from "../agent/conversation/agentRecords.js";
+import {
+	LIMIT_RESUME_RECORDS,
+	type LimitResumeRecord,
+} from "../agent/conversation/limitResume.js";
 import {
 	UsageLimits,
 	usageLimitsListener,
@@ -673,6 +678,8 @@ export class AppController {
 	private agentWiring: AgentWiring | undefined;
 	/** Each GUI Agent's unsent draft, beside `state.json`. See `drafts.ts`. */
 	private readonly drafts: AgentDrafts;
+	/** What each GUI Agent decided about the usage limit it stopped at (`limitResume.ts`). */
+	private readonly limitResumes: AgentRecords<LimitResumeRecord>;
 	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
 	private sessionSweeper: SessionSweeper | undefined;
 	private stopHearingReconnections: (() => void) | undefined;
@@ -806,6 +813,17 @@ export class AppController {
 		if (drafts.refused !== undefined) {
 			this.noteStartupFailure(
 				withDetail(errorWireAt("persistence_degraded"), drafts.refused),
+			);
+		}
+		const limitResumes = AgentRecords.load(
+			join(dirname(stateStore.path), "limit-resumes.json"),
+			LIMIT_RESUME_RECORDS,
+			() => this.modelAgentIds(),
+		);
+		this.limitResumes = limitResumes.records;
+		if (limitResumes.refused !== undefined) {
+			this.noteStartupFailure(
+				withDetail(errorWireAt("persistence_degraded"), limitResumes.refused),
 			);
 		}
 		this.registerIpc();
@@ -961,6 +979,14 @@ export class AppController {
 				this.publishError(withDetail(errorWireAt("agent_exited"), message)),
 			clientVersion: electron.app.getVersion(),
 			profileTag: remoteProfileTag(controlSocketPath(userDataPath)),
+			resumeAfterLimit: () => {
+				const { agents } = this.requireConfig();
+				return {
+					enabled: agents.resume_after_limit,
+					message: agents.resume_after_limit_message,
+				};
+			},
+			limitResumes: this.limitResumes,
 		});
 		const agentWiring = this.agentWiring;
 		registerConversationIpc({
@@ -2334,6 +2360,7 @@ export class AppController {
 		// A draft lives as long as its Agent: one that has just gone takes its
 		// draft with it. `prune` compares before it writes.
 		this.drafts.prune();
+		this.limitResumes.prune();
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.

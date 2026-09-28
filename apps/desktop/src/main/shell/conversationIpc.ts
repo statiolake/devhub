@@ -228,6 +228,8 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 				return conversation.removePending(request.pending);
 			case "send-pending-now":
 				return conversation.sendPendingNow(request.pending);
+			case "cancel-limit-resume":
+				return conversation.cancelLimitResume();
 			default:
 				return conversation.command(request);
 		}
@@ -259,7 +261,8 @@ function requestFrom(wire: unknown):
 			readonly kind: "set-setting";
 			readonly which: SettingName;
 			readonly id: string;
-	  } {
+	  }
+	| { readonly kind: "cancel-limit-resume" } {
 	const command = wire as ConversationCommandWire;
 	switch (command?.kind) {
 		case "send":
@@ -299,6 +302,8 @@ function requestFrom(wire: unknown):
 			};
 		case "interrupt":
 			return { kind: "interrupt" };
+		case "cancel-limit-resume":
+			return { kind: "cancel-limit-resume" };
 		case "stop-task":
 			if (typeof command.task !== "string") break;
 			return { kind: "stop-task", task: command.task };

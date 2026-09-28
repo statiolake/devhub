@@ -993,7 +993,7 @@ describe("round trip", () => {
       const config = parseConfig(source);
       const saved = configOntoDocument(source, {
         ...config,
-        agents: { default_presentation: "gui" },
+        agents: { ...config.agents, default_presentation: "gui" },
       });
       expect(saved).toContain('default_presentation = "gui"');
       expect(saved).not.toMatch(/^presentation = /m);
@@ -2098,5 +2098,55 @@ describe("the Agent panes' colours, as [appearance] terminal_theme says", () => 
     expect(parseConfig(saved).appearance.terminalTheme).toBe(
       TERMINAL_THEME_VSCODE,
     );
+  });
+});
+
+describe("going on after a usage limit, as [agents] says", () => {
+  const withAgents = (lines: string) =>
+    `version = ${String(CONFIG_SCHEMA_VERSION)}\n[agents]\n${lines}\n`;
+
+  it("is on, with 続けて, when the file does not say", () => {
+    const { agents } = parseConfig(
+      `version = ${String(CONFIG_SCHEMA_VERSION)}\n`,
+    );
+    expect(agents.resume_after_limit).toBe(true);
+    expect(agents.resume_after_limit_message).toBe("続けて");
+    expect(defaultConfig().agents.resume_after_limit_message).toBe("続けて");
+  });
+
+  it("reads both keys, and writes them back as read", () => {
+    const source = withAgents(
+      'resume_after_limit = false\nresume_after_limit_message = "Please go on"',
+    );
+    const config = parseConfig(source);
+    expect(config.agents.resume_after_limit).toBe(false);
+    expect(config.agents.resume_after_limit_message).toBe("Please go on");
+    const saved = configOntoDocument(source, {
+      ...config,
+      agents: {
+        ...config.agents,
+        resume_after_limit_message: "続けてください",
+      },
+    });
+    expect(parseConfig(saved).agents).toEqual({
+      ...config.agents,
+      resume_after_limit_message: "続けてください",
+    });
+  });
+
+  it("refuses an empty message, naming the key", () => {
+    for (const message of ['""', '"   "', '"a\\u0000b"']) {
+      const source = withAgents(`resume_after_limit_message = ${message}`);
+      expect(codeOf(() => parseConfig(source))).toBe("invalid_resume_message");
+      expect(pathOf(() => parseConfig(source))).toBe(
+        "agents.resume_after_limit_message",
+      );
+    }
+  });
+
+  it("refuses a switch that is not true or false", () => {
+    const source = withAgents('resume_after_limit = "yes"');
+    expect(codeOf(() => parseConfig(source))).toBe("invalid_type");
+    expect(pathOf(() => parseConfig(source))).toBe("agents.resume_after_limit");
   });
 });

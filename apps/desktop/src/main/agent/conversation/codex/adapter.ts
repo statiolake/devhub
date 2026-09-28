@@ -46,8 +46,11 @@ import {
 	EMPTY_TRANSCRIPT,
 	answerTo,
 	applyEvent,
+	isSentOrigin,
 	rewindTargets,
 	entryId,
+	SENT_ORIGINS,
+	usedUpReset,
 	sameRunningTasks,
 	requestId,
 	type AnswerEntry,
@@ -69,6 +72,8 @@ import {
 	type SendingMessage,
 	type SubagentInfo,
 	type RunningTask,
+	type SentOrigin,
+	type LimitStop,
 	type ToolEntry,
 	type ImageRef,
 	type ToolOutput,
@@ -328,7 +333,17 @@ const SUBAGENT_TURN_UNKNOWN =
 /** JSON-RPC's own "method not found". */
 const METHOD_NOT_FOUND = -32601;
 
-const USER_MESSAGE_ID = /^devhub-(person|injection)-(\d+)$/;
+const USER_MESSAGE_ID = new RegExp(
+	`^devhub-(${SENT_ORIGINS.join("|")})-(\\d+)$`,
+);
+
+/** Whom DevHub sent a user message for, by the id it gave it (`USER_MESSAGE_ID`). */
+function sentOrigin(match: RegExpExecArray): SentOrigin {
+	const origin = match[1];
+	if (!isSentOrigin(origin))
+		throw new Error(`${match[0]} names no origin DevHub sends for`);
+	return origin;
+}
 
 /**
  * The skill names words mention: each `$name` that starts a word, without
@@ -454,6 +469,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	/** The main thread's turns, each by the first message the person sent in it. */
 	private readonly turnMessages = new Map<string, EntryId>();
 	private runningTurn: string | undefined;
+	/**
+	 * The end of the last main-thread turn, when the plan's usage limit
+	 * stopped it and no rate limit known then was used up: the rate limits
+	 * Codex reports before the next turn starts say when it resets.
+	 */
+	private unresetLimit: EntryId | undefined;
 	private defaults: ThreadDefaults | undefined;
 	/**
 	 * What `model/list` said: the pages so far while it is still listing,
@@ -917,7 +938,7 @@ export class CodexAdapter implements ProtocolAdapter {
 								? [dataImage(input.url)]
 								: [],
 						),
-						origin: match[1] === "injection" ? "injection" : "person",
+						origin: sentOrigin(match),
 					},
 				});
 				this.emitSending();
@@ -1342,8 +1363,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		if (turn.status === "inProgress") {
 			this.runningTurn = turn.id;
 		} else {
-			// What a past turn used is not in what `thread/resume` hands back.
-			this.endTurn(threadId, turn, undefined);
+			// What a past turn used is not in what `thread/resume` hands back;
+			// a limit that stopped it is over by now, and was not this Agent's.
+			this.endTurn(threadId, turn, undefined, undefined);
 		}
 	}
 
@@ -1571,8 +1593,29 @@ export class CodexAdapter implements ProtocolAdapter {
 			return;
 		}
 		this.runningTurn = turn.id;
+		this.unresetLimit = undefined;
 		this.totalAtTurnStart = this.total;
 		this.setState({ phase: "ready", turn: "running" });
+	}
+
+	/** The reset of the usage limit the last turn stopped at, once a used-up window says it. */
+	private fillLimitReset(): void {
+		if (this.unresetLimit === undefined) return;
+		const resetsAt = usedUpReset(this.usage?.rateLimits);
+		if (resetsAt === undefined) return;
+		const end = this.entry(this.unresetLimit);
+		// Rewound away, or left with another thread: nothing to fill in.
+		if (end === undefined) {
+			this.unresetLimit = undefined;
+			return;
+		}
+		if (end.kind !== "turn-end") {
+			throw new Error(
+				`${this.unresetLimit}, the end of a turn a usage limit stopped, is a ${end.kind} entry`,
+			);
+		}
+		this.unresetLimit = undefined;
+		this.emit({ type: "entry", entry: { ...end, limit: { resetsAt } } });
 	}
 
 	private onTurnCompleted(params: unknown): void {
@@ -1586,7 +1629,17 @@ export class CodexAdapter implements ProtocolAdapter {
 			)
 		)
 			return;
-		this.endTurn(threadId, turn, this.turnUsage());
+		// The plan's usage limit stopped the turn: the window it reset is the
+		// one used up, as the rate limits last reported it — or, when Codex
+		// says so only after the turn, as they report it then.
+		this.endTurn(
+			threadId,
+			turn,
+			this.turnUsage(),
+			turn.usageLimited
+				? { resetsAt: usedUpReset(this.usage?.rateLimits) }
+				: undefined,
+		);
 	}
 
 	/**
@@ -1600,6 +1653,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		threadId: string,
 		turn: TurnFacts,
 		usage: Usage | undefined,
+		limit: LimitStop | undefined,
 	): void {
 		for (const id of this.unfinished.get(threadId) ?? []) {
 			const entry = this.entry(id);
@@ -1642,8 +1696,13 @@ export class CodexAdapter implements ProtocolAdapter {
 				detail: turn.error ?? undefined,
 				usage,
 				durationMs: turn.durationMs ?? undefined,
+				limit,
 			},
 		});
+		this.unresetLimit =
+			limit !== undefined && limit.resetsAt === undefined
+				? entryId(`${threadId}/turn/${turn.id}`)
+				: undefined;
 		if (this.runningTurn === turn.id) this.runningTurn = undefined;
 		this.setState({
 			phase: "ready",
@@ -1756,9 +1815,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						// Codex's terminal in a thread read back.
 						origin:
 							match !== null
-								? match[1] === "injection"
-									? "injection"
-									: "person"
+								? sentOrigin(match)
 								: threadId === this.mainThread
 									? "person"
 									: "other",
@@ -2805,7 +2862,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	private send(
 		text: string,
 		images: readonly ImageRef[],
-		origin: "person" | "injection",
+		origin: SentOrigin,
 	): void {
 		const { state } = this.current;
 		if (state.phase !== "ready" || this.mainThread === undefined) {
@@ -3058,6 +3115,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.publishUsage({
 				rateLimits: withRateLimits(this.usage?.rateLimits, windows),
 			});
+			this.fillLimitReset();
 		},
 		"app/list/updated": unused("DevHub lists no Codex apps"),
 		"remoteControl/status/changed": unused("DevHub is the remote control"),

@@ -25,6 +25,18 @@ import { errorWire } from "../../../model/wire.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
 import {
+	HandClock,
+	memoryRecords,
+	RESUME_OFF,
+	RESUME_ON,
+	resumeOff,
+} from "./limitResumeTestKit.js";
+import {
+	RESET_MARGIN_MS,
+	SOONEST_MS,
+	type LimitResumeSettings,
+} from "./limitResume.js";
+import {
 	AgentConversation,
 	openedLater,
 	type ConversationHost,
@@ -194,6 +206,7 @@ async function liveTurn(): Promise<{
 		host,
 		new ClaudeAdapter("boot-a"),
 		publish,
+		resumeOff(),
 	);
 	conversation.start();
 	await settle();
@@ -270,6 +283,7 @@ describe("a conversation attached again after DevHub restarts", () => {
 			host,
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await settle();
@@ -285,6 +299,7 @@ describe("a conversation attached again after DevHub restarts", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -301,6 +316,7 @@ describe("a conversation attached again after DevHub restarts", () => {
 			host,
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await settle();
@@ -319,6 +335,7 @@ describe("a command", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -344,6 +361,7 @@ describe("a setting chosen", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -374,6 +392,7 @@ describe("a line printed while DevHub's write is still in flight", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -406,6 +425,7 @@ describe("a line the adapter cannot read", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			publish,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -441,6 +461,7 @@ describe("a journal stream that is lost", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		host.failAfter = 1;
 		host.print(
@@ -476,6 +497,7 @@ describe("a host that could not be opened", () => {
 			openedLater(() => Promise.reject(new Error("the machine has no home"))),
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -495,6 +517,7 @@ describe("a host that could not be opened", () => {
 			}),
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -514,6 +537,7 @@ describe("a failure that is neither the host's nor the protocol's", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -541,6 +565,7 @@ describe("a reply the protocol demands", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		live.start();
 		await settle();
@@ -553,6 +578,7 @@ describe("a reply the protocol demands", () => {
 			host,
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await settle();
@@ -566,6 +592,7 @@ describe("a reply the protocol demands", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		live.start();
 		await settle();
@@ -583,6 +610,7 @@ describe("a reply the protocol demands", () => {
 			host,
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await settle();
@@ -598,6 +626,7 @@ describe("a reply the protocol demands", () => {
 			host,
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await settle();
@@ -710,6 +739,7 @@ async function turns(
 		host,
 		new ClaudeAdapter("boot-a"),
 		() => undefined,
+		resumeOff(),
 	);
 	conversation.start();
 	await settle();
@@ -775,6 +805,7 @@ describe("rewinding", () => {
 			host,
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await settle();
@@ -1143,3 +1174,307 @@ async function drawnAs(settled: Promise<unknown>) {
 		),
 	);
 }
+
+describe("a turn a usage limit stopped", () => {
+	/** When the five-hour window resets, in epoch seconds as the CLI says it. */
+	const RESETS = 1_800_000_000;
+	const DUE = RESETS * 1000 + RESET_MARGIN_MS;
+	/** An hour before the reset. */
+	const BEFORE = RESETS * 1000 - 3_600_000;
+
+	/** What the CLI prints when a limit stops the turn under way; `null`, a refusal that names no reset. */
+	const printLimit = (host: FakeHost, resetsAt: number | null) => {
+		host.print(
+			JSON.stringify({
+				type: "rate_limit_event",
+				rate_limit_info: {
+					status: "rejected",
+					...(resetsAt === null ? {} : { resetsAt }),
+					rateLimitType: "five_hour",
+				},
+				session_id: "s-1",
+			}),
+		);
+		host.print(
+			JSON.stringify({
+				type: "assistant",
+				message: {
+					id: "msg_limit",
+					role: "assistant",
+					content: [{ type: "text", text: "You've hit your limit" }],
+				},
+				parent_tool_use_id: null,
+				session_id: "s-1",
+				error: "rate_limit",
+			}),
+		);
+		host.print(
+			JSON.stringify({
+				type: "result",
+				subtype: "success",
+				is_error: true,
+				duration_ms: 100,
+				result: "You've hit your limit",
+				session_id: "s-1",
+			}),
+		);
+	};
+
+	/** One DevHub's conversation on `host`, going on after a limit as `settings` say. */
+	async function following(
+		host: FakeHost,
+		clock: HandClock,
+		records: ReturnType<typeof memoryRecords>,
+		settings: LimitResumeSettings = RESUME_ON,
+	): Promise<AgentConversation> {
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot"),
+			() => undefined,
+			{
+				settings: () => settings,
+				record: {
+					get: () => records.get("agent"),
+					set: (record) => records.set("agent", record),
+				},
+				clock,
+			},
+		);
+		conversation.start();
+		await settle();
+		return conversation;
+	}
+
+	/** A conversation whose first turn a limit stopped. */
+	async function stopped(
+		settings: LimitResumeSettings = RESUME_ON,
+		resetsAt: number | null = RESETS,
+	) {
+		const host = new FakeHost();
+		const cli = answeringCli(host);
+		const clock = new HandClock(BEFORE);
+		const records = memoryRecords();
+		const conversation = await following(host, clock, records, settings);
+		cli.hold = true;
+		await conversation.submit("go", []);
+		await settle();
+		printLimit(host, resetsAt);
+		await settle();
+		return { host, cli, clock, records, conversation };
+	}
+
+	const resume = (conversation: AgentConversation) =>
+		conversation.reading().transcript.limitResume;
+	/** The user messages written to the CLI, with whom they were written for. */
+	const written = (host: FakeHost) =>
+		host.inLog.flatMap(({ line }) => {
+			const message = JSON.parse(line) as {
+				type: string;
+				devhub_origin?: string;
+				message?: { content: string };
+			};
+			return message.type === "user"
+				? [`${message.devhub_origin} ${message.message!.content}`]
+				: [];
+		});
+
+	it("is gone on with once the limit has reset, by a message written for the person", async () => {
+		const { host, clock, records, conversation } = await stopped();
+		expect(resume(conversation)).toEqual({ kind: "scheduled", at: DUE });
+		expect(records.get("agent")).toMatchObject({ entry: "turn:1", at: DUE });
+
+		clock.advance(DUE - BEFORE - 1);
+		await settle();
+		expect(written(host)).toEqual(["person go"]);
+
+		clock.advance(1);
+		await settle();
+		expect(written(host)).toEqual(["person go", "after-limit 続けて"]);
+		expect(resume(conversation)).toBeUndefined();
+		expect(records.get("agent")?.at).toBeUndefined();
+		expect(
+			conversation
+				.reading()
+				.transcript.entries.filter((each) => each.kind === "user"),
+		).toMatchObject([
+			{ text: "go", origin: "person" },
+			{ text: "続けて", origin: "after-limit" },
+		]);
+		await conversation.stop();
+	});
+
+	it("writes the words Settings give", async () => {
+		const { host, clock, conversation } = await stopped({
+			enabled: true,
+			message: "Please continue",
+		});
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(written(host).at(-1)).toBe("after-limit Please continue");
+		await conversation.stop();
+	});
+
+	it("is cancelled by the person's Cancel, and nothing is written", async () => {
+		const { host, clock, records, conversation } = await stopped();
+		await conversation.cancelLimitResume();
+		expect(resume(conversation)).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		expect(records.get("agent")?.at).toBeUndefined();
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(written(host)).toEqual(["person go"]);
+		await conversation.stop();
+	});
+
+	it("is cancelled by the person's own words", async () => {
+		const { host, clock, conversation } = await stopped();
+		await conversation.submit("never mind", []);
+		await settle();
+		expect(resume(conversation)).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(written(host)).toEqual(["person go", "person never mind"]);
+		await conversation.stop();
+	});
+
+	it("is cancelled by a turn the Agent starts on its own", async () => {
+		const { host, clock, conversation } = await stopped();
+		host.print(
+			JSON.stringify({
+				type: "assistant",
+				message: {
+					id: "msg_own",
+					role: "assistant",
+					content: [{ type: "text", text: "A background task finished." }],
+				},
+				parent_tool_use_id: null,
+				session_id: "s-1",
+			}),
+		);
+		await settle();
+		expect(resume(conversation)).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(written(host)).toEqual(["person go"]);
+		await conversation.stop();
+	});
+
+	it("stops timing when the conversation is no longer followed, and keeps what it decided", async () => {
+		const { clock, records, conversation } = await stopped();
+		await conversation.stop();
+		expect(clock.pending).toBe(0);
+		expect(records.get("agent")?.at).toBe(DUE);
+	});
+
+	it("survives a restart of DevHub, at the same time", async () => {
+		const { host, records, conversation } = await stopped();
+		await conversation.stop();
+
+		const clock = new HandClock(BEFORE + 60_000);
+		const again = await following(host, clock, records);
+		expect(resume(again)).toEqual({ kind: "scheduled", at: DUE });
+		clock.advance(DUE - BEFORE - 60_000);
+		await settle();
+		expect(written(host)).toEqual(["person go", "after-limit 続けて"]);
+		await again.stop();
+	});
+
+	it("is written soon after a restart of DevHub when its time passed meanwhile, once", async () => {
+		const { host, records, conversation } = await stopped();
+		await conversation.stop();
+
+		const late = DUE + 3_600_000;
+		const clock = new HandClock(late);
+		const again = await following(host, clock, records);
+		expect(resume(again)).toEqual({
+			kind: "scheduled",
+			at: late + SOONEST_MS,
+		});
+		clock.advance(SOONEST_MS);
+		await settle();
+		expect(written(host)).toEqual(["person go", "after-limit 続けて"]);
+		await again.stop();
+
+		const third = await following(host, new HandClock(late + 60_000), records);
+		expect(resume(third)).toBeUndefined();
+		await third.stop();
+	});
+
+	it("stays cancelled across a restart of DevHub", async () => {
+		const { host, records, conversation } = await stopped();
+		await conversation.cancelLimitResume();
+		await conversation.stop();
+		const clock = new HandClock(BEFORE);
+		const again = await following(host, clock, records);
+		expect(resume(again)).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		await again.stop();
+	});
+
+	it("is not resumed for an earlier stop the replay passes on its way", async () => {
+		const { host, clock, records, conversation } = await stopped();
+		await conversation.submit("try again", []);
+		await settle();
+		printLimit(host, RESETS + 3600);
+		await settle();
+		const second = (RESETS + 3600) * 1000 + RESET_MARGIN_MS;
+		expect(resume(conversation)).toEqual({ kind: "scheduled", at: second });
+		await conversation.stop();
+
+		const restarted = new HandClock(clock.now());
+		const again = await following(host, restarted, records);
+		expect(resume(again)).toEqual({ kind: "scheduled", at: second });
+		expect(restarted.pending).toBe(1);
+		restarted.advance(second - restarted.now());
+		await settle();
+		expect(written(host)).toEqual([
+			"person go",
+			"person try again",
+			"after-limit 続けて",
+		]);
+		await again.stop();
+	});
+
+	it("says so, and writes nothing, when the CLI did not say when the limit resets", async () => {
+		const { host, clock, conversation } = await stopped(RESUME_ON, null);
+		expect(resume(conversation)).toEqual({
+			kind: "unscheduled",
+			reason: "the CLI did not say when the limit resets",
+		});
+		expect(clock.pending).toBe(0);
+		await conversation.cancelLimitResume();
+		expect(resume(conversation)).toBeUndefined();
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(written(host)).toEqual(["person go"]);
+		await conversation.stop();
+	});
+
+	it("does nothing when Settings turn it off", async () => {
+		const { clock, conversation } = await stopped(RESUME_OFF);
+		expect(resume(conversation)).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		await conversation.stop();
+	});
+
+	it("says why when the message could not be written, and does not try again", async () => {
+		const { host, clock, records, conversation } = await stopped();
+		host.refuseWrite = true;
+		clock.advance(DUE - BEFORE);
+		await settle();
+		expect(resume(conversation)).toEqual({
+			kind: "failed",
+			failure: "the fake host has ended",
+		});
+		expect(records.get("agent")?.at).toBeUndefined();
+		expect(clock.pending).toBe(0);
+		clock.advance(3_600_000);
+		await settle();
+		expect(written(host)).toEqual(["person go"]);
+		await conversation.cancelLimitResume();
+		expect(resume(conversation)).toBeUndefined();
+		await conversation.stop();
+	});
+});

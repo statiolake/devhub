@@ -22,10 +22,16 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { entryId, type UserEntry } from "../../model/conversation";
+import {
+  applyEvent,
+  entryId,
+  type LimitResume,
+  type UserEntry,
+} from "../../model/conversation";
 import type { AppAppearance } from "../../ipc/appShell";
 import { ConversationSurface } from "./ConversationSurface";
 import { COPIED_MS } from "./CopyButton";
+import { limitResumeLine } from "./EntryView";
 import {
   draw,
   entry,
@@ -75,6 +81,19 @@ describe("every entry kind", () => {
     expect(entry("u1")).toHaveTextContent("fix the build");
     expect(entry("u1")).not.toHaveTextContent("Sent by a template");
     expect(entry("u2")).toHaveTextContent("Sent by a template");
+  });
+
+  it("draws the message DevHub sent after a usage limit as the person's, saying so", () => {
+    draw(
+      transcriptOf([
+        put(user("u1", "go")),
+        put(user("u2", "続けて", "after-limit")),
+      ]),
+    );
+    expect(entry("u2").querySelector(".conversation-user")).toHaveTextContent(
+      "Sent automatically after the limit reset続けて",
+    );
+    expect(entry("u1")).not.toHaveTextContent("Sent automatically");
   });
 
   it("draws a message the Agent was given that the person did not send apart from theirs, folded when long", () => {
@@ -1229,5 +1248,93 @@ describe("size", () => {
     expect(sizeAt(undefined)).toBe("15px");
     expect(sizeAt(13)).toBe("15px");
     expect(sizeAt(26)).toBe("30px");
+  });
+});
+
+describe("what DevHub will do about a usage limit", () => {
+  const stopped = (resume: LimitResume) =>
+    applyEvent(
+      transcriptOf([
+        put(user("u1", "go")),
+        put(turnEnd("t1", "failed", { limit: { resetsAt: 1 } })),
+      ]),
+      { type: "limit-resume", resume },
+    );
+
+  it("is one quiet line at the end, with a Cancel that cancels it", async () => {
+    const at = new Date(2026, 8, 29, 16, 50).getTime();
+    vi.useFakeTimers({ now: at - 3_600_000, toFake: ["Date"] });
+    const actions = fakeActions();
+    draw(stopped({ kind: "scheduled", at }), actions);
+    const line = entry("limit-resume");
+    expect(line.querySelector(".conversation-notice")).toHaveAttribute(
+      "data-level",
+      "info",
+    );
+    expect(line).toHaveTextContent("Rate limited — resuming at 16:50");
+    expect(
+      document.querySelector(".conversation-transcript")!.lastElementChild,
+    ).toBe(line);
+    fireEvent.click(within(line).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(actions.cancelLimitResume).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("gives a resume a day off its date as well", () => {
+    const now = new Date(2026, 8, 29, 9, 0).getTime();
+    expect(
+      limitResumeLine(
+        { kind: "scheduled", at: new Date(2026, 9, 3, 16, 50).getTime() },
+        now,
+      )[0],
+    ).toMatch(/^Rate limited — resuming at \S+ 16:50$/);
+  });
+
+  it("says why nothing will be written, and a failure with a warning's weight, each dismissed", async () => {
+    const actions = fakeActions();
+    draw(
+      stopped({
+        kind: "unscheduled",
+        reason: "the CLI did not say when the limit resets",
+      }),
+      actions,
+    );
+    expect(entry("limit-resume")).toHaveTextContent(
+      "Rate limited — not resuming by itself: the CLI did not say when the limit resets",
+    );
+    cleanup();
+    draw(stopped({ kind: "failed", failure: "the host has ended" }), actions);
+    const line = entry("limit-resume");
+    expect(line).toHaveTextContent(
+      "Rate limited — could not resume: the host has ended",
+    );
+    expect(line.querySelector(".conversation-notice")).toHaveAttribute(
+      "data-level",
+      "warning",
+    );
+    fireEvent.click(within(line).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => {
+      expect(actions.cancelLimitResume).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("hands a Cancel that failed to the page's root", async () => {
+    const failure = new Error("the conversation has stopped");
+    const actions = fakeActions({
+      cancelLimitResume: vi.fn(() => Promise.reject(failure)),
+    });
+    draw(stopped({ kind: "scheduled", at: Date.now() + 60_000 }), actions);
+    fireEvent.click(
+      within(entry("limit-resume")).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() => {
+      expect(actions.reportFailure).toHaveBeenCalledWith(failure);
+    });
+  });
+
+  it("is not drawn while there is nothing to say", () => {
+    draw(transcriptOf([put(user("u1", "go"))]));
+    expect(document.querySelector('[data-entry-id="limit-resume"]')).toBeNull();
   });
 });

@@ -32,6 +32,7 @@ import { ProtocolMismatch } from "../protocolAdapter.js";
 import type { InitializeResponse } from "./protocol/InitializeResponse.js";
 import type { RequestId as RpcId } from "./protocol/RequestId.js";
 import type { AgentMessageDeltaNotification } from "./protocol/v2/AgentMessageDeltaNotification.js";
+import type { CodexErrorInfo } from "./protocol/v2/CodexErrorInfo.js";
 import type { CollabAgentStatus } from "./protocol/v2/CollabAgentStatus.js";
 import type { CommandExecutionOutputDeltaNotification } from "./protocol/v2/CommandExecutionOutputDeltaNotification.js";
 import type { CommandExecutionRequestApprovalParams } from "./protocol/v2/CommandExecutionRequestApprovalParams.js";
@@ -520,7 +521,15 @@ export function threadRevertResponse(r: Reader, value: unknown): void {
 export type TurnFacts = Pick<Turn, "id" | "status" | "durationMs"> & {
 	readonly items: readonly Item[];
 	readonly error: string | null;
+	/**
+	 * The turn's error is the plan's usage limit (`codexErrorInfo`
+	 * `usageLimitExceeded`): the turn stopped because the limit was reached.
+	 */
+	readonly usageLimited: boolean;
 };
+
+/** The `codexErrorInfo` of a turn stopped by the plan's usage limit. */
+const USAGE_LIMIT_EXCEEDED = "usageLimitExceeded" satisfies CodexErrorInfo;
 
 const TURN_STATUSES = [
 	"completed",
@@ -533,11 +542,27 @@ function turn(r: Reader, value: unknown, path: string): TurnFacts {
 	const o = r.fields(value, path);
 	const error = o["error"];
 	let message: string | null = null;
+	let usageLimited = false;
 	if (error !== null && error !== undefined) {
 		const e = r.fields(error, `${path}.error`);
 		const details = r.nullableString(e, "additionalDetails", `${path}.error`);
 		message = r.string(e, "message", `${path}.error`);
 		if (details !== null) message = `${message}\n${details}`;
+		// A kind in a word, or a kind with its HTTP status as an object: only
+		// the one word is read.
+		const info = e["codexErrorInfo"];
+		if (
+			info !== undefined &&
+			info !== null &&
+			typeof info !== "string" &&
+			(typeof info !== "object" || Array.isArray(info))
+		) {
+			r.fail(
+				`${path}.error.codexErrorInfo`,
+				`a string, an object or null, got ${describe(info)}`,
+			);
+		}
+		usageLimited = info === USAGE_LIMIT_EXCEEDED;
 	}
 	return {
 		id: r.string(o, "id", path),
@@ -545,6 +570,7 @@ function turn(r: Reader, value: unknown, path: string): TurnFacts {
 		durationMs: r.nullableNumber(o, "durationMs", path),
 		items: r.array(o, "items", path, (value, at) => item(r, value, at)),
 		error: message,
+		usageLimited,
 	};
 }
 

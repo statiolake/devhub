@@ -71,6 +71,13 @@
  * until they save the change (`editPending`) or give it up
  * (`stopEditingPending`); the page that had it open going away gives it up
  * (`stopEditingAll`).
+ *
+ * # After a usage limit
+ *
+ * A turn a usage limit stopped is gone on with once the limit has reset: the
+ * conversation's `LimitResumer` (`limitResume.ts`) watches every event, and
+ * when the message it times is due the conversation writes it here, in the
+ * turnstile, as the person's (`after-limit`) — or says why it could not.
  */
 
 import {
@@ -90,6 +97,7 @@ import {
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ConversationRefused, ConversationStopped } from "./failures.js";
+import { LimitResumer, type LimitResumeOptions } from "./limitResume.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
@@ -222,15 +230,22 @@ export class AgentConversation {
 	/** Whether the Agent was idle after the last event: becoming idle writes a held message. */
 	#idle = false;
 	#heldCount = 0;
+	readonly #limits: LimitResumer;
 
 	constructor(
 		host: ConversationHost,
 		adapter: ProtocolAdapter,
 		publish: ConversationPublish,
+		limits: LimitResumeOptions,
 	) {
 		this.#host = host;
 		this.#adapter = adapter;
 		this.#publish = publish;
+		this.#limits = new LimitResumer(
+			limits,
+			(resume) => this.#apply({ type: "limit-resume", resume }),
+			() => this.#resumeAfterLimit(),
+		);
 	}
 
 	/** Start following the host. Once; `reattach` is how it starts again. */
@@ -399,6 +414,43 @@ export class AgentConversation {
 		return this.#serial(async () => {
 			this.#apply({ type: "mcp-sign-in", signIn });
 		});
+	}
+
+	/**
+	 * The person does not want the Agent gone on with after the usage limit
+	 * it stopped at (Cancel), or has read why that failed (Dismiss).
+	 */
+	cancelLimitResume(): Promise<void> {
+		return this.#serial(async () => {
+			this.#limits.cancel();
+		});
+	}
+
+	/**
+	 * The message that goes on after a usage limit is due: written in the
+	 * turnstile, as the person's, if it still is (`LimitResumer.take`). A
+	 * write that fails is said where the resume was; nothing retries it.
+	 * Nobody waits on this, so a failure DevHub did not expect is the
+	 * conversation's own.
+	 */
+	#resumeAfterLimit(): void {
+		void this.#serial(async () => {
+			const text = this.#limits.take();
+			if (text === undefined) return;
+			try {
+				await this.#write(
+					this.#adapter.encode({
+						kind: "send",
+						text,
+						images: [],
+						origin: "after-limit",
+					}),
+				);
+			} catch (error: unknown) {
+				if (!(error instanceof HostLinkFailure)) throw error;
+				this.#limits.failed(error.message);
+			}
+		}).catch((error: unknown) => this.#crash(error));
 	}
 
 	/** Take a held message back: it is never written. */
@@ -657,6 +709,7 @@ export class AgentConversation {
 	/** Stop following. The host and its CLI are untouched. */
 	async stop(): Promise<void> {
 		this.#cancel.cancel();
+		this.#limits.stop();
 		await this.#following;
 	}
 
@@ -733,6 +786,7 @@ export class AgentConversation {
 	/** A failure DevHub did not expect stops the conversation for good (see the module's doc). */
 	#crash(error: unknown): void {
 		this.#cancel.cancel();
+		this.#limits.stop();
 		this.#crashed = error instanceof Error ? error : new Error(String(error));
 		console.error(
 			"[devhub] a GUI Agent's conversation stopped on a failure DevHub did not expect:",
@@ -767,6 +821,10 @@ export class AgentConversation {
 		const idle = this.#idleNow();
 		if (idle && !this.#idle) this.#writeNextHeld();
 		this.#idle = idle;
+		// What DevHub will do about a usage limit follows from the rest of
+		// the conversation, never the other way round.
+		if (event.type !== "limit-resume")
+			this.#limits.observe(this.#transcript, this.#offset);
 	}
 
 	/** An edit's rewind is over once the turn has been `rewinding` and is not any more. */

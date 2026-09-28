@@ -70,6 +70,10 @@ import {
   IDLE_SETTLE_MS,
 } from "../../src/main/agent/injection";
 import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
+import {
+  memoryRecords,
+  RESUME_OFF,
+} from "../../src/main/agent/conversation/limitResumeTestKit";
 import { scratchDirectory } from "./scratch";
 import { makeSocketDir } from "../../src/model/testScratch";
 import {
@@ -2239,6 +2243,8 @@ describe.skipIf(TMUX === undefined)(
         report: (message) => reports.push(message),
         clientVersion: "0.0.0-test",
         profileTag: "0123456789ab",
+        resumeAfterLimit: () => RESUME_OFF,
+        limitResumes: memoryRecords(),
       });
       const adapter = agents();
       if (!adapter) throw new Error("the Agent adapter was not registered");

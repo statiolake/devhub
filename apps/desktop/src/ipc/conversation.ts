@@ -89,7 +89,12 @@ export type ConversationCommandWire =
 			readonly id: string;
 	  }
 	/** Ask about the MCP servers, or do one of a server's `McpServer.actions` but `sign-in`. */
-	| { readonly kind: "mcp"; readonly request: McpRequestWire };
+	| { readonly kind: "mcp"; readonly request: McpRequestWire }
+	/**
+	 * Nothing is to be written after the usage limit the Agent stopped at
+	 * (`Transcript.limitResume`'s Cancel), or its failure has been read (Dismiss).
+	 */
+	| { readonly kind: "cancel-limit-resume" };
 
 export type McpRequestWire =
 	| { readonly action: "refresh" }
@@ -149,6 +154,8 @@ export interface ConversationApi {
 		request: RequestId,
 		answer: RequestAnswer,
 	): Promise<void>;
+	/** Cancel what `Transcript.limitResume` says DevHub will do, or dismiss why it failed. */
+	cancelLimitResume(agentId: string): Promise<void>;
 	/**
 	 * Take the conversation back to before `message`, one of `rewindTargets`.
 	 * Refused, with the reason, when it cannot be rewound to now.

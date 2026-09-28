@@ -24,11 +24,14 @@
  */
 
 import {
+	isSentOrigin,
+	SENT_ORIGINS,
 	type ImageRef,
 	type JsonValue,
 	type Question,
 	type RateLimit,
 	rateLimitWindowName,
+	type SentOrigin,
 	type UsageReading,
 } from "../../../../model/conversation.js";
 import { type Elicitation, formFields } from "../elicitation.js";
@@ -202,6 +205,16 @@ export type ClaudeLine =
 			readonly type: "rate_limit";
 			/** Every window the event reports. */
 			readonly windows: readonly RateLimit[];
+			/**
+			 * Whether the CLI may go on (`allowed`, `allowed_warning`) or has
+			 * been refused (`rejected`): the event's `status`, when it says.
+			 */
+			readonly status: string | undefined;
+			/**
+			 * When the limiting window resets (the event's own `resetsAt`, of
+			 * the window `rateLimitType` names), in epoch ms, when it says.
+			 */
+			readonly resetsAt: number | undefined;
 	  }
 	/**
 	 * A message of the session this conversation resumed, put at the head of
@@ -439,7 +452,7 @@ export type SentLine =
 			readonly type: "user";
 			readonly text: string;
 			readonly images: readonly ImageRef[];
-			readonly origin: "person" | "injection";
+			readonly origin: SentOrigin;
 	  }
 	| {
 			readonly type: "control_request";
@@ -1770,6 +1783,7 @@ function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
 	// (`rateLimitType` is optional): an event that names none says nothing
 	// about any one window.
 	const limiting = f.optionalString(info.rateLimitType, `${at}.rateLimitType`);
+	const resetsAt = f.optionalNumber(info.resetsAt, `${at}.resetsAt`);
 	const windows =
 		info.unifiedWindows === undefined
 			? limiting === undefined
@@ -1783,6 +1797,9 @@ function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
 				});
 	return {
 		type: "rate_limit",
+		status: f.optionalString(info.status, `${at}.status`),
+		// Epoch seconds on the wire; milliseconds in the model.
+		resetsAt: resetsAt === undefined ? undefined : resetsAt * 1000,
 		windows: windows.map(([key, window, path]) => {
 			const utilization = f.optionalNumber(
 				window.utilization,
@@ -1874,8 +1891,11 @@ export function decodeSent(line: string): SentLine {
 		case "user": {
 			const message = f.object(raw.message, "sent user.message");
 			const origin = f.string(raw[ORIGIN_KEY], `sent user.${ORIGIN_KEY}`);
-			if (origin !== "person" && origin !== "injection") {
-				return f.fail(`sent user.${ORIGIN_KEY}`, `"person" or "injection"`);
+			if (!isSentOrigin(origin)) {
+				return f.fail(
+					`sent user.${ORIGIN_KEY}`,
+					SENT_ORIGINS.map((each) => JSON.stringify(each)).join(" or "),
+				);
 			}
 			const content = message.content;
 			if (typeof content === "string")

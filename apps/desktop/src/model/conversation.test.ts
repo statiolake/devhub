@@ -22,7 +22,10 @@ import {
   rewindTargets,
   entryId,
   lastTurnFailed,
+  limitStop,
   mostUsedRateLimit,
+  usedUpReset,
+  type LimitStop,
   rateLimitWindowName,
   withRateLimits,
   workState,
@@ -119,6 +122,7 @@ function delta(id: string, block: number, text: string): ConversationEvent {
 function turnEnd(
   id: string,
   outcome: "completed" | "interrupted" | "failed",
+  limit?: LimitStop,
 ): ConversationEvent {
   return {
     type: "entry",
@@ -129,6 +133,7 @@ function turnEnd(
       detail: undefined,
       usage: undefined,
       durationMs: 1200,
+      limit,
     },
   };
 }
@@ -1299,6 +1304,103 @@ describe("a rewind", () => {
       },
     ]);
     expect([...rewindTargets(more)]).toEqual(["u1", "u2"]);
+  });
+});
+
+describe("a conversation a usage limit stopped", () => {
+  const LIMITED = { resetsAt: 1_800_000_000_000 };
+  const stopped = [
+    READY,
+    user("u1", "go"),
+    RUNNING,
+    turnEnd("t1", "failed", LIMITED),
+    READY,
+  ];
+
+  it("stands stopped at the limit while the turn's end is the last thing in it", () => {
+    expect(limitStop(fold(...stopped))).toEqual({
+      entry: entryId("t1"),
+      resetsAt: LIMITED.resetsAt,
+    });
+    // A turn that failed for any other reason is not a limit.
+    expect(
+      limitStop(
+        fold(READY, user("u1", "go"), RUNNING, turnEnd("t1", "failed"), READY),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("stops standing once anything moves it on", () => {
+    const moved: readonly [string, ConversationEvent][] = [
+      ["the person's words", user("u2", "again")],
+      ["a turn the Agent starts", RUNNING],
+      [
+        "a restart of its CLI",
+        {
+          type: "entry",
+          entry: {
+            kind: "notice",
+            id: entryId("n1"),
+            parent: null,
+            level: "info",
+            text: "Session restarted",
+            raw: undefined,
+          },
+        },
+      ],
+      [
+        "a message written and not taken",
+        {
+          type: "sending",
+          sending: [{ id: "s1", text: "x", images: [], origin: "person" }],
+        },
+      ],
+      [
+        "a message DevHub holds",
+        {
+          type: "pending",
+          pending: [
+            {
+              id: pendingId("held:1"),
+              text: "x",
+              images: [],
+              failure: "the host is gone",
+              editing: false,
+            },
+          ],
+        },
+      ],
+      ["another session", { type: "session-switched", session: "other" }],
+    ];
+    for (const [what, event] of moved)
+      expect(limitStop(fold(...stopped, event)), what).toBeUndefined();
+  });
+
+  it("is what DevHub will do about it, replaced whole and its own", () => {
+    const shown = applyEvent(fold(...stopped), {
+      type: "limit-resume",
+      resume: { kind: "scheduled", at: 5 },
+    });
+    expect(shown.limitResume).toEqual({ kind: "scheduled", at: 5 });
+    expect(limitStop(shown)).toEqual(limitStop(fold(...stopped)));
+    expect(
+      applyEvent(shown, { type: "limit-resume", resume: undefined })
+        .limitResume,
+    ).toBeUndefined();
+  });
+
+  it("resets when the used-up window does, the latest of several", () => {
+    expect(
+      usedUpReset([
+        { window: "5-hour", usedPercent: 100, resetsAt: 10 },
+        { window: "7-day", usedPercent: 100, resetsAt: 30 },
+        { window: "other", usedPercent: 40, resetsAt: 50 },
+      ]),
+    ).toBe(30);
+    expect(
+      usedUpReset([{ window: "5-hour", usedPercent: 99, resetsAt: 10 }]),
+    ).toBeUndefined();
+    expect(usedUpReset(undefined)).toBeUndefined();
   });
 });
 

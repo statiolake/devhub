@@ -42,7 +42,11 @@ export function testConfig(
     general: { importLoginEnvironment: true },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
-    agents: { defaultPresentation: "tui" },
+    agents: {
+      defaultPresentation: "tui",
+      resumeAfterLimit: true,
+      resumeAfterLimitMessage: "続けて",
+    },
     runtimes: {
       shell: "/bin/zsh",
       git: "git",

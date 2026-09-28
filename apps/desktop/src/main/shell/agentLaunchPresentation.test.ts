@@ -25,6 +25,10 @@ import { HOST_NAME, HOST_SCRIPT } from "../agent/conversation/hostScript.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { agents } from "./adapters.js";
+import {
+	memoryRecords,
+	RESUME_OFF,
+} from "../agent/conversation/limitResumeTestKit.js";
 import { wireAgents } from "./agentWiring.js";
 
 const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
@@ -57,6 +61,8 @@ function wired() {
 		},
 		clientVersion: "0.0.0-test",
 		profileTag: "0123456789ab",
+		resumeAfterLimit: () => RESUME_OFF,
+		limitResumes: memoryRecords(),
 	});
 	const adapter = agents();
 	if (!adapter) throw new Error("the Agent adapter was not registered");

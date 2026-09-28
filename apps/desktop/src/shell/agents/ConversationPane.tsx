@@ -72,6 +72,7 @@ export function ConversationPane({
       rewind: (message: EntryId) =>
         bridge.conversation.rewind(agentId, message),
       interrupt: () => bridge.conversation.interrupt(agentId),
+      cancelLimitResume: () => bridge.conversation.cancelLimitResume(agentId),
       stopTask: (task: string) => bridge.conversation.stopTask(agentId, task),
       answer: (request: RequestId, answer: RequestAnswer) =>
         bridge.conversation.answer(agentId, request, answer),

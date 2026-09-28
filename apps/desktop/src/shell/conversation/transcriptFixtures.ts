@@ -12,6 +12,7 @@ import {
   type AskedQuestion,
   type FileDiff,
   type UserOrigin,
+  type LimitStop,
   applyEvents,
   EMPTY_TRANSCRIPT,
   entryId,
@@ -158,7 +159,13 @@ export function turnEnd(
     detail,
     durationMs = 4_200,
     usage = USAGE,
-  }: { detail?: string; durationMs?: number; usage?: Usage } = {},
+    limit,
+  }: {
+    detail?: string;
+    durationMs?: number;
+    usage?: Usage;
+    limit?: LimitStop;
+  } = {},
 ): TranscriptEntry {
   return {
     kind: "turn-end",
@@ -167,6 +174,7 @@ export function turnEnd(
     detail,
     usage,
     durationMs,
+    limit,
   };
 }
 

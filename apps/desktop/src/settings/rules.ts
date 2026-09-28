@@ -43,6 +43,9 @@ export const WORKSPACE_PATH_RULE =
 export const SCRATCH_DAILY_RULE =
   "scratch.daily is an absolute or ~/ path naming one folder per day with the date tokens (YYYY, MM, DD, …; [text] for literal text), e.g. ~/junk/YYYYMMDD.";
 
+export const RESUME_MESSAGE_RULE =
+  "The message sent after a usage limit resets has some text in it, and no null character.";
+
 export const PROJECT_DIRECTORY_RULE =
   "projects.directory is an absolute path, or one starting with ~/ (or ~ on its own), used as written.";
 

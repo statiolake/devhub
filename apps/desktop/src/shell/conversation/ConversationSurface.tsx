@@ -55,7 +55,12 @@ import {
   type ConversationActions,
   type SettingName,
 } from "./ConversationContext";
-import { EntryTreeContext, EntryView, SendingView } from "./EntryView";
+import {
+  EntryTreeContext,
+  EntryView,
+  LimitResumeView,
+  SendingView,
+} from "./EntryView";
 import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
@@ -438,6 +443,11 @@ export function ConversationSurface({
                             {transcript.sending.map((message) => (
                               <SendingView key={message.id} message={message} />
                             ))}
+                            {transcript.limitResume === undefined ? null : (
+                              <LimitResumeView
+                                resume={transcript.limitResume}
+                              />
+                            )}
                             {tree.unattached.map((request) => (
                               <div
                                 className="conversation-entry"

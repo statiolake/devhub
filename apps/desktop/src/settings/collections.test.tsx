@@ -355,7 +355,11 @@ describe("a collection of agent profiles", () => {
     const { saves } = await open(
       "Agents",
       testConfig({
-        agents: { defaultPresentation: "gui" },
+        agents: {
+          defaultPresentation: "gui",
+          resumeAfterLimit: true,
+          resumeAfterLimitMessage: "続けて",
+        },
         agentProfiles: [
           { ...PROFILES[0]!, kind: "claude", presentation: "tui" },
         ],
@@ -373,13 +377,37 @@ describe("a collection of agent profiles", () => {
     });
   });
 
+  it("turns going on after a usage limit off, and edits its message, refusing an empty one", async () => {
+    const { saves } = await open("General", testConfig({}));
+    fireEvent.click(screen.getByLabelText("Resume after a limit"));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agents.resumeAfterLimit).toBe(false);
+    });
+    const field = screen.getByLabelText(
+      "Message sent after a usage limit resets",
+    );
+    expect(field).toHaveValue("続けて");
+    fireEvent.change(field, { target: { value: "   " } });
+    fireEvent.blur(field);
+    expect(field).toBeInvalid();
+    fireEvent.change(field, { target: { value: "Please go on" } });
+    fireEvent.blur(field);
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agents.resumeAfterLimitMessage).toBe("Please go on");
+    });
+  });
+
   it("edits the app-wide default in General", async () => {
     const { saves } = await open("General", testConfig({}));
     fireEvent.change(screen.getByLabelText("Default agent presentation"), {
       target: { value: "gui" },
     });
     await vi.waitFor(() => {
-      expect(saves.at(-1)?.agents).toEqual({ defaultPresentation: "gui" });
+      expect(saves.at(-1)?.agents).toEqual({
+        defaultPresentation: "gui",
+        resumeAfterLimit: true,
+        resumeAfterLimitMessage: "続けて",
+      });
     });
   });
 

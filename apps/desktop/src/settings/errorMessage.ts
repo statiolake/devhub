@@ -37,6 +37,7 @@ import {
   DATE_TEMPLATE_RULE,
   SCRATCH_DAILY_RULE,
   PROJECT_DIRECTORY_RULE,
+  RESUME_MESSAGE_RULE,
   DATE_TOKEN_RULE,
   TMUX_ARGUMENT_RULE,
   WORKSPACE_PATH_RULE,
@@ -73,6 +74,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return SCRATCH_DAILY_RULE;
     case "invalid_project_directory":
       return PROJECT_DIRECTORY_RULE;
+    case "invalid_resume_message":
+      return RESUME_MESSAGE_RULE;
     case "ambiguous_date_token":
       return DATE_TOKEN_RULE;
     case "invalid_exclusion":

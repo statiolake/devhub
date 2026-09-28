@@ -55,6 +55,11 @@ export interface ConversationActions {
    * would not: the conversation says why, and nothing was dropped.
    */
   readonly rewind: (message: EntryId) => Promise<RewindOutcome>;
+  /**
+   * Nothing is to be written after the usage limit the Agent stopped at
+   * (`Transcript.limitResume`'s Cancel), or why that failed has been read.
+   */
+  readonly cancelLimitResume: () => Promise<void>;
   /** Stop the turn that is running. */
   readonly interrupt: () => Promise<void>;
   /**

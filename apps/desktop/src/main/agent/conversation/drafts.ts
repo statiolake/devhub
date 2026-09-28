@@ -8,49 +8,22 @@
  * debounced there), and main keeps the last report — so two places typing to
  * one Agent is last write wins.
  *
- * A draft lives exactly as long as its Agent, and the store is told which
- * Agents there are (`accounted`) rather than trusting anyone to remember to
- * say one went away: a report for an Agent that is not there is dropped, and
- * `prune` (run whenever the projection changes, and at load) drops every
- * draft whose Agent has gone. That is why the drafts are not in the Agent's
- * own host directory, which lives as long but sits on the Agent's machine —
- * an SSH round trip per keystroke pause, and a write that could not finish
- * after main is told to quit — nor in `state.json`, whose every save is a
- * snapshot of the whole model.
+ * A draft lives exactly as long as its Agent, kept as every such record is
+ * (`agentRecords.ts`): a report for an Agent that is not there is dropped,
+ * and a draft goes when its Agent does.
  *
  * Only the words are kept. Attached images are not: they are the bytes of
  * the images themselves, which a text file written on every pause in typing
  * should not carry, so after a restart the text comes back without them.
- *
- * Each write replaces the file whole (a temporary file renamed over it) and
- * is synchronous, so a report main has received is on disk before anything
- * after it — a quit included — can run.
  */
 
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	writeFileSync,
-} from "node:fs";
-import { dirname } from "node:path";
-
-const VERSION = 1;
+import { AgentRecords, RecordRefused } from "./agentRecords.js";
 
 export class AgentDrafts {
-	readonly #path: string;
-	readonly #accounted: () => ReadonlySet<string>;
-	readonly #drafts: Map<string, string>;
+	readonly #records: AgentRecords<string>;
 
-	private constructor(
-		path: string,
-		accounted: () => ReadonlySet<string>,
-		drafts: Map<string, string>,
-	) {
-		this.#path = path;
-		this.#accounted = accounted;
-		this.#drafts = drafts;
+	private constructor(records: AgentRecords<string>) {
+		this.#records = records;
 	}
 
 	/**
@@ -62,35 +35,25 @@ export class AgentDrafts {
 		path: string,
 		accounted: () => ReadonlySet<string>,
 	): { readonly drafts: AgentDrafts; readonly refused: string | undefined } {
-		if (!existsSync(path)) {
-			return {
-				drafts: new AgentDrafts(path, accounted, new Map()),
-				refused: undefined,
-			};
-		}
-		const text = readFileSync(path, "utf8");
-		let decoded: Map<string, string>;
-		try {
-			decoded = decode(JSON.parse(text));
-		} catch (error: unknown) {
-			if (!(error instanceof SyntaxError || error instanceof DraftsRefused)) {
-				throw error;
-			}
-			const aside = `${path}.corrupt`;
-			renameSync(path, aside);
-			return {
-				drafts: new AgentDrafts(path, accounted, new Map()),
-				refused: `${path} could not be read (${error.message}); it was moved to ${aside}, and the Agents' unsent drafts start empty.`,
-			};
-		}
-		const drafts = new AgentDrafts(path, accounted, decoded);
-		drafts.prune();
-		return { drafts, refused: undefined };
+		const { records, refused } = AgentRecords.load(
+			path,
+			{
+				key: "drafts",
+				lost: "the Agents' unsent drafts start empty",
+				decode: (text, agentId) => {
+					if (typeof text !== "string")
+						throw new RecordRefused(`the draft of ${agentId} is not text`);
+					return text;
+				},
+			},
+			accounted,
+		);
+		return { drafts: new AgentDrafts(records), refused };
 	}
 
 	/** The Agent's draft; empty when it has none. */
 	get(agentId: string): string {
-		return this.#drafts.get(agentId) ?? "";
+		return this.#records.get(agentId) ?? "";
 	}
 
 	/**
@@ -99,57 +62,11 @@ export class AgentDrafts {
 	 * a draft for nothing.
 	 */
 	set(agentId: string, text: string): void {
-		if (!this.#accounted().has(agentId)) {
-			if (this.#drafts.delete(agentId)) this.#write();
-			return;
-		}
-		if (this.get(agentId) === text) return;
-		if (text === "") this.#drafts.delete(agentId);
-		else this.#drafts.set(agentId, text);
-		this.#write();
+		this.#records.set(agentId, text === "" ? undefined : text);
 	}
 
 	/** Drop the draft of every Agent that is not there any more. */
 	prune(): void {
-		const accounted = this.#accounted();
-		let dropped = false;
-		for (const agentId of [...this.#drafts.keys()]) {
-			if (accounted.has(agentId)) continue;
-			this.#drafts.delete(agentId);
-			dropped = true;
-		}
-		if (dropped) this.#write();
+		this.#records.prune();
 	}
-
-	#write(): void {
-		mkdirSync(dirname(this.#path), { recursive: true });
-		const temporary = `${this.#path}.tmp`;
-		writeFileSync(
-			temporary,
-			`${JSON.stringify({
-				version: VERSION,
-				drafts: Object.fromEntries(this.#drafts),
-			})}\n`,
-		);
-		renameSync(temporary, this.#path);
-	}
-}
-
-class DraftsRefused extends Error {}
-
-function decode(value: unknown): Map<string, string> {
-	if (typeof value !== "object" || value === null)
-		throw new DraftsRefused("it is not an object");
-	const { version, drafts } = value as Record<string, unknown>;
-	if (version !== VERSION)
-		throw new DraftsRefused(`its version is ${JSON.stringify(version)}`);
-	if (typeof drafts !== "object" || drafts === null || Array.isArray(drafts))
-		throw new DraftsRefused("its drafts are not an object");
-	const decoded = new Map<string, string>();
-	for (const [agentId, text] of Object.entries(drafts)) {
-		if (typeof text !== "string")
-			throw new DraftsRefused(`the draft of ${agentId} is not text`);
-		decoded.set(agentId, text);
-	}
-	return decoded;
 }

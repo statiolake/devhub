@@ -2436,6 +2436,139 @@ describe("a usage limit", () => {
 	});
 });
 
+describe("a turn a usage limit stopped", () => {
+	const RESETS = 1_800_000_000;
+	const rejected = (fields: Record<string, unknown> = {}) =>
+		json({
+			type: "rate_limit_event",
+			rate_limit_info: {
+				status: "rejected",
+				resetsAt: RESETS,
+				rateLimitType: "five_hour",
+				...fields,
+			},
+			session_id: SESSION,
+		});
+	const limitAnswer = assistantLine(
+		"m",
+		[{ type: "text", text: "You've hit your limit · resets 3am" }],
+		null,
+		{ error: "rate_limit" },
+	);
+	const lastEnd = (adapter: ClaudeAdapter) =>
+		adapter.transcript.entries.findLast((each) => each.kind === "turn-end");
+
+	it("ends with the limit and the reset of the window that stopped it", () => {
+		const adapter = inTurn();
+		adapter.received(rejected());
+		adapter.received(limitAnswer);
+		adapter.received(
+			result({ is_error: true, result: "You've hit your limit" }),
+		);
+		expect(lastEnd(adapter)).toMatchObject({
+			outcome: "failed",
+			limit: { resetsAt: RESETS * 1000 },
+		});
+	});
+
+	it("is a limit on the model's limit answer alone, its reset from a used-up window", () => {
+		const adapter = inTurn();
+		adapter.received(
+			json({
+				type: "rate_limit_event",
+				rate_limit_info: {
+					status: "allowed_warning",
+					unifiedWindows: {
+						five_hour: { utilization: 1, resetsAt: RESETS },
+						seven_day: { utilization: 0.4, resetsAt: RESETS + 99 },
+					},
+				},
+				session_id: SESSION,
+			}),
+		);
+		adapter.received(limitAnswer);
+		adapter.received(
+			result({ is_error: true, result: "You've hit your limit" }),
+		);
+		expect(
+			lastEnd(adapter)?.kind === "turn-end" && lastEnd(adapter)?.limit,
+		).toEqual({ resetsAt: RESETS * 1000 });
+	});
+
+	it("learns its reset from a refusal the CLI reports after the turn ended", () => {
+		const adapter = inTurn();
+		adapter.received(limitAnswer);
+		adapter.received(
+			result({ is_error: true, result: "You've hit your limit" }),
+		);
+		expect(lastEnd(adapter)).toMatchObject({ limit: { resetsAt: undefined } });
+		adapter.received(rejected());
+		expect(lastEnd(adapter)).toMatchObject({
+			limit: { resetsAt: RESETS * 1000 },
+		});
+	});
+
+	it("is not a turn that failed otherwise, nor one the person stopped", () => {
+		const failed = inTurn();
+		failed.received(result({ is_error: true, result: "Something broke" }));
+		expect(lastEnd(failed)).toMatchObject({ limit: undefined });
+
+		const stopped = inTurn();
+		stopped.received(rejected());
+		perform(stopped, { kind: "interrupt" });
+		stopped.received(result({ is_error: true, result: "interrupted" }));
+		expect(lastEnd(stopped)).toMatchObject({
+			outcome: "interrupted",
+			limit: undefined,
+		});
+	});
+
+	it("is not carried into the next turn", () => {
+		const adapter = inTurn();
+		adapter.received(rejected());
+		adapter.received(result());
+		perform(adapter, {
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
+		adapter.received(echo("more", "u-more"));
+		adapter.received(result({ is_error: true, result: "Something broke" }));
+		expect(lastEnd(adapter)).toMatchObject({ limit: undefined });
+	});
+
+	it("is gone on with by a message sent for the person, which says so, live and replayed", () => {
+		const adapter = inTurn();
+		adapter.received(rejected());
+		adapter.received(limitAnswer);
+		adapter.received(
+			result({ is_error: true, result: "You've hit your limit" }),
+		);
+		const written = perform(adapter, {
+			kind: "send",
+			text: "続けて",
+			images: [],
+			origin: "after-limit",
+		});
+		expect(adapter.transcript.sending).toMatchObject([
+			{ text: "続けて", origin: "after-limit" },
+		]);
+		const replayed = new ClaudeAdapter("replay");
+		replayed.received(init());
+		for (const line of written) replayed.sent(line);
+		expect(replayed.transcript.sending).toMatchObject([
+			{ text: "続けて", origin: "after-limit" },
+		]);
+		adapter.received(echo("続けて", "u-resume"));
+		expect(adapter.transcript.entries.at(-1)).toMatchObject({
+			kind: "user",
+			text: "続けて",
+			origin: "after-limit",
+		});
+	});
+});
+
 describe("a subagent's end", () => {
 	// `claude-session-background-agents.handwritten.jsonl` is HAND-WRITTEN,
 	// shaped from what claude 2.1.x writes (read from its binary): background

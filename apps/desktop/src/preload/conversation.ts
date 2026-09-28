@@ -74,6 +74,8 @@ export const conversationApi: ConversationApi = {
 		command(agentId, { kind: "send-pending-now", pending }),
 	instruct: (agentId, subagent, text) =>
 		command(agentId, { kind: "instruct", subagent, text }),
+	cancelLimitResume: (agentId) =>
+		command(agentId, { kind: "cancel-limit-resume" }),
 	rewind: (agentId, message) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.rewind,

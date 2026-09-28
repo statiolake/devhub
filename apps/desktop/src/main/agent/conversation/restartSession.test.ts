@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Transcript } from "../../../model/conversation.js";
 import { LocalRuntime } from "../../runtime/local.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
+import { resumeOff } from "./limitResumeTestKit.js";
 import { AgentConversation, hostOn } from "./conversation.js";
 import {
 	agentStateDirectory,
@@ -128,6 +129,7 @@ describe("Restart session through a real host", () => {
 			hosted(new HostLink(new LocalRuntime(), directory)),
 			new ClaudeAdapter("boot-a"),
 			() => undefined,
+			resumeOff(),
 		);
 		conversation.start();
 		await until(conversation, idle);
@@ -181,6 +183,7 @@ describe("Restart session through a real host", () => {
 			hosted(link),
 			new ClaudeAdapter("boot-b"),
 			() => undefined,
+			resumeOff(),
 		);
 		again.start();
 		await until(

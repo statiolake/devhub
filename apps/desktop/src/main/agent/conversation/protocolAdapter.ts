@@ -34,12 +34,14 @@ import type {
 	RequestAnswer,
 	RequestId,
 	RunningTask,
+	SentOrigin,
 	Transcript,
 } from "../../../model/conversation.js";
 
 export type ConversationCommand =
 	/**
-	 * A user message: a person's words, an injection, or a slash command typed
+	 * A user message: a person's words, an injection, the message DevHub
+	 * sends for the person once a usage limit reset, or a slash command typed
 	 * as text. Written while a turn runs, it is taken into that turn (Codex's
 	 * `turn/steer`, Claude's message queued for the turn's next step); written
 	 * while none runs, it starts one.
@@ -49,7 +51,7 @@ export type ConversationCommand =
 			readonly text: string;
 			/** Images attached to the words, each its own bytes (`source.kind` "data"). */
 			readonly images: readonly ImageRef[];
-			readonly origin: "person" | "injection";
+			readonly origin: SentOrigin;
 	  }
 	/**
 	 * The person's words to a subagent, named by the call that started it,

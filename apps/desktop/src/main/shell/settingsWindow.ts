@@ -193,7 +193,11 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		workspaceSources: config.workspaceSources.map(toWireSource),
 		scratch: { daily: config.scratch.daily },
 		projects: { directory: config.projects.directory },
-		agents: { defaultPresentation: config.agents.default_presentation },
+		agents: {
+			defaultPresentation: config.agents.default_presentation,
+			resumeAfterLimit: config.agents.resume_after_limit,
+			resumeAfterLimitMessage: config.agents.resume_after_limit_message,
+		},
 		agentActions: config.agentActions.map((action) => ({
 			trigger: action.trigger,
 			id: action.id,
@@ -318,7 +322,11 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
 		scratch: { daily: wire.scratch.daily },
 		projects: { directory: wire.projects.directory },
-		agents: { default_presentation: wire.agents.defaultPresentation },
+		agents: {
+			default_presentation: wire.agents.defaultPresentation,
+			resume_after_limit: wire.agents.resumeAfterLimit,
+			resume_after_limit_message: wire.agents.resumeAfterLimitMessage,
+		},
 		// The order is the order the window shows them in — the tree is where a
 		// person arranges these — so the position in this list is the `order`
 		// that is written down, rather than a number the page has to carry.

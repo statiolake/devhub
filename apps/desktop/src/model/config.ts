@@ -52,6 +52,10 @@ import {
 import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
+  DEFAULT_RESUME_MESSAGE,
+  resumeMessageProblem,
+} from "./conversation.js";
+import {
   AGENT_PRESENTATIONS,
   presentationsFor,
   type AgentPresentation,
@@ -325,6 +329,13 @@ export interface AgentsConfig {
    * terminal instead: a default is a preference, not a demand on every kind.
    */
   readonly default_presentation: AgentPresentation;
+  /**
+   * Whether a GUI Agent a usage limit stopped is gone on with once the limit
+   * has reset: `resume_after_limit_message` is written for the person then.
+   */
+  readonly resume_after_limit: boolean;
+  /** What is written: never empty (`resumeMessageProblem`). */
+  readonly resume_after_limit_message: string;
 }
 
 /**
@@ -706,7 +717,11 @@ export function defaultConfig(): Config {
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
     projects: { directory: undefined },
-    agents: { default_presentation: "tui" },
+    agents: {
+      default_presentation: "tui",
+      resume_after_limit: true,
+      resume_after_limit_message: DEFAULT_RESUME_MESSAGE,
+    },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
   };
@@ -737,6 +752,7 @@ export type ValidationCode =
   | "invalid_date_template"
   | "invalid_scratch_daily"
   | "invalid_project_directory"
+  | "invalid_resume_message"
   | "ambiguous_date_token"
   | "invalid_exclusion"
   | "invalid_command"
@@ -1297,6 +1313,9 @@ export function validateConfig(config: Config): void {
     )
   ) {
     fail("invalid_profile", "agents.default_presentation");
+  }
+  if (resumeMessageProblem(config.agents.resume_after_limit_message)) {
+    fail("invalid_resume_message", "agents.resume_after_limit_message");
   }
   validateAgentProfiles(config.agentProfiles);
   validateAgentActions(config.agentActions);
@@ -1875,7 +1894,15 @@ export function interpretConfig(document: unknown): Config {
   }
   checkKeys(generalTable, ["import_login_environment"], "general");
   const agentsTable = requireTable(table["agents"] ?? {}, "agents");
-  checkKeys(agentsTable, ["default_presentation"], "agents");
+  checkKeys(
+    agentsTable,
+    [
+      "default_presentation",
+      "resume_after_limit",
+      "resume_after_limit_message",
+    ],
+    "agents",
+  );
 
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
   checkKeys(
@@ -2028,6 +2055,18 @@ export function interpretConfig(document: unknown): Config {
         "agents",
         defaults.agents.default_presentation,
       ) as AgentPresentation,
+      resume_after_limit: optionalBoolean(
+        agentsTable,
+        "resume_after_limit",
+        "agents",
+        defaults.agents.resume_after_limit,
+      ),
+      resume_after_limit_message: optionalString(
+        agentsTable,
+        "resume_after_limit_message",
+        "agents",
+        defaults.agents.resume_after_limit_message,
+      ),
     },
     workspaceSources:
       rawSources === undefined
@@ -2137,7 +2176,11 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     ...(config.projects.directory === undefined
       ? {}
       : { projects: { directory: config.projects.directory } }),
-    agents: { default_presentation: config.agents.default_presentation },
+    agents: {
+      default_presentation: config.agents.default_presentation,
+      resume_after_limit: config.agents.resume_after_limit,
+      resume_after_limit_message: config.agents.resume_after_limit_message,
+    },
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,

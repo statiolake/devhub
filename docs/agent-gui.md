@@ -1311,7 +1311,59 @@ once as a notice (*DevHub could not read a CLI's usage limits*), and stops:
 there is no retry until DevHub is restarted, and the readout goes on with what
 GUI Agents report. A CLI nothing has read says so in the tooltip (*Not read
 yet*) rather than showing zero, and while neither has anything to say nothing
-is drawn. The conversation itself shows no rate limits.
+is drawn. The conversation itself shows no rate limits, except when one has
+stopped it (below).
+
+## Going on after a usage limit
+
+When a usage limit stops a GUI Agent's turn, DevHub goes on with it by
+itself once the limit has reset. Which turns count is each CLI's own
+documented word, read by its adapter onto the turn's end
+(`TurnEndEntry.limit`):
+
+- **Claude**: the turn's answer is the API's `rate_limit` error (the
+  `error` of the `assistant` message, the SDK's `SDKAssistantMessageError`),
+  or the turn failed (`result.is_error`) after a `rate_limit_event` whose
+  `status` was `rejected`. The reset is that event's own `resetsAt`, the
+  window `rateLimitType` names; without one, the reset of a window the
+  events report as used up (100%).
+- **Codex**: the turn failed with `codexErrorInfo` `usageLimitExceeded`. The
+  reset is that of the window `account/rateLimits/updated` reports as used
+  up; a report that comes after the turn ended still fills it in.
+
+A turn the person stopped is never a limit. While such a turn's end is the
+last thing in the conversation — nothing running, written, held or asked
+since — the conversation stands stopped at the limit, and a quiet line at
+its end says what DevHub will do: *Rate limited — resuming at 16:50* (the
+time as the Sidebar gives it, within twelve hours; the short date and time
+further off) with **Cancel**. Thirty seconds after the reset (the CLI's clock
+and this Mac's differ), DevHub writes `[agents] resume_after_limit_message`
+(default *続けて*) through the conversation's one send, as the person's: it
+is drawn as their bubble, marked *Sent automatically after the limit
+reset*, and can be rewound to like their own. Nothing is written sooner
+than thirty seconds after the line appeared.
+
+One rule ends it: anything that moves the conversation on — the person's
+words, a turn the Agent starts on its own, Restart session, a rewind,
+`/resume`, the Agent stopped, closed or continued in a terminal — leaves the
+stop no longer standing, and the resume goes with it; so does Cancel. A
+limit whose reset the CLI did not say is not resumed, and the line says so
+(*not resuming by itself: the CLI did not say when the limit resets*), as it
+does for one whose reset had already passed when DevHub read it; **Dismiss**
+puts either away. A write that fails is said on the line (*could not
+resume: …*, with a warning's weight) and is not tried again.
+
+It survives a restart of DevHub. What was decided about each Agent's last
+stop — its turn end, the journal offset it first stood at, and when the
+message is due or that it is over — is kept in `limit-resumes.json` beside
+`state.json` (`main/agent/conversation/limitResume.ts`), and goes when the
+Agent does. The next DevHub replays the journal and picks the recorded stop
+up again: at the same time, or thirty seconds after start when the time
+passed while it was down; an earlier stop the replay passes on the way is
+history, and a stop after it (one that happened while DevHub was down) is
+new. Settings → General → Agents turns it off (`[agents]
+resume_after_limit = false`) and sets the message, which may not be empty;
+turned off, a resume already shown is not written when it comes due.
 
 ## Known limits
 

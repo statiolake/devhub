@@ -58,6 +58,7 @@ import {
 } from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { scratchDailyProblem } from "../model/scratchDay";
+import { resumeMessageProblem } from "../model/conversation";
 import {
   defaultTerminalPalettes,
   TERMINAL_THEME_VSCODE,
@@ -100,6 +101,7 @@ import {
   projectDirectoryProblem,
   workspacePathProblem,
   SCRATCH_DAILY_RULE,
+  RESUME_MESSAGE_RULE,
   type MatchChoice,
 } from "./rules";
 
@@ -208,7 +210,39 @@ export function GeneralSection({
               ["gui", PRESENTATION_NAMES.gui],
             ]}
             onChange={(defaultPresentation) => {
-              update({ ...config, agents: { defaultPresentation } });
+              update({
+                ...config,
+                agents: { ...config.agents, defaultPresentation },
+              });
+            }}
+          />
+        </Row>
+        <SwitchRow
+          label="Resume after a limit"
+          help="When a usage limit stops a GUI agent, send it the message below once the limit resets. The conversation says when, and Cancel there stops it."
+          checked={config.agents.resumeAfterLimit}
+          onChange={(resumeAfterLimit) => {
+            update({
+              ...config,
+              agents: { ...config.agents, resumeAfterLimit },
+            });
+          }}
+        />
+        <Row
+          label="Resume message"
+          help="What is sent for you, shown in the conversation as your message sent automatically."
+        >
+          <TextField
+            label="Message sent after a usage limit resets"
+            value={config.agents.resumeAfterLimitMessage}
+            validate={(next) =>
+              resumeMessageProblem(next) ? RESUME_MESSAGE_RULE : undefined
+            }
+            onCommit={(resumeAfterLimitMessage) => {
+              update({
+                ...config,
+                agents: { ...config.agents, resumeAfterLimitMessage },
+              });
             }}
           />
         </Row>

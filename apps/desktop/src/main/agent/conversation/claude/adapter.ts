@@ -67,6 +67,7 @@ import {
 	type SendingMessage,
 	type RunningTask,
 	type UserOrigin,
+	type SentOrigin,
 	type SubagentInfo,
 	type ToolEntry,
 	type ToolOutput,
@@ -74,6 +75,7 @@ import {
 	type Transcript,
 	type TranscriptEntry,
 	type Usage,
+	usedUpReset,
 	withRateLimits,
 } from "../../../../model/conversation.js";
 import {
@@ -309,6 +311,8 @@ const DECLINE: RequestChoice = {
 
 /** The `error` of an assistant message whose request the API refused as unauthenticated. */
 const SIGNED_OUT = "authentication_failed";
+/** The API error of an answer a usage or rate limit refused (`SDKAssistantMessageError`). */
+const RATE_LIMITED = "rate_limit";
 
 const DENIED_WITHOUT_WORDS = "The person denied this in DevHub.";
 
@@ -389,6 +393,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private readonly answered = new Set<string>();
 	/** DevHub asked the running turn to stop. */
 	private interrupting = false;
+	/**
+	 * What of a usage limit the turn under way has been told: the model's
+	 * answer was the API's `rate_limit` error (`limitAnswered`), and the
+	 * reset of the window a `rate_limit_event` with status `rejected` named
+	 * (`rejected`, whose `resetsAt` may be unknown). Read when the turn ends.
+	 */
+	private limitAnswered = false;
+	private rejected: { readonly resetsAt: number | undefined } | undefined;
+	/**
+	 * The end of the last turn, when a usage limit stopped it and the CLI has
+	 * not said when that limit resets: a `rate_limit_event` that says so
+	 * before the next turn starts fills it in.
+	 */
+	private unresetLimit: EntryId | undefined;
 	/**
 	 * The subagent call each background task belongs to, by task id: what a
 	 * notification that names only the task (not its call) is matched by.
@@ -968,6 +986,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const { state } = this.current;
 		if (state.phase === "broken") return;
 		if (state.phase === "ready" && state.turn === turn) return;
+		if (turn === "running") {
+			// A turn starts: what a limit said of the last one is over.
+			this.limitAnswered = false;
+			this.rejected = undefined;
+			this.unresetLimit = undefined;
+		}
 		this.emit({ type: "state", state: { phase: "ready", turn } });
 	}
 
@@ -1224,16 +1248,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				this.background = line.tasks;
 				return;
 			case "rate_limit":
-				return this.emit({
-					type: "usage",
-					usage: {
-						...(this.current.usage ?? NO_USAGE),
-						rateLimits: withRateLimits(
-							this.current.usage?.rateLimits,
-							line.windows,
-						),
-					},
-				});
+				return this.takeRateLimit(line);
 			case "unused":
 				return;
 			case "reported":
@@ -1529,6 +1544,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				},
 			});
 		} else if (line.error !== undefined) {
+			if (line.error === RATE_LIMITED && parent === null && when === "live")
+				this.limitAnswered = true;
 			this.notice(
 				"error",
 				`The API refused the request: ${line.error}`,
@@ -2017,12 +2034,69 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 	}
 
+	/**
+	 * A `rate_limit_event`: the windows it reports are the conversation's
+	 * usage, and one whose status is `rejected` is a usage limit refusing the
+	 * CLI — the turn under way's, or, when the CLI says it after that turn's
+	 * end, the reset that end did not know.
+	 */
+	private takeRateLimit(
+		line: Extract<ClaudeLine, { type: "rate_limit" }>,
+	): void {
+		const rateLimits = withRateLimits(
+			this.current.usage?.rateLimits,
+			line.windows,
+		);
+		this.emit({
+			type: "usage",
+			usage: { ...(this.current.usage ?? NO_USAGE), rateLimits },
+		});
+		const resetsAt =
+			(line.status === "rejected" ? line.resetsAt : undefined) ??
+			usedUpReset(rateLimits);
+		if (this.unresetLimit !== undefined) {
+			if (resetsAt === undefined) return;
+			const end = this.current.entries.find(
+				(each) => each.id === this.unresetLimit,
+			);
+			// Rewound away, or left with another session: nothing to fill in.
+			if (end === undefined) {
+				this.unresetLimit = undefined;
+				return;
+			}
+			if (end.kind !== "turn-end") {
+				throw new Error(
+					`${this.unresetLimit}, the end of a turn a usage limit stopped, is a ${end.kind} entry`,
+				);
+			}
+			this.unresetLimit = undefined;
+			this.emit({ type: "entry", entry: { ...end, limit: { resetsAt } } });
+			return;
+		}
+		if (line.status === "rejected") this.rejected = { resetsAt };
+	}
+
 	private takeResult(line: Extract<ClaudeLine, { type: "result" }>): void {
 		const outcome = this.interrupting
 			? "interrupted"
 			: line.isError
 				? "failed"
 				: "completed";
+		// A usage limit stopped the turn: the model's answer was the API's
+		// limit error, or the turn failed after the CLI was refused by a limit.
+		// A turn the person stopped was stopped by them.
+		const limit =
+			outcome !== "interrupted" &&
+			(this.limitAnswered ||
+				(outcome === "failed" && this.rejected !== undefined))
+				? {
+						resetsAt:
+							this.rejected?.resetsAt ??
+							usedUpReset(this.current.usage?.rateLimits),
+					}
+				: undefined;
+		this.limitAnswered = false;
+		this.rejected = undefined;
 		const usage: Usage = {
 			...NO_USAGE,
 			inputTokens: line.usage?.inputTokens,
@@ -2052,10 +2126,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 							: line.result,
 				usage,
 				durationMs: line.durationMs,
+				limit,
 			},
 		});
 		this.emit({ type: "usage", usage });
 		this.turn("none");
+		this.unresetLimit =
+			limit !== undefined && limit.resetsAt === undefined
+				? entryId(`turn:${this.turns}`)
+				: undefined;
 		this.interrupting = false;
 		// A server still connecting when the turn began (`system/init`) has
 		// settled one way or the other by now, most likely.
@@ -2238,7 +2317,7 @@ function invocation(text: string): string | undefined {
 function userLine(
 	text: string,
 	images: readonly ImageRef[],
-	origin: "person" | "injection",
+	origin: SentOrigin,
 	midTurn = false,
 ): string {
 	return JSON.stringify({

@@ -183,8 +183,16 @@ export interface SettingsConfigWire {
 	readonly scratch: { readonly daily: string };
 	/** `[projects]`: where new projects go; absent means derived from the sources. */
 	readonly projects: { readonly directory: string | undefined };
-	/** `[agents]`: how an Agent is shown when neither its launch nor its profile says. */
-	readonly agents: { readonly defaultPresentation: "tui" | "gui" };
+	/**
+	 * `[agents]`: how an Agent is shown when neither its launch nor its
+	 * profile says, and whether (and with what words) a GUI Agent a usage
+	 * limit stopped is gone on with once it resets.
+	 */
+	readonly agents: {
+		readonly defaultPresentation: "tui" | "gui";
+		readonly resumeAfterLimit: boolean;
+		readonly resumeAfterLimitMessage: string;
+	};
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];
 }
@@ -358,6 +366,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_date_template"
 	| "invalid_scratch_daily"
 	| "invalid_project_directory"
+	| "invalid_resume_message"
 	| "ambiguous_date_token"
 	| "invalid_exclusion"
 	| "invalid_command"
