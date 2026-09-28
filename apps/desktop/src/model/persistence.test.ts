@@ -1419,6 +1419,70 @@ describe("the order a person put the rows in, across a restart", () => {
     removeScratchDir(directory);
   });
 
+  /**
+   * Where the Smart Buttons were dragged survives a restart, per
+   * presentation; a file written before they could be dragged has no key and
+   * loads with both in their default spot.
+   */
+  it("loads a file with no Smart Buttons placement, and writes one back", async () => {
+    const state = freshState();
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    delete document["smart_buttons"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const store = new JsonStateStore(path);
+    const load = await store.loadState();
+    expect(load.metadata.origin).toBe("primary");
+    expect(load.state.smart_buttons).toEqual({});
+
+    const model = hydrateModel(load.state, [], today());
+    model.placeSmartButtons("gui", { right: 40, bottom: 120 });
+    await store.saveState(applySnapshot(load.state, model.snapshot()));
+
+    const again = await new JsonStateStore(path).loadState();
+    expect(again.state.smart_buttons).toEqual({
+      gui: { right: 40, bottom: 120 },
+    });
+    const restored = hydrateModel(again.state, [], today());
+    expect(restored.snapshot().smartButtons).toEqual({
+      gui: { right: 40, bottom: 120 },
+    });
+
+    // Put back is forgotten, not written as a copy of the default.
+    restored.placeSmartButtons("gui", undefined);
+    await store.saveState(applySnapshot(again.state, restored.snapshot()));
+    expect(
+      (await new JsonStateStore(path).loadState()).state.smart_buttons,
+    ).toEqual({});
+    removeScratchDir(directory);
+  });
+
+  it("refuses a Smart Buttons placement that is not a place", async () => {
+    for (const smartButtons of [
+      { tui: { right: -1, bottom: 0 } },
+      { tui: { right: 1.5, bottom: 0 } },
+      { sideways: { right: 0, bottom: 0 } },
+    ]) {
+      const directory = makeScratchDir("state");
+      const path = join(directory, "state.json");
+      const document = JSON.parse(JSON.stringify(freshState())) as Record<
+        string,
+        unknown
+      >;
+      document["smart_buttons"] = smartButtons;
+      await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+      const load = await new JsonStateStore(path).loadState();
+      expect(load.metadata.origin).not.toBe("primary");
+      expect(load.state.smart_buttons).toEqual({});
+      removeScratchDir(directory);
+    }
+  });
+
   it("carries an arrangement from the model to the file and back", () => {
     const model = new AppModel(today());
     model.addWorkspace(

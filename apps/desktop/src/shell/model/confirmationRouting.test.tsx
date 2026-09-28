@@ -48,6 +48,7 @@ const SNAPSHOT = {
   selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 240, collapsed: false },
   splitRatio: 0.55,
+  smartButtons: {},
   scratchWorkspaceId: SCRATCH_ID,
   workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;
@@ -80,6 +81,7 @@ function bridge(dispatch: () => Promise<AppOutcome>) {
       profiles: [],
     }),
     onAgentProfiles: () => () => undefined,
+    agentActions: async () => [],
     onAgentActions: () => () => undefined,
     onWorkspacePicker: () => () => undefined,
     onTheme: () => () => undefined,

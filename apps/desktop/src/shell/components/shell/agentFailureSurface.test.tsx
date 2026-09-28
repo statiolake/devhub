@@ -28,11 +28,15 @@ vi.mock("../../agents/AgentsContext", () => ({
   useAgents: () => ({
     dispatch,
     reportFailure,
+    repositoryStatus: { sequence: 0, workspaces: [] },
+    agentActions: [],
+    runAgentAction: vi.fn(),
   }),
 }));
 
 function snapshotWith(failure: AgentFailureStateWire | undefined): AppSnapshot {
   return {
+    smartButtons: {},
     workspaces: [
       {
         id: "workspace-1",

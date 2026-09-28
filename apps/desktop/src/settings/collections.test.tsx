@@ -402,6 +402,7 @@ function withCommitAction(): SettingsConfig {
         displayName: "Commit the changes",
         template: "commit it",
         confirmBeforeSend: true,
+        button: true,
         enabled: true,
       },
     ],
@@ -463,7 +464,7 @@ describe("the actions an agent is sent", () => {
     const headings = within(list())
       .getAllByRole("presentation")
       .map((one) => one.textContent);
-    expect(headings).toEqual(["Assigning an Issue", "Commit button"]);
+    expect(headings).toEqual(["Assigning an Issue", "Uncommitted changes"]);
   });
 
   it("adds a new action under the trigger that is selected", async () => {
@@ -495,6 +496,22 @@ describe("the actions an agent is sent", () => {
       expect(saves.at(-1)?.agentActions[0]?.enabled).toBe(false);
     });
     expect(saves.at(-1)?.agentActions[0]?.template.length).toBeGreaterThan(0);
+  });
+
+  it("saves whether a Smart Button action is drawn as a button", async () => {
+    const { saves } = await open("Actions", withCommitAction());
+    fireEvent.click(options()[1] as HTMLElement);
+    fireEvent.click(screen.getByLabelText("Show as a Smart Button"));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[1]?.button).toBe(false);
+    });
+    // Still there, and still offered: the Agent actions sheet lists it.
+    expect(saves.at(-1)?.agentActions[1]?.enabled).toBe(true);
+  });
+
+  it("has no button switch for an Issue action, which is not a button", async () => {
+    await open("Actions", testConfig({}));
+    expect(screen.queryByLabelText("Show as a Smart Button")).toBeNull();
   });
 
   /**
@@ -567,6 +584,7 @@ describe("the actions an agent is sent", () => {
             template: "a",
             confirmBeforeSend: true,
             trigger: "issue",
+            button: false,
             enabled: true,
           },
           {
@@ -575,6 +593,7 @@ describe("the actions an agent is sent", () => {
             template: "b",
             confirmBeforeSend: true,
             trigger: "issue",
+            button: false,
             enabled: true,
           },
         ],

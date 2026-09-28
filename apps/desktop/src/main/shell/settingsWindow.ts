@@ -200,6 +200,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			displayName: action.display_name,
 			template: action.template,
 			confirmBeforeSend: action.confirm_before_send,
+			button: action.button,
 			enabled: action.enabled,
 		})),
 		agentProfiles: config.agentProfiles.map((profile) => ({
@@ -327,6 +328,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			display_name: action.displayName,
 			template: action.template,
 			confirm_before_send: action.confirmBeforeSend,
+			button: action.button,
 			enabled: action.enabled,
 			order: index,
 		})),

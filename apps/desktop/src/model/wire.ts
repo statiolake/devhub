@@ -45,6 +45,7 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import { isSmartButtonsOffset } from "./smartButtons.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -478,6 +479,7 @@ export function snapshotWire(
       collapsed: snapshot.sidebar.collapsed,
     },
     splitRatio: snapshot.splitRatio,
+    smartButtons: snapshot.smartButtons,
   };
   if (
     wire.sidebar.width < SIDEBAR_MIN_WIDTH ||
@@ -1010,6 +1012,24 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         invalid();
       }
       return { type: "resize_split", ratio: wire.ratio };
+    case "place_smart_buttons": {
+      const offset = wire.offset;
+      if (
+        offset !== undefined &&
+        (typeof offset !== "object" ||
+          offset === null ||
+          !isSmartButtonsOffset({ right: offset.right, bottom: offset.bottom }))
+      ) {
+        invalid();
+      }
+      return {
+        type: "place_smart_buttons",
+        presentation: tryParse(() => parseAgentPresentation(wire.presentation)),
+        ...(offset === undefined
+          ? {}
+          : { offset: { right: offset.right, bottom: offset.bottom } }),
+      };
+    }
     case "resize_sidebar":
       if (
         !Number.isInteger(wire.width) ||

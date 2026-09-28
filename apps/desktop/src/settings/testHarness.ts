@@ -72,6 +72,7 @@ export function testConfig(
         template: DEFAULT_ACTION_TEMPLATE,
         confirmBeforeSend: true,
         trigger: "issue",
+        button: false,
         enabled: true,
       },
     ],

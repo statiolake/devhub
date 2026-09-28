@@ -381,7 +381,10 @@ import {
 	parseGitHubItemUrl,
 } from "../../model/github.js";
 import type { GitHubItem } from "../../model/github.js";
-import { renderAgentAction } from "../../model/agentActions.js";
+import {
+	renderAgentAction,
+	smartButtonValues,
+} from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
@@ -2551,6 +2554,7 @@ export class AppController {
 				trigger: action.trigger,
 				id: action.id,
 				displayName: action.display_name,
+				button: action.button,
 			}));
 	}
 
@@ -3164,17 +3168,18 @@ export class AppController {
 				`There is no agent action called \`${actionId}\` in the configuration.`,
 			);
 		}
-		// The branch is the one variable a shortcut knows, and it comes from the
-		// same projection the buttons were drawn from — so the message names the
-		// branch the person was looking at when they pressed it.
-		const branch = this.lastRepositoryStatus.workspaces.find(
-			(entry) => entry.workspaceId === agent.workspaceId,
-		)?.branch;
+		// The values come from the same projection the Smart Buttons were drawn
+		// from — so the message names the branch and the pull request the person
+		// was looking at when they pressed it.
 		this.sayToAgent(
 			agent.id,
 			agent.profile.kind,
 			action,
-			branch === undefined ? {} : { BRANCH: branch },
+			smartButtonValues(
+				this.lastRepositoryStatus.workspaces.find(
+					(entry) => entry.workspaceId === agent.workspaceId,
+				),
+			),
 		);
 		// Queueing changed the Agent's `injection`, which is what the buttons read
 		// to say a message is waiting — so the page is handed the snapshot that
@@ -3191,7 +3196,7 @@ export class AppController {
 	 * Compose one action for one Agent and put it where it will be sent.
 	 *
 	 * Every template DevHub says goes through here — the Issue flow's first
-	 * message and the three shortcut buttons alike — because they are one act
+	 * message and the Smart Buttons alike — because they are one act
 	 * with one difference: what fired it. Rendering, the review decision, and
 	 * the sheet are therefore written once. A second caller that queued its own
 	 * text directly would be a second answer to "does this get looked at first",
@@ -6435,7 +6440,7 @@ export class AppController {
 		// Destructive. `force` says the page already asked and was told to go
 		// ahead; without it git is left to refuse, which is what happens for the
 		// removals that were never worth asking about.
-		// The shortcut buttons. A refusal reaches the page as words, because a
+		// The Smart Buttons. A refusal reaches the page as words, because a
 		// button that quietly does nothing is the one outcome nobody can act on.
 		handle(
 			CHANNELS.runAgentAction,

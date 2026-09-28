@@ -59,6 +59,7 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
     } as AppSnapshot["selection"],
     sidebar: { width: 240 } as AppSnapshot["sidebar"],
     splitRatio: 0.55,
+    smartButtons: {},
     scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
       scratchWorkspace(),

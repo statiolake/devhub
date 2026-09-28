@@ -143,6 +143,11 @@ export interface SettingsAgentActionWire {
 	readonly template: string;
 	/** Whether the wording is shown for review before it is sent. */
 	readonly confirmBeforeSend: boolean;
+	/**
+	 * Whether a Smart Button is drawn for it while its condition holds. Always
+	 * false for an Issue action, which has no button.
+	 */
+	readonly button: boolean;
 	/** False is how one DevHub ships is taken away. */
 	readonly enabled: boolean;
 }

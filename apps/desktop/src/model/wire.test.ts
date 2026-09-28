@@ -104,6 +104,7 @@ function snapshotOf(workspaces: readonly WorkspaceSnapshot[]): AppSnapshot {
     workspaces,
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    smartButtons: {},
     editorHost: { kind: "ready" },
   } as unknown as AppSnapshot;
 }
@@ -347,6 +348,36 @@ describe("the path a row shows", () => {
     // A host DevHub has not reached yet. Longer, never wrong.
     const row = rowAt(`${REMOTE_HOME}/api`, nas, () => "");
     expect(row.displayRoot).toBe(`${REMOTE_HOME}/api`);
+  });
+});
+
+describe("where the Smart Buttons were dragged, across the wire", () => {
+  const place = (offset?: unknown, presentation: unknown = "tui") =>
+    intentFromWire({
+      type: "place_smart_buttons",
+      presentation,
+      ...(offset === undefined ? {} : { offset }),
+    } as AppIntentWire);
+
+  it("carries a place, and a put-back as no place", () => {
+    expect(place({ right: 20, bottom: 30 })).toEqual({
+      type: "place_smart_buttons",
+      presentation: "tui",
+      offset: { right: 20, bottom: 30 },
+    });
+    expect(place(undefined, "gui")).toEqual({
+      type: "place_smart_buttons",
+      presentation: "gui",
+    });
+  });
+
+  it("refuses a place that is not one, and a presentation that is neither", () => {
+    expect(() => place({ right: -3, bottom: 0 })).toThrow(InvalidIntent);
+    expect(() => place({ right: "20", bottom: 0 })).toThrow(InvalidIntent);
+    expect(() => place(null)).toThrow(InvalidIntent);
+    expect(() => place({ right: 0, bottom: 0 }, "sideways")).toThrow(
+      InvalidIntent,
+    );
   });
 });
 

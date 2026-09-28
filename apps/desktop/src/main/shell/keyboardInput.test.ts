@@ -60,6 +60,7 @@ const SNAPSHOT = {
 	scratchWorkspaceId: "s-0",
 	sidebar: { width: 248 },
 	splitRatio: 0.55,
+	smartButtons: {},
 	// One workspace with one Agent, unread, so that every cycle — including the
 	// one narrowed to unread Agents — has somewhere to go and a chord that was
 	// recognised is visibly distinct from one that was not.

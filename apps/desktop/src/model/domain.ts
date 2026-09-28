@@ -41,6 +41,7 @@ export enum DomainErrorCode {
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
   InvalidTerminalZoom = "INVALID_TERMINAL_ZOOM",
+  InvalidSmartButtonsOffset = "INVALID_SMART_BUTTONS_OFFSET",
   InvalidEditorAttachment = "INVALID_EDITOR_ATTACHMENT",
 }
 

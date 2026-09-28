@@ -6,6 +6,7 @@ import { agentFailureSummary } from "../components/shell/diagnosticLabel";
 import { Failure } from "../components/shell/SurfaceState";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InjectionStatus } from "../components/shell/InjectionStatus";
+import { SmartButtons } from "./SmartButtons";
 import { ConversationPane } from "./ConversationPane";
 import { ContinueElsewhere, continuesElsewhere } from "./ContinueElsewhere";
 import { devhub } from "./client";
@@ -63,7 +64,7 @@ export function AgentPane({
         >
           {/* The one place the two presentations differ on this page: which
               surface the pane is. Everything around it — the pool, the
-              failure drawn over it, the shortcuts — is the same pane. */}
+              failure drawn over it, the Smart Buttons — is the same pane. */}
           {surface.presentation === "gui" ? (
             <ConversationPane
               agentId={surface.agentId}
@@ -123,6 +124,15 @@ export function AgentPane({
         </div>
       ) : null}
       {active ? <InjectionStatus agent={active} /> : null}
+      {/* After the status, so a terminal's buttons can stand on it. Not over
+          a failure: the failure's actions are what the pane offers then. */}
+      {active && active.failure === undefined ? (
+        <SmartButtons
+          key={active.id}
+          agent={active}
+          stored={snapshot.smartButtons[active.presentation]}
+        />
+      ) : null}
       {/* The way to the other presentation, while the pane is the Agent's
           own: over a failure, the failure's actions are the way out. Offered
           whatever the Agent is doing; main asks first when it is not idle. */}

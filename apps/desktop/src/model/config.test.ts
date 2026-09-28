@@ -162,14 +162,17 @@ describe("parsing", () => {
   it("ships one action per thing that can fire one", () => {
     // Defaults rather than a fixed set: the wording is the person's, and a file
     // that lists actions replaces this list entirely. What DevHub decides is
-    // that these four things can happen — assigning an Issue, and the three
-    // shortcuts a workspace offers while work is under way.
+    // that these things can happen — assigning an Issue, and the Smart
+    // Buttons an Agent's pane offers while work is under way.
     const actions = parseConfig(MINIMAL).agentActions;
     expect(actions.map((action) => action.id)).toEqual([
       "issue_assignment",
       "commit_changes",
       "push_commits",
       "open_pull_request",
+      "ready_draft_pull_request",
+      "address_review_comments",
+      "fix_ci",
     ]);
     for (const action of actions) {
       expect(action.display_name.length).toBeGreaterThan(0);
@@ -207,16 +210,19 @@ describe("parsing", () => {
       "Commit the changes",
       "Push the commits",
       "Open a pull request",
+      "Get the draft PR ready",
+      "Address review comments",
+      "Fix CI",
     ]);
     expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
       parseConfig(source),
     );
   });
 
-  // The shortcut buttons say what they send, so a sheet asking a person to
+  // The Smart Buttons say what they send, so a sheet asking a person to
   // approve the sentence on the button they just pressed is a second click,
   // not a safeguard. The Issue action's text is not on its button.
-  it("sends the shortcut buttons without a review sheet", () => {
+  it("sends the Smart Buttons without a review sheet", () => {
     const actions = defaultConfig().agentActions;
     const confirms = Object.fromEntries(
       actions.map((action) => [action.id, action.confirm_before_send]),
@@ -226,6 +232,9 @@ describe("parsing", () => {
       commit_changes: false,
       push_commits: false,
       open_pull_request: false,
+      ready_draft_pull_request: false,
+      address_review_comments: false,
+      fix_ci: false,
     });
   });
 
@@ -348,6 +357,67 @@ describe("parsing", () => {
     );
   });
 
+  it("reads the Smart Button triggers, and whether each action is a button", () => {
+    const source = [
+      "version = 3",
+      "",
+      "[agent_actions.ci_failing.fix_ci]",
+      "button = false",
+      "",
+      "[agent_actions.unresolved_review_comments.answer_reviewers]",
+      'display_name = "Answer the reviewers"',
+      'template = "{{PR_URL}} has {{UNRESOLVED}} open threads"',
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const byId = (id: string) =>
+      config.agentActions.find((one) => one.id === id);
+    expect(byId("fix_ci")).toMatchObject({
+      trigger: "ci_failing",
+      button: false,
+      confirm_before_send: false,
+    });
+    // Somebody's own action is a button unless it says otherwise, and is
+    // reviewed unless it says otherwise, as every action somebody wrote is.
+    expect(byId("answer_reviewers")).toMatchObject({
+      trigger: "unresolved_review_comments",
+      button: true,
+      confirm_before_send: true,
+    });
+    // Every Smart Button DevHub ships is a button by default; the Issue flow
+    // is not one.
+    for (const action of defaultConfig().agentActions) {
+      expect(action.button).toBe(action.trigger !== "issue");
+    }
+    expect(parseConfig(configToToml(config))).toEqual(config);
+  });
+
+  it("refuses `button` on an Issue action, which is not a button", () => {
+    const source = [
+      "version = 3",
+      "",
+      "[agent_actions.issue.issue_assignment]",
+      "button = true",
+      "",
+    ].join("\n");
+    expect(pathOf(() => parseConfig(source))).toBe(
+      "agent_actions.issue.issue_assignment.button",
+    );
+  });
+
+  it("refuses a trigger DevHub has no rule for", () => {
+    const source = [
+      "version = 3",
+      "",
+      "[agent_actions.deploy.ship_it]",
+      'display_name = "Ship it"',
+      'template = "ship"',
+      "",
+    ].join("\n");
+    expect(codeOf(() => parseConfig(source))).toBeDefined();
+    expect(pathOf(() => parseConfig(source))).toBe("agent_actions.deploy");
+  });
+
   it("puts a second action under a trigger after the one DevHub ships", () => {
     const source = [
       "version = 1",
@@ -402,6 +472,9 @@ describe("parsing", () => {
       "commit_changes",
       "push_commits",
       "open_pull_request",
+      "ready_draft_pull_request",
+      "address_review_comments",
+      "fix_ci",
     ]);
     // The person's own wording survives the move; the trigger comes back from
     // the id, which is all the old shape ever said about it.

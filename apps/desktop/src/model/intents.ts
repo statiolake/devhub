@@ -42,6 +42,7 @@ import {
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
 import type { AppSnapshot } from "./appModel.js";
+import type { SmartButtonsOffset } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
@@ -308,6 +309,15 @@ export type UserIntent =
       readonly base: number;
     }
   | { readonly type: "resize_split"; readonly ratio: number }
+  /**
+   * Where one presentation's Smart Buttons were dragged to, or back to their
+   * default spot (`offset` absent). See `model/smartButtons.ts`.
+   */
+  | {
+      readonly type: "place_smart_buttons";
+      readonly presentation: AgentPresentation;
+      readonly offset?: SmartButtonsOffset;
+    }
   | {
       readonly type: "open_folder";
       readonly location: RequestedWorkspaceLocation;

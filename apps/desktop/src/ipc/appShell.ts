@@ -556,6 +556,16 @@ export type AppIntentWire =
 			readonly order: readonly string[];
 	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
+	/**
+	 * Where one presentation's Smart Buttons were dragged to, in whole pixels
+	 * from the pane's right and bottom edges; absent puts them back in their
+	 * default spot. See `model/smartButtons.ts`.
+	 */
+	| {
+			readonly type: "place_smart_buttons";
+			readonly presentation: AgentPresentationWire;
+			readonly offset?: SmartButtonsOffsetWire;
+	  }
 	| { readonly type: "open_workspace_picker" }
 	| {
 			readonly profileId: string;
@@ -660,7 +670,21 @@ export interface AppSnapshotWire {
 	readonly sidebar: SidebarWire;
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
+	/**
+	 * Where each presentation's Smart Buttons were dragged to; a presentation
+	 * that is absent has them in their default spot.
+	 */
+	readonly smartButtons: {
+		readonly tui?: SmartButtonsOffsetWire;
+		readonly gui?: SmartButtonsOffsetWire;
+	};
 	readonly workspaces: readonly WorkspaceWire[];
+}
+
+/** A Smart Buttons box's distance from its pane's right and bottom edges. */
+export interface SmartButtonsOffsetWire {
+	readonly right: number;
+	readonly bottom: number;
 }
 
 /**

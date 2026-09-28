@@ -59,6 +59,7 @@ const SNAPSHOT = {
   selection: { context: { kind: "agent", agentId: AGENT_ID } },
   sidebar: { width: 240, collapsed: false },
   splitRatio: 0.55,
+  smartButtons: {},
   scratchWorkspaceId: SCRATCH_ID,
   workspaces: [
     scratchWorkspace(),

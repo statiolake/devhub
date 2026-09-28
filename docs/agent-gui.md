@@ -906,6 +906,21 @@ is its own column), the same distance in, and the same size whichever it
 says. It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
+**Smart Buttons.** While a GUI Agent is idle, a row of small buttons sits on
+its composer's top right edge, touching it: what the Workspace's repository
+says could be done next — commit, push, open a pull request, get a draft ready,
+address review comments, fix CI (`smartButtonTriggers` in
+`model/agentActions.ts`, read from the repository status the Sidebar already
+has; nothing is polled for them). A terminal Agent's stand in its bottom right
+corner, above the queued-message status. Each is an Agent action whose trigger
+holds and whose `button` is on; pressing one queues its wording exactly as the
+Agent actions sheet does, so the corner's rules for what became of it are
+unchanged. They go when the Agent starts working or the condition stops
+holding. The box rests translucent and comes up to full when pointed at,
+focused or dragged; its handle drags it anywhere in the pane, main remembers
+the place per presentation (`state.json` `smart_buttons`), and a double-click
+on the handle puts it back.
+
 **Continuing an Agent that is not idle.** A continue is a stop followed by a
 resume elsewhere, in this order: the new Agent is launched on the session
 first, and the one it replaces is stopped once the new one is running and

@@ -63,6 +63,7 @@ import {
   ACTION_VARIABLES,
   BUILT_IN_ACTIONS,
   ACTION_TRIGGERS,
+  isSmartButtonTrigger,
   DEFAULT_ACTION_TEMPLATE,
   TRIGGER_NAMES,
   type AgentActionTrigger,
@@ -1442,6 +1443,7 @@ export function ActionsSection({
           displayName: "New action",
           template: `{{${ACTION_VARIABLES[trigger][0] ?? "BRANCH"}}}\n`,
           confirmBeforeSend: true,
+          button: isSmartButtonTrigger(trigger),
           enabled: true,
         });
         setWanted(at);
@@ -1471,7 +1473,7 @@ export function ActionsSection({
       empty={{
         title: "No agent actions",
         message:
-          "An action is what DevHub says to an agent — when it starts one on an Issue, and when you press one of a workspace's buttons.",
+          "An action is what DevHub says to an agent — when it starts one on an Issue, and when you press one of its Smart Buttons.",
       }}
     >
       {action ? (
@@ -1490,7 +1492,7 @@ export function ActionsSection({
             </Row>
             <Row
               label="Trigger"
-              help="What fires it: the Issue flow, or one of a workspace's buttons."
+              help="What fires it: the Issue flow, or the Smart Button condition it is offered under."
             >
               <Popup
                 label="Agent action trigger"
@@ -1499,7 +1501,16 @@ export function ActionsSection({
                   (one) => [one, TRIGGER_NAMES[one]] as const,
                 )}
                 onChange={(next) => {
-                  replace({ ...action, trigger: next });
+                  // An action moved onto a Smart Button trigger is drawn as
+                  // one unless it already said otherwise there; moved onto the
+                  // Issue flow, it has no button to draw.
+                  replace({
+                    ...action,
+                    trigger: next,
+                    button:
+                      isSmartButtonTrigger(next) &&
+                      (!isSmartButtonTrigger(action.trigger) || action.button),
+                  });
                 }}
               />
             </Row>
@@ -1515,6 +1526,18 @@ export function ActionsSection({
                 replace({ ...action, confirmBeforeSend });
               }}
             />
+            {/* Whether the pane offers it unasked. The Agent actions sheet
+                lists it either way; this is only about the button. */}
+            {isSmartButtonTrigger(action.trigger) ? (
+              <SwitchRow
+                label="Show as a Smart Button"
+                help="Offer it on an idle Agent's pane while its condition holds. The Agent actions sheet lists it either way."
+                checked={action.button}
+                onChange={(button) => {
+                  replace({ ...action, button });
+                }}
+              />
+            ) : null}
             {/* How an action DevHub ships is taken away. Deleting it from the
                 file no longer means anything — built-ins are merged in by id,
                 which is what stops a configuration written today from losing an
@@ -1540,9 +1563,11 @@ export function ActionsSection({
             note={`${
               ACTION_VARIABLES[action.trigger].length === 0
                 ? "This message takes no variables."
-                : `${ACTION_VARIABLES[action.trigger]
-                    .map((name) => `{{${name}}}`)
-                    .join(" and ")} ${
+                : `${listed(
+                    ACTION_VARIABLES[action.trigger].map(
+                      (name) => `{{${name}}}`,
+                    ),
+                  )} ${
                     ACTION_VARIABLES[action.trigger].length === 1 ? "is" : "are"
                   } replaced when it is sent.`
             } A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
@@ -1568,6 +1593,13 @@ export function ActionsSection({
       ) : null}
     </Collection>
   );
+}
+
+/** "A", "A and B", "A, B and C". */
+function listed(names: readonly string[]): string {
+  return names.length <= 1
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
 }
 
 // ---------------------------------------------------------------- keyboard

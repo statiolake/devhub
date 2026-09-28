@@ -36,6 +36,7 @@ import { dirname, join } from "node:path";
 import {
   ACTION_TRIGGERS,
   BUILT_IN_ACTIONS,
+  isSmartButtonTrigger,
   triggerOf,
   type AgentActionTrigger,
 } from "./agentActions.js";
@@ -247,6 +248,16 @@ export interface ConfiguredAgentAction {
    * that intent starts in (`main/agent/injection.ts`).
    */
   readonly confirm_before_send: boolean;
+  /**
+   * Whether a Smart Button is drawn for it while its trigger's condition holds.
+   *
+   * True by default. Off, the action is still in the Agent actions sheet
+   * (`Cmd+Q Shift+A`), which lists every action whatever this says — it is
+   * about the pane offering it unasked, not about whether it exists. Only a
+   * Smart Button trigger has it: the Issue flow is not a button, and an Issue
+   * action's is always `false` and never written or read.
+   */
+  readonly button: boolean;
   /**
    * Whether this action exists at all.
    *
@@ -738,6 +749,7 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
       display_name: action.displayName,
       template: action.template,
       confirm_before_send: action.confirmBeforeSend,
+      button: isSmartButtonTrigger(action.trigger),
       enabled: true,
       // Position within its own trigger, which is what `order` means
       // everywhere. See `overlay`.
@@ -1274,6 +1286,10 @@ function validateAgentActions(actions: readonly ConfiguredAgentAction[]): void {
     if (action.display_name.trim().length === 0) {
       fail("invalid_profile", `${prefix}.display_name`);
     }
+    // The Issue flow is not a button, so an Issue action cannot ask for one.
+    if (action.button && !isSmartButtonTrigger(action.trigger)) {
+      fail("invalid_profile", `${prefix}.button`);
+    }
   });
 }
 
@@ -1478,6 +1494,9 @@ function agentActionsToTable(
       display_name: action.display_name,
       template: action.template,
       confirm_before_send: action.confirm_before_send,
+      ...(isSmartButtonTrigger(action.trigger)
+        ? { button: action.button }
+        : {}),
       enabled: action.enabled,
       // The position within its trigger, which is the only thing `order` ever
       // means. Writing the index in this flat list instead would make a file
@@ -1647,8 +1666,9 @@ function legacyAgentAction(
   );
   const id = optionalString(table, "id", prefix, "");
   const shipped = BUILT_IN_ACTIONS.find((one) => one.id === id);
+  const trigger = triggerOf(id);
   return {
-    trigger: triggerOf(id),
+    trigger,
     id,
     display_name: optionalString(table, "display_name", prefix, ""),
     template: optionalString(table, "template", prefix, ""),
@@ -1658,6 +1678,7 @@ function legacyAgentAction(
       prefix,
       shipped?.confirmBeforeSend ?? true,
     ),
+    button: isSmartButtonTrigger(trigger),
     enabled: true,
     // After whatever DevHub ships under the same trigger, in the array's own
     // order. The old shape had no way to say where an action sat, so the only
@@ -1673,9 +1694,19 @@ function agentActionFromTable(
 ): ConfiguredAgentAction {
   const prefix = `agent_actions.${trigger}.${id}`;
   const table = requireTable(value, prefix);
+  // `button` only where there is a button: an Issue action that says one is
+  // a file that means something DevHub does not do, and is refused as such.
+  const smart = isSmartButtonTrigger(trigger);
   checkKeys(
     table,
-    ["display_name", "template", "confirm_before_send", "enabled", "order"],
+    [
+      "display_name",
+      "template",
+      "confirm_before_send",
+      ...(smart ? ["button"] : []),
+      "enabled",
+      "order",
+    ],
     prefix,
   );
   const shipped = BUILT_IN_ACTIONS.find((one) => one.id === id);
@@ -1707,10 +1738,8 @@ function agentActionFromTable(
       prefix,
       shipped?.confirmBeforeSend ?? true,
     ),
+    button: smart && optionalBoolean(table, "button", prefix, true),
     enabled: optionalBoolean(table, "enabled", prefix, true),
-    // An action DevHub ships keeps its shipped position; one somebody wrote
-    // goes after everything shipped under that trigger, which is where a new
-    // button belongs — at the end of the row, not in the middle of it.
     // An action DevHub ships keeps its shipped position; one somebody wrote
     // goes after everything shipped under that trigger, which is where a new
     // button belongs — at the end of the row, not in the middle of it.

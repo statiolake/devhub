@@ -68,6 +68,7 @@ function snapshotWith(state: WorkspaceCloseWire): AppSnapshot {
     selection: { context: ON_SCRATCH, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    smartButtons: {},
     scratchWorkspaceId: SCRATCH_ID,
     workspaces: [scratchWorkspace(), workspace(state)],
   } as unknown as AppSnapshot;
@@ -82,6 +83,7 @@ const EMPTY: AppSnapshot = {
   selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 248 },
   splitRatio: 0.55,
+  smartButtons: {},
   scratchWorkspaceId: SCRATCH_ID,
   workspaces: [scratchWorkspace()],
 } as unknown as AppSnapshot;

@@ -1,0 +1,82 @@
+/* `SmartButtons`: what an idle Agent's pane offers to say next.
+
+   Placed by the component, which writes `right` and `bottom`: on a GUI
+   Agent's composer, in a terminal's bottom right corner, or wherever the
+   person dragged it. Over a surface that may be any colour, so each button
+   carries its own ground.
+
+   One rule for its strength, and it is the only opacity anything in the box
+   has: at rest the whole box is a suggestion at 40%; pointed at, holding
+   focus, or being dragged, it is at full strength. On the box and not per
+   button, because reaching for one is a decision about the group — a row in
+   which one button is bright and the others ghosts reads as the others
+   being disabled. */
+.smart-buttons {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  max-width: calc(100% - var(--space-6));
+  align-items: center;
+  gap: var(--space-1);
+  opacity: 0.4;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.smart-buttons:hover,
+.smart-buttons:focus-within,
+.smart-buttons[data-dragging] {
+  opacity: 1;
+}
+
+/* A terminal's stand in a column, as they always have in that corner; a
+   conversation's are a row of chips along the composer's top edge. */
+.smart-buttons[data-presentation="tui"] {
+  flex-direction: column;
+  align-items: end;
+}
+
+.smart-buttons-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  color: var(--secondary);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.smart-buttons[data-dragging] .smart-buttons-handle {
+  cursor: grabbing;
+}
+
+.smart-buttons-handle svg {
+  fill: currentcolor;
+}
+
+.smart-button {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-row);
+  background: var(--chrome);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 510;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.smart-button:hover {
+  background: var(--wash-strong);
+}
+
+.smart-button:active {
+  background: var(--selection);
+}
+
+/* A conversation's sit on the composer, so their bottom corners meet its
+   top edge square. */
+.smart-buttons[data-presentation="gui"][data-placed="default"] .smart-button {
+  border-bottom-color: transparent;
+  border-radius: var(--radius-row) var(--radius-row) 0 0;
+}

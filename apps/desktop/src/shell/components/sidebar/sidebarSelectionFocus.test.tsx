@@ -55,6 +55,7 @@ function snapshot(collapsed: boolean): AppSnapshot {
     },
     sidebar: { width: 248, collapsed },
     splitRatio: 0.55,
+    smartButtons: {},
     scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
       scratchWorkspace(),

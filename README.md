@@ -249,6 +249,48 @@ presentation = "gui"        # optional override of [agents] default_presentation
                             # See docs/agent-gui.md.
 ```
 
+### Agent actions and Smart Buttons
+
+`[agent_actions.<trigger>.<id>]` is what DevHub says to an Agent on your
+behalf: the wording is yours, what fires it is DevHub's. `issue` fires when an
+Agent is started on an Issue. Every other trigger is a **Smart Button**: a
+small button on an Agent's pane — on a GUI Agent's composer, in a terminal
+Agent's bottom right corner — shown only while the Agent is idle and the
+trigger's condition holds for the Workspace's repository, and gone on its own
+when it stops holding. Pressing one queues the filled-in wording for the Agent,
+exactly as the Agent actions sheet (`Cmd+Q Shift+A`) does; the sheet lists
+every action whatever its `button` says. The box is translucent until pointed
+at; drag it by its handle anywhere in the pane (the place is remembered per
+kind of pane), and double-click the handle to put it back.
+
+| Trigger | Shown when | Variables | Ships as |
+| --- | --- | --- | --- |
+| `issue` | (assigning an Issue; not a button) | `ISSUE_URL`, `ISSUE_NO` | Work on the Issue |
+| `commit` | there are uncommitted changes | — | Commit the changes |
+| `push` | the branch has commits its upstream does not | `BRANCH` | Push the commits |
+| `pull_request` | a branch that is not the default one has no pull request (pushed or not) | `BRANCH` | Open a pull request |
+| `draft_pull_request` | the branch's pull request is a draft | `PR_URL`, `PR_NO`, `BRANCH` | Get the draft PR ready |
+| `unresolved_review_comments` | its pull request is open or a draft and has unresolved review conversations | `PR_URL`, `PR_NO`, `UNRESOLVED`, `BRANCH` | Address review comments |
+| `ci_failing` | its pull request is open or a draft and CI is failing | `PR_URL`, `PR_NO`, `BRANCH`, `FAILING` | Fix CI |
+
+`UNRESOLVED` reads `100+` when there were more threads than one page, and a
+variable with nothing known stays as written. A trigger DevHub does not know is
+refused.
+
+```toml
+[agent_actions.ci_failing.fix_ci]   # a built-in: only what you change
+button = false                      # not drawn as a Smart Button (default true);
+                                    # still in the Agent actions sheet
+confirm_before_send = true          # review the wording first (default false for
+                                    # Smart Buttons, true for issue and your own)
+
+[agent_actions.unresolved_review_comments.answer_reviewers]
+display_name = "Answer the reviewers"
+template = "{{PR_URL}} のレビューコメント {{UNRESOLVED}} 件に対応して。"
+enabled = true                      # false hides a built-in without deleting it
+order = 0                           # its place among the trigger's actions
+```
+
 The workbench's own settings are VS Code's, on disk under the app's user-data
 directory. Runtime state lives separately under Application Support.
 

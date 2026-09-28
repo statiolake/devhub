@@ -9,12 +9,17 @@
 import { describe, expect, it } from "vitest";
 import { errorWire } from "./wire.js";
 import {
+  ACTION_TRIGGERS,
   ACTION_VARIABLES,
   applySkillNotation,
   BUILT_IN_ACTIONS,
   fillVariables,
+  isSmartButtonTrigger,
   renderAgentAction,
+  smartButtonTriggers,
+  smartButtonValues,
   triggerOf,
+  type SmartButtonRepository,
 } from "./agentActions.js";
 
 describe("the actions DevHub ships", () => {
@@ -41,6 +46,9 @@ describe("the actions DevHub ships", () => {
       "commit_changes",
       "push_commits",
       "open_pull_request",
+      "ready_draft_pull_request",
+      "address_review_comments",
+      "fix_ci",
     ]);
   });
 
@@ -54,14 +62,262 @@ describe("the actions DevHub ships", () => {
     expect(triggerOf("review_it_instead")).toBe("issue");
   });
 
-  it("ships exactly one action per shortcut", () => {
-    // Each of the three buttons fires one action and has no picker, so a
-    // second action with the same trigger would be a message that can never
-    // be sent.
-    for (const trigger of ["commit", "push", "pull_request"] as const) {
+  it("ships exactly one action per trigger", () => {
+    // Two built-ins under one trigger would be two buttons for one condition
+    // before anybody asked for a second.
+    for (const trigger of ACTION_TRIGGERS) {
       expect(
         BUILT_IN_ACTIONS.filter((action) => action.trigger === trigger),
       ).toHaveLength(1);
+    }
+  });
+
+  it("sends every Smart Button without a review sheet, and reviews the Issue flow's", () => {
+    // A Smart Button's text is what its label says; the Issue flow's is a
+    // filled-in template about something DevHub read.
+    for (const action of BUILT_IN_ACTIONS) {
+      expect(action.confirmBeforeSend).toBe(
+        !isSmartButtonTrigger(action.trigger),
+      );
+    }
+  });
+});
+
+/** A repository on a feature branch with nothing to do, varied per case. */
+function repository(
+  over: Partial<SmartButtonRepository> = {},
+): SmartButtonRepository {
+  return {
+    branch: "feature/128-tidy",
+    defaultBranch: "main",
+    dirty: false,
+    ahead: 0,
+    pullRequest: {
+      number: 42,
+      url: "https://github.com/example/widget/pull/42",
+      title: "Tidy",
+      state: "open",
+      conversations: { unresolved: 0, uncounted: 0 },
+      checks: { state: "passing", total: 3, failing: 0, pending: 0 },
+    },
+    ...over,
+  };
+}
+
+type PullRequest = NonNullable<SmartButtonRepository["pullRequest"]>;
+
+function withPullRequest(over: Partial<PullRequest>): SmartButtonRepository {
+  const base = repository().pullRequest as PullRequest;
+  return repository({ pullRequest: { ...base, ...over } });
+}
+
+describe("when a Smart Button is offered", () => {
+  it("offers nothing for a repository with nothing to do", () => {
+    expect(smartButtonTriggers("idle", repository())).toEqual([]);
+  });
+
+  it("offers commit for uncommitted changes", () => {
+    expect(smartButtonTriggers("idle", repository({ dirty: true }))).toEqual([
+      "commit",
+    ]);
+    // Not knowing is not dirty.
+    expect(
+      smartButtonTriggers("idle", repository({ dirty: undefined })),
+    ).toEqual([]);
+  });
+
+  it("offers push for commits ahead of the upstream, and not with no upstream", () => {
+    expect(smartButtonTriggers("idle", repository({ ahead: 2 }))).toEqual([
+      "push",
+    ]);
+    expect(
+      smartButtonTriggers("idle", repository({ ahead: undefined })),
+    ).toEqual([]);
+  });
+
+  it("offers a pull request on a branch with none, pushed or not", () => {
+    expect(
+      smartButtonTriggers(
+        "idle",
+        repository({ pullRequest: undefined, ahead: undefined }),
+      ),
+    ).toEqual(["pull_request"]);
+  });
+
+  it("does not offer a pull request from the trunk, or when the trunk is not known", () => {
+    expect(
+      smartButtonTriggers(
+        "idle",
+        repository({ pullRequest: undefined, branch: "main" }),
+      ),
+    ).toEqual([]);
+    expect(
+      smartButtonTriggers(
+        "idle",
+        repository({ pullRequest: undefined, defaultBranch: undefined }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not offer a second pull request for a branch whose one was merged", () => {
+    expect(
+      smartButtonTriggers("idle", withPullRequest({ state: "merged" })),
+    ).toEqual([]);
+  });
+
+  it("offers getting a draft ready for a draft pull request", () => {
+    expect(
+      smartButtonTriggers("idle", withPullRequest({ state: "draft" })),
+    ).toEqual(["draft_pull_request"]);
+  });
+
+  it("offers review comments while some are unresolved, or went uncounted", () => {
+    expect(
+      smartButtonTriggers(
+        "idle",
+        withPullRequest({ conversations: { unresolved: 2, uncounted: 0 } }),
+      ),
+    ).toEqual(["unresolved_review_comments"]);
+    expect(
+      smartButtonTriggers(
+        "idle",
+        withPullRequest({ conversations: { unresolved: 0, uncounted: 30 } }),
+      ),
+    ).toEqual(["unresolved_review_comments"]);
+    // On a draft too, beside getting it ready.
+    expect(
+      smartButtonTriggers(
+        "idle",
+        withPullRequest({
+          state: "draft",
+          conversations: { unresolved: 1, uncounted: 0 },
+        }),
+      ),
+    ).toEqual(["draft_pull_request", "unresolved_review_comments"]);
+  });
+
+  it("offers fixing CI while it fails on an open or draft pull request", () => {
+    const failing = {
+      state: "failing" as const,
+      total: 3,
+      failing: 1,
+      pending: 0,
+    };
+    expect(
+      smartButtonTriggers("idle", withPullRequest({ checks: failing })),
+    ).toEqual(["ci_failing"]);
+    expect(
+      smartButtonTriggers(
+        "idle",
+        withPullRequest({ checks: { ...failing, state: "pending" } }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("offers nothing about a pull request that is closed or merged", () => {
+    for (const state of ["closed", "merged"] as const) {
+      expect(
+        smartButtonTriggers(
+          "idle",
+          withPullRequest({
+            state,
+            conversations: { unresolved: 3, uncounted: 0 },
+            checks: { state: "failing", total: 1, failing: 1, pending: 0 },
+          }),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("offers them in the order the work goes in", () => {
+    expect(
+      smartButtonTriggers(
+        "idle",
+        repository({
+          dirty: true,
+          ahead: 1,
+          pullRequest: {
+            ...(repository().pullRequest as PullRequest),
+            state: "draft",
+            conversations: { unresolved: 1, uncounted: 0 },
+            checks: { state: "failing", total: 2, failing: 2, pending: 0 },
+          },
+        }),
+      ),
+    ).toEqual([
+      "commit",
+      "push",
+      "draft_pull_request",
+      "unresolved_review_comments",
+      "ci_failing",
+    ]);
+  });
+
+  it("offers nothing unless the Agent is idle", () => {
+    const busy = repository({ dirty: true, ahead: 1 });
+    for (const status of [
+      "working",
+      "waiting",
+      "background",
+      "error",
+      "unknown",
+    ] as const) {
+      expect(smartButtonTriggers(status, busy)).toEqual([]);
+    }
+    expect(smartButtonTriggers("idle", busy)).toEqual(["commit", "push"]);
+  });
+
+  it("offers nothing for a Workspace whose repository is not known", () => {
+    expect(smartButtonTriggers("idle", undefined)).toEqual([]);
+  });
+});
+
+describe("what a Smart Button's wording is filled from", () => {
+  it("names the branch and the pull request", () => {
+    expect(
+      smartButtonValues(
+        withPullRequest({
+          conversations: { unresolved: 4, uncounted: 0 },
+          checks: { state: "failing", total: 5, failing: 2, pending: 0 },
+        }),
+      ),
+    ).toEqual({
+      BRANCH: "feature/128-tidy",
+      PR_URL: "https://github.com/example/widget/pull/42",
+      PR_NO: "42",
+      UNRESOLVED: "4",
+      FAILING: "2",
+    });
+  });
+
+  it("says a count read from the first page only is a lower bound", () => {
+    expect(
+      smartButtonValues(
+        withPullRequest({ conversations: { unresolved: 100, uncounted: 12 } }),
+      )["UNRESOLVED"],
+    ).toBe("100+");
+  });
+
+  it("leaves out what is not known, so the template keeps its hole", () => {
+    const values = smartButtonValues(
+      repository({ pullRequest: undefined, branch: undefined }),
+    );
+    expect(values).toEqual({});
+    expect(fillVariables("{{PR_URL}} on {{BRANCH}}", values)).toBe(
+      "{{PR_URL}} on {{BRANCH}}",
+    );
+  });
+
+  it("fills every shipped Smart Button's wording completely for a pull request that has it all", () => {
+    const values = smartButtonValues(
+      withPullRequest({
+        conversations: { unresolved: 1, uncounted: 0 },
+        checks: { state: "failing", total: 1, failing: 1, pending: 0 },
+      }),
+    );
+    for (const action of BUILT_IN_ACTIONS) {
+      if (!isSmartButtonTrigger(action.trigger)) continue;
+      expect(fillVariables(action.template, values)).not.toMatch(/\{\{/u);
     }
   });
 });

@@ -47,7 +47,13 @@ import {
   type WorkspaceLocation,
   type WorkspaceRoot,
   type WorkspaceState,
+  AGENT_PRESENTATIONS,
 } from "./domain.js";
+import {
+  isSmartButtonsOffset,
+  type SmartButtonsOffset,
+  type SmartButtonsPlacement,
+} from "./smartButtons.js";
 import {
   isTerminalZoomOffset,
   nextTerminalZoomOffset,
@@ -242,6 +248,11 @@ export interface AppSnapshot {
    * `model/terminalZoom.ts` for why it is an offset and not a size.
    */
   readonly terminalZoomOffset: number;
+  /**
+   * Where each presentation's Smart Buttons were dragged to, if anywhere. See
+   * `model/smartButtons.ts`.
+   */
+  readonly smartButtons: SmartButtonsPlacement;
   readonly editorHost: EditorHostState;
 }
 
@@ -395,6 +406,7 @@ export class AppModel {
   private scratchReturn: NavigationSelection | undefined;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private terminalZoomOffsetValue = 0;
+  private smartButtonsValue: SmartButtonsPlacement = {};
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
@@ -452,6 +464,7 @@ export class AppModel {
       workspaceOrder: this.workspaceOrderValue,
       splitRatio: this.splitRatioValue,
       terminalZoomOffset: this.terminalZoomOffsetValue,
+      smartButtons: this.smartButtonsValue,
       editorHost: this.editorHost,
     };
   }
@@ -669,6 +682,39 @@ export class AppModel {
   /** Restoring is setting, minus the revision bump on an unchanged value. */
   restoreSplitRatio(ratio: number): boolean {
     return this.setSplitRatio(ratio);
+  }
+
+  /**
+   * Put one presentation's Smart Buttons where they were dragged, or back in
+   * their default spot (`offset` absent). An offset out of range is a bug in
+   * the caller — the page clamps a drag to the pane before it drops it.
+   */
+  placeSmartButtons(
+    presentation: AgentPresentation,
+    offset: SmartButtonsOffset | undefined,
+  ): boolean {
+    if (offset !== undefined && !isSmartButtonsOffset(offset)) {
+      fail(DomainErrorCode.InvalidSmartButtonsOffset);
+    }
+    const current = this.smartButtonsValue[presentation];
+    if (
+      current?.right === offset?.right &&
+      current?.bottom === offset?.bottom
+    ) {
+      return false;
+    }
+    const { [presentation]: _dropped, ...others } = this.smartButtonsValue;
+    this.smartButtonsValue =
+      offset === undefined ? others : { ...others, [presentation]: offset };
+    this.bumpRevision();
+    return true;
+  }
+
+  /** Restoring is placing each, minus the revision bump on an unchanged value. */
+  restoreSmartButtons(placement: SmartButtonsPlacement): void {
+    for (const presentation of AGENT_PRESENTATIONS) {
+      this.placeSmartButtons(presentation, placement[presentation]);
+    }
   }
 
   get terminalZoomOffset(): number {

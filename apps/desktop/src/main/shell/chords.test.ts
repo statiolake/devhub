@@ -124,6 +124,7 @@ function snapshotOf({
 		scratchWorkspaceId: scratch.id,
 		sidebar: { width: 248, collapsed: false },
 		splitRatio: 0.55,
+		smartButtons: {},
 		workspaces: [scratch, ...workspaces],
 	};
 }

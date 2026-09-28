@@ -36,10 +36,13 @@
  * # Its contract with main
  *
  * - **reads**: the snapshot (the running Agents, the selection, each Agent's
- *   `failure` and `injection`), the appearance (the terminal's font and
- *   theme), and the palette.
- * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`.
- * - **asks**: the terminal channels (`ipc/terminal.ts`), `dispatch`, `openModal` (an injection to review), `writeClipboard` (OSC 52,
+ *   `failure` and `injection`, where the Smart Buttons were dragged), the
+ *   appearance (the terminal's font and theme), the repository status and the
+ *   agent actions (what the Smart Buttons offer), and the palette.
+ * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`,
+ *   `repositoryStatusChanged`, `agentActionsChanged`.
+ * - **asks**: the terminal channels (`ipc/terminal.ts`), `dispatch`,
+ *   `runAgentAction`, `openModal` (an injection to review), `writeClipboard` (OSC 52,
  *   which cannot go through `navigator.clipboard` because that is gated on the
  *   document being focused and a PTY writes at a moment nobody chose).
  * - **draws no failure it raised**: what goes wrong here is handed to main and

@@ -90,6 +90,7 @@ function snapshotOn(context: AppSnapshot["selection"]["context"]): AppSnapshot {
     selection: { context, presentation: "full" },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    smartButtons: {},
     scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
       scratchWorkspace(),

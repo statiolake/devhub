@@ -50,6 +50,7 @@ const SNAPSHOT = {
   selection: { context: ON_SCRATCH, presentation: "full" },
   sidebar: { width: 248 },
   splitRatio: 0.55,
+  smartButtons: {},
   scratchWorkspaceId: SCRATCH_ID,
   workspaces: [
     scratchWorkspace(),

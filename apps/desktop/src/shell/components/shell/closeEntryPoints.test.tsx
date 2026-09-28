@@ -83,6 +83,7 @@ function snapshotWith(row: Row): AppSnapshot {
     },
     sidebar: { width: 248 },
     splitRatio: 0.55,
+    smartButtons: {},
     scratchWorkspaceId: SCRATCH_ID,
     workspaces: [
       scratchWorkspace(),

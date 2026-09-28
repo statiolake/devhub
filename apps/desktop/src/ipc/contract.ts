@@ -102,18 +102,26 @@ export interface AgentActionWire {
 	readonly id: string;
 	readonly displayName: string;
 	/**
-	 * What fires it. The Issue flow offers every `issue` action as a choice; the
-	 * three shortcuts each fire the one action with their own trigger, so the
-	 * page reads this to know whether a button has any wording behind it.
+	 * What fires it. The Issue flow offers every `issue` action as a choice;
+	 * every other trigger is a Smart Button's, drawn on an Agent's pane while
+	 * its condition holds (`smartButtonTriggers` in `model/agentActions.ts`).
 	 */
 	readonly trigger: AgentActionTriggerWire;
+	/**
+	 * Whether it is drawn as a Smart Button when its trigger holds. Always false
+	 * for an Issue action. The Agent actions sheet lists it either way.
+	 */
+	readonly button: boolean;
 }
 
 export type AgentActionTriggerWire =
 	| "issue"
 	| "commit"
 	| "push"
-	| "pull_request";
+	| "pull_request"
+	| "draft_pull_request"
+	| "unresolved_review_comments"
+	| "ci_failing";
 
 /**
  * The branch an Issue or a pull request already has, and what can be done with
@@ -1083,7 +1091,9 @@ export interface SidebarBridge
 export interface AgentsBridge
 	extends PageBridge,
 		ProjectionBridge,
-		AppearanceBridge {
+		AppearanceBridge,
+		RepositoryStatusBridge,
+		AgentActionsBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;

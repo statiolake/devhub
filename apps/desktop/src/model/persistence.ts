@@ -72,6 +72,10 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isTerminalZoomOffset } from "./terminalZoom.js";
+import {
+  isSmartButtonsOffset,
+  type SmartButtonsOffset,
+} from "./smartButtons.js";
 
 /**
  * Version 4 took the close out of the file entirely; version 3 made a close's
@@ -543,6 +547,21 @@ export interface TerminalState {
   zoom_offset: number;
 }
 
+/**
+ * Where each presentation's Smart Buttons were dragged to, in whole pixels
+ * from the pane's right and bottom edges. A presentation that is absent has
+ * them in their default spot. See `model/smartButtons.ts`.
+ *
+ * No version bump, for the reason `sidebar.collapsed` had none: absent is the
+ * default spot, which is what every file written before this means, and an
+ * older DevHub that drops the key on its next save puts the box back where it
+ * always was — a spot, not work.
+ */
+export interface SmartButtonsState {
+  tui?: SmartButtonsOffset;
+  gui?: SmartButtonsOffset;
+}
+
 export interface WindowState {
   frame: WindowFrame;
 }
@@ -641,6 +660,7 @@ export interface PersistedAppState {
   sidebar: SidebarState;
   split: SplitState;
   terminal: TerminalState;
+  smart_buttons: SmartButtonsState;
   window: WindowState;
   tmux: TmuxState;
   shutdown: ShutdownMetadata;
@@ -655,6 +675,7 @@ export function freshState(): PersistedAppState {
     sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false, order: [] },
     split: { ratio: SPLIT_DEFAULT_RATIO },
     terminal: { zoom_offset: 0 },
+    smart_buttons: {},
     window: {
       frame: {
         x: 0,
@@ -1119,6 +1140,16 @@ export function validateState(state: PersistedAppState): void {
   decodeObject("sidebar", state.sidebar);
   decodeObject("split", state.split);
   decodeObject("terminal", state.terminal);
+  decodeObject("smart_buttons", state.smart_buttons);
+  for (const presentation of AGENT_PRESENTATIONS) {
+    const offset = state.smart_buttons[presentation];
+    if (offset === undefined) continue;
+    const where = `smart_buttons.${presentation}`;
+    decodeObject(where, offset);
+    decodeNumber(`${where}.right`, offset.right);
+    decodeNumber(`${where}.bottom`, offset.bottom);
+    if (!isSmartButtonsOffset(offset)) fail("STATE_INVALID");
+  }
   decodeObject("window", state.window);
   decodeObject("window.frame", state.window.frame);
   decodeObject("tmux", state.tmux);
@@ -1345,6 +1376,7 @@ export function hydrateModel(
     model.restoreWorkspaceOrder(state.sidebar.order.map(parseWorkspaceId));
     model.restoreSplitRatio(state.split.ratio);
     model.restoreTerminalZoom(state.terminal.zoom_offset);
+    model.restoreSmartButtons(state.smart_buttons);
   });
 
   const navigation = restoreNavigation(state).context;
@@ -1480,6 +1512,7 @@ export function stateFromSnapshot(
     },
     split: { ratio: snapshot.splitRatio },
     terminal: { zoom_offset: snapshot.terminalZoomOffset },
+    smart_buttons: { ...snapshot.smartButtons },
   };
   validateState(state);
   return state;
@@ -1514,6 +1547,7 @@ export function applySnapshot(
     sidebar: projected.sidebar,
     split: projected.split,
     terminal: projected.terminal,
+    smart_buttons: projected.smart_buttons,
   };
   validateState(next);
   return next;
@@ -2485,6 +2519,24 @@ function parseState(bytes: Buffer): Parsed {
   return { kind: "document", object, version, legacy };
 }
 
+/** `smart_buttons`, with only the presentations it names. */
+function decodeSmartButtons(value: unknown): SmartButtonsState {
+  const table = decodeObject("smart_buttons", value);
+  const state: SmartButtonsState = {};
+  for (const key of Object.keys(table)) {
+    if (!(AGENT_PRESENTATIONS as readonly string[]).includes(key)) {
+      fail("STATE_INVALID", `smart_buttons.${key}`);
+    }
+    const where = `smart_buttons.${key}`;
+    const offset = decodeObject(where, table[key]);
+    state[key as AgentPresentation] = {
+      right: decodeNumber(`${where}.right`, offset["right"]),
+      bottom: decodeNumber(`${where}.bottom`, offset["bottom"]),
+    };
+  }
+  return state;
+}
+
 /** Decode a document with nothing prepared: see `JsonStateStore.prepare`. */
 function decodeState(bytes: Buffer): Decoded {
   const parsed = parseState(bytes);
@@ -2561,6 +2613,11 @@ function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
                 decodeObject("terminal", object["terminal"])["zoom_offset"],
               ),
             },
+      // Absent is the default spot, for both presentations.
+      smart_buttons:
+        object["smart_buttons"] === undefined
+          ? fresh.smart_buttons
+          : decodeSmartButtons(object["smart_buttons"]),
       window:
         object["window"] === undefined
           ? fresh.window
