@@ -627,18 +627,6 @@ export interface TooltipContentWire {
 }
 
 /**
- * One candidate the workspace picker found. `searchText` is what the filter
- * matches against and `score` is the rank main assigned, so two sources that
- * disagree about ordering still merge into one list.
- *
- * `sourceRank` is where the source that named it sits in `workspace_sources`,
- * and it is what puts the merged list back in the order the person wrote in
- * Settings. Sources are run concurrently and answer at whatever speed they
- * answer, so arrival order is a race between a command and a directory walk —
- * which is why the rank travels with the candidate rather than the list being
- * assumed to arrive in it.
- */
-/**
  * A machine `~/.ssh/config` names, as the picker is told it.
  *
  * The alias is what travels back when the row is chosen: `ssh` resolves it,
@@ -652,6 +640,18 @@ export interface SshHostWire {
 	readonly user?: string;
 }
 
+/**
+ * One candidate the workspace picker found. `searchText` is what the filter
+ * matches against and `score` is the rank main assigned, so two sources that
+ * disagree about ordering still merge into one list.
+ *
+ * `sourceRank` is where the source that named it sits in `workspace_sources`,
+ * and it is what puts the merged list back in the order the person wrote in
+ * Settings. Sources are run concurrently and answer at whatever speed they
+ * answer, so arrival order is a race between a command and a directory walk —
+ * which is why the rank travels with the candidate rather than the list being
+ * assumed to arrive in it.
+ */
 export interface WorkspacePickerCandidate {
 	readonly operationId: string;
 	readonly sequence: number;
@@ -670,6 +670,17 @@ export interface WorkspacePickerCandidate {
 	 * arrangement in which a row about a folder that exists is marked missing.
 	 */
 	readonly missing: boolean;
+	/**
+	 * The folder is a git worktree: its `.git` is a file pointing at another
+	 * checkout's repository rather than a directory of its own.
+	 *
+	 * Read from the folder, the same way for every source, rather than from
+	 * which `kinds` a source was told to look for — a command source names
+	 * paths without saying what they are, and a row's kind must not depend on
+	 * which source happened to name it. The sheet ranks a repository above a
+	 * worktree the query matches equally well (`PickerItem.worktree`).
+	 */
+	readonly worktree: boolean;
 }
 
 /** Streamed progress for one picker run. */

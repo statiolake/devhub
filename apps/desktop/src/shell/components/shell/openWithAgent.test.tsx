@@ -47,6 +47,7 @@ const CANDIDATE = {
   sourceId: "projects",
   sourceRank: 0,
   missing: false,
+  worktree: false,
 };
 
 function mount() {

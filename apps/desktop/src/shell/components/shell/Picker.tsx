@@ -127,6 +127,17 @@ export interface PickerItem {
    * the person expects that is missing would take the reason with it.
    */
   readonly unavailable?: string;
+  /**
+   * The row is a git worktree — a second checkout cut from a repository.
+   *
+   * Only rows about folders say either way, and a row that does not say is not
+   * one. It decides nothing but a tie: of two rows the query matches equally
+   * well, the repository comes before a worktree of it, because the checkout a
+   * person keeps is the one they usually mean and a worktree is the one made
+   * for a single piece of work. A worktree the query matches better still
+   * leads — this orders rows the scorer cannot tell apart, never overrules it.
+   */
+  readonly worktree?: boolean;
 }
 
 /**
@@ -278,6 +289,11 @@ function SearchGlyph() {
 
 const NO_PINNED: readonly PickerItem[] = [];
 
+/** Where a row sits among rows the query scores the same: a worktree after. */
+function worktreeRank(item: PickerItem): number {
+  return item.worktree === true ? 1 : 0;
+}
+
 export function Picker({
   title,
   question,
@@ -351,21 +367,24 @@ export function Picker({
       const value = score(item.searchText ?? item.label, query);
       return value === 0 ? [] : [{ item, value }];
     });
-    // A stable order within every band of equal score: the caller's order is
-    // the order the person arranged — for workspaces it is `workspace_sources`
-    // read from the top — and it is also the order they were just looking at,
-    // so re-sorting rows the query cannot tell apart would both discard the
-    // arrangement and move the selection out from under them.
+    // Three keys, in this order. The score first: it is what was asked.
+    // Then, among rows it scores the same, a folder that is not a worktree
+    // before one that is (see `PickerItem.worktree`). Then the caller's order,
+    // which is the order the person arranged — for workspaces it is
+    // `workspace_sources` read from the top — and also the order they were just
+    // looking at, so re-sorting rows nothing else tells apart would both
+    // discard the arrangement and move the selection out from under them.
     //
     // The index is carried explicitly rather than relying on the sort being
-    // stable, because "equal score keeps the caller's order" is the guarantee
-    // this control makes and it should be readable as one.
+    // stable, because "otherwise the caller's order" is the guarantee this
+    // control makes and it should be readable as one.
     return scored
       .map((entry, index) => ({ ...entry, index }))
-      .sort((left, right) =>
-        right.value === left.value
-          ? left.index - right.index
-          : right.value - left.value,
+      .sort(
+        (left, right) =>
+          right.value - left.value ||
+          worktreeRank(left.item) - worktreeRank(right.item) ||
+          left.index - right.index,
       )
       .map((entry) => entry.item);
   }, [answers, query]);

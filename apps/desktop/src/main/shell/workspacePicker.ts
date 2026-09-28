@@ -108,7 +108,11 @@ export function startWorkspacePicker(
 	 */
 	const offerFrom = (source: WorkspaceSource, sourceRank: number) => {
 		const seen = new Set<string>();
-		return (path: string, label: string, missing = false) => {
+		return async (
+			path: string,
+			label: string,
+			missing = false,
+		): Promise<void> => {
 			if (state.cancelled || seen.has(path)) return;
 			if (state.candidateCount >= MAX_CANDIDATES) {
 				state.truncated = true;
@@ -118,6 +122,9 @@ export function startWorkspacePicker(
 			if (value === 0) return;
 			seen.add(path);
 			state.candidateCount += 1;
+			// A folder that is not there yet is no checkout of anything.
+			const worktree = !missing && (await gitCheckout(path)) === "git_worktree";
+			if (state.cancelled) return;
 			emit({
 				kind: "candidate",
 				operationId,
@@ -129,6 +136,7 @@ export function startWorkspacePicker(
 				sourceId: source.id,
 				sourceRank,
 				missing,
+				worktree,
 			});
 		};
 	};
@@ -207,23 +215,35 @@ async function isDirectory(path: string): Promise<boolean> {
 	}
 }
 
+/** Offers one folder. Awaited, so a source's rows arrive in its own order. */
+type Offer = (path: string, label: string, missing?: boolean) => Promise<void>;
+
+/**
+ * What kind of git checkout a folder is, or `undefined` when it is none.
+ *
+ * A repository has a `.git` directory; a worktree has a `.git` file pointing
+ * at one. Neither needs git itself to be run. The one reading of a folder's
+ * kind, for both questions asked of it: whether a filesystem source's `kinds`
+ * take it, and whether the row it becomes is a worktree.
+ */
+async function gitCheckout(
+	path: string,
+): Promise<"git_repository" | "git_worktree" | undefined> {
+	try {
+		const stats = await stat(join(path, ".git"));
+		return stats.isDirectory() ? "git_repository" : "git_worktree";
+	} catch {
+		return undefined;
+	}
+}
+
 async function matchesKind(
 	path: string,
 	kinds: readonly FilesystemSource["kinds"][number][],
 ): Promise<boolean> {
 	if (kinds.includes("directory")) return true;
-	// A repository has a `.git` directory; a worktree has a `.git` file pointing
-	// at one. Both are "there is a git checkout here", which is what the kinds
-	// distinguish, and neither needs git itself to be run.
-	const marker = join(path, ".git");
-	try {
-		const stats = await stat(marker);
-		return stats.isDirectory()
-			? kinds.includes("git_repository")
-			: kinds.includes("git_worktree");
-	} catch {
-		return false;
-	}
+	const checkout = await gitCheckout(path);
+	return checkout !== undefined && kinds.includes(checkout);
 }
 
 /**
@@ -244,21 +264,21 @@ async function matchesKind(
 async function runDateSource(
 	source: DateSource,
 	now: Date,
-	offer: (path: string, label: string, missing?: boolean) => void,
+	offer: Offer,
 ): Promise<void> {
 	const path = expandHome(expandDateTemplate(source.path, now));
 	const label = basename(path) || path;
 	if (await isDirectory(path)) {
-		offer(path, label);
+		await offer(path, label);
 		return;
 	}
-	if (source.create_if_missing) offer(path, label, true);
+	if (source.create_if_missing) await offer(path, label, true);
 }
 
 async function walkFilesystemSource(
 	source: FilesystemSource,
 	state: RunState,
-	offer: (path: string, label: string) => void,
+	offer: Offer,
 ): Promise<void> {
 	const root = expandHome(source.path);
 	const maxDepth = source.max_depth ?? source.min_depth;
@@ -284,7 +304,7 @@ async function walkFilesystemSource(
 				depth >= source.min_depth &&
 				(await matchesKind(path, source.kinds))
 			) {
-				offer(path, entry.name);
+				await offer(path, entry.name);
 			}
 			await visit(path, depth + 1);
 		}
@@ -299,7 +319,7 @@ async function walkFilesystemSource(
 function runCommandSource(
 	source: CommandSource,
 	state: RunState,
-	offer: (path: string, label: string) => void,
+	offer: Offer,
 ): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const [command, ...args] = source.command;
@@ -349,12 +369,17 @@ function runCommandSource(
 				finish(new Error(`workspace source exited with ${String(code)}`));
 				return;
 			}
-			for (const line of stdout.split("\n")) {
-				const path = line.trim();
-				if (path.length === 0 || !path.startsWith("/")) continue;
-				offer(path, basename(path) || path);
-			}
-			finish();
+			// The timeout bounds the program, which has exited. Reading what it
+			// named is this file's own work and is not the source running long.
+			clearTimeout(timer);
+			const offerAll = async () => {
+				for (const line of stdout.split("\n")) {
+					const path = line.trim();
+					if (path.length === 0 || !path.startsWith("/")) continue;
+					await offer(path, basename(path) || path);
+				}
+			};
+			void offerAll().then(() => finish(), finish);
 		});
 	});
 }

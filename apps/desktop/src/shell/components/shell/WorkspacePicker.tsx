@@ -244,6 +244,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
             glyph: <FolderGlyph />,
             sourceRank: candidate.sourceRank,
             missing: candidate.missing,
+            worktree: candidate.worktree,
           });
           changed = true;
         } else if (candidate.sourceRank < known.sourceRank) {

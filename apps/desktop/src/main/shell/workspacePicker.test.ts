@@ -9,7 +9,7 @@
  * being decided by which source finished first.
  */
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { WorkspacePickerEvent } from "../../ipc/contract.js";
@@ -150,6 +150,36 @@ describe("the workspace picker's search", () => {
 		await mkdir(join(root, "once"), { recursive: true });
 		const events = await run(configWith([directorySource("only", root)]), "");
 		expect(candidates(events)).toHaveLength(1);
+	});
+});
+
+describe("a candidate's kind", () => {
+	it("says which folders are worktrees, whatever the source looked for", async () => {
+		// A repository's `.git` is a directory and a worktree's is a file; a
+		// plain folder has neither. The source takes every directory, so the
+		// kind is read from the folder rather than from what the source asked.
+		await mkdir(join(root, "repository", ".git"), { recursive: true });
+		await mkdir(join(root, "worktree"), { recursive: true });
+		await writeFile(
+			join(root, "worktree", ".git"),
+			"gitdir: ../repository/.git/worktrees/worktree\n",
+		);
+		await mkdir(join(root, "plain"), { recursive: true });
+
+		const events = await run(configWith([directorySource("all", root)]), "");
+		expect(
+			events
+				.flatMap((event) =>
+					event.kind === "candidate"
+						? [{ path: event.path, worktree: event.worktree }]
+						: [],
+				)
+				.toSorted((a, b) => a.path.localeCompare(b.path)),
+		).toEqual([
+			{ path: join(root, "plain"), worktree: false },
+			{ path: join(root, "repository"), worktree: false },
+			{ path: join(root, "worktree"), worktree: true },
+		]);
 	});
 });
 

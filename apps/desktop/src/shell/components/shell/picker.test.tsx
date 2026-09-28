@@ -256,6 +256,67 @@ describe("the picker", () => {
     expect(shown()).toEqual(["devhub", "widget", "0901"]);
   });
 
+  it("puts a repository before a worktree the query matches as well", () => {
+    // The caller listed the worktree first, and the query scores both the
+    // same, so the kind is what decides: the checkout a person keeps is the
+    // one they usually mean.
+    const rows: readonly PickerItem[] = [
+      {
+        id: "tidy",
+        label: "widget-tidy",
+        searchText: "/code/widget-tidy",
+        worktree: true,
+      },
+      { id: "widget", label: "widget", searchText: "/code/widget" },
+    ];
+    renderPicker({ items: rows });
+    const shown = () =>
+      screen.getAllByRole("option").map((row) => row.textContent);
+
+    expect(shown()).toEqual(["widget", "widget-tidy"]);
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "widget" },
+    });
+    expect(shown()).toEqual(["widget", "widget-tidy"]);
+  });
+
+  it("still puts first a worktree the query matches better", () => {
+    // "tidy" is in the worktree's last component and only a scattered
+    // subsequence of the repository's path, so the score decides before the
+    // kind is asked.
+    const rows: readonly PickerItem[] = [
+      { id: "widget", label: "widget", searchText: "/t/i/d/y/widget" },
+      {
+        id: "tidy",
+        label: "widget-tidy",
+        searchText: "/code/widget-tidy",
+        worktree: true,
+      },
+    ];
+    renderPicker({ items: rows });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "tidy" },
+    });
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["widget-tidy", "widget"],
+    );
+  });
+
+  it("keeps the caller's order among rows of one kind the query scores the same", () => {
+    // The kind orders between repositories and worktrees and nothing else:
+    // two of each keep the order they were given within their kind.
+    const rows: readonly PickerItem[] = [
+      { id: "w2", label: "b-wt", searchText: "/code/b-wt", worktree: true },
+      { id: "r2", label: "b", searchText: "/code/b" },
+      { id: "w1", label: "a-wt", searchText: "/code/a-wt", worktree: true },
+      { id: "r1", label: "a", searchText: "/code/a", worktree: false },
+    ];
+    renderPicker({ items: rows });
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["b", "a", "b-wt", "a-wt"],
+    );
+  });
+
   it("holds back a pinned row that means what was typed, until something is", () => {
     // Pinned rows lead while nothing is typed, so a row meaning "use the field"
     // would otherwise be the row Return takes the instant the sheet opens —
