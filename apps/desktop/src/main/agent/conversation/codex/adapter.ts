@@ -873,6 +873,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	private takeRestart(): void {
 		this.emit({ type: "restarted" });
 		this.notice("info", RESTARTED, undefined);
+		this.processEnded();
 		this.starts += 1;
 		this.reopening = true;
 		this.sending.clear();
@@ -1097,6 +1098,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		if (!this.reopening)
 			for (const turn of thread.turns) this.replayTurn(thread.id, turn);
 		this.reopening = false;
+		// Its history tells of no subagent running on this server now.
+		this.processEnded();
 		this.emitSending();
 		this.setState({
 			phase: "ready",
@@ -2026,11 +2029,30 @@ export class CodexAdapter implements ProtocolAdapter {
 				about as unknown as JsonValue,
 			);
 		}
+		this.spawnState(entry, state);
+	}
+
+	/** Where every change of a drawn subagent's state is made. */
+	private spawnState(entry: ToolEntry, state: SubagentInfo["state"]): void {
 		if (entry.spawns!.state === state) return;
 		this.emit({
 			type: "entry",
 			entry: { ...entry, spawns: { ...entry.spawns!, state } },
 		});
+	}
+
+	/**
+	 * The app-server that ran the subagents drawn so far is not the one DevHub
+	 * hears live: it was started again (a restart, live or read back from the
+	 * journal), or they were read from a thread's history. A subagent it ran
+	 * cannot be running now, and how it ended nobody said — so one drawn as
+	 * running is unknown, until its thread's own turn says otherwise.
+	 */
+	private processEnded(): void {
+		for (const entry of this.current.entries) {
+			if (entry.kind === "tool" && entry.spawns?.state === "running")
+				this.spawnState(entry, "unknown");
+		}
 	}
 
 	/** A child thread takes the person's messages: its spawn entry says so, once DevHub knows it. */

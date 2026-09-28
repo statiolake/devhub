@@ -1328,6 +1328,7 @@ describe("multi-agent v2 subagents", () => {
 	const B = "00000000-0000-7000-8000-00000000000c";
 	const SPAWN_A = `${MAIN}/call_spawn_a`;
 	const SPAWN_B = `${MAIN}/call_spawn_b`;
+	const V1 = "00000000-0000-7000-8000-00000000000d";
 
 	function delegated(
 		lines: readonly string[] = fixture("subagent-v2.handwritten.ndjson"),
@@ -1524,7 +1525,7 @@ describe("multi-agent v2 subagents", () => {
 		expect(replayed.transcript).toEqual(live.transcript);
 	});
 
-	it("draws a resumed thread's past subagents from its history, done once its history says so", () => {
+	it("draws a resumed thread's past subagents from its history: done when it says so, else unknown, never running", () => {
 		const harness = new Harness({ ...OPTIONS, resumeThreadId: MAIN });
 		harness.start();
 		const [initialize, account, start] = fixture(
@@ -1535,20 +1536,35 @@ describe("multi-agent v2 subagents", () => {
 		const opened = JSON.parse(start!) as {
 			result: { thread: { turns: unknown[] } };
 		};
-		const activity = (id: string, kind: string) => ({
+		const activity = (id: string, kind: string, thread: string) => ({
 			type: "subAgentActivity",
 			id,
 			kind,
-			agentThreadId: A,
-			agentPath: "/root/reader",
+			agentThreadId: thread,
+			agentPath: thread === A ? "/root/reader" : "/root/tester",
 		});
 		opened.result.thread.turns = [
 			{
 				id: "old-turn",
 				items: [
-					activity("call_spawn_a", "started"),
-					activity("call_ask_a", "interacted"),
-					activity("subagent-completed-old", "completed"),
+					activity("call_spawn_a", "started", A),
+					activity("call_ask_a", "interacted", A),
+					activity("subagent-completed-old", "completed", A),
+					// Its turn failed: upstream says nothing of that here.
+					activity("call_spawn_b", "started", B),
+					// A multi-agent v1 spawn, running when it was recorded.
+					{
+						type: "collabAgentToolCall",
+						id: "call_v1",
+						tool: "spawnAgent",
+						status: "completed",
+						senderThreadId: MAIN,
+						receiverThreadIds: [V1],
+						prompt: "Look around.",
+						model: null,
+						reasoningEffort: null,
+						agentsStates: { [V1]: { status: "running", message: null } },
+					},
 				],
 				itemsView: "full",
 				status: "completed",
@@ -1562,9 +1578,65 @@ describe("multi-agent v2 subagents", () => {
 		expect(outline(harness.transcript)).toEqual([
 			'tool spawnAgent "Start a subagent: /root/reader" succeeded spawns /root/reader/completed',
 			'tool sendMessage "Message a subagent: /root/reader" succeeded',
+			'tool spawnAgent "Start a subagent: /root/tester" succeeded spawns /root/tester/unknown',
+			'tool spawnAgent "Start a subagent: Look around." succeeded spawns subagent/unknown',
 			"turn-end completed 10ms",
 		]);
 		expect(harness.transcript.backgroundTasks).toEqual([]);
+	});
+
+	describe("once the app-server that ran them is started again", () => {
+		function restarted(): Harness {
+			const lines = fixture("subagent-v2.handwritten.ndjson");
+			const running = lines.findIndex(
+				(line) => line.includes('"turn/started"') && line.includes("child-b-1"),
+			);
+			const harness = delegated(lines.slice(0, running + 1));
+			expect(harness.transcript.backgroundTasks).toHaveLength(2);
+			harness.receive(RESTART_MARK);
+			return harness;
+		}
+
+		it("says of each subagent that was running that how it stands is unknown, and lists none", () => {
+			const harness = restarted();
+			expect(harness.entry(SPAWN_A)).toMatchObject({
+				spawns: { state: "unknown" },
+			});
+			expect(harness.entry(SPAWN_B)).toMatchObject({
+				spawns: { state: "unknown" },
+			});
+			expect(harness.transcript.backgroundTasks).toEqual([]);
+		});
+
+		it("says the same when the journal is read back after the restart", () => {
+			const live = restarted();
+			const replayed = new Harness();
+			for (const line of live.written) {
+				for (const event of replayed.adapter.sent(line).events)
+					replayed.transcript = applyEvent(replayed.transcript, event);
+			}
+			for (const line of live.received) replayed.receive(line);
+			expect(replayed.transcript.entries).toEqual(live.transcript.entries);
+			expect(replayed.entry(SPAWN_A)).toMatchObject({
+				spawns: { state: "unknown" },
+			});
+		});
+	});
+
+	it("says a subagent failed when its thread's turn ends failed or interrupted", () => {
+		for (const status of ["failed", "interrupted"]) {
+			const lines = fixture("subagent-v2.handwritten.ndjson").map((line) =>
+				line.includes('"turn/completed"') && line.includes("child-a-1")
+					? line.replace('"status":"completed"', `"status":"${status}"`)
+					: line,
+			);
+			const harness = delegated(
+				lines.filter((line) => !line.includes("subagent-completed")),
+			);
+			expect(harness.entry(SPAWN_A)).toMatchObject({
+				spawns: { state: "failed" },
+			});
+		}
 	});
 });
 

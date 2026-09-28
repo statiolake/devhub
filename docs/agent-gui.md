@@ -582,7 +582,11 @@ subagent's thread, or, under multi-agent v2 (which codex 0.158 runs), a
 card is linked to the thread by whichever comes first. What the thread says
 before its call is named waits, and is drawn under the card once it is; a
 thread no call is named for by the end of the conversation's turn is one
-warning, not one per item. A Claude subagent is running from its call
+warning, not one per item. A Codex subagent drawn as running is *Unknown*
+once the app-server that ran it is started again (Restart session, live or
+read back from the journal), and one read from a thread's history is *Done*
+if the history says so and *Unknown* otherwise, until its thread's own turn
+says more. A Claude subagent is running from its call
 until its end is told: its call's result, for one run in the foreground; a
 task notification, for one started in the background (whose call's result
 only says it launched) — a `task_notification` event in stream-json, or a
