@@ -151,7 +151,10 @@ function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
  */
 async function choose(dialogName: RegExp, rowName: string | RegExp) {
   await screen.findByRole("dialog", { name: dialogName });
-  fireEvent.click(screen.getByRole("option", { name: rowName }));
+  // Found, not got: a sheet can be up before all of its rows are — the Agent
+  // question fills in the folder's earlier sessions after it opens — and a
+  // person clicks the row once it is there, not the moment the sheet is.
+  fireEvent.click(await screen.findByRole("option", { name: rowName }));
 }
 
 async function answer(
