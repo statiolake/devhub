@@ -12,13 +12,13 @@ the `.handwritten` part, scrubbed the same way these are written: paths under
 `/home/testuser`, accounts `alice@example.com`, dummy UUIDs.
 
 - `handshake.handwritten.ndjson` — the replies to `initialize`, `account/read`,
-  `thread/start` (and its `thread/started`) and `model/list`, in that order, to
-  requests `0` to `3`.
-- `turn.handwritten.ndjson` — one turn started by request `4`: a user message,
+  `thread/start` (and its `thread/started`), `model/list` and `skills/list`, in
+  that order, to requests `0` to `4`.
+- `turn.handwritten.ndjson` — one turn started by request `5`: a user message,
   reasoning, a streamed reply, a command that asks for approval (server request
   `0`), a file change that asks for approval (server request `1`), a plan, token
   usage, a rate limit, and the end of the turn.
-- `subagent.handwritten.ndjson` — one turn started by request `4` in which the
+- `subagent.handwritten.ndjson` — one turn started by request `5` in which the
   main thread spawns a subagent, the subagent's own thread says something and
   runs a command, and the main thread waits for it and reports.
 

@@ -63,18 +63,21 @@ afterEach(cleanup);
 
 const COMMANDS: readonly SlashCommand[] = [
   {
+    trigger: "/",
     name: "review",
     description: "Review the current diff",
     argumentHint: "[path]",
     route: "message",
   },
   {
+    trigger: "/",
     name: "compact",
     description: "Summarize the conversation so far",
     argumentHint: undefined,
     route: "message",
   },
   {
+    trigger: "/",
     name: "model",
     description: "Choose the model",
     argumentHint: undefined,
@@ -411,6 +414,65 @@ describe("slash commands", () => {
   });
 });
 
+describe("skills", () => {
+  const SKILLS: readonly SlashCommand[] = [
+    ...COMMANDS,
+    {
+      trigger: "$",
+      name: "release-notes",
+      description: "Write release notes",
+      argumentHint: undefined,
+      route: "message",
+    },
+    {
+      trigger: "$",
+      name: "skill-creator",
+      description: "Create a skill",
+      argumentHint: undefined,
+      route: "message",
+    },
+  ];
+  const withSkills = () => withSession([], { ...SESSION, commands: SKILLS });
+
+  it("offers the Agent's skills after a $, anywhere in the message, and only its commands after a /", () => {
+    draw(withSkills());
+    type("$");
+    expect(
+      within(screen.getByRole("listbox", { name: "Skills" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([
+      "$release-notesWrite release notes",
+      "$skill-creatorCreate a skill",
+    ]);
+    type("please use $sk");
+    expect(
+      within(screen.getByRole("listbox", { name: "Skills" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["$skill-creatorCreate a skill"]);
+    type("/");
+    expect(
+      within(screen.getByRole("listbox", { name: "Commands" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent?.slice(0, 1)),
+    ).toEqual(["/", "/", "/"]);
+    // Not in the middle of a word, and not once the name is done.
+    type("a$re");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    type("use $release-notes now");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("completes the skill in place of what was typed after the $, keeping the words before it, and sends nothing", () => {
+    const { actions } = draw(withSkills());
+    type("please use $rel");
+    press("Enter");
+    expect(composer()).toHaveValue("please use $release-notes ");
+    expect(actions.send).not.toHaveBeenCalled();
+  });
+});
+
 describe("history", () => {
   const said = withSession([
     put(user("u1", "first thing")),
@@ -641,6 +703,7 @@ describe("/resume", () => {
     commands: [
       ...COMMANDS,
       {
+        trigger: "/",
         name: "resume",
         description: "Go on with an earlier session in this Workspace",
         argumentHint: undefined,

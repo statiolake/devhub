@@ -205,9 +205,9 @@ describe("the app-server argv", () => {
 });
 
 describe("the handshake", () => {
-	it("initializes, reads the account, starts a thread in the Workspace, and lists models", () => {
+	it("initializes, reads the account, starts a thread in the Workspace, and lists models and skills", () => {
 		const harness = new Harness();
-		const [initialize, account, start, started, models] = fixture(
+		const [initialize, account, start, started, models, skills] = fixture(
 			"handshake.handwritten.ndjson",
 		);
 
@@ -238,6 +238,7 @@ describe("the handshake", () => {
 		harness.receive(start!);
 		expect(harness.writesSince(4)).toEqual([
 			{ id: 3, method: "model/list", params: { includeHidden: true } },
+			{ id: 4, method: "skills/list", params: { cwds: [CWD] } },
 		]);
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 		expect(conversationStatus(harness.transcript)).toBe("idle");
@@ -275,6 +276,55 @@ describe("the handshake", () => {
 			"full-access",
 		]);
 		expect(harness.transcript.entries).toEqual([]);
+
+		// The enabled skills, offered after `$` beside the commands after `/`.
+		expect(
+			session.commands.map((command) => `${command.trigger}${command.name}`),
+		).toEqual(["/model", "/effort", "/approvals", "/resume"]);
+		harness.receive(skills!);
+		expect(
+			harness.transcript.session.commands.filter(
+				(command) => command.trigger === "$",
+			),
+		).toEqual([
+			{
+				trigger: "$",
+				name: "release-notes",
+				description: "Write release notes",
+				argumentHint: undefined,
+				route: "message",
+			},
+			{
+				trigger: "$",
+				name: "skill-creator",
+				description: "Create a skill",
+				argumentHint: undefined,
+				route: "message",
+			},
+		]);
+	});
+
+	it("says it could not list the skills, and offers none", () => {
+		const harness = new Harness();
+		harness.start();
+		const lines = fixture("handshake.handwritten.ndjson");
+		for (const line of lines.slice(0, 5)) harness.receive(line);
+		harness.receive({ id: 4, error: { code: -32603, message: "no skills" } });
+		expect(
+			harness.transcript.session.commands.some(
+				(command) => command.trigger === "$",
+			),
+		).toBe(false);
+		expect(
+			harness.transcript.entries.flatMap((entry) =>
+				entry.kind === "notice" ? [[entry.level, entry.text]] : [],
+			),
+		).toEqual([
+			[
+				"warning",
+				expect.stringContaining("could not list its skills: no skills"),
+			],
+		]);
 	});
 
 	it("stops at a signed-out account and says to sign in, without starting a thread", () => {
@@ -397,6 +447,56 @@ describe("the handshake", () => {
 });
 
 describe("a turn", () => {
+	it("sends each skill the words mention after $ as that skill, beside the words", () => {
+		const harness = ready();
+		const text =
+			"Use $release-notes, then $skill-creator. Not $old-habit or $nothing, nor a$release-notes.";
+		harness.command({ kind: "send", images: [], text, origin: "person" });
+		expect(harness.lastWrite()).toMatchObject({
+			id: 5,
+			method: "turn/start",
+			params: {
+				input: [
+					{ type: "text", text, text_elements: [] },
+					{
+						type: "skill",
+						name: "release-notes",
+						path: "/home/testuser/project/.codex/skills/release-notes/SKILL.md",
+					},
+					{
+						type: "skill",
+						name: "skill-creator",
+						path: "/home/testuser/.codex/skills/.system/skill-creator/SKILL.md",
+					},
+				],
+			},
+		});
+		// The message comes back with its skills, and is drawn as its words.
+		harness.receive({
+			method: "item/started",
+			params: {
+				threadId: MAIN,
+				turnId: "turn-1",
+				startedAtMs: 1790000000000,
+				item: {
+					type: "userMessage",
+					id: "item-user",
+					clientId: "devhub-person-0",
+					content: [
+						{ type: "text", text, text_elements: [] },
+						{
+							type: "skill",
+							name: "release-notes",
+							path: "/home/testuser/project/.codex/skills/release-notes/SKILL.md",
+						},
+					],
+				},
+			},
+		});
+		expect(harness.transcript.sending).toEqual([]);
+		expect(outline(harness.transcript)).toEqual([`user(person): ${text}`]);
+	});
+
 	it("runs a whole turn with two approvals into one transcript", () => {
 		const harness = ready();
 		harness.command({
@@ -406,7 +506,7 @@ describe("a turn", () => {
 			origin: "person",
 		});
 		expect(harness.lastWrite()).toEqual({
-			id: 4,
+			id: 5,
 			method: "turn/start",
 			params: {
 				threadId: MAIN,
@@ -600,7 +700,7 @@ describe("a turn", () => {
 			origin: "injection",
 		});
 		expect(harness.lastWrite()).toEqual({
-			id: 5,
+			id: 6,
 			method: "turn/steer",
 			params: {
 				threadId: MAIN,
@@ -645,7 +745,7 @@ describe("a turn", () => {
 		for (const line of lines.slice(0, 15)) harness.receive(line);
 		harness.command({ kind: "interrupt" });
 		expect(harness.lastWrite()).toEqual({
-			id: 5,
+			id: 6,
 			method: "turn/interrupt",
 			params: { threadId: MAIN, turnId: "turn-1" },
 		});
@@ -710,7 +810,7 @@ describe("a turn", () => {
 		const harness = ready();
 		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
 		harness.receive({
-			id: 4,
+			id: 5,
 			error: { code: -32600, message: "model not available" },
 		});
 		expect(outline(harness.transcript).at(-1)).toMatch(
@@ -1517,7 +1617,7 @@ describe("replay", () => {
 			origin: "person",
 		});
 		expect(replayed.lastWrite()).toMatchObject({
-			id: 5,
+			id: 6,
 			method: "turn/start",
 			params: { clientUserMessageId: "devhub-person-1" },
 		});
@@ -1594,7 +1694,7 @@ describe("taking back the last turn", () => {
 
 	const USER = `${MAIN}/item-user`;
 	const REVERTED = {
-		id: 5,
+		id: 6,
 		result: {
 			thread: { id: MAIN, turns: [] },
 			turnsBackwardsCursor: null,
@@ -1609,7 +1709,7 @@ describe("taking back the last turn", () => {
 
 		harness.rewind(USER);
 		expect(harness.lastWrite()).toEqual({
-			id: 5,
+			id: 6,
 			method: "thread/revert",
 			params: { threadId: MAIN, beforeTurnId: "turn-1" },
 		});
@@ -1631,7 +1731,7 @@ describe("taking back the last turn", () => {
 			origin: "person",
 		});
 		expect(harness.lastWrite()).toMatchObject({
-			id: 6,
+			id: 7,
 			method: "turn/start",
 			params: { threadId: MAIN, clientUserMessageId: "devhub-person-1" },
 		});
@@ -1642,7 +1742,7 @@ describe("taking back the last turn", () => {
 		const before = harness.transcript.entries;
 		harness.rewind(USER);
 		harness.receive({
-			id: 5,
+			id: 6,
 			error: {
 				code: -32600,
 				message: "thread/revert only supports paginated threads",
@@ -1697,7 +1797,7 @@ describe("taking back the last turn", () => {
 			completedAt: null,
 			durationMs: null,
 		};
-		harness.receive({ id: 5, result: { turn: turn2 } });
+		harness.receive({ id: 6, result: { turn: turn2 } });
 		harness.receive({
 			method: "turn/started",
 			params: { threadId: MAIN, turn: turn2 },
@@ -1729,11 +1829,11 @@ describe("taking back the last turn", () => {
 		]);
 		harness.rewind(USER);
 		expect(harness.lastWrite()).toEqual({
-			id: 6,
+			id: 7,
 			method: "thread/revert",
 			params: { threadId: MAIN, beforeTurnId: "turn-1" },
 		});
-		harness.receive({ ...REVERTED, id: 6 });
+		harness.receive({ ...REVERTED, id: 7 });
 		expect(harness.transcript.entries).toEqual([]);
 		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
@@ -1778,7 +1878,7 @@ describe("taking back the last turn", () => {
 			images: [],
 			origin: "person",
 		});
-		harness.receive({ id: 5, error: { code: -32600, message: "no" } });
+		harness.receive({ id: 6, error: { code: -32600, message: "no" } });
 		expect(harness.transcript.sending).toEqual([]);
 	});
 
@@ -2133,7 +2233,7 @@ describe("the thread's model, against the models model/list names", () => {
 
 	it("lists hidden models too, and offers the thread's own hidden model with its efforts", () => {
 		const harness = resumedOn("older-model");
-		expect(harness.lastWrite()).toEqual({
+		expect(harness.writesSince(harness.written.length - 2)[0]).toEqual({
 			id: 3,
 			method: "model/list",
 			params: { includeHidden: true },
@@ -2186,12 +2286,12 @@ describe("the thread's model, against the models model/list names", () => {
 		const harness = resumedOn("older-model");
 		harness.receive({ id: 3, result: { data: [SHOWN], nextCursor: "page-2" } });
 		expect(harness.lastWrite()).toEqual({
-			id: 4,
+			id: 5,
 			method: "model/list",
 			params: { includeHidden: true, cursor: "page-2" },
 		});
 		expect(harness.transcript.session.effort.unchangeable).toBeUndefined();
-		harness.receive({ id: 4, result: { data: [HIDDEN], nextCursor: null } });
+		harness.receive({ id: 5, result: { data: [HIDDEN], nextCursor: null } });
 		const { session } = harness.transcript;
 		expect(session.model.current).toBe("older-model");
 		expect(session.effort.choices.map((choice) => choice.id)).toEqual([

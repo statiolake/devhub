@@ -723,12 +723,14 @@ describe("session facts and usage", () => {
     },
     commands: [
       {
+        trigger: "/",
         name: "review",
         description: "Review a PR",
         argumentHint: "<pr>",
         route: "message",
       },
       {
+        trigger: "/",
         name: "model",
         description: "Switch model",
         argumentHint: undefined,

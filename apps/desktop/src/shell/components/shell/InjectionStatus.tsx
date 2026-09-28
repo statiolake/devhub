@@ -12,6 +12,15 @@
  * by the next one and cleared when something new is queued — a rule that does
  * not depend on which ending it is, so a new kind of ending cannot arrive with
  * nobody having chosen to show it. A failure is an alert, in the failure ink.
+ *
+ * The corner says only what the pane does not already show. A GUI Agent's
+ * transcript draws a message DevHub delivered — where it went among the
+ * Agent's replies, marked as a template's — so there "sent" is not said
+ * again; what waits, a cancel and a failure are nowhere else, and are. A
+ * terminal shows nothing of the kind, so it hears every ending.
+ *
+ * It is a status, not a control: words on a plain ground that reads over a
+ * terminal of any colour, with nothing about it that looks pressable.
  */
 
 import type { AgentSnapshot } from "../../../ipc/appShell";
@@ -49,7 +58,11 @@ function resultNote(
 }
 
 export function InjectionStatus({ agent }: { readonly agent: AgentSnapshot }) {
-  const { queued, lastResult } = agent.injection;
+  const { queued } = agent.injection;
+  const lastResult =
+    agent.presentation === "gui" && agent.injection.lastResult?.kind === "sent"
+      ? undefined
+      : agent.injection.lastResult;
   if (queued === 0 && lastResult === undefined) return null;
   return (
     <div className="agent-injection-status">

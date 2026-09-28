@@ -433,8 +433,21 @@ bubble. Claude records them as tagged text (`<command-name>`,
 `<command-args>`, `<local-command-stdout>` and `-stderr`, `<bash-input>`,
 `<bash-stdout>` and `-stderr`); the caveat it writes before them
 (`<local-command-caveat>`) is for the model and is not drawn. Output that no
-recorded command names is drawn as *Command output*. A slash command sent
-from the composer that the CLI echoes in this form is taken as sent then.
+recorded command names is drawn as *Command output*.
+
+A slash command sent from the composer (or by a template) is taken as sent
+when the CLI says it ran that command, in whichever of its two forms: a
+command that expands into a prompt (a skill, `/review 12`) is echoed in the
+tagged form above; a local command (`/mcp`, `/cost`) is not echoed at all,
+and is answered by one assistant message of the model `<synthetic>` that
+names the command it ran (`local_command_run`) and carries what it printed in
+the same tags (`local_command_source`), then the command's `result`. That
+message is drawn as the command, in the place the answer came, and the
+`result` ends it as it ends any turn, so the Agent is idle again. The command
+is matched to the oldest message sending that invokes it (`/name`, or `!`),
+never by the whole text, because the CLI reads the arguments its own way.
+This shape was observed on 2.1.273, 2.1.281 and 2.1.283 alike; the two
+fields are not in the Agent SDK's types.
 
 **Questions the Agent asks** (Claude's AskUserQuestion, Codex's
 requestUserInput) are a card of choices, with an *Other* field where the CLI
@@ -676,12 +689,18 @@ notification no drawn call started is a notice. Its work is drawn in one place a
 - Only `/model`, `/effort` and `/approvals` are offered as commands. They open
   the composer's pickers. Codex has no protocol-level slash commands, and review,
   compact and diff are not wired yet.
+- Skills are offered after `$`, as in Codex's own terminal UI, anywhere in a
+  message: the enabled ones `skills/list` names for the thread's directory,
+  asked once when the thread opens. Each skill a message mentions (`$name`
+  starting a word) goes with its words as a `skill` input (its name and the
+  path of its `SKILL.md`), the protocol's way of handing Codex a skill. A
+  skill added while the Agent runs is offered once the Agent is started again
+  (`skills/changed` is not followed).
 - Permission modes are the terminal UI's presets: Read only, Auto and Full
   access (an approval policy and sandbox pair each).
 - Not drawn:
   - the whole-turn diff (each file change shows its own);
   - the thread list, archive, rename, goals, queue, projects and environments;
-  - skills changes;
   - hooks;
   - automatic approval review;
   - raw response events;
@@ -712,8 +731,9 @@ notification no drawn call started is a notice. Its work is drawn in one place a
 
 A message you send while the Agent is idle is written to the CLI at once, and
 its bubble is at the end of the conversation at once too, quieter (*sending*)
-until the CLI takes it: Claude's echo of the message (`--replay-user-messages`)
-or Codex's `userMessage` item puts the message itself in the same place. A
+until the CLI takes it: Claude's echo of the message (`--replay-user-messages`),
+its word that it ran a slash command (above), or Codex's `userMessage` item
+puts the message itself in the same place. A
 message the CLI refused (Codex's `turn/start` or `turn/steer` failing) stops
 sending, and the refusal is a notice. Which messages are sending is read from
 what was written (`in.log`), so after a restart a message written and not yet
@@ -845,7 +865,10 @@ then start a new GUI Agent. DevHub never signs in on your behalf.
 **Continue in GUI** is the mirror, for a terminal Claude or Codex Agent: the
 same floating button in the same place, the top right corner of its pane (the
 bottom right is where the pane says what became of a message DevHub queued
-for the Agent, from an Issue assignment or the Agent actions sheet). The two
+for the Agent, from an Issue assignment or the Agent actions sheet: what it
+waits for, a cancel or a failure; in a GUI pane a message that went is not
+said there, because the transcript shows it, marked *Sent by a template*,
+where it went). The two
 are one control: the top right corner of the Agent's own column (a terminal
 is its own column), the same distance in, and the same size whichever it
 says. It starts a GUI Agent from the same profile resuming the
@@ -1187,6 +1210,19 @@ read on 2026-09-25:
   `codex-rs/app-server/README.md` and
   `app-server-protocol/schema/typescript/v2/ThreadRevertParams.ts` at
   `rust-v0.156.1` in openai/codex
+- A local slash command's answer over stream-json, observed on 2026-09-28
+  with Claude Code 2.1.273, 2.1.281 and 2.1.283 (`/mcp`, `/mcp reconnect`,
+  `/cost`, with `--no-session-persistence` and no network, so no prompt
+  reached a model): the turn's `init`, one `<synthetic>` assistant message
+  carrying `local_command_run` and `local_command_source`, and a `result`
+  with `num_turns` 0; no echo and no `local_command` event. The Agent SDK's
+  types say a local command's output comes on a synthetic assistant message
+  (`context_usage`) and that `terminal_reason` is unset when the loop was
+  bypassed for a local slash command
+- Codex skills: `skills/list` and `UserInput`'s `skill` in
+  `app-server-protocol` at `rust-v0.156.1` in openai/codex, and "run
+  `/skills` or type `$` to mention a skill" —
+  <https://learn.chatgpt.com/docs/build-skills>
 - Codex app-server and authentication —
   <https://learn.chatgpt.com/docs/app-server>,
   <https://learn.chatgpt.com/docs/auth>

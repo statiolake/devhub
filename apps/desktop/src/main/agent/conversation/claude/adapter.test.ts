@@ -308,30 +308,35 @@ describe("the handshake", () => {
 		);
 		expect(session.commands).toEqual([
 			{
+				trigger: "/",
 				name: "review",
 				description: "",
 				argumentHint: undefined,
 				route: "message",
 			},
 			{
+				trigger: "/",
 				name: "model",
 				description: "",
 				argumentHint: undefined,
 				route: "model",
 			},
 			{
+				trigger: "/",
 				name: "effort",
 				description: "",
 				argumentHint: undefined,
 				route: "effort",
 			},
 			{
+				trigger: "/",
 				name: "permissions",
 				description: "",
 				argumentHint: undefined,
 				route: "mode",
 			},
 			{
+				trigger: "/",
 				name: "resume",
 				description: "Go on with an earlier session in this Workspace",
 				argumentHint: undefined,
@@ -421,30 +426,35 @@ describe("the permission fixture", () => {
 		const { session } = played().transcript;
 		expect(session.commands).toEqual([
 			{
+				trigger: "/",
 				name: "review",
 				description: "Review a pull request",
 				argumentHint: "<pr>",
 				route: "message",
 			},
 			{
+				trigger: "/",
 				name: "model",
 				description: "Set the AI model",
 				argumentHint: undefined,
 				route: "model",
 			},
 			{
+				trigger: "/",
 				name: "compact",
 				description: "Compact the conversation",
 				argumentHint: "[instructions]",
 				route: "message",
 			},
 			{
+				trigger: "/",
 				name: "init",
 				description: "",
 				argumentHint: undefined,
 				route: "message",
 			},
 			{
+				trigger: "/",
 				name: "resume",
 				description: "Go on with an earlier session in this Workspace",
 				argumentHint: undefined,
@@ -3287,6 +3297,98 @@ describe("a slash command and its output", () => {
 		expect(
 			adapter.transcript.entries.filter((each) => each.kind === "notice"),
 		).toEqual([]);
+	});
+
+	it("takes the echo of a command sent with spaces and a newline around its arguments as that command", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, {
+			kind: "send",
+			text: "/review   12\n",
+			images: [],
+			origin: "injection",
+		});
+		adapter.received(
+			echo(
+				"<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>12</command-args>",
+				"u-cmd",
+			),
+		);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(commands(adapter)).toMatchObject([{ line: "/review 12" }]);
+	});
+
+	it("is a command the CLI answered itself, in place, and the Agent idle again once the CLI says the command is done", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const statuses: string[] = [];
+		for (const { side, line } of fixture(
+			"claude-local-command.handwritten.ndjson",
+		)) {
+			if (side === "sent") adapter.sent(line);
+			else adapter.received(line);
+			statuses.push(conversationStatus(adapter.transcript));
+		}
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(
+			adapter.transcript.entries
+				.filter((each) => each.kind !== "turn-end")
+				.map((each) =>
+					each.kind === "command"
+						? ["command", each.line, each.output]
+						: each.kind === "user"
+							? ["user", each.text, each.origin]
+							: [each.kind],
+				),
+		).toEqual([
+			["command", "/mcp reconnect", "Reconnecting is not available here."],
+			["user", "What changed?", "person"],
+			["assistant"],
+			["command", "/mcp", "2 MCP servers."],
+		]);
+		// Working from each send until its result, idle again after it.
+		expect(statuses).toEqual([
+			"unknown",
+			"idle",
+			"idle",
+			...["working", "working", "working", "idle"],
+			...["working", "working", "working", "working", "idle"],
+			...["working", "working", "working", "idle"],
+		]);
+	});
+
+	it("says a local command's error as failed, as the session file does", () => {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		perform(adapter, {
+			kind: "send",
+			text: "/mcp nope",
+			images: [],
+			origin: "person",
+		});
+		adapter.received(
+			assistantLine(
+				"00000000-0000-4000-8000-0000000000e1",
+				[{ type: "text", text: "Unknown subcommand." }],
+				null,
+				{
+					uuid: "u-local",
+					local_command_run: { command: "mcp", args: "nope" },
+					local_command_source:
+						"<local-command-stderr>Unknown subcommand.</local-command-stderr>",
+				},
+			),
+		);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(commands(adapter)).toEqual([
+			{
+				kind: "command",
+				id: "command:u-local",
+				parent: null,
+				line: "/mcp nope",
+				output: "Unknown subcommand.",
+				failed: true,
+			},
+		]);
 	});
 });
 

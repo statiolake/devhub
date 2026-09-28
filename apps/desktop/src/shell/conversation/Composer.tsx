@@ -63,7 +63,12 @@ import {
   type Transcript,
   type UserEntry,
 } from "../../model/conversation";
-import { commandQuery, completions, inputHistory } from "./commandCompletion";
+import {
+  completed,
+  completionQuery,
+  completions,
+  inputHistory,
+} from "./commandCompletion";
 import { ComposerFooter } from "./BackgroundTasks";
 import { ContextUsage } from "./ContextUsage";
 import {
@@ -378,12 +383,12 @@ function CompletionList({
         ref={listRef}
         className="mac-list conversation-completion-list"
         role="listbox"
-        aria-label="Commands"
+        aria-label={commands[0]?.trigger === "$" ? "Skills" : "Commands"}
         id="conversation-completions"
       >
         {commands.map((command, index) => (
           <li
-            key={command.name}
+            key={`${command.trigger}${command.name}`}
             role="option"
             aria-selected={index === selected}
             aria-describedby={
@@ -397,7 +402,8 @@ function CompletionList({
             }}
           >
             <span className="conversation-completion-name">
-              /{command.name}
+              {command.trigger}
+              {command.name}
             </span>
             {command.argumentHint ? (
               <span className="conversation-completion-hint mac-caption">
@@ -460,7 +466,7 @@ export function Composer({
   const canSendNow =
     transcript.state.phase === "ready" && transcript.state.turn !== "rewinding";
   const history = useMemo(() => inputHistory(transcript), [transcript]);
-  const query = commandQuery(text);
+  const query = completionQuery(text);
   const offered =
     query === undefined || dismissed === text
       ? []
@@ -501,7 +507,8 @@ export function Composer({
     // chosen, not words for the Agent (`/resume`, `/model`).
     const answered = transcript.session.commands.find(
       (command) =>
-        command.route !== "message" && line.trim() === `/${command.name}`,
+        command.route !== "message" &&
+        line.trim() === `${command.trigger}${command.name}`,
     );
     if (answered !== undefined) {
       choose(answered);
@@ -530,7 +537,11 @@ export function Composer({
 
   const choose = (command: SlashCommand) => {
     if (command.route === "message") {
-      edit(`/${command.name} `);
+      // Only an offered completion is chosen, and one is offered only while a
+      // name is being typed.
+      if (query === undefined)
+        throw new Error(`${command.name} was chosen with no name being typed`);
+      edit(completed(text, query, command));
       return;
     }
     edit("");

@@ -1,8 +1,9 @@
 /**
- * What the composer offers after a `/`, and what it walks with ↑ and ↓.
+ * What the composer offers after a `/` or a `$`, and what it walks with ↑ and ↓.
  *
  * Both are readings of what the page already has. The commands are the
- * Agent's own (`SessionFacts.commands`), ranked by the scorer every picker in
+ * Agent's own (`SessionFacts.commands`), each with the character it is typed
+ * after (`trigger`), ranked by the scorer every picker in
  * DevHub uses; the history is the person's own messages in this Agent's
  * transcript. Neither is stored anywhere else, so neither can disagree with
  * the conversation it belongs to.
@@ -15,26 +16,55 @@ import type {
   TranscriptEntry,
 } from "../../model/conversation";
 
-/**
- * The command name being typed, or `undefined` when the composer is not
- * typing one: a completion is offered only while the text is a `/` and a
- * name with nothing after it.
- */
-export function commandQuery(text: string): string | undefined {
-  const match = /^\/(\S*)$/.exec(text);
-  return match ? match[1] : undefined;
+/** A name being typed after a trigger, and where its trigger starts in the text. */
+export interface CompletionQuery {
+  readonly trigger: SlashCommand["trigger"];
+  readonly name: string;
+  readonly start: number;
 }
 
-/** The commands matching `query`, best first; ties keep the Agent's order. */
+/**
+ * The name being typed at the end of the text, or `undefined` when the
+ * composer is not typing one. A completion is offered only while the last
+ * word is a trigger and a name with nothing after it: a `/` only as the
+ * whole text (a command is the message's first word), a `$` as any word.
+ */
+export function completionQuery(text: string): CompletionQuery | undefined {
+  const command = /^\/(\S*)$/u.exec(text);
+  if (command) return { trigger: "/", name: command[1]!, start: 0 };
+  const skill = /(?:^|\s)\$([^\s$]*)$/u.exec(text);
+  if (skill)
+    return {
+      trigger: "$",
+      name: skill[1]!,
+      start: text.length - skill[1]!.length - 1,
+    };
+  return undefined;
+}
+
+/**
+ * The text with the name being typed replaced by the chosen one and a space
+ * after it, so the next word can follow.
+ */
+export function completed(
+  text: string,
+  query: CompletionQuery,
+  command: SlashCommand,
+): string {
+  return `${text.slice(0, query.start)}${command.trigger}${command.name} `;
+}
+
+/** The commands typed after `query`'s trigger that match its name, best first; ties keep the Agent's order. */
 export function completions(
   commands: readonly SlashCommand[],
-  query: string,
+  query: CompletionQuery,
 ): readonly SlashCommand[] {
   return commands
+    .filter((command) => command.trigger === query.trigger)
     .map((command, index) => ({
       command,
       index,
-      score: score(command.name, query),
+      score: score(command.name, query.name),
     }))
     .filter((candidate) => candidate.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)

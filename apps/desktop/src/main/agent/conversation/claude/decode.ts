@@ -526,7 +526,7 @@ export function decodeReceived(
 				event: decodeStreamEvent(f.object(raw.event, "stream_event.event"), f),
 			};
 		case "assistant":
-			return decodeAssistant(raw, f);
+			return decodeRanCommand(raw, "assistant", f) ?? decodeAssistant(raw, f);
 		case "user":
 			return decodeUser(raw, f);
 		case "result":
@@ -562,7 +562,12 @@ function decodeHistory(raw: JsonObject, f: Fields): ClaudeLine {
 	const type = f.string(record.type, "devhub_history.record.type");
 	switch (type) {
 		case "assistant":
-			return { type: "history", message: decodeAssistant(record, f) };
+			return {
+				type: "history",
+				message:
+					decodeRanCommand(record, "devhub_history.record", f) ??
+					decodeAssistant(record, f),
+			};
 		case "user":
 			return { type: "history", message: decodeUser(record, f) };
 		// A system event the session file kept, in the shape stream-json prints it.
@@ -1108,6 +1113,46 @@ function decodeContentBlock(
 		default:
 			return { kind: "unknown", key: `content/${type}`, raw: block };
 	}
+}
+
+/**
+ * A local slash command's answer. Asked one over stream-json (`/mcp`,
+ * `/cost`), the CLI runs it without the model and prints neither an echo of
+ * the message nor a `local_command` event, only an assistant message of the
+ * model `<synthetic>` (the SDK's word for the message a local command's
+ * output comes on) and then the command's `result`. That message says which
+ * command ran (`local_command_run`) and what it printed, in the tags the
+ * session file records a local command in (`local_command_source`), so it is
+ * read as the session file's record of the command: the command, then its
+ * output. Observed from 2.1.273 through 2.1.283; neither field is in the
+ * SDK's types.
+ */
+function decodeRanCommand(
+	raw: JsonObject,
+	at: string,
+	f: Fields,
+): Extract<ClaudeLine, { type: "user" }> | undefined {
+	if (raw.local_command_run === undefined) return undefined;
+	const run = f.object(raw.local_command_run, `${at}.local_command_run`);
+	const command = f.string(run.command, `${at}.local_command_run.command`);
+	const args = f.string(run.args, `${at}.local_command_run.args`).trim();
+	const source = f.string(
+		raw.local_command_source,
+		`${at}.local_command_source`,
+	);
+	return {
+		type: "user",
+		parent: f.parent(raw, "assistant"),
+		uuid: f.optionalString(raw.uuid, `${at}.uuid`),
+		content: [
+			{
+				kind: "command",
+				line: args === "" ? `/${command}` : `/${command} ${args}`,
+			},
+			...textBlock(source),
+		],
+		toolResult: NO_TOOL_RESULT,
+	};
 }
 
 function decodeAssistant(

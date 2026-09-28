@@ -1293,7 +1293,8 @@ body.is-resizing-sidebar {
  * saying something in. Drawn only while there is something to say, on its own
  * ground so it reads over a terminal of any colour, and at full strength: it
  * is the answer to something the person asked for, and a failure among it is
- * never a suggestion.
+ * never a suggestion. No border and no rounding: it cannot be pressed, so it
+ * does not look like a button.
  */
 .agent-injection-status {
   position: absolute;
@@ -1305,8 +1306,6 @@ body.is-resizing-sidebar {
   flex-direction: column;
   align-items: end;
   padding: 3px var(--space-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-row);
   background: var(--chrome);
   gap: 2px;
 }

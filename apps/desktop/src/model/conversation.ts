@@ -582,6 +582,13 @@ export interface Setting {
 }
 
 export interface SlashCommand {
+  /**
+   * The character the composer offers it after, which is typed before its
+   * name: `/` for a command, only as the message's first word, as both CLIs
+   * read one; `$` for a Codex skill, mentioned anywhere in the message, as
+   * Codex's own terminal UI offers one.
+   */
+  readonly trigger: "/" | "$";
   readonly name: string;
   readonly description: string;
   readonly argumentHint: string | undefined;

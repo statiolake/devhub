@@ -97,6 +97,7 @@ import {
 	initializeResponse,
 	itemNotification,
 	modelListResponse,
+	skillsListResponse,
 	patchUpdated,
 	permissionsApproval,
 	planUpdated,
@@ -119,6 +120,7 @@ import {
 	type FileChange,
 	type Item,
 	type ModelChoice,
+	type SkillChoice,
 	type ReasoningDelta,
 	type ThreadFacts,
 	type ThreadOpened,
@@ -135,6 +137,7 @@ import type { FileChangeRequestApprovalResponse } from "./protocol/v2/FileChange
 import type { GetAccountParams } from "./protocol/v2/GetAccountParams.js";
 import type { McpServerElicitationRequestResponse } from "./protocol/v2/McpServerElicitationRequestResponse.js";
 import type { ModelListParams } from "./protocol/v2/ModelListParams.js";
+import type { SkillsListParams } from "./protocol/v2/SkillsListParams.js";
 import type { PermissionsRequestApprovalResponse } from "./protocol/v2/PermissionsRequestApprovalResponse.js";
 import type { SandboxPolicy } from "./protocol/v2/SandboxPolicy.js";
 import type { ThreadResumeParams } from "./protocol/v2/ThreadResumeParams.js";
@@ -228,6 +231,7 @@ type ClientMethod =
 	| "thread/resume"
 	| "thread/revert"
 	| "model/list"
+	| "skills/list"
 	| "turn/start"
 	| "turn/steer"
 	| "turn/interrupt";
@@ -239,6 +243,7 @@ const CLIENT_METHODS: readonly ClientMethod[] = [
 	"thread/resume",
 	"thread/revert",
 	"model/list",
+	"skills/list",
 	"turn/start",
 	"turn/steer",
 	"turn/interrupt",
@@ -251,6 +256,18 @@ const SUBAGENT_TURN_UNKNOWN =
 const METHOD_NOT_FOUND = -32601;
 
 const USER_MESSAGE_ID = /^devhub-(person|injection)-(\d+)$/;
+
+/**
+ * The skill names words mention: each `$name` that starts a word, without
+ * the punctuation a sentence puts after it.
+ */
+function mentions(text: string): ReadonlySet<string> {
+	return new Set(
+		[...text.matchAll(/(?:^|\s)\$([\w:-]+(?:\.[\w:-]+)*)/gu)].map(
+			(match) => match[1]!,
+		),
+	);
+}
 
 /** A request the server made that DevHub is showing, and how each answer is spelled. */
 interface OpenRequest {
@@ -368,6 +385,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		state: "listing",
 		models: [],
 	};
+	/** The skills `skills/list` named for the thread's directory; none until it answers. */
+	private skills: readonly SkillChoice[] = [];
 	private readonly open = new Map<RequestId, OpenRequest>();
 	/** Child thread → the tool entry that started it. */
 	private readonly threadParents = new Map<string, EntryId>();
@@ -842,6 +861,9 @@ export class CodexAdapter implements ProtocolAdapter {
 				this.listing = { state: "listed", models };
 				return this.publishSession();
 			}
+			case "skills/list":
+				this.skills = skillsListResponse(this.reader, result);
+				return this.publishSession();
 			case "thread/revert":
 				threadRevertResponse(this.reader, result);
 				return this.onReverted(id);
@@ -897,6 +919,12 @@ export class CodexAdapter implements ProtocolAdapter {
 				return this.notice(
 					"warning",
 					`${this.codexName} could not list its models: ${message}. The model can't be changed here.`,
+					raw,
+				);
+			case "skills/list":
+				return this.notice(
+					"warning",
+					`${this.codexName} could not list its skills: ${message}. None are offered after $.`,
 					raw,
 				);
 			case "thread/revert":
@@ -972,6 +1000,9 @@ export class CodexAdapter implements ProtocolAdapter {
 			turn: this.runningTurn === undefined ? "none" : "running",
 		});
 		this.callOnce("model/list", LIST_EVERY_MODEL satisfies ModelListParams);
+		this.callOnce("skills/list", {
+			cwds: [opened.cwd],
+		} satisfies SkillsListParams);
 	}
 
 	/**
@@ -1114,29 +1145,40 @@ export class CodexAdapter implements ProtocolAdapter {
 			},
 			commands: [
 				{
+					trigger: "/",
 					name: "model",
 					description: "Choose the model",
 					argumentHint: undefined,
 					route: "model",
 				},
 				{
+					trigger: "/",
 					name: "effort",
 					description: "Choose the reasoning effort",
 					argumentHint: undefined,
 					route: "effort",
 				},
 				{
+					trigger: "/",
 					name: "approvals",
 					description: "Choose what Codex may do without asking",
 					argumentHint: undefined,
 					route: "mode",
 				},
 				{
+					trigger: "/",
 					name: "resume",
 					description: "Go on with an earlier thread in this Workspace",
 					argumentHint: undefined,
 					route: "resume",
 				},
+				...this.skills.map((skill) => ({
+					trigger: "$" as const,
+					name: skill.name,
+					description: skill.description,
+					argumentHint: undefined,
+					route: "message" as const,
+				})),
 			],
 		};
 	}
@@ -2297,23 +2339,27 @@ export class CodexAdapter implements ProtocolAdapter {
 	// -------------------------------------------------------------------------
 	// Commands.
 
-	private send(
-		text: string,
-		images: readonly ImageRef[],
-		origin: "person" | "injection",
-	): void {
-		const { state } = this.current;
-		if (state.phase !== "ready" || this.mainThread === undefined) {
-			throw new Error(
-				`cannot send to a Codex conversation that is ${state.phase}`,
-			);
-		}
+	/**
+	 * A message as app-server takes it: its words, each skill they mention
+	 * (`$name`) as the protocol's `skill` input, the way a client hands Codex
+	 * a skill, and its images.
+	 */
+	private inputOf(text: string, images: readonly ImageRef[]): UserInput[] {
 		// Images as data URLs, which app-server takes as it takes any image
 		// URL: the file is on the page's machine, not necessarily the Agent's.
-		const input: UserInput[] = [
+		return [
 			...(text === ""
 				? []
 				: [{ type: "text" as const, text, text_elements: [] }]),
+			...this.skills
+				.filter((skill) => mentions(text).has(skill.name))
+				.map(
+					(skill): UserInput => ({
+						type: "skill",
+						name: skill.name,
+						path: skill.path,
+					}),
+				),
 			...images.map((image): UserInput => {
 				if (image.source.kind !== "data") {
 					throw new Error(
@@ -2326,6 +2372,20 @@ export class CodexAdapter implements ProtocolAdapter {
 				};
 			}),
 		];
+	}
+
+	private send(
+		text: string,
+		images: readonly ImageRef[],
+		origin: "person" | "injection",
+	): void {
+		const { state } = this.current;
+		if (state.phase !== "ready" || this.mainThread === undefined) {
+			throw new Error(
+				`cannot send to a Codex conversation that is ${state.phase}`,
+			);
+		}
+		const input = this.inputOf(text, images);
 		const clientUserMessageId = `devhub-${origin}-${this.nextUserMessage}`;
 		this.nextUserMessage += 1;
 		if (this.runningTurn !== undefined) {
@@ -2370,7 +2430,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				`${subagent} started no subagent thread that takes the person's messages`,
 			);
 		}
-		const input: UserInput[] = [{ type: "text", text, text_elements: [] }];
+		const input = this.inputOf(text, []);
 		const clientUserMessageId = `devhub-person-${this.nextUserMessage}`;
 		this.nextUserMessage += 1;
 		const running = this.childTurns.get(thread);
@@ -2484,7 +2544,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		"thread/reverted": unused(
 			"the answer to DevHub's thread/revert says the same, for the one thread DevHub reverts",
 		),
-		"skills/changed": unused("DevHub lists no skills yet"),
+		"skills/changed": unused(
+			"DevHub lists the skills once, when the thread opens",
+		),
 		"thread/name/updated": unused("the Agent's name is DevHub's"),
 		"thread/attachment/updated": unused("DevHub attaches nothing"),
 		"thread/goal/updated": unused("DevHub sets no goals"),

@@ -600,6 +600,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			.filter((command) => !TUI_ONLY.has(command.name))
 			.map((command) => ({
 				...command,
+				trigger: "/" as const,
 				route: Object.hasOwn(PICKED, command.name)
 					? PICKED[command.name]!
 					: "message",
@@ -1540,7 +1541,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	/**
 	 * A command the CLI ran itself. One DevHub sent (a slash command typed in
-	 * the composer) is echoed in this form, and is taken as sent then.
+	 * the composer, or a template's) comes back in this form — echoed, or
+	 * answered by the CLI on its own — and is taken as sent then: the oldest
+	 * message sending that invokes the command this one names. The CLI reads
+	 * the command's arguments its own way (spaces and newlines around them
+	 * are gone), so the command is what matches, never the text as sent.
 	 */
 	private takeCommand(
 		uuid: string | undefined,
@@ -1550,8 +1555,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	): void {
 		if (parent !== null) return;
 		if (when === "live") {
-			const taken = this.untaken.findIndex((each) => each.text === line);
-			if (taken >= 0) {
+			const invoked = invocation(line);
+			const taken = this.untaken.findIndex(
+				(each) => invocation(each.text) === invoked,
+			);
+			if (invoked !== undefined && taken >= 0) {
 				this.untaken.splice(taken, 1);
 				this.emitSending();
 				this.turn("running");
@@ -1937,6 +1945,14 @@ function resumesAtAMessage(version: string | undefined): boolean {
 
 function toolEntryId(toolUseId: string): EntryId {
 	return entryId(`tool:${toolUseId}`);
+}
+
+/**
+ * The command a line invokes: the `/name` of a slash command, or `!` of a
+ * shell-mode one; nothing for words to the model.
+ */
+function invocation(text: string): string | undefined {
+	return /^\s*(\/\S+|!)/u.exec(text)?.[1];
 }
 
 /**

@@ -14,10 +14,13 @@ import { InjectionStatus } from "./InjectionStatus";
 
 afterEach(cleanup);
 
-function mount(injection: AgentSnapshot["injection"]) {
+function mount(
+  injection: AgentSnapshot["injection"],
+  presentation: AgentSnapshot["presentation"] = "tui",
+) {
   return render(
     <InjectionStatus
-      agent={{ id: "a-1", injection } as unknown as AgentSnapshot}
+      agent={{ id: "a-1", injection, presentation } as unknown as AgentSnapshot}
     />,
   );
 }
@@ -59,6 +62,41 @@ describe("the injection status in an Agent's pane", () => {
       waitingFor: "nothing_queued",
       lastResult: { kind: "cancelled" },
     });
+    expect(screen.getByRole("status")).toHaveTextContent(/Cancelled/u);
+  });
+
+  it("does not say a message went in a GUI Agent's pane, whose transcript already shows it where it went", () => {
+    const { container } = mount(
+      { queued: 0, waitingFor: "nothing_queued", lastResult: { kind: "sent" } },
+      "gui",
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("still says in a GUI Agent's pane what its transcript does not: what waits, and how one ended that never went", () => {
+    mount(
+      {
+        queued: 1,
+        waitingFor: "agent_busy",
+        lastResult: { kind: "failed", reason: "The Agent ended first." },
+      },
+      "gui",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Waiting for the agent to finish its turn",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The Agent ended first.",
+    );
+    cleanup();
+    mount(
+      {
+        queued: 0,
+        waitingFor: "nothing_queued",
+        lastResult: { kind: "cancelled" },
+      },
+      "gui",
+    );
     expect(screen.getByRole("status")).toHaveTextContent(/Cancelled/u);
   });
 

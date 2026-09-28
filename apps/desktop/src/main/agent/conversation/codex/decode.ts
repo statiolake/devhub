@@ -398,6 +398,56 @@ export function modelListResponse(
 	return { models, next: r.nullableString(o, "nextCursor", "result") };
 }
 
+/**
+ * A skill `skills/list` names, as the composer offers it after `$` and a turn
+ * is given it (`UserInput`'s `skill`, by name and the path of its SKILL.md).
+ */
+export interface SkillChoice {
+	readonly name: string;
+	readonly description: string;
+	readonly path: string;
+}
+
+/**
+ * The enabled skills `skills/list` names for the thread's directory, in its
+ * order. The short description is the one a picker shows, where the skill
+ * has one (`interface.shortDescription`, else the legacy
+ * `shortDescription`); otherwise its description.
+ */
+export function skillsListResponse(
+	r: Reader,
+	value: unknown,
+): readonly SkillChoice[] {
+	const o = r.fields(value, "result");
+	const entries = r.array(o, "data", "result", (entry, path) =>
+		r.array(r.fields(entry, path), "skills", path, (skill, at) => {
+			const s = r.fields(skill, at);
+			const face =
+				s["interface"] === undefined
+					? undefined
+					: r.fields(s["interface"], `${at}.interface`);
+			return {
+				enabled: r.boolean(s, "enabled", at),
+				skill: {
+					name: r.string(s, "name", at),
+					description:
+						(face === undefined
+							? null
+							: r.nullableString(
+									face,
+									"shortDescription",
+									`${at}.interface`,
+								)) ??
+						r.nullableString(s, "shortDescription", at) ??
+						r.string(s, "description", at),
+					path: r.string(s, "path", at),
+				},
+			};
+		}),
+	);
+	return entries.flat().flatMap((each) => (each.enabled ? [each.skill] : []));
+}
+
 /** A response whose content DevHub does not read still has to be an object. */
 export function anyObjectResponse(r: Reader, value: unknown): void {
 	r.fields(value, "result");
