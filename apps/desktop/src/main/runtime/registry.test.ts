@@ -2,9 +2,10 @@
  * The one switch, and the fact that it is the only one.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { makeSocketDir } from "../../model/testScratch.js";
 import {
 	containerHostId,
 	devContainerConfigPath,
@@ -73,14 +74,14 @@ const NO_DEVCONTAINER: DevContainerCli = {
 };
 
 /**
- * Short on purpose: a control socket has to fit in 104 bytes, and macOS puts
- * `TMPDIR` fifty characters deep. Naming the profile's two directories is the
- * point of the seam — a test gets the real arithmetic, not a stub of it.
+ * A socket directory, because the profile puts control sockets under it.
+ * Naming the profile's two directories is the point of the seam — a test gets
+ * the real arithmetic, not a stub of it.
  */
 let userDataDirectory: string;
 
 beforeAll(async () => {
-	userDataDirectory = await mkdtemp("/tmp/devhub-profile-");
+	userDataDirectory = makeSocketDir("profile");
 	setRuntimeProfile({
 		userDataDirectory,
 		home: homedir(),

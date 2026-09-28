@@ -37,6 +37,7 @@ import {
 	expect,
 	it,
 } from "vitest";
+import { makeSocketDir } from "../../model/testScratch.js";
 import { errorWire, failureText, NamedFailure } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
@@ -174,24 +175,23 @@ exit 255
 
 let bin: string;
 /**
- * Short on purpose, and not under `TMPDIR`.
- *
- * A control socket's path has to fit in 104 bytes, and macOS puts `TMPDIR`
- * fifty characters deep — so a test that put the socket there would be
- * testing the limit rather than the runtime. This is the same reason
+ * A socket directory: a test that put the control socket anywhere deep would
+ * be testing the limit rather than the runtime. The limit is the same reason
  * `chooseControlDirectory` has a fallback at all.
  */
+let sockets: string;
 let control: string;
 
 beforeAll(async () => {
 	bin = await mkdtemp(join(tmpdir(), "devhub-fake-ssh-"));
-	control = join(await mkdtemp("/tmp/devhub-ssh-"), "c");
+	sockets = makeSocketDir("ssh");
+	control = join(sockets, "c");
 	await writeFile(join(bin, "ssh"), FAKE_SSH, { mode: 0o700 });
 	await chmod(join(bin, "ssh"), 0o700);
 });
 afterAll(async () => {
 	await rm(bin, { recursive: true, force: true });
-	await rm(control, { recursive: true, force: true });
+	await rm(sockets, { recursive: true, force: true });
 });
 
 /**

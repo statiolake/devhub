@@ -43,10 +43,11 @@ mkdir -p "$REPO_ROOT/.spike"
 # TMUX_TMPDIR moves every socket these tests create into one directory that goes
 # away with the run, which is also what makes it safe for a test to delete its
 # own socket. The vitest side does the same thing in test/tmuxSockets.ts.
-TMUX_TMPDIR="$REPO_ROOT/.spike/tmux-pty-$$"
+# Under /tmp rather than the checkout, like every directory the tests put a
+# socket in: tmux adds `tmux-<uid>/<name>` beneath it, and the whole path has to
+# fit in a socket address whatever directory the repository is checked out in.
+TMUX_TMPDIR="$(mktemp -d /tmp/dh-tmux-pty-XXXXXX)"
 export TMUX_TMPDIR
-rm -rf "$TMUX_TMPDIR"
-mkdir -p "$TMUX_TMPDIR"
 trap 'rm -rf "$TMUX_TMPDIR"' EXIT
 
 # Not `exec`: the socket directory has to be read for leaks and removed after

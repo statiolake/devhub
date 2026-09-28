@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { makeSocketDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	callerContext,
 	main,
@@ -453,7 +453,7 @@ describe("devhub when DevHub is not running", () => {
 	let previousStdin: PropertyDescriptor | undefined;
 
 	beforeEach(() => {
-		scratch = makeScratchDir("cli-cold");
+		scratch = makeSocketDir("cli-cold");
 		previousStdin = Object.getOwnPropertyDescriptor(process, "stdin");
 	});
 

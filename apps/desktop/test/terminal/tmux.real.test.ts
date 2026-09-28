@@ -303,10 +303,12 @@ describe.skipIf(TMUX === undefined)(
       const test = fixture("isolated");
       await test.runtime.ensure(SCRATCH_TARGET);
 
-      const directory = tmuxSocketDirectory();
-      expect(directory.startsWith("/tmp/")).toBe(false);
-      expect(directory.startsWith("/private/tmp/")).toBe(false);
+      // The run's own directory is under /tmp too, where a socket's path is
+      // short enough; what it must not be is tmux's shared one there.
+      const shared = join("/tmp", `tmux-${process.getuid?.() ?? 0}`);
+      expect(tmuxSocketDirectory()).not.toBe(shared);
       expect(tmuxSocketFiles()).toContain(test.socket);
+      expect(existsSync(join(shared, test.socket))).toBe(false);
     });
 
     it("adopts an absent socket by creating exactly one marked Scratch", async () => {

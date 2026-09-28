@@ -10,7 +10,7 @@ import { connect } from "node:net";
 import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { makeSocketDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	errorWireAt,
 	NamedFailure,
@@ -75,8 +75,7 @@ describe("the DevHub control socket", () => {
 	let calls: string[];
 
 	beforeEach(async () => {
-		scratch = makeScratchDir("cli-control");
-		// Short, because a unix socket path is capped at around 104 bytes.
+		scratch = makeSocketDir("cli-control");
 		socketPath = join(scratch, "c.sock");
 		calls = [];
 		server = await startControlServer(socketPath, {

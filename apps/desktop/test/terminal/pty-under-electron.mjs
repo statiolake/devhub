@@ -70,6 +70,18 @@ function scratchDirectory(label) {
 }
 
 /**
+ * A directory for a Unix socket, under /tmp rather than the checkout.
+ *
+ * A socket's path has to fit in `sun_path`, 104 bytes on macOS, and a directory
+ * inside the checkout is as deep as wherever the checkout is. The vitest side's
+ * `makeSocketDir` in `src/model/testScratch.ts` is the same rule; this copy
+ * exists because that file is TypeScript and this interpreter has none.
+ */
+function socketDirectory(label) {
+  return mkdtempSync(join("/tmp", `dh-${label}-`));
+}
+
+/**
  * Stop the server on one of this run's sockets, and take the socket with it.
  *
  * tmux never unlinks a socket file — not when the server is killed, and not
@@ -468,7 +480,9 @@ test(
       "/bin/sh",
     ]);
 
-    const controlSocket = join(home, "control.sock");
+    const sockets = socketDirectory("launch");
+    t.after(() => rmSync(sockets, { recursive: true, force: true }));
+    const controlSocket = join(sockets, "control.sock");
     const answer = {
       ok: true,
       message: "tmux attach",

@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { makeSocketDir, removeScratchDir } from "../../model/testScratch.js";
 import { resolveTerminalCommand, workspaceArgument } from "./devhubTerminal.js";
 import { terminalCommandLine } from "./launcher.js";
 
@@ -34,7 +34,7 @@ describe("what a DevHub terminal runs", () => {
 	let server: Server | undefined;
 
 	beforeEach(() => {
-		scratch = makeScratchDir("devhub-terminal");
+		scratch = makeSocketDir("terminal");
 		socketPath = join(scratch, "control.sock");
 	});
 

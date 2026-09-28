@@ -24,14 +24,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-/** The gitignored scratch root; never the OS temp directory. */
-const SCRATCH_ROOT = fileURLToPath(
-  new URL("../../../.spike/", import.meta.url),
-);
+import { makeSocketDir } from "../src/model/testScratch";
 
 const TMUX_CANDIDATES = [
   "/opt/homebrew/bin/tmux",
@@ -41,16 +36,6 @@ const TMUX_CANDIDATES = [
 
 /** The tmux these tests run, or nothing on a machine that has none. */
 export const TMUX = TMUX_CANDIDATES.find((path) => existsSync(path));
-
-/**
- * The `TMUX_TMPDIR` for one run.
- *
- * Kept short on purpose: a Unix socket path is capped just past a hundred
- * bytes, and tmux appends `tmux-<uid>/<name>` of its own underneath this.
- */
-function tmuxTmpdir(pid: number): string {
-  return join(SCRATCH_ROOT, `tmux-${pid}`);
-}
 
 /**
  * The directory tmux actually puts the sockets in, under `TMUX_TMPDIR`.
@@ -98,10 +83,9 @@ export function killTmuxServer(socket: string): void {
 
 /** Vitest's global setup: give this run its own socket directory. */
 export function setup(): void {
-  const directory = tmuxTmpdir(process.pid);
-  rmSync(directory, { recursive: true, force: true });
-  mkdirSync(directory, { recursive: true });
-  process.env.TMUX_TMPDIR = directory;
+  // A socket directory, because tmux puts `tmux-<uid>/<name>` underneath it
+  // and the whole path has to fit in a socket address.
+  process.env.TMUX_TMPDIR = makeSocketDir("tmux");
 }
 
 /** Vitest's global teardown: take it away, and report anything left in it. */

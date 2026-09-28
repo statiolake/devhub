@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { makeSocketDir, removeScratchDir } from "../../model/testScratch.js";
 import { socketAnswers } from "./launch.js";
 import {
 	createMarker,
@@ -56,7 +56,7 @@ describe("waiting for an editor to be closed", () => {
 	let scratch: string;
 
 	beforeEach(() => {
-		scratch = makeScratchDir("cli-wait");
+		scratch = makeSocketDir("cli-wait");
 	});
 
 	afterEach(() => {
