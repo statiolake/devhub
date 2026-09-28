@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formContent, initialValues, type FormField } from "./elicitationForm.js";
+import {
+  formContent,
+  initialValues,
+  type FormField,
+} from "./elicitationForm.js";
 
 function field(
   key: string,
