@@ -935,7 +935,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			}
 			case "account/read": {
 				const account = accountResponse(this.reader, result);
-				if (!account.signedIn && account.requiresOpenaiAuth) {
+				if (account.account === null && account.requiresOpenaiAuth) {
 					this.broken = true;
 					return this.setState({
 						phase: "broken",

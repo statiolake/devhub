@@ -29,6 +29,7 @@ import {
 	type Question,
 	type RateLimit,
 	rateLimitWindowName,
+	type UsageReading,
 } from "../../../../model/conversation.js";
 import { type Elicitation, formFields } from "../elicitation.js";
 import { ProtocolMismatch } from "../protocolAdapter.js";
@@ -1804,6 +1805,54 @@ function claudeWindowName(key: string): string {
 	return minutes === undefined
 		? key.replaceAll("_", " ")
 		: rateLimitWindowName(minutes);
+}
+
+/**
+ * The windows `get_usage` names that DevHub shows: the two the stream's
+ * `rate_limit_event` reports under the same keys, so a reading from either
+ * is a reading of the same window. The response's other windows — per-model
+ * weeks, spend caps under internal names — are not read.
+ */
+const CLAUDE_USAGE_WINDOWS = ["five_hour", "seven_day"] as const;
+
+/**
+ * The payload of the CLI's success response to `get_usage`
+ * (`SDKControlGetUsageResponse`, marked experimental by the SDK).
+ *
+ * `rate_limits_available: false` is a sign-in with no plan limits — an API
+ * key, Bedrock — and says so. Otherwise the two windows are read strictly,
+ * because the request is experimental: a shape other than the one decoded
+ * here is a mismatch that says where, never a guess. Unlike the stream's
+ * event, utilization is already 0–100 here and the reset an ISO time.
+ */
+export function decodeUsage(
+	payload: JsonObject | undefined,
+	version: string | undefined,
+): UsageReading {
+	const f = new Fields(version);
+	const at = "control_response(get_usage).response.response";
+	const body = f.object(payload, at);
+	if (!f.boolean(body.rate_limits_available, `${at}.rate_limits_available`)) {
+		return { kind: "no_plan_limits" };
+	}
+	const limits = f.object(body.rate_limits, `${at}.rate_limits`);
+	return {
+		kind: "windows",
+		windows: CLAUDE_USAGE_WINDOWS.flatMap((key): RateLimit[] => {
+			const value = limits[key];
+			// A window the account has not started is null: not reported.
+			if (value === undefined || value === null) return [];
+			const path = `${at}.rate_limits.${key}`;
+			const window = f.object(value, path);
+			return [
+				{
+					window: claudeWindowName(key),
+					usedPercent: f.number(window.utilization, `${path}.utilization`),
+					resetsAt: f.optionalTime(window.resets_at, `${path}.resets_at`),
+				},
+			];
+		}),
+	};
 }
 
 /**

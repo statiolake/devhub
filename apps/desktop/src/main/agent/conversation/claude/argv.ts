@@ -29,3 +29,24 @@ export function claudeStructuredCommand(
 ): AgentSessionCommand {
 	return { ...cli, args: [...cli.args, ...CLAUDE_STRUCTURED_FLAGS] };
 }
+
+/**
+ * The command line of the background usage reader's `claude`
+ * (`main/shell/usageReaders.ts`): structured input and output, and nothing
+ * that could make it a conversation. It is sent control requests only, never
+ * a message, so it never starts a turn; `--no-session-persistence` keeps it
+ * from writing a session, and `disableAllHooks` keeps the owner's hooks —
+ * `SessionStart` among them — from running for a process that is not a
+ * session anybody opened.
+ */
+export const CLAUDE_USAGE_FLAGS: readonly string[] = [
+	"-p",
+	"--input-format",
+	"stream-json",
+	"--output-format",
+	"stream-json",
+	"--verbose",
+	"--no-session-persistence",
+	"--settings",
+	JSON.stringify({ disableAllHooks: true }),
+];

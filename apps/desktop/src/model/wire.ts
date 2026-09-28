@@ -719,6 +719,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "conversation_refused":
     case "conversation_stopped":
     case "sessions_unreadable":
+    case "usage_unreadable":
       return "agent";
     case "terminal_colors_unreadable":
     case "terminal_launcher_unavailable":
@@ -756,7 +757,8 @@ export function errorWireAt(
     // there is nothing to try again.
     code === "terminal_colors_unreadable" ||
     code === "state_migrated" ||
-    code === "input_source_unavailable"
+    code === "input_source_unavailable" ||
+    code === "usage_unreadable"
       ? []
       : // Trying again reads the same file; what answers it is fixing the file.
         code === "settings_refused"

@@ -1911,6 +1911,14 @@ body.is-resizing-split {
   white-space: nowrap;
 }
 
+/* In place of the bar, for a sign-in that has no limits to draw. */
+.sidebar-usage-note {
+  overflow: hidden;
+  grid-column: 2 / -1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Under the bar, from its left edge to the row's end. */
 .sidebar-usage-caption {
   overflow: hidden;
@@ -1945,6 +1953,11 @@ body.is-resizing-split {
 
 .sidebar[data-collapsed="true"] .sidebar-usage-track {
   grid-column: 1;
+}
+
+/* The rail draws bars only, and a sign-in with no limits has none. */
+.sidebar[data-collapsed="true"] .sidebar-usage-cli[data-planless] {
+  display: none;
 }
 
 .sidebar[data-collapsed="true"] .sidebar-usage-name,

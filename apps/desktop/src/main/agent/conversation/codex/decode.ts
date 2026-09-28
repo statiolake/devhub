@@ -286,19 +286,27 @@ export function initializeResponse(r: Reader, value: unknown): Initialized {
 }
 
 export type AccountReading = {
-	readonly signedIn: boolean;
+	/**
+	 * The kind of sign-in (`Account["type"]`), or null when there is none.
+	 * A string rather than the vendored union: a kind a newer Codex adds is
+	 * still a sign-in, and only the usage reader asks which one it is.
+	 */
+	readonly account: string | null;
 	readonly requiresOpenaiAuth: GetAccountResponse["requiresOpenaiAuth"];
 };
 
 export function accountResponse(r: Reader, value: unknown): AccountReading {
 	const o = r.fields(value, "result");
 	const account = o["account"];
-	if (account !== null && account !== undefined) {
-		// Which kind of account it is does not matter to DevHub, only that there is one.
-		r.string(r.fields(account, "result.account"), "type", "result.account");
-	}
 	return {
-		signedIn: account !== null && account !== undefined,
+		account:
+			account === null || account === undefined
+				? null
+				: r.string(
+						r.fields(account, "result.account"),
+						"type",
+						"result.account",
+					),
 		requiresOpenaiAuth: r.boolean(o, "requiresOpenaiAuth", "result"),
 	};
 }
@@ -1056,21 +1064,30 @@ export type RateLimits = {
 	readonly windows: readonly RateLimit[];
 };
 
-export function rateLimits(r: Reader, params: unknown): RateLimits {
-	const o = r.fields(params, "params");
-	const snapshot = r.fields(o["rateLimits"], "params.rateLimits");
+/**
+ * The `rateLimits` snapshot of `account/rateLimits/updated`'s params, or —
+ * `at` "result" — of `account/rateLimits/read`'s result: the same
+ * `RateLimitSnapshot` under the same key.
+ */
+export function rateLimits(
+	r: Reader,
+	params: unknown,
+	at: "params" | "result" = "params",
+): RateLimits {
+	const o = r.fields(params, at);
+	const snapshot = r.fields(o["rateLimits"], `${at}.rateLimits`);
 	return {
 		windows: (["primary", "secondary"] as const).flatMap((slot) => {
 			const value = snapshot[slot];
 			if (value === null || value === undefined) return [];
-			const at = `params.rateLimits.${slot}`;
-			const w = r.fields(value, at);
-			const minutes = r.nullableNumber(w, "windowDurationMins", at);
-			const resetsAt = r.nullableNumber(w, "resetsAt", at);
+			const path = `${at}.rateLimits.${slot}`;
+			const w = r.fields(value, path);
+			const minutes = r.nullableNumber(w, "windowDurationMins", path);
+			const resetsAt = r.nullableNumber(w, "resetsAt", path);
 			return [
 				{
 					window: minutes === null ? slot : rateLimitWindowName(minutes),
-					usedPercent: r.number(w, "usedPercent", at),
+					usedPercent: r.number(w, "usedPercent", path),
 					// Unix seconds on the wire, as Codex's core protocol keeps it.
 					resetsAt: resetsAt === null ? undefined : resetsAt * 1000,
 				},

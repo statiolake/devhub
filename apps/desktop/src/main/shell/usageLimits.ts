@@ -1,36 +1,64 @@
 /**
  * How much of Claude's and Codex's rate limits is used, app-wide.
  *
- * DevHub does not ask either CLI's account for its limits: it reads what the
- * running GUI Agents already report (`usage.rateLimits` on a conversation's
- * `usage` event — Claude's `rate_limit_event`, Codex's
- * `account/rateLimits/updated`). A limit belongs to the account, not to the
- * Agent, so every Agent of one CLI is reporting on the same limits, and the
- * readout keeps one reading per window of each CLI — Claude's five-hour and
- * seven-day, Codex's primary and secondary — in the order they were first
- * reported.
+ * Two kinds of reading arrive here, through the one entry `observe`. DevHub
+ * asks each CLI's account itself, in the background (`usageReaders.ts`: one
+ * long-lived process per CLI, polled), so the readout is there without a GUI
+ * Agent having run a turn. And the running GUI Agents report the same limits
+ * on their own (`usage.rateLimits` on a conversation's `usage` event —
+ * Claude's `rate_limit_event`, Codex's `account/rateLimits/updated`). A limit
+ * belongs to the account, not to whoever read it, so every reading of one CLI
+ * is a reading of the same limits, and the readout keeps one reading per
+ * window of each CLI — Claude's five-hour and seven-day, Codex's primary and
+ * secondary — in the order they were first reported.
  *
  * Which reading of a window is the latest is decided by the reading, not by when it
  * arrived. A conversation replays its journal when DevHub starts, so the order
- * events arrive in across Agents says nothing about which is newer. Within one
+ * readings arrive in across Agents and the reader says nothing about which is
+ * newer. Within one
  * window usage only grows, and a later window resets later: so the reading
  * with the later reset is newer, and between two with the same reset, the one
  * with more used. A reading that does not say when it resets cannot be
  * compared, and then the one that arrived last wins.
  *
- * A CLI no Agent has reported for is said to be unknown rather than zero.
+ * Besides windows, the reader can say two things of a CLI (`note`): that the
+ * sign-in has no plan limits, and that the CLI's command is not on this Mac.
+ * Each is the reader's latest word, replaced by the next one; a reading of
+ * windows from the reader clears it. It sits beside the windows rather than
+ * replacing them, and the Sidebar shows windows when there are any.
+ *
+ * A CLI nothing has reported for is said to be unknown rather than zero.
  */
 
-import type { UsageLimitsWire } from "../../ipc/contract.js";
-import type { ConversationEvent, RateLimit } from "../../model/conversation.js";
+import type { UsageLimitsWire, UsageNoteWire } from "../../ipc/contract.js";
+import type {
+	ConversationEvent,
+	RateLimit,
+	UsageReading,
+} from "../../model/conversation.js";
 import type { AgentId, AgentProfileKind } from "../../model/domain.js";
 
-/** The CLIs that have a GUI, and so report their limits to DevHub. */
+/**
+ * The CLIs whose accounts have plan limits DevHub reads — the background
+ * reader asks them, and they are the two with a GUI Agent that reports them.
+ */
 export const LIMITED_CLIS = ["claude", "codex"] as const;
 export type LimitedCli = (typeof LIMITED_CLIS)[number];
 
 export class UsageLimits {
 	readonly #latest = new Map<LimitedCli, Map<string, RateLimit>>();
+	readonly #notes = new Map<LimitedCli, UsageNoteWire>();
+
+	/**
+	 * The reader's word on a CLI besides its windows, or `undefined` to take
+	 * it back; whether it changed what the readout says.
+	 */
+	note(cli: LimitedCli, note: UsageNoteWire | undefined): boolean {
+		if (this.#notes.get(cli) === note) return false;
+		if (note === undefined) this.#notes.delete(cli);
+		else this.#notes.set(cli, note);
+		return true;
+	}
 
 	/** Take a reading of one window; whether it changed what the readout says. */
 	observe(cli: LimitedCli, reading: RateLimit): boolean {
@@ -53,10 +81,12 @@ export class UsageLimits {
 		return {
 			clis: LIMITED_CLIS.map((cli) => {
 				const windows = [...(this.#latest.get(cli)?.values() ?? [])];
+				const note = this.#notes.get(cli);
 				return windows.length === 0
-					? { cli }
+					? { cli, ...(note === undefined ? {} : { note }) }
 					: {
 							cli,
+							...(note === undefined ? {} : { note }),
 							windows: windows.map((reading) => ({
 								window: reading.window,
 								...(reading.usedPercent === undefined
@@ -113,5 +143,36 @@ export function usageLimitsListener(
 			.map((reading) => limits.observe(kind, reading))
 			.includes(true);
 		if (changed) publish(limits.wire());
+	};
+}
+
+/**
+ * Feed the background readers' word into the readout (`usageReaders.ts`):
+ * each window of a reading through `observe`, exactly as a GUI Agent's, so the
+ * two merge by the one rule above; a reading of windows takes back the
+ * reader's note, and one of no plan limits is that note.
+ */
+export function usageReadingListener(
+	limits: UsageLimits,
+	publish: (wire: UsageLimitsWire) => void,
+): {
+	deliver(cli: LimitedCli, reading: UsageReading): void;
+	note(cli: LimitedCli, note: UsageNoteWire): void;
+} {
+	return {
+		deliver(cli, reading) {
+			// Every window is observed, whether or not an earlier one changed.
+			const changed =
+				reading.kind === "no_plan_limits"
+					? limits.note(cli, "no_plan_limits")
+					: [
+							...reading.windows.map((window) => limits.observe(cli, window)),
+							limits.note(cli, undefined),
+						].includes(true);
+			if (changed) publish(limits.wire());
+		},
+		note(cli, note) {
+			if (limits.note(cli, note)) publish(limits.wire());
+		},
 	};
 }

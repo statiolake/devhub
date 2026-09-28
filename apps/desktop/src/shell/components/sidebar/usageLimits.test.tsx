@@ -106,10 +106,70 @@ describe("the usage-limits readout", () => {
       },
       { text: "Codex", style: "name" },
       {
-        text: "Not reported yet: no Codex GUI Agent has said",
+        text: "Not read yet",
         style: "note",
       },
     ]);
+  });
+
+  it("says quietly that a sign-in has no plan limits, and why a CLI was not read", () => {
+    render(
+      <UsageLimits
+        limits={{
+          clis: [
+            { cli: "claude", note: "no_plan_limits" },
+            { cli: "codex", note: "cli_not_found" },
+          ],
+        }}
+        now={NOW}
+      />,
+    );
+    const readout = screen.getByRole("status");
+    expect(readout).toHaveAccessibleName("Usage limits: Claude No plan limits");
+    const rows = readout.querySelectorAll(".sidebar-usage-cli");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("ClaudeNo plan limits");
+    expect(rows[0]).toHaveAttribute("data-planless", "true");
+    // No bar, and no colour: there is no limit to approach.
+    expect(rows[0]!.querySelector(".sidebar-usage-track")).toBeNull();
+    expect(rows[0]).not.toHaveAttribute("data-level");
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      {
+        text: "No plan limits for this Claude sign-in: an API key or a cloud provider",
+        style: "note",
+      },
+      { text: "Codex", style: "name" },
+      {
+        text: "Not read: the first Codex profile's command is not on this Mac",
+        style: "note",
+      },
+    ]);
+  });
+
+  it("draws the windows when a CLI has any, whatever the reader's note", () => {
+    render(
+      <UsageLimits
+        limits={{
+          clis: [
+            {
+              cli: "claude",
+              note: "no_plan_limits",
+              windows: [
+                { window: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+              ],
+            },
+            { cli: "codex" },
+          ],
+        }}
+        now={NOW}
+      />,
+    );
+    const rows = screen
+      .getByRole("status")
+      .querySelectorAll(".sidebar-usage-cli");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Claude40%(until 19:00)");
   });
 
   it("shows the current window over one that is history, and a CLI whose readings are all history faded", () => {

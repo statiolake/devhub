@@ -288,7 +288,12 @@ import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
-import { UsageLimits, usageLimitsListener } from "./usageLimits.js";
+import {
+	UsageLimits,
+	usageLimitsListener,
+	usageReadingListener,
+} from "./usageLimits.js";
+import { spawnLineProcess, startUsageReaders } from "./usageReaders.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import {
@@ -987,7 +992,8 @@ export class AppController {
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
 			fail: (error) => namedFailure(error),
 		});
-		// The Sidebar's usage-limits readout, from what the GUI Agents report.
+		// The Sidebar's usage-limits readout, from what the GUI Agents report
+		// as well as from the background readers (`startUsageReaders`).
 		this.agentWiring.conversations.registry.onEvent(
 			usageLimitsListener(
 				this.usageLimits,
@@ -2089,6 +2095,7 @@ export class AppController {
 		this.stopWatchingWake?.();
 		this.scratch.stop();
 		this.repositoryStatus.stop();
+		this.usageReaders?.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
 		// runtime: coming back finds the same work still running.
@@ -2499,6 +2506,33 @@ export class AppController {
 
 	/** The Sidebar's usage-limits readout. See `usageLimits.ts`. */
 	private readonly usageLimits = new UsageLimits();
+
+	/** The background readers of each CLI's plan limits, once started. */
+	private usageReaders: { stop(): void } | undefined;
+
+	/**
+	 * Start reading each CLI's plan limits in the background, once the window
+	 * is up: one process per CLI with a profile, the first profile of its kind
+	 * (`usageReaders.ts`). A failure is said once on the root surface. A
+	 * settings file that would not parse has no profiles, and is already said.
+	 */
+	startUsageReaders(): void {
+		const config = this.config;
+		if (!config) return;
+		this.usageReaders = startUsageReaders({
+			profiles: config.agentProfiles,
+			runtime: localRuntime(),
+			searchPath: this.launchEnvironment["PATH"] ?? "",
+			clientVersion: electron.app.getVersion(),
+			spawn: spawnLineProcess,
+			...usageReadingListener(this.usageLimits, (limits) =>
+				this.send(CHANNELS.usageLimitsChanged, limits),
+			),
+			report: (failure) => {
+				this.publishError(errorWire(failure));
+			},
+		});
+	}
 
 	/**
 	 * The branch and Issue projection, and the watcher that keeps it true.

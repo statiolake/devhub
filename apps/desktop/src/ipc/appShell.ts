@@ -397,7 +397,18 @@ export type AppErrorCodeWire =
 	 * input source is already ASCII-capable, and only this one thing is gone.
 	 * Said once; DevHub does not try again until it is started again.
 	 */
-	| "input_source_unavailable";
+	| "input_source_unavailable"
+	/**
+	 * A CLI's usage limits could not be read in the background
+	 * (`main/shell/usageReaders.ts`): its process would not start or stopped,
+	 * it refused the request, or it answered in a shape DevHub does not read.
+	 *
+	 * Its own code because, like the input source, the consequence is a
+	 * missing reading and not a failed action: the Sidebar goes on with what
+	 * GUI Agents report. Said once; DevHub does not ask again until it is
+	 * started again.
+	 */
+	| "usage_unreadable";
 
 /**
  * The sentence each failure is shown as.
@@ -471,6 +482,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"A dev container DevHub started is still running: it could not be stopped.",
 	input_source_unavailable:
 		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
+	usage_unreadable:
+		"DevHub could not read a CLI's usage limits, and will not try again until it is restarted.",
 };
 export type AppErrorModuleWire =
 	| "app"

@@ -388,9 +388,10 @@ export interface AppConditionWire {
 }
 
 /**
- * How much of each CLI's rate limits is used, as its GUI Agents last reported
- * them. One entry per CLI with a GUI, always; `windows` absent means no Agent
- * of that CLI has reported one yet — not that nothing is used. One window per
+ * How much of each CLI's rate limits is used, as DevHub's background reader
+ * and its GUI Agents last reported them. One entry per CLI with plan limits,
+ * always; `windows` absent means nothing has reported one yet — not that
+ * nothing is used. One window per
  * limit the CLI keeps (`5-hour`, `7-day`, …), in the order first reported.
  * See `main/shell/usageLimits.ts`.
  */
@@ -405,8 +406,16 @@ export interface UsageLimitsWire {
 			/** Epoch milliseconds. */
 			readonly resetsAt?: number;
 		}[];
+		/**
+		 * What DevHub's own reader of the account last said besides windows:
+		 * the sign-in has no plan limits (an API key, Bedrock), or the CLI's
+		 * command is not on this Mac, so it cannot be asked.
+		 */
+		readonly note?: UsageNoteWire;
 	}[];
 }
+
+export type UsageNoteWire = "no_plan_limits" | "cli_not_found";
 
 export interface RepositoryStatusWire {
 	readonly sequence: number;

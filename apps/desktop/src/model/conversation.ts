@@ -650,6 +650,15 @@ export interface RateLimit {
   readonly resetsAt: number | undefined;
 }
 
+/**
+ * What a CLI's account said of its plan's limits when DevHub asked it
+ * (`main/shell/usageReaders.ts`): the windows it has, or that the sign-in has
+ * none — an API key, Bedrock — which is an answer, not a failure.
+ */
+export type UsageReading =
+  | { readonly kind: "windows"; readonly windows: readonly RateLimit[] }
+  | { readonly kind: "no_plan_limits" };
+
 /** A window's name from its length: `5-hour`, `7-day`, `90-minute`. */
 export function rateLimitWindowName(minutes: number): string {
   if (minutes % 1440 === 0) return `${String(minutes / 1440)}-day`;

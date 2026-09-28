@@ -427,6 +427,9 @@ export async function bootstrapShell(
 
 	controller.installChords();
 	controller.installMenuBar();
+	// After the window is up and the runtimes are started: the readers need
+	// the login environment, and nothing they do is on the way to a window.
+	controller.startUsageReaders();
 	// A Mac menu bar describes the key window, so it is rebuilt when the key
 	// window changes as well as when the model does.
 	electron.app.on("browser-window-focus", refreshMenu);
