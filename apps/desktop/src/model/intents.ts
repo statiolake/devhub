@@ -391,6 +391,22 @@ export type UserIntent =
       readonly type: "confirm_continue_agent";
       readonly confirmationId: ConfirmationId;
     }
+  /**
+   * Stop a GUI Agent's CLI and start it again on the same session (Restart
+   * session): the same Agent, pane and conversation, with a CLI that has
+   * connected afresh to its MCP servers, read its configuration and plugins
+   * again, and is whatever version is installed now.
+   *
+   * Asked about first when the Agent is not idle, exactly as a stop is: the
+   * CLI is stopped where it stands, and whatever it is in the middle of stops
+   * with it (`confirm_restart_agent`). A terminal Agent has no restart: its
+   * CLI is the terminal's own process, not one DevHub starts.
+   */
+  | { readonly type: "restart_agent"; readonly agentId: AgentId }
+  | {
+      readonly type: "confirm_restart_agent";
+      readonly confirmationId: ConfirmationId;
+    }
   | {
       readonly type: "rename_agent";
       readonly agentId: AgentId;
@@ -585,6 +601,12 @@ export type ProviderEvent =
       readonly agentId: AgentId;
       readonly result: AgentStopResult;
     }
+  /** A GUI Agent's CLI was started again on its session, and is ready. */
+  | {
+      readonly type: "agent_restart_completed";
+      readonly token: OperationToken;
+      readonly agentId: AgentId;
+    }
   | {
       readonly type: "agent_termination_completed";
       readonly token: OperationToken;
@@ -694,7 +716,8 @@ export type ConfirmationOutcomePurpose =
       readonly agentId: AgentId;
       /** The presentation it goes on in, so the sheet can say where. */
       readonly presentation: AgentPresentation;
-    };
+    }
+  | { readonly kind: "agent_restart"; readonly agentId: AgentId };
 
 export type IntentOutcome =
   | { readonly kind: "noop"; readonly snapshot: AppSnapshot }
@@ -716,6 +739,7 @@ export type IntentOutcome =
 export type ConfirmationPurpose =
   | { readonly kind: "stop_agent"; readonly agentId: AgentId }
   | { readonly kind: "continue_agent"; readonly agentId: AgentId }
+  | { readonly kind: "restart_agent"; readonly agentId: AgentId }
   | {
       readonly kind: "workspace_close";
       readonly workspaceId: WorkspaceId;

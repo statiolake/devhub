@@ -60,6 +60,7 @@
  * | `Cmd+Q A`                   | `send_agent_action`       |
  * | `Cmd+Q ,`                   | `rename_agent`            |
  * | `Cmd+Q X`                   | `close_selection`         |
+ * | `Cmd+Q Shift+R`             | `restart_agent`           |
  * | `Cmd+Q Shift+W`             | `close_workspace`         |
  * | `Cmd+Q R`                   | `refresh_repositories`    |
  * | `Cmd+Q U`                   | `mark_agent_unread`       |
@@ -334,6 +335,7 @@ export type CommandId =
   | "rename_agent"
   | "mark_agent_unread"
   | "close_selection"
+  | "restart_agent"
   | "close_workspace"
   | "open_issue_picker"
   | "send_agent_action"
@@ -571,6 +573,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     label: "Close what is selected",
     needs: "nothing",
     defaultKeys: ["x"],
+  },
+  {
+    // Beside Stop (`close_selection`): the other act that stops the Agent's
+    // CLI where it stands, asked about on the same rule.
+    id: "restart_agent",
+    label: "Restart this Agent's session",
+    needs: "agent",
+    defaultKeys: ["R"],
   },
   {
     id: "close_workspace",

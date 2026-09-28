@@ -37,6 +37,7 @@ export function fakeActions(
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),
     openResume: vi.fn(),
+    restart: vi.fn(() => Promise.resolve()),
     reportFailure: vi.fn(),
     ...overrides,
   };

@@ -961,6 +961,62 @@ describe("tasks working in the background", () => {
   });
 });
 
+describe("a CLI restarted on its session", () => {
+  it("keeps every entry, and nothing the stopped CLI had going goes on", () => {
+    const before = fold(
+      READY,
+      user("u1", "go"),
+      RUNNING,
+      assistant("a1", [{ kind: "text", markdown: "Look" }], true),
+      tool("t1"),
+      tool("t2", {
+        status: "succeeded",
+        spawns: {
+          label: "Explore",
+          prompt: "look around",
+          model: undefined,
+          state: "running",
+          takesMessages: false,
+        },
+      }),
+      tool("t3", {
+        status: "succeeded",
+        background: { state: "running", summary: undefined },
+      }),
+      tool("t4", { status: "succeeded" }),
+      { type: "request-opened", request: permission("p1", "t1") },
+      running(shell("b1", "t3")),
+      {
+        type: "sending",
+        sending: [{ id: "sent:2", text: "and", images: [], origin: "person" }],
+      },
+    );
+    const after = applyEvent(before, { type: "restarted" });
+    expect(after.entries.map((entry) => entry.id)).toEqual(
+      before.entries.map((entry) => entry.id),
+    );
+    expect(after.requests).toEqual([]);
+    expect(after.backgroundTasks).toEqual([]);
+    expect(after.sending).toEqual([]);
+    const byId = (id: string) =>
+      after.entries.find((entry) => entry.id === entryId(id))!;
+    expect(byId("a1")).toMatchObject({ streaming: false });
+    expect(byId("t1")).toMatchObject({ status: "interrupted" });
+    expect(byId("t2")).toMatchObject({
+      status: "succeeded",
+      spawns: { state: "unknown" },
+    });
+    expect(byId("t3")).toMatchObject({
+      background: { state: "unknown", summary: undefined },
+    });
+    expect(byId("t4")).toBe(
+      before.entries.find((entry) => entry.id === entryId("t4")),
+    );
+    // What state the conversation is in is the adapter's to say.
+    expect(after.state).toEqual(before.state);
+  });
+});
+
 describe("an Agent whose turn is over with tasks working in the background", () => {
   it("is background, neither idle nor working, and idle again once they end", () => {
     const after = fold(

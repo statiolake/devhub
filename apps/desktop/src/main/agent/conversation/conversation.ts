@@ -529,8 +529,27 @@ export class AgentConversation {
 	}
 
 	/**
-	 * Inside the turnstile only: carry out the adapter's plan for a rewind or
-	 * a `/resume` — its lines written, or the CLI started again — and hand
+	 * Stop the CLI and start it again on the session it is on (Restart
+	 * session), carried out as a rewind's plan is: resolves once the new CLI
+	 * is ready. Taken whatever the Agent is doing — whether to ask first is
+	 * the coordinator's (`askAbout`) — so a running turn, a question it is
+	 * waiting on and what it started in the background stop with the CLI.
+	 * The messages DevHub holds for it stay held, and go to the new CLI.
+	 */
+	async restart(): Promise<void> {
+		const restarted = await this.#serial(async () => {
+			this.#refuseIfBusy();
+			return this.#carryOut(
+				this.#adapter.restart(),
+				"the CLI had started again",
+			);
+		});
+		await restarted.over;
+	}
+
+	/**
+	 * Inside the turnstile only: carry out the adapter's plan for a rewind, a
+	 * `/resume` or a restart — its lines written, or the CLI started again — and hand
 	 * back `over`, which settles when the adapter says the switch is done
 	 * (`#rewind`). A plan that could not be carried out leaves nothing under
 	 * way. Wrapped: returned bare, the turnstile would wait for `over`, and

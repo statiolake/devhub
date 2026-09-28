@@ -578,6 +578,11 @@ export type AppIntentWire =
 			readonly confirmationId: string;
 			readonly type: "confirm_continue_agent";
 	  }
+	| { readonly agentId: string; readonly type: "restart_agent" }
+	| {
+			readonly confirmationId: string;
+			readonly type: "confirm_restart_agent";
+	  }
 	| { readonly agentId: string; readonly type: "retry_stop_agent" }
 	| { readonly agentId: string; readonly type: "mark_agent_unread" }
 	| { readonly agentId: string; readonly type: "reconcile_agent" }
@@ -732,7 +737,12 @@ export type ConfirmationPurposeWire =
 			readonly agentId: string;
 			readonly kind: "agent_continue";
 			readonly presentation: AgentPresentationWire;
-	  };
+	  }
+	/**
+	 * Starting this GUI Agent's CLI again on its session, which stops the one
+	 * running: asked when it is not idle, as a stop is.
+	 */
+	| { readonly agentId: string; readonly kind: "agent_restart" };
 export type ContextWire =
 	| { readonly kind: "workspace"; readonly workspaceId: string }
 	| { readonly agentId: string; readonly kind: "agent" };

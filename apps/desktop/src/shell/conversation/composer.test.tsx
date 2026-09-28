@@ -733,6 +733,48 @@ describe("/resume", () => {
   });
 });
 
+describe("/restart", () => {
+  const restartable = withSession([], {
+    ...SESSION,
+    commands: [
+      ...COMMANDS,
+      {
+        trigger: "/",
+        name: "restart",
+        description:
+          "Restart the session: start the CLI again, reconnecting its MCP servers",
+        argumentHint: undefined,
+        route: "restart",
+      },
+    ],
+  });
+
+  it("typed out whole restarts the session through DevHub and sends nothing", () => {
+    const actions = fakeActions();
+    draw(restartable, actions);
+    fireEvent.change(composer(), { target: { value: "/restart" } });
+    fireEvent.keyDown(composer(), { key: "Escape" });
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    expect(actions.restart).toHaveBeenCalledOnce();
+    expect(actions.send).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue("");
+  });
+
+  it("says why when the restart is refused", async () => {
+    const refused = new Error("not now");
+    const actions = fakeActions({
+      restart: vi.fn(() => Promise.reject(refused)),
+    });
+    draw(restartable, actions);
+    fireEvent.change(composer(), { target: { value: "/restart" } });
+    fireEvent.keyDown(composer(), { key: "Escape" });
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    await waitFor(() =>
+      expect(actions.reportFailure).toHaveBeenCalledWith(refused),
+    );
+  });
+});
+
 describe("requests from the keyboard", () => {
   const waiting = withSession([
     put(tool("t1", "Bash: npm test", { status: "running" })),

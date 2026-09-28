@@ -27,6 +27,8 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	RESTARTED,
+	RESTART_MARK,
 	type ConversationCommand,
 } from "../protocolAdapter.js";
 import { claudeHistoryLines } from "../resume.js";
@@ -342,6 +344,14 @@ describe("the handshake", () => {
 				argumentHint: undefined,
 				route: "resume",
 			},
+			{
+				trigger: "/",
+				name: "restart",
+				description:
+					"Restart the session: start the CLI again, reconnecting its MCP servers",
+				argumentHint: undefined,
+				route: "restart",
+			},
 		]);
 	});
 });
@@ -459,6 +469,14 @@ describe("the permission fixture", () => {
 				description: "Go on with an earlier session in this Workspace",
 				argumentHint: undefined,
 				route: "resume",
+			},
+			{
+				trigger: "/",
+				name: "restart",
+				description:
+					"Restart the session: start the CLI again, reconnecting its MCP servers",
+				argumentHint: undefined,
+				route: "restart",
 			},
 		]);
 		// This handshake names no `resolvedModel`, so no choice is known to be
@@ -2717,6 +2735,74 @@ describe("going on with another session (/resume)", () => {
 		});
 		adapter.received(echo("first", "u1"));
 		expect(() => adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
+	});
+});
+
+describe("restarting the session", () => {
+	it("starts the CLI again on the session it is on, with the restart mark between the two", () => {
+		const adapter = inTurn();
+		expect(adapter.restart()).toEqual({
+			kind: "restart",
+			session: ["--resume", SESSION],
+			mark: [RESTART_MARK],
+		});
+		// Nothing changes until the host puts the mark in the journal.
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
+	});
+
+	it("starts a CLI that has named no session yet on a new one", () => {
+		expect(new ClaudeAdapter("boot").restart()).toEqual({
+			kind: "restart",
+			session: [],
+			mark: [RESTART_MARK],
+		});
+	});
+
+	it("keeps the conversation, stops what the CLI had going under a quiet divider, and greets the new CLI", () => {
+		const adapter = askingForBash();
+		const step = adapter.received(RESTART_MARK);
+		expect(step.events).toContainEqual({ type: "restarted" });
+		const { transcript } = adapter;
+		expect(entry(adapter, "user:u-go")).toMatchObject({ text: "go" });
+		expect((entry(adapter, "tool:toolu_1") as ToolEntry).status).toBe(
+			"interrupted",
+		);
+		expect(transcript.requests).toEqual([]);
+		expect(transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "info",
+			text: RESTARTED,
+		});
+		expect(transcript.session.sessionId).toBe(SESSION);
+		expect(transcript.state).toEqual({ phase: "ready", turn: "rewinding" });
+		expect(step.replies.map((line) => JSON.parse(line))).toEqual([
+			{
+				type: "control_request",
+				request_id: "boot:1",
+				request: { subtype: "initialize" },
+			},
+		]);
+		for (const line of step.replies) adapter.sent(line);
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: "boot:1",
+					response: { commands: [], models: [] },
+				},
+			}),
+		);
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		// The new CLI offers the commands again, DevHub's own with them.
+		expect(
+			adapter.transcript.session.commands.find(
+				(command) => command.name === "restart",
+			),
+		).toMatchObject({ trigger: "/", route: "restart" });
 	});
 });
 

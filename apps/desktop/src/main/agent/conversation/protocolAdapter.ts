@@ -94,6 +94,12 @@ export type RewindPlan =
 			readonly mark: readonly string[];
 	  };
 
+/** The line the host puts in the journal between the CLI a restart stopped and the one it started. */
+export const RESTART_MARK = JSON.stringify({ type: "devhub_restart" });
+
+/** What the transcript says where the CLI was started again. */
+export const RESTARTED = "Session restarted";
+
 export interface AdapterStep {
 	readonly events: readonly ConversationEvent[];
 	/** Lines the protocol requires DevHub to write back at once. */
@@ -141,6 +147,17 @@ export interface ProtocolAdapter {
 	 * a turn runs or a request is open.
 	 */
 	resumeSession(session: string, history: readonly string[]): RewindPlan;
+	/**
+	 * How to stop the CLI and start it again on the session it is on
+	 * (Restart session): always the CLI started again by its host, on that
+	 * session — none yet, a new one — with `RESTART_MARK` between the two, so
+	 * that the new CLI connects afresh to what it is configured with (its MCP
+	 * servers, its plugins, its own new version). Changes nothing, like
+	 * `encode`. Taken whatever the conversation is doing: once the mark is
+	 * read the adapter emits `restarted` and the `RESTARTED` notice, and holds
+	 * the turn `rewinding` until the new CLI is ready.
+	 */
+	restart(): RewindPlan & { readonly kind: "restart" };
 	/** A line DevHub wrote to the CLI's stdin — live, or read back from `in.log`. */
 	sent(line: string): AdapterStep;
 	/** A line the CLI printed on stdout. */

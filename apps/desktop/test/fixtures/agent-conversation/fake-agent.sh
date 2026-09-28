@@ -29,17 +29,28 @@
 # --resume and no --resume-session-at while FAKE_AGENT_RESUME_SCRIPT is set (as
 # DevHub's /resume of a Claude session does), it plays that one. An argv that
 # picks a session twice (two --resume, or two --resume-session-at) is said on
-# stderr and exits 2: which one a real CLI takes is nobody's to rely on.
+# stderr and exits 2: which one a real CLI takes is nobody's to rely on. With
+# FAKE_AGENT_RESUME_SESSION set, a --resume of any other session is said on
+# stderr and exits 4.
 request_id() { printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p'; }
 script=${FAKE_AGENT_SCRIPT:-}
 cuts=
 resumes=
+resumed=
+previous=
 for arg in "$@"; do
   case "$arg" in
     --resume-session-at) cuts=$cuts. ;;
     --resume) resumes=$resumes. ;;
   esac
+  [ "$previous" != --resume ] || resumed=$arg
+  previous=$arg
 done
+if [ -n "$resumes" ] && [ -n "${FAKE_AGENT_RESUME_SESSION:-}" ] &&
+  [ "$resumed" != "$FAKE_AGENT_RESUME_SESSION" ]; then
+  echo "fake-agent: resumed $resumed, not $FAKE_AGENT_RESUME_SESSION" >&2
+  exit 4
+fi
 if [ "${#cuts}" -gt 1 ] || [ "${#resumes}" -gt 1 ]; then
   echo "fake-agent: started on two sessions at once: $*" >&2
   exit 2

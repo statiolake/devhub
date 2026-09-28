@@ -74,6 +74,8 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	RESTARTED,
+	RESTART_MARK,
 	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
@@ -111,14 +113,27 @@ const PICKED: Readonly<
 	effort: "effort",
 	permissions: "mode",
 	resume: "resume",
+	restart: "restart",
 };
 
-/** `/resume`, which DevHub offers whether or not the CLI lists it: stream-json has no picker of its own. */
-const RESUME_COMMAND = {
-	name: "resume",
-	description: "Go on with an earlier session in this Workspace",
-	argumentHint: undefined,
-} as const;
+/**
+ * DevHub's own commands, offered whether or not the CLI lists them:
+ * `/resume`, since stream-json has no picker of its own, and `/restart`,
+ * since only DevHub can start the CLI again.
+ */
+const DEVHUB_COMMANDS = [
+	{
+		name: "resume",
+		description: "Go on with an earlier session in this Workspace",
+		argumentHint: undefined,
+	},
+	{
+		name: "restart",
+		description:
+			"Restart the session: start the CLI again, reconnecting its MCP servers",
+		argumentHint: undefined,
+	},
+] as const;
 
 /** Commands that only work in the TUI; "continue in terminal" is the way to them. */
 const TUI_ONLY = new Set(["login", "logout"]);
@@ -440,6 +455,16 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		};
 	}
 
+	restart(): RewindPlan & { readonly kind: "restart" } {
+		this.refuseIfSpent();
+		const { sessionId } = this.current.session;
+		return {
+			kind: "restart",
+			session: sessionId === undefined ? [] : ["--resume", sessionId],
+			mark: [RESTART_MARK],
+		};
+	}
+
 	sent(line: string): AdapterStep {
 		return this.step(() => {
 			const sent = decodeSent(line);
@@ -593,9 +618,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const listed = [...this.described, ...announced];
 		return [
 			...listed,
-			...(listed.some((command) => command.name === RESUME_COMMAND.name)
-				? []
-				: [RESUME_COMMAND]),
+			...DEVHUB_COMMANDS.filter(
+				(own) => !listed.some((command) => command.name === own.name),
+			),
 		]
 			.filter((command) => !TUI_ONLY.has(command.name))
 			.map((command) => ({
@@ -733,6 +758,26 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.tasks.clear();
 		this.teammates.clear();
 		this.callTimes.clear();
+		this.interrupting = false;
+		this.turn("rewinding");
+		this.replies.push(this.controlRequest({ subtype: "initialize" }));
+	}
+
+	/**
+	 * The host stopped the CLI and started it again on the same session: the
+	 * conversation stays, and nothing the CLI that was stopped had going goes
+	 * on (`restarted`). What DevHub kept about that CLI goes with it, and the
+	 * new one is greeted as a rewound one is.
+	 */
+	private takeRestart(): void {
+		this.background = [];
+		this.emit({ type: "restarted" });
+		this.notice("info", RESTARTED, undefined);
+		this.ours.clear();
+		this.untaken.length = 0;
+		this.permissions.clear();
+		this.answered.clear();
+		this.streaming.clear();
 		this.interrupting = false;
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
@@ -936,6 +981,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.takeRewind(entryId(line.message));
 			case "resume":
 				return this.takeResume(line.session);
+			case "restart":
+				return this.takeRestart();
 			// The resumed session's past: the same messages, drawn the same way,
 			// except that they are not a turn running now.
 			case "history":

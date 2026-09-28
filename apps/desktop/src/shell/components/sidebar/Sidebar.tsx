@@ -1423,6 +1423,17 @@ function agentMenuItems(
       },
     });
   }
+  // A GUI Agent's CLI is DevHub's to start again (`restart_agent`); a
+  // terminal Agent's is the terminal's own process.
+  if (agent.presentation === "gui" && agent.controlState.kind === "running") {
+    items.push({
+      id: "restart",
+      label: "Restart Session",
+      run: () => {
+        dispatch({ type: "restart_agent", agentId: agent.id });
+      },
+    });
+  }
   if (agent.controlState.kind !== "stopping") {
     items.push({
       id: "stop",

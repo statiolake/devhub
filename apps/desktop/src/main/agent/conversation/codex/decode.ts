@@ -222,7 +222,13 @@ export type Message =
 			readonly id: RpcId;
 			readonly method: string;
 			readonly params: unknown;
-	  };
+	  }
+	/**
+	 * The host stopped app-server and started it again (Restart session), and
+	 * put this line (`RESTART_MARK`) between the two servers' output — not
+	 * something app-server printed.
+	 */
+	| { readonly kind: "restart" };
 
 /** One line off app-server's stdout. */
 export function decodeLine(r: Reader, line: string): Message {
@@ -236,6 +242,7 @@ export function decodeLine(r: Reader, line: string): Message {
 		);
 	}
 	const o = r.fields(value, "message");
+	if (o["type"] === "devhub_restart") return { kind: "restart" };
 	if ("method" in o) {
 		const method = r.string(o, "method", "message");
 		const params = o["params"];

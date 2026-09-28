@@ -1029,6 +1029,37 @@ Either way it is in the journal, so a restart of DevHub replays to the same
 conversation. The Agent's recorded profile still names what it was launched
 with; the conversation's session is the one Continue in terminal resumes.
 
+## Restarting the session
+
+**Restart Session** stops a GUI Agent's CLI and starts it again on the same
+session, in the same Agent: the pane, the transcript and the Agent's name
+stay. It is for when the CLI has to start afresh to see a change — MCP
+servers to reconnect (`/mcp` has no reconnect in `-p` mode), a configuration
+or plugin that changed, a CLI that was updated.
+
+- It is in the Agent row's menu in the Sidebar, under `Cmd+Q Shift+R`
+  (`restart_agent`), and typed as `/restart` in the composer, which is
+  DevHub's own command like `/resume`, offered for Claude and Codex alike.
+- It goes the way a rewind and `/resume` do: the host stops the CLI and starts
+  it again, with a mark between the two in the journal
+  (`{"type":"devhub_restart"}`), so a replay draws the same. Claude is started
+  with `--resume <session id>` (a CLI that has named no session yet starts a
+  new one); Codex's app-server is started again and resumes the same thread in
+  its handshake (`thread/resume`), which draws nothing a second time.
+- The transcript says *Session restarted* where it happened, as one quiet
+  information line. Nothing the stopped CLI had going goes on: a call still
+  running is marked interrupted, a question it asked closes, and its subagents
+  and background tasks end with it (*Unknown*). A message written to it and
+  not yet taken never reached it; messages DevHub still holds are written to
+  the new CLI once it is ready.
+- When the Agent is not idle it asks first, on the same sheet and by the same
+  rule as Stop and Continue (`agentIsIdle`); an idle Agent is restarted at
+  once.
+- A terminal Agent has no Restart Session: its CLI is the terminal's own
+  process, which DevHub's host does not start, so there is no host to start it
+  again on the same pane. Continue it in the GUI to restart it there, or stop
+  it and resume its session in a new one.
+
 ## Folder trust: hooks and `.mcp.json` run without asking
 
 `claude -p` does not show the folder-trust prompt that interactive `claude`

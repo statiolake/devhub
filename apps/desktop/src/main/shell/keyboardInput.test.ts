@@ -130,6 +130,7 @@ function host(zoomActs = true) {
 			return zoomActs;
 		},
 		closeAgent: record("closeAgent"),
+		restartAgent: record("restartAgent"),
 		closeWorkspace: record("closeWorkspace"),
 		reorderEntries: record("reorderEntries"),
 		refreshRepositories: record("refreshRepositories"),

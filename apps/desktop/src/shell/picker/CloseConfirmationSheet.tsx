@@ -392,5 +392,19 @@ function questionWords(
         refused: "The Agent could not be continued. Try again.",
       };
     }
+    case "agent_restart":
+      return {
+        title:
+          agentName === undefined
+            ? "Restart this Agent's session?"
+            : `Restart the session of “${agentName}”?`,
+        question:
+          "It is not idle. Its CLI is stopped and started again on the same session: the turn it is in, a question it is waiting on, and any subagents or background tasks it started stop with it.",
+        cancel: "Leave the Agent running.",
+        confirm: "Restart Session",
+        confirmDetail:
+          "The conversation stays, and the CLI connects again to its MCP servers and reads its configuration afresh.",
+        refused: "The session could not be restarted. Try again.",
+      };
   }
 }

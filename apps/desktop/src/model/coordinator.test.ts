@@ -1391,6 +1391,121 @@ describe("continuing an Agent that is not idle", () => {
   });
 });
 
+describe("restarting an Agent's session", () => {
+  /** A `presentation` Agent AG_A in WS_A, read as `status`, asked to restart. */
+  function restarting(
+    presentation: "tui" | "gui",
+    status: "idle" | "working" | "background" | "waiting" | "error" | "unknown",
+  ): { driver: Driver; asked: () => IntentOutcome } {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      agentPresentation: presentation,
+    });
+    driver.settle();
+    driver.coordinator.model.setAgentStatus(AG_A, status);
+    return {
+      driver,
+      asked: () => driver.dispatch({ type: "restart_agent", agentId: AG_A }),
+    };
+  }
+
+  it("restarts an idle GUI Agent at once, and the Agent stays as it is", () => {
+    const { driver, asked } = restarting("gui", "idle");
+    expect(asked()).toMatchObject({ kind: "deferred" });
+    const effects = driver.drainEffects();
+    expect(effects.map((effect) => effect.kind)).toEqual(["restart_agent"]);
+    const restart = effects[0]!;
+    if (restart.kind !== "restart_agent") throw new Error("unexpected");
+    expect(restart.agentId).toBe(AG_A);
+    expect(
+      driver.accept({
+        type: "agent_restart_completed",
+        token: restart.token,
+        agentId: AG_A,
+      }),
+    ).toMatchObject({ kind: "noop" });
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+    expect(driver.drainEffects()).toEqual([]);
+  });
+
+  // A restart stops the CLI where it stands, as a stop does: the turn it is
+  // in, the question it is holding, the subagents and background tasks it
+  // started all stop with it. So it is asked about exactly when a stop is.
+  for (const status of [
+    "working",
+    "background",
+    "waiting",
+    "error",
+    "unknown",
+  ] as const) {
+    it(`asks first when a GUI Agent is ${status}, and restarts nothing yet`, () => {
+      const { driver, asked } = restarting("gui", status);
+      asked();
+      const effects = driver.drainEffects();
+      expect(effects.map((effect) => effect.kind)).toEqual([
+        "generate_confirmation_id",
+      ]);
+      const generate = effects[0]!;
+      if (generate.kind !== "generate_confirmation_id")
+        throw new Error("unexpected");
+      expect(generate.purpose).toEqual({
+        kind: "restart_agent",
+        agentId: AG_A,
+      });
+      expect(
+        driver.accept({
+          type: "confirmation_id_generated",
+          token: generate.token,
+          confirmationId: CONFIRM,
+        }),
+      ).toMatchObject({
+        kind: "confirmation_required",
+        confirmationId: CONFIRM,
+        purpose: { kind: "agent_restart", agentId: AG_A },
+      });
+      expect(driver.drainEffects()).toEqual([]);
+    });
+  }
+
+  it("goes on once confirmed, and is not answered by a stop's or a continue's confirmation", () => {
+    const { driver, asked } = restarting("gui", "working");
+    asked();
+    const generate = driver.drainEffects()[0];
+    if (generate?.kind !== "generate_confirmation_id")
+      throw new Error("unexpected");
+    driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    for (const type of [
+      "confirm_stop_agent",
+      "confirm_continue_agent",
+    ] as const) {
+      expect(
+        errorCode(() => driver.dispatch({ type, confirmationId: CONFIRM })),
+      ).toBe("invalid_intent");
+    }
+    driver.dispatch({ type: "confirm_restart_agent", confirmationId: CONFIRM });
+    expect(driver.drainEffects()).toMatchObject([
+      { kind: "restart_agent", agentId: AG_A },
+    ]);
+  });
+
+  it("is refused for a terminal Agent, before anything is asked", () => {
+    const { driver, asked } = restarting("tui", "working");
+    expect(errorCode(asked)).toBe("invalid_intent");
+    expect(driver.drainEffects()).toEqual([]);
+  });
+});
+
 describe("how a launched agent is shown", () => {
   const cursor = AgentProfile.create(
     agentProfileId("cursor"),

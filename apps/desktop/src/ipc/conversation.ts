@@ -36,6 +36,7 @@ export const CONVERSATION_CHANNELS = {
 	listSessions: "devhub:conversation:list-sessions",
 	previewSession: "devhub:conversation:preview-session",
 	resumeSession: "devhub:conversation:resume-session",
+	restartSession: "devhub:conversation:restart-session",
 	rewind: "devhub:conversation:rewind",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
@@ -145,6 +146,12 @@ export interface ConversationApi {
 	 * Refused, with the reason, when DevHub cannot tell which session it is in.
 	 */
 	continueInGui(agentId: string): Promise<void>;
+	/**
+	 * Stop the GUI Agent's CLI and start it again on its session (`/restart`),
+	 * asking first on the confirmation sheet when the Agent is not idle, as
+	 * the Sidebar's Restart Session does.
+	 */
+	restartSession(agentId: string): Promise<void>;
 	/** The earlier sessions a GUI Agent's `/resume` offers: its Workspace's, or every directory's. */
 	listSessions(
 		agentId: string,

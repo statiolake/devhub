@@ -567,6 +567,44 @@ describe("closing a workspace with things open in it", () => {
  * state it was about to overwrite. It said nothing at all for a confirmation
  * main raised on its own, which is the one the chord and the menu produce.
  */
+/**
+ * A restart stops the Agent's CLI where it stands before it starts it again,
+ * so it is asked about when the Agent is not idle, exactly as a stop is, and
+ * says what stops with it and what stays.
+ */
+describe("restarting an Agent's session that is not idle, asked on the modal layer", () => {
+  afterEach(cleanup);
+
+  it("names the Agent, what stops, and restarts on the second row", async () => {
+    const onDismiss = vi.fn();
+    const dispatch = mount(snapshotWith(true), onDismiss, {
+      kind: "agent_restart",
+      agentId: AGENT_ID,
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText("Restart the session of “claude 1”?"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(
+        "It is not idle. Its CLI is stopped and started again on the same session: the turn it is in, a question it is waiting on, and any subagents or background tasks it started stop with it.",
+      ),
+    ).toBeInTheDocument();
+    expect(rows()).toEqual(["Cancel", "Restart Session"]);
+    fireEvent.click(screen.getByText("Restart Session"));
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "confirm_restart_agent",
+        confirmationId: CONFIRMATION_ID,
+      });
+    });
+    await waitFor(() => {
+      expect(onDismiss).toHaveBeenCalled();
+    });
+  });
+});
+
 describe("what a confirmation knows about itself", () => {
   afterEach(cleanup);
 
@@ -595,6 +633,10 @@ describe("what a confirmation knows about itself", () => {
           presentation: "tui",
         } as ConfirmationPurposeWire,
         { type: "confirm_continue_agent", confirmationId: CONFIRMATION_ID },
+      ],
+      [
+        { kind: "agent_restart", agentId: AGENT_ID } as ConfirmationPurposeWire,
+        { type: "confirm_restart_agent", confirmationId: CONFIRMATION_ID },
       ],
       [
         CLOSE_WORKSPACE,

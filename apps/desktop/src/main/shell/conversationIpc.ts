@@ -39,6 +39,8 @@ export interface ConversationIpcOptions {
 		presentation: AgentPresentation,
 		session: string,
 	) => Promise<unknown>;
+	/** Ask the model to restart an Agent's session: the one way the Sidebar and the chord go too. */
+	readonly restart: (agentId: AgentId) => Promise<unknown>;
 	/** The session a terminal Agent's CLI is in (`AgentWiring.terminalSession`). */
 	readonly terminalSession: (agentId: AgentId) => Promise<string>;
 	/** The app's one conversion of a failure into what crosses IPC. */
@@ -141,6 +143,10 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	handle(CONVERSATION_CHANNELS.continueInGui, async (agentId) => {
 		const session = await options.terminalSession(agentId);
 		await options.continueIn(agentId, "gui", session);
+	});
+
+	handle(CONVERSATION_CHANNELS.restartSession, async (agentId) => {
+		await options.restart(agentId);
 	});
 
 	handle(CONVERSATION_CHANNELS.listSessions, (agentId, scope) =>

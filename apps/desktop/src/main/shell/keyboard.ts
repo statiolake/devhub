@@ -116,6 +116,8 @@ export interface ChordHost {
 	terminalZoom(direction: TerminalZoomDirection): boolean;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
 	closeAgent(agentId: string): void;
+	/** Restart this Agent's session, asking first exactly as the row menu's Restart Session does. */
+	restartAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
 	closeWorkspace(workspaceId: string): void;
 	/**
@@ -199,6 +201,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-agent":
 			host.closeAgent(effect.agentId);
+			return;
+		case "restart-agent":
+			host.restartAgent(effect.agentId);
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);

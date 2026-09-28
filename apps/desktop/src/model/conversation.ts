@@ -595,10 +595,18 @@ export interface SlashCommand {
   /**
    * `message`: sent as the text of a user message. `resume`: DevHub's picker
    * of the Workspace's earlier sessions, one of which this Agent then goes on
-   * with (`/resume`). Otherwise the header picker for that setting, which
+   * with (`/resume`). `restart`: DevHub's Restart session, which stops the
+   * Agent's CLI and starts it again on the same session (`/restart`).
+   * Otherwise the header picker for that setting, which
    * DevHub opens instead of sending (`/model`).
    */
-  readonly route: "message" | "resume" | "model" | "effort" | "mode";
+  readonly route:
+    | "message"
+    | "resume"
+    | "restart"
+    | "model"
+    | "effort"
+    | "mode";
 }
 
 /**
@@ -796,7 +804,16 @@ export type ConversationEvent =
    * entry, and the usage, belonged to the one it left. What the other session
    * holds follows as entries.
    */
-  | { readonly type: "session-switched"; readonly session: string };
+  | { readonly type: "session-switched"; readonly session: string }
+  /**
+   * The CLI was stopped and started again on the same session (Restart
+   * session): the entries stay, and nothing the CLI that was stopped had
+   * going goes on. Each request it asked closes, each call still running was
+   * interrupted, each message still streaming ends where it got to, each
+   * subagent or background task it started ends nobody knows how, and a
+   * message written to it and not yet taken never reached it.
+   */
+  | { readonly type: "restarted" };
 
 /**
  * An event that cannot be true of the Transcript it was applied to. It is the
@@ -903,6 +920,14 @@ export function applyEvent(
         session: { ...transcript.session, sessionId: event.session },
       };
     }
+    case "restarted":
+      return {
+        ...transcript,
+        entries: transcript.entries.map(withProcessEnded),
+        requests: [],
+        sending: [],
+        backgroundTasks: [],
+      };
     default:
       return unknownEvent(event);
   }
@@ -1059,6 +1084,38 @@ function openRequest(
     );
   }
   return [...transcript.requests, request];
+}
+
+/**
+ * `entry` once the CLI process that was running it has ended (it was
+ * replaced, or the entry is read back from a session file): a call still
+ * running was interrupted, a message still streaming ends where it got to,
+ * and a subagent or background task it started cannot run now, though how it
+ * ended nobody recorded. Anything else is as it was.
+ */
+export function withProcessEnded(entry: TranscriptEntry): TranscriptEntry {
+  switch (entry.kind) {
+    case "assistant":
+      return entry.streaming ? { ...entry, streaming: false } : entry;
+    case "tool": {
+      const status = entry.status === "running" ? "interrupted" : entry.status;
+      const spawns =
+        entry.spawns?.state === "running" || entry.spawns?.state === "idle"
+          ? { ...entry.spawns, state: "unknown" as const }
+          : entry.spawns;
+      const background =
+        entry.background?.state === "running"
+          ? { state: "unknown" as const, summary: undefined }
+          : entry.background;
+      return status === entry.status &&
+        spawns === entry.spawns &&
+        background === entry.background
+        ? entry
+        : { ...entry, status, spawns, background };
+    }
+    default:
+      return entry;
+  }
 }
 
 function closeRequest(

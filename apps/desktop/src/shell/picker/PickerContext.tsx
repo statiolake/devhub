@@ -530,6 +530,8 @@ function confirmIntent(
       return { type: "confirm_stop_agent", confirmationId };
     case "agent_continue":
       return { type: "confirm_continue_agent", confirmationId };
+    case "agent_restart":
+      return { type: "confirm_restart_agent", confirmationId };
     case "workspace_close":
       return { type: "confirm_close_workspace", confirmationId };
   }

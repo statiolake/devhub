@@ -77,6 +77,8 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	RESTARTED,
+	RESTART_MARK,
 	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
@@ -338,6 +340,14 @@ export class CodexAdapter implements ProtocolAdapter {
 	/** The conversation is broken (signed out, refused, or a failure it reported). */
 	private broken = false;
 	private version: string | undefined;
+	/**
+	 * How many times app-server was started again (Restart session). A new
+	 * server numbers its requests afresh, so what DevHub names after one of
+	 * them is named in the server's start too (`serverKey`).
+	 */
+	private starts = 0;
+	/** app-server was started again and its thread is not open yet: the thread DevHub draws is resumed, not drawn again. */
+	private reopening = false;
 
 	// What DevHub said (from `sent`), and the counters `encode` draws ids from.
 	private nextRpcId = 0;
@@ -424,18 +434,20 @@ export class CodexAdapter implements ProtocolAdapter {
 	// The port.
 
 	opening(): readonly string[] {
-		return this.lines(() => {
-			const params: InitializeParams = {
-				clientInfo: {
-					name: "devhub",
-					title: "DevHub",
-					version: this.options.clientVersion,
-				},
-				// The stable surface only: it is the one the vendored types describe.
-				capabilities: { experimentalApi: false, requestAttestation: false },
-			};
-			this.call("initialize", params);
-		});
+		return this.lines(() => this.initialize());
+	}
+
+	/** The handshake's first link, for the first server and each one started again. */
+	private initialize(): void {
+		this.call("initialize", {
+			clientInfo: {
+				name: "devhub",
+				title: "DevHub",
+				version: this.options.clientVersion,
+			},
+			// The stable surface only: it is the one the vendored types describe.
+			capabilities: { experimentalApi: false, requestAttestation: false },
+		} satisfies InitializeParams);
 	}
 
 	encode(command: ConversationCommand): readonly string[] {
@@ -530,6 +542,18 @@ export class CodexAdapter implements ProtocolAdapter {
 			} satisfies ThreadResumeParams);
 		});
 		return { kind: "write", lines };
+	}
+
+	restart(): RewindPlan & { readonly kind: "restart" } {
+		this.refuseIfSpent();
+		if (this.broken) {
+			throw new Error(
+				"the Codex conversation is broken and cannot be started again",
+			);
+		}
+		// app-server takes no thread on its command line: the new one is
+		// handed the thread in the handshake (`openThread`).
+		return { kind: "restart", session: [], mark: [RESTART_MARK] };
 	}
 
 	sent(line: string): AdapterStep {
@@ -757,6 +781,8 @@ export class CodexAdapter implements ProtocolAdapter {
 	private dispatch(line: string): void {
 		const message = decodeLine(this.reader, line);
 		switch (message.kind) {
+			case "restart":
+				return this.takeRestart();
 			case "response":
 				return this.onResponse(message.id, message.result);
 			case "error":
@@ -799,6 +825,41 @@ export class CodexAdapter implements ProtocolAdapter {
 				);
 			}
 		}
+	}
+
+	/**
+	 * The host stopped app-server and started it again on the same thread:
+	 * the conversation stays, and nothing the server that was stopped had
+	 * going goes on (`restarted`). What DevHub kept about that server goes
+	 * with it — its requests, the calls DevHub made of it, the handshake — and
+	 * the new one is greeted afresh, as a reply, so a replay does not greet it
+	 * twice; the handshake then resumes the thread already drawn.
+	 */
+	private takeRestart(): void {
+		this.emit({ type: "restarted" });
+		this.notice("info", RESTARTED, undefined);
+		this.starts += 1;
+		this.reopening = true;
+		this.sending.clear();
+		this.open.clear();
+		this.responded.clear();
+		this.calls.clear();
+		this.sentMethods.clear();
+		this.reverts.clear();
+		this.switches.clear();
+		this.interrupts.clear();
+		this.runningTurn = undefined;
+		this.childTurns.clear();
+		this.directInput.clear();
+		this.unfinished.clear();
+		this.listing = { state: "listing", models: [] };
+		this.setState({ phase: "ready", turn: "rewinding" });
+		this.initialize();
+	}
+
+	/** A request of the server's, named apart from a request of an earlier server's with the same id. */
+	private serverKey(rpcId: RpcId): string {
+		return `${this.starts}/${rpcKey(rpcId)}`;
 	}
 
 	private methodOf(id: RpcId | null, path: string): ClientMethod {
@@ -966,7 +1027,9 @@ export class CodexAdapter implements ProtocolAdapter {
 	}
 
 	private openThread(): void {
-		const { cwd, resumeThreadId } = this.options;
+		const { cwd } = this.options;
+		// A server started again goes on with the thread already open.
+		const resumeThreadId = this.mainThread ?? this.options.resumeThreadId;
 		if (
 			this.sentMethods.has("thread/start") ||
 			this.sentMethods.has("thread/resume")
@@ -993,7 +1056,10 @@ export class CodexAdapter implements ProtocolAdapter {
 			cwd: opened.cwd,
 		};
 		this.publishSession();
-		for (const turn of thread.turns) this.replayTurn(thread.id, turn);
+		// The thread a restarted server resumes is the one drawn already.
+		if (!this.reopening)
+			for (const turn of thread.turns) this.replayTurn(thread.id, turn);
+		this.reopening = false;
 		this.emitSending();
 		this.setState({
 			phase: "ready",
@@ -1171,6 +1237,14 @@ export class CodexAdapter implements ProtocolAdapter {
 					description: "Go on with an earlier thread in this Workspace",
 					argumentHint: undefined,
 					route: "resume",
+				},
+				{
+					trigger: "/",
+					name: "restart",
+					description:
+						"Restart the session: start Codex again, reconnecting its MCP servers",
+					argumentHint: undefined,
+					route: "restart",
 				},
 				...this.skills.map((skill) => ({
 					trigger: "$" as const,
@@ -1948,7 +2022,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		choices: readonly (RequestChoice & { readonly result?: JsonValue })[],
 		answers: QuestionReply | undefined,
 	): void {
-		const id = requestId(`codex/${rpcKey(rpcId)}`);
+		const id = requestId(`codex/${this.serverKey(rpcId)}`);
 		const about =
 			itemId === undefined
 				? undefined
@@ -2233,7 +2307,7 @@ export class CodexAdapter implements ProtocolAdapter {
 					const { answers } = result as ToolRequestUserInputResponse;
 					return {
 						kind: "answer",
-						id: entryId(`answer/${rpcKey(rpcId)}`),
+						id: entryId(`answer/${this.serverKey(rpcId)}`),
 						parent,
 						answers: questions.map((question, index) =>
 							answerTo(
@@ -2329,7 +2403,7 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private onResolved(params: unknown): void {
 		const { requestId: rpcId } = requestResolved(this.reader, params);
-		const id = requestId(`codex/${rpcKey(rpcId)}`);
+		const id = requestId(`codex/${this.serverKey(rpcId)}`);
 		// A request DevHub declined with an error was never opened.
 		if (!this.open.has(id)) return;
 		this.open.delete(id);

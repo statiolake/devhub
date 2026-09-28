@@ -204,6 +204,12 @@ export type ClaudeLine =
 	 * as `devhub_history` lines — not something the CLI printed.
 	 */
 	| { readonly type: "resume"; readonly session: string }
+	/**
+	 * The host stopped the CLI and started it again on the same session
+	 * (Restart session), and put this line (`RESTART_MARK`) between the two
+	 * CLIs' output — not something the CLI printed.
+	 */
+	| { readonly type: "restart" }
 	| {
 			readonly type: "history";
 			readonly message: Extract<ClaudeLine, { type: "assistant" | "user" }>;
@@ -545,6 +551,8 @@ export function decodeReceived(
 				type: "resume",
 				session: f.string(raw.session, "devhub_resume.session"),
 			};
+		case "devhub_restart":
+			return { type: "restart" };
 		// `tool_progress`: ticks of a running tool, whose entry already says it
 		// runs. `prompt_suggestion`: suggested next prompts, which v1 does not
 		// offer (design §3.5).

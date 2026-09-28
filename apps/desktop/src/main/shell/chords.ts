@@ -190,6 +190,7 @@ export type ChordEffect =
 	/** Whichever failure is on screen in whichever window is in front. */
 	| { readonly kind: "dismiss-alert" }
 	| { readonly kind: "close-agent"; readonly agentId: string }
+	| { readonly kind: "restart-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
 	/**
@@ -394,6 +395,9 @@ export function resolveChord(
 			return agent
 				? { kind: "close-agent", agentId: agent.id }
 				: closeWorkspace(snapshot, workspace);
+
+		case "restart_agent":
+			return agent ? { kind: "restart-agent", agentId: agent.id } : undefined;
 
 		case "close_workspace":
 			return closeWorkspace(snapshot, workspace);

@@ -90,6 +90,11 @@ export const conversationApi: ConversationApi = {
 			CONVERSATION_CHANNELS.continueInGui,
 			agentId,
 		) as Promise<void>,
+	restartSession: (agentId) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.restartSession,
+			agentId,
+		) as Promise<void>,
 	listSessions: (agentId, scope) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.listSessions,

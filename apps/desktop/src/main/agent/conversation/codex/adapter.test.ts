@@ -24,6 +24,8 @@ import {
 } from "../../../../model/conversation.js";
 import {
 	ProtocolMismatch,
+	RESTARTED,
+	RESTART_MARK,
 	type AdapterStep,
 	type ConversationCommand,
 } from "../protocolAdapter.js";
@@ -280,7 +282,7 @@ describe("the handshake", () => {
 		// The enabled skills, offered after `$` beside the commands after `/`.
 		expect(
 			session.commands.map((command) => `${command.trigger}${command.name}`),
-		).toEqual(["/model", "/effort", "/approvals", "/resume"]);
+		).toEqual(["/model", "/effort", "/approvals", "/resume", "/restart"]);
 		harness.receive(skills!);
 		expect(
 			harness.transcript.session.commands.filter(
@@ -1248,7 +1250,7 @@ describe("requests that are not approvals", () => {
 		});
 		const request = harness.transcript.requests[0]!;
 		expect(request).toEqual({
-			id: "codex/7",
+			id: "codex/0/7",
 			entry: undefined,
 			subject: {
 				kind: "question",
@@ -2092,6 +2094,194 @@ describe("going on with another thread (/resume)", () => {
 				(command) => command.name === "resume",
 			),
 		).toMatchObject({ route: "resume" });
+	});
+});
+
+describe("restarting the session", () => {
+	/** A turn running on the main thread, with the person's message in it. */
+	function running(): Harness {
+		const harness = ready();
+		harness.command({
+			kind: "send",
+			text: "here",
+			images: [],
+			origin: "person",
+		});
+		harness.receive({
+			method: "turn/started",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "full",
+					status: "inProgress",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
+		});
+		return harness;
+	}
+
+	it("starts app-server again, with the restart mark between the two", () => {
+		const harness = running();
+		expect(harness.adapter.restart()).toEqual({
+			kind: "restart",
+			session: [],
+			mark: [RESTART_MARK],
+		});
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
+	});
+
+	it("keeps the thread drawn under a quiet divider, greets the new server afresh and resumes the same thread on it", () => {
+		const harness = running();
+		const drawn = outline(harness.transcript);
+		const before = harness.written.length;
+		const step = harness.receive(RESTART_MARK);
+		expect(step.events).toContainEqual({ type: "restarted" });
+		expect(outline(harness.transcript)).toEqual([
+			...drawn,
+			`notice(info): ${RESTARTED}`,
+		]);
+		expect(harness.transcript.sending).toEqual([]);
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		const [initialize] = harness.writesSince(before) as {
+			id: number;
+			method: string;
+		}[];
+		expect(initialize).toMatchObject({ method: "initialize" });
+
+		const handshake = fixture("handshake.handwritten.ndjson").map(
+			(line) => JSON.parse(line) as { id?: number },
+		);
+		const answer = (asked: { id: number }, index: number) =>
+			harness.receive({ ...handshake[index], id: asked.id });
+		answer(initialize!, 0);
+		const [initialized, account] = harness.writesSince(before + 1) as {
+			id: number;
+			method: string;
+		}[];
+		expect(initialized).toEqual({ method: "initialized" });
+		expect(account).toMatchObject({ method: "account/read" });
+		answer(account!, 1);
+		const resumed = harness.lastWrite() as { id: number };
+		expect(resumed).toEqual({
+			id: resumed.id,
+			method: "thread/resume",
+			params: { threadId: MAIN, cwd: CWD },
+		});
+		// app-server hands the thread back with its past, which is drawn already.
+		const opened = handshake[2] as {
+			result: { thread: { turns: unknown[] } };
+		};
+		harness.receive({
+			id: resumed.id,
+			result: {
+				...opened.result,
+				thread: {
+					...opened.result.thread,
+					turns: [
+						{
+							id: "t-1",
+							items: [
+								{
+									type: "userMessage",
+									id: "past-user",
+									clientId: null,
+									content: [{ type: "text", text: "here", text_elements: [] }],
+								},
+							],
+							itemsView: "full",
+							status: "interrupted",
+							error: null,
+							startedAt: null,
+							completedAt: null,
+							durationMs: 5,
+						},
+					],
+				},
+			},
+		});
+		// The same thread, not drawn a second time.
+		expect(outline(harness.transcript)).toEqual([
+			...drawn,
+			`notice(info): ${RESTARTED}`,
+		]);
+		expect(harness.transcript.session.sessionId).toBe(MAIN);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		// The new server is asked for its models and skills again.
+		expect(
+			(harness.writesSince(before) as { method?: string }[]).map(
+				(line) => line.method,
+			),
+		).toEqual([
+			"initialize",
+			"initialized",
+			"account/read",
+			"thread/resume",
+			"model/list",
+			"skills/list",
+		]);
+
+		harness.command({
+			kind: "send",
+			text: "go on",
+			images: [],
+			origin: "person",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/start",
+			params: { threadId: MAIN },
+		});
+	});
+
+	it("names a request of the new server apart from the old one's with the same id", () => {
+		const harness = ready();
+		const ask = {
+			id: 7,
+			method: "item/tool/requestUserInput",
+			params: {
+				threadId: MAIN,
+				turnId: "t-1",
+				itemId: "ask",
+				isBlocking: true,
+				autoResolutionMs: null,
+				questions: [
+					{
+						id: "lang",
+						header: "Language",
+						question: "Which language?",
+						isOther: true,
+						isSecret: false,
+						options: [{ label: "TypeScript", description: "the usual" }],
+					},
+				],
+			},
+		};
+		harness.receive(ask);
+		const [first] = harness.transcript.requests;
+		harness.receive(RESTART_MARK);
+		expect(harness.transcript.requests).toEqual([]);
+		harness.receive(ask);
+		const [second] = harness.transcript.requests;
+		expect(second!.id).not.toBe(first!.id);
+	});
+
+	it("offers /restart as DevHub's own command", () => {
+		expect(
+			ready().transcript.session.commands.find(
+				(command) => command.name === "restart",
+			),
+		).toMatchObject({ trigger: "/", route: "restart" });
 	});
 });
 

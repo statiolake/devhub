@@ -67,6 +67,11 @@ export interface ConversationActions {
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;
   /** Open the picker of earlier sessions this Agent can go on with (`/resume`). */
   readonly openResume: () => void;
+  /**
+   * Stop the Agent's CLI and start it again on its session (`/restart`),
+   * asked about first on the confirmation sheet when the Agent is not idle.
+   */
+  readonly restart: () => Promise<void>;
   readonly reportFailure: (error: unknown) => void;
 }
 

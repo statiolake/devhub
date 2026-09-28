@@ -77,6 +77,7 @@ export function ConversationPane({
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>
         bridge.conversation.setSetting(agentId, setting, id),
       openResume: () => setResuming(true),
+      restart: () => bridge.conversation.restartSession(agentId),
       reportFailure,
     };
   }, [agentId, reportFailure]);

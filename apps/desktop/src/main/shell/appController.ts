@@ -240,6 +240,8 @@ import { WindowAttention, platformDock } from "./windowAttention.js";
 const REPOSITORY_STATUS_CONDITION = "repository_status";
 import { crash, isInvariantViolation } from "./invariant.js";
 import { InvariantViolation } from "../../model/invariant.js";
+import { HostLinkFailure } from "../agent/conversation/hostLink.js";
+import { ConversationStopped } from "../agent/conversation/failures.js";
 import {
 	deadEditorKeys,
 	editorGaveUpFailure,
@@ -946,6 +948,9 @@ export class AppController {
 					),
 					agentId,
 				),
+			// `/restart`: the question, when there is one, goes to the same
+			// sheet as the Sidebar's Restart Session and the chord's.
+			restart: (agentId) => this.requestRestartAgent(agentId),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
 			fail: (error) => namedFailure(error),
 		});
@@ -1243,6 +1248,9 @@ export class AppController {
 				this.placeKeyboardOnSurface();
 				this.requestCloseAgent(agentId);
 			},
+			restartAgent: (agentId) => {
+				void this.requestRestartAgent(agentId);
+			},
 			closeWorkspace: (workspaceId) => {
 				this.placeKeyboardOnSurface();
 				this.closeWorkspaceOrWorktree(workspaceId);
@@ -1415,6 +1423,18 @@ export class AppController {
 				// the outcome and nothing to open.
 				this.raiseCloseConfirmation(outcome, agentId);
 			},
+		);
+	}
+
+	/**
+	 * Restart an Agent's session, asking first exactly as the Sidebar's
+	 * Restart Session does: `/restart` and the chord cannot draw the question,
+	 * so it goes on the modal layer with the same token (`requestCloseAgent`).
+	 */
+	private async requestRestartAgent(agentId: string): Promise<void> {
+		this.raiseCloseConfirmation(
+			await this.dispatchFromPage({ type: "restart_agent", agentId }),
+			agentId,
 		);
 	}
 
@@ -2923,6 +2943,9 @@ export class AppController {
 			case "terminate_agent":
 				await this.stopAgent(effect.token, effect.agentId, effect.kind);
 				return;
+			case "restart_agent":
+				await this.restartAgent(effect.token, effect.agentId);
+				return;
 			case "reconcile_agent":
 			case "reconcile_agents":
 				await this.reconcile(
@@ -3445,6 +3468,41 @@ export class AppController {
 				? { type: "agent_stop_completed", token, agentId, result }
 				: { type: "agent_termination_completed", token, agentId, result },
 		);
+	}
+
+	/**
+	 * Start a GUI Agent's CLI again on its session: done once the new CLI is
+	 * ready. The conversation's refusal or failure, and a host that could not
+	 * start it again, are the person's news, drawn once here and answered to
+	 * whoever asked; anything else is DevHub's own bug and goes to the root.
+	 */
+	private async restartAgent(
+		token: OperationToken,
+		agentId: ReturnType<typeof parseAgentId>,
+	): Promise<void> {
+		const wiring = this.agentWiring;
+		if (wiring === undefined) {
+			throw new InvariantViolation(
+				"a restart was dispatched before the Agent adapter was wired",
+			);
+		}
+		try {
+			await (await wiring.conversations.of(agentId)).restart();
+		} catch (error: unknown) {
+			const failure =
+				error instanceof HostLinkFailure
+					? new ConversationStopped(
+							`DevHub could not start the CLI again: ${error.message}`,
+						).wire
+					: error instanceof NamedFailure
+						? error.wire
+						: undefined;
+			if (failure === undefined) throw error;
+			this.publishError(failure);
+			this.accept({ type: "operation_failed", token, failure });
+			return;
+		}
+		this.accept({ type: "agent_restart_completed", token, agentId });
 	}
 
 	private async reconcile(

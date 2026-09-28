@@ -163,6 +163,12 @@ export type Effect =
       readonly token: OperationToken;
       readonly agentId: AgentId;
     }
+  /** Start a GUI Agent's CLI again on its session (`restart_agent`). */
+  | {
+      readonly kind: "restart_agent";
+      readonly token: OperationToken;
+      readonly agentId: AgentId;
+    }
   | {
       readonly kind: "reconcile_agents";
       readonly token: OperationToken;
@@ -212,6 +218,7 @@ type OperationKind =
   | "launch_agent"
   | "inspect_workspace"
   | "stop_agent"
+  | "restart_agent"
   | "reconcile_agent"
   | "reconcile_agents"
   | "terminate_agent"
@@ -257,9 +264,10 @@ interface CachedDispatch {
 
 /**
  * What an Agent is asked about before it is done to it, because it stops the
- * Agent's CLI where it stands: stopping it, and carrying it on in its other
- * presentation (which stops it once the new one runs). Both are asked about
- * on the one rule, `agentIsIdle`.
+ * Agent's CLI where it stands: stopping it, carrying it on in its other
+ * presentation (which stops it once the new one runs), and restarting it
+ * (which starts it again on the same session). All are asked about on the
+ * one rule, `agentIsIdle`.
  */
 type AgentAct =
   | { readonly kind: "stop" }
@@ -267,7 +275,39 @@ type AgentAct =
       readonly kind: "continue";
       readonly presentation: AgentPresentation;
       readonly session: string;
-    };
+    }
+  | { readonly kind: "restart" };
+
+/** The question `askAbout` raises about `act` on `agentId`. */
+function purposeOf(agentId: AgentId, act: AgentAct): ConfirmationPurpose {
+  switch (act.kind) {
+    case "stop":
+      return { kind: "stop_agent", agentId };
+    case "continue":
+      return { kind: "continue_agent", agentId };
+    case "restart":
+      return { kind: "restart_agent", agentId };
+  }
+}
+
+/** The question the sheet asks about `act` on `agentId`. */
+function confirmationOf(
+  agentId: AgentId,
+  act: AgentAct,
+): ConfirmationOutcomePurpose {
+  switch (act.kind) {
+    case "stop":
+      return { kind: "agent_stop", agentId };
+    case "continue":
+      return {
+        kind: "agent_continue",
+        agentId,
+        presentation: act.presentation,
+      };
+    case "restart":
+      return { kind: "agent_restart", agentId };
+  }
+}
 
 type PendingConfirmationRequest =
   | {
@@ -723,6 +763,12 @@ export class AppCoordinator {
         return this.confirmAgentAct(intent.confirmationId, "stop", id);
       case "retry_stop_agent":
         return this.retryStop(intent.agentId, id);
+      case "restart_agent":
+        // Refused before anything is asked, as a continue is.
+        this.restartable(intent.agentId);
+        return this.askAbout(intent.agentId, { kind: "restart" }, id);
+      case "confirm_restart_agent":
+        return this.confirmAgentAct(intent.confirmationId, "restart", id);
       case "mark_agent_unread":
         this.model.markAgentUnread(intent.agentId);
         return this.transitionOutcome(beforeRevision, id);
@@ -1057,10 +1103,7 @@ export class AppCoordinator {
     this.emitEffect({
       kind: "generate_confirmation_id",
       token,
-      purpose: {
-        kind: act.kind === "stop" ? "stop_agent" : "continue_agent",
-        agentId: agent,
-      },
+      purpose: purposeOf(agent, act),
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
@@ -1097,7 +1140,38 @@ export class AppCoordinator {
         return this.startAgentStop(agent, id);
       case "continue":
         return this.beginContinue(agent, act.presentation, act.session, id);
+      case "restart":
+        return this.startAgentRestart(agent, id);
     }
+  }
+
+  /**
+   * Agent `agentId`, when it can be restarted: it is there, and it is a GUI
+   * Agent, whose CLI DevHub's host starts and can start again. A terminal
+   * Agent's CLI is the terminal's own process.
+   */
+  private restartable(agentId: AgentId): void {
+    const agent = this.model.agent(agentId);
+    if (!agent || !this.model.workspaceForAgent(agentId)) {
+      throw domainRefusal(DomainErrorCode.UnknownAgent);
+    }
+    if (agent.presentation !== "gui") {
+      throw domainRefusal(
+        DomainErrorCode.InvalidAgentControlTransition,
+        `“${agent.displayName}” is a terminal Agent, so it has no session to restart: its CLI runs in the terminal itself. Continue it in the GUI to restart it there.`,
+      );
+    }
+  }
+
+  /** Actually restart it. The one second half, whether or not anything was asked. */
+  private startAgentRestart(agent: AgentId, id: OperationId): IntentOutcome {
+    const token = this.startOperation(
+      "restart_agent",
+      { kind: "agent", agentId: agent },
+      id,
+    );
+    this.emitEffect({ kind: "restart_agent", token, agentId: agent });
+    return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
   /**
@@ -1246,6 +1320,8 @@ export class AppCoordinator {
         );
       case "agent_stop_completed":
         return this.completeAgentStop(event.token, event.agentId, event.result);
+      case "agent_restart_completed":
+        return this.completeAgentRestart(event.token, event.agentId);
       case "agent_termination_completed":
         return this.completeAgentTermination(
           event.token,
@@ -1304,6 +1380,20 @@ export class AppCoordinator {
       case "operation_failed":
         return this.completeOperationFailed(event.token, event.failure);
     }
+  }
+
+  private completeAgentRestart(
+    token: OperationToken,
+    agentId: AgentId,
+  ): IntentOutcome {
+    this.takePending(
+      token,
+      "restart_agent",
+      (target) => target.kind === "agent" && target.agentId === agentId,
+    );
+    const snapshot = this.snapshot();
+    this.emit({ kind: "operation_completed", token });
+    return { kind: "noop", snapshot };
   }
 
   private completeOperationFailed(
@@ -1775,13 +1865,7 @@ export class AppCoordinator {
             inspection: request.inspection,
             worktree: request.worktree,
           }
-        : request.act.kind === "stop"
-          ? { kind: "agent_stop", agentId: request.agentId }
-          : {
-              kind: "agent_continue",
-              agentId: request.agentId,
-              presentation: request.act.presentation,
-            };
+        : confirmationOf(request.agentId, request.act);
 
     // One open question per subject: a newer one about the same Agent or
     // Workspace replaces the one before it.
