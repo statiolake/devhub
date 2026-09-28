@@ -39,6 +39,10 @@ export const CONVERSATION_CHANNELS = {
 	restartSession: "devhub:conversation:restart-session",
 	rewind: "devhub:conversation:rewind",
 	saveDraft: "devhub:conversation:save-draft",
+	mcpSignIn: "devhub:conversation:mcp-sign-in",
+	mcpSignInInput: "devhub:conversation:mcp-sign-in-input",
+	mcpSignInCancel: "devhub:conversation:mcp-sign-in-cancel",
+	mcpSignInDismiss: "devhub:conversation:mcp-sign-in-dismiss",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -83,6 +87,15 @@ export type ConversationCommandWire =
 			readonly kind: "set-setting";
 			readonly which: "model" | "effort" | "mode";
 			readonly id: string;
+	  }
+	/** Ask about the MCP servers, or do one of a server's `McpServer.actions` but `sign-in`. */
+	| { readonly kind: "mcp"; readonly request: McpRequestWire };
+
+export type McpRequestWire =
+	| { readonly action: "refresh" }
+	| {
+			readonly action: "reconnect" | "enable" | "disable";
+			readonly server: string;
 	  };
 
 export interface ConversationAttachment {
@@ -181,6 +194,23 @@ export interface ConversationApi {
 		which: "model" | "effort" | "mode",
 		id: string,
 	): Promise<void>;
+	/**
+	 * Ask the Agent's CLI about its MCP servers, or reconnect, enable or
+	 * disable one. Resolves once the request is written; what the CLI
+	 * answers is in `Transcript.mcp`.
+	 */
+	mcp(agentId: string, request: McpRequestWire): Promise<void>;
+	/**
+	 * Sign in to one of the Agent's MCP servers: its CLI's own `mcp login`,
+	 * run on the Agent's machine and shown in `Transcript.mcpSignIn`.
+	 * Resolves once it has started.
+	 */
+	signIn(agentId: string, server: string): Promise<void>;
+	/** A line for the running sign-in's prompt (the redirect URL pasted back). */
+	signInInput(agentId: string, text: string): Promise<void>;
+	cancelSignIn(agentId: string): Promise<void>;
+	/** Put away a sign-in that has ended. */
+	dismissSignIn(agentId: string): Promise<void>;
 	/**
 	 * The Agent's unsent draft is now `text` (empty: none). Main keeps the last
 	 * one it is told, across restarts, for as long as the Agent exists

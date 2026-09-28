@@ -34,7 +34,11 @@ import {
 } from "../agent/conversation/hostCommand.js";
 import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
-import { SessionNotResumable } from "../agent/conversation/failures.js";
+import {
+	ConversationRefused,
+	SessionNotResumable,
+} from "../agent/conversation/failures.js";
+import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
@@ -134,6 +138,20 @@ export interface GuiConversations {
 	 * read back is refused before the running CLI is touched.
 	 */
 	resume(agentId: AgentId, session: string): Promise<void>;
+	/**
+	 * Sign in to one of a GUI Agent's MCP servers (`mcpSignIn.ts`): the CLI's
+	 * own `mcp login` run on the Agent's machine, shown in
+	 * `Transcript.mcpSignIn` as it goes. Resolves once it has started; once
+	 * it has succeeded the server is reconnected. Refused while another runs,
+	 * or for a server the panel does not offer a sign-in for.
+	 */
+	signIn(agentId: AgentId, server: string): Promise<void>;
+	/** A line the person typed for the running sign-in's prompt. */
+	signInInput(agentId: AgentId, text: string): Promise<void>;
+	/** Stop the running sign-in. */
+	cancelSignIn(agentId: AgentId): Promise<void>;
+	/** Put away a sign-in that has ended. */
+	dismissSignIn(agentId: AgentId): Promise<void>;
 	readonly registry: ConversationRegistry;
 }
 
@@ -151,6 +169,8 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	 * the ending as news.
 	 */
 	const stopping = new Set<AgentId>();
+	/** Each GUI Agent's MCP sign-in, running or run last. */
+	const signIns = new Map<AgentId, McpSignInRun>();
 
 	const stateDirectory = async (machine: RuntimeId, agentId: AgentId) =>
 		agentStateDirectory(
@@ -233,6 +253,67 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					: [];
 			await conversation.resumeSession(session, history);
 		},
+		async signIn(agentId, server) {
+			const conversation = await conversations.of(agentId);
+			const { agent, workspace, runtime } = placeOf(agentId);
+			const running = signIns.get(agentId);
+			if (running?.state.phase === "running") {
+				throw new ConversationRefused(
+					`The sign-in to ${running.server} is still running. Cancel it first.`,
+				);
+			}
+			const listed = conversation
+				.reading()
+				.transcript.mcp.servers?.find((each) => each.name === server);
+			if (listed === undefined || !listed.actions.includes("sign-in")) {
+				throw new ConversationRefused(
+					`${agent.displayName} offers no sign-in to an MCP server named ${server} now.`,
+				);
+			}
+			// Declared before it is made: the run shows itself as it starts,
+			// and a run that is no longer the Agent's shows nothing.
+			let run: McpSignInRun | undefined = undefined;
+			run = new McpSignInRun({
+				machine: runtime,
+				program: agent.profile.command,
+				env: Object.fromEntries(agent.profile.env),
+				cwd: workspace.root,
+				server,
+				show: (signIn) => {
+					if (run === undefined || signIns.get(agentId) === run)
+						void conversation.showSignIn(signIn);
+				},
+				// Signed in: the server is connected again with the new
+				// credentials, and asked about afresh once it is.
+				signedIn: () =>
+					conversation.command({
+						kind: "mcp",
+						request: { action: "reconnect", server },
+					}),
+			});
+			signIns.set(agentId, run);
+		},
+		async signInInput(agentId, text) {
+			const run = signIns.get(agentId);
+			if (run === undefined) {
+				throw new ConversationRefused("No MCP sign-in is running.");
+			}
+			run.input(text);
+		},
+		async cancelSignIn(agentId) {
+			signIns.get(agentId)?.cancel();
+		},
+		async dismissSignIn(agentId) {
+			const run = signIns.get(agentId);
+			if (run === undefined) return;
+			if (run.state.phase === "running") {
+				throw new ConversationRefused(
+					`The sign-in to ${run.server} is still running. Cancel it first.`,
+				);
+			}
+			signIns.delete(agentId);
+			await (await conversations.of(agentId)).showSignIn(undefined);
+		},
 		async session(agentId) {
 			const conversation = await conversations.of(agentId);
 			const agent = options.model().agent(agentId)!;
@@ -280,6 +361,8 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		kind: string,
 	): Promise<void> => {
 		await registry.close(agentId);
+		signIns.get(agentId)?.cancel();
+		signIns.delete(agentId);
 		const runtime = options.machineRuntime(machine);
 		const directory = await stateDirectory(machine, agentId);
 		if (!stopping.has(agentId)) {

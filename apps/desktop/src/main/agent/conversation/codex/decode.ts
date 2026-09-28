@@ -65,6 +65,7 @@ import type { Turn } from "./protocol/v2/Turn.js";
 import type { TurnPlanStep } from "./protocol/v2/TurnPlanStep.js";
 import type { TurnPlanUpdatedNotification } from "./protocol/v2/TurnPlanUpdatedNotification.js";
 import type { WarningNotification } from "./protocol/v2/WarningNotification.js";
+import type { McpServerStatus } from "./protocol/v2/McpServerStatus.js";
 
 /** Reads fields of one message, failing with that message's path and the CLI's version. */
 export class Reader {
@@ -412,6 +413,44 @@ export function modelListResponse(
 		};
 	});
 	return { models, next: r.nullableString(o, "nextCursor", "result") };
+}
+
+/**
+ * One MCP server as `mcpServerStatus/list` names it: the fields the panel
+ * reads, with the statuses kept as Codex's words, so a word a later Codex
+ * adds is shown rather than refused.
+ */
+export interface CodexMcpServer {
+	readonly name: string;
+	/** `runtimeStatus`: null when Codex has no connection state for it. */
+	readonly runtimeStatus: string | null;
+	/** `authStatus`: `unsupported`, `notLoggedIn`, `bearerToken`, `oAuth`… */
+	readonly authStatus: string;
+	readonly pluginId: string | null;
+	/** `toolsError`: why listing its tools failed. */
+	readonly toolsError: string | null;
+}
+
+/** One page of `mcpServerStatus/list`, and the cursor of the next. */
+export function mcpServerStatusListResponse(
+	r: Reader,
+	value: unknown,
+): {
+	readonly servers: readonly CodexMcpServer[];
+	readonly next: string | null;
+} {
+	const o = r.fields(value, "result");
+	const servers = r.array(o, "data", "result", (item, path) => {
+		const m = r.fields(item, path);
+		return {
+			name: r.string(m, "name" satisfies keyof McpServerStatus, path),
+			runtimeStatus: r.nullableString(m, "runtimeStatus", path),
+			authStatus: r.string(m, "authStatus", path),
+			pluginId: r.nullableString(m, "pluginId", path),
+			toolsError: r.nullableString(m, "toolsError", path),
+		};
+	});
+	return { servers, next: r.nullableString(o, "nextCursor", "result") };
 }
 
 /**

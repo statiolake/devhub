@@ -82,6 +82,7 @@ import {
 	type ConversationEvent,
 	type EntryId,
 	type ImageRef,
+	type McpSignIn,
 	type PendingId,
 	type PendingMessage,
 	type RewindOutcome,
@@ -386,6 +387,18 @@ export class AgentConversation {
 		this.#setPending(
 			pending.map((each) => (which(each) ? { ...each, editing } : each)),
 		);
+	}
+
+	/**
+	 * How the MCP sign-in DevHub runs for this Agent stands now
+	 * (`Transcript.mcpSignIn`), or none. DevHub's own, like the held
+	 * messages: it is not in the journal, and a restart of DevHub forgets it
+	 * along with the command it ran.
+	 */
+	showSignIn(signIn: McpSignIn | undefined): Promise<void> {
+		return this.#serial(async () => {
+			this.#apply({ type: "mcp-sign-in", signIn });
+		});
 	}
 
 	/** Take a held message back: it is never written. */

@@ -405,6 +405,17 @@ export interface TerminalLauncher {
 	readonly binDirectory: string | undefined;
 }
 
+/** A `forwardLoopbackPort` held open. */
+export interface LoopbackForward {
+	/**
+	 * The machine the port now reaches, for a sentence (`build-box`);
+	 * undefined when nothing had to be forwarded, on this Mac.
+	 */
+	readonly to: string | undefined;
+	/** Take the forward away. Rejects, in ssh's words, when it could not be. */
+	close(): Promise<void>;
+}
+
 /** A program, its arguments, and what it needs in its environment. */
 export interface MachineCommand {
 	readonly file: string;
@@ -570,6 +581,20 @@ export interface Runtime {
 	 * on the host.
 	 */
 	commandFromHere(command: MachineCommand): Promise<MachineCommand>;
+
+	/**
+	 * Make `localhost:<port>` on this Mac reach `localhost:<port>` on this
+	 * machine, until the forward is closed.
+	 *
+	 * What an OAuth sign-in run on this machine needs (`mcpSignIn.ts`): the
+	 * command listens for the browser's redirect on a `localhost` port of the
+	 * machine it runs on, and the browser that follows the redirect is this
+	 * Mac's. On this Mac the port is already the same port, so there is
+	 * nothing to make; on a host it is `ssh -O forward -L` on the host's
+	 * master, cancelled by `close`. Refused, in ssh's words, when the port
+	 * cannot be bound here.
+	 */
+	forwardLoopbackPort(port: number): Promise<LoopbackForward>;
 
 	readonly cadence: RuntimeCadence;
 	/**

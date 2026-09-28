@@ -58,6 +58,10 @@ import {
 	type JsonValue,
 	type PendingRequest,
 	type Question,
+	type McpAction,
+	type McpServer,
+	type McpServerStatus,
+	type McpState,
 	type RequestAnswer,
 	type RequestChoice,
 	type RequestId,
@@ -87,6 +91,7 @@ import {
 	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
+	type McpRequest,
 	type ProtocolAdapter,
 	type RewindPlan,
 	type SettingName,
@@ -103,6 +108,7 @@ import {
 	fileChangeApproval,
 	initializeResponse,
 	itemNotification,
+	mcpServerStatusListResponse,
 	modelListResponse,
 	skillsListResponse,
 	patchUpdated,
@@ -126,6 +132,7 @@ import {
 	warning,
 	type FileChange,
 	type Item,
+	type CodexMcpServer,
 	type ModelChoice,
 	type SkillChoice,
 	type ReasoningDelta,
@@ -145,6 +152,7 @@ import type { GetAccountParams } from "./protocol/v2/GetAccountParams.js";
 import type { McpServerElicitationRequestResponse } from "./protocol/v2/McpServerElicitationRequestResponse.js";
 import type { ModelListParams } from "./protocol/v2/ModelListParams.js";
 import type { SkillsListParams } from "./protocol/v2/SkillsListParams.js";
+import type { ListMcpServerStatusParams } from "./protocol/v2/ListMcpServerStatusParams.js";
 import type { PermissionsRequestApprovalResponse } from "./protocol/v2/PermissionsRequestApprovalResponse.js";
 import type { SandboxPolicy } from "./protocol/v2/SandboxPolicy.js";
 import type { ThreadResumeParams } from "./protocol/v2/ThreadResumeParams.js";
@@ -222,6 +230,51 @@ function modeOf(
 // Methods: every one the vendored protocol names is placed here, so a method a
 // new Codex adds is a compile error until someone decides what it means.
 
+/**
+ * A server as the panel draws it. Codex's connection state leads; one it has
+ * none for that waits on a sign-in (`authStatus` `notLoggedIn`) needs one.
+ * `sign-in` is offered wherever Codex says there is none, `reconnect` for
+ * every server that is not disabled (Codex keeps that in its config, which
+ * DevHub does not write).
+ */
+function codexMcpServer(server: CodexMcpServer): McpServer {
+	const status = codexMcpStatus(server);
+	const signIn =
+		status === "needs-sign-in" || server.authStatus === "notLoggedIn";
+	const actions: McpAction[] = [];
+	if (signIn && status !== "disabled") actions.push("sign-in");
+	if (status !== "disabled") actions.push("reconnect");
+	return {
+		name: server.name,
+		status,
+		said: server.runtimeStatus ?? server.authStatus,
+		error: server.toolsError ?? undefined,
+		source: server.pluginId === null ? undefined : `plugin ${server.pluginId}`,
+		actions,
+	};
+}
+
+function codexMcpStatus(server: CodexMcpServer): McpServerStatus {
+	switch (server.runtimeStatus) {
+		case "connected":
+			return "connected";
+		case "starting":
+		case "notStarted":
+			return "connecting";
+		case "authenticationRequired":
+			return "needs-sign-in";
+		case "failed":
+		case "cancelled":
+			return "failed";
+		case "disabled":
+			return "disabled";
+		case null:
+			return server.authStatus === "notLoggedIn" ? "needs-sign-in" : "unknown";
+		default:
+			return "unknown";
+	}
+}
+
 /** A method DevHub reads nothing from, and why. */
 interface Unused {
 	readonly unused: string;
@@ -239,6 +292,8 @@ type ClientMethod =
 	| "thread/revert"
 	| "model/list"
 	| "skills/list"
+	| "mcpServerStatus/list"
+	| "config/mcpServer/reload"
 	| "turn/start"
 	| "turn/steer"
 	| "turn/interrupt";
@@ -251,6 +306,8 @@ const CLIENT_METHODS: readonly ClientMethod[] = [
 	"thread/revert",
 	"model/list",
 	"skills/list",
+	"mcpServerStatus/list",
+	"config/mcpServer/reload",
 	"turn/start",
 	"turn/steer",
 	"turn/interrupt",
@@ -415,6 +472,16 @@ export class CodexAdapter implements ProtocolAdapter {
 	};
 	/** The skills `skills/list` named for the thread's directory; none until it answers. */
 	private skills: readonly SkillChoice[] = [];
+	/**
+	 * The MCP servers the last full `mcpServerStatus/list` named; undefined
+	 * until one has. The pages of one still listing are `mcpPages`.
+	 */
+	private mcpServers: readonly CodexMcpServer[] | undefined;
+	private mcpPages: CodexMcpServer[] = [];
+	/** The last MCP request of the person's Codex refused (`McpState.failure`). */
+	private mcpFailure: string | undefined;
+	/** The `config/mcpServer/reload` calls Codex has not answered, by id. */
+	private readonly reloads = new Set<string>();
 	private readonly open = new Map<RequestId, OpenRequest>();
 	/** Child thread → the tool entry that started it. */
 	private readonly threadParents = new Map<string, EntryId>();
@@ -498,8 +565,38 @@ export class CodexAdapter implements ProtocolAdapter {
 					return this.stopSubagent(command.task);
 				case "answer":
 					return this.answer(command.request, command.answer);
+				case "mcp":
+					return this.mcpRequest(command.request);
 			}
 		});
+	}
+
+	/**
+	 * The call that carries an MCP request: `mcpServerStatus/list` for the
+	 * thread, or `config/mcpServer/reload`, which reconnects every server
+	 * with the configuration as it is now — Codex has no request that
+	 * reconnects one. An action not offered for that server now is DevHub's
+	 * bug: the panel draws only the offered.
+	 */
+	private mcpRequest(request: McpRequest): void {
+		if (request.action === "refresh") return this.listMcpServers(undefined);
+		const server = this.current.mcp.servers?.find(
+			(each) => each.name === request.server,
+		);
+		if (server === undefined || !server.actions.includes(request.action)) {
+			throw new Error(
+				`${request.action} is not offered for the MCP server ${request.server} now`,
+			);
+		}
+		this.call("config/mcpServer/reload", undefined);
+	}
+
+	private listMcpServers(cursor: string | undefined): void {
+		this.call("mcpServerStatus/list", {
+			detail: "toolsAndAuthOnly",
+			...(this.mainThread === undefined ? {} : { threadId: this.mainThread }),
+			...(cursor === undefined ? {} : { cursor }),
+		} satisfies ListMcpServerStatusParams);
 	}
 
 	configure(which: SettingName, id: string): AdapterStep {
@@ -615,8 +712,32 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.events = [];
 		this.writes = [];
 		work();
+		this.publishMcp();
 		this.spent = false;
 		return { events: this.events, replies: this.writes };
+	}
+
+	/**
+	 * The MCP servers as they stand after a step, emitted when that is news.
+	 * A reload DevHub asked for and Codex has not answered is working on
+	 * every server, since it reconnects them all.
+	 */
+	private publishMcp(): void {
+		const reloading = this.reloads.size > 0;
+		const servers = this.mcpServers?.map(codexMcpServer);
+		const mcp: McpState = {
+			servers,
+			pluginErrors: [],
+			working: reloading
+				? (servers ?? []).map((server) => ({
+						server: server.name,
+						action: "reconnect" as const,
+					}))
+				: [],
+			failure: this.mcpFailure,
+		};
+		if (JSON.stringify(mcp) === JSON.stringify(this.current.mcp)) return;
+		this.emit({ type: "mcp", mcp });
 	}
 
 	/**
@@ -700,7 +821,13 @@ export class CodexAdapter implements ProtocolAdapter {
 	private call(method: ClientMethod, params: unknown): void {
 		const id = this.nextRpcId;
 		this.nextRpcId += 1;
-		this.writes.push(JSON.stringify({ id, method, params }));
+		// A request that takes no params (`config/mcpServer/reload`) is sent
+		// without them.
+		this.writes.push(
+			JSON.stringify(
+				params === undefined ? { id, method } : { id, method, params },
+			),
+		);
 	}
 
 	/** A handshake step: made only if no line DevHub has sent already made it. */
@@ -796,6 +923,12 @@ export class CodexAdapter implements ProtocolAdapter {
 				this.emitSending();
 			}
 		}
+		// The person's next MCP request: what the last one ended in has been
+		// read, and this one's outcome replaces it.
+		if (method === "config/mcpServer/reload") {
+			this.mcpFailure = undefined;
+			this.reloads.add(rpcKey(message.id));
+		}
 		if (method === "turn/interrupt") {
 			const params = message.params as TurnInterruptParams;
 			this.interrupts.set(rpcKey(message.id), params.threadId);
@@ -889,6 +1022,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.open.clear();
 		this.responded.clear();
 		this.calls.clear();
+		this.reloads.clear();
+		this.mcpPages = [];
 		this.sentMethods.clear();
 		this.reverts.clear();
 		this.switches.clear();
@@ -972,6 +1107,19 @@ export class CodexAdapter implements ProtocolAdapter {
 			case "skills/list":
 				this.skills = skillsListResponse(this.reader, result);
 				return this.publishSession();
+			case "mcpServerStatus/list": {
+				const page = mcpServerStatusListResponse(this.reader, result);
+				this.mcpPages.push(...page.servers);
+				if (page.next !== null) return this.listMcpServers(page.next);
+				this.mcpServers = this.mcpPages;
+				this.mcpPages = [];
+				return;
+			}
+			case "config/mcpServer/reload":
+				// Done: how the servers stand now is asked again.
+				anyObjectResponse(this.reader, result);
+				this.reloads.delete(rpcKey(id));
+				return this.listMcpServers(undefined);
 			case "thread/revert":
 				threadRevertResponse(this.reader, result);
 				return this.onReverted(id);
@@ -1035,6 +1183,15 @@ export class CodexAdapter implements ProtocolAdapter {
 					`${this.codexName} could not list its skills: ${message}. None are offered after $.`,
 					raw,
 				);
+			// Said in the MCP panel, where the request was made.
+			case "mcpServerStatus/list":
+				this.mcpPages = [];
+				this.mcpFailure = `Listing the MCP servers failed: ${message}`;
+				return;
+			case "config/mcpServer/reload":
+				this.reloads.delete(rpcKey(id!));
+				this.mcpFailure = `Reconnecting the MCP servers failed: ${message}`;
+				return;
 			case "thread/revert":
 				this.reverts.delete(rpcKey(id!));
 				this.notice(
@@ -1295,6 +1452,13 @@ export class CodexAdapter implements ProtocolAdapter {
 						"Restart the session: start Codex again, reconnecting its MCP servers",
 					argumentHint: undefined,
 					route: "restart",
+				},
+				{
+					trigger: "/",
+					name: "mcp",
+					description: "MCP servers: how each stands, reconnect, sign in",
+					argumentHint: undefined,
+					route: "mcp",
 				},
 				...this.skills.map((skill) => ({
 					trigger: "$" as const,

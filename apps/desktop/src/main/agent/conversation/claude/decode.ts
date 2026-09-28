@@ -253,6 +253,11 @@ export interface McpServerState {
 	readonly status: string;
 	/** Why it failed, when the CLI says. */
 	readonly error: string | undefined;
+	/**
+	 * Where it is configured (`scope`: `user`, `project`, `local`,
+	 * `claudeai`, `managed`…); `mcp_status` says, `system/init` does not.
+	 */
+	readonly scope: string | undefined;
 }
 
 export interface PluginLoadError {
@@ -903,6 +908,7 @@ function decodeMcpServers(
 			name: f.string(server.name, `${path}.name`),
 			status: f.string(server.status, `${path}.status`),
 			error: f.optionalString(server.error, `${path}.error`),
+			scope: f.optionalString(server.scope, `${path}.scope`),
 		};
 	});
 }

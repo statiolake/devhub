@@ -67,6 +67,8 @@ export interface ConversationActions {
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;
   /** Open the picker of earlier sessions this Agent can go on with (`/resume`). */
   readonly openResume: () => void;
+  /** Open the MCP panel: the Agent's MCP servers and what can be done about each (`/mcp`). */
+  readonly openMcp: () => void;
   /**
    * Stop the Agent's CLI and start it again on its session (`/restart`),
    * asked about first on the confirmation sheet when the Agent is not idle.

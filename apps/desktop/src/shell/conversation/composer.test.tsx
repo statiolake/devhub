@@ -751,6 +751,33 @@ describe("/resume", () => {
   });
 });
 
+describe("/mcp", () => {
+  it("typed out whole opens DevHub's MCP panel and sends nothing", () => {
+    const actions = fakeActions();
+    draw(
+      withSession([], {
+        ...SESSION,
+        commands: [
+          ...COMMANDS,
+          {
+            trigger: "/",
+            name: "mcp",
+            description: "MCP servers",
+            argumentHint: undefined,
+            route: "mcp",
+          },
+        ],
+      }),
+      actions,
+    );
+    fireEvent.change(composer(), { target: { value: "/mcp" } });
+    fireEvent.keyDown(composer(), { key: "Escape" });
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    expect(actions.openMcp).toHaveBeenCalledOnce();
+    expect(actions.send).not.toHaveBeenCalled();
+  });
+});
+
 describe("/restart", () => {
   const restartable = withSession([], {
     ...SESSION,

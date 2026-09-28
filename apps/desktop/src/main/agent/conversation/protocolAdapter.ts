@@ -30,6 +30,7 @@ import type {
 	ConversationEvent,
 	EntryId,
 	ImageRef,
+	McpAction,
 	RequestAnswer,
 	RequestId,
 	RunningTask,
@@ -71,6 +72,20 @@ export type ConversationCommand =
 			readonly kind: "answer";
 			readonly request: RequestId;
 			readonly answer: RequestAnswer;
+	  }
+	/**
+	 * Ask the CLI about its MCP servers (`refresh`), or do one of the
+	 * `McpServer.actions` the adapter offers for a server. What the CLI
+	 * answers is in `Transcript.mcp`: a refusal as its `failure`, a success
+	 * as the servers asked about again.
+	 */
+	| { readonly kind: "mcp"; readonly request: McpRequest };
+
+export type McpRequest =
+	| { readonly action: "refresh" }
+	| {
+			readonly action: Exclude<McpAction, "sign-in">;
+			readonly server: string;
 	  };
 
 /** The three settings a session offers choices for, as `SessionFacts` names them. */

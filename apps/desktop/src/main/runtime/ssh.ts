@@ -83,6 +83,7 @@ import {
 import type {
 	ExecRequest,
 	ExecResult,
+	LoopbackForward,
 	MachineCommand,
 	PtyRequest,
 	Runtime,
@@ -725,6 +726,45 @@ export class SshRuntime
 				}),
 			],
 			env: {},
+		};
+	}
+
+	/**
+	 * `localhost:<port>` here reaching `localhost:<port>` on this host:
+	 * `ssh -O forward -L <port>:localhost:<port>` on the master that is
+	 * already up — a sign-in's command is running through it — and `-O
+	 * cancel` of the same pair to close it. See `Runtime.forwardLoopbackPort`.
+	 *
+	 * Cancel-first, as `#forward` is: a master outlives the DevHub that
+	 * started it, and answers a second forward of a pair it holds with
+	 * success while binding nothing. Not probed afterwards as `#forward` is:
+	 * nothing listens on the far end until the command does, and a probe
+	 * that connected would be taken by the command for the browser.
+	 */
+	async forwardLoopbackPort(port: number): Promise<LoopbackForward> {
+		await this.#ensureControlDirectory();
+		const spec = `${String(port)}:localhost:${String(port)}`;
+		await this.#mux("cancel", "-L", spec);
+		const forwarded = await this.#mux("forward", "-L", spec);
+		if (forwarded.code !== 0) {
+			const said = lastLine(forwarded.stderr.toString("utf8"));
+			this.lastFailure = said;
+			throw new Error(
+				`DevHub could not forward localhost:${String(port)} to ${this.#host}: ${said}`,
+			);
+		}
+		return {
+			to: this.#host,
+			close: async () => {
+				const cancelled = await this.#mux("cancel", "-L", spec);
+				if (cancelled.code !== 0) {
+					const said = lastLine(cancelled.stderr.toString("utf8"));
+					this.lastFailure = said;
+					throw new Error(
+						`DevHub could not take away the forward of localhost:${String(port)} to ${this.#host}: ${said}`,
+					);
+				}
+			},
 		};
 	}
 

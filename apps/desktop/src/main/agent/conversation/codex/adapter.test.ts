@@ -282,7 +282,14 @@ describe("the handshake", () => {
 		// The enabled skills, offered after `$` beside the commands after `/`.
 		expect(
 			session.commands.map((command) => `${command.trigger}${command.name}`),
-		).toEqual(["/model", "/effort", "/approvals", "/resume", "/restart"]);
+		).toEqual([
+			"/model",
+			"/effort",
+			"/approvals",
+			"/resume",
+			"/restart",
+			"/mcp",
+		]);
 		harness.receive(skills!);
 		expect(
 			harness.transcript.session.commands.filter(
@@ -3185,5 +3192,187 @@ describe("the thread's model, against the models model/list names", () => {
 		expect(session.model.choices).toEqual([]);
 		expect(session.model.unchangeable).toContain("catalog unavailable");
 		expect(session.effort.unchangeable).toContain("catalog unavailable");
+	});
+});
+
+describe("the MCP servers", () => {
+	/** One `McpServerStatus` as `mcpServerStatus/list` names it, with the fields the panel does not read. */
+	function server(fields: Record<string, unknown>): Record<string, unknown> {
+		return {
+			runtimeStatus: null,
+			pluginId: null,
+			httpOrigin: null,
+			serverInfo: null,
+			serverCapabilities: null,
+			tools: {},
+			toolsError: null,
+			resources: [],
+			resourceTemplates: [],
+			authStatus: "unsupported",
+			...fields,
+		};
+	}
+
+	/** The last request written: its id, method and params. */
+	function lastCall(harness: Harness): {
+		readonly id: number;
+		readonly method: string;
+		readonly params?: unknown;
+	} {
+		return harness.lastWrite() as never;
+	}
+
+	it("asks for them with the documented mcpServerStatus/list, for the thread, following every page", () => {
+		const harness = ready();
+		harness.command({ kind: "mcp", request: { action: "refresh" } });
+		const first = lastCall(harness);
+		expect(first.method).toBe("mcpServerStatus/list");
+		expect(first.params).toEqual({
+			detail: "toolsAndAuthOnly",
+			threadId: MAIN,
+		});
+		harness.receive({
+			id: first.id,
+			result: {
+				data: [server({ name: "docs", runtimeStatus: "connected" })],
+				nextCursor: "page-2",
+			},
+		});
+		expect(harness.transcript.mcp.servers).toBeUndefined();
+		const second = lastCall(harness);
+		expect(second.params).toEqual({
+			detail: "toolsAndAuthOnly",
+			threadId: MAIN,
+			cursor: "page-2",
+		});
+		harness.receive({
+			id: second.id,
+			result: {
+				data: [
+					server({
+						name: "linear",
+						runtimeStatus: "authenticationRequired",
+						authStatus: "notLoggedIn",
+						pluginId: "linear@openai-curated",
+					}),
+					server({
+						name: "broken",
+						runtimeStatus: "failed",
+						toolsError: "connection refused",
+					}),
+					server({ name: "later", authStatus: "notLoggedIn" }),
+					server({ name: "off", runtimeStatus: "disabled" }),
+				],
+				nextCursor: null,
+			},
+		});
+		expect(harness.transcript.mcp.servers).toEqual([
+			{
+				name: "docs",
+				status: "connected",
+				said: "connected",
+				error: undefined,
+				source: undefined,
+				actions: ["reconnect"],
+			},
+			{
+				name: "linear",
+				status: "needs-sign-in",
+				said: "authenticationRequired",
+				error: undefined,
+				source: "plugin linear@openai-curated",
+				actions: ["sign-in", "reconnect"],
+			},
+			{
+				name: "broken",
+				status: "failed",
+				said: "failed",
+				error: "connection refused",
+				source: undefined,
+				actions: ["reconnect"],
+			},
+			{
+				name: "later",
+				status: "needs-sign-in",
+				said: "notLoggedIn",
+				error: undefined,
+				source: undefined,
+				actions: ["sign-in", "reconnect"],
+			},
+			{
+				name: "off",
+				status: "disabled",
+				said: "disabled",
+				error: undefined,
+				source: undefined,
+				actions: [],
+			},
+		]);
+		// Nothing about them in the conversation itself.
+		expect(harness.transcript.entries).toEqual([]);
+	});
+
+	function listing(servers: readonly Record<string, unknown>[]): Harness {
+		const harness = ready();
+		harness.command({ kind: "mcp", request: { action: "refresh" } });
+		harness.receive({
+			id: lastCall(harness).id,
+			result: { data: servers.map(server), nextCursor: null },
+		});
+		return harness;
+	}
+
+	it("reconnects with the documented config/mcpServer/reload, every server working until it is answered, and asks again after", () => {
+		const harness = listing([
+			{ name: "docs", runtimeStatus: "connected" },
+			{ name: "broken", runtimeStatus: "failed" },
+		]);
+		harness.command({
+			kind: "mcp",
+			request: { action: "reconnect", server: "broken" },
+		});
+		const reload = lastCall(harness);
+		expect(reload).toEqual({
+			id: reload.id,
+			method: "config/mcpServer/reload",
+		});
+		expect(harness.transcript.mcp.working).toEqual([
+			{ server: "docs", action: "reconnect" },
+			{ server: "broken", action: "reconnect" },
+		]);
+		harness.receive({ id: reload.id, result: {} });
+		expect(harness.transcript.mcp.working).toEqual([]);
+		expect(lastCall(harness).method).toBe("mcpServerStatus/list");
+	});
+
+	it("offers no enabling or disabling, which Codex keeps in its config", () => {
+		const harness = listing([{ name: "off", runtimeStatus: "disabled" }]);
+		expect(() =>
+			harness.command({
+				kind: "mcp",
+				request: { action: "enable", server: "off" },
+			}),
+		).toThrow("enable is not offered for the MCP server off now");
+	});
+
+	it("says a refused request in the panel until the person makes the next one", () => {
+		const harness = listing([{ name: "broken", runtimeStatus: "failed" }]);
+		harness.command({
+			kind: "mcp",
+			request: { action: "reconnect", server: "broken" },
+		});
+		harness.receive({
+			id: lastCall(harness).id,
+			error: { code: -32603, message: "failed to refresh MCP servers: boom" },
+		});
+		expect(harness.transcript.mcp.failure).toBe(
+			"Reconnecting the MCP servers failed: failed to refresh MCP servers: boom",
+		);
+		expect(harness.transcript.mcp.working).toEqual([]);
+		harness.command({
+			kind: "mcp",
+			request: { action: "reconnect", server: "broken" },
+		});
+		expect(harness.transcript.mcp.failure).toBeUndefined();
 	});
 });

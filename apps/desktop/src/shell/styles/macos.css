@@ -992,3 +992,92 @@
 .session-preview-empty {
   margin: 0;
 }
+
+/* The MCP panel of a GUI Agent (`McpPanel`): a picker's sheet whose aside is
+   the server the person is on, its actions, and a sign-in's output. */
+.mcp-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--secondary);
+}
+
+.mcp-status-connected {
+  background: var(--status-idle);
+}
+
+.mcp-status-needs-sign-in,
+.mcp-status-connecting {
+  background: var(--status-working);
+}
+
+.mcp-status-failed {
+  background: var(--status-error);
+}
+
+.mcp-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mcp-detail-name,
+.mcp-sign-in-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.mcp-detail-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-2);
+  margin: 0;
+}
+
+.mcp-detail-facts dt {
+  color: var(--secondary);
+}
+
+.mcp-detail-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-detail-error {
+  color: var(--danger);
+}
+
+.mcp-detail-actions,
+.mcp-sign-in-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.mcp-sign-in-input .mac-field {
+  flex: 1;
+  min-width: 12em;
+}
+
+.mcp-sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.mcp-sign-in-output {
+  max-height: 14em;
+  margin: 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+}

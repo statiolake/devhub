@@ -715,7 +715,8 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   - hooks;
   - automatic approval review;
   - raw response events;
-  - MCP server status, events and progress;
+  - MCP server events and progress (their status is in the MCP panel, see
+    [MCP servers](#mcp-servers-mcp));
   - `command/exec` output.
 - A request DevHub does not handle is answered "cannot", and a notice says so.
 
@@ -1116,9 +1117,9 @@ with; the conversation's session is the one Continue in terminal resumes.
 
 **Restart Session** stops a GUI Agent's CLI and starts it again on the same
 session, in the same Agent: the pane, the transcript and the Agent's name
-stay. It is for when the CLI has to start afresh to see a change — MCP
-servers to reconnect (`/mcp` has no reconnect in `-p` mode), a configuration
-or plugin that changed, a CLI that was updated.
+stay. It is for when the CLI has to start afresh to see a change — a
+configuration or plugin that changed, a CLI that was updated. (One MCP server
+is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
 
 - It is in the Agent row's menu in the Sidebar, under `Cmd+Q Shift+R`
   (`restart_agent`), and typed as `/restart` in the composer, which is
@@ -1142,6 +1143,63 @@ or plugin that changed, a CLI that was updated.
   process, which DevHub's host does not start, so there is no host to start it
   again on the same pane. Continue it in the GUI to restart it there, or stop
   it and resume its session in a new one.
+
+## MCP servers (`/mcp`)
+
+`/mcp` in a GUI Agent opens DevHub's MCP panel, a sheet drawn like the other
+pickers: every MCP server the Agent's CLI reports, how it stands (Connected,
+Needs sign-in, Failed with its reason, Connecting, Disabled) and where it is
+configured (Claude's `scope`: `user`, `project`, `local`, `claudeai`,
+`managed`…; for Codex, the plugin it came with). Nothing about MCP is written
+into the conversation itself. It is DevHub's own command, offered for Claude
+and Codex alike.
+
+- **The list** is the CLI's answer to its documented status request, asked
+  when the panel opens and again after each action is done: Claude's
+  `mcp_status` control request (the Agent SDK's `mcpServerStatus()`, which a
+  Claude Agent also asks once it is up and after each turn, beside the
+  statuses each turn's `system/init` reports), Codex's `mcpServerStatus/list`
+  for the thread (every page). Plugins Claude says did not load are listed
+  under it.
+- **Actions** are only the ones the CLI has a documented request for, offered
+  per server as it stands:
+  - *Reconnect* — Claude: `mcp_reconnect` (`reconnectMcpServer(name)`).
+    Codex has no per-server request; its `config/mcpServer/reload` reconnects
+    every server, and the panel shows them all working until it answers.
+  - *Enable* / *Disable* — Claude: `mcp_toggle` (`toggleMcpServer(name,
+    enabled)`). Codex keeps this in its config file, which DevHub does not
+    write, so it is not offered.
+  - *Sign In…* — for a server that needs it (Claude `needs-auth`; Codex
+    `authenticationRequired`, or no sign-in yet), see below.
+  A request the CLI refused is said in the panel's footer with the CLI's
+  words, until the next action replaces it.
+- **Signing in** runs the CLI's own documented `mcp login <server>` (Claude
+  Code's CLI reference, "claude mcp login"; Codex's `codex mcp login`) on the
+  Agent's machine, with the Agent's profile's program and environment, in the
+  Workspace folder, so the credentials land where the Agent reads them. It runs
+  on a pseudo-terminal, because Claude's command needs an interactive terminal
+  when it cannot open a browser (over SSH it prints the authorization URL and
+  asks for the redirect URL to be pasted back). The panel shows what it prints
+  as it prints it, its URLs as links that open in the default browser, and a
+  line typed under it goes to its prompt — paste the address the browser ended
+  on there if the command asks. On this Mac the command may open the browser
+  itself. When it succeeds DevHub has the Agent reconnect that server, and the
+  list is asked again. One sign-in runs at a time per Agent; it can be
+  cancelled, and one that has ended stays in the panel until it is dismissed
+  or the next starts. It is DevHub's, not the journal's: quitting DevHub stops
+  it.
+- **The browser's way back.** The authorization URL's `redirect_uri` is
+  `http://localhost:<port>/…` on the machine the command runs on. For an Agent
+  on an SSH host DevHub forwards that port from this Mac to the host for as
+  long as the command runs (`ssh -O forward -L <port>:localhost:<port>` over
+  the host's existing master), and cancels the forward when the command ends,
+  whether it succeeded or not; the panel says it is forwarded. A local Agent
+  needs no forward. A forward that cannot be made (the port is taken on this
+  Mac) is said in the panel with ssh's words, and the sign-in goes on: pasting
+  the redirect address at the prompt still finishes it. A Workspace whose
+  editor is in a dev container runs its Agents where its folder is, not in the
+  container, so its sign-in is forwarded (or not) exactly as that machine's
+  other Agents' are.
 
 ## Folder trust: hooks and `.mcp.json` run without asking
 
@@ -1353,6 +1411,14 @@ read on 2026-09-25:
   the thread's rollout open (`lsof`) and still held it after `/new`
 - Codex's terminal UI, `codex-rs/tui/src/app_server_session.rs`
   (`thread_blocks_direct_input`, `canAcceptDirectInput`) at `rust-v0.156.1`
+- MCP from the command line (`claude mcp login`, `--no-browser`, the paste
+  step over SSH) — <https://code.claude.com/docs/en/mcp> and
+  <https://code.claude.com/docs/en/cli-reference>; the control requests
+  `mcp_status`, `mcp_reconnect`, `mcp_toggle` and `McpServerStatus` in the
+  Agent SDK's `sdk.d.ts`; Codex's `mcpServerStatus/list`,
+  `config/mcpServer/reload` and `codex mcp login` in
+  `app-server-protocol/schema/typescript` and `codex-rs/cli/src/mcp_cmd.rs`
+  at `rust-v0.158.0` in openai/codex
 - Claude Agent SDK TypeScript reference, `resumeSessionAt`,
   `resumeDropsTurn`, `forkSession`, `enableFileCheckpointing` —
   <https://code.claude.com/docs/en/agent-sdk/typescript>

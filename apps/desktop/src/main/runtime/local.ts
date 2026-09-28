@@ -51,6 +51,7 @@ import {
 	type ExecRequest,
 	type ExecResult,
 	type FileKind,
+	type LoopbackForward,
 	type PtyRequest,
 	type Runtime,
 	type RuntimeCadence,
@@ -449,6 +450,11 @@ export class LocalRuntime implements Runtime {
 			unreachable: undefined,
 			binDirectory: undefined,
 		};
+	}
+
+	/** Already here: the port on this Mac is the port. See `Runtime.forwardLoopbackPort`. */
+	forwardLoopbackPort(_port: number): Promise<LoopbackForward> {
+		return Promise.resolve({ to: undefined, close: () => Promise.resolve() });
 	}
 
 	/** Already here. See `Runtime.commandFromHere`. */

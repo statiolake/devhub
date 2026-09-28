@@ -120,6 +120,29 @@ export const conversationApi: ConversationApi = {
 		command(agentId, { kind: "answer", request, answer }),
 	setSetting: (agentId, which, id) =>
 		command(agentId, { kind: "set-setting", which, id }),
+	mcp: (agentId, request) => command(agentId, { kind: "mcp", request }),
+	signIn: (agentId, server) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.mcpSignIn,
+			agentId,
+			server,
+		) as Promise<void>,
+	signInInput: (agentId, text) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.mcpSignInInput,
+			agentId,
+			text,
+		) as Promise<void>,
+	cancelSignIn: (agentId) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.mcpSignInCancel,
+			agentId,
+		) as Promise<void>,
+	dismissSignIn: (agentId) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.mcpSignInDismiss,
+			agentId,
+		) as Promise<void>,
 	saveDraft: (agentId, text) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.saveDraft,

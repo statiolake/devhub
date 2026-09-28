@@ -608,16 +608,115 @@ export interface SlashCommand {
    * of the Workspace's earlier sessions, one of which this Agent then goes on
    * with (`/resume`). `restart`: DevHub's Restart session, which stops the
    * Agent's CLI and starts it again on the same session (`/restart`).
-   * Otherwise the header picker for that setting, which
+   * `mcp`: DevHub's MCP panel, the Agent's MCP servers and what can be done
+   * about each (`/mcp`). Otherwise the header picker for that setting, which
    * DevHub opens instead of sending (`/model`).
    */
   readonly route:
     | "message"
     | "resume"
     | "restart"
+    | "mcp"
     | "model"
     | "effort"
     | "mode";
+}
+
+/**
+ * How an MCP server stands, in one vocabulary for both CLIs. `unknown` is a
+ * word of the CLI's DevHub does not know (`McpServer.said` has it), shown
+ * rather than refused.
+ */
+export type McpServerStatus =
+  | "connected"
+  | "needs-sign-in"
+  | "failed"
+  | "connecting"
+  | "disabled"
+  | "unknown";
+
+/**
+ * What can be done about one MCP server from the panel, each the CLI's own
+ * documented request: `reconnect` (Claude's `mcp_reconnect`, Codex's
+ * `config/mcpServer/reload`, which reloads them all), `enable` and `disable`
+ * (Claude's `mcp_toggle`), and `sign-in` (the CLI's own `mcp login`, run by
+ * DevHub on the Agent's machine).
+ */
+export type McpAction = "reconnect" | "enable" | "disable" | "sign-in";
+
+export interface McpServer {
+  readonly name: string;
+  readonly status: McpServerStatus;
+  /** The CLI's own word for the status (`needs-auth`, `authenticationRequired`). */
+  readonly said: string;
+  /** Why it failed, when the CLI says. */
+  readonly error: string | undefined;
+  /**
+   * Where it is configured, in the CLI's words (`user`, `project`, `local`,
+   * `claudeai`, `plugin: …`); undefined when the CLI does not say.
+   */
+  readonly source: string | undefined;
+  /** The actions the adapter offers for it now, in the order they are drawn. */
+  readonly actions: readonly McpAction[];
+}
+
+/**
+ * The Agent's MCP servers as its CLI last reported them, and DevHub's
+ * requests about them. The adapter's, replaced whole (`mcp` events).
+ */
+export interface McpState {
+  /** Undefined until the CLI has said which servers it has. */
+  readonly servers: readonly McpServer[] | undefined;
+  /** Plugins the CLI said did not load, and why. */
+  readonly pluginErrors: readonly {
+    readonly plugin: string;
+    readonly message: string;
+  }[];
+  /** The person's MCP requests the CLI has not answered yet. */
+  readonly working: readonly {
+    readonly server: string;
+    readonly action: Exclude<McpAction, "sign-in">;
+  }[];
+  /**
+   * The last of the person's MCP requests the CLI refused, in its words. It
+   * stands until the person makes the next one, whose own outcome replaces it.
+   */
+  readonly failure: string | undefined;
+}
+
+export const NO_MCP: McpState = {
+  servers: undefined,
+  pluginErrors: [],
+  working: [],
+  failure: undefined,
+};
+
+/**
+ * An MCP sign-in DevHub is running for the Agent, or ran last: the CLI's own
+ * `mcp login <server>` on the Agent's machine. DevHub's own, like `pending`,
+ * not an adapter's; it stands until the next sign-in starts or the person
+ * dismisses it.
+ */
+export interface McpSignIn {
+  readonly server: string;
+  readonly phase: "running" | "succeeded" | "failed";
+  /** What the command printed so far, as text (terminal escapes taken out). */
+  readonly output: string;
+  /**
+   * The browser's way back to the command, when it needed one made: the
+   * forward of the authorization URL's `localhost` callback port to the
+   * Agent's machine, or why it could not be made.
+   */
+  readonly callback:
+    | { readonly kind: "forwarded"; readonly port: number; readonly to: string }
+    | {
+        readonly kind: "unforwarded";
+        readonly port: number;
+        readonly why: string;
+      }
+    | undefined;
+  /** Why it failed, when it did. */
+  readonly failure: string | undefined;
 }
 
 /**
@@ -751,6 +850,10 @@ export interface Transcript {
    * background: the conversation's one account of it.
    */
   readonly backgroundTasks: readonly RunningTask[];
+  /** The Agent's MCP servers (the adapter's). */
+  readonly mcp: McpState;
+  /** The MCP sign-in running or run last (DevHub's). */
+  readonly mcpSignIn: McpSignIn | undefined;
 }
 
 export interface SendingMessage {
@@ -814,6 +917,10 @@ export type ConversationEvent =
       readonly type: "background-tasks";
       readonly tasks: readonly RunningTask[];
     }
+  /** Replaces the MCP servers' state whole. The adapter's. */
+  | { readonly type: "mcp"; readonly mcp: McpState }
+  /** Replaces the MCP sign-in whole. DevHub's own, not an adapter's. */
+  | { readonly type: "mcp-sign-in"; readonly signIn: McpSignIn | undefined }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -870,6 +977,8 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   pending: [],
   sending: [],
   backgroundTasks: [],
+  mcp: NO_MCP,
+  mcpSignIn: undefined,
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -918,6 +1027,10 @@ export function applyEvent(
         ...transcript,
         backgroundTasks: backgroundTasks(transcript, event.tasks),
       };
+    case "mcp":
+      return { ...transcript, mcp: event.mcp };
+    case "mcp-sign-in":
+      return { ...transcript, mcpSignIn: event.signIn };
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {

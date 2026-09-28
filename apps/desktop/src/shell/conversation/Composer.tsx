@@ -543,7 +543,7 @@ export function Composer({
   /** Open the call a background task was started by (`ComposerFooter`). */
   readonly openTask: (call: EntryId) => void;
 }) {
-  const { send, interrupt, reportFailure, openResume, restart } =
+  const { send, interrupt, reportFailure, openResume, openMcp, restart } =
     useConversationActions();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<readonly ImageRef[]>([]);
@@ -669,6 +669,7 @@ export function Composer({
     }
     edit("");
     if (command.route === "resume") openResume();
+    else if (command.route === "mcp") openMcp();
     else if (command.route === "restart") void restart().catch(reportFailure);
     else openSetting(command.route);
   };

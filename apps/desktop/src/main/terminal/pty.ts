@@ -86,7 +86,8 @@ export interface PtyLaunch {
 export interface Pty {
 	readonly pid: number;
 	onData(listener: (bytes: Uint8Array) => void): void;
-	onExit(listener: () => void): void;
+	/** `exitCode` is the program's, when the platform reported one. */
+	onExit(listener: (exitCode?: number) => void): void;
 	write(bytes: Uint8Array): void;
 	resize(size: {
 		cols: number;
@@ -157,7 +158,7 @@ export const openPty: PtyFactory = (launch) => {
 			process_.onData((data) => listener(Buffer.from(data, "utf8")));
 		},
 		onExit(listener) {
-			process_.onExit(() => listener());
+			process_.onExit((event) => listener(event.exitCode));
 		},
 		write(bytes) {
 			process_.write(Buffer.from(bytes));

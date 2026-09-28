@@ -177,6 +177,26 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 		return options.conversations.resume(agentId, session);
 	});
 
+	handle(CONVERSATION_CHANNELS.mcpSignIn, (agentId, server) => {
+		if (typeof server !== "string")
+			throw new Error(`${JSON.stringify(server)} is not an MCP server`);
+		return options.conversations.signIn(agentId, server);
+	});
+
+	handle(CONVERSATION_CHANNELS.mcpSignInInput, (agentId, text) => {
+		if (typeof text !== "string")
+			throw new Error(`${JSON.stringify(text)} is not a line to type`);
+		return options.conversations.signInInput(agentId, text);
+	});
+
+	handle(CONVERSATION_CHANNELS.mcpSignInCancel, (agentId) =>
+		options.conversations.cancelSignIn(agentId),
+	);
+
+	handle(CONVERSATION_CHANNELS.mcpSignInDismiss, (agentId) =>
+		options.conversations.dismissSignIn(agentId),
+	);
+
 	handle(
 		CONVERSATION_CHANNELS.rewind,
 		async (agentId, message): Promise<RewindOutcome> => {
@@ -301,6 +321,26 @@ function requestFrom(wire: unknown):
 				break;
 			}
 			return { kind: "set-setting", which: command.which, id: command.id };
+		case "mcp": {
+			const request = command.request as Partial<{
+				action: unknown;
+				server: unknown;
+			}> | null;
+			if (request?.action === "refresh")
+				return { kind: "mcp", request: { action: "refresh" } };
+			if (
+				(request?.action === "reconnect" ||
+					request?.action === "enable" ||
+					request?.action === "disable") &&
+				typeof request.server === "string"
+			) {
+				return {
+					kind: "mcp",
+					request: { action: request.action, server: request.server },
+				};
+			}
+			break;
+		}
 	}
 	throw new Error(`${JSON.stringify(wire)} is not a conversation command`);
 }

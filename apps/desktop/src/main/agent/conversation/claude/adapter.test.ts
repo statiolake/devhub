@@ -354,6 +354,14 @@ describe("the handshake", () => {
 				argumentHint: undefined,
 				route: "restart",
 			},
+			{
+				trigger: "/",
+				name: "mcp",
+				description:
+					"MCP servers: how each stands, reconnect, enable or disable, sign in",
+				argumentHint: undefined,
+				route: "mcp",
+			},
 		]);
 	});
 });
@@ -479,6 +487,14 @@ describe("the permission fixture", () => {
 					"Restart the session: start the CLI again, reconnecting its MCP servers",
 				argumentHint: undefined,
 				route: "restart",
+			},
+			{
+				trigger: "/",
+				name: "mcp",
+				description:
+					"MCP servers: how each stands, reconnect, enable or disable, sign in",
+				argumentHint: undefined,
+				route: "mcp",
 			},
 		]);
 		// This handshake names no `resolvedModel`, so no choice is known to be
@@ -5071,7 +5087,7 @@ describe("a subagent woken again by SendMessage", () => {
 	});
 });
 
-describe("the MCP servers and plugins that are not working", () => {
+describe("the MCP servers", () => {
 	const SLACK = "plugin:slack:slack";
 
 	/** The handshake answered; returns what the answer had DevHub write. */
@@ -5102,11 +5118,30 @@ describe("the MCP servers and plugins that are not working", () => {
 		});
 	}
 
-	function extensionNotices(adapter: ClaudeAdapter): readonly NoticeEntry[] {
-		return adapter.transcript.entries.filter(
-			(each): each is NoticeEntry =>
-				each.kind === "notice" && each.id === "notice:extensions",
-		);
+	function refused(requestId: string, error: string): string {
+		return json({
+			type: "control_response",
+			response: { subtype: "error", request_id: requestId, error },
+		});
+	}
+
+	/** The person's MCP request, written; the control request it was. */
+	function request(
+		adapter: ClaudeAdapter,
+		mcp: Extract<ConversationCommand, { kind: "mcp" }>["request"],
+	): { readonly request_id: string; readonly request: unknown } {
+		const lines = adapter.encode({ kind: "mcp", request: mcp });
+		expect(lines).toHaveLength(1);
+		adapter.sent(lines[0]!);
+		return JSON.parse(lines[0]!);
+	}
+
+	/** Up, with the status request answered with `servers`. */
+	function reporting(servers: readonly unknown[]): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		handshake(adapter);
+		adapter.received(status("boot:2", servers));
+		return adapter;
 	}
 
 	it("asks how they stand as soon as the CLI is up, before anything is said", () => {
@@ -5118,52 +5153,72 @@ describe("the MCP servers and plugins that are not working", () => {
 				request: { subtype: "mcp_status" },
 			},
 		]);
+		expect(adapter.transcript.mcp.servers).toBeUndefined();
 	});
 
-	it("says nothing while every server is connected, or disabled by choice", () => {
-		const adapter = new ClaudeAdapter("boot");
-		handshake(adapter);
-		adapter.received(
-			status("boot:2", [
-				{ name: "playwright", status: "connected" },
-				{ name: "off", status: "disabled" },
-			]),
-		);
-		adapter.received(
-			init({ mcp_servers: [{ name: SLACK, status: "connected" }] }),
-		);
-		expect(extensionNotices(adapter)).toEqual([]);
-	});
-
-	it("is one quiet line at the top, naming a server that needs sign-in and how to sign in", () => {
-		const adapter = new ClaudeAdapter("boot");
-		handshake(adapter);
-		adapter.received(
-			status("boot:2", [
-				{ name: "playwright", status: "connected" },
-				{ name: SLACK, status: "needs-auth" },
-			]),
-		);
-		expect(adapter.transcript.entries).toEqual([
+	it("reads each server's status, source and failure into the panel's state, with what can be done about it", () => {
+		const adapter = reporting([
+			{ name: "playwright", status: "connected", scope: "user" },
+			{ name: SLACK, status: "needs-auth", scope: "plugin" },
+			{ name: "db", status: "failed", error: "HTTP 503", scope: "project" },
+			{ name: "slow", status: "pending", scope: "local" },
+			{ name: "off", status: "disabled", scope: "user" },
+			{ name: "odd", status: "sleeping" },
+		]);
+		expect(adapter.transcript.mcp.servers).toEqual([
 			{
-				kind: "notice",
-				id: "notice:extensions",
-				parent: null,
-				level: "info",
-				text: `MCP ${SLACK}: needs sign-in — run \`claude mcp login ${SLACK}\` in a terminal`,
-				raw: undefined,
+				name: "playwright",
+				status: "connected",
+				said: "connected",
+				error: undefined,
+				source: "user",
+				actions: ["reconnect", "disable"],
+			},
+			{
+				name: SLACK,
+				status: "needs-sign-in",
+				said: "needs-auth",
+				error: undefined,
+				source: "plugin",
+				actions: ["sign-in", "reconnect", "disable"],
+			},
+			{
+				name: "db",
+				status: "failed",
+				said: "failed",
+				error: "HTTP 503",
+				source: "project",
+				actions: ["reconnect", "disable"],
+			},
+			{
+				name: "slow",
+				status: "connecting",
+				said: "pending",
+				error: undefined,
+				source: "local",
+				actions: ["disable"],
+			},
+			{
+				name: "off",
+				status: "disabled",
+				said: "disabled",
+				error: undefined,
+				source: "user",
+				actions: ["enable"],
+			},
+			{
+				name: "odd",
+				status: "unknown",
+				said: "sleeping",
+				error: undefined,
+				source: undefined,
+				actions: ["reconnect", "disable"],
 			},
 		]);
 	});
 
-	it("keeps the one line up to date in place: each turn's init, then the status asked after the turn", () => {
-		const adapter = new ClaudeAdapter("boot");
-		handshake(adapter);
-		adapter.received(status("boot:2", [{ name: SLACK, status: "pending" }]));
-		expect(extensionNotices(adapter).map((each) => each.text)).toEqual([
-			`MCP ${SLACK}: still connecting`,
-		]);
-
+	it("says nothing about them in the conversation: they are the panel's", () => {
+		const adapter = reporting([{ name: SLACK, status: "needs-auth" }]);
 		adapter.received(
 			init({
 				mcp_servers: [{ name: SLACK, status: "failed", error: "HTTP 503" }],
@@ -5172,6 +5227,29 @@ describe("the MCP servers and plugins that are not working", () => {
 				],
 			}),
 		);
+		expect(adapter.transcript.entries).toEqual([]);
+		expect(adapter.transcript.mcp.pluginErrors).toEqual([
+			{ plugin: "broken", message: "needs x@2" },
+		]);
+	});
+
+	it("keeps them up to date: each turn's init, which keeps where each is configured, then the status asked after the turn", () => {
+		const adapter = reporting([
+			{ name: SLACK, status: "pending", scope: "plugin" },
+		]);
+		adapter.received(
+			init({
+				mcp_servers: [{ name: SLACK, status: "failed", error: "HTTP 503" }],
+			}),
+		);
+		expect(adapter.transcript.mcp.servers).toEqual([
+			expect.objectContaining({
+				name: SLACK,
+				status: "failed",
+				error: "HTTP 503",
+				source: "plugin",
+			}),
+		]);
 		perform(adapter, {
 			kind: "send",
 			text: "hi",
@@ -5179,11 +5257,6 @@ describe("the MCP servers and plugins that are not working", () => {
 			origin: "person",
 		});
 		adapter.received(echo("hi", "u1"));
-		expect(extensionNotices(adapter).map((each) => each.text)).toEqual([
-			`MCP ${SLACK}: failed: HTTP 503 · plugin broken did not load: needs x@2`,
-		]);
-		expect(adapter.transcript.entries[0]!.id).toBe("notice:extensions");
-
 		const ended = adapter.received(result());
 		const asked = ended.replies.map((line) => JSON.parse(line));
 		expect(asked).toEqual([
@@ -5195,45 +5268,108 @@ describe("the MCP servers and plugins that are not working", () => {
 		]);
 		for (const line of ended.replies) adapter.sent(line);
 		adapter.received(
-			status(asked[0].request_id, [{ name: SLACK, status: "connected" }]),
+			status(asked[0].request_id, [
+				{ name: SLACK, status: "connected", scope: "plugin" },
+			]),
 		);
-		expect(extensionNotices(adapter).map((each) => each.text)).toEqual([
-			"plugin broken did not load: needs x@2",
-		]);
+		expect(adapter.transcript.mcp.servers?.[0]?.status).toBe("connected");
 	});
 
-	it("says all is working once it is, rather than going silent", () => {
-		const adapter = new ClaudeAdapter("boot");
-		handshake(adapter);
-		adapter.received(status("boot:2", [{ name: SLACK, status: "pending" }]));
-		adapter.received(
-			init({ mcp_servers: [{ name: SLACK, status: "connected" }] }),
-		);
-		expect(extensionNotices(adapter).map((each) => each.text)).toEqual([
-			"MCP servers and plugins: all working now",
-		]);
+	it("asks again when the panel asks (refresh)", () => {
+		const adapter = reporting([]);
+		expect(request(adapter, { action: "refresh" }).request).toEqual({
+			subtype: "mcp_status",
+		});
 	});
 
-	it("shows a refused status request as the error it is", () => {
-		const adapter = new ClaudeAdapter("boot");
-		handshake(adapter);
-		adapter.received(
+	it("reconnects a server with the documented mcp_reconnect, working until it is answered, and asks how they stand after", () => {
+		const adapter = reporting([{ name: "db", status: "failed" }]);
+		const sent = request(adapter, { action: "reconnect", server: "db" });
+		expect(sent.request).toEqual({
+			subtype: "mcp_reconnect",
+			serverName: "db",
+		});
+		expect(adapter.transcript.mcp.working).toEqual([
+			{ server: "db", action: "reconnect" },
+		]);
+		const answered = adapter.received(
 			json({
 				type: "control_response",
 				response: {
-					subtype: "error",
-					request_id: "boot:2",
-					error: "unknown subtype",
+					subtype: "success",
+					request_id: sent.request_id,
+					response: {},
 				},
 			}),
 		);
-		expect(adapter.transcript.entries).toContainEqual(
-			expect.objectContaining({
-				kind: "notice",
-				level: "error",
-				text: "mcp_status was refused: unknown subtype",
+		expect(adapter.transcript.mcp.working).toEqual([]);
+		expect(answered.replies.map((line) => JSON.parse(line))).toEqual([
+			expect.objectContaining({ request: { subtype: "mcp_status" } }),
+		]);
+	});
+
+	it("enables and disables a server with the documented mcp_toggle", () => {
+		const adapter = reporting([
+			{ name: "on", status: "connected" },
+			{ name: "off", status: "disabled" },
+		]);
+		expect(
+			request(adapter, { action: "disable", server: "on" }).request,
+		).toEqual({
+			subtype: "mcp_toggle",
+			serverName: "on",
+			enabled: false,
+		});
+		expect(
+			request(adapter, { action: "enable", server: "off" }).request,
+		).toEqual({
+			subtype: "mcp_toggle",
+			serverName: "off",
+			enabled: true,
+		});
+		expect(adapter.transcript.mcp.working).toEqual([
+			{ server: "on", action: "disable" },
+			{ server: "off", action: "enable" },
+		]);
+	});
+
+	it("refuses an action it does not offer for that server now", () => {
+		const adapter = reporting([{ name: "off", status: "disabled" }]);
+		expect(() =>
+			adapter.encode({
+				kind: "mcp",
+				request: { action: "reconnect", server: "off" },
 			}),
+		).toThrow("reconnect is not offered for the MCP server off now");
+		expect(() =>
+			adapter.encode({
+				kind: "mcp",
+				request: { action: "disable", server: "nowhere" },
+			}),
+		).toThrow("disable is not offered for the MCP server nowhere now");
+	});
+
+	it("says a refused request in the panel until the person makes the next one", () => {
+		const adapter = reporting([{ name: "db", status: "failed" }]);
+		const first = request(adapter, { action: "reconnect", server: "db" });
+		adapter.received(refused(first.request_id, "Server not found: db"));
+		expect(adapter.transcript.mcp.failure).toBe(
+			"Reconnecting db failed: Server not found: db",
 		);
+		expect(adapter.transcript.mcp.working).toEqual([]);
+		expect(adapter.transcript.entries).toEqual([]);
+		request(adapter, { action: "reconnect", server: "db" });
+		expect(adapter.transcript.mcp.failure).toBeUndefined();
+	});
+
+	it("says a refused status request in the panel", () => {
+		const adapter = new ClaudeAdapter("boot");
+		handshake(adapter);
+		adapter.received(refused("boot:2", "unknown subtype"));
+		expect(adapter.transcript.mcp.failure).toBe(
+			"Listing the MCP servers failed: unknown subtype",
+		);
+		expect(adapter.transcript.entries).toEqual([]);
 	});
 
 	it("refuses a server reported without its status", () => {

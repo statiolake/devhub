@@ -1837,3 +1837,89 @@ describe("a dev container on a host", () => {
 		expect(Buffer.concat(chunks).toString("utf8")).toBe("the host's tmux");
 	});
 });
+
+/**
+ * An MCP sign-in's callback port (`Runtime.forwardLoopbackPort`): the
+ * browser on this Mac follows the redirect to `localhost:<port>`, and the
+ * command waiting for it is on the host.
+ */
+describe("a sign-in's callback port, forwarded to the host", () => {
+	let remoteHome: string;
+	let log: string;
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp(join(tmpdir(), "devhub-forward-"));
+		log = join(remoteHome, "ssh.log");
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+	});
+
+	function runtimeWith(forward: "bind" | "refuse" = "bind"): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...FAKE_ENVIRONMENT,
+				DEVHUB_FAKE_SSH_LOG: log,
+				DEVHUB_FAKE_FORWARD: forward,
+			},
+			tmux: FAKE_TMUX,
+		});
+	}
+
+	/** A port nothing on this Mac holds now. */
+	async function freePort(): Promise<number> {
+		const { createServer } = await import("node:net");
+		return new Promise((resolve, reject) => {
+			const server = createServer();
+			server.once("error", reject);
+			server.listen(0, "127.0.0.1", () => {
+				const address = server.address();
+				server.close(() =>
+					resolve(typeof address === "object" && address ? address.port : 0),
+				);
+			});
+		});
+	}
+
+	const muxLines = async (operation: string) =>
+		(await readFile(log, "utf8"))
+			.split("\n")
+			.filter((line) => line.includes(`-O ${operation} -L`));
+
+	it("is `-O forward -L <port>:localhost:<port>` on the host's master, and `-O cancel` of the same pair when closed", async () => {
+		const port = await freePort();
+		const pair = `${String(port)}:localhost:${String(port)}`;
+		const forward = await runtimeWith().forwardLoopbackPort(port);
+		expect(forward.to).toBe("build-box.example.com");
+		const forwarded = await muxLines("forward");
+		expect(forwarded).toHaveLength(1);
+		expect(forwarded[0]).toContain(`-L ${pair} build-box.example.com`);
+		// Cancelled first, by the same name, in case a master that outlived an
+		// earlier DevHub still holds it.
+		expect((await muxLines("cancel"))[0]).toContain(`-L ${pair}`);
+
+		await forward.close();
+		const cancelled = await muxLines("cancel");
+		expect(cancelled).toHaveLength(2);
+		expect(cancelled[1]).toContain(`-L ${pair} build-box.example.com`);
+	});
+
+	it("says why, in ssh's words, when the port cannot be bound here", async () => {
+		const port = await freePort();
+		await expect(
+			runtimeWith("refuse").forwardLoopbackPort(port),
+		).rejects.toThrow(
+			`DevHub could not forward localhost:${String(port)} to build-box.example.com: channel_setup_fwd_listener_tcpip: cannot listen to port`,
+		);
+	});
+
+	it("is nothing on this Mac, where the port already is the port", async () => {
+		const { LocalRuntime } = await import("./local.js");
+		const forward = await new LocalRuntime().forwardLoopbackPort(43117);
+		expect(forward.to).toBeUndefined();
+		await forward.close();
+	});
+});

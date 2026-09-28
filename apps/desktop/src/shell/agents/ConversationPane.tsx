@@ -23,6 +23,7 @@ import {
   type Transcript,
 } from "../../model/conversation";
 import { ConversationSurface } from "../conversation/ConversationSurface";
+import { McpPanel, type McpPanelActions } from "../conversation/McpPanel";
 import {
   SessionPicker,
   type SessionSource,
@@ -77,12 +78,28 @@ export function ConversationPane({
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>
         bridge.conversation.setSetting(agentId, setting, id),
       openResume: () => setResuming(true),
+      openMcp: () => setManagingMcp(true),
       restart: () => bridge.conversation.restartSession(agentId),
       saveDraft: (text: string) => bridge.conversation.saveDraft(agentId, text),
       reportFailure,
     };
   }, [agentId, reportFailure]);
   const [resuming, setResuming] = useState(false);
+  const [managingMcp, setManagingMcp] = useState(false);
+  const mcpActions: McpPanelActions = useMemo(() => {
+    const bridge = devhub();
+    return {
+      refresh: () => bridge.conversation.mcp(agentId, { action: "refresh" }),
+      act: (action, server) =>
+        bridge.conversation.mcp(agentId, { action, server }),
+      signIn: (server) => bridge.conversation.signIn(agentId, server),
+      signInInput: (text) => bridge.conversation.signInInput(agentId, text),
+      cancelSignIn: () => bridge.conversation.cancelSignIn(agentId),
+      dismissSignIn: () => bridge.conversation.dismissSignIn(agentId),
+      openExternalUrl: (url) => bridge.openExternalUrl(url),
+      reportFailure,
+    };
+  }, [agentId, reportFailure]);
   const sessions: SessionSource = useMemo(() => {
     const bridge = devhub().conversation;
     return {
@@ -100,6 +117,16 @@ export function ConversationPane({
         label={label}
         savedDraft={draft}
       />
+      {/* `/mcp`: the Agent's MCP servers, and what can be done about each. */}
+      {managingMcp && !hidden ? (
+        <McpPanel
+          label={label}
+          mcp={transcript.mcp}
+          signIn={transcript.mcpSignIn}
+          actions={mcpActions}
+          onClose={() => setManagingMcp(false)}
+        />
+      ) : null}
       {/* `/resume`: the Workspace's earlier sessions, one of which this
           Agent then goes on with in place of the one it is in. */}
       {resuming && !hidden ? (

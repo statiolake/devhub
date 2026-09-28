@@ -53,6 +53,10 @@ import {
 	type FileDiff,
 	type ImageRef,
 	type JsonValue,
+	type McpAction,
+	type McpServer,
+	type McpServerStatus,
+	type McpState,
 	type PlanStep,
 	type Question,
 	type RequestChoice,
@@ -79,6 +83,7 @@ import {
 	requireStoppable,
 	type AdapterStep,
 	type ConversationCommand,
+	type McpRequest,
 	type ProtocolAdapter,
 	type RewindPlan,
 	type SettingName,
@@ -123,12 +128,14 @@ const PICKED: Readonly<
 	permissions: "mode",
 	resume: "resume",
 	restart: "restart",
+	mcp: "mcp",
 };
 
 /**
  * DevHub's own commands, offered whether or not the CLI lists them:
- * `/resume`, since stream-json has no picker of its own, and `/restart`,
- * since only DevHub can start the CLI again.
+ * `/resume`, since stream-json has no picker of its own, `/restart`, since
+ * only DevHub can start the CLI again, and `/mcp`, since -p mode has no MCP
+ * panel of its own (MCP docs, "non-interactive mode").
  */
 const DEVHUB_COMMANDS = [
 	{
@@ -142,36 +149,71 @@ const DEVHUB_COMMANDS = [
 			"Restart the session: start the CLI again, reconnecting its MCP servers",
 		argumentHint: undefined,
 	},
+	{
+		name: "mcp",
+		description:
+			"MCP servers: how each stands, reconnect, enable or disable, sign in",
+		argumentHint: undefined,
+	},
 ] as const;
 
-/**
- * The one line that says which of the session's MCP servers and plugins are
- * not working: one entry, drawn where it was first needed and changed in
- * place after that, so it is never a new line per report.
- */
-const EXTENSIONS_NOTICE = entryId("notice:extensions");
-
-/**
- * An MCP server that is not working, in words the person can act on. A
- * `disabled` server is not here: disabling it was the person's own choice.
- */
-function mcpProblem(server: McpServerState): string | undefined {
-	switch (server.status) {
+/** Claude's word for an MCP server's status, in the conversation's vocabulary. */
+function mcpStatus(said: string): McpServerStatus {
+	switch (said) {
 		case "connected":
-		case "disabled":
-			return undefined;
+			return "connected";
 		case "needs-auth":
-			// A -p session cannot run the sign-in itself (MCP docs,
-			// "non-interactive mode"); a terminal can.
-			return `MCP ${server.name}: needs sign-in — run \`claude mcp login ${server.name}\` in a terminal`;
-		case "pending":
-			return `MCP ${server.name}: still connecting`;
+			return "needs-sign-in";
 		case "failed":
-			return `MCP ${server.name}: failed${server.error === undefined ? "" : `: ${server.error}`}`;
+			return "failed";
+		case "pending":
+			return "connecting";
+		case "disabled":
+			return "disabled";
 		default:
-			return `MCP ${server.name}: ${server.status}${server.error === undefined ? "" : `: ${server.error}`}`;
+			return "unknown";
 	}
 }
+
+/**
+ * What the panel offers for a server that stands so: each a documented
+ * control request (`mcp_reconnect`, `mcp_toggle`) or the documented
+ * `claude mcp login`. A server still connecting is left to finish.
+ */
+function mcpActions(status: McpServerStatus): readonly McpAction[] {
+	switch (status) {
+		case "connected":
+		case "failed":
+		case "unknown":
+			return ["reconnect", "disable"];
+		case "needs-sign-in":
+			return ["sign-in", "reconnect", "disable"];
+		case "connecting":
+			return ["disable"];
+		case "disabled":
+			return ["enable"];
+	}
+}
+
+/** The person's MCP request a control request of DevHub's is, if it is one. */
+function mcpWorking(request: JsonObject): McpState["working"] {
+	const server = request.serverName;
+	if (typeof server !== "string") return [];
+	if (request.subtype === "mcp_reconnect")
+		return [{ server, action: "reconnect" }];
+	if (request.subtype === "mcp_toggle")
+		return [
+			{ server, action: request.enabled === true ? "enable" : "disable" },
+		];
+	return [];
+}
+
+/** How a refused MCP request reads in the panel. */
+const MCP_ACTION_NAMES: Readonly<Record<string, string>> = {
+	mcp_status: "Listing the MCP servers",
+	mcp_reconnect: "Reconnecting",
+	mcp_toggle: "Enabling or disabling",
+};
 
 /** Commands that only work in the TUI; "continue in terminal" is the way to them. */
 const TUI_ONLY = new Set(["login", "logout"]);
@@ -380,10 +422,15 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	/** The model the top level last wrote with: whose context window the usage is measured against. */
 	private mainModel: string | undefined;
 	private announced: readonly string[] = [];
-	/** The session's MCP servers as the CLI last reported them (`system/init`, `mcp_status`). */
-	private mcpServers: readonly McpServerState[] = [];
+	/**
+	 * The session's MCP servers as the CLI last reported them (`system/init`,
+	 * `mcp_status`); undefined until it has.
+	 */
+	private mcpServers: readonly McpServerState[] | undefined;
 	/** The plugins the CLI last said did not load (`system/init`). */
 	private pluginErrors: readonly PluginLoadError[] = [];
+	/** The last MCP request of the person's the CLI refused (`McpState.failure`). */
+	private mcpFailure: string | undefined;
 	private readonly unknownSeen = new Set<string>();
 	private notices = 0;
 	private commandCount = 0;
@@ -439,6 +486,37 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				];
 			case "answer":
 				return [this.answerLine(command.request, command.answer)];
+			case "mcp":
+				return [this.controlRequest(this.mcpRequest(command.request))];
+		}
+	}
+
+	/**
+	 * The control request that carries an MCP request: the SDK's
+	 * `mcpServerStatus()`, `reconnectMcpServer(name)` and
+	 * `toggleMcpServer(name, enabled)`. An action the adapter does not offer
+	 * for that server now is DevHub's bug: the panel draws only the offered.
+	 */
+	private mcpRequest(request: McpRequest): JsonObject {
+		if (request.action === "refresh") return { subtype: "mcp_status" };
+		const server = this.current.mcp.servers?.find(
+			(each) => each.name === request.server,
+		);
+		if (server === undefined || !server.actions.includes(request.action)) {
+			throw new Error(
+				`${request.action} is not offered for the MCP server ${request.server} now`,
+			);
+		}
+		switch (request.action) {
+			case "reconnect":
+				return { subtype: "mcp_reconnect", serverName: request.server };
+			case "enable":
+			case "disable":
+				return {
+					subtype: "mcp_toggle",
+					serverName: request.server,
+					enabled: request.action === "enable",
+				};
 		}
 	}
 
@@ -542,6 +620,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				case "control_request":
 					this.ours.set(sent.requestId, sent.request);
 					if (sent.subtype === "interrupt") this.interrupting = true;
+					// The person's next MCP request: what the last one ended in
+					// has been read, and this one's outcome replaces it.
+					if (sent.subtype === "mcp_reconnect" || sent.subtype === "mcp_toggle")
+						this.mcpFailure = undefined;
 					return;
 				case "control_response": {
 					this.answered.add(sent.requestId);
@@ -588,8 +670,36 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.events = [];
 		this.replies = [];
 		work();
+		this.publishMcp();
 		this.spent = false;
 		return { events: this.events, replies: this.replies };
+	}
+
+	/**
+	 * The MCP servers as they stand after a step, emitted when that is news:
+	 * what the CLI last reported, the person's requests it has not answered
+	 * (the MCP control requests of `ours`), and the last it refused.
+	 */
+	private publishMcp(): void {
+		const known = this.mcpServers;
+		const mcp: McpState = {
+			servers: known?.map((server): McpServer => {
+				const status = mcpStatus(server.status);
+				return {
+					name: server.name,
+					status,
+					said: server.status,
+					error: server.error,
+					source: server.scope,
+					actions: mcpActions(status),
+				};
+			}),
+			pluginErrors: this.pluginErrors,
+			working: [...this.ours.values()].flatMap(mcpWorking),
+			failure: this.mcpFailure,
+		};
+		if (JSON.stringify(mcp) === JSON.stringify(this.current.mcp)) return;
+		this.emit({ type: "mcp", mcp });
 	}
 
 	private emit(event: ConversationEvent): void {
@@ -1038,9 +1148,18 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					},
 					commands: this.commands(),
 				});
-				if (line.mcpServers !== undefined) this.mcpServers = line.mcpServers;
+				if (line.mcpServers !== undefined) {
+					// `system/init` does not say where a server is configured;
+					// what `mcp_status` said of it stands.
+					const before = new Map(
+						(this.mcpServers ?? []).map((server) => [server.name, server]),
+					);
+					this.mcpServers = line.mcpServers.map((server) => ({
+						...server,
+						scope: server.scope ?? before.get(server.name)?.scope,
+					}));
+				}
 				this.pluginErrors = line.pluginErrors;
-				this.reportExtensions();
 				return this.becomeReady();
 			case "stream":
 				return this.takeStream(
@@ -1138,6 +1257,13 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 		this.ours.delete(line.requestId);
 		const subtype = request.subtype as string;
+		if (!line.outcome.ok && Object.hasOwn(MCP_ACTION_NAMES, subtype)) {
+			// Said in the panel, where the request was made.
+			const server =
+				typeof request.serverName === "string" ? ` ${request.serverName}` : "";
+			this.mcpFailure = `${MCP_ACTION_NAMES[subtype]!}${server} failed: ${line.outcome.error}`;
+			return;
+		}
 		if (!line.outcome.ok) {
 			// Without the handshake there is no conversation to have; any other
 			// refusal is one request that did not happen, said where it happened.
@@ -1183,7 +1309,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 					line.outcome.payload,
 					this.current.session.agentVersion,
 				);
-				return this.reportExtensions();
+				return;
+			case "mcp_reconnect":
+			case "mcp_toggle":
+				// Done: how the servers stand now is asked again.
+				return this.askMcpStatus();
 			case "set_model":
 				return this.setSession(this.modelSettings(request.model as string));
 			case "set_permission_mode":
@@ -1934,45 +2064,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	/**
 	 * Ask the CLI how its MCP servers stand now (`mcp_status`, the SDK's
-	 * `mcpServerStatus()`): once it is up, before anyone has said anything, so
-	 * a server that cannot work is seen before it is missed, and after each
-	 * turn, since `system/init` reports them only as each turn begins.
+	 * `mcpServerStatus()`): once it is up, after each turn, since
+	 * `system/init` reports them only as each turn begins, and after each of
+	 * the person's MCP requests is done — so the MCP panel (`/mcp`) opens on
+	 * what is true now and shows what a request changed. The panel asks too
+	 * as it opens.
 	 */
 	private askMcpStatus(): void {
 		this.replies.push(this.controlRequest({ subtype: "mcp_status" }));
-	}
-
-	/**
-	 * The one line on the MCP servers and plugins that are not working. It
-	 * appears only once something is not working; once it has, it says how
-	 * they stand from then on, all working included, rather than going
-	 * silent.
-	 */
-	private reportExtensions(): void {
-		const problems = [
-			...this.mcpServers.flatMap((server) => mcpProblem(server) ?? []),
-			...this.pluginErrors.map(
-				(error) => `plugin ${error.plugin} did not load: ${error.message}`,
-			),
-		];
-		const shown = this.find(EXTENSIONS_NOTICE);
-		if (shown === undefined && problems.length === 0) return;
-		const text =
-			problems.length === 0
-				? "MCP servers and plugins: all working now"
-				: problems.join(" · ");
-		if (shown?.kind === "notice" && shown.text === text) return;
-		this.emit({
-			type: "entry",
-			entry: {
-				kind: "notice",
-				id: EXTENSIONS_NOTICE,
-				parent: null,
-				level: "info",
-				text,
-				raw: undefined,
-			},
-		});
 	}
 
 	/**

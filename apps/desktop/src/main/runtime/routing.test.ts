@@ -83,6 +83,9 @@ class RecordingRuntime implements Runtime {
 	}) {
 		return Promise.resolve(command);
 	}
+	forwardLoopbackPort() {
+		return Promise.resolve({ to: undefined, close: () => Promise.resolve() });
+	}
 	resolveProgram(configured: string) {
 		return Promise.resolve({
 			kind: "command_name" as const,

@@ -57,6 +57,9 @@ const ROOTS = [
   "v2/ThreadListResponse",
   "v2/SkillsListParams",
   "v2/SkillsListResponse",
+  "v2/ListMcpServerStatusParams",
+  "v2/ListMcpServerStatusResponse",
+  "v2/McpServerRefreshResponse",
 ];
 
 const SCHEMA = "codex-rs/app-server-protocol/schema/typescript";

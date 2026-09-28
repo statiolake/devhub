@@ -96,6 +96,9 @@ class FakeMachine implements Runtime {
 	}) {
 		return Promise.resolve(command);
 	}
+	forwardLoopbackPort() {
+		return Promise.resolve({ to: undefined, close: () => Promise.resolve() });
+	}
 	resolveProgram(configured: string): Promise<SettingsResolvedRuntimeWire> {
 		return Promise.resolve({ kind: "command_name", value: configured });
 	}
