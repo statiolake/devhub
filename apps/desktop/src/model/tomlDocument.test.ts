@@ -249,6 +249,48 @@ describe("editing in place", () => {
     );
   });
 
+  it("replaces a table that became a value, headings and sub-tables alike", () => {
+    const headed = [
+      "[appearance]",
+      "size = 13",
+      "",
+      "[appearance.theme]",
+      "",
+      "[appearance.theme.light]",
+      'background = "#FFFFFF"',
+      "",
+      "[appearance.theme.dark]",
+      'background = "#000000"',
+      "",
+      "[agents]",
+      "on = true",
+      "",
+    ].join("\n");
+    const next = updateTomlDocument(headed, {
+      appearance: { size: 13, theme: "vscode" },
+      agents: { on: true },
+    });
+    expect(next).toBe(
+      '[appearance]\nsize = 13\ntheme = "vscode"\n\n[agents]\non = true\n',
+    );
+    // Only the sub-tables, with no heading of the key's own.
+    const implied = [
+      "[appearance]",
+      "size = 13",
+      "",
+      "[appearance.theme.light]",
+      'background = "#FFFFFF"',
+      "",
+    ].join("\n");
+    expect(
+      parseTomlValue(
+        updateTomlDocument(implied, {
+          appearance: { size: 13, theme: "vscode" },
+        }),
+      ),
+    ).toEqual({ appearance: { size: 13, theme: "vscode" } });
+  });
+
   it("leaves an empty sub-table's heading to spell it, not a second definition", () => {
     const withEmptyEnv = [
       "version = 1",

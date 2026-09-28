@@ -8,7 +8,8 @@
  * is announced as well as stored.
  *
  * This is composition, not a copy: `ThemeMainService` does all of the work and
- * this class only forwards. Registered for `IThemeMainService` in `codeMain.ts`
+ * this class only forwards — to the shell's palette and to the Agent panes'
+ * terminal colours. Registered for `IThemeMainService` in `codeMain.ts`
  * in place of upstream's own registration — that line is what a VS Code bump
  * has to re-check, along with the signature of `saveWindowSplash`.
  */
@@ -20,6 +21,7 @@ import type {
 	IWorkspaceIdentifier,
 } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
 import { shellTheme } from "../shell/shellTheme.js";
+import { terminalColors } from "../shell/terminalColors.js";
 
 export class DevHubThemeMainService extends ThemeMainService {
 	override saveWindowSplash(
@@ -32,5 +34,9 @@ export class DevHubThemeMainService extends ThemeMainService {
 	): void {
 		super.saveWindowSplash(windowId, workspace, splash);
 		shellTheme().reportSplash(windowId, splash);
+		// The same report says the theme may have changed, and the variables
+		// are already rewritten by the time it is sent: the Agent panes' colours
+		// are read again from here. See `terminalColors.ts`.
+		terminalColors().splashReported(windowId);
 	}
 }

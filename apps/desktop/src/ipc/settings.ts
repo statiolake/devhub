@@ -48,10 +48,16 @@ export interface SettingsTerminalPaletteWire {
 	readonly ansi: readonly string[];
 }
 
-export interface SettingsTerminalThemeWire {
-	readonly light: SettingsTerminalPaletteWire;
-	readonly dark: SettingsTerminalPaletteWire;
-}
+/**
+ * `"vscode"` follows the VS Code theme's terminal colours; palettes are the
+ * person's own. See `TerminalThemeConfig` in `model/config.ts`.
+ */
+export type SettingsTerminalThemeWire =
+	| "vscode"
+	| {
+			readonly light: SettingsTerminalPaletteWire;
+			readonly dark: SettingsTerminalPaletteWire;
+	  };
 
 /**
  * There is still no colour scheme here, and `mode` is not one.

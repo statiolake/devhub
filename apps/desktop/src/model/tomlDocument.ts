@@ -430,6 +430,24 @@ export function updateTomlDocument(
   });
 
   /**
+   * Remove these blocks with their sub-tables, each span once: a block written
+   * inside another one's family goes with that one.
+   */
+  const removeBlocks = (entries: readonly TableEntry[]): void => {
+    const spans = entries.map(blockWithChildrenSpan);
+    spans.forEach((span, index) => {
+      const inside = spans.some(
+        (other, at) =>
+          at !== index &&
+          other.start <= span.start &&
+          span.end <= other.end &&
+          (other.start !== span.start || other.end !== span.end || at < index),
+      );
+      if (!inside) edits.push({ start: span.start, end: span.end, text: "" });
+    });
+  };
+
+  /**
    * Whether this key is an array of tables at all.
    *
    * With entries the value answers: every element is a table. Empty, the value
@@ -565,10 +583,19 @@ export function updateTomlDocument(
       // block left behind is an entry that comes back on the next read, and
       // here it is worse than that, because the key would then be defined
       // twice in one document and the document would not parse at all.
-      for (const entry of arrayTableBlocks(childPath)) {
-        const span = blockWithChildrenSpan(entry);
-        edits.push({ start: span.start, end: span.end, text: "" });
-      }
+      //
+      // A value that is not a table either — `terminal_theme` was palettes and
+      // is now `"vscode"` — has no headings at all, so every heading at or
+      // under the key is the old shape, and goes by the same rule.
+      removeBlocks(
+        isTable(wanted)
+          ? arrayTableBlocks(childPath)
+          : allTables.filter(
+              (entry) =>
+                entry.path.length >= childPath.length &&
+                samePath(entry.path.slice(0, childPath.length), childPath),
+            ),
+      );
 
       if (isTable(wanted)) {
         // The document's own spelling wins, and a table has one either way it

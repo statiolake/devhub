@@ -240,6 +240,15 @@ export type AppErrorCodeWire =
 	| "editor_restarting"
 	/** It kept dying, so DevHub stopped building it again. */
 	| "editor_restart_exhausted"
+	/**
+	 * The VS Code theme's terminal colours could not be read from Scratch's
+	 * workbench (`main/shell/terminalColors.ts`), or were not colours.
+	 *
+	 * Its own code because the consequence is a missing reading and not a
+	 * failed action: the Agent panes keep the colours they had. Said once
+	 * until a read works again.
+	 */
+	| "terminal_colors_unreadable"
 	/** The Agent Surface has no live channel to its Agent. */
 	| "agent_not_connected"
 	/** The Agent is gone: it ended, or something ended it. */
@@ -404,6 +413,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	editor_restarting: "The workbench stopped unexpectedly and is restarting.",
 	editor_restart_exhausted:
 		"The workbench kept stopping and will not be restarted again.",
+	terminal_colors_unreadable:
+		"The Agent panes could not take the VS Code theme's terminal colours, and keep the colours they had.",
 	agent_not_connected: "The agent surface is not connected.",
 	agent_exited: "The agent has exited.",
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
@@ -844,7 +855,11 @@ export interface TerminalPaletteWire {
 	readonly cursorText: string;
 	readonly foreground: string;
 	readonly selectionBackground: string;
-	readonly selectionForeground: string;
+	/**
+	 * Absent when the VS Code theme leaves `terminal.selectionForeground`
+	 * unset: a selected cell keeps its own colour, as it does in VS Code.
+	 */
+	readonly selectionForeground: string | undefined;
 }
 export interface TerminalThemeWire {
 	readonly dark: TerminalPaletteWire;

@@ -396,6 +396,7 @@ import type { ConfiguredAgentAction } from "../../model/config.js";
 import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
+import { terminalColors } from "./terminalColors.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
@@ -2201,7 +2202,21 @@ export class AppController {
 				),
 			},
 			this.appearanceSequence,
+			terminalColors().palette(),
 		);
+	}
+
+	/**
+	 * The VS Code theme's terminal colours moved: every pane learns them the
+	 * way it learns an edited setting.
+	 */
+	terminalColorsChanged(): void {
+		this.publishAppearance();
+	}
+
+	/** The view id of Scratch's workbench, whose theme the panes follow. */
+	scratchEditorViewId(): number | undefined {
+		return this.editorViewId(this.scratchWorkspace().key);
 	}
 
 	agentProfiles(): AgentProfiles {

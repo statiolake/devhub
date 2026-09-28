@@ -16,6 +16,14 @@ import { createAppController } from "./appController.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
 import { shellTheme } from "./shellTheme.js";
 import {
+	installTerminalColors,
+	loadTerminalColors,
+	readThemeVariables,
+	saveTerminalColors,
+	TerminalColors,
+	terminalColors,
+} from "./terminalColors.js";
+import {
 	registerShellPageProtocol,
 	SHELL_ORIGIN,
 } from "./shellPageProtocol.js";
@@ -174,6 +182,21 @@ export async function bootstrapShell(
 		() => shellWindowIfCreated()?.revealedView()?.id,
 	);
 
+	// The Agent panes' colours, for the same reason and from the same moment:
+	// the theme's terminal colours as they were at the last quit, so a pane
+	// that comes up before Scratch's workbench does is already in them.
+	const terminalColorsPath = join(
+		userDataPath,
+		"devhub",
+		"terminal-colors.json",
+	);
+	const keptTerminalColors = loadTerminalColors(terminalColorsPath);
+	installTerminalColors(
+		new TerminalColors(keptTerminalColors.palette, (next) => {
+			saveTerminalColors(terminalColorsPath, next);
+		}),
+	);
+
 	// One preload per page, in one directory, named after the page. Which
 	// preload a page is loaded with is what decides what that page can spell:
 	// see `ipc/contract.ts` for the bridges and `scripts/build-preloads.mjs`
@@ -212,6 +235,29 @@ export async function bootstrapShell(
 	shellTheme().onDidChange((next) => {
 		shellWindowIfCreated()?.applyPalette(next);
 		controller.publishTheme(next);
+	});
+	if (keptTerminalColors.refused !== undefined) {
+		controller.noteStartupFailure(
+			withDetail(
+				errorWireAt("persistence_degraded"),
+				keptTerminalColors.refused,
+			),
+		);
+	}
+	// Bound before any workbench exists: the controller opens them, and the
+	// first splash Scratch's reports is the first read.
+	terminalColors().bind({
+		followed: () => controller.scratchEditorViewId(),
+		read: (windowId) =>
+			readThemeVariables(
+				shellWindowIfCreated()?.getViewById(windowId)?.webContents,
+			),
+		changed: () => {
+			controller.terminalColorsChanged();
+		},
+		failed: (failure) => {
+			controller.noteFailure(failure);
+		},
 	});
 	await controller.startRuntimes(userDataPath);
 	// After the runtimes, and this order is load-bearing.

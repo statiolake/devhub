@@ -90,13 +90,17 @@ import {
   type EditorAttachmentWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
+  type TerminalPaletteWire,
+  type TerminalThemeWire,
   sidebarWorkspaces,
 } from "../ipc/appShell.js";
-import type {
-  AppearanceConfig,
-  ConfigDiagnostic,
-  TerminalPalette,
-} from "./config.js";
+import { isPaletteColor } from "../ipc/palette.js";
+import type { AppearanceConfig, ConfigDiagnostic } from "./config.js";
+import {
+  defaultTerminalPalettes,
+  TERMINAL_THEME_VSCODE,
+  type TerminalThemeConfig,
+} from "./terminalPalettes.js";
 import type { CoordinatorReplay } from "./coordinator.js";
 
 /** A projection that cannot be represented on the wire is a bug, not a state. */
@@ -107,7 +111,7 @@ export class SnapshotWireError extends Error {
   }
 }
 
-function paletteWire(palette: TerminalPalette) {
+function paletteWire(palette: TerminalPaletteWire): TerminalPaletteWire {
   return {
     background: palette.background,
     foreground: palette.foreground,
@@ -119,9 +123,39 @@ function paletteWire(palette: TerminalPalette) {
   };
 }
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+/**
+ * The palettes an Agent pane wears, from the setting and what the VS Code
+ * theme said last.
+ *
+ * Following the theme, the theme's terminal colours are the pane's colours
+ * whichever scheme the page is in — they are the colours of the one theme the
+ * workbench is wearing, and that theme is what decides the scheme. Before any
+ * theme has been read (the first launch of a profile, until Scratch's
+ * workbench has come up once), the built-in palettes stand in. Palettes the
+ * person named win outright.
+ */
+export function terminalThemeWire(
+  theme: TerminalThemeConfig,
+  fromVsCode: TerminalPaletteWire | undefined,
+): TerminalThemeWire {
+  const palettes: { light: TerminalPaletteWire; dark: TerminalPaletteWire } =
+    theme !== TERMINAL_THEME_VSCODE
+      ? theme
+      : fromVsCode
+        ? { light: fromVsCode, dark: fromVsCode }
+        : defaultTerminalPalettes();
+  return {
+    light: paletteWire(palettes.light),
+    dark: paletteWire(palettes.dark),
+  };
+}
 
-function paletteIsValid(palette: TerminalPalette): boolean {
+/**
+ * A palette a pane can be given: sixteen ANSI colours and every other colour a
+ * colour. The selection's foreground may be absent — a theme that leaves it
+ * unset keeps each cell's own colour under the selection, as VS Code does.
+ */
+export function terminalPaletteIsValid(palette: TerminalPaletteWire): boolean {
   return (
     palette.ansi.length === 16 &&
     [
@@ -130,15 +164,18 @@ function paletteIsValid(palette: TerminalPalette): boolean {
       palette.cursor,
       palette.cursorText,
       palette.selectionBackground,
-      palette.selectionForeground,
+      ...(palette.selectionForeground === undefined
+        ? []
+        : [palette.selectionForeground]),
       ...palette.ansi,
-    ].every((color) => HEX_COLOR.test(color))
+    ].every(isPaletteColor)
   );
 }
 
 export function appearanceWire(
   config: AppearanceConfig,
   sequence: number,
+  vsCodeTerminal: TerminalPaletteWire | undefined,
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -150,19 +187,13 @@ export function appearanceWire(
     terminalLineHeight: config.terminalLineHeight,
     terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
-    terminalTheme: {
-      light: paletteWire(config.terminalTheme.light),
-      dark: paletteWire(config.terminalTheme.dark),
-    },
+    terminalTheme: terminalThemeWire(config.terminalTheme, vsCodeTerminal),
   };
-  validateAppearanceWire(wire, config);
+  validateAppearanceWire(wire);
   return wire;
 }
 
-function validateAppearanceWire(
-  wire: AppAppearanceWire,
-  config: AppearanceConfig,
-): void {
+function validateAppearanceWire(wire: AppAppearanceWire): void {
   if (wire.sequence === 0 || wire.sequence > MAX_SAFE_JS_INTEGER) {
     throw new SnapshotWireError(
       "appearance sequence is outside the safe range",
@@ -179,8 +210,8 @@ function validateAppearanceWire(
     wire.terminalScrollSensitivity < 0.1 ||
     wire.terminalScrollSensitivity > 20 ||
     wire.terminalMargin > 64 ||
-    !paletteIsValid(config.terminalTheme.light) ||
-    !paletteIsValid(config.terminalTheme.dark)
+    !terminalPaletteIsValid(wire.terminalTheme.light) ||
+    !terminalPaletteIsValid(wire.terminalTheme.dark)
   ) {
     throw new SnapshotWireError(
       "appearance projection is outside the supported range",
@@ -689,6 +720,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "conversation_stopped":
     case "sessions_unreadable":
       return "agent";
+    case "terminal_colors_unreadable":
     case "terminal_launcher_unavailable":
     case "workspace_sessions_left_running":
     case "tmux_command_failed":
@@ -720,7 +752,9 @@ export function errorWireAt(
   const actions: AppErrorActionWire[] =
     // Something that already happened, or that trying again cannot change:
     // there is nothing to try again.
-    code === "state_migrated" || code === "input_source_unavailable"
+    code === "terminal_colors_unreadable" ||
+    code === "state_migrated" ||
+    code === "input_source_unavailable"
       ? []
       : // Trying again reads the same file; what answers it is fixing the file.
         code === "settings_refused"

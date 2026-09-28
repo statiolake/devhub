@@ -58,6 +58,10 @@ import {
 } from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { scratchDailyProblem } from "../model/scratchDay";
+import {
+  defaultTerminalPalettes,
+  TERMINAL_THEME_VSCODE,
+} from "../model/terminalPalettes";
 import { presentationsFor } from "../model/domain";
 import {
   ACTION_VARIABLES,
@@ -344,6 +348,38 @@ export function GeneralSection({
               update({
                 ...config,
                 appearance: { ...config.appearance, terminalScrollSensitivity },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Colours"
+          help="Following the VS Code theme, a pane takes the theme's terminal colours — those of VS Code's own terminal — and changes with it. Palettes are the light and dark tables under [appearance.terminal_theme] in settings.toml, starting from DevHub's own."
+        >
+          <Popup
+            label="Agent pane colours"
+            value={
+              config.appearance.terminalTheme === TERMINAL_THEME_VSCODE
+                ? "vscode"
+                : "palettes"
+            }
+            options={[
+              ["vscode", "Follow the VS Code theme"],
+              ["palettes", "Palettes in settings.toml"],
+            ]}
+            onChange={(choice) => {
+              // Palettes already there stay: only a switch from the theme starts
+              // from the built-in ones.
+              const current = config.appearance.terminalTheme;
+              const terminalTheme =
+                choice === "vscode"
+                  ? TERMINAL_THEME_VSCODE
+                  : current === TERMINAL_THEME_VSCODE
+                    ? defaultTerminalPalettes()
+                    : current;
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalTheme },
               });
             }}
           />

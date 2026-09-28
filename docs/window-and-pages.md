@@ -256,6 +256,15 @@ recoloured correctly, and one on its own page would not have. `chromeAudience`
 states the rule instead of it being a coincidence, and the test on it is that
 every page with `onTheme` is in it.
 
+An Agent pane's colours are not the palette. The splash that recolours the
+chrome carries nothing about a terminal, so with `[appearance] terminal_theme =
+"vscode"` — the default — main reads the theme's terminal colours out of
+Scratch's workbench (its `--vscode-terminal-*` custom properties, which already
+hold the registry's defaults) each time Scratch reports a splash, keeps the last
+answer in `terminal-colors.json` beside `state.json`, and sends it on the
+appearance projection like an edited setting (`main/shell/terminalColors.ts`).
+Palettes named under `[appearance.terminal_theme.light]` / `.dark` win outright.
+
 Three scopes survive underneath this, and they are about *subject* rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a
 Workspace's over its surface, and the failure that stopped a page from starting

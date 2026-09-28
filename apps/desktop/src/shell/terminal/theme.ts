@@ -15,7 +15,8 @@ export interface TerminalPalette {
   readonly cursor: string;
   readonly cursorText: string;
   readonly selectionBackground: string;
-  readonly selectionForeground: string;
+  /** Absent: a selected cell keeps its own colour, as it does in VS Code. */
+  readonly selectionForeground: string | undefined;
   readonly ansi: readonly string[];
 }
 
@@ -23,6 +24,10 @@ export interface TerminalPalette {
  * Both schemes travel together. Which one applies is the page's business — a
  * colour theme decides it, and the system decides it until one has — so
  * sending only the resolved one would mean a round trip every time it moved.
+ *
+ * Following the VS Code theme (`[appearance] terminal_theme = "vscode"`), main
+ * sends the theme's terminal colours as both: they are the colours of the one
+ * theme on screen, whichever scheme it put the page in.
  */
 export interface TerminalTheme {
   readonly light: TerminalPalette;

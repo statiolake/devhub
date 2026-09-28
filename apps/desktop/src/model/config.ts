@@ -66,6 +66,14 @@ import {
   type MigrationOutcome,
 } from "./settingsMigration.js";
 import {
+  defaultTerminalDark,
+  defaultTerminalLight,
+  defaultTerminalPalettes,
+  TERMINAL_THEME_VSCODE,
+  type TerminalPalette,
+  type TerminalThemeConfig,
+} from "./terminalPalettes.js";
+import {
   parseTomlValue,
   renderTomlDocument,
   TomlSyntaxError,
@@ -85,8 +93,14 @@ import {
  * default_presentation`. A file older than that wrote `presentation = "tui"`
  * on every profile because it was the only default there was, and that copy is
  * dropped once — see `withoutTheOldPresentationDefault`.
+ *
+ * 4 says an Agent pane's colours follow the VS Code theme unless
+ * `[appearance] terminal_theme` names palettes. A file older than that wrote
+ * the built-in palettes out in full because a save states the whole config,
+ * and that copy is read as the default it was — see
+ * `withoutTheOldTerminalThemeDefault`.
  */
-export const CONFIG_SCHEMA_VERSION = 3;
+export const CONFIG_SCHEMA_VERSION = 4;
 
 /** The oldest file shape this build knows how to read. */
 const OLDEST_READABLE_VERSION = 1;
@@ -340,21 +354,6 @@ export interface RuntimeConfig {
   readonly tmux_args: readonly string[];
 }
 
-export interface TerminalPalette {
-  readonly background: string;
-  readonly foreground: string;
-  readonly cursor: string;
-  readonly cursorText: string;
-  readonly selectionBackground: string;
-  readonly selectionForeground: string;
-  readonly ansi: readonly string[];
-}
-
-export interface TerminalThemeConfig {
-  readonly light: TerminalPalette;
-  readonly dark: TerminalPalette;
-}
-
 /**
  * The three appearances DevHub can run in, and the only values `appearance.mode`
  * takes.
@@ -568,64 +567,6 @@ export function withProfileRuntimes(
   };
 }
 
-export function defaultTerminalLight(): TerminalPalette {
-  return {
-    background: "#FFFFFF",
-    foreground: "#202020",
-    cursor: "#202020",
-    cursorText: "#FFFFFF",
-    selectionBackground: "#BFD9F2",
-    selectionForeground: "#202020",
-    ansi: [
-      "#202020",
-      "#cf222e",
-      "#116329",
-      "#B69500",
-      "#0550ae",
-      "#8250df",
-      "#0069CC",
-      "#606060",
-      "#606060",
-      "#ad0707",
-      "#1a7f37",
-      "#9a6700",
-      "#0969da",
-      "#6639ba",
-      "#1f6feb",
-      "#1f2328",
-    ],
-  };
-}
-
-export function defaultTerminalDark(): TerminalPalette {
-  return {
-    background: "#121314",
-    foreground: "#BBBEBF",
-    cursor: "#BBBEBF",
-    cursorText: "#121314",
-    selectionBackground: "#245C73",
-    selectionForeground: "#BBBEBF",
-    ansi: [
-      "#555555",
-      "#ff7b72",
-      "#7ee787",
-      "#e5ba7d",
-      "#79c0ff",
-      "#d2a8ff",
-      "#3994BC",
-      "#BBBEBF",
-      "#8C8C8C",
-      "#f48771",
-      "#72C892",
-      "#ffa657",
-      "#48A0C7",
-      "#B267E6",
-      "#53A5CA",
-      "#ededed",
-    ],
-  };
-}
-
 export function defaultAppearance(): AppearanceConfig {
   return {
     mode: "auto",
@@ -636,10 +577,7 @@ export function defaultAppearance(): AppearanceConfig {
     terminalScrollSensitivity: 3,
     sidebarDensity: "compact",
     terminalMargin: 4,
-    terminalTheme: {
-      light: defaultTerminalLight(),
-      dark: defaultTerminalDark(),
-    },
+    terminalTheme: TERMINAL_THEME_VSCODE,
   };
 }
 
@@ -1162,8 +1100,9 @@ function validateAppearance(appearance: AppearanceConfig): void {
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
     appearance.terminalMargin > MAX_TERMINAL_MARGIN ||
-    !paletteIsValid(appearance.terminalTheme.light) ||
-    !paletteIsValid(appearance.terminalTheme.dark)
+    (appearance.terminalTheme !== TERMINAL_THEME_VSCODE &&
+      (!paletteIsValid(appearance.terminalTheme.light) ||
+        !paletteIsValid(appearance.terminalTheme.dark)))
   ) {
     fail("invalid_appearance", "appearance");
   }
@@ -1573,6 +1512,67 @@ function withoutTheOldPresentationDefault(
   );
 }
 
+/**
+ * `[appearance] terminal_theme`, as written: absent or `"vscode"` follows the
+ * VS Code theme, and a table is palettes.
+ *
+ * A table may name one scheme and leave the other out; the one left out is the
+ * built-in palette for it, as a key left out of a palette is the built-in
+ * value for that key.
+ */
+function terminalThemeFromValue(value: unknown): TerminalThemeConfig {
+  const path = "appearance.terminal_theme";
+  if (value === undefined) return TERMINAL_THEME_VSCODE;
+  if (typeof value === "string") {
+    if (value !== TERMINAL_THEME_VSCODE) fail("invalid_appearance", path);
+    return TERMINAL_THEME_VSCODE;
+  }
+  const table = requireTable(value, path);
+  checkKeys(table, ["light", "dark"], path);
+  return {
+    light: paletteFromTable(
+      table["light"] ?? {},
+      `${path}.light`,
+      defaultTerminalLight(),
+    ),
+    dark: paletteFromTable(
+      table["dark"] ?? {},
+      `${path}.dark`,
+      defaultTerminalDark(),
+    ),
+  };
+}
+
+/**
+ * The one-time migration of `terminal_theme`.
+ *
+ * Before version 4 there was nothing to follow, and every file DevHub wrote
+ * spelled the built-in palettes out in full, because a save states the whole
+ * config. Read as the person's palettes, that copy would keep every existing
+ * install off the VS Code theme and make the new default mean nothing to
+ * anybody who had ever saved Settings. So in an older file, palettes that are
+ * exactly the built-in ones are taken for what they were — the default — and
+ * palettes that differ anywhere, which somebody wrote, stay theirs.
+ */
+function withoutTheOldTerminalThemeDefault(
+  theme: TerminalThemeConfig,
+  fileVersion: number,
+): TerminalThemeConfig {
+  if (fileVersion >= 4 || theme === TERMINAL_THEME_VSCODE) return theme;
+  const shipped = defaultTerminalPalettes();
+  return samePalette(theme.light, shipped.light) &&
+    samePalette(theme.dark, shipped.dark)
+    ? TERMINAL_THEME_VSCODE
+    : theme;
+}
+
+function samePalette(left: TerminalPalette, right: TerminalPalette): boolean {
+  return (
+    JSON.stringify(paletteToTable(left)) ===
+    JSON.stringify(paletteToTable(right))
+  );
+}
+
 function agentActionsFromValue(
   value: unknown,
   defaults: readonly ConfiguredAgentAction[],
@@ -1900,11 +1900,6 @@ export function interpretConfig(document: unknown): Config {
     ],
     "appearance",
   );
-  const themeTable = requireTable(
-    appearanceTable["terminal_theme"] ?? {},
-    "appearance.terminal_theme",
-  );
-  checkKeys(themeTable, ["light", "dark"], "appearance.terminal_theme");
 
   const keybindingsTable = requireTable(
     table["keybindings"] ?? {},
@@ -2003,18 +1998,10 @@ export function interpretConfig(document: unknown): Config {
         "appearance",
         4,
       ),
-      terminalTheme: {
-        light: paletteFromTable(
-          themeTable["light"] ?? {},
-          "appearance.terminal_theme.light",
-          defaultTerminalLight(),
-        ),
-        dark: paletteFromTable(
-          themeTable["dark"] ?? {},
-          "appearance.terminal_theme.dark",
-          defaultTerminalDark(),
-        ),
-      },
+      terminalTheme: withoutTheOldTerminalThemeDefault(
+        terminalThemeFromValue(appearanceTable["terminal_theme"]),
+        fileVersion,
+      ),
     },
     keybindings: {
       prefix: optionalString(
@@ -2129,10 +2116,13 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_scroll_sensitivity: config.appearance.terminalScrollSensitivity,
       sidebar_density: config.appearance.sidebarDensity,
       terminal_margin: config.appearance.terminalMargin,
-      terminal_theme: {
-        light: paletteToTable(config.appearance.terminalTheme.light),
-        dark: paletteToTable(config.appearance.terminalTheme.dark),
-      },
+      terminal_theme:
+        config.appearance.terminalTheme === TERMINAL_THEME_VSCODE
+          ? TERMINAL_THEME_VSCODE
+          : {
+              light: paletteToTable(config.appearance.terminalTheme.light),
+              dark: paletteToTable(config.appearance.terminalTheme.dark),
+            },
     },
     keybindings: {
       prefix: config.keybindings.prefix,
