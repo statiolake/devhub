@@ -7,6 +7,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { TooltipLineWire } from "../../../ipc/contract";
@@ -46,7 +47,7 @@ describe("the usage-limits readout", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("draws a bar per CLI for its window nearest the limit, every window as a meter on hover, and that the other has not reported", () => {
+  it("draws a bar per CLI for its window that resets soonest, coloured by its strictest window and captioned with it, every window as a meter on hover, and that the other has not reported", () => {
     render(
       <UsageLimits
         limits={{
@@ -69,18 +70,26 @@ describe("the usage-limits readout", () => {
       />,
     );
     const readout = screen.getByRole("status");
-    expect(readout).toHaveAccessibleName("Usage limits: Claude 98% until 9/27");
+    expect(readout).toHaveAccessibleName(
+      "Usage limits: Claude 12% until 20:00, 7-day limit nearly reached",
+    );
     expect(readout).not.toHaveTextContent("Codex");
     const claude = readout.querySelector(".sidebar-usage-cli")!;
-    // The seven-day window resets on another day: the date alone.
-    expect(claude).toHaveTextContent("Claude98%(until 9/27)");
-    // At its limit: coloured, by the rule every usage meter keeps.
-    expect(claude).toHaveAttribute("data-level", "at");
+    // The five-hour window resets first: its number, its reset.
+    expect(claude).toHaveTextContent(
+      "Claude12%(until 20:00)7-day limit nearly reached",
+    );
     expect(
       (
         claude.querySelector(".sidebar-usage-fill") as HTMLElement
       ).style.getPropertyValue("--usage-fill"),
-    ).toBe("97.6%");
+    ).toBe("12%");
+    // The seven-day window is at its limit: the row wears its colour, and the
+    // caption under the bar says which window that is.
+    expect(claude).toHaveAttribute("data-level", "at");
+    expect(claude.querySelector(".sidebar-usage-caption")).toHaveTextContent(
+      "7-day limit nearly reached",
+    );
     expect(tooltipOf(readout)).toEqual([
       { text: "Claude", style: "name" },
       {
@@ -178,13 +187,93 @@ describe("the usage-limits readout", () => {
           now={NOW}
         />,
       );
-      const level = screen
+      const row = screen
         .getByRole("status")
-        .querySelector(".sidebar-usage-cli")!
-        .getAttribute("data-level");
+        .querySelector(".sidebar-usage-cli")!;
+      const level = row.getAttribute("data-level");
+      // Its own window is the reason: nothing to caption.
+      expect(row.querySelector(".sidebar-usage-caption")).toBeNull();
       cleanup();
       return level;
     });
     expect(levels).toEqual(["calm", "near", "near", "at"]);
+  });
+
+  it("gives every row's bar the same box, however long the words beside it", () => {
+    // jsdom lays nothing out, so the stylesheet is applied and each bar's
+    // placement read back: one grid for the readout, every row a subgrid of
+    // it, every bar in the same column of it, the words in their own.
+    const style = document.createElement("style");
+    style.textContent = readFileSync("src/shell/styles/shell.css", "utf8");
+    document.head.append(style);
+    try {
+      render(
+        <UsageLimits
+          limits={{
+            clis: [
+              {
+                cli: "claude",
+                windows: [
+                  { window: "5-hour", usedPercent: 5, resetsAt: NOW + HOUR },
+                  {
+                    window: "7-day",
+                    usedPercent: 80,
+                    resetsAt: NOW + 50 * HOUR,
+                  },
+                ],
+              },
+              {
+                cli: "codex",
+                windows: [{ window: "weekly", usedPercent: 100 }],
+              },
+            ],
+          }}
+          now={NOW}
+        />,
+      );
+      const readout = screen.getByRole("status");
+      const rows = [...readout.querySelectorAll(".sidebar-usage-cli")];
+      expect(rows).toHaveLength(2);
+      // Different words beside each bar: a parenthesis and a caption on one,
+      // neither on the other.
+      expect(rows[0]).toHaveTextContent("(until 19:00)");
+      expect(rows[1]!.querySelector(".sidebar-usage-reset")).toBeNull();
+      expect(getComputedStyle(readout).display).toBe("grid");
+      expect(getComputedStyle(readout).gridTemplateColumns).toBe(
+        "3.6em minmax(16px, 1fr) 2.6em minmax(0, max-content)",
+      );
+      const boxes = rows.map((row) => {
+        const track = row.querySelector(".sidebar-usage-track")!;
+        expect(track.parentElement).toBe(row);
+        return {
+          row: [
+            getComputedStyle(row).gridColumn,
+            getComputedStyle(row).gridTemplateColumns,
+          ],
+          track: [
+            getComputedStyle(track).gridColumn,
+            getComputedStyle(track).width,
+          ],
+        };
+      });
+      expect(boxes[0]).toEqual({
+        row: ["1 / -1", "subgrid"],
+        track: ["2", ""],
+      });
+      expect(boxes[1]).toEqual(boxes[0]);
+      const columns = (selector: string) =>
+        rows.flatMap((row) =>
+          [...row.querySelectorAll(selector)].map(
+            (element) => getComputedStyle(element).gridColumn,
+          ),
+        );
+      expect(columns(".sidebar-usage-name")).toEqual(["1", "1"]);
+      expect(columns(".sidebar-usage-value")).toEqual(["3", "3"]);
+      expect(columns(".sidebar-usage-reset")).toEqual(["4"]);
+      // The caption is under the bar, from its left edge to the row's end.
+      expect(columns(".sidebar-usage-caption")).toEqual(["2 / -1"]);
+    } finally {
+      style.remove();
+    }
   });
 });

@@ -1749,32 +1749,36 @@ body.is-resizing-split {
 
 /* Claude's and Codex's rate limits, at the foot of the column: a slim row per
    CLI — name, bar, percentage, when it resets — in the column's quiet ink,
-   coloured only near the limit (`usageLevel.ts`), the detail in the tooltip.
-   See `UsageLimits.tsx`. One line whatever the width: the bar keeps a sliver
-   and the reset is what gives way, cut short before the percentage is. On the
-   rail the words go and the bars stay, centred in the glyph column. */
+   coloured only near the limit (`usageLevel.ts`), and a caption under the bar
+   when another window than the shown one is the reason; the detail in the
+   tooltip. See `UsageLimits.tsx`. The rows are one grid, each row a subgrid of
+   it, so every bar has the same edges however wide the words beside it are.
+   One line whatever the width: the bar keeps a sliver and the reset is what
+   gives way, cut short before the percentage is. On the rail the words go and
+   the bars stay, centred in the glyph column. */
 .sidebar-usage {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  flex-direction: column;
+  align-items: center;
   padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
   color: var(--tertiary);
+  column-gap: var(--space-2);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
-  gap: 3px;
+  grid-template-columns: 3.6em minmax(16px, 1fr) 2.6em minmax(0, max-content);
+  row-gap: 3px;
 }
 
 .sidebar-usage-cli {
-  display: flex;
-  min-width: 0;
+  display: grid;
   align-items: center;
-  gap: var(--space-2);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .sidebar-usage-name {
   overflow: hidden;
-  width: 3.6em;
-  flex: none;
+  grid-column: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1782,11 +1786,10 @@ body.is-resizing-split {
 .sidebar-usage-track {
   position: relative;
   overflow: hidden;
-  min-width: 16px;
   height: 3px;
-  flex: 1 1 auto;
   border-radius: 2px;
   background: var(--wash-strong);
+  grid-column: 2;
 }
 
 .sidebar-usage-fill {
@@ -1798,17 +1801,24 @@ body.is-resizing-split {
 }
 
 .sidebar-usage-value {
-  min-width: 2.6em;
-  flex: none;
+  grid-column: 3;
   text-align: right;
 }
 
 .sidebar-usage-reset {
   overflow: hidden;
-  min-width: 0;
-  flex: 0 1 auto;
   /* Closer to its percentage than the row's gap: one reading, not two. */
   margin-left: calc(var(--space-1) - var(--space-2));
+  grid-column: 4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Under the bar, from its left edge to the row's end. */
+.sidebar-usage-caption {
+  overflow: hidden;
+  font-size: 9.5px;
+  grid-column: 2 / -1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1830,17 +1840,19 @@ body.is-resizing-split {
 }
 
 .sidebar[data-collapsed="true"] .sidebar-usage {
-  align-items: center;
+  justify-content: center;
   padding: var(--space-2) 0;
-  gap: 4px;
+  grid-template-columns: 20px;
+  row-gap: 4px;
 }
 
-.sidebar[data-collapsed="true"] .sidebar-usage-cli {
-  width: 20px;
+.sidebar[data-collapsed="true"] .sidebar-usage-track {
+  grid-column: 1;
 }
 
 .sidebar[data-collapsed="true"] .sidebar-usage-name,
 .sidebar[data-collapsed="true"] .sidebar-usage-value,
-.sidebar[data-collapsed="true"] .sidebar-usage-reset {
+.sidebar[data-collapsed="true"] .sidebar-usage-reset,
+.sidebar[data-collapsed="true"] .sidebar-usage-caption {
   display: none;
 }

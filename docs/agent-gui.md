@@ -1081,20 +1081,26 @@ and changes it for this session.
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
 used: one slim row per CLI — its name, a bar, the percentage and when that
-window resets, *79% (until 16:50)* — for its window nearest the limit, the
-one that stops it first. The reset is the time on the 24-hour clock while it
-is within twelve hours, past midnight too, and the date alone in the reader's
-locale (*10/3*) when further off; an unknown or past reset has no parenthesis, and a narrow
-column cuts the parenthesis before the percentage. The bar is quiet grey
-until 75%, orange to 90%, red beyond. On the collapsed rail the words go and the
-bars stay. The tooltip draws every window each CLI reports — Claude's
+window resets, *12% (until 16:50)* — for its window that resets soonest among
+the current readings (the five-hour one, usually). The reset is the time on
+the 24-hour clock while it is within twelve hours, past midnight too, and the
+date alone in the reader's locale (*10/3*) when further off; an unknown or
+past reset has no parenthesis, and a narrow column cuts the parenthesis before
+the percentage. The row's bar and numbers are quiet grey until 75%, orange to
+90%, red beyond — by the strictest of the CLI's current windows, not only the
+shown one; when the colour comes from another window, a small caption under
+the bar names it by the CLI's label (*Approaching 7-day limit*, *7-day limit
+nearly reached*). The rows share one grid, so every CLI's bar has the same
+width and edges whatever the words beside it. On the collapsed rail the words
+go and the bars stay. The tooltip draws every window each CLI reports — Claude's
 five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
 `primary` and `secondary`, named by their length (`5-hour`, `7-day`) — as a
 labelled bar with the percentage and its reset (*Resets in 2h 10m · 16:40*,
 or the date alone, *10/3*, when over twelve hours away), worked out by the tooltip as it opens. A reading
 whose reset has passed is history: faded, and said to be (*nothing reported
-since*); the Sidebar's row shows the window nearest its limit among readings
-still current, and a CLI whose readings are all history faded. DevHub does not ask the accounts:
+since*); history neither is the Sidebar row's shown window nor colours it, and a CLI
+whose readings are all history shows the one nearest its limit, faded and
+uncoloured. DevHub does not ask the accounts:
 the numbers are what running GUI Agents last reported — Claude's
 `rate_limit_event`, Codex's `account/rateLimits/updated` — kept per window of
 each CLI in main, the newer of two readings of a window being the one with the

@@ -2,15 +2,19 @@
  * Claude's and Codex's rate limits, at the foot of the Sidebar.
  *
  * One slim row per CLI that has reported: its name, a bar of how much is used
- * of its window nearest the limit — the one that stops it first — the
- * percentage and when that window resets, `79% (until 16:50)`: the time when
- * the reset is later today, the date alone when it is another day
- * (`resetTime.ts`, the words the tooltip uses too). A reset that is unknown or
- * already past has no parenthesis rather than a guess. The row stays one line;
- * when the column is narrow the parenthesis gives way before the percentage.
- * The bar is the column's quiet ink until the window is near its end
- * (`usageLevel.ts`). On the rail the names and numbers go and the bars stay,
- * one per CLI, so a limit coming close still shows.
+ * of its window that resets soonest, the percentage and when that window
+ * resets, `12% (until 16:50)`: the time when the reset is later today, the
+ * date alone when it is another day (`resetTime.ts`, the words the tooltip
+ * uses too). A reset that is unknown or already past has no parenthesis
+ * rather than a guess. The row is coloured by the strictest of the CLI's
+ * current windows, and when that is not the shown one a small caption under
+ * the bar names it, *Approaching 7-day limit* (`usageRow.ts` decides all
+ * three). On the rail the names and numbers go and the bars stay, one per
+ * CLI, so a limit coming close still shows.
+ *
+ * The rows share one grid, so every bar has the same edges whatever the
+ * width of the words beside it; when the column is narrow the parenthesis
+ * gives way before the percentage or the bar.
  *
  * The detail is on hover, through the same tooltip every row uses: per CLI,
  * every window it reported (five-hour, seven-day, …) as a labelled bar with
@@ -19,41 +23,18 @@
  * DevHub does not ask the accounts itself, so a CLI nobody has run as a GUI
  * Agent is unknown, and says so, rather than zero.
  *
- * A reading whose reset has passed is history: what was used then, with
- * nothing newer reported. The row shows the window nearest its limit among
- * the readings still current, and only when every reading is history the
- * nearest of those, faded.
- *
  * Nothing at all is drawn while neither CLI has reported: a readout that only
  * ever says "unknown" is noise in a column that is about Workspaces.
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
-import { mostUsedRateLimit } from "../../../model/conversation";
 import { resetTime } from "../../resetTime";
-import { usageLevel } from "../../usageLevel";
+import { usageRow, type UsageRow } from "./usageRow";
 
 type Window = NonNullable<UsageLimitsWire["clis"][number]["windows"]>[number];
 
 const CLI_NAMES = { claude: "Claude", codex: "Codex" } as const;
-
-function isHistory(window: Window, now: number): boolean {
-  return window.resetsAt !== undefined && window.resetsAt <= now;
-}
-
-/** The window a CLI's row shows, and whether that reading is history. */
-function shownWindow(
-  windows: readonly Window[],
-  now: number,
-): { readonly window: Window; readonly stale: boolean } | undefined {
-  const current = mostUsedRateLimit(
-    windows.filter((window) => !isHistory(window, now)),
-  );
-  if (current !== undefined) return { window: current, stale: false };
-  const past = mostUsedRateLimit(windows);
-  return past === undefined ? undefined : { window: past, stale: true };
-}
 
 /** The clock, a minute at a time: a reading turns into history on its own. */
 function useMinuteClock(): number {
@@ -76,7 +57,7 @@ export function UsageLimits({
   const clock = useMinuteClock();
   const at = now ?? clock;
   const rows = limits.clis.flatMap((one) => {
-    const shown = shownWindow(one.windows ?? [], at);
+    const shown = usageRow(one.windows ?? [], at);
     return shown === undefined
       ? []
       : [{ cli: one.cli, ...shown, until: until(shown, at) }];
@@ -87,7 +68,9 @@ export function UsageLimits({
       (row) =>
         `${CLI_NAMES[row.cli]} ${percent(row.window.usedPercent)}${
           row.stale ? " before its last reset" : ""
-        }${row.until === undefined ? "" : ` until ${row.until}`}`,
+        }${row.until === undefined ? "" : ` until ${row.until}`}${
+          row.caption === undefined ? "" : `, ${row.caption.toLowerCase()}`
+        }`,
     )
     .join(", ");
   return (
@@ -101,8 +84,7 @@ export function UsageLimits({
         <div
           key={row.cli}
           className="sidebar-usage-cli"
-          // History is not a warning: what was near its limit then is not now.
-          data-level={row.stale ? "calm" : usageLevel(row.window.usedPercent)}
+          data-level={row.level}
           data-stale={row.stale || undefined}
         >
           <span className="sidebar-usage-name">{CLI_NAMES[row.cli]}</span>
@@ -124,6 +106,9 @@ export function UsageLimits({
               ({`until ${row.until}`})
             </span>
           )}
+          {row.caption === undefined ? null : (
+            <span className="sidebar-usage-caption">{row.caption}</span>
+          )}
         </div>
       ))}
     </div>
@@ -131,10 +116,7 @@ export function UsageLimits({
 }
 
 /** When the shown window resets, while that is known and still ahead. */
-function until(
-  shown: { readonly window: Window; readonly stale: boolean },
-  now: number,
-): string | undefined {
+function until(shown: UsageRow<Window>, now: number): string | undefined {
   const resetsAt = shown.window.resetsAt;
   return resetsAt === undefined || shown.stale
     ? undefined
