@@ -426,6 +426,150 @@ describe("a pull request's unresolved conversations", () => {
 });
 
 /**
+ * What the pull request's CI says.
+ *
+ * A failure wears a red cross and a run still going an amber dot, at the pull
+ * request mark's bottom-right; a pass is said in words and not drawn, because
+ * it is the ordinary case and asks nothing. Nothing is drawn or said when
+ * nothing has reported. The words are the same in the mark's hover, the row's
+ * tooltip and the spoken name, from one list of facts.
+ */
+describe("a pull request's CI", () => {
+  function withChecks(
+    checks:
+      | NonNullable<
+          NonNullable<
+            RepositoryStatusWire["workspaces"][number]["pullRequest"]
+          >["checks"]
+        >
+      | undefined,
+    unresolved = 0,
+  ) {
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          pullRequest: {
+            number: 7,
+            url: "https://github.com/example/widget/pull/7",
+            title: "Rework the picker",
+            state: "open",
+            conversations: { unresolved, uncounted: 0 },
+            ...(checks === undefined ? {} : { checks }),
+          },
+        },
+      ],
+    });
+    return document.querySelector(".row-link-button.is-pr-open");
+  }
+
+  function badges(mark: Element | null) {
+    return [...(mark?.querySelectorAll(".row-mark-badge") ?? [])].map((badge) =>
+      badge.getAttribute("data-glyph"),
+    );
+  }
+
+  function hover(mark: Element | null) {
+    return JSON.parse(
+      mark?.getAttribute("data-tooltip-lines") ?? "[]",
+    ) as unknown;
+  }
+
+  it("wears a cross when it is failing, and says how many of how many", () => {
+    const mark = withChecks({
+      state: "failing",
+      total: 12,
+      failing: 3,
+      pending: 0,
+    });
+    expect(badges(mark)).toEqual(["checksFailing"]);
+    expect(hover(mark)).toEqual([
+      { icon: "pullRequest", text: "#7 Rework the picker" },
+      { icon: "checksFailing", text: "CI: failing (3 of 12 checks)" },
+    ]);
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "Pull request #7, open: Rework the picker\nCI: failing (3 of 12 checks)",
+    );
+  });
+
+  it("wears a dot while it is pending, and says how many have not finished", () => {
+    const mark = withChecks({
+      state: "pending",
+      total: 12,
+      failing: 0,
+      pending: 4,
+    });
+    expect(badges(mark)).toEqual(["checksPending"]);
+    expect(hover(mark)).toContainEqual({
+      icon: "checksPending",
+      text: "CI: pending (4 of 12 checks)",
+    });
+  });
+
+  it("wears nothing when it is passing, and says so in words", () => {
+    const mark = withChecks({
+      state: "passing",
+      total: 1,
+      failing: 0,
+      pending: 0,
+    });
+    expect(badges(mark)).toEqual([]);
+    expect(hover(mark)).toContainEqual({
+      icon: "checksPassing",
+      text: "CI: passing (1 check)",
+    });
+  });
+
+  it("says the verdict alone when none of the counted checks are in it", () => {
+    const mark = withChecks({
+      state: "failing",
+      total: 5,
+      failing: 0,
+      pending: 0,
+    });
+    expect(badges(mark)).toEqual(["checksFailing"]);
+    expect(hover(mark)).toContainEqual({
+      icon: "checksFailing",
+      text: "CI: failing",
+    });
+  });
+
+  it("draws nothing and says nothing when nothing has reported", () => {
+    const mark = withChecks(undefined);
+    expect(badges(mark)).toEqual([]);
+    expect(JSON.stringify(hover(mark))).not.toContain("CI:");
+  });
+
+  it("sits beside the conversation badge, each saying its own line", () => {
+    const mark = withChecks(
+      { state: "failing", total: 12, failing: 3, pending: 0 },
+      2,
+    );
+    expect(badges(mark)).toEqual(["conversation", "checksFailing"]);
+    expect(hover(mark)).toEqual([
+      { icon: "pullRequest", text: "#7 Rework the picker" },
+      { icon: "conversation", text: "2 unresolved conversations" },
+      { icon: "checksFailing", text: "CI: failing (3 of 12 checks)" },
+    ]);
+  });
+
+  it("says it in the row's own tooltip too", () => {
+    withChecks({ state: "pending", total: 3, failing: 0, pending: 1 });
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
+    expect(
+      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toContainEqual({
+      icon: "checksPending",
+      text: "CI: pending (1 of 3 checks)",
+      style: "muted",
+    });
+  });
+});
+
+/**
  * Which mark a row starts with.
  *
  * Two, where there were four. A repository and a worktree of one had marks of

@@ -162,6 +162,7 @@ function pullRequest(over: Record<string, unknown>) {
 		isDraft: false,
 		headRepositoryOwner: { login: "example" },
 		reviewThreads: { totalCount: 0, nodes: [] },
+		commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
 		...over,
 	};
 }
@@ -399,6 +400,141 @@ describe("the conversations in a branch's pull request", () => {
 		expect(failure).toBeInstanceOf(GitHubUnavailable);
 		expect(failureText(failure)).toContain(
 			"GitHub did not list the review conversations of example/widget#5.",
+		);
+	});
+});
+
+/**
+ * The head commit's CI rollup, as GitHub answers it: the verdict, and the
+ * counts by state of check runs and of commit statuses, every state listed
+ * whether or not anything is in it.
+ */
+function rollup(
+	state: string,
+	checkRuns: Record<string, number>,
+	statuses: Record<string, number> = {},
+) {
+	const counts = (by: Record<string, number>) =>
+		Object.entries(by).map(([name, count]) => ({ state: name, count }));
+	const total = [
+		...Object.values(checkRuns),
+		...Object.values(statuses),
+	].reduce((sum, count) => sum + count, 0);
+	return {
+		nodes: [
+			{
+				commit: {
+					statusCheckRollup: {
+						state,
+						contexts: {
+							totalCount: total,
+							checkRunCountsByState: counts(checkRuns),
+							statusContextCountsByState: counts(statuses),
+						},
+					},
+				},
+			},
+		],
+	};
+}
+
+/**
+ * What the pull request's CI says, read on the same query as the pull request
+ * itself: GitHub's rollup on its head commit, and how many checks are in each
+ * state, as counts GitHub keeps rather than a page of checks to read.
+ */
+describe("the CI of a branch's pull request", () => {
+	async function checksOf(commits: unknown) {
+		withPullRequests([pullRequest({ commits })]);
+		return (await readBranchStatus(REFERENCE, "token")).pullRequest?.checks;
+	}
+
+	it("is asked on the same query as the pull request, from its head commit", async () => {
+		const fetchMock = withPullRequests([]);
+		await readBranchStatus(REFERENCE, "token");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { query: string };
+		expect(body.query).toContain(
+			"commits(last:1){ nodes{ commit{ statusCheckRollup{",
+		);
+		expect(body.query).toMatch(
+			/contexts\{ totalCount checkRunCountsByState\{ state count \} statusContextCountsByState\{ state count \} \}/,
+		);
+	});
+
+	it("is failing, counting what failed however it failed", async () => {
+		expect(
+			await checksOf(
+				rollup(
+					"FAILURE",
+					{ SUCCESS: 7, FAILURE: 1, TIMED_OUT: 1, CANCELLED: 1, SKIPPED: 2 },
+					{ ERROR: 1, SUCCESS: 1 },
+				),
+			),
+		).toEqual({ state: "failing", total: 14, failing: 4, pending: 0 });
+	});
+
+	it("is failing when GitHub calls it an error", async () => {
+		expect((await checksOf(rollup("ERROR", {}, { ERROR: 1 })))?.state).toBe(
+			"failing",
+		);
+	});
+
+	it("is pending, counting what has not finished or not started", async () => {
+		expect(
+			await checksOf(
+				rollup(
+					"PENDING",
+					{ SUCCESS: 3, QUEUED: 1, IN_PROGRESS: 2, WAITING: 1 },
+					{ EXPECTED: 1, PENDING: 1 },
+				),
+			),
+		).toEqual({ state: "pending", total: 9, failing: 0, pending: 6 });
+	});
+
+	it("is pending when a status GitHub expects has not reported", async () => {
+		expect(
+			(await checksOf(rollup("EXPECTED", {}, { EXPECTED: 2 })))?.state,
+		).toBe("pending");
+	});
+
+	it("is passing, with skipped and neutral checks in the total", async () => {
+		expect(
+			await checksOf(
+				rollup("SUCCESS", { SUCCESS: 11, SKIPPED: 6, NEUTRAL: 1 }),
+			),
+		).toEqual({ state: "passing", total: 18, failing: 0, pending: 0 });
+	});
+
+	it("is absent when nothing has reported on the head commit", async () => {
+		expect(
+			await checksOf({ nodes: [{ commit: { statusCheckRollup: null } }] }),
+		).toBeUndefined();
+	});
+
+	it("is a failure, not an absence, when GitHub leaves the commits out", async () => {
+		withPullRequests([pullRequest({ number: 5, commits: null })]);
+		const failure = await readBranchStatus(REFERENCE, "token").catch(
+			(error: unknown) => error,
+		);
+		expect(failure).toBeInstanceOf(GitHubUnavailable);
+		expect(failureText(failure)).toContain(
+			"GitHub did not list the head commit of example/widget#5.",
+		);
+	});
+
+	it("is a failure, not some other verdict, when the verdict is one it does not know", async () => {
+		withPullRequests([
+			pullRequest({ number: 6, commits: rollup("SOMETHING_NEW", {}) }),
+		]);
+		const failure = await readBranchStatus(REFERENCE, "token").catch(
+			(error: unknown) => error,
+		);
+		expect(failure).toBeInstanceOf(GitHubUnavailable);
+		expect(failureText(failure)).toContain(
+			"GitHub said the CI of example/widget#6 is SOMETHING_NEW, which DevHub does not know.",
 		);
 	});
 });

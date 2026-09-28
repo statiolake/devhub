@@ -267,6 +267,10 @@ describe("the tooltip page", () => {
       "pullRequest",
       "pullRequestMerged",
       "pullRequestClosed",
+      "conversation",
+      "checksFailing",
+      "checksPending",
+      "checksPassing",
     ]) {
       const rule = new RegExp(
         `\\[data-mark="${mark}"\\][^{}]*\\{[^}]*\\}|\\[data-mark="${mark}"\\],`,

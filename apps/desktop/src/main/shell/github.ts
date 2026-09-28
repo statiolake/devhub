@@ -82,6 +82,31 @@ export interface PullRequestStatus {
 	readonly title: string;
 	readonly state: "open" | "draft" | "closed" | "merged";
 	readonly conversations: ConversationCount;
+	/** Its head commit's CI, or absent when nothing has reported on that commit. */
+	readonly checks?: CheckSummary;
+}
+
+/**
+ * What a pull request's CI says about its head commit.
+ *
+ * `state` is GitHub's own rollup over every check run and commit status,
+ * folded into the three verdicts a person acts on: something failed
+ * (`FAILURE`, `ERROR`), something has not finished or not started (`PENDING`,
+ * `EXPECTED`), or everything that reported passed (`SUCCESS`). It is GitHub's
+ * verdict and not one recomputed here from the counts, because the rollup is
+ * what the pull request page and branch protection go by.
+ *
+ * The counts are how many checks are in each of the two verdicts that ask
+ * something of you, out of `total`, so the words can say "3 of 12". A check run
+ * that was cancelled, timed out, could not start or wants an action is failing,
+ * as GitHub's own rollup counts it; one queued, in progress or waiting is
+ * pending, as is a commit status that is expected and has not reported yet.
+ */
+export interface CheckSummary {
+	readonly state: "passing" | "failing" | "pending";
+	readonly total: number;
+	readonly failing: number;
+	readonly pending: number;
 }
 
 /**
@@ -161,6 +186,14 @@ const MAX_REVIEW_THREADS = 100;
  * second cadence to keep in step with this one. Only `isResolved` is read, and
  * `totalCount` beside it is what says whether the page held all of them.
  *
+ * Its CI is on the same query too, and for the same reason: the head commit's
+ * `statusCheckRollup`, which is GitHub's own verdict over every check run and
+ * commit status on it, and the counts by state beside it so the row can say how
+ * many of how many without a page of check runs being read. The counts come as
+ * totals GitHub keeps, so they cost nothing that grows with the number of
+ * checks. `commits(last:1)` is the head commit; a rollup of null is a commit
+ * nothing has reported on.
+ *
  * The Issue is on the same query and skipped when the branch does not name one,
  * so a branch is one request whether or not it is about an Issue. `$number` is
  * still declared and still sent when skipped, because GraphQL validates a
@@ -172,6 +205,10 @@ const QUERY = `query($owner:String!,$name:String!,$branch:String!,$number:Int!,$
       nodes{
         number url title state isDraft headRepositoryOwner{ login }
         reviewThreads(first:$threads){ totalCount nodes{ isResolved } }
+        commits(last:1){ nodes{ commit{ statusCheckRollup{
+          state
+          contexts{ totalCount checkRunCountsByState{ state count } statusContextCountsByState{ state count } }
+        } } } }
       }
     }
     issue(number:$number) @include(if:$wantIssue){ number title state url }
@@ -340,6 +377,29 @@ interface GraphQlPullRequest {
 		readonly totalCount: number;
 		readonly nodes: readonly ({ readonly isResolved: boolean } | null)[];
 	} | null;
+	/** The head commit, alone. Absent only when GitHub did not answer it. */
+	readonly commits?: {
+		readonly nodes: readonly ({
+			readonly commit: {
+				readonly statusCheckRollup: GraphQlCheckRollup | null;
+			} | null;
+		} | null)[];
+	} | null;
+}
+
+interface GraphQlStateCount {
+	readonly state: string;
+	readonly count: number;
+}
+
+interface GraphQlCheckRollup {
+	/** GitHub's `StatusState`: `SUCCESS`, `FAILURE`, `ERROR`, `PENDING` or `EXPECTED`. */
+	readonly state: string;
+	readonly contexts: {
+		readonly totalCount: number;
+		readonly checkRunCountsByState: readonly GraphQlStateCount[] | null;
+		readonly statusContextCountsByState: readonly GraphQlStateCount[] | null;
+	};
 }
 
 /**
@@ -479,6 +539,81 @@ function conversationCount(
 	};
 }
 
+/** The rollup's own verdict, as one of the three `CheckSummary` says. */
+const CHECK_VERDICT: Readonly<Record<string, CheckSummary["state"]>> = {
+	SUCCESS: "passing",
+	FAILURE: "failing",
+	ERROR: "failing",
+	PENDING: "pending",
+	EXPECTED: "pending",
+};
+
+/**
+ * Which verdict each state a check run or a commit status can be in counts
+ * toward. The two enums share some names (`FAILURE`, `PENDING`) and mean the
+ * same by them, so one table reads both. A state not listed — passed, skipped,
+ * neutral, stale — asks nothing of anybody and is counted only in the total.
+ */
+const CHECK_COUNTED_AS: Readonly<
+	Record<string, "failing" | "pending" | undefined>
+> = {
+	FAILURE: "failing",
+	ERROR: "failing",
+	CANCELLED: "failing",
+	TIMED_OUT: "failing",
+	STARTUP_FAILURE: "failing",
+	ACTION_REQUIRED: "failing",
+	PENDING: "pending",
+	EXPECTED: "pending",
+	QUEUED: "pending",
+	IN_PROGRESS: "pending",
+	WAITING: "pending",
+};
+
+/**
+ * What the pull request's CI says, from the rollup on its head commit.
+ *
+ * A pull request answered without its commits is a failure, as one without its
+ * threads is: "no checks" is a claim, and the answer did not make it. A rollup
+ * GitHub answered with a verdict this does not know is a failure too — a
+ * verdict drawn as some other verdict would be a badge that lies.
+ */
+function checkSummary(
+	node: GraphQlPullRequest,
+	reference: BranchReference,
+): CheckSummary | undefined {
+	const where = `${reference.owner}/${reference.repository}#${String(node.number)}`;
+	if (!node.commits) {
+		throw new GitHubUnavailable(
+			`GitHub did not list the head commit of ${where}.`,
+		);
+	}
+	const rollup = node.commits.nodes[0]?.commit?.statusCheckRollup;
+	if (!rollup) return undefined;
+	const state = CHECK_VERDICT[rollup.state.toUpperCase()];
+	if (!state) {
+		throw new GitHubUnavailable(
+			`GitHub said the CI of ${where} is ${rollup.state}, which DevHub does not know.`,
+		);
+	}
+	const counts = [
+		...(rollup.contexts.checkRunCountsByState ?? []),
+		...(rollup.contexts.statusContextCountsByState ?? []),
+	];
+	const counted = (verdict: "failing" | "pending") =>
+		counts
+			.filter(
+				(count) => CHECK_COUNTED_AS[count.state.toUpperCase()] === verdict,
+			)
+			.reduce((sum, count) => sum + count.count, 0);
+	return {
+		state,
+		total: rollup.contexts.totalCount,
+		failing: counted("failing"),
+		pending: counted("pending"),
+	};
+}
+
 /**
  * Read what a branch is about: the pull request out from it, and the Issue it
  * names, if it names one.
@@ -541,6 +676,7 @@ export async function readBranchStatus(
 					title: chosen.title,
 					state: pullRequestState(chosen),
 					conversations: conversationCount(chosen, reference),
+					checks: checkSummary(chosen, reference),
 				}
 			: undefined,
 	};

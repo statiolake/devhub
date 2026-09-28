@@ -255,10 +255,68 @@ export function hasUnresolvedConversations(
   return pullRequest.conversations.unresolved > 0;
 }
 
+type PullRequestChecks = NonNullable<
+  NonNullable<WorkspaceRepositoryWire["pullRequest"]>["checks"]
+>;
+
+/** The mark each CI verdict is drawn with, in a tooltip line and as a badge. */
+const CHECKS_GLYPH: Record<PullRequestChecks["state"], GlyphName> = {
+  passing: "checksPassing",
+  failing: "checksFailing",
+  pending: "checksPending",
+};
+
 /**
- * The pull request, as facts: the pull request itself, and then its unresolved
- * conversations when it has any. One list, used by the row's tooltip and by the
- * pull request mark's own, so the two cannot come to count differently.
+ * A pull request's CI, in words: the verdict, and how many of how many checks
+ * earned it.
+ *
+ * The count is the checks in the verdict's own state — failing ones for a
+ * failing rollup, unfinished ones for a pending one — because that is the
+ * number somebody acts on. A passing rollup has nothing in it to act on, so it
+ * says only how many reported. A verdict none of whose counts landed in its own
+ * state (a rollup GitHub calls failing while every counted check is fine, say)
+ * says the verdict alone rather than "0 of 12".
+ */
+export function checksText(checks: PullRequestChecks): string {
+  const checksOf = (count: number) =>
+    `${String(count)} check${count === 1 ? "" : "s"}`;
+  switch (checks.state) {
+    case "failing":
+      return checks.failing === 0
+        ? "CI: failing"
+        : `CI: failing (${String(checks.failing)} of ${checksOf(checks.total)})`;
+    case "pending":
+      return checks.pending === 0
+        ? "CI: pending"
+        : `CI: pending (${String(checks.pending)} of ${checksOf(checks.total)})`;
+    case "passing":
+      return `CI: passing (${checksOf(checks.total)})`;
+  }
+}
+
+/**
+ * The badge the pull request mark wears for its CI, by glyph name — or none.
+ *
+ * None when nothing has reported, and none when everything passed: a passing
+ * pull request is the ordinary case and the one that asks nothing, so a green
+ * mark on every such row would be ink that is almost always there and so is
+ * never read. A failure and a run still going are the two worth a glance; the
+ * tooltip still says "passing" for the one that is.
+ */
+export function checksBadge(
+  pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
+): GlyphName | undefined {
+  const checks = pullRequest.checks;
+  if (checks === undefined || checks.state === "passing") return undefined;
+  return CHECKS_GLYPH[checks.state];
+}
+
+/**
+ * The pull request, as facts: the pull request itself, then its unresolved
+ * conversations when it has any, then its CI when anything has reported. One
+ * list, used by the row's tooltip and by the pull request mark's own, so the
+ * two cannot come to say differently. The order is the badges' own, top-right
+ * before bottom-right.
  */
 export function pullRequestFacts(
   pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
@@ -275,6 +333,13 @@ export function pullRequestFacts(
     conversations === undefined
       ? undefined
       : { icon: "conversation", text: conversations, style: "muted" },
+    pullRequest.checks === undefined
+      ? undefined
+      : {
+          icon: CHECKS_GLYPH[pullRequest.checks.state],
+          text: checksText(pullRequest.checks),
+          style: "muted",
+        },
   ]);
 }
 

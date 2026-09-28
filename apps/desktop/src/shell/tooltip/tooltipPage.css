@@ -183,6 +183,21 @@ body,
   color: var(--status-waiting);
 }
 
+/* A pull request's CI, in the inks its badge wears — red for a failure, the
+   working amber for a run not finished — and a pass in the green an open pull
+   request wears, which is drawn only here. */
+.tooltip-line-mark[data-mark="checksFailing"] {
+  color: var(--status-error);
+}
+
+.tooltip-line-mark[data-mark="checksPending"] {
+  color: var(--status-working);
+}
+
+.tooltip-line-mark[data-mark="checksPassing"] {
+  color: var(--status-idle);
+}
+
 .tooltip-line-mark .sidebar-glyph {
   display: block;
   width: 13px;

@@ -290,6 +290,17 @@ export interface WorkspaceRepositoryWire {
 			readonly unresolved: number;
 			readonly uncounted: number;
 		};
+		/**
+		 * What its CI says about its head commit: GitHub's own verdict, and how
+		 * many of `total` checks are failing and how many have not finished.
+		 * Absent when nothing has reported on that commit.
+		 */
+		readonly checks?: {
+			readonly state: "passing" | "failing" | "pending";
+			readonly total: number;
+			readonly failing: number;
+			readonly pending: number;
+		};
 	};
 	/**
 	 * Why this row cannot say what the workspace is working on.

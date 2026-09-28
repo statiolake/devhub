@@ -37,6 +37,7 @@ import {
   editorAttachmentFact,
   issueLabel,
   issueMark,
+  checksBadge,
   hasUnresolvedConversations,
   markLines,
   pullRequestFacts,
@@ -681,6 +682,7 @@ function WorkspaceMarks({
   const { openExternalUrl } = useSidebar();
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
+  const ciBadge = pullRequest ? checksBadge(pullRequest) : undefined;
   return (
     <span className="row-marks">
       {issue ? (
@@ -724,6 +726,13 @@ function WorkspaceMarks({
           {hasUnresolvedConversations(pullRequest) ? (
             <Glyph name="conversation" className="row-mark-badge" />
           ) : null}
+          {/* What its CI says, at the opposite corner, and for the same
+              reasons: about this pull request alone, and coloured at rest.
+              Only a failure or a run still going is drawn; the counts are in
+              the words above. */}
+          {ciBadge === undefined ? null : (
+            <Glyph name={ciBadge} className="row-mark-badge" />
+          )}
         </button>
       ) : null}
       {/* Asking. The branch is read every couple of seconds and GitHub once a

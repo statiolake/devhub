@@ -735,51 +735,102 @@
 }
 
 /*
- * A pull request somebody is waiting on an answer in: the conversation mark,
- * small and filled, over the pull request mark's top-right corner.
+ * The pull request mark's two badges: a conversation somebody is waiting on an
+ * answer in, over its top-right corner, and CI that failed or is still running,
+ * under its bottom-right. Each is small, filled and coloured at rest.
  *
- * A bubble and not a dot, chosen by drawing both at the row's real size: at
- * this size the bubble's tail still reads on a Retina display, in either
- * appearance, and where it does not (a 1x display) it is a blob no smaller
- * than the dot would have been. A dot would also have said the wrong thing
- * here — a blue disc is what an unread Agent wears in the rail.
+ * On the mark and not beside it, because each is about this pull request and
+ * nothing else on the row. Coloured at rest, like the unavailable mark and for
+ * its reason: it is news rather than context, and news nobody sees without
+ * hovering is news nobody acts on.
  *
- * Coloured at rest, like the unavailable mark and for its reason: it is news
- * rather than context, and a conversation nobody sees without hovering is one
- * nobody answers. The blue is `--status-waiting`, which is what the same
- * bubble wears on an Agent that has stopped to ask you something — the same
- * fact about a different party.
+ * The conversation is a bubble and not a dot, chosen by drawing both at the
+ * row's real size: at this size the bubble's tail still reads on a Retina
+ * display, in either appearance, and where it does not (a 1x display) it is a
+ * blob no smaller than the dot would have been. A dot would also have said the
+ * wrong thing there — a blue disc is what an unread Agent wears in the rail.
+ * The blue is `--status-waiting`, which is what the same bubble wears on an
+ * Agent that has stopped to ask you something — the same fact about a
+ * different party.
  *
- * The pull request mark is cut away under it rather than drawn over, so the
- * two never merge into one shape whatever the row's background is: a ring in
- * the Sidebar's colour would have had to know the colour of a vibrant, hovered
- * or selected row, and a mask does not. The badge sits partly outside the
- * button, in the padding the row already has above it, which is what lets it
- * be large enough to be a bubble while leaving the pull request's own drawing
- * recognisable.
+ * CI is GitHub's own marks in GitHub's own colours: a red cross for a failure,
+ * an amber dot for a run not finished. Passing is not drawn (see
+ * `checksBadge`). The cross is stroked heavier than the glyph's own weight,
+ * because at this size that weight is under a pixel. It does not turn the way
+ * an Agent's working ring does: a ring turns because an Agent's turn is the
+ * thing being watched, and a CI run on a pull request is not — a dozen rows
+ * each with a moving corner would be a Sidebar that never sits still. Chosen,
+ * like the bubble, by drawing the candidates at the row's real size.
+ *
+ * The pull request mark is cut away under each badge rather than drawn over,
+ * so the two never merge into one shape whatever the row's background is: a
+ * ring in the Sidebar's colour would have had to know the colour of a vibrant,
+ * hovered or selected row, and a mask does not. The badges sit partly outside
+ * the button, in the padding the row already has around it, which is what lets
+ * them be large enough to read while leaving the pull request's own drawing
+ * recognisable. The cut is one mask with a hole per corner, each hole closed
+ * (a negative radius) unless its badge is there.
  */
 .row-mark-badge {
   position: absolute;
+  pointer-events: none;
+}
+
+.row-link-button svg.row-mark-badge[data-glyph="conversation"] {
   top: -3px;
   right: -3.5px;
   width: 11px;
   height: 11px;
-  pointer-events: none;
   color: var(--status-waiting);
 }
 
-.row-link-button svg.row-mark-badge {
-  width: 11px;
-  height: 11px;
+.row-link-button svg.row-mark-badge[data-glyph^="checks"] {
+  right: -4.5px;
+  bottom: -3.5px;
+  width: 9px;
+  height: 9px;
+  stroke-width: 3;
 }
 
-.row-mark-badge path {
+.row-mark-badge[data-glyph="checksFailing"] {
+  color: var(--status-error);
+}
+
+.row-mark-badge[data-glyph="checksPending"] {
+  color: var(--status-working);
+}
+
+.row-mark-badge[data-glyph="conversation"] path {
   fill: currentcolor;
   stroke: none;
 }
 
 .row-link-button:has(> .row-mark-badge) > .sidebar-glyph:not(.row-mark-badge) {
-  mask: radial-gradient(circle at 14px 0, transparent 5.5px, #000 6px);
+  --badge-cut-top: -1px;
+  --badge-cut-bottom: -1px;
+
+  mask:
+    radial-gradient(
+      circle at 14px 0,
+      transparent var(--badge-cut-top),
+      #000 calc(var(--badge-cut-top) + 0.5px)
+    ),
+    radial-gradient(
+      circle at 16px 16px,
+      transparent var(--badge-cut-bottom),
+      #000 calc(var(--badge-cut-bottom) + 0.5px)
+    );
+  mask-composite: intersect;
+}
+
+.row-link-button:has(> .row-mark-badge[data-glyph="conversation"])
+  > .sidebar-glyph:not(.row-mark-badge) {
+  --badge-cut-top: 5.5px;
+}
+
+.row-link-button:has(> .row-mark-badge[data-glyph^="checks"])
+  > .sidebar-glyph:not(.row-mark-badge) {
+  --badge-cut-bottom: 5px;
 }
 
 /*

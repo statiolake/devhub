@@ -59,6 +59,9 @@ export type GlyphName =
   | "pullRequestClosed"
   | "pullRequestMerged"
   | "conversation"
+  | "checksPassing"
+  | "checksFailing"
+  | "checksPending"
   | "openIssue"
   | "statusWorking"
   | "statusBackground"
@@ -238,6 +241,22 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
   conversation: (
     <path d="M4 3.5h8a1.75 1.75 0 0 1 1.75 1.75v3.5A1.75 1.75 0 0 1 12 10.5H7.2L4 13v-2.5A1.75 1.75 0 0 1 2.25 8.75v-3.5A1.75 1.75 0 0 1 4 3.5Z" />
   ),
+
+  /* A pull request's CI, in the three verdicts GitHub's rollup comes to:
+     GitHub's own three marks for them — a check, a cross, a dot — on the
+     shared grid. The check is `statusIdle`'s and the cross is `close`'s,
+     drawn again under names of their own for the reason `conversation` is:
+     the same shape saying a fact about something else. A check that is
+     passing and an Agent that is idle both mean nothing is wrong here, and a
+     second check would only ask how the two differ.
+
+     Drawn outlined in a tooltip line. As the pull request mark's badge they
+     are drawn heavier (`.row-mark-badge` in `shell.css`), because a stroke at
+     the badge's size in the glyph's own weight is under a pixel. The dot is
+     filled either way: an outlined dot is a ring. */
+  checksPassing: <path d="M3.4 8.35 6.35 11.3 12.6 4.85" />,
+  checksFailing: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
+  checksPending: <circle className="glyph-fill" cx="8" cy="8" r="4" />,
 
   /* Opening an Issue, as an *act* rather than a state (the Sidebar's New
      from Issue): DevHub's drawing and not the Octicon above, because an
