@@ -183,26 +183,35 @@ close sat at "closing" until its deadline with that dialog stranded over it.
 Every request a close makes to a workbench has a deadline, and a step that
 fails reaches the person down the one failure path below.
 
-**A close lands on the next row, and on the previous one only when what
-closed was the last.** "Next" is the row that followed it in the Sidebar as
-drawn — Scratch first, each Workspace followed by its Agents, the same list
-`Cmd+Q N` and `]` walk — so closing an Agent lands on the Agent under it, or
-on the next Workspace's row when it was its Workspace's last, and closing a
-Workspace lands past all of its Agents. The rule is one method,
-`AppModel.repairSelection`, run by every removal: an Agent stopped from its
-row, from `Cmd+Q X` or from the confirmation sheet, an Agent that exited on
-its own, a Workspace closed any way it can be. A close that asks moves
-nothing until it is answered; Cancel leaves the selection where it was.
+**A close lands on the next row of what held it, and on the previous one
+when there is no next.** An Agent is held by its Workspace, so closing one
+never leaves that Workspace: it lands on the Agent under it, on the Agent
+above it when it was the Workspace's last, and on the Workspace's own row
+when it was the only one — the row stays, and it is the one row above. The
+last row on screen is only another last Agent, and Scratch's Agents are the
+same. A Workspace is held by the Sidebar, so closing one lands on the next
+row as drawn — Scratch first, each Workspace followed by its Agents, the same
+list `Cmd+Q N` and `]` walk — which is the next Workspace's row, because its
+own Agents are removed first by the Agent rule; when it was drawn last, the
+row above it. The rule is one method, `AppModel.repairSelection`, handed the
+rows of what held the removed row and run by every removal: an Agent stopped
+from its row, from `Cmd+Q X` or from the confirmation sheet, an Agent that
+exited on its own, a Workspace closed any way it can be. A close that asks
+moves nothing until it is answered; Cancel leaves the selection where it was.
 
-The order is not the model's to work out: the Sidebar groups worktrees under
-their repository, which is git's answer, and the model does not know git
-(`AppSnapshot.workspaceOrder`). So the coordinator is handed the drawn order
-(`DrawnOrder`), read by the projection's own function (`drawnWorkspaceOrder`
-in `model/wire.ts`) with main's repository status — the same order every
-page and chord reads. The model used to choose on its own, from the order
-folders happened to be opened in: an Agent's successor was the Agent under
-it or else its own Workspace's editor, a step backwards, and a Workspace's
-was its neighbour in opening order, which could be anywhere on screen.
+Closing an Agent used to land on the next row of the whole Sidebar, which
+after a Workspace's last Agent was the next Workspace: stopping an Agent took
+you out of the folder you were working in.
+
+The Workspace order is not the model's to work out: the Sidebar groups
+worktrees under their repository, which is git's answer, and the model does
+not know git (`AppSnapshot.workspaceOrder`). So the coordinator is handed the
+drawn order (`DrawnOrder`), read by the projection's own function
+(`drawnWorkspaceOrder` in `model/wire.ts`) with main's repository status —
+the same order every page and chord reads. The model used to choose on its
+own, from the order folders happened to be opened in, and a Workspace's
+successor was its neighbour in opening order, which could be anywhere on
+screen.
 
 ## Failures go one way
 
@@ -343,8 +352,9 @@ restarting or gone, behind a question, or while DevHub is not in front is
 simply not had: the move still happens.
 
 **`]` and `[` step from the tab you are on.** Every tab stands on its own row
-of the tab order — the list `N`/`P` walk and a close lands by, built by one
-function (`tabOrder` in `ipc/appShell.ts`, found in by `tabPosition`) — and
+of the tab order — the list `N`/`P` walk and a Workspace's close lands by,
+built by one function (`tabOrder` in `ipc/appShell.ts`, found in by
+`tabPosition`) — and
 `]` (`[`) walks forward (back) from there to the first Agent, wrapping. From
 an Agent that is the next Agent; from an editor, Scratch or a Workspace with
 no Agents it is the first Agent under that row, so alpha's editor `]` is

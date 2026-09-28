@@ -977,10 +977,7 @@ export class AppModel {
     }
   }
 
-  reconcileAgents(
-    reconciliation: AgentReconciliation,
-    drawn: readonly WorkspaceId[],
-  ): void {
+  reconcileAgents(reconciliation: AgentReconciliation): void {
     for (const observation of reconciliation.observations) {
       if (!this.agent(observation.agentId)) {
         fail(DomainErrorCode.UnknownAgent);
@@ -1009,7 +1006,7 @@ export class AppModel {
       );
     }
     for (const id of [...exited].sort()) {
-      this.agentExited(id, drawn);
+      this.agentExited(id);
     }
   }
 
@@ -1226,10 +1223,16 @@ export class AppModel {
     };
   }
 
-  agentExited(id: AgentId, drawn: readonly WorkspaceId[]): void {
+  /**
+   * An Agent is gone. Where the selection goes when it was the Agent's is
+   * decided inside its Workspace (`repairSelection`, handed only that
+   * Workspace's rows), so it never leaves for another Workspace.
+   */
+  agentExited(id: AgentId): void {
     const position = this.findAgentPosition(id);
-    const before = this.tabs(drawn);
-    this.workspaceList[position.workspaceIndex].removeAgent(id);
+    const workspace = this.workspaceList[position.workspaceIndex];
+    const before = tabOrder([workspace]);
+    workspace.removeAgent(id);
     this.repairSelection(before);
     this.bumpRevision();
   }
@@ -1261,17 +1264,25 @@ export class AppModel {
   /**
    * The selection, after something was removed from under it.
    *
-   * **A close lands on the next row, and on the previous one only when what
-   * closed was the last.** "Next" is the row that followed it as the Sidebar
-   * drew it before the removal (`before`), so closing an Agent lands on the
-   * Agent under it, or on the next Workspace's row when it was its
-   * Workspace's last, and closing a Workspace lands past all of its Agents.
-   * A removal of several rows at once — a Workspace, and the Agents that go
-   * with it — arrives here once per row, and landing on the first survivor
-   * after each is the same as landing past the whole block.
+   * **A close lands on the next row of what held it, and on the previous one
+   * when there is no next.** `before` is the rows of the thing the removed
+   * row belonged to, as they stood before the removal:
    *
-   * One rule for every removal: an Agent stopped from its row, from the chord
-   * or from the confirmation sheet, an Agent that exited on its own, a
+   * - An Agent belongs to its Workspace, so `before` is that Workspace's own
+   *   rows — its row, then its Agents (`agentExited`). Closing an Agent lands
+   *   on the Agent under it; closing its Workspace's last Agent lands on the
+   *   Agent above it; closing its only Agent lands on the Workspace's own
+   *   row, the one row before it. The selection never leaves the Workspace,
+   *   Scratch included, and the last row on screen is only another last
+   *   Agent.
+   * - A Workspace belongs to the Sidebar, so `before` is every row as drawn
+   *   (`tabs`, the list `Cmd+Q N` and `]` walk). A Workspace closes with no
+   *   Agents left — they are removed first, each by the rule above — so
+   *   closing one lands on the next Workspace's row, or on the row above it
+   *   when it was drawn last.
+   *
+   * One method for every removal: an Agent stopped from its row, from the
+   * chord or from the confirmation sheet, an Agent that exited on its own, a
    * Workspace closed any way it can be. Whatever the departed row was shown
    * as, the successor is shown on its own: `beside` was asked for about a row
    * that is gone. A selection that did not go is left where it is.
@@ -1286,7 +1297,8 @@ export class AppModel {
         .slice(0, at)
         .reverse()
         .find((tab) => this.contextExists(tab));
-    // Scratch cannot close, so there is always a row left.
+    // A Workspace's row outlives its Agents and Scratch cannot close, so
+    // there is always a row left.
     if (successor === undefined) {
       throw new Error("a removal left no row to select");
     }

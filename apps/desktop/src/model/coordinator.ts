@@ -416,9 +416,10 @@ function unknownOperation(id: OperationId): InvariantViolation {
 /**
  * The Workspaces in the order the Sidebar draws them, Scratch first.
  *
- * Read by the model whenever something is removed, because where the
- * selection lands after a close is the row that followed it on screen
- * (`AppModel.repairSelection`). The order is git's grouping laid under the
+ * Read by the model whenever a Workspace is removed, because where the
+ * selection lands after a Workspace's close is the row that followed it on
+ * screen (`AppModel.repairSelection`; an Agent's close lands inside its own
+ * Workspace and needs no order). The order is git's grouping laid under the
  * person's arrangement, which the model does not know, so the projection
  * hands it in: `drawnWorkspaceOrder` in `wire.ts`, read with main's
  * repository status — the same order every page and every chord reads.
@@ -1794,7 +1795,7 @@ export class AppCoordinator {
       this.cancelAgentStopStateAfterExit(agentId),
     );
     const beforeRevision = this.model.snapshot().revision;
-    this.model.reconcileAgents(reconciliation, this.drawn());
+    this.model.reconcileAgents(reconciliation);
     const snapshot = this.snapshot();
     if (snapshot.revision === beforeRevision) {
       for (const stopToken of canceledStopTokens) {
@@ -2014,7 +2015,7 @@ export class AppCoordinator {
         this.emit({ kind: "operation_completed", token });
         return { kind: "noop", snapshot: this.snapshot() };
       }
-      this.model.agentExited(agentId, this.drawn());
+      this.model.agentExited(agentId);
       this.invalidateReconciliationAfterAgentRemoval(agentId);
     } else {
       // Still there and still stoppable: the row says so, and the request
@@ -2073,16 +2074,13 @@ export class AppCoordinator {
     if (!workspace) {
       throw new StaleCompletion(token.operationId);
     }
-    // Removing an Agent moves no Workspace, so one reading of the order
-    // serves the whole close.
-    const drawn = this.drawn();
     for (const agent of [...workspace.agents]) {
-      this.model.agentExited(agent.id, drawn);
+      this.model.agentExited(agent.id);
     }
     const backup = this.model.closeWorkspaceForPersistence(
       workspaceId,
       CLEAN_CLOSE_INSPECTION,
-      drawn,
+      this.drawn(),
     );
     this.finalizationRoots.set(backup.workspace.key, token.operationId);
     this.finalizationPending.add(token.operationId);
@@ -2209,7 +2207,7 @@ export class AppCoordinator {
     const stopTokens = this.cancelAgentStopStateAfterExit(agentId);
     const removed = this.model.workspaceForAgent(agentId) !== undefined;
     if (removed) {
-      this.model.agentExited(agentId, this.drawn());
+      this.model.agentExited(agentId);
     }
     const snapshot = this.snapshot();
     if (removed) {

@@ -2215,16 +2215,22 @@ describe("where a close lands", () => {
   // (nobody has arranged anything and none of these is a checkout), each
   // followed by its Agents:
   //
-  //   Scratch, s1, alpha, a1, a2, a3, bravo, b1, charlie
+  //   Scratch, s1, s2, alpha, a1, a2, a3, bravo, b1, charlie, c1, c2
+  //
+  // An Agent's close lands inside its own Workspace; a Workspace's close
+  // lands on the rows as drawn.
   //
   // They are opened charlie first on purpose: the order folders were opened
   // in is not the order anybody sees, and a successor read off that order
   // lands somewhere nobody expected.
   const S1 = agentId("00000000-0000-4000-8000-0000000000f1");
+  const S2 = agentId("00000000-0000-4000-8000-0000000000f2");
   const A1 = agentId("00000000-0000-4000-8000-0000000000a1");
   const A2 = agentId("00000000-0000-4000-8000-0000000000a2");
   const A3 = agentId("00000000-0000-4000-8000-0000000000a3");
   const B1 = agentId("00000000-0000-4000-8000-0000000000b1");
+  const C1 = agentId("00000000-0000-4000-8000-0000000000c1");
+  const C2 = agentId("00000000-0000-4000-8000-0000000000c2");
   const ALPHA = workspaceId("00000000-0000-4000-8000-00000000000a");
   const BRAVO = workspaceId("00000000-0000-4000-8000-00000000000b");
   const CHARLIE = workspaceId("00000000-0000-4000-8000-00000000000c");
@@ -2236,10 +2242,13 @@ describe("where a close lands", () => {
     model.addWorkspace(localWorkspace("/dev/bravo", BRAVO));
     const agents: [AgentId, WorkspaceId][] = [
       [S1, model.scratchWorkspaceId],
+      [S2, model.scratchWorkspaceId],
       [A1, ALPHA],
       [A2, ALPHA],
       [A3, ALPHA],
       [B1, BRAVO],
+      [C1, CHARLIE],
+      [C2, CHARLIE],
     ];
     for (const [id, owner] of agents) {
       model.addAgent(owner, id, codex, "tui");
@@ -2288,11 +2297,37 @@ describe("where a close lands", () => {
     expect(selected(driver)).toEqual(agent(A3));
   });
 
-  it("closing a workspace's last Agent lands on the next row, in the next workspace", () => {
+  it("closing a workspace's last Agent lands on the Agent above it, not in the next workspace", () => {
     const driver = arranged();
     select(driver, agent(A3));
     closeAgent(driver, A3);
+    expect(selected(driver)).toEqual(agent(A2));
+  });
+
+  it("closing a workspace's only Agent lands on the workspace's own row", () => {
+    const driver = arranged();
+    select(driver, agent(B1));
+    closeAgent(driver, B1);
     expect(selected(driver)).toEqual(workspace(BRAVO));
+  });
+
+  it("closing the last row on screen lands on the Agent above it, then on its workspace", () => {
+    const driver = arranged();
+    select(driver, agent(C2));
+    closeAgent(driver, C2);
+    expect(selected(driver)).toEqual(agent(C1));
+    closeAgent(driver, C1);
+    expect(selected(driver)).toEqual(workspace(CHARLIE));
+  });
+
+  it("closes Scratch's Agents by the same rule, and stays in Scratch", () => {
+    const driver = arranged();
+    const scratch = driver.coordinator.model.scratchWorkspaceId;
+    select(driver, agent(S1));
+    closeAgent(driver, S1);
+    expect(selected(driver)).toEqual(agent(S2));
+    closeAgent(driver, S2);
+    expect(selected(driver)).toEqual(workspace(scratch));
   });
 
   it("an Agent that exits on its own is replaced by the same rule", () => {
@@ -2308,7 +2343,7 @@ describe("where a close lands", () => {
       token: effect.token,
       reconciliation: { observations: [], exited: [A3] },
     });
-    expect(selected(driver)).toEqual(workspace(BRAVO));
+    expect(selected(driver)).toEqual(agent(A2));
   });
 
   it("closing the last row lands on the one before it", () => {
@@ -2353,7 +2388,7 @@ describe("where a close lands", () => {
 
     driver.dispatch({ type: "confirm_stop_agent", confirmationId: CONFIRM });
     driver.settle();
-    expect(selected(driver)).toEqual(workspace(BRAVO));
+    expect(selected(driver)).toEqual(agent(A2));
   });
 
   it("a workspace close that asks moves nothing until it is confirmed", () => {

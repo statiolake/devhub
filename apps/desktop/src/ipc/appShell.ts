@@ -1024,9 +1024,10 @@ export type TabOf<W extends string, A extends string> =
  * followed by its Agents, over Workspaces already in the order the Sidebar
  * draws them (Scratch first — see `sidebarWorkspaces`).
  *
- * The one list `Cmd+Q N`/`P` and `]`/`[` walk and a close lands by
- * (`AppModel.repairSelection`), so where you go next and where a close puts
- * you cannot come to disagree.
+ * The one list `Cmd+Q N`/`P` and `]`/`[` walk and a Workspace's close lands
+ * by (`AppModel.repairSelection`), so where you go next and where a close
+ * puts you cannot come to disagree. An Agent's close lands by the same
+ * function over its own Workspace alone, so it stays in that Workspace.
  */
 export function tabOrder<W extends string, A extends string>(
 	workspaces: readonly {

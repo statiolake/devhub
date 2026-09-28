@@ -348,12 +348,12 @@ describe("selection", () => {
     model.addAgent(WS_A, AG_A, codex, "tui");
     model.addAgent(WS_A, AG_B, codex, "tui");
     model.selectContext({ kind: "agent", agentId: AG_A });
-    model.agentExited(AG_A, drawn(model));
+    model.agentExited(AG_A);
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_B },
       presentation: "full",
     });
-    model.agentExited(AG_B, drawn(model));
+    model.agentExited(AG_B);
     expect(model.selection).toEqual({
       context: { kind: "workspace", workspaceId: WS_A },
       presentation: "full",
@@ -365,18 +365,12 @@ describe("selection", () => {
     // on a row nobody sees; it fails where it is read instead, and nothing
     // is removed.
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.addAgent(WS_A, AG_A, codex, "tui");
-    const stale = drawn(model).filter((id) => id !== WS_B);
-    expect(() => {
-      model.agentExited(AG_A, stale);
-    }).toThrow(/does not name the open workspaces/);
     expect(() => {
       model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION, [
         ...drawn(model),
         WS_A,
       ]);
     }).toThrow(/does not name the open workspaces/);
-    expect(model.agent(AG_A)).toBeDefined();
     expect(model.workspace(WS_B)).toBeDefined();
   });
 });
@@ -526,7 +520,7 @@ describe("sidebar", () => {
     expect(model.snapshot().workspaces[1].agents.map((a) => a.id)).toEqual([
       AG_A,
     ]);
-    model.agentExited(AG_A, drawn(model));
+    model.agentExited(AG_A);
     expect(model.snapshot().workspaces[1].agents).toEqual([]);
   });
 });
@@ -937,18 +931,18 @@ describe("a failure a reading carries", () => {
 
   it("is shown on the Agent while the rounds keep reading it, without being republished", () => {
     const shown = model();
-    shown.reconcileAgents(reading(lost), [WS_A]);
+    shown.reconcileAgents(reading(lost));
     expect(failureOf(shown)).toEqual(lost);
     const before = shown.snapshot().revision;
-    shown.reconcileAgents(reading(lost), [WS_A]);
+    shown.reconcileAgents(reading(lost));
     expect(shown.snapshot().revision).toBe(before);
     expect(failureOf(shown)).toEqual(lost);
   });
 
   it("goes with the first reading that does not carry it", () => {
     const shown = model();
-    shown.reconcileAgents(reading(lost), [WS_A]);
-    shown.reconcileAgents(reading(undefined), [WS_A]);
+    shown.reconcileAgents(reading(lost));
+    shown.reconcileAgents(reading(undefined));
     expect(failureOf(shown)).toBeUndefined();
   });
 });

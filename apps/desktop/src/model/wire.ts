@@ -399,7 +399,7 @@ export type HomeOf = (location: WorkspaceLocation) => string | undefined;
  * read with git's answer about which folders are checkouts of one repository.
  * The model carries the arrangement and does not know git, so the order is
  * worked out here, where the two meet, and nowhere else: the projection is put
- * in it, and so is what a close lands on (`drawnWorkspaceOrder`).
+ * in it, and so is what a Workspace's close lands on (`drawnWorkspaceOrder`).
  */
 function drawnWorkspaces(
   snapshot: AppSnapshot,
@@ -415,10 +415,10 @@ function drawnWorkspaces(
 /**
  * Every Workspace as the Sidebar lists it: Scratch, then the rows as drawn.
  *
- * What the model is told when it has to repair the selection after a removal
- * (`DrawnOrder` in `coordinator.ts`), so that the row a close lands on is the
- * row `Cmd+Q N` would have stepped to — the chords walk the projection, and
- * the projection is in this order.
+ * What the model is told when it has to repair the selection after a
+ * Workspace's removal (`DrawnOrder` in `coordinator.ts`), so that the row the
+ * close lands on is the row `Cmd+Q N` would have stepped to — the chords walk
+ * the projection, and the projection is in this order.
  */
 export function drawnWorkspaceOrder(
   snapshot: AppSnapshot,

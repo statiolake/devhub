@@ -753,9 +753,10 @@ export class AppController {
 			// with. Without it DevHub would run in `auto` until the first save.
 			appearanceMode().apply(config.appearance.mode);
 		}
-		// Where a close lands is the row after it as the Sidebar draws it, and
-		// the Sidebar's order is read with the repository status only main
-		// has — so the model is handed the same order the projection is in.
+		// Where a Workspace's close lands is the row after it as the Sidebar
+		// draws it, and the Sidebar's order is read with the repository status
+		// only main has — so the model is handed the same order the projection
+		// is in.
 		this.coordinator = new AppCoordinator(model, (snapshot) =>
 			drawnWorkspaceOrder(snapshot, this.repositoryOf),
 		);
