@@ -3,7 +3,8 @@
  * or an earlier session that ran in the folder the Agent is for.
  *
  * Three flows ask it — the sidebar's `+`, which starts an Agent in a Workspace
- * that is already open; Assign Issue, once it knows the folder; and the
+ * that is already open; Assign Issue, once it has opened the Issue's folder as
+ * a Workspace (both through `WorkspaceAgentPicker`, in the same words); and the
  * workspace picker's Command gesture, which starts one in the Workspace it is
  * about to open — and they are the same question about the same list. A second
  * copy of it would be a list that could drift, and a person cannot know which
@@ -85,9 +86,8 @@ export interface AgentProfilePickerProps {
   readonly hint: ReactNode;
   /**
    * The folder the Agent will run in, whose earlier sessions are offered.
-   * Undefined where there are none to offer — a worktree the flow has still
-   * to make, a Workspace that opening will start the Agent in — and then
-   * there are only the New rows.
+   * Undefined where there is no folder yet — a Workspace that opening will
+   * start the Agent in — and then there are only the New rows.
    */
   readonly sessionsIn: WorkspacePlaceWire | undefined;
   readonly onChoose: (choice: AgentChoice) => void;

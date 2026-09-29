@@ -1012,14 +1012,27 @@ sessions DevHub can list, so they have their New row only.
 - **Taking one.** Return starts a new Agent from that profile resuming the
   session (a launch that resumes, below), ⌥Return in the other presentation,
   ⌘Return beside the editor, exactly as a New row does.
-- **Assign Issue** asks which agent last, once it knows where the work
-  happens, so the same rows are offered for that folder: the root checkout,
-  or the checkout a pull request's branch is already in — where the session
-  that wrote it is, when review comments arrive. A worktree the flow is about
-  to make has had no session yet, so it offers the New rows only. A resumed
-  session is told about the Issue the way a new Agent is: the action's
-  template is queued for it (after the review sheet, when the action asks for
-  one) and sent when the resumed CLI is idle.
+- **Assign Issue** acts on the folder before it asks which agent. Once the
+  person picks a row of "Where to work on owner/repo#128", DevHub does the
+  folder work and switches to it: it creates the worktree
+  (`../<repo>_feature_128-wip` for a new branch; `../<repo>_<branch>`, with
+  `/` as `_`, for the branch the work already has), or opens the worktree that
+  branch is already checked out in, or opens the root checkout as it stands — and opens that
+  folder as the selected Workspace, as opening one does. Only then does it ask
+  which agent, with New Agent's picker for that Workspace, word for word under
+  the title "Agent for owner/repo#128": New rows, the folder's earlier
+  sessions with their preview, ⌥Return, ⌘Return. An existing worktree or the
+  root checkout offers its sessions — the session that wrote a pull request is
+  there when review comments arrive; a worktree just created has none, so it
+  offers the New rows only. A resumed session is told about the Issue the way
+  a new Agent is: the action's template is queued for it (after the review
+  sheet, when the action asks for one) and sent when the resumed CLI is idle.
+  A folder that cannot be made (a directory in the way, a branch nowhere to be
+  fetched) is said under the branch question and no agent is asked about; a
+  fetch that failed asks whether to start from the copy on disk first.
+  Escaping the agent question goes back to the branch question and leaves the
+  Workspace, and the worktree it may have created, in place: they were opened
+  like any other, and closing them is its own act.
 
 A launch that resumes is an ordinary launch whose arguments end with the
 terminal mode's resume: `--resume <session id>` or `resume <thread id>`. They

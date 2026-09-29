@@ -153,15 +153,51 @@ export interface AssignmentBranchWire {
 }
 
 /** Everything the Issue flow asked, once it has all the answers. */
-export interface IssueAssignment {
+/**
+ * Where an Issue is to be worked on: the clone, and the branch that decides
+ * which folder of it.
+ *
+ * The first half of assigning an Issue. DevHub does the folder work — makes the
+ * worktree, or finds the one the branch is already in, or takes the clone as it
+ * stands — and opens that folder as a Workspace, *before* anybody is asked
+ * which agent. The agent question is then New Agent's, about a Workspace that
+ * exists, so it offers that folder's earlier sessions like New Agent does.
+ */
+export interface IssueFolderRequest {
 	readonly issueUrl: string;
 	/** The clone to work in, and the machine it is on. */
 	readonly place: WorkspacePlaceWire;
 	/**
-	 * The branch to make a worktree for. Absent means the person chose to work
-	 * in the clone itself, which is a workspace they may already have open.
+	 * The branch whose worktree to open, made if it is not there yet. Absent
+	 * means the clone's own folder, on whatever branch it is on.
 	 */
 	readonly branch?: string;
+	/**
+	 * Start the branch from the `origin` already on disk, the fetch having
+	 * failed and the person having been asked and said to go on.
+	 *
+	 * Absent means no, which is what every first attempt sends: a stale base is
+	 * only ever used deliberately.
+	 */
+	readonly allowStaleBase?: boolean;
+}
+
+/** The Workspace the Issue's folder opened as, now the selected one. */
+export interface IssueFolderWire {
+	readonly outcome: AppOutcome;
+	readonly workspaceId: string;
+	/** The Workspace's folder, on its machine — where its sessions are read. */
+	readonly place: WorkspacePlaceWire;
+}
+
+/**
+ * The second half: start an agent in the Workspace the folder opened as, and
+ * tell it about the Issue.
+ */
+export interface IssueAssignment {
+	readonly issueUrl: string;
+	/** The Workspace `openIssueFolder` answered with. */
+	readonly workspaceId: string;
 	readonly profileId: string;
 	/**
 	 * Which action to start the agent with, from `agent_actions`.
@@ -175,19 +211,11 @@ export interface IssueAssignment {
 	/** TUI or GUI, as the agent row said when it was taken (⌥ flips it). */
 	readonly presentation: "tui" | "gui";
 	/**
-	 * An earlier session of the profile's CLI in the place worked in, which
+	 * An earlier session of the profile's CLI in that Workspace's folder, which
 	 * the agent goes on with and is then told about the Issue. Absent starts
 	 * afresh.
 	 */
 	readonly resume?: string;
-	/**
-	 * Start the branch from the `origin` already on disk, the fetch having
-	 * failed and the person having been asked and said to go on.
-	 *
-	 * Absent means no, which is what every first attempt sends: a stale base is
-	 * only ever used deliberately.
-	 */
-	readonly allowStaleBase?: boolean;
 }
 
 /**
@@ -969,9 +997,12 @@ export interface WorkspaceOpeningBridge {
 	): Promise<AssignmentBranchWire>;
 	listBranches(place: WorkspacePlaceWire): Promise<readonly string[]>;
 	/**
-	 * Do what the answers add up to: make the worktree if one was asked for,
-	 * open it, write the Issue down against it, and start the agent.
+	 * Make or find the folder the Issue is worked in, and open it as the
+	 * selected Workspace. Throws what to do about it — a directory in the way,
+	 * a fetch that failed — because the branch question shows the reason.
 	 */
+	openIssueFolder(request: IssueFolderRequest): Promise<IssueFolderWire>;
+	/** Start the agent in that Workspace and queue the Issue's action for it. */
 	assignIssue(request: IssueAssignment): Promise<AppOutcome>;
 }
 
@@ -1450,6 +1481,7 @@ export const CHANNELS = {
 	previewAgentSession: "devhub:preview-agent-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
+	openIssueFolder: "devhub:open-issue-folder",
 	assignIssue: "devhub:assign-issue",
 	getRepositoryStatus: "devhub:get-repository-status",
 	getUsageLimits: "devhub:get-usage-limits",

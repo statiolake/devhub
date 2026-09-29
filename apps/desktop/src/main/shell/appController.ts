@@ -63,6 +63,8 @@ import {
 	type LayoutPreviewWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
+	type IssueFolderRequest,
+	type IssueFolderWire,
 	type WorkspacePlaceWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
@@ -6063,20 +6065,25 @@ export class AppController {
 	}
 
 	/**
-	 * Carry out everything the Issue flow asked for, in one act.
+	 * The folder an Issue is worked in: made or found, opened, and selected.
 	 *
-	 * The worktree, if one was asked for; the folder opened; the Issue written
-	 * down against the workspace that opening produced; the agent started in it.
-	 * They are one act because a half-done one is worse than none: a worktree
-	 * nothing opened is litter, and a workspace opened for an Issue it does not
-	 * know about is the exact confusion the record exists to prevent.
+	 * The worktree, if one was asked for — or the one the branch is already in,
+	 * which `ensureWorktree` switches to rather than duplicating — and then the
+	 * folder opened as a Workspace, which is also going there. This comes before
+	 * the agent question, not with it, because the agent question is about a
+	 * folder: its earlier sessions are what a person assigning review comments
+	 * wants, and a question asked before the folder was settled could only guess
+	 * which folder it was about. A person who then declines to start an agent
+	 * keeps the Workspace, the same as one opened any other way.
 	 *
 	 * Which workspace it is comes from the selection rather than from matching
 	 * the path back, because opening a folder *is* selecting it — for a folder
 	 * already open as much as for a new one — and re-deriving it from a path
 	 * would be a second answer to a question the model has already answered.
 	 */
-	private async assignIssue(request: IssueAssignment): Promise<AppOutcomeWire> {
+	private async openIssueFolder(
+		request: IssueFolderRequest,
+	): Promise<IssueFolderWire> {
 		const item = parseGitHubItemUrl(request.issueUrl);
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
@@ -6098,28 +6105,46 @@ export class AppController {
 					},
 				)
 			: place.path;
-
-		// Which workspace the opening produced is a fact the model states: it is
-		// the selection, new or not. Deriving it from the path instead would be
-		// a second answer — the root is canonicalised on the way in, so it is not
-		// the string this call was given.
 		// A worktree of a repository on a host is beside it, on that host: git
 		// made it there, and there is nowhere else it could be. So the place the
 		// flow was working in decides the machine, and only the path moves.
 		const opening = requestedLocation({ ...place, path: target });
-		await this.openFolder(opening);
-		// Not `openFolder(target, profileId)`: this flow has more to do around the
-		// creation than that shortcut can express — the Agent goes beside the
-		// editor when the person asked for that, and the Issue's prompt is queued
-		// against whichever Agent it produced — but *which workspace opening
-		// produced* is the same fact, read the same way.
+		const outcome = await this.openFolder(opening);
 		const workspaceId = this.openedWorkspaceId(opening);
-		// Nothing is written down about which Issue this workspace is for. The
-		// branch the flow just made carries the number (`feature/128-…`), and the
-		// branch is the whole of the link — so a worktree made for the Issue shows
-		// it, and "in this workspace" on a branch that says nothing about an Issue
-		// shows nothing, which is the point: a record would have claimed the Issue
-		// while `master` was checked out.
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (workspace === undefined) {
+			throw new Error(`the workspace opening ${target} selected is not there`);
+		}
+		// The Workspace's own folder rather than the string git answered with:
+		// the root is canonicalised on the way in, and New Agent reads a
+		// Workspace's sessions from its root, so this is the same folder asked
+		// the same way.
+		return {
+			outcome,
+			workspaceId,
+			place: relocatedOnSameMachine(
+				workspace.location,
+				workspace.location.path,
+			),
+		};
+	}
+
+	/**
+	 * Start the agent for an Issue in the Workspace its folder opened as, and
+	 * tell it about the Issue.
+	 *
+	 * Nothing is written down about which Issue this workspace is for. The
+	 * branch the flow made carries the number (`feature/128-…`), and the branch
+	 * is the whole of the link — so a worktree made for the Issue shows it, and
+	 * "in this workspace" on a branch that says nothing about an Issue shows
+	 * nothing, which is the point: a record would have claimed the Issue while
+	 * `master` was checked out.
+	 */
+	private async assignIssue(request: IssueAssignment): Promise<AppOutcomeWire> {
+		const item = parseGitHubItemUrl(request.issueUrl);
+		if (!item) {
+			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
+		}
 		const agentsBefore = new Set(
 			this.coordinator.model.workspaces.flatMap((workspace) =>
 				workspace.agents.map((agent) => agent.id),
@@ -6129,7 +6154,7 @@ export class AppController {
 		// same queue a new Agent's first message goes through.
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
-			workspaceId,
+			workspaceId: parseWorkspaceId(request.workspaceId),
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 			agentPresentation: agentPresentation(request.presentation),
@@ -6586,6 +6611,16 @@ export class AppController {
 				throw namedFailure(error);
 			}
 		});
+		handle(
+			CHANNELS.openIssueFolder,
+			async (_event, request: IssueFolderRequest) => {
+				try {
+					return await this.openIssueFolder(request);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
 		handle(CHANNELS.assignIssue, async (_event, request: IssueAssignment) => {
 			try {
 				return await this.assignIssue(request);

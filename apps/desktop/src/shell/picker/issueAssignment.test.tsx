@@ -3,15 +3,18 @@
 /**
  * Assigning an Issue, as the person walks it.
  *
- * The flow's value is in what it *asks* and what it finally sends, so that is
- * what these check: the whole way through with a worktree, the shorter way
- * without one, a URL that is not an Issue URL, and Escape coming back to a
- * question that has already been answered once.
+ * The flow's value is in what it *asks*, what it does between the questions,
+ * and what it finally sends, so that is what these check: the folder made and
+ * opened before the agent is asked about, the agent question listing that
+ * folder's sessions, a URL that is not an Issue URL, a folder that could not be
+ * made, and Escape coming back to a question that has already been answered.
  */
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { IssueFolderRequest } from "../../ipc/contract";
+import { worktreeDirectory } from "../../model/worktrees";
 import type { PickerValue } from "./PickerContext";
 import { PickerContext } from "./PickerContext";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
@@ -22,8 +25,33 @@ afterEach(cleanup);
 const ISSUE = "https://github.com/example/widget/issues/128";
 const PULL_REQUEST = "https://github.com/example/widget/pull/128";
 
+/** The Workspace every folder opens as, in these tests. */
+const WORKSPACE = "workspace-1";
+
+/**
+ * Main's half of the folder step, as far as the flow can tell: the worktree
+ * for a branch lands where `worktreeDirectory` says, and the folder opens as
+ * the selected Workspace.
+ */
+function openedFolder() {
+  return vi.fn((request: IssueFolderRequest) =>
+    Promise.resolve({
+      outcome: {},
+      workspaceId: WORKSPACE,
+      place:
+        request.branch === undefined
+          ? request.place
+          : {
+              ...request.place,
+              path: worktreeDirectory(request.place.path, request.branch),
+            },
+    }),
+  );
+}
+
 function mount(overrides: Partial<PickerValue> = {}) {
   const assignIssue = vi.fn().mockResolvedValue(undefined);
+  const openIssueFolder = openedFolder();
   // One repository, checked out in one place: the shape most of these walk.
   const findIssueRepositories = vi.fn().mockResolvedValue([
     {
@@ -67,6 +95,7 @@ function mount(overrides: Partial<PickerValue> = {}) {
     findIssueRepositories,
     listBranches,
     cloneRepository,
+    openIssueFolder,
     assignIssue,
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi
@@ -92,6 +121,7 @@ function mount(overrides: Partial<PickerValue> = {}) {
   );
   return {
     assignIssue,
+    openIssueFolder: value.openIssueFolder as ReturnType<typeof openedFolder>,
     findIssueRepositories,
     listBranches,
     cloneRepository,
@@ -114,6 +144,7 @@ function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
     previewAgentSession: vi.fn().mockResolvedValue([]),
     listBranches: vi.fn().mockResolvedValue([]),
     cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
+    openIssueFolder: openedFolder(),
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
@@ -169,32 +200,82 @@ async function answer(
   fireEvent.keyDown(dialog, { key: "Enter", ...modifiers });
 }
 
+/** The rows on screen, by their titles, in order. */
+function rowTitles(): readonly (string | null | undefined)[] {
+  return screen
+    .getAllByRole("option")
+    .map((row) => row.querySelector(".mac-list-title")?.textContent);
+}
+
+/** A refusal in the shape main's actually arrives in. */
+function refusal(summary: string): Error {
+  return new Error(
+    `Error: ${JSON.stringify({
+      code: "workspace_unavailable",
+      summary,
+      module: "app",
+      timestampMs: 0,
+      runtimeVersion: "0.1.0",
+      actions: ["retry"],
+    })}`,
+  );
+}
+
 describe("assigning an Issue", () => {
-  it("asks three questions and sends what they add up to", async () => {
-    // The Issue, which branch, and the agent. The repository is not asked
+  it("opens the folder, then asks which agent, then starts it with the Issue", async () => {
+    // The Issue, which folder, and the agent. The repository is not asked
     // because there is exactly one clone, and the Issue has no branch of its
     // own: DevHub offers `feature/128-wip` and the agent is told to rename it.
-    const { assignIssue } = mount();
+    const { openIssueFolder, assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New branch feature\/128-wip/u,
+      /New worktree: feature\/128-wip/u,
     );
+    await screen.findByRole("dialog", {
+      name: /Agent for example\/widget#128/u,
+    });
+
+    // The folder is made and opened before the agent is asked about.
+    expect(openIssueFolder).toHaveBeenCalledWith({
+      issueUrl: ISSUE,
+      place: { kind: "local", path: "/projects/widget" },
+      branch: "feature/128-wip",
+      allowStaleBase: false,
+    });
+    expect(assignIssue).not.toHaveBeenCalled();
+
     await answer(/Agent for example\/widget#128/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
-        place: { kind: "local", path: "/projects/widget" },
-        branch: "feature/128-wip",
+        workspaceId: WORKSPACE,
         profileId: "claude",
         actionId: "implement",
         split: false,
         presentation: "tui",
-        allowStaleBase: false,
       });
     });
+    expect(openIssueFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the agent question in New Agent's words, with the Issue in the title", async () => {
+    mount();
+
+    await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /Root checkout/u);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /Agent for example\/widget#128/u,
+    });
+    expect(dialog).toHaveTextContent(
+      "Start a new session, or go on with one of this workspace's earlier ones.",
+    );
+    expect(dialog).toHaveTextContent(
+      "The agent starts at the workspace root. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI.",
+    );
   });
 
   it("offers TUI and GUI the way New Agent does, and carries the choice to the launch", async () => {
@@ -203,7 +284,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New branch feature\/128-wip/u,
+      /New worktree: feature\/128-wip/u,
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
@@ -231,7 +312,7 @@ describe("assigning an Issue", () => {
   });
 
   it("asks which repository only when there are two of them", async () => {
-    const { assignIssue } = mount({
+    const { openIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
           place: { kind: "local", path: "/projects/widget" },
@@ -250,24 +331,22 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await choose(/Which example\/widget/u, /\/other\/widget/u);
-    await choose(/Where to work on/u, /root checkout/u);
-    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /Root checkout/u);
 
     await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({
-          place: { kind: "local", path: "/other/widget" },
-          branch: undefined,
-        }),
-      );
+      expect(openIssueFolder).toHaveBeenCalledWith({
+        issueUrl: ISSUE,
+        place: { kind: "local", path: "/other/widget" },
+        allowStaleBase: false,
+      });
     });
   });
 
-  it("offers the branch the work already has, and opens it where it is", async () => {
+  it("opens the worktree a branch is already checked out in, where it is", async () => {
     // A pull request whose branch is already checked out somewhere. git gives
     // one branch one worktree, so the honest offer is the folder the work is
     // already in — opening it, not making a second one git would refuse.
-    const { assignIssue } = mount({
+    const { openIssueFolder } = mount({
       assignmentBranch: vi.fn().mockResolvedValue({
         branch: "alice/fix-the-crash",
         reachable: true,
@@ -276,19 +355,20 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await choose(/Where to work on/u, /Open widget_alice_fix-the-crash/u);
-    await answer(/Agent for/u);
+    await choose(
+      /Where to work on/u,
+      /Existing worktree: alice\/fix-the-crash/u,
+    );
 
     await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({
-          place: {
-            kind: "local",
-            path: "/projects/widget_alice_fix-the-crash",
-          },
-          branch: undefined,
-        }),
-      );
+      expect(openIssueFolder).toHaveBeenCalledWith({
+        issueUrl: PULL_REQUEST,
+        place: {
+          kind: "local",
+          path: "/projects/widget_alice_fix-the-crash",
+        },
+        allowStaleBase: false,
+      });
     });
   });
 
@@ -302,7 +382,8 @@ describe("assigning an Issue", () => {
       path: "/srv/widget",
     };
     const assignmentBranch = vi.fn().mockResolvedValue({ reachable: false });
-    const { assignIssue } = mount({
+    const listAgentSessions = vi.fn().mockResolvedValue([]);
+    const { openIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
           place,
@@ -310,20 +391,24 @@ describe("assigning an Issue", () => {
         },
       ]),
       assignmentBranch,
+      listAgentSessions,
     } as unknown as Partial<PickerValue>);
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New branch/u);
-    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /New worktree/u);
+    await screen.findByRole("dialog", { name: /Agent for/u });
 
-    await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({ place, branch: "feature/128-wip" }),
-      );
-    });
+    expect(openIssueFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ place, branch: "feature/128-wip" }),
+    );
     expect(assignmentBranch).toHaveBeenCalledWith(
       ISSUE,
       place,
       expect.any(AbortSignal),
+    );
+    // And the sessions are read on that host, in the worktree.
+    expect(listAgentSessions).toHaveBeenCalledWith(
+      { ...place, path: "/srv/widget_feature_128-wip" },
+      "claude",
     );
   });
 
@@ -347,33 +432,30 @@ describe("assigning an Issue", () => {
         "patch-1 is in alice/widget, which this clone has no remote for, so it cannot be checked out here.",
       ),
     ).toBeVisible();
-    expect(
-      screen
-        .getAllByRole("option")
-        .map((row) => row.querySelector(".mac-list-title")?.textContent),
-    ).toEqual(["New branch feature/128-wip", "Work in the root checkout"]);
+    expect(rowTitles()).toEqual([
+      "New worktree: feature/128-wip",
+      "Root checkout",
+    ]);
   });
 
-  it("makes no branch when the work stays in the workspace", async () => {
+  it("makes no branch when the work stays in the root checkout", async () => {
     // Which also means it is linked to no Issue unless the branch already
     // happens to name one — see the branch-only linking rule.
-    const { assignIssue } = mount();
+    const { openIssueFolder, assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /root checkout/u);
+    await choose(/Where to work on/u, /Root checkout/u);
     await answer(/Agent for/u);
 
+    expect(openIssueFolder).toHaveBeenCalledWith({
+      issueUrl: ISSUE,
+      place: { kind: "local", path: "/projects/widget" },
+      allowStaleBase: false,
+    });
     await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith({
-        issueUrl: ISSUE,
-        place: { kind: "local", path: "/projects/widget" },
-        branch: undefined,
-        profileId: "claude",
-        actionId: "implement",
-        split: false,
-        presentation: "tui",
-        allowStaleBase: false,
-      });
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: WORKSPACE }),
+      );
     });
   });
 
@@ -399,7 +481,7 @@ describe("assigning an Issue", () => {
       } as unknown as PickerValue["agentProfiles"],
     });
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /root checkout/u);
+    await choose(/Where to work on/u, /Root checkout/u);
 
     expect(
       await screen.findByRole("option", { name: /New Claude Session/u }),
@@ -444,25 +526,23 @@ describe("assigning an Issue", () => {
     const assignmentBranch = vi
       .fn()
       .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true });
-    const { assignIssue } = mount({
+    const { openIssueFolder } = mount({
       assignmentBranch,
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await choose(
       /Where to work on example\/widget#128/u,
-      /Check out alice\/fix-the-crash/u,
+      /Check out alice\/fix-the-crash in a new worktree/u,
     );
-    await answer(/Agent for example\/widget#128/u);
 
     await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({
-          issueUrl: PULL_REQUEST,
-          place: { kind: "local", path: "/projects/widget" },
-          branch: "alice/fix-the-crash",
-        }),
-      );
+      expect(openIssueFolder).toHaveBeenCalledWith({
+        issueUrl: PULL_REQUEST,
+        place: { kind: "local", path: "/projects/widget" },
+        branch: "alice/fix-the-crash",
+        allowStaleBase: false,
+      });
     });
     expect(assignmentBranch).toHaveBeenCalledWith(
       PULL_REQUEST,
@@ -471,29 +551,80 @@ describe("assigning an Issue", () => {
     );
   });
 
-  it("checks nothing out when the work stays in the repository itself", async () => {
-    // The agent is handed the repository as it stands. Which branch to look at
-    // is then the agent's business, and DevHub moving somebody's checkout out
-    // from under them would be the wrong kind of helpful.
-    const { assignIssue } = mount({
+  it("says what each row does and where, in the folder names it will use", async () => {
+    // "A worktree of its own, beside widget" left the person to guess whether
+    // an existing folder was meant, and which. Each row now says whether it
+    // creates or opens, and names the folder.
+    mount({
       assignmentBranch: vi
         .fn()
         .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await choose(/Where to work on/u, /root checkout/u);
-    await answer(/Agent for/u);
+    await screen.findByRole("dialog", { name: /Where to work on/u });
 
-    await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({
-          issueUrl: PULL_REQUEST,
-          place: { kind: "local", path: "/projects/widget" },
-          branch: undefined,
-        }),
-      );
-    });
+    expect(
+      screen.getByRole("option", {
+        name: /Check out alice\/fix-the-crash in a new worktree/u,
+      }),
+    ).toHaveTextContent(
+      "Creates ../widget_alice_fix-the-crash on the branch this work already has",
+    );
+    expect(
+      screen.getByRole("option", { name: /New worktree: feature\/128-wip/u }),
+    ).toHaveTextContent(
+      "Creates ../widget_feature_128-wip on a new branch from origin's default branch",
+    );
+    expect(
+      screen.getByRole("option", { name: /^Root checkout/u }),
+    ).toHaveTextContent(
+      "Opens /projects/widget on whatever branch it is on now; nothing is checked out or created",
+    );
+  });
+
+  it("names an existing worktree by its folder, and offers no second row for the same branch", async () => {
+    // The owner's case: an earlier `feature/128-wip` worktree, found by the
+    // Issue's number. Opening it is the answer; "New worktree: feature/128-wip"
+    // beside it would open the same folder while claiming to create one.
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "feature/128-wip",
+        reachable: true,
+        checkedOutAt: "/projects/widget_feature_128-wip",
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(rowTitles()).toEqual([
+      "Existing worktree: feature/128-wip",
+      "Root checkout",
+    ]);
+    expect(
+      screen.getByRole("option", { name: /Existing worktree/u }),
+    ).toHaveTextContent(
+      "Opens ../widget_feature_128-wip, where feature/128-wip is already checked out",
+    );
+  });
+
+  it("offers the root checkout once when the work's branch is checked out there", async () => {
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "feature/128-tidy",
+        reachable: true,
+        checkedOutAt: "/projects/widget",
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(rowTitles()).toEqual([
+      "Root checkout: feature/128-tidy",
+      "New worktree: feature/128-wip",
+    ]);
   });
 
   it("leads with the branch the work already has, then the two standing answers", async () => {
@@ -510,14 +641,10 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", PULL_REQUEST);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
-    expect(
-      screen
-        .getAllByRole("option")
-        .map((row) => row.querySelector(".mac-list-title")?.textContent),
-    ).toEqual([
-      "Check out alice/fix-the-crash in a worktree",
-      "New branch feature/128-wip",
-      "Work in the root checkout",
+    expect(rowTitles()).toEqual([
+      "Check out alice/fix-the-crash in a new worktree",
+      "New worktree: feature/128-wip",
+      "Root checkout",
     ]);
     // Every row is an answer rather than a name to search among, so they are
     // all pinned and typing narrows nothing away: there is no list here that a
@@ -551,11 +678,14 @@ describe("assigning an Issue", () => {
     expect(screen.getByText("Step 2")).toBeVisible();
   });
 
-  it("takes Escape back to the question before, with its answers still true", async () => {
-    const { assignIssue } = mount();
+  it("takes Escape back to the question before, leaving the opened folder open", async () => {
+    // Declining to start an agent is not undoing the folder: it was opened
+    // like any other Workspace, and closing it is its own act. Nothing here
+    // asks main to take it back, and nothing is started.
+    const { openIssueFolder, assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /root checkout/u);
+    await choose(/Where to work on/u, /New worktree/u);
     // Escape from the agent question goes back to where to work.
     fireEvent.keyDown(
       await screen.findByRole("dialog", { name: /Agent for/u }),
@@ -574,13 +704,61 @@ describe("assigning an Issue", () => {
     expect(
       await screen.findByRole("dialog", { name: "Assign Issue" }),
     ).toBeVisible();
+    expect(openIssueFolder).toHaveBeenCalledTimes(1);
     expect(assignIssue).not.toHaveBeenCalled();
+  });
+
+  it("shows a folder that could not be made on the branch question, and asks no agent", async () => {
+    const openIssueFolder = vi
+      .fn()
+      .mockRejectedValueOnce(
+        refusal(
+          "/projects/widget_feature_128-wip already exists and is not a worktree for feature/128-wip.",
+        ),
+      );
+    const { assignIssue } = mount({
+      openIssueFolder,
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /New worktree/u);
+
+    // The branch question again, redrawn with the reason under it.
+    expect(
+      await screen.findByText(
+        "/projects/widget_feature_128-wip already exists and is not a worktree for feature/128-wip.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: /Where to work on/u }),
+    ).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: /Agent for/u })).toBeNull();
+    expect(openIssueFolder).toHaveBeenCalledTimes(1);
+    expect(assignIssue).not.toHaveBeenCalled();
+  });
+
+  it("shows an agent that could not start on the agent question", async () => {
+    const assignIssue = vi
+      .fn()
+      .mockRejectedValueOnce(refusal("Claude is not on this machine's PATH."));
+    mount({ assignIssue } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /Root checkout/u);
+    await answer(/Agent for/u);
+
+    // The agent question again, redrawn with the reason under it.
+    expect(
+      await screen.findByText("Claude is not on this machine's PATH."),
+    ).toBeVisible();
+    expect(screen.getByRole("dialog", { name: /Agent for/u })).toBeVisible();
   });
 
   it("asks before starting a branch from a copy the fetch could not refresh", async () => {
     // The fetch failing is not the end of the flow and not a silent fallback:
     // the reason is shown, and starting from what is on disk is a decision the
-    // person makes once, in words.
+    // person makes once, in words — before the agent is asked about, because
+    // the folder is what the fetch was for.
     const failure = Object.assign(new Error("fetch"), {
       code: "git_fetch_failed",
       summary:
@@ -588,18 +766,18 @@ describe("assigning an Issue", () => {
       module: "app",
       actions: [],
     });
-    const assignIssue = vi
+    const fallback = openedFolder();
+    const openIssueFolder = vi
       .fn()
       .mockRejectedValueOnce(failure)
-      .mockResolvedValueOnce(undefined);
-    mount({ assignIssue } as unknown as Partial<PickerValue>);
+      .mockImplementation(fallback);
+    mount({ openIssueFolder } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New branch feature\/128-wip/u,
+      /New worktree: feature\/128-wip/u,
     );
-    await answer(/Agent for/u);
 
     expect(
       await screen.findByText(
@@ -608,15 +786,17 @@ describe("assigning an Issue", () => {
     ).toBeInTheDocument();
     await choose(/remote could not be reached/u, /Start from the copy/u);
 
-    await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenLastCalledWith(
-        expect.objectContaining({ allowStaleBase: true }),
-      );
-    });
+    await screen.findByRole("dialog", { name: /Agent for/u });
+    expect(openIssueFolder).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        branch: "feature/128-wip",
+        allowStaleBase: true,
+      }),
+    );
   });
 
   it("clones when there is no clone to work in", async () => {
-    const { cloneRepository, assignIssue } = mount({
+    const { cloneRepository, openIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
     } as unknown as Partial<PickerValue>);
 
@@ -627,8 +807,7 @@ describe("assigning an Issue", () => {
     await choose(/Clone example\/widget/u, /\/code\/github/u);
     // A fresh clone is checked out in one place, and that place plus a new
     // worktree is the same location question everybody else gets.
-    await choose(/Where to work on/u, /root checkout/u);
-    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /Root checkout/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -637,7 +816,7 @@ describe("assigning an Issue", () => {
       );
     });
     await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalled();
+      expect(openIssueFolder).toHaveBeenCalled();
     });
   });
 
@@ -654,7 +833,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /root checkout/u);
+    await choose(/Where to work on/u, /Root checkout/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -670,20 +849,11 @@ describe("assigning an Issue", () => {
     // third. The person watches a spinner that reports nothing however long
     // they wait, which is the original complaint arrived at from the other
     // side. The refusal has to become something answerable.
-    // The shape main's refusal actually arrives in: an Error whose message
-    // carries the wire payload, which is what `spokenFailure` reads.
-    const findIssueRepositories = vi.fn().mockRejectedValue(
-      new Error(
-        `Error: ${JSON.stringify({
-          code: "workspace_unavailable",
-          summary: "example/widget could not be found within 20s.",
-          module: "app",
-          timestampMs: 0,
-          runtimeVersion: "0.1.0",
-          actions: ["retry"],
-        })}`,
-      ),
-    );
+    const findIssueRepositories = vi
+      .fn()
+      .mockRejectedValue(
+        refusal("example/widget could not be found within 20s."),
+      );
     mount({ findIssueRepositories } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
@@ -706,19 +876,13 @@ describe("assigning an Issue", () => {
     // refusal in the sheet, and re-running the step would restart the walk. A
     // walk that did not finish loses the rows and not the question — the folder
     // can still be typed, and the pinned row has always taken it.
-    const cloneParentDirectories = vi.fn().mockRejectedValue(
-      new Error(
-        `Error: ${JSON.stringify({
-          code: "workspace_unavailable",
-          summary:
-            "the folders a clone could go into could not be found within 20s.",
-          module: "app",
-          timestampMs: 0,
-          runtimeVersion: "0.1.0",
-          actions: ["retry"],
-        })}`,
-      ),
-    );
+    const cloneParentDirectories = vi
+      .fn()
+      .mockRejectedValue(
+        refusal(
+          "the folders a clone could go into could not be found within 20s.",
+        ),
+      );
     const { cloneRepository } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
       cloneParentDirectories,
@@ -738,7 +902,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /root checkout/u);
+    await choose(/Where to work on/u, /Root checkout/u);
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
         "https://github.com/example/widget.git",
@@ -786,7 +950,7 @@ describe("assigning an Issue", () => {
 });
 
 describe("going on with an earlier session", () => {
-  it("offers the sessions of the checkout the work is in, and resumes the one taken before the Issue is said", async () => {
+  it("offers the sessions of the folder the work is in, and resumes the one taken before the Issue is said", async () => {
     // Review comments on a pull request whose branch is already checked out:
     // the session that wrote it is there, and is what the person goes on with.
     const checkout = {
@@ -818,40 +982,75 @@ describe("going on with an earlier session", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await choose(/Where to work on/u, /Open widget_alice_fix-the-crash/u);
+    await choose(/Where to work on/u, /Existing worktree/u);
     await choose(/Agent for/u, /^Claude Session: Fix the crash/u);
 
-    // Listed where the Agent will run, not the repository's root.
+    // Listed where the Agent will run — the Workspace the folder opened as —
+    // not the repository's root.
     expect(listAgentSessions).toHaveBeenCalledWith(checkout, "claude");
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: PULL_REQUEST,
-        place: checkout,
-        branch: undefined,
+        workspaceId: WORKSPACE,
         profileId: "claude",
         // The Issue's action is still said, into the resumed session.
         actionId: "implement",
         split: false,
         presentation: "tui",
         resume: "session-1",
-        allowStaleBase: false,
       });
     });
   });
 
-  it("offers only new sessions for a worktree the flow is about to make", async () => {
+  it("offers the root checkout's sessions", async () => {
+    const listAgentSessions = vi.fn((_place: unknown, profileId: string) =>
+      Promise.resolve(
+        profileId === "claude"
+          ? [
+              {
+                id: "session-2",
+                title: "Tidy the parser",
+                cwd: "/projects/widget",
+                resumableHere: true,
+              },
+            ]
+          : [],
+      ),
+    );
+    mount({ listAgentSessions } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(/Where to work on/u, /Root checkout/u);
+
+    expect(
+      await screen.findByRole("option", {
+        name: /Claude Session: Tidy the parser/u,
+      }),
+    ).toBeInTheDocument();
+    expect(listAgentSessions).toHaveBeenCalledWith(
+      { kind: "local", path: "/projects/widget" },
+      "claude",
+    );
+  });
+
+  it("offers only New rows in a worktree just made, which has had no session", async () => {
+    // Nothing special-cased: the new folder is listed like any other, and a
+    // folder nobody has worked in lists nothing.
     const listAgentSessions = vi.fn().mockResolvedValue([]);
     mount({ listAgentSessions } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New branch feature\/128-wip/u);
+    await choose(/Where to work on/u, /New worktree: feature\/128-wip/u);
     await screen.findByRole("dialog", { name: /Agent for/u });
 
-    expect(listAgentSessions).not.toHaveBeenCalled();
-    expect(
-      screen
-        .getAllByRole("option")
-        .map((row) => row.querySelector(".mac-list-title")?.textContent),
-    ).toEqual(["New Claude Session", "New Cursor Session"]);
+    await vi.waitFor(() => {
+      expect(listAgentSessions).toHaveBeenCalledWith(
+        { kind: "local", path: "/projects/widget_feature_128-wip" },
+        "claude",
+      );
+    });
+    await vi.waitFor(() => {
+      expect(rowTitles()).toEqual(["New Claude Session", "New Cursor Session"]);
+    });
   });
 });

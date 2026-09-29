@@ -3,7 +3,10 @@
  *
  * Which Issue and what to do with it, which clone, which branch, which agent —
  * and each answer decides the next question, which is why this is a chain of
- * steps rather than four sheets that open each other. Escape goes back one
+ * steps rather than four sheets that open each other. The branch answer is
+ * acted on before the agent is asked about: the folder is made or found and
+ * opened as the selected Workspace, and the agent question is then New Agent's
+ * about that Workspace, earlier sessions and all. Escape goes back one
  * question the whole way down, because that is the runner's rule and no step
  * here had to be told about it.
  *
@@ -16,11 +19,13 @@
  */
 
 import { useMemo, type ReactNode } from "react";
-import {
-  AgentProfilePicker,
-  type AgentChoice,
-} from "../components/shell/AgentProfilePicker";
-import type { AssignmentBranchWire } from "../../ipc/contract";
+import type { AgentChoice } from "../components/shell/AgentProfilePicker";
+import type {
+  AssignmentBranchWire,
+  IssueAssignment,
+  IssueFolderRequest,
+  IssueFolderWire,
+} from "../../ipc/contract";
 import {
   wipBranchForIssue,
   gitHubItemUrl,
@@ -41,9 +46,11 @@ import {
 } from "../components/shell/cloneDestination";
 import type { AgentActionWire, IssueRepository } from "../../ipc/contract";
 import { folderName, githubCloneTarget } from "../../model/projects";
+import { baseName, worktreeDirectory } from "../../model/worktrees";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
 import { spokenFailure, toAppError } from "../failure";
 import { usePicker } from "./PickerContext";
+import { WorkspaceAgentPicker } from "./AgentPickerSheet";
 
 export interface IssueAssignmentSheetProps {
   readonly onDismiss: () => void;
@@ -59,7 +66,7 @@ const ACTION_PREFIX = "devhub:action:";
 const NEW_WORKTREE = "devhub:new-worktree";
 /** The branch this work already has, checked out in a worktree of its own. */
 const EXISTING_BRANCH = "devhub:existing-branch";
-/** The checkout that branch is already in, opened as the workspace it is. */
+/** The folder that branch is already checked out in, opened as it is. */
 const OPEN_CHECKOUT = "devhub:open-checkout";
 const ROOT_CHECKOUT = "devhub:root-checkout";
 const USE_STALE_BASE = "devhub:use-stale-base";
@@ -89,6 +96,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
   const {
     findIssueRepositories,
     cloneRepository,
+    openIssueFolder,
     assignIssue,
     cloneParentDirectories,
     assignmentBranch,
@@ -100,6 +108,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
       issueUrlStep({
         findIssueRepositories,
         cloneRepository,
+        openIssueFolder,
         assignIssue,
         cloneParentDirectories,
         assignmentBranch,
@@ -108,6 +117,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     [
       agentActions,
       assignIssue,
+      openIssueFolder,
       cloneParentDirectories,
       cloneRepository,
       findIssueRepositories,
@@ -124,17 +134,10 @@ interface FlowServices {
     signal?: AbortSignal,
   ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
-  readonly assignIssue: (request: {
-    readonly issueUrl: string;
-    readonly place: WorkspacePlaceWire;
-    readonly branch?: string;
-    readonly profileId: string;
-    readonly actionId?: string;
-    readonly split: boolean;
-    readonly presentation: AgentChoice["presentation"];
-    readonly resume?: string;
-    readonly allowStaleBase?: boolean;
-  }) => Promise<unknown>;
+  readonly openIssueFolder: (
+    request: IssueFolderRequest,
+  ) => Promise<IssueFolderWire>;
+  readonly assignIssue: (request: IssueAssignment) => Promise<unknown>;
   readonly cloneParentDirectories: (
     signal?: AbortSignal,
   ) => Promise<readonly string[]>;
@@ -344,17 +347,23 @@ function worktreeCount(places: number): string {
 }
 
 /**
- * Which branch the agent works on, which is the same question as where.
+ * Which branch the agent works on, which is the same question as where — and,
+ * once answered, that folder made or found and opened.
  *
  * There are three answers and never a fourth, because an agent runs in the
  * repository's root checkout or in exactly one worktree of it:
  *
  * 1. **the branch this work already has** — a pull request's head, an Issue's
- *    linked branch — checked out in a worktree;
- * 2. **a new branch**, `feature/128-wip`, in a worktree, which is what an Issue
- *    nobody has started gets;
+ *    linked branch, a branch named for the Issue — in its worktree: the one
+ *    it is already checked out in, or a new one;
+ * 2. **a new branch**, `feature/128-wip`, in a new worktree, which is what an
+ *    Issue nobody has started gets;
  * 3. **the root checkout**, taken as it stands, where nothing is checked out
  *    and which branch to read is the agent's business.
+ *
+ * Each row says what choosing it does and where, in the folder names DevHub
+ * will use (`worktreeDirectory`), because "a worktree of its own, beside the
+ * repository" left a person to guess whether an existing folder was meant.
  *
  * The first is the default when there is one, because a person assigning a pull
  * request has already decided what to work on and it is not a new branch. It is
@@ -365,13 +374,12 @@ function worktreeCount(places: number): string {
  *
  * A branch that is *already checked out* turns the first row into a different
  * offer: git gives one branch one worktree, so the honest answer is that the
- * work already has a folder and this is which one. Opening it is not "another
- * worktree for the agent" — it is the workspace the branch lives in.
+ * work already has a folder and this is which one.
  *
- * This replaced a list of every worktree the repository had. That list read as
- * the same question and was not: choosing an unrelated worktree put an agent to
- * work on a branch that had nothing to do with the Issue, and the branch — the
- * thing the person was actually deciding — was never on screen.
+ * The folder work happens here, after the answer, rather than at the end of
+ * the flow: the agent question that follows is about the Workspace this opens,
+ * and its earlier sessions are the reason to ask it there. A failure — a
+ * directory in the way — comes back to this question with the reason under it.
  */
 function branchStep(
   services: FlowServices,
@@ -402,57 +410,80 @@ function branchStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${itemLabel(item)}`,
-      question: `Choose the branch the agent works on in ${folderName(root)}.`,
+      question: `Choose the folder of ${folderName(root)} the agent works in. DevHub opens it as a workspace, then asks which agent.`,
       // Every row is an answer to the question rather than a name to search
       // among, so they are all pinned and the field filters nothing: there is
       // no list here that typing could narrow.
       items: [],
-      pinned: [
-        ...existingBranchRows(plan, root),
-        {
-          id: NEW_WORKTREE,
-          label: `New branch ${wip}`,
-          detail: `A worktree of its own, beside ${folderName(root)}`,
-          searchText: `new branch worktree ${wip}`,
-        },
-        {
-          id: ROOT_CHECKOUT,
-          label: "Work in the root checkout",
-          detail: `${root} — taken as it stands, with nothing checked out`,
-          searchText: `repository root ${root}`,
-        },
-      ],
+      pinned: folderRows(plan, root, wip),
       note: refusal ?? unreachableBranch(plan),
     });
-    if (answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined) {
-      // Somewhere the same repository is checked out, so the same machine: git
-      // answered from there and could not have named a folder anywhere else.
-      return agentStep(
-        services,
-        work,
-        { ...place, path: plan.checkedOutAt },
-        undefined,
-      );
-    }
-    return agentStep(
-      services,
-      work,
-      place,
-      answer.id === NEW_WORKTREE
-        ? wip
-        : answer.id === EXISTING_BRANCH
-          ? plan.branch
-          : undefined,
-    );
+    const choice: FolderChoice =
+      answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined
+        ? // Somewhere the same repository is checked out, so the same
+          // machine: git answered from there and could not have named a
+          // folder anywhere else.
+          { place: { ...place, path: plan.checkedOutAt }, branch: undefined }
+        : {
+            place,
+            branch:
+              answer.id === NEW_WORKTREE
+                ? wip
+                : answer.id === EXISTING_BRANCH
+                  ? plan.branch
+                  : undefined,
+          };
+    return openFolder(services, input, work, choice, false);
   };
+}
+
+/**
+ * The rows of the branch question, each saying what it does and where.
+ *
+ * `feature/128-wip` is the new branch only while it is not already the branch
+ * this work has: once it is, the first row is that branch, and a second row
+ * that would open the same folder under a claim that it "creates" one is not
+ * an answer of its own. Likewise the root checkout is offered once, by the row
+ * that says which branch it is on when that is the branch this work has.
+ */
+function folderRows(
+  plan: AssignmentBranchWire,
+  root: string,
+  wip: string,
+): readonly PickerItem[] {
+  const branch = plan.branch;
+  const rootIsTheWork = branch !== undefined && plan.checkedOutAt === root;
+  return [
+    ...existingBranchRows(plan, root),
+    ...(branch === wip
+      ? []
+      : [
+          {
+            id: NEW_WORKTREE,
+            label: `New worktree: ${wip}`,
+            detail: `Creates ${besideRoot(root, worktreeDirectory(root, wip))} on a new branch from origin's default branch`,
+            searchText: `new branch worktree ${wip}`,
+          },
+        ]),
+    ...(rootIsTheWork
+      ? []
+      : [
+          {
+            id: ROOT_CHECKOUT,
+            label: "Root checkout",
+            detail: `Opens ${root} on whatever branch it is on now; nothing is checked out or created`,
+            searchText: `repository root ${root}`,
+          },
+        ]),
+  ];
 }
 
 /**
  * The row for the branch this work already has, when there is one to offer.
  *
  * Three cases and one row: the branch is already checked out somewhere, so that
- * folder is what is offered; the branch can be had, so a worktree for it is;
- * or there is nothing to offer and the list starts at the new branch.
+ * folder is what is offered; the branch can be had, so a new worktree for it
+ * is; or there is nothing to offer and the list starts at the new branch.
  */
 function existingBranchRows(
   plan: AssignmentBranchWire,
@@ -460,28 +491,44 @@ function existingBranchRows(
 ): readonly PickerItem[] {
   const branch = plan.branch;
   if (branch === undefined) return [];
-  if (plan.checkedOutAt !== undefined) {
+  const checkedOutAt = plan.checkedOutAt;
+  if (checkedOutAt !== undefined) {
     return [
-      {
-        id: OPEN_CHECKOUT,
-        label:
-          plan.checkedOutAt === root
-            ? "Open the root checkout"
-            : `Open ${folderName(plan.checkedOutAt)}`,
-        detail: `${branch} is already checked out there`,
-        searchText: `${branch} ${plan.checkedOutAt}`,
-      },
+      checkedOutAt === root
+        ? {
+            id: OPEN_CHECKOUT,
+            label: `Root checkout: ${branch}`,
+            detail: `Opens ${root}, where ${branch} is already checked out`,
+            searchText: `${branch} ${checkedOutAt}`,
+          }
+        : {
+            id: OPEN_CHECKOUT,
+            label: `Existing worktree: ${branch}`,
+            detail: `Opens ${besideRoot(root, checkedOutAt)}, where ${branch} is already checked out`,
+            searchText: `${branch} ${checkedOutAt}`,
+          },
     ];
   }
   if (!plan.reachable) return [];
   return [
     {
       id: EXISTING_BRANCH,
-      label: `Check out ${branch} in a worktree`,
-      detail: `The branch this work already has, beside ${folderName(root)}`,
+      label: `Check out ${branch} in a new worktree`,
+      detail: `Creates ${besideRoot(root, worktreeDirectory(root, branch))} on the branch this work already has`,
       searchText: `${branch} checkout worktree`,
     },
   ];
+}
+
+/**
+ * A folder as the branch question names it: `../widget_feature_128-wip` when
+ * it sits beside the repository, which is where DevHub puts worktrees, and
+ * the whole path when it is anywhere else.
+ */
+function besideRoot(root: string, path: string): string {
+  const parent = (of: string) =>
+    of.slice(0, of.replace(/\/+$/u, "").lastIndexOf("/"));
+  return parent(path) === parent(root) ? `../${baseName(path)}` : path;
 }
 
 /** The branch exists and is somewhere this clone cannot see. */
@@ -585,88 +632,92 @@ function cloneDestinationStep(
   };
 }
 
+/** The folder the branch question settled on, before it is opened. */
+interface FolderChoice {
+  /** The clone, or — for a branch already checked out — the folder it is in. */
+  readonly place: WorkspacePlaceWire;
+  /** The branch whose worktree to open, made if need be; absent is `place` as it is. */
+  readonly branch: string | undefined;
+}
+
 /**
- * Which agent works on it, now that where is known: a new session of one of
- * the profiles, or — where the folder is already there — one of the earlier
- * sessions that ran in it, which goes on and is then told about the Issue.
+ * Make or find the folder and open it as the selected Workspace, then ask
+ * which agent.
  *
- * Asked last, and not first as it once was, because the earlier sessions are
- * the folder's: a pull request whose branch is already checked out is where
- * review comments are answered, and the session that wrote it is there. A
- * worktree the flow is about to make has had no session yet, so it is asked
- * with the New rows only.
+ * Run from inside the step that asked for it, so a failure re-asks that step
+ * with the reason under it. The one failure that is a question rather than a
+ * reason is the fetch a new branch starts with: `origin` as of the last
+ * successful fetch is on disk, and whether to start from it is the person's
+ * call.
+ */
+async function openFolder(
+  services: FlowServices,
+  input: WizardInput,
+  work: Work,
+  choice: FolderChoice,
+  allowStaleBase: boolean,
+): Promise<WizardStep> {
+  let opened: IssueFolderWire;
+  try {
+    opened = await input.working(
+      choice.branch === undefined
+        ? `Opening ${baseName(choice.place.path)}…`
+        : `Setting up the worktree for ${choice.branch}…`,
+      () =>
+        services.openIssueFolder({
+          issueUrl: gitHubItemUrl(work.item),
+          place: choice.place,
+          ...(choice.branch === undefined ? {} : { branch: choice.branch }),
+          allowStaleBase,
+        }),
+    );
+  } catch (error: unknown) {
+    if (toAppError(error).code !== "git_fetch_failed") throw error;
+    return staleBaseStep(services, work, choice, error);
+  }
+  return agentStep(services, work, opened);
+}
+
+/**
+ * Which agent works on it, in the Workspace that is now open and selected.
+ *
+ * New Agent's question, word for word, with the Issue in the title: a new
+ * session of one of the profiles, or one of the earlier sessions that ran in
+ * that folder — the reason the folder is opened first. A worktree just made
+ * has had no session, so it offers the New rows only, the same as New Agent
+ * in it would. A session taken is resumed and then told about the Issue.
+ *
+ * Escape goes back to the branch question and leaves the Workspace open:
+ * it is a folder opened like any other, and closing it is its own act.
  */
 function agentStep(
   services: FlowServices,
   work: Work,
-  place: WorkspacePlaceWire,
-  branch: string | undefined,
+  opened: IssueFolderWire,
 ): WizardStep {
   const { item } = work;
   return async (input) => {
     const agent = await input.sheet<AgentChoice>((controls) => (
-      <AgentProfilePicker
+      <WorkspaceAgentPicker
         title={`Agent for ${itemLabel(item)}`}
-        question={
-          branch === undefined
-            ? `Which agent should work on ${itemLabel(item)}? Start a new session, or go on with an earlier one in ${folderName(place.path)}.`
-            : `Which agent should work on ${itemLabel(item)} in the new worktree for ${branch}?`
-        }
+        place={opened.place}
         step={controls.step}
-        hint={
-          controls.failure === undefined ? (
-            "⌘Return opens the agent beside the editor; ⌥Return opens it as the other of TUI and GUI."
-          ) : (
-            <Wrong what={controls.failure} />
-          )
-        }
-        sessionsIn={branch === undefined ? place : undefined}
+        failure={controls.failure}
         onChoose={controls.answer}
         onCancel={controls.back}
       />
     ));
-    return finishStep(services, work, agent, place, branch);
-  };
-}
-
-/**
- * Everything the answers add up to, in one call to main.
- *
- * With one question left in it. A new branch starts from the remote's default
- * branch, which means fetching first, and a fetch can fail with the work still
- * perfectly possible: `origin` as of the last successful fetch is on disk. That
- * is a decision with consequences — a base that may be days old — so it is
- * asked rather than assumed, with git's own reason quoted, and the same call is
- * made again with the answer.
- */
-function finishStep(
-  services: FlowServices,
-  work: Work,
-  agent: AgentChoice,
-  place: WorkspacePlaceWire,
-  branch: string | undefined,
-  allowStaleBase = false,
-): WizardStep {
-  const { item } = work;
-  return async (input) => {
-    try {
-      await input.working(`Setting up ${itemLabel(item)}…`, () =>
-        services.assignIssue({
-          issueUrl: gitHubItemUrl(item),
-          place,
-          branch,
-          profileId: agent.profileId,
-          actionId: work.actionId,
-          split: agent.split,
-          presentation: agent.presentation,
-          ...(agent.resume === undefined ? {} : { resume: agent.resume }),
-          allowStaleBase,
-        }),
-      );
-    } catch (error: unknown) {
-      if (toAppError(error).code !== "git_fetch_failed") throw error;
-      return staleBaseStep(services, work, agent, place, branch, error);
-    }
+    await input.working(`Starting the agent for ${itemLabel(item)}…`, () =>
+      services.assignIssue({
+        issueUrl: gitHubItemUrl(item),
+        workspaceId: opened.workspaceId,
+        profileId: agent.profileId,
+        actionId: work.actionId,
+        split: agent.split,
+        presentation: agent.presentation,
+        ...(agent.resume === undefined ? {} : { resume: agent.resume }),
+      }),
+    );
     return undefined;
   };
 }
@@ -675,11 +726,10 @@ function finishStep(
 function staleBaseStep(
   services: FlowServices,
   work: Work,
-  agent: AgentChoice,
-  place: WorkspacePlaceWire,
-  branch: string | undefined,
+  choice: FolderChoice,
   failure: unknown,
 ): WizardStep {
+  const branch = choice.branch;
   return async (input) => {
     const answer = await input.ask({
       ...SHEET,
@@ -698,7 +748,7 @@ function staleBaseStep(
     // Escape is the other answer, and it is the runner's: back to the branch,
     // where a branch that already exists needs no fetch at all.
     return answer.id === USE_STALE_BASE
-      ? finishStep(services, work, agent, place, branch, true)
+      ? openFolder(services, input, work, choice, true)
       : undefined;
   };
 }

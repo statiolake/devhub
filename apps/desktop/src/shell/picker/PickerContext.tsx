@@ -38,6 +38,8 @@ import type {
   AssignmentBranchWire,
   GitHubLoginWire,
   IssueAssignment,
+  IssueFolderRequest,
+  IssueFolderWire,
   IssueRepository,
   PastSessionWire,
   SessionPreviewLineWire,
@@ -134,6 +136,10 @@ export interface PickerValue {
   readonly listBranches: (
     place: WorkspacePlaceWire,
   ) => Promise<readonly string[]>;
+  /** The folder first, opened and selected; see `IssueFolderRequest`. */
+  readonly openIssueFolder: (
+    request: IssueFolderRequest,
+  ) => Promise<IssueFolderWire>;
   readonly assignIssue: (request: IssueAssignment) => Promise<AppOutcome>;
   /**
    * The earlier sessions of a profile's CLI that ran in `place`, newest
@@ -341,6 +347,11 @@ export function PickerProvider({ children }: { children: ReactNode }) {
         return bridge.assignmentBranch(url, place);
       },
       listBranches: (place) => bridge.listBranches(place),
+      openIssueFolder: async (request) => {
+        const opened = await bridge.openIssueFolder(request);
+        applyOpening(opened.outcome);
+        return opened;
+      },
       assignIssue: async (request) =>
         applyOpening(await bridge.assignIssue(request)),
       listAgentSessions: (place, profileId) =>
