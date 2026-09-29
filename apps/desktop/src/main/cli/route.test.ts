@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeOpen, type RoutableWorkspace } from "./route.js";
+import { routeAgentOpen, routeOpen, type RoutableWorkspace } from "./route.js";
 
 function workspace(
 	workspaceId: string,
@@ -296,5 +296,61 @@ describe("an open that came from an Agent's own pane", () => {
 		expect(
 			routeOpen("/etc/hosts", "local", open, "local\talpha-id\tnone"),
 		).toEqual({ kind: "workspace", reason: "origin", workspace: alpha });
+	});
+});
+
+describe("where a file link in a GUI Agent's conversation opens", () => {
+	const agent = { workspaceId: "alpha", agentId: "agent-1" };
+	const alpha = workspace("alpha", "/work/alpha", "local", ["agent-1"]);
+	const beta = workspace("beta", "/work/beta", "local");
+
+	it("opens beside the Agent when its own Workspace contains the file", () => {
+		expect(
+			routeAgentOpen("/work/alpha/src/a.ts", "local", [alpha, beta], agent),
+		).toEqual({
+			kind: "workspace",
+			reason: "origin-agent",
+			workspace: alpha,
+			agentId: "agent-1",
+		});
+	});
+
+	it("opens in the Workspace that contains the file, not the Agent's", () => {
+		expect(
+			routeAgentOpen("/work/beta/b.ts", "local", [alpha, beta], agent),
+		).toEqual({ kind: "workspace", reason: "containing", workspace: beta });
+	});
+
+	it("opens beside the Agent, never in Scratch, when no Workspace contains it", () => {
+		expect(
+			routeAgentOpen("/elsewhere/c.ts", "local", [alpha, beta], agent),
+		).toEqual({
+			kind: "workspace",
+			reason: "origin-agent",
+			workspace: alpha,
+			agentId: "agent-1",
+		});
+	});
+
+	it("does not take a Workspace on another machine for the containing one", () => {
+		const remote = workspace("remote", "/srv/app", "ssh:box", ["agent-2"]);
+		const local = workspace("local-app", "/srv/app", "local");
+		expect(
+			routeAgentOpen("/srv/app/x.ts", "ssh:box", [local, remote], {
+				workspaceId: "remote",
+				agentId: "agent-2",
+			}),
+		).toEqual({
+			kind: "workspace",
+			reason: "origin-agent",
+			workspace: remote,
+			agentId: "agent-2",
+		});
+	});
+
+	it("refuses when the Agent's Workspace is not open", () => {
+		expect(() =>
+			routeAgentOpen("/elsewhere/c.ts", "local", [beta], agent),
+		).toThrow(/not open/u);
 	});
 });

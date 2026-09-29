@@ -43,6 +43,8 @@ export const CONVERSATION_CHANNELS = {
 	mcpSignInInput: "devhub:conversation:mcp-sign-in-input",
 	mcpSignInCancel: "devhub:conversation:mcp-sign-in-cancel",
 	mcpSignInDismiss: "devhub:conversation:mcp-sign-in-dismiss",
+	resolvePaths: "devhub:conversation:resolve-paths",
+	openFile: "devhub:conversation:open-file",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -95,6 +97,14 @@ export type ConversationCommandWire =
 	 * (`Transcript.limitResume`'s Cancel), or its failure has been read (Dismiss).
 	 */
 	| { readonly kind: "cancel-limit-resume" };
+
+/**
+ * Where in a file a link in the conversation points, beyond the file itself:
+ * a line (and column), or a range of lines. One-based, as every editor counts.
+ */
+export type FileRange =
+	| { readonly kind: "line"; readonly line: number; readonly column: number }
+	| { readonly kind: "lines"; readonly from: number; readonly to: number };
 
 export type McpRequestWire =
 	| { readonly action: "refresh" }
@@ -224,4 +234,26 @@ export interface ConversationApi {
 	 * (`main/agent/conversation/drafts.ts`).
 	 */
 	saveDraft(agentId: string, text: string): Promise<void>;
+	/**
+	 * Which of `paths`, as the conversation's text spells them (absolute,
+	 * `~/…`, or relative to `cwd`), name a file on the Agent's machine: each
+	 * answered, in order, with the file's absolute path or `null`. `cwd` is
+	 * `undefined` only when every path is absolute or `~/…`.
+	 */
+	resolvePaths(
+		agentId: string,
+		cwd: string | undefined,
+		paths: readonly string[],
+	): Promise<readonly (string | null)[]>;
+	/**
+	 * Open a file on the Agent's machine (an absolute path `resolvePaths`
+	 * answered) in the editor of the open Workspace that contains it, else
+	 * of the Agent's own Workspace, at `range`. Rejects, with the reason,
+	 * when the file is gone or there is no editor to open it in.
+	 */
+	openFile(
+		agentId: string,
+		path: string,
+		range: FileRange | undefined,
+	): Promise<void>;
 }

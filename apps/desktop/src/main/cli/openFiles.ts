@@ -49,6 +49,16 @@ import type { ResolvedPath } from "./canonical.js";
 import type { ControlPosition } from "./protocol.js";
 
 /**
+ * Where the editor puts the caret — or, with an `end`, which text it selects.
+ * A position is a selection without an end, so `--goto`'s is one as it is.
+ * An `end` column past its line's end is the line's end: the editor clamps a
+ * selection to its text.
+ */
+export interface FileSelection extends ControlPosition {
+	readonly end?: ControlPosition;
+}
+
+/**
  * Ask a running workbench to open one file, optionally at a position, and
  * optionally holding a `--wait` marker open until it is closed again.
  *
@@ -62,7 +72,7 @@ export function openFileInWorkbench(
 	window: ICodeWindow,
 	machine: ShellMachineId,
 	file: ResolvedPath,
-	position: ControlPosition | undefined,
+	position: FileSelection | undefined,
 	waitMarkerPath: string | undefined,
 ): void {
 	const fileUri = workbenchUri(machine, file.path);
@@ -82,6 +92,12 @@ export function openFileInWorkbench(
 								selection: {
 									startLineNumber: position.line,
 									startColumn: position.column,
+									...(position.end === undefined
+										? {}
+										: {
+												endLineNumber: position.end.line,
+												endColumn: position.end.column,
+											}),
 								},
 							},
 						}),

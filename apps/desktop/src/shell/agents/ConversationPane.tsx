@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
+import type { FileRange } from "../../ipc/conversation";
 import {
   EMPTY_TRANSCRIPT,
   applyEvent,
@@ -82,6 +83,10 @@ export function ConversationPane({
       openMcp: () => setManagingMcp(true),
       restart: () => bridge.conversation.restartSession(agentId),
       saveDraft: (text: string) => bridge.conversation.saveDraft(agentId, text),
+      resolvePaths: (cwd: string | undefined, paths: readonly string[]) =>
+        bridge.conversation.resolvePaths(agentId, cwd, paths),
+      openFile: (path: string, range: FileRange | undefined) =>
+        bridge.conversation.openFile(agentId, path, range),
       reportFailure,
     };
   }, [agentId, reportFailure]);

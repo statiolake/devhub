@@ -27,6 +27,8 @@ import type {
 	SettingName,
 } from "../agent/conversation/protocolAdapter.js";
 import type { AgentDrafts } from "../agent/conversation/drafts.js";
+import type { FileSelection } from "../cli/openFiles.js";
+import { fileSelection } from "../agent/conversation/pathLinks.js";
 import type { GuiConversations } from "./agentWiring.js";
 
 export interface ConversationIpcOptions {
@@ -46,6 +48,18 @@ export interface ConversationIpcOptions {
 	readonly restart: (agentId: AgentId) => Promise<unknown>;
 	/** The session a terminal Agent's CLI is in (`AgentWiring.terminalSession`). */
 	readonly terminalSession: (agentId: AgentId) => Promise<string>;
+	/** Which of a conversation's path candidates are files on the Agent's machine (`resolvePathCandidates`). */
+	readonly resolvePaths: (
+		agentId: AgentId,
+		cwd: string | undefined,
+		paths: readonly string[],
+	) => Promise<readonly (string | null)[]>;
+	/** Open a file a conversation links to, in the editor `routeAgentOpen` says. */
+	readonly openFile: (
+		agentId: AgentId,
+		path: string,
+		selection: FileSelection | undefined,
+	) => Promise<void>;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
 }
@@ -196,6 +210,23 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	handle(CONVERSATION_CHANNELS.mcpSignInDismiss, (agentId) =>
 		options.conversations.dismissSignIn(agentId),
 	);
+
+	handle(CONVERSATION_CHANNELS.resolvePaths, (agentId, cwd, paths) => {
+		if (cwd !== undefined && typeof cwd !== "string")
+			throw new Error(`${JSON.stringify(cwd)} is not a directory`);
+		if (
+			!Array.isArray(paths) ||
+			!paths.every((path): path is string => typeof path === "string")
+		)
+			throw new Error(`${JSON.stringify(paths)} is not a list of paths`);
+		return options.resolvePaths(agentId, cwd, paths);
+	});
+
+	handle(CONVERSATION_CHANNELS.openFile, (agentId, path, range) => {
+		if (typeof path !== "string" || !path.startsWith("/"))
+			throw new Error(`${JSON.stringify(path)} is not a file to open`);
+		return options.openFile(agentId, path, fileSelection(range));
+	});
 
 	handle(
 		CONVERSATION_CHANNELS.rewind,

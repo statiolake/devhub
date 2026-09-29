@@ -151,4 +151,18 @@ export const conversationApi: ConversationApi = {
 			agentId,
 			text,
 		) as Promise<void>,
+	resolvePaths: (agentId, cwd, paths) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.resolvePaths,
+			agentId,
+			cwd,
+			paths,
+		) as ReturnType<ConversationApi["resolvePaths"]>,
+	openFile: (agentId, path, range) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.openFile,
+			agentId,
+			path,
+			range,
+		) as Promise<void>,
 };

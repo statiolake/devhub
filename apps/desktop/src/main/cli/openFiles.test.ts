@@ -193,6 +193,48 @@ describe("a file on another machine", () => {
 	});
 });
 
+describe("where the caret goes", () => {
+	const file = { path: "/srv/app/main.ts", exists: true, isDirectory: false };
+	const selectionOf = (sent: SentMessage[]) =>
+		(
+			sent[0]?.payload.filesToOpenOrCreate?.[0] as
+				| { readonly options?: { readonly selection?: unknown } }
+				| undefined
+		)?.options?.selection;
+
+	it("puts it at a position, as `--goto` does", () => {
+		const window = recordingWindow(undefined);
+		openFileInWorkbench(
+			window.window,
+			"ssh:build-host",
+			file,
+			{ line: 12, column: 5 },
+			undefined,
+		);
+		expect(selectionOf(window.sent)).toEqual({
+			startLineNumber: 12,
+			startColumn: 5,
+		});
+	});
+
+	it("selects from the position to the end, when there is one", () => {
+		const window = recordingWindow(undefined);
+		openFileInWorkbench(
+			window.window,
+			"ssh:build-host",
+			file,
+			{ line: 12, column: 1, end: { line: 20, column: 400 } },
+			undefined,
+		);
+		expect(selectionOf(window.sent)).toEqual({
+			startLineNumber: 12,
+			startColumn: 1,
+			endLineNumber: 20,
+			endColumn: 400,
+		});
+	});
+});
+
 /**
  * The upstream facts the test above is only meaningful because of.
  *

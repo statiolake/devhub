@@ -55,6 +55,7 @@ import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { clockTime } from "../resetTime";
 import { Markdown } from "./Markdown";
+import { PathText } from "./pathLinks";
 import { QuestionRecord, RequestCard } from "./RequestCard";
 import { StatusMark, workNote } from "./StatusMark";
 import { SubagentMessage } from "./SubagentMessage";
@@ -491,7 +492,9 @@ function ToolTitle({ title }: { readonly title: string }) {
       <span className="conversation-tool-verb">
         {title.slice(0, colon + 1)}
       </span>{" "}
-      <span className="conversation-tool-target">{title.slice(colon + 2)}</span>
+      <span className="conversation-tool-target">
+        <PathText text={title.slice(colon + 2)} />
+      </span>
     </span>
   );
 }

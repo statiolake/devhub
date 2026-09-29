@@ -8,6 +8,11 @@
  * which is what lets a code block carry its own copy button and a link open
  * through the page's `openExternalUrl` instead of navigating this view away.
  *
+ * A path in the prose or in inline code that names a file on the Agent's
+ * machine is a link to it (`pathLinks.tsx`); one in a fenced block is code
+ * and is left alone. Only a settled document is looked through: a path still
+ * being written would be asked about one keystroke at a time.
+ *
  * While the answer streams, its source is drawn as two documents: the settled
  * prefix, memoized so a delta does not parse it again, and the tail, which is
  * re-parsed on every delta and whose code is not coloured (see
@@ -25,6 +30,8 @@ import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
 import { useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
+import { PathText } from "./pathLinks";
+import { pathSpans } from "./filePaths";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -77,6 +84,37 @@ export function ExternalLink({
   );
 }
 
+/** The element a stretch of prose with a path in it is wrapped in, for `span` to draw. */
+const PATHS = "dataConversationPaths";
+
+/**
+ * Wrap every text of the document that has a path candidate in it — outside
+ * a fenced block and outside a link — in a `span` the component below draws
+ * with `PathText`. Only the wrapping is done here; which words are links is
+ * decided when it is drawn.
+ */
+function rehypePaths() {
+  const visit = (parent: { children: ElementContent[] }) => {
+    parent.children = parent.children.map((child): ElementContent => {
+      if (child.type === "element") {
+        if (child.tagName !== "pre" && child.tagName !== "a") visit(child);
+        return child;
+      }
+      if (child.type !== "text" || pathSpans(child.value).length === 0)
+        return child;
+      return {
+        type: "element",
+        tagName: "span",
+        properties: { [PATHS]: "" },
+        children: [child],
+      };
+    });
+  };
+  return (tree: { children: ElementContent[] }) => visit(tree);
+}
+
+const REHYPE_PLUGINS = [rehypePaths];
+
 function componentsFor(settled: boolean): Components {
   return {
     // A fenced or indented block: `pre > code`. Inline code stays `code`.
@@ -93,6 +131,12 @@ function componentsFor(settled: boolean): Components {
           settled={settled}
         />
       );
+    },
+    span({ node, children }) {
+      // Raw HTML is skipped, so every span is one `rehypePaths` made.
+      if (node === undefined || !(PATHS in node.properties))
+        return <span>{children}</span>;
+      return <PathText text={textOf(node.children)} />;
     },
     a({ href, children }) {
       return <ExternalLink href={href}>{children}</ExternalLink>;
@@ -122,6 +166,7 @@ const MarkdownDocument = memo(function MarkdownDocument({
   return (
     <ReactMarkdown
       remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={settled ? REHYPE_PLUGINS : undefined}
       skipHtml
       components={settled ? SETTLED_COMPONENTS : UNSETTLED_COMPONENTS}
     >

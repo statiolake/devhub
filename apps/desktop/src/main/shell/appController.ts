@@ -94,13 +94,14 @@ import {
 	sessionsLeftRunningDetail,
 	withCloseDeadline,
 } from "./cleanupDeadline.js";
-import { canonicalise } from "../cli/canonical.js";
+import { canonicalise, type ResolvedPath } from "../cli/canonical.js";
+import { resolvePathCandidates } from "../agent/conversation/pathLinks.js";
 import {
 	installExtensions,
 	listExtensions,
 	uninstallExtensions,
 } from "../cli/extensionCommands.js";
-import { openFileInWorkbench } from "../cli/openFiles.js";
+import { openFileInWorkbench, type FileSelection } from "../cli/openFiles.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type {
 	ControlOpenRequest,
@@ -110,7 +111,9 @@ import type {
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import {
+	routeAgentOpen,
 	routeOpen,
+	type OpenDestination,
 	type OpenReason,
 	type RoutableWorkspace,
 } from "../cli/route.js";
@@ -135,6 +138,7 @@ import {
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
 	sessionId,
+	type AgentId,
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
@@ -1018,6 +1022,14 @@ export class AppController {
 			// sheet as the Sidebar's Restart Session and the chord's.
 			restart: (agentId) => this.requestRestartAgent(agentId),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
+			resolvePaths: (agentId, cwd, paths) =>
+				resolvePathCandidates(
+					runtimeById(this.agentMachine(agentId)),
+					cwd,
+					paths,
+				),
+			openFile: (agentId, path, selection) =>
+				this.openFromConversation(agentId, path, selection),
 			fail: (error) => namedFailure(error),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report
@@ -5450,13 +5462,85 @@ export class AppController {
 		}
 
 		// The rule itself is `routeOpen`, and it is the only thing that decides
-		// this. Everything below is the carrying out of its answer.
+		// this. `openRouted` is the carrying out of its answer.
 		const destination = routeOpen(
 			target.path,
 			machine,
 			this.routableWorkspaces(),
 			request.origin,
 		);
+		return this.openRouted(
+			destination,
+			machine,
+			target,
+			position,
+			waitMarkerPath,
+			before,
+		);
+	}
+
+	/**
+	 * A file link in a GUI Agent's conversation, clicked: the file, on the
+	 * Agent's machine, opened where `routeAgentOpen` says — the Workspace
+	 * that contains it, else beside the Agent in its own — at `selection`.
+	 *
+	 * A file that has gone since the link was drawn is refused rather than
+	 * opened as a new, empty editor the way `devhub <new file>` is: the person
+	 * followed a link to something that was there, and an empty editor would
+	 * say it still is.
+	 */
+	async openFromConversation(
+		agentId: AgentId,
+		path: string,
+		selection: FileSelection | undefined,
+	): Promise<void> {
+		const machine = this.agentMachine(agentId);
+		const workspace = this.coordinator.model.workspaceForAgent(agentId);
+		if (!workspace) throw new Error(`no Agent ${agentId} is open`);
+		const runtime = runtimeById(machine);
+		const target = await canonicalise(runtime, path);
+		if (!target.exists) {
+			throw new Error(`${path} is no longer there${runtime.where}.`);
+		}
+		if (target.isDirectory) {
+			throw new Error(`${target.path} is a folder, not a file to open.`);
+		}
+		const destination = routeAgentOpen(
+			target.path,
+			machine,
+			this.routableWorkspaces(),
+			{ workspaceId: workspace.id, agentId },
+		);
+		await this.openRouted(
+			destination,
+			machine,
+			target,
+			selection,
+			undefined,
+			this.coordinator.model.selection,
+		);
+	}
+
+	/** The machine an Agent runs on, which is its Workspace's. */
+	private agentMachine(agentId: AgentId): RuntimeId {
+		const machine = this.machineOfAgent(agentId);
+		if (machine === undefined) throw new Error(`no Agent ${agentId} is open`);
+		return machine;
+	}
+
+	/**
+	 * Carry out where an open was routed: select what it lands in — beside
+	 * the Agent that asked, when it was one — and hand the workbench the file.
+	 * The sentence it answers with says where, and why.
+	 */
+	private async openRouted(
+		destination: OpenDestination,
+		machine: RuntimeId,
+		target: ResolvedPath,
+		position: FileSelection | undefined,
+		waitMarkerPath: string | undefined,
+		before: NavigationSelection,
+	): Promise<string> {
 		if (destination.kind === "scratch") {
 			openFileInWorkbench(
 				await this.scratchWorkbench(),

@@ -41,6 +41,11 @@ export function fakeActions(
     openMcp: vi.fn(),
     restart: vi.fn(() => Promise.resolve()),
     saveDraft: vi.fn(() => Promise.resolve()),
+    // No path names a file unless a test says so.
+    resolvePaths: vi.fn((_cwd: string | undefined, paths: readonly string[]) =>
+      Promise.resolve(paths.map(() => null)),
+    ),
+    openFile: vi.fn(() => Promise.resolve()),
     reportFailure: vi.fn(),
     ...overrides,
   };

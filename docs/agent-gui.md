@@ -739,6 +739,55 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   version. The transcript up to that point stays readable. This usually means
   the CLI was updated past what DevHub knows.
 
+## File paths open in the editor
+
+A path in the conversation that names a file is a link: a click opens the
+file in DevHub's editor, at the line or lines it names.
+
+**Where paths are found.** In the Agent's prose and inline code, once the
+paragraph has finished streaming; in a tool call's title (*Read: src/a.ts*),
+in its output (a command's output and stderr, grep's `path:line:` lines,
+Glob's list) and in a diff's file header, which opens the file at its first
+changed hunk. Not in a fenced code block of an answer: that is code, and a
+word in it that happens to be a file is not the Agent pointing at it.
+
+**What counts as a path.** One word — whitespace, quotes, backticks,
+brackets and braces, `, ; | = * ?` and CJK punctuation end it, so a path with
+a space in it is not found. Absolute (`/work/app/src/a.ts`), in the home
+directory (`~/notes/todo.md`), or relative to the Agent's directory: a
+relative word counts when it has a `/` in it or ends in an extension
+(`README.md`). A path has no `:` in it; after the path come:
+
+| Written | Opens at |
+| --- | --- |
+| `src/a.ts:12` or `src/a.ts#L12` | line 12 |
+| `src/a.ts:12:5` | line 12, column 5 |
+| `src/a.ts:12-20` or `src/a.ts#L12-L20` | lines 12 to 20, selected |
+
+A URL is never a path, and a trailing full stop is the sentence's.
+
+**Only files that are there.** A word that could be a path is a link only
+once DevHub has checked that it is a file on the Agent's machine — this Mac,
+or the host an SSH Workspace's Agent runs on — so *and/or* or *e.g.* stays
+text. The check is one `/bin/sh` per batch of paths through that machine's
+runtime (`main/agent/conversation/pathLinks.ts`), and its answer is kept for
+as long as the conversation is on screen; a word that named nothing is
+checked again when the Agent's turn ends, since the turn may have made it. A
+folder is not a link.
+
+**Which editor.** The Workspace on the Agent's machine whose folder contains
+the file; if no open Workspace does, the Agent's own Workspace, with the
+editor shown beside the Agent (`routeAgentOpen` in
+`main/cli/route.ts`). It is the same open `devhub <file>` makes — the one
+`vscode:openFiles` message, remote files as `vscode-remote:` — weighed the
+other way round: a terminal's `devhub` opens in the window it was typed in,
+a link opens where the file's folder already is.
+
+**When it cannot.** A file that has gone since the link was drawn, a
+Workspace whose editor cannot be reached, or a machine that could not be
+asked is said once, the way every other failure on the Agents page is — never
+an empty editor for a file that is not there.
+
 ## Messages that wait, and sending one into a turn
 
 A message you send while the Agent is idle is written to the CLI at once, and

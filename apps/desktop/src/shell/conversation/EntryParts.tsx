@@ -11,6 +11,7 @@ import type {
   ToolOutputPart,
 } from "../../model/conversation";
 import { useAgentCwd } from "./ConversationContext";
+import { PathLink, PathText } from "./pathLinks";
 
 export function JsonView({ value }: { readonly value: JsonValue }) {
   // A bare string is shown as itself: a command line or a path reads better
@@ -77,39 +78,59 @@ export function shownPath(path: string, cwd: string | undefined): string {
   return path.startsWith(base) ? path.slice(base.length) : path;
 }
 
+/** The first line a diff's hunks name in the file after it, where one does. */
+function firstNewLine(rows: readonly DiffRow[]): number | undefined {
+  return rows.find((row) => row.new !== undefined)?.new;
+}
+
 /**
  * Each file's change: its path (relative to the Agent's directory when inside
- * it) over its lines, one row each, numbered where the diff says, a long line
- * wrapping under itself rather than running off to the side.
+ * it, and a link to the file at its first changed hunk) over its lines, one
+ * row each, numbered where the diff says, a long line wrapping under itself
+ * rather than running off to the side.
  */
 export function DiffView({ files }: { readonly files: readonly FileDiff[] }) {
   const cwd = useAgentCwd();
   return (
     <div className="conversation-diff">
-      {files.map((file, index) => (
-        <div className="conversation-diff-file" key={`${index}:${file.path}`}>
-          <div className="conversation-diff-path" title={file.path}>
-            {shownPath(file.path, cwd)}
-          </div>
-          <div className="conversation-diff-lines">
-            {diffRows(file.unifiedDiff).map((row, at) => (
-              <div
-                key={at}
-                className="conversation-diff-line"
-                data-line={row.kind}
+      {files.map((file, index) => {
+        const rows = diffRows(file.unifiedDiff);
+        const line = firstNewLine(rows);
+        return (
+          <div className="conversation-diff-file" key={`${index}:${file.path}`}>
+            <div className="conversation-diff-path" title={file.path}>
+              <PathLink
+                candidate={{
+                  path: file.path,
+                  range:
+                    line === undefined
+                      ? undefined
+                      : { kind: "line", line, column: 1 },
+                }}
               >
-                <span className="conversation-diff-number" aria-hidden="true">
-                  {row.old ?? ""}
-                </span>
-                <span className="conversation-diff-number" aria-hidden="true">
-                  {row.new ?? ""}
-                </span>
-                <span className="conversation-diff-text">{row.text}</span>
-              </div>
-            ))}
+                {shownPath(file.path, cwd)}
+              </PathLink>
+            </div>
+            <div className="conversation-diff-lines">
+              {rows.map((row, at) => (
+                <div
+                  key={at}
+                  className="conversation-diff-line"
+                  data-line={row.kind}
+                >
+                  <span className="conversation-diff-number" aria-hidden="true">
+                    {row.old ?? ""}
+                  </span>
+                  <span className="conversation-diff-number" aria-hidden="true">
+                    {row.new ?? ""}
+                  </span>
+                  <span className="conversation-diff-text">{row.text}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -160,7 +181,9 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
     case "text":
       return (
         <pre className="conversation-output">
-          <code>{part.text}</code>
+          <code>
+            <PathText text={part.text} />
+          </code>
         </pre>
       );
     case "image":
@@ -180,14 +203,18 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
         <>
           {part.output !== "" ? (
             <pre className="conversation-output">
-              <code>{part.output}</code>
+              <code>
+                <PathText text={part.output} />
+              </code>
             </pre>
           ) : null}
           {part.stderr !== undefined ? (
             <>
               <div className="conversation-tool-section">Stderr</div>
               <pre className="conversation-output" data-stream="stderr">
-                <code>{part.stderr}</code>
+                <code>
+                  <PathText text={part.stderr} />
+                </code>
               </pre>
             </>
           ) : null}
@@ -214,13 +241,17 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
             {part.path !== undefined && !part.note.includes(part.path) ? (
               <>
                 {" "}
-                <code>{part.path}</code>
+                <code>
+                  <PathText text={part.path} />
+                </code>
               </>
             ) : null}
           </div>
           {part.preview !== "" ? (
             <pre className="conversation-output">
-              <code>{part.preview}</code>
+              <code>
+                <PathText text={part.preview} />
+              </code>
             </pre>
           ) : null}
         </>

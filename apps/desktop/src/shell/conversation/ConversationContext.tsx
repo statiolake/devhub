@@ -17,6 +17,7 @@
  */
 
 import { createContext, useContext } from "react";
+import type { FileRange } from "../../ipc/conversation";
 import type {
   EntryId,
   ImageRef,
@@ -85,6 +86,22 @@ export interface ConversationActions {
    * the last one across a restart and hands it back on the next attach.
    */
   readonly saveDraft: (text: string) => Promise<void>;
+  /**
+   * Which of `paths` (absolute, `~/…`, or relative to `cwd`) name a file on
+   * the Agent's machine: each its absolute path, or `null`. See `pathLinks.tsx`.
+   */
+  readonly resolvePaths: (
+    cwd: string | undefined,
+    paths: readonly string[],
+  ) => Promise<readonly (string | null)[]>;
+  /**
+   * Open a file on the Agent's machine in the editor — the open Workspace's
+   * that contains it, else the Agent's own — at `range`.
+   */
+  readonly openFile: (
+    path: string,
+    range: FileRange | undefined,
+  ) => Promise<void>;
   readonly reportFailure: (error: unknown) => void;
 }
 

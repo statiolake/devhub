@@ -203,6 +203,62 @@ export function routeOpen(
 		}
 	}
 
+	const workspace = containingWorkspace(path, machine, workspaces);
+	return workspace === undefined
+		? { kind: "scratch", reason: "no-containing-workspace" }
+		: { kind: "workspace", workspace, reason: "containing" };
+}
+
+/**
+ * Where a file link in a GUI Agent's conversation opens.
+ *
+ * The same two facts as `routeOpen`, weighed the other way round, because
+ * the question is a different one. A terminal's `devhub <file>` is a command
+ * typed *in* a window, and the window it was typed in is the answer. A link
+ * in a conversation is the Agent pointing at a file, and the editor that
+ * already has that file's folder open is where the person reads it — so:
+ *
+ * > A link opens in the Workspace on the Agent's machine whose root contains
+ * > the file; if none does, in the Agent's own Workspace.
+ *
+ * Never Scratch: the Agent's Workspace is always open while its conversation
+ * is on screen, and it is where the file was talked about. When the answer is
+ * the Agent's own Workspace the editor is shown beside the Agent
+ * (`origin-agent`), because the conversation is what the person is looking
+ * at; another Workspace is shown as a plain open is.
+ */
+export function routeAgentOpen(
+	path: CanonicalPath,
+	machine: string,
+	workspaces: readonly RoutableWorkspace[],
+	agent: { readonly workspaceId: string; readonly agentId: string },
+): OpenDestination {
+	const containing = containingWorkspace(path, machine, workspaces);
+	const workspace =
+		containing ??
+		workspaces.find((each) => each.workspaceId === agent.workspaceId);
+	if (!workspace) {
+		throw new Error(
+			`the Agent ${agent.agentId}'s Workspace ${agent.workspaceId} is not open`,
+		);
+	}
+	return workspace.workspaceId === agent.workspaceId &&
+		workspace.agents.includes(agent.agentId)
+		? {
+				kind: "workspace",
+				workspace,
+				reason: "origin-agent",
+				agentId: agent.agentId,
+			}
+		: { kind: "workspace", workspace, reason: "containing" };
+}
+
+/** The open Workspace on `machine` whose root is `path`'s nearest ancestor. */
+function containingWorkspace(
+	path: CanonicalPath,
+	machine: string,
+	workspaces: readonly RoutableWorkspace[],
+): RoutableWorkspace | undefined {
 	const onMachine = workspaces.filter(
 		(workspace) => workspace.machine === machine,
 	);
@@ -210,9 +266,7 @@ export function routeOpen(
 		path,
 		onMachine.map((workspace) => workspace.root),
 	);
-	if (root === undefined) {
-		return { kind: "scratch", reason: "no-containing-workspace" };
-	}
+	if (root === undefined) return undefined;
 	const workspace = onMachine.find((candidate) => candidate.root === root);
 	// `workspaceRootFor` answers with one of the roots it was given, so the
 	// find cannot miss. If it ever did, the list it was given and the list it
@@ -221,5 +275,5 @@ export function routeOpen(
 	if (!workspace) {
 		throw new Error(`no workspace is rooted at ${root} on ${machine}`);
 	}
-	return { kind: "workspace", workspace, reason: "containing" };
+	return workspace;
 }

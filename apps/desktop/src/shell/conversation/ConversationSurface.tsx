@@ -64,6 +64,7 @@ import {
 import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
+import { PathLinks, PathLinksProvider } from "./pathLinks";
 import { ArrowDownIcon } from "./icons";
 import { SEND_KEY } from "./messageKeys";
 import { RequestCard } from "./RequestCard";
@@ -148,6 +149,21 @@ export function ConversationSurface({
     previousTree.current = next;
     return next;
   }, [transcript]);
+
+  // The conversation's file links (`pathLinks.tsx`): asked about in batches,
+  // remembered for as long as the surface is mounted, and a word that named
+  // no file asked about again once a turn has ended — it may have made it.
+  const pathLinks = useMemo(
+    () => new PathLinks(actions.resolvePaths, actions.reportFailure),
+    [actions.resolvePaths, actions.reportFailure],
+  );
+  const turnsEnded = useMemo(
+    () => transcript.entries.filter((each) => each.kind === "turn-end").length,
+    [transcript.entries],
+  );
+  useEffect(() => {
+    pathLinks.forgetAbsent();
+  }, [pathLinks, turnsEnded]);
 
   const surface = useRef<HTMLElement>(null);
   const subagents = useSubagentLayout(transcript, surface);
@@ -396,113 +412,118 @@ export function ConversationSurface({
       <FocusComposerProvider value={focusComposer}>
         <RewindMessageProvider value={rewindMessage}>
           <AgentCwdProvider value={transcript.session.cwd}>
-            <EntryTreeContext.Provider value={tree}>
-              <SubagentLayoutProvider value={subagents}>
-                <section
-                  ref={surface}
-                  className="conversation-surface"
-                  aria-label={label}
-                  style={style}
-                  hidden={hidden}
-                >
-                  <div className="conversation-views">
-                    {/* The Agent's own column, whose top right corner the
+            <PathLinksProvider value={pathLinks}>
+              <EntryTreeContext.Provider value={tree}>
+                <SubagentLayoutProvider value={subagents}>
+                  <section
+                    ref={surface}
+                    className="conversation-surface"
+                    aria-label={label}
+                    style={style}
+                    hidden={hidden}
+                  >
+                    <div className="conversation-views">
+                      {/* The Agent's own column, whose top right corner the
                       Continue button sits in (`ContinueElsewhere`). */}
-                    <div className="conversation-main" data-agent-column="">
-                      {finding ? (
-                        <FindBar
-                          ref={findBar}
-                          root={findRoot}
-                          scope={findScope}
-                          revision={transcript}
-                          onClose={closeFind}
-                        />
-                      ) : null}
-                      <div
-                        className="conversation-body"
-                        data-view="conversation"
-                        hidden={maximized !== undefined}
-                      >
-                        <div className="conversation-scroll" ref={scroller}>
-                          {topLevel.length === 0 &&
-                          transcript.sending.length === 0 &&
-                          tree.unattached.length === 0 ? (
-                            <EmptyTranscript />
-                          ) : null}
-                          <div
-                            className="conversation-transcript conversation-selectable"
-                            ref={content}
-                          >
-                            {topLevel.map((entry) => (
-                              <EntryView
-                                key={entry.id}
-                                entry={entry}
-                                depth={0}
-                              />
-                            ))}
-                            {transcript.sending.map((message) => (
-                              <SendingView key={message.id} message={message} />
-                            ))}
-                            {transcript.limitResume === undefined ? null : (
-                              <LimitResumeView
-                                resume={transcript.limitResume}
-                              />
-                            )}
-                            {tree.unattached.map((request) => (
-                              <div
-                                className="conversation-entry"
-                                data-kind="request"
-                                data-entry-id={`request:${request.id}`}
-                                key={request.id}
-                              >
-                                <RequestCard request={request} />
-                              </div>
-                            ))}
+                      <div className="conversation-main" data-agent-column="">
+                        {finding ? (
+                          <FindBar
+                            ref={findBar}
+                            root={findRoot}
+                            scope={findScope}
+                            revision={transcript}
+                            onClose={closeFind}
+                          />
+                        ) : null}
+                        <div
+                          className="conversation-body"
+                          data-view="conversation"
+                          hidden={maximized !== undefined}
+                        >
+                          <div className="conversation-scroll" ref={scroller}>
+                            {topLevel.length === 0 &&
+                            transcript.sending.length === 0 &&
+                            tree.unattached.length === 0 ? (
+                              <EmptyTranscript />
+                            ) : null}
+                            <div
+                              className="conversation-transcript conversation-selectable"
+                              ref={content}
+                            >
+                              {topLevel.map((entry) => (
+                                <EntryView
+                                  key={entry.id}
+                                  entry={entry}
+                                  depth={0}
+                                />
+                              ))}
+                              {transcript.sending.map((message) => (
+                                <SendingView
+                                  key={message.id}
+                                  message={message}
+                                />
+                              ))}
+                              {transcript.limitResume === undefined ? null : (
+                                <LimitResumeView
+                                  resume={transcript.limitResume}
+                                />
+                              )}
+                              {tree.unattached.map((request) => (
+                                <div
+                                  className="conversation-entry"
+                                  data-kind="request"
+                                  data-entry-id={`request:${request.id}`}
+                                  key={request.id}
+                                >
+                                  <RequestCard request={request} />
+                                </div>
+                              ))}
+                            </div>
                           </div>
+                          {following ? null : (
+                            <button
+                              type="button"
+                              className="conversation-latest"
+                              onClick={jumpToLatest}
+                            >
+                              <ArrowDownIcon />
+                              {unseen ? "New output" : "Latest"}
+                            </button>
+                          )}
                         </div>
-                        {following ? null : (
+                        {maximized !== undefined ? (
+                          <SubagentPane
+                            key={maximized.id}
+                            entry={maximized}
+                            place="maximized"
+                            tree={tree}
+                          />
+                        ) : null}
+                        {transcript.requests.length > 0 ? (
                           <button
                             type="button"
-                            className="conversation-latest"
-                            onClick={jumpToLatest}
+                            className="conversation-waiting"
+                            onClick={showFirstRequest}
                           >
-                            <ArrowDownIcon />
-                            {unseen ? "New output" : "Latest"}
+                            {waitingSentence(transcript.requests.length)} ↑
                           </button>
-                        )}
-                      </div>
-                      {maximized !== undefined ? (
-                        <SubagentPane
-                          key={maximized.id}
-                          entry={maximized}
-                          place="maximized"
-                          tree={tree}
+                        ) : null}
+                        <Composer
+                          transcript={transcript}
+                          openTask={openTask}
+                          inputRef={composer}
+                          pickers={pickers}
+                          openSetting={openSetting}
+                          restored={restored}
+                          savedDraft={savedDraft}
                         />
-                      ) : null}
-                      {transcript.requests.length > 0 ? (
-                        <button
-                          type="button"
-                          className="conversation-waiting"
-                          onClick={showFirstRequest}
-                        >
-                          {waitingSentence(transcript.requests.length)} ↑
-                        </button>
-                      ) : null}
-                      <Composer
-                        transcript={transcript}
-                        openTask={openTask}
-                        inputRef={composer}
-                        pickers={pickers}
-                        openSetting={openSetting}
-                        restored={restored}
-                        savedDraft={savedDraft}
-                      />
+                      </div>
+                      <SubagentColumn tree={tree} />
                     </div>
-                    <SubagentColumn tree={tree} />
-                  </div>
-                </section>
-              </SubagentLayoutProvider>
-            </EntryTreeContext.Provider>
+                  </section>
+                </SubagentLayoutProvider>
+              </EntryTreeContext.Provider>
+            </PathLinksProvider>
           </AgentCwdProvider>
         </RewindMessageProvider>
       </FocusComposerProvider>
