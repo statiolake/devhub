@@ -639,6 +639,15 @@ names the SendMessage call on its task events, the news is the subagent's —
 its Agent call runs again, stays in the column and the background tasks,
 and ends with it — while the SendMessage call is only the message, done
 with its own result.
+A subagent outlives what DevHub drew of its session: its transcript is kept
+apart from the conversation, through a compaction and across a restart, and
+SendMessage can wake one whose Agent call this transcript never drew (it came
+before the history read back from the session file, or a rewind cut it). Its
+messages still name that call as their `parent_tool_use_id`, so the call is
+drawn where the subagent is first heard of, as *A subagent started earlier in
+this session*, *Unknown* (nothing ties its task to it), with the subagent's
+messages under it. Its task, tied first to the SendMessage call, stands on
+that call.
 A notification that names only its task is matched through the call that
 task belongs to: the one `task_started` tied it to, or, read back from a
 session file, the call whose result named that task (a background agent's

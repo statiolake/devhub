@@ -1981,17 +1981,6 @@ describe("a line DevHub cannot read", () => {
 		).toThrow(/expected a message_start before it/);
 	});
 
-	it("includes a subagent message whose parent call nobody made", () => {
-		const adapter = inTurn();
-		expect(() =>
-			adapter.received(
-				assistantLine("m", [{ type: "text", text: "hi" }], "toolu_ghost"),
-			),
-		).toThrow(
-			/assistant.parent_tool_use_id: expected a tool call that was made/,
-		);
-	});
-
 	it("includes a line in in.log that DevHub would never have written", () => {
 		const adapter = inTurn();
 		expect(() => adapter.sent(json({ type: "assistant" }))).toThrow(
@@ -5878,5 +5867,126 @@ describe("the MCP servers", () => {
 		expect(() => adapter.received(status("boot:2", [{ name: SLACK }]))).toThrow(
 			ProtocolMismatch,
 		);
+	});
+});
+
+describe("a subagent whose Agent call this transcript never drew", () => {
+	function task(subtype: string, fields: Record<string, unknown>): string {
+		return json({ type: "system", subtype, session_id: SESSION, ...fields });
+	}
+
+	/**
+	 * The shape seen: the Agent call that started "agent-old" is not in what
+	 * DevHub read (it came before the history drawn, or a rewind cut it), and
+	 * SendMessage wakes the subagent, whose messages name that call.
+	 */
+	function lines(): string[] {
+		return [
+			assistantLine("m1", [
+				toolUse("toolu_send", "SendMessage", {
+					to: "agent-old",
+					message: "one more thing",
+				}),
+			]),
+			task("task_started", {
+				task_id: "agent-old",
+				tool_use_id: "toolu_send",
+				task_type: "local_agent",
+				description: "Survey",
+			}),
+			toolResult("toolu_send", "Message sent."),
+			stream({ type: "message_start", message: { id: "s1" } }, "toolu_earlier"),
+			stream(
+				{
+					type: "content_block_start",
+					index: 0,
+					content_block: { type: "text", text: "" },
+				},
+				"toolu_earlier",
+			),
+			stream(
+				{
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "Looking again." },
+				},
+				"toolu_earlier",
+			),
+			assistantLine(
+				"s1",
+				[
+					{ type: "text", text: "Looking again." },
+					toolUse("toolu_sub_bash", "Bash", { command: "ls" }),
+				],
+				"toolu_earlier",
+			),
+			json({
+				type: "user",
+				message: {
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "toolu_sub_bash",
+							content: "a.txt",
+							is_error: false,
+						},
+					],
+				},
+				parent_tool_use_id: "toolu_earlier",
+				session_id: SESSION,
+			}),
+			assistantLine(
+				"s2",
+				[{ type: "text", text: "Found it." }],
+				"toolu_earlier",
+			),
+			task("task_notification", {
+				task_id: "agent-old",
+				tool_use_id: "toolu_send",
+				status: "completed",
+				summary: "Found it.",
+			}),
+			result(),
+		];
+	}
+
+	function played(): ClaudeAdapter {
+		const adapter = inTurn();
+		for (const line of lines()) adapter.received(line);
+		return adapter;
+	}
+
+	it("draws that call where its subagent is first heard of, and the subagent's messages under it", () => {
+		const adapter = played();
+		const earlier = entry(adapter, "tool:toolu_earlier") as ToolEntry;
+		expect(earlier).toMatchObject({
+			parent: null,
+			tool: "Agent",
+			title: "Agent: A subagent started earlier in this session",
+			status: "succeeded",
+			spawns: {
+				label: "A subagent started earlier in this session",
+				state: "unknown",
+			},
+		});
+		expect(
+			childrenOf(adapter.transcript, entryId("tool:toolu_earlier")).map(
+				(each) => each.id,
+			),
+		).toEqual(["assistant:s1:0", "tool:toolu_sub_bash", "assistant:s2:0"]);
+		expect(entry(adapter, "tool:toolu_sub_bash")).toMatchObject({
+			status: "succeeded",
+		});
+		expect(childrenOf(adapter.transcript, null).map((each) => each.id)).toEqual(
+			["user:u-go", "tool:toolu_send", "tool:toolu_earlier", "turn:1"],
+		);
+		expect(conversationStatus(adapter.transcript)).not.toBe("broken");
+	});
+
+	it("reads the same in a replay", () => {
+		const live = played();
+		const replayed = played();
+		expect(replayed.transcript).toEqual(live.transcript);
 	});
 });

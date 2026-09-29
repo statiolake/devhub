@@ -280,6 +280,9 @@ function modelChoice(
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
+/** A subagent whose starting call this transcript never drew (`parentOf`), in the words its card has. */
+const EARLIER_SUBAGENT = "A subagent started earlier in this session";
+
 const NO_USAGE: Usage = {
 	inputTokens: undefined,
 	outputTokens: undefined,
@@ -799,15 +802,49 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		return found?.kind === "tool" ? found : undefined;
 	}
 
-	/** The entry a message's `parent_tool_use_id` names, which must be a call already made. */
-	private parentOf(parent: string | null, type: string): EntryId | null {
+	/**
+	 * The call a message's `parent_tool_use_id` names: the one that started
+	 * the subagent the message is from.
+	 *
+	 * A subagent outlives what DevHub drew of its session. Its transcript is
+	 * kept apart from the conversation, through a compaction and across a
+	 * restart, and `SendMessage` wakes it again with its messages still naming
+	 * the call that first started it. So that call can be one this transcript
+	 * never drew: made before the history DevHub read back begins, or cut by a
+	 * rewind. Such a call is drawn where its subagent is first heard of, as a
+	 * subagent from earlier in the session whose state nothing here says, and
+	 * the subagent's messages go under it as under any other call.
+	 */
+	private parentOf(parent: string | null): EntryId | null {
 		if (parent === null) return null;
 		const id = toolEntryId(parent);
 		if (this.tool(id) === undefined) {
-			return this.mismatch(
-				`${type}.parent_tool_use_id`,
-				"a tool call that was made",
-			);
+			this.emit({
+				type: "entry",
+				entry: {
+					kind: "tool",
+					id,
+					parent: null,
+					tool: "Agent",
+					title: toolTitle("Agent", { description: EARLIER_SUBAGENT }),
+					input: {},
+					status: "succeeded",
+					output: undefined,
+					spawns: {
+						label: EARLIER_SUBAGENT,
+						prompt: "",
+						model: undefined,
+						state: "unknown",
+						takesMessages: false,
+					},
+					background: undefined,
+					outsideSandbox: false,
+					plan: undefined,
+					denial: undefined,
+					change: undefined,
+					asked: undefined,
+				},
+			});
 		}
 		return id;
 	}
@@ -1276,10 +1313,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				this.pluginErrors = line.pluginErrors;
 				return this.becomeReady();
 			case "stream":
-				return this.takeStream(
-					this.parentOf(line.parent, "stream_event"),
-					line.event,
-				);
+				return this.takeStream(this.parentOf(line.parent), line.event);
 			case "assistant":
 				return this.takeAssistant(line, "live");
 			case "user":
@@ -1582,7 +1616,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		line: Extract<ClaudeLine, { type: "assistant" }>,
 		when: "live" | "history",
 	): void {
-		const parent = this.parentOf(line.parent, "assistant");
+		const parent = this.parentOf(line.parent);
 		this.placed(line.uuid, parent);
 		if (parent === null && when === "live") this.turn("running");
 		if (parent === null && line.contextTokens !== undefined) {
@@ -1838,7 +1872,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		line: Extract<ClaudeLine, { type: "user" }>,
 		when: "live" | "history",
 	): void {
-		const parent = this.parentOf(line.parent, "user");
+		const parent = this.parentOf(line.parent);
 		const before = this.lastUuid;
 		// A message that only tells of tasks ending is the CLI's, not a
 		// message of the conversation's own: no place for a resume to cut.
