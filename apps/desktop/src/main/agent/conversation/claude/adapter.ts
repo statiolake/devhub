@@ -311,6 +311,9 @@ const DECLINE: RequestChoice = {
 
 /** The `error` of an assistant message whose request the API refused as unauthenticated. */
 const SIGNED_OUT = "authentication_failed";
+/** How to sign claude in again, in its documented commands (CLI reference). */
+const CLAUDE_SIGN_IN =
+	"Sign in with `claude auth login` (or `/login` in claude) in a terminal on this Agent's machine, then try again.";
 /** The API error of an answer a usage or rate limit refused (`SDKAssistantMessageError`). */
 const RATE_LIMITED = "rate_limit";
 
@@ -984,7 +987,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.answered.clear();
 		this.streaming.clear();
 		this.interrupting = false;
-		this.turn("rewinding");
+		// Not `turn`, which never moves a broken conversation: a new CLI is
+		// the one thing that ends what the stopped one said (signed out, a
+		// refused handshake), and it is greeted afresh.
+		this.emit({ type: "state", state: { phase: "ready", turn: "rewinding" } });
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
 	}
 
@@ -1627,15 +1633,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 		if (line.error === SIGNED_OUT) {
 			// The one API error no turn can get past: the CLI has no sign-in to
-			// use. What it said stays in the transcript above, in its words.
+			// use. What it said stays in the transcript above, and is the reason
+			// the failure gives; the fix is the CLI's documented sign-in, after
+			// which Restart Session starts it again on the same session.
+			const said = line.content
+				.flatMap((block) => (block.kind === "text" ? [block.text.trim()] : []))
+				.filter((text) => text.length > 0)
+				.join(" ");
 			this.emit({
 				type: "state",
 				state: {
 					phase: "broken",
 					failure: {
 						code: "not_signed_in",
-						detail:
-							"claude is not signed in. Open a terminal Agent from this profile and run /login there.",
+						detail: `${said.length > 0 ? `claude said: “${said}”. ` : ""}${CLAUDE_SIGN_IN}`,
 					},
 				},
 			});

@@ -17,7 +17,8 @@
  */
 
 import {
-  agentIsIdle,
+  agentRestart,
+  interruptsNothing,
   AVAILABLE,
   CLEAN_CLOSE_INSPECTION,
   closeInspectionProjection,
@@ -267,7 +268,7 @@ interface CachedDispatch {
  * Agent's CLI where it stands: stopping it, carrying it on in its other
  * presentation (which stops it once the new one runs), and restarting it
  * (which starts it again on the same session). All are asked about on the
- * one rule, `agentIsIdle`.
+ * one rule, `interruptsNothing`.
  */
 type AgentAct =
   | { readonly kind: "stop" }
@@ -1082,7 +1083,7 @@ export class AppCoordinator {
    * stands, and the turn it is in, the question it is holding and the
    * subagents and background tasks it started stop with it.
    *
-   * `agentIsIdle` is the whole of the rule and it lives in one place — the
+   * `interruptsNothing` is the whole of the rule and it lives in one place — the
    * same one the workspace close reads, so "this Agent is busy" cannot mean
    * two things. An Agent sitting at its prompt is stopped, or carried on,
    * where it stands: a question whose answer is always yes is what teaches
@@ -1097,7 +1098,7 @@ export class AppCoordinator {
     if (!found || !this.model.workspaceForAgent(agent)) {
       throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
-    if (agentIsIdle(found.status)) return this.doAgentAct(agent, act, id);
+    if (interruptsNothing(found)) return this.doAgentAct(agent, act, id);
     const token = this.startOperation(
       "generate_confirmation_id",
       { kind: "agent", agentId: agent },
@@ -1150,19 +1151,20 @@ export class AppCoordinator {
   }
 
   /**
-   * Agent `agentId`, when it can be restarted: it is there, and it is a GUI
-   * Agent, whose CLI DevHub's host starts and can start again. A terminal
-   * Agent's CLI is the terminal's own process.
+   * Agent `agentId`, when it can be restarted: it is there, and `agentRestart`
+   * says so — the one rule, which the pane and the Sidebar offer by too. A
+   * refusal says why.
    */
   private restartable(agentId: AgentId): void {
     const agent = this.model.agent(agentId);
     if (!agent || !this.model.workspaceForAgent(agentId)) {
       throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
-    if (agent.presentation !== "gui") {
+    const restart = agentRestart(agent);
+    if (restart.kind === "refused") {
       throw domainRefusal(
         DomainErrorCode.InvalidAgentControlTransition,
-        `“${agent.displayName}” is a terminal Agent, so it has no session to restart: its CLI runs in the terminal itself. Continue it in the GUI to restart it there.`,
+        restart.why,
       );
     }
   }

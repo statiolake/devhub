@@ -253,7 +253,7 @@ describe("when the conversation takes no input", () => {
         phase: "broken",
         failure: { code: "not_signed_in", detail: "" },
       },
-      "This conversation takes no more input: the Agent's CLI is not signed in.",
+      "This conversation takes no more input until the Agent's CLI is signed in again and restarted.",
     ],
     [
       {

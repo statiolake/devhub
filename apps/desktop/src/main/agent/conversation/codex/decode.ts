@@ -542,7 +542,15 @@ export type TurnFacts = Pick<Turn, "id" | "status" | "durationMs"> & {
 	 * `usageLimitExceeded`): the turn stopped because the limit was reached.
 	 */
 	readonly usageLimited: boolean;
+	/**
+	 * The turn's error is the provider refusing the sign-in (`codexErrorInfo`
+	 * `unauthorized`): no turn gets past it until the person signs in again.
+	 */
+	readonly unauthorized: boolean;
 };
+
+/** The `codexErrorInfo` of a turn the provider refused as unauthenticated. */
+const UNAUTHORIZED = "unauthorized" satisfies CodexErrorInfo;
 
 /** The `codexErrorInfo` of a turn stopped by the plan's usage limit. */
 const USAGE_LIMIT_EXCEEDED = "usageLimitExceeded" satisfies CodexErrorInfo;
@@ -559,6 +567,7 @@ function turn(r: Reader, value: unknown, path: string): TurnFacts {
 	const error = o["error"];
 	let message: string | null = null;
 	let usageLimited = false;
+	let unauthorized = false;
 	if (error !== null && error !== undefined) {
 		const e = r.fields(error, `${path}.error`);
 		const details = r.nullableString(e, "additionalDetails", `${path}.error`);
@@ -579,6 +588,7 @@ function turn(r: Reader, value: unknown, path: string): TurnFacts {
 			);
 		}
 		usageLimited = info === USAGE_LIMIT_EXCEEDED;
+		unauthorized = info === UNAUTHORIZED;
 	}
 	return {
 		id: r.string(o, "id", path),
@@ -587,6 +597,7 @@ function turn(r: Reader, value: unknown, path: string): TurnFacts {
 		items: r.array(o, "items", path, (value, at) => item(r, value, at)),
 		error: message,
 		usageLimited,
+		unauthorized,
 	};
 }
 

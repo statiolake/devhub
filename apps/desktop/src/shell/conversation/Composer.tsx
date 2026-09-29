@@ -121,7 +121,7 @@ const BROKEN_REFUSALS = {
   protocol_mismatch:
     "This conversation takes no more input: DevHub could not read what the Agent said.",
   not_signed_in:
-    "This conversation takes no more input: the Agent's CLI is not signed in.",
+    "This conversation takes no more input until the Agent's CLI is signed in again and restarted.",
   refused:
     "This conversation takes no more input: the Agent's CLI refused to start.",
 } as const;

@@ -952,23 +952,51 @@ A usage limit does not stop the conversation: the CLI says so in the turn
 prompt would take it. A `rate_limit_event` that names no limiting window
 (its `rateLimitType` is optional) changes no window's readout.
 
-When the CLI is not signed in, the conversation stops and the Agent's pane
-says so:
+When the CLI is not signed in, or its sign-in is refused, the conversation
+stops (*Authentication failed*):
 
-- Claude reports it on its first answer (`authentication_failed`).
-- Codex reports it at `account/read`.
+- Claude reports it on an answer: an assistant message whose `error` is
+  `authentication_failed` (`SDKAssistantMessageError`). What the message
+  says ("Invalid API key · Please run /login", an expired token) is the
+  reason the failure gives.
+- Codex reports it at `account/read` (no account, `requiresOpenaiAuth`), or
+  as a turn that failed with `codexErrorInfo` `unauthorized`, with its message.
 
-The pane then offers **Open a terminal to sign in**, which starts a terminal
-Agent from the same profile. Run `/login` (Claude) or `codex login` there,
-then start a new GUI Agent. DevHub never signs in on your behalf.
+The fix is the CLI's own sign-in, in a terminal on the Agent's machine:
+`claude auth login` (or `/login` inside claude), or `codex login`. DevHub
+never signs in on your behalf. Then **Try again** restarts the Agent's CLI on
+the same session ([Restart Session](#restarting-the-session)).
+
+### How a failure is shown
+
+A failure of a GUI Agent's conversation — authentication failed, the CLI
+refused to start, a protocol mismatch, the host lost — and a terminal Agent's
+runtime failures are all drawn the same way, over that Agent's pane and
+nothing else:
+
+- A sheet in the middle of the pane, over the pane dimmed, so what the Agent
+  said up to the failure stays in view behind it. It has the failure's name,
+  its sentence, the detail (the CLI's reason and the fix), and:
+  - **Try again**, where Restart Session can be taken — the same
+    `restart_agent` as the Sidebar's menu. A CLI that stopped itself (signed
+    out, refusing to start) runs nothing, so nothing is asked first.
+  - The way out the failure has: **Open a terminal to sign in** (a terminal
+    Agent from the same profile, on the same machine) for authentication,
+    **Continue in terminal** for a conversation DevHub cannot follow.
+  - **Dismiss** (or Escape), which leaves a line along the top of the pane
+    with the same actions. The composer stays closed.
+- How long it stands is one rule for every failure: the sheet is up from the
+  moment a failure appears until it is dismissed; the failure, sheet or line,
+  is drawn for as long as the Agent's readings say it; a different failure is
+  asked about with the sheet again.
 
 **Continue in terminal** is the way out of a GUI Agent:
 
 - It is a small floating button in the top right corner of the
   conversation's column (left of the subagent column when one is open),
-  translucent until it is pointed at or focused. It is also on the failure over the pane when the
-  conversation broke (the host was lost, a protocol mismatch, or the CLI
-  refused to start).
+  translucent until it is pointed at or focused. It is also on the failure
+  sheet when the conversation broke (the host was lost, a protocol mismatch,
+  or the CLI refused to start).
 - It starts a terminal Agent from the same profile, resuming the same
   session: `claude --resume <session id>`, or `codex resume <thread id>`.
 - It selects that Agent, and stops the GUI one once the new one is running.
@@ -1230,13 +1258,26 @@ is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
   and background tasks end with it (*Unknown*). A message written to it and
   not yet taken never reached it; messages DevHub still holds are written to
   the new CLI once it is ready.
+- It is what a conversation its CLI stopped is for — signed out, or refusing
+  to start: after signing in, **Try again** on the pane's failure sheet (or
+  Restart Session) starts the CLI again, and the new CLI's start lifts the
+  stop. The same session goes on.
 - When the Agent is not idle it asks first, on the same sheet and by the same
-  rule as Stop and Continue (`agentIsIdle`); an idle Agent is restarted at
-  once.
-- A terminal Agent has no Restart Session: its CLI is the terminal's own
-  process, which DevHub's host does not start, so there is no host to start it
-  again on the same pane. Continue it in the GUI to restart it there, or stop
-  it and resume its session in a new one.
+  rule as Stop and Continue (`interruptsNothing`); an idle Agent, and one
+  whose CLI stopped itself, is restarted at once.
+- An answered question is over, whether or not what it asked for worked: a
+  restart that failed says so, and the question is not left up to be
+  answered a second time (main takes a confirmation once).
+- Where it cannot be taken it is not offered, and asked for anyway (the
+  chord, `/restart`) it is refused with why — one rule, `agentRestart`:
+  - A terminal Agent: its CLI is the terminal's own process, which DevHub's
+    host does not start. Continue it in the GUI to restart it there, or stop
+    it and resume its session in a new one.
+  - The host lost: the host is what starts the CLI again. DevHub attaches
+    again every round.
+  - A protocol mismatch, or DevHub failing on what it read: DevHub stopped
+    reading the journal there, and would stop at the same line again. Continue
+    it in a terminal.
 
 ## MCP servers (`/mcp`)
 

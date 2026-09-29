@@ -600,10 +600,24 @@ export class AgentConversation {
 	 * the coordinator's (`askAbout`) — so a running turn, a question it is
 	 * waiting on and what it started in the background stop with the CLI.
 	 * The messages DevHub holds for it stay held, and go to the new CLI.
+	 *
+	 * A conversation its CLI stopped (signed out, refusing to start) is the
+	 * case it is most for: DevHub still reads the journal, and the new CLI's
+	 * start lifts the stop. One whose journal DevHub stopped reading is
+	 * refused — nothing would read what the new CLI said.
 	 */
 	async restart(): Promise<void> {
 		const restarted = await this.#serial(async () => {
-			this.#refuseIfBusy();
+			if (this.#crashed !== undefined) throw this.#crashed;
+			if (this.#cancel.isCancelled) {
+				const { state } = this.#transcript;
+				throw new ConversationStopped(
+					state.phase === "broken"
+						? `DevHub stopped reading this conversation, so it cannot follow a CLI started again: ${state.failure.detail}`
+						: "DevHub stopped following this conversation, so it cannot follow a CLI started again.",
+				);
+			}
+			this.#refuseIfRewinding();
 			return this.#carryOut(
 				this.#adapter.restart(),
 				"the CLI had started again",
@@ -675,6 +689,10 @@ export class AgentConversation {
 
 	#refuseIfBusy(): void {
 		this.#refuseIfBroken();
+		this.#refuseIfRewinding();
+	}
+
+	#refuseIfRewinding(): void {
 		if (this.#rewind !== undefined) {
 			throw new ConversationRefused(
 				"The conversation is being taken back. Wait until that is done.",

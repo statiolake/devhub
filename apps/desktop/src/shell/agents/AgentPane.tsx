@@ -1,16 +1,12 @@
 import { useMemo } from "react";
 import type { AppAppearance, AppSnapshot } from "../../ipc/appShell";
-import { useAgents } from "./AgentsContext";
 import { runningAgentSurfaces } from "../components/shell/surfacePool";
-import { agentFailureSummary } from "../components/shell/diagnosticLabel";
-import { Failure } from "../components/shell/SurfaceState";
+import { AgentFailure } from "./AgentFailure";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InjectionStatus } from "../components/shell/InjectionStatus";
 import { SmartButtons } from "./SmartButtons";
 import { ConversationPane } from "./ConversationPane";
 import { ContinueElsewhere, continuesElsewhere } from "./ContinueElsewhere";
-import { devhub } from "./client";
-import type { SurfaceAction } from "../components/shell/SurfaceState";
 import type { AgentWire } from "../../ipc/appShell";
 
 /**
@@ -107,45 +103,19 @@ function OverThePane({
   readonly agent: AgentWire;
   readonly snapshot: AppSnapshot;
 }) {
-  const { dispatch, reportFailure } = useAgents();
   return (
     <>
       {/* A failure about this Agent is drawn over this Agent's pane, because
-          that is where its subject is. It covers nothing else: the sidebar,
-          the workbench and every other Agent stay usable, which is the whole
-          difference between this and the app-wide alert it used to be.
-
-          There is no dismiss and no timer. It is retired by the next
-          reconcile that reads this Agent, so the pane simply stops drawing it
-          when the condition stops being true — and goes on saying it for as
-          long as it is true, which a dismissible banner could not. */}
+          that is where its subject is: a sheet over the pane dimmed, then a
+          banner once dismissed (`AgentFailure`). Keyed by the failure, so a
+          different one is asked about afresh; retired by the next reading
+          that does not say it. */}
       {active.failure ? (
-        <div className="agent-pane-failure">
-          {/* The code's own sentence leads, and the detail is whatever the
-              raising site was allowed to carry. A fixed summary over the top
-              of it would put "could not be reached" above a runtime that
-              answered and refused — the very conflation this split exists to
-              undo. */}
-          <Failure
-            summary={agentFailureSummary(active.failure.code)}
-            {...(active.failure.detail === undefined
-              ? {}
-              : { detail: active.failure.detail })}
-            actions={conversationWayOut(active, {
-              openTerminal: () =>
-                dispatch({
-                  type: "request_create_agent",
-                  workspaceId: active.workspaceId,
-                  profileId: active.profileId,
-                  presentation: "tui",
-                }).catch(reportFailure),
-              continueInTerminal: () =>
-                devhub()
-                  .conversation.continueInTerminal(active.id)
-                  .catch(reportFailure),
-            })}
-          />
-        </div>
+        <AgentFailure
+          key={`${active.failure.code}\n${active.failure.detail ?? ""}`}
+          agent={active}
+          failure={active.failure}
+        />
       ) : null}
       <InjectionStatus agent={active} />
       {/* After the status, so a terminal's buttons can stand on it. Not over
@@ -185,44 +155,5 @@ function cliName(snapshot: AppSnapshot, agentId: string): string {
       return "Codex";
     default:
       return agent.profileKind;
-  }
-}
-
-/**
- * The way out of a conversation that has stopped (design §6.1): the Agent's
- * own CLI in a terminal. Not signed in is a terminal Agent from the same
- * profile, where the CLI's own sign-in runs; anything else carries the
- * conversation on there, resuming its session. A terminal Agent's failures
- * have none: a terminal is already where it is.
- */
-function conversationWayOut(
-  agent: AgentWire,
-  ways: {
-    readonly openTerminal: () => void;
-    readonly continueInTerminal: () => void;
-  },
-): readonly SurfaceAction[] | undefined {
-  switch (agent.failure?.code) {
-    case "conversation_not_signed_in":
-      return [
-        {
-          label: "Open a terminal to sign in",
-          primary: true,
-          run: ways.openTerminal,
-        },
-      ];
-    case "conversation_host_lost":
-    case "conversation_protocol_mismatch":
-    case "conversation_refused":
-    case "conversation_failed":
-      return [
-        {
-          label: "Continue in terminal",
-          primary: true,
-          run: ways.continueInTerminal,
-        },
-      ];
-    default:
-      return undefined;
   }
 }

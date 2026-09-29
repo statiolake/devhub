@@ -206,8 +206,6 @@ export function CloseConfirmationSheet({
    * gone (`.spike/agents-09-stop-confirmation.png`).
    */
   const [taken, setTaken] = useState(false);
-  const [failure, setFailure] = useState<string>();
-  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     adoptConfirmation({
@@ -286,9 +284,6 @@ export function CloseConfirmationSheet({
 
   return (
     <Picker
-      // Re-asking is remounting: the picker stops listening the moment a row
-      // is taken, so a refused close needs a fresh one to be answered again.
-      key={attempt}
       title={words.title}
       question={words.question}
       cancelRow={{ detail: words.cancel }}
@@ -296,35 +291,21 @@ export function CloseConfirmationSheet({
         { id: CONFIRM, label: words.confirm, detail: words.confirmDetail },
       ]}
       note={
-        failure === undefined && diagnostics.length === 0 ? undefined : (
-          <>
-            {failure ? (
-              <span className="picker-note-failure">{failure}</span>
-            ) : null}
-            {diagnostics.length > 0 ? (
-              <ul className="mac-detail-list">
-                {collapsed(diagnostics).map(([label, text]) => (
-                  <li key={label}>
-                    <span>{label}</span>
-                    <span>{text}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </>
+        diagnostics.length === 0 ? undefined : (
+          <ul className="mac-detail-list">
+            {collapsed(diagnostics).map(([label, text]) => (
+              <li key={label}>
+                <span>{label}</span>
+                <span>{text}</span>
+              </li>
+            ))}
+          </ul>
         )
       }
-      onChoose={() => {
-        void confirmPending().then((done) => {
-          // Done means main consumed the confirmation, and the effect above is
-          // what takes the modal off screen. Refused means it is still there
-          // and still retryable — so the sheet is asked again, with the reason
-          // written under the list rather than dropped.
-          if (done) return;
-          setFailure(words.refused);
-          setAttempt((count) => count + 1);
-        });
-      }}
+      // Answered is over, done or failed: the effect above takes the modal
+      // off screen once the confirmation is gone, and a failure is the
+      // page's root's to say (`confirmPending`).
+      onChoose={() => void confirmPending()}
       onCancel={dismissCloseConfirmation}
     />
   );
@@ -332,7 +313,7 @@ export function CloseConfirmationSheet({
 
 /**
  * Everything the sheet says, for one purpose: the question, its two answers,
- * and what it says when main refused the answer. The Agent's name is drawn as
+ * and what it asks the answers under. The Agent's name is drawn as
  * soon as it is known; waiting for it would mean drawing nothing at all on
  * the frame the layer goes up.
  */
@@ -346,7 +327,6 @@ function questionWords(
   readonly cancel: string;
   readonly confirm: string;
   readonly confirmDetail: string;
-  readonly refused: string;
 } {
   switch (purpose.kind) {
     case "workspace_close":
@@ -360,7 +340,6 @@ function questionWords(
           unsaved === undefined
             ? "Everything listed below is closed with it."
             : "Everything listed below is closed with it. Unsaved changes are discarded.",
-        refused: "The workspace could not be closed. Try again.",
       };
     case "agent_stop":
       return {
@@ -371,7 +350,6 @@ function questionWords(
         cancel: "Leave the Agent running.",
         confirm: "Stop the Agent",
         confirmDetail: "The runtime stops. You can retry if cleanup fails.",
-        refused: "The Agent could not be stopped. Try again.",
       };
     case "agent_continue": {
       const where =
@@ -389,7 +367,6 @@ function questionWords(
             ? "Continue in terminal"
             : "Continue in GUI",
         confirmDetail: `A new Agent resumes the session ${where}, and this one is stopped once it runs.`,
-        refused: "The Agent could not be continued. Try again.",
       };
     }
     case "agent_restart":
@@ -404,7 +381,6 @@ function questionWords(
         confirm: "Restart Session",
         confirmDetail:
           "The conversation stays, and the CLI connects again to its MCP servers and reads its configuration afresh.",
-        refused: "The session could not be restarted. Try again.",
       };
   }
 }

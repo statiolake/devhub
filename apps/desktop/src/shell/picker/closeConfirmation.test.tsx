@@ -317,16 +317,18 @@ describe("stopping an Agent, asked on the modal layer", () => {
   });
 
   /**
-   * A refused stop has not consumed main's one-shot operation, so it is still
-   * there to be answered — and the sheet says why the last answer did nothing
-   * rather than standing there looking as if nothing was asked.
+   * Main takes a confirmation once: the answer consumes it and then the act
+   * runs, so an act that failed has used it up. A sheet that stood there
+   * offering it again could only be refused — "The requested action is not
+   * available", which is what a failed Restart Session said the second time.
+   * The failure is the page root's to say; the question is over.
    */
-  it("re-asks, with the reason, when main refuses", async () => {
+  it("goes when the answer failed, rather than offering a used confirmation again", async () => {
     const onDismiss = vi.fn();
-    const refuse = vi.fn(
+    const failed = vi.fn(
       async (): Promise<AppOutcome | undefined> => undefined,
     );
-    mount(snapshotWith(true), onDismiss, STOP_AGENT, refuse);
+    mount(snapshotWith(true), onDismiss, STOP_AGENT, failed);
     await waitFor(() => {
       expect(rows()).toHaveLength(2);
     });
@@ -334,13 +336,9 @@ describe("stopping an Agent, asked on the modal layer", () => {
     fireEvent.click(screen.getByText("Stop the Agent"));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("The Agent could not be stopped. Try again."),
-      ).toBeInTheDocument();
+      expect(onDismiss).toHaveBeenCalled();
     });
-    expect(onDismiss).not.toHaveBeenCalled();
-    // Asked again, not locked on the row it took.
-    expect(rows()).toEqual(["Cancel", "Stop the Agent"]);
+    expect(failed).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -408,27 +406,25 @@ describe("continuing an Agent that is not idle, asked on the modal layer", () =>
     });
   });
 
-  it("re-asks, with the reason, when main refuses", async () => {
+  it("goes when the answer failed, as every confirmation does", async () => {
     const onDismiss = vi.fn();
-    const refuse = vi.fn(
+    const failed = vi.fn(
       async (): Promise<AppOutcome | undefined> => undefined,
     );
     mount(
       snapshotWith(true),
       onDismiss,
       { kind: "agent_continue", agentId: AGENT_ID, presentation: "gui" },
-      refuse,
+      failed,
     );
     await waitFor(() => {
       expect(rows()).toHaveLength(2);
     });
     fireEvent.click(screen.getByText("Continue in GUI"));
     await waitFor(() => {
-      expect(
-        screen.getByText("The Agent could not be continued. Try again."),
-      ).toBeInTheDocument();
+      expect(onDismiss).toHaveBeenCalled();
     });
-    expect(onDismiss).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledTimes(1);
   });
 });
 

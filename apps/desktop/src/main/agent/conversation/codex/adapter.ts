@@ -424,6 +424,10 @@ function firstLine(text: string): string {
 	return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }
 
+/** How to sign Codex in again, in its documented command. */
+const CODEX_SIGN_IN =
+	"Sign in with `codex login` in a terminal on this Agent's machine, then try again.";
+
 export class CodexAdapter implements ProtocolAdapter {
 	private current: Transcript = EMPTY_TRANSCRIPT;
 	/** An earlier call threw; the bookkeeping may be half-updated. */
@@ -704,11 +708,8 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	restart(): RewindPlan & { readonly kind: "restart" } {
 		this.refuseIfSpent();
-		if (this.broken) {
-			throw new Error(
-				"the Codex conversation is broken and cannot be started again",
-			);
-		}
+		// A conversation app-server stopped (signed out, a refused handshake)
+		// is the one a restart is most for: the new server's start ends it.
 		// app-server takes no thread on its command line: the new one is
 		// handed the thread in the handshake (`openThread`).
 		return { kind: "restart", session: [], mark: [RESTART_MARK] };
@@ -720,7 +721,8 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	received(line: string): AdapterStep {
 		return this.step(() => {
-			if (!this.broken) this.dispatch(line);
+			// A stopped conversation reads nothing but a new server's start.
+			if (!this.broken || line === RESTART_MARK) this.dispatch(line);
 			this.reportBackground();
 		});
 	}
@@ -1105,6 +1107,7 @@ export class CodexAdapter implements ProtocolAdapter {
 	 * twice; the handshake then resumes the thread already drawn.
 	 */
 	private takeRestart(): void {
+		this.broken = false;
 		this.emit({ type: "restarted" });
 		this.notice("info", RESTARTED, undefined);
 		this.processEnded();
@@ -1168,7 +1171,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						phase: "broken",
 						failure: {
 							code: "not_signed_in",
-							detail: `${this.codexName} is not signed in. Run \`codex login\` in a terminal.`,
+							detail: `${this.codexName} is not signed in. ${CODEX_SIGN_IN}`,
 						},
 					});
 				}
@@ -1719,6 +1722,19 @@ export class CodexAdapter implements ProtocolAdapter {
 				? { resetsAt: usedUpReset(this.usage?.rateLimits) }
 				: undefined,
 		);
+		// The provider refused the sign-in: the thread takes no turn until the
+		// person signs in again, and Restart Session starts app-server afresh
+		// to read the new sign-in. What it said is the reason.
+		if (turn.unauthorized && threadId === this.mainThread) {
+			this.broken = true;
+			this.setState({
+				phase: "broken",
+				failure: {
+					code: "not_signed_in",
+					detail: `${turn.error === null ? "" : `${this.codexName} said: “${turn.error}”. `}${CODEX_SIGN_IN}`,
+				},
+			});
+		}
 	}
 
 	/**

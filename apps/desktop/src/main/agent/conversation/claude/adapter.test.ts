@@ -1372,7 +1372,7 @@ describe("the end of a turn", () => {
 });
 
 describe("a CLI that cannot work", () => {
-	it("is not signed in when the API refuses it as unauthenticated: the conversation stops, saying how to sign in", () => {
+	it("is not signed in when the API refuses it as unauthenticated: the conversation stops, saying what claude said and how to sign in", () => {
 		const adapter = inTurn();
 		adapter.received(
 			assistantLine(
@@ -1387,7 +1387,7 @@ describe("a CLI that cannot work", () => {
 			failure: {
 				code: "not_signed_in",
 				detail:
-					"claude is not signed in. Open a terminal Agent from this profile and run /login there.",
+					"claude said: “Invalid API key · Please run /login”. Sign in with `claude auth login` (or `/login` in claude) in a terminal on this Agent's machine, then try again.",
 			},
 		});
 		// The turn still ends, and the conversation stays broken past it.
@@ -1401,6 +1401,48 @@ describe("a CLI that cannot work", () => {
 				{ kind: "text", markdown: "Invalid API key · Please run /login" },
 			],
 		});
+	});
+
+	it("goes on after a restart once signed out: the new CLI's start lifts the stop and is greeted afresh", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine(
+				"m",
+				[{ type: "text", text: "OAuth token has expired" }],
+				null,
+				{ error: "authentication_failed" },
+			),
+		);
+		adapter.received(
+			result({ is_error: true, result: "OAuth token has expired" }),
+		);
+		expect(adapter.transcript.state.phase).toBe("broken");
+		expect(adapter.restart()).toEqual({
+			kind: "restart",
+			session: ["--resume", SESSION],
+			mark: [RESTART_MARK],
+		});
+		const step = adapter.received(RESTART_MARK);
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		expect(step.replies.map((line) => JSON.parse(line))).toMatchObject([
+			{ type: "control_request", request: { subtype: "initialize" } },
+		]);
+		for (const line of step.replies) adapter.sent(line);
+		const initialize = JSON.parse(step.replies[0]!) as { request_id: string };
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "success",
+					request_id: initialize.request_id,
+					response: { commands: [], models: [] },
+				},
+			}),
+		);
+		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
 	});
 
 	it("refused the conversation when it refuses the handshake", () => {

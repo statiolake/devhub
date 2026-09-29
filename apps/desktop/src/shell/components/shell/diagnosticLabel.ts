@@ -84,6 +84,38 @@ export function closeFailureLabel(
   }`;
 }
 
+/**
+ * The failure's name, as the Agent pane's sheet and banner head it: a few
+ * words for what failed, before the sentence (`agentFailureSummary`) and the
+ * detail say what happened and what to do.
+ */
+export function agentFailureTitle(code: AgentFailureWire): string {
+  switch (code) {
+    case "agent_runtime_unavailable":
+      return "Agent runtime unreachable";
+    case "tmux_command_failed":
+      return "Agent runtime refused";
+    case "tmux_command_timed_out":
+      return "Agent runtime not answering";
+    case "tmux_session_conflict":
+      return "Session conflict";
+    case "agent_profile_unavailable":
+      return "Profile unavailable";
+    case "workspace_unavailable":
+      return "Workspace unavailable";
+    case "conversation_host_lost":
+      return "Conversation unreachable";
+    case "conversation_protocol_mismatch":
+      return "Protocol mismatch";
+    case "conversation_not_signed_in":
+      return "Authentication failed";
+    case "conversation_refused":
+      return "CLI refused to start";
+    case "conversation_failed":
+      return "Conversation stopped";
+  }
+}
+
 /** Why an operation on one Agent was refused, in the words a person would use. */
 export function agentFailureSummary(code: AgentFailureWire): string {
   switch (code) {
@@ -104,7 +136,7 @@ export function agentFailureSummary(code: AgentFailureWire): string {
     case "conversation_protocol_mismatch":
       return "This Agent said something DevHub cannot read, so the conversation has stopped taking input.";
     case "conversation_not_signed_in":
-      return "This Agent's CLI is not signed in.";
+      return "This Agent's CLI is signed out, or its sign-in was refused.";
     case "conversation_refused":
       return "This Agent's CLI refused to start.";
     case "conversation_failed":

@@ -1513,7 +1513,7 @@ export class AppController {
 		void this.dispatchFromPage({ type: "stop_agent", agentId }).then(
 			(outcome) => {
 				// An idle Agent is stopped without a question — the model decides
-				// that, from `agentIsIdle` — and then there is no confirmation in
+				// that, from `interruptsNothing` — and then there is no confirmation in
 				// the outcome and nothing to open.
 				this.raiseCloseConfirmation(outcome, agentId);
 			},
@@ -3525,7 +3525,7 @@ export class AppController {
 			// reason to ask anything, and the close stops it on the way out. The
 			// rule is `agentsInspection`'s, and it is the same one `Cmd+Q X` on a
 			// single Agent reads.
-			agentsInspection((workspace?.agents ?? []).map((agent) => agent.status)),
+			agentsInspection(workspace?.agents ?? []),
 			await this.inspectEditors(workspaceId),
 		);
 		this.accept({

@@ -18,6 +18,7 @@ import {
 } from "../../../ipc/appShell";
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
+import { agentRestart } from "../../../model/domain";
 import { closingDeletesWorktree } from "../../../model/worktrees";
 import { useSidebar, useSidebarDispatch } from "../../sidebar/SidebarContext";
 import { UsageLimits } from "./UsageLimits";
@@ -1438,9 +1439,14 @@ function agentMenuItems(
       },
     });
   }
-  // A GUI Agent's CLI is DevHub's to start again (`restart_agent`); a
-  // terminal Agent's is the terminal's own process.
-  if (agent.presentation === "gui" && agent.controlState.kind === "running") {
+  // Offered where the coordinator would take it (`agentRestart`): a GUI
+  // Agent's CLI is DevHub's to start again, a terminal Agent's is the
+  // terminal's own process, and a conversation DevHub cannot follow could
+  // not follow a CLI started again either.
+  if (
+    agent.controlState.kind === "running" &&
+    agentRestart(agent).kind === "available"
+  ) {
     items.push({
       id: "restart",
       label: "Restart Session",

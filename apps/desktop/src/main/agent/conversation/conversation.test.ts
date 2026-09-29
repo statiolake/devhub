@@ -24,6 +24,7 @@ import {
 import { errorWire } from "../../../model/wire.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
+import { RESTART_MARK } from "./protocolAdapter.js";
 import {
 	HandClock,
 	memoryRecords,
@@ -928,6 +929,68 @@ describe("rewinding", () => {
 			detail:
 				"The conversation stopped before the CLI had taken the turns back.",
 		});
+	});
+});
+
+describe("restarting a conversation its CLI stopped", () => {
+	it("starts the CLI again on the same session once it was signed out, and takes input again", async () => {
+		const { host, conversation } = await turns(["first"]);
+		host.print(
+			JSON.stringify({
+				type: "assistant",
+				message: {
+					id: "msg_auth",
+					role: "assistant",
+					content: [
+						{ type: "text", text: "Invalid API key · Please run /login" },
+					],
+				},
+				parent_tool_use_id: null,
+				session_id: "s-1",
+				error: "authentication_failed",
+			}),
+		);
+		endTurn(host);
+		await settle();
+		expect(conversation.reading().transcript.state).toMatchObject({
+			phase: "broken",
+			failure: { code: "not_signed_in" },
+		});
+		await conversation.restart();
+		await settle();
+		expect(host.restarts).toEqual([
+			{ args: ["--resume", "s-1"], mark: [RESTART_MARK] },
+		]);
+		expect(conversation.reading().transcript.state).toEqual({
+			phase: "ready",
+			turn: "none",
+		});
+		await conversation.submit("again", []);
+		await settle();
+		expect(
+			conversation
+				.reading()
+				.transcript.entries.flatMap((each) =>
+					each.kind === "user" ? [each.text] : [],
+				),
+		).toEqual(["first", "again"]);
+		await conversation.stop();
+	});
+
+	it("is refused, saying why, once DevHub stopped reading the journal", async () => {
+		const { host, conversation } = await turns(["first"]);
+		host.print(
+			'{"type":"assistant","message":{"id":"m","content":"not an array"}}',
+		);
+		await settle();
+		expect(await drawnAs(conversation.restart())).toMatchObject({
+			code: "conversation_stopped",
+			detail: expect.stringMatching(
+				/cannot follow a CLI started again: assistant.message.content/,
+			) as string,
+		});
+		expect(host.restarts).toEqual([]);
+		await conversation.stop();
 	});
 });
 

@@ -2677,7 +2677,7 @@ describe("a captured app-server that is not signed in", () => {
 			failure: {
 				code: "not_signed_in",
 				detail:
-					"codex 0.156.1 is not signed in. Run `codex login` in a terminal.",
+					"codex 0.156.1 is not signed in. Sign in with `codex login` in a terminal on this Agent's machine, then try again.",
 			},
 		});
 		expect(transcript.entries).toEqual([]);
@@ -2921,6 +2921,54 @@ describe("restarting the session", () => {
 		});
 		return harness;
 	}
+
+	it("stops a thread whose turn the provider refused as unauthorized, and a restart goes on from it", () => {
+		const harness = running();
+		harness.receive({
+			method: "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "notLoaded",
+					status: "failed",
+					error: {
+						message: "Your access token could not be refreshed.",
+						codexErrorInfo: "unauthorized",
+						additionalDetails: null,
+					},
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
+		});
+		expect(harness.transcript.state).toMatchObject({
+			phase: "broken",
+			failure: {
+				code: "not_signed_in",
+				detail: expect.stringMatching(
+					/said: “Your access token could not be refreshed\.”\. Sign in with `codex login`/,
+				) as string,
+			},
+		});
+		// Stopped, it reads nothing but a new server's start.
+		expect(harness.adapter.restart()).toEqual({
+			kind: "restart",
+			session: [],
+			mark: [RESTART_MARK],
+		});
+		const before = harness.written.length;
+		harness.receive(RESTART_MARK);
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		expect(harness.writesSince(before)).toMatchObject([
+			{ method: "initialize" },
+		]);
+	});
 
 	it("starts app-server again, with the restart mark between the two", () => {
 		const harness = running();

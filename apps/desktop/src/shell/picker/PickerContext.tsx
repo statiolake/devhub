@@ -193,15 +193,17 @@ export interface PickerValue {
 
   readonly pendingConfirmation: PendingConfirmation | null;
   /**
-   * Answer the pending confirmation, and say whether it was carried out.
+   * Answer the pending confirmation. The question is over once it is
+   * answered, whatever became of the answer.
    *
-   * `false` is a request main refused: the confirmation is still there, still
-   * retryable — main's one-shot operation was not consumed — and the caller is
-   * the only thing in a position to say so where the question was asked. A
-   * `void` here is how a close that quietly did not happen looked exactly like
-   * one that did.
+   * Main takes a confirmation once: the answer consumes it and then the act
+   * runs, so an act that failed has used it up, and answering the same
+   * question again could only be refused ("The requested action is not
+   * available" — what a failed Restart Session answered a second time). What
+   * went wrong goes to the page's root like every other failure; asking
+   * again is doing the thing again, which asks afresh.
    */
-  readonly confirmPending: () => Promise<boolean>;
+  readonly confirmPending: () => Promise<void>;
   readonly dismissCloseConfirmation: () => void;
   /** Take on a confirmation main raised, as if it had been raised here. */
   readonly adoptConfirmation: (confirmation: PendingConfirmation) => void;
@@ -260,8 +262,8 @@ export function PickerProvider({ children }: { children: ReactNode }) {
     [applySnapshot, picker],
   );
 
-  const confirmPending = useCallback(async (): Promise<boolean> => {
-    if (!pendingConfirmation || confirmationBusyRef.current) return false;
+  const confirmPending = useCallback(async (): Promise<void> => {
+    if (!pendingConfirmation || confirmationBusyRef.current) return;
     confirmationBusyRef.current = true;
     const confirmationId = pendingConfirmation.confirmationId;
     try {
@@ -271,20 +273,14 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       // was stranded, the Agent was not stopped, and the sheet closed as
       // though it had been. The purpose carries its subject now, and there is
       // no such state left to guard.
-      const outcome: AppOutcome | undefined = await dispatch(
+      await dispatch(
         confirmIntent(pendingConfirmation.purpose.kind, confirmationId),
       );
-      // Keep the confirmation available when the request itself failed. A
-      // successful confirmation consumes the one-shot operation in main; a
-      // failure has to stay retryable without inventing a second local state.
-      if (outcome) {
-        setPendingConfirmation((current) =>
-          current?.confirmationId === confirmationId ? null : current,
-        );
-      }
-      return outcome !== undefined;
     } finally {
       confirmationBusyRef.current = false;
+      setPendingConfirmation((current) =>
+        current?.confirmationId === confirmationId ? null : current,
+      );
     }
   }, [dispatch, pendingConfirmation]);
 

@@ -7,7 +7,11 @@ import {
   agentId,
   agentAtPrompt,
   agentIsIdle,
+  agentRestart,
   agentsInspection,
+  interruptsNothing,
+  type AgentFailureCode,
+  type AgentStatus,
   consolidateCloseInspection,
   closeInspectionProjection,
   busy,
@@ -433,26 +437,92 @@ describe("whether an Agent's prompt reads what is typed into it", () => {
 });
 
 describe("what the Agents in a workspace amount to for a close", () => {
+  const read = (...statuses: AgentStatus[]) =>
+    statuses.map((status) => ({ status }));
+
   it("counts only the ones stopping would interrupt", () => {
-    expect(agentsInspection(["idle", "working", "idle", "waiting"])).toEqual(
-      busy(2),
-    );
+    expect(
+      agentsInspection(read("idle", "working", "idle", "waiting")),
+    ).toEqual(busy(2));
   });
 
   it("is clean when every Agent is sitting at its prompt", () => {
-    expect(agentsInspection(["idle", "idle"])).toEqual(CLEAN);
+    expect(agentsInspection(read("idle", "idle"))).toEqual(CLEAN);
     expect(agentsInspection([])).toEqual(CLEAN);
   });
 
   it("counts an Agent whose background tasks a close would stop", () => {
-    expect(agentsInspection(["idle", "background"])).toEqual(busy(1));
+    expect(agentsInspection(read("idle", "background"))).toEqual(busy(1));
   });
 
   it("counts an Agent nobody has read, and one that failed", () => {
     // Not knowing is not idle, and an error is on a screen that stopping the
     // Agent throws away.
-    expect(agentsInspection(["unknown"])).toEqual(busy(1));
-    expect(agentsInspection(["error"])).toEqual(busy(1));
+    expect(agentsInspection(read("unknown"))).toEqual(busy(1));
+    expect(agentsInspection(read("error"))).toEqual(busy(1));
+  });
+
+  it("does not count a GUI Agent whose CLI stopped itself", () => {
+    // Signed out or refusing to start, the CLI takes no turn and runs
+    // nothing, and what it said is in the journal, not only on a screen.
+    for (const code of [
+      "conversation_not_signed_in",
+      "conversation_refused",
+    ] as const) {
+      expect(
+        agentsInspection([{ status: "error", failure: { code } }]),
+      ).toEqual(CLEAN);
+      expect(interruptsNothing({ status: "error", failure: { code } })).toBe(
+        true,
+      );
+    }
+    // A conversation DevHub stopped reading may still be mid-turn.
+    expect(
+      interruptsNothing({
+        status: "error",
+        failure: { code: "conversation_protocol_mismatch" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("what Restart Session is for an Agent", () => {
+  const gui = (code?: AgentFailureCode) => ({
+    displayName: "Claude 1",
+    presentation: "gui" as const,
+    ...(code === undefined ? {} : { failure: { code } }),
+  });
+
+  it("is available for a GUI Agent, and most of all for one its CLI stopped", () => {
+    expect(agentRestart(gui())).toEqual({ kind: "available" });
+    expect(agentRestart(gui("conversation_not_signed_in"))).toEqual({
+      kind: "available",
+    });
+    expect(agentRestart(gui("conversation_refused"))).toEqual({
+      kind: "available",
+    });
+  });
+
+  it("is refused, saying why, where DevHub could not follow a CLI started again", () => {
+    for (const [code, why] of [
+      ["conversation_host_lost", /cannot reach the host/],
+      ["conversation_protocol_mismatch", /would stop there again/],
+      ["conversation_failed", /failure of its own/],
+    ] as const) {
+      const restart = agentRestart(gui(code));
+      expect(restart.kind).toBe("refused");
+      if (restart.kind === "refused") expect(restart.why).toMatch(why);
+    }
+  });
+
+  it("is refused for a terminal Agent, whose CLI is the terminal's own", () => {
+    const restart = agentRestart({
+      displayName: "Codex 2",
+      presentation: "tui",
+    });
+    expect(restart).toMatchObject({ kind: "refused" });
+    if (restart.kind === "refused")
+      expect(restart.why).toMatch(/terminal Agent/);
   });
 });
 

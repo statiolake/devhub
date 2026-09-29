@@ -1362,23 +1362,76 @@ body.is-resizing-sidebar {
 }
 
 /*
- * A refusal about the Agent on screen, over the Agent on screen.
+ * A failure about the Agent on screen, over the Agent on screen
+ * (`agents/AgentFailure.tsx`).
  *
- * It fills this pane and nothing outside it. The rule it exists for is that a
- * failure is shown at its subject: a failure about one Agent used to be an
- * app-wide alert across the whole window, which covered the sidebar and every
- * other workspace to say something about one pane.
- *
- * It is opaque, because what is underneath is a terminal whose last frame is
- * from before the runtime stopped answering — a live-looking screen behind a
- * sentence saying it cannot be reached is the ambiguity this removes.
+ * The sheet stands in the middle of this pane, over the pane dimmed, and
+ * covers nothing outside it: a failure is shown at its subject, and the
+ * Sidebar and every other Agent stay usable. The pane shows through the dim,
+ * because what the Agent said up to the failure is usually the reason for it.
+ * Absolute within the pane rather than fixed over the page, so it is the
+ * pane that is dimmed.
  */
-.agent-pane-failure {
+.agent-failure-scrim {
   position: absolute;
-  z-index: 2;
-  inset: 0;
+  z-index: 5;
+  align-items: center;
+  padding: var(--space-4);
+}
+
+.agent-failure-sheet {
+  width: min(520px, 100%);
+  border-radius: 12px;
+}
+
+.agent-failure-sheet .picker-title {
+  white-space: normal;
+}
+
+.agent-failure-detail {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--primary);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/*
+ * The same failure once the sheet is dismissed: one line along the top of
+ * the pane, with the same actions, for as long as the failure holds.
+ */
+.agent-failure-banner {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 0;
+  left: 0;
   display: flex;
-  background: var(--terminal-background, var(--surface));
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--secondary);
+}
+
+.agent-failure-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-failure-banner-text strong {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.agent-failure-banner-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
 }
 
 /*

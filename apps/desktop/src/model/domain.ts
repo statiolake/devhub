@@ -932,7 +932,7 @@ export type AgentStatus = (typeof AGENT_STATUSES)[number];
 export type UnreadReason = AgentStatus;
 
 /**
- * Whether stopping this Agent would interrupt anything.
+ * Whether stopping this Agent would interrupt nothing.
  *
  * **One predicate, and this is it.** It decides whether `Cmd+Q X` on an Agent
  * asks "Stop this agent?" before stopping it, and it decides whether closing a
@@ -952,7 +952,20 @@ export type UnreadReason = AgentStatus;
  * - `unknown`: nobody has read this Agent — a profile with no detector, or one
  *   that has not been reconciled yet. Not knowing is not idle, and the
  *   question is the safe branch. See `AgentStatus`.
+ *
+ * The one `error` that interrupts nothing is a GUI Agent's conversation its
+ * CLI stopped itself — signed out, or refusing to start (`cliStoppedItself`):
+ * the CLI takes no turn, runs nothing, and what it said is in the journal,
+ * not only on a screen.
  */
+export function interruptsNothing(agent: {
+  readonly status: AgentStatus;
+  readonly failure?: { readonly code: AgentFailureCode } | undefined;
+}): boolean {
+  return agentIsIdle(agent.status) || cliStoppedItself(agent.failure);
+}
+
+/** Whether the reading is `idle`: the part of `interruptsNothing` a screen can tell. */
 export function agentIsIdle(status: AgentStatus): boolean {
   return status === "idle";
 }
@@ -1017,6 +1030,73 @@ export const AGENT_FAILURE_CODES = [
   "conversation_failed",
 ] as const;
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number];
+
+/**
+ * Whether a GUI Agent's failure is its CLI's own word that it stopped: it is
+ * not signed in, or it refused to start. DevHub still reads the journal, the
+ * CLI takes no turn, and a CLI started again (Restart Session) is the fix —
+ * once the person has signed in, or changed what it refused.
+ */
+export function cliStoppedItself(
+  failure: { readonly code: AgentFailureCode } | undefined,
+): boolean {
+  return (
+    failure?.code === "conversation_not_signed_in" ||
+    failure?.code === "conversation_refused"
+  );
+}
+
+/**
+ * What Restart Session is for this Agent: available, or refused with why.
+ *
+ * **The one place that decides it.** The coordinator refuses `restart_agent`
+ * by it (the Sidebar's menu, the chord and `/restart` all arrive there), and
+ * the Agent pane and the Sidebar offer Try again and Restart Session by it,
+ * so what is offered is what would be taken.
+ *
+ * A restart is the host stopping the CLI and starting it again, with DevHub
+ * following the same journal across the two. So it is refused where there is
+ * no host of DevHub's (a terminal Agent), where DevHub cannot reach the host
+ * now, and where DevHub has stopped reading the journal — it would stop at the
+ * same line again, since a replay reads the journal from the start. Every
+ * other Agent can be restarted, and a CLI that stopped itself
+ * (`cliStoppedItself`) is the case it is most for.
+ */
+export type AgentRestart =
+  | { readonly kind: "available" }
+  | { readonly kind: "refused"; readonly why: string };
+
+export function agentRestart(agent: {
+  readonly displayName: string;
+  readonly presentation: AgentPresentation;
+  readonly failure?: { readonly code: AgentFailureCode } | undefined;
+}): AgentRestart {
+  if (agent.presentation !== "gui") {
+    return {
+      kind: "refused",
+      why: `“${agent.displayName}” is a terminal Agent, so it has no session to restart: its CLI runs in the terminal itself. Continue it in the GUI to restart it there.`,
+    };
+  }
+  switch (agent.failure?.code) {
+    case "conversation_host_lost":
+      return {
+        kind: "refused",
+        why: `DevHub cannot reach the host of “${agent.displayName}” now, and the host is what starts its CLI again. DevHub attaches again every round; restart it once it is back.`,
+      };
+    case "conversation_protocol_mismatch":
+      return {
+        kind: "refused",
+        why: `DevHub stopped reading the conversation of “${agent.displayName}” at a line it could not read, and would stop there again after a restart. Continue it in a terminal instead.`,
+      };
+    case "conversation_failed":
+      return {
+        kind: "refused",
+        why: `DevHub stopped following the conversation of “${agent.displayName}” on a failure of its own, so it could not follow a CLI started again. Continue it in a terminal instead.`,
+      };
+    default:
+      return { kind: "available" };
+  }
+}
 
 /**
  * The last refusal this Agent is still showing, and the tool's own words.
@@ -2007,16 +2087,16 @@ export function busy(count: number): ResourceInspection {
 /**
  * What the Agents in a Workspace amount to, for a close.
  *
- * Only the ones stopping would interrupt are counted — `agentIsIdle` says
+ * Only the ones stopping would interrupt are counted — `interruptsNothing` says
  * which, and it is the same predicate `Cmd+Q X` on a single Agent reads, so a
  * workspace full of idle Agents closes with no question and stops them on the
  * way out. Counting every Agent is what made "close this workspace" ask about
  * three Agents that were all sitting at a prompt.
  */
 export function agentsInspection(
-  statuses: readonly AgentStatus[],
+  agents: readonly Parameters<typeof interruptsNothing>[0][],
 ): ResourceInspection {
-  const busyCount = statuses.filter((status) => !agentIsIdle(status)).length;
+  const busyCount = agents.filter((agent) => !interruptsNothing(agent)).length;
   return busyCount === 0 ? CLEAN : busy(busyCount);
 }
 

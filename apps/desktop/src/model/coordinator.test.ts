@@ -15,6 +15,7 @@ import {
   displayPath,
   workspaceId,
   workspaceLocation,
+  type AgentFailureCode,
   type AgentId,
   type CloseInspectionInputs,
   type NavigationContext,
@@ -1403,6 +1404,7 @@ describe("restarting an Agent's session", () => {
   function restarting(
     presentation: "tui" | "gui",
     status: "idle" | "working" | "background" | "waiting" | "error" | "unknown",
+    failure?: AgentFailureCode,
   ): { driver: Driver; asked: () => IntentOutcome } {
     const driver = new Driver();
     driver.openFolder("/dev/project");
@@ -1414,7 +1416,11 @@ describe("restarting an Agent's session", () => {
       agentPresentation: presentation,
     });
     driver.settle();
-    driver.coordinator.model.setAgentStatus(AG_A, status);
+    driver.coordinator.model.setAgentStatus(
+      AG_A,
+      status,
+      failure === undefined ? undefined : { code: failure, detail: "said" },
+    );
     return {
       driver,
       asked: () => driver.dispatch({ type: "restart_agent", agentId: AG_A }),
@@ -1509,6 +1515,41 @@ describe("restarting an Agent's session", () => {
   it("is refused for a terminal Agent, before anything is asked", () => {
     const { driver, asked } = restarting("tui", "working");
     expect(errorCode(asked)).toBe("invalid_intent");
+    expect(driver.drainEffects()).toEqual([]);
+  });
+
+  // The owner's case: the CLI said it was signed out, the person signed in
+  // in a terminal, and Restart Session (or the pane's Try again) is the way
+  // on. The CLI takes no turn and runs nothing, so nothing is asked.
+  for (const failure of [
+    "conversation_not_signed_in",
+    "conversation_refused",
+  ] as const) {
+    it(`restarts a GUI Agent whose CLI stopped itself (${failure}) at once`, () => {
+      const { driver, asked } = restarting("gui", "error", failure);
+      expect(asked()).toMatchObject({ kind: "deferred" });
+      expect(driver.drainEffects()).toMatchObject([
+        { kind: "restart_agent", agentId: AG_A },
+      ]);
+    });
+  }
+
+  it("is refused, saying why, for a conversation DevHub stopped reading", () => {
+    const { driver, asked } = restarting(
+      "gui",
+      "error",
+      "conversation_protocol_mismatch",
+    );
+    let refusal: unknown;
+    try {
+      asked();
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(NamedFailure);
+    expect((refusal as NamedFailure).wire.detail).toMatch(
+      /would stop there again after a restart/,
+    );
     expect(driver.drainEffects()).toEqual([]);
   });
 });
