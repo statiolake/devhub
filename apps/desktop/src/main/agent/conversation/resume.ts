@@ -975,47 +975,54 @@ export function claudeHistoryLines(
 	const isMessage = (record: Record<string, unknown>) =>
 		(record["type"] === "user" || record["type"] === "assistant") &&
 		record["isSidechain"] !== true;
-	let leaf = records.length - 1;
-	while (leaf >= 0 && !isMessage(records[leaf]!)) leaf -= 1;
-	// A record's parent is written before it: of the lines a parent uuid
-	// names, the chain goes on at the last one above the record. A parent
-	// written only after its child is still its parent — the CLI finds a
-	// record by its uuid, wherever it is — so the walk takes the last line
-	// with that uuid then. It never visits a line twice: a chain that loops
-	// back is drawn as far as the loop, and says so, rather than refusing a
-	// session the CLI resumes.
 	const chain: Record<string, unknown>[] = [];
 	const visited = new Set<number>();
-	let loop: string | undefined;
-	for (let at = leaf; at >= 0; ) {
+	// The conversation as it stood when line `position` was written: the
+	// last record of the main chain above it (not a subagent's) that the walk
+	// has not drawn yet. The whole file's conversation is the one standing
+	// below its last line.
+	const standingAbove = (position: number): number | undefined => {
+		for (let at = position - 1; at >= 0; at -= 1) {
+			const record = records[at]!;
+			if (
+				typeof record["uuid"] === "string" &&
+				record["isSidechain"] !== true &&
+				!visited.has(at)
+			)
+				return at;
+		}
+		return undefined;
+	};
+	// Each record goes on at its parent (`parentUuid`, else a compaction
+	// boundary's `logicalParentUuid`). Of the lines a parent uuid names, the
+	// chain takes the last one above the record, as Claude writes some
+	// records twice under one uuid; a parent written only after its child is
+	// still its parent (the CLI finds a record by its uuid), so the last line
+	// with that uuid then. When the parent names no record the walk has not
+	// yet drawn — none at all, or one of the conversation after the record,
+	// as a boundary's logical parent can be a reminder Claude wrote only
+	// after the summary, under it — the record goes on at the conversation
+	// standing above it in the file. The walk never draws a line twice, and
+	// every session the CLI resumes is drawn back to its first record.
+	let next = standingAbove(records.length);
+	while (next !== undefined) {
+		const at = next;
 		const record = records[at]!;
 		visited.add(at);
 		chain.push(record);
 		const parent = record["parentUuid"] ?? record["logicalParentUuid"];
-		if (typeof parent !== "string") break;
-		const written = byUuid.get(parent);
-		if (written === undefined) break;
-		const next =
-			[...written].reverse().find((position) => position < at) ??
-			written.at(-1)!;
-		if (visited.has(next)) {
-			loop = String(record["uuid"]);
-			break;
-		}
-		at = next;
+		const written = typeof parent === "string" ? byUuid.get(parent) : undefined;
+		const named =
+			written === undefined
+				? undefined
+				: ([...written].reverse().find((position) => position < at) ??
+					written.at(-1)!);
+		next =
+			named === undefined || visited.has(named) ? standingAbove(at) : named;
 	}
 	const history = (fields: Record<string, unknown>) =>
 		JSON.stringify({ type: "devhub_history", record: fields });
-	const head =
-		loop === undefined
-			? []
-			: [
-					historyWarning(
-						`DevHub drew this session's history only back to ${loop}: its records loop there, so what came before is not shown.`,
-					),
-				];
 	return [
-		...head,
 		...chain.reverse().flatMap((record) => {
 			if (record["isSidechain"] === true) return [];
 			if (record["type"] === "system") return [history(systemEvent(record))];

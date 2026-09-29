@@ -1163,8 +1163,13 @@ it resumed.
   starts, as `devhub_history` lines: the chain of messages from the last one
   back to the first (a rewound branch and a subagent's lines are not part of
   it; across a compaction the earlier messages are). A record's parent is the
-  last line above it with that uuid: Claude writes some records twice under
-  one uuid, and a parent always comes before its child. The adapter draws them as
+  last line above it with that uuid (Claude writes some records twice under
+  one uuid), or the last line with it when it was written only after its
+  child. A record whose parent names nothing the walk has not drawn yet goes
+  on at the conversation standing above it in the file (the last line of the
+  main chain above it): a compaction boundary's logical parent can be a
+  reminder Claude wrote only after the summary, under it, or not be in the
+  file at all. The adapter draws them as
   the entries a live turn makes, without a turn running. The task
   notifications Claude recorded (as user messages or queued commands) come
   along, and end the tasks they name; they are nobody's words and draw no
@@ -1182,10 +1187,10 @@ it resumed.
 A session that is not there (Claude's file is missing) refuses the launch
 with the path. Otherwise DevHub never refuses a Claude session the CLI can
 resume on account of reading its history: the CLI resumes it and has all of
-it, whatever DevHub makes of the file. A parent record written only after
-its child is followed all the same (the CLI finds records by uuid); a chain
-that loops back is drawn as far as the loop, with a warning at its head;
-a file over 32 MiB is resumed with a warning that its past is not drawn.
+it, whatever DevHub makes of the file. The walk above never draws a line
+twice and always reaches the session's first record, so the pre-compaction
+conversation, the compaction and what followed it are all drawn; a file over
+32 MiB is resumed with a warning that its past is not drawn.
 Nothing public asks the CLI for a session's past messages over stream-json:
 `claude --help` has no such option (`--replay-user-messages` echoes only what
 is written to stdin), and the Agent SDK's `getSessionMessages()` /

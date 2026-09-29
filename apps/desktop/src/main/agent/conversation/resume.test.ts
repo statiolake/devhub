@@ -197,7 +197,59 @@ describe("a Claude session read back as history", () => {
 		).toEqual(["u1", "u2", "u3", "u4"]);
 	});
 
-	it("reads a chain that loops back as far as the loop, and says so at its head, rather than refusing the session", () => {
+	it("goes on across a compaction whose logical parent was written after it, under its summary, to the conversation above it in the file", async () => {
+		// HAND-WRITTEN (claude-session-logical-parent-after.handwritten.jsonl),
+		// in the link structure of real compacted sessions: the boundary's
+		// logicalParentUuid names a reminder the CLI wrote only after the
+		// summary, parented under it, so following it re-enters the chain after
+		// the compaction. What came before is the conversation standing above
+		// the boundary, a queued message of the person's included.
+		const lines = claudeHistoryLines(
+			SESSION,
+			await readFile(
+				join(
+					dirname(FIXTURE),
+					"claude-session-logical-parent-after.handwritten.jsonl",
+				),
+				"utf8",
+			),
+		).map((each) => JSON.parse(each) as { record: Record<string, unknown> });
+		expect(
+			lines.map((each) => each.record["uuid"] ?? each.record["type"]),
+		).toEqual(["u1", "a1", "q1", "c1", "attachment", "u6", "a6"]);
+	});
+
+	it("goes on across a compaction whose logical parent is not in the file, to the conversation above it", () => {
+		const line = (fields: Record<string, unknown>) =>
+			JSON.stringify({
+				type: "user",
+				message: { role: "user", content: "x" },
+				...fields,
+			});
+		const lines = claudeHistoryLines(
+			SESSION,
+			[
+				line({ uuid: "u1", parentUuid: null }),
+				line({ uuid: "u2", parentUuid: "u1" }),
+				JSON.stringify({
+					type: "system",
+					subtype: "compact_boundary",
+					uuid: "c1",
+					parentUuid: null,
+					logicalParentUuid: "gone",
+				}),
+				line({ uuid: "u3", parentUuid: "c1" }),
+			].join("\n"),
+		);
+		expect(
+			lines.map(
+				(each) =>
+					(JSON.parse(each) as { record: { uuid: string } }).record.uuid,
+			),
+		).toEqual(["u1", "u2", "c1", "u3"]);
+	});
+
+	it("reads every record of a chain that loops back once, without a warning, rather than refusing the session", () => {
 		const line = (fields: Record<string, unknown>) =>
 			JSON.stringify({
 				type: "user",
@@ -213,14 +265,7 @@ describe("a Claude session read back as history", () => {
 				line({ uuid: "u4", parentUuid: "u3" }),
 			].join("\n"),
 		).map((each) => JSON.parse(each) as { record: Record<string, unknown> });
-		expect(lines[0]!.record).toEqual({
-			type: "system",
-			subtype: "informational",
-			level: "warning",
-			content:
-				"DevHub drew this session's history only back to u1: its records loop there, so what came before is not shown.",
-		});
-		expect(lines.slice(1).map((each) => each.record.uuid)).toEqual([
+		expect(lines.map((each) => each.record["uuid"])).toEqual([
 			"u1",
 			"u2",
 			"u3",
