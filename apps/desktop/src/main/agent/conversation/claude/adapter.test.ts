@@ -780,7 +780,7 @@ describe("user messages", () => {
 		});
 	});
 
-	it("appear when the CLI takes them, and the turn starts then", () => {
+	it("appear when the CLI takes them, in a turn under way from the moment one is written", () => {
 		const adapter = new ClaudeAdapter("boot");
 		adapter.received(init());
 		perform(adapter, {
@@ -790,7 +790,10 @@ describe("user messages", () => {
 			origin: "person",
 		});
 		expect(adapter.transcript.entries).toEqual([]);
-		expect(adapter.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
 		adapter.received(echo("hello", "u1"));
 		expect(entry(adapter, "user:u1")).toMatchObject({
 			text: "hello",
@@ -3848,6 +3851,328 @@ describe("a slash command and its output", () => {
 				failed: true,
 			},
 		]);
+	});
+});
+
+describe("the turn a message starts, ended by the CLI's result", () => {
+	function status(fields: Record<string, unknown>): string {
+		return json({
+			type: "system",
+			subtype: "status",
+			session_id: SESSION,
+			...fields,
+		});
+	}
+
+	function boundary(metadata: Record<string, unknown>): string {
+		return json({
+			type: "system",
+			subtype: "compact_boundary",
+			session_id: SESSION,
+			compact_metadata: metadata,
+		});
+	}
+
+	function localResult(command: string, text = ""): string {
+		return result({
+			num_turns: 0,
+			result: text,
+			total_cost_usd: 0,
+			local_command: command,
+		});
+	}
+
+	function send(adapter: ClaudeAdapter, text: string): void {
+		perform(adapter, { kind: "send", text, images: [], origin: "person" });
+	}
+
+	/** Each line received, with the Agent's status after it. */
+	function statuses(
+		adapter: ClaudeAdapter,
+		lines: readonly string[],
+	): string[] {
+		return lines.map((line) => {
+			adapter.received(line);
+			return conversationStatus(adapter.transcript);
+		});
+	}
+
+	function outline(adapter: ClaudeAdapter): string[] {
+		return adapter.transcript.entries.map((each) => {
+			switch (each.kind) {
+				case "command":
+					return `command: ${each.line}${each.output === undefined ? "" : ` -> ${each.output}`}${each.failed ? " (failed)" : ""}`;
+				case "user":
+					return `user(${each.origin}): ${each.text}`;
+				case "compaction":
+					return `compaction: ${each.trigger} ${each.preTokens} -> ${each.postTokens}`;
+				case "turn-end":
+					return `turn-end ${each.outcome}`;
+				case "notice":
+					return `notice(${each.level}): ${each.text}`;
+				default:
+					return each.kind;
+			}
+		});
+	}
+
+	function ready(): ClaudeAdapter {
+		const adapter = new ClaudeAdapter("boot");
+		adapter.received(init());
+		return adapter;
+	}
+
+	it("is working from the write of /compact, shows the compaction while it runs, and is idle at the result, with no echo", () => {
+		const adapter = ready();
+		send(adapter, "/compact");
+		expect(conversationStatus(adapter.transcript)).toBe("working");
+		expect(adapter.transcript.compacting).toBe(false);
+		adapter.received(init());
+		adapter.received(status({ status: "compacting" }));
+		expect(adapter.transcript.compacting).toBe(true);
+		expect(conversationStatus(adapter.transcript)).toBe("working");
+		adapter.received(
+			boundary({ trigger: "manual", pre_tokens: 90000, post_tokens: 12000 }),
+		);
+		expect(adapter.transcript.compacting).toBe(false);
+		expect(
+			statuses(adapter, [
+				status({ status: null, compact_result: "success" }),
+				localResult("compact"),
+			]),
+		).toEqual(["working", "idle"]);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(outline(adapter)).toEqual([
+			"compaction: manual 90000 -> 12000",
+			"command: /compact",
+			"turn-end completed",
+		]);
+	});
+
+	it("takes an echoed /compact as the command, and is idle at the result that follows the boundary", () => {
+		const adapter = ready();
+		send(adapter, "/compact keep the plan");
+		adapter.received(
+			echo(
+				"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep the plan</command-args>",
+				"u-compact",
+			),
+		);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(
+			statuses(adapter, [
+				status({ status: "compacting" }),
+				boundary({ trigger: "manual", pre_tokens: 5000 }),
+				localResult("compact"),
+			]),
+		).toEqual(["working", "working", "idle"]);
+		expect(outline(adapter)).toEqual([
+			"command: /compact keep the plan",
+			"compaction: manual 5000 -> undefined",
+			"turn-end completed",
+		]);
+	});
+
+	it("says a compaction that failed, and the indicator ends with it", () => {
+		const adapter = ready();
+		send(adapter, "/compact");
+		adapter.received(status({ status: "compacting" }));
+		adapter.received(
+			status({
+				status: null,
+				compact_result: "failed",
+				compact_error: "The summary was too long.",
+			}),
+		);
+		expect(adapter.transcript.compacting).toBe(false);
+		adapter.received(localResult("compact"));
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+		expect(outline(adapter)).toEqual([
+			"notice(error): Compacting the conversation failed: The summary was too long.",
+			"command: /compact",
+			"turn-end completed",
+		]);
+	});
+
+	it("shows an automatic compaction inside a turn, which the turn's end ends in any case", () => {
+		const adapter = inTurn();
+		adapter.received(status({ status: "compacting" }));
+		expect(adapter.transcript.compacting).toBe(true);
+		adapter.received(result());
+		expect(adapter.transcript.compacting).toBe(false);
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+	});
+
+	it("is idle after each local command 2.1.284 answers without an echo, drawn in place: /compact with nothing to compact, /cost that runs usage, /clear", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const seen: string[] = [];
+		for (const { side, line } of fixture(
+			"claude-local-command-2.1.284.handwritten.ndjson",
+		)) {
+			if (side === "sent") adapter.sent(line);
+			else adapter.received(line);
+			seen.push(conversationStatus(adapter.transcript));
+		}
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(outline(adapter)).toEqual([
+			"command: /compact -> Error: Nothing to compact yet. (failed)",
+			"turn-end completed",
+			"command: /usage -> Current session: 1% used.",
+			"turn-end completed",
+			"notice(info): Context cleared: the model starts afresh from here.",
+			"command: /clear",
+			"turn-end completed",
+		]);
+		expect(seen).toEqual([
+			"unknown",
+			"idle",
+			"idle",
+			...["working", "working", "working", "idle"],
+			...["working", "working", "working", "idle"],
+			...["working", "working", "working", "idle"],
+		]);
+	});
+
+	it("draws a command the CLI names nowhere as sent, with what the result said when the model was not asked", () => {
+		const adapter = ready();
+		send(adapter, "/context");
+		adapter.received(init());
+		adapter.received(localResult("context", "12k of 200k tokens."));
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+		expect(outline(adapter)).toEqual([
+			"command: /context -> 12k of 200k tokens.",
+			"turn-end completed",
+		]);
+	});
+
+	it("is idle after an unknown command the CLI hands to the model, echoed or not", () => {
+		const echoed = ready();
+		send(echoed, "/nope");
+		expect(
+			statuses(echoed, [
+				init(),
+				echo("/nope", "u-nope"),
+				assistantLine("msg_n", [{ type: "text", text: "No such command." }]),
+				result({ num_turns: 1, result: "No such command." }),
+			]),
+		).toEqual(["working", "working", "working", "idle"]);
+		expect(outline(echoed)).toEqual([
+			"user(person): /nope",
+			"assistant",
+			"turn-end completed",
+		]);
+
+		const silent = ready();
+		send(silent, "/nope");
+		expect(
+			statuses(silent, [
+				init(),
+				assistantLine("msg_n", [{ type: "text", text: "No such command." }]),
+				result({ num_turns: 1, result: "No such command." }),
+			]),
+		).toEqual(["working", "working", "idle"]);
+		expect(outline(silent)).toEqual([
+			"assistant",
+			"command: /nope",
+			"turn-end completed",
+		]);
+	});
+
+	it("is idle after a prompt the model answered, and after one the CLI answered without echoing it", () => {
+		const adapter = ready();
+		send(adapter, "hello");
+		expect(
+			statuses(adapter, [
+				echo("hello", "u-hello"),
+				assistantLine("msg_h", [{ type: "text", text: "Hi." }]),
+				result(),
+			]),
+		).toEqual(["working", "working", "idle"]);
+		send(adapter, "and again");
+		expect(
+			statuses(adapter, [result({ is_error: true, subtype: "error" })]),
+		).toEqual(["error"]);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(outline(adapter)).toEqual([
+			"user(person): hello",
+			"assistant",
+			"turn-end completed",
+			"user(person): and again",
+			"turn-end failed",
+		]);
+	});
+
+	it("answers two sends in a row in order when only the second is echoed: working until the second's result", () => {
+		const adapter = ready();
+		send(adapter, "/compact");
+		send(adapter, "then this");
+		expect(adapter.transcript.sending.map((each) => each.text)).toEqual([
+			"/compact",
+			"then this",
+		]);
+		expect(
+			statuses(adapter, [
+				status({ status: "compacting" }),
+				boundary({ trigger: "manual", pre_tokens: 3000 }),
+				localResult("compact"),
+			]),
+		).toEqual(["working", "working", "working"]);
+		expect(adapter.transcript.sending.map((each) => each.text)).toEqual([
+			"then this",
+		]);
+		expect(
+			statuses(adapter, [
+				echo("then this", "u-then"),
+				assistantLine("msg_t", [{ type: "text", text: "Done." }]),
+				result(),
+			]),
+		).toEqual(["working", "working", "idle"]);
+		expect(outline(adapter)).toEqual([
+			"compaction: manual 3000 -> undefined",
+			"command: /compact",
+			"turn-end completed",
+			"user(person): then this",
+			"assistant",
+			"turn-end completed",
+		]);
+	});
+
+	it("answers every message up to the last one a turn took in, when the second is echoed into the turn of the first", () => {
+		const adapter = ready();
+		send(adapter, "/compact");
+		send(adapter, "meanwhile");
+		expect(
+			statuses(adapter, [echo("meanwhile", "u-mean"), localResult("compact")]),
+		).toEqual(["working", "idle"]);
+		expect(adapter.transcript.sending).toEqual([]);
+		expect(outline(adapter)).toEqual([
+			"user(person): meanwhile",
+			"command: /compact",
+			"turn-end completed",
+		]);
+	});
+
+	it("replays the same way from the journal", () => {
+		const live = ready();
+		const written: string[] = [];
+		const received = [
+			status({ status: "compacting" }),
+			boundary({ trigger: "manual", pre_tokens: 1000 }),
+			localResult("compact"),
+		];
+		written.push(
+			...perform(live, {
+				kind: "send",
+				text: "/compact",
+				images: [],
+				origin: "person",
+			}),
+		);
+		for (const line of received) live.received(line);
+		const replayed = ready();
+		for (const line of written) replayed.sent(line);
+		for (const line of received) replayed.received(line);
+		expect(replayed.transcript).toEqual(live.transcript);
 	});
 });
 

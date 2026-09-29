@@ -363,6 +363,13 @@ interface Permission {
 	readonly entry: EntryId | undefined;
 }
 
+/** A user message DevHub wrote, waiting for the end of the turn that answers it. */
+interface Unanswered {
+	readonly message: SendingMessage;
+	/** The CLI echoed it into the conversation: drawn as an entry, no longer sending. */
+	taken: boolean;
+}
+
 /** An MCP server's elicitation, which is about no call. */
 interface PendingElicitation {
 	readonly kind: "elicitation";
@@ -379,8 +386,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private nextRequest = 1;
 	/** Control requests DevHub wrote that the CLI has not answered, by id. */
 	private readonly ours = new Map<string, JsonObject>();
-	/** User messages DevHub wrote that the CLI has not echoed yet, oldest first. */
-	private readonly untaken: SendingMessage[] = [];
+	/**
+	 * The user messages DevHub wrote that the CLI has not answered yet,
+	 * oldest first: each until the end of the turn that answers it (the
+	 * `result`), whatever the CLI printed or did not print on the way.
+	 * `taken` once the CLI echoed it into the conversation; until then it is
+	 * drawn as sending.
+	 */
+	private readonly unanswered: Unanswered[] = [];
 	/** How many user messages DevHub has written: what names each while it is sending. */
 	private written = 0;
 	private readonly pending = new Map<string, Pending>();
@@ -620,13 +633,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			switch (sent.type) {
 				case "user": {
 					this.written += 1;
-					this.untaken.push({
-						id: `sent:${this.written}`,
-						text: sent.text,
-						images: sent.images,
-						origin: sent.origin,
+					this.unanswered.push({
+						message: {
+							id: `sent:${this.written}`,
+							text: sent.text,
+							images: sent.images,
+							origin: sent.origin,
+						},
+						taken: false,
 					});
 					this.emitSending();
+					// A message written is a turn under way until the CLI ends
+					// the turn that answers it.
+					const { state } = this.current;
+					if (state.phase === "ready" && state.turn === "none")
+						this.turn("running");
 					const effort = EFFORT_COMMAND.exec(sent.text);
 					if (effort !== null) {
 						this.setSession({
@@ -892,7 +913,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			state.phase === "connecting" ||
 			(state.phase === "ready" && state.turn === "rewinding")
 		)
-			this.turn("none");
+			this.turn(this.unanswered.length > 0 ? "running" : "none");
 	}
 
 	/**
@@ -911,7 +932,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			if (!kept.has(id)) this.cutBefore.delete(id);
 		}
 		this.ours.clear();
-		this.untaken.length = 0;
+		this.unanswered.length = 0;
 		this.emitSending();
 		this.answered.clear();
 		this.streaming.clear();
@@ -932,7 +953,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.lastUuid = undefined;
 		this.cutBefore.clear();
 		this.ours.clear();
-		this.untaken.length = 0;
+		this.unanswered.length = 0;
 		this.emitSending();
 		this.pending.clear();
 		this.denied.clear();
@@ -958,7 +979,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.emit({ type: "restarted" });
 		this.notice("info", RESTARTED, undefined);
 		this.ours.clear();
-		this.untaken.length = 0;
+		this.unanswered.length = 0;
 		this.pending.clear();
 		this.answered.clear();
 		this.streaming.clear();
@@ -1050,7 +1071,70 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	/** The messages written and not yet taken, as the transcript shows them sending. */
 	private emitSending(): void {
-		this.emit({ type: "sending", sending: [...this.untaken] });
+		this.emit({
+			type: "sending",
+			sending: this.unanswered.flatMap((each) =>
+				each.taken ? [] : [each.message],
+			),
+		});
+	}
+
+	/** Whether the CLI is compacting the conversation now: a turn is under way while it does. */
+	private setCompacting(compacting: boolean): void {
+		if (compacting) {
+			this.turn("running");
+			if (!this.running()) return;
+		}
+		if (this.current.compacting !== compacting)
+			this.emit({ type: "compacting", compacting });
+	}
+
+	/**
+	 * The messages a turn's end answers, out of those waiting for one. The
+	 * CLI reads its input in order, so it has answered every message up to
+	 * the last one this turn took in (echoed); when the turn took none, it
+	 * answered the oldest. A message it answered without echoing it — a
+	 * command it ran by itself (`/compact`, `/clear`, `/cost`), or anything
+	 * else it printed nothing of — is answered all the same, and drawn where
+	 * it was sending: as the command line, or as the person's words. With
+	 * nothing waiting, the turn was one the CLI started by itself.
+	 */
+	private answer(line: Extract<ClaudeLine, { type: "result" }>): void {
+		let last = -1;
+		this.unanswered.forEach((each, index) => {
+			if (each.taken) last = index;
+		});
+		const answered = this.unanswered.splice(0, last >= 0 ? last + 1 : 1);
+		for (const { message, taken } of answered) {
+			if (taken) continue;
+			this.emit({
+				type: "entry",
+				entry:
+					invocation(message.text) !== undefined
+						? {
+								kind: "command",
+								id: entryId(`command:${message.id}`),
+								parent: null,
+								line: message.text.trim(),
+								// What the CLI said, when it answered without the model.
+								output:
+									line.modelTurns === 0 && line.result !== ""
+										? line.result
+										: undefined,
+								failed: line.isError,
+							}
+						: {
+								kind: "user",
+								id: entryId(`user:${message.id}`),
+								parent: null,
+								text: message.text,
+								images: message.images,
+								origin: message.origin,
+								rewindable: false,
+							},
+			});
+		}
+		if (answered.some((each) => !each.taken)) this.emitSending();
 	}
 
 	private notice(
@@ -1211,6 +1295,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			case "api_retry":
 				return this.notice("warning", retrySentence(line), line.raw);
 			case "compact_boundary":
+				this.setCompacting(false);
 				this.compactions += 1;
 				return this.emit({
 					type: "entry",
@@ -1220,13 +1305,24 @@ export class ClaudeAdapter implements ProtocolAdapter {
 						parent: null,
 						trigger: line.trigger,
 						preTokens: line.preTokens,
+						postTokens: line.postTokens,
 					},
 				});
 			case "status":
-				if (line.permissionMode === undefined) return;
-				return this.setSession({
-					mode: { current: line.permissionMode, choices: MODES },
-				});
+				if (line.permissionMode !== undefined) {
+					this.setSession({
+						mode: { current: line.permissionMode, choices: MODES },
+					});
+				}
+				if (line.compacting !== undefined) this.setCompacting(line.compacting);
+				if (line.compactFailure !== undefined) {
+					this.notice(
+						"error",
+						`Compacting the conversation failed: ${line.compactFailure}`,
+						undefined,
+					);
+				}
+				return;
 			case "permission_denied":
 				return this.takeDenial(line);
 			case "said":
@@ -1786,9 +1882,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		// to be matched with it, and the session file does not say who.
 		let origin: UserOrigin = "person";
 		if (when === "live") {
-			const taken = this.untaken.findIndex((each) => each.text === text);
-			if (taken < 0) origin = "other";
-			else [{ origin }] = this.untaken.splice(taken, 1) as [SendingMessage];
+			const taken = this.unanswered.find(
+				(each) => !each.taken && each.message.text === text,
+			);
+			if (taken === undefined) origin = "other";
+			else {
+				taken.taken = true;
+				origin = taken.message.origin;
+			}
 		}
 		this.users += 1;
 		const id = entryId(`user:${line.uuid ?? `#${this.users}`}`);
@@ -1819,9 +1920,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 * A command the CLI ran itself. One DevHub sent (a slash command typed in
 	 * the composer, or a template's) comes back in this form — echoed, or
 	 * answered by the CLI on its own — and is taken as sent then: the oldest
-	 * message sending that invokes the command this one names. The CLI reads
-	 * the command's arguments its own way (spaces and newlines around them
-	 * are gone), so the command is what matches, never the text as sent.
+	 * message sending that invokes a command, since the CLI reads its input
+	 * in order. Neither the text nor the name has to match: the CLI reads the
+	 * command's arguments its own way (spaces and newlines around them are
+	 * gone), and names the command it ran, not the alias sent (`/cost` runs
+	 * `usage`).
 	 */
 	private takeCommand(
 		uuid: string | undefined,
@@ -1831,12 +1934,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	): void {
 		if (parent !== null) return;
 		if (when === "live") {
-			const invoked = invocation(line);
-			const taken = this.untaken.findIndex(
-				(each) => invocation(each.text) === invoked,
+			const taken = this.unanswered.find(
+				(each) => !each.taken && invocation(each.message.text) !== undefined,
 			);
-			if (invoked !== undefined && taken >= 0) {
-				this.untaken.splice(taken, 1);
+			if (taken !== undefined) {
+				taken.taken = true;
 				this.emitSending();
 				this.turn("running");
 			}
@@ -2097,6 +2199,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				: undefined;
 		this.limitAnswered = false;
 		this.rejected = undefined;
+		this.answer(line);
 		const usage: Usage = {
 			...NO_USAGE,
 			inputTokens: line.usage?.inputTokens,
@@ -2130,7 +2233,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			},
 		});
 		this.emit({ type: "usage", usage });
-		this.turn("none");
+		// A message written and not answered yet is the next turn, under way.
+		this.turn(this.unanswered.length > 0 ? "running" : "none");
 		this.unresetLimit =
 			limit !== undefined && limit.resetsAt === undefined
 				? entryId(`turn:${this.turns}`)

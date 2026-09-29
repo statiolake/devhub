@@ -823,17 +823,18 @@ describe("the turn lifecycle, read as a status", () => {
     expect(conversationStatus(resumed)).toBe("working");
   });
 
-  // DevHub's own hold on the person's words is part of what the Agent is
-  // doing: a message written to the CLI and not taken yet starts a turn, and
-  // one DevHub holds at the prompt (open to change, or its write failed)
-  // waits on the person. Stopping the CLI — a stop, a continue — loses both,
-  // so neither is idle.
-  it("is working while a message is written and not taken, waiting while one is held at the prompt", () => {
+  // Working is the turn's alone: the adapter runs a turn from the write of
+  // a message until the CLI ends the turn that answers it, so what is drawn
+  // as sending says nothing of it. DevHub's own hold on the person's words
+  // (a message open to change, or whose write failed) waits on the person:
+  // stopping the CLI — a stop, a continue — would lose it, so it is not idle.
+  it("is working only while a turn runs, whatever is drawn as sending, and waiting while a message is held at the prompt", () => {
     const sending = fold(READY, {
       type: "sending",
       sending: [{ id: "s1", text: "go", images: [], origin: "person" }],
     });
-    expect(conversationStatus(sending)).toBe("working");
+    expect(conversationStatus(sending)).toBe("idle");
+    expect(conversationStatus(applyEvent(sending, RUNNING))).toBe("working");
     const held = fold(READY, {
       type: "pending",
       pending: [
@@ -850,6 +851,25 @@ describe("the turn lifecycle, read as a status", () => {
     expect(
       conversationStatus(applyEvent(held, { type: "pending", pending: [] })),
     ).toBe("idle");
+  });
+
+  // A compaction is part of the turn that runs it: shown while the turn
+  // runs, and gone with the turn however the turn ends.
+  it("is compacting only while a turn runs, and not after the turn ends or the CLI starts again", () => {
+    const COMPACTING: ConversationEvent = {
+      type: "compacting",
+      compacting: true,
+    };
+    const compacting = fold(READY, RUNNING, COMPACTING);
+    expect(compacting.compacting).toBe(true);
+    expect(conversationStatus(compacting)).toBe("working");
+    expect(applyEvent(compacting, READY).compacting).toBe(false);
+    expect(applyEvent(compacting, { type: "restarted" }).compacting).toBe(
+      false,
+    );
+    expect(() => fold(READY, COMPACTING)).toThrow(
+      "a compaction started while no turn is running",
+    );
   });
 
   it("is idle after a completed turn and an interrupted one", () => {

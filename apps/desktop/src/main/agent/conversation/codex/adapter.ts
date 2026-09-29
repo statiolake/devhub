@@ -106,6 +106,7 @@ import {
 	Reader,
 	accountResponse,
 	anyObjectResponse,
+	messageTurn,
 	commandApproval,
 	decodeLine,
 	elicitation,
@@ -443,10 +444,19 @@ export class CodexAdapter implements ProtocolAdapter {
 	private nextRpcId = 0;
 	private nextUserMessage = 0;
 	private readonly calls = new Map<string, ClientMethod>();
-	/** The messages written and not yet taken, by the call that wrote each, with the thread it went to. */
+	/**
+	 * The messages written and not yet taken, by the call that wrote each,
+	 * with the thread it went to and, once app-server has answered the call,
+	 * the turn it went to: the `turn/completed` of that turn answers it,
+	 * whether or not its item came back.
+	 */
 	private readonly sending = new Map<
 		string,
-		{ readonly thread: string; readonly message: SendingMessage }
+		{
+			readonly thread: string;
+			readonly message: SendingMessage;
+			turn: string | undefined;
+		}
 	>();
 	private readonly sentMethods = new Set<string>();
 	private readonly responded = new Set<string>();
@@ -804,6 +814,63 @@ export class CodexAdapter implements ProtocolAdapter {
 		this.emit({ type: "state", state });
 	}
 
+	/**
+	 * Whether a turn is under way on the conversation's thread: one
+	 * app-server started, or a message written to it that the end of no turn
+	 * has answered yet.
+	 */
+	private turnState(): "none" | "running" {
+		const written = [...this.sending.values()].some(
+			(each) => each.thread === this.mainThread,
+		);
+		return this.runningTurn !== undefined || written ? "running" : "none";
+	}
+
+	/** The turn state again, after a write or a refusal, while the conversation is ready and not being taken back. */
+	private publishTurn(): void {
+		const { state } = this.current;
+		if (state.phase !== "ready" || state.turn === "rewinding") return;
+		const turn = this.turnState();
+		if (state.turn !== turn) this.setState({ phase: "ready", turn });
+	}
+
+	/**
+	 * A turn of the conversation's thread ended: each message written to it
+	 * that app-server never handed back as an item is answered all the same,
+	 * drawn as the person's words where it was sending.
+	 */
+	private answerSent(threadId: string, turn: string): void {
+		if (threadId !== this.mainThread) return;
+		let answered = false;
+		for (const [call, each] of this.sending) {
+			if (each.thread !== threadId || each.turn !== turn) continue;
+			this.sending.delete(call);
+			answered = true;
+			this.emit({
+				type: "entry",
+				entry: {
+					kind: "user",
+					id: entryId(`${threadId}/sent/${each.message.id}`),
+					parent: null,
+					text: each.message.text,
+					images: each.message.images,
+					origin: each.message.origin,
+					rewindable: false,
+				},
+			});
+		}
+		if (answered) this.emitSending();
+	}
+
+	/** Whether app-server is compacting the conversation now, which only a turn running does. */
+	private setCompacting(compacting: boolean): void {
+		const { state } = this.current;
+		if (compacting && (state.phase !== "ready" || state.turn !== "running"))
+			return;
+		if (this.current.compacting !== compacting)
+			this.emit({ type: "compacting", compacting });
+	}
+
 	private notice(
 		level: "info" | "warning" | "error",
 		text: string,
@@ -925,9 +992,10 @@ export class CodexAdapter implements ProtocolAdapter {
 					this.nextUserMessage,
 					Number(match[2]) + 1,
 				);
-				// Sending until its item comes back.
+				// Sending until its item comes back, or its turn ends.
 				this.sending.set(rpcKey(message.id), {
 					thread: params.threadId,
+					turn: undefined,
 					message: {
 						id: params.clientUserMessageId!,
 						text: params.input
@@ -942,6 +1010,9 @@ export class CodexAdapter implements ProtocolAdapter {
 					},
 				});
 				this.emitSending();
+				// A message written is a turn under way until the turn that
+				// answers it ends.
+				if (params.threadId === this.mainThread) this.publishTurn();
 			}
 		}
 		// The person's next MCP request: what the last one ended in has been
@@ -1148,9 +1219,18 @@ export class CodexAdapter implements ProtocolAdapter {
 				this.interrupts.delete(rpcKey(id));
 				return anyObjectResponse(this.reader, result);
 			case "turn/start":
-			case "turn/steer":
-				// What these say again arrives as `turn/started` and the items.
-				return anyObjectResponse(this.reader, result);
+			case "turn/steer": {
+				// What else these say arrives again as `turn/started` and the
+				// items; the turn is what answers the message.
+				const turn = messageTurn(this.reader, method, result);
+				const sent = this.sending.get(rpcKey(id));
+				if (sent === undefined) return;
+				sent.turn = turn;
+				// Its turn already ended (`turn/completed` came first).
+				if (this.entry(entryId(`${sent.thread}/turn/${turn}`)) !== undefined)
+					this.answerSent(sent.thread, turn);
+				return;
+			}
 		}
 	}
 
@@ -1168,7 +1248,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				`${this.codexName} did not go on with that thread: ${message}`,
 				raw,
 			);
-			return this.setState({ phase: "ready", turn: "none" });
+			return this.setState({ phase: "ready", turn: this.turnState() });
 		}
 		switch (method) {
 			case "initialize":
@@ -1220,10 +1300,11 @@ export class CodexAdapter implements ProtocolAdapter {
 					`${this.codexName} did not take back the last turn: ${message}`,
 					raw,
 				);
-				return this.setState({ phase: "ready", turn: "none" });
+				return this.setState({ phase: "ready", turn: this.turnState() });
 			case "turn/start":
 				this.sending.delete(rpcKey(id!));
 				this.emitSending();
+				this.publishTurn();
 				return this.notice(
 					"error",
 					`${this.codexName} did not start the turn: ${message}`,
@@ -1232,6 +1313,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			case "turn/steer":
 				this.sending.delete(rpcKey(id!));
 				this.emitSending();
+				this.publishTurn();
 				return this.notice(
 					"error",
 					`${this.codexName} did not take the message: ${message}`,
@@ -1288,10 +1370,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		// Its history tells of no subagent running on this server now.
 		this.processEnded();
 		this.emitSending();
-		this.setState({
-			phase: "ready",
-			turn: this.runningTurn === undefined ? "none" : "running",
-		});
+		this.setState({ phase: "ready", turn: this.turnState() });
 		this.callOnce("model/list", LIST_EVERY_MODEL satisfies ModelListParams);
 		this.callOnce("skills/list", {
 			cwds: [opened.cwd],
@@ -1686,6 +1765,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				undefined,
 			);
 		}
+		this.answerSent(threadId, turn.id);
 		const outcome = turn.status === "inProgress" ? "failed" : turn.status;
 		this.emit({
 			type: "entry",
@@ -1704,10 +1784,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				? entryId(`${threadId}/turn/${turn.id}`)
 				: undefined;
 		if (this.runningTurn === turn.id) this.runningTurn = undefined;
-		this.setState({
-			phase: "ready",
-			turn: this.runningTurn === undefined ? "none" : "running",
-		});
+		this.setState({ phase: "ready", turn: this.turnState() });
 	}
 
 	private turnUsage(): Usage | undefined {
@@ -1776,7 +1853,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			if (gone.some((entry) => entry.id === message))
 				this.turnMessages.delete(turnId);
 		}
-		this.setState({ phase: "ready", turn: "none" });
+		this.setState({ phase: "ready", turn: this.turnState() });
 	}
 
 	private onItem(
@@ -2013,6 +2090,12 @@ export class CodexAdapter implements ProtocolAdapter {
 					id,
 				);
 			case "contextCompaction":
+				// The conversation's own compaction runs from the item's start
+				// to its end, and is drawn once done; a subagent's is only drawn.
+				if (threadId === this.mainThread) {
+					this.setCompacting(streaming);
+					if (streaming) return;
+				}
 				return this.put(
 					{
 						kind: "compaction",
@@ -2020,6 +2103,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						parent,
 						trigger: undefined,
 						preTokens: undefined,
+						postTokens: undefined,
 					},
 					threadId,
 				);

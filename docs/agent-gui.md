@@ -174,7 +174,7 @@ screen:
 | connecting | unknown |
 | broken | error |
 | a request waiting for an answer | waiting |
-| a turn running | working |
+| a turn running (from the write of a message until the CLI ends the turn that answers it) | working |
 | a message DevHub holds at the prompt | waiting |
 | the last turn failed | error |
 | something it started still working in the background | background |
@@ -334,7 +334,12 @@ It covers what a turn does, not everything a CLI's own terminal UI has.
 **Everything that is drawn**: Markdown with tables and code (coloured once
 each block is complete), thinking folded, plans, a compaction as a divider
 across the transcript (*Conversation compacted · auto · from 150,000
-tokens*; Codex's too),
+to 12,000 tokens*; Codex's too) and, while the CLI is compacting, a dashed
+line at the end, *Compacting the conversation…*, that the divider takes the
+place of once it is done (Claude's `system/status` `compacting` until its
+`compact_boundary`, a `status` that says otherwise, or the turn's end; a
+`compact_result` of `failed` is an error notice with `compact_error`; Codex's
+`contextCompaction` item from `item/started` to `item/completed`),
 tool calls with their input and output, subagents nested under the
 call that started them, images, notices, a turn that was interrupted or failed (with
 the CLI's reason), how full the context is under the composer, and pending
@@ -436,18 +441,44 @@ bubble. Claude records them as tagged text (`<command-name>`,
 recorded command names is drawn as *Command output*.
 
 A slash command sent from the composer (or by a template) is taken as sent
-when the CLI says it ran that command, in whichever of its two forms: a
+when the CLI says it ran a command, in whichever of its two forms: a
 command that expands into a prompt (a skill, `/review 12`) is echoed in the
 tagged form above; a local command (`/mcp`, `/cost`) is not echoed at all,
-and is answered by one assistant message of the model `<synthetic>` that
+and is often answered by one assistant message of the model `<synthetic>` that
 names the command it ran (`local_command_run`) and carries what it printed in
 the same tags (`local_command_source`), then the command's `result`. That
-message is drawn as the command, in the place the answer came, and the
-`result` ends it as it ends any turn, so the Agent is idle again. The command
-is matched to the oldest message sending that invokes it (`/name`, or `!`),
-never by the whole text, because the CLI reads the arguments its own way.
-This shape was observed on 2.1.273, 2.1.281 and 2.1.283 alike; the two
-fields are not in the Agent SDK's types.
+message is drawn as the command, in the place the answer came. The command
+is matched to the oldest message sending that invokes a command (`/name`, or
+`!`), never by its text or its name, because the CLI reads the arguments its
+own way and names the command it ran, not the alias sent (`/cost` runs
+`usage`). This shape was observed on 2.1.273, 2.1.281, 2.1.283 and 2.1.284
+alike; the two fields are not in the Agent SDK's types. Some local commands
+print neither: `/clear` prints `conversation_reset` (drawn as *Context
+cleared*) and then only its `result`, and a `/compact` that compacts prints
+its `status` and `compact_boundary` and then its `result`.
+
+None of that is what ends the turn, though. **A turn ends on the CLI's own
+end-of-turn signal and nothing else**: Claude's `result`, Codex's
+`turn/completed`. From the moment DevHub writes a message the Agent is
+*working* (the adapter says a turn is under way), and the end of the turn
+that answers it makes it idle again, whatever the CLI printed or did not
+print in between: an echo or none, a synthetic answer or none, a compaction
+only, an unknown command, an error. Which messages a Claude `result` answers
+follows from the CLI reading its input in order: every message up to the
+last one the turn took in (echoed), or, when it took none, the oldest one
+written. A message answered without ever being echoed is drawn where it was
+sending, as the command line (with the `result`'s text as its output when
+the model was not asked, `num_turns` 0) or as the person's words. A message
+still unanswered after a `result` is the next turn, so the Agent stays
+working. For Codex the turn a message went to is in the answer to its
+`turn/start` (`turn.id`) or `turn/steer` (`turnId`), and that turn's
+`turn/completed` answers it the same way. What is drawn as sending plays no
+part in the status. If the CLI never answers because it ended, the Agent
+ends as any Agent whose CLI exits does (*The host, the journal, and
+restarts*). One case the order cannot tell apart: a turn the CLI starts by itself (a background task's
+notification) while a command written to it is still unechoed is taken as
+that command's turn, so the command line may be drawn a turn early; it never
+leaves the Agent working.
 
 **Questions the Agent asks** (Claude's AskUserQuestion, Codex's
 requestUserInput) are a card of choices, with an *Other* field where the CLI
@@ -794,7 +825,8 @@ A message you send while the Agent is idle is written to the CLI at once, and
 its bubble is at the end of the conversation at once too, quieter (*sending*)
 until the CLI takes it: Claude's echo of the message (`--replay-user-messages`),
 its word that it ran a slash command (above), or Codex's `userMessage` item
-puts the message itself in the same place. A
+puts the message itself in the same place, and so does the end of the turn
+that answers a message the CLI never echoed (above). A
 message the CLI refused (Codex's `turn/start` or `turn/steer` failing) stops
 sending, and the refusal is a notice. Which messages are sending is read from
 what was written (`in.log`), so after a restart a message written and not yet
@@ -985,8 +1017,8 @@ stopping it (`agentIsIdle`: working, background, waiting, error or not yet
 read all ask). The question is main's, not the page's: the continue request is
 answered with the question, and only its Confirm goes on. An idle Agent is
 continued without one. A GUI Agent's status counts DevHub's hold on the
-person's words for this: a message written and not yet taken is `working`,
-one held at the prompt is `waiting`.
+person's words for this: a message written and not yet answered is
+`working`, one held at the prompt is `waiting`.
 
 Which session the terminal is in is found from the Agent's own processes:
 the one tmux runs in its pane (`#{pane_pid}`, read with the Agent id the
@@ -1545,10 +1577,22 @@ read on 2026-09-25:
   `/cost`, with `--no-session-persistence` and no network, so no prompt
   reached a model): the turn's `init`, one `<synthetic>` assistant message
   carrying `local_command_run` and `local_command_source`, and a `result`
-  with `num_turns` 0; no echo and no `local_command` event. The Agent SDK's
+  with `num_turns` 0; no echo and no `local_command` event. On 2026-09-29
+  with 2.1.284 in a fresh session (`--no-session-persistence`): `/compact`
+  with nothing to compact answers the same way (`local_command_outcome`
+  failed, an empty `result`), `/cost` names `usage` in `local_command_run`
+  and `cost` in the `result`'s `local_command`, and `/clear` prints
+  `conversation_reset`, its `init` and its `result` only. The Agent SDK's
   types say a local command's output comes on a synthetic assistant message
   (`context_usage`) and that `terminal_reason` is unset when the loop was
   bypassed for a local slash command
+- `/compact` and `/clear` in the Agent SDK —
+  <https://code.claude.com/docs/en/agent-sdk/slash-commands> (a
+  `compact_boundary` only when compaction ran, and a `success` result either
+  way); `SDKStatusMessage` (`status` `compacting`, `compact_result`,
+  `compact_error`), `SDKCompactBoundaryMessage` (`pre_tokens`,
+  `post_tokens`) and `SDKConversationResetMessage` in the Agent SDK's
+  `sdk.d.ts`
 - Codex skills: `skills/list` and `UserInput`'s `skill` in
   `app-server-protocol` at `rust-v0.156.1` in openai/codex, and "run
   `/skills` or type `$` to mention a skill" —

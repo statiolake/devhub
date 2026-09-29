@@ -509,6 +509,22 @@ export function anyObjectResponse(r: Reader, value: unknown): void {
 	r.fields(value, "result");
 }
 
+/**
+ * The turn a message went to, as `turn/start` (`TurnStartResponse`, the turn
+ * it started) or `turn/steer` (`TurnSteerResponse`, the turn it joined)
+ * answers: the turn whose `turn/completed` answers the message.
+ */
+export function messageTurn(
+	r: Reader,
+	method: "turn/start" | "turn/steer",
+	value: unknown,
+): string {
+	const o = r.fields(value, "result");
+	return method === "turn/start"
+		? r.string(r.fields(o["turn"], "result.turn"), "id", "result.turn")
+		: r.string(o, "turnId", "result");
+}
+
 /** `thread/revert`'s answer. What it took back is the request's to say; the thread is only checked. */
 export function threadRevertResponse(r: Reader, value: unknown): void {
 	const o = r.fields(value, "result");

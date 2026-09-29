@@ -134,6 +134,11 @@ export type ClaudeLine =
 			readonly subtype: string;
 			readonly durationMs: number | undefined;
 			readonly result: string | undefined;
+			/**
+			 * How many times the model was asked (`num_turns`): 0 when the CLI
+			 * answered by itself, as it does a local command.
+			 */
+			readonly modelTurns: number | undefined;
 			readonly errors: readonly string[];
 			readonly costUsd: number | undefined;
 			readonly usage: ResultUsage | undefined;
@@ -152,8 +157,20 @@ export type ClaudeLine =
 			readonly type: "compact_boundary";
 			readonly trigger: string | undefined;
 			readonly preTokens: number | undefined;
+			readonly postTokens: number | undefined;
 	  }
-	| { readonly type: "status"; readonly permissionMode: string | undefined }
+	/**
+	 * What the CLI is doing apart from the model's words (`SDKStatusMessage`):
+	 * `compacting` while it compacts the conversation, and how a compaction
+	 * ended (`compact_result`, `compact_error`) when one did.
+	 */
+	| {
+			readonly type: "status";
+			readonly permissionMode: string | undefined;
+			/** Undefined when the line does not say what the CLI is doing. */
+			readonly compacting: boolean | undefined;
+			readonly compactFailure: string | undefined;
+	  }
 	/** Something the CLI says to the person in so many words: a recap, a warning, a refusal. */
 	| {
 			readonly type: "said";
@@ -607,6 +624,14 @@ export function decodeReceived(
 			};
 		case "devhub_restart":
 			return { type: "restart" };
+		// `/clear` (and the CLI's other fresh starts): the model goes on
+		// from nothing, in a new session the next `system/init` names.
+		case "conversation_reset":
+			return {
+				type: "said",
+				level: "info",
+				text: "Context cleared: the model starts afresh from here.",
+			};
 		// `tool_progress`: ticks of a running tool, whose entry already says it
 		// runs. `prompt_suggestion`: suggested next prompts, which v1 does not
 		// offer (design §3.5).
@@ -1008,16 +1033,35 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 					metadata.pre_tokens,
 					`${at}.compact_metadata.pre_tokens`,
 				),
+				postTokens: f.optionalNumber(
+					metadata.post_tokens,
+					`${at}.compact_metadata.post_tokens`,
+				),
 			};
 		}
-		case "status":
+		case "status": {
+			const status =
+				raw.status === null || raw.status === undefined
+					? raw.status
+					: f.string(raw.status, `${at}.status`);
+			const result = f.optionalString(
+				raw.compact_result,
+				`${at}.compact_result`,
+			);
 			return {
 				type: "status",
 				permissionMode: f.optionalString(
 					raw.permissionMode,
 					`${at}.permissionMode`,
 				),
+				compacting: status === undefined ? undefined : status === "compacting",
+				compactFailure:
+					result === "failed"
+						? (f.optionalString(raw.compact_error, `${at}.compact_error`) ??
+							"the CLI did not say why")
+						: undefined,
 			};
+		}
 		case "permission_denied": {
 			const text = (key: string) => f.optionalString(raw[key], `${at}.${key}`);
 			return {
@@ -1744,6 +1788,7 @@ function decodeResult(raw: JsonObject, f: Fields): ClaudeLine {
 		subtype: f.string(raw.subtype, "result.subtype"),
 		durationMs: f.optionalNumber(raw.duration_ms, "result.duration_ms"),
 		result: f.optionalString(raw.result, "result.result"),
+		modelTurns: f.optionalNumber(raw.num_turns, "result.num_turns"),
 		errors: (raw.errors === undefined
 			? []
 			: f.array(raw.errors, "result.errors")

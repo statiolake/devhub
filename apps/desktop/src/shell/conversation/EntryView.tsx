@@ -714,7 +714,9 @@ function CompactionView({ entry }: { readonly entry: CompactionEntry }) {
     entry.trigger,
     entry.preTokens === undefined
       ? undefined
-      : `from ${entry.preTokens.toLocaleString("en-US")} tokens`,
+      : entry.postTokens === undefined
+        ? `from ${entry.preTokens.toLocaleString("en-US")} tokens`
+        : `from ${entry.preTokens.toLocaleString("en-US")} to ${entry.postTokens.toLocaleString("en-US")} tokens`,
   ].filter((fact): fact is string => fact !== undefined);
   return (
     <div className="conversation-compaction" role="separator">
@@ -808,6 +810,27 @@ export function SendingView({ message }: { readonly message: SendingMessage }) {
           {message.text !== "" ? message.text : null}
         </PersonBubble>
         <ImageStrip images={message.images} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The CLI compacting the conversation now (`Transcript.compacting`): the
+ * compaction's divider, dashed and in progress, at the end of the
+ * transcript, until the compaction's own divider takes its place.
+ */
+export function CompactingView() {
+  return (
+    <div
+      className="conversation-entry"
+      data-kind="compacting"
+      data-entry-id="compacting"
+    >
+      <div className="conversation-compaction" data-running="" role="status">
+        <span className="conversation-compaction-text">
+          Compacting the conversation…
+        </span>
       </div>
     </div>
   );

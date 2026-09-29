@@ -1160,6 +1160,14 @@
   content: "";
 }
 
+/* One in progress: the same line, dashed, until the compaction is done. */
+.conversation-compaction[data-running]::before,
+.conversation-compaction[data-running]::after {
+  height: 0;
+  border-top: 1px dashed var(--line-soft);
+  background: none;
+}
+
 /* ---------------------------------------------------------------- Images */
 
 /* Thumbnails in a row: on the person's message, and on the call of a tool

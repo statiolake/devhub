@@ -873,15 +873,16 @@ describe("subagents", () => {
 			}
 		}
 		expect(outline(harness.transcript)).toMatchInlineSnapshot(`
-      [
-        "tool spawnAgent "Start a subagent: List the files in src/" succeeded spawns explorer/completed",
-        "  assistant: Listing.",
-        "  tool commandExecution "ls src" succeeded -> "main.ts\\n"",
-        "tool wait "Wait for subagents" succeeded",
-        "assistant: src/ has main.ts.",
-        "turn-end completed 2100ms",
-      ]
-    `);
+			[
+			  "tool spawnAgent "Start a subagent: List the files in src/" succeeded spawns explorer/completed",
+			  "  assistant: Listing.",
+			  "  tool commandExecution "ls src" succeeded -> "main.ts\\n"",
+			  "tool wait "Wait for subagents" succeeded",
+			  "assistant: src/ has main.ts.",
+			  "user(person): delegate",
+			  "turn-end completed 2100ms",
+			]
+		`);
 		expect(harness.entry(`${MAIN}/item-spawn`)).toMatchObject({
 			spawns: {
 				prompt: "List the files in src/\nand report back.",
@@ -1366,6 +1367,7 @@ describe("multi-agent v2 subagents", () => {
 			  "  tool commandExecution "make test" succeeded -> "ok\\n"",
 			  "tool wait "Wait for subagents" succeeded",
 			  "assistant: src/ has main.ts; the tests could not finish.",
+			  "user(person): delegate",
 			  "turn-end completed 2100ms",
 			]
 		`);
@@ -2559,6 +2561,95 @@ describe("taking back the last turn", () => {
 		expect(harness.transcript.sending).toEqual([]);
 	});
 
+	it("is working from a message's write until the end of its turn, which answers it even when its item never came back", () => {
+		const harness = oneTurn();
+		harness.command({
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
+		expect(conversationStatus(harness.transcript)).toBe("working");
+		const turn2 = {
+			id: "turn-2",
+			items: [],
+			itemsView: "notLoaded",
+			status: "inProgress",
+			error: null,
+			startedAt: null,
+			completedAt: null,
+			durationMs: null,
+		};
+		harness.receive({ id: 6, result: { turn: turn2 } });
+		harness.receive({
+			method: "turn/started",
+			params: { threadId: MAIN, turn: turn2 },
+		});
+		harness.receive({
+			method: "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: { ...turn2, status: "completed", durationMs: 3 },
+			},
+		});
+		expect(harness.transcript.sending).toEqual([]);
+		expect(conversationStatus(harness.transcript)).toBe("idle");
+		expect(
+			harness.transcript.entries
+				.slice(-2)
+				.map((each) =>
+					each.kind === "user"
+						? `user(${each.origin}): ${each.text}`
+						: each.kind,
+				),
+		).toEqual(["user(person): more", "turn-end"]);
+	});
+
+	it("shows the conversation compacting while its contextCompaction item runs, and the divider once it is done", () => {
+		const harness = oneTurn();
+		harness.command({
+			kind: "send",
+			text: "more",
+			images: [],
+			origin: "person",
+		});
+		const turn2 = {
+			id: "turn-2",
+			items: [],
+			itemsView: "notLoaded",
+			status: "inProgress",
+			error: null,
+			startedAt: null,
+			completedAt: null,
+			durationMs: null,
+		};
+		harness.receive({ id: 6, result: { turn: turn2 } });
+		harness.receive({
+			method: "turn/started",
+			params: { threadId: MAIN, turn: turn2 },
+		});
+		const compaction = (method: string) => ({
+			method,
+			params: {
+				threadId: MAIN,
+				turnId: "turn-2",
+				startedAtMs: 0,
+				completedAtMs: 0,
+				item: { type: "contextCompaction", id: "item-compact" },
+			},
+		});
+		harness.receive(compaction("item/started"));
+		expect(harness.transcript.compacting).toBe(true);
+		expect(harness.transcript.entries.at(-1)?.kind).not.toBe("compaction");
+		harness.receive(compaction("item/completed"));
+		expect(harness.transcript.compacting).toBe(false);
+		expect(harness.transcript.entries.at(-1)).toMatchObject({
+			kind: "compaction",
+			id: `${MAIN}/item-compact`,
+		});
+		expect(conversationStatus(harness.transcript)).toBe("working");
+	});
+
 	it("replays to the same rewound transcript and writes nothing", () => {
 		const live = oneTurn();
 		live.rewind(USER);
@@ -2683,6 +2774,21 @@ describe("going on with another thread (/resume)", () => {
 			origin: "person",
 		});
 		harness.receive({
+			id: (harness.lastWrite() as { id: number }).id,
+			result: {
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "full",
+					status: "inProgress",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
+		});
+		harness.receive({
 			method: "turn/started",
 			params: {
 				threadId: MAIN,
@@ -2781,6 +2887,21 @@ describe("restarting the session", () => {
 			text: "here",
 			images: [],
 			origin: "person",
+		});
+		harness.receive({
+			id: (harness.lastWrite() as { id: number }).id,
+			result: {
+				turn: {
+					id: "t-1",
+					items: [],
+					itemsView: "full",
+					status: "inProgress",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
 		});
 		harness.receive({
 			method: "turn/started",

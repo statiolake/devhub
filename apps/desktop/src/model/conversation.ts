@@ -401,6 +401,8 @@ export interface CompactionEntry {
   readonly trigger: string | undefined;
   /** How many tokens the conversation held before. */
   readonly preTokens: number | undefined;
+  /** How many it holds after, when the CLI says. */
+  readonly postTokens: number | undefined;
 }
 
 export interface TurnEndEntry {
@@ -888,7 +890,8 @@ export interface Transcript {
   /**
    * The messages written to the CLI that it has not taken yet (not echoed
    * back), oldest first. They are drawn where they will land, at the end of
-   * the conversation, as sending; the CLI's echo makes each an entry. The
+   * the conversation, as sending; the CLI's echo makes each an entry, and
+   * so does the end of the turn that answers one the CLI never echoed. The
    * adapter's, from what was written (`in.log`), so a replay says the same.
    */
   readonly sending: readonly SendingMessage[];
@@ -908,6 +911,12 @@ export interface Transcript {
    * DevHub's own, like `pending`.
    */
   readonly limitResume: LimitResume | undefined;
+  /**
+   * The CLI is compacting the conversation now, as part of the turn running
+   * (auto, or the person's `/compact`). The adapter's; it ends with the
+   * compaction's divider, or with the turn. Only ever true while a turn runs.
+   */
+  readonly compacting: boolean;
 }
 
 /**
@@ -998,6 +1007,8 @@ export type ConversationEvent =
   | { readonly type: "mcp-sign-in"; readonly signIn: McpSignIn | undefined }
   /** Replaces what DevHub will do about a usage limit whole. DevHub's own. */
   | { readonly type: "limit-resume"; readonly resume: LimitResume | undefined }
+  /** Whether the CLI is compacting the conversation now. The adapter's. */
+  | { readonly type: "compacting"; readonly compacting: boolean }
   /**
    * The CLI took back the turns from a message of the person's on: that
    * message and every entry after it are no longer part of the conversation.
@@ -1057,6 +1068,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   mcp: NO_MCP,
   mcpSignIn: undefined,
   limitResume: undefined,
+  compacting: false,
 };
 
 /** The one fold. Returns a new Transcript; the one passed in is not touched. */
@@ -1093,7 +1105,15 @@ export function applyEvent(
     case "session":
       return { ...transcript, session: event.session };
     case "state":
-      return { ...transcript, state: event.state };
+      // A compaction is part of a turn: no turn running, none going on.
+      return {
+        ...transcript,
+        state: event.state,
+        compacting:
+          event.state.phase === "ready" && event.state.turn === "running"
+            ? transcript.compacting
+            : false,
+      };
     case "usage":
       return { ...transcript, usage: event.usage };
     case "pending":
@@ -1111,6 +1131,18 @@ export function applyEvent(
       return { ...transcript, mcpSignIn: event.signIn };
     case "limit-resume":
       return { ...transcript, limitResume: event.resume };
+    case "compacting": {
+      const { state } = transcript;
+      if (
+        event.compacting &&
+        (state.phase !== "ready" || state.turn !== "running")
+      ) {
+        throw new TranscriptInvariantError(
+          "a compaction started while no turn is running",
+        );
+      }
+      return { ...transcript, compacting: event.compacting };
+    }
     case "rewound":
       return { ...transcript, entries: rewind(transcript, event.from) };
     case "session-switched": {
@@ -1140,6 +1172,7 @@ export function applyEvent(
         requests: [],
         sending: [],
         backgroundTasks: [],
+        compacting: false,
       };
     default:
       return unknownEvent(event);
@@ -1480,10 +1513,14 @@ export function lastTurnFailed(transcript: Transcript): boolean {
  * until the next turn starts; a pending request is `waiting` even mid-turn,
  * because somebody has to answer it before the turn goes anywhere.
  *
- * DevHub's hold on the person's words counts too, because stopping the CLI
- * (a stop, a continue) loses them: a message written and not taken yet is
- * the turn it starts (`working`), and one DevHub holds at the prompt — open
- * to change, or its write failed — waits on the person (`waiting`).
+ * Working is the turn's alone: the adapter says a turn runs from the moment
+ * a message is written to the CLI until the CLI's own end of the turn that
+ * answers it (Claude's `result`, Codex's `turn/completed`), whatever the CLI
+ * printed or did not print in between. What is drawn as sending plays no
+ * part in it. DevHub's hold on the person's words counts too, because
+ * stopping the CLI (a stop, a continue) loses them: one DevHub holds at the
+ * prompt — open to change, or its write failed — waits on the person
+ * (`waiting`).
  *
  * With no turn running, what the Agent set going apart from its turn — a
  * command, a subagent, a teammate still at work — is `background`: it is not
@@ -1500,8 +1537,7 @@ export function conversationStatus(transcript: Transcript): AgentStatus {
       return "error";
     case "ready":
       if (transcript.requests.length > 0) return "waiting";
-      if (state.turn !== "none" || transcript.sending.length > 0)
-        return "working";
+      if (state.turn !== "none") return "working";
       if (transcript.pending.length > 0) return "waiting";
       if (lastTurnFailed(transcript)) return "error";
       return transcript.backgroundTasks.length > 0 ? "background" : "idle";

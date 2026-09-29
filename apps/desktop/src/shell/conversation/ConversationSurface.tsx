@@ -56,6 +56,7 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import {
+  CompactingView,
   EntryTreeContext,
   EntryView,
   LimitResumeView,
@@ -463,6 +464,9 @@ export function ConversationSurface({
                                   message={message}
                                 />
                               ))}
+                              {transcript.compacting ? (
+                                <CompactingView />
+                              ) : null}
                               {transcript.limitResume === undefined ? null : (
                                 <LimitResumeView
                                   resume={transcript.limitResume}

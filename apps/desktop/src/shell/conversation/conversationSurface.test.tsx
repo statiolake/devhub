@@ -25,6 +25,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applyEvent,
   entryId,
+  type ConversationEvent,
   type LimitResume,
   type UserEntry,
 } from "../../model/conversation";
@@ -520,6 +521,7 @@ describe("every entry kind", () => {
           parent: null,
           trigger: "auto",
           preTokens: 150000,
+          postTokens: undefined,
         }),
       ]),
     );
@@ -527,6 +529,40 @@ describe("every entry kind", () => {
     expect(divider).toHaveAttribute("role", "separator");
     expect(divider).toHaveTextContent(
       "Conversation compacted · auto · from 150,000 tokens",
+    );
+  });
+
+  it("draws a compaction under way as a line at the end, which the divider replaces once it is done", () => {
+    const running: ConversationEvent = {
+      type: "state",
+      state: { phase: "ready", turn: "running" },
+    };
+    const compacting = transcriptOf([
+      running,
+      { type: "compacting", compacting: true },
+    ]);
+    const { redraw } = draw(compacting);
+    const line = entry("compacting").querySelector(".conversation-compaction");
+    expect(line).toHaveAttribute("role", "status");
+    expect(line).toHaveTextContent("Compacting the conversation…");
+    redraw(
+      transcriptOf([
+        running,
+        { type: "compacting", compacting: true },
+        { type: "compacting", compacting: false },
+        put({
+          kind: "compaction",
+          id: entryId("c1"),
+          parent: null,
+          trigger: "manual",
+          preTokens: 90000,
+          postTokens: 12000,
+        }),
+      ]),
+    );
+    expect(document.querySelector('[data-entry-id="compacting"]')).toBeNull();
+    expect(entry("c1")).toHaveTextContent(
+      "Conversation compacted · manual · from 90,000 to 12,000 tokens",
     );
   });
 
