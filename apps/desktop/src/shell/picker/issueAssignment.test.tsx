@@ -13,6 +13,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AppOutcome } from "../../ipc/appShell";
 import type { IssueFolderRequest } from "../../ipc/contract";
 import { worktreeDirectory } from "../../model/worktrees";
 import type { PickerValue } from "./PickerContext";
@@ -36,7 +37,7 @@ const WORKSPACE = "workspace-1";
 function openedFolder() {
   return vi.fn((request: IssueFolderRequest) =>
     Promise.resolve({
-      outcome: {},
+      outcome: {} as AppOutcome,
       workspaceId: WORKSPACE,
       place:
         request.branch === undefined
