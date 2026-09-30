@@ -681,7 +681,12 @@ describe("the header", () => {
             contextWindow: 200_000,
             costUsd: 1.234,
             rateLimits: [
-              { window: "5-hour", usedPercent: 20, resetsAt: undefined },
+              {
+                window: "5-hour",
+                durationMinutes: 300,
+                usedPercent: 20,
+                resetsAt: undefined,
+              },
             ],
           },
         },

@@ -431,7 +431,12 @@ describe("the permission fixture", () => {
 					contextWindow: undefined,
 					costUsd: 0.0123,
 					rateLimits: [
-						{ window: "5-hour", usedPercent: 25, resetsAt: 1_800_000_000_000 },
+						{
+							window: "5-hour",
+							durationMinutes: 300,
+							usedPercent: 25,
+							resetsAt: 1_800_000_000_000,
+						},
 					],
 				},
 				durationMs: 4210,
@@ -518,7 +523,12 @@ describe("the permission fixture", () => {
 			contextWindow: undefined,
 			costUsd: 0.0123,
 			rateLimits: [
-				{ window: "5-hour", usedPercent: 25, resetsAt: 1_800_000_000_000 },
+				{
+					window: "5-hour",
+					durationMinutes: 300,
+					usedPercent: 25,
+					resetsAt: 1_800_000_000_000,
+				},
 			],
 		});
 	});
@@ -2427,6 +2437,33 @@ describe("a message being sent", () => {
 });
 
 describe("a usage limit", () => {
+	it("keeps each window's length, decided from its key: five_hour and seven_day, and none for a key of no documented length", () => {
+		const adapter = inTurn();
+		adapter.received(
+			json({
+				type: "rate_limit_event",
+				rate_limit_info: {
+					status: "allowed",
+					unifiedWindows: {
+						five_hour: { utilization: 0.1, resetsAt: 1_800_000_000 },
+						seven_day: { utilization: 0.2, resetsAt: 1_800_000_100 },
+						seven_day_opus: { utilization: 0.3, resetsAt: 1_800_000_200 },
+					},
+				},
+				session_id: SESSION,
+			}),
+		);
+		expect(
+			adapter.transcript.usage?.rateLimits?.map(
+				({ window, durationMinutes }) => ({ window, durationMinutes }),
+			),
+		).toEqual([
+			{ window: "5-hour", durationMinutes: 300 },
+			{ window: "7-day", durationMinutes: 10_080 },
+			{ window: "seven day opus", durationMinutes: undefined },
+		]);
+	});
+
 	it("is said, and the conversation still takes the person's next message", () => {
 		const adapter = inTurn();
 		// The limit's event names no window when the CLI cannot tell which

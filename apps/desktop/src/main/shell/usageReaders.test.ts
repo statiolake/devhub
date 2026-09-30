@@ -278,11 +278,13 @@ describe("decoding a usage reading", () => {
 			windows: [
 				{
 					window: "5-hour",
+					durationMinutes: 300,
 					usedPercent: 91,
 					resetsAt: Date.parse("2026-09-28T14:59:59.559Z"),
 				},
 				{
 					window: "7-day",
+					durationMinutes: 10_080,
 					usedPercent: 34,
 					resetsAt: Date.parse("2026-10-04T13:59:59.559Z"),
 				},
@@ -324,7 +326,14 @@ describe("decoding a usage reading", () => {
 			),
 		).toEqual({
 			kind: "windows",
-			windows: [{ window: "7-day", usedPercent: 3, resetsAt: undefined }],
+			windows: [
+				{
+					window: "7-day",
+					durationMinutes: 10_080,
+					usedPercent: 3,
+					resetsAt: undefined,
+				},
+			],
 		});
 	});
 
@@ -357,8 +366,44 @@ describe("decoding a usage reading", () => {
 	it("reads Codex's account/rateLimits/read: the reset in seconds becomes milliseconds, windows named by length", () => {
 		expect(rateLimits(new Reader(undefined), CODEX_LIMITS, "result")).toEqual({
 			windows: [
-				{ window: "5-hour", usedPercent: 76, resetsAt: 1_790_625_408_000 },
-				{ window: "7-day", usedPercent: 2, resetsAt: 1_791_091_364_000 },
+				{
+					window: "5-hour",
+					durationMinutes: 300,
+					usedPercent: 76,
+					resetsAt: 1_790_625_408_000,
+				},
+				{
+					window: "7-day",
+					durationMinutes: 10_080,
+					usedPercent: 2,
+					resetsAt: 1_791_091_364_000,
+				},
+			],
+		});
+		// A window whose length Codex does not say is named by its slot, and
+		// has no length.
+		expect(
+			rateLimits(
+				new Reader(undefined),
+				{
+					rateLimits: {
+						primary: {
+							usedPercent: 5,
+							windowDurationMins: null,
+							resetsAt: null,
+						},
+					},
+				},
+				"result",
+			),
+		).toEqual({
+			windows: [
+				{
+					window: "primary",
+					durationMinutes: undefined,
+					usedPercent: 5,
+					resetsAt: undefined,
+				},
 			],
 		});
 		expect(() =>
@@ -376,6 +421,7 @@ describe("how often a reader asks", () => {
 		kind: "windows",
 		windows: used.map((usedPercent, index) => ({
 			window: String(index),
+			durationMinutes: undefined,
 			usedPercent,
 			resetsAt: undefined,
 		})),
@@ -487,8 +533,18 @@ describe("the background usage readers", () => {
 		expect(h.limits.wire().clis[1]).toEqual({
 			cli: "codex",
 			windows: [
-				{ window: "5-hour", usedPercent: 76, resetsAt: 1_790_625_408_000 },
-				{ window: "7-day", usedPercent: 2, resetsAt: 1_791_091_364_000 },
+				{
+					window: "5-hour",
+					durationMinutes: 300,
+					usedPercent: 76,
+					resetsAt: 1_790_625_408_000,
+				},
+				{
+					window: "7-day",
+					durationMinutes: 10_080,
+					usedPercent: 2,
+					resetsAt: 1_791_091_364_000,
+				},
 			],
 		});
 	});
@@ -521,11 +577,13 @@ describe("the background usage readers", () => {
 		// seven-day reading from before its last reset.
 		h.limits.observe("claude", {
 			window: "5-hour",
+			durationMinutes: 300,
 			usedPercent: 95,
 			resetsAt: fiveHourReset,
 		});
 		h.limits.observe("claude", {
 			window: "7-day",
+			durationMinutes: 10_080,
 			usedPercent: 80,
 			resetsAt: 1_000,
 		});
@@ -534,9 +592,15 @@ describe("the background usage readers", () => {
 		expect(h.limits.wire().clis[0]).toEqual({
 			cli: "claude",
 			windows: [
-				{ window: "5-hour", usedPercent: 95, resetsAt: fiveHourReset },
+				{
+					window: "5-hour",
+					durationMinutes: 300,
+					usedPercent: 95,
+					resetsAt: fiveHourReset,
+				},
 				{
 					window: "7-day",
+					durationMinutes: 10_080,
 					usedPercent: 34,
 					resetsAt: Date.parse("2026-10-04T13:59:59.559Z"),
 				},

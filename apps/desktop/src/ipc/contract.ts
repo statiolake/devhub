@@ -431,8 +431,10 @@ export interface UsageLimitsWire {
 	readonly clis: readonly {
 		readonly cli: "claude" | "codex";
 		readonly windows?: readonly {
-			/** Which window, in words. */
+			/** Which window, in words: a label, never read for its length. */
 			readonly window: string;
+			/** How long the window is, in minutes; absent when the CLI does not say. */
+			readonly durationMinutes?: number;
 			/** 0–100. */
 			readonly usedPercent?: number;
 			/** Epoch milliseconds. */

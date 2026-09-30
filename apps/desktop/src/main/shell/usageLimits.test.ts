@@ -82,12 +82,32 @@ describe("the usage-limits readout", () => {
 		// The capture's last `rate_limit_event`: 98% of the five-hour window
 		// and 80% of the seven-day one, resets in epoch seconds on the wire.
 		expect(claude?.windows).toEqual([
-			{ window: "5-hour", usedPercent: 98, resetsAt: 1_790_280_600_000 },
-			{ window: "7-day", usedPercent: 80, resetsAt: 1_790_517_600_000 },
+			{
+				window: "5-hour",
+				durationMinutes: 300,
+				usedPercent: 98,
+				resetsAt: 1_790_280_600_000,
+			},
+			{
+				window: "7-day",
+				durationMinutes: 10_080,
+				usedPercent: 80,
+				resetsAt: 1_790_517_600_000,
+			},
 		]);
 		expect(codex?.windows).toEqual([
-			{ window: "5-hour", usedPercent: 0, resetsAt: 1_790_313_079_000 },
-			{ window: "7-day", usedPercent: 17, resetsAt: 1_790_593_906_000 },
+			{
+				window: "5-hour",
+				durationMinutes: 300,
+				usedPercent: 0,
+				resetsAt: 1_790_313_079_000,
+			},
+			{
+				window: "7-day",
+				durationMinutes: 10_080,
+				usedPercent: 17,
+				resetsAt: 1_790_593_906_000,
+			},
 		]);
 		// Published when it changed, and only then.
 		expect(published.at(-1)).toEqual(wire);
@@ -100,6 +120,7 @@ describe("the usage-limits readout", () => {
 		const limits = new UsageLimits();
 		const w = (usedPercent: number, resetsAt: number) => ({
 			window: "5-hour",
+			durationMinutes: 300,
 			usedPercent,
 			resetsAt,
 		});
@@ -112,6 +133,7 @@ describe("the usage-limits readout", () => {
 		expect(
 			limits.observe("claude", {
 				window: "7-day",
+				durationMinutes: 10_080,
 				usedPercent: 1,
 				resetsAt: 1,
 			}),
@@ -119,8 +141,18 @@ describe("the usage-limits readout", () => {
 		expect(limits.wire().clis[0]).toEqual({
 			cli: "claude",
 			windows: [
-				{ window: "5-hour", usedPercent: 5, resetsAt: 3_000 },
-				{ window: "7-day", usedPercent: 1, resetsAt: 1 },
+				{
+					window: "5-hour",
+					durationMinutes: 300,
+					usedPercent: 5,
+					resetsAt: 3_000,
+				},
+				{
+					window: "7-day",
+					durationMinutes: 10_080,
+					usedPercent: 1,
+					resetsAt: 1,
+				},
 			],
 		});
 	});
@@ -138,7 +170,14 @@ describe("the usage-limits readout", () => {
 						contextTokens: undefined,
 						contextWindow: undefined,
 						costUsd: undefined,
-						rateLimits: [{ window: "5-hour", usedPercent: 1, resetsAt: 1 }],
+						rateLimits: [
+							{
+								window: "5-hour",
+								durationMinutes: 300,
+								usedPercent: 1,
+								resetsAt: 1,
+							},
+						],
 					},
 				},
 			]),

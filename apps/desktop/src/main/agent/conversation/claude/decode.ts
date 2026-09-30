@@ -1852,7 +1852,7 @@ function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
 			);
 			const resetsAt = f.optionalNumber(window.resetsAt, `${path}.resetsAt`);
 			return {
-				window: claudeWindowName(key),
+				...claudeWindow(key),
 				// A fraction on the wire; a percentage in the model.
 				usedPercent: utilization === undefined ? undefined : utilization * 100,
 				// Epoch seconds on the wire; milliseconds in the model.
@@ -1862,17 +1862,32 @@ function decodeRateLimit(raw: JsonObject, f: Fields): ClaudeLine {
 	};
 }
 
-/** The windows whose length the name says, named as Codex's are; any other by its own name. */
+/**
+ * The length of each window Claude names by a key (`unifiedWindows`,
+ * `rateLimitType`, `get_usage`'s `rate_limits`) that Anthropic documents:
+ * the five-hour session window and the seven-day one.
+ */
 const CLAUDE_WINDOW_MINUTES: Readonly<Record<string, number>> = {
 	five_hour: 5 * 60,
 	seven_day: 7 * 24 * 60,
 };
 
-function claudeWindowName(key: string): string {
+/**
+ * A window's name and length, decided once from Claude's key for it: a
+ * window of known length is named by it, as Codex's are, and any other by
+ * its own key, with no length.
+ */
+function claudeWindow(
+	key: string,
+): Pick<RateLimit, "window" | "durationMinutes"> {
 	const minutes = CLAUDE_WINDOW_MINUTES[key];
-	return minutes === undefined
-		? key.replaceAll("_", " ")
-		: rateLimitWindowName(minutes);
+	return {
+		window:
+			minutes === undefined
+				? key.replaceAll("_", " ")
+				: rateLimitWindowName(minutes),
+		durationMinutes: minutes,
+	};
 }
 
 /**
@@ -1914,7 +1929,7 @@ export function decodeUsage(
 			const window = f.object(value, path);
 			return [
 				{
-					window: claudeWindowName(key),
+					...claudeWindow(key),
 					usedPercent: f.number(window.utilization, `${path}.utilization`),
 					resetsAt: f.optionalTime(window.resets_at, `${path}.resets_at`),
 				},

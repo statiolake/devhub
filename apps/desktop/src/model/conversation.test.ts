@@ -25,7 +25,6 @@ import {
   limitStop,
   usedUpReset,
   type LimitStop,
-  rateLimitWindowMinutes,
   rateLimitWindowName,
   withRateLimits,
   workState,
@@ -771,7 +770,12 @@ describe("session facts and usage", () => {
       contextWindow: 200_000,
       costUsd: 0.01,
       rateLimits: [
-        { window: "5-hour", usedPercent: 12, resetsAt: 1_800_000_000_000 },
+        {
+          window: "5-hour",
+          durationMinutes: 300,
+          usedPercent: 12,
+          resetsAt: 1_800_000_000_000,
+        },
       ],
     };
     const counted = fold({ type: "usage", usage });
@@ -785,9 +789,19 @@ describe("session facts and usage", () => {
 
 describe("rate-limit windows", () => {
   it("replace a window of the same name and keep one a report leaves out", () => {
-    const five = { window: "5-hour", usedPercent: 10, resetsAt: 1 };
-    const seven = { window: "7-day", usedPercent: 50, resetsAt: 2 };
-    const later = { window: "5-hour", usedPercent: 60, resetsAt: 1 };
+    const five = {
+      window: "5-hour",
+      durationMinutes: 300,
+      usedPercent: 10,
+      resetsAt: 1,
+    };
+    const seven = {
+      window: "7-day",
+      durationMinutes: 10080,
+      usedPercent: 50,
+      resetsAt: 2,
+    };
+    const later = { ...five, usedPercent: 60 };
     expect(
       withRateLimits(withRateLimits(undefined, [five, seven]), [later]),
     ).toEqual([later, seven]);
@@ -797,16 +811,6 @@ describe("rate-limit windows", () => {
     expect(rateLimitWindowName(300)).toBe("5-hour");
     expect(rateLimitWindowName(10080)).toBe("7-day");
     expect(rateLimitWindowName(90)).toBe("90-minute");
-  });
-
-  it("have the length their name says, and none when named otherwise", () => {
-    for (const minutes of [300, 10080, 90, 1440]) {
-      expect(rateLimitWindowMinutes(rateLimitWindowName(minutes))).toBe(
-        minutes,
-      );
-    }
-    expect(rateLimitWindowMinutes("primary")).toBeUndefined();
-    expect(rateLimitWindowMinutes("seven day opus")).toBeUndefined();
   });
 });
 
@@ -1421,13 +1425,35 @@ describe("a conversation a usage limit stopped", () => {
   it("resets when the used-up window does, the latest of several", () => {
     expect(
       usedUpReset([
-        { window: "5-hour", usedPercent: 100, resetsAt: 10 },
-        { window: "7-day", usedPercent: 100, resetsAt: 30 },
-        { window: "other", usedPercent: 40, resetsAt: 50 },
+        {
+          window: "5-hour",
+          durationMinutes: 300,
+          usedPercent: 100,
+          resetsAt: 10,
+        },
+        {
+          window: "7-day",
+          durationMinutes: 10080,
+          usedPercent: 100,
+          resetsAt: 30,
+        },
+        {
+          window: "other",
+          durationMinutes: undefined,
+          usedPercent: 40,
+          resetsAt: 50,
+        },
       ]),
     ).toBe(30);
     expect(
-      usedUpReset([{ window: "5-hour", usedPercent: 99, resetsAt: 10 }]),
+      usedUpReset([
+        {
+          window: "5-hour",
+          durationMinutes: 300,
+          usedPercent: 99,
+          resetsAt: 10,
+        },
+      ]),
     ).toBeUndefined();
     expect(usedUpReset(undefined)).toBeUndefined();
   });

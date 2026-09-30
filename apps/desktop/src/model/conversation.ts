@@ -791,8 +791,17 @@ export interface Usage {
 }
 
 export interface RateLimit {
-  /** Which window, in words: `5-hour`, `7-day`, or the CLI's own name for it. */
+  /**
+   * Which window, in words: `5-hour`, `7-day`, or the CLI's own name for it.
+   * A label and the window's identity, never read for its length.
+   */
   readonly window: string;
+  /**
+   * How long the window is, in minutes, as the CLI says it where it is
+   * decoded (Codex's `windowDurationMins`, the documented length of Claude's
+   * `five_hour` and `seven_day`); `undefined` when the CLI does not say.
+   */
+  readonly durationMinutes: number | undefined;
   /** 0–100. */
   readonly usedPercent: number | undefined;
   /** Epoch milliseconds. */
@@ -813,26 +822,6 @@ export function rateLimitWindowName(minutes: number): string {
   if (minutes % 1440 === 0) return `${String(minutes / 1440)}-day`;
   if (minutes % 60 === 0) return `${String(minutes / 60)}-hour`;
   return `${String(minutes)}-minute`;
-}
-
-const WINDOW_UNIT_MINUTES = { minute: 1, hour: 60, day: 1440 } as const;
-
-/**
- * A window's length from its name, the inverse of `rateLimitWindowName`:
- * every window whose length the CLI says (Codex's `windowDurationMins`,
- * Claude's `five_hour` and `seven_day`) is named by it, so the name is where
- * the length is kept. A window named otherwise (`primary`, `seven day opus`)
- * has no length DevHub knows.
- */
-export function rateLimitWindowMinutes(name: string): number | undefined {
-  const match = /^([1-9][0-9]*)-(minute|hour|day)$/.exec(name);
-  if (match === null) return undefined;
-  const [, count, unit] = match as unknown as [
-    string,
-    string,
-    keyof typeof WINDOW_UNIT_MINUTES,
-  ];
-  return Number(count) * WINDOW_UNIT_MINUTES[unit];
 }
 
 /**

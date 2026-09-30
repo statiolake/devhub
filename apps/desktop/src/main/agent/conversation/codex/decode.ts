@@ -1179,6 +1179,7 @@ export function rateLimits(
 			return [
 				{
 					window: minutes === null ? slot : rateLimitWindowName(minutes),
+					durationMinutes: minutes ?? undefined,
 					usedPercent: r.number(w, "usedPercent", path),
 					// Unix seconds on the wire, as Codex's core protocol keeps it.
 					resetsAt: resetsAt === null ? undefined : resetsAt * 1000,

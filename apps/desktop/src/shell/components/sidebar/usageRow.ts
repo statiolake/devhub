@@ -6,9 +6,10 @@
  *
  * The row shows the CLI's shortest window — the five-hour one over the
  * seven-day one — since that is the number that moves. The length is the
- * CLI's own (`rateLimitWindowMinutes`: Codex's `windowDurationMins`, Claude's
- * `five_hour` and `seven_day`); a window of no known length comes after every
- * one whose length is known, and between those the first reported is shown.
+ * CLI's own, decoded with the window (`durationMinutes`: Codex's
+ * `windowDurationMins`, Claude's `five_hour` and `seven_day`); a window of no
+ * known length comes after every one whose length is known, and between
+ * those the first reported is shown.
  *
  * A reading whose reset has passed is history, and says nothing about now
  * except that its window has started again: the account reports an unstarted
@@ -24,11 +25,11 @@
  * limit nearly reached*.
  */
 
-import { rateLimitWindowMinutes } from "../../../model/conversation";
 import { usageLevel, type UsageLevel } from "../../usageLevel";
 
 export interface UsageWindow {
   readonly window: string;
+  readonly durationMinutes?: number | undefined;
   readonly usedPercent?: number | undefined;
   readonly resetsAt?: number | undefined;
 }
@@ -88,7 +89,7 @@ interface Reading {
 
 /** What a window's last reading says of it now. */
 function asOf(one: UsageWindow, now: number): Reading {
-  const minutes = rateLimitWindowMinutes(one.window) ?? Infinity;
+  const minutes = one.durationMinutes ?? Infinity;
   const stale = one.resetsAt !== undefined && one.resetsAt <= now;
   const usedPercent = stale ? 0 : one.usedPercent;
   return {

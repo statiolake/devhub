@@ -622,6 +622,7 @@ describe("a turn", () => {
 			rateLimits: [
 				{
 					window: "5-hour",
+					durationMinutes: 300,
 					usedPercent: 42,
 					resetsAt: (1790000000 + 3600) * 1000,
 				},
@@ -2717,8 +2718,18 @@ describe("a captured greeting on the owner's signed-in app-server", () => {
 	it("keeps the primary and secondary windows, their resets sent in seconds read as milliseconds", () => {
 		const { usage } = played("codex-greeting.capture.ndjson").transcript;
 		expect(usage?.rateLimits).toEqual([
-			{ window: "5-hour", usedPercent: 0, resetsAt: 1_790_313_079_000 },
-			{ window: "7-day", usedPercent: 17, resetsAt: 1_790_593_906_000 },
+			{
+				window: "5-hour",
+				durationMinutes: 300,
+				usedPercent: 0,
+				resetsAt: 1_790_313_079_000,
+			},
+			{
+				window: "7-day",
+				durationMinutes: 10_080,
+				usedPercent: 17,
+				resetsAt: 1_790_593_906_000,
+			},
 		]);
 		expect(usage).toMatchObject({
 			inputTokens: 21669,

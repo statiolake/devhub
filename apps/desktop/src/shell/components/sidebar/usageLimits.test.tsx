@@ -55,9 +55,15 @@ describe("the usage-limits readout", () => {
             {
               cli: "claude",
               windows: [
-                { window: "5-hour", usedPercent: 12, resetsAt: NOW + 2 * HOUR },
+                {
+                  window: "5-hour",
+                  durationMinutes: 300,
+                  usedPercent: 12,
+                  resetsAt: NOW + 2 * HOUR,
+                },
                 {
                   window: "7-day",
+                  durationMinutes: 10_080,
                   usedPercent: 97.6,
                   resetsAt: NOW + 50 * HOUR,
                 },
@@ -156,7 +162,12 @@ describe("the usage-limits readout", () => {
               cli: "claude",
               note: "no_plan_limits",
               windows: [
-                { window: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+                {
+                  window: "5-hour",
+                  durationMinutes: 300,
+                  usedPercent: 40,
+                  resetsAt: NOW + HOUR,
+                },
               ],
             },
             { cli: "codex" },
@@ -180,14 +191,29 @@ describe("the usage-limits readout", () => {
             {
               cli: "claude",
               windows: [
-                { window: "5-hour", usedPercent: 90, resetsAt: NOW - HOUR },
-                { window: "7-day", usedPercent: 80, resetsAt: NOW + HOUR },
+                {
+                  window: "5-hour",
+                  durationMinutes: 300,
+                  usedPercent: 90,
+                  resetsAt: NOW - HOUR,
+                },
+                {
+                  window: "7-day",
+                  durationMinutes: 10_080,
+                  usedPercent: 80,
+                  resetsAt: NOW + HOUR,
+                },
               ],
             },
             {
               cli: "codex",
               windows: [
-                { window: "5-hour", usedPercent: 96, resetsAt: NOW - HOUR },
+                {
+                  window: "5-hour",
+                  durationMinutes: 300,
+                  usedPercent: 96,
+                  resetsAt: NOW - HOUR,
+                },
               ],
             },
           ],
@@ -243,7 +269,12 @@ describe("the usage-limits readout", () => {
               {
                 cli: "claude",
                 windows: [
-                  { window: "5-hour", usedPercent, resetsAt: NOW + HOUR },
+                  {
+                    window: "5-hour",
+                    durationMinutes: 300,
+                    usedPercent,
+                    resetsAt: NOW + HOUR,
+                  },
                 ],
               },
             ],
@@ -278,9 +309,15 @@ describe("the usage-limits readout", () => {
               {
                 cli: "claude",
                 windows: [
-                  { window: "5-hour", usedPercent: 5, resetsAt: NOW + HOUR },
+                  {
+                    window: "5-hour",
+                    durationMinutes: 300,
+                    usedPercent: 5,
+                    resetsAt: NOW + HOUR,
+                  },
                   {
                     window: "7-day",
+                    durationMinutes: 10_080,
                     usedPercent: 80,
                     resetsAt: NOW + 50 * HOUR,
                   },

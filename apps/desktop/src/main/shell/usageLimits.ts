@@ -89,6 +89,9 @@ export class UsageLimits {
 							...(note === undefined ? {} : { note }),
 							windows: windows.map((reading) => ({
 								window: reading.window,
+								...(reading.durationMinutes === undefined
+									? {}
+									: { durationMinutes: reading.durationMinutes }),
 								...(reading.usedPercent === undefined
 									? {}
 									: { usedPercent: reading.usedPercent }),
