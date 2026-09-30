@@ -49,6 +49,11 @@ const command: GitCommand = {
 	},
 };
 
+/** The work most of these make a worktree for: Issue #128. */
+const ISSUE_128 = { kind: "issue", number: 128 } as const;
+/** A pull request whose branch names no Issue: named by its own number. */
+const PULL_REQUEST = { kind: "pull", number: 130 } as const;
+
 let parent: string;
 let repository: string;
 
@@ -98,15 +103,65 @@ describe("reading a repository", () => {
 });
 
 describe("the worktree for a branch", () => {
-	it("is a sibling of the repository, named for the repository and the branch", async () => {
-		const path = await ensureWorktree(command, repository, "feature/128-tidy");
-		expect(path).toBe(join(parent, "widget_feature_128-tidy"));
+	it("is a sibling of the repository, named for the repository and the Issue", async () => {
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
+		expect(path).toBe(join(parent, "widget_128"));
 		expect((await stat(path)).isDirectory()).toBe(true);
+	});
+
+	it("is found where git says the branch is, whatever the folder is called", async () => {
+		// A worktree an earlier DevHub named after its branch. The folder the
+		// Issue's number would give is not where this work is, and making it
+		// would be a second checkout of the same Issue; git's record of which
+		// worktree holds which branch is the answer, and takes precedence.
+		const earlier = join(parent, "widget_feature_128-wip");
+		await runGit(
+			command,
+			["worktree", "add", "-b", "feature/128-wip", earlier],
+			{ cwd: repository },
+		);
+
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+		);
+
+		expect(path).toBe(earlier);
+		await expect(stat(join(parent, "widget_128"))).rejects.toThrow();
+	});
+
+	it("refuses the Issue's folder when it holds a different branch", async () => {
+		// The Issue's worktree is still on `feature/128-wip`, and the branch
+		// asked for is another. Opening that folder would put the agent on the
+		// wrong branch while claiming the right one; which to keep is the
+		// person's call, so the refusal names the branch the folder holds.
+		await ensureWorktree(command, repository, ISSUE_128, "feature/128-wip");
+		await expect(
+			ensureWorktree(command, repository, ISSUE_128, "feature/128-short-name"),
+		).rejects.toThrow(
+			/widget_128 is already the worktree of feature\/128-wip, not of feature\/128-short-name/u,
+		);
+		// And nothing was made on the way.
+		expect(
+			await worktreeForBranch(command, repository, "feature/128-short-name"),
+		).toBeUndefined();
 	});
 
 	it("checks out a branch that already exists rather than forking a new one", async () => {
 		await runGit(command, ["branch", "release"], { cwd: repository });
-		const path = await ensureWorktree(command, repository, "release");
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"release",
+		);
 		const branch = await runGit(
 			command,
 			["rev-parse", "--abbrev-ref", "HEAD"],
@@ -118,8 +173,18 @@ describe("the worktree for a branch", () => {
 	});
 
 	it("switches to the worktree a branch already has", async () => {
-		const first = await ensureWorktree(command, repository, "feature/128-tidy");
-		const again = await ensureWorktree(command, repository, "feature/128-tidy");
+		const first = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
+		const again = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
 		expect(again).toBe(first);
 	});
 
@@ -127,9 +192,19 @@ describe("the worktree for a branch", () => {
 		// The parent is the *main* worktree's parent, always. Measuring from the
 		// current one would nest, and where a branch lives would depend on where
 		// the person happened to be standing.
-		const first = await ensureWorktree(command, repository, "feature/128-tidy");
-		const second = await ensureWorktree(command, first, "fix/9-crash");
-		expect(second).toBe(join(parent, "widget_fix_9-crash"));
+		const first = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
+		const second = await ensureWorktree(
+			command,
+			first,
+			{ kind: "issue", number: 9 },
+			"fix/9-crash",
+		);
+		expect(second).toBe(join(parent, "widget_9"));
 	});
 
 	it("starts a new branch from the remote's default branch, not from HEAD", async () => {
@@ -149,7 +224,12 @@ describe("the worktree for a branch", () => {
 		await runGit(command, ["add", "SIDE"], { cwd: repository });
 		await runGit(command, ["commit", "-m", "side"], { cwd: repository });
 
-		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
 
 		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
 		const wanted = await runGit(command, ["rev-parse", "origin/main"], {
@@ -159,7 +239,12 @@ describe("the worktree for a branch", () => {
 	});
 
 	it("starts from the branch checked out when there is no remote at all", async () => {
-		const path = await ensureWorktree(command, repository, "feature/9-solo");
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/9-solo",
+		);
 		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
 		const wanted = await runGit(command, ["rev-parse", "main"], {
 			cwd: repository,
@@ -179,7 +264,7 @@ describe("the worktree for a branch", () => {
 			},
 		);
 		await expect(
-			ensureWorktree(command, repository, "feature/128-tidy"),
+			ensureWorktree(command, repository, ISSUE_128, "feature/128-tidy"),
 		).rejects.toThrow(/could not be fetched/u);
 	});
 
@@ -198,26 +283,32 @@ describe("the worktree for a branch", () => {
 		// The remote goes away; what was fetched from it stays.
 		await rm(origin, { recursive: true, force: true });
 
-		const path = await ensureWorktree(command, repository, "feature/128-tidy", {
-			allowStaleBase: true,
-		});
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+			{
+				allowStaleBase: true,
+			},
+		);
 
 		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
 		expect(made.trim()).toBe(wanted.trim());
 	});
 
 	it("refuses a directory that is in the way and is not a worktree", async () => {
-		const occupied = join(parent, "widget_feature_128-tidy");
+		const occupied = join(parent, "widget_128");
 		await mkdir(occupied);
 		await expect(
-			ensureWorktree(command, repository, "feature/128-tidy"),
+			ensureWorktree(command, repository, ISSUE_128, "feature/128-tidy"),
 		).rejects.toBeInstanceOf(NamedFailure);
 	});
 
 	it("refuses a branch name that is only whitespace", async () => {
-		await expect(ensureWorktree(command, repository, "   ")).rejects.toThrow(
-			/Enter a branch name/u,
-		);
+		await expect(
+			ensureWorktree(command, repository, ISSUE_128, "   "),
+		).rejects.toThrow(/Enter a branch name/u);
 	});
 });
 
@@ -248,8 +339,8 @@ describe("a branch that already exists somewhere", () => {
 		const path = await ensureWorktree(
 			command,
 			repository,
+			PULL_REQUEST,
 			"alice/fix-the-crash",
-			{ branchExistsAlready: true },
 		);
 
 		expect(
@@ -262,6 +353,23 @@ describe("a branch that already exists somewhere", () => {
 		expect(
 			(await runGit(command, ["rev-parse", "HEAD"], { cwd: path })).trim(),
 		).toBe(wanted.trim());
+		// A branch that names no Issue: the pull request's own number.
+		expect(path).toBe(join(parent, "widget_130"));
+	});
+
+	it("goes in the folder of the Issue its branch is for", async () => {
+		// Pull request #130 from `feature/128-short-name` is the work on Issue
+		// #128, and reviewing it goes where that Issue's worktree goes.
+		await originWith("feature/128-short-name");
+
+		const path = await ensureWorktree(
+			command,
+			repository,
+			PULL_REQUEST,
+			"feature/128-short-name",
+		);
+
+		expect(path).toBe(join(parent, "widget_128"));
 	});
 
 	it("is found on the remote it is actually on, whatever that remote is called", async () => {
@@ -281,9 +389,12 @@ describe("a branch that already exists somewhere", () => {
 			kind: "remote",
 			ref: "refs/remotes/alice/patch-1",
 		});
-		const path = await ensureWorktree(command, repository, "patch-1", {
-			branchExistsAlready: true,
-		});
+		const path = await ensureWorktree(
+			command,
+			repository,
+			PULL_REQUEST,
+			"patch-1",
+		);
 		expect(
 			(
 				await runGit(command, ["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -300,16 +411,19 @@ describe("a branch that already exists somewhere", () => {
 		await originWith("release");
 		expect(await findBranch(command, repository, "patch-1")).toBeUndefined();
 		await expect(
-			ensureWorktree(command, repository, "patch-1", {
-				branchExistsAlready: true,
-			}),
+			ensureWorktree(command, repository, PULL_REQUEST, "patch-1"),
 		).rejects.toThrow(/on neither this machine nor any remote/u);
 	});
 
 	it("says which worktree already has it, so no second one is asked for", async () => {
 		// git gives one branch one worktree and refuses a second. The person is
 		// offered the folder the work is already in, which is this answer.
-		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
 		expect(
 			await worktreeForBranch(command, repository, "feature/128-tidy"),
 		).toBe(path);
@@ -422,7 +536,7 @@ describe("a clone of an empty repository", () => {
 		// thing the person asked for, so the sentence is written where the
 		// reason is known — and it says what would fix it.
 		await expect(
-			ensureWorktree(command, empty, "feature/1-start"),
+			ensureWorktree(command, empty, ISSUE_128, "feature/1-start"),
 		).rejects.toThrow(/no commits yet/u);
 	});
 
@@ -555,7 +669,12 @@ describe("the name a branch has on the remote", () => {
 		await runGit(command, ["config", "push.default", "simple"], {
 			cwd: repository,
 		});
-		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
 		expect((await readRepository(command, path))?.branch).toBe(
 			"feature/128-tidy",
 		);

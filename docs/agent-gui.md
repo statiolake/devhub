@@ -1168,10 +1168,17 @@ sessions DevHub can list, so they have their New row only.
 - **Assign Issue** makes the folder before it asks which agent, and opens it
   only once the agent is chosen. Once the person picks a row of "Where to work
   on owner/repo#128", DevHub does the folder work and nothing else: it creates
-  the worktree (`../<repo>_feature_128-wip` for a new branch;
-  `../<repo>_<branch>`, with `/` as `_`, for the branch the work already has),
-  or takes the worktree that branch is already checked out in, or the root
-  checkout as it stands. No Workspace is opened or selected and no editor
+  the worktree, or takes the worktree that branch is already checked out in,
+  or the root checkout as it stands. A new worktree is named for the Issue,
+  not the branch: `../<repo>_128` for Issue #128 whichever branch it holds
+  (`feature/128-wip`, or the name it is renamed to later), and for a pull
+  request the Issue its branch names (`feature/128-…` → `../<repo>_128`, the
+  same rule the Sidebar links a Workspace to its Issue by), or the pull
+  request's own number when the branch names none. A branch already checked
+  out is found by git's record of which worktree holds it, whatever that
+  folder is called — the `../<repo>_feature_128-wip` folders earlier versions
+  made included. When `../<repo>_128` exists holding a different branch, or
+  is not a worktree at all, nothing is made and the reason is said. No Workspace is opened or selected and no editor
   starts, so the keyboard stays in the picker. It then asks which agent with
   New Agent's picker, word for word under the title "Agent for
   owner/repo#128", about that folder by its path on its machine: New rows,

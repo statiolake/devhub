@@ -1,27 +1,45 @@
-/**
- * Where a worktree for a branch goes.
- *
- * The rule is not DevHub's own: it is the one the author's shell has used for
- * every worktree on this machine (`gwt co`), and a second rule would put the
- * same branch in two places depending on which tool made it. So it is written
- * here once, as a rule about strings, and the main process and the page both
- * read it — the page to show where the worktree is going to land before the
- * person commits to it, main to actually make it there.
- *
- * The parent is always the *main* worktree's parent, never the current one's.
- * A worktree made from inside another worktree otherwise nests, and a branch's
- * directory would then depend on where you happened to be standing.
- */
+import { issueNumberFromBranch, type GitHubItem } from "./github.js";
 
 /**
- * A branch name as a directory name.
+ * Where the worktree for a piece of work goes.
  *
- * `/` is the interesting one — `feature/128-tidy` is one directory named
- * `feature_128-tidy`, not a `feature` directory with something in it — and the
- * rest are the characters a filesystem or a shell would argue about.
+ * A worktree is named for the *work* — the Issue it is for — and not for the
+ * branch it holds. A branch is renamed once somebody knows what the work is
+ * (`feature/128-wip` becomes `feature/128-short-name`), and a folder named
+ * after the old name would then be a second folder for the same Issue the
+ * next time the work is checked out for review. The number does not change.
+ *
+ * It is written here once, as a rule about strings, and the main process and
+ * the page both read it — the page to show where the worktree is going to land
+ * before the person commits to it, main to actually make it there.
+ *
+ * The parent is always the *main* worktree's parent, never the current one's.
+ * A worktree made from inside another worktree otherwise nests, and the work's
+ * directory would then depend on where you happened to be standing.
+ *
+ * The name is only where a *new* worktree goes. A branch that is already
+ * checked out somewhere is found by git's own record of which worktree holds
+ * which branch (`ensureWorktree`), whatever its folder is called — including
+ * the `{repo}_{branch}` folders earlier versions of DevHub made.
  */
-export function sanitizeBranchName(branch: string): string {
-  return branch.replace(/[/:\\*?"<>|]/gu, "_");
+
+/** The work a worktree is for: an Issue, or a pull request. */
+export type WorkItem = Pick<GitHubItem, "kind" | "number">;
+
+/**
+ * The number a worktree is named by: the Issue's.
+ *
+ * An Issue is its own number. A pull request is named by the Issue it is for
+ * when DevHub can tell, and DevHub tells the way it tells everywhere else —
+ * by the Issue number its branch carries (`issueNumberFromBranch`, the rule
+ * the Sidebar links a Workspace to its Issue by) — so an Issue's worktree and
+ * the worktree its pull request is reviewed in are the same folder. A pull
+ * request whose branch names no Issue is named by its own number.
+ */
+export function worktreeNumber(work: WorkItem, branch: string): number {
+  return work.kind === "issue"
+    ? work.number
+    : (issueNumberFromBranch(branch) ?? work.number);
 }
 
 /** The directory part of a path, with no trailing separator. */
@@ -38,15 +56,16 @@ export function baseName(path: string): string {
 }
 
 /**
- * `{main worktree's parent}/{repo}_{sanitized branch}` — a sibling of the
- * repository, named for the repository and the branch it holds.
+ * `{main worktree's parent}/{repo}_{number}` — a sibling of the repository,
+ * named for the repository and the Issue (see `worktreeNumber`).
  */
 export function worktreeDirectory(
   mainWorktree: string,
+  work: WorkItem,
   branch: string,
 ): string {
   const parent = parentDirectory(mainWorktree);
-  const name = `${baseName(mainWorktree)}_${sanitizeBranchName(branch)}`;
+  const name = `${baseName(mainWorktree)}_${String(worktreeNumber(work, branch))}`;
   return parent === "/" ? `/${name}` : `${parent}/${name}`;
 }
 

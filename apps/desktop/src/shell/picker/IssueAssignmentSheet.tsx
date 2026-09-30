@@ -47,7 +47,11 @@ import {
 } from "../components/shell/cloneDestination";
 import type { AgentActionWire, IssueRepository } from "../../ipc/contract";
 import { folderName, githubCloneTarget } from "../../model/projects";
-import { baseName, worktreeDirectory } from "../../model/worktrees";
+import {
+  baseName,
+  worktreeDirectory,
+  type WorkItem,
+} from "../../model/worktrees";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
 import { spokenFailure, toAppError } from "../failure";
 import { usePicker } from "./PickerContext";
@@ -363,8 +367,11 @@ function worktreeCount(places: number): string {
  *    and which branch to read is the agent's business.
  *
  * Each row says what choosing it does and where, in the folder names DevHub
- * will use (`worktreeDirectory`), because "a worktree of its own, beside the
- * repository" left a person to guess whether an existing folder was meant.
+ * will use (`worktreeDirectory`: `../widget_128`, named for the Issue whichever
+ * branch it holds), because "a worktree of its own, beside the repository"
+ * left a person to guess whether an existing folder was meant. A branch that
+ * is already checked out is offered in the folder git says holds it, whatever
+ * that folder is called.
  *
  * The first is the default when there is one, because a person assigning a pull
  * request has already decided what to work on and it is not a new branch. It is
@@ -416,7 +423,7 @@ function branchStep(
       // among, so they are all pinned and the field filters nothing: there is
       // no list here that typing could narrow.
       items: [],
-      pinned: folderRows(plan, root, wip),
+      pinned: folderRows(plan, root, item, wip),
       note: refusal ?? unreachableBranch(plan),
     });
     const choice: FolderChoice =
@@ -450,19 +457,20 @@ function branchStep(
 function folderRows(
   plan: AssignmentBranchWire,
   root: string,
+  work: WorkItem,
   wip: string,
 ): readonly PickerItem[] {
   const branch = plan.branch;
   const rootIsTheWork = branch !== undefined && plan.checkedOutAt === root;
   return [
-    ...existingBranchRows(plan, root),
+    ...existingBranchRows(plan, root, work),
     ...(branch === wip
       ? []
       : [
           {
             id: NEW_WORKTREE,
             label: `New worktree: ${wip}`,
-            detail: `Creates ${besideRoot(root, worktreeDirectory(root, wip))} on a new branch from origin's default branch`,
+            detail: `Creates ${besideRoot(root, worktreeDirectory(root, work, wip))} on a new branch from origin's default branch`,
             searchText: `new branch worktree ${wip}`,
           },
         ]),
@@ -489,6 +497,7 @@ function folderRows(
 function existingBranchRows(
   plan: AssignmentBranchWire,
   root: string,
+  work: WorkItem,
 ): readonly PickerItem[] {
   const branch = plan.branch;
   if (branch === undefined) return [];
@@ -515,14 +524,14 @@ function existingBranchRows(
     {
       id: EXISTING_BRANCH,
       label: `Check out ${branch} in a new worktree`,
-      detail: `Creates ${besideRoot(root, worktreeDirectory(root, branch))} on the branch this work already has`,
+      detail: `Creates ${besideRoot(root, worktreeDirectory(root, work, branch))} on the branch this work already has`,
       searchText: `${branch} checkout worktree`,
     },
   ];
 }
 
 /**
- * A folder as the branch question names it: `../widget_feature_128-wip` when
+ * A folder as the branch question names it: `../widget_128` when
  * it sits beside the repository, which is where DevHub puts worktrees, and
  * the whole path when it is anywhere else.
  */

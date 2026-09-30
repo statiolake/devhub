@@ -8,7 +8,7 @@
  *
  * So the picker's own search is what runs, for the repository's name, and this
  * only decides which of its answers are really that repository: a directory
- * whose name is the repository's (or one of its worktrees, `{repo}_{branch}`)
+ * whose name is the repository's (or one of its worktrees, `{repo}_{…}`)
  * and whose `origin` normalises to the same identity. The name narrows it
  * cheaply; the remote is what makes it true, because two people's `widget` are
  * not the same widget.
@@ -203,9 +203,9 @@ async function worktreesOf(
 }
 
 /**
- * `widget`, or a worktree of it: `widget_feature_128-tidy`. Anything else with
- * `widget` somewhere in its path is a directory the fuzzy search reached, not a
- * clone of this repository.
+ * `widget`, or a worktree of it: `widget_128`, or `widget_feature_128-tidy` as
+ * earlier versions named them. Anything else with `widget` somewhere in its
+ * path is a directory the fuzzy search reached, not a clone of this repository.
  */
 function namesRepository(path: string, repository: string): boolean {
 	const name = baseName(path);

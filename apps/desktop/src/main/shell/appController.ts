@@ -6173,15 +6173,13 @@ export class AppController {
 			? await ensureWorktree(
 					await this.gitCommand(runtimeFor(location)),
 					place.path,
+					// Which work this is — an Issue, or a pull request whose branch
+					// already exists — follows from the URL rather than from a second
+					// field beside it, because two facts saying the same thing can
+					// disagree. It also names the folder (`worktreeDirectory`).
+					item,
 					request.branch,
-					{
-						allowStaleBase: request.allowStaleBase,
-						// A pull request's branch is work that exists already; an
-						// Issue's is one being started now. Which it is follows from
-						// the URL rather than from a second field beside it, because
-						// two facts saying the same thing can disagree.
-						branchExistsAlready: item.kind === "pull",
-					},
+					{ allowStaleBase: request.allowStaleBase },
 				)
 			: place.path;
 		// A worktree of a repository on a host is beside it, on that host: git

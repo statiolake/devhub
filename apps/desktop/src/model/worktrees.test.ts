@@ -2,34 +2,61 @@ import { describe, expect, it } from "vitest";
 import {
   baseName,
   closingDeletesWorktree,
-  sanitizeBranchName,
   worktreeDirectory,
+  worktreeNumber,
 } from "./worktrees.js";
 
+const ISSUE_128 = { kind: "issue", number: 128 } as const;
+
 describe("a worktree's directory", () => {
-  it("is a sibling of the repository, named for both", () => {
-    expect(worktreeDirectory("/projects/widget", "feature/128-tidy")).toBe(
-      "/projects/widget_feature_128-tidy",
+  it("is a sibling of the repository, named for the Issue", () => {
+    expect(
+      worktreeDirectory("/projects/widget", ISSUE_128, "feature/128-wip"),
+    ).toBe("/projects/widget_128");
+  });
+
+  it("is the Issue's whatever the branch is called", () => {
+    // A branch renamed once the work has a name is still the same work, and
+    // checking it out again must not propose a second folder for it.
+    expect(
+      worktreeDirectory(
+        "/projects/widget",
+        ISSUE_128,
+        "feature/128-short-name",
+      ),
+    ).toBe("/projects/widget_128");
+    expect(worktreeDirectory("/projects/widget", ISSUE_128, "tidy-up")).toBe(
+      "/projects/widget_128",
     );
   });
 
-  it("is a sibling of the *main* worktree, wherever it was asked for", () => {
-    // A worktree made from inside another worktree must not nest: the branch's
-    // directory cannot depend on where the person was standing.
-    expect(worktreeDirectory("/projects/widget", "fix/9-crash")).toBe(
-      "/projects/widget_fix_9-crash",
-    );
+  it("is the Issue's for a pull request whose branch names the Issue", () => {
+    // Pull request #130 is the work on Issue #128: reviewing it goes back to
+    // the folder the Issue was worked in.
+    const pull = { kind: "pull", number: 130 } as const;
+    expect(worktreeNumber(pull, "feature/128-short-name")).toBe(128);
+    expect(
+      worktreeDirectory("/projects/widget", pull, "feature/128-short-name"),
+    ).toBe("/projects/widget_128");
   });
 
-  it("replaces every character a path would argue about", () => {
-    expect(sanitizeBranchName('a/b:c\\d*e?f"g<h>i|j')).toBe(
-      "a_b_c_d_e_f_g_h_i_j",
-    );
+  it("is the pull request's own for a branch that names no Issue", () => {
+    const pull = { kind: "pull", number: 130 } as const;
+    expect(worktreeNumber(pull, "alice/fix-the-crash")).toBe(130);
+    expect(
+      worktreeDirectory("/projects/widget", pull, "alice/fix-the-crash"),
+    ).toBe("/projects/widget_130");
+  });
+
+  it("does not read an Issue's number from its branch", () => {
+    // An Issue is its own number; a linked branch GitHub made for it may
+    // carry another, or none.
+    expect(worktreeNumber(ISSUE_128, "feature/9-crash")).toBe(128);
   });
 
   it("ignores a trailing separator on the repository", () => {
-    expect(worktreeDirectory("/projects/widget/", "main")).toBe(
-      "/projects/widget_main",
+    expect(worktreeDirectory("/projects/widget/", ISSUE_128, "main")).toBe(
+      "/projects/widget_128",
     );
   });
 

@@ -15,6 +15,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IssueFolderRequest } from "../../ipc/contract";
+import { parseGitHubItemUrl } from "../../model/github";
 import { worktreeDirectory } from "../../model/worktrees";
 import type { PickerValue } from "./PickerContext";
 import { PickerContext } from "./PickerContext";
@@ -28,20 +29,22 @@ const PULL_REQUEST = "https://github.com/example/widget/pull/128";
 
 /**
  * Main's half of the folder step, as far as the flow can tell: the worktree
- * for a branch lands where `worktreeDirectory` says, and the answer is that
+ * for the work's branch lands where `worktreeDirectory` says, and the answer is that
  * folder on its machine. Nothing is opened, so there is no outcome to apply.
  */
 function preparedFolder() {
-  return vi.fn((request: IssueFolderRequest) =>
-    Promise.resolve(
+  return vi.fn((request: IssueFolderRequest) => {
+    const item = parseGitHubItemUrl(request.issueUrl);
+    if (!item) throw new Error(`not an item URL: ${request.issueUrl}`);
+    return Promise.resolve(
       request.branch === undefined
         ? request.place
         : {
             ...request.place,
-            path: worktreeDirectory(request.place.path, request.branch),
+            path: worktreeDirectory(request.place.path, item, request.branch),
           },
-    ),
-  );
+    );
+  });
 }
 
 function mount(overrides: Partial<PickerValue> = {}) {
@@ -258,7 +261,7 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
-        place: { kind: "local", path: "/projects/widget_feature_128-wip" },
+        place: { kind: "local", path: "/projects/widget_128" },
         profileId: "claude",
         actionId: "implement",
         split: false,
@@ -415,7 +418,7 @@ describe("assigning an Issue", () => {
     );
     // And the sessions are read on that host, in the worktree.
     expect(listAgentSessions).toHaveBeenCalledWith(
-      { ...place, path: "/srv/widget_feature_128-wip" },
+      { ...place, path: "/srv/widget_128" },
       "claude",
     );
   });
@@ -579,12 +582,12 @@ describe("assigning an Issue", () => {
         name: /Check out alice\/fix-the-crash in a new worktree/u,
       }),
     ).toHaveTextContent(
-      "Creates ../widget_alice_fix-the-crash on the branch this work already has",
+      "Creates ../widget_128 on the branch this work already has",
     );
     expect(
       screen.getByRole("option", { name: /New worktree: feature\/128-wip/u }),
     ).toHaveTextContent(
-      "Creates ../widget_feature_128-wip on a new branch from origin's default branch",
+      "Creates ../widget_128 on a new branch from origin's default branch",
     );
     expect(
       screen.getByRole("option", { name: /^Root checkout/u }),
@@ -593,10 +596,36 @@ describe("assigning an Issue", () => {
     );
   });
 
+  it("names a pull request's new worktree by the Issue its branch is for", async () => {
+    // The owner's report: the branch was renamed from `feature/128-wip` once
+    // the work had a name, and checking it out again for review proposed a
+    // folder named after the new branch. The folder is the Issue's, so the
+    // pull request (#130) lands where the Issue's worktree does.
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "feature/128-short-name",
+        reachable: true,
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", "https://github.com/example/widget/pull/130");
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(
+      screen.getByRole("option", {
+        name: /Check out feature\/128-short-name in a new worktree/u,
+      }),
+    ).toHaveTextContent(
+      "Creates ../widget_128 on the branch this work already has",
+    );
+  });
+
   it("names an existing worktree by its folder, and offers no second row for the same branch", async () => {
     // The owner's case: an earlier `feature/128-wip` worktree, found by the
-    // Issue's number. Opening it is the answer; "New worktree: feature/128-wip"
-    // beside it would open the same folder while claiming to create one.
+    // Issue's number, in the folder an earlier DevHub named after the branch.
+    // git says where the branch is, so that folder is offered whatever it is
+    // called. Opening it is the answer; "New worktree: feature/128-wip" beside
+    // it would open the same folder while claiming to create one.
     mount({
       assignmentBranch: vi.fn().mockResolvedValue({
         branch: "feature/128-wip",
@@ -724,7 +753,7 @@ describe("assigning an Issue", () => {
       .fn()
       .mockRejectedValueOnce(
         refusal(
-          "/projects/widget_feature_128-wip already exists and is not a worktree for feature/128-wip.",
+          "/projects/widget_128 already exists and is not a worktree for feature/128-wip.",
         ),
       );
     const { assignIssue } = mount({
@@ -737,7 +766,7 @@ describe("assigning an Issue", () => {
     // The branch question again, redrawn with the reason under it.
     expect(
       await screen.findByText(
-        "/projects/widget_feature_128-wip already exists and is not a worktree for feature/128-wip.",
+        "/projects/widget_128 already exists and is not a worktree for feature/128-wip.",
       ),
     ).toBeVisible();
     expect(
@@ -1056,7 +1085,7 @@ describe("going on with an earlier session", () => {
 
     await vi.waitFor(() => {
       expect(listAgentSessions).toHaveBeenCalledWith(
-        { kind: "local", path: "/projects/widget_feature_128-wip" },
+        { kind: "local", path: "/projects/widget_128" },
         "claude",
       );
     });

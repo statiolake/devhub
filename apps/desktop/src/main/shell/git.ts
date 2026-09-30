@@ -26,7 +26,11 @@ import {
 	NamedFailure,
 	withSummary,
 } from "../../model/wire.js";
-import { baseName, worktreeDirectory } from "../../model/worktrees.js";
+import {
+	baseName,
+	worktreeDirectory,
+	type WorkItem,
+} from "../../model/worktrees.js";
 
 /**
  * A refusal in the words it should be read in.
@@ -838,15 +842,22 @@ export async function refreshOrigin(
 }
 
 /**
- * The worktree for a branch, made if it is not there yet.
+ * The worktree for a piece of work's branch, made if it is not there yet.
  *
- * The three cases are the ones `gwt co` has always had, and they are answered
- * the same way: an existing worktree for the branch is switched to rather than
- * duplicated, a directory in the way that is not a worktree is refused rather
- * than written into, and a branch that exists locally or on `origin` is checked
- * out rather than forked. A branch that does not exist yet starts from the
- * remote's default branch — see `baseRef`, which is where the one exception to
- * `gwt co` lives.
+ * Where the branch already is decides first: git's record of which worktree
+ * holds which branch is the answer to "is this work checked out", whatever the
+ * folder is called — so a worktree made by hand, or by an earlier DevHub that
+ * named folders after branches, is switched to rather than duplicated. Only a
+ * branch that is checked out nowhere gets a new worktree, and that one goes
+ * where `worktreeDirectory` says: named for the Issue, not for the branch.
+ *
+ * A directory already at that name is never written into. A worktree holding
+ * a different branch there is refused with the branch it holds — it may be the
+ * same Issue's work under an older name, and which of the two to keep is the
+ * person's call, not a folder to open under the wrong branch — and anything
+ * else there is refused as being in the way. A branch that exists locally or
+ * on a remote is checked out rather than forked; one that does not exist yet
+ * starts from the remote's default branch (see `baseRef`).
  */
 export interface WorktreeOptions {
 	/**
@@ -857,25 +868,22 @@ export interface WorktreeOptions {
 	 * to carry on anyway.
 	 */
 	readonly allowStaleBase?: boolean;
-	/**
-	 * The branch is work that already exists somewhere else — a pull request's
-	 * head — rather than a new one to start.
-	 *
-	 * It changes two things. The remote is fetched *before* the branch is looked
-	 * for, because a pull request opened since the last fetch is a branch this
-	 * clone has never heard of; and a name that is still nowhere afterwards is a
-	 * failure rather than a branch to create, because creating it would hand
-	 * somebody an empty branch under the name of the work they asked to review.
-	 */
-	readonly branchExistsAlready?: boolean;
 }
 
 export async function ensureWorktree(
 	command: GitCommand,
 	directory: string,
+	work: WorkItem,
 	branch: string,
 	options: WorktreeOptions = {},
 ): Promise<string> {
+	// A pull request's branch is work that exists already — somebody else's,
+	// perhaps opened since the last fetch — and an Issue's is one being started
+	// now. It changes two things: the remote is fetched *before* the branch is
+	// looked for, and a name that is still nowhere afterwards is a failure
+	// rather than a branch to create, because creating it would hand somebody
+	// an empty branch under the name of the work they asked to review.
+	const branchExistsAlready = work.kind === "pull";
 	const name = branch.trim();
 	if (name.length === 0) {
 		throw workspaceFailure("Enter a branch name.");
@@ -895,21 +903,27 @@ export async function ensureWorktree(
 		);
 	}
 
-	const existing = parseWorktrees(
+	const worktrees = parseWorktrees(
 		await runGit(command, ["worktree", "list", "--porcelain"], {
 			cwd: directory,
 		}),
-	).find((record) => record.branch === name);
+	);
+	const existing = worktrees.find((record) => record.branch === name);
 	if (existing) return existing.path;
 
 	// Somebody else's branch: bring it here before asking whether it is here.
 	// `findBranch` reads refs, which are only as current as the last fetch, so
 	// without this a pull request opened five minutes ago looks like a branch
 	// that does not exist and would be created empty.
-	if (options.branchExistsAlready)
-		await fetchOrigin(command, directory, options);
+	if (branchExistsAlready) await fetchOrigin(command, directory, options);
 
-	const target = worktreeDirectory(repository.mainWorktree, name);
+	const target = worktreeDirectory(repository.mainWorktree, work, name);
+	const occupant = worktrees.find((record) => record.path === target);
+	if (occupant) {
+		throw workspaceFailure(
+			`${target} is already the worktree of ${occupant.branch ?? "a detached HEAD"}, not of ${name}. Remove that worktree, or check ${name} out in it yourself, then try again.`,
+		);
+	}
 	if (await exists(command.runtime, target)) {
 		throw workspaceFailure(
 			`${target} already exists and is not a worktree for ${name}.`,
@@ -917,7 +931,7 @@ export async function ensureWorktree(
 	}
 
 	const here = await findBranch(command, directory, name);
-	if (options.branchExistsAlready && !here) {
+	if (branchExistsAlready && !here) {
 		throw workspaceFailure(
 			`${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
 		);
