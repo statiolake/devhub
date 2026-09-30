@@ -4,11 +4,13 @@
  * Which Issue and what to do with it, which clone, which branch, which agent —
  * and each answer decides the next question, which is why this is a chain of
  * steps rather than four sheets that open each other. The branch answer is
- * acted on before the agent is asked about: the folder is made or found and
- * opened as the selected Workspace, and the agent question is then New Agent's
- * about that Workspace, earlier sessions and all. Escape goes back one
- * question the whole way down, because that is the runner's rule and no step
- * here had to be told about it.
+ * acted on before the agent is asked about: the folder is made or found, and
+ * the agent question is then New Agent's about that folder by its path,
+ * earlier sessions and all. Nothing is opened until an agent is chosen — the
+ * folder becomes the selected Workspace in the same act that starts the agent,
+ * so no editor starts behind the question and the keyboard stays in it. Escape
+ * goes back one question the whole way down, because that is the runner's
+ * rule and no step here had to be told about it.
  *
  * Two kinds of "that did not work" show up in the same place, the line under
  * the field, and they are different things. A URL that is not an Issue URL is
@@ -24,7 +26,6 @@ import type {
   AssignmentBranchWire,
   IssueAssignment,
   IssueFolderRequest,
-  IssueFolderWire,
 } from "../../ipc/contract";
 import {
   wipBranchForIssue,
@@ -50,7 +51,7 @@ import { baseName, worktreeDirectory } from "../../model/worktrees";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
 import { spokenFailure, toAppError } from "../failure";
 import { usePicker } from "./PickerContext";
-import { WorkspaceAgentPicker } from "./AgentPickerSheet";
+import { FolderAgentPicker } from "./AgentPickerSheet";
 
 export interface IssueAssignmentSheetProps {
   readonly onDismiss: () => void;
@@ -96,7 +97,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
   const {
     findIssueRepositories,
     cloneRepository,
-    openIssueFolder,
+    prepareIssueFolder,
     assignIssue,
     cloneParentDirectories,
     assignmentBranch,
@@ -108,7 +109,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
       issueUrlStep({
         findIssueRepositories,
         cloneRepository,
-        openIssueFolder,
+        prepareIssueFolder,
         assignIssue,
         cloneParentDirectories,
         assignmentBranch,
@@ -117,7 +118,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     [
       agentActions,
       assignIssue,
-      openIssueFolder,
+      prepareIssueFolder,
       cloneParentDirectories,
       cloneRepository,
       findIssueRepositories,
@@ -134,9 +135,9 @@ interface FlowServices {
     signal?: AbortSignal,
   ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
-  readonly openIssueFolder: (
+  readonly prepareIssueFolder: (
     request: IssueFolderRequest,
-  ) => Promise<IssueFolderWire>;
+  ) => Promise<WorkspacePlaceWire>;
   readonly assignIssue: (request: IssueAssignment) => Promise<unknown>;
   readonly cloneParentDirectories: (
     signal?: AbortSignal,
@@ -348,7 +349,7 @@ function worktreeCount(places: number): string {
 
 /**
  * Which branch the agent works on, which is the same question as where — and,
- * once answered, that folder made or found and opened.
+ * once answered, that folder made or found.
  *
  * There are three answers and never a fourth, because an agent runs in the
  * repository's root checkout or in exactly one worktree of it:
@@ -377,9 +378,9 @@ function worktreeCount(places: number): string {
  * work already has a folder and this is which one.
  *
  * The folder work happens here, after the answer, rather than at the end of
- * the flow: the agent question that follows is about the Workspace this opens,
- * and its earlier sessions are the reason to ask it there. A failure — a
- * directory in the way — comes back to this question with the reason under it.
+ * the flow: the agent question that follows is about this folder, and its
+ * earlier sessions are the reason to ask it there. A failure — a directory in
+ * the way — comes back to this question with the reason under it.
  */
 function branchStep(
   services: FlowServices,
@@ -410,7 +411,7 @@ function branchStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${itemLabel(item)}`,
-      question: `Choose the folder of ${folderName(root)} the agent works in. DevHub opens it as a workspace, then asks which agent.`,
+      question: `Choose the folder of ${folderName(root)} the agent works in. DevHub makes it if need be, then asks which agent; the folder opens as a workspace when the agent starts.`,
       // Every row is an answer to the question rather than a name to search
       // among, so they are all pinned and the field filters nothing: there is
       // no list here that typing could narrow.
@@ -433,7 +434,7 @@ function branchStep(
                   ? plan.branch
                   : undefined,
           };
-    return openFolder(services, input, work, choice, false);
+    return prepareFolder(services, input, work, choice, false);
   };
 }
 
@@ -632,7 +633,7 @@ function cloneDestinationStep(
   };
 }
 
-/** The folder the branch question settled on, before it is opened. */
+/** The folder the branch question settled on, before it is made or found. */
 interface FolderChoice {
   /** The clone, or — for a branch already checked out — the folder it is in. */
   readonly place: WorkspacePlaceWire;
@@ -641,8 +642,7 @@ interface FolderChoice {
 }
 
 /**
- * Make or find the folder and open it as the selected Workspace, then ask
- * which agent.
+ * Make or find the folder, then ask which agent — opening nothing.
  *
  * Run from inside the step that asked for it, so a failure re-asks that step
  * with the reason under it. The one failure that is a question rather than a
@@ -650,21 +650,21 @@ interface FolderChoice {
  * successful fetch is on disk, and whether to start from it is the person's
  * call.
  */
-async function openFolder(
+async function prepareFolder(
   services: FlowServices,
   input: WizardInput,
   work: Work,
   choice: FolderChoice,
   allowStaleBase: boolean,
 ): Promise<WizardStep> {
-  let opened: IssueFolderWire;
+  let folder: WorkspacePlaceWire;
   try {
-    opened = await input.working(
+    folder = await input.working(
       choice.branch === undefined
-        ? `Opening ${baseName(choice.place.path)}…`
+        ? `Reading ${baseName(choice.place.path)}…`
         : `Setting up the worktree for ${choice.branch}…`,
       () =>
-        services.openIssueFolder({
+        services.prepareIssueFolder({
           issueUrl: gitHubItemUrl(work.item),
           place: choice.place,
           ...(choice.branch === undefined ? {} : { branch: choice.branch }),
@@ -675,32 +675,36 @@ async function openFolder(
     if (toAppError(error).code !== "git_fetch_failed") throw error;
     return staleBaseStep(services, work, choice, error);
   }
-  return agentStep(services, work, opened);
+  return agentStep(services, work, folder);
 }
 
 /**
- * Which agent works on it, in the Workspace that is now open and selected.
+ * Which agent works on it, in the folder the branch question settled on.
  *
  * New Agent's question, word for word, with the Issue in the title: a new
  * session of one of the profiles, or one of the earlier sessions that ran in
- * that folder — the reason the folder is opened first. A worktree just made
- * has had no session, so it offers the New rows only, the same as New Agent
- * in it would. A session taken is resumed and then told about the Issue.
+ * that folder, read by its path on its machine — the reason the folder is made
+ * first. A worktree just made has had no session, so it offers the New rows
+ * only, the same as New Agent in it would. A session taken is resumed and then
+ * told about the Issue.
  *
- * Escape goes back to the branch question and leaves the Workspace open:
- * it is a folder opened like any other, and closing it is its own act.
+ * The answer is what opens the folder: `assignIssue` opens it as the selected
+ * Workspace and starts the agent in one act, so the Workspace, its editor and
+ * the keyboard move only once there is an agent to go to. Escape goes back to
+ * the branch question and opens nothing; a worktree it made stays on disk,
+ * where the branch question's "Existing worktree" row finds it next time.
  */
 function agentStep(
   services: FlowServices,
   work: Work,
-  opened: IssueFolderWire,
+  folder: WorkspacePlaceWire,
 ): WizardStep {
   const { item } = work;
   return async (input) => {
     const agent = await input.sheet<AgentChoice>((controls) => (
-      <WorkspaceAgentPicker
+      <FolderAgentPicker
         title={`Agent for ${itemLabel(item)}`}
-        place={opened.place}
+        place={folder}
         step={controls.step}
         failure={controls.failure}
         onChoose={controls.answer}
@@ -710,7 +714,7 @@ function agentStep(
     await input.working(`Starting the agent for ${itemLabel(item)}…`, () =>
       services.assignIssue({
         issueUrl: gitHubItemUrl(item),
-        workspaceId: opened.workspaceId,
+        place: folder,
         profileId: agent.profileId,
         actionId: work.actionId,
         split: agent.split,
@@ -748,7 +752,7 @@ function staleBaseStep(
     // Escape is the other answer, and it is the runner's: back to the branch,
     // where a branch that already exists needs no fetch at all.
     return answer.id === USE_STALE_BASE
-      ? openFolder(services, input, work, choice, true)
+      ? prepareFolder(services, input, work, choice, true)
       : undefined;
   };
 }

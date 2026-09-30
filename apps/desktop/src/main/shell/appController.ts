@@ -64,7 +64,6 @@ import {
 	type AssignmentBranchWire,
 	type IssueAssignment,
 	type IssueFolderRequest,
-	type IssueFolderWire,
 	type WorkspacePlaceWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
@@ -6149,25 +6148,21 @@ export class AppController {
 	}
 
 	/**
-	 * The folder an Issue is worked in: made or found, opened, and selected.
+	 * The folder an Issue is worked in: made or found, and nothing more.
 	 *
 	 * The worktree, if one was asked for — or the one the branch is already in,
-	 * which `ensureWorktree` switches to rather than duplicating — and then the
-	 * folder opened as a Workspace, which is also going there. This comes before
-	 * the agent question, not with it, because the agent question is about a
-	 * folder: its earlier sessions are what a person assigning review comments
-	 * wants, and a question asked before the folder was settled could only guess
-	 * which folder it was about. A person who then declines to start an agent
-	 * keeps the Workspace, the same as one opened any other way.
-	 *
-	 * Which workspace it is comes from the selection rather than from matching
-	 * the path back, because opening a folder *is* selecting it — for a folder
-	 * already open as much as for a new one — and re-deriving it from a path
-	 * would be a second answer to a question the model has already answered.
+	 * which `ensureWorktree` switches to rather than duplicating — or the clone
+	 * as it stands. This comes before the agent question because the question
+	 * is about a folder: its earlier sessions, read by path on its machine, are
+	 * what a person assigning review comments wants. Opening it is not part of
+	 * this: a Workspace opened here would be selected, its editor started and the
+	 * keyboard taken from the question still being asked. The folder becomes a
+	 * Workspace in `assignIssue`, once an agent is chosen for it, and a person
+	 * who declines keeps only the worktree on disk.
 	 */
-	private async openIssueFolder(
+	private async prepareIssueFolder(
 		request: IssueFolderRequest,
-	): Promise<IssueFolderWire> {
+	): Promise<WorkspacePlaceWire> {
 		const item = parseGitHubItemUrl(request.issueUrl);
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
@@ -6192,30 +6187,18 @@ export class AppController {
 		// A worktree of a repository on a host is beside it, on that host: git
 		// made it there, and there is nowhere else it could be. So the place the
 		// flow was working in decides the machine, and only the path moves.
-		const opening = requestedLocation({ ...place, path: target });
-		const outcome = await this.openFolder(opening);
-		const workspaceId = this.openedWorkspaceId(opening);
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (workspace === undefined) {
-			throw new Error(`the workspace opening ${target} selected is not there`);
-		}
-		// The Workspace's own folder rather than the string git answered with:
-		// the root is canonicalised on the way in, and New Agent reads a
-		// Workspace's sessions from its root, so this is the same folder asked
-		// the same way.
-		return {
-			outcome,
-			workspaceId,
-			place: relocatedOnSameMachine(
-				workspace.location,
-				workspace.location.path,
-			),
-		};
+		return { ...place, path: target };
 	}
 
 	/**
-	 * Start the agent for an Issue in the Workspace its folder opened as, and
-	 * tell it about the Issue.
+	 * Open the Issue's folder, start the agent chosen for it there, and tell it
+	 * about the Issue — one act, because it is what choosing the agent means.
+	 *
+	 * Opening is going there, the same as opening any folder: the Workspace is
+	 * selected (made, or the one already open for that folder) and the keyboard
+	 * lands as `arrive` says. Which workspace it is comes from the selection
+	 * rather than from matching the path back, because opening a folder *is*
+	 * selecting it and the root is canonicalised on the way in.
 	 *
 	 * Nothing is written down about which Issue this workspace is for. The
 	 * branch the flow made carries the number (`feature/128-…`), and the branch
@@ -6229,6 +6212,14 @@ export class AppController {
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
 		}
+		const opening = requestedLocation(request.place);
+		await this.openFolder(opening);
+		// Not `openFolder(opening, withAgent)`: this flow has more to do around
+		// the creation than that shortcut can express — the Agent goes beside the
+		// editor when the person asked for that, it may resume a session, and the
+		// Issue's prompt is queued against whichever Agent it produced — but
+		// *which workspace opening produced* is the same fact, read the same way.
+		const workspaceId = this.openedWorkspaceId(opening);
 		const agentsBefore = new Set(
 			this.coordinator.model.workspaces.flatMap((workspace) =>
 				workspace.agents.map((agent) => agent.id),
@@ -6238,7 +6229,7 @@ export class AppController {
 		// same queue a new Agent's first message goes through.
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
-			workspaceId: parseWorkspaceId(request.workspaceId),
+			workspaceId,
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 			agentPresentation: agentPresentation(request.presentation),
@@ -6696,10 +6687,10 @@ export class AppController {
 			}
 		});
 		handle(
-			CHANNELS.openIssueFolder,
+			CHANNELS.prepareIssueFolder,
 			async (_event, request: IssueFolderRequest) => {
 				try {
-					return await this.openIssueFolder(request);
+					return await this.prepareIssueFolder(request);
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}

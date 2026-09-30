@@ -3,8 +3,8 @@
  * or an earlier session that ran in the folder the Agent is for.
  *
  * Three flows ask it — the sidebar's `+`, which starts an Agent in a Workspace
- * that is already open; Assign Issue, once it has opened the Issue's folder as
- * a Workspace (both through `WorkspaceAgentPicker`, in the same words); and the
+ * that is already open; Assign Issue, once it has made the Issue's folder
+ * (both through `FolderAgentPicker`, in the same words); and the
  * workspace picker's Command gesture, which starts one in the Workspace it is
  * about to open — and they are the same question about the same list. A second
  * copy of it would be a list that could drift, and a person cannot know which

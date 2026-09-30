@@ -245,9 +245,10 @@ presentation = "gui"        # optional override of [agents] default_presentation
                             # other way. Both list "New Claude Session" first, then
                             # the earlier Claude and Codex sessions that ran in the
                             # folder, to go on with (--resume / thread resume).
-                            # Assign Issue creates or opens the Issue's folder and
-                            # switches to it first, then asks with New Agent's list
-                            # for that Workspace; cancelling there keeps the folder.
+                            # Assign Issue creates the Issue's worktree (or takes the
+                            # existing folder) first, asks with New Agent's list for
+                            # that folder, and opens it as a Workspace only with the
+                            # agent; cancelling there leaves the worktree on disk.
                             # A GUI Agent runs its CLI in structured mode (`claude -p`
                             # stream-json, `codex app-server`) under a small host in its
                             # tmux session, so it outlives a DevHub restart like a TUI one.

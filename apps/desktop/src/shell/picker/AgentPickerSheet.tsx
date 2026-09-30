@@ -7,8 +7,8 @@
  * workspace picker's Command gesture. What is left here is the only part that
  * differs: the Workspace is already open, so its folder is where the earlier
  * sessions are read, and the answer is dispatched straight at it. Assign Issue
- * asks the same question the same way (`WorkspaceAgentPicker`), once it has
- * opened the Issue's folder.
+ * asks the same question the same way (`FolderAgentPicker`), about the Issue's
+ * folder by its path, before that folder is opened as anything.
  */
 
 import type { ReactNode } from "react";
@@ -38,7 +38,7 @@ export function AgentPickerSheet({
       : undefined;
 
   return (
-    <WorkspaceAgentPicker
+    <FolderAgentPicker
       title="New Agent"
       // Until the projection has arrived there is no folder to read, and the
       // New rows are the whole of the answer.
@@ -59,10 +59,14 @@ export function AgentPickerSheet({
   );
 }
 
-export interface WorkspaceAgentPickerProps {
+export interface FolderAgentPickerProps {
   /** "New Agent", or what the agent is for — the one thing that differs. */
   readonly title: string;
-  /** The Workspace's folder, on its machine, whose earlier sessions are offered. */
+  /**
+   * The folder the agent will run in, on its machine, whose earlier sessions
+   * are offered: a Workspace's root, or a folder not yet opened as one. The
+   * sessions are read by path, so the two are the same question.
+   */
   readonly place: WorkspacePlaceWire | undefined;
   /** Which question this is, when it is one of a flow's. */
   readonly step?: number;
@@ -73,28 +77,28 @@ export interface WorkspaceAgentPickerProps {
 }
 
 /**
- * "Which agent, in this Workspace?" — New Agent's question, and Assign Issue's
- * once its folder is open. One question with one wording: an Issue changes
+ * "Which agent, in this folder?" — New Agent's question, and Assign Issue's
+ * once its folder is made. One question with one wording: an Issue changes
  * what the agent is told after it starts, not what starting one looks like.
  */
-export function WorkspaceAgentPicker({
+export function FolderAgentPicker({
   title,
   place,
   step,
   failure,
   onChoose,
   onCancel,
-}: WorkspaceAgentPickerProps) {
+}: FolderAgentPickerProps) {
   const hint: ReactNode =
     failure === undefined ? (
-      "The agent starts at the workspace root. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI."
+      "The agent starts in this folder. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI."
     ) : (
       <span className="picker-note-failure">{failure}</span>
     );
   return (
     <AgentProfilePicker
       title={title}
-      question="Start a new session, or go on with one of this workspace's earlier ones."
+      question="Start a new session, or go on with one of this folder's earlier ones."
       step={step}
       hint={hint}
       sessionsIn={place}

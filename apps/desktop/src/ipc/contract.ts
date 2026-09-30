@@ -152,16 +152,16 @@ export interface AssignmentBranchWire {
 	readonly checkedOutAt?: string;
 }
 
-/** Everything the Issue flow asked, once it has all the answers. */
 /**
  * Where an Issue is to be worked on: the clone, and the branch that decides
  * which folder of it.
  *
- * The first half of assigning an Issue. DevHub does the folder work — makes the
- * worktree, or finds the one the branch is already in, or takes the clone as it
- * stands — and opens that folder as a Workspace, *before* anybody is asked
- * which agent. The agent question is then New Agent's, about a Workspace that
- * exists, so it offers that folder's earlier sessions like New Agent does.
+ * The first half of assigning an Issue, and only the folder work: DevHub makes
+ * the worktree, or finds the one the branch is already in, or takes the clone
+ * as it stands, and answers with that folder. Nothing is opened. The agent
+ * question is asked about the folder by its path — its earlier sessions are
+ * read there — and the folder becomes a Workspace only when an agent is chosen
+ * for it, so the question keeps the keyboard and no editor starts behind it.
  */
 export interface IssueFolderRequest {
 	readonly issueUrl: string;
@@ -182,22 +182,14 @@ export interface IssueFolderRequest {
 	readonly allowStaleBase?: boolean;
 }
 
-/** The Workspace the Issue's folder opened as, now the selected one. */
-export interface IssueFolderWire {
-	readonly outcome: AppOutcome;
-	readonly workspaceId: string;
-	/** The Workspace's folder, on its machine — where its sessions are read. */
-	readonly place: WorkspacePlaceWire;
-}
-
 /**
- * The second half: start an agent in the Workspace the folder opened as, and
- * tell it about the Issue.
+ * The second half: open the folder as the selected Workspace, start an agent
+ * in it, and tell it about the Issue — one act, taken once the agent is chosen.
  */
 export interface IssueAssignment {
 	readonly issueUrl: string;
-	/** The Workspace `openIssueFolder` answered with. */
-	readonly workspaceId: string;
+	/** The folder `prepareIssueFolder` answered with, on its machine. */
+	readonly place: WorkspacePlaceWire;
 	readonly profileId: string;
 	/**
 	 * Which action to start the agent with, from `agent_actions`.
@@ -211,7 +203,7 @@ export interface IssueAssignment {
 	/** TUI or GUI, as the agent row said when it was taken (⌥ flips it). */
 	readonly presentation: "tui" | "gui";
 	/**
-	 * An earlier session of the profile's CLI in that Workspace's folder, which
+	 * An earlier session of the profile's CLI in that folder, which
 	 * the agent goes on with and is then told about the Issue. Absent starts
 	 * afresh.
 	 */
@@ -1009,12 +1001,15 @@ export interface WorkspaceOpeningBridge {
 	): Promise<AssignmentBranchWire>;
 	listBranches(place: WorkspacePlaceWire): Promise<readonly string[]>;
 	/**
-	 * Make or find the folder the Issue is worked in, and open it as the
-	 * selected Workspace. Throws what to do about it — a directory in the way,
-	 * a fetch that failed — because the branch question shows the reason.
+	 * Make or find the folder the Issue is worked in, and answer with it —
+	 * opening nothing. Throws what to do about it — a directory in the way, a
+	 * fetch that failed — because the branch question shows the reason.
 	 */
-	openIssueFolder(request: IssueFolderRequest): Promise<IssueFolderWire>;
-	/** Start the agent in that Workspace and queue the Issue's action for it. */
+	prepareIssueFolder(request: IssueFolderRequest): Promise<WorkspacePlaceWire>;
+	/**
+	 * Open that folder as the selected Workspace, start the agent in it, and
+	 * queue the Issue's action for it.
+	 */
 	assignIssue(request: IssueAssignment): Promise<AppOutcome>;
 }
 
@@ -1493,7 +1488,7 @@ export const CHANNELS = {
 	previewAgentSession: "devhub:preview-agent-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
-	openIssueFolder: "devhub:open-issue-folder",
+	prepareIssueFolder: "devhub:prepare-issue-folder",
 	assignIssue: "devhub:assign-issue",
 	getRepositoryStatus: "devhub:get-repository-status",
 	getUsageLimits: "devhub:get-usage-limits",

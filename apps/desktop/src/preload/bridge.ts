@@ -29,7 +29,6 @@ import {
 	type GitHubLoginWire,
 	type IssueAssignment,
 	type IssueFolderRequest,
-	type IssueFolderWire,
 	type IssueRepository,
 	type LayoutPreviewWire,
 	type ModalRequest,
@@ -233,11 +232,11 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 			ipcRenderer.invoke(CHANNELS.listBranches, place) as Promise<
 				readonly string[]
 			>,
-		openIssueFolder: (request: IssueFolderRequest) =>
+		prepareIssueFolder: (request: IssueFolderRequest) =>
 			ipcRenderer.invoke(
-				CHANNELS.openIssueFolder,
+				CHANNELS.prepareIssueFolder,
 				request,
-			) as Promise<IssueFolderWire>,
+			) as Promise<WorkspacePlaceWire>,
 		assignIssue: (request: IssueAssignment) =>
 			ipcRenderer.invoke(CHANNELS.assignIssue, request) as Promise<AppOutcome>,
 	};

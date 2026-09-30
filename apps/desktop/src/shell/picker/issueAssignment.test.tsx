@@ -4,16 +4,16 @@
  * Assigning an Issue, as the person walks it.
  *
  * The flow's value is in what it *asks*, what it does between the questions,
- * and what it finally sends, so that is what these check: the folder made and
- * opened before the agent is asked about, the agent question listing that
- * folder's sessions, a URL that is not an Issue URL, a folder that could not be
- * made, and Escape coming back to a question that has already been answered.
+ * and what it finally sends, so that is what these check: the folder made —
+ * and not opened — before the agent is asked about, the agent question listing
+ * that folder's sessions by its path, the folder opened only with the agent, a
+ * URL that is not an Issue URL, a folder that could not be made, and Escape
+ * coming back to a question that has already been answered.
  */
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppOutcome } from "../../ipc/appShell";
 import type { IssueFolderRequest } from "../../ipc/contract";
 import { worktreeDirectory } from "../../model/worktrees";
 import type { PickerValue } from "./PickerContext";
@@ -26,33 +26,30 @@ afterEach(cleanup);
 const ISSUE = "https://github.com/example/widget/issues/128";
 const PULL_REQUEST = "https://github.com/example/widget/pull/128";
 
-/** The Workspace every folder opens as, in these tests. */
-const WORKSPACE = "workspace-1";
-
 /**
  * Main's half of the folder step, as far as the flow can tell: the worktree
- * for a branch lands where `worktreeDirectory` says, and the folder opens as
- * the selected Workspace.
+ * for a branch lands where `worktreeDirectory` says, and the answer is that
+ * folder on its machine. Nothing is opened, so there is no outcome to apply.
  */
-function openedFolder() {
+function preparedFolder() {
   return vi.fn((request: IssueFolderRequest) =>
-    Promise.resolve({
-      outcome: {} as AppOutcome,
-      workspaceId: WORKSPACE,
-      place:
-        request.branch === undefined
-          ? request.place
-          : {
-              ...request.place,
-              path: worktreeDirectory(request.place.path, request.branch),
-            },
-    }),
+    Promise.resolve(
+      request.branch === undefined
+        ? request.place
+        : {
+            ...request.place,
+            path: worktreeDirectory(request.place.path, request.branch),
+          },
+    ),
   );
 }
 
 function mount(overrides: Partial<PickerValue> = {}) {
   const assignIssue = vi.fn().mockResolvedValue(undefined);
-  const openIssueFolder = openedFolder();
+  const prepareIssueFolder = preparedFolder();
+  // The page's own way to open or select anything. The flow must not reach
+  // for it: the folder is opened by `assignIssue`, with the agent.
+  const dispatch = vi.fn().mockResolvedValue(undefined);
   // One repository, checked out in one place: the shape most of these walk.
   const findIssueRepositories = vi.fn().mockResolvedValue([
     {
@@ -93,10 +90,11 @@ function mount(overrides: Partial<PickerValue> = {}) {
         },
       ],
     },
+    dispatch,
     findIssueRepositories,
     listBranches,
     cloneRepository,
-    openIssueFolder,
+    prepareIssueFolder,
     assignIssue,
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi
@@ -122,7 +120,10 @@ function mount(overrides: Partial<PickerValue> = {}) {
   );
   return {
     assignIssue,
-    openIssueFolder: value.openIssueFolder as ReturnType<typeof openedFolder>,
+    dispatch,
+    prepareIssueFolder: value.prepareIssueFolder as ReturnType<
+      typeof preparedFolder
+    >,
     findIssueRepositories,
     listBranches,
     cloneRepository,
@@ -145,7 +146,7 @@ function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
     previewAgentSession: vi.fn().mockResolvedValue([]),
     listBranches: vi.fn().mockResolvedValue([]),
     cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
-    openIssueFolder: openedFolder(),
+    prepareIssueFolder: preparedFolder(),
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
@@ -223,11 +224,11 @@ function refusal(summary: string): Error {
 }
 
 describe("assigning an Issue", () => {
-  it("opens the folder, then asks which agent, then starts it with the Issue", async () => {
+  it("makes the folder, asks which agent, then opens it with the agent and the Issue", async () => {
     // The Issue, which folder, and the agent. The repository is not asked
     // because there is exactly one clone, and the Issue has no branch of its
     // own: DevHub offers `feature/128-wip` and the agent is told to rename it.
-    const { openIssueFolder, assignIssue } = mount();
+    const { prepareIssueFolder, assignIssue, dispatch } = mount();
 
     await answer("Assign Issue", ISSUE);
     await choose(
@@ -238,28 +239,34 @@ describe("assigning an Issue", () => {
       name: /Agent for example\/widget#128/u,
     });
 
-    // The folder is made and opened before the agent is asked about.
-    expect(openIssueFolder).toHaveBeenCalledWith({
+    // The folder is made before the agent is asked about — and only made:
+    // nothing opens or selects a Workspace while the question is up, so no
+    // editor starts behind it and the keyboard stays in it.
+    expect(prepareIssueFolder).toHaveBeenCalledWith({
       issueUrl: ISSUE,
       place: { kind: "local", path: "/projects/widget" },
       branch: "feature/128-wip",
       allowStaleBase: false,
     });
     expect(assignIssue).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
 
     await answer(/Agent for example\/widget#128/u);
 
+    // Choosing the agent is what opens the folder: the worktree, by its path
+    // on its machine, with the agent and the Issue's action to queue for it.
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
-        workspaceId: WORKSPACE,
+        place: { kind: "local", path: "/projects/widget_feature_128-wip" },
         profileId: "claude",
         actionId: "implement",
         split: false,
         presentation: "tui",
       });
     });
-    expect(openIssueFolder).toHaveBeenCalledTimes(1);
+    expect(prepareIssueFolder).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("asks the agent question in New Agent's words, with the Issue in the title", async () => {
@@ -272,10 +279,10 @@ describe("assigning an Issue", () => {
       name: /Agent for example\/widget#128/u,
     });
     expect(dialog).toHaveTextContent(
-      "Start a new session, or go on with one of this workspace's earlier ones.",
+      "Start a new session, or go on with one of this folder's earlier ones.",
     );
     expect(dialog).toHaveTextContent(
-      "The agent starts at the workspace root. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI.",
+      "The agent starts in this folder. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI.",
     );
   });
 
@@ -313,7 +320,7 @@ describe("assigning an Issue", () => {
   });
 
   it("asks which repository only when there are two of them", async () => {
-    const { openIssueFolder } = mount({
+    const { prepareIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
           place: { kind: "local", path: "/projects/widget" },
@@ -335,7 +342,7 @@ describe("assigning an Issue", () => {
     await choose(/Where to work on/u, /Root checkout/u);
 
     await vi.waitFor(() => {
-      expect(openIssueFolder).toHaveBeenCalledWith({
+      expect(prepareIssueFolder).toHaveBeenCalledWith({
         issueUrl: ISSUE,
         place: { kind: "local", path: "/other/widget" },
         allowStaleBase: false,
@@ -347,7 +354,7 @@ describe("assigning an Issue", () => {
     // A pull request whose branch is already checked out somewhere. git gives
     // one branch one worktree, so the honest offer is the folder the work is
     // already in — opening it, not making a second one git would refuse.
-    const { openIssueFolder } = mount({
+    const { prepareIssueFolder } = mount({
       assignmentBranch: vi.fn().mockResolvedValue({
         branch: "alice/fix-the-crash",
         reachable: true,
@@ -362,7 +369,7 @@ describe("assigning an Issue", () => {
     );
 
     await vi.waitFor(() => {
-      expect(openIssueFolder).toHaveBeenCalledWith({
+      expect(prepareIssueFolder).toHaveBeenCalledWith({
         issueUrl: PULL_REQUEST,
         place: {
           kind: "local",
@@ -384,7 +391,7 @@ describe("assigning an Issue", () => {
     };
     const assignmentBranch = vi.fn().mockResolvedValue({ reachable: false });
     const listAgentSessions = vi.fn().mockResolvedValue([]);
-    const { openIssueFolder } = mount({
+    const { prepareIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
           place,
@@ -398,7 +405,7 @@ describe("assigning an Issue", () => {
     await choose(/Where to work on/u, /New worktree/u);
     await screen.findByRole("dialog", { name: /Agent for/u });
 
-    expect(openIssueFolder).toHaveBeenCalledWith(
+    expect(prepareIssueFolder).toHaveBeenCalledWith(
       expect.objectContaining({ place, branch: "feature/128-wip" }),
     );
     expect(assignmentBranch).toHaveBeenCalledWith(
@@ -442,20 +449,22 @@ describe("assigning an Issue", () => {
   it("makes no branch when the work stays in the root checkout", async () => {
     // Which also means it is linked to no Issue unless the branch already
     // happens to name one — see the branch-only linking rule.
-    const { openIssueFolder, assignIssue } = mount();
+    const { prepareIssueFolder, assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
     await choose(/Where to work on/u, /Root checkout/u);
     await answer(/Agent for/u);
 
-    expect(openIssueFolder).toHaveBeenCalledWith({
+    expect(prepareIssueFolder).toHaveBeenCalledWith({
       issueUrl: ISSUE,
       place: { kind: "local", path: "/projects/widget" },
       allowStaleBase: false,
     });
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({ workspaceId: WORKSPACE }),
+        expect.objectContaining({
+          place: { kind: "local", path: "/projects/widget" },
+        }),
       );
     });
   });
@@ -527,7 +536,7 @@ describe("assigning an Issue", () => {
     const assignmentBranch = vi
       .fn()
       .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true });
-    const { openIssueFolder } = mount({
+    const { prepareIssueFolder } = mount({
       assignmentBranch,
     } as unknown as Partial<PickerValue>);
 
@@ -538,7 +547,7 @@ describe("assigning an Issue", () => {
     );
 
     await vi.waitFor(() => {
-      expect(openIssueFolder).toHaveBeenCalledWith({
+      expect(prepareIssueFolder).toHaveBeenCalledWith({
         issueUrl: PULL_REQUEST,
         place: { kind: "local", path: "/projects/widget" },
         branch: "alice/fix-the-crash",
@@ -679,11 +688,11 @@ describe("assigning an Issue", () => {
     expect(screen.getByText("Step 2")).toBeVisible();
   });
 
-  it("takes Escape back to the question before, leaving the opened folder open", async () => {
-    // Declining to start an agent is not undoing the folder: it was opened
-    // like any other Workspace, and closing it is its own act. Nothing here
-    // asks main to take it back, and nothing is started.
-    const { openIssueFolder, assignIssue } = mount();
+  it("takes Escape back to the question before, opening no Workspace", async () => {
+    // Declining to start an agent opens nothing: the folder became a
+    // Workspace only with an agent. The worktree made for it stays on disk —
+    // nothing asks main to take it back — and nothing is started or selected.
+    const { prepareIssueFolder, assignIssue, dispatch } = mount();
 
     await answer("Assign Issue", ISSUE);
     await choose(/Where to work on/u, /New worktree/u);
@@ -705,12 +714,13 @@ describe("assigning an Issue", () => {
     expect(
       await screen.findByRole("dialog", { name: "Assign Issue" }),
     ).toBeVisible();
-    expect(openIssueFolder).toHaveBeenCalledTimes(1);
+    expect(prepareIssueFolder).toHaveBeenCalledTimes(1);
     expect(assignIssue).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("shows a folder that could not be made on the branch question, and asks no agent", async () => {
-    const openIssueFolder = vi
+    const prepareIssueFolder = vi
       .fn()
       .mockRejectedValueOnce(
         refusal(
@@ -718,7 +728,7 @@ describe("assigning an Issue", () => {
         ),
       );
     const { assignIssue } = mount({
-      openIssueFolder,
+      prepareIssueFolder,
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
@@ -734,7 +744,7 @@ describe("assigning an Issue", () => {
       screen.getByRole("dialog", { name: /Where to work on/u }),
     ).toBeVisible();
     expect(screen.queryByRole("dialog", { name: /Agent for/u })).toBeNull();
-    expect(openIssueFolder).toHaveBeenCalledTimes(1);
+    expect(prepareIssueFolder).toHaveBeenCalledTimes(1);
     expect(assignIssue).not.toHaveBeenCalled();
   });
 
@@ -767,12 +777,12 @@ describe("assigning an Issue", () => {
       module: "app",
       actions: [],
     });
-    const fallback = openedFolder();
-    const openIssueFolder = vi
+    const fallback = preparedFolder();
+    const prepareIssueFolder = vi
       .fn()
       .mockRejectedValueOnce(failure)
       .mockImplementation(fallback);
-    mount({ openIssueFolder } as unknown as Partial<PickerValue>);
+    mount({ prepareIssueFolder } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await choose(
@@ -788,7 +798,7 @@ describe("assigning an Issue", () => {
     await choose(/remote could not be reached/u, /Start from the copy/u);
 
     await screen.findByRole("dialog", { name: /Agent for/u });
-    expect(openIssueFolder).toHaveBeenLastCalledWith(
+    expect(prepareIssueFolder).toHaveBeenLastCalledWith(
       expect.objectContaining({
         branch: "feature/128-wip",
         allowStaleBase: true,
@@ -797,7 +807,7 @@ describe("assigning an Issue", () => {
   });
 
   it("clones when there is no clone to work in", async () => {
-    const { cloneRepository, openIssueFolder } = mount({
+    const { cloneRepository, prepareIssueFolder } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
     } as unknown as Partial<PickerValue>);
 
@@ -817,7 +827,7 @@ describe("assigning an Issue", () => {
       );
     });
     await vi.waitFor(() => {
-      expect(openIssueFolder).toHaveBeenCalled();
+      expect(prepareIssueFolder).toHaveBeenCalled();
     });
   });
 
@@ -986,13 +996,13 @@ describe("going on with an earlier session", () => {
     await choose(/Where to work on/u, /Existing worktree/u);
     await choose(/Agent for/u, /^Claude Session: Fix the crash/u);
 
-    // Listed where the Agent will run — the Workspace the folder opened as —
-    // not the repository's root.
+    // Listed where the Agent will run — the folder, by its path, before it is
+    // opened as anything — not the repository's root.
     expect(listAgentSessions).toHaveBeenCalledWith(checkout, "claude");
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: PULL_REQUEST,
-        workspaceId: WORKSPACE,
+        place: checkout,
         profileId: "claude",
         // The Issue's action is still said, into the resumed session.
         actionId: "implement",
