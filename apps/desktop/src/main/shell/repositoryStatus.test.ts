@@ -423,6 +423,8 @@ describe("what a workspace is about", () => {
 		expect(row?.issue).toBeUndefined();
 		expect(row?.unavailable?.number).toBe(128);
 		expect(row?.unavailable?.reason).toMatch(/github-alt\/example\/widget/u);
+		// No repository to number anything in, so a bare `#128` links nowhere.
+		expect(row?.issueRepository).toBeUndefined();
 		expect(readBranchStatus).not.toHaveBeenCalled();
 	});
 
@@ -596,7 +598,13 @@ describe("the pull request out from a branch", () => {
 		readDirty.mockResolvedValue(false);
 		readAhead.mockResolvedValue(0);
 
-		await round();
+		const status = await round();
+		// And the same repository is where a bare `#128` in the conversation of
+		// an Agent in this workspace links to.
+		expect(status.workspaces[0]?.issueRepository).toEqual({
+			owner: "example",
+			repository: "widget",
+		});
 		expect(readBranchStatus).toHaveBeenCalledWith(
 			{
 				owner: "example",
@@ -657,7 +665,11 @@ describe("the pull request out from a branch", () => {
 
 	it("stays on origin when there is no upstream to prefer", async () => {
 		checkedOut("feature/128-tidy");
-		await round();
+		const status = await round();
+		expect(status.workspaces[0]?.issueRepository).toEqual({
+			owner: "example",
+			repository: "widget",
+		});
 		expect(readBranchStatus).toHaveBeenCalledWith(
 			expect.objectContaining({ owner: "example", headOwner: "example" }),
 			"token",

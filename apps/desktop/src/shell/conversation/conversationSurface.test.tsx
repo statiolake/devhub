@@ -1270,6 +1270,7 @@ describe("size", () => {
         hidden={false}
         label="Agent 1"
         savedDraft=""
+        issueRepository={undefined}
       />,
     );
     const surface = document.querySelector<HTMLElement>(

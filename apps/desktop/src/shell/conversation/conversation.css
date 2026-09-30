@@ -761,14 +761,16 @@
 /* A path that names a file on the Agent's machine, opening it in the editor
    (`pathLinks.tsx`): in a tool's title, output or diff header as much as in
    the prose, so drawn as a link wherever it stands, in the text's own face. */
-.conversation-path-link {
+.conversation-path-link,
+.conversation-issue-link {
   color: var(--accent);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
   text-underline-offset: 2px;
 }
 
-.conversation-path-link:hover {
+.conversation-path-link:hover,
+.conversation-issue-link:hover {
   text-decoration-color: var(--accent);
 }
 

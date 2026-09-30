@@ -227,6 +227,33 @@ function gitHubRepository(
 	return owner && repository ? { owner, repository } : undefined;
 }
 
+/**
+ * Where a checkout's Issues and pull requests are numbered: `upstream` in a
+ * fork, else `origin`, and nothing when `origin` is not a github.com
+ * repository.
+ *
+ * In a fork the branch is in `origin` and the Issue it names is in
+ * `upstream`: a fork's own Issues are either turned off or numbered
+ * independently, so asking `origin` about `#128` answers about a different
+ * Issue or about none. `upstream` is the name `gh repo fork` gives it, which
+ * is what makes this a rule rather than a guess.
+ *
+ * An `upstream` DevHub cannot read as a github.com repository is ignored
+ * rather than reported: it is a remote the person added for their own
+ * reasons, and `origin` is still a perfectly good answer.
+ *
+ * The one answer for every question asked of a number: what a branch's pull
+ * request and Issue are looked up in, and what a bare `#128` in a GUI
+ * Agent's conversation links to (`WorkspaceRepositoryWire.issueRepository`).
+ */
+function issueRepositoryOf(
+	remote: string | undefined,
+	upstream: string | undefined,
+): { readonly owner: string; readonly repository: string } | undefined {
+	const head = gitHubRepository(remote);
+	return head ? (gitHubRepository(upstream) ?? head) : undefined;
+}
+
 function branchFromLocal(
 	remote: string | undefined,
 	upstream: string | undefined,
@@ -236,7 +263,8 @@ function branchFromLocal(
 	if (branch === undefined) return { kind: "none" };
 	const number = issueNumberFromBranch(branch);
 	const head = gitHubRepository(remote);
-	if (!head) {
+	const item = issueRepositoryOf(remote, upstream);
+	if (!head || !item) {
 		// Nothing to ask, and whether that is worth saying depends entirely on
 		// whether the branch was making a claim. `spike/rework` on a self-hosted
 		// remote is a workspace with nothing to show and no problem;
@@ -252,16 +280,6 @@ function branchFromLocal(
 					: `\`origin\` is \`${remote}\`, which DevHub cannot read as a github.com repository, so it cannot tell whose issue this is.`,
 		};
 	}
-	// Where the numbers live. In a fork the branch is in `origin` and the Issue
-	// it names is in `upstream`: a fork's own Issues are either turned off or
-	// numbered independently, so asking `origin` about `#128` answers about a
-	// different Issue or about none. `upstream` is the name `gh repo fork`
-	// gives it, which is what makes this a rule rather than a guess.
-	//
-	// An `upstream` DevHub cannot read as a github.com repository is ignored
-	// rather than reported: it is a remote the person added for their own
-	// reasons, and `origin` is still a perfectly good answer.
-	const item = gitHubRepository(upstream) ?? head;
 	return {
 		kind: "branch",
 		reference: {
@@ -956,6 +974,7 @@ export class RepositoryStatusWatcher {
 				mainWorktree: entry.mainWorktree,
 				worktree: entry.worktree,
 				repositoryUrl: entry.repositoryUrl,
+				issueRepository: issueRepositoryOf(entry.remote, entry.upstream),
 				dirty: entry.dirty,
 				ahead: entry.ahead,
 				defaultBranch: entry.defaultBranch,

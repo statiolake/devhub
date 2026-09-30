@@ -24,6 +24,7 @@ import {
   type Transcript,
 } from "../../model/conversation";
 import { ConversationSurface } from "../conversation/ConversationSurface";
+import { issueRepositoryOf } from "../conversation/issueLinks";
 import { McpPanel, type McpPanelActions } from "../conversation/McpPanel";
 import {
   SessionPicker,
@@ -34,19 +35,26 @@ import { devhub } from "./client";
 
 export function ConversationPane({
   agentId,
+  workspaceId,
   label,
   cli,
   appearance,
   hidden,
 }: {
   readonly agentId: string;
+  /** The Agent's Workspace: whose GitHub repository a bare `#12` is in. */
+  readonly workspaceId: string;
   readonly label: string;
   /** The CLI's name, for what `/resume` says about its sessions. */
   readonly cli: string;
   readonly appearance: AppAppearance | undefined;
   readonly hidden: boolean;
 }) {
-  const { reportFailure } = useAgents();
+  const { reportFailure, repositoryStatus } = useAgents();
+  const row = repositoryStatus.workspaces.find(
+    (entry) => entry.workspaceId === workspaceId,
+  );
+  const issueRepository = useMemo(() => issueRepositoryOf(row), [row]);
   const { transcript, draft } = useConversation(agentId, reportFailure);
   // Not declared as `ConversationActions`: that interface grows with the
   // surface (the composer, the header), and what this pane binds is every
@@ -122,6 +130,7 @@ export function ConversationPane({
         hidden={hidden}
         label={label}
         savedDraft={draft}
+        issueRepository={issueRepository}
       />
       {/* `/mcp`: the Agent's MCP servers, and what can be done about each. */}
       {managingMcp && !hidden ? (

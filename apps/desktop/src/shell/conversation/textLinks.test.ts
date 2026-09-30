@@ -1,16 +1,96 @@
 import { describe, expect, it } from "vitest";
-import { pathSpans } from "./filePaths";
+import { linkSpans } from "./textLinks";
 
-/** Each span as the text it covers, the path it names and where in the file. */
+/** Each path span as the text it covers, the path it names and where in the file. */
 function found(text: string) {
-  return pathSpans(text).map((span) => ({
-    text: text.slice(span.start, span.end),
-    path: span.path,
-    range: span.range,
-  }));
+  return linkSpans(text).flatMap((span) =>
+    span.kind === "path"
+      ? [
+          {
+            text: text.slice(span.start, span.end),
+            path: span.path,
+            range: span.range,
+          },
+        ]
+      : [],
+  );
 }
 
-describe("pathSpans", () => {
+/** Every span as the text it covers and what it is. */
+function spans(text: string) {
+  return linkSpans(text).map((span) => {
+    const shown = text.slice(span.start, span.end);
+    if (span.kind === "path") return { path: shown };
+    const where = span.repository;
+    return {
+      issue: `${where ? `${where.owner}/${where.repository}` : ""}#${span.number}`,
+      text: shown,
+    };
+  });
+}
+
+describe("linkSpans: references", () => {
+  it("finds a bare #12 and an owner/repo#12", () => {
+    expect(spans("Fixes #12, see example/widget#345.")).toEqual([
+      { issue: "#12", text: "#12" },
+      { issue: "example/widget#345", text: "example/widget#345" },
+    ]);
+  });
+
+  it("finds one in brackets, after a colon's word, and against CJK text", () => {
+    expect(
+      spans(
+        "(#1) [#2] 「#3」を直しました。これは#4です Merge pull request #5 from x",
+      ),
+    ).toEqual([
+      { issue: "#1", text: "#1" },
+      { issue: "#2", text: "#2" },
+      { issue: "#3", text: "#3" },
+      { issue: "#4", text: "#4" },
+      { issue: "#5", text: "#5" },
+    ]);
+  });
+
+  it("does not take a GitHub line anchor for one: #L12 is the path's line", () => {
+    expect(spans("src/a.ts#L12 and #L12 alone")).toEqual([
+      { path: "src/a.ts#L12" },
+    ]);
+  });
+
+  it("leaves URLs alone, a #12 in one included", () => {
+    expect(
+      spans(
+        "https://github.com/example/widget/issues/12 https://example.com/#12 https://example.com/a#12",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not run one on from a word, an entity or another hash", () => {
+    expect(spans("PR#12 a.ts#12 &#12; ##12 #12a #0 #1.5x x@#9")).toEqual([
+      // `#1.5x`: the number ends at the full stop.
+      { issue: "#1", text: "#1" },
+    ]);
+  });
+
+  it("leaves a Markdown heading's hashes alone", () => {
+    expect(spans("# Title\n## 2. Steps\n### 12")).toEqual([]);
+  });
+
+  it("reads a word with a reference in it as the reference, never also as a path", () => {
+    expect(spans("example/widget#12 src/a.ts")).toEqual([
+      { issue: "example/widget#12", text: "example/widget#12" },
+      { path: "src/a.ts" },
+    ]);
+  });
+
+  it("reads a repository with dots and hyphens, and an owner with hyphens", () => {
+    expect(spans("my-org/widget.js#7")).toEqual([
+      { issue: "my-org/widget.js#7", text: "my-org/widget.js#7" },
+    ]);
+  });
+});
+
+describe("linkSpans: paths", () => {
   it("finds absolute, home and relative paths", () => {
     expect(
       found("See /work/app/src/main.ts, ~/notes/todo.md and src/b.ts."),

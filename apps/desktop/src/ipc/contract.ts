@@ -272,6 +272,18 @@ export interface WorkspaceRepositoryWire {
 	 */
 	readonly repositoryUrl?: string;
 	/**
+	 * Where this workspace's Issues and pull requests are numbered, for a
+	 * workspace whose `origin` is on GitHub: `upstream` in a fork, else
+	 * `origin` — the repository `issue` and `pullRequest` are read from.
+	 *
+	 * What a bare `#128` in a GUI Agent's conversation links to. Absent, it is
+	 * not a link: a number without a repository names nothing.
+	 */
+	readonly issueRepository?: {
+		readonly owner: string;
+		readonly repository: string;
+	};
+	/**
 	 * Work here that removing the folder would destroy, as of the last look.
 	 *
 	 * Tracked changes and untracked files alike. Absent when DevHub could not

@@ -35,7 +35,10 @@ vi.mock("../conversation/ConversationSurface", () => ({
 
 const reportFailure = vi.fn();
 vi.mock("./AgentsContext", () => ({
-  useAgents: () => ({ reportFailure }),
+  useAgents: () => ({
+    reportFailure,
+    repositoryStatus: { sequence: 0, workspaces: [] },
+  }),
 }));
 
 const HERE: PastSessionWire = {
@@ -93,6 +96,7 @@ function pane() {
   return render(
     <ConversationPane
       agentId="agent-1"
+      workspaceId="workspace-1"
       label="Claude 1"
       cli="Claude"
       appearance={undefined}

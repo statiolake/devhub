@@ -11,7 +11,8 @@ import type {
   ToolOutputPart,
 } from "../../model/conversation";
 import { useAgentCwd } from "./ConversationContext";
-import { PathLink, PathText } from "./pathLinks";
+import { LinkedText } from "./LinkedText";
+import { PathLink } from "./pathLinks";
 
 export function JsonView({ value }: { readonly value: JsonValue }) {
   // A bare string is shown as itself: a command line or a path reads better
@@ -182,7 +183,7 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
       return (
         <pre className="conversation-output">
           <code>
-            <PathText text={part.text} />
+            <LinkedText text={part.text} />
           </code>
         </pre>
       );
@@ -204,7 +205,7 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
           {part.output !== "" ? (
             <pre className="conversation-output">
               <code>
-                <PathText text={part.output} />
+                <LinkedText text={part.output} />
               </code>
             </pre>
           ) : null}
@@ -213,7 +214,7 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
               <div className="conversation-tool-section">Stderr</div>
               <pre className="conversation-output" data-stream="stderr">
                 <code>
-                  <PathText text={part.stderr} />
+                  <LinkedText text={part.stderr} />
                 </code>
               </pre>
             </>
@@ -242,7 +243,7 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
               <>
                 {" "}
                 <code>
-                  <PathText text={part.path} />
+                  <LinkedText text={part.path} />
                 </code>
               </>
             ) : null}
@@ -250,7 +251,7 @@ function PartView({ part }: { readonly part: ToolOutputPart }) {
           {part.preview !== "" ? (
             <pre className="conversation-output">
               <code>
-                <PathText text={part.preview} />
+                <LinkedText text={part.preview} />
               </code>
             </pre>
           ) : null}

@@ -7,6 +7,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import type { Transcript } from "../../model/conversation";
 import type { ConversationActions } from "./ConversationContext";
+import type { IssueRepository } from "./issueLinks";
 import { ConversationSurface } from "./ConversationSurface";
 
 /** jsdom lays nothing out, so there is nothing for it to observe. */
@@ -60,6 +61,8 @@ export function draw(
   hidden = false,
   /** What main kept, or `NOT_YET` while the attachment has not answered. */
   savedDraft: string | typeof NOT_YET = "",
+  /** The Agent's Workspace's GitHub repository, if it has one. */
+  issueRepository?: IssueRepository,
 ) {
   const surface = (
     next: Transcript,
@@ -73,6 +76,7 @@ export function draw(
       hidden={nextHidden}
       label="Agent 1"
       savedDraft={nextDraft}
+      issueRepository={issueRepository}
     />
   );
   let draft = savedDraft === NOT_YET ? undefined : savedDraft;

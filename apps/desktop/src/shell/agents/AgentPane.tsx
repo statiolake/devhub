@@ -63,6 +63,7 @@ export function AgentPane({
           {surface.presentation === "gui" ? (
             <ConversationPane
               agentId={surface.agentId}
+              workspaceId={surface.workspaceId}
               label={surface.label}
               cli={cliName(snapshot, surface.agentId)}
               appearance={appearance}

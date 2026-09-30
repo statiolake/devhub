@@ -25,27 +25,34 @@ import {
   put,
   transcriptOf,
 } from "../conversation/transcriptFixtures";
+import type { RepositoryStatusWire } from "../../ipc/contract";
+import type { IssueRepository } from "../conversation/issueLinks";
 import { ConversationPane } from "./ConversationPane";
 
 const drawn: Transcript[] = [];
 const drafts: (string | undefined)[] = [];
+const repositories: (IssueRepository | undefined)[] = [];
 vi.mock("../conversation/ConversationSurface", () => ({
   ConversationSurface: ({
     transcript,
     savedDraft,
+    issueRepository,
   }: {
     transcript: Transcript;
     savedDraft: string | undefined;
+    issueRepository: IssueRepository | undefined;
   }) => {
     drawn.push(transcript);
     drafts.push(savedDraft);
+    repositories.push(issueRepository);
     return null;
   },
 }));
 
 const reportFailure = vi.fn();
+let repositoryStatus: RepositoryStatusWire = { sequence: 0, workspaces: [] };
 vi.mock("./AgentsContext", () => ({
-  useAgents: () => ({ reportFailure }),
+  useAgents: () => ({ reportFailure, repositoryStatus }),
 }));
 
 /** Animation frames, run by hand. */
@@ -65,6 +72,8 @@ let answerAttach: (attachment: ConversationAttachment) => void = () => {};
 beforeEach(() => {
   drawn.length = 0;
   drafts.length = 0;
+  repositories.length = 0;
+  repositoryStatus = { sequence: 0, workspaces: [] };
   reportFailure.mockReset();
   frames = new Map();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -100,6 +109,7 @@ async function attached(revision = 5, draft = "") {
   const view = render(
     <ConversationPane
       agentId="agent-1"
+      workspaceId="workspace-1"
       label="Agent 1"
       cli="Claude"
       appearance={undefined}
@@ -185,6 +195,39 @@ describe("drawing once per frame", () => {
     expect(frames.size).toBe(1);
     view.unmount();
     expect(frames.size).toBe(0);
+  });
+});
+
+describe("the Workspace's GitHub repository", () => {
+  it("is where the surface numbers a bare #12: its own Workspace's, not another's", async () => {
+    repositoryStatus = {
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "workspace-2",
+          issueRepository: { owner: "other-org", repository: "gadget" },
+        },
+        {
+          workspaceId: "workspace-1",
+          issueRepository: { owner: "example", repository: "widget" },
+          issue: { number: 128, title: "Tidy", state: "open", url: "u" },
+        },
+      ],
+    };
+    await attached();
+    const last = repositories.at(-1);
+    expect(last?.owner).toBe("example");
+    expect(last?.repository).toBe("widget");
+    expect(last?.titles.get(128)).toBe("Tidy");
+  });
+
+  it("is nothing while its Workspace has no GitHub repository", async () => {
+    repositoryStatus = {
+      sequence: 1,
+      workspaces: [{ workspaceId: "workspace-1" }],
+    };
+    await attached();
+    expect(repositories.at(-1)).toBeUndefined();
   });
 });
 

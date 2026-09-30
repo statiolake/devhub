@@ -828,6 +828,41 @@ Workspace whose editor cannot be reached, or a machine that could not be
 asked is said once, the way every other failure on the Agents page is — never
 an empty editor for a file that is not there.
 
+## Issue and pull request references open on GitHub
+
+`#128` and `owner/repo#128` in the conversation are links to that Issue or
+pull request on GitHub: a click opens
+`https://github.com/owner/repo/issues/128` in the default browser, which
+GitHub sends on to the pull request when 128 is one. DevHub has no Issue view
+of its own for them to open in.
+
+**Where they are found.** Exactly where paths are: the prose and inline code
+once the paragraph has finished streaming, a tool call's title and output
+(`git log`'s `(#128)`, `gh`'s lists), and nowhere in a fenced code block. The
+two are found by one pass over the text (`shell/conversation/textLinks.ts`),
+so a word is at most one of them: `owner/repo#128` is a reference and not a
+path, and `src/a.ts#L12` is a path's line and not a reference.
+
+**What counts as one.** `#` and a number, with `owner/repo` before it or
+not, inside one word as a path is. It does not run on from a letter, digit,
+`/`, `.`, `#`, `&` or `@` before it (`PR#12`, `a.ts#12` and `&#12;` are not
+references) nor into a letter or digit after it (`#12a`); anything else may
+stand either side, CJK included, so `#128を` is `#128`. A word with `://` in it
+is a URL, and a `#12` in it is the URL's: a GitHub link the Agent wrote stays
+the link it wrote. A Markdown heading's `#` is never one — it is followed by a
+space, and the heading's text is drawn without it.
+
+**Which repository.** `owner/repo#128` is linked as written. A bare `#128` is
+numbered in the Agent's Workspace's GitHub repository — the one DevHub reads
+the Workspace's pull request from: `upstream` in a fork, else `origin`
+(`issueRepository` in the repository status). A Workspace whose `origin` is
+not a github.com repository has none, and there a bare `#128` stays text.
+
+**Nothing is asked of GitHub** to draw a link. Hovering one says its title
+only when DevHub already has it — the Workspace's own Issue and pull request,
+from the Sidebar's status — and the URL otherwise. A browser that could not
+be opened is said the way every other failure on the Agents page is.
+
 ## Messages that wait, and sending one into a turn
 
 A message you send while the Agent is idle is written to the CLI at once, and

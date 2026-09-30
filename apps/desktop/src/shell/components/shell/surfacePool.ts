@@ -4,6 +4,8 @@ import type { AgentPresentationWire, AppSnapshot } from "../../../ipc/appShell";
 export interface PooledSurface {
   readonly key: string;
   readonly agentId: string;
+  /** The Workspace the Agent is in. */
+  readonly workspaceId: string;
   readonly label: string;
   /** Which surface the pane is: a terminal, or a conversation. Fixed at launch. */
   readonly presentation: AgentPresentationWire;
@@ -37,6 +39,7 @@ export function runningAgentSurfaces(
       surfaces.set(key, {
         key,
         agentId: agent.id,
+        workspaceId: workspace.id,
         label: agent.displayName,
         presentation: agent.presentation,
       });

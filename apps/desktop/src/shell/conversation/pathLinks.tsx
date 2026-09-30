@@ -2,7 +2,7 @@
  * File paths in the conversation, drawn as links that open the file in the
  * editor.
  *
- * A word is a link when its spelling says it could be a path (`filePaths.ts`)
+ * A word is a link when its spelling says it could be a path (`textLinks.ts`)
  * *and* main says it names a file on the Agent's machine — local, or the host
  * the Agent runs on. The second gate is what keeps "and/or" and "e.g." plain:
  * nothing is linked on a guess. Until main has answered, a candidate is drawn
@@ -16,22 +16,19 @@
  * nothing is asked about again once the Agent's turn has ended, because the
  * turn may be what made it (`forgetAbsent`).
  *
- * Where the gate applies: the Agent's prose and inline code once its block
- * has settled, a tool call's title and its output, and a diff's file header.
- * Not a fenced code block in an answer: that is code, and a word in it that
- * happens to be a file is not the Agent pointing at it.
+ * Where the gate applies is where `LinkedText` is drawn, and a diff's file
+ * header.
  */
 
 import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
-import { pathSpans, rangeSuffix, type PathCandidate } from "./filePaths";
+import { rangeSuffix, type PathCandidate } from "./textLinks";
 
 /** At most this many paths in one request: a long grep is several. */
 const BATCH = 500;
@@ -207,23 +204,4 @@ export function PathLink({
       {children}
     </a>
   );
-}
-
-/** Text with each path in it that names a file drawn as a link to it. */
-export function PathText({ text }: { readonly text: string }) {
-  const spans = useMemo(() => pathSpans(text), [text]);
-  if (spans.length === 0) return <>{text}</>;
-  const parts: ReactNode[] = [];
-  let at = 0;
-  for (const span of spans) {
-    if (span.start > at) parts.push(text.slice(at, span.start));
-    parts.push(
-      <PathLink key={span.start} candidate={span}>
-        {text.slice(span.start, span.end)}
-      </PathLink>,
-    );
-    at = span.end;
-  }
-  if (at < text.length) parts.push(text.slice(at));
-  return <>{parts}</>;
 }
