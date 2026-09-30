@@ -23,9 +23,9 @@ import {
   entryId,
   lastTurnFailed,
   limitStop,
-  mostUsedRateLimit,
   usedUpReset,
   type LimitStop,
+  rateLimitWindowMinutes,
   rateLimitWindowName,
   withRateLimits,
   workState,
@@ -791,13 +791,22 @@ describe("rate-limit windows", () => {
     expect(
       withRateLimits(withRateLimits(undefined, [five, seven]), [later]),
     ).toEqual([later, seven]);
-    expect(mostUsedRateLimit([five, seven, later])).toBe(later);
   });
 
   it("are named by their length", () => {
     expect(rateLimitWindowName(300)).toBe("5-hour");
     expect(rateLimitWindowName(10080)).toBe("7-day");
     expect(rateLimitWindowName(90)).toBe("90-minute");
+  });
+
+  it("have the length their name says, and none when named otherwise", () => {
+    for (const minutes of [300, 10080, 90, 1440]) {
+      expect(rateLimitWindowMinutes(rateLimitWindowName(minutes))).toBe(
+        minutes,
+      );
+    }
+    expect(rateLimitWindowMinutes("primary")).toBeUndefined();
+    expect(rateLimitWindowMinutes("seven day opus")).toBeUndefined();
   });
 });
 

@@ -1403,14 +1403,19 @@ and changes it for this session.
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
 used: one slim row per CLI — its name, a bar, the percentage and when that
-window resets, *12% (until 16:50)* — for its window that resets soonest among
-the current readings (the five-hour one, usually). The reset is the time on
+window resets, *12% (until 16:50)* — for its shortest window, by the length
+the CLI gives it (Codex's `windowDurationMins`, Claude's `five_hour` and
+`seven_day`): the five-hour one over the seven-day one, and a window of no
+known length last. The reset is the time on
 the 24-hour clock while it is within twelve hours, past midnight too, and the
-date alone in the reader's locale (*10/3*) when further off; an unknown or
-past reset has no parenthesis, and a narrow column cuts the parenthesis before
-the percentage. The row's bar and numbers are quiet grey until 75%, orange to
-90%, red beyond — by the strictest of the CLI's current windows, not only the
-shown one; when the colour comes from another window, a small caption under
+date alone in the reader's locale (*10/3*) when further off; an unknown reset
+has no parenthesis, and a narrow column cuts the parenthesis before the
+percentage. When the shown window's last reading has passed its reset, the
+window has started again — the account reports an unstarted window as nothing,
+so that old reading is what stays — and the row says so, faded, *0% (reset)*,
+rather than turning to a longer window. The row's bar and numbers are quiet grey until 75%, orange to
+90%, red beyond — by the strictest of the CLI's windows (a reset one counting as
+empty), not only the shown one; when the colour comes from another window, a small caption under
 the bar names it by the CLI's label (*Approaching 7-day limit*, *7-day limit
 nearly reached*). The rows share one grid, so every CLI's bar has the same
 width and edges whatever the words beside it. On the collapsed rail the words
@@ -1420,9 +1425,7 @@ five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
 labelled bar with the percentage and its reset (*Resets in 2h 10m · 16:40*,
 or the date alone, *10/3*, when over twelve hours away), worked out by the tooltip as it opens. A reading
 whose reset has passed is history: faded, and said to be (*nothing reported
-since*); history neither is the Sidebar row's shown window nor colours it, and a CLI
-whose readings are all history shows the one nearest its limit, faded and
-uncoloured.
+since*).
 
 The numbers come from two places, merged per window in main. **DevHub asks
 the accounts itself**, in the background (`main/shell/usageReaders.ts`): one

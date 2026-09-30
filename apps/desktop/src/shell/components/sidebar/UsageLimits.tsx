@@ -2,12 +2,14 @@
  * Claude's and Codex's rate limits, at the foot of the Sidebar.
  *
  * One slim row per CLI that has reported: its name, a bar of how much is used
- * of its window that resets soonest, the percentage and when that window
- * resets, `12% (until 16:50)`: the time when the reset is later today, the
- * date alone when it is another day (`resetTime.ts`, the words the tooltip
- * uses too). A reset that is unknown or already past has no parenthesis
- * rather than a guess. The row is coloured by the strictest of the CLI's
- * current windows, and when that is not the shown one a small caption under
+ * of its shortest window (the five-hour one over the seven-day one), the
+ * percentage and when that window resets, `12% (until 16:50)`: the time when
+ * the reset is later today, the date alone when it is another day
+ * (`resetTime.ts`, the words the tooltip uses too). A reset that is unknown
+ * has no parenthesis rather than a guess; one that has passed means the
+ * window has started again since its last reading, and the row says so,
+ * faded, `0% (reset)`. The row is coloured by the strictest of the CLI's
+ * windows, and when that is not the shown one a small caption under
  * the bar names it, *Approaching 7-day limit* (`usageRow.ts` decides all
  * three). On the rail the names and numbers go and the bars stay, one per
  * CLI, so a limit coming close still shows.
@@ -37,8 +39,6 @@ import { useEffect, useState, type CSSProperties } from "react";
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
 import { resetTime } from "../../resetTime";
 import { usageRow, type UsageRow } from "./usageRow";
-
-type Window = NonNullable<UsageLimitsWire["clis"][number]["windows"]>[number];
 
 const CLI_NAMES = { claude: "Claude", codex: "Codex" } as const;
 
@@ -87,11 +87,9 @@ export function UsageLimits({
   const spoken = [
     ...rows.map(
       (row) =>
-        `${CLI_NAMES[row.cli]} ${percent(row.window.usedPercent)}${
-          row.stale ? " before its last reset" : ""
-        }${row.until === undefined ? "" : ` until ${row.until}`}${
-          row.caption === undefined ? "" : `, ${row.caption.toLowerCase()}`
-        }`,
+        `${CLI_NAMES[row.cli]} ${percent(row.usedPercent)}${
+          row.until === undefined ? "" : ` ${row.until}`
+        }${row.caption === undefined ? "" : `, ${row.caption.toLowerCase()}`}`,
     ),
     ...planless.map((one) => `${CLI_NAMES[one.cli]} ${NO_PLAN_LIMITS}`),
   ].join(", ");
@@ -115,18 +113,16 @@ export function UsageLimits({
               className="sidebar-usage-fill"
               style={
                 {
-                  "--usage-fill": `${Math.min(Math.max(row.window.usedPercent ?? 0, 0), 100)}%`,
+                  "--usage-fill": `${Math.min(Math.max(row.usedPercent ?? 0, 0), 100)}%`,
                 } as CSSProperties
               }
             />
           </span>
           <span className="sidebar-usage-value">
-            {percent(row.window.usedPercent)}
+            {percent(row.usedPercent)}
           </span>
           {row.until === undefined ? null : (
-            <span className="sidebar-usage-reset">
-              ({`until ${row.until}`})
-            </span>
+            <span className="sidebar-usage-reset">({row.until})</span>
           )}
           {row.caption === undefined ? null : (
             <span className="sidebar-usage-caption">{row.caption}</span>
@@ -143,12 +139,12 @@ export function UsageLimits({
   );
 }
 
-/** When the shown window resets, while that is known and still ahead. */
-function until(shown: UsageRow<Window>, now: number): string | undefined {
-  const resetsAt = shown.window.resetsAt;
-  return resetsAt === undefined || shown.stale
+/** When the shown window resets, or that it has; nothing when that is unknown. */
+function until(shown: UsageRow, now: number): string | undefined {
+  if (shown.stale) return "reset";
+  return shown.resetsAt === undefined
     ? undefined
-    : resetTime(resetsAt, now);
+    : `until ${resetTime(shown.resetsAt, now)}`;
 }
 
 function percent(used: number | undefined): string {

@@ -815,6 +815,26 @@ export function rateLimitWindowName(minutes: number): string {
   return `${String(minutes)}-minute`;
 }
 
+const WINDOW_UNIT_MINUTES = { minute: 1, hour: 60, day: 1440 } as const;
+
+/**
+ * A window's length from its name, the inverse of `rateLimitWindowName`:
+ * every window whose length the CLI says (Codex's `windowDurationMins`,
+ * Claude's `five_hour` and `seven_day`) is named by it, so the name is where
+ * the length is kept. A window named otherwise (`primary`, `seven day opus`)
+ * has no length DevHub knows.
+ */
+export function rateLimitWindowMinutes(name: string): number | undefined {
+  const match = /^([1-9][0-9]*)-(minute|hour|day)$/.exec(name);
+  if (match === null) return undefined;
+  const [, count, unit] = match as unknown as [
+    string,
+    string,
+    keyof typeof WINDOW_UNIT_MINUTES,
+  ];
+  return Number(count) * WINDOW_UNIT_MINUTES[unit];
+}
+
 /**
  * The windows known after a report: each window the report names replaces
  * the one of the same name, and a window it does not name stays as last seen
@@ -827,19 +847,6 @@ export function withRateLimits(
   const byName = new Map((known ?? []).map((one) => [one.window, one]));
   for (const one of reported) byName.set(one.window, one);
   return [...byName.values()];
-}
-
-/** The window nearest its limit, which is the one that stops the CLI first. */
-export function mostUsedRateLimit<
-  W extends { readonly usedPercent?: number | undefined },
->(windows: readonly W[]): W | undefined {
-  return windows.reduce<W | undefined>(
-    (most, one) =>
-      most === undefined || (one.usedPercent ?? -1) > (most.usedPercent ?? -1)
-        ? one
-        : most,
-    undefined,
-  );
 }
 
 export const CONVERSATION_FAILURE_CODES = [

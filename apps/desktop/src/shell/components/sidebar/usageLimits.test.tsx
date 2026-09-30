@@ -47,7 +47,7 @@ describe("the usage-limits readout", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("draws a bar per CLI for its window that resets soonest, coloured by its strictest window and captioned with it, every window as a meter on hover, and that the other has not reported", () => {
+  it("draws a bar per CLI for its shortest window, coloured by its strictest window and captioned with it, every window as a meter on hover, and that the other has not reported", () => {
     render(
       <UsageLimits
         limits={{
@@ -75,7 +75,7 @@ describe("the usage-limits readout", () => {
     );
     expect(readout).not.toHaveTextContent("Codex");
     const claude = readout.querySelector(".sidebar-usage-cli")!;
-    // The five-hour window resets first: its number, its reset.
+    // The five-hour window is the shorter: its number, its reset.
     expect(claude).toHaveTextContent(
       "Claude12%(until 20:00)7-day limit nearly reached",
     );
@@ -172,7 +172,7 @@ describe("the usage-limits readout", () => {
     expect(rows[0]).toHaveTextContent("Claude40%(until 19:00)");
   });
 
-  it("shows the current window over one that is history, and a CLI whose readings are all history faded", () => {
+  it("shows the shortest window as reset, faded, once its last reading's reset has passed, rather than a longer window", () => {
     render(
       <UsageLimits
         limits={{
@@ -181,7 +181,7 @@ describe("the usage-limits readout", () => {
               cli: "claude",
               windows: [
                 { window: "5-hour", usedPercent: 90, resetsAt: NOW - HOUR },
-                { window: "7-day", usedPercent: 30, resetsAt: NOW + HOUR },
+                { window: "7-day", usedPercent: 80, resetsAt: NOW + HOUR },
               ],
             },
             {
@@ -198,17 +198,21 @@ describe("the usage-limits readout", () => {
     const [claude, codex] = [
       ...screen.getByRole("status").querySelectorAll(".sidebar-usage-cli"),
     ];
-    // Resets within the hour, today: the time.
-    expect(claude).toHaveTextContent("Claude30%(until 19:00)");
-    expect(claude).not.toHaveAttribute("data-stale");
-    // Its reset is past: no parenthesis rather than an old time.
-    expect(codex).toHaveTextContent(/^Codex96%$/u);
-    expect(codex.querySelector(".sidebar-usage-reset")).toBeNull();
-    expect(codex).toHaveAttribute("data-stale", "true");
-    // History is not a warning.
+    // The five-hour window has started again: empty, and said to be reset.
+    expect(claude).toHaveTextContent("Claude0%(reset)Approaching 7-day limit");
+    expect(claude).toHaveAttribute("data-stale", "true");
+    expect(
+      (
+        claude.querySelector(".sidebar-usage-fill") as HTMLElement
+      ).style.getPropertyValue("--usage-fill"),
+    ).toBe("0%");
+    // The seven-day window still colours the row, and the caption says so.
+    expect(claude).toHaveAttribute("data-level", "near");
+    expect(codex).toHaveTextContent(/^Codex0%\(reset\)$/u);
+    // A reset window is not a warning.
     expect(codex).toHaveAttribute("data-level", "calm");
     expect(screen.getByRole("status")).toHaveAccessibleName(
-      "Usage limits: Claude 30% until 19:00, Codex 96% before its last reset",
+      "Usage limits: Claude 0% reset, approaching 7-day limit, Codex 0% reset",
     );
   });
 
