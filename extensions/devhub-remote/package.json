@@ -1,7 +1,7 @@
 {
   "name": "devhub-remote",
   "displayName": "DevHub Remote",
-  "description": "DevHub's built-in ssh-remote and dev-container authority resolvers, and the editor's Reopen in Container / Reopen Folder Locally / Switch Container: they ask the running DevHub over its control socket.",
+  "description": "DevHub's built-in ssh-remote and dev-container authority resolvers, and the editor's Reopen in Container / Reopen Folder Locally / Switch Container / Show Build Log: they ask the running DevHub over its control socket.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -65,6 +65,11 @@
         "command": "devhub.switchContainer",
         "title": "Switch Container",
         "category": "Dev Containers"
+      },
+      {
+        "command": "devhub.showBuildLog",
+        "title": "Show Build Log",
+        "category": "Dev Containers"
       }
     ],
     "menus": {
@@ -80,23 +85,32 @@
         {
           "command": "devhub.switchContainer",
           "when": "remoteName == dev-container && devhub.devContainerConfigs > 1"
+        },
+        {
+          "command": "devhub.showBuildLog",
+          "when": "devhub.devContainerConfigs > 0"
         }
       ],
       "statusBar/remoteIndicator": [
         {
           "command": "devhub.reopenInContainer",
           "when": "remoteName != dev-container && devhub.devContainerConfigs > 0",
-          "group": "remote_20_devhub@1"
+          "group": "remote_20_dev-container_devhub@1"
         },
         {
           "command": "devhub.reopenLocally",
           "when": "remoteName == dev-container",
-          "group": "remote_20_devhub@2"
+          "group": "remote_20_dev-container_devhub@2"
         },
         {
           "command": "devhub.switchContainer",
           "when": "remoteName == dev-container && devhub.devContainerConfigs > 1",
-          "group": "remote_20_devhub@3"
+          "group": "remote_20_dev-container_devhub@3"
+        },
+        {
+          "command": "devhub.showBuildLog",
+          "when": "remoteName == dev-container",
+          "group": "remote_20_dev-container_devhub@4"
         }
       ]
     }

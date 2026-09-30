@@ -47,6 +47,7 @@ function everythingSaysOk(): ControlHandlers {
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
 		devContainerConfigs: () =>
 			Promise.resolve({ configs: [], current: undefined }),
+		devContainerBuildLog: () => Promise.resolve("/logs/c.log"),
 		reattachEditor: () => Promise.resolve(),
 		personStarted: () => undefined,
 	};
@@ -92,6 +93,10 @@ describe("the DevHub control socket", () => {
 					],
 					current: undefined,
 				});
+			},
+			devContainerBuildLog: (window, configPath) => {
+				calls.push(`build-log ${window.fsPath} ${configPath}`);
+				return Promise.resolve("/logs/c.log");
 			},
 			reattachEditor: (window, to) => {
 				calls.push(
@@ -608,6 +613,32 @@ describe("the DevHub control socket", () => {
 			"configs file:/work/a",
 			"reattach /work/a /work/a/.devcontainer/py/devcontainer.json",
 			"reattach /work/a host",
+		]);
+	});
+
+	it("answers where a window's dev container build log is, and refuses without a definition", async () => {
+		const window = {
+			scheme: "file",
+			authority: "",
+			path: "/work/a",
+			fsPath: "/work/a",
+		};
+		const named = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "dev-container-build-log",
+				window,
+				configPath: "/work/a/.devcontainer/devcontainer.json",
+			})}\n`,
+		);
+		expect(named).toMatchObject({ ok: true, buildLog: "/logs/c.log" });
+		const unnamed = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "dev-container-build-log", window })}\n`,
+		);
+		expect(unnamed.ok).toBe(false);
+		expect(calls).toEqual([
+			"build-log /work/a /work/a/.devcontainer/devcontainer.json",
 		]);
 	});
 

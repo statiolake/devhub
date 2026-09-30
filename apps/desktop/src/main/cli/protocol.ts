@@ -279,6 +279,16 @@ export type ControlRequest =
 			readonly window: WindowFolderWire;
 	  }
 	| {
+			/**
+			 * Where the build log is of the dev container a workbench's
+			 * Workspace's folder makes from one of its definitions. See
+			 * `main/runtime/buildLog.ts`.
+			 */
+			readonly kind: "dev-container-build-log";
+			readonly window: WindowFolderWire;
+			readonly configPath: string;
+	  }
+	| {
 			/** Move a workbench's editor, in or out of a dev container. */
 			readonly kind: "reattach-editor";
 			readonly window: WindowFolderWire;
@@ -390,6 +400,8 @@ export interface ControlResponse {
 	readonly retry?: boolean;
 	/** A `dev-container-configs` answer. Data, for the reason `profile` is. */
 	readonly devContainers?: DevContainerConfigsAnswer;
+	/** A `dev-container-build-log` answer: the log file's path on this Mac. */
+	readonly buildLog?: string;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -476,6 +488,12 @@ export function parseControlRequest(line: string): ControlRequest {
 			return {
 				kind: "dev-container-configs",
 				window: requireWindow(record["window"]),
+			};
+		case "dev-container-build-log":
+			return {
+				kind: "dev-container-build-log",
+				window: requireWindow(record["window"]),
+				configPath: requireAbsolute(record["configPath"], "configPath"),
 			};
 		case "reattach-editor":
 			return {

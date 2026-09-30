@@ -5,6 +5,8 @@ import {
   refreshAvailability,
   reopenInContainer,
   reopenLocally,
+  SHOW_BUILD_LOG,
+  showBuildLog,
   switchContainer,
   type CommandsApi,
   type DevHubConnection,
@@ -29,8 +31,15 @@ function world(options: {
   current?: string;
   picks?: (labels: string[]) => number | undefined;
   refuse?: string;
+  /** The action chosen on an error notice. */
+  answers?: string;
+  /** Whether a build log exists to show. */
+  logExists?: boolean;
 }) {
   const said: string[] = [];
+  const offeredActions: string[][] = [];
+  /** What happened to build logs, in order. */
+  const logs: string[] = [];
   const context = new Map<string, unknown>();
   const reattached: ReattachTarget[] = [];
   const offered: string[][] = [];
@@ -43,10 +52,28 @@ function world(options: {
       const index = options.picks?.(labels);
       return Promise.resolve(index === undefined ? undefined : items[index]);
     },
-    showError: (message) => {
+    showError: (message, ...actions) => {
       said.push(message);
+      offeredActions.push(actions);
+      return Promise.resolve(options.answers);
     },
-    withProgress: (_title, work) => work(),
+    followBuildLog: (path) => {
+      logs.push(`follow ${path}`);
+      return Promise.resolve({
+        stop: () => {
+          logs.push(`stop ${path}`);
+          return Promise.resolve();
+        },
+      });
+    },
+    showBuildLog: (path) => {
+      logs.push(`show ${path}`);
+      return Promise.resolve(options.logExists ?? true);
+    },
+    withProgress: (_title, work) => {
+      logs.push("reattaching");
+      return work();
+    },
     setContext: (key, value) => {
       context.set(key, value);
     },
@@ -58,6 +85,12 @@ function world(options: {
         message: "",
         devContainers: { configs: options.configs, current: options.current },
       }),
+    buildLog: (_window, configPath) =>
+      Promise.resolve({
+        ok: true,
+        message: "",
+        buildLog: `/logs/${configPath.split("/").at(-2) ?? ""}.log`,
+      }),
     reattach: (_window, to) => {
       reattached.push(to);
       return Promise.resolve(
@@ -67,7 +100,16 @@ function world(options: {
       );
     },
   };
-  return { api, devhub, said, context, reattached, offered };
+  return {
+    api,
+    devhub,
+    said,
+    context,
+    reattached,
+    offered,
+    logs,
+    offeredActions,
+  };
 }
 
 test("a folder with one definition is reopened in it without a question", async () => {
@@ -105,15 +147,69 @@ test("Switch Container offers only the definitions the editor is not in", async 
   deepStrictEqual(reattached, [{ configPath: PYTHON.path }]);
 });
 
-test("DevHub's refusal is said in DevHub's words", async () => {
-  const { api, devhub, said } = world({
+test("DevHub's refusal is said in DevHub's words, and offers the build log", async () => {
+  const { api, devhub, said, offeredActions, logs } = world({
     configs: [DEFAULT],
     refuse: "The dev container for /src/api could not be started: no image",
+    answers: SHOW_BUILD_LOG,
   });
   await reopenInContainer(api, devhub);
   deepStrictEqual(said, [
     "The dev container for /src/api could not be started: no image",
   ]);
+  deepStrictEqual(offeredActions, [[SHOW_BUILD_LOG]]);
+  // Followed while DevHub worked, stopped when it answered, and shown whole
+  // when the person asked for it from the notice.
+  deepStrictEqual(logs, [
+    "follow /logs/.devcontainer.log",
+    "reattaching",
+    "stop /logs/.devcontainer.log",
+    "show /logs/.devcontainer.log",
+  ]);
+});
+
+test("a bring-up that succeeds follows its log and offers nothing", async () => {
+  const { api, devhub, said, logs } = world({
+    configs: [DEFAULT, PYTHON],
+    current: DEFAULT.path,
+    picks: () => 0,
+  });
+  await switchContainer(api, devhub);
+  deepStrictEqual(said, []);
+  deepStrictEqual(logs, [
+    "follow /logs/python.log",
+    "reattaching",
+    "stop /logs/python.log",
+  ]);
+});
+
+test("Reopen Folder Locally has no build log to follow", async () => {
+  const { api, devhub, logs } = world({ configs: [DEFAULT] });
+  await reopenLocally(api, devhub);
+  deepStrictEqual(logs, ["reattaching"]);
+});
+
+test("Show Build Log shows the log of the container the editor is in", async () => {
+  const { api, devhub, logs, offered } = world({
+    configs: [DEFAULT, PYTHON],
+    current: PYTHON.path,
+  });
+  await showBuildLog(api, devhub);
+  deepStrictEqual(offered, []);
+  deepStrictEqual(logs, ["show /logs/python.log"]);
+});
+
+test("Show Build Log in a window on its own machine asks which, and says when there is none", async () => {
+  const { api, devhub, logs, offered, said } = world({
+    configs: [DEFAULT, PYTHON],
+    picks: () => 1,
+    logExists: false,
+  });
+  await showBuildLog(api, devhub);
+  deepStrictEqual(offered, [["Dev Container", "python"]]);
+  deepStrictEqual(logs, ["show /logs/python.log"]);
+  strictEqual(said.length, 1);
+  strictEqual(said[0]?.includes("no build log"), true);
 });
 
 test("the when clauses are told how many definitions there are", async () => {

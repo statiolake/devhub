@@ -92,7 +92,7 @@ if (events.join(",") !== expectedEvents.join(",")) {
   );
 }
 // The manifest contributes how a remote path is spelled in the UI, and the
-// three dev container commands with the menus that offer them.
+// four dev container commands with the menus that offer them.
 const contributes = manifest.contributes ?? {};
 if (
   Object.keys(contributes).sort().join(",") !==
@@ -105,6 +105,7 @@ if (
 const expectedCommands = [
   "devhub.reopenInContainer",
   "devhub.reopenLocally",
+  "devhub.showBuildLog",
   "devhub.switchContainer",
 ];
 const commands = (contributes.commands ?? [])
@@ -114,6 +115,18 @@ if (commands.join(",") !== expectedCommands.join(",")) {
   throw new Error(
     `the commands are exactly ${expectedCommands.join(", ")}: ${commands.join(", ")}`,
   );
+}
+// The remote indicator's menu keeps only entries whose group is
+// `remote_<order>_<remote name>_<grouping>` (`RemoteStatusIndicator.
+// validatedGroup`, which says so only in the log): an entry grouped any other
+// way is dropped, and the menu then showed nothing of DevHub's.
+for (const entry of contributes.menus?.["statusBar/remoteIndicator"] ?? []) {
+  const group = (entry.group ?? "").split("@")[0];
+  if (!/^remote_\d\d_dev-container_.+$/u.test(group)) {
+    throw new Error(
+      `${entry.command}'s remote indicator group ${group} is not remote_<NN>_dev-container_<grouping>, so VS Code drops it`,
+    );
+  }
 }
 for (const menu of ["commandPalette", "statusBar/remoteIndicator"]) {
   const entries = contributes.menus?.[menu] ?? [];

@@ -243,6 +243,7 @@ export class LocalRuntime implements Runtime {
 				request.cancel,
 				request.limits,
 				request.stdin,
+				request.onOutput,
 			);
 			this.#record(startedAt);
 			return output;

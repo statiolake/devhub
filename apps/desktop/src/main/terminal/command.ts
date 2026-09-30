@@ -181,6 +181,7 @@ export function runBounded(
 	cancel: CancellationToken,
 	limits: ExecLimits,
 	stdin?: Uint8Array,
+	onOutput?: (chunk: Buffer) => void,
 ): Promise<CommandOutput> {
 	// The deadline started at the caller's first probe, not when this child
 	// happens to be spawned. Refuse a late spawn outright.
@@ -276,10 +277,15 @@ export function runBounded(
 			chunks.push(chunk.subarray(0, cap - seen));
 			return total;
 		};
+		// Both streams, as they arrive, to a caller showing a long command's
+		// progress — whole, before any cap: the cap bounds what is held here,
+		// and what the caller keeps is the caller's business.
 		outPipe.on("data", (chunk: Buffer) => {
+			onOutput?.(chunk);
 			stdoutBytes = capped(stdout, stdoutBytes, chunk, limits.stdoutBytes);
 		});
 		errPipe.on("data", (chunk: Buffer) => {
+			onOutput?.(chunk);
 			stderrBytes = capped(stderr, stderrBytes, chunk, limits.stderrBytes);
 		});
 		// `close` rather than `exit`: the drain is part of the same budget, so

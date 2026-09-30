@@ -92,6 +92,14 @@ export interface ControlHandlers {
 	devContainerConfigs(
 		window: WindowFolderWire,
 	): Promise<DevContainerConfigsAnswer>;
+	/**
+	 * Where the build log is of the container the window's Workspace's
+	 * folder makes from the definition `configPath`.
+	 */
+	devContainerBuildLog(
+		window: WindowFolderWire,
+		configPath: string,
+	): Promise<string>;
 	/** Move a window's editor; resolves once the new workbench is open. */
 	reattachEditor(
 		window: WindowFolderWire,
@@ -325,6 +333,13 @@ export async function answerControlRequest(
 					devContainers,
 				};
 			}
+			case "dev-container-build-log": {
+				const buildLog = await handlers.devContainerBuildLog(
+					request.window,
+					request.configPath,
+				);
+				return { ok: true, message: buildLog, buildLog };
+			}
 			case "reattach-editor":
 				await handlers.reattachEditor(request.window, request.to);
 				return { ok: true, message: "reattached" };
@@ -375,6 +390,7 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "resolve-remote":
 		case "terminal-profile":
 		case "dev-container-configs":
+		case "dev-container-build-log":
 			return false;
 		case "reattach-editor":
 			return true;

@@ -318,6 +318,8 @@ export async function bootstrapShell(
 		// A workbench's own dev container commands: see `extensions/devhub-remote`.
 		devContainerConfigs: (window) =>
 			controller.devContainerConfigsForWindow(window),
+		devContainerBuildLog: (window, configPath) =>
+			controller.devContainerBuildLogForWindow(window, configPath),
 		reattachEditor: (window, to) =>
 			controller.reattachEditorFromWindow(
 				window,

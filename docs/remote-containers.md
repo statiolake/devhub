@@ -78,10 +78,27 @@ Workspace's session through `Runtime.commandFromHere`: the session's own
 command for a folder on this Mac, and `ssh -tt <host> -- <command>` for one on
 a host.
 
-Only the DevHub profile moves. Every other profile, every task and the
-debugger stay with the container, and the patch already refuses the DevHub
-profile as the automation shell. From that terminal, `devcontainer exec` is
-how to reach the container by hand.
+Only the DevHub profile moves, and the rule is one line: **the default
+terminal is the DevHub terminal; a profile a person picks runs in the
+container.** Ctrl+`, the `+` button and New Terminal create the DevHub
+terminal on the Workspace's machine; `bash`, `sh` or any other profile chosen
+from the profile list (Create New Terminal (With Profile), the `+` button's
+menu) is a terminal on the container's remote pty host, as in any Dev
+Containers window, and the list shows the container's own shells. Tasks and
+the debugger stay with the container too, and the patch already refuses the
+DevHub profile as the automation shell.
+
+A terminal that cannot start stays open with the reason written in it until a
+key closes it (patch 0005). Upstream closes it at once and says why in a
+notification that times out, which read as a terminal that opened for an
+instant and crashed.
+
+The container's shells start in the folder as the container has it:
+`read-configuration`'s `workspace.workspaceFolder`, the CLI's own answer
+(`ContainerHost.workspacePath`). A folder inside a git repository is mounted
+through the repository's root (`/workspaces/<repo>/<sub>`), so
+`/workspaces/<folder name>` — what DevHub used to assume — was a folder that
+did not exist, and every container terminal failed to start in it.
 
 ### `devhub` inside the container
 
@@ -98,8 +115,8 @@ to it.
 ## The commands
 
 `extensions/devhub-remote` contributes **Reopen in Container**, **Reopen
-Folder Locally** and **Switch Container** to the command palette and to the
-remote indicator's menu. It is `ui`-kind, so it runs on this Mac in every
+Folder Locally**, **Switch Container** and **Show Build Log** to the command
+palette and to the remote indicator's menu. It is `ui`-kind, so it runs on this Mac in every
 window, local or attached, next to DevHub's control socket. It asks DevHub
 two things with the window's folder URI, which `editorPlaceFromWorkspaceUri`
 turns into its Workspace:
@@ -114,6 +131,15 @@ turns into its Workspace:
   Cancel changes nothing — records the attachment, and opens the workbench
   again on the new authority.
 
+- `dev-container-build-log` — where the build log of one of the folder's
+  definitions is (see [The build log](#the-build-log)).
+
+VS Code's own **Close Remote Connection** is not in a DevHub workbench (patch
+0006): upstream it reopens the window empty and local, and DevHub has no empty
+window — the request became Scratch, and the editor stayed where it was. The
+way out of a container is Reopen Folder Locally, in the same menu; an SSH
+Workspace *is* its host and is closed from the sidebar.
+
 These commands are the only way into a container. Opening a Workspace never
 asks about one: a folder always opens with its editor on its own machine, and
 the editor is moved from inside it. Outside the editor there is one way out:
@@ -123,6 +149,25 @@ container — the way out when that editor cannot open.
 The row keeps its folder's mark and wears a quiet crate mark beside its other
 marks; its facts say `editor in dev container`, and the definition's name
 when the folder has several.
+
+## The build log
+
+Every `devcontainer up` DevHub runs writes what the CLI says — the pull, the
+build, the lifecycle commands — to one file per container on this Mac,
+`<user data>/devhub/dev-container-logs/<hash of the container id>.log`, as it
+says it (`main/runtime/buildLog.ts`). A container on an SSH host is no
+different: the CLI runs there, and its output comes back over ssh as it is
+written. Each bring-up replaces the file with a new one, headed by the command
+and ending with how it exited.
+
+Reopen in Container and Switch Container follow it into the window's **Dev
+Containers** output while DevHub works; a container that only has to be
+started or adopted writes nothing, and the output then shows nothing rather
+than the last build. A bring-up that fails says so in a notice with **Show
+Build Log**, and the refusal names the file too — it is also what a window
+that failed to resolve says. **Dev Containers: Show Build Log** shows it at
+any time: the log of the container the editor is in, or, in a window on the
+folder's own machine, of the definition chosen.
 
 ## Lifecycle
 
@@ -272,7 +317,8 @@ What changed is said in one notice (`state_migrated`).
 1. **`docker ps -a --filter label=devcontainer.local_folder=<folder>
    --filter label=devcontainer.config_file=<definition>`** — the exact
    question DevHub asks (on the host, for an SSH Workspace).
-2. **`devcontainer up --workspace-folder <folder> --config <definition>`** by
+2. **The build log** (Dev Containers: Show Build Log), or
+   **`devcontainer up --workspace-folder <folder> --config <definition>`** by
    hand; its log is on stderr and its one JSON object on stdout.
 3. **The server's log, in the container:**
    `docker exec <id> cat ~/.devhub-server/.<commit>.log`.
@@ -285,11 +331,14 @@ What changed is said in one notice (`state_migrated`).
 
 1. Open a folder with two definitions (`.devcontainer/devcontainer.json` and
    `.devcontainer/<name>/devcontainer.json`). The palette offers **Reopen in
-   Container** and asks which.
+   Container** and asks which; the Dev Containers output shows the build as
+   it runs, and a definition that does not build offers Show Build Log.
 2. The window comes up with `Dev Container: <folder>` (and the definition's
    name) in the status bar; the explorer shows the bind-mounted folder.
 3. Ctrl+`: the terminal is `tmux - Local` and attached to the Workspace's own
    session on the Workspace's machine (`tmux -L <socket> list-clients`).
+   Create New Terminal (With Profile) → `bash`: a shell in the container, in
+   the folder, for a folder that is a subfolder of a repository too.
 4. A task runs in the container: its `hostname` is the container's.
 5. `devhub <file>` from inside the container opens in this window.
 6. **Switch Container** to the other definition: the new container comes up,

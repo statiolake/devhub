@@ -1,0 +1,61 @@
+diff --git a/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts b/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
+index 65d90cfd1848..f2ac8719b364 100644
+--- a/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
++++ b/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
+@@ -21,7 +21,7 @@ import { IBrowserWorkbenchEnvironmentService } from '../../../services/environme
+ import { PersistentConnectionEventType } from '../../../../platform/remote/common/remoteAgentConnection.js';
+ import { IRemoteAuthorityResolverService } from '../../../../platform/remote/common/remoteAuthorityResolver.js';
+ import { IHostService } from '../../../services/host/browser/host.js';
+-import { PlatformName, PlatformToString, isWeb, platform } from '../../../../base/common/platform.js';
++import { PlatformName, PlatformToString, devhubTerminalLauncher, isWeb, platform } from '../../../../base/common/platform.js';
+ import { truncate } from '../../../../base/common/strings.js';
+ import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+ import { getRemoteName } from '../../../../platform/remote/common/remoteHosts.js';
+@@ -76,7 +76,15 @@ export class RemoteStatusIndicator extends Disposable implements IWorkbenchContr
+ 
+ 	private static readonly REMOTE_ACTIONS_COMMAND_ID = 'workbench.action.remote.showMenu';
+ 	private static readonly CLOSE_REMOTE_COMMAND_ID = 'workbench.action.remote.close';
+-	private static readonly SHOW_CLOSE_REMOTE_COMMAND_ID = !isWeb; // web does not have a "Close Remote" command
++	private static readonly SHOW_CLOSE_REMOTE_COMMAND_ID = !isWeb && !devhubTerminalLauncher; // web does not have a "Close Remote" command
++	// DevHub: nor does a workbench DevHub hosts. Upstream's Close Remote
++	// Connection reopens this window empty and local, and DevHub has no empty
++	// window: a request for one is Scratch, so the command only switched to
++	// Scratch and left this editor as it was. Leaving a dev container is
++	// DevHub's Reopen Folder Locally, which sits in this same menu; an SSH
++	// Workspace *is* its host, and is closed from the sidebar. Reload Window,
++	// which upstream offers beside it on a lost connection, stays.
++	private static readonly SHOW_RELOAD_ON_DISCONNECT = !isWeb;
+ 	private static readonly INSTALL_REMOTE_EXTENSIONS_ID = 'workbench.action.remote.extensions';
+ 
+ 	private static readonly DEFAULT_REMOTE_STATUS_LABEL = '$(remote)';
+@@ -770,13 +778,15 @@ export class RemoteStatusIndicator extends Disposable implements IWorkbenchContr
+ 
+ 			const entriesBeforeConfig = items.length;
+ 
+-			if (RemoteStatusIndicator.SHOW_CLOSE_REMOTE_COMMAND_ID) {
++			if (RemoteStatusIndicator.SHOW_RELOAD_ON_DISCONNECT) {
+ 				if (this.remoteAuthority) {
+-					items.push({
+-						type: 'item',
+-						id: RemoteStatusIndicator.CLOSE_REMOTE_COMMAND_ID,
+-						label: nls.localize('closeRemoteConnection.title', 'Close Remote Connection')
+-					});
++					if (RemoteStatusIndicator.SHOW_CLOSE_REMOTE_COMMAND_ID) {
++						items.push({
++							type: 'item',
++							id: RemoteStatusIndicator.CLOSE_REMOTE_COMMAND_ID,
++							label: nls.localize('closeRemoteConnection.title', 'Close Remote Connection')
++						});
++					}
+ 
+ 					if (this.connectionState === 'disconnected') {
+ 						items.push({
+@@ -785,7 +795,7 @@ export class RemoteStatusIndicator extends Disposable implements IWorkbenchContr
+ 							label: nls.localize('reloadWindow', 'Reload Window')
+ 						});
+ 					}
+-				} else if (this.virtualWorkspaceLocation) {
++				} else if (this.virtualWorkspaceLocation && RemoteStatusIndicator.SHOW_CLOSE_REMOTE_COMMAND_ID) {
+ 					items.push({
+ 						type: 'item',
+ 						id: RemoteStatusIndicator.CLOSE_REMOTE_COMMAND_ID,

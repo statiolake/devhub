@@ -16,17 +16,26 @@
  * the opposite, `workspace`, because its job is inside the window's workbench.)
  */
 
+import { open, stat } from "node:fs/promises";
 import * as vscode from "vscode";
+import {
+  LogFollower,
+  showLog,
+  type LogFiles,
+  type LogOutput,
+} from "./buildLog";
 import {
   refreshAvailability,
   reopenInContainer,
   reopenLocally,
+  showBuildLog,
   switchContainer,
   type CommandsApi,
   type DevHubConnection,
 } from "./commands";
 import {
   controlSocketFromGlobalStorage,
+  requestDevContainerBuildLog,
   requestDevContainerConfigs,
   requestReattachEditor,
   requestResolveRemote,
@@ -116,36 +125,92 @@ function workspaceSuffixFor(authority: string): string {
   return `SSH: ${authority.slice(authority.indexOf("+") + 1)}`;
 }
 
-/** The commands' view of the window, through the real `vscode`. */
-const commandsApi: CommandsApi = {
-  windowFolder: () => {
-    const uri = vscode.workspace.workspaceFolders?.[0]?.uri;
-    return uri === undefined
-      ? undefined
-      : {
-          scheme: uri.scheme,
-          authority: uri.authority,
-          path: uri.path,
-          fsPath: uri.fsPath,
-        };
+/** The build log's file, read with Node: this extension runs on this Mac. */
+const logFiles: LogFiles = {
+  stat: async (path) => {
+    try {
+      const found = await stat(path);
+      return { ino: found.ino, size: found.size };
+    } catch (failure) {
+      // No file is an answer: nothing has been written there yet.
+      if ((failure as NodeJS.ErrnoException).code === "ENOENT")
+        return undefined;
+      throw failure;
+    }
   },
-  remoteName: () => vscode.env.remoteName,
-  pick: async (items, placeholder) =>
-    vscode.window.showQuickPick([...items], { placeHolder: placeholder }),
-  showError: (message) => {
-    void vscode.window.showErrorMessage(message);
-  },
-  withProgress: (title, work) =>
-    Promise.resolve(
-      vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title },
-        work,
-      ),
-    ),
-  setContext: (key, value) => {
-    void vscode.commands.executeCommand("setContext", key, value);
+  read: async (path, from, to) => {
+    const file = await open(path, "r");
+    try {
+      const bytes = new Uint8Array(to - from);
+      const { bytesRead } = await file.read(bytes, 0, bytes.byteLength, from);
+      return bytes.subarray(0, bytesRead);
+    } finally {
+      await file.close();
+    }
   },
 };
+
+/** How often a followed build log is looked at. */
+const FOLLOW_EVERY_MS = 250;
+
+/** The commands' view of the window, through the real `vscode`. */
+function commandsApiFor(
+  context: vscode.ExtensionContext,
+  report: (failure: unknown) => void,
+): CommandsApi {
+  // One "Dev Containers" output per window, made the first time a log is
+  // shown in it.
+  let channel: vscode.OutputChannel | undefined;
+  const output = (): LogOutput => {
+    if (channel === undefined) {
+      channel = vscode.window.createOutputChannel("Dev Containers");
+      context.subscriptions.push(channel);
+    }
+    return channel;
+  };
+  return {
+    windowFolder: () => {
+      const uri = vscode.workspace.workspaceFolders?.[0]?.uri;
+      return uri === undefined
+        ? undefined
+        : {
+            scheme: uri.scheme,
+            authority: uri.authority,
+            path: uri.path,
+            fsPath: uri.fsPath,
+          };
+    },
+    remoteName: () => vscode.env.remoteName,
+    pick: async (items, placeholder) =>
+      vscode.window.showQuickPick([...items], { placeHolder: placeholder }),
+    showError: (message, ...actions) =>
+      Promise.resolve(vscode.window.showErrorMessage(message, ...actions)),
+    followBuildLog: async (path) => {
+      const follower = await LogFollower.start(path, output(), logFiles);
+      const timer = setInterval(() => {
+        follower.poll().catch(report);
+      }, FOLLOW_EVERY_MS);
+      return {
+        stop: async () => {
+          clearInterval(timer);
+          // What was written between the last look and the end.
+          await follower.poll();
+        },
+      };
+    },
+    showBuildLog: (path) => showLog(path, output(), logFiles),
+    withProgress: (title, work) =>
+      Promise.resolve(
+        vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title },
+          work,
+        ),
+      ),
+    setContext: (key, value) => {
+      void vscode.commands.executeCommand("setContext", key, value);
+    },
+  };
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   const socketPath = controlSocketFromGlobalStorage(
@@ -158,16 +223,22 @@ export function activate(context: vscode.ExtensionContext): void {
     const devhub: DevHubConnection = {
       configs: (window) => requestDevContainerConfigs(socketPath, window),
       reattach: (window, to) => requestReattachEditor(socketPath, window, to),
+      buildLog: (window, configPath) =>
+        requestDevContainerBuildLog(socketPath, window, configPath),
     };
+    // The one place a command's failure is said: every command's rejection
+    // comes here.
     const report = (failure: unknown): void => {
-      commandsApi.showError(
+      void vscode.window.showErrorMessage(
         failure instanceof Error ? failure.message : String(failure),
       );
     };
+    const commandsApi = commandsApiFor(context, report);
     for (const [id, run] of [
       ["devhub.reopenInContainer", reopenInContainer],
       ["devhub.reopenLocally", reopenLocally],
       ["devhub.switchContainer", switchContainer],
+      ["devhub.showBuildLog", showBuildLog],
     ] as const) {
       context.subscriptions.push(
         vscode.commands.registerCommand(id, () =>

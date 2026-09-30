@@ -581,6 +581,7 @@ export class SshRuntime
 			request.cancel,
 			request.limits,
 			request.stdin,
+			request.onOutput,
 		);
 	}
 

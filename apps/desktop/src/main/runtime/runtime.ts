@@ -89,6 +89,12 @@ export interface ExecRequest {
 	readonly deadline: OperationDeadline;
 	readonly cancel: CancellationToken;
 	readonly limits: ExecLimits;
+	/**
+	 * Told every chunk of the command's stdout and stderr as it arrives, for
+	 * a caller that shows a long command's progress while it runs — a
+	 * `devcontainer up`'s build log. The result still carries both, whole.
+	 */
+	readonly onOutput?: (chunk: Buffer) => void;
 }
 
 export interface ExecResult {

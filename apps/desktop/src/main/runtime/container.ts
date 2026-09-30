@@ -57,6 +57,7 @@ import {
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import type { Pty } from "../terminal/pty.js";
 import type { StreamLaunch } from "./byteStream.js";
+import { BuildLogFile } from "./buildLog.js";
 import { LOCAL_CADENCE } from "./local.js";
 import { shellQuote } from "./quote.js";
 import {
@@ -156,7 +157,10 @@ export function dockerOutput(
 /** How this build runs `devcontainer`. */
 export interface DevContainerCli {
 	readonly path: string;
-	readonly run?: (args: readonly string[]) => Promise<CommandOutput>;
+	readonly run?: (
+		args: readonly string[],
+		onOutput?: (chunk: Buffer) => void,
+	) => Promise<CommandOutput>;
 }
 
 /**
@@ -176,11 +180,16 @@ export interface ContainerMachine {
 	readonly dockerName: string;
 	docker(
 		args: readonly string[],
-		request?: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+		request?: Pick<
+			ExecRequest,
+			"deadline" | "cancel" | "limits" | "stdin" | "onOutput"
+		>,
 	): Promise<CommandOutput>;
+	/** `onOutput` is told the CLI's output as it arrives: its log. */
 	devcontainer(
 		args: readonly string[],
 		timeoutMs: number,
+		onOutput?: (chunk: Buffer) => void,
 	): Promise<CommandOutput>;
 	/** A long-lived `docker …` whose stdin and stdout are pipes on this Mac. */
 	dockerLaunch(args: readonly string[]): Promise<StreamLaunch>;
@@ -195,7 +204,10 @@ export function localContainerMachine(
 	const bounded = (
 		file: string,
 		args: readonly string[],
-		request: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+		request: Pick<
+			ExecRequest,
+			"deadline" | "cancel" | "limits" | "stdin" | "onOutput"
+		>,
 	): Promise<CommandOutput> =>
 		runBounded(
 			{ file, args: [...args], cwd: undefined, env: environment },
@@ -203,6 +215,7 @@ export function localContainerMachine(
 			request.cancel,
 			request.limits,
 			request.stdin,
+			request.onOutput,
 		);
 	return {
 		where: "",
@@ -216,14 +229,16 @@ export function localContainerMachine(
 						cancel: request?.cancel ?? new CancellationToken(),
 						limits: request?.limits ?? PROBE_LIMITS,
 						stdin: request?.stdin,
+						onOutput: request?.onOutput,
 					}),
-		devcontainer: (args, timeoutMs) =>
+		devcontainer: (args, timeoutMs, onOutput) =>
 			devcontainer.run
-				? devcontainer.run(args)
+				? devcontainer.run(args, onOutput)
 				: bounded(devcontainer.path, args, {
 						deadline: OperationDeadline.in(timeoutMs),
 						cancel: new CancellationToken(),
 						limits: { ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
+						onOutput,
 					}),
 		dockerLaunch: (args) =>
 			Promise.resolve({
@@ -251,7 +266,10 @@ export interface HostShell {
 export function hostContainerMachine(host: HostShell): ContainerMachine {
 	const run = async (
 		argv: readonly string[],
-		request: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+		request: Pick<
+			ExecRequest,
+			"deadline" | "cancel" | "limits" | "stdin" | "onOutput"
+		>,
 	): Promise<CommandOutput> => {
 		const result = await host.exec({ argv, ...request });
 		return { ...result, success: result.code === 0 };
@@ -265,12 +283,14 @@ export function hostContainerMachine(host: HostShell): ContainerMachine {
 				cancel: request?.cancel ?? new CancellationToken(),
 				limits: request?.limits ?? PROBE_LIMITS,
 				stdin: request?.stdin,
+				onOutput: request?.onOutput,
 			}),
-		devcontainer: (args, timeoutMs) =>
+		devcontainer: (args, timeoutMs, onOutput) =>
 			run(["devcontainer", ...args], {
 				deadline: OperationDeadline.in(timeoutMs),
 				cancel: new CancellationToken(),
 				limits: { ...PROBE_LIMITS, stdoutBytes: 1024 * 1024 },
+				onOutput,
 			}),
 		dockerLaunch: (args) => host.commandLaunch(["docker", ...args]),
 	};
@@ -281,6 +301,12 @@ export interface ContainerHostOptions {
 	readonly target: ContainerTarget;
 	/** Where `docker` runs for it. See `ContainerMachine`. */
 	readonly machine: ContainerMachine;
+	/**
+	 * The file on this Mac each `devcontainer up` writes its log to, as it
+	 * runs: one file per container, replaced by every bring-up. See
+	 * `containerBuildLogPath` and `BuildLogFile`.
+	 */
+	readonly buildLog: string;
 	/**
 	 * Where the remote extension host comes from.
 	 *
@@ -327,7 +353,6 @@ export type ContainerState =
 interface UpResult {
 	readonly containerId: string;
 	readonly remoteUser: string;
-	readonly remoteWorkspaceFolder: string;
 }
 
 /**
@@ -469,6 +494,7 @@ export class ContainerHost
 	readonly #rehDelivery: RehDelivery | undefined;
 	readonly #listen: ContainerHostOptions["listen"];
 	readonly #onStarted: ContainerHostOptions["onStarted"];
+	readonly #buildLog: string;
 
 	readonly #recentExecs = new RollingTally(A_MINUTE);
 	#connected = false;
@@ -492,6 +518,12 @@ export class ContainerHost
 		this.#rehDelivery = options.reh;
 		this.#listen = options.listen;
 		this.#onStarted = options.onStarted;
+		this.#buildLog = options.buildLog;
+	}
+
+	/** Where this container's `devcontainer up` log is. See `buildLog`. */
+	get buildLogPath(): string {
+		return this.#buildLog;
 	}
 
 	protected override get machineName(): string {
@@ -524,7 +556,10 @@ export class ContainerHost
 	/** One `docker`, with its output bounded like every other command. */
 	#docker_(
 		args: readonly string[],
-		request?: Pick<ExecRequest, "deadline" | "cancel" | "limits" | "stdin">,
+		request?: Pick<
+			ExecRequest,
+			"deadline" | "cancel" | "limits" | "stdin" | "onOutput"
+		>,
 	): Promise<CommandOutput> {
 		return this.#machine.docker(args, request);
 	}
@@ -748,9 +783,6 @@ export class ContainerHost
 			result: {
 				containerId: id,
 				remoteUser: user ?? "",
-				// The path inside is the Workspace's, which the location already
-				// carries; adoption does not need to rediscover it.
-				remoteWorkspaceFolder: "",
 			},
 			remoteUser: user,
 		};
@@ -806,7 +838,24 @@ export class ContainerHost
 		// Building an image is not a probe: a first `up` pulls a base image and
 		// runs whatever the definition's `postCreateCommand` is, and a minute is
 		// not unusual.
-		const result = await this.#devcontainerCommand("up", UP_TIMEOUT_MS);
+		const log = BuildLogFile.begin(
+			this.#buildLog,
+			`devcontainer up --workspace-folder ${this.#workspaceFolder} --config ${this.#configPath}${this.#machine.where}`,
+		);
+		let result: CommandOutput;
+		try {
+			result = await this.#devcontainerCommand("up", UP_TIMEOUT_MS, (chunk) =>
+				log.write(chunk),
+			);
+		} catch (failure: unknown) {
+			log.end(`DevHub could not run it: ${describeFailure(failure)}`);
+			throw failure;
+		}
+		log.end(
+			result.success
+				? "exited 0"
+				: `exited ${result.code === null ? `on ${result.signal ?? "a signal"}` : String(result.code)}`,
+		);
 		const stdout = result.stdout.toString("utf8");
 		// The CLI prints its log on stderr and exactly one JSON object on stdout,
 		// which is the contract this parses. An unrecognised shape is a hard
@@ -816,12 +865,14 @@ export class ContainerHost
 		if (parsed === undefined) {
 			throw new DevContainerUnusable(
 				`devcontainer up did not answer with an outcome DevHub understands ` +
-					`for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
+					`for ${this.machineName}. ${describeCliFailure(result, stdout)} ` +
+					`Its build log: ${this.#buildLog}`,
 			);
 		}
 		if (parsed.outcome !== "success") {
 			throw new DevContainerUnusable(
-				`${capitalised(this.machineName)} could not be started: ${parsed.message}`,
+				`${capitalised(this.machineName)} could not be started: ${parsed.message} ` +
+					`Its build log: ${this.#buildLog}`,
 			);
 		}
 		return parsed.result;
@@ -831,6 +882,7 @@ export class ContainerHost
 	#devcontainerCommand(
 		verb: string,
 		timeoutMs: number,
+		onOutput?: (chunk: Buffer) => void,
 	): Promise<CommandOutput> {
 		return this.#machine.devcontainer(
 			[
@@ -841,6 +893,7 @@ export class ContainerHost
 				this.#configPath,
 			],
 			timeoutMs,
+			onOutput,
 		);
 	}
 
@@ -856,18 +909,7 @@ export class ContainerHost
 	 * others; the CLI is what knows the answer.
 	 */
 	async shutdownAction(): Promise<ShutdownAction> {
-		const result = await this.#devcontainerCommand(
-			"read-configuration",
-			PROBE_TIMEOUT_MS,
-		);
-		const stdout = result.stdout.toString("utf8");
-		const configuration = parseReadConfiguration(stdout);
-		if (configuration === undefined) {
-			throw new Error(
-				`devcontainer read-configuration did not answer with a configuration ` +
-					`DevHub understands for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
-			);
-		}
+		const { configuration } = await this.#readConfiguration();
 		const stated = configuration["shutdownAction"];
 		if (stated === undefined) {
 			return configuration["dockerComposeFile"] === undefined
@@ -885,6 +927,23 @@ export class ContainerHost
 			`${capitalised(this.machineName)}'s definition says shutdownAction ` +
 				`${JSON.stringify(stated)}, which is not none, stopContainer or stopCompose.`,
 		);
+	}
+
+	/** `devcontainer read-configuration` for this folder and definition. */
+	async #readConfiguration(): Promise<ReadConfiguration> {
+		const result = await this.#devcontainerCommand(
+			"read-configuration",
+			PROBE_TIMEOUT_MS,
+		);
+		const stdout = result.stdout.toString("utf8");
+		const read = parseReadConfiguration(stdout);
+		if (read === undefined) {
+			throw new DevContainerUnusable(
+				`devcontainer read-configuration did not answer with a configuration ` +
+					`DevHub understands for ${this.machineName}. ${describeCliFailure(result, stdout)}`,
+			);
+		}
+		return read;
 	}
 
 	/**
@@ -982,42 +1041,28 @@ export class ContainerHost
 	}
 
 	/**
-	 * Where this Workspace's folder is mounted inside the container.
+	 * Where this Workspace's folder is inside the container: the path a
+	 * workbench opens.
 	 *
-	 * `devcontainer up` says so, and a container that was adopted rather than
-	 * started did not — so the mount is read back from the container itself,
-	 * which is the answer that is true either way. `docker inspect`'s `Mounts`
-	 * is where the bind that carries this folder is written down, and its
-	 * `Destination` is the path a workbench opens.
-	 *
-	 * The fallback is the spec's own default, `/workspaces/<folder name>`,
-	 * which is what the CLI uses when the definition names no
-	 * `workspaceFolder`. Guessing is worth it here only because the guess is
-	 * upstream's documented one and a wrong answer is visible immediately — the
-	 * window opens on a folder that is not there — rather than being the kind
-	 * of silent wrongness this codebase refuses.
+	 * The CLI's own answer, `read-configuration`'s `workspace.workspaceFolder`,
+	 * which is what `up` mounts — asked rather than worked out, because the
+	 * working out is the CLI's: a folder inside a git repository is reached
+	 * through a mount of the repository's root (`/workspaces/<repo>/<sub>`),
+	 * and a definition can name its own `workspaceMount` and
+	 * `workspaceFolder`. A guess here opened windows on a folder that is not
+	 * there, whose terminals then could not start in it. The container is
+	 * started first, like every other question put to it.
 	 */
 	async workspacePath(): Promise<string> {
-		const workspaceFolder = this.#workspaceFolder;
-		const container = await this.#currentContainer();
-		if (container.remoteWorkspaceFolder.length > 0) {
-			return container.remoteWorkspaceFolder;
+		await this.#currentContainer();
+		const { workspaceFolder } = await this.#readConfiguration();
+		if (workspaceFolder === undefined) {
+			throw new DevContainerUnusable(
+				`devcontainer read-configuration did not say where ${this.#workspaceFolder} ` +
+					`is inside ${this.machineName}.`,
+			);
 		}
-		const mounts = await this.#docker_([
-			"inspect",
-			"-f",
-			"{{range .Mounts}}{{.Source}}\t{{.Destination}}\n{{end}}",
-			container.containerId,
-		]);
-		if (mounts.code === 0) {
-			for (const line of mounts.stdout.toString("utf8").split("\n")) {
-				const [source = "", destination = ""] = line.split("\t");
-				if (source === workspaceFolder && destination.length > 0) {
-					return destination;
-				}
-			}
-		}
-		return posix.join("/workspaces", basenameOf(workspaceFolder));
+		return workspaceFolder;
 	}
 
 	protected override async run(request: ExecRequest): Promise<ExecResult> {
@@ -1719,12 +1764,29 @@ function notAWorkspaceMachine(machineName: string, what: string): Error {
 }
 
 /**
- * `devcontainer read-configuration`'s `configuration` object, or `undefined`
- * for anything else. The CLI prints one JSON object on stdout, as `up` does.
+ * What DevHub reads of `devcontainer read-configuration`'s answer: the
+ * definition as the CLI merged it, and where the CLI puts the Workspace's
+ * folder inside the container.
+ */
+export interface ReadConfiguration {
+	readonly configuration: Record<string, unknown>;
+	/**
+	 * The folder a workbench opens in the container: the CLI's own
+	 * `workspace.workspaceFolder`, which is what `up` mounts and reports. Not
+	 * `/workspaces/<folder name>` — the CLI mounts a folder's git root when the
+	 * folder is inside a repository, so the folder is under that mount, and a
+	 * definition may name any `workspaceFolder` it likes.
+	 */
+	readonly workspaceFolder: string | undefined;
+}
+
+/**
+ * `devcontainer read-configuration`'s answer, or `undefined` for anything
+ * else. The CLI prints one JSON object on stdout, as `up` does.
  */
 export function parseReadConfiguration(
 	stdout: string,
-): Record<string, unknown> | undefined {
+): ReadConfiguration | undefined {
 	const line = stdout.trim().split("\n").at(-1) ?? "";
 	let parsed: unknown;
 	try {
@@ -1733,12 +1795,26 @@ export function parseReadConfiguration(
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const configuration = (parsed as { configuration?: unknown }).configuration;
-	return typeof configuration === "object" &&
-		configuration !== null &&
-		!Array.isArray(configuration)
-		? (configuration as Record<string, unknown>)
-		: undefined;
+	const { configuration, workspace } = parsed as {
+		configuration?: unknown;
+		workspace?: unknown;
+	};
+	if (
+		typeof configuration !== "object" ||
+		configuration === null ||
+		Array.isArray(configuration)
+	) {
+		return undefined;
+	}
+	const folder =
+		typeof workspace === "object" && workspace !== null
+			? (workspace as { workspaceFolder?: unknown }).workspaceFolder
+			: undefined;
+	return {
+		configuration: configuration as Record<string, unknown>,
+		workspaceFolder:
+			typeof folder === "string" && folder.length > 0 ? folder : undefined,
+	};
 }
 
 /** `devcontainer up`'s answer, as far as DevHub reads it. */
@@ -1785,14 +1861,11 @@ export function parseUpOutcome(
 		return undefined;
 	}
 	const remoteUser = object["remoteUser"];
-	const remoteWorkspaceFolder = object["remoteWorkspaceFolder"];
 	return {
 		outcome: "success",
 		result: {
 			containerId,
 			remoteUser: typeof remoteUser === "string" ? remoteUser : "",
-			remoteWorkspaceFolder:
-				typeof remoteWorkspaceFolder === "string" ? remoteWorkspaceFolder : "",
 		},
 	};
 }

@@ -11,6 +11,9 @@
  */
 
 import { Buffer } from "node:buffer";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	devContainerConfigPath,
@@ -85,27 +88,37 @@ function fakeDocker(
 }
 
 function fakeDevcontainer(
-	answer: (args: readonly string[]) => Promise<CommandOutput>,
+	answer: (
+		args: readonly string[],
+		say: (text: string) => void,
+	) => Promise<CommandOutput>,
 ): DevContainerCli & { calls: string[][] } {
 	const calls: string[][] = [];
 	return {
 		path: "/fake/devcontainer",
 		calls,
-		run: (args) => {
+		run: (args, onOutput) => {
 			calls.push([...args]);
-			return answer(args);
+			return answer(args, (text) => onOutput?.(Buffer.from(text, "utf8")));
 		},
 	};
+}
+
+/** A build log file of this test run's own. */
+function scratchBuildLog(): string {
+	return join(mkdtempSync(join(tmpdir(), "devhub-build-log-")), "up.log");
 }
 
 function runtimeWith(
 	docker: DockerCli,
 	devcontainer: DevContainerCli,
 	configPath = CONFIG,
+	buildLog = scratchBuildLog(),
 ): ContainerHost {
 	return new ContainerHost({
 		target: target(configPath),
 		machine: localContainerMachine(docker, devcontainer),
+		buildLog,
 	});
 }
 
@@ -568,7 +581,6 @@ describe("reading devcontainer up", () => {
 			result: {
 				containerId: "abc",
 				remoteUser: "vscode",
-				remoteWorkspaceFolder: "/workspaces/api",
 			},
 		});
 	});
@@ -751,6 +763,92 @@ describe("what a container is called", () => {
 	});
 });
 
+describe("the build log", () => {
+	it("is written as devcontainer up says it, and ends with how it ended", async () => {
+		const log = scratchBuildLog();
+		let seenMidway = "";
+		const docker = fakeDocker((args) => {
+			if (args[0] === "ps") return output(0, "");
+			const script = args.at(-1) ?? "";
+			return containerShell(script) ?? output(0, "/home/vscode");
+		});
+		const devcontainer = fakeDevcontainer(async (_args, say) => {
+			say("[1/3] pulling ubuntu\n");
+			// On disk before the CLI has finished: an editor follows it live.
+			seenMidway = readFileSync(log, "utf8");
+			say("[2/3] running postCreateCommand\n");
+			return upSucceeded("c1");
+		});
+		const runtime = runtimeWith(docker, devcontainer, CONFIG, log);
+		await runtime.ensureUp({ build: true });
+		expect(seenMidway).toContain("[1/3] pulling ubuntu");
+		const written = readFileSync(log, "utf8");
+		expect(written).toContain(`$ devcontainer up --workspace-folder ${FOLDER}`);
+		expect(written).toContain("[2/3] running postCreateCommand");
+		expect(written).toContain("# exited 0");
+		expect(runtime.buildLogPath).toBe(log);
+	});
+
+	it("is named by the refusal of a devcontainer up that failed", async () => {
+		const log = scratchBuildLog();
+		const docker = fakeDocker(() => output(0, ""));
+		const devcontainer = fakeDevcontainer(async (_args, say) => {
+			say("ERROR: failed to solve: ubuntu:nope: not found\n");
+			return output(
+				1,
+				JSON.stringify({ outcome: "error", message: "Command failed" }),
+			);
+		});
+		const runtime = runtimeWith(docker, devcontainer, CONFIG, log);
+		expect(await drawnAs(runtime.ensureUp({ build: true }))).toMatchObject({
+			code: "dev_container_unusable",
+			detail: expect.stringContaining(`Its build log: ${log}`) as string,
+		});
+		const written = readFileSync(log, "utf8");
+		expect(written).toContain("ubuntu:nope: not found");
+		expect(written).toContain("# exited 1");
+	});
+});
+
+describe("where the folder is inside the container", () => {
+	function reading(workspace: unknown) {
+		const docker = fakeDocker((args) => {
+			if (args[0] === "ps") return output(0, psLine("c1", "running"));
+			if (args[0] === "inspect") return output(0, "");
+			const script = args.at(-1) ?? "";
+			return containerShell(script) ?? output(0, "/home/vscode");
+		});
+		const devcontainer = fakeDevcontainer((args) =>
+			args[0] === "read-configuration"
+				? output(
+						0,
+						JSON.stringify({ configuration: { image: "alpine" }, workspace }),
+					)
+				: Promise.reject(new Error(`${args[0] ?? ""} must not run here`)),
+		);
+		return runtimeWith(docker, devcontainer);
+	}
+
+	it("is the CLI's own workspaceFolder, under the git root it mounted", async () => {
+		// A folder inside a repository is mounted through the repository's
+		// root, so it is not /workspaces/<folder name>: the window opened on a
+		// folder that was not there, and a terminal picked from the profile
+		// list could not start in it and vanished.
+		const runtime = reading({
+			workspaceFolder: "/workspaces/src/api",
+			workspaceMount: "type=bind,source=/src,target=/workspaces/src",
+		});
+		expect(await runtime.workspacePath()).toBe("/workspaces/src/api");
+	});
+
+	it("refuses, under its own title, when the CLI does not say", async () => {
+		const runtime = reading(undefined);
+		expect(await drawnAs(runtime.workspacePath())).toMatchObject({
+			code: "dev_container_unusable",
+		});
+	});
+});
+
 describe("letting go of a container DevHub started", () => {
 	function stopping(options: {
 		readonly state: string;
@@ -850,6 +948,7 @@ describe("hearing that a container was started", () => {
 		const make = () =>
 			new ContainerHost({
 				target: target(),
+				buildLog: scratchBuildLog(),
 				machine: localContainerMachine(
 					fakeDocker((args) => {
 						if (args[0] === "ps") {

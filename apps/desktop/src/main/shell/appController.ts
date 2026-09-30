@@ -4334,8 +4334,8 @@ export class AppController {
 			}
 		}
 		// Where the workbench opens the folder. On the Workspace's own machine
-		// that is the folder; in a dev container it is wherever the folder is
-		// mounted, which only the container can say — so it is started first,
+		// that is the folder; in a dev container it is where the CLI mounts it
+		// (`ContainerHost.workspacePath`) — and the container is started first,
 		// and only started: opening a window is the person's standing choice to
 		// have this editor in its container, which is enough to start one that
 		// exists and not enough to spend minutes building an image.
@@ -5207,6 +5207,26 @@ export class AppController {
 					? workspace.editor.configPath
 					: undefined,
 		};
+	}
+
+	/**
+	 * `dev-container-build-log`: see `ControlHandlers.devContainerBuildLog`.
+	 * A definition the folder does not have is refused, as a reattach to one
+	 * is.
+	 */
+	async devContainerBuildLogForWindow(
+		uri: WorkspaceUriParts,
+		configPath: string,
+	): Promise<string> {
+		const workspace = this.workspaceOfWindow(uri);
+		const editor = await this.editorFor(workspace, { configPath });
+		const target = containerTargetOf(workspace.location, editor);
+		if (target === undefined) {
+			throw new Error(
+				`${configPath} named no dev container of ${workspace.root}; this is a bug in DevHub.`,
+			);
+		}
+		return containerHostFor(target).buildLogPath;
 	}
 
 	/** `reattach-editor`: see `ControlHandlers.reattachEditor`. */

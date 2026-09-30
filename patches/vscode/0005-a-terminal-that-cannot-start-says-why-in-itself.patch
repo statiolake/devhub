@@ -1,0 +1,29 @@
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
+index 5e921025518..a462a52de16 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
+@@ -20,7 +20,7 @@ import { ISeparator, normalizeDriveLetter, template, tildify } from '../../../..
+ import { Disposable, DisposableMap, DisposableStore, IDisposable, ImmortalReference, MutableDisposable, dispose, toDisposable, type IReference } from '../../../../base/common/lifecycle.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import * as path from '../../../../base/common/path.js';
+-import { OS, OperatingSystem, isMacintosh, isWindows } from '../../../../base/common/platform.js';
++import { OS, OperatingSystem, devhubTerminalLauncher, isMacintosh, isWindows } from '../../../../base/common/platform.js';
+ import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { TabFocus } from '../../../../editor/browser/config/tabFocus.js';
+@@ -1753,7 +1753,14 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
+ 
+ 		// Only trigger wait on exit when the exit was *not* triggered by the
+ 		// user (via the `workbench.action.terminal.kill` command).
+-		const waitOnExit = this.waitOnExit;
++		// DevHub: a terminal that could not start stays open with the reason
++		// written in it, until a key closes it. Upstream says it in a
++		// notification and closes the terminal at once, so a terminal picked
++		// from the profile list appeared for an instant and was gone, and the
++		// only account of why was a toast that times out. The reason belongs
++		// where the person was looking.
++		const launchFailed = !!devhubTerminalLauncher && !!exitMessage && (this._processManager.processState === ProcessState.Launching || this._processManager.processState === ProcessState.KilledDuringLaunch);
++		const waitOnExit = this.waitOnExit ?? (launchFailed ? nls.localize('devhub.terminal.launchFailed', "Press any key to close the terminal.") : undefined);
+ 		if (waitOnExit && this._processManager.processState !== ProcessState.KilledByUser) {
+ 			this._xtermReadyPromise.then(xterm => {
+ 				if (!xterm) {

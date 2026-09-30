@@ -158,3 +158,24 @@ export function requestReattachEditor(
 ): Promise<{ ok: boolean; message: string }> {
   return request(socketPath, { kind: "reattach-editor", window, to });
 }
+
+/** DevHub's answer to `dev-container-build-log`. */
+export interface BuildLogAnswer {
+  ok: boolean;
+  message: string;
+  /** The log file's path on this Mac, when `ok`. */
+  buildLog?: string;
+}
+
+/** Where the build log is of the container one of the folder's definitions makes. */
+export function requestDevContainerBuildLog(
+  socketPath: string,
+  window: WindowFolder,
+  configPath: string,
+): Promise<BuildLogAnswer> {
+  return request(socketPath, {
+    kind: "dev-container-build-log",
+    window,
+    configPath,
+  });
+}

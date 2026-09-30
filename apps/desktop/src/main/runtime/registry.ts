@@ -35,6 +35,7 @@ import {
 	type DevContainerCli,
 	type DockerCli,
 } from "./container.js";
+import { containerBuildLogPath } from "./buildLog.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
 import type { RehDelivery, RemoteServerHost } from "./remoteServer.js";
@@ -252,6 +253,7 @@ export function containerHostFor(target: ContainerTarget): ContainerHost {
 				? hostContainerMachine(machine)
 				: localContainerMachine(profile.docker, profile.devcontainer),
 		reh: profile.reh,
+		buildLog: containerBuildLogPath(profile.userDataDirectory, key),
 		onStarted: (id, containerId) => containerStarted?.(id, containerId),
 	});
 	CONTAINERS.set(key, host);

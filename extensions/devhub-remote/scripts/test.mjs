@@ -13,6 +13,7 @@ await build({
     "test/resolveRemote.test.ts",
     "test/control.test.ts",
     "test/commands.test.ts",
+    "test/buildLog.test.ts",
   ],
   bundle: true,
   platform: "node",

@@ -20,6 +20,7 @@
  */
 
 import type {
+  BuildLogAnswer,
   DevContainerConfig,
   DevContainerConfigsAnswer,
   ReattachTarget,
@@ -37,7 +38,15 @@ export interface CommandsApi {
     items: readonly T[],
     placeholder: string,
   ): Promise<T | undefined>;
-  showError(message: string): void;
+  /** An error notification; resolves to the action chosen, if any. */
+  showError(message: string, ...actions: string[]): Promise<string | undefined>;
+  /**
+   * Follow the build log at `path` into the window's "Dev Containers" output
+   * from the next bring-up on, until `stop`. See `buildLog.ts`.
+   */
+  followBuildLog(path: string): Promise<{ stop(): Promise<void> }>;
+  /** Show the whole build log at `path`; false when there is none. */
+  showBuildLog(path: string): Promise<boolean>;
   /** Run `work` under a progress notification titled `title`. */
   withProgress<T>(title: string, work: () => Promise<T>): Promise<T>;
   /** `setContext` for the keys the commands' `when` clauses read. */
@@ -51,7 +60,11 @@ export interface DevHubConnection {
     window: WindowFolder,
     to: ReattachTarget,
   ): Promise<{ ok: boolean; message: string }>;
+  buildLog(window: WindowFolder, configPath: string): Promise<BuildLogAnswer>;
 }
+
+/** The action a failed bring-up's notice offers. */
+export const SHOW_BUILD_LOG = "Show Build Log";
 
 /** The context key the commands' `when` clauses read: how many definitions. */
 export const CONFIG_COUNT_KEY = "devhub.devContainerConfigs";
@@ -99,13 +112,33 @@ async function configsOf(
 ): Promise<{ configs: DevContainerConfig[]; current?: string } | undefined> {
   const answer = await devhub.configs(window);
   if (!answer.ok || answer.devContainers === undefined) {
-    api.showError(answer.message);
+    void api.showError(answer.message);
     return undefined;
   }
   api.setContext(CONFIG_COUNT_KEY, answer.devContainers.configs.length);
   return answer.devContainers;
 }
 
+/** Where DevHub writes the build log of `configPath`'s container. */
+async function buildLogOf(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+  window: WindowFolder,
+  configPath: string,
+): Promise<string | undefined> {
+  const answer = await devhub.buildLog(window, configPath);
+  if (!answer.ok || answer.buildLog === undefined) {
+    void api.showError(answer.message);
+    return undefined;
+  }
+  return answer.buildLog;
+}
+
+/**
+ * Move the editor. Into a container, the bring-up's build log is followed
+ * into the output while DevHub works, and a refusal offers it — the log is
+ * where a build that failed says why.
+ */
 async function reattach(
   api: CommandsApi,
   devhub: DevHubConnection,
@@ -113,10 +146,37 @@ async function reattach(
   to: ReattachTarget,
   title: string,
 ): Promise<void> {
-  const answer = await api.withProgress(title, () =>
-    devhub.reattach(window, to),
-  );
-  if (!answer.ok) api.showError(answer.message);
+  const log =
+    "configPath" in to
+      ? await buildLogOf(api, devhub, window, to.configPath)
+      : undefined;
+  if ("configPath" in to && log === undefined) return;
+  const following =
+    log === undefined ? undefined : await api.followBuildLog(log);
+  let answer: { ok: boolean; message: string };
+  try {
+    answer = await api.withProgress(title, () => devhub.reattach(window, to));
+  } finally {
+    await following?.stop();
+  }
+  if (answer.ok) return;
+  if (log === undefined) {
+    void api.showError(answer.message);
+    return;
+  }
+  if (
+    (await api.showError(answer.message, SHOW_BUILD_LOG)) === SHOW_BUILD_LOG
+  ) {
+    await showLogOrSay(api, log);
+  }
+}
+
+async function showLogOrSay(api: CommandsApi, log: string): Promise<void> {
+  if (!(await api.showBuildLog(log))) {
+    void api.showError(
+      `DevHub has not built or started this dev container yet, so it has no build log (${log}).`,
+    );
+  }
 }
 
 /** Reopen in Container: one definition goes straight in, several are asked. */
@@ -129,7 +189,7 @@ export async function reopenInContainer(
   const found = await configsOf(api, devhub, window);
   if (found === undefined) return;
   if (found.configs.length === 0) {
-    api.showError("This folder has no dev container definition.");
+    void api.showError("This folder has no dev container definition.");
     return;
   }
   const chosen =
@@ -176,7 +236,7 @@ export async function switchContainer(
     (config) => config.path !== found.current,
   );
   if (others.length === 0) {
-    api.showError("This folder has no other dev container definition.");
+    void api.showError("This folder has no other dev container definition.");
     return;
   }
   const chosen = (
@@ -190,4 +250,33 @@ export async function switchContainer(
     { configPath: chosen.path },
     "Switching dev container…",
   );
+}
+
+/**
+ * Show Build Log: the log of the container the editor is in, or, in a window
+ * whose editor is on its own machine, of the definition chosen — the one
+ * there is, or the one asked for.
+ */
+export async function showBuildLog(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+): Promise<void> {
+  const window = api.windowFolder();
+  if (window === undefined) return;
+  const found = await configsOf(api, devhub, window);
+  if (found === undefined) return;
+  if (found.configs.length === 0) {
+    void api.showError("This folder has no dev container definition.");
+    return;
+  }
+  const chosen =
+    found.current ??
+    (found.configs.length === 1
+      ? found.configs[0]?.path
+      : (await api.pick(choices(found.configs), "Whose build log?"))?.config
+          .path);
+  if (chosen === undefined) return;
+  const log = await buildLogOf(api, devhub, window, chosen);
+  if (log === undefined) return;
+  await showLogOrSay(api, log);
 }
