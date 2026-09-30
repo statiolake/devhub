@@ -785,8 +785,8 @@
 }
 
 .row-link-button svg.row-mark-badge[data-glyph^="checks"] {
-  right: -4.5px;
-  bottom: -3.5px;
+  right: -3px;
+  bottom: -2px;
   width: 9px;
   height: 9px;
   stroke-width: 3;
@@ -816,7 +816,7 @@
       #000 calc(var(--badge-cut-top) + 0.5px)
     ),
     radial-gradient(
-      circle at 16px 16px,
+      circle at 15.5px 14.5px,
       transparent var(--badge-cut-bottom),
       #000 calc(var(--badge-cut-bottom) + 0.5px)
     );
@@ -830,7 +830,7 @@
 
 .row-link-button:has(> .row-mark-badge[data-glyph^="checks"])
   > .sidebar-glyph:not(.row-mark-badge) {
-  --badge-cut-bottom: 5px;
+  --badge-cut-bottom: 4px;
 }
 
 /*
