@@ -1,5 +1,5 @@
 diff --git a/src/vs/workbench/electron-browser/window.ts b/src/vs/workbench/electron-browser/window.ts
-index b60c0adc62c..460fb002937 100644
+index b60c0adc..460fb002 100644
 --- a/src/vs/workbench/electron-browser/window.ts
 +++ b/src/vs/workbench/electron-browser/window.ts
 @@ -365,8 +365,34 @@ export class NativeWindow extends BaseWindow {

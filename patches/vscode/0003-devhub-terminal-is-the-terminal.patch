@@ -236,6 +236,35 @@ index f7ce1dab..f0875b95 100644
  			if (shouldPersistTerminals) {
  				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
  			} else {
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
+index 5e921025..a462a52d 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
+@@ -20,7 +20,7 @@ import { ISeparator, normalizeDriveLetter, template, tildify } from '../../../..
+ import { Disposable, DisposableMap, DisposableStore, IDisposable, ImmortalReference, MutableDisposable, dispose, toDisposable, type IReference } from '../../../../base/common/lifecycle.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import * as path from '../../../../base/common/path.js';
+-import { OS, OperatingSystem, isMacintosh, isWindows } from '../../../../base/common/platform.js';
++import { OS, OperatingSystem, devhubTerminalLauncher, isMacintosh, isWindows } from '../../../../base/common/platform.js';
+ import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { TabFocus } from '../../../../editor/browser/config/tabFocus.js';
+@@ -1753,7 +1753,14 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
+ 
+ 		// Only trigger wait on exit when the exit was *not* triggered by the
+ 		// user (via the `workbench.action.terminal.kill` command).
+-		const waitOnExit = this.waitOnExit;
++		// DevHub: a terminal that could not start stays open with the reason
++		// written in it, until a key closes it. Upstream says it in a
++		// notification and closes the terminal at once, so a terminal picked
++		// from the profile list appeared for an instant and was gone, and the
++		// only account of why was a toast that times out. The reason belongs
++		// where the person was looking.
++		const launchFailed = !!devhubTerminalLauncher && !!exitMessage && (this._processManager.processState === ProcessState.Launching || this._processManager.processState === ProcessState.KilledDuringLaunch);
++		const waitOnExit = this.waitOnExit ?? (launchFailed ? nls.localize('devhub.terminal.launchFailed', "Press any key to close the terminal.") : undefined);
+ 		if (waitOnExit && this._processManager.processState !== ProcessState.KilledByUser) {
+ 			this._xtermReadyPromise.then(xterm => {
+ 				if (!xterm) {
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts
 index 28318f54..19b80876 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts
@@ -273,7 +302,7 @@ index 28318f54..19b80876 100644
  			tooltip: nls.localize('createQuickLaunchProfile', "Configure Terminal Profile")
  		}];
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
-index 275ab346..22009a29 100644
+index 275ab346..d22a89f5 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 @@ -9,7 +9,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
@@ -285,11 +314,27 @@ index 275ab346..22009a29 100644
  import { IShellLaunchConfig, ITerminalLogService, ITerminalProfile, TerminalIcon, TerminalSettingId } from '../../../../platform/terminal/common/terminal.js';
  import { IShellLaunchConfigResolveOptions, ITerminalProfileResolverService, ITerminalProfileService } from '../common/terminal.js';
  import * as path from '../../../../base/common/path.js';
-@@ -213,7 +213,14 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+@@ -117,6 +117,16 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 				profileName: generatedProfileName,
+ 				isDefault: false
+ 			}, options);
++		} else if (devhubTerminalLauncher) {
++			// DevHub: a terminal that reaches here without a shell is one
++			// something else made — an extension's `createTerminal` (Code
++			// Runner's, a test runner's), a debug console — and the launcher
++			// is DevHub's interactive terminal, and only that, which always
++			// arrives with its path already set (`createTerminal` converts the
++			// DevHub profile into one). What an extension made runs commands
++			// it sends into it, so it gets a fresh plain shell of its own,
++			// never the tmux session a person is working in.
++			resolvedProfile = await this._resolveProfile(await this._devhubPlainProfile(options), options);
+ 		} else {
+ 			resolvedProfile = await this.getDefaultProfile(options);
+ 		}
+@@ -213,6 +223,16 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
  		// if the window just opened
  		await this._terminalProfileService.profilesReady;
  		const defaultProfile = this._getUnresolvedRealDefaultProfile(options.os);
--		if (defaultProfile) {
 +		// DevHub: the launcher is the interactive terminal, and only that. A
 +		// task or a debug console is throwaway — it must run a plain shell it
 +		// owns, never join the tmux session a person is working in. So when
@@ -297,10 +342,39 @@ index 275ab346..22009a29 100644
 +		// configured, fall through to the OS default shell below. A configured
 +		// `automationProfile` still wins; it was answered above.
 +		const devhubIsDefault = !!devhubTerminalLauncher && defaultProfile?.path === devhubTerminalLauncher;
-+		if (defaultProfile && !(devhubIsDefault && options.allowAutomationShell)) {
++		if (devhubIsDefault && options.allowAutomationShell) {
++			return this._setIconForAutomation(options, await this._devhubPlainProfile(options));
++		}
+ 		if (defaultProfile) {
  			return this._setIconForAutomation(options, defaultProfile);
  		}
+@@ -222,6 +242,26 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 		return this._setIconForAutomation(options, await this._getUnresolvedFallbackDefaultProfile(options));
+ 	}
  
++	/**
++	 * DevHub: the plain shell for a terminal that is not DevHub's own — the
++	 * profile `terminal.integrated.defaultProfile.<os>` names, when it names one
++	 * of the available profiles other than `devhub` (a default the person
++	 * chose is their interactive terminal too; see
++	 * `TerminalProfileService._devhubProfiles`), else the machine's default
++	 * shell. Never the launcher, whatever the setting says.
++	 */
++	private async _devhubPlainProfile(options: IShellLaunchConfigResolveOptions): Promise<ITerminalProfile> {
++		await this._terminalProfileService.profilesReady;
++		const name = this._configurationService.getValue(`terminal.integrated.defaultProfile.${this._getOsKey(options.os)}`);
++		if (isString(name) && options.os === OS) {
++			const named = this._terminalProfileService.availableProfiles.find(p => p.profileName === name && p.path !== devhubTerminalLauncher);
++			if (named) {
++				return deepClone(named);
++			}
++		}
++		return this._getUnresolvedFallbackDefaultProfile(options);
++	}
++
+ 	private _setIconForAutomation(options: IShellLaunchConfigResolveOptions, profile: ITerminalProfile): ITerminalProfile {
+ 		if (options.allowAutomationShell) {
+ 			const profileClone = deepClone(profile);
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 index d4d6ba9e..72caa3f2 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
@@ -559,7 +633,7 @@ index d4d6ba9e..72caa3f2 100644
  		// and defers to the provided launch config when an executable is provided
  		if (shellLaunchConfig && !shellLaunchConfig.extHostTerminalId && !hasKey(shellLaunchConfig, { executable: true })) {
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-index 83ac3261..cc941960 100644
+index 83ac3261..fc59c881 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 @@ -10,7 +10,7 @@ import { debounce, memoize } from '../../../../base/common/decorators.js';
@@ -571,7 +645,7 @@ index 83ac3261..cc941960 100644
  import { URI } from '../../../../base/common/uri.js';
  import { IKeyMods } from '../../../../platform/quickinput/common/quickInput.js';
  import * as nls from '../../../../nls.js';
-@@ -973,11 +973,38 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -973,11 +973,44 @@ export class TerminalService extends Disposable implements ITerminalService {
  	}
  
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
@@ -582,7 +656,13 @@ index 83ac3261..cc941960 100644
 +		// terminal to the local backend (`TerminalProcessManager`), the same way
 +		// "Create New Integrated Terminal (Local)" does. Every other profile, a
 +		// default the person chose, and every task, stays with the container.
-+		if (devhubTerminalLocal && devhubTerminalLauncher && options?.cwd === undefined) {
++		//
++		// "Create New Integrated Terminal (Local)" asks for this Mac by a
++		// `file:` cwd and no profile, and on this Mac the default terminal is
++		// the DevHub terminal too — not a bare login shell beside it.
++		const requestedCwd = options?.cwd;
++		const asksForThisMac = options?.config === undefined && URI.isUri(requestedCwd) && requestedCwd.scheme === Schemas.file;
++		if (devhubTerminalLocal && devhubTerminalLauncher && (options?.cwd === undefined || asksForThisMac)) {
 +			let config = options?.config;
 +			if (config === undefined) {
 +				config = this._terminalProfileService.getDefaultProfile();

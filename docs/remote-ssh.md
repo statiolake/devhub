@@ -381,7 +381,7 @@ same file. It is not a language pack version mismatch: a pack written for
 another VS Code only lacks some keys, and a missing key falls back to English;
 it never moves another key's translation into its place.
 
-`patches/vscode/0009-a-language-pack-is-cached-per-message-table.patch` names the
+`patches/vscode/0007-a-language-pack-is-cached-per-message-table.patch` names the
 folder `<commit>.<hash>` instead, the hash being the first 16 hex digits of a
 SHA-256 over `nls.keys.json` and `nls.messages.json` — exactly the two inputs
 the cached table is made from besides the pack, whose own hash is already in the
@@ -896,7 +896,7 @@ login shell for the task that just started.
 **Nor is an extension's terminal.** An extension that runs a command in a
 terminal of its own — Code Runner, a test runner, anything calling
 `vscode.window.createTerminal` without a `shellPath` — gets a fresh plain
-shell, never the DevHub terminal (patch 0007). It sends its command into that
+shell, never the DevHub terminal (patch 0003). It sends its command into that
 terminal as keystrokes, so handing it the tmux session would type the command
 into whatever the person had open there. The rule is where the shell is
 resolved: a terminal that reaches `resolveShellLaunchConfig` with no

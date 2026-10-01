@@ -91,7 +91,7 @@ remote pty host, as in any Dev Containers window, and the list shows the
 container's own shells after `devhub`. Tasks, the debugger and a terminal an
 extension makes for itself (Code Runner's) stay with the container too, as a
 plain container shell: neither the automation path nor an extension's terminal
-ever resolves to the DevHub launcher (patch 0007, see `remote-ssh.md`). Create
+ever resolves to the DevHub launcher (patch 0003, see `remote-ssh.md`). Create
 New Integrated Terminal (Local) is the DevHub terminal as well while `devhub`
 is the default: it asks for this Mac by a `file:` cwd and no profile, and on
 this Mac the terminal is the Workspace's tmux session, not a bare login shell
@@ -99,7 +99,7 @@ beside it. With another default chosen it is upstream's, a login shell on this
 Mac.
 
 A terminal that cannot start stays open with the reason written in it until a
-key closes it (patch 0005). Upstream closes it at once and says why in a
+key closes it (patch 0003). Upstream closes it at once and says why in a
 notification that times out, which read as a terminal that opened for an
 instant and crashed.
 
@@ -150,8 +150,8 @@ window — the request became Scratch, and the editor stayed where it was. The
 way out of a container is Reopen Folder Locally, in the same menu; an SSH
 Workspace *is* its host and is closed from the sidebar.
 
-Patch 0013 decides "this is DevHub's workbench" by the product's `hostCommit`,
-which every DevHub build states. Patch 0006 had decided it by the window's
+Patch 0005 decides "this is DevHub's workbench" by the product's `hostCommit`,
+which every DevHub build states. An earlier version of that patch had decided it by the window's
 DevHub terminal launcher, and a window whose launcher could not be installed
 has none: that window got Close Remote Connection back, in the palette, the
 File menu and the remote menu beside Reopen Folder Locally, and choosing it
@@ -259,7 +259,7 @@ host is marked replaced, and the next one adopts the new container.
 
 A new container has none of the extensions the old one had installed, until
 they are installed again. The activity bar keeps an item whose extension is
-away hidden rather than removed (patch 0008), as upstream already does for one
+away hidden rather than removed (patch 0006), as upstream already does for one
 that is missing when a window opens, so an item a person had hidden stays
 hidden when its extension comes back. Removing it — upstream's answer when an
 extension goes away under an open window — dropped it from the list every

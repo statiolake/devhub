@@ -9,7 +9,7 @@ import { resolveNLSConfiguration } from "code-oss-dev/out/vs/base/node/nls.js";
 // its index in that table, and DevHub's `commit` is the VS Code submodule's: it
 // stays the same while patches/vscode/ add or drop `localize` calls. These
 // tests hold the cache to the table it was made from — see
-// patches/vscode/0009-a-language-pack-is-cached-per-message-table.patch.
+// patches/vscode/0007-a-language-pack-is-cached-per-message-table.patch.
 
 const COMMIT = "a44adf7f53e00964ab890f9f8758a334f1fc15bc";
 
@@ -27,7 +27,7 @@ const BEFORE: Build = {
 };
 
 // The next build adds a `localize` call ahead of the trust request, the way
-// patches/vscode/0005 did, so every index after it moves up by one.
+// patches/vscode/0003 did, so every index after it moves up by one.
 const AFTER: Build = {
 	keys: [
 		[
