@@ -5345,6 +5345,27 @@ export class AppController {
 		await this.attachEditor(workspaceId, workspace.editor);
 	}
 
+	/**
+	 * A request for an empty window in place of the workbench `viewId`: when
+	 * that workbench is attached to a dev container, it is the editor asking
+	 * to leave it, and DevHub's answer is Reopen Folder Locally — not Scratch,
+	 * which is what an empty window otherwise is. True when it was taken as
+	 * that; the reopen runs on, because the workbench that asked is the one it
+	 * closes, and its refusal is said the way the row's is.
+	 */
+	reopenLocallyInsteadOfEmpty(viewId: number): boolean {
+		const key = shellWindow()
+			.editorBindings()
+			.find(([, id]) => id === viewId)?.[0];
+		const workspace =
+			key === undefined ? undefined : this.workspaceForEditorKey(key);
+		if (workspace?.editor.kind !== "devContainer") return false;
+		void this.reopenEditorLocally(workspace.id).catch((failure: unknown) => {
+			this.publishError(errorWire(failure));
+		});
+		return true;
+	}
+
 	/** Reopen a Workspace's editor on its own machine: the row's way out. */
 	async reopenEditorLocally(workspaceId: WorkspaceId): Promise<void> {
 		await this.attachEditor(workspaceId, EDITOR_ON_HOST);

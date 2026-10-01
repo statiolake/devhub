@@ -58,6 +58,11 @@ interface OpenBrowserWindowOptions {
 	/** Upstream's `IFilesToOpen`, passed on untouched. */
 	readonly filesToOpen?: unknown;
 	/**
+	 * The window the request is to replace — upstream's `forceReuseWindow`,
+	 * resolved against the window that asked.
+	 */
+	readonly windowToUse?: { readonly id: number };
+	/**
 	 * Upstream's `NativeParsedArgs`. Only the one field DevHub reads is named:
 	 * `openInBrowserWindow` spreads this over the window configuration, so it is
 	 * where "this window is an Extension Development Host" is decided.
@@ -169,6 +174,22 @@ const upstreamOpenInBrowserWindow = (
 	const controller = appController();
 
 	if (!location || editorKey === undefined) {
+		// An empty window in place of a workbench attached to a dev container
+		// is upstream's way out of the container: Close Remote Connection, and
+		// anything else that asks for this window again with no folder and no
+		// remote. DevHub's way out is Reopen Folder Locally, and this is that:
+		// the Workspace's editor reopened on its own machine. Answered as
+		// Scratch, it switched to Scratch and left the editor in its container.
+		if (
+			options.windowToUse !== undefined &&
+			options.filesToOpen === undefined &&
+			controller.reopenLocallyInsteadOfEmpty(options.windowToUse.id)
+		) {
+			console.log(
+				"[devhub] open: no folder, in place of a dev container's workbench — Reopen Folder Locally",
+			);
+			return options.windowToUse as ICodeWindow;
+		}
 		// DevHub never builds a folderless workbench — Scratch is a folder, so
 		// its workbench comes through the branch below like any other — and so
 		// every request without one is a request for somewhere to scribble.

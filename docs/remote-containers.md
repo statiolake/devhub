@@ -150,6 +150,18 @@ window — the request became Scratch, and the editor stayed where it was. The
 way out of a container is Reopen Folder Locally, in the same menu; an SSH
 Workspace *is* its host and is closed from the sidebar.
 
+Patch 0013 decides "this is DevHub's workbench" by the product's `hostCommit`,
+which every DevHub build states. Patch 0006 had decided it by the window's
+DevHub terminal launcher, and a window whose launcher could not be installed
+has none: that window got Close Remote Connection back, in the palette, the
+File menu and the remote menu beside Reopen Folder Locally, and choosing it
+was the Scratch switch the patch was written to remove. Behind both, DevHub
+main answers an empty window asked for *in place of* a workbench attached to
+a dev container (`windowToUse`, with no files) as Reopen Folder Locally of
+that Workspace (`AppController.reopenLocallyInsteadOfEmpty`), not as Scratch —
+so upstream's way out, from wherever it is still reached, ends where DevHub's
+does.
+
 These commands are the only way into a container. Opening a Workspace never
 asks about one: a folder always opens with its editor on its own machine, and
 the editor is moved from inside it. Outside the editor, the context menu of a

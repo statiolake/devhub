@@ -1,0 +1,29 @@
+diff --git a/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts b/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
+--- a/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
++++ b/src/vs/workbench/contrib/remote/browser/remoteIndicator.ts
+@@ -21,7 +21,8 @@
+ import { PersistentConnectionEventType } from '../../../../platform/remote/common/remoteAgentConnection.js';
+ import { IRemoteAuthorityResolverService } from '../../../../platform/remote/common/remoteAuthorityResolver.js';
+ import { IHostService } from '../../../services/host/browser/host.js';
+-import { PlatformName, PlatformToString, devhubTerminalLauncher, isWeb, platform } from '../../../../base/common/platform.js';
++import { PlatformName, PlatformToString, isWeb, platform } from '../../../../base/common/platform.js';
++import product from '../../../../platform/product/common/product.js';
+ import { truncate } from '../../../../base/common/strings.js';
+ import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+ import { getRemoteName } from '../../../../platform/remote/common/remoteHosts.js';
+@@ -76,7 +77,14 @@
+ 
+ 	private static readonly REMOTE_ACTIONS_COMMAND_ID = 'workbench.action.remote.showMenu';
+ 	private static readonly CLOSE_REMOTE_COMMAND_ID = 'workbench.action.remote.close';
+-	private static readonly SHOW_CLOSE_REMOTE_COMMAND_ID = !isWeb && !devhubTerminalLauncher; // web does not have a "Close Remote" command
++	private static readonly SHOW_CLOSE_REMOTE_COMMAND_ID = !isWeb && !product.hostCommit; // web does not have a "Close Remote" command
++	// DevHub: which workbench is DevHub's is the product's `hostCommit`, which
++	// every DevHub build states (source runs included) and stock VS Code never
++	// does. It was the window's DevHub terminal launcher, which is a different
++	// fact: a window whose launcher could not be installed has none, and that
++	// window got Close Remote Connection back — in the palette, the File menu
++	// and the remote menu beside Reopen Folder Locally — and choosing it
++	// switched DevHub to Scratch and left the editor in its container.
+ 	// DevHub: nor does a workbench DevHub hosts. Upstream's Close Remote
+ 	// Connection reopens this window empty and local, and DevHub has no empty
+ 	// window: a request for one is Scratch, so the command only switched to
