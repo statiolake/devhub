@@ -492,6 +492,12 @@
    connector no longer points at. */
 .agent-row .row-glyph {
   transform: none;
+  /* Indented under its Workspace, right of the connector: the column starts at
+     `--sidebar-agent-glyph-inset`, counted here from the end of the row's own
+     inset, which is where this column would otherwise be. */
+  margin-left: calc(
+    var(--sidebar-agent-glyph-inset) - var(--sidebar-row-inset)
+  );
 }
 
 .row-glyph svg {
@@ -844,25 +850,22 @@
  * with the rest of the geometry.
  */
 .agent-row .sidebar-context-button {
-  /* The button starts where the icon column ends, so what it clears is the
-     connector column and nothing else — `--sidebar-agent-text-inset` is the
-     same distance counted from the row's leading edge instead. */
-  padding-left: var(--sidebar-tree-width);
+  /* The button starts where the Agent's own icon column ends, so it clears one
+     gap, as a Workspace's does — `--sidebar-agent-text-inset` is the same
+     distance counted from the row's leading edge instead. */
+  padding-left: var(--space-2);
 }
 
 /*
  * The connector: the bent guide from a Workspace down to each of its Agents.
  *
  * It is `tree`(1)'s drawing, and it is drawn here because the thing it says is
- * no longer said anywhere else. It used to be said by the indent — an Agent's
- * words started well to the right of its Workspace's, and a plain vertical
- * rule at that indent was enough to tie a run of them together. There is one
- * leading column now: an Agent's status mark sits at exactly the x its
- * Workspace's folder sits at, which is the whole point of the column and is
- * also the last cue that one row belongs to another. So the connector carries
- * it: a vertical dropping through the run, and an elbow turning right into the
- * words — `├` for every Agent but the last, `└` for the last, which is the one
- * thing that says where a Workspace's Agents stop.
+ * said by the indent as well: an Agent's status mark stands right of the
+ * guide, under its Workspace's name, the way a file tree draws a child. The
+ * connector is a vertical dropping from under the Workspace's folder through
+ * the run, and an elbow turning right into each Agent's mark — `├` for every
+ * Agent but the last, `└` for the last, which is the one thing that says where
+ * a Workspace's Agents stop.
  *
  * Two pseudo-elements rather than an element. There is nothing to read here —
  * the tree is in the markup, where `aria-level` and the arrow-key walk are —
@@ -897,14 +900,14 @@
   height: calc(var(--row-height) / 2);
 }
 
-/* The elbow's horizontal run, from the vertical to one gap short of the first
-   letter. */
+/* The elbow's horizontal run, from the vertical to one gap short of the
+   Agent's mark. */
 .agent-row::after {
   position: absolute;
   top: calc(var(--row-height) / 2);
   left: var(--sidebar-tree-line);
   width: calc(
-    var(--sidebar-agent-text-inset) - var(--sidebar-tree-line) -
+    var(--sidebar-agent-glyph-inset) - var(--sidebar-tree-line) -
       var(--sidebar-tree-gap)
   );
   height: 1px;
@@ -1895,6 +1898,12 @@ body.is-resizing-split {
 .sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
   flex: 0 0 0;
   padding: 0;
+}
+
+/* The rail is one column: an Agent's mark stands at its Workspace's x, not
+   indented, so the column runs straight down the middle. */
+.sidebar[data-collapsed="true"] .agent-row .row-glyph {
+  margin-left: 0;
 }
 
 /* Claude's and Codex's rate limits, at the foot of the column: a slim row per

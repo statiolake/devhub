@@ -508,18 +508,16 @@ function WorkspaceRow({
                   }}
                 >
                   <div className="row-head">
-                    {/* The icon column, and what an Agent puts in it: its one
-                        status mark — the unread dot included, see
+                    {/* An Agent's icon column, and what it puts in it: its
+                        one status mark — the unread dot included, see
                         `unreadShows` in `StatusMark.tsx`.
 
-                        It is the same column, at the same x, that a Workspace
-                        draws its folder in and Scratch draws its terminal in.
-                        Nothing is in front of it and the depth is behind it,
-                        in the connector, so every status in the list is at one
-                        x whatever row it is on — which is what makes them a
-                        column a person can run an eye down, and what lets the
-                        rail be these rows with the connector and the words
-                        taken off. The button's hit area covers the whole row
+                        Indented the way a file tree draws a child: right of
+                        the connector, under its Workspace's name, so which
+                        Workspace an Agent belongs to is said by where it
+                        stands as well as by the guide. In the rail it comes
+                        back to the one column every row leads with. The
+                        button's hit area covers the whole row
                         (`.sidebar-context-button::after`), so the mark is
                         still part of what selects the row. */}
                     <span className="row-glyph">
