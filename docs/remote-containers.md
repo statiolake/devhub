@@ -298,14 +298,32 @@ container talks to.
 ### Why node, and which node
 
 The relay runs on the remote extension host's own `node`,
-`~/.devhub-server/bin/<commit>/node` — not `socat` and not a system `node`,
+`~/.devhub-server/bin/<key>/node` — not `socat` and not a system `node`,
 which few dev container images have. So the server is installed before the
 relay is written, stated in `#relayPaths`: the `devhub` command is installed
 when a window opens, before that window has resolved.
 
-**This Mac fetches; the container receives.** The server tarball is fetched
-here and unpacked in the container from a stream on `docker exec -i` stdin: a
-container's egress is whatever its image and the person's Docker allow.
+**The server comes out of DevHub; the container receives it.** DevHub carries
+its servers inside the app — glibc and musl Linux, x64 and arm64 — and the one
+the container needs is unpacked there from a stream on `docker exec -i` stdin,
+after DevHub has asked the container's C library: an Alpine-based image gets
+the musl server, a Debian- or Ubuntu-based one the glibc server. A container's
+egress is whatever its image and the person's Docker allow, and DevHub needs
+none of it: a container started with `--network none` gets a server that
+starts and answers like any other, `libstdc++` included for Alpine. See
+[The servers travel inside DevHub](remote-ssh.md#the-servers-travel-inside-devhub).
+
+**Verified against real containers, offline.**
+`main/runtime/rehInstall.docker.test.ts` starts containers with `--network
+none` and the labels `devcontainer up` would give them, has `ContainerHost`
+adopt them, install the server out of a bundle directory and start it, and asks
+the server `/version` through DevHub's own bridge. It needs Docker and a
+`dist/reh`, so it runs only when asked:
+
+```sh
+DEVHUB_REH_BUNDLE=$PWD/dist/reh DEVHUB_REH_IMAGES="debian:bookworm-slim alpine:3.20" \
+  npx vitest run src/main/runtime/rehInstall.docker.test.ts   # in apps/desktop
+```
 
 ## The authority
 
@@ -349,11 +367,14 @@ What changed is said in one notice (`state_migrated`).
   Desktop, colima on this Mac; any `docker` on the host's login `PATH` on a
   host.
 - **The `devcontainer` CLI**, `@devcontainers/cli`, in the same place.
+- **A Linux container**, on x64 or arm64, with glibc or musl — the four
+  platforms DevHub carries a server for. Anything else is refused by name.
+  The container needs no network access.
 - **A packaged DevHub, or a source run started by
-  `apps/desktop/scripts/dev.sh`.** A source run states no `commit`, but it
-  states `serverCommit`, the submodule's, and installs the server published
-  under it — see [a source run connects to the published
-  server](remote-ssh.md#a-source-run-connects-to-the-published-server).
+  `apps/desktop/scripts/dev.sh`** whose `dist/reh` holds the server the
+  container needs, built by `scripts/build_reh.py` from the checkout — see [a
+  source run uses servers built in the
+  checkout](remote-ssh.md#a-source-run-uses-servers-built-in-the-checkout).
 
   It used not to: DevHub read `commit` alone, so a source run's Reopen in
   Container opened a window whose resolver was refused ("states no commit …
@@ -372,7 +393,9 @@ What changed is said in one notice (`state_migrated`).
    **`devcontainer up --workspace-folder <folder> --config <definition>`** by
    hand; its log is on stderr and its one JSON object on stdout.
 3. **The server's log, in the container:**
-   `docker exec <id> cat ~/.devhub-server/.<commit>.log`.
+   `docker exec <id> cat ~/.devhub-server/.<key>.log`, where `<key>` is
+   `<commit>-<identity>` — `ls ~/.devhub-server/bin/` in the container shows
+   it.
 4. **The relay:** `docker exec <id> ls -l ~/.devhub-server/relay.cjs`.
 5. **The extension host log** in the window. `CANNOT use API proposal:
    resolvers.` means the `product.json` grant for `devhub.devhub-remote` did

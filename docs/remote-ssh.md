@@ -11,9 +11,11 @@ Two pieces make that work, and DevHub owns both of them.
   with a port. It has no SSH client, no settings and no opinion; it asks DevHub
   and passes the answer on.
 - **The remote extension host**, or REH — VS Code's own server, built from the
-  same VS Code commit DevHub's client is built from and published on this
-  repository's releases. That is `scripts/build_reh.py` and the `reh-*` jobs in
-  `.github/workflows/nightly.yml`.
+  same patched VS Code DevHub's client is built from and carried **inside the
+  app**: four of them, one per Linux platform, which DevHub copies to a machine
+  over the connection it already has. That is `scripts/build_reh.py` and the
+  `reh` jobs in `.github/workflows/nightly.yml`; see
+  [The servers travel inside DevHub](#the-servers-travel-inside-devhub).
 
 Everything between those two — the connection, the install, the server, the
 token and the port — is `main/runtime/remoteServer.ts` and `main/runtime/ssh.ts`,
@@ -73,12 +75,15 @@ DevHub answers it in five steps, all over the ControlMaster it already has.
    in one command, cached for the life of the connection. A machine that is not
    Linux or macOS is refused by name here.
 2. **Install the server, if it is not there.** The question that decides is
-   `test -x ~/.devhub-server/bin/<commit>/bin/devhub-server`, so an install that
-   has happened is an install that is skipped — whether this DevHub did it, an
-   older one did, or somebody unpacked the tarball by hand. Otherwise the
-   tarball is fetched **here**, over this Mac's network, and handed to the host
-   as bytes on the stdin of a `tar`: a staging directory and a `mv`, not
-   `--strip-components`, which POSIX does not require.
+   whether `~/.devhub-server/bin/<key>/` holds a finished install — its
+   `.devhub-installed` marker and an executable `bin/devhub-server` — where
+   `<key>` is `<commit>-<identity>`, naming DevHub's patches as well as its VS
+   Code. Otherwise DevHub asks the machine's C library (glibc or musl), picks
+   the one of the four servers it carries that the machine needs, and hands it
+   to the host as bytes on the stdin of a `tar`: a staging directory, the
+   server's own `node` run once on the host, and a `mv`. Nothing on the host
+   and nothing on this Mac touches the network. See
+   [The servers travel inside DevHub](#the-servers-travel-inside-devhub).
 3. **Start it, or adopt the one that is running.** A pidfile and the socket
    together answer "is it up"; if it is not, the server is started under `nohup`
    with `--start-server --host=127.0.0.1 --socket-path=… --connection-token-file=…`
@@ -90,8 +95,8 @@ DevHub answers it in five steps, all over the ControlMaster it already has.
    `new vscode.ResolvedAuthority("127.0.0.1", port, connectionToken)`.
 
 The server then checks the connecting client's commit against its own and
-refuses if they differ, which is why everything below is keyed on a commit
-rather than on a version or a date.
+refuses if they differ. The two agree by construction: the server came out of
+the app, and both state the VS Code commit the app was built from.
 
 ### A socket, not a port
 
@@ -107,7 +112,7 @@ DevHub chose, so there is nothing to discover and nothing to parse.
 A connection token is generated **here** and offered to the start script on
 **stdin** — never in the command line, because the composed script is the remote
 shell's argv and argv is world-readable in `ps`. The script writes it only if
-`~/.devhub-server/.<commit>.token` is not already there, and prints back
+`~/.devhub-server/.<key>.token` is not already there, and prints back
 whatever the file contains either way.
 
 That read-back is the whole point. A server that is already running was started
@@ -149,13 +154,13 @@ sentence, and wrong in silence.
 | failure | asking again? |
 | --- | --- |
 | the host is asleep, away, or not answering | yes |
-| this Mac cannot reach the release right now | yes |
 | anything DevHub did not anticipate | yes |
 | no key for the host — DevHub's ssh runs `BatchMode=yes` and has no pane to prompt in | no |
 | the host key is not known | no |
 | the host is not Linux or macOS | no |
-| the release has no server for that `<os>-<arch>` (an HTTP 404, not a network error) | no |
-| this DevHub states neither `commit` nor `serverCommit` | no |
+| DevHub carries no server for the host's platform (macOS, an architecture other than x64 and arm64, a C library it cannot identify) | no |
+| this DevHub's bundle lacks the server the host needs, or holds one built from other patches | no |
+| this DevHub states no commit or no server identity | no |
 
 The default is "yes", and deliberately: a resolve that goes on retrying stops on
 VS Code's own attempt limit and says so, and one that wrongly gave up needs the
@@ -174,34 +179,86 @@ require — and so is the wait loop, which sleeps whole seconds because BusyBox'
 This is not a style preference. There is no bash on a Synology and no guarantee
 of one anywhere, and the host this product exists for is exactly that host.
 
-## The URL
+## The servers travel inside DevHub
 
-Stated once, in `apps/desktop/product-overrides.json`:
+DevHub carries four remote extension hosts and installs one of them on a
+machine by copying it there. It never downloads a server, and nothing it
+installs on a machine downloads one either:
 
-```
-https://github.com/statiolake/devhub/releases/download/reh-${commit}/devhub-reh-${os}-${arch}-${commit}.tar.gz
-```
+| target | the machine | VS Code's gulp target |
+| --- | --- | --- |
+| `linux-x64` | glibc Linux on x86-64 | `linux-x64` |
+| `linux-arm64` | glibc Linux on arm64 | `linux-arm64` |
+| `alpine-x64` | musl Linux (Alpine) on x86-64 | `linux-alpine` |
+| `alpine-arm64` | musl Linux (Alpine) on arm64 | `alpine-arm64` |
 
-Six names may appear in that template — `${quality}`, `${version}`, `${commit}`,
-`${os}` and `${arch}`, `${release}` — and DevHub's uses three. They are
-substituted **here**, by `rehDownloadUrl` in `main/runtime/remoteServer.ts`, and
-nowhere else: the URL is built on the machine that does the fetching.
+**Why carried, not downloaded.** The machines a remote window is for are often
+the ones with no route out: a dev container on a network with none, an SSH
+host behind a firewall, an appliance whose `curl` is too old for a modern TLS.
+DevHub already reaches every one of them — it holds an ssh ControlMaster, or a
+`docker exec` — and a hundred megabytes on the stdin of a `tar` is a thing all
+of them can receive. And a server that came out of the app is built from the
+app's own patches: the server used to be published separately, keyed by the VS
+Code commit alone, so a DevHub whose patches had changed the server went on
+installing the old one, and a source run had no server of its own at all.
 
-`${os}` and `${arch}` come from `uname -s` and `uname -m` on the host, folded to
-the names the release uses (`x86_64` and `amd64` both become `x64`; `aarch64`
-and `arm64` both become `arm64`). An architecture DevHub does not recognise keeps
-its own word rather than being rounded to one that looks close, so the 404 names
-the machine it is actually about.
+**Where they are.** In a packaged app, `DevHub.app/Contents/Resources/reh/`,
+put there by `scripts/package-nightly.py`. In a source run, `dist/reh/` in the
+checkout, where `scripts/build_reh.py` writes (see
+[A source run uses servers built in the checkout](#a-source-run-uses-servers-built-in-the-checkout)).
+Either way it is one directory of `devhub-reh-<target>.tar.gz`, each with a
+`devhub-reh-<target>.json` beside it — the **statement**: the target, the VS
+Code commit and the server identity it was built from, the tarball's SHA-256
+and the directory inside it. `BundledRehDelivery` in
+`main/runtime/remoteServer.ts` reads the statement before anything else and
+refuses a server whose commit or identity is not the app's, or whose bytes do
+not hash to what it states, with a sentence that names the target and says
+how to get the right one.
 
-`${quality}` and `${release}` are deliberately not in it. DevHub states neither
-key, so either would be substituted with nothing at all rather than reported — a
-URL that is wrong in a way no error message mentions.
-`scripts/build_reh_test.py` fails if either appears.
+**Which one a machine gets.** `uname -s` and `uname -m` from step 1, folded
+(`x86_64` and `amd64` are `x64`; `aarch64` and `arm64` are `arm64`), and then
+the C library, asked in `sh` (`LIBC_PROBE`): `/etc/alpine-release` is musl —
+even with `gcompat` installed, which puts a glibc loader beside musl's and lets
+a glibc `node` start and then fall over on its first native addon;
+`getconf GNU_LIBC_VERSION` answering is glibc, which keeps a Debian that has
+the `musl` package installed on glibc; failing both, whichever loader
+(`ld-musl-*` or `ld-linux-*`) is on the machine. A machine none of that
+identifies — macOS, `riscv64`, a libc nobody can name — is refused by name and
+for good, before a byte is sent: _DevHub has no remote extension host for
+<host>, which is Linux riscv64, glibc._
+
+**What arrives.** The tarball is unpacked from stdin into
+`~/.devhub-server/bin/<key>.unpacking`, its `node` is run once on the machine —
+which is exactly what a wrong platform fails, a glibc `node` on musl with the
+loader's own words, an x64 one on arm64 with an exec format error — and only
+then is `.devhub-installed` written (the tarball's hash) and the directory
+moved to `~/.devhub-server/bin/<key>`. A directory without the marker is an
+install that did not finish, and is replaced rather than started.
+
+**The key.** `<key>` is `<commit>-<identity>`. The commit is the VS Code
+submodule's; the identity is `reh_identity()` in `scripts/product_metadata.py`,
+twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`
+and a `REH_REVISION` bumped when the build itself changes what it produces.
+The app states it as `serverIdentity` beside `serverCommit`, and every server
+built for it states the same pair. So a DevHub whose patches moved names a
+directory no older DevHub installed, installs its own server there, and two
+DevHubs of different patch sets on one machine each keep theirs. The token,
+socket, pid and log files under `~/.devhub-server/` are named by the key for
+the same reason. Older directories are left where they are; nothing on the
+machine refers to them once no DevHub of that key connects.
+
+**The commit check.** A packaged client states `commit` and the server it
+carries states the same one, because both come from `packaged_metadata()`. A
+source run states none, and the server checks a client's commit only when the
+client states one (`remoteExtensionHostAgentServer.ts`:
+`if (rendererCommit && myCommit)`), so it is accepted too.
+`remoteServer.test.ts` reads that line out of the pinned submodule and fails if
+it ever stops being conditional.
 
 ## What is built, where, and when
 
-`scripts/build_reh.py` produces one tarball per target. Inside it, under a
-single directory:
+`scripts/build_reh.py` produces one tarball per target, and a statement beside
+it. Inside the tarball, under a single directory:
 
 ```
 devhub-reh-linux-x64/
@@ -209,13 +266,38 @@ devhub-reh-linux-x64/
   bin/remote-cli/devhub    upstream's remote CLI. It is in the tarball because
                            the REH build puts it there, and DevHub does not use
                            it — see "The `devhub` command on a host"
-  node                     the prebuilt Node the server runs on
+  node                     the target's own Node
+  lib/                     musl targets only: libstdc++ and libgcc_s, which
+                           that Node needs and a stock Alpine does not have
   out/                     the bundled server
   product.json             DevHub's, with the same `commit` the client states
   extensions/              the built-in set, minus the UI-only ones and
                            minus copilot
   node_modules/            the server's production dependencies
 ```
+
+**Native modules, for the target.** `vscode/remote/node_modules` holds native
+addons — node-pty, `@parcel/watcher`, kerberos, `@vscode/spdlog`, sqlite3 —
+and the package task ships them as npm installed them. So before packaging
+each target, the script installs them again **in a container of that target's
+platform**: `node:<version>-bullseye` for glibc, so they need no newer glibc
+than Debian 11's 2.31, and `node:<version>-alpine` for musl, which is what
+upstream does for its own Alpine servers. The host's own install is moved
+aside and put back afterwards.
+
+**musl's C++ runtime goes with it.** The musl Node is linked against
+`libstdc++` and `libgcc_s`, which Alpine does not install by default — VS
+Code's own Alpine server asks for `apk add libstdc++`, and a container with no
+network cannot do that. So the build copies both out of the same
+`node:<version>-alpine` image into `lib/` and sets the `node` binary's run path
+to `$ORIGIN/lib`; musl's loader expands `$ORIGIN` to the binary's own
+directory, so the server starts on an Alpine that has never run `apk`.
+
+**Started before it is packed.** Each finished tree is started — `bin/devhub-
+server --version` — in a plain container of its platform (`debian:bullseye-
+slim` or `alpine:3`) with `--network none`: no compilers, no Node, no route
+out. A server that cannot start on the machines it is for fails the build
+rather than the connection.
 
 **No Copilot.** DevHub pins `chat.disableAIFeatures: true`, so nothing on a
 remote would ever start the agent host, and the `copilot` built-in plus its
@@ -235,46 +317,34 @@ not a directory — `gulp.dest` recreates the directory entries its source glob
 yielded, so an SDK subtree whose files were all filtered out (or that npm left
 as a symlink into `@github/copilot-<os>-<arch>`, which a glob that does not
 follow symlinks walks past) reaches `.build` as an empty shell that satisfies
-every existence check and carries nothing into the server tree. Two small packages stay — `@github/copilot` (12 KB) and
-`@github/copilot-sdk` (736 KB) — because `server-main.js` reads their versions
-at startup. The build runs `bin/devhub-server --version` afterwards whenever the
-target is one the building machine can execute, so a deletion that broke
-startup fails the build rather than the connection.
+every existence check and carries nothing into the server tree. Two small
+packages stay — `@github/copilot` (12 KB) and `@github/copilot-sdk` (736 KB) —
+because `server-main.js` reads their versions at startup, which the start
+above exercises.
 
-Published targets are `linux-x64` and `linux-arm64`. Each is built on a runner
-of its own architecture, because `vscode/remote/node_modules` holds native
-addons — node-pty, `@parcel/watcher`, kerberos, `@vscode/spdlog` — and the
-package task ships them as npm installed them, for the machine that did the
-installing. Cross-building produces a tarball that unpacks, starts, and then
-fails to open a terminal.
+**Where, and when.** On every night the app is packaged, not only when the
+submodule moves: the servers are DevHub's patches as much as VS Code's, and
+the app refuses to carry servers of another identity. Two `reh` legs in
+`.github/workflows/nightly.yml`, one per architecture — `linux-x64` and
+`alpine-x64` on an x64 runner, `linux-arm64` and `alpine-arm64` on an arm64
+one — so every container runs natively rather than under emulation, hand their
+tarballs and statements to the macOS job, which downloads them into `dist/reh`
+before `scripts/build-app.sh`. `scripts/package-nightly.py` then checks all
+four against the app's commit and identity (`bundle_problems`) and refuses to
+package if any is missing or stale; a red `reh` leg therefore means no nightly
+that night rather than a nightly that refuses some machines. Nothing is
+published on its own: the `reh-<commit>` releases earlier nightlies made are
+no longer read by anything.
 
-**One architecture at a time.** Each target is a job of its own and the release
-is cut from whichever of them succeeded: a leg that fails stays red in the run,
-and the other leg's tarball is still published. So a release can exist with
-`linux-x64` in it and no `linux-arm64`. That is deliberate — the alternative
-withholds a server that built fine from everyone on the architecture that was
-never broken. What a host on the missing architecture sees is a 404 on the URL
-above, with the `<os>-<arch>` in the filename: `server-setup.sh` reports
-`Error downloading server from <url>`, so the name of the missing asset is in
-the message rather than left to be guessed at. The fix is to
-make the red leg green and rerun the workflow with `force_reh`; the release is
-named after the VS Code commit and is added to, not replaced.
+CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
+it is a bundle that is smoke-tested and thrown away, and building four servers
+on every push is the nightly's work. `scripts/build_reh_test.py` and
+`scripts/package_nightly_test.py` hold the names, the statement and the bundle
+check to what `remoteServer.ts` reads.
 
-`darwin-arm64` is not published yet, for the same reason and one more: it would
-have to be built on the macOS job, which already runs for two hours against a
-two-hour timeout. SSHing into a Mac is rare enough to wait.
-
-**When**: the server is a function of the VS Code submodule, not of DevHub's
-own commits, so it is rebuilt when the submodule moves — roughly monthly —
-and not nightly. `reh-decide` in the nightly workflow asks GitHub whether the
-release named after the current submodule commit exists, and the whole thing
-costs a minute on the nights it does.
-
-**The one thing that does not follow**: a change to `patches/vscode/` that
-touches server code does not move the submodule, so it does not change
-`${commit}`, so remotes go on using the server already published under that
-tag. Rebuild it deliberately — Actions → Nightly → Run workflow, with
-`force_reh` ticked.
+`darwin-*` is not built: its native addons would have to be built on a Mac,
+on the one job that already runs for two hours, and SSHing from DevHub into a
+Mac is rare enough to refuse by name instead.
 
 ## A language pack is cached per message table, not per commit
 
@@ -326,89 +396,72 @@ the cache-miss path read anyway. Folders made under the old naming, plain
 a week (DevHub states no `quality`, which the cleaner reads as a non-stable
 build).
 
-## Building one locally
+## Building the servers locally
 
 ```sh
-scripts/build_reh.py linux-x64            # writes dist/devhub-reh-linux-x64-<commit>.tar.gz
+scripts/build_reh.py                      # all four, into dist/reh
+scripts/build_reh.py linux-arm64          # or only the ones you need
 ```
 
-It provisions the submodule first unless you pass `--skip-provision`, and it
-edits `vscode/product.json` for the duration of the build and puts it back
+It needs **Docker** — Docker Desktop, colima, or `dockerd` — for the native
+modules and for the start check, and it says so in one sentence when there is
+none. It provisions the submodule first unless you pass `--skip-provision`, and
+it edits `vscode/product.json` for the duration of the build and puts it back
 afterwards. That edit is not avoidable: esbuild inlines `product.json` into
 the server bundle, so a server bundled against the submodule's own file calls
 itself `code-server-oss` no matter what the `product.json` next to it says.
 
-On a Mac the Linux tarballs it produces are for inspecting the layout, not for
-running: the Node inside is downloaded for the target, but the native addons
-beside it are the Mac's. Use CI for anything you intend to connect to. The one
-target a Mac builds correctly is `darwin-arm64`, which is also the one CI does
-not publish.
+A target of another architecture than the machine's runs its containers under
+emulation (`docker run --platform`): on an Apple Silicon Mac the arm64 servers
+build natively and the x64 ones slowly. When a build moves `serverIdentity` —
+a patch changed — the servers in `dist/reh` built from the old identity are
+removed, and named, when the first new one is written, so the directory never
+holds a mix that DevHub would half refuse.
 
-The tarballs are around 100 MB: 103 MB for linux-x64, 99 MB for linux-arm64,
-94 MB for darwin-arm64.
+The tarballs are around 100 MB each.
 
-## A source run connects to the published server
+`--out-dir` puts them elsewhere; `scripts/package-nightly.py --reh-dir` reads
+them from elsewhere.
+
+## A source run uses servers built in the checkout
 
 `pnpm dev` has no `commit` — deliberately, and it cannot be given one: VS Code
 reads `product.commit` as "this is a packaged build" and sends a source run
 looking for a `node_modules.asar` that a checkout does not have. But a source
-run is still built from one VS Code commit, the submodule's, and the server
-published under that commit is the server its workbench speaks to. So
-`scripts/product_metadata.py` states that commit in a field of its own,
-`serverCommit`, on every build, and `apps/desktop/scripts/dev.sh` writes it into
-`vscode/product.overrides.json` with the rest. VS Code does not know the key;
-DevHub's main process reads it (`rehCommit` in `main/runtime/remoteServer.ts`)
-wherever it used to read `commit` alone: the install directory, the download
-URL, the `devhub` command's Node.
+run is still built from one VS Code commit and one set of patches, so
+`scripts/product_metadata.py` states both in fields of their own,
+`serverCommit` and `serverIdentity`, on every build, and
+`apps/desktop/scripts/dev.sh` writes them into `vscode/product.overrides.json`
+with the rest. VS Code does not know the keys; DevHub's main process reads them
+(`rehCommit` and `rehInstallKey` in `main/runtime/remoteServer.ts`) for the
+install directory, the bundle check and the `devhub` command's Node.
 
-What makes that enough is the server's own check. It compares the connecting
-client's commit with its own only when the client states one
-(`remoteExtensionHostAgentServer.ts`: `if (rendererCommit && myCommit)`), and a
-source run's workbench states none, so the published server accepts it.
-`remoteServer.test.ts` reads that line out of the pinned submodule and fails if
-it ever stops being conditional.
+The servers a source run copies to machines are the ones in `dist/reh/` of the
+checkout, built by `scripts/build_reh.py` from the checkout as it is — so a
+source run's remote windows run the server its own patches make, uncommitted
+ones included. There is no download to fall back on. A source run whose
+`dist/reh/` lacks the server a machine needs, or holds one built before the
+patches moved, refuses that machine permanently with a sentence that names the
+target and the command: _This DevHub has no remote extension host for
+alpine-x64 (Linux x64, musl): …/dist/reh holds linux-x64 only. Build it in this
+checkout with scripts/build_reh.py alpine-x64._ `dev.sh` says the same at
+start-up, as a note rather than a stop: a local window needs no server, and
+building them takes most of an hour.
 
-Until this, DevHub read `commit` alone and refused every remote window of a
-source run — a dev container's as much as an SSH host's, with a sentence that
-said "SSH workspaces need a packaged build" either way. The window still
-opened, so what a person saw first was often not the refusal but whatever
-reached for the remote next: Open Settings reads the remote settings file
-through the remote file system, and failed as "Unable to open 'Settings'".
+What makes a commit-less client acceptable to a server whose `product.json`
+states a commit is the server's own check, above. The refusal for a run that
+states neither field — a source run not started by `dev.sh`, or one whose
+`product.overrides.json` predates them — is still there, still permanent, and
+names no kind of machine.
 
-The refusal is still there for a run that states neither field — a source run
-not started by `dev.sh`, or one whose `product.overrides.json` predates
-`serverCommit` — and it is still permanent: the workbench gets `NotAvailable`
-with the sentence rather than five attempts at a URL ending `-undefined.tar.gz`.
-It names no kind of machine.
+## Nothing to install by hand
 
-The one thing a source run cannot have is its own uncommitted server changes:
-it connects to the server published for the submodule commit, built from the
-patches as they were when that release was cut — the same sharp edge a
-packaged build has (see "What is built, where, and when").
-
-## Installing a server by hand
-
-For a remote with no route to github.com, or to try a server the nightly has
-not published.
-
-```sh
-# on your Mac: the commit DevHub will ask for
-commit=$(git -C vscode rev-parse HEAD)
-
-# on the remote
-mkdir -p ~/.devhub-server/bin/$commit
-tar -xzf devhub-reh-linux-x64-$commit.tar.gz \
-    --strip-components 1 -C ~/.devhub-server/bin/$commit
-```
-
-DevHub looks for `bin/devhub-server` under that exact directory and skips the
-download when it finds it. Nothing else about the flow changes: it starts that
-server, writes the token file beside it and forwards its socket exactly as if it
-had put it there itself.
-
-The commit has to match. There is no override that makes a client of one commit
-talk to a server of another — the server checks, and the check is the reason
-everything here is keyed on a commit. Build or fetch the right one.
+A machine with no route anywhere gets its server from DevHub like every other
+machine, so there is no by-hand install any more and no directory to unpack
+into: `~/.devhub-server/bin/<key>/` is DevHub's, and a tree there without
+DevHub's `.devhub-installed` marker in it is treated as an install that did
+not finish and replaced. To try a server of your own, build it with
+`scripts/build_reh.py` into `dist/reh` and connect from a source run.
 
 ## tmux on the host
 
@@ -453,7 +506,7 @@ https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhu
 stated once, in `apps/desktop/product-overrides.json` as
 `tmuxDownloadUrlTemplate`, and substituted by DevHub itself rather than by
 anything on the host. The three names are its own; `${version}` and
-`${commit}`, which mean VS Code's version and commit in
+`${commit}`, which mean VS Code's version and commit in VS Code's own
 `serverDownloadUrlTemplate`, are deliberately not reused here.
 
 Because the release is keyed on the tmux version, it is built once per bump and
@@ -536,12 +589,11 @@ build says so on its own output.
 
 ## Pointing one host somewhere else
 
-There is no setting for this, per host or otherwise. `serverDownloadUrlTemplate`
-in `apps/desktop/product-overrides.json` is a fact about the build — which
-release these binaries were made alongside — and a person who could point one
-host at a different server could point it at a server of a different commit,
-which the server itself would then refuse. A host that needs its own server gets
-it installed by hand, above.
+There is no setting for this, per host or otherwise. Which servers a DevHub
+carries is a fact about the build — they were made alongside it, from its
+patches — and a person who could point one host at a different server could
+point it at a server of a different commit, which the server itself would then
+refuse.
 
 The `remote.SSH.*` settings the vendored extension had —
 `serverDownloadUrlTemplate`, `serverValidation`, `serverInstallPath`,
@@ -561,10 +613,10 @@ Beyond that, in order:
   line for the failure if there was one.
 - **`devhub --metrics`** names the host, whether its runtime is connected, and
   the last thing that went wrong on it.
-- **The server's own log on the host**, `~/.devhub-server/.<commit>.log`. When
+- **The server's own log on the host**, `~/.devhub-server/.<key>.log`. When
   the server starts and then exits, the start script says so with that path in
   the message rather than waiting out its timeout.
-- **`~/.devhub-server/.<commit>.pid` and `.sock`** on the host say what DevHub
+- **`~/.devhub-server/.<key>.pid` and `.sock`** on the host say what DevHub
   thinks is running. A socket file with no live pid behind it is what the start
   script removes before starting a new server.
 
@@ -587,8 +639,8 @@ Nothing about the protocol changes. What changes is where its two ends are.
   the local one, with the host's own paths in it. The `<tag>` is a digest of
   DevHub's control-socket path, so two DevHub profiles on one Mac reaching one
   host do not adopt each other's files.
-- **It runs on the REH's own Node**, `~/.devhub-server/bin/<commit>/node` — the
-  Node the connection installed, at the commit the client states. A
+- **It runs on the REH's own Node**, `~/.devhub-server/bin/<key>/node` — the
+  Node the connection installed, under the key the client states. A
   `command -v node` would find whatever the login shell's PATH happened to
   have, which is a different Node on every host and none at all on some.
 - **DevHub's control socket is reverse-forwarded onto the host**:
@@ -907,20 +959,20 @@ a button that was never there.
 
 Nothing here can be verified without a reachable host. A packaged build or a
 source run started by `apps/desktop/scripts/dev.sh` will do — the latter
-connects to the server published for its submodule commit. In order:
+installs the server `scripts/build_reh.py` built into its `dist/reh`. In order:
 
 0. **The authority resolves at all.** The window comes up with `SSH: <host>` in
    the status bar rather than sitting on "Opening Remote…". On the host,
-   `~/.devhub-server/bin/<commit>/bin/devhub-server` exists,
-   `~/.devhub-server/.<commit>.sock` is a socket and `.<commit>.pid` names a
+   `~/.devhub-server/bin/<key>/bin/devhub-server` and `.devhub-installed`
+   exist, `~/.devhub-server/.<key>.sock` is a socket and `.<key>.pid` names a
    live process; on the Mac, `lsof -nP -iTCP@127.0.0.1 -sTCP:LISTEN` shows the
    forwarded port and the `ssh` holding it. Reopening the same host a second
-   time must *not* add a second line to `~/.devhub-server/.<commit>.log` — the
+   time must *not* add a second line to `~/.devhub-server/.<key>.log` — the
    running server is adopted, not restarted.
 1. `ls -l ~/.devhub/terminal/` on the host after opening an ssh window: the
    launcher is there, mode 0755, and `js/package.json` says `{"type":"module"}`.
-2. `~/.devhub-server/bin/<commit>/node --version` runs — the commit is the one
-   `devhub --version` prints.
+2. `~/.devhub-server/bin/<key>/node --version` runs — the key's first half is
+   the commit `devhub --version` prints.
 3. `ls -l ~/.devhub/terminal/control-*.sock` is a socket, and
    `printf '{"kind":"terminal-profile","machine":"ssh:<host>","root":null}\n' |
 nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
@@ -954,7 +1006,7 @@ nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
 12. **Reconnecting.** `ssh -O exit <host>` from a terminal on the Mac, or a real
     sleep and wake: the workbench notices, reconnects through a fresh
     `resolve()`, and the extension host on the host is the *same process* —
-    `.<commit>.pid` has not changed and the log has not grown. A workbench that
+    `.<key>.pid` has not changed and the log has not grown. A workbench that
     came back with a new server is a resolve that was not idempotent, and it
     would take every language server on that machine with it each time a lid
     closed.
