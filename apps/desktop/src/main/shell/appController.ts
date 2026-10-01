@@ -5052,7 +5052,29 @@ export class AppController {
 			);
 		}
 		if (sameEditorAttachment(workspace.editor, next)) {
-			await this.ensureEditorView(workspace.key);
+			// Asked for where it already is: a person reopening an editor that
+			// could not open. Its container is built if it has to be — opening
+			// a window only ever starts one — and DevHub's verdict on the
+			// workbench it gave up on is dropped, so the one opened now stays.
+			const target = containerTargetOf(workspace.location, next);
+			const up =
+				target === undefined
+					? undefined
+					: await containerHostFor(target).ensureUp({ build: true });
+			await this.dispatchAwaiting({
+				type: "attach_editor",
+				workspaceId,
+				editor: next,
+			});
+			if (up?.started === true) {
+				this.dispatchOwn({
+					type: "editor_container_started",
+					workspaceId,
+					containerId: up.containerId,
+				});
+			}
+			const view = await this.ensureEditorView(workspace.key);
+			if (view) shellWindow().assertArrangement();
 			return;
 		}
 		if (workspaceId === this.coordinator.model.scratchWorkspaceId) {
@@ -5236,6 +5258,23 @@ export class AppController {
 	): Promise<void> {
 		const workspace = this.workspaceOfWindow(uri);
 		await this.attachEditor(workspace.id, await this.editorFor(workspace, to));
+	}
+
+	/**
+	 * Reopen a Workspace's editor in the dev container it is attached to,
+	 * building it if it was never built: the row's way back in.
+	 */
+	async reopenEditorInContainer(workspaceId: WorkspaceId): Promise<void> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (workspace === undefined) {
+			throw new Error(`no workspace ${workspaceId} is open to reopen`);
+		}
+		if (workspace.editor.kind !== "devContainer") {
+			throw workspaceFailure(
+				`The editor for ${workspace.root} is not attached to a dev container; use Reopen in Container from the editor to choose one.`,
+			);
+		}
+		await this.attachEditor(workspaceId, workspace.editor);
 	}
 
 	/** Reopen a Workspace's editor on its own machine: the row's way out. */
@@ -6517,6 +6556,16 @@ export class AppController {
 			async (_event, workspaceId: string) => {
 				try {
 					await this.reopenEditorLocally(parseWorkspaceId(workspaceId));
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
+		handle(
+			CHANNELS.reopenEditorInContainer,
+			async (_event, workspaceId: string) => {
+				try {
+					await this.reopenEditorInContainer(parseWorkspaceId(workspaceId));
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}

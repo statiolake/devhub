@@ -734,8 +734,21 @@ export class ContainerHost
 			started.then(done, done);
 		}
 		const { result, started } = await bringUp;
-		this.#noteContainer(result.containerId);
 		if (started) this.#onStarted?.(this.id, result.containerId);
+		// A container other than the one this instance knew is the one this
+		// bring-up asked for — built after the old one was removed, which is
+		// exactly what Reopen Editor in Container is for — so it is answered,
+		// not refused. This instance is still done (its caches describe the
+		// old filesystem): it is marked replaced, and the next
+		// `containerHostFor` builds the one that adopts the new container.
+		if (
+			this.#containerId !== undefined &&
+			this.#containerId !== result.containerId
+		) {
+			this.#replaced = true;
+			return { containerId: result.containerId, started };
+		}
+		this.#noteContainer(result.containerId);
 		this.#container = Promise.resolve(result);
 		return { containerId: result.containerId, started };
 	}
@@ -1704,7 +1717,8 @@ export function containerNotBuilt(
 	return portFailure("unavailable", {
 		detail:
 			`${capitalised(containerName(workspaceFolder, configPath))} has not been built yet. ` +
-			`Build it with: ${upCommand(workspaceFolder, configPath)}`,
+			`Build it with: ${upCommand(workspaceFolder, configPath)} — or, for an editor, ` +
+			`with Reopen Editor in Container on the Workspace's right-click menu.`,
 	});
 }
 

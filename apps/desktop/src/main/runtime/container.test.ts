@@ -527,6 +527,34 @@ describe("a rebuild is a different machine underneath the same one", () => {
 		await expect(runtime.home()).rejects.toThrow(/has been rebuilt/u);
 	});
 
+	it("builds a removed container again when asked, and hands it to a new host", async () => {
+		// Reopen Editor in Container after the container was removed: the
+		// bring-up the person asked for made the new one, so it is answered —
+		// and this instance, whose caches are the old container's, is done.
+		let id: string | undefined = "first";
+		const runtime = runtimeWith(
+			fakeDocker((args) => {
+				if (args[0] === "ps") {
+					return output(0, id === undefined ? "" : psLine(id, "running"));
+				}
+				if (args[0] === "inspect") return output(0, "");
+				return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+			}),
+			fakeDevcontainer(() => {
+				id = "second";
+				return upSucceeded("second");
+			}),
+		);
+		expect(await runtime.home()).toBe("/home/vscode");
+		id = undefined;
+		await expect(runtime.prepare()).rejects.toThrow(/has not been built yet/u);
+		expect(await runtime.ensureUp({ build: true })).toEqual({
+			containerId: "second",
+			started: true,
+		});
+		expect(runtime.replaced).toBe(true);
+	});
+
 	it("asks docker for untruncated ids, so a restart is not a rebuild", async () => {
 		// Found by running it. `docker ps --format {{.ID}}` gives the short
 		// twelve-character id and `devcontainer up` answers with the full

@@ -36,6 +36,8 @@ import {
   workspaceLocation,
   workspaceRoot,
   unsavedEditors,
+  devContainerConfigPath,
+  EDITOR_ON_HOST,
 } from "./domain.js";
 
 const UUID_A = "550e8400-e29b-41d4-a716-446655440000";
@@ -302,6 +304,46 @@ describe("workspace lifecycle", () => {
         ),
       ),
     ).toBe(DomainErrorCode.WorkspaceUnavailable);
+  });
+});
+
+describe("editor attachment", () => {
+  const workspace = () =>
+    new Workspace(
+      workspaceId(UUID_A),
+      workspaceLocation({ kind: "local", path: "/dev/project" }),
+      displayPath("/dev/project"),
+    );
+  const inContainer = {
+    kind: "devContainer",
+    configPath: devContainerConfigPath(
+      "/dev/project/.devcontainer/devcontainer.json",
+    ),
+  } as const;
+
+  it("makes a Workspace whose workbench DevHub gave up on available again", () => {
+    // Reopening the editor — elsewhere, or in the same container once it is
+    // built — is a person asking for it again, so the verdict on the old
+    // workbench no longer stands.
+    const moved = workspace();
+    moved.attachEditor(inContainer);
+    moved.markUnavailable("editor_restart_exhausted");
+    expect(moved.attachEditor(EDITOR_ON_HOST)).toBe(true);
+    expect(moved.state.kind).toBe("available");
+
+    const same = workspace();
+    same.attachEditor(inContainer);
+    same.markUnavailable("editor_restart_exhausted");
+    expect(same.attachEditor(inContainer)).toBe(true);
+    expect(same.state.kind).toBe("available");
+    expect(same.attachEditor(inContainer)).toBe(false);
+  });
+
+  it("leaves a folder that is gone unavailable", () => {
+    const gone = workspace();
+    gone.markUnavailable("root_missing");
+    gone.attachEditor(inContainer);
+    expect(gone.state).toEqual({ kind: "unavailable", reason: "root_missing" });
   });
 });
 

@@ -1106,7 +1106,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const closeWorkspaceMenu = useCallback(() => {
     setWorkspaceMenu(undefined);
   }, []);
-  const { reopenEditorLocally } = useSidebar();
+  const { reopenEditorLocally, reopenEditorInContainer } = useSidebar();
 
   const resize = useCallback(
     (width: number) => {
@@ -1391,6 +1391,17 @@ export function Sidebar({ snapshot }: SidebarProps) {
           at={workspaceMenu.at}
           label={`${workspaceMenu.workspace.label} actions`}
           items={[
+            {
+              // The way back in when the editor could not open because its
+              // container was never built, or was removed: build it, then
+              // open the editor in it — what Retry, which only starts a
+              // container, cannot do.
+              id: "reopen-in-container",
+              label: "Reopen Editor in Container",
+              run: () => {
+                reopenEditorInContainer(workspaceMenu.workspace.id);
+              },
+            },
             {
               // The way out when an editor in a dev container cannot open —
               // a container never built, a Docker that is not running — and

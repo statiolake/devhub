@@ -266,6 +266,13 @@ export function reopenEditorLocally(workspaceId: string): Promise<void> {
 	) as Promise<void>;
 }
 
+export function reopenEditorInContainer(workspaceId: string): Promise<void> {
+	return ipcRenderer.invoke(
+		CHANNELS.reopenEditorInContainer,
+		workspaceId,
+	) as Promise<void>;
+}
+
 export function openExternalUrl(url: string): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.openExternalUrl, url) as Promise<void>;
 }

@@ -1756,10 +1756,21 @@ export class Workspace {
    * Attach the editor somewhere else. The Workspace itself does not move:
    * its location, its key, its Agents and its terminals are all untouched.
    * What DevHub started for the editor it had is forgotten with it.
+   *
+   * An attach is a person asking for the editor again, so a Workspace DevHub
+   * had given up building a workbench for (`editor_restart_exhausted`) is
+   * available again — attached elsewhere or, after its container was built,
+   * in the same place. That verdict was about the workbench it had, and
+   * leaving it standing kept the Workspace unavailable, so the workbench just
+   * asked for was taken down again at once.
    */
   attachEditor(next: EditorAttachment): boolean {
+    const recovered =
+      this.stateValue.kind === "unavailable" &&
+      this.stateValue.reason === "editor_restart_exhausted";
+    if (recovered) this.stateValue = AVAILABLE;
     if (sameEditorAttachment(this.editorValue, next)) {
-      return false;
+      return recovered;
     }
     this.editorValue = next;
     this.startedContainerValue = undefined;

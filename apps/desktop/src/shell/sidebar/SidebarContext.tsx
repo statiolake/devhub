@@ -55,6 +55,7 @@ export interface SidebarValue {
   readonly openExternalUrl: (url: string) => void;
   /** Reopen a Workspace's editor on its own machine, out of its dev container. */
   readonly reopenEditorLocally: (workspaceId: string) => void;
+  readonly reopenEditorInContainer: (workspaceId: string) => void;
   /** Hand a failure to main. What arrived is never raised again. */
   readonly reportFailure: (error: unknown) => void;
 }
@@ -143,6 +144,13 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
     [bridge, reportFailure],
   );
 
+  const reopenEditorInContainer = useCallback(
+    (workspaceId: string) => {
+      void bridge.reopenEditorInContainer(workspaceId).catch(reportFailure);
+    },
+    [bridge, reportFailure],
+  );
+
   const value = useMemo<SidebarValue>(
     () => ({
       state,
@@ -155,6 +163,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       closeWorkspace,
       openExternalUrl,
       reopenEditorLocally,
+      reopenEditorInContainer,
       reportFailure,
     }),
     [
@@ -164,6 +173,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       dispatch,
       openExternalUrl,
       reopenEditorLocally,
+      reopenEditorInContainer,
       reportFailure,
       repositoryStatus,
       retry,

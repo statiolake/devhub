@@ -1098,6 +1098,12 @@ export interface SidebarBridge
 	 * it is attached to: the row's way out when that editor cannot open.
 	 */
 	reopenEditorLocally(workspaceId: string): Promise<void>;
+	/**
+	 * Reopen a Workspace's editor in the dev container it is attached to,
+	 * building the container first when it has not been built: the row's way
+	 * back in when that editor could not open.
+	 */
+	reopenEditorInContainer(workspaceId: string): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 	/** The sidebar's width under the pointer while a drag lasts; `null` ends it. */
 	previewLayout(preview: LayoutPreviewWire): Promise<void>;
@@ -1499,6 +1505,7 @@ export const CHANNELS = {
 	listSshHosts: "devhub:list-ssh-hosts",
 	openSshWorkspace: "devhub:open-ssh-workspace",
 	reopenEditorLocally: "devhub:reopen-editor-locally",
+	reopenEditorInContainer: "devhub:reopen-editor-in-container",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",

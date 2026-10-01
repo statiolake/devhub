@@ -147,9 +147,15 @@ Workspace *is* its host and is closed from the sidebar.
 
 These commands are the only way into a container. Opening a Workspace never
 asks about one: a folder always opens with its editor on its own machine, and
-the editor is moved from inside it. Outside the editor there is one way out:
-**Reopen Editor Locally** on the context menu of a row whose editor is in a
-container — the way out when that editor cannot open.
+the editor is moved from inside it. Outside the editor, the context menu of a
+row whose editor is in a container has the two ways on when that editor
+cannot open: **Reopen Editor in Container**, which builds the container if it
+was never built (or was removed) and opens the editor in it, and **Reopen
+Editor Locally**. Either is a person asking for the editor again, so a
+Workspace DevHub had stopped restarting the workbench of
+(`editor_restart_exhausted`) is available again — that verdict was about the
+workbench it had, and leaving it standing kept the Workspace unavailable, so
+the editor just reopened was taken down again at once.
 
 The row keeps its folder's mark and wears a quiet crate mark beside its other
 marks; its facts say `editor in dev container`, and the definition's name
@@ -182,8 +188,9 @@ folder's own machine, of the definition chosen.
 reattach from the editor's commands. Restoring an attached editor at launch, a
 workbench rebuilt by the supervisor, and the resolver's first attempt only
 *start* a container that exists (`ContainerHost.prepare`); one that was never
-built refuses with the command that builds it, and the row's Reopen Editor
-Locally is the way out. Nothing on a timer reaches `up`.
+built refuses with the command that builds it, and the row's Reopen Editor in
+Container (which builds it) and Reopen Editor Locally are the ways on. Nothing
+on a timer reaches `up`.
 
 ### Stopping: the definition's `shutdownAction`, for a container DevHub started
 
@@ -353,5 +360,10 @@ What changed is said in one notice (`state_migrated`).
 8. Restart DevHub with the editor attached: it comes back attached, starting
    (never building) the container.
 9. The row's **Reopen Editor Locally** does what 7 does.
+   `docker rm -f` the container and restart DevHub: the editor cannot open
+   (the container has not been built), and the row's **Reopen Editor in
+   Container** builds it and opens the editor in it, as does its **Reopen
+   Editor Locally** open it on the folder's machine — both from the state
+   where DevHub had stopped restarting the workbench.
 10. Close the Workspace: a container DevHub started stops.
 11. Nothing is left behind: no stray `docker exec` or `ssh` processes.
