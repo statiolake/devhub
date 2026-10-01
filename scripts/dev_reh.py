@@ -99,12 +99,16 @@ def ensure(
 	return 0
 
 
-def run_build(target: str) -> int:
-	"""Run build_reh.py, mirroring its output to the terminal and the log."""
-	LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-	with LOG_PATH.open("w") as log:
+def run_build(
+	targets: str | list[str], log_path: Path = LOG_PATH, extra: tuple[str, ...] = ()
+) -> int:
+	"""Run build_reh.py for `targets`, mirroring its output to the terminal and
+	the log. Shared with scripts/ensure_reh.py (the packaging path)."""
+	names = [targets] if isinstance(targets, str) else list(targets)
+	log_path.parent.mkdir(parents=True, exist_ok=True)
+	with log_path.open("w") as log:
 		proc = subprocess.Popen(
-			[sys.executable, str(Path(__file__).with_name("build_reh.py")), target],
+			[sys.executable, str(Path(__file__).with_name("build_reh.py")), *names, *extra],
 			stdout=subprocess.PIPE,
 			stderr=subprocess.STDOUT,
 			text=True,

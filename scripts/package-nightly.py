@@ -866,6 +866,14 @@ def main() -> int:
 	if sys.platform != "darwin":
 		fail("this packages a macOS app bundle and only runs on macOS")
 
+	if not args.without_reh:
+		# Before the long steps: a Mac that never built the servers builds them
+		# now, not after node_modules.asar. Does nothing in CI (see ensure_reh).
+		from ensure_reh import ensure as ensure_reh_servers
+
+		if ensure_reh_servers(Path(args.reh_dir).resolve()) != 0:
+			return 1
+
 	step("inputs")
 	check_inputs()
 	version = devhub_version()

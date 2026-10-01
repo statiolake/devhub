@@ -336,6 +336,13 @@ that night rather than a nightly that refuses some machines. Nothing is
 published on its own: the `reh-<commit>` releases earlier nightlies made are
 no longer read by anything.
 
+Locally, `pnpm build` builds whichever of the four servers is missing or stale
+in `dist/reh` before packaging (`scripts/ensure_reh.py`, using the same check as
+`bundle_problems` and `pnpm dev`): Docker required, ~15 minutes each, log in
+`dist/reh-build.log`. Without Docker it fails naming the targets and
+`--without-reh`. It does nothing when `CI` is set, so the nightly's downloaded
+servers are the only ones used there.
+
 CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
 it is a bundle that is smoke-tested and thrown away, and building four servers
 on every push is the nightly's work. `scripts/build_reh_test.py` and

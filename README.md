@@ -394,7 +394,13 @@ line tools (`xcode-select --install`), `python3`, Node, and pnpm `11.20.0`
 (`corepack enable && corepack prepare pnpm@11.20.0 --activate`). The machine's
 own Node version does not matter — the one VS Code's build insists on is
 fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
-rather than complains about.
+rather than complains about. That includes the four remote extension hosts in
+`dist/reh`: any that is missing or stale is built first, with
+`scripts/build_reh.py <those targets>`, announced up front (about 15 minutes
+each, log in `dist/reh-build.log`). That needs **Docker**; without it the build
+stops and names the missing targets. `pnpm build -- --without-reh` skips them
+for a bundle that opens no remote window. Under CI (`CI` set) nothing is built:
+the nightly downloads the servers its own jobs built.
 
 The first build is roughly **40–60 minutes**, nearly all of it VS Code's `npm
 ci` and its two compiles. Those are stamped, so a later build that changes only

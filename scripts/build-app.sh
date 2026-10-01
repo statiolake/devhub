@@ -41,11 +41,13 @@
 #   * pnpm — it is the package manager that invoked us in the normal case, but
 #     the script is also runnable directly
 #   * the four remote extension hosts the app carries, in dist/reh, built from
-#     this checkout's VS Code and patches — scripts/build_reh.py makes them,
-#     but it needs Docker and most of an hour, which is not a thing to start
-#     behind somebody's back. scripts/package-nightly.py names what is missing
-#     or stale. `--without-reh` packages without them, for a bundle that opens
-#     no remote window (CI's check build does that).
+#     this checkout's VS Code and patches — when any is missing or stale,
+#     package-nightly.py runs scripts/build_reh.py for exactly those first
+#     (scripts/ensure_reh.py): needs Docker, ~15 minutes each, announced up
+#     front and logged to dist/reh-build.log. Without Docker it stops, naming
+#     them. It does nothing when CI is set: the nightly downloads the servers
+#     its `reh` jobs built. `--without-reh` packages without them, for a
+#     bundle that opens no remote window (CI's check build does that).
 #
 # Node's own version is deliberately *not* checked: the only Node this build is
 # picky about is the one VS Code's build requires, and provisioning fetches
