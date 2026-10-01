@@ -1084,6 +1084,25 @@ focused or dragged; its handle drags it anywhere in the pane, main remembers
 the place per presentation (`state.json` `smart_buttons`), and a double-click
 on the handle puts it back.
 
+**Automatic actions.** The box also carries an **Auto** menu: a check box per
+action whose trigger may be automatic (`AUTOMATIC_TRIGGERS` in
+`model/automaticActions.ts`: commit, push, review comments, failing CI). A
+ticked action is sent on its own when its button would appear. The choice is
+on the Agent (`Agent.automaticActions`, the `set_automatic_action` intent), off
+by default and not restored after DevHub restarts. Main decides when, on the
+two clocks the conditions move on — the projection (an Agent going idle, a box
+ticked) and the repository status (comments, CI) — and sends through the same
+`runAgentAction` a press does. A condition is read as a run of events: an
+episode starts each time it starts to hold, and for review comments a rise in
+the number of unresolved threads is a new event within one; another pull
+request is another episode. Each event is sent once, and an event already
+standing when the box was ticked, or answered by a press of the button, is not
+sent. A reading with no repository status is no news, not the end of an
+episode. Nothing goes to an Agent that is not idle or has something queued,
+and one trigger at a time, in trigger order, so pushing is decided on the
+repository committing left. With no button offered and nothing ticked, the box
+is only the Auto menu and shows while the pane is pointed at.
+
 **Continuing an Agent that is not idle.** A continue is a stop followed by a
 resume elsewhere, in this order: the new Agent is launched on the session
 first, and the one it replaces is stopped once the new one is running and

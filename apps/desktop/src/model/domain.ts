@@ -1333,6 +1333,15 @@ export class Agent {
    */
   private activityValue: string | undefined;
   private injectionValue: AgentInjection = NO_INJECTION;
+  /**
+   * The ids of the actions a person ticked as automatic for this Agent: sent
+   * on their own when their Smart Button would appear (`automaticActions.ts`).
+   *
+   * Not part of `AgentRestoreRecord`, like `activity`: it is an instruction
+   * given for this run of DevHub, and an Agent that went on acting on its own
+   * after a restart would be acting on a word nobody has said since.
+   */
+  private automaticActionsValue: readonly string[] = [];
 
   /**
    * The refusal this Agent's pane is still showing, or nothing.
@@ -1432,6 +1441,7 @@ export class Agent {
     );
     copy.activityValue = this.activityValue;
     copy.injectionValue = this.injectionValue;
+    copy.automaticActionsValue = this.automaticActionsValue;
     copy.failureValue = this.failureValue;
     return copy;
   }
@@ -1458,6 +1468,20 @@ export class Agent {
   /** What DevHub is holding for this Agent, and why. */
   get injection(): AgentInjection {
     return this.injectionValue;
+  }
+
+  /** The actions ticked as automatic for it. See `automaticActionsValue`. */
+  get automaticActions(): readonly string[] {
+    return this.automaticActionsValue;
+  }
+
+  setAutomaticAction(actionId: string, automatic: boolean): boolean {
+    const has = this.automaticActionsValue.includes(actionId);
+    if (has === automatic) return false;
+    this.automaticActionsValue = automatic
+      ? [...this.automaticActionsValue, actionId]
+      : this.automaticActionsValue.filter((id) => id !== actionId);
+    return true;
   }
 
   get runtimeHealth(): RuntimeHealth {

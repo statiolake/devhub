@@ -29,15 +29,26 @@
  * **How it looks.** Translucent at rest — it sits over the work — and at full
  * strength while pointed at, holding focus, or being dragged
  * (`smartButtons.css`).
+ *
+ * **Automatic.** The box's Auto menu lists the actions that may be automatic
+ * (`AUTOMATIC_TRIGGERS`), each with a check box, for this Agent only and off
+ * until ticked. A ticked one is sent on its own when its button would appear
+ * — main decides when (`model/automaticActions.ts`) — and its button, when it
+ * is on screen, says so. So the box is there whenever the Agent has an action
+ * that may be automatic, not only while a button is offered: the moment to
+ * tick "Address review comments" is before the comments arrive. With no
+ * button offered and nothing ticked it shows only while the pane is pointed
+ * at.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentWire } from "../../ipc/appShell";
 import type {
   AgentActionWire,
   WorkspaceRepositoryWire,
 } from "../../ipc/contract";
 import { smartButtonTriggers } from "../../model/agentActions";
+import { isAutomaticTrigger } from "../../model/automaticActions";
 import {
   clampOffset,
   defaultOffset,
@@ -124,14 +135,19 @@ export function SmartButtons({
     (entry) => entry.workspaceId === agent.workspaceId,
   );
   const offered = smartButtonActions(agent, repository, agentActions);
+  const automatic = agentActions.filter((action) =>
+    isAutomaticTrigger(action.trigger),
+  );
+  const ticked = agent.automaticActions ?? [];
+  const [menuOpen, setMenuOpen] = useState(false);
   const own = useRef<HTMLDivElement | null>(null);
-  const metrics = useMetrics(own, agent, offered.length);
+  const metrics = useMetrics(own, agent, offered.length + (menuOpen ? 1 : 0));
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
     readonly to: SmartButtonsOffset | undefined;
   }>();
-  if (offered.length === 0) return null;
+  if (offered.length === 0 && automatic.length === 0) return null;
 
   // Before the first measurement — the one render that precedes the layout
   // effect, never painted — the pane's corner.
@@ -159,6 +175,9 @@ export function SmartButtons({
       data-presentation={agent.presentation}
       data-placed={stored === undefined ? "default" : "moved"}
       {...(drag === undefined ? {} : { "data-dragging": "" })}
+      {...(offered.length === 0 && ticked.length === 0 && !menuOpen
+        ? { "data-quiet": "" }
+        : {})}
       style={{
         right: `${String(drawn.right)}px`,
         bottom: `${String(drawn.bottom)}px`,
@@ -219,7 +238,10 @@ export function SmartButtons({
           key={action.id}
           type="button"
           className="smart-button"
-          title={`${action.displayName} — sent to ${agent.displayName}`}
+          title={`${action.displayName} — sent to ${agent.displayName}${
+            ticked.includes(action.id) ? " (automatic: sent on its own)" : ""
+          }`}
+          {...(ticked.includes(action.id) ? { "data-automatic": "" } : {})}
           onClick={() => {
             void runAgentAction(agent.id, action.id);
           }}
@@ -227,7 +249,106 @@ export function SmartButtons({
           {action.displayName}
         </button>
       ))}
+      {automatic.length > 0 ? (
+        <AutomaticMenu
+          agent={agent}
+          choices={automatic}
+          ticked={ticked}
+          open={menuOpen}
+          setOpen={setMenuOpen}
+          set={(actionId, on) =>
+            dispatch({
+              type: "set_automatic_action",
+              agentId: agent.id,
+              actionId,
+              automatic: on,
+            })
+          }
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The Auto button and its menu: which actions are sent on their own for this
+ * Agent. A check box per action that may be automatic, off until ticked.
+ */
+function AutomaticMenu({
+  agent,
+  choices,
+  ticked,
+  open,
+  setOpen,
+  set,
+}: {
+  readonly agent: AgentWire;
+  readonly choices: readonly AgentActionWire[];
+  readonly ticked: readonly string[];
+  readonly open: boolean;
+  readonly setOpen: (open: boolean) => void;
+  readonly set: (actionId: string, automatic: boolean) => Promise<unknown>;
+}) {
+  const own = useRef<HTMLSpanElement | null>(null);
+  const count = choices.filter((choice) => ticked.includes(choice.id)).length;
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: Event) => {
+      if (!own.current?.contains(event.target as Node | null)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open, setOpen]);
+  return (
+    <span ref={own} className="smart-buttons-automatic">
+      <button
+        type="button"
+        className="smart-button smart-buttons-auto"
+        aria-label="Automatic actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Actions sent to ${agent.displayName} on their own, the moment their button would appear`}
+        {...(count > 0 ? { "data-armed": "" } : {})}
+        onClick={() => setOpen(!open)}
+      >
+        {count > 0 ? `Auto ${String(count)}` : "Auto"}
+      </button>
+      {open ? (
+        <div
+          className="smart-buttons-menu"
+          role="menu"
+          aria-label={`Automatic actions for ${agent.displayName}`}
+        >
+          {choices.map((choice) => {
+            const on = ticked.includes(choice.id);
+            return (
+              <button
+                key={choice.id}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={on}
+                className="smart-buttons-menu-item"
+                onClick={() => {
+                  void set(choice.id, !on);
+                }}
+              >
+                <span className="smart-buttons-check" aria-hidden="true">
+                  {on ? "✓" : ""}
+                </span>
+                {choice.displayName}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </span>
   );
 }
 

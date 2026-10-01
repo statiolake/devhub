@@ -381,6 +381,32 @@ describe("where the Smart Buttons were dragged, across the wire", () => {
   });
 });
 
+describe("an automatic action ticked, across the wire", () => {
+  const AGENT = "33333333-3333-4333-8333-333333333333";
+  const tick = (actionId: unknown, automatic: unknown) =>
+    intentFromWire({
+      type: "set_automatic_action",
+      agentId: AGENT,
+      actionId,
+      automatic,
+    } as AppIntentWire);
+
+  it("carries which action, for which Agent, on or off", () => {
+    expect(tick("fix_ci", true)).toEqual({
+      type: "set_automatic_action",
+      agentId: AGENT,
+      actionId: "fix_ci",
+      automatic: true,
+    });
+  });
+
+  it("refuses an action that is not named, and a tick that is not one", () => {
+    expect(() => tick("", true)).toThrow(InvalidIntent);
+    expect(() => tick(3, true)).toThrow(InvalidIntent);
+    expect(() => tick("fix_ci", "yes")).toThrow(InvalidIntent);
+  });
+});
+
 describe("how an Agent is shown, across the wire", () => {
   const WORKSPACE = "22222222-2222-4222-8222-222222222222";
   const request = (presentation?: unknown) =>

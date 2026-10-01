@@ -168,6 +168,8 @@ export interface AgentSnapshot {
   /** What the Agent says it is doing, or nothing if it has not said. */
   readonly activity: string | undefined;
   readonly injection: AgentInjection;
+  /** The actions ticked as automatic for it. */
+  readonly automaticActions: readonly string[];
   /** The refusal this Agent's pane is still showing, or nothing. */
   readonly failure: AgentFailure | undefined;
 }
@@ -883,6 +885,17 @@ export class AppModel {
     this.bumpRevision();
   }
 
+  /** Tick or untick an action as automatic for an Agent. See `automaticActions.ts`. */
+  setAgentAutomaticAction(
+    id: AgentId,
+    actionId: string,
+    automatic: boolean,
+  ): void {
+    if (this.requireAgent(id).setAutomaticAction(actionId, automatic)) {
+      this.bumpRevision();
+    }
+  }
+
   renameAgent(id: AgentId, displayName: string): void {
     const agent = this.requireAgent(id);
     if (agent.rename(displayName)) {
@@ -1585,6 +1598,7 @@ export class AppModel {
         unread: agent.unread,
         activity: agent.activity,
         injection: agent.injection,
+        automaticActions: agent.automaticActions,
         failure: agent.failure,
       })),
     }));

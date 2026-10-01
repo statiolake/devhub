@@ -429,6 +429,13 @@ export type UserIntent =
       readonly agentId: AgentId;
       readonly displayName: string;
     }
+  /** Tick or untick an action as automatic for an Agent (`automaticActions.ts`). */
+  | {
+      readonly type: "set_automatic_action";
+      readonly agentId: AgentId;
+      readonly actionId: string;
+      readonly automatic: boolean;
+    }
   | { readonly type: "stop_agent"; readonly agentId: AgentId }
   | {
       readonly type: "confirm_stop_agent";

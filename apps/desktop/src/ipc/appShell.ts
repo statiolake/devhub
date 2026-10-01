@@ -180,6 +180,11 @@ export interface AgentWire {
 	 * ended. See `main/agent/injection.ts`.
 	 */
 	readonly injection: AgentInjectionWire;
+	/**
+	 * The ids of the actions ticked as automatic for this Agent: sent on their
+	 * own when their Smart Button would appear. See `model/automaticActions.ts`.
+	 */
+	readonly automaticActions: readonly string[];
 	readonly workspaceId: string;
 }
 /**
@@ -640,6 +645,12 @@ export type AppIntentWire =
 			readonly agentId: string;
 			readonly displayName: string;
 			readonly type: "rename_agent";
+	  }
+	| {
+			readonly agentId: string;
+			readonly actionId: string;
+			readonly automatic: boolean;
+			readonly type: "set_automatic_action";
 	  }
 	| { readonly agentId: string; readonly type: "stop_agent" }
 	| { readonly confirmationId: string; readonly type: "confirm_stop_agent" }

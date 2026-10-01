@@ -80,3 +80,61 @@
   border-bottom-color: transparent;
   border-radius: var(--radius-row) var(--radius-row) 0 0;
 }
+
+/* With no button offered and nothing ticked, the box is only the Auto menu,
+   and it is there to be found, not to be looked at: shown while the pane is
+   pointed at or the menu holds focus. */
+.agent-pane:not(:hover) > .smart-buttons[data-quiet]:not(:focus-within) {
+  visibility: hidden;
+}
+
+/* A button that is automatic, and the Auto button while anything is: the
+   accent's edge, so an Agent acting on its own is never a surprise. */
+.smart-button[data-automatic],
+.smart-buttons-auto[data-armed] {
+  border-color: var(--accent);
+}
+
+.smart-buttons-automatic {
+  position: relative;
+  display: flex;
+}
+
+.smart-buttons-menu {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: calc(100% + var(--space-1));
+  display: flex;
+  min-width: 200px;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-row);
+  background: var(--chrome);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+}
+
+.smart-buttons-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.smart-buttons-menu-item:hover {
+  background: var(--wash-strong);
+}
+
+.smart-buttons-check {
+  display: inline-block;
+  width: 12px;
+  color: var(--accent);
+}

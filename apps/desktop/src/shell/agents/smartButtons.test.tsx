@@ -198,9 +198,11 @@ function box(): HTMLElement {
   return screen.getByRole("toolbar", { name: "Smart Buttons" });
 }
 
+/** The Smart Buttons on screen: every button but the Auto menu's. */
 function labels(): string[] {
   return screen
     .queryAllByRole("button")
+    .filter((button) => !button.classList.contains("smart-buttons-auto"))
     .map((button) => button.textContent ?? "");
 }
 
@@ -231,16 +233,42 @@ describe("which Smart Buttons are drawn", () => {
     ]);
   });
 
-  it("draws nothing while the Agent is not idle", () => {
+  it("draws no button while the Agent is not idle, only the quiet Auto menu", () => {
     for (const status of ["working", "waiting", "background", "unknown"]) {
       mount({ over: { status } as Partial<AgentWire> });
-      expect(screen.queryByRole("toolbar")).toBeNull();
+      expect(labels()).toEqual([]);
+      expect(box()).toHaveAttribute("data-quiet");
       cleanup();
     }
   });
 
-  it("draws nothing when no condition holds", () => {
+  it("draws no button when no condition holds", () => {
     mount({ repository: { ...DIRTY, dirty: false } });
+    expect(labels()).toEqual([]);
+    expect(box()).toHaveAttribute("data-quiet");
+  });
+
+  it("draws nothing at all when no action may be automatic and none is offered", () => {
+    const runAgentAction = vi.fn();
+    render(
+      <AgentsContext.Provider
+        value={
+          {
+            repositoryStatus: { sequence: 1, workspaces: [DIRTY] },
+            agentActions: ACTIONS.filter(
+              (action) => action.trigger === "issue",
+            ),
+            runAgentAction,
+            dispatch: vi.fn(),
+            reportFailure: vi.fn(),
+          } as unknown as AgentsValue
+        }
+      >
+        <div className="agent-pane">
+          <SmartButtons agent={agent()} stored={undefined} />
+        </div>
+      </AgentsContext.Provider>,
+    );
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
@@ -419,9 +447,9 @@ describe("the box in an Agent's pane", () => {
     );
     const { container, rerender } = render(pane(undefined));
     const drawn = () =>
-      [...container.querySelectorAll(".smart-button")].map(
-        (button) => button.textContent,
-      );
+      [
+        ...container.querySelectorAll(".smart-button:not(.smart-buttons-auto)"),
+      ].map((button) => button.textContent);
     expect(drawn()).toEqual(["Commit the changes"]);
 
     for (const step of [1, 2, 3]) {
@@ -450,5 +478,57 @@ describe("the box in an Agent's pane", () => {
       ).toHaveLength(1);
       expect(drawn()).toEqual(["Commit the changes"]);
     }
+  });
+});
+
+describe("automatic actions", () => {
+  it("lists the actions that may be automatic, each off until ticked", () => {
+    const { dispatch } = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Automatic actions" }));
+    const menu = screen.getByRole("menu");
+    const items = [...menu.querySelectorAll('[role="menuitemcheckbox"]')];
+    // The Issue flow's is not one of them; commit, push and CI are.
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Commit the changes",
+      "Commit in pieces",
+      "Push the commits",
+      "Fix CI",
+    ]);
+    expect(
+      items.every((item) => item.getAttribute("aria-checked") === "false"),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Fix CI" }));
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "set_automatic_action",
+      agentId: "a-1",
+      actionId: "fix_ci",
+      automatic: true,
+    });
+  });
+
+  it("says which are ticked, on the menu, its button and the Smart Button", () => {
+    const { dispatch } = mount({
+      over: { automaticActions: ["commit_changes"] } as Partial<AgentWire>,
+    });
+    const auto = screen.getByRole("button", { name: "Automatic actions" });
+    expect(auto).toHaveTextContent("Auto 1");
+    expect(box()).not.toHaveAttribute("data-quiet");
+    expect(
+      screen.getByRole("button", { name: "Commit the changes" }),
+    ).toHaveAttribute("data-automatic");
+    fireEvent.click(auto);
+    const item = screen.getByRole("menuitemcheckbox", {
+      name: "Commit the changes",
+    });
+    expect(item).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(item);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "set_automatic_action",
+      agentId: "a-1",
+      actionId: "commit_changes",
+      automatic: false,
+    });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });

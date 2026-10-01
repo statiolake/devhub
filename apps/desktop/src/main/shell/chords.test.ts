@@ -40,6 +40,7 @@ function agent(
 			waitingFor: "nothing_queued",
 			lastResult: undefined,
 		},
+		automaticActions: [],
 		controlState: { kind: "running" },
 		displayName: id,
 		id,

@@ -387,6 +387,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     unread: agent.unread,
     activity: agent.activity,
     injection: agent.injection,
+    automaticActions: agent.automaticActions,
     ...(agent.failure === undefined ? {} : { failure: agent.failure }),
   };
 }
@@ -1149,6 +1150,23 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         type: "rename_agent",
         agentId: tryParse(() => parseAgentId(wire.agentId)),
         displayName,
+      };
+    }
+    case "set_automatic_action": {
+      const actionId = wire.actionId;
+      if (
+        typeof actionId !== "string" ||
+        actionId.length === 0 ||
+        actionId.length > 256 ||
+        typeof wire.automatic !== "boolean"
+      ) {
+        invalid();
+      }
+      return {
+        type: "set_automatic_action",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+        actionId,
+        automatic: wire.automatic,
       };
     }
     case "stop_agent":

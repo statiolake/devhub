@@ -408,6 +408,7 @@ import {
 	smartButtonValues,
 } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
+import { AutomaticActions } from "../../model/automaticActions.js";
 import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
@@ -683,6 +684,8 @@ export class AppController {
 	private agentWiring: AgentWiring | undefined;
 	/** Each GUI Agent's unsent draft, beside `state.json`. See `drafts.ts`. */
 	private readonly drafts: AgentDrafts;
+	/** What each Agent's automatic actions have already sent. See `runAutomaticActions`. */
+	private readonly automaticActions = new AutomaticActions();
 	/** What each GUI Agent decided about the usage limit it stopped at (`limitResume.ts`). */
 	private readonly limitResumes: AgentRecords<LimitResumeRecord>;
 	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
@@ -2374,6 +2377,9 @@ export class AppController {
 		// draft with it. `prune` compares before it writes.
 		this.drafts.prune();
 		this.limitResumes.prune();
+		// An Agent gone idle, or a box ticked, is when an automatic action may
+		// be due.
+		this.runAutomaticActions();
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
@@ -2625,6 +2631,8 @@ export class AppController {
 			// projection now — it does not need one — so the source says it
 			// itself, which is where every other condition is already said.
 			this.publishCondition(REPOSITORY_STATUS_CONDITION, status.diagnostic);
+			// Review comments arriving and CI failing are news from here.
+			this.runAutomaticActions();
 			const after = this.orderedWorkspaceIds();
 			if (before.join("\0") !== after.join("\0")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
@@ -3264,6 +3272,9 @@ export class AppController {
 				`There is no agent action called \`${actionId}\` in the configuration.`,
 			);
 		}
+		// Sent by hand, it answers whatever its trigger stands for now, so an
+		// automatic action does not send it a second time.
+		this.automaticActions.answered(agent.id, action.trigger);
 		// The values come from the same projection the Smart Buttons were drawn
 		// from — so the message names the branch and the pull request the person
 		// was looking at when they pressed it.
@@ -3286,6 +3297,49 @@ export class AppController {
 			this.repositoryOf,
 			this.homeOf,
 		);
+	}
+
+	/**
+	 * Send whatever automatic actions are due (`model/automaticActions.ts`).
+	 *
+	 * Read on the two clocks its conditions move on — the projection (an
+	 * Agent's status, a box ticked) and the repository status (a pull
+	 * request's comments and CI) — and sent the way a Smart Button sends, so
+	 * an automatic action is exactly the button pressed at the moment it
+	 * appeared. One that cannot be sent says why, app-wide: nobody pressed
+	 * anything for it to be refused under.
+	 */
+	private runAutomaticActions(): void {
+		const actions = (this.config?.agentActions ?? [])
+			.filter((action) => action.enabled)
+			.map((action) => ({ id: action.id, trigger: action.trigger }));
+		const firings = this.automaticActions.observe(
+			this.coordinator.model.workspaces.flatMap((workspace) =>
+				workspace.agents.map((agent) => ({
+					agentId: agent.id,
+					status: agent.status,
+					queued: agent.injection.queued,
+					automaticActions: agent.automaticActions,
+					repository: this.lastRepositoryStatus.workspaces.find(
+						(entry) => entry.workspaceId === agent.workspaceId,
+					),
+				})),
+			),
+			actions,
+		);
+		for (const firing of firings) {
+			console.log(
+				`[devhub] automatic action ${firing.actionId} for ${firing.agentId} (${firing.trigger})`,
+			);
+			void this.runAgentAction(firing.agentId, firing.actionId).then(
+				() => {
+					this.publishSnapshot();
+				},
+				(error: unknown) => {
+					this.publishError(errorWire(error));
+				},
+			);
+		}
 	}
 
 	/**
