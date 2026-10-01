@@ -98,6 +98,25 @@ this Mac the terminal is the Workspace's tmux session, not a bare login shell
 beside it. With another default chosen it is upstream's, a login shell on this
 Mac.
 
+**Where the container's half of the list comes from.** The profile list is
+`devhub` followed by whatever the window's own terminal backend detects, and
+in an attached window that backend is the container's server: the renderer
+asks the remote pty host (`RemoteTerminalBackend.getProfiles`, answered by
+the server's `remoteTerminalChannel` with upstream's detection —
+`terminal.integrated.profiles.linux` checked against the container's `PATH`,
+plus `/etc/shells`), and an extension's `contributes.terminal.profiles` (the
+JavaScript Debug Terminal) comes from the remote extension host. Patch 0003
+does not wait on, filter or replace that answer; it only puts `devhub` in
+front of it and leaves out a profile named `devhub` or one that runs this
+Mac's launcher, which no container shell does. So a list holding `devhub`
+*alone* — not even `sh` or a contributed profile — is a window whose server
+never answered: no server for the container's platform in this DevHub (a
+source run without `scripts/build_reh.py`; see "A source run uses servers
+built in the checkout" in `remote-ssh.md`) or a connection that did not come
+up. `devhub` is still there because it needs no detection. Look at the
+remote indicator and the Dev Containers output, not at the terminal
+settings.
+
 A terminal that cannot start stays open with the reason written in it until a
 key closes it (patch 0003). Upstream closes it at once and says why in a
 notification that times out, which read as a terminal that opened for an
