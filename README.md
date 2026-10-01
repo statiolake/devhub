@@ -363,6 +363,12 @@ needs Docker. Without Docker, or if the build fails, it warns and starts anyway
 `DEVHUB_SKIP_REH_BUILD=1 pnpm dev` skips it. The other three servers are listed,
 not built; see [docs/remote-ssh.md](docs/remote-ssh.md).
 
+The server builds are cached under `~/.cache/devhub/` (finished tarballs per
+identity, `vscode/remote` modules per target, local toolchain Docker images), so
+a patch-only change skips `npm ci` and returning to a built identity builds
+nothing. `scripts/build_reh.py --prune-cache [--keep N]` cleans it; see the
+build section of [docs/remote-ssh.md](docs/remote-ssh.md).
+
 `pnpm dev` runs under the `dev` profile, so a source build and the packaged
 DevHub can be open at the same time — which is what makes developing DevHub
 inside DevHub possible. `DEVHUB_PROFILE` is the whole switch: unset (every

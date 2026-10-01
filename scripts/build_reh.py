@@ -78,8 +78,28 @@ Each server is then started once, offline, in a container of its platform
 (`verify_server_starts`), so a server that cannot start on the machines it is
 for never reaches a bundle.
 
+## Three caches, so a rebuild is not twelve minutes
+
+All under `~/.cache/devhub/` (`$XDG_CACHE_HOME/devhub/`), none of it secret:
+
+- `reh/<identity>/` — the finished tarball and statement of each target. A
+  target whose identity is cached is verified against its sha256 and copied
+  into `--out-dir`; nothing is built, and when every target hits, the gulp
+  `core-ci` bundle is skipped too. `prune_stale` cleans `dist/reh`, never this.
+  `DEVHUB_REH_CACHE` moves it; `--no-cache` ignores it; `--prune-cache
+  [--keep N]` drops all but the N most recently used identities (default 2).
+- `reh-modules/<target>-<key>.tar` — `vscode/remote/node_modules` as `npm ci`
+  left it, keyed by the target, the lock file, package.json, .npmrc, the Node
+  version, the toolchain image's id and `REH_REVISION`. A patch-only change
+  moves the identity but not that key, so it skips `npm ci`.
+  `DEVHUB_REH_MODULES_CACHE` moves it.
+- `devhub-reh-toolchain:<libc>-<arch>-<hash>` Docker images with the compilers
+  (and patchelf) baked in, built on first use from the Dockerfile text in this
+  file, so neither `npm ci` nor the musl bundling installs packages again.
+
     scripts/build_reh.py [linux-x64 linux-arm64 alpine-x64 alpine-arm64]
-                         [--out-dir dist/reh] [--skip-provision]
+                         [--out-dir dist/reh] [--skip-provision] [--no-cache]
+    scripts/build_reh.py --prune-cache [--keep N]
 
 With no targets it builds all four. It needs Docker.
 """
@@ -98,7 +118,7 @@ import tarfile
 import time
 from pathlib import Path
 
-from product_metadata import PRODUCT_OVERRIDES, packaged_metadata, reh_identity, vscode_commit
+from product_metadata import PRODUCT_OVERRIDES, REH_REVISION, packaged_metadata, reh_identity, vscode_commit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
@@ -199,7 +219,7 @@ def remote_node_version() -> str:
 
 
 def remote_modules_image(target: str, node_version: str) -> str:
-	"""The container `vscode/remote`'s dependencies are installed in.
+	"""The stock image the toolchain image is built on.
 
 	See the module docstring for why bullseye and why alpine.
 	"""
@@ -207,22 +227,63 @@ def remote_modules_image(target: str, node_version: str) -> str:
 	return f"node:{node_version}-{flavour}"
 
 
-def remote_modules_script(target: str) -> str:
-	"""What runs in that container, in `vscode/remote`.
+def toolchain_dockerfile(target: str, node_version: str) -> str:
+	"""The Dockerfile of the image `npm ci` and the musl bundling run in.
 
 	The compilers and the kerberos headers, because `remote/.npmrc` says
 	`build_from_source` — every addon is compiled against the target's Node and
-	libc, none is a prebuild for some other machine. `--ignore-scripts=false`
-	is npm's default and stated only so nobody wonders.
+	libc, none is a prebuild for some other machine — and patchelf for
+	`musl_runtime_script`. Baked in once instead of installed in every
+	container, which also means the musl bundling needs no network.
 	"""
+	base = remote_modules_image(target, node_version)
 	if libc_of(target) == "musl":
-		packages = "apk add --no-cache python3 make g++ krb5-dev linux-headers"
+		run = "apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf"
 	else:
-		packages = (
+		run = (
 			"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
-			"libkrb5-dev python3 make g++ >/dev/null"
+			"libkrb5-dev python3 make g++ >/dev/null && rm -rf /var/lib/apt/lists/*"
 		)
-	return f"set -e; {packages}; npm ci --ignore-scripts=false"
+	return f"FROM {base}\nRUN {run}\n"
+
+
+def toolchain_tag(target: str, node_version: str) -> str:
+	"""`devhub-reh-toolchain:<libc>-<arch>-<hash of Dockerfile + node version>`."""
+	digest = hashlib.sha256(
+		(toolchain_dockerfile(target, node_version) + "\0" + node_version).encode()
+	).hexdigest()[:12]
+	return f"devhub-reh-toolchain:{libc_of(target)}-{arch_of(target)}-{digest}"
+
+
+def ensure_toolchain_image(target: str, node_version: str) -> str:
+	"""The toolchain image's tag, built first if this machine has not got it."""
+	tag = toolchain_tag(target, node_version)
+	have = subprocess.run(["docker", "image", "inspect", tag], capture_output=True)
+	if have.returncode != 0:
+		print(f"  building toolchain image {tag}")
+		subprocess.run(
+			["docker", "build", "--platform", docker_platform(target), "-t", tag, "-"],
+			input=toolchain_dockerfile(target, node_version).encode(),
+			check=True,
+		)
+	return tag
+
+
+def toolchain_image_id(tag: str) -> str:
+	"""The image's content id, which is what the modules cache is keyed on."""
+	result = subprocess.run(
+		["docker", "image", "inspect", "--format", "{{.Id}}", tag],
+		capture_output=True, text=True, check=True,
+	)
+	return result.stdout.strip()
+
+
+def remote_modules_script(target: str) -> str:
+	"""What runs in the toolchain image, in `vscode/remote`.
+
+	`--ignore-scripts=false` is npm's default and stated only so nobody wonders.
+	"""
+	return "set -e; npm ci --ignore-scripts=false"
 
 
 def verify_image(target: str) -> str:
@@ -443,22 +504,172 @@ def in_container(target: str, image: str, directory: Path, script: str) -> None:
 		)
 
 
+# --- caches -----------------------------------------------------------------
+
+
+def cache_base() -> Path:
+	xdg = os.environ.get("XDG_CACHE_HOME")
+	return (Path(xdg) if xdg else Path.home() / ".cache") / "devhub"
+
+
+def reh_cache_root() -> Path:
+	"""Finished servers, by identity. `DEVHUB_REH_CACHE` overrides."""
+	override = os.environ.get("DEVHUB_REH_CACHE")
+	return Path(override) if override else cache_base() / "reh"
+
+
+def modules_cache_root() -> Path:
+	"""`node_modules` tarballs. `DEVHUB_REH_MODULES_CACHE` overrides."""
+	override = os.environ.get("DEVHUB_REH_MODULES_CACHE")
+	if override:
+		return Path(override)
+	servers = os.environ.get("DEVHUB_REH_CACHE")
+	if servers:
+		return Path(servers).with_name(Path(servers).name + "-modules")
+	return cache_base() / "reh-modules"
+
+
+def sha256_file(path: Path) -> str:
+	digest = hashlib.sha256()
+	with path.open("rb") as handle:
+		while chunk := handle.read(1024 * 1024):
+			digest.update(chunk)
+	return digest.hexdigest()
+
+
+def touch(path: Path) -> None:
+	try:
+		os.utime(path)
+	except OSError:
+		pass
+
+
+def cached_server_problems(cache_dir: Path, target: str, commit: str, identity: str) -> list[str]:
+	"""Why `cache_dir` holds no usable `target` server; empty when it does."""
+	path = cache_dir / statement_name(target)
+	try:
+		said = json.loads(path.read_text())
+	except (OSError, ValueError):
+		return [f"no statement {path}"]
+	if said.get("commit") != commit or said.get("identity") != identity:
+		return ["statement is for another commit or identity"]
+	tarball = cache_dir / said.get("file", "")
+	if said.get("file") != tarball_name(target) or not tarball.is_file():
+		return [f"{tarball} is missing"]
+	if sha256_file(tarball) != said.get("sha256"):
+		return [f"{tarball} does not hash to its statement"]
+	return []
+
+
+def restore_cached_server(target: str, commit: str, identity: str, out_dir: Path, root: Path | None = None) -> bool:
+	"""Copy a cached, verified `target` server into `out_dir`; False on a miss.
+
+	An entry that fails verification is deleted so it is rebuilt, not retried.
+	"""
+	cache_dir = (root or reh_cache_root()) / identity
+	if not (cache_dir / statement_name(target)).is_file():
+		return False
+	problems = cached_server_problems(cache_dir, target, commit, identity)
+	if problems:
+		print(f"  cached {target} server unusable ({problems[0]}); rebuilding")
+		(cache_dir / statement_name(target)).unlink(missing_ok=True)
+		(cache_dir / tarball_name(target)).unlink(missing_ok=True)
+		return False
+	out_dir.mkdir(parents=True, exist_ok=True)
+	partial = out_dir / (tarball_name(target) + ".partial")
+	shutil.copyfile(cache_dir / tarball_name(target), partial)
+	partial.replace(out_dir / tarball_name(target))
+	shutil.copyfile(cache_dir / statement_name(target), out_dir / statement_name(target))
+	touch(cache_dir)
+	return True
+
+
+def store_cached_server(target: str, identity: str, out_dir: Path, root: Path | None = None) -> None:
+	cache_dir = (root or reh_cache_root()) / identity
+	cache_dir.mkdir(parents=True, exist_ok=True)
+	partial = cache_dir / (tarball_name(target) + ".partial")
+	shutil.copyfile(out_dir / tarball_name(target), partial)
+	partial.replace(cache_dir / tarball_name(target))
+	shutil.copyfile(out_dir / statement_name(target), cache_dir / statement_name(target))
+	touch(cache_dir)
+
+
+def prune_cache(identity: str, keep: int, root: Path | None = None, modules_root: Path | None = None) -> list[str]:
+	"""Delete all but the `keep` most recently used identities, and the oldest
+	module tarballs beyond `keep` * four. The current identity always stays."""
+	root = root or reh_cache_root()
+	modules_root = modules_root or modules_cache_root()
+	removed: list[str] = []
+	if root.is_dir():
+		dirs = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
+		kept = {d.name for d in dirs[:max(keep, 0)]} | {identity}
+		for d in dirs:
+			if d.name not in kept:
+				shutil.rmtree(d)
+				removed.append(str(d))
+	if modules_root.is_dir():
+		tars = sorted(modules_root.glob("*.tar"), key=lambda f: f.stat().st_mtime, reverse=True)
+		for f in tars[max(keep, 0) * len(TARGETS):]:
+			f.unlink()
+			removed.append(str(f))
+	return removed
+
+
+def modules_cache_key(
+	target: str, node_version: str, image_id: str, remote_dir: Path = REMOTE_DIR, revision: int = REH_REVISION
+) -> str:
+	"""What `npm ci` in `vscode/remote` depends on, and nothing else.
+
+	Files and versions only — never the environment — so `GITHUB_TOKEN` and the
+	like cannot reach the key or the cache.
+	"""
+	def content(name: str) -> str:
+		path = remote_dir / name
+		return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "-"
+
+	parts = [
+		target, content("package-lock.json"), content("package.json"), content(".npmrc"),
+		node_version, image_id, str(revision),
+	]
+	return hashlib.sha256("\0".join(parts).encode()).hexdigest()[:32]
+
+
+def modules_cache_path(target: str, key: str, root: Path | None = None) -> Path:
+	return (root or modules_cache_root()) / f"{target}-{key}.tar"
+
+
 def install_remote_modules(target: str) -> float:
 	"""Install `vscode/remote`'s dependencies for `target`, in a container.
 
 	The host's own install is moved aside the first time and put back by
 	`restore_remote_modules`, so a developer's checkout is left as provisioning
-	made it.
+	made it. The result is cached as a tarball (`modules_cache_key`) and
+	restored instead of running `npm ci` when nothing it depends on changed.
 	"""
 	node_modules = REMOTE_DIR / "node_modules"
 	if node_modules.exists() and not HOST_REMOTE_MODULES.exists():
 		node_modules.rename(HOST_REMOTE_MODULES)
 	else:
 		shutil.rmtree(node_modules, ignore_errors=True)
-	image = remote_modules_image(target, remote_node_version())
-	print(f"  installing vscode/remote for {target} in {image}")
+	node_version = remote_node_version()
+	image = ensure_toolchain_image(target, node_version)
+	cached = modules_cache_path(target, modules_cache_key(target, node_version, toolchain_image_id(image)))
 	started = time.monotonic()
+	if cached.is_file():
+		print(f"  restoring vscode/remote modules for {target} from {cached}")
+		try:
+			subprocess.run(["tar", "-xf", str(cached), "-C", str(REMOTE_DIR)], check=True)
+			touch(cached)
+			return time.monotonic() - started
+		except subprocess.CalledProcessError:
+			shutil.rmtree(node_modules, ignore_errors=True)
+			cached.unlink(missing_ok=True)
+	print(f"  installing vscode/remote for {target} in {image}")
 	in_container(target, image, REMOTE_DIR, remote_modules_script(target))
+	cached.parent.mkdir(parents=True, exist_ok=True)
+	partial = cached.with_name(cached.name + ".partial")
+	subprocess.run(["tar", "-cf", str(partial), "-C", str(REMOTE_DIR), "node_modules"], check=True)
+	partial.replace(cached)
 	return time.monotonic() - started
 
 
@@ -476,12 +687,12 @@ def musl_runtime_script() -> str:
 	to the directory the executable is in, so the server's `node` finds
 	`lib/libstdc++.so.6` beside itself wherever the tree is unpacked, and
 	every native addon it then loads links against the copy already loaded.
-	Out of the same `node:<version>-alpine` image the addons were compiled in
+	Out of the toolchain image (patchelf baked in, no network) the addons were compiled in
 	and the `node` came from, so all three agree on the library's version.
 	"""
 	copies = " ".join(MUSL_RUNTIME)
 	return (
-		"set -e; apk add --no-cache patchelf >/dev/null; mkdir -p lib; "
+		"set -e; mkdir -p lib; "
 		f"cp -L {copies} lib/; "
 		"patchelf --set-rpath '$ORIGIN/lib' node"
 	)
@@ -490,7 +701,7 @@ def musl_runtime_script() -> str:
 def bundle_musl_runtime(staging: Path, target: str) -> None:
 	if libc_of(target) != "musl":
 		return
-	in_container(target, remote_modules_image(target, remote_node_version()), staging, musl_runtime_script())
+	in_container(target, ensure_toolchain_image(target, remote_node_version()), staging, musl_runtime_script())
 	print(f"  bundled libstdc++ and libgcc_s beside {target}'s node")
 
 
@@ -607,6 +818,7 @@ def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path
 	tarball = out_dir / tarball_name(target)
 	pack(staging, tarball, top_level_dir(target))
 	write_statement(out_dir, target, commit, identity)
+	store_cached_server(target, identity, out_dir)
 	size_mb = tarball.stat().st_size / 1e6
 	print(f"{tarball.name}: {size_mb:.0f} MB, built in {elapsed / 60:.0f} min")
 	return tarball
@@ -826,12 +1038,19 @@ def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 	parser.add_argument("targets", nargs="*", help=f"any of {', '.join(TARGETS)}; default: all four")
 	parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+	parser.add_argument("--no-cache", action="store_true", help="build even targets the cache has")
+	parser.add_argument("--prune-cache", action="store_true", help="clean the caches and exit")
+	parser.add_argument("--keep", type=int, default=2, help="with --prune-cache: identities to keep (default 2)")
 	parser.add_argument(
 		"--skip-provision",
 		action="store_true",
 		help="the tree is already provisioned (CI does this step itself)",
 	)
 	args = parser.parse_args()
+	if args.prune_cache:
+		for gone in prune_cache(reh_identity(), args.keep):
+			print(f"removed {gone}")
+		return 0
 	targets = args.targets or list(TARGETS)
 	unknown = [target for target in targets if target not in TARGETS]
 	if unknown:
@@ -855,6 +1074,14 @@ def main() -> int:
 	print(f"remote extension hosts for VS Code {commit}, identity {identity}: {', '.join(targets)}")
 	for target in prune_stale(out_dir, identity):
 		print(f"  removed the {target} server built from another identity")
+
+	if not args.no_cache:
+		cached = [t for t in targets if restore_cached_server(t, commit, identity, out_dir)]
+		for target in cached:
+			print(f"  {target}: restored from {reh_cache_root() / identity}")
+		targets = [t for t in targets if t not in cached]
+		if not targets:
+			return 0
 
 	original_product_json = write_devhub_product_json()
 	try:

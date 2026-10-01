@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -50,6 +51,15 @@ from build_reh import (
 	top_level_dir,
 	verify_image,
 	write_statement,
+	cached_server_problems,
+	modules_cache_key,
+	modules_cache_path,
+	prune_cache,
+	reh_cache_root,
+	restore_cached_server,
+	store_cached_server,
+	toolchain_dockerfile,
+	toolchain_tag,
 )
 from product_metadata import PRODUCT_OVERRIDES
 
@@ -91,8 +101,8 @@ class Targets(unittest.TestCase):
 	def test_native_modules_are_built_for_the_targets_libc(self) -> None:
 		self.assertEqual(remote_modules_image("alpine-arm64", "24.18.1"), "node:24.18.1-alpine")
 		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "node:24.18.1-bullseye")
-		self.assertIn("apk add", remote_modules_script("alpine-x64"))
-		self.assertIn("apt-get", remote_modules_script("linux-arm64"))
+		self.assertIn("apk add", toolchain_dockerfile("alpine-x64", "24.18.1"))
+		self.assertIn("apt-get", toolchain_dockerfile("linux-arm64", "24.18.1"))
 		for target in TARGETS:
 			self.assertIn("npm ci", remote_modules_script(target))
 		self.assertEqual(docker_platform("alpine-arm64"), "linux/arm64")
@@ -105,6 +115,9 @@ class Targets(unittest.TestCase):
 		self.assertIn("libstdc++.so.6", script)
 		self.assertIn("libgcc_s.so.1", script)
 		self.assertIn("--set-rpath '$ORIGIN/lib' node", script)
+		# patchelf is baked into the toolchain image; no network at bundling.
+		self.assertNotIn("apk add", script)
+		self.assertIn("patchelf", toolchain_dockerfile("alpine-arm64", "24.18.1"))
 
 	def test_are_started_on_a_machine_without_node(self) -> None:
 		# The verification image is not the build image: a server that only
@@ -414,3 +427,111 @@ class RetryCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class ToolchainImage(unittest.TestCase):
+	def test_tag_is_per_libc_arch_and_content(self) -> None:
+		tag = toolchain_tag("alpine-arm64", "24.18.1")
+		self.assertRegex(tag, r"^devhub-reh-toolchain:musl-arm64-[0-9a-f]{12}$")
+		self.assertRegex(toolchain_tag("linux-x64", "24.18.1"), r":glibc-x64-")
+		self.assertNotEqual(tag, toolchain_tag("alpine-arm64", "24.18.2"))
+		# the same libc on another arch shares the Dockerfile, not the tag
+		self.assertNotEqual(toolchain_tag("linux-x64", "1"), toolchain_tag("linux-arm64", "1"))
+		self.assertEqual(tag, toolchain_tag("alpine-arm64", "24.18.1"))
+
+	def test_dockerfile_bakes_the_toolchain(self) -> None:
+		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM node:1.2.3-bullseye\n"))
+		self.assertTrue(toolchain_dockerfile("alpine-x64", "1.2.3").startswith("FROM node:1.2.3-alpine\n"))
+
+
+class ModulesCacheKey(unittest.TestCase):
+	def setUp(self) -> None:
+		self.dir = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.dir)
+		for name in ("package-lock.json", "package.json", ".npmrc"):
+			(self.dir / name).write_text(name)
+
+	def key(self, target="linux-x64", node="24", image="sha256:a", revision=1) -> str:
+		return modules_cache_key(target, node, image, self.dir, revision)
+
+	def test_stable_and_sensitive_to_every_input(self) -> None:
+		base = self.key()
+		self.assertEqual(base, self.key())
+		for changed in (self.key(target="alpine-x64"), self.key(node="25"), self.key(image="sha256:b"), self.key(revision=2)):
+			self.assertNotEqual(base, changed)
+		for name in ("package-lock.json", "package.json", ".npmrc"):
+			with self.subTest(name=name):
+				(self.dir / name).write_text("changed")
+				self.assertNotEqual(base, self.key())
+				(self.dir / name).write_text(name)
+
+	def test_environment_never_reaches_the_key(self) -> None:
+		base = self.key()
+		with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret"}):
+			self.assertEqual(base, self.key())
+		self.assertNotIn("secret", modules_cache_path("linux-x64", base).name)
+
+
+class ServerCache(unittest.TestCase):
+	IDENTITY = "a" * 12
+
+	def setUp(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root)
+		self.out, self.cache = root / "out", root / "cache"
+		self.out.mkdir()
+		(self.out / tarball_name("linux-x64")).write_bytes(b"server")
+		write_statement(self.out, "linux-x64", COMMIT, self.IDENTITY)
+
+	def test_miss_then_hit_copies_into_the_bundle(self) -> None:
+		fresh = self.out.parent / "fresh"
+		self.assertFalse(restore_cached_server("linux-x64", COMMIT, self.IDENTITY, fresh, self.cache))
+		store_cached_server("linux-x64", self.IDENTITY, self.out, self.cache)
+		self.assertTrue(restore_cached_server("linux-x64", COMMIT, self.IDENTITY, fresh, self.cache))
+		self.assertEqual(bundle_problems(fresh, COMMIT, self.IDENTITY, required=("linux-x64",)), [])
+		self.assertFalse(restore_cached_server("alpine-x64", COMMIT, self.IDENTITY, fresh, self.cache))
+
+	def test_other_identity_or_commit_is_a_miss(self) -> None:
+		store_cached_server("linux-x64", self.IDENTITY, self.out, self.cache)
+		fresh = self.out.parent / "fresh"
+		self.assertFalse(restore_cached_server("linux-x64", COMMIT, "b" * 12, fresh, self.cache))
+		self.assertIn("another", cached_server_problems(self.cache / self.IDENTITY, "linux-x64", "9" * 40, self.IDENTITY)[0])
+
+	def test_a_corrupt_tarball_is_refused_and_dropped(self) -> None:
+		store_cached_server("linux-x64", self.IDENTITY, self.out, self.cache)
+		(self.cache / self.IDENTITY / tarball_name("linux-x64")).write_bytes(b"rotten")
+		fresh = self.out.parent / "fresh"
+		self.assertFalse(restore_cached_server("linux-x64", COMMIT, self.IDENTITY, fresh, self.cache))
+		self.assertFalse((fresh / tarball_name("linux-x64")).exists())
+		self.assertFalse((self.cache / self.IDENTITY / statement_name("linux-x64")).exists())
+
+	def test_prune_stale_leaves_the_cache_alone(self) -> None:
+		store_cached_server("linux-x64", self.IDENTITY, self.out, self.cache)
+		prune_stale(self.out, "b" * 12)
+		self.assertTrue((self.cache / self.IDENTITY / tarball_name("linux-x64")).is_file())
+
+	def test_cache_root_follows_the_environment(self) -> None:
+		with mock.patch.dict(os.environ, {"DEVHUB_REH_CACHE": "/x/y"}):
+			self.assertEqual(reh_cache_root(), Path("/x/y"))
+		with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": "/xdg"}, clear=False):
+			os.environ.pop("DEVHUB_REH_CACHE", None)
+			self.assertEqual(reh_cache_root(), Path("/xdg/devhub/reh"))
+
+
+class PruneCache(unittest.TestCase):
+	def test_keeps_newest_and_the_current_identity(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root)
+		cache, modules = root / "reh", root / "mods"
+		modules.mkdir()
+		for age, name in enumerate(["cur", "new", "mid", "old"]):
+			(cache / name).mkdir(parents=True)
+			os.utime(cache / name, (1000 - age * 10 if name != "cur" else 1, ) * 2)
+		for i in range(10):
+			f = modules / f"t-{i}.tar"
+			f.write_bytes(b"")
+			os.utime(f, (100 + i, 100 + i))
+		removed = prune_cache("cur", 1, cache, modules)
+		self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cur", "new"])
+		self.assertEqual(len(list(modules.glob("*.tar"))), 4)
+		self.assertEqual(len(removed), 2 + 6)

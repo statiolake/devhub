@@ -366,6 +366,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
 
+      - name: Work out the servers' identity
+        id: reh-identity
+        run: echo "identity=$(cd scripts && python3 -c 'from product_metadata import reh_identity; print(reh_identity())')" >> "$GITHUB_OUTPUT"
+
+      # Finished servers by identity and node_modules by lock file; a miss just
+      # builds. See docs/remote-ssh.md.
+      - name: Restore the build caches
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/devhub
+          key: reh-${{ matrix.arch }}-${{ steps.reh-identity.outputs.identity }}
+          restore-keys: reh-${{ matrix.arch }}-
+
       - name: Build the servers
         env:
           # Read by the containers that install the native addons, for the

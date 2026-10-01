@@ -438,6 +438,36 @@ holds a mix that DevHub would half refuse.
 
 The tarballs are around 100 MB each.
 
+### Three caches (about 12 minutes, then seconds)
+
+Everything is under `~/.cache/devhub/` (`$XDG_CACHE_HOME/devhub/`) and holds no
+secrets (keys are hashes of files and versions, never of the environment):
+
+| what | where | key |
+|---|---|---|
+| finished servers | `reh/<identity>/devhub-reh-<target>.tar.gz` + `.json` | the identity (commit + patches + `REH_REVISION`) |
+| `vscode/remote/node_modules` per target | `reh-modules/<target>-<key>.tar` | target, sha256 of `package-lock.json`, `package.json`, `.npmrc`, Node version, toolchain image id, `REH_REVISION` |
+| compilers and patchelf | Docker image `devhub-reh-toolchain:<libc>-<arch>-<hash>` | hash of its Dockerfile text and the Node version |
+
+- First build: as before plus a one-off toolchain image build per libc and
+  architecture (a minute or so each); the musl bundling no longer needs
+  network for `apk add patchelf`.
+- A patch-only change (new identity, same lock file): the modules come out of
+  `reh-modules`, so the per-target `npm ci` is skipped; the `core-ci` bundle and
+  the packaging still run.
+- Returning to an identity already built (switching branches back): each
+  target's tarball is verified against its sha256 and copied into `dist/reh`;
+  when all hit, nothing is bundled or built.
+
+`prune_stale` empties `dist/reh` of other identities but never touches the
+caches. `DEVHUB_REH_CACHE` and `DEVHUB_REH_MODULES_CACHE` move them,
+`--no-cache` ignores the finished-server cache, and
+`scripts/build_reh.py --prune-cache [--keep N]` deletes all but the `N` (default
+2) most recently used identities and the oldest module tarballs; the current
+identity is always kept. Nothing is deleted automatically. CI starts with an
+empty cache unless `actions/cache` restores `~/.cache/devhub`, which the
+nightly's server jobs do.
+
 `--out-dir` puts them elsewhere; `scripts/package-nightly.py --reh-dir` reads
 them from elsewhere.
 
