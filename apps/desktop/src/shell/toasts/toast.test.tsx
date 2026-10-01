@@ -547,16 +547,48 @@ describe("how much room the page says it needs", () => {
 describe("copying a notice", () => {
   afterEach(cleanup);
 
-  it("puts its summary and detail on main's clipboard, and says so", async () => {
+  it("has no Copy button", () => {
     const page = mount();
     page.observe("gh", GH_MISSING);
-    const copy = screen.getByRole("button", { name: "Copy" });
-    await act(async () => {
-      fireEvent.click(copy);
-      await Promise.resolve();
-    });
+    expect(screen.queryByRole("button", { name: /copied?$/i })).toBeNull();
+  });
+
+  it("Cmd+C with words selected copies the selection", () => {
+    const page = mount();
+    page.observe("gh", GH_MISSING);
+    const summary = document.querySelector(".toast-summary") as HTMLElement;
+    const toast = document.querySelector(".toast") as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(summary);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseDown(summary);
+    expect(toast).toHaveFocus();
+    fireEvent.keyDown(toast, { key: "c", metaKey: true });
     expect(page.writeClipboard).toHaveBeenCalledTimes(1);
-    expect(page.writeClipboard.mock.calls[0]?.[0]).toContain(GH_MISSING);
-    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(page.writeClipboard.mock.calls[0]?.[0]).toBe(
+      summary.textContent ?? "",
+    );
+    selection?.removeAllRanges();
+  });
+
+  it("Cmd+C on a focused notice with nothing selected copies all of it", () => {
+    const page = mount();
+    page.observe("gh", GH_MISSING);
+    window.getSelection()?.removeAllRanges();
+    const toast = document.querySelector(".toast") as HTMLElement;
+    toast.focus();
+    fireEvent.keyDown(toast, { key: "c", metaKey: true });
+    const copied = page.writeClipboard.mock.calls[0]?.[0] ?? "";
+    expect(copied).toContain(GH_MISSING);
+    expect(copied).toBe(
+      [
+        document.querySelector(".toast-summary")?.textContent,
+        document.querySelector(".toast-detail")?.textContent,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
   });
 });

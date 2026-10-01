@@ -35,14 +35,11 @@
  * different guarantees, and both are wanted.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { isImeComposing } from "../accessibility/ime";
 import type { Notice } from "../notices";
 
-/** How long a Copy button says it has copied. */
-export const COPIED_MS = 1500;
-
-/** What Copy puts on the clipboard: the summary, then the detail under it. */
+/** What Cmd+C puts on the clipboard with nothing selected: the whole notice. */
 export function noticeText(notice: Notice): string {
   return notice.detail ? `${notice.summary}\n${notice.detail}` : notice.summary;
 }
@@ -62,13 +59,6 @@ function Toast({
 }) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), COPIED_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
   return (
     <div
       className="toast"
@@ -77,8 +67,30 @@ function Toast({
       // pointer is a notice a keyboard cannot answer. Escape closes the one
       // that has the focus; `Cmd+Q D` closes the newest without going there.
       tabIndex={0}
+      // A press on the words takes the focus, so that a selection made there
+      // is answered by Cmd+C here and not by whatever had the keys before.
+      onMouseDown={(event) => {
+        if (event.currentTarget !== document.activeElement) {
+          event.currentTarget.focus({ preventScroll: true });
+        }
+      }}
       onKeyDown={(event) => {
         if (isImeComposing(event.nativeEvent)) return;
+        // Cmd+C copies the selected words, or the whole notice when nothing
+        // is selected. Through main's clipboard: this view is not always the
+        // one the menu's Copy reaches, and the page's own is refused without
+        // the focus.
+        if (
+          event.metaKey &&
+          !event.shiftKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === "c"
+        ) {
+          event.preventDefault();
+          const selected = window.getSelection()?.toString() ?? "";
+          void onCopy(selected === "" ? noticeText(notice) : selected);
+          return;
+        }
         if (event.key === "Escape") {
           event.preventDefault();
           dismiss.current();
@@ -93,19 +105,7 @@ function Toast({
         {/* The summary says what to do; the detail says what happened. */}
         {notice.detail ? <p className="toast-detail">{notice.detail}</p> : null}
       </div>
-      {/* Every notice can be copied: an error is most often read in order
-          to be pasted somewhere — an Issue, a search, an Agent. Its words
-          can be selected too; this is the whole of it in one press. */}
       <div className="toast-actions">
-        <button
-          type="button"
-          className="toast-action"
-          onClick={() => {
-            void onCopy(noticeText(notice)).then(() => setCopied(true));
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
         {notice.actions.includes("retry") ? (
           <button type="button" className="toast-action" onClick={onRetry}>
             Try Again
@@ -140,7 +140,7 @@ export interface ToastStackProps {
   readonly onDismiss: (identity: string) => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
-  /** Put a notice's words on the clipboard. */
+  /** Put a notice's words on the clipboard (Cmd+C on a notice). */
   readonly onCopy: (text: string) => Promise<void>;
   /**
    * Where the measurement is taken.

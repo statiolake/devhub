@@ -1222,7 +1222,7 @@ export interface ToastsBridge extends PageBridge {
 	 */
 	reportNoticeRetired(retired: NoticeRetiredWire): Promise<void>;
 	/**
-	 * Put a notice's words on the clipboard — its Copy button. Main's
+	 * Put a notice's words on the clipboard — Cmd+C on a notice. Main's
 	 * clipboard rather than the page's, which refuses a write from a view
 	 * that does not have the focus.
 	 */
