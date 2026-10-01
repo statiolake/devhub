@@ -113,6 +113,7 @@ hook disabled, which was the state DevHub's own patch had left it in.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
+                               [--zip-level 0-9|ditto]
                                [--reh-dir DIR | --without-reh]
 
 Requires an already-built tree; every missing input names the command that
@@ -154,6 +155,7 @@ from darwin_bundle import (  # noqa: E402
 	rebrand,
 	sign,
 )
+import build_cache  # noqa: E402
 from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, bundle_problems  # noqa: E402
 from product_metadata import (  # noqa: E402
 	devhub_commit,
@@ -304,10 +306,26 @@ def build_builtin_extensions() -> Path:
 	otherwise.
 	"""
 	env = dict(os.environ, PATH=f"{toolchain_node_bin()}:{os.environ['PATH']}")
-	run(["npm", "run", "gulp", "compile-extensions-build"], cwd=VSCODE_DIR, env=env)
 	staged = VSCODE_DIR / ".build" / "extensions"
+	stamp = VSCODE_DIR / ".build" / "extensions.devhub-stamp"
+	key = build_cache.extensions_key(
+		vscode_commit=vscode_commit(),
+		patches_dir=REPO_ROOT / "patches" / "vscode",
+		extensions_dir=VSCODE_DIR / "extensions",
+		build_dir=VSCODE_DIR / "build",
+		product_json=VSCODE_DIR / "product.json",
+		node_version=(VSCODE_DIR / ".nvmrc").read_text().strip(),
+	)
+	reuse, why = build_cache.stamp_decision(stamp, staged, key)
+	if reuse:
+		print(f"    reused compile-extensions-build ({why})")
+		return staged
+	stamp.unlink(missing_ok=True)
+	print(f"    rebuilt compile-extensions-build ({why})")
+	run(["npm", "run", "gulp", "compile-extensions-build"], cwd=VSCODE_DIR, env=env)
 	if not staged.is_dir():
 		fail(f"compile-extensions-build produced no {staged}")
+	build_cache.write_stamp(stamp, key)
 	return staged
 
 
@@ -706,7 +724,14 @@ await import("./node_modules/code-oss-dev/out/main.js");
 '''
 
 
-def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> None:
+# Bump when the closure filtering in assemble_app_directory (Copilot skips, copy
+# ignores) changes.
+ASAR_RULES_VERSION = "1"
+
+
+def assemble_app_directory(
+	app: Path, version: str, staged_extensions: Path, asar_cache_root: Path | None = None
+) -> None:
 	resources = app / "Contents" / "Resources" / "app"
 	shutil.rmtree(resources, ignore_errors=True)
 	resources.mkdir(parents=True)
@@ -774,6 +799,7 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 	print(f"    {count} built-in extensions")
 
 	step("vscode production dependencies")
+	modules = []
 	skipped = 0
 	for module in production_dependencies():
 		# The Copilot *runtime binary* is a quarter of the whole bundle and
@@ -790,6 +816,31 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 		if "@github" in module.parts and module.name not in ("copilot", "copilot-sdk"):
 			skipped += 1
 			continue
+		modules.append(module)
+
+	cache_root = (asar_cache_root or REPO_ROOT / "dist") / ".cache" / "asar"
+	key = build_cache.asar_key(
+		modules=modules,
+		root=VSCODE_DIR,
+		packer=REPO_ROOT / "scripts" / "pack_node_modules_asar.mjs",
+		asar_library=next(
+			(c for c in (
+				VSCODE_DIR / "build" / "node_modules" / "@electron" / "asar" / "package.json",
+				VSCODE_DIR / "node_modules" / "@electron" / "asar" / "package.json",
+			) if c.is_file()),
+			None,
+		),
+		node_version=(VSCODE_DIR / ".nvmrc").read_text().strip(),
+		extra_rules=f"skipped:{skipped};rules:{ASAR_RULES_VERSION}",
+	)
+	hit = build_cache.asar_cache_hit(cache_root, key)
+	if hit is not None:
+		step("node_modules.asar")
+		build_cache.asar_cache_restore(hit, code_oss)
+		print(f"    reused node_modules.asar (inputs unchanged; {hit})")
+		return
+
+	for module in modules:
 		relative = module.relative_to(VSCODE_DIR)
 		copy_tree(
 			module,
@@ -799,6 +850,7 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 	print(f"    copied the production closure, minus {skipped} Copilot packages")
 
 	step("node_modules.asar")
+	print("    rebuilt node_modules.asar (no cache entry for these inputs)")
 	run(
 		[
 			str(toolchain_node_bin() / "node"),
@@ -807,6 +859,7 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 			str(VSCODE_DIR),
 		]
 	)
+	build_cache.asar_cache_store(cache_root, key, code_oss)
 
 
 def bundle_remote_servers(app: Path, reh_dir: Path) -> None:
@@ -846,6 +899,12 @@ def main() -> int:
 	parser.add_argument("--out-dir", default=str(REPO_ROOT / "dist"), help="where DevHub.app is written")
 	parser.add_argument("--zip", action="store_true", help="also produce a zip with ditto")
 	parser.add_argument("--zip-name", default=None, help="the zip's file name")
+	parser.add_argument(
+		"--zip-level",
+		default=os.environ.get("DEVHUB_ZIP_LEVEL", "1"),
+		help="deflate level 0-9 (0 stores) or 'ditto' for ditto's default; default 1: "
+		"about 2.5x faster than ditto for ~10%% more bytes (env DEVHUB_ZIP_LEVEL)",
+	)
 	parser.add_argument(
 		"--skip-extension-build",
 		action="store_true",
@@ -902,7 +961,7 @@ def main() -> int:
 	rename_bundle(app)
 	write_licenses(app)
 
-	assemble_app_directory(app, version, staged)
+	assemble_app_directory(app, version, staged, out_dir)
 
 	step("remote extension hosts")
 	if args.without_reh:
@@ -929,7 +988,11 @@ def main() -> int:
 		archive = out_dir / name
 		archive.unlink(missing_ok=True)
 		step(f"zip -> {archive}")
-		run(["ditto", "-c", "-k", "--keepParent", str(app), str(archive)])
+		try:
+			argv, cwd = build_cache.zip_command(app, archive, args.zip_level)
+		except ValueError as error:
+			fail(str(error))
+		run(argv, cwd=cwd)
 		print(f"\n    {archive}  {archive.stat().st_size / 1e6:.0f} MB")
 
 	print("\npackaged.")

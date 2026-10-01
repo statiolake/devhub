@@ -342,6 +342,16 @@ faster and emits the same output as `tsc` 5.9. `typescript` stays installed for
 eslint, vitest and the editor. If `tsgo` misbehaves, `pnpm --filter
 @devhub/desktop run typecheck:tsc` runs the same check with `tsc`.
 
+`pnpm build` skips what has not changed and says so, one line per step
+(`reused …` / `rebuilt … (why)`): `compile-extensions-build` is stamped in
+`vscode/.build/extensions.devhub-stamp` over the VS Code commit, the patches,
+`vscode/extensions` sources, `builtInExtensions` and the Node version;
+`node_modules.asar` is cached in `dist/.cache/asar/<key>/` over the production
+closure's package files, the packer script and the Node version (delete either
+to force a rebuild). The zip uses `zip -1` (`--zip-level 0-9|ditto`, or
+`DEVHUB_ZIP_LEVEL`): about 2.5x faster than `ditto` for roughly 10% more bytes.
+CI starts clean, so these only ever miss there.
+
 Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step.

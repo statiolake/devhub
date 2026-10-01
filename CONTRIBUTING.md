@@ -26,6 +26,10 @@ Run focused commands while iterating with `CI=true pnpm --filter @devhub/app tes
 `cargo test --workspace --locked`, and `cargo clippy --workspace
 --all-targets --all-features --locked -- -D warnings`.
 
+`pnpm run build` reuses the extension build and `node_modules.asar` when their
+inputs are unchanged (see README, Development); if a result looks stale, delete
+`vscode/.build/extensions.devhub-stamp` or `dist/.cache/asar`.
+
 Types are checked with `tsgo` (pinned `@typescript/native-preview`); if its
 result looks wrong, compare with `pnpm --filter @devhub/desktop run
 typecheck:tsc` before changing code.
