@@ -1063,7 +1063,7 @@ export abstract class RemoteShellRuntime {
 	): Promise<TerminalLauncher> {
 		if (spec.serverCommit === undefined) {
 			throw new Error(
-				`this DevHub was built from a source checkout and states no commit, so there is no ${spec.serverDataFolderName} directory on ${this.machineName} it can name — which is the same reason it can open no workbench there`,
+				`this DevHub states no commit for the remote extension host — neither a packaged build's commit nor the serverCommit apps/desktop/scripts/dev.sh writes for a source run — so there is no ${spec.serverDataFolderName} directory on ${this.machineName} it can name, which is the same reason it can open no workbench there`,
 			);
 		}
 		const paths = remoteTerminalPaths({

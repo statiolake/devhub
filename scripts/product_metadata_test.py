@@ -34,6 +34,11 @@ class SourceRunMetadata(unittest.TestCase):
 	def test_says_which_devhub_it_is_anyway(self) -> None:
 		self.assertEqual(product_metadata()["hostCommit"], devhub_commit())
 
+	def test_says_which_remote_extension_host_it_connects_to(self) -> None:
+		# Without it a source run has no REH to install in a dev container or
+		# on an SSH host, and every remote window it opens never connects.
+		self.assertEqual(product_metadata()["serverCommit"], vscode_commit())
+
 
 class PackagedMetadata(unittest.TestCase):
 	"""What scripts/package-nightly.py merges over vscode/product.json."""
@@ -45,6 +50,10 @@ class PackagedMetadata(unittest.TestCase):
 		metadata = packaged_metadata()
 		self.assertEqual(metadata["hostCommit"], devhub_commit())
 		self.assertNotEqual(metadata["commit"], devhub_commit())
+
+	def test_server_commit_is_the_commit(self) -> None:
+		metadata = packaged_metadata()
+		self.assertEqual(metadata["serverCommit"], metadata["commit"])
 
 	def test_commit_is_hex_vs_code_can_slice(self) -> None:
 		# It becomes cache keys and folder names, so anything but lowercase hex

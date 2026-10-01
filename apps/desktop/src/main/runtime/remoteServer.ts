@@ -46,7 +46,8 @@ import { shellQuote } from "./quote.js";
 export interface RehDelivery {
 	/** The VS Code commit this DevHub states, which names the install
 	 * directory and is what the server checks the connecting client against.
-	 * `undefined` in a source checkout — see `sourceBuildRefusal`. */
+	 * `undefined` only when the build states neither commit `rehCommit`
+	 * reads — see `sourceBuildRefusal`. */
 	readonly commit: string | undefined;
 	/** `product.json`'s `serverDataFolderName`: `.devhub-server`. */
 	readonly dataFolderName: string;
@@ -162,21 +163,53 @@ export function isPermanent(failure: unknown): boolean {
 }
 
 /**
- * Why a source run cannot open a remote workbench, said once.
+ * Which commit names the remote extension host this DevHub installs and
+ * connects to.
  *
- * `pnpm dev` has no `product.commit` and cannot be given one — VS Code reads it
- * as "this is a packaged build" and sends a source run looking for a
- * `node_modules.asar` a checkout does not have. But `commit` is also what names
- * the install directory and what the server checks the connecting client
- * against, so there is nothing to install and nothing that would accept a
- * connection. It is permanent for as long as this DevHub is running, which is
- * what makes it `NotAvailable` rather than something to retry.
+ * A packaged build states it twice: `commit`, which VS Code reads, and
+ * `serverCommit`, which only DevHub reads — the same forty characters, both
+ * from `scripts/product_metadata.py`. A source run states only `serverCommit`.
+ * It has no `commit` and cannot be given one — VS Code reads that field as
+ * "this is a packaged build" and sends a source run looking for a
+ * `node_modules.asar` a checkout does not have — but it is still built from
+ * one VS Code commit, the submodule's, and the server published under that
+ * commit is the one its workbench speaks to. The server compares a client's
+ * commit with its own only when the client states one
+ * (`remoteExtensionHostAgentServer.ts`: `if (rendererCommit && myCommit)`), so
+ * a source run's commit-less workbench is accepted by it.
+ *
+ * Reading `commit` alone is what made every remote window of a source run —
+ * a dev container's as much as an SSH host's — refuse with
+ * `sourceBuildRefusal`: the window opened, its resolver was refused, and
+ * everything after that which reached for the remote (the remote settings
+ * file behind Open Settings, for one) failed with the same sentence.
+ */
+export function rehCommit(product: {
+	readonly commit?: string;
+	readonly serverCommit?: string;
+}): string | undefined {
+	return product.commit ?? product.serverCommit;
+}
+
+/**
+ * Why this DevHub cannot open a remote workbench, said once.
+ *
+ * Only a run that states neither commit `rehCommit` reads gets here: a source
+ * run started some other way than `apps/desktop/scripts/dev.sh`, which is what
+ * writes `serverCommit`, or one whose `vscode/product.overrides.json` predates
+ * the field. There is then no install directory to name and no release to
+ * fetch, and asking again cannot change that while this DevHub runs, which is
+ * what makes it `NotAvailable` rather than something to retry. It names no
+ * kind of machine: a dev container and an SSH host refuse alike.
  */
 export function sourceBuildRefusal(machine: string): string {
 	return (
-		`This DevHub was built from a source checkout and states no commit, so ` +
-		`there is no remote extension host it can install on ${machine} or ask ` +
-		`for. SSH workspaces need a packaged build — see docs/remote-ssh.md.`
+		`This DevHub states no commit for the remote extension host — neither ` +
+		`product.json's commit (a packaged build) nor the serverCommit ` +
+		`apps/desktop/scripts/dev.sh writes for a source run — so there is no ` +
+		`remote extension host it can install on ${machine} or ask for. Start ` +
+		`a source run with apps/desktop/scripts/dev.sh — see ` +
+		`docs/remote-ssh.md#a-source-run-connects-to-the-published-server.`
 	);
 }
 

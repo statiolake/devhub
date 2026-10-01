@@ -45,6 +45,16 @@ for cache keys and folder names, and About prints `hostCommit` beside it, so a
 run reports the commits it is on and says nothing about uncommitted changes.
 That is what `version` and the date are for.
 
+Which remote extension host a build connects to is a third question, and it
+gets a third field: `serverCommit`, the VS Code commit, stated on every build.
+A packaged build's `commit` says the same thing, but a source run has no
+`commit` and still opens remote windows — SSH hosts and dev containers — so it
+needs another place to say which REH release (`reh-<commit>`) and which
+`~/.devhub-server/bin/<commit>` it means. The server only compares a client's
+commit with its own when the client states one, so a source run's workbench is
+accepted by the published server of the VS Code it is built from. Only DevHub's
+main process reads `serverCommit`; to VS Code it is an unknown key.
+
     scripts/product_metadata.py <destination.json>
 """
 
@@ -200,6 +210,9 @@ def product_metadata() -> dict[str, object]:
 		"extensionEnabledApiProposals": EXTENSION_ENABLED_API_PROPOSALS,
 		"hostVersion": devhub_version(),
 		"hostCommit": devhub_commit(),
+		# The remote extension host this build installs and connects to — see
+		# the module docstring. On a source run too, which is the point.
+		"serverCommit": vscode_commit(),
 		# About shows this beside the commit. Without it the line reads
 		# "Date: Unknown" next to a hash that could be any age.
 		"date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

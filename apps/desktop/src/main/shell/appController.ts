@@ -37,10 +37,24 @@ const devhubProduct = vscodeProduct as unknown as {
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
 	readonly serverDownloadUrlTemplate?: string;
+	/**
+	 * The VS Code commit whose remote extension host this build connects to,
+	 * stated by a source run as well — see `rehCommit`.
+	 */
+	readonly serverCommit?: string;
 	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
 	readonly dockerPath?: string;
 	readonly devcontainerPath?: string;
 };
+/**
+ * The commit naming the remote extension host every remote window — an SSH
+ * host's, a dev container's — installs and connects to: `commit` on a
+ * packaged build, `serverCommit` on a source run, which has no `commit`.
+ */
+const REH_COMMIT = rehCommit({
+	commit: vscodeProduct.commit,
+	serverCommit: devhubProduct.serverCommit,
+});
 import { activityCounters } from "../diagnostics/counters.js";
 import {
 	metricsReport,
@@ -331,7 +345,7 @@ import {
 	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
-import { ReleaseRehDelivery } from "../runtime/remoteServer.js";
+import { ReleaseRehDelivery, rehCommit } from "../runtime/remoteServer.js";
 import {
 	ReleaseTmuxDelivery,
 	tmuxInstallDirectory,
@@ -4288,7 +4302,7 @@ export class AppController {
 			cliEntryName: CLI_ENTRY_BUNDLE,
 			serverDataFolderName:
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-			serverCommit: vscodeProduct.commit,
+			serverCommit: REH_COMMIT,
 		});
 	}
 
@@ -7110,7 +7124,7 @@ export async function createAppController(
 		// the URL template, the application name and the data folder — read
 		// once, here, now that DevHub is the thing that installs it.
 		reh: new ReleaseRehDelivery({
-			commit: vscodeProduct.commit,
+			commit: REH_COMMIT,
 			version: vscodeProduct.version,
 			dataFolderName: vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			applicationName: vscodeProduct.serverApplicationName ?? "code-server",

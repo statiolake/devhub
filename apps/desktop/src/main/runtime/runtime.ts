@@ -324,10 +324,12 @@ export interface TerminalLauncherSpec {
 	/** `product.json`'s `serverDataFolderName`: where the REH lives over there. */
 	readonly serverDataFolderName: string;
 	/**
-	 * The commit this DevHub states, which is the directory its REH is under.
+	 * The commit naming the REH this DevHub connects to, which is the
+	 * directory it is under — `rehCommit`, so a source run states it too.
 	 *
-	 * `undefined` in a source checkout, which is also a DevHub that can open no
-	 * remote workbench at all, so the refusal is the same fact said once.
+	 * `undefined` only for a DevHub that states neither commit, which is also a
+	 * DevHub that can open no remote workbench at all, so the refusal is the
+	 * same fact said once.
 	 */
 	readonly serverCommit: string | undefined;
 }

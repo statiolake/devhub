@@ -724,7 +724,7 @@ describe("the terminal launcher on the host", () => {
 	it("refuses when this DevHub states no commit to find the Node under", async () => {
 		await expect(
 			runtimeWith().terminalLauncher({ ...spec, serverCommit: undefined }),
-		).rejects.toThrow(/source checkout/u);
+		).rejects.toThrow(/states no commit for the remote extension host/u);
 	});
 });
 

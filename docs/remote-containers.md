@@ -332,9 +332,19 @@ What changed is said in one notice (`state_migrated`).
   Desktop, colima on this Mac; any `docker` on the host's login `PATH` on a
   host.
 - **The `devcontainer` CLI**, `@devcontainers/cli`, in the same place.
-- **A packaged DevHub.** A source run states no `commit`, so there is no remote
-  extension host to install — the same refusal as [a source run cannot
-  connect](remote-ssh.md#a-source-run-cannot-connect).
+- **A packaged DevHub, or a source run started by
+  `apps/desktop/scripts/dev.sh`.** A source run states no `commit`, but it
+  states `serverCommit`, the submodule's, and installs the server published
+  under it — see [a source run connects to the published
+  server](remote-ssh.md#a-source-run-connects-to-the-published-server).
+
+  It used not to: DevHub read `commit` alone, so a source run's Reopen in
+  Container opened a window whose resolver was refused ("states no commit …
+  SSH workspaces need a packaged build"), and the first thing that reached
+  for the container after that — Open Settings, which reads the remote
+  settings file — failed as "Unable to open 'Settings'" with the same
+  sentence. The window had never connected; the dialog was only where it
+  showed.
 
 ## Where to look when it does not connect
 

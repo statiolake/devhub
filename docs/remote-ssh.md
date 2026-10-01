@@ -155,7 +155,7 @@ sentence, and wrong in silence.
 | the host key is not known | no |
 | the host is not Linux or macOS | no |
 | the release has no server for that `<os>-<arch>` (an HTTP 404, not a network error) | no |
-| this is a source build and states no commit | no |
+| this DevHub states neither `commit` nor `serverCommit` | no |
 
 The default is "yes", and deliberately: a resolve that goes on retrying stops on
 VS Code's own attempt limit and says so, and one that wrongly gave up needs the
@@ -347,22 +347,44 @@ not publish.
 The tarballs are around 100 MB: 103 MB for linux-x64, 99 MB for linux-arm64,
 94 MB for darwin-arm64.
 
-## A source run cannot connect
+## A source run connects to the published server
 
 `pnpm dev` has no `commit` — deliberately, and it cannot be given one: VS Code
 reads `product.commit` as "this is a packaged build" and sends a source run
-looking for a `node_modules.asar` that a checkout does not have. But `commit` is also
-what names the install directory, what goes in the download URL and what the
-remote server checks the connecting client against — so there is nothing to
-install and nothing that would accept a connection.
+looking for a `node_modules.asar` that a checkout does not have. But a source
+run is still built from one VS Code commit, the submodule's, and the server
+published under that commit is the server its workbench speaks to. So
+`scripts/product_metadata.py` states that commit in a field of its own,
+`serverCommit`, on every build, and `apps/desktop/scripts/dev.sh` writes it into
+`vscode/product.overrides.json` with the rest. VS Code does not know the key;
+DevHub's main process reads it (`rehCommit` in `main/runtime/remoteServer.ts`)
+wherever it used to read `commit` alone: the install directory, the download
+URL, the `devhub` command's Node.
 
-A source run therefore refuses the resolve by name, permanently: the workbench
-gets `NotAvailable` with the sentence rather than five attempts at a URL ending
-`-undefined.tar.gz`.
+What makes that enough is the server's own check. It compares the connecting
+client's commit with its own only when the client states one
+(`remoteExtensionHostAgentServer.ts`: `if (rendererCommit && myCommit)`), and a
+source run's workbench states none, so the published server accepts it.
+`remoteServer.test.ts` reads that line out of the pinned submodule and fails if
+it ever stops being conditional.
 
-**SSH workspaces need a packaged build.** Test them against `pnpm build`'s
-`dist/DevHub.app` or a nightly, not against `pnpm dev`. See
-`scripts/product_metadata.py` for why the field means what it means.
+Until this, DevHub read `commit` alone and refused every remote window of a
+source run — a dev container's as much as an SSH host's, with a sentence that
+said "SSH workspaces need a packaged build" either way. The window still
+opened, so what a person saw first was often not the refusal but whatever
+reached for the remote next: Open Settings reads the remote settings file
+through the remote file system, and failed as "Unable to open 'Settings'".
+
+The refusal is still there for a run that states neither field — a source run
+not started by `dev.sh`, or one whose `product.overrides.json` predates
+`serverCommit` — and it is still permanent: the workbench gets `NotAvailable`
+with the sentence rather than five attempts at a URL ending `-undefined.tar.gz`.
+It names no kind of machine.
+
+The one thing a source run cannot have is its own uncommitted server changes:
+it connects to the server published for the submodule commit, built from the
+patches as they were when that release was cut — the same sharp edge a
+packaged build has (see "What is built, where, and when").
 
 ## Installing a server by hand
 
@@ -831,8 +853,9 @@ a button that was never there.
 
 ### What a first real run must check
 
-Nothing here can be verified without a reachable host, and a packaged build:
-`pnpm dev` states no commit and so refuses the resolve by name. In order:
+Nothing here can be verified without a reachable host. A packaged build or a
+source run started by `apps/desktop/scripts/dev.sh` will do — the latter
+connects to the server published for its submodule commit. In order:
 
 0. **The authority resolves at all.** The window comes up with `SSH: <host>` in
    the status bar rather than sitting on "Opening Remote…". On the host,
