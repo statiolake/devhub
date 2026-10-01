@@ -2070,7 +2070,7 @@ export type SurfaceLayout =
  * Agent's pane beside it — so the layout could be read off the context alone.
  * It cannot any more: the same Agent is either the whole content area or half
  * of it, and which one is what the person asked for when they selected it.
- * Plain click, Return: `full`. Command-click, Command-Return: `beside`.
+ * Plain click, Return: `full`. Option-click, Option-Return: `beside`.
  *
  * It is a property of the *selection*, not of the Agent. Opening an Agent
  * beside the workbench and later opening the same Agent on its own are two

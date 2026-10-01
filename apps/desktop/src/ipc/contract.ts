@@ -198,9 +198,9 @@ export interface IssueAssignment {
 	 * DevHub should start the agent and say nothing.
 	 */
 	readonly actionId?: string;
-	/** The agent beside the editor rather than over it — ⌘Return, as ever. */
+	/** The agent beside the editor rather than over it — ⌥Return, as ever. */
 	readonly split: boolean;
-	/** TUI or GUI, as the agent row said when it was taken (⌥ flips it). */
+	/** TUI or GUI, as the agent row said when it was taken (⌘ flips it). */
 	readonly presentation: "tui" | "gui";
 	/**
 	 * An earlier session of the profile's CLI in that folder, which
@@ -1640,7 +1640,7 @@ export type ModalRequest =
 	 *
 	 * `Cmd+Q G`. Stepping (`Cmd+N`, `{`, `Shift+N`) is for the neighbour; this
 	 * is for the one you can name. It is the ordinary picker, so `Return`
-	 * activates and `Command-Return` mounts an Agent beside its workbench — the
+	 * activates and `Option-Return` mounts an Agent beside its workbench — the
 	 * same two gestures, meaning the same two things, as in the workspace
 	 * picker.
 	 */

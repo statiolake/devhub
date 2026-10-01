@@ -3,7 +3,7 @@
 /**
  * New Agent, and how the Agent it starts is shown.
  *
- * Return launches with the profile's own presentation; Option-Return launches
+ * Return launches with the profile's own presentation; Command-Return launches
  * with the other one, for that one Agent. The sheet has to say which of the two
  * the key about to be pressed will do, so each row names it at its right end
  * and names the other while Option is held. A profile whose kind has no GUI
@@ -142,11 +142,11 @@ describe("launching from New Agent", () => {
     });
   });
 
-  it("launches with the other presentation on Option-Return", () => {
+  it("launches with the other presentation on Command-Return", () => {
     const { dispatch } = mount();
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      altKey: true,
+      metaKey: true,
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "claude", presentation: "gui" }),
@@ -158,10 +158,29 @@ describe("launching from New Agent", () => {
     narrowTo("codex");
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      altKey: true,
+      metaKey: true,
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "codex", presentation: "tui" }),
+    );
+  });
+
+  it("opens beside the editor on Option-Return and keeps the presentation", () => {
+    const { dispatch } = mount();
+    fireEvent.keyDown(screen.getByRole("dialog"), {
+      key: "Enter",
+      altKey: true,
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ split: true, presentation: "tui" }),
+    );
+  });
+
+  it("opens beside the editor on Option-click, and with Command-Option-click turns the presentation too", () => {
+    const { dispatch } = mount();
+    fireEvent.click(row(/^New Codex Session/u), { altKey: true });
+    expect(dispatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ split: true, presentation: "gui" }),
     );
   });
 
@@ -169,8 +188,8 @@ describe("launching from New Agent", () => {
     const { dispatch } = mount();
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      metaKey: true,
       altKey: true,
+      metaKey: true,
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ split: true, presentation: "gui" }),
@@ -182,7 +201,7 @@ describe("launching from New Agent", () => {
     narrowTo("cursor");
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      altKey: true,
+      metaKey: true,
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "cursor", presentation: "tui" }),
@@ -191,7 +210,7 @@ describe("launching from New Agent", () => {
 
   it("takes Option from a click too", () => {
     const { dispatch } = mount();
-    fireEvent.click(row(/^New Codex Session/u), { altKey: true });
+    fireEvent.click(row(/^New Codex Session/u), { metaKey: true });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "codex", presentation: "tui" }),
     );
@@ -209,13 +228,13 @@ describe("what the sheet says will happen", () => {
   it("names the other one while Option is held, and only then", () => {
     mount();
     const dialog = screen.getByRole("dialog");
-    fireEvent.keyDown(dialog, { key: "Alt", altKey: true });
+    fireEvent.keyDown(dialog, { key: "Meta", metaKey: true });
     expect(row(/^New Claude Session/u)).toHaveTextContent("GUI");
     expect(row(/^New Codex Session/u)).toHaveTextContent("TUI");
     // Nowhere to turn it, so nothing to say differently.
     expect(row(/^New Cursor Session/u)).toHaveTextContent("TUI");
 
-    fireEvent.keyUp(dialog, { key: "Alt", altKey: false });
+    fireEvent.keyUp(dialog, { key: "Meta", metaKey: false });
     expect(row(/^New Claude Session/u)).toHaveTextContent("TUI");
     expect(row(/^New Codex Session/u)).toHaveTextContent("GUI");
   });
@@ -223,8 +242,8 @@ describe("what the sheet says will happen", () => {
   it("stops naming the other one when the window loses the keyboard", () => {
     mount();
     fireEvent.keyDown(screen.getByRole("dialog"), {
-      key: "Alt",
-      altKey: true,
+      key: "Meta",
+      metaKey: true,
     });
     expect(row(/^New Claude Session/u)).toHaveTextContent("GUI");
     // Option let go in another app is a keyup this sheet never hears.
@@ -235,7 +254,7 @@ describe("what the sheet says will happen", () => {
   it("says what Option does", () => {
     mount();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "⌥Return opens it as the other of TUI and GUI.",
+      "⌘Return opens it as the other of TUI and GUI.",
     );
   });
 });
@@ -350,7 +369,7 @@ describe("earlier sessions in the Workspace's folder", () => {
     });
     // Codex's own default is GUI; Option makes this one a terminal.
     expect(session).toHaveTextContent("GUI");
-    fireEvent.click(session, { altKey: true });
+    fireEvent.click(session, { metaKey: true });
     expect(dispatch).toHaveBeenCalledWith({
       type: "request_create_agent",
       workspaceId: WORKSPACE,

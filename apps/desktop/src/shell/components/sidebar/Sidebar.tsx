@@ -531,16 +531,16 @@ function WorkspaceRow({
                       aria-current={agentSelected ? "page" : undefined}
                       aria-label={agentDescription}
                       disabled={agent.controlState.kind === "stopping"}
-                      // Command-click opens the Agent beside its workbench; a
+                      // Option-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
-                      // pair as Return and Command-Return in the picker, because
+                      // pair as Return and Option-Return in the picker, because
                       // it is the same choice, and it is stated in the intent
                       // rather than applied afterwards.
                       onClick={(event) =>
                         selectRow(event, {
                           type: "select_context",
                           context: { kind: "agent", agentId: agent.id },
-                          split: event.metaKey,
+                          split: event.altKey,
                         })
                       }
                       // Renaming is what a source list does on a second click at

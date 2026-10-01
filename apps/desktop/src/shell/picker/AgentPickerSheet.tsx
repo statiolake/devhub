@@ -91,7 +91,7 @@ export function FolderAgentPicker({
 }: FolderAgentPickerProps) {
   const hint: ReactNode =
     failure === undefined ? (
-      "The agent starts in this folder. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI."
+      "The agent starts in this folder. ⌥Return opens it beside the editor; ⌘Return opens it as the other of TUI and GUI."
     ) : (
       <span className="picker-note-failure">{failure}</span>
     );

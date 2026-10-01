@@ -6,9 +6,9 @@
  * is the only one of the two that scales.
  *
  * The same picker as everything else, so `Return` activates and
- * `Command-Return` mounts an Agent beside its workbench — the two gestures the
+ * `Option-Return` mounts an Agent beside its workbench — the two gestures the
  * workspace picker already has, meaning the same two things. On a workspace row
- * the Command modifier means nothing and is ignored, exactly as it is
+ * the Option modifier means nothing and is ignored, exactly as it is
  * everywhere else a row has only one way to be taken; the footer says so rather
  * than the rows quietly differing.
  */
@@ -75,7 +75,7 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
       question="Which workspace or agent do you want to look at?"
       items={items}
       emptyNoMatch="Nothing here matches that."
-      note="⌘Return opens an agent beside its editor."
+      note="⌥Return opens an agent beside its editor."
       onChoose={({ id, split }) => {
         const [kind, value] = id.split(":");
         if (kind === "agent") {

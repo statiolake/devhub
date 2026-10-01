@@ -76,7 +76,7 @@ export interface WizardPrompt {
 export interface WizardAnswer {
   readonly id: string;
   readonly split: boolean;
-  /** Option was held: the row's other reading, as its accessory showed it. */
+  /** Command was held: the row's other reading, as its accessory showed it. */
   readonly alternate: boolean;
   readonly query: string;
 }

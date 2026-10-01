@@ -229,3 +229,36 @@ describe("a keyboard selection stays in the Sidebar", () => {
     expect(focusSurface).not.toHaveBeenCalled();
   });
 });
+
+describe("opening an Agent beside the workbench", () => {
+  const select = async (modifiers: { altKey?: boolean; metaKey?: boolean }) => {
+    const dispatch = mount();
+    const target = row("agent:a-1");
+    target.focus();
+    // A click, and the click a focused button raises on Return, carry the
+    // same modifier flags.
+    fireEvent.click(target, { detail: 0, ...modifiers });
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "select_context" }),
+      );
+    });
+    return dispatch.mock.calls[0]?.[0] as { split?: boolean };
+  };
+
+  it("is Option, as in VS Code", async () => {
+    expect((await select({ altKey: true })).split).toBe(true);
+  });
+
+  it("is not Command, which leaves a row alone", async () => {
+    expect((await select({ metaKey: true })).split).toBe(false);
+  });
+
+  it("is Command-Option too", async () => {
+    expect((await select({ metaKey: true, altKey: true })).split).toBe(true);
+  });
+
+  it("is not a plain click", async () => {
+    expect((await select({})).split).toBe(false);
+  });
+});

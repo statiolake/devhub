@@ -45,7 +45,7 @@ export type AgentProfileKindWire = "codex" | "claude" | "cursor" | "custom";
 export type AgentPresentationWire = "tui" | "gui";
 /**
  * An Agent a Workspace opening should start once it is open: which profile,
- * and how the person asked for it to be shown — the Option gesture in the
+ * and how the person asked for it to be shown — the Command gesture in the
  * profile question already spent, so this is the answer and not the default.
  */
 export interface AgentLaunchWire {
@@ -629,8 +629,8 @@ export type AppIntentWire =
 	| {
 			readonly profileId: string;
 			/**
-			 * The person asked for the Agent *beside* its workbench — Command-Return
-			 * in the picker, Command-click on a row — rather than on its own.
+			 * The person asked for the Agent *beside* its workbench — Option-Return
+			 * in the picker, Option-click on a row — rather than on its own.
 			 *
 			 * Absent means the plain choice, which is the Agent alone. It is carried
 			 * on the intent rather than set afterwards because it is part of what
@@ -639,7 +639,7 @@ export type AppIntentWire =
 			 */
 			readonly split?: boolean;
 			/**
-			 * The presentation this one Agent should have — Option-Return in the
+			 * The presentation this one Agent should have — Command-Return in the
 			 * picker turns the profile's default the other way.
 			 *
 			 * Absent means the profile's own default, the way an absent `split`

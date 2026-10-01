@@ -241,7 +241,7 @@ display_name = "Claude"
 kind = "claude"             # codex | claude | cursor | custom
 presentation = "gui"        # optional override of [agents] default_presentation
                             # (gui for claude and codex only). Unset, the default.
-                            # ⌥Return in New Agent, or in Assign Issue, opens one the
+                            # ⌘Return in New Agent, or in Assign Issue, opens one the
                             # other way. Both list "New Claude Session" first, then
                             # the earlier Claude and Codex sessions that ran in the
                             # folder, to go on with (--resume / thread resume).

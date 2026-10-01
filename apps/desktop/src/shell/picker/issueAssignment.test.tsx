@@ -196,7 +196,7 @@ async function choose(dialogName: RegExp, rowName: string | RegExp) {
 async function answer(
   name: string | RegExp,
   text?: string,
-  modifiers: { altKey?: boolean } = {},
+  modifiers: { altKey?: boolean; metaKey?: boolean } = {},
 ) {
   const dialog = await screen.findByRole("dialog", { name });
   if (text !== undefined) {
@@ -285,7 +285,7 @@ describe("assigning an Issue", () => {
       "Start a new session, or go on with one of this folder's earlier ones.",
     );
     expect(dialog).toHaveTextContent(
-      "The agent starts in this folder. ⌘Return opens it beside the editor; ⌥Return opens it as the other of TUI and GUI.",
+      "The agent starts in this folder. ⌥Return opens it beside the editor; ⌘Return opens it as the other of TUI and GUI.",
     );
   });
 
@@ -300,11 +300,11 @@ describe("assigning an Issue", () => {
     const dialog = await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
     });
-    // Each row says what Return launches, and the other while ⌥ is held.
+    // Each row says what Return launches, and the other while ⌘ is held.
     expect(screen.getByRole("option", { name: /Claude/u })).toHaveTextContent(
       "TUI",
     );
-    fireEvent.keyDown(dialog, { key: "Alt", altKey: true });
+    fireEvent.keyDown(dialog, { key: "Meta", metaKey: true });
     expect(screen.getByRole("option", { name: /Claude/u })).toHaveTextContent(
       "GUI",
     );
@@ -312,8 +312,10 @@ describe("assigning an Issue", () => {
     expect(screen.getByRole("option", { name: /Cursor/u })).toHaveTextContent(
       "TUI",
     );
-    fireEvent.keyUp(dialog, { key: "Alt", altKey: false });
-    await answer(/Agent for example\/widget#128/u, undefined, { altKey: true });
+    fireEvent.keyUp(dialog, { key: "Meta", metaKey: false });
+    await answer(/Agent for example\/widget#128/u, undefined, {
+      metaKey: true,
+    });
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(

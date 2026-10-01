@@ -26,9 +26,9 @@ three places, each overriding the one before:
   of the only default there was; that copy is read as absent, once.
 - **This launch, the other way.** In New Agent (the sidebar's sheet, and the
   Agent step of the workspace picker) and in Assign Issue's agent step, each
-  row — a new session or an earlier one — says `GUI` or `TUI`. Holding ⌥
-  flips it, and ⌥Return launches the Agent the other way. ⌘Return (beside the
-  editor) combines with it. A kind with no GUI does not flip.
+  row — a new session or an earlier one — says `GUI` or `TUI`. Holding ⌘
+  flips it, and ⌘Return (or ⌘-click) launches the Agent the other way. ⌥Return
+  (⌥-click), as in VS Code, opens it beside the editor, and ⌘⌥Return does both. A kind with no GUI does not flip.
 
 There is no switching an Agent between the two in place. "Continue in
 terminal" (below) starts a new terminal Agent on the same session instead.
@@ -1191,8 +1191,8 @@ sessions DevHub can list, so they have their New row only.
   until they all have. A listing that fails says why in the sheet's note
   (`sessions_unreadable`, or the profile's own refusal), and the New rows stay.
 - **Taking one.** Return starts a new Agent from that profile resuming the
-  session (a launch that resumes, below), ⌥Return in the other presentation,
-  ⌘Return beside the editor, exactly as a New row does.
+  session (a launch that resumes, below), ⌘Return in the other presentation,
+  ⌥Return beside the editor, ⌘⌥Return both, exactly as a New row does.
 - **Assign Issue** makes the folder before it asks which agent, and opens it
   only once the agent is chosen. Once the person picks a row of "Where to work
   on owner/repo#128", DevHub does the folder work and nothing else: it creates
@@ -1211,7 +1211,7 @@ sessions DevHub can list, so they have their New row only.
   New Agent's picker, word for word under the title "Agent for
   owner/repo#128", about that folder by its path on its machine: New rows,
   the folder's earlier sessions with their preview (read by cwd, as New
-  Agent's are), ⌥Return, ⌘Return. An existing worktree or the root checkout
+  Agent's are), ⌘Return, ⌥Return, ⌘⌥Return. An existing worktree or the root checkout
   offers its sessions — the session that wrote a pull request is there when
   review comments arrive; a worktree just created has none, so it offers the
   New rows only. Choosing the agent is one act: the folder is opened as the
@@ -1433,7 +1433,7 @@ does. **A GUI Claude Agent runs the Workspace's project hooks and starts the
 servers in its `.mcp.json` without asking.** DevHub adds no prompt of its own
 in this version, on the grounds that a Workspace is a folder you opened
 yourself. If you open a repository you do not trust, start its Agent as a
-terminal (⌥Return), where Claude asks first.
+terminal (⌘Return), where Claude asks first.
 
 ## Permissions follow your Claude settings
 

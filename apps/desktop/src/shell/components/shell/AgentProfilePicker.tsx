@@ -27,12 +27,12 @@
  * The row the person is on, when it is a session, is previewed beside the list
  * (`sessionRows`), as `/resume` previews it.
  *
- * # Option
+ * # Command
  *
- * The Option modifier means the same thing to every row, so it is answered
+ * The Command modifier means the same thing to every row, so it is answered
  * here: the profile's presentation turned the other way for this one launch.
  * Each row says at its right end which one Return will launch — `TUI` or
- * `GUI` — and says the other while Option is held. A profile with only one
+ * `GUI` — and says the other while Command is held. A profile with only one
  * presentation says the same thing either way. What reaches the caller is the
  * presentation the row was showing, not the gesture.
  */
@@ -347,7 +347,7 @@ const PRESENTATION_LABEL: Record<AgentPresentationWire, string> = {
 
 /**
  * A profile row's right end: `TUI` or `GUI`, whichever Return launches — the
- * other while Option is held. Every row that starts an Agent draws it, so a
+ * other while Command is held. Every row that starts an Agent draws it, so a
  * row means the same thing wherever it is.
  */
 function presentationAccessory(
@@ -358,7 +358,7 @@ function presentationAccessory(
 }
 
 /**
- * What a launch of this profile is: its default, or with Option held, the
+ * What a launch of this profile is: its default, or with Command held, the
  * other presentation it has — and still its default when it has no other.
  */
 function launchPresentation(

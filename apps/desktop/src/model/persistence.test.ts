@@ -919,7 +919,7 @@ describe("store", () => {
   });
 
   it("keeps an Agent's presentation apart from its profile's default", () => {
-    // A GUI-default profile launched the other way, as Option-Return does.
+    // A GUI-default profile launched the other way, as Command-Return does.
     const claude = AgentProfile.create(
       agentProfileId("claude"),
       "Claude",

@@ -180,11 +180,11 @@ describe("opening a workspace with an agent", () => {
     });
   });
 
-  it("carries the other presentation into the opening on Option", async () => {
+  it("carries the other presentation into the opening on Command", async () => {
     const { selectWorkspacePicker } = mount();
     fireEvent.click(workspaceRow(), { metaKey: true });
     fireEvent.click(await screen.findByRole("option", { name: /Codex/u }), {
-      altKey: true,
+      metaKey: true,
     });
     await waitFor(() => {
       expect(selectWorkspacePicker).toHaveBeenCalledWith(

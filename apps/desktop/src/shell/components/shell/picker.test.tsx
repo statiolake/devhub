@@ -3,7 +3,7 @@
 /**
  * The one picker, at the three points it used to go wrong.
  *
- * 1. **Return and Command-Return are different answers.** The modifier is what
+ * 1. **Return and Option-Return are different answers.** The modifier is what
  *    a caller reads to know whether the person asked for the thing beside its
  *    editor or on its own, so a picker that dropped it would silently make one
  *    of the two impossible.
@@ -63,11 +63,11 @@ describe("the picker", () => {
     });
   });
 
-  it("reports Command-Return as the split choice", () => {
+  it("reports Option-Return as the split choice", () => {
     const { onChoose } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      metaKey: true,
+      altKey: true,
     });
     expect(onChoose).toHaveBeenCalledWith({
       id: "claude",
@@ -77,11 +77,11 @@ describe("the picker", () => {
     });
   });
 
-  it("reports Option-Return as the alternate choice", () => {
+  it("reports Command-Return as the alternate choice", () => {
     const { onChoose } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), {
       key: "Enter",
-      altKey: true,
+      metaKey: true,
     });
     expect(onChoose).toHaveBeenCalledWith({
       id: "claude",
@@ -91,15 +91,56 @@ describe("the picker", () => {
     });
   });
 
-  it("carries the modifier from a click too", () => {
+  it("reports Command-Option-Return as both choices at once", () => {
+    const { onChoose } = renderPicker({});
+    fireEvent.keyDown(screen.getByRole("dialog"), {
+      key: "Enter",
+      metaKey: true,
+      altKey: true,
+    });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "claude",
+      split: true,
+      alternate: true,
+      query: "",
+    });
+  });
+
+  it("carries the modifiers from a click too", () => {
+    const row = () => screen.getByRole("option", { name: /Codex/ });
+    const { onChoose } = renderPicker({});
+    fireEvent.click(row(), { altKey: true });
+    expect(onChoose).toHaveBeenLastCalledWith({
+      id: "codex",
+      split: true,
+      alternate: false,
+      query: "",
+    });
+  });
+
+  it("carries Command and Command-Option from a click", () => {
     const { onChoose } = renderPicker({});
     fireEvent.click(screen.getByRole("option", { name: /Codex/ }), {
       metaKey: true,
     });
-    expect(onChoose).toHaveBeenCalledWith({
+    expect(onChoose).toHaveBeenLastCalledWith({
+      id: "codex",
+      split: false,
+      alternate: true,
+      query: "",
+    });
+  });
+
+  it("carries Command-Option from a click as both", () => {
+    const { onChoose } = renderPicker({});
+    fireEvent.click(screen.getByRole("option", { name: /Codex/ }), {
+      metaKey: true,
+      altKey: true,
+    });
+    expect(onChoose).toHaveBeenLastCalledWith({
       id: "codex",
       split: true,
-      alternate: false,
+      alternate: true,
       query: "",
     });
   });

@@ -401,7 +401,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         title="New Agent"
         question="Which agent profile should start in the workspace being opened?"
         step={2}
-        hint="The agent starts at the workspace root, once it is open. ⌥Return opens it as the other of TUI and GUI."
+        hint="The agent starts at the workspace root, once it is open. ⌘Return opens it as the other of TUI and GUI."
         // The Agent starts with the Workspace this opens, and that opening
         // starts one afresh: only the New rows.
         sessionsIn={undefined}
@@ -481,7 +481,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
                         pool.find((item) => item.id === choice.id)?.missing ??
                         false,
                     };
-        if (choice.split) {
+        if (choice.alternate) {
           void cancelWorkspacePicker();
           setChosen(row);
           setAsking("agent");

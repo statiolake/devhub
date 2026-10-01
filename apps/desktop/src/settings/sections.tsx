@@ -200,7 +200,7 @@ export function GeneralSection({
       <Group heading="Agents">
         <Row
           label="Show agents as"
-          help="How a new agent is shown when its profile does not say. Only Claude and Codex have a GUI; other agents open in a terminal either way. Option-Return in New Agent opens one the other way."
+          help="How a new agent is shown when its profile does not say. Only Claude and Codex have a GUI; other agents open in a terminal either way. Command-Return in New Agent opens one the other way."
         >
           <Popup
             label="Default agent presentation"
@@ -978,7 +978,7 @@ export function AgentsSection({
             </Row>
             <Row
               label="Show as"
-              help="How a new agent from this profile is shown. Default follows “Show agents as” in General. Option-Return in New Agent opens one the other way. Only Claude and Codex have a GUI."
+              help="How a new agent from this profile is shown. Default follows “Show agents as” in General. Command-Return in New Agent opens one the other way. Only Claude and Codex have a GUI."
             >
               <Popup
                 label="Agent presentation"

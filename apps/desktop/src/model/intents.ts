@@ -372,7 +372,7 @@ export type UserIntent =
        * Whether the Agent is a terminal or DevHub's conversation view.
        *
        * Absent means the profile's own default, which is every way of asking
-       * for an Agent except the picker's Option gesture. Not to be confused
+       * for an Agent except the picker's Command gesture. Not to be confused
        * with `presentation` above, which is where the pane sits.
        */
       readonly agentPresentation?: AgentPresentation;
