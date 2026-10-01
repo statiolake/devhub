@@ -1,5 +1,5 @@
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
-index 22009a29..88ecba08 100644
+index 22009a29..d22a89f5 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 @@ -117,6 +117,16 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
@@ -31,16 +31,17 @@ index 22009a29..88ecba08 100644
  			return this._setIconForAutomation(options, defaultProfile);
  		}
  
-@@ -229,6 +242,25 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+@@ -229,6 +242,26 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
  		return this._setIconForAutomation(options, await this._getUnresolvedFallbackDefaultProfile(options));
  	}
  
 +	/**
 +	 * DevHub: the plain shell for a terminal that is not DevHub's own — the
 +	 * profile `terminal.integrated.defaultProfile.<os>` names, when it names one
-+	 * of the available profiles (DevHub's own launcher overrides that setting
-+	 * for the interactive terminal, so here is where it still applies), else
-+	 * the machine's default shell.
++	 * of the available profiles other than `devhub` (a default the person
++	 * chose is their interactive terminal too; see
++	 * `TerminalProfileService._devhubProfiles`), else the machine's default
++	 * shell. Never the launcher, whatever the setting says.
 +	 */
 +	private async _devhubPlainProfile(options: IShellLaunchConfigResolveOptions): Promise<ITerminalProfile> {
 +		await this._terminalProfileService.profilesReady;
@@ -58,21 +59,21 @@ index 22009a29..88ecba08 100644
  		if (options.allowAutomationShell) {
  			const profileClone = deepClone(profile);
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-index c51f6dd3..f2d2a730 100644
+index cc941960..fc59c881 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-@@ -979,7 +979,13 @@ export class TerminalService extends Disposable implements ITerminalService {
- 		// what sends a terminal to the local backend (`TerminalProcessManager`),
- 		// the same way "Create New Integrated Terminal (Local)" does. Every other
- 		// profile, and every task, stays with the container.
+@@ -980,7 +980,13 @@ export class TerminalService extends Disposable implements ITerminalService {
+ 		// terminal to the local backend (`TerminalProcessManager`), the same way
+ 		// "Create New Integrated Terminal (Local)" does. Every other profile, a
+ 		// default the person chose, and every task, stays with the container.
 -		if (devhubTerminalLocal && devhubTerminalLauncher && options?.cwd === undefined) {
 +		//
 +		// "Create New Integrated Terminal (Local)" asks for this Mac by a
-+		// `file:` cwd and no profile, and on this Mac the terminal is the
-+		// DevHub terminal too — not a bare login shell beside it.
++		// `file:` cwd and no profile, and on this Mac the default terminal is
++		// the DevHub terminal too — not a bare login shell beside it.
 +		const requestedCwd = options?.cwd;
 +		const asksForThisMac = options?.config === undefined && URI.isUri(requestedCwd) && requestedCwd.scheme === Schemas.file;
 +		if (devhubTerminalLocal && devhubTerminalLauncher && (options?.cwd === undefined || asksForThisMac)) {
- 			const config = options?.config;
- 			const isDevhub = config === undefined || (hasKey(config, { path: true }) && (config as { path?: unknown }).path === devhubTerminalLauncher);
- 			if (isDevhub) {
+ 			let config = options?.config;
+ 			if (config === undefined) {
+ 				config = this._terminalProfileService.getDefaultProfile();

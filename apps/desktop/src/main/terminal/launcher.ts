@@ -56,9 +56,11 @@
  * reload was a plain zsh again. So the path goes onto the window configuration
  * DevHub opens each window with (`AppController.windowTerminalLauncher` →
  * `INativeWindowConfiguration.devhubTerminalLauncher`), and the patched
- * `TerminalProfileService` reads it and *is* the default, reading no terminal
- * setting at all. See `patches/vscode/0003-devhub-terminal-is-the-terminal.
- * patch`; `terminal.integrated.enablePersistentSessions` is forced off in the
+ * `TerminalProfileService` lists it as the `devhub` profile beside the
+ * person's own and makes it the default unless they set
+ * `terminal.integrated.defaultProfile.<os>` themselves — the one terminal
+ * setting it reads, and only ever to step aside; nothing here writes it. See
+ * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`; `terminal.integrated.enablePersistentSessions` is forced off in the
  * same patch and for the same reason — a tmux session outlives the window
  * already, so a restored tab is a second, empty client for a session that is
  * still running.

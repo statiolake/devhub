@@ -18,8 +18,10 @@
  * dotfiles tool rewrites it wholesale, and when it did, the DevHub profile went
  * with it and the next reload produced a plain zsh. DevHub's terminal is not a
  * suggestion, so it is not a setting — it is told to VS Code in code, by
- * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`, which reads no
- * terminal setting at all.
+ * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`, as the `devhub`
+ * profile, which is the default until the person sets
+ * `terminal.integrated.defaultProfile.<os>` themselves. DevHub writes neither
+ * that key nor any other terminal setting.
  *
  * This module is deliberately free of Electron and of the filesystem: what the
  * file should say next is the part worth testing, and the write around it is

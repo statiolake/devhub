@@ -776,6 +776,58 @@ another's. The patched profile service refuses to invent one, the reason is on
 DevHub's log and in `devhub --metrics`, and the person gets the app's own
 alert.
 
+**The profile is `devhub`, and it is the default unless you chose one.**
+The patched `TerminalProfileService` (patch 0003) puts a profile named
+`devhub` — the launcher, with the tmux icon — first in the profile list, beside
+whatever `terminal.integrated.profiles.<os>` holds, whether or not that holds
+anything. It is never written into settings: its path is this window's
+launcher, which is per window and per machine, and Select Default Profile
+neither copies it into `profiles.<os>` nor offers its Configure button for it.
+It is the only profile of its name: a profile of yours called `devhub` or
+`DevHub` (this profile's old name, which Select Default Profile could once
+write into a settings file with that window's launcher path in it), or one that
+runs the launcher, is left out of the list.
+
+Which profile is the default turns on one question: **did you set
+`terminal.integrated.defaultProfile.<os>` yourself?**
+
+- **No** — `devhub` is the default: Ctrl+`, the `+` button and New Terminal
+  open the tmux session. This is answered without waiting for shell
+  detection, so the terminal a window creates as it opens is the DevHub one.
+  Detection, an extension's `contributes.terminal.profiles` and an extension's
+  programmatic default cannot change it.
+- **Yes** — your profile is the default, looked up exactly as upstream looks it
+  up (a profile from `profiles.<os>`, or an extension's profile of that name),
+  and `devhub` is one of the profiles to pick from the `+` menu or Create New
+  Terminal (With Profile). Setting it to `devhub` (in any case) chooses DevHub's
+  own.
+
+"Yourself" means a value at some level above the default, read with
+`configurationService.inspect`: the user settings (local or, in a remote
+window, remote), the workspace's, a folder's, a policy, or an in-memory
+override. The default level is not yours — it is `null`, unless an extension
+contributed one through `configurationDefaults` — and `getValue` alone cannot
+tell a default from a choice. Writing `null` or `""` is the same as writing
+nothing. The key is the one for the OS the window's terminals run on
+(`osx` locally, usually `linux` over ssh or in a container); in a remote window
+whose OS is not known yet, `devhub` is answered at once only when no
+`defaultProfile.*` key is set at all, and otherwise the terminal waits for the
+OS as upstream waits for profiles. The setting is read every time a terminal is
+created, so changing or removing it takes effect for the next terminal, and the
+profile list is re-announced so the `+` menu's default follows.
+
+**What a tab says is not the profile's name.** The title is
+`terminal.integrated.tabs.title`, `${process}` by default — the process the
+pty runs, so `tmux` once the launcher has `exec`ed it — and the description
+after it is `terminal.integrated.tabs.description`: `Local` for a terminal on
+this Mac in a remote window, then the folder when it differs from the window's.
+`tmux - Local - dockim` is the single-tab header in a dev container window;
+`1: tmux` is the Switch Terminal dropdown, which replaces tabs when
+`terminal.integrated.tabs.enabled` is `false` (and adds the description in
+parentheses only when there is one). These are the person's own settings, and
+each DevHub profile (`DEVHUB_PROFILE`) has its own `User/settings.json` under
+its own data directory, so two builds can show the same terminal differently.
+
 **A task is not a terminal.** The launcher is what a *person* opens — one tmux
 session, kept, with its history. A task, a debug console and anything else the
 automation path resolves is throwaway: it is created to run one command, it is
@@ -799,9 +851,9 @@ resolved: a terminal that reaches `resolveShellLaunchConfig` with no
 executable is one something else made, because DevHub's own terminal always
 arrives with the launcher's path already set (`createTerminal` converts the
 DevHub profile into one). Such a terminal, like a task, runs the profile
-`terminal.integrated.defaultProfile.<os>` names when it names one — DevHub's
-launcher overrides that setting for the interactive terminal only — else the
-machine's default shell.
+`terminal.integrated.defaultProfile.<os>` names when it names one other than
+`devhub` — the same profile your own terminals open when you set it — else the
+machine's default shell; never the launcher, whatever the setting says.
 
 ### Agents and terminals on the host
 

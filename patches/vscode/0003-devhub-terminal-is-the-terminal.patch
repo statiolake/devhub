@@ -1,8 +1,8 @@
 diff --git a/src/vs/base/common/platform.ts b/src/vs/base/common/platform.ts
-index d2072dea83c..f9b508f5452 100644
+index d2072dea..9ac07930 100644
 --- a/src/vs/base/common/platform.ts
 +++ b/src/vs/base/common/platform.ts
-@@ -60,6 +60,48 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
+@@ -60,6 +60,60 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
  	nodeProcess = process;
  }
  
@@ -48,11 +48,23 @@ index d2072dea83c..f9b508f5452 100644
 +	? ($globalThis.vscode.context.configuration() as { devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] } } | undefined)?.devhubTerminalLocal
 +	: undefined) || undefined;
 +
++// DevHub: the name of the terminal profile that is DevHub's terminal, beside
++// the person's own profiles (`TerminalProfileService`).
++export const devhubTerminalProfileName = 'devhub';
++
++// DevHub: whether a terminal profile name is DevHub's own — in any case,
++// because the profile was called `DevHub` before, and a settings file written
++// then (Select Default Profile writes the profile it picked into
++// `terminal.integrated.profiles.<os>`) can still say so.
++export function isDevhubTerminalProfileName(name: string): boolean {
++	return name.toLowerCase() === devhubTerminalProfileName;
++}
++
  const isElectronProcess = typeof nodeProcess?.versions?.electron === 'string';
  const isElectronRenderer = isElectronProcess && nodeProcess?.type === 'renderer';
  
 diff --git a/src/vs/platform/window/common/window.ts b/src/vs/platform/window/common/window.ts
-index d073d011d56..6547253b5f0 100644
+index d073d011..6547253b 100644
 --- a/src/vs/platform/window/common/window.ts
 +++ b/src/vs/platform/window/common/window.ts
 @@ -460,6 +460,27 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
@@ -84,7 +96,7 @@ index d073d011d56..6547253b5f0 100644
  	sqmId: string;
  	devDeviceId: string;
 diff --git a/src/vs/platform/windows/electron-main/windows.ts b/src/vs/platform/windows/electron-main/windows.ts
-index 7c4f02efdfa..6ae9ed93dea 100644
+index 7c4f02ef..6ae9ed93 100644
 --- a/src/vs/platform/windows/electron-main/windows.ts
 +++ b/src/vs/platform/windows/electron-main/windows.ts
 @@ -94,6 +94,14 @@ export interface IBaseOpenConfiguration {
@@ -103,7 +115,7 @@ index 7c4f02efdfa..6ae9ed93dea 100644
  	readonly waitMarkerFileURI?: URI;
  	readonly preferNewWindow?: boolean;
 diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
-index d8428b529b2..cf1a9d86e24 100644
+index d8428b52..cf1a9d86 100644
 --- a/src/vs/platform/windows/electron-main/windowsMainService.ts
 +++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
 @@ -66,6 +66,10 @@ type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
@@ -172,7 +184,7 @@ index d8428b529b2..cf1a9d86e24 100644
  			nls: {
  				messages: getNLSMessages(),
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
-index 385e1b055d1..28cb1d99d5c 100644
+index 385e1b05..28cb1d99 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
 @@ -11,7 +11,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
@@ -202,7 +214,7 @@ index 385e1b055d1..28cb1d99d5c 100644
  		const skipTerminalCommands = new Set(DEFAULT_COMMANDS_TO_SKIP_SHELL);
  		const commandsToSkipShell = configValues.commandsToSkipShell ?? [];
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts b/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
-index f7ce1dab62b..f0875b9538c 100644
+index f7ce1dab..f0875b95 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
 @@ -7,6 +7,7 @@ import { localize } from '../../../../nls.js';
@@ -224,8 +236,44 @@ index f7ce1dab62b..f0875b9538c 100644
  			if (shouldPersistTerminals) {
  				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
  			} else {
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts
+index 28318f54..19b80876 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileQuickpick.ts
+@@ -20,6 +20,7 @@ import { basename } from '../../../../base/common/path.js';
+ import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+ import { hasKey, isString } from '../../../../base/common/types.js';
+ import { Event } from '../../../../base/common/event.js';
++import { isDevhubTerminalProfileName } from '../../../../base/common/platform.js';
+ 
+ 
+ type DefaultProfileName = string;
+@@ -60,7 +61,10 @@ export class TerminalProfileQuickpick {
+ 			}
+ 
+ 			// Add the profile to settings if necessary
+-			if (hasKey(result.profile, { profileName: true })) {
++			// DevHub: never `devhub`. Its path is this window's launcher, which
++			// is per window and per machine, and it is in the list without
++			// being in settings; the name alone chooses it.
++			if (hasKey(result.profile, { profileName: true }) && !isDevhubTerminalProfileName(result.profile.profileName)) {
+ 				const profilesConfig = await this._configurationService.getValue(profilesKey);
+ 				if (typeof profilesConfig === 'object') {
+ 					const newProfile: ITerminalProfileObject = {
+@@ -269,7 +273,10 @@ export class TerminalProfileQuickpick {
+ 	}
+ 
+ 	private _createProfileQuickPickItem(profile: ITerminalProfile): IProfileQuickPickItem {
+-		const buttons: IQuickInputButton[] = [{
++		// DevHub: `devhub` has no Configure button, which would copy this
++		// window's launcher path into the person's settings as a profile of
++		// their own; see `TerminalProfileService._devhubProfiles`.
++		const buttons: IQuickInputButton[] = isDevhubTerminalProfileName(profile.profileName) ? [] : [{
+ 			iconClass: ThemeIcon.asClassName(configureTerminalProfileIcon),
+ 			tooltip: nls.localize('createQuickLaunchProfile', "Configure Terminal Profile")
+ 		}];
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
-index 275ab34615d..22009a292e4 100644
+index 275ab346..22009a29 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
 @@ -9,7 +9,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
@@ -254,7 +302,7 @@ index 275ab34615d..22009a292e4 100644
  		}
  
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
-index d4d6ba9ee53..f3142f3c55e 100644
+index d4d6ba9e..72caa3f2 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 @@ -9,7 +9,8 @@ import { AutoOpenBarrier } from '../../../../base/common/async.js';
@@ -262,87 +310,256 @@ index d4d6ba9ee53..f3142f3c55e 100644
  import { Emitter, Event } from '../../../../base/common/event.js';
  import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 -import { isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
-+import { devhubTerminalLauncher, devhubTerminalLocal, isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, devhubTerminalLocal, devhubTerminalProfileName, isDevhubTerminalProfileName, isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
 +import { Codicon } from '../../../../base/common/codicons.js';
  import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
  import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
  import { ITerminalProfile, IExtensionTerminalProfile, TerminalSettingPrefix, TerminalSettingId, ITerminalProfileObject, IShellLaunchConfig, ITerminalExecutable } from '../../../../platform/terminal/common/terminal.js';
-@@ -45,6 +46,28 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -45,6 +46,49 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	private readonly _profileProviders: Map</*ext id*/string, Map</*provider id*/string, ITerminalProfileProvider>> = new Map();
  	private _defaultProfileOverride: { extensionIdentifier: string; id: string } | undefined;
  
 +	/**
-+	 * DevHub: the profile this workbench's terminal is, when DevHub hosts it.
++	 * DevHub: the profile this workbench's terminal is, when DevHub hosts it —
++	 * `devhub`, the tmux session DevHub owns.
 +	 *
-+	 * DevHub hosts this workbench; its terminal is the tmux session DevHub
-+	 * owns. That is not a preference, so nothing below reads one for it —
-+	 * `defaultProfile.*`, `profiles.*`, an extension's contribution and shell
-+	 * detection can none of them move it. Because it is not derived from
-+	 * configuration it exists the moment this service does, which is what makes
-+	 * it the answer for the terminal a window creates on load, before any
-+	 * refresh has run. The person's own profiles stay in the list and are still
-+	 * theirs to pick; what cannot happen is one of them becoming the default.
++	 * It is DevHub's, not the person's, so it is not read from
++	 * `terminal.integrated.profiles.*`: its path is per window (and per machine)
++	 * and a settings file is the person's, rewritten by their dotfiles tool. It
++	 * is in the list beside their profiles whether or not they have any, first,
++	 * with the tmux icon, and it is the only profile of its name.
++	 *
++	 * It is the default **unless the person has chosen one**:
++	 * `terminal.integrated.defaultProfile.<os>` written by them, at any level
++	 * above the default (`_explicitDefaultProfileName`). Then theirs is the
++	 * default, looked up exactly as upstream looks it up, and `devhub` is one
++	 * of the profiles to pick. Shell detection, an extension's contribution and
++	 * an extension's programmatic override cannot move the default off
++	 * `devhub`; only the person can. Because none of that needs detection, the
++	 * answer for a person who has chosen nothing exists the moment this service
++	 * does, which is what makes it the terminal a window creates on load,
++	 * before any refresh has run.
++	 *
++	 * Two objects, so that `isDefault` says which it is and the object a caller
++	 * holds stays the same while that does not change.
 +	 */
-+	private readonly _devhubProfile: ITerminalProfile | undefined = devhubTerminalLauncher ? {
-+		profileName: 'DevHub',
-+		path: devhubTerminalLauncher,
-+		// The launcher's own arguments, when the window names its Workspace
-+		// (`devhubTerminalLocal`); none otherwise.
-+		args: devhubTerminalLocal ? [...devhubTerminalLocal.args] : [],
-+		isDefault: true,
-+		icon: Codicon.terminalTmux
-+	} : undefined;
++	private readonly _devhubProfiles: { readonly asDefault: ITerminalProfile; readonly notDefault: ITerminalProfile } | undefined = devhubTerminalLauncher ? (() => {
++		const profile: ITerminalProfile = {
++			profileName: devhubTerminalProfileName,
++			path: devhubTerminalLauncher,
++			// The launcher's own arguments, when the window names its Workspace
++			// (`devhubTerminalLocal`); none otherwise.
++			args: devhubTerminalLocal ? [...devhubTerminalLocal.args] : [],
++			isDefault: false,
++			icon: Codicon.terminalTmux
++		};
++		return { asDefault: { ...profile, isDefault: true }, notDefault: profile };
++	})() : undefined;
++
++	/** DevHub: the pty host's OS key, once known; see `_currentOsKey`. */
++	private _platformKey: string | undefined;
++
++	/** DevHub: whether `devhub` was the default when the list was last announced. */
++	private _devhubWasDefault: boolean | undefined;
 +
  	private readonly _onDidChangeAvailableProfiles = this._register(new Emitter<ITerminalProfile[]>());
  	get onDidChangeAvailableProfiles(): Event<ITerminalProfile[]> { return this._onDidChangeAvailableProfiles.event; }
  
-@@ -53,7 +76,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -53,7 +97,8 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  		if (!this._platformConfigJustRefreshed) {
  			this.refreshAvailableProfiles();
  		}
 -		return this._availableProfiles || [];
-+		const profiles = this._availableProfiles || [];
-+		// DevHub: first in the dropdown, and the only profile of that name.
-+		if (this._devhubProfile) {
-+			return [this._devhubProfile, ...profiles.filter(p => p.profileName !== this._devhubProfile!.profileName)];
-+		}
-+		return profiles;
++		// DevHub: `devhub` first; see `_withDevhub`.
++		return this._withDevhub(this._availableProfiles || []);
  	}
  	get contributedProfiles(): IExtensionTerminalProfile[] {
  		const userConfiguredProfileNames = this._availableProfiles?.map(p => p.profileName) || [];
-@@ -111,10 +139,19 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -94,6 +139,19 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 		const platformKey = await this.getPlatformKey();
+ 
+ 		this._register(this._configurationService.onDidChangeConfiguration(async e => {
++			// DevHub: choosing a default, or clearing one, moves the default
++			// off or back onto `devhub` at once — `getDefaultProfile` reads the
++			// setting every time it is asked. What is announced here is the
++			// list, so that the dropdown's default follows: the person's own
++			// profiles need not have changed, and then the refresh below
++			// announces nothing.
++			if (this._devhubProfiles && e.affectsConfiguration(TerminalSettingPrefix.DefaultProfile + platformKey)) {
++				const isDefault = this._devhubIsDefaultFor(platformKey) === true;
++				if (isDefault !== this._devhubWasDefault) {
++					this._devhubWasDefault = isDefault;
++					this._onDidChangeAvailableProfiles.fire(this._withDevhub(this._availableProfiles || []));
++				}
++			}
+ 			if (e.affectsConfiguration(TerminalSettingPrefix.AutomationProfile + platformKey) ||
+ 				e.affectsConfiguration(TerminalSettingPrefix.DefaultProfile + platformKey) ||
+ 				e.affectsConfiguration(TerminalSettingPrefix.Profiles + platformKey) ||
+@@ -111,12 +169,36 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	}
  
  	getDefaultProfileName(): string | undefined {
-+		// DevHub: see `_devhubProfile`.
-+		if (this._devhubProfile) {
-+			return this._devhubProfile.profileName;
++		// DevHub: see `_devhubProfiles`.
++		if (this._devhubProfiles) {
++			const osKey = this._currentOsKey();
++			const isDevhub = this._devhubIsDefaultFor(osKey);
++			if (isDevhub) {
++				return devhubTerminalProfileName;
++			}
++			return isDevhub === undefined || osKey === undefined ? undefined : this._explicitDefaultProfileName(osKey);
 +		}
  		return this._defaultProfileName;
  	}
  
  	getDefaultProfile(os?: OperatingSystem): ITerminalProfile | undefined {
-+		// DevHub: see `_devhubProfile`. Answered synchronously, before any
-+		// setting is read and without waiting for detection.
-+		if (this._devhubProfile) {
-+			return this._devhubProfile;
-+		}
  		let defaultProfileName: string | undefined;
- 		if (os) {
+-		if (os) {
++		// DevHub: see `_devhubProfiles`. `devhub` is answered synchronously,
++		// without waiting for detection; a default the person chose is looked
++		// up below the way upstream looks it up, by the name they wrote.
++		if (this._devhubProfiles) {
++			const osKey = os !== undefined ? this._getOsKey(os) : this._currentOsKey();
++			const isDevhub = this._devhubIsDefaultFor(osKey);
++			if (isDevhub) {
++				return this._devhubProfiles.asDefault;
++			}
++			if (isDevhub === undefined || osKey === undefined) {
++				// The person chose a default for some OS, and which OS this
++				// window's terminals run on is not known yet.
++				return undefined;
++			}
++			defaultProfileName = this._explicitDefaultProfileName(osKey);
++		} else if (os) {
  			defaultProfileName = this._configurationService.getValue(`${TerminalSettingPrefix.DefaultProfile}${this._getOsKey(os)}`);
-@@ -278,6 +315,10 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 			if (!defaultProfileName || !isString(defaultProfileName)) {
+ 				return undefined;
+@@ -141,6 +223,80 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 		}
+ 	}
+ 
++	/**
++	 * DevHub: the default profile the person chose for `osKey`, by name, or
++	 * undefined when they have chosen none.
++	 *
++	 * Chosen means *written*: a value for
++	 * `terminal.integrated.defaultProfile.<os>` at any level above the
++	 * default — the user's settings (local or remote), the workspace's, a
++	 * folder's, a policy, or one set in memory. The default level is not the
++	 * person's: it is `null`, unless an extension contributed one through
++	 * `configurationDefaults`, and an extension does not choose DevHub's
++	 * terminal away. `null` or `""` written by the person says "no default",
++	 * which is the same as writing nothing. `inspect` rather than `getValue`,
++	 * because a value alone cannot say which level it came from.
++	 */
++	private _explicitDefaultProfileName(osKey: string): string | undefined {
++		const inspected = this._configurationService.inspect<unknown>(`${TerminalSettingPrefix.DefaultProfile}${osKey}`);
++		const written = [
++			inspected.policyValue,
++			inspected.memoryValue,
++			inspected.workspaceFolderValue,
++			inspected.workspaceValue,
++			inspected.userValue,
++			inspected.applicationValue
++		].some(value => value !== undefined);
++		if (!written) {
++			return undefined;
++		}
++		return isString(inspected.value) && inspected.value.length > 0 ? inspected.value : undefined;
++	}
++
++	/**
++	 * DevHub: whether `devhub` is the default on the OS `osKey` names — true
++	 * when the person chose no default there, or chose `devhub` by name.
++	 *
++	 * `osKey` is undefined in a remote window before its environment is known.
++	 * A person who has chosen no default for any OS has `devhub` either way;
++	 * otherwise the answer waits for the OS, and undefined says so.
++	 */
++	private _devhubIsDefaultFor(osKey: string | undefined): boolean | undefined {
++		if (osKey === undefined) {
++			return ['linux', 'osx', 'windows'].every(key => this._explicitDefaultProfileName(key) === undefined) ? true : undefined;
++		}
++		const chosen = this._explicitDefaultProfileName(osKey);
++		return chosen === undefined || isDevhubTerminalProfileName(chosen);
++	}
++
++	/**
++	 * DevHub: the OS key of the pty host this window's terminals run on, or
++	 * undefined while a remote window's environment is still unknown.
++	 */
++	private _currentOsKey(): string | undefined {
++		if (this._platformKey !== undefined) {
++			return this._platformKey;
++		}
++		if (this._environmentService.remoteAuthority) {
++			return undefined;
++		}
++		return isWindows ? 'windows' : (isMacintosh ? 'osx' : 'linux');
++	}
++
++	/**
++	 * DevHub: `profiles` with `devhub` first and no other profile that is it —
++	 * none named `devhub` in any case (it was called `DevHub` before, and Select
++	 * Default Profile could write a profile of that name into the person's
++	 * settings), and none that runs the launcher.
++	 */
++	private _withDevhub(profiles: ITerminalProfile[]): ITerminalProfile[] {
++		if (!this._devhubProfiles) {
++			return profiles;
++		}
++		const devhub = this._devhubIsDefaultFor(this._currentOsKey()) ? this._devhubProfiles.asDefault : this._devhubProfiles.notDefault;
++		return [devhub, ...profiles.filter(p => !isDevhubTerminalProfileName(p.profileName) && p.path !== devhubTerminalLauncher)];
++	}
++
+ 
+ 	@throttle(2000)
+ 	refreshAvailableProfiles(): void {
+@@ -161,10 +317,14 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 		if (profilesChanged || contributedProfilesChanged || automationProfileChanged) {
+ 			this._availableProfiles = profiles;
+ 			this._automationProfile = automationProfile;
+-			this._onDidChangeAvailableProfiles.fire(this._availableProfiles);
++			// DevHub: announced and registered with `devhub` in it — the list
++			// a listener rebuilds the dropdown from, and the names the
++			// `defaultProfile.*` setting offers.
++			this._devhubWasDefault = this._devhubProfiles ? this._devhubIsDefaultFor(this._currentOsKey()) === true : undefined;
++			this._onDidChangeAvailableProfiles.fire(this._withDevhub(this._availableProfiles));
+ 			this._profilesReadyBarrier!.open();
+ 			this._updateWebContextKey();
+-			await this._refreshPlatformConfig(this._availableProfiles);
++			await this._refreshPlatformConfig(this._withDevhub(this._availableProfiles));
+ 		}
+ 	}
+ 
+@@ -221,10 +381,11 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 
+ 	async getPlatformKey(): Promise<string> {
+ 		const env = await this._remoteAgentService.getEnvironment();
++		// DevHub: remembered for the synchronous answers; see `_currentOsKey`.
+ 		if (env) {
+-			return env.os === OperatingSystem.Windows ? 'windows' : (env.os === OperatingSystem.Macintosh ? 'osx' : 'linux');
++			return this._platformKey = env.os === OperatingSystem.Windows ? 'windows' : (env.os === OperatingSystem.Macintosh ? 'osx' : 'linux');
+ 		}
+-		return isWindows ? 'windows' : (isMacintosh ? 'osx' : 'linux');
++		return this._platformKey = isWindows ? 'windows' : (isMacintosh ? 'osx' : 'linux');
+ 	}
+ 
+ 	registerTerminalProfileProvider(extensionIdentifier: string, id: string, profileProvider: ITerminalProfileProvider): IDisposable {
+@@ -278,6 +439,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	}
  
  	async getContributedDefaultProfile(shellLaunchConfig: IShellLaunchConfig): Promise<IExtensionTerminalProfile | undefined> {
-+		// DevHub: see `_devhubProfile`. No extension takes this default.
-+		if (this._devhubProfile) {
++		// DevHub: see `_devhubProfiles`. No extension takes the default from
++		// `devhub`; a default the person chose by name is resolved below as
++		// upstream resolves it.
++		if (this._devhubProfiles && this._devhubIsDefaultFor(await this.getPlatformKey())) {
 +			return undefined;
 +		}
  		// prevents recursion with the MainThreadTerminalService call to create terminal
  		// and defers to the provided launch config when an executable is provided
  		if (shellLaunchConfig && !shellLaunchConfig.extHostTerminalId && !hasKey(shellLaunchConfig, { executable: true })) {
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
-index 83ac3261b33..c51f6dd335b 100644
+index 83ac3261..cc941960 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
 @@ -10,7 +10,7 @@ import { debounce, memoize } from '../../../../base/common/decorators.js';
@@ -354,23 +571,43 @@ index 83ac3261b33..c51f6dd335b 100644
  import { URI } from '../../../../base/common/uri.js';
  import { IKeyMods } from '../../../../platform/quickinput/common/quickInput.js';
  import * as nls from '../../../../nls.js';
-@@ -973,6 +973,19 @@ export class TerminalService extends Disposable implements ITerminalService {
+@@ -973,11 +973,38 @@ export class TerminalService extends Disposable implements ITerminalService {
  	}
  
  	async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {
 +		// DevHub: in a window attached to a dev container, the DevHub terminal —
-+		// the default, or picked by name — runs on this Mac, where the
-+		// Workspace's session is, and never in the container. A `file:` cwd is
-+		// what sends a terminal to the local backend (`TerminalProcessManager`),
-+		// the same way "Create New Integrated Terminal (Local)" does. Every other
-+		// profile, and every task, stays with the container.
++		// the default (`devhub`, unless the person chose another default), or
++		// `devhub` picked by name — runs on this Mac, where the Workspace's
++		// session is, and never in the container. A `file:` cwd is what sends a
++		// terminal to the local backend (`TerminalProcessManager`), the same way
++		// "Create New Integrated Terminal (Local)" does. Every other profile, a
++		// default the person chose, and every task, stays with the container.
 +		if (devhubTerminalLocal && devhubTerminalLauncher && options?.cwd === undefined) {
-+			const config = options?.config;
-+			const isDevhub = config === undefined || (hasKey(config, { path: true }) && (config as { path?: unknown }).path === devhubTerminalLauncher);
++			let config = options?.config;
++			if (config === undefined) {
++				config = this._terminalProfileService.getDefaultProfile();
++				if (config === undefined) {
++					// The person chose a default for some OS, and the
++					// container's OS is not known until its environment is.
++					await this._terminalProfileService.getPlatformKey();
++					config = this._terminalProfileService.getDefaultProfile();
++				}
++			}
++			const isDevhub = config !== undefined && hasKey(config, { path: true }) && (config as { path?: unknown }).path === devhubTerminalLauncher;
 +			if (isDevhub) {
-+				options = { ...options, config: this._terminalProfileService.getDefaultProfile(), cwd: URI.file(devhubTerminalLocal.cwd) };
++				options = { ...options, config, cwd: URI.file(devhubTerminalLocal.cwd) };
 +			}
 +		}
  		// Await the initialization of available profiles as long as this is not a pty terminal or a
  		// local terminal in a remote workspace as profile won't be used in those cases and these
  		// terminals need to be launched before remote connections are established.
+ 		const isLocalInRemoteTerminal = this._remoteAgentService.getConnection() && URI.isUri(options?.cwd) && options?.cwd.scheme === Schemas.file;
+-		if (this._terminalProfileService.availableProfiles.length === 0) {
++		// DevHub: `devhub` is always in the list, so the list is never empty.
++		// What is waited for instead is a default the person chose that has not
++		// been detected yet; `devhub` itself is never waited for.
++		const awaitsChosenDefault = !!devhubTerminalLauncher && options?.config === undefined && this._terminalProfileService.getDefaultProfile() === undefined;
++		if (this._terminalProfileService.availableProfiles.length === 0 || awaitsChosenDefault) {
+ 			const isPtyTerminal = options?.config && hasKey(options.config, { customPtyImplementation: true });
+ 			if (!isPtyTerminal && !isLocalInRemoteTerminal) {
+ 				if (this._connectionState === TerminalConnectionState.Connecting) {

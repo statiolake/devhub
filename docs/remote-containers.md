@@ -71,27 +71,32 @@ An attached window keeps a DevHub terminal, and it is the Workspace's own tmux
 session — the direction VS Code calls "Create New Integrated Terminal
 (Local)". Patch 0003 gives the window configuration one field,
 `devhubTerminalLocal { cwd, args }`: when it is set, a terminal created with
-the DevHub profile is created with a `file:` cwd on this Mac, which is what
+the `devhub` profile is created with a `file:` cwd on this Mac, which is what
 puts it on the local backend, and the launcher is this Mac's with
 `--workspace <locationKey>`. `terminal-profile` then answers with that
 Workspace's session through `Runtime.commandFromHere`: the session's own
 command for a folder on this Mac, and `ssh -tt <host> -- <command>` for one on
 a host.
 
-Only the DevHub profile moves, and the rule is one line: **the default
-terminal is the DevHub terminal; a profile a person picks runs in the
-container.** Ctrl+`, the `+` button and New Terminal create the DevHub
-terminal on the Workspace's machine; `bash`, `sh` or any other profile chosen
-from the profile list (Create New Terminal (With Profile), the `+` button's
-menu) is a terminal on the container's remote pty host, as in any Dev
-Containers window, and the list shows the container's own shells. Tasks, the
-debugger and a terminal an extension makes for itself (Code Runner's) stay
-with the container too, as a plain container shell: neither the automation
-path nor an extension's terminal ever resolves to the DevHub launcher (patch
-0007, see `remote-ssh.md`). Create New Integrated Terminal (Local) is the
-DevHub terminal as well: it asks for this Mac by a `file:` cwd and no profile,
-and on this Mac the terminal is the Workspace's tmux session, not a bare login
-shell beside it.
+Only the `devhub` profile moves, and the rule is one line: **the `devhub`
+terminal runs on the Workspace's machine; every other profile runs in the
+container.** `devhub` is the default unless the person set
+`terminal.integrated.defaultProfile.linux` themselves (see "The profile is
+`devhub`" in `remote-ssh.md`), so with nothing set Ctrl+`, the `+` button and
+New Terminal create the DevHub terminal on the Workspace's machine, and
+`devhub` picked from the list does at any time. `bash`, `sh` or any other
+profile chosen from the profile list (Create New Terminal (With Profile), the
+`+` button's menu) — or set as the default — is a terminal on the container's
+remote pty host, as in any Dev Containers window, and the list shows the
+container's own shells after `devhub`. Tasks, the debugger and a terminal an
+extension makes for itself (Code Runner's) stay with the container too, as a
+plain container shell: neither the automation path nor an extension's terminal
+ever resolves to the DevHub launcher (patch 0007, see `remote-ssh.md`). Create
+New Integrated Terminal (Local) is the DevHub terminal as well while `devhub`
+is the default: it asks for this Mac by a `file:` cwd and no profile, and on
+this Mac the terminal is the Workspace's tmux session, not a bare login shell
+beside it. With another default chosen it is upstream's, a login shell on this
+Mac.
 
 A terminal that cannot start stays open with the reason written in it until a
 key closes it (patch 0005). Upstream closes it at once and says why in a
@@ -369,8 +374,12 @@ What changed is said in one notice (`state_migrated`).
    it runs, and a definition that does not build offers Show Build Log.
 2. The window comes up with `Dev Container: <folder>` (and the definition's
    name) in the status bar; the explorer shows the bind-mounted folder.
-3. Ctrl+`: the terminal is `tmux - Local` and attached to the Workspace's own
-   session on the Workspace's machine (`tmux -L <socket> list-clients`).
+3. Ctrl+` (with no `terminal.integrated.defaultProfile.linux` set): the
+   terminal is `tmux - Local` with the tmux icon and attached to the
+   Workspace's own session on the Workspace's machine
+   (`tmux -L <socket> list-clients`); the `+` menu lists `devhub` first, as
+   the default. Set `defaultProfile.linux` to `bash`: Ctrl+` is a container
+   shell, and `devhub` from the `+` menu is still the Workspace's session.
    Create New Terminal (With Profile) → `bash`: a shell in the container, in
    the folder, for a folder that is a subfolder of a repository too.
 4. A task runs in the container: its `hostname` is the container's.
