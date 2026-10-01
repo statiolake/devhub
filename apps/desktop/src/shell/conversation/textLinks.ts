@@ -166,6 +166,49 @@ function isCandidate(path: string): boolean {
   return FILE_NAME.test(path);
 }
 
+/**
+ * The file a Markdown link's target names, when it names one rather than a
+ * page: `[a.ts](src/a.ts)`, `[a.ts](/abs/a.ts#L12)`, `[a.ts](file:///abs/a.ts)`.
+ * `undefined` for a URL with any other scheme, and for an anchor (`#usage`),
+ * which are the browser's.
+ *
+ * Unlike a word in prose, a link's target is a path because the Agent wrote it
+ * as one, so it needs no spelling to look like one: only the second gate,
+ * main's, applies, when it is followed.
+ */
+export function pathOfHref(href: string): PathCandidate | undefined {
+  let target = href.trim();
+  if (/^file:/iu.test(target)) {
+    try {
+      const url = new URL(target);
+      target = decodeURIComponent(url.pathname) + url.hash;
+    } catch {
+      return undefined;
+    }
+  } else if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(target)) {
+    return undefined;
+  } else {
+    try {
+      target = decodeURIComponent(target);
+    } catch {
+      // A stray `%` is the name's own.
+    }
+  }
+  if (target === "" || target.startsWith("#")) return undefined;
+  const colon = target.indexOf(":");
+  const hash = target.search(/#L\d/u);
+  const cut = [colon, hash]
+    .filter((at) => at >= 0)
+    .reduce((least, at) => Math.min(least, at), target.length);
+  const path = target.slice(0, cut).replace(/[?#].*$/u, "");
+  if (path === "" || path.endsWith("/")) return undefined;
+  const position = POSITION.exec(target.slice(cut));
+  return {
+    path,
+    range: position === null ? undefined : rangeOf(position.groups ?? {}),
+  };
+}
+
 /** `:12`, `:12:5`, `:12-20`: a range as the text after a path would spell it. */
 export function rangeSuffix(range: FileRange | undefined): string {
   if (range === undefined) return "";

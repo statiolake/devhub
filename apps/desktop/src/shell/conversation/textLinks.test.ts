@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkSpans } from "./textLinks";
+import { linkSpans, pathOfHref } from "./textLinks";
 
 /** Each path span as the text it covers, the path it names and where in the file. */
 function found(text: string) {
@@ -186,5 +186,34 @@ describe("linkSpans: paths", () => {
         range: { kind: "line", line: 20, column: 1 },
       },
     ]);
+  });
+});
+
+describe("pathOfHref", () => {
+  it("reads a link's target as a file and its position", () => {
+    expect(pathOfHref("src/a.ts")).toEqual({
+      path: "src/a.ts",
+      range: undefined,
+    });
+    expect(pathOfHref("/abs/a.ts:12")).toEqual({
+      path: "/abs/a.ts",
+      range: { kind: "line", line: 12, column: 1 },
+    });
+    expect(pathOfHref("a.ts#L3-L5")).toEqual({
+      path: "a.ts",
+      range: { kind: "lines", from: 3, to: 5 },
+    });
+    expect(pathOfHref("file:///abs/my%20file.ts#L2")).toEqual({
+      path: "/abs/my file.ts",
+      range: { kind: "line", line: 2, column: 1 },
+    });
+    expect(pathOfHref("README")).toEqual({ path: "README", range: undefined });
+  });
+
+  it("leaves a URL and an anchor to the browser", () => {
+    expect(pathOfHref("https://example.com/a.ts")).toBeUndefined();
+    expect(pathOfHref("mailto:a@example.com")).toBeUndefined();
+    expect(pathOfHref("#usage")).toBeUndefined();
+    expect(pathOfHref("")).toBeUndefined();
   });
 });

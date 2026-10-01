@@ -189,6 +189,28 @@ describe("every entry kind", () => {
     );
   });
 
+  it("opens a Markdown link to a file in the editor, not the browser", async () => {
+    const actions = fakeActions({
+      resolvePaths: vi.fn(
+        (_cwd: string | undefined, paths: readonly string[]) =>
+          Promise.resolve(paths.map((path) => `/work/${path}`)),
+      ),
+    });
+    draw(
+      transcriptOf([put(assistant("a1", "See [a.ts](src/a.ts#L12)."))]),
+      actions,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "a.ts" }));
+    await vi.waitFor(() =>
+      expect(actions.openFile).toHaveBeenCalledWith("/work/src/a.ts", {
+        kind: "line",
+        line: 12,
+        column: 1,
+      }),
+    );
+    expect(actions.openExternalUrl).not.toHaveBeenCalled();
+  });
+
   it("draws no fold for thinking that came with no text", () => {
     draw(
       transcriptOf([

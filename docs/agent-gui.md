@@ -806,6 +806,15 @@ relative word counts when it has a `/` in it or ends in an extension
 
 A URL is never a path, and a trailing full stop is the sentence's.
 
+**Markdown links to files.** A link the Agent writes whose target is not a
+URL — `[a.ts](src/a.ts)`, `[a.ts](/work/app/src/a.ts#L12)`,
+`[a.ts](file:///work/app/src/a.ts)` — is a file link too, with the same
+positions, and opens in the editor rather than being handed to the browser
+(which could only refuse it as an invalid URL). It is checked when it is
+clicked, and a target that names no file says so. A link with a scheme
+(`https:`, `mailto:`) still opens in the browser, and an anchor (`#usage`)
+opens nothing.
+
 **Only files that are there.** A word that could be a path is a link only
 once DevHub has checked that it is a file on the Agent's machine — this Mac,
 or the host an SSH Workspace's Agent runs on — so *and/or* or *e.g.* stays

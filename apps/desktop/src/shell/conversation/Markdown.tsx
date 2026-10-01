@@ -29,10 +29,10 @@ import ReactMarkdown, {
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
-import { useConversationActions } from "./ConversationContext";
+import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
-import { linkSpans } from "./textLinks";
+import { linkSpans, pathOfHref, rangeSuffix } from "./textLinks";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -61,7 +61,12 @@ function languageOf(code: Element): string | undefined {
   return undefined;
 }
 
-/** A link the Agent gave, opened outside DevHub, never in place of the page. */
+/**
+ * A link the Agent gave, opened outside DevHub, never in place of the page —
+ * or, when its target is a file rather than a page (`pathOfHref`), opened in
+ * the editor the way a path in the prose is. A file link that main finds no
+ * file for says so instead of handing the browser something that is not a URL.
+ */
 export function ExternalLink({
   href,
   children,
@@ -69,7 +74,34 @@ export function ExternalLink({
   readonly href: string | undefined;
   readonly children?: ReactNode;
 }) {
-  const { openExternalUrl, reportFailure } = useConversationActions();
+  const { openExternalUrl, resolvePaths, openFile, reportFailure } =
+    useConversationActions();
+  const cwd = useAgentCwd();
+  const file = href === undefined ? undefined : pathOfHref(href);
+  if (file !== undefined) {
+    return (
+      <a
+        href="#"
+        className="conversation-path-link"
+        title={`Open ${file.path}${rangeSuffix(file.range)} in the editor`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void (async () => {
+            const [found] = await resolvePaths(cwd, [file.path]);
+            if (typeof found !== "string") {
+              throw new Error(
+                `There is no file ${file.path} on the Agent's machine.`,
+              );
+            }
+            await openFile(found, file.range);
+          })().catch(reportFailure);
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   return (
     <a
       href={href}
