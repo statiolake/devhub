@@ -341,7 +341,18 @@ in `dist/reh` before packaging (`scripts/ensure_reh.py`, using the same check as
 `bundle_problems` and `pnpm dev`): Docker required, ~15 minutes each, log in
 `dist/reh-build.log`. Without Docker it fails naming the targets and
 `--without-reh`. It does nothing when `CI` is set, so the nightly's downloaded
-servers are the only ones used there.
+servers are the only ones used there. When a build fails, the servers already
+built stay in `dist/reh` and the error names only the targets still missing.
+
+The musl `node` is not fetched by VS Code's gulp task: upstream reads it out of
+the `node` Docker image with an `execSync` whose buffer is smaller than a Node
+24 binary (128 MB, `ENOBUFS`) and no `--platform`, so an arm64 Mac pulled the
+wrong image for `alpine-x64`. `scripts/build_reh.py` instead streams
+`/usr/local/bin/node` out of `node:<version>-alpine` for the target's platform
+into `vscode/.build/node/v<version>/`, checks the ELF machine and version, and
+the gulp task then finds it and downloads nothing. Every container the script
+starts passes `--platform`, so an arm64 host builds x64 targets under emulation
+and the reverse.
 
 CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
 it is a bundle that is smoke-tested and thrown away, and building four servers

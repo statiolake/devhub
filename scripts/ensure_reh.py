@@ -72,9 +72,12 @@ def ensure(
 	)
 	extra = () if directory == DEFAULT_OUT_DIR else ("--out-dir", str(directory))
 	if build(todo, LOG_PATH, extra) != 0:
+		# Servers that did get built stay in `directory`; only the rest is retried.
+		left = missing_targets(directory, commit or vscode_commit(), identity or reh_identity()) or todo
+		command = f"scripts/build_reh.py {' '.join(left)}"
 		print(
 			f"error: building the remote extension hosts failed (log: {LOG_PATH}). "
-			f"Retry with: {command}, or pass --without-reh.",
+			f"Still missing: {' '.join(left)}. Retry with: {command}, or pass --without-reh.",
 			file=sys.stderr,
 		)
 		return 1

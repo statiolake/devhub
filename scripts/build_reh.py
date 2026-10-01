@@ -502,10 +502,99 @@ def restore_remote_modules() -> None:
 	HOST_REMOTE_MODULES.rename(REMOTE_DIR / "node_modules")
 
 
+# ELF `e_machine` of the binary each target's Node must be.
+ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
+MIN_NODE_BYTES = 20 * 1024 * 1024
+
+
+def musl_node_dir(target: str, node_version: str) -> Path:
+	"""Where VS Code's `node-<platform>-<arch>` gulp task looks for the Node.
+
+	`vscode/build/gulpfile.reh.ts` keeps one directory per build under
+	`.build/node/v<version>/` and downloads only when it is absent.
+	"""
+	gulp_platform, gulp_arch = GULP_TARGETS[target]
+	return VSCODE_DIR / ".build" / "node" / f"v{node_version}" / f"{gulp_platform}-{gulp_arch}"
+
+
+def node_binary_problems(path: Path, target: str, node_version: str) -> list[str]:
+	"""Why `path` is not the Node `node_version` for `target`; empty if it is."""
+	try:
+		size = path.stat().st_size
+		if size < MIN_NODE_BYTES:
+			return [f"{path} is only {size} bytes"]
+		with path.open("rb") as handle:
+			head = handle.read(20)
+			if head[:4] != b"\x7fELF":
+				return [f"{path} is not an ELF binary"]
+			machine = int.from_bytes(head[18:20], "little")
+			wanted = ELF_MACHINES[arch_of(target)]
+			if machine != wanted:
+				return [f"{path} is for ELF machine {machine:#x}, not {wanted:#x} ({arch_of(target)})"]
+			handle.seek(0)
+			needle = f"v{node_version}".encode()
+			tail = b""
+			while chunk := handle.read(8 * 1024 * 1024):
+				if needle in tail + chunk:
+					return []
+				tail = chunk[-len(needle):]
+	except OSError as error:
+		return [str(error)]
+	return [f"{path} does not say it is Node v{node_version}"]
+
+
+def fetch_musl_node(target: str, node_version: str) -> Path:
+	"""Put the musl Node for `target` where VS Code's build will find it.
+
+	Upstream gets it by `execSync("docker run ... cat node")`, whose output
+	buffer is too small for a Node 24 binary (ENOBUFS), and without `--platform`
+	(an arm64 host pulls the wrong image for alpine-x64). nodejs.org has no
+	official musl build and no checksum for it, so there is nothing else to
+	trust. Here the container's stdout goes straight to a file, for the target's
+	platform, and the file is checked before it is put in place.
+	"""
+	directory = musl_node_dir(target, node_version)
+	existing = directory / "node"
+	if existing.is_file() and not node_binary_problems(existing, target, node_version):
+		return existing
+	shutil.rmtree(directory, ignore_errors=True)
+	partial = directory.with_name(directory.name + ".partial")
+	shutil.rmtree(partial, ignore_errors=True)
+	partial.mkdir(parents=True)
+	image = remote_modules_image(target, node_version)
+	print(f"  fetching node {node_version} for {target} from {image}")
+	with (partial / "node").open("wb") as out:
+		subprocess.run(
+			["docker", "run", "--rm", "--platform", docker_platform(target), image, "cat", "/usr/local/bin/node"],
+			stdout=out,
+			check=True,
+		)
+	problems = node_binary_problems(partial / "node", target, node_version)
+	if problems:
+		shutil.rmtree(partial, ignore_errors=True)
+		raise SystemExit(f"the node from {image} for {target} is wrong: {problems[0]}")
+	(partial / "node").chmod(0o755)
+	partial.rename(directory)
+	return directory / "node"
+
+
+def missing_targets(out_dir: Path, targets: tuple[str, ...] | list[str], commit: str, identity: str) -> list[str]:
+	"""The `targets` that have no current server in `out_dir`."""
+	return [t for t in targets if bundle_problems(out_dir, commit, identity, required=(t,))]
+
+
+def retry_command(out_dir: Path, targets: tuple[str, ...] | list[str], commit: str, identity: str) -> str:
+	"""The command that builds only what is still missing; built ones stay."""
+	todo = missing_targets(out_dir, targets, commit, identity)
+	return "scripts/build_reh.py " + " ".join(todo or targets)
+
+
 def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path:
 	"""Install, package, trim, verify and tar one target, and state it."""
 	staging = staging_dir(target)
 	elapsed = install_remote_modules(target)
+	if libc_of(target) == "musl":
+		fetch_musl_node(target, remote_node_version())
 	elapsed += gulp(gulp_task(target), commit)
 
 	if not staging.is_dir():
@@ -771,7 +860,17 @@ def main() -> int:
 	try:
 		print(f"bundled the server sources in {bundle_server_sources(commit) / 60:.0f} min")
 		for target in targets:
-			build_target(target, commit, identity, out_dir)
+			try:
+				build_target(target, commit, identity, out_dir)
+			except (subprocess.CalledProcessError, SystemExit) as error:
+				remaining = retry_command(out_dir, targets, commit, identity)
+				print(
+					f"\nerror: building {target} failed ({error}).\n"
+					f"Servers already built stay in {out_dir}. Retry only what is missing with:\n"
+					f"  {remaining}",
+					file=sys.stderr,
+				)
+				return 1
 	finally:
 		# Put the submodule's own file back. Leaving DevHub's there would be a
 		# trap for `pnpm dev`: the merged metadata carries `commit`, and a

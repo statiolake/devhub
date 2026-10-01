@@ -47,6 +47,22 @@ class EnsureTest(unittest.TestCase):
 		self.assertEqual(built[0][0], ["linux-x64", "alpine-arm64"])
 		self.assertIn("15 minutes", err)
 
+	def test_failed_build_retry_lists_only_what_is_still_missing(self):
+		problems = {"alpine-x64": ["no"], "alpine-arm64": ["no"]}
+
+		def build(targets, log, extra):
+			problems.pop("alpine-x64")  # built before the other one failed
+			return 1
+
+		err = io.StringIO()
+		with tempfile.TemporaryDirectory() as d, mock.patch.object(
+			ensure_reh, "target_problems", lambda t, *a: problems.get(t, [])
+		), redirect_stderr(err):
+			rc = ensure_reh.ensure(Path(d), env={}, commit="c", identity="i", docker=lambda: True, build=build)
+		self.assertEqual(rc, 1)
+		self.assertIn("Retry with: scripts/build_reh.py alpine-arm64,", err.getvalue())
+		self.assertNotIn("alpine-x64", err.getvalue().split("Still missing")[1])
+
 	def test_nothing_missing_no_docker_needed(self):
 		rc, built, _ = self.run_ensure({}, {}, docker=False)
 		self.assertEqual((rc, built), (0, []))

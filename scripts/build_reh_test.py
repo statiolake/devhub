@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from build_reh import (
 	BUILT_IN_COPILOT_SDK,
@@ -32,7 +33,11 @@ from build_reh import (
 	bundle_problems,
 	copilot_sdk_staging,
 	docker_platform,
+	fetch_musl_node,
 	gulp_task,
+	musl_node_dir,
+	node_binary_problems,
+	retry_command,
 	musl_runtime_script,
 	prune_stale,
 	remote_modules_image,
@@ -330,6 +335,81 @@ class StageBuiltInCopilotSdk(unittest.TestCase):
 		with self.assertRaises(SystemExit) as caught:
 			stage_builtin_copilot_sdk(self.vscode)
 		self.assertIn(str(self.installed), str(caught.exception))
+
+
+def fake_node(machine: int, version: str = "24.18.1", size: int = 21 * 1024 * 1024) -> bytes:
+	head = b"\x7fELF" + bytes(14) + machine.to_bytes(2, "little")
+	body = f"process v{version} ".encode()
+	return head + body + bytes(size - len(head) - len(body))
+
+
+class MuslNodeTest(unittest.TestCase):
+	def setUp(self) -> None:
+		self.tmp = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.tmp, True)
+
+	def write(self, data: bytes) -> Path:
+		path = self.tmp / "node"
+		path.write_bytes(data)
+		return path
+
+	def test_directory_is_the_one_gulp_checks(self) -> None:
+		# gulpfile.reh.ts: .build/node/v<version>/<platform>-<arch>, the legacy
+		# x64 musl build being platform linux, arch alpine.
+		self.assertEqual(musl_node_dir("alpine-x64", "24.18.1").parts[-2:], ("v24.18.1", "linux-alpine"))
+		self.assertEqual(musl_node_dir("alpine-arm64", "24.18.1").parts[-2:], ("v24.18.1", "alpine-arm64"))
+
+	def test_accepts_matching_binary(self) -> None:
+		self.assertEqual(node_binary_problems(self.write(fake_node(0x3E)), "alpine-x64", "24.18.1"), [])
+		self.assertEqual(node_binary_problems(self.write(fake_node(0xB7)), "alpine-arm64", "24.18.1"), [])
+
+	def test_rejects_wrong_arch_version_size_and_format(self) -> None:
+		self.assertTrue(node_binary_problems(self.write(fake_node(0xB7)), "alpine-x64", "24.18.1"))
+		self.assertTrue(node_binary_problems(self.write(fake_node(0x3E, "22.0.0")), "alpine-x64", "24.18.1"))
+		self.assertTrue(node_binary_problems(self.write(b"\x7fELF" + bytes(100)), "alpine-x64", "24.18.1"))
+		self.assertTrue(node_binary_problems(self.write(bytes(25 * 1024 * 1024)), "alpine-x64", "24.18.1"))
+		self.assertTrue(node_binary_problems(self.tmp / "missing", "alpine-x64", "24.18.1"))
+
+	def fetch(self, target: str, machine: int) -> list:
+		calls = []
+
+		def run(cmd, stdout=None, check=False):
+			calls.append(cmd)
+			stdout.write(fake_node(machine))
+
+		with mock.patch("build_reh.VSCODE_DIR", self.tmp), mock.patch("build_reh.subprocess.run", run):
+			self.path = fetch_musl_node(target, "24.18.1")
+		return calls
+
+	def test_fetch_streams_for_the_targets_platform(self) -> None:
+		for target, platform, machine in (
+			("alpine-x64", "linux/amd64", 0x3E),
+			("alpine-arm64", "linux/arm64", 0xB7),
+		):
+			calls = self.fetch(target, machine)
+			self.assertEqual(calls[0][calls[0].index("--platform") + 1], platform)
+			self.assertIn("node:24.18.1-alpine", calls[0])
+			self.assertTrue(self.path.is_file())
+			self.assertTrue(self.path.stat().st_mode & 0o100)
+			self.assertEqual(self.path.parent.name, musl_node_dir(target, "24.18.1").name)
+
+	def test_fetch_reuses_a_good_binary(self) -> None:
+		self.fetch("alpine-x64", 0x3E)
+		self.assertEqual(self.fetch("alpine-x64", 0x3E), [])
+
+	def test_fetch_refuses_wrong_arch_and_leaves_nothing(self) -> None:
+		with self.assertRaises(SystemExit):
+			self.fetch("alpine-x64", 0xB7)
+		with mock.patch("build_reh.VSCODE_DIR", self.tmp):
+			self.assertFalse(musl_node_dir("alpine-x64", "24.18.1").exists())
+
+
+class RetryCommandTest(unittest.TestCase):
+	def test_lists_only_missing_targets(self) -> None:
+		out = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, out, True)
+		with mock.patch("build_reh.bundle_problems", lambda d, c, i, required: [] if required[0] in TARGETS[:2] else ["no"]):
+			self.assertEqual(retry_command(out, TARGETS, "c", "i"), "scripts/build_reh.py alpine-x64 alpine-arm64")
 
 
 if __name__ == "__main__":
