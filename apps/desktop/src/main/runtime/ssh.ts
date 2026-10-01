@@ -60,7 +60,6 @@ import {
 	describeFailure,
 	HEAD_WATCH_POLL_MS,
 	lastLine,
-	platformName,
 	PROBE_LIMITS,
 	PROBE_TIMEOUT_MS,
 	RemoteShellRuntime,
@@ -68,14 +67,10 @@ import {
 	SCRIPT_MARKER,
 } from "./remoteShellRuntime.js";
 import {
-	isPermanent,
 	newConnectionToken,
 	permanent,
 	parseStartedServer,
-	remoteServerPaths,
-	sourceBuildRefusal,
 	startServerScript,
-	unpackServerScript,
 	type RehDelivery,
 	type RemoteServerEndpoint,
 	type RemoteServerHost,
@@ -845,20 +840,8 @@ export class SshRuntime
 	async #openRemoteServer(
 		delivery: RehDelivery,
 	): Promise<RemoteServerEndpoint> {
-		const commit = delivery.commit;
-		// Permanent for as long as this DevHub is running: a source build cannot
-		// be given a commit, so there is nothing a later attempt would find.
-		if (commit === undefined) {
-			throw permanent(new Error(sourceBuildRefusal(this.#host)));
-		}
-		const { home, platform, architecture, login } = await this.describeRemote();
-		const paths = remoteServerPaths({
-			home,
-			dataFolderName: delivery.dataFolderName,
-			applicationName: delivery.applicationName,
-			commit,
-		});
-		await this.#installServer(delivery, paths, platform, architecture);
+		const paths = await this.installRemoteServer(delivery);
+		const { login } = await this.describeRemote();
 		const started = await this.sh(startServerScript(paths), {
 			stdin: Buffer.from(newConnectionToken(), "utf8"),
 		});
@@ -889,63 +872,6 @@ export class SshRuntime
 					? undefined
 					: { SSH_AUTH_SOCK: login["SSH_AUTH_SOCK"] },
 		};
-	}
-
-	/**
-	 * The server tarball, fetched here and unpacked there — once.
-	 *
-	 * Idempotent by the question it starts with, exactly as the tmux install is:
-	 * a `bin/<commit>/bin/<serverApplicationName>` that is executable is an
-	 * install that has happened, whether this DevHub did it, an older one did,
-	 * or somebody unpacked the tarball by hand (`docs/remote-ssh.md` tells them
-	 * how, for a host with no route to the release).
-	 */
-	async #installServer(
-		delivery: RehDelivery,
-		paths: ReturnType<typeof remoteServerPaths>,
-		platform: string,
-		architecture: string,
-	): Promise<void> {
-		const present = await this.sh(`test -x ${shellQuote(paths.server)}`);
-		if (present.code === 0) return;
-		const target = `${platformName(platform)}-${architecture}`;
-		let tarball;
-		try {
-			tarball = await delivery.tarball(target);
-		} catch (failure: unknown) {
-			// The delivery knows whether what refused was the release (permanent)
-			// or this Mac's network (not), and that opinion has to survive being
-			// wrapped in a sentence that names the host.
-			const wrapped = new Error(
-				`DevHub could not get the remote extension host it installs on ` +
-					`${this.#host} (${target}): ${describeFailure(failure)}`,
-				{ cause: failure },
-			);
-			throw isPermanent(failure) ? permanent(wrapped) : wrapped;
-		}
-		const unpack = await this.sh(
-			unpackServerScript(paths, tarball.topLevelDirectory),
-			{ stdin: tarball.bytes },
-		);
-		if (unpack.code !== 0) {
-			throw new Error(
-				`DevHub could not unpack the remote extension host into ` +
-					`${paths.install} on ${this.#host}: ` +
-					`${lastLine(unpack.stderr.toString("utf8"))}`,
-			);
-		}
-		const runnable = await this.sh(`test -x ${shellQuote(paths.server)}`);
-		if (runnable.code !== 0) {
-			// Permanent: the bytes that arrived are not the ones this DevHub is
-			// built to unpack, and the next attempt unpacks the same bytes.
-			throw permanent(
-				new Error(
-					`DevHub unpacked the remote extension host into ${paths.install} on ` +
-						`${this.#host}, but ${paths.server} is not there to run — the ` +
-						`tarball that came out is not the one this DevHub expects`,
-				),
-			);
-		}
 	}
 
 	/**

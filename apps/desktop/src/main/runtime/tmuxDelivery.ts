@@ -84,9 +84,9 @@ export interface ReleaseTmuxDeliveryOptions {
 /**
  * The three names the URL template takes, substituted here and nowhere else.
  *
- * `${version}` and `${commit}` mean VS Code's version and commit in
- * `serverDownloadUrlTemplate`, so this template deliberately does not reuse
- * them: one name, one meaning, across one `product.json`.
+ * `${version}` and `${commit}` mean VS Code's version and commit in VS Code's
+ * own `serverDownloadUrlTemplate`, so this template deliberately does not
+ * reuse them: one name, one meaning, across one `product.json`.
  */
 export function tmuxDownloadUrl(
 	template: string,

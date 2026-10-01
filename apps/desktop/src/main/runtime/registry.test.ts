@@ -52,7 +52,7 @@ const NO_TMUX: TmuxDelivery = {
 
 /** A remote extension host nobody asks for, for the same reason. */
 const NO_REH: RehDelivery = {
-	commit: undefined,
+	installKey: undefined,
 	dataFolderName: ".devhub-server",
 	applicationName: "devhub-server",
 	tarball: () => Promise.reject(new Error("no tarball in this test")),

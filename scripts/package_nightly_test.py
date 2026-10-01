@@ -115,5 +115,40 @@ class DownloadedBuiltins(unittest.TestCase):
 		self.assertIn("ms-vscode.js-debug", names)
 
 
+class RemoteServers(unittest.TestCase):
+	"""The four servers go into Contents/Resources/reh, or packaging stops."""
+
+	def setUp(self) -> None:
+		from build_reh import TARGETS, tarball_name, write_statement
+		from product_metadata import reh_identity, vscode_commit
+
+		self.root = Path(tempfile.mkdtemp(prefix="package-reh-"))
+		self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+		self.reh = self.root / "reh"
+		self.reh.mkdir()
+		self.app = self.root / "DevHub.app"
+		self.targets = TARGETS
+		for target in TARGETS:
+			(self.reh / tarball_name(target)).write_bytes(target.encode())
+			write_statement(self.reh, target, vscode_commit(), reh_identity())
+
+	def test_copies_every_server_and_its_statement_into_the_bundle(self) -> None:
+		package_nightly.bundle_remote_servers(self.app, self.reh)
+		bundled = sorted(p.name for p in (self.app / "Contents" / "Resources" / "reh").iterdir())
+		self.assertEqual(
+			bundled,
+			sorted(
+				[f"devhub-reh-{t}.tar.gz" for t in self.targets]
+				+ [f"devhub-reh-{t}.json" for t in self.targets]
+			),
+		)
+
+	def test_refuses_to_package_without_one_of_them(self) -> None:
+		(self.reh / "devhub-reh-alpine-arm64.json").unlink()
+		with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+			package_nightly.bundle_remote_servers(self.app, self.reh)
+		self.assertFalse((self.app / "Contents" / "Resources" / "reh").exists())
+
+
 if __name__ == "__main__":
 	unittest.main()

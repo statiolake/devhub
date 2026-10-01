@@ -42,6 +42,11 @@ The layout inside the bundle, and why:
                                     installed by the same rename that gives the
                                     bundle its name — a source run's bundle gets
                                     it from there too
+      Resources/reh/                the four remote extension hosts, one per
+                                    Linux platform, with their statements —
+                                    built by scripts/build_reh.py, copied in
+                                    by bundle_remote_servers; DevHub copies
+                                    the one a far machine needs over to it
       Resources/app/                what Electron loads
         package.json                "main" -> devhub-main.js
         devhub-main.js              generated entry: the environment and the
@@ -108,6 +113,7 @@ hook disabled, which was the state DevHub's own patch had left it in.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
+                               [--reh-dir DIR | --without-reh]
 
 Requires an already-built tree; every missing input names the command that
 produces it. The result is unsigned beyond an ad-hoc signature, which is the
@@ -148,7 +154,14 @@ from darwin_bundle import (  # noqa: E402
 	rebrand,
 	sign,
 )
-from product_metadata import devhub_commit, devhub_version, packaged_metadata  # noqa: E402
+from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, bundle_problems  # noqa: E402
+from product_metadata import (  # noqa: E402
+	devhub_commit,
+	devhub_version,
+	packaged_metadata,
+	reh_identity,
+	vscode_commit,
+)
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
 # carries. It is about half the weight of `out/` and means nothing without the
@@ -796,6 +809,35 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 	)
 
 
+def bundle_remote_servers(app: Path, reh_dir: Path) -> None:
+	"""Put the four remote extension hosts in the app, or refuse to package.
+
+	A DevHub opens remote windows by copying one of these to the far machine;
+	a DevHub without one refuses that machine at runtime with a sentence that
+	tells its user to install a build that has it. So a missing or stale server
+	is refused *here*, where the person packaging can do something about it,
+	and the whole set is checked against the commit and identity this app
+	states (`bundle_problems`), not only the one that happened to be looked at.
+	"""
+	problems = bundle_problems(reh_dir, vscode_commit(), reh_identity())
+	if problems:
+		fail(
+			"the remote extension hosts are not ready to bundle:\n  "
+			+ "\n  ".join(problems)
+			+ "\nBuild them with scripts/build_reh.py (all four by default), or pass "
+			"--without-reh for a bundle that will open no remote window."
+		)
+	target = app / "Contents" / "Resources" / "reh"
+	shutil.rmtree(target, ignore_errors=True)
+	target.mkdir(parents=True)
+	total = 0
+	for name in REH_TARGETS:
+		for file in (f"devhub-reh-{name}.tar.gz", f"devhub-reh-{name}.json"):
+			shutil.copyfile(reh_dir / file, target / file)
+			total += (target / file).stat().st_size
+	print(f"    {', '.join(REH_TARGETS)}: {total / 1e6:.0f} MB")
+
+
 # --- entry point -----------------------------------------------------------
 
 
@@ -808,6 +850,16 @@ def main() -> int:
 		"--skip-extension-build",
 		action="store_true",
 		help="reuse an existing vscode/.build/extensions instead of rebuilding it",
+	)
+	parser.add_argument(
+		"--reh-dir",
+		default=str(REH_BUILD_DIR),
+		help="where scripts/build_reh.py left the four remote extension hosts",
+	)
+	parser.add_argument(
+		"--without-reh",
+		action="store_true",
+		help="package without them — a bundle that opens no remote window; CI's check build only",
 	)
 	args = parser.parse_args()
 
@@ -843,6 +895,12 @@ def main() -> int:
 	write_licenses(app)
 
 	assemble_app_directory(app, version, staged)
+
+	step("remote extension hosts")
+	if args.without_reh:
+		print("    none: --without-reh (this bundle opens no remote window)")
+	else:
+		bundle_remote_servers(app, Path(args.reh_dir).resolve())
 
 	step("ad-hoc signature")
 	# An Apple Silicon Mac refuses to run a modified bundle with no signature at

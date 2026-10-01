@@ -46,20 +46,25 @@ run reports the commits it is on and says nothing about uncommitted changes.
 That is what `version` and the date are for.
 
 Which remote extension host a build connects to is a third question, and it
-gets a third field: `serverCommit`, the VS Code commit, stated on every build.
-A packaged build's `commit` says the same thing, but a source run has no
-`commit` and still opens remote windows — SSH hosts and dev containers — so it
-needs another place to say which REH release (`reh-<commit>`) and which
-`~/.devhub-server/bin/<commit>` it means. The server only compares a client's
-commit with its own when the client states one, so a source run's workbench is
-accepted by the published server of the VS Code it is built from. Only DevHub's
-main process reads `serverCommit`; to VS Code it is an unknown key.
+gets two more fields, stated on every build: `serverCommit`, the VS Code
+commit, and `serverIdentity`, `reh_identity()` — a hash of that commit and
+DevHub's patches. A packaged build's `commit` says the first again, but a
+source run has no `commit` and still opens remote windows — SSH hosts and dev
+containers — so it needs another place to say it. Together they name the
+directory the server is installed under on the far machine,
+`~/.devhub-server/bin/<serverCommit>-<serverIdentity>`, and they are what
+DevHub checks the servers it carries against (scripts/build_reh.py writes the
+same two beside each one). The server only compares a client's commit with its
+own when the client states one, so a source run's workbench is accepted by a
+server built from its checkout. Only DevHub's main process reads either field;
+to VS Code they are unknown keys.
 
     scripts/product_metadata.py <destination.json>
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -171,6 +176,43 @@ def vscode_commit() -> str:
 	return head_of(REPO_ROOT / "vscode")
 
 
+# What else, beyond the VS Code commit and DevHub's patches, decides what is
+# in a remote extension host DevHub builds. Bump it when a change to
+# scripts/build_reh.py changes the server it produces — what it deletes, the
+# image it installs native modules in — so far machines install the new one
+# instead of keeping the server they have. A change that does not alter the
+# output (a comment, a log line) leaves it alone, and so leaves every
+# machine's server where it is.
+REH_REVISION = 1
+
+PATCHES_DIR = REPO_ROOT / "patches" / "vscode"
+
+
+def reh_identity(
+	commit: str | None = None, patches_dir: Path = PATCHES_DIR, revision: int = REH_REVISION
+) -> str:
+	"""Which build of the remote extension host this checkout makes.
+
+	Twelve hex characters of a hash over the VS Code commit, every patch in
+	`patches/vscode/` (name and bytes) and `REH_REVISION`. The far machine
+	keeps its server under `bin/<commit>-<identity>`, and both the app
+	(`serverIdentity`) and every server built for it (its statement) say this
+	value — so DevHub can tell a server built from its own patches from one
+	built before they moved, which the commit alone could not: a patch to the
+	server does not move the submodule. It is computed from the inputs rather
+	than from the built tarballs so that rebuilding the same inputs — every
+	nightly — names the same directory, and machines are not handed a fresh
+	copy of an identical server every day.
+	"""
+	digest = hashlib.sha256()
+	digest.update(f"revision {revision}\n".encode())
+	digest.update(f"commit {commit or vscode_commit()}\n".encode())
+	for patch in sorted(patches_dir.glob("*.patch")):
+		digest.update(f"patch {patch.name}\n".encode())
+		digest.update(patch.read_bytes())
+	return digest.hexdigest()[:12]
+
+
 def head_of(tree: Path) -> str:
 	return subprocess.run(
 		["git", "-C", str(tree), "rev-parse", "HEAD"],
@@ -213,6 +255,7 @@ def product_metadata() -> dict[str, object]:
 		# The remote extension host this build installs and connects to — see
 		# the module docstring. On a source run too, which is the point.
 		"serverCommit": vscode_commit(),
+		"serverIdentity": reh_identity(),
 		# About shows this beside the commit. Without it the line reads
 		# "Date: Unknown" next to a hash that could be any age.
 		"date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

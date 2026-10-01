@@ -13,14 +13,19 @@ app to say why. It happened, which is why these tests exist.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 from product_metadata import (
 	EXTENSION_ENABLED_API_PROPOSALS,
+	PATCHES_DIR,
 	devhub_commit,
 	packaged_metadata,
 	product_metadata,
 	proposal_declaration_file,
+	reh_identity,
 	vscode_commit,
 )
 
@@ -38,6 +43,42 @@ class SourceRunMetadata(unittest.TestCase):
 		# Without it a source run has no REH to install in a dev container or
 		# on an SSH host, and every remote window it opens never connects.
 		self.assertEqual(product_metadata()["serverCommit"], vscode_commit())
+
+
+class ServerIdentity(unittest.TestCase):
+	"""The second half of the directory a far machine keeps its server under."""
+
+	def setUp(self) -> None:
+		self.patches = Path(tempfile.mkdtemp(prefix="patches-"))
+		self.addCleanup(lambda: shutil.rmtree(self.patches, ignore_errors=True))
+		for patch in sorted(PATCHES_DIR.glob("*.patch"))[:2]:
+			shutil.copyfile(patch, self.patches / patch.name)
+
+	def identity(self, **overrides: object) -> str:
+		arguments: dict = {"commit": "0" * 40, "patches_dir": self.patches, "revision": 1}
+		arguments.update(overrides)
+		return reh_identity(**arguments)
+
+	def test_is_stated_by_a_source_run_and_a_packaged_build_alike(self) -> None:
+		self.assertEqual(product_metadata()["serverIdentity"], reh_identity())
+		self.assertEqual(packaged_metadata()["serverIdentity"], reh_identity())
+
+	def test_is_twelve_hex_characters(self) -> None:
+		self.assertRegex(self.identity(), r"^[0-9a-f]{12}$")
+
+	def test_moves_when_a_patch_does_and_not_otherwise(self) -> None:
+		# The failure this exists for: a patch changed the server, the commit
+		# did not move, and every machine kept the server it already had.
+		before = self.identity()
+		self.assertEqual(self.identity(), before)
+		patch = next(self.patches.glob("*.patch"))
+		patch.write_bytes(patch.read_bytes() + b"# changed\n")
+		self.assertNotEqual(self.identity(), before)
+
+	def test_moves_with_the_commit_and_the_revision(self) -> None:
+		before = self.identity()
+		self.assertNotEqual(self.identity(commit="1" * 40), before)
+		self.assertNotEqual(self.identity(revision=2), before)
 
 
 class PackagedMetadata(unittest.TestCase):

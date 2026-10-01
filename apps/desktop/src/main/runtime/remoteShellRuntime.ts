@@ -62,7 +62,21 @@ import {
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { openByteStream, type StreamLaunch } from "./byteStream.js";
-import { permanent } from "./remoteServer.js";
+import {
+	isPermanent,
+	LIBC_PROBE,
+	parseLibc,
+	permanent,
+	rehTargetFor,
+	remoteServerPaths,
+	serverInstalledScript,
+	sourceBuildRefusal,
+	unpackServerScript,
+	unsupportedServerPlatform,
+	type Libc,
+	type RehDelivery,
+	type RemoteServerPaths,
+} from "./remoteServer.js";
 import { shellQuote } from "./quote.js";
 import {
 	NO_USER_TMUX_CONFIG,
@@ -110,6 +124,15 @@ export const PROBE_LIMITS: ExecLimits = {
 
 /** How long a filesystem probe may go without an answer. */
 export const PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * How long the remote extension host's install may take: a hundred
+ * megabytes on the stdin of a `tar`, which over an SSH connection to a far
+ * machine is minutes, not the seconds a probe gets. Ten of them is a link of
+ * under 200 kB/s — slower than that, the person has a bigger problem than
+ * this install, and an install that never ends is not a better answer.
+ */
+export const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * How much of a login environment DevHub will read.
@@ -763,6 +786,98 @@ export abstract class RemoteShellRuntime {
 	}
 
 	/**
+	 * The remote extension host this DevHub carries, installed here — and
+	 * where.
+	 *
+	 * One install for every kind of machine, an SSH host's and a dev
+	 * container's alike, because every step of it is a question asked over
+	 * `sh` and a stream on its stdin, which is what both of them have:
+	 *
+	 * 1. Is the server for this DevHub's key already here and finished? Then
+	 *    nothing is read and nothing is sent. The key names DevHub's patches as
+	 *    well as its VS Code (`rehInstallKey`), so "already here" cannot be a
+	 *    server some other DevHub built from other patches.
+	 * 2. Which server does this machine need — Linux, its architecture, and its
+	 *    C library (`LIBC_PROBE`). A machine DevHub carries no server for is
+	 *    refused here, by name, before a hundred megabytes go anywhere.
+	 * 3. The tarball, out of this DevHub's own bundle, checked against the
+	 *    hash its statement gives.
+	 * 4. Unpacked over there from stdin, its `node` run once on that machine,
+	 *    and only then moved into place (`unpackServerScript`).
+	 *
+	 * The far machine never reaches the network. That is the point: it may
+	 * have no route out at all, and DevHub already reaches it.
+	 */
+	protected async installRemoteServer(
+		delivery: RehDelivery,
+	): Promise<RemoteServerPaths> {
+		const key = delivery.installKey;
+		// Permanent for as long as this DevHub is running: a build that states no
+		// key cannot be given one, so there is nothing a later attempt would find.
+		if (key === undefined) {
+			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
+		}
+		const { home, platform, architecture } = await this.describeRemote();
+		const paths = remoteServerPaths({
+			home,
+			dataFolderName: delivery.dataFolderName,
+			applicationName: delivery.applicationName,
+			key,
+		});
+		const present = await this.sh(serverInstalledScript(paths));
+		if (present.code === 0) return paths;
+		const machine = {
+			system: platform,
+			architecture,
+			libc: platform === "Linux" ? await this.#libc() : undefined,
+		};
+		const target = rehTargetFor(machine);
+		if (target === undefined) {
+			throw permanent(
+				new Error(unsupportedServerPlatform(this.machineName, machine)),
+			);
+		}
+		let tarball;
+		try {
+			tarball = await delivery.tarball(target);
+		} catch (failure: unknown) {
+			// The delivery knows whether what refused is going to go on refusing
+			// (a server this DevHub does not carry: permanent), and that opinion
+			// has to survive being wrapped in a sentence that names the machine.
+			const wrapped = new Error(
+				`DevHub could not install the remote extension host on ` +
+					`${this.machineName} (${target}): ${describeFailure(failure)}`,
+				{ cause: failure },
+			);
+			throw isPermanent(failure) ? permanent(wrapped) : wrapped;
+		}
+		const unpack = await this.sh(
+			unpackServerScript(paths, tarball.topLevelDirectory, tarball.sha256),
+			{ stdin: tarball.bytes, timeoutMs: INSTALL_TIMEOUT_MS },
+		);
+		if (unpack.code !== 0) {
+			throw new Error(
+				`DevHub could not install the remote extension host (${target}) into ` +
+					`${paths.install} on ${this.machineName}: ` +
+					`${lastLine(unpack.stderr.toString("utf8"))}`,
+			);
+		}
+		return paths;
+	}
+
+	/** Which C library this (Linux) machine runs against, asked once. */
+	#libcAnswer: Promise<Libc> | undefined;
+	#libc(): Promise<Libc> {
+		const pending = (this.#libcAnswer ??= this.sh(LIBC_PROBE).then((result) =>
+			parseLibc(result.stdout.toString("utf8")),
+		));
+		pending.catch(() => {
+			if (this.#libcAnswer === pending) this.#libcAnswer = undefined;
+		});
+		return pending;
+	}
+
+	/**
 	 * DevHub's tmux config, carried across on every connection.
 	 *
 	 * The file lives on this Mac — it is beside `settings.toml`, where a person
@@ -1039,8 +1154,8 @@ export abstract class RemoteShellRuntime {
 	 * rather than two implementations that agree for now.
 	 *
 	 * The Node that runs it is the REH's own (`~/<serverDataFolderName>/bin/
-	 * <commit>/node`). It is the one Node a machine with a workbench on it is
-	 * certain to have, it is the same commit the client states, and it needs no
+	 * <key>/node`). It is the one Node a machine with a workbench on it is
+	 * certain to have, it is the same server the client connects to, and it needs no
 	 * probing — a `command -v node` would find whatever a login shell happened
 	 * to have on its PATH, which is a different Node on every machine and none at
 	 * all on some.
@@ -1061,15 +1176,15 @@ export abstract class RemoteShellRuntime {
 	async #installLauncher(
 		spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
-		if (spec.serverCommit === undefined) {
+		if (spec.serverInstallKey === undefined) {
 			throw new Error(
-				`this DevHub states no commit for the remote extension host — neither a packaged build's commit nor the serverCommit apps/desktop/scripts/dev.sh writes for a source run — so there is no ${spec.serverDataFolderName} directory on ${this.machineName} it can name, which is the same reason it can open no workbench there`,
+				`this DevHub states no commit or no server identity for the remote extension host — a packaged build's product.json states both, and apps/desktop/scripts/dev.sh writes both for a source run — so there is no ${spec.serverDataFolderName} directory on ${this.machineName} it can name, which is the same reason it can open no workbench there`,
 			);
 		}
 		const paths = remoteTerminalPaths({
 			home: await this.home(),
 			serverDataFolderName: spec.serverDataFolderName,
-			serverCommit: spec.serverCommit,
+			serverInstallKey: spec.serverInstallKey,
 			controlSocketPath: spec.controlSocketPath,
 			entryName: spec.entryName,
 			cliEntryName: spec.cliEntryName,
@@ -1143,11 +1258,13 @@ export abstract class RemoteShellRuntime {
 		extra: {
 			stdin?: Uint8Array;
 			stdoutBytes?: number;
+			/** For the one script that carries a payload: see `INSTALL_TIMEOUT_MS`. */
+			timeoutMs?: number;
 		} = {},
 	): Promise<ExecResult> {
 		return this.run({
 			argv: ["/bin/sh", "-c", script],
-			deadline: OperationDeadline.in(PROBE_TIMEOUT_MS),
+			deadline: OperationDeadline.in(extra.timeoutMs ?? PROBE_TIMEOUT_MS),
 			cancel: new CancellationToken(),
 			limits:
 				extra.stdoutBytes === undefined

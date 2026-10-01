@@ -63,7 +63,6 @@ import { shellQuote } from "./quote.js";
 import {
 	describeFailure,
 	lastLine,
-	platformName,
 	PROBE_LIMITS,
 	PROBE_TIMEOUT_MS,
 	RemoteShellRuntime,
@@ -73,14 +72,11 @@ import {
 import {
 	newConnectionToken,
 	parseStartedServer,
-	permanent,
-	remoteServerPaths,
-	sourceBuildRefusal,
 	startServerScript,
-	unpackServerScript,
 	type RehDelivery,
 	type RemoteServerEndpoint,
 	type RemoteServerHost,
+	type RemoteServerPaths,
 } from "./remoteServer.js";
 import {
 	containerHostId,
@@ -1245,7 +1241,7 @@ export class ContainerHost
 		// command is installed before any window has resolved — before the
 		// server has been started once — so the order is stated here rather
 		// than left to whichever came first.
-		const install = await this.#ensureServerInstalled();
+		const { install } = await this.#ensureServerInstalled();
 		const relay = relayPath(await this.home());
 		await this.writeTextFile(relay, RELAY_SOURCE, 0o600);
 		return { node: posix.join(install, "node"), relay };
@@ -1261,8 +1257,8 @@ export class ContainerHost
 	 * step that either of them may be the first to take, rather than an
 	 * ordering between two callers that nothing enforces.
 	 */
-	async #ensureServerInstalled(): Promise<string> {
-		const held = this.#serverInstall;
+	async #ensureServerInstalled(): Promise<RemoteServerPaths> {
+		const held = this.#serverPaths;
 		if (held !== undefined) return held;
 		const delivery = this.#rehDelivery;
 		if (delivery === undefined) {
@@ -1272,22 +1268,14 @@ export class ContainerHost
 					`about that container`,
 			);
 		}
-		const commit = delivery.commit;
-		if (commit === undefined) {
-			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
-		}
-		const { home, platform, architecture } = await this.describeRemote();
-		const paths = remoteServerPaths({
-			home,
-			dataFolderName: delivery.dataFolderName,
-			applicationName: delivery.applicationName,
-			commit,
-		});
-		await this.#installServer(delivery, paths, platform, architecture);
+		const paths = await this.installRemoteServer(delivery);
+		this.#serverPaths = paths;
 		this.#serverInstall = paths.install;
-		return paths.install;
+		return paths;
 	}
 
+	/** The server's paths in the container, once it has been installed. */
+	#serverPaths: RemoteServerPaths | undefined;
 	/** Where the server was installed, once it has been. */
 	#serverInstall: string | undefined;
 	/** Where DevHub's `devhub` command is in the container, once installed. */
@@ -1322,7 +1310,12 @@ export class ContainerHost
 	 * again on every reconnect, and a lid closed and reopened must not restart
 	 * the extension host and every language server with it.
 	 */
-	async remoteServer(delivery: RehDelivery): Promise<RemoteServerEndpoint> {
+	async remoteServer(
+		// The same delivery this runtime was built with, which is the one
+		// `#ensureServerInstalled` installs from — the terminal launcher needs
+		// the server before any window has resolved.
+		_delivery: RehDelivery,
+	): Promise<RemoteServerEndpoint> {
 		const held = this.#server;
 		if (held !== undefined) {
 			const endpoint = await held.catch(() => undefined);
@@ -1338,7 +1331,7 @@ export class ContainerHost
 			this.#closeBridge();
 			this.#server = undefined;
 		}
-		const pending = this.#openRemoteServer(delivery);
+		const pending = this.#openRemoteServer();
 		pending.catch(() => {
 			if (this.#server === pending) this.#server = undefined;
 		});
@@ -1389,7 +1382,7 @@ export class ContainerHost
 	 * puts the start script back on its "there is nothing here" path.
 	 */
 	async #clearDeadServer(
-		paths: ReturnType<typeof remoteServerPaths>,
+		paths: RemoteServerPaths,
 		node: string,
 	): Promise<void> {
 		const present = await this.sh(`test -S ${shellQuote(paths.socket)}`);
@@ -1400,22 +1393,10 @@ export class ContainerHost
 		);
 	}
 
-	async #openRemoteServer(
-		delivery: RehDelivery,
-	): Promise<RemoteServerEndpoint> {
-		const commit = delivery.commit;
-		if (commit === undefined) {
-			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
-		}
+	async #openRemoteServer(): Promise<RemoteServerEndpoint> {
 		const container = await this.#currentContainer();
 		const { home } = await this.describeRemote();
-		const paths = remoteServerPaths({
-			home,
-			dataFolderName: delivery.dataFolderName,
-			applicationName: delivery.applicationName,
-			commit,
-		});
-		await this.#ensureServerInstalled();
+		const paths = await this.#ensureServerInstalled();
 		await this.#clearDeadServer(paths, posix.join(paths.install, "node"));
 		const started = await this.sh(
 			startServerScript(paths, this.#binDirectory),
@@ -1451,29 +1432,6 @@ export class ContainerHost
 			// is not there — a failure that reads as "the agent is broken".
 			extensionHostEnv: undefined,
 		};
-	}
-
-	/** The tarball, fetched here and unpacked there — once. */
-	async #installServer(
-		delivery: RehDelivery,
-		paths: ReturnType<typeof remoteServerPaths>,
-		platform: string,
-		architecture: string,
-	): Promise<void> {
-		const present = await this.sh(`test -x ${shellQuote(paths.server)}`);
-		if (present.code === 0) return;
-		const target = `${platformName(platform)}-${architecture}`;
-		const tarball = await delivery.tarball(target);
-		const unpacked = await this.sh(
-			unpackServerScript(paths, tarball.topLevelDirectory),
-			{ stdin: tarball.bytes },
-		);
-		if (unpacked.code !== 0) {
-			throw new Error(
-				`DevHub could not unpack the remote extension host in ` +
-					`${this.machineName}: ${lastLine(unpacked.stderr.toString("utf8"))}`,
-			);
-		}
 	}
 
 	/**

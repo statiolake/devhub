@@ -18,11 +18,13 @@
 # Developer identity in the repository's secrets; until there is one, the
 # release notes tell people how to clear the quarantine flag themselves.
 #
-# The other half of a DevHub is the remote extension host — the server SSH
-# development downloads onto the machine you are working on. It is published by
-# a separate set of jobs here, on a separate release, because it answers to a
-# different question: the app is rebuilt when *DevHub* moves, and the server is
-# rebuilt when the *VS Code submodule* moves, which is roughly monthly. See
+# The other half of a DevHub is the remote extension host — the server DevHub
+# copies onto an SSH host or into a dev container to open a remote window
+# there. The app carries four of them inside itself (Contents/Resources/reh:
+# glibc and musl Linux, x64 and arm64), built here, every time the app is, from
+# the same patched VS Code: two `reh` legs, one per architecture, hand their
+# tarballs to the macOS job, which bundles them. Nothing is published for them
+# on their own — no far machine and no DevHub downloads a server any more. See
 # docs/remote-ssh.md and scripts/build_reh.py.
 #
 # A third set of jobs publishes a statically linked tmux, on the same shape and
@@ -41,14 +43,6 @@ on:
           though their release already exists. What this is for: a change to
           scripts/build_tmux.py that does not move the tmux version — a
           terminfo entry added, a configure flag corrected.
-        type: boolean
-        default: false
-      force_reh:
-        description: >-
-          Rebuild and replace the remote extension host for the current VS Code
-          commit, even though its release already exists. What this is for: a
-          change to patches/vscode that touches server code, which does not
-          move the submodule and so does not change the URL remotes fetch.
         type: boolean
         default: false
   schedule:
@@ -98,7 +92,9 @@ jobs:
 
   package:
     name: DevHub.app (darwin-arm64)
-    needs: decide
+    # The servers first: the app is not packaged without all four, and
+    # package-nightly.py refuses a bundle that would refuse a far machine.
+    needs: [decide, reh]
     if: needs.decide.outputs.needed == 'true'
     runs-on: macos-15
     timeout-minutes: 120
@@ -167,6 +163,15 @@ jobs:
           # rate limit (403). The token is only there for that limit.
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
+
+      # Where scripts/package-nightly.py looks for them by default, which is
+      # also where scripts/build_reh.py writes on a developer's machine.
+      - name: Collect the remote extension hosts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: reh-*
+          merge-multiple: true
+          path: dist/reh
 
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats
@@ -250,75 +255,42 @@ jobs:
             dist/*.zip
 
   # ---------------------------------------------------------------------------
-  # The remote extension host: the server half of SSH development.
+  # The remote extension hosts the app carries.
   #
-  # Three jobs rather than one because the answer to "is a new one needed?" is
-  # cheap and the build is not, and because the two architectures cannot be
-  # built on one machine. `vscode/remote/node_modules` holds native addons —
-  # node-pty, @parcel/watcher, kerberos, @vscode/spdlog — and the package task
-  # copies them into the tarball as npm installed them, for the machine doing
-  # the installing. So an arm64 server is built on an arm64 runner and an x64
-  # one on an x64 runner, and there is no cross-building to get subtly wrong.
-  # Both Linux runners are free on a public repository.
+  # Two legs, one per architecture, each building the glibc and the musl server
+  # of its own architecture: the native addons in `vscode/remote/node_modules`
+  # are compiled for the target (scripts/build_reh.py installs them in a
+  # `node:<version>-bullseye` or `-alpine` container of the runner's own
+  # architecture), and the musl Node comes out of `node:<version>-alpine` the
+  # same way, so a runner of the target's architecture runs all of it natively
+  # rather than under emulation. Each server is then started once, offline, in
+  # a plain container of its platform before it is handed on. Both Linux
+  # runners are free on a public repository.
+  #
+  # Built on every night the app is, not only when the submodule moves: the
+  # servers are DevHub's patches as much as VS Code's, and the app refuses to
+  # carry servers built from other patches than its own.
   # ---------------------------------------------------------------------------
 
-  reh-decide:
-    name: Is there a new server to build?
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      needed: ${{ steps.decision.outputs.needed }}
-      tag: ${{ steps.decision.outputs.tag }}
-    steps:
-      # The submodule pointer is all this needs, and `git submodule status`
-      # reads it out of the parent tree without checking anything out.
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Decide
-        id: decision
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force_reh }}
-        run: |
-          set -euo pipefail
-          vscode_sha="$(git submodule status -- vscode | awk '{print $1}' | tr -d '+-')"
-          tag="reh-${vscode_sha}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-          # The server is a function of the VS Code commit, and its download URL
-          # names that commit — so a release that exists is a release every
-          # DevHub built from this submodule is already pointing at, and
-          # rebuilding it would replace working downloads with identical ones.
-          if [ "$FORCE" = "true" ]; then
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "asked to rebuild $tag"
-          elif gh release view "$tag" >/dev/null 2>&1; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "$tag is already published"
-          else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "no $tag yet"
-          fi
-
   reh:
-    name: Server (${{ matrix.target }})
-    needs: reh-decide
-    if: needs.reh-decide.outputs.needed == 'true'
+    name: Servers (${{ matrix.arch }})
+    needs: decide
+    if: needs.decide.outputs.needed == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
       # One failing architecture must not cancel the other: knowing that only
-      # arm64 is broken is the whole of the diagnosis.
+      # arm64 is broken is the whole of the diagnosis. The app is not packaged
+      # either way — it needs all four.
       fail-fast: false
       matrix:
         include:
-          - target: linux-x64
+          - arch: x64
             runner: ubuntu-latest
-          - target: linux-arm64
+            targets: linux-x64 alpine-x64
+          - arch: arm64
             runner: ubuntu-24.04-arm
+            targets: linux-arm64 alpine-arm64
     env:
       CI: "true"
     steps:
@@ -394,85 +366,32 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
 
-      - name: Build the server tarball
-        run: scripts/build_reh.py ${{ matrix.target }} --skip-provision --out-dir dist
+      - name: Build the servers
+        env:
+          # Read by the containers that install the native addons, for the
+          # ones whose install fetches a release asset; only for the rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/build_reh.py ${{ matrix.targets }} --skip-provision --out-dir dist/reh
 
-      # Not published here: the release is created once, by the job below, out
-      # of whichever architectures got this far. A missing `<os>-<arch>` asset
-      # is a 404 for the people on that architecture — which the extension
-      # reports by name, see docs/remote-ssh.md — but withholding the ones that
-      # did build makes it a 404 for everyone, and leaves a red run whose only
-      # fix is to rebuild both.
-      - name: Hand the tarball to the publishing job
+      # To the macOS job, which bundles them; nothing is published on its own.
+      - name: Hand the servers to the packaging job
         uses: actions/upload-artifact@v4
         with:
-          name: reh-${{ matrix.target }}
-          path: dist/*.tar.gz
+          name: reh-${{ matrix.arch }}
+          path: |
+            dist/reh/*.tar.gz
+            dist/reh/*.json
           retention-days: 1
           if-no-files-found: error
-
-  # `always()` so one architecture failing does not withhold the other. The
-  # failed leg stays red in the run — nothing here reports success on its
-  # behalf — and the release carries the assets that exist. `needed` is still
-  # the gate: nothing is published on a night the deciding job said there was
-  # no new server, and nothing is published if that job itself did not answer.
-  reh-publish:
-    name: Publish the server release
-    needs: [reh-decide, reh]
-    if: >-
-      always()
-      && needs.reh-decide.result == 'success'
-      && needs.reh-decide.outputs.needed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Collect the tarballs
-        uses: actions/download-artifact@v4
-        with:
-          pattern: reh-*
-          merge-multiple: true
-          path: dist
-
-      # Not the rolling `nightly` tag. That one is deleted and recreated every
-      # night; this one is named after the VS Code commit and never moves, so
-      # an app built months ago goes on finding the server it was told to fetch.
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # This job never checks the repository out — it only moves two files
-          # from the artifact store to a release — so `gh` has no working tree
-          # to infer the repository from and has to be told.
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.reh-decide.outputs.tag }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          tarballs=(dist/*.tar.gz)
-          if [ ${#tarballs[@]} -eq 0 ]; then
-            echo "every Server leg failed: there is nothing to publish for $TAG." >&2
-            echo "Read the red legs above; the release is left as it was." >&2
-            exit 1
-          fi
-          ls -l dist
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.tar.gz --clobber
-          else
-            gh release create "$TAG" \
-              --prerelease \
-              --target "$GITHUB_SHA" \
-              --title "Remote extension host $TAG" \
-              --notes "The server half of DevHub's SSH remote development, built from the VS Code commit this tag is named after. DevHub downloads it onto a remote machine by itself; see docs/remote-ssh.md for the URL it uses and for installing one by hand." \
-              dist/*.tar.gz
-          fi
 
   # ---------------------------------------------------------------------------
   # tmux: the terminal multiplexer every terminal and every Agent runs inside,
   # on whichever machine the Workspace lives on.
   #
-  # Shaped like the REH jobs above and for the same two reasons — the answer to
-  # "is one needed?" is cheap and the build is not, and the two architectures
-  # are built on runners of their own architecture rather than cross-built. It
-  # is otherwise independent of them: this is a function of the tmux version
+  # Built on runners of their own architecture rather than cross-built, like the
+  # servers above, and gated on whether its release exists, because the answer
+  # to "is one needed?" is cheap and the build is not. It is otherwise
+  # independent of the servers: this is a function of the tmux version
   # pinned in scripts/build_tmux.py and of nothing in the VS Code submodule, so
   # the release is named after that version and is built once, ever, per bump.
   #
@@ -529,7 +448,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
-      # As for the server: one failing architecture must not cancel the other.
+      # As for the servers: one failing architecture must not cancel the other.
       fail-fast: false
       matrix:
         include:
@@ -559,9 +478,9 @@ jobs:
       - name: Build the tmux tarball
         run: scripts/build_tmux.py ${{ matrix.target }} --out-dir dist
 
-      # Not published here, as the server tarballs are not: the release is
-      # created once, by the job below, out of whichever architectures got this
-      # far. A missing one is a 404 for that architecture alone.
+      # Not published here: the release is created once, by the job below, out
+      # of whichever architectures got this far. A missing one is a 404 for that
+      # architecture alone.
       - name: Hand the tarball to the publishing job
         uses: actions/upload-artifact@v4
         with:
@@ -570,7 +489,11 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Same rule as `reh-publish` above, and for the same reason.
+  # `always()` so one architecture failing does not withhold the other. The
+  # failed leg stays red in the run — nothing here reports success on its
+  # behalf — and the release carries the assets that exist. `needed` is still
+  # the gate: nothing is published on a night the deciding job said there was
+  # no new tmux, and nothing is published if that job itself did not answer.
   tmux-publish:
     name: Publish the tmux release
     needs: [tmux-decide, tmux]

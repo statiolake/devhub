@@ -25,36 +25,36 @@ import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.j
  * `product.json` is one file and VS Code's type for it names only VS Code's
  * fields, so the fields `apps/desktop/product-overrides.json` adds are read
  * through this rather than by widening a type that is not DevHub's to widen.
- *
- * `serverDownloadUrlTemplate` is in here for a different reason than the tmux
- * three: VS Code *has* the field, its type simply does not name it, because
- * upstream's own builds read it only inside the server bundle. DevHub reads it
- * on the client now — it is the client that fetches the tarball — so it is
- * named here rather than left as a cast at the one call site.
  */
 const devhubProduct = vscodeProduct as unknown as {
 	readonly tmuxVersion?: string;
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
-	readonly serverDownloadUrlTemplate?: string;
 	/**
 	 * The VS Code commit whose remote extension host this build connects to,
 	 * stated by a source run as well — see `rehCommit`.
 	 */
 	readonly serverCommit?: string;
+	/**
+	 * Which build of that server this DevHub carries: a hash of the commit and
+	 * DevHub's patches — see `rehInstallKey`.
+	 */
+	readonly serverIdentity?: string;
 	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
 	readonly dockerPath?: string;
 	readonly devcontainerPath?: string;
 };
 /**
- * The commit naming the remote extension host every remote window — an SSH
- * host's, a dev container's — installs and connects to: `commit` on a
- * packaged build, `serverCommit` on a source run, which has no `commit`.
+ * The VS Code commit the remote extension host every remote window — an SSH
+ * host's, a dev container's — installs is built from: `commit` on a packaged
+ * build, `serverCommit` on a source run, which has no `commit`.
  */
 const REH_COMMIT = rehCommit({
 	commit: vscodeProduct.commit,
 	serverCommit: devhubProduct.serverCommit,
 });
+/** And the directory it is installed under over there, `<commit>-<identity>`. */
+const REH_INSTALL_KEY = rehInstallKey(REH_COMMIT, devhubProduct.serverIdentity);
 import { activityCounters } from "../diagnostics/counters.js";
 import {
 	metricsReport,
@@ -345,7 +345,11 @@ import {
 	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
-import { ReleaseRehDelivery, rehCommit } from "../runtime/remoteServer.js";
+import {
+	BundledRehDelivery,
+	rehCommit,
+	rehInstallKey,
+} from "../runtime/remoteServer.js";
 import {
 	ReleaseTmuxDelivery,
 	tmuxInstallDirectory,
@@ -457,6 +461,20 @@ const APP_ROOT = join(
 	"..",
 	"..",
 );
+
+/**
+ * Where the remote extension host tarballs are.
+ *
+ * `commit` is the packaged-build switch (see scripts/product_metadata.py), so
+ * it is what decides between the two layouts: `APP_ROOT` is
+ * `Contents/Resources/app` in a packaged app, and `apps/desktop` in a
+ * checkout.
+ */
+function rehBundleDirectory(): string {
+	return vscodeProduct.commit !== undefined
+		? join(APP_ROOT, "..", "reh")
+		: join(APP_ROOT, "..", "..", "dist", "reh");
+}
 
 /**
  * What a thrown thing said, for a detail line.
@@ -4302,7 +4320,7 @@ export class AppController {
 			cliEntryName: CLI_ENTRY_BUNDLE,
 			serverDataFolderName:
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-			serverCommit: REH_COMMIT,
+			serverInstallKey: REH_INSTALL_KEY,
 		});
 	}
 
@@ -7127,8 +7145,7 @@ export async function createAppController(
 		userDataDirectory: userDataPath,
 		home: homedir(),
 		// Where the tmux DevHub puts on a host comes from. Stated in
-		// `product-overrides.json` beside `serverDownloadUrlTemplate`, because
-		// the release the app installs from is a fact about the build and not a
+		// `product-overrides.json`, because the release the app installs from is a fact about the build and not a
 		// thing a person configures — and read here for the same reason the
 		// profile is passed in at all.
 		tmux: new ReleaseTmuxDelivery({
@@ -7140,17 +7157,17 @@ export async function createAppController(
 			sha256: devhubProduct.tmuxDownloadSha256 ?? {},
 			cacheDirectory: join(userDataPath, "tmux"),
 		}),
-		// And where the remote extension host comes from. The same three
-		// product facts the connection used to hand a vendored extension —
-		// the URL template, the application name and the data folder — read
-		// once, here, now that DevHub is the thing that installs it.
-		reh: new ReleaseRehDelivery({
+		// And the remote extension hosts this DevHub carries. Out of the app
+		// itself and never off the network: a packaged app has them in
+		// `Contents/Resources/reh` (scripts/package-nightly.py), a source run
+		// in the checkout's `dist/reh`, where scripts/build_reh.py writes.
+		reh: new BundledRehDelivery({
+			directory: rehBundleDirectory(),
 			commit: REH_COMMIT,
-			version: vscodeProduct.version,
+			identity: devhubProduct.serverIdentity,
 			dataFolderName: vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			applicationName: vscodeProduct.serverApplicationName ?? "code-server",
-			urlTemplate: devhubProduct.serverDownloadUrlTemplate ?? "",
-			cacheDirectory: join(userDataPath, "reh"),
+			packaged: vscodeProduct.commit !== undefined,
 		}),
 		// And which binaries drive a dev container. Named rather than
 		// discovered, and separately, because they are separately absent: a Mac

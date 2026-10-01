@@ -246,7 +246,7 @@ describe("the DevHub terminal launcher", () => {
 		const paths = {
 			home: "/home/dev",
 			serverDataFolderName: ".devhub-server",
-			serverCommit: "abc123",
+			serverInstallKey: "abc123",
 			controlSocketPath: "/data/devhub/devhub/control.sock",
 			entryName: "devhub-terminal.bundle.js",
 			cliEntryName: "devhub-cli.bundle.js",

@@ -8,17 +8,22 @@
  * to be a vendored extension's job — it SSHed in with a JavaScript client of
  * its own, ran a generated bash script, scraped a port out of a log and opened
  * its own tunnel. DevHub already holds a connection to that machine, already
- * knows how to run POSIX `sh` on it, and already fetches payloads here and
- * delivers them there for tmux. So it does this too, and the extension shrinks
- * to the one thing only an extension can do: answer
- * `onResolveRemoteAuthority` with the port DevHub produced.
+ * knows how to run POSIX `sh` on it, and already delivers payloads there for
+ * tmux. So it does this too, and the extension shrinks to the one thing only
+ * an extension can do: answer `onResolveRemoteAuthority` with the port DevHub
+ * produced.
  *
- * **This Mac fetches; the machine receives.** The same rule as `tmuxDelivery.ts`
- * and for the same reasons, only more so: the REH tarball is a hundred
- * megabytes, the appliance this product exists for has no route to github.com,
- * half of them have no `curl` and the ones that do have a `curl` too old for a
- * modern TLS. The far end unpacks a stream from stdin, which is the one thing
- * every one of them can do.
+ * **The server travels inside DevHub.** The app carries one REH tarball per
+ * Linux platform it supports — glibc and musl, x64 and arm64 — built from the
+ * same patched VS Code the app itself is built from, and copies the one the
+ * machine needs over the connection it already has: the bytes go on the stdin
+ * of a `tar` over there. Nothing on the far machine reaches the internet, and
+ * nothing on this Mac does either. A dev container on a network with no route
+ * out, an SSH host behind a firewall, an appliance whose `curl` is too old for
+ * a modern TLS: DevHub reaches all of them already, so it can hand them a
+ * server. And a server that came out of the app is a server built from the
+ * app's own patches, which a server published separately and keyed only by
+ * the VS Code commit never was.
  *
  * **A unix socket, not a port.** The server is started with `--socket-path` and
  * reached with `ssh -L <local port>:<remote socket>`, which OpenSSH has
@@ -37,24 +42,32 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { shellQuote } from "./quote.js";
 
 /** Where a machine's remote extension host comes from, as far as a runtime
- * is concerned. Mirrors `TmuxDelivery`, deliberately. */
+ * is concerned. */
 export interface RehDelivery {
-	/** The VS Code commit this DevHub states, which names the install
-	 * directory and is what the server checks the connecting client against.
-	 * `undefined` only when the build states neither commit `rehCommit`
-	 * reads — see `sourceBuildRefusal`. */
-	readonly commit: string | undefined;
+	/**
+	 * The directory the server is installed under on every machine:
+	 * `<VS Code commit>-<server identity>` — see `rehInstallKey`.
+	 *
+	 * `undefined` only when this build states neither half, which is a build
+	 * that can open no remote workbench at all — see `sourceBuildRefusal`.
+	 */
+	readonly installKey: string | undefined;
 	/** `product.json`'s `serverDataFolderName`: `.devhub-server`. */
 	readonly dataFolderName: string;
 	/** `product.json`'s `serverApplicationName`: the script under `bin/`. */
 	readonly applicationName: string;
-	/** The tarball for one `<os>-<arch>`, from the cache or from the release. */
-	tarball(platform: string): Promise<RehTarball>;
+	/**
+	 * The tarball for one `RehTarget`, read out of the bundle and checked.
+	 *
+	 * Rejects — permanently, see `permanent` — when this DevHub carries no
+	 * server for that target, or carries one that is not the one it states.
+	 */
+	tarball(target: RehTarget): Promise<RehTarball>;
 }
 
 export interface RehTarball {
@@ -62,11 +75,13 @@ export interface RehTarball {
 	/**
 	 * The single directory inside the archive.
 	 *
-	 * `scripts/build_reh.py` names it after the platform and the commit is not
-	 * in it, so the unpack can move that one directory into place rather than
-	 * needing `tar --strip-components`, which is not in every machine's `tar`.
+	 * `scripts/build_reh.py` names it after the target, so the unpack can move
+	 * that one directory into place rather than needing
+	 * `tar --strip-components`, which is not in every machine's `tar`.
 	 */
 	readonly topLevelDirectory: string;
+	/** What the bytes hash to — checked against the bundle's own statement. */
+	readonly sha256: string;
 }
 
 /**
@@ -163,8 +178,7 @@ export function isPermanent(failure: unknown): boolean {
 }
 
 /**
- * Which commit names the remote extension host this DevHub installs and
- * connects to.
+ * Which VS Code commit this DevHub's workbench and its servers are built from.
  *
  * A packaged build states it twice: `commit`, which VS Code reads, and
  * `serverCommit`, which only DevHub reads — the same forty characters, both
@@ -172,17 +186,12 @@ export function isPermanent(failure: unknown): boolean {
  * It has no `commit` and cannot be given one — VS Code reads that field as
  * "this is a packaged build" and sends a source run looking for a
  * `node_modules.asar` a checkout does not have — but it is still built from
- * one VS Code commit, the submodule's, and the server published under that
- * commit is the one its workbench speaks to. The server compares a client's
- * commit with its own only when the client states one
+ * one VS Code commit, the submodule's. The server compares a client's commit
+ * with its own only when the client states one
  * (`remoteExtensionHostAgentServer.ts`: `if (rendererCommit && myCommit)`), so
- * a source run's commit-less workbench is accepted by it.
- *
- * Reading `commit` alone is what made every remote window of a source run —
- * a dev container's as much as an SSH host's — refuse with
- * `sourceBuildRefusal`: the window opened, its resolver was refused, and
- * everything after that which reached for the remote (the remote settings
- * file behind Open Settings, for one) failed with the same sentence.
+ * a source run's commit-less workbench is accepted by a server whose
+ * `product.json` states the commit, and a packaged workbench is accepted by
+ * the server bundled with it because both state the same one.
  */
 export function rehCommit(product: {
 	readonly commit?: string;
@@ -192,191 +201,409 @@ export function rehCommit(product: {
 }
 
 /**
+ * The directory a server is installed under on a far machine:
+ * `<commit>-<identity>`.
+ *
+ * The commit alone is not enough, and that was a real failure rather than a
+ * theoretical one: DevHub's servers are VS Code *plus DevHub's patches*, and a
+ * patch that changed the server did not change the commit, so every machine
+ * that had a server went on running the old one under the same name. The
+ * identity is `scripts/product_metadata.py`'s `reh_identity()` — a hash of the
+ * commit, every file in `patches/vscode/` and the server build's own revision
+ * — stated by the app as `serverIdentity` and by every bundled server beside
+ * its tarball. A DevHub whose patches changed names a directory no older
+ * DevHub installed, so it installs a fresh server instead of adopting a stale
+ * one, and two DevHubs of different patch sets on one machine each keep their
+ * own.
+ */
+export function rehInstallKey(
+	commit: string | undefined,
+	identity: string | undefined,
+): string | undefined {
+	if (commit === undefined || identity === undefined) return undefined;
+	if (commit.length === 0 || identity.length === 0) return undefined;
+	return `${commit}-${identity}`;
+}
+
+/**
  * Why this DevHub cannot open a remote workbench, said once.
  *
- * Only a run that states neither commit `rehCommit` reads gets here: a source
- * run started some other way than `apps/desktop/scripts/dev.sh`, which is what
- * writes `serverCommit`, or one whose `vscode/product.overrides.json` predates
- * the field. There is then no install directory to name and no release to
- * fetch, and asking again cannot change that while this DevHub runs, which is
+ * Only a run that states no commit or no server identity gets here: a source
+ * run started some other way than `apps/desktop/scripts/dev.sh`, which is
+ * what writes both, or one whose `vscode/product.overrides.json` predates the
+ * fields. There is then no install directory to name and no bundled server to
+ * check, and asking again cannot change that while this DevHub runs, which is
  * what makes it `NotAvailable` rather than something to retry. It names no
  * kind of machine: a dev container and an SSH host refuse alike.
  */
 export function sourceBuildRefusal(machine: string): string {
 	return (
-		`This DevHub states no commit for the remote extension host — neither ` +
-		`product.json's commit (a packaged build) nor the serverCommit ` +
+		`This DevHub states no commit or no server identity for the remote ` +
+		`extension host — product.json's commit and serverIdentity in a ` +
+		`packaged build, the serverCommit and serverIdentity ` +
 		`apps/desktop/scripts/dev.sh writes for a source run — so there is no ` +
-		`remote extension host it can install on ${machine} or ask for. Start ` +
-		`a source run with apps/desktop/scripts/dev.sh — see ` +
-		`docs/remote-ssh.md#a-source-run-connects-to-the-published-server.`
+		`remote extension host it can install on ${machine}. Start a source run ` +
+		`with apps/desktop/scripts/dev.sh — see ` +
+		`docs/remote-ssh.md#a-source-run-uses-servers-built-in-the-checkout.`
 	);
 }
 
-/** The single directory inside the tarball for one platform. */
-export function rehTopLevelDirectory(platform: string): string {
-	return `devhub-reh-${platform}`;
+/**
+ * The four servers DevHub carries, by the name it gives them.
+ *
+ * `<libc family>-<arch>`: `linux-*` is glibc, `alpine-*` is musl, which is
+ * what upstream calls them too (`vscode/build/gulpfile.reh.ts` builds
+ * `linux-x64`, `linux-arm64`, `alpine-arm64` and — its legacy spelling for
+ * the fourth — `linux-alpine`). A glibc server does not start on musl: its
+ * `node` is linked against `ld-linux`, which an Alpine image does not have,
+ * and its native addons against glibc symbols. So the libc is part of the
+ * platform, not a detail of it.
+ */
+export const REH_TARGETS = [
+	"linux-x64",
+	"linux-arm64",
+	"alpine-x64",
+	"alpine-arm64",
+] as const;
+
+export type RehTarget = (typeof REH_TARGETS)[number];
+
+/**
+ * Which C library a Linux machine runs its programs against, asked in `sh`.
+ *
+ * In this order, because each earlier answer is the more specific one:
+ *
+ * - `/etc/alpine-release` is Alpine, which is musl even with `gcompat`
+ *   installed — `gcompat` puts an `ld-linux` beside musl's own loader, and a
+ *   glibc `node` then starts and falls over on the first native addon.
+ * - `getconf GNU_LIBC_VERSION` answers only on glibc; musl's `getconf`
+ *   refuses the name. That puts a Debian that has the `musl` package
+ *   installed (and so a `/lib/ld-musl-*.so.1`) on glibc, which is right.
+ * - The loaders themselves, for a machine with neither of those — a
+ *   distroless image has no `getconf`.
+ *
+ * Anything else is `unknown`, and an unknown libc is refused by name rather
+ * than guessed at: a guess that is wrong installs a server that cannot start,
+ * and the sentence that then reaches the person is about a socket.
+ */
+export const LIBC_PROBE = [
+	`if [ -f /etc/alpine-release ]; then echo musl; exit 0; fi`,
+	`if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then echo glibc; exit 0; fi`,
+	`for f in /lib/ld-musl-*.so.1; do [ -e "$f" ] && { echo musl; exit 0; }; done`,
+	`for f in /lib64/ld-linux-*.so.* /lib/ld-linux-*.so.* /lib/*/ld-linux-*.so.*; do [ -e "$f" ] && { echo glibc; exit 0; }; done`,
+	`echo unknown`,
+].join("\n");
+
+export type Libc = "glibc" | "musl" | "unknown";
+
+export function parseLibc(stdout: string): Libc {
+	const answer = stdout.trim().split("\n").pop()?.trim();
+	return answer === "glibc" || answer === "musl" ? answer : "unknown";
 }
 
-/** The name a platform's tarball has, on the release and in the cache. */
-export function rehTarballName(platform: string, commit: string): string {
-	return `devhub-reh-${platform}-${commit}.tar.gz`;
+/** What a machine is, as far as choosing its server is concerned. */
+export interface RehMachine {
+	/** `uname -s`: `Linux`, `Darwin`. */
+	readonly system: string;
+	/** `uname -m`, folded: `x64`, `arm64`, or the machine's own word. */
+	readonly architecture: string;
+	/** Only asked of a Linux machine; `undefined` for anything else. */
+	readonly libc: Libc | undefined;
 }
 
 /**
- * The six names `serverDownloadUrlTemplate` takes, substituted here and
- * nowhere else.
+ * The server a machine needs, or `undefined` when DevHub has none for it.
  *
- * DevHub's template uses three of them. `${quality}` and `${release}` are
- * deliberately absent from it — DevHub states neither key, and a template that
- * asked for one would be substituted with nothing at all rather than reported,
- * which is a URL that is wrong in a way no error message mentions.
- * `scripts/build_reh_test.py` fails if either appears.
+ * Linux only. macOS has a server upstream, but DevHub does not carry one: its
+ * native addons have to be built on a Mac, and nobody SSHes from DevHub into
+ * a Mac often enough to carry its weight in every download.
  */
-export function rehDownloadUrl(
-	template: string,
-	platform: string,
-	commit: string,
-	version: string,
+export function rehTargetFor(machine: RehMachine): RehTarget | undefined {
+	if (machine.system !== "Linux") return undefined;
+	const family =
+		machine.libc === "glibc"
+			? "linux"
+			: machine.libc === "musl"
+				? "alpine"
+				: undefined;
+	if (family === undefined) return undefined;
+	const target = `${family}-${machine.architecture}`;
+	return (REH_TARGETS as readonly string[]).includes(target)
+		? (target as RehTarget)
+		: undefined;
+}
+
+/** A machine described the way a person would recognise it. */
+export function describeRehMachine(machine: RehMachine): string {
+	const libc =
+		machine.libc === undefined
+			? ""
+			: machine.libc === "unknown"
+				? ", with a C library DevHub could not identify"
+				: machine.libc === "musl"
+					? ", musl"
+					: ", glibc";
+	return `${machine.system} ${machine.architecture}${libc}`;
+}
+
+/** What a target is, in the words `describeRehMachine` uses. */
+function describeTarget(target: string): string {
+	const [family = "", arch = ""] = target.split("-");
+	return `Linux ${arch}, ${family === "alpine" ? "musl" : "glibc"}`;
+}
+
+/**
+ * The sentence for a machine DevHub carries no server for at all.
+ *
+ * Permanent where it is thrown: an architecture does not change while a
+ * workbench waits.
+ */
+export function unsupportedServerPlatform(
+	machine: string,
+	description: RehMachine,
 ): string {
-	const [os = "", arch = ""] = platform.split("-");
-	return template
-		.replaceAll("${commit}", commit)
-		.replaceAll("${version}", version)
-		.replaceAll("${os}", os)
-		.replaceAll("${arch}", arch);
+	return (
+		`DevHub has no remote extension host for ${machine}, which is ` +
+		`${describeRehMachine(description)}. It carries servers for Linux on ` +
+		`x64 and arm64, with glibc or musl (${REH_TARGETS.join(", ")}), and ` +
+		`nothing else.`
+	);
 }
 
-export interface ReleaseRehDeliveryOptions {
-	readonly commit: string | undefined;
-	readonly version: string;
-	readonly dataFolderName: string;
-	readonly applicationName: string;
-	/** `product.json`'s `serverDownloadUrlTemplate`. */
-	readonly urlTemplate: string;
-	/** Where fetched tarballs are kept, under this DevHub profile's own data. */
-	readonly cacheDirectory: string;
-	/** For tests: how the bytes are fetched. */
-	readonly fetchBytes?: (url: string) => Promise<Uint8Array>;
+/** The single directory inside the tarball for one target. */
+export function rehTopLevelDirectory(target: string): string {
+	return `devhub-reh-${target}`;
 }
 
-export class ReleaseRehDelivery implements RehDelivery {
+/** The name a target's tarball has in the bundle. */
+export function rehTarballName(target: string): string {
+	return `devhub-reh-${target}.tar.gz`;
+}
+
+/** The name of the statement beside it. */
+export function rehStatementName(target: string): string {
+	return `devhub-reh-${target}.json`;
+}
+
+/**
+ * What `scripts/build_reh.py` writes beside each tarball, read back.
+ *
+ * It says which commit and which identity the server was built from, so a
+ * bundle whose servers are older than the app around them — a checkout whose
+ * patches moved since the last `build_reh.py`, or a packaging step handed the
+ * wrong artifacts — is refused by name instead of installed under a key that
+ * says something it is not.
+ */
+export interface RehStatement {
+	readonly target: string;
+	readonly commit: string;
+	readonly identity: string;
+	readonly file: string;
+	readonly sha256: string;
+	readonly topLevelDirectory: string;
+}
+
+export function parseRehStatement(text: string): RehStatement | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	const fields = [
+		"target",
+		"commit",
+		"identity",
+		"file",
+		"sha256",
+		"topLevelDirectory",
+	] as const;
+	for (const field of fields) {
+		if (typeof record[field] !== "string") return undefined;
+	}
+	return record as unknown as RehStatement;
+}
+
+export interface BundledRehDeliveryOptions {
+	/** Where the tarballs and their statements are. */
+	readonly directory: string;
+	/** `rehCommit` of this build's product. */
 	readonly commit: string | undefined;
+	/** `serverIdentity` of this build's product. */
+	readonly identity: string | undefined;
 	readonly dataFolderName: string;
 	readonly applicationName: string;
-	readonly #options: ReleaseRehDeliveryOptions;
-	readonly #fetching = new Map<string, Promise<RehTarball>>();
+	/**
+	 * Whether this is a packaged app, which decides what a missing server
+	 * means: a packaging bug in one, a step not yet taken in the other — and
+	 * so which sentence tells the person what to do.
+	 */
+	readonly packaged: boolean;
+}
 
-	constructor(options: ReleaseRehDeliveryOptions) {
-		this.commit = options.commit;
+/**
+ * The servers this DevHub carries.
+ *
+ * In a packaged app that is `Contents/Resources/reh/`, put there by
+ * `scripts/package-nightly.py`; in a source run it is `dist/reh/` in the
+ * checkout, where `scripts/build_reh.py` writes. Either way it is a directory
+ * of `devhub-reh-<target>.tar.gz` with a `devhub-reh-<target>.json` beside
+ * each — the same layout, so there is one reader.
+ */
+export class BundledRehDelivery implements RehDelivery {
+	readonly installKey: string | undefined;
+	readonly dataFolderName: string;
+	readonly applicationName: string;
+	readonly #options: BundledRehDeliveryOptions;
+	readonly #reading = new Map<string, Promise<RehTarball>>();
+
+	constructor(options: BundledRehDeliveryOptions) {
+		this.installKey = rehInstallKey(options.commit, options.identity);
 		this.dataFolderName = options.dataFolderName;
 		this.applicationName = options.applicationName;
 		this.#options = options;
 	}
 
 	/**
-	 * One download per platform per DevHub start, however many machines ask.
+	 * One read per target per DevHub start, however many machines ask.
 	 *
-	 * The promise is cached and not the bytes, because two machines of the same
-	 * platform coming up together must produce one download rather than two
-	 * that race onto the same cache file.
+	 * The promise is kept rather than the bytes, so two machines of the same
+	 * target coming up together share one read of a hundred megabytes.
 	 */
-	tarball(platform: string): Promise<RehTarball> {
-		const existing = this.#fetching.get(platform);
+	tarball(target: RehTarget): Promise<RehTarball> {
+		const existing = this.#reading.get(target);
 		if (existing) return existing;
-		const pending = this.#obtain(platform);
+		const pending = this.#read(target);
 		pending.catch(() => {
-			if (this.#fetching.get(platform) === pending) {
-				this.#fetching.delete(platform);
+			if (this.#reading.get(target) === pending) {
+				this.#reading.delete(target);
 			}
 		});
-		this.#fetching.set(platform, pending);
+		this.#reading.set(target, pending);
 		return pending;
 	}
 
-	async #obtain(platform: string): Promise<RehTarball> {
-		const commit = this.commit;
-		if (commit === undefined) {
+	async #read(target: RehTarget): Promise<RehTarball> {
+		const { directory, commit, identity } = this.#options;
+		if (this.installKey === undefined) {
 			throw permanent(new Error(sourceBuildRefusal("any machine")));
 		}
-		const cached = join(
-			this.#options.cacheDirectory,
-			rehTarballName(platform, commit),
-		);
-		const fromCache = await readFile(cached).catch(() => undefined);
-		if (fromCache !== undefined) {
-			return {
-				bytes: new Uint8Array(fromCache),
-				topLevelDirectory: rehTopLevelDirectory(platform),
-			};
+		const statementText = await readFile(
+			join(directory, rehStatementName(target)),
+			"utf8",
+		).catch(() => undefined);
+		if (statementText === undefined) {
+			throw permanent(
+				new Error(await this.#missing(target, await this.#available())),
+			);
 		}
-		const url = rehDownloadUrl(
-			this.#options.urlTemplate,
-			platform,
-			commit,
-			this.#options.version,
+		const statement = parseRehStatement(statementText);
+		if (statement === undefined || statement.target !== target) {
+			throw permanent(
+				new Error(
+					`${join(directory, rehStatementName(target))} is not a statement ` +
+						`of the ${target} remote extension host. ${this.#rebuild(target)}`,
+				),
+			);
+		}
+		if (statement.commit !== commit || statement.identity !== identity) {
+			throw permanent(
+				new Error(
+					`The ${target} remote extension host in ${directory} was built ` +
+						`from VS Code ${statement.commit.slice(0, 12)} with server ` +
+						`identity ${statement.identity}, and this DevHub is ` +
+						`${String(commit).slice(0, 12)} with ${String(identity)} — ` +
+						`DevHub's patches or its VS Code moved since it was built. ` +
+						this.#rebuild(target),
+				),
+			);
+		}
+		const bytes = await readFile(join(directory, statement.file)).catch(
+			() => undefined,
 		);
-		const fetchBytes = this.#options.fetchBytes ?? downloadBytes;
-		const bytes = await fetchBytes(url);
-		// Written under a temporary name and renamed, so a download interrupted
-		// half way through is not a cache entry the next start reads as whole.
-		await mkdir(this.#options.cacheDirectory, { recursive: true, mode: 0o700 });
-		const partial = `${cached}.part`;
-		await writeFile(partial, bytes, { mode: 0o600 });
-		await rename(partial, cached);
+		if (bytes === undefined) {
+			throw permanent(
+				new Error(
+					`${join(directory, statement.file)} is missing although ` +
+						`${rehStatementName(target)} names it. ${this.#rebuild(target)}`,
+				),
+			);
+		}
+		const sha256 = createHash("sha256").update(bytes).digest("hex");
+		if (sha256 !== statement.sha256) {
+			throw permanent(
+				new Error(
+					`${join(directory, statement.file)} hashes to ${sha256}, not the ` +
+						`${statement.sha256} its statement says — it is not the server ` +
+						`that was built. ${this.#rebuild(target)}`,
+				),
+			);
+		}
 		return {
-			// A plain `Uint8Array` whichever way it arrived: `readFile` gives a
-			// `Buffer` and `fetch` does not, and a caller that could be handed
-			// either is a caller that will one day be right about only one.
+			// A plain `Uint8Array`, not the `Buffer` `readFile` gives, so a caller
+			// is never right about only one of the two.
 			bytes: new Uint8Array(bytes),
-			topLevelDirectory: rehTopLevelDirectory(platform),
+			topLevelDirectory: statement.topLevelDirectory,
+			sha256,
 		};
 	}
-}
 
-/**
- * The bytes of one release asset.
- *
- * A release asset URL on github.com answers with a redirect to object storage,
- * which `fetch` follows by default — the one behaviour this depends on, said
- * here so that a change to it is a change to a line rather than a mystery.
- * A 404 here is the published-target story in `docs/remote-ssh.md`: the name of
- * the missing asset is in the URL, so the sentence names the architecture
- * nobody built rather than leaving it to be guessed at.
- */
-async function downloadBytes(url: string): Promise<Uint8Array> {
-	const response = await fetch(url);
-	if (!response.ok) {
-		// Permanent: an HTTP answer is the release saying what it has, and what
-		// it has does not change while a workbench waits. A 404 here is the
-		// published-target story above — the architecture nobody built — and
-		// retrying it four more times only delays the sentence that names it.
-		// A *thrown* fetch is a different thing entirely and stays transient:
-		// that is this Mac's network, which does come back.
-		throw permanent(
-			new Error(
-				`${url} answered ${String(response.status)} ${response.statusText}`,
-			),
+	async #available(): Promise<string[]> {
+		const names: string[] = await readdir(this.#options.directory).catch(
+			() => [],
+		);
+		return REH_TARGETS.filter((target) =>
+			names.includes(rehStatementName(target)),
 		);
 	}
-	return new Uint8Array(await response.arrayBuffer());
+
+	async #missing(target: RehTarget, available: string[]): Promise<string> {
+		const holds =
+			available.length === 0
+				? "holds no servers at all"
+				: `holds ${available.join(", ")} only`;
+		return (
+			`This DevHub has no remote extension host for ${target} ` +
+			`(${describeTarget(target)}): ${this.#options.directory} ${holds}. ` +
+			this.#rebuild(target)
+		);
+	}
+
+	#rebuild(target: RehTarget): string {
+		return this.#options.packaged
+			? `This DevHub was packaged without the server it needs; install a ` +
+					`build that carries all four (see docs/remote-ssh.md#the-servers-` +
+					`travel-inside-devhub).`
+			: `Build it in this checkout with scripts/build_reh.py ${target} — ` +
+					`see docs/remote-ssh.md#a-source-run-uses-servers-built-in-the-` +
+					`checkout.`;
+	}
 }
 
 /** Every path the remote extension host has on a machine. */
 export interface RemoteServerPaths {
 	/** `~/.devhub-server`. */
 	readonly root: string;
-	/** `~/.devhub-server/bin/<commit>`, the tarball's contents. */
+	/** `~/.devhub-server/bin/<key>`, the tarball's contents. */
 	readonly install: string;
-	/** `~/.devhub-server/bin/<commit>/bin/devhub-server`. */
+	/** `~/.devhub-server/bin/<key>/bin/devhub-server`. */
 	readonly server: string;
+	/**
+	 * The file an install writes last, once its `node` has run on this
+	 * machine. A directory without it is an install that did not finish —
+	 * interrupted, or unpacked by an older DevHub that did not check — and is
+	 * replaced rather than started.
+	 */
+	readonly installed: string;
 	/**
 	 * The connection token, 0600.
 	 *
-	 * Under the root rather than under the install, so that a commit bump gets
-	 * a token of its own: two servers of two commits on one machine are two
-	 * handshakes, and one token file would make the older one's clients fail
-	 * against the newer one's server with nothing that says why.
+	 * Under the root rather than under the install, and named by the key, so
+	 * that a new server gets a token of its own: two servers on one machine
+	 * are two handshakes, and one token file would make the older one's
+	 * clients fail against the newer one's server with nothing that says why.
 	 */
 	readonly token: string;
 	/** The unix socket the server listens on, and the `-L` forward's far end. */
@@ -391,19 +618,28 @@ export function remoteServerPaths(request: {
 	readonly home: string;
 	readonly dataFolderName: string;
 	readonly applicationName: string;
-	readonly commit: string;
+	readonly key: string;
 }): RemoteServerPaths {
 	const root = posix.join(request.home, request.dataFolderName);
-	const install = posix.join(root, "bin", request.commit);
+	const install = posix.join(root, "bin", request.key);
 	return {
 		root,
 		install,
 		server: posix.join(install, "bin", request.applicationName),
-		token: posix.join(root, `.${request.commit}.token`),
-		socket: posix.join(root, `.${request.commit}.sock`),
-		pid: posix.join(root, `.${request.commit}.pid`),
-		log: posix.join(root, `.${request.commit}.log`),
+		installed: posix.join(install, INSTALLED_MARKER),
+		token: posix.join(root, `.${request.key}.token`),
+		socket: posix.join(root, `.${request.key}.sock`),
+		pid: posix.join(root, `.${request.key}.pid`),
+		log: posix.join(root, `.${request.key}.log`),
 	};
+}
+
+/** The name of `RemoteServerPaths.installed`. */
+export const INSTALLED_MARKER = ".devhub-installed";
+
+/** Whether the server under `paths` is a finished install. */
+export function serverInstalledScript(paths: RemoteServerPaths): string {
+	return `[ -f ${shellQuote(paths.installed)} ] && [ -x ${shellQuote(paths.server)} ]`;
 }
 
 /** How long the start script waits for the server to open its socket. */
@@ -435,7 +671,7 @@ export function startServerScript(
 	 * A directory to put in front of the server's `PATH`, when there is one:
 	 * DevHub's `devhub` command in a dev container, which the terminals and
 	 * tasks the server starts inherit. A server already running keeps the PATH
-	 * it was started with, which is the same directory — it is per commit.
+	 * it was started with, which is the same directory — it is per install key.
 	 */
 	pathPrefix?: string,
 ): string {
@@ -521,21 +757,62 @@ export function parseStartedServer(stdout: string): StartedServer | undefined {
 	return { socket, token };
 }
 
-/** The unpack, the same shape and for the same reasons as tmux's. */
+/**
+ * Unpack the server from stdin, prove it runs here, and only then put it in
+ * place.
+ *
+ * Into a staging directory beside the install and moved in whole, so the
+ * install directory is either absent or complete — never the half a dropped
+ * connection leaves behind. The proof is the server's own `node` running a
+ * line of JavaScript on this machine: that is what a wrong platform fails —
+ * a glibc `node` on musl is "not found" by its loader, an x64 one on arm64
+ * is an exec format error — and it fails here, with the words of that
+ * failure, rather than as a socket that never opens a minute later.
+ *
+ * The marker is written last, inside the staged tree, with the tarball's
+ * hash in it, so `serverInstalledScript` can tell a finished install from
+ * any other directory of that name.
+ */
 export function unpackServerScript(
 	paths: RemoteServerPaths,
 	topLevelDirectory: string,
+	sha256: string,
 ): string {
-	const staging = `${paths.install}.unpacking`;
-	const unpacked = posix.join(staging, topLevelDirectory);
+	const staging = shellQuote(`${paths.install}.unpacking`);
+	const unpacked = shellQuote(
+		posix.join(`${paths.install}.unpacking`, topLevelDirectory),
+	);
+	const node = shellQuote(
+		posix.join(`${paths.install}.unpacking`, topLevelDirectory, "node"),
+	);
+	const launcher = shellQuote(
+		posix.join(
+			`${paths.install}.unpacking`,
+			topLevelDirectory,
+			posix.relative(paths.install, paths.server),
+		),
+	);
+	const install = shellQuote(paths.install);
+	const fail = (sentence: string): string =>
+		`{ echo ${shellQuote(`${SERVER_MARKER} ${sentence}`)} >&2; rm -rf -- ${staging}; exit 1; }`;
 	return [
-		`rm -rf -- ${shellQuote(staging)} ${shellQuote(paths.install)}`,
-		`mkdir -p -- ${shellQuote(staging)} || exit 1`,
-		`tar xzf - -C ${shellQuote(staging)} || exit 1`,
-		`[ -d ${shellQuote(unpacked)} ] || { echo "no ${topLevelDirectory} in the tarball" >&2; exit 1; }`,
+		`rm -rf -- ${staging}`,
+		`mkdir -p -- ${staging} || exit 1`,
+		`tar xzf - -C ${staging} || ${fail("the server tarball did not unpack")}`,
+		`[ -d ${unpacked} ] || ${fail(`there is no ${topLevelDirectory} in the server tarball`)}`,
+		`[ -x ${launcher} ] || ${fail(`the server tarball has no ${posix.relative(paths.install, paths.server)}`)}`,
+		`ran="$(${node} -e 'process.stdout.write(process.platform + "-" + process.arch)' 2>&1)" || {`,
+		// The loader's first two lines name what is missing; a musl loader
+		// facing a glibc binary goes on for hundreds more.
+		`  echo ${shellQuote(`${SERVER_MARKER} the server's node does not run on this machine:`)} "$(printf '%s\\n' "$ran" | head -n 2 | tr '\\n' ' ')" >&2`,
+		`  rm -rf -- ${staging}`,
+		`  exit 1`,
+		`}`,
+		`printf '%s\\n' ${shellQuote(sha256)} > ${shellQuote(posix.join(`${paths.install}.unpacking`, topLevelDirectory, INSTALLED_MARKER))} || ${fail("could not write the install marker")}`,
+		`rm -rf -- ${install}`,
 		`mkdir -p -- ${shellQuote(posix.dirname(paths.install))} || exit 1`,
-		`mv -- ${shellQuote(unpacked)} ${shellQuote(paths.install)} || exit 1`,
-		`exec rm -rf -- ${shellQuote(staging)}`,
+		`mv -- ${unpacked} ${install} || ${fail(`could not move the server into ${paths.install}`)}`,
+		`exec rm -rf -- ${staging}`,
 	].join("\n");
 }
 

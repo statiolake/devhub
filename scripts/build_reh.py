@@ -1,90 +1,93 @@
 #!/usr/bin/env python3
-"""Build the Remote Extension Host — the half of DevHub that runs over SSH.
+"""Build the remote extension hosts DevHub carries inside itself.
 
-DevHub connects to a remote machine the way VSCodium does: main downloads a
-*server* tarball onto that host over SSH, unpacks it and starts it, and the
-workbench then talks to it over the SSH tunnel. That tarball is what this
-script builds. VS Code calls it the REH, the remote extension host; the file
-people see is `devhub-reh-linux-x64-<commit>.tar.gz`.
+DevHub opens remote windows — on SSH hosts and in dev containers — by putting
+VS Code's *server* on the far machine, starting it, and talking to it over the
+connection it already has. That server is what this script builds. VS Code
+calls it the REH, the remote extension host; DevHub carries four of them, one
+per Linux platform it supports, and copies the one a machine needs over to it
+(`apps/desktop/src/main/runtime/remoteServer.ts`). Nothing is downloaded on the
+far machine or on the Mac: the servers are in the app.
 
-## The contract with the remote-server install
+    target          what it runs on                  VS Code's gulp target
+    ------------    -------------------------------  ---------------------
+    linux-x64       glibc Linux on x86-64            linux-x64
+    linux-arm64     glibc Linux on arm64             linux-arm64
+    alpine-x64      musl Linux (Alpine) on x86-64    linux-alpine
+    alpine-arm64    musl Linux (Alpine) on arm64     alpine-arm64
 
-Every name below is something DevHub's own remote-server install reads out of
-`product.json` and then expects to find inside the tarball. Nothing here is a
-preference:
+## What it writes
 
-    product.json key            what the remote does with it
-    ------------------------    -----------------------------------------
-    serverDownloadUrlTemplate   the URL to fetch, after substituting
-                                ${quality} ${version} ${commit} ${os}
-                                ${arch} ${release} — those six, by `sed`,
-                                and no others
-    commit                      names the install directory
-                                ($HOME/<serverDataFolderName>/bin/<commit>)
-                                *and* is what the server checks the
-                                connecting client's commit against
-    serverApplicationName       the script it runs: bin/<serverApplicationName>
-    serverDataFolderName        where on the remote all of it lives
-    version                     substituted into the URL as ${version}; the
-                                client sends its own `vscode.version`
+Into `--out-dir` (default `dist/reh/`, which is where a source run reads them
+and where `scripts/package-nightly.py` takes them from), per target:
 
-The tarball is unpacked with `tar --strip-components 1`, so it must have
-exactly one top-level directory, and under it `bin/<serverApplicationName>`,
-`node`, `out/` and `product.json` — the launcher script resolves the other
-three relative to itself.
+    devhub-reh-<target>.tar.gz   one top-level directory, devhub-reh-<target>/,
+                                 holding bin/<serverApplicationName>, node,
+                                 out/, product.json, node_modules/
+    devhub-reh-<target>.json     the statement: target, commit, identity,
+                                 file, sha256, topLevelDirectory
 
-`${quality}` and `${release}` are deliberately absent from DevHub's template.
-DevHub states neither key, and a missing one substitutes as the empty string
-rather than failing — a URL that is wrong in a way no error message mentions.
-What is left is `${os}`, `${arch}` and `${commit}`, all three of which DevHub
-does state.
+The statement is what DevHub checks before it installs anything: the commit
+and the identity must be the ones the app states (`serverCommit`,
+`serverIdentity` — `scripts/product_metadata.py`), and the tarball must hash
+to what the statement says. A server built before DevHub's patches moved is
+refused by name rather than installed under a name that says otherwise.
 
-## Why `commit` is the whole design
+## Why the identity and not only the commit
 
-`product.commit` is the VS Code submodule's HEAD; `scripts/product_metadata.py`
-explains why it is that and not DevHub's own hash. The remote server refuses a
-client whose commit differs from its own — that is `serverValidation: strict`,
-the default — so the REH's `product.json` and the packaged app's
-`product.json` have to state the same forty characters. They do, because both
-come from `packaged_metadata()`.
+The far machine keeps the server under `~/.devhub-server/bin/<commit>-
+<identity>`. The commit alone used to be the name, and it was not enough:
+DevHub's servers are VS Code *plus DevHub's patches*, a patch that changes the
+server does not move the commit, and every machine went on running the server
+it already had. `reh_identity()` hashes the commit, every patch and the
+build's own revision, so a change to any of them is a new directory.
 
-That is also why the release tag is keyed on the VS Code commit rather than on
-a date or on DevHub's own commit: the REH is a function of the submodule, the
-URL can only be parameterised by what the six placeholders offer, and `${commit}`
-is the one of them that identifies a build. A DevHub commit that does not move
-the submodule needs no new REH, and the nightly therefore skips this entirely on
-most nights. See .github/workflows/nightly.yml.
+The server's own `product.json` still states `commit` — the VS Code commit,
+from `packaged_metadata()` — because that is what the server compares a
+connecting client's commit with, and the packaged app states the same one.
 
-The corollary, and the one sharp edge: a change to `patches/vscode/` that
-touches server code does *not* change `commit`, so it does not change the URL
-and the remote goes on using the REH already published for that submodule
-commit. Rebuild it deliberately (Actions -> Nightly -> Run workflow with
-`force_reh`) when that happens.
+## Native modules, per target
 
-## What the build needs
+`vscode/remote/node_modules` holds native addons — node-pty, @parcel/watcher,
+kerberos, @vscode/spdlog, sqlite3 — and the package task copies them into the
+server as npm installed them. So they have to be installed *for the target*:
+glibc or musl, x64 or arm64. This script does that in a container of the
+target's platform (`remote_modules_image`) before packaging each target, and
+puts the host's own `node_modules` back afterwards:
 
-A provisioned submodule — `scripts/provision-vscode.sh`, which this script runs
-for you. The gulp task compiles VS Code's sources for the server, downloads the
-prebuilt Node for the *target* platform from nodejs.org, and writes the tree to
-`<repo root>/vscode-reh-<os>-<arch>` (VS Code's build root is the parent of the
-submodule, which for DevHub is the repository itself; both are gitignored).
+- glibc targets in `node:<version>-bullseye`, so the addons need no newer
+  glibc than Debian 11's 2.31 — the oldest the Node they run on supports
+  is 2.28, and building on a newer runner would quietly raise that floor.
+- musl targets in `node:<version>-alpine`, which is what upstream does too
+  (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME` in `build/npm/postinstall.ts`).
+  The C++ runtime that musl Node needs and a stock Alpine lacks is copied in
+  beside it (`bundle_musl_runtime`), so the server starts on an Alpine that has
+  never run `apk add` and cannot.
 
-Cross-building mostly works but is not shippable: the Node comes down for the
-target, but `vscode/remote/node_modules` holds native addons the package task
-copies as npm installed them, for the host. So each published target is built
-on a runner of its own architecture.
+The target's own Node comes from VS Code's gulp task: nodejs.org for glibc,
+`node:<version>-alpine` for musl. A container of another architecture runs
+under emulation (`docker run --platform`), which works and is slow; CI builds
+each architecture on a runner of its own.
 
 The Copilot built-in and its native runtime are taken back out afterwards —
 about 470 MB of an 810 MB tree, and DevHub disables AI features outright. See
 `remove_copilot` for why that is a deletion rather than an option passed to the
 build.
 
-    scripts/build_reh.py linux-x64 linux-arm64 [--out-dir dist] [--skip-provision]
+Each server is then started once, offline, in a container of its platform
+(`verify_server_starts`), so a server that cannot start on the machines it is
+for never reaches a bundle.
+
+    scripts/build_reh.py [linux-x64 linux-arm64 alpine-x64 alpine-arm64]
+                         [--out-dir dist/reh] [--skip-provision]
+
+With no targets it builds all four. It needs Docker.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -95,58 +98,60 @@ import tarfile
 import time
 from pathlib import Path
 
-from product_metadata import PRODUCT_OVERRIDES, packaged_metadata, vscode_commit
+from product_metadata import PRODUCT_OVERRIDES, packaged_metadata, reh_identity, vscode_commit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
 PRODUCT_JSON = VSCODE_DIR / "product.json"
+REMOTE_DIR = VSCODE_DIR / "remote"
 
-# Which targets DevHub publishes. `vscode/build/gulpfile.reh.ts` can build more
-# (win32, alpine, ppc64le...), but a target nobody has is a target nobody
-# notices is broken, and each one is a download and a few minutes of a runner.
-#
-# linux-x64 and linux-arm64 are what people SSH into, and they are what the
-# nightly publishes. darwin-arm64 is buildable but not published: the native
-# addons in `vscode/remote/node_modules` are the host's, so it is only correct
-# when built on a Mac, and the one job DevHub has on a Mac already runs for two
-# hours against a two-hour timeout. It stays here because a developer with a
-# Mac to SSH into can build and install one by hand; see docs/remote-ssh.md.
-TARGETS = ("linux-x64", "linux-arm64", "darwin-arm64")
+# Where the servers go unless told otherwise: a source run reads them here
+# (`rehBundleDirectory` in apps/desktop/src/main/shell/appController.ts), and
+# package-nightly.py copies them from here into the app.
+DEFAULT_OUT_DIR = REPO_ROOT / "dist" / "reh"
+
+# The four servers DevHub carries, by DevHub's name for them, and the
+# (platform, arch) pair `vscode/build/gulpfile.reh.ts` names the same build
+# by. `linux-alpine` is upstream's legacy spelling of the x64 musl server — it
+# predates `alpine-arm64` and was kept for compatibility — and its tree is
+# `vscode-reh-linux-alpine`, so the mapping is not a string rule.
+GULP_TARGETS: dict[str, tuple[str, str]] = {
+	"linux-x64": ("linux", "x64"),
+	"linux-arm64": ("linux", "arm64"),
+	"alpine-x64": ("linux", "alpine"),
+	"alpine-arm64": ("alpine", "arm64"),
+}
+TARGETS = tuple(GULP_TARGETS)
 
 
-def tarball_name(os_name: str, arch: str, commit: str) -> str:
-	"""What `serverDownloadUrlTemplate` resolves to for this target.
+def libc_of(target: str) -> str:
+	return "musl" if target.startswith("alpine-") else "glibc"
 
-	The three placeholders in the template are the three arguments here, so
-	this function and the template in
-	`apps/desktop/product-overrides.json` are the same statement written twice
-	— which is what `build_reh_test.py` checks.
+
+def arch_of(target: str) -> str:
+	return target.partition("-")[2]
+
+
+def tarball_name(target: str) -> str:
+	"""The tarball's name in the bundle — `rehTarballName` in remoteServer.ts."""
+	return f"devhub-reh-{target}.tar.gz"
+
+
+def statement_name(target: str) -> str:
+	"""The statement beside it — `rehStatementName` in remoteServer.ts."""
+	return f"devhub-reh-{target}.json"
+
+
+def top_level_dir(target: str) -> str:
+	"""The single directory inside the tarball — `rehTopLevelDirectory`.
+
+	DevHub moves this one directory into place on the far machine rather than
+	unpacking with `tar --strip-components`, which is not in every `tar`.
 	"""
-	return f"devhub-reh-{os_name}-{arch}-{commit}.tar.gz"
+	return f"devhub-reh-{target}"
 
 
-def release_tag(commit: str) -> str:
-	"""The GitHub release that holds the tarballs for this VS Code commit.
-
-	Not the rolling `nightly` tag. That release is replaced whole every night,
-	and a client older than the newest nightly would find its server gone —
-	whereas the REH itself changes only when the submodule does. One immutable
-	release per submodule commit, referenced by a template that already has
-	`${commit}` in it, means yesterday's app keeps connecting.
-	"""
-	return f"reh-{commit}"
-
-
-def top_level_dir(os_name: str, arch: str) -> str:
-	"""The single directory inside the tarball.
-
-	`tar --strip-components 1` in the remote-server install script requires
-	exactly one, and does not care what it is called.
-	"""
-	return f"devhub-reh-{os_name}-{arch}"
-
-
-def gulp_task(os_name: str, arch: str) -> str:
+def gulp_task(target: str) -> str:
 	"""VS Code's own name for the task that assembles this target's tree.
 
 	`-min` is the bundled-and-minified server, which is what a download should
@@ -166,7 +171,74 @@ def gulp_task(os_name: str, arch: str) -> str:
 	the three trees it bundles in parallel is `out-vscode-reh-min` — the exact
 	input this task wants. See `bundle_server_sources`.
 	"""
-	return f"vscode-reh-{os_name}-{arch}-min-ci"
+	gulp_platform, gulp_arch = GULP_TARGETS[target]
+	return f"vscode-reh-{gulp_platform}-{gulp_arch}-min-ci"
+
+
+def staging_dir(target: str) -> Path:
+	"""Where the gulp task writes the tree: the parent of the submodule.
+
+	VS Code's build root is the parent of `vscode/`, which here is the
+	repository; `.gitignore` covers `vscode-reh-*/` for that reason.
+	"""
+	gulp_platform, gulp_arch = GULP_TARGETS[target]
+	return REPO_ROOT / f"vscode-reh-{gulp_platform}-{gulp_arch}"
+
+
+def docker_platform(target: str) -> str:
+	return {"x64": "linux/amd64", "arm64": "linux/arm64"}[arch_of(target)]
+
+
+def remote_node_version() -> str:
+	"""The Node the server's native addons are built against: remote/.npmrc."""
+	for line in (REMOTE_DIR / ".npmrc").read_text().splitlines():
+		key, _, value = line.partition("=")
+		if key.strip() == "target":
+			return value.strip().strip('"')
+	raise SystemExit(f"no target= in {REMOTE_DIR / '.npmrc'}")
+
+
+def remote_modules_image(target: str, node_version: str) -> str:
+	"""The container `vscode/remote`'s dependencies are installed in.
+
+	See the module docstring for why bullseye and why alpine.
+	"""
+	flavour = "alpine" if libc_of(target) == "musl" else "bullseye"
+	return f"node:{node_version}-{flavour}"
+
+
+def remote_modules_script(target: str) -> str:
+	"""What runs in that container, in `vscode/remote`.
+
+	The compilers and the kerberos headers, because `remote/.npmrc` says
+	`build_from_source` — every addon is compiled against the target's Node and
+	libc, none is a prebuild for some other machine. `--ignore-scripts=false`
+	is npm's default and stated only so nobody wonders.
+	"""
+	if libc_of(target) == "musl":
+		packages = "apk add --no-cache python3 make g++ krb5-dev linux-headers"
+	else:
+		packages = (
+			"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
+			"libkrb5-dev python3 make g++ >/dev/null"
+		)
+	return f"set -e; {packages}; npm ci --ignore-scripts=false"
+
+
+def verify_image(target: str) -> str:
+	"""A plain image of the target's libc to start the finished server in.
+
+	Not the build image: a machine DevHub installs on has no compilers and no
+	Node of its own, and a server that only starts where Node is installed is a
+	server that depends on something it does not carry.
+	"""
+	return "alpine:3" if libc_of(target) == "musl" else "debian:bullseye-slim"
+
+
+def docker_available() -> bool:
+	return shutil.which("docker") is not None and subprocess.run(
+		["docker", "info"], capture_output=True
+	).returncode == 0
 
 
 def toolchain_node_bin() -> Path:
@@ -350,26 +422,192 @@ def stage_builtin_copilot_sdk(vscode_dir: Path) -> None:
 	)
 
 
-def build_target(os_name: str, arch: str, commit: str, out_dir: Path) -> Path:
-	"""Package one target's tree out of the bundle, and tar it."""
-	# VS Code's build root is the parent of the submodule, which here is the
-	# repository. `.gitignore` covers `vscode-reh-*/` for that reason.
-	staging = REPO_ROOT / f"vscode-reh-{os_name}-{arch}"
+HOST_REMOTE_MODULES = REMOTE_DIR / "node_modules.host"
 
-	elapsed = gulp(gulp_task(os_name, arch), commit)
+
+def in_container(target: str, image: str, directory: Path, script: str) -> None:
+	"""Run `script` in `image`, for `target`'s platform, in `directory`.
+
+	The directory is mounted at `/work` and is the working directory. The
+	container runs as root, so whatever it wrote is handed back to whoever owns
+	the checkout afterwards, or the next `npm` or `rm` here is refused.
+	"""
+	base = ["docker", "run", "--rm", "--platform", docker_platform(target), "-v", f"{directory}:/work", "-w", "/work"]
+	# GitHub's rate limit, for the addons whose install fetches a release
+	# asset; nothing else reads it.
+	subprocess.run([*base, "-e", "GITHUB_TOKEN", image, "sh", "-c", script], check=True)
+	if hasattr(os, "getuid") and os.getuid() != 0:
+		subprocess.run(
+			[*base, image, "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/work"],
+			check=True,
+		)
+
+
+def install_remote_modules(target: str) -> float:
+	"""Install `vscode/remote`'s dependencies for `target`, in a container.
+
+	The host's own install is moved aside the first time and put back by
+	`restore_remote_modules`, so a developer's checkout is left as provisioning
+	made it.
+	"""
+	node_modules = REMOTE_DIR / "node_modules"
+	if node_modules.exists() and not HOST_REMOTE_MODULES.exists():
+		node_modules.rename(HOST_REMOTE_MODULES)
+	else:
+		shutil.rmtree(node_modules, ignore_errors=True)
+	image = remote_modules_image(target, remote_node_version())
+	print(f"  installing vscode/remote for {target} in {image}")
+	started = time.monotonic()
+	in_container(target, image, REMOTE_DIR, remote_modules_script(target))
+	return time.monotonic() - started
+
+
+# The C++ runtime musl's Node is linked against, which Alpine does not install
+# by default: a stock `alpine` image has neither, and VS Code's own Alpine
+# server simply asks for `apk add libstdc++`. A machine with no network cannot
+# do that, and is exactly the machine DevHub carries its servers for.
+MUSL_RUNTIME = ("/usr/lib/libstdc++.so.6", "/usr/lib/libgcc_s.so.1")
+
+
+def musl_runtime_script() -> str:
+	"""Copy the C++ runtime next to `node`, and point `node` at it.
+
+	`$ORIGIN/lib` as the binary's run path: musl's loader expands `$ORIGIN`
+	to the directory the executable is in, so the server's `node` finds
+	`lib/libstdc++.so.6` beside itself wherever the tree is unpacked, and
+	every native addon it then loads links against the copy already loaded.
+	Out of the same `node:<version>-alpine` image the addons were compiled in
+	and the `node` came from, so all three agree on the library's version.
+	"""
+	copies = " ".join(MUSL_RUNTIME)
+	return (
+		"set -e; apk add --no-cache patchelf >/dev/null; mkdir -p lib; "
+		f"cp -L {copies} lib/; "
+		"patchelf --set-rpath '$ORIGIN/lib' node"
+	)
+
+
+def bundle_musl_runtime(staging: Path, target: str) -> None:
+	if libc_of(target) != "musl":
+		return
+	in_container(target, remote_modules_image(target, remote_node_version()), staging, musl_runtime_script())
+	print(f"  bundled libstdc++ and libgcc_s beside {target}'s node")
+
+
+def restore_remote_modules() -> None:
+	"""Put the host's `vscode/remote/node_modules` back where it was."""
+	if not HOST_REMOTE_MODULES.exists():
+		return
+	shutil.rmtree(REMOTE_DIR / "node_modules", ignore_errors=True)
+	HOST_REMOTE_MODULES.rename(REMOTE_DIR / "node_modules")
+
+
+def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path:
+	"""Install, package, trim, verify and tar one target, and state it."""
+	staging = staging_dir(target)
+	elapsed = install_remote_modules(target)
+	elapsed += gulp(gulp_task(target), commit)
 
 	if not staging.is_dir():
-		raise SystemExit(f"{gulp_task(os_name, arch)} produced no {staging}")
+		raise SystemExit(f"{gulp_task(target)} produced no {staging}")
 
-	remove_copilot(staging, os_name, arch)
-	if runs_here(os_name, arch):
-		verify_server_starts(staging)
+	remove_copilot(staging, target)
+	bundle_musl_runtime(staging, target)
+	verify_server_starts(staging, target)
 
-	tarball = out_dir / tarball_name(os_name, arch, commit)
-	pack(staging, tarball, top_level_dir(os_name, arch))
+	tarball = out_dir / tarball_name(target)
+	pack(staging, tarball, top_level_dir(target))
+	write_statement(out_dir, target, commit, identity)
 	size_mb = tarball.stat().st_size / 1e6
-	print(f"{tarball.name}: {size_mb:.0f} MB, packaged in {elapsed:.0f}s")
+	print(f"{tarball.name}: {size_mb:.0f} MB, built in {elapsed / 60:.0f} min")
 	return tarball
+
+
+def statement(target: str, commit: str, identity: str, tarball: Path) -> dict[str, str]:
+	"""What DevHub reads before it installs this server — see the docstring."""
+	return {
+		"target": target,
+		"commit": commit,
+		"identity": identity,
+		"file": tarball.name,
+		"sha256": hashlib.sha256(tarball.read_bytes()).hexdigest(),
+		"topLevelDirectory": top_level_dir(target),
+	}
+
+
+def write_statement(out_dir: Path, target: str, commit: str, identity: str) -> Path:
+	path = out_dir / statement_name(target)
+	path.write_text(
+		json.dumps(statement(target, commit, identity, out_dir / tarball_name(target)), indent="\t")
+		+ "\n"
+	)
+	return path
+
+
+def read_statements(directory: Path) -> dict[str, dict[str, str]]:
+	"""Every statement in a bundle directory, by target."""
+	found: dict[str, dict[str, str]] = {}
+	for target in TARGETS:
+		path = directory / statement_name(target)
+		if path.is_file():
+			found[target] = json.loads(path.read_text())
+	return found
+
+
+def bundle_problems(
+	directory: Path, commit: str, identity: str, required: tuple[str, ...] = TARGETS
+) -> list[str]:
+	"""Why this directory is not the set of servers a DevHub of `commit` and
+	`identity` carries — nothing, when it is.
+
+	Asked by `scripts/package-nightly.py` before it copies the servers into the
+	app, so a bundle that would refuse a machine at runtime is refused at
+	packaging instead, where the person who can fix it is looking.
+	"""
+	problems: list[str] = []
+	statements = read_statements(directory)
+	for target in required:
+		said = statements.get(target)
+		if said is None:
+			problems.append(
+				f"no {target} server in {directory} (scripts/build_reh.py {target})"
+			)
+			continue
+		if said.get("commit") != commit or said.get("identity") != identity:
+			problems.append(
+				f"the {target} server in {directory} was built from VS Code "
+				f"{said.get('commit')} with identity {said.get('identity')}, and this "
+				f"DevHub is {commit} with {identity}: rebuild it "
+				f"(scripts/build_reh.py {target})"
+			)
+			continue
+		tarball = directory / said.get("file", "")
+		if not tarball.is_file():
+			problems.append(f"{tarball} is missing although {statement_name(target)} names it")
+			continue
+		digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+		if digest != said.get("sha256"):
+			problems.append(f"{tarball} hashes to {digest}, not the {said.get('sha256')} it states")
+	return problems
+
+
+def prune_stale(out_dir: Path, identity: str) -> list[str]:
+	"""Take away servers built from another identity than this checkout's.
+
+	A bundle directory that held servers of two identities would be a bundle
+	half of whose machines DevHub refuses; a developer who rebuilt one target
+	after moving a patch would find the others refused at runtime with a
+	sentence about something they did not touch. So the old ones go, and are
+	named, when the first new one is built.
+	"""
+	removed: list[str] = []
+	for target, said in read_statements(out_dir).items():
+		if said.get("identity") == identity:
+			continue
+		(out_dir / statement_name(target)).unlink(missing_ok=True)
+		(out_dir / tarball_name(target)).unlink(missing_ok=True)
+		removed.append(target)
+	return removed
 
 
 # The `@github/copilot-<platform>-<arch>` runtime package, by the name
@@ -384,7 +622,7 @@ COPILOT_RUNTIME_GLOB = "node_modules/@github/copilot-*-*"
 COPILOT_KEPT = ("node_modules/@github/copilot", "node_modules/@github/copilot-sdk")
 
 
-def remove_copilot(staging: Path, os_name: str, arch: str) -> None:
+def remove_copilot(staging: Path, target: str) -> None:
 	"""Take the Copilot built-in and its native runtime back out of the server.
 
 	DevHub pins `chat.disableAIFeatures: true` — fixed, not a preference — so
@@ -410,13 +648,13 @@ def remove_copilot(staging: Path, os_name: str, arch: str) -> None:
 	What it must not break is startup, which is why `verify_server_starts`
 	exists and why the two small packages above are kept.
 	"""
-	targets = [staging / "extensions" / "copilot", *staging.glob(COPILOT_RUNTIME_GLOB)]
+	doomed = [staging / "extensions" / "copilot", *staging.glob(COPILOT_RUNTIME_GLOB)]
 	removed = 0
-	for target in targets:
-		if not target.exists():
+	for path in doomed:
+		if not path.exists():
 			continue
-		removed += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
-		shutil.rmtree(target)
+		removed += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+		shutil.rmtree(path)
 
 	# A build that stopped shipping Copilot for some *other* reason — upstream
 	# renaming the package, say — would silently produce a smaller tarball and
@@ -430,37 +668,53 @@ def remove_copilot(staging: Path, os_name: str, arch: str) -> None:
 			"vscode/build/lib/copilot.ts and fix remove_copilot rather than "
 			"shipping a server that quietly differs from the one before it."
 		)
-	print(f"  removed {removed / 1e6:.0f} MB of Copilot ({os_name}-{arch})")
+	print(f"  removed {removed / 1e6:.0f} MB of Copilot ({target})")
 
 
-def verify_server_starts(staging: Path) -> None:
-	"""Run the server that was just carved up, and make it say something.
+def verify_server_starts(staging: Path, target: str) -> None:
+	"""Start the server that was just carved up, offline, where it will run.
 
-	Only for a target this machine can execute — the Node in a cross-built
-	tarball is the target's. It is a weak check on purpose: `--version` loads
+	In a plain container of the target's libc and architecture with no network
+	(`--network none`): no compilers, no Node, no route out — the machine this
+	server is for, as far as starting it is concerned. `--version` loads
 	`server-main.js`, which is where the product metadata, the
 	`copilotVersions` lookup and the module resolution that `remove_copilot`
-	could plausibly have broken all happen. A failure here means the deletion
-	took something the server needed, which is the one thing worth catching
-	before the tarball leaves the machine.
+	could plausibly have broken all happen, and it runs the target's own `node`
+	on the target's own libc, which is the thing a wrong build gets wrong.
+
+	Without Docker it falls back to running it here, when this machine is the
+	target; anything else is said rather than skipped silently.
 	"""
-	launcher = staging / "bin" / PRODUCT_OVERRIDES["serverApplicationName"]
-	result = subprocess.run(
-		[str(launcher), "--version"], capture_output=True, text=True, timeout=120
-	)
+	launcher = f"bin/{PRODUCT_OVERRIDES['serverApplicationName']}"
+	if docker_available():
+		argv = [
+			"docker", "run", "--rm", "--network", "none",
+			"--platform", docker_platform(target),
+			"-v", f"{staging}:/reh:ro",
+			verify_image(target),
+			f"/reh/{launcher}", "--version",
+		]
+	elif runs_here(target):
+		argv = [str(staging / launcher), "--version"]
+	else:
+		print(f"  NOT VERIFIED: no Docker to start the {target} server in")
+		return
+	result = subprocess.run(argv, capture_output=True, text=True, timeout=300)
 	if result.returncode != 0:
 		raise SystemExit(
-			f"{launcher} --version exited {result.returncode} after remove_copilot:\n"
-			f"{result.stdout}{result.stderr}"
+			f"the {target} server did not start ({' '.join(argv)} exited "
+			f"{result.returncode}):\n{result.stdout}{result.stderr}"
 		)
-	print(f"  {launcher.name} --version: {result.stdout.strip().splitlines()[0]}")
+	print(f"  {target} {launcher} --version: {result.stdout.strip().splitlines()[0]}")
 
 
-def runs_here(os_name: str, arch: str) -> bool:
-	"""Whether this machine can execute the server it just built."""
-	here = {"darwin": "darwin", "linux": "linux"}.get(platform.system().lower())
-	machine = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}.get(platform.machine())
-	return (os_name, arch) == (here, machine)
+def runs_here(target: str) -> bool:
+	"""Whether this machine can execute `target`'s server itself."""
+	if platform.system() != "Linux":
+		return False
+	machine = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "x64"}.get(platform.machine())
+	here_musl = Path("/etc/alpine-release").exists()
+	return (arch_of(target), libc_of(target) == "musl") == (machine, here_musl)
 
 
 def pack(staging: Path, tarball: Path, top_level: str) -> None:
@@ -481,27 +735,43 @@ def pack(staging: Path, tarball: Path, top_level: str) -> None:
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-	parser.add_argument("targets", nargs="+", choices=TARGETS)
-	parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "dist")
+	parser.add_argument("targets", nargs="*", help=f"any of {', '.join(TARGETS)}; default: all four")
+	parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
 	parser.add_argument(
 		"--skip-provision",
 		action="store_true",
 		help="the tree is already provisioned (CI does this step itself)",
 	)
 	args = parser.parse_args()
+	targets = args.targets or list(TARGETS)
+	unknown = [target for target in targets if target not in TARGETS]
+	if unknown:
+		parser.error(f"no such target: {', '.join(unknown)} (DevHub carries {', '.join(TARGETS)})")
+
+	if not docker_available():
+		raise SystemExit(
+			"build_reh.py needs Docker: each server's native modules are installed "
+			"in a container of its platform, and each server is started in one "
+			"before it is packed. Start Docker (Docker Desktop, colima, or dockerd) "
+			"and run this again."
+		)
 
 	if not args.skip_provision:
 		subprocess.run([str(REPO_ROOT / "scripts" / "provision-vscode.sh")], check=True)
 
 	commit = vscode_commit()
-	print(f"REH for VS Code {commit}, release {release_tag(commit)}")
+	identity = reh_identity()
+	out_dir: Path = args.out_dir.resolve()
+	out_dir.mkdir(parents=True, exist_ok=True)
+	print(f"remote extension hosts for VS Code {commit}, identity {identity}: {', '.join(targets)}")
+	for target in prune_stale(out_dir, identity):
+		print(f"  removed the {target} server built from another identity")
 
 	original_product_json = write_devhub_product_json()
 	try:
 		print(f"bundled the server sources in {bundle_server_sources(commit) / 60:.0f} min")
-		for target in args.targets:
-			os_name, _, arch = target.partition("-")
-			build_target(os_name, arch, commit, args.out_dir)
+		for target in targets:
+			build_target(target, commit, identity, out_dir)
 	finally:
 		# Put the submodule's own file back. Leaving DevHub's there would be a
 		# trap for `pnpm dev`: the merged metadata carries `commit`, and a
@@ -509,6 +779,7 @@ def main() -> int:
 		# to a `node_modules.asar` it does not have. See
 		# scripts/product_metadata.py.
 		PRODUCT_JSON.write_text(original_product_json)
+		restore_remote_modules()
 
 	return 0
 

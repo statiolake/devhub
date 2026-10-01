@@ -428,7 +428,7 @@ describe("what a window is told its terminal is", () => {
 		cliText: "",
 		cliEntryName: "devhub-cli.bundle.js",
 		serverDataFolderName: ".devhub-server",
-		serverCommit: "abc123",
+		serverInstallKey: "abc123",
 	};
 
 	it("names the launcher of the machine that window is on", async () => {

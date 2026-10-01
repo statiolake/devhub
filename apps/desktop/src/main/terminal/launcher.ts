@@ -371,16 +371,16 @@ export interface RemoteTerminalPaths {
 /**
  * Where all of it goes on the far machine, from its `$HOME` and two facts.
  *
- * `~/.devhub-server/<bin>/<commit>/node` is the REH tarball's own layout
- * (`docs/remote-ssh.md`, `scripts/build_reh.py`) and the commit is the one this
- * DevHub states — the same directory the connection installed the server into,
+ * `~/.devhub-server/bin/<key>/node` is the REH tarball's own layout
+ * (`docs/remote-ssh.md`, `scripts/build_reh.py`) and the key is the one this
+ * DevHub states (`rehInstallKey`) — the same directory the connection installed the server into,
  * so the Node that runs the asking program is the Node the workbench is already
  * running on. Anything else would be a second Node to be right about.
  */
 export function remoteTerminalPaths(request: {
 	readonly home: string;
 	readonly serverDataFolderName: string;
-	readonly serverCommit: string;
+	readonly serverInstallKey: string;
 	readonly controlSocketPath: string;
 	readonly entryName: string;
 	readonly cliEntryName: string;
@@ -407,7 +407,7 @@ export function remoteTerminalPaths(request: {
 			request.home,
 			request.serverDataFolderName,
 			"bin",
-			request.serverCommit,
+			request.serverInstallKey,
 			"node",
 		),
 	};

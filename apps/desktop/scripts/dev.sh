@@ -54,6 +54,23 @@ fi
 # its product.json from as well.
 "$REPO_ROOT/scripts/product_metadata.py" "$VSCODE_DIR/product.overrides.json"
 
+# The remote extension hosts a source run copies onto SSH hosts and into dev
+# containers are the ones scripts/build_reh.py left in dist/reh — built from
+# this checkout's VS Code and patches, or refused. Said here, once, rather than
+# only at the first remote window: building them takes most of an hour, and a
+# local window needs none of them, so this is a note and not a stop.
+if ! (cd "$REPO_ROOT/scripts" && python3 -c '
+import sys
+from build_reh import DEFAULT_OUT_DIR, bundle_problems
+from product_metadata import reh_identity, vscode_commit
+problems = bundle_problems(DEFAULT_OUT_DIR, vscode_commit(), reh_identity())
+for problem in problems:
+	print(f"[devhub] {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+'); then
+	echo "[devhub] remote windows on the platforms above will be refused until scripts/build_reh.py builds their servers — see docs/remote-ssh.md#a-source-run-uses-servers-built-in-the-checkout" >&2
+fi
+
 # Which DevHub this run is. A source run is a *second* DevHub: the packaged one
 # is the environment the person works in, and the two cannot share the editor's
 # user-data directory (VS Code makes that single-instance, so the second one
