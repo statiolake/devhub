@@ -340,6 +340,13 @@ Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step.
 
+`pnpm dev` also builds the remote extension host for this Mac's CPU
+(`linux-arm64` or `linux-x64`) when it is missing or stale — about 15 minutes,
+needs Docker. Without Docker, or if the build fails, it warns and starts anyway
+(remote windows won't work until `scripts/build_reh.py <target>` succeeds).
+`DEVHUB_SKIP_REH_BUILD=1 pnpm dev` skips it. The other three servers are listed,
+not built; see [docs/remote-ssh.md](docs/remote-ssh.md).
+
 `pnpm dev` runs under the `dev` profile, so a source build and the packaged
 DevHub can be open at the same time — which is what makes developing DevHub
 inside DevHub possible. `DEVHUB_PROFILE` is the whole switch: unset (every

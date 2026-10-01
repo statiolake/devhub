@@ -448,6 +448,18 @@ checkout with scripts/build_reh.py alpine-x64._ `dev.sh` says the same at
 start-up, as a note rather than a stop: a local window needs no server, and
 building them takes most of an hour.
 
+`pnpm dev` builds one of them for you: before the app starts,
+`scripts/dev_reh.py` checks the glibc server of this Mac's CPU (`linux-arm64`
+on Apple Silicon, `linux-x64` on Intel) against the current identity — a file
+check, no Docker — and runs `scripts/build_reh.py <target>` only when it is
+missing or stale. That takes about 15 minutes, and `pnpm dev` says so and why
+(the patches or VS Code changed); the output is also in
+`dist/reh-dev-build.log`. It never blocks the app: without Docker running, or if
+the build fails, it prints a warning with the exact command and starts anyway,
+and remote windows stay refused until the server is built. The other three
+servers are never built automatically; `dev.sh` lists them as above. Set
+`DEVHUB_SKIP_REH_BUILD=1` to skip the automatic build.
+
 What makes a commit-less client acceptable to a server whose `product.json`
 states a commit is the server's own check, above. The refusal for a run that
 states neither field — a source run not started by `dev.sh`, or one whose

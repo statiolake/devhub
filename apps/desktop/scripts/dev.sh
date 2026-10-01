@@ -54,6 +54,11 @@ fi
 # its product.json from as well.
 "$REPO_ROOT/scripts/product_metadata.py" "$VSCODE_DIR/product.overrides.json"
 
+# First build the one server this Mac's CPU can use natively (glibc, its own
+# architecture) if it is missing or stale. Never blocks: no Docker or a failed
+# build only warns. DEVHUB_SKIP_REH_BUILD=1 opts out. See scripts/dev_reh.py.
+python3 "$REPO_ROOT/scripts/dev_reh.py" || true
+
 # The remote extension hosts a source run copies onto SSH hosts and into dev
 # containers are the ones scripts/build_reh.py left in dist/reh — built from
 # this checkout's VS Code and patches, or refused. Said here, once, rather than
