@@ -276,6 +276,56 @@ touches server code does not move the submodule, so it does not change
 tag. Rebuild it deliberately — Actions → Nightly → Run workflow, with
 `force_reh` ticked.
 
+## A language pack is cached per message table, not per commit
+
+The same fact — `commit` does not move when `patches/vscode/` does — once
+broke a translated UI, on this Mac as much as on a host, so it is written down
+here beside the server it also applies to.
+
+The compiled VS Code does not look a message up by its key. Each `localize`
+call is compiled to an index into `out/nls.messages.json`, and
+`out/nls.keys.json` records which module and key each index stands for in that
+build. A language pack is the other way round: its `*.i18n.json` is keyed by
+module and key, because it has to serve every build of the version it was
+written for. `resolveNLSConfiguration` (`vscode/src/vs/base/node/nls.ts`) joins
+the two once — walks `nls.keys.json` in order and writes the pack's translation,
+or the English message where it has none, at each index — and caches the result
+as `<userData>/clp/<pack hash>.<locale>/<commit>/nls.messages.json`. The main
+process does that for the app (`apps/desktop/src/main/main.ts`), and the
+remote server does it for itself (`remoteLanguagePacks.ts`, under
+`~/.devhub-server/data`).
+
+Upstream keys that cache by `commit` because every upstream build has a commit
+of its own. DevHub's `commit` is the submodule's, so every DevHub build on one
+submodule commit shares a cache folder — and a patch that adds, removes or
+moves a single `localize` call shifts every index after it. The table cached by
+the previous build was then read against the new build's indices: messages
+before the change were right, and every one after it was its neighbour's
+translation. That is what the Workspace Trust dialog a terminal raises in a
+dev container showed in Japanese: its own buttons and body were right, and its
+message — "Creating a terminal process requires executing code" — read
+「ターミナル ユーザー補助のヘルプに {0} を使用する」, a string four `localize` calls
+further down `terminalInstance.ts`, because DevHub's patches had changed the
+messages above it since the cache was written — `0005` alone adds one to that
+same file. It is not a language pack version mismatch: a pack written for
+another VS Code only lacks some keys, and a missing key falls back to English;
+it never moves another key's translation into its place.
+
+`patches/vscode/0009-a-language-pack-is-cached-per-message-table.patch` names the
+folder `<commit>.<hash>` instead, the hash being the first 16 hex digits of a
+SHA-256 over `nls.keys.json` and `nls.messages.json` — exactly the two inputs
+the cached table is made from besides the pack, whose own hash is already in the
+parent folder's name. A build with the same table finds the folder it made; a
+build with a different one makes its own. Hashing the files rather than adding a
+build number to `product.json` keeps the key correct however the build was made,
+and it applies unchanged to the remote server, which is the same function. The
+cost is reading the two files at startup when a language pack is in use, which
+the cache-miss path read anyway. Folders made under the old naming, plain
+`<commit>`, are never read again, and VS Code's
+`LanguagePackCachedDataCleaner` removes them once they have gone untouched for
+a week (DevHub states no `quality`, which the cleaner reads as a non-stable
+build).
+
 ## Building one locally
 
 ```sh
