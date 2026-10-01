@@ -336,6 +336,12 @@ pnpm dev             # build apps/desktop and run it
 pnpm run check       # extension checks, format, lint, types, tests
 ```
 
+Type checking and the main-process build use `tsgo` (`@typescript/native-preview`,
+TypeScript's Go port), pinned to an exact preview version: it is several times
+faster and emits the same output as `tsc` 5.9. `typescript` stays installed for
+eslint, vitest and the editor. If `tsgo` misbehaves, `pnpm --filter
+@devhub/desktop run typecheck:tsc` runs the same check with `tsc`.
+
 Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step.

@@ -26,6 +26,10 @@ Run focused commands while iterating with `CI=true pnpm --filter @devhub/app tes
 `cargo test --workspace --locked`, and `cargo clippy --workspace
 --all-targets --all-features --locked -- -D warnings`.
 
+Types are checked with `tsgo` (pinned `@typescript/native-preview`); if its
+result looks wrong, compare with `pnpm --filter @devhub/desktop run
+typecheck:tsc` before changing code.
+
 Do not claim hosted CI, macOS artifact generation, signing, or release status
 from a local run. The committed `.github/workflows/ci.yml` describes the
 non-release hosted verification that will be run in the final wave; it is not

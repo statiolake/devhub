@@ -31,7 +31,7 @@ if [ ! -f "$VSCODE_DIR/node_modules/node-pty/build/Release/pty.node" ]; then
 	exit 1
 fi
 
-"$APP_DIR/node_modules/.bin/tsc" -p "$TEST_DIR/tsconfig.json"
+"$APP_DIR/node_modules/.bin/tsgo" -p "$TEST_DIR/tsconfig.json"
 
 # Scratch directories the tests create live under .spike/, never in $TMPDIR.
 mkdir -p "$REPO_ROOT/.spike"

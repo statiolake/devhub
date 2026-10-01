@@ -17,6 +17,9 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    // Vite resolves `import "./x.css"`; there is nothing for tsc to check. tsc
+    // 5.9 never looked, tsgo checks side-effect imports by default.
+    "noUncheckedSideEffectImports": false,
     "noEmit": true
   },
   "include": ["src/shell", "src/settings", "src/ipc", "vite.config.ts"]
