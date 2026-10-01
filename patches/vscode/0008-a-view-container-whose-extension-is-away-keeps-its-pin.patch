@@ -1,0 +1,43 @@
+diff --git a/src/vs/workbench/browser/parts/paneCompositeBar.ts b/src/vs/workbench/browser/parts/paneCompositeBar.ts
+index 048de8a0..df744f20 100644
+--- a/src/vs/workbench/browser/parts/paneCompositeBar.ts
++++ b/src/vs/workbench/browser/parts/paneCompositeBar.ts
+@@ -337,11 +337,15 @@ export class PaneCompositeBar extends Disposable {
+ 
+ 	private onDidRegisterViewContainers(viewContainers: readonly ViewContainer[]): void {
+ 		for (const viewContainer of viewContainers) {
++			// DevHub: one this bar already holds — hidden while its extension was
++			// away (`onDidDeregisterViewContainer`) — is not new, whatever the
++			// cache read when the window opened says, and keeps its pin.
++			const known = this.compositeBar.getCompositeBarItems().some(({ id }) => id === viewContainer.id);
+ 			this.addComposite(viewContainer);
+ 
+ 			// Pin it by default if it is new
+ 			const cachedViewContainer = this.cachedViewContainers.filter(({ id }) => id === viewContainer.id)[0];
+-			if (!cachedViewContainer) {
++			if (!cachedViewContainer && !known) {
+ 				this.compositeBar.pin(viewContainer.id);
+ 			}
+ 
+@@ -365,7 +369,20 @@ export class PaneCompositeBar extends Disposable {
+ 
+ 	private onDidDeregisterViewContainer(viewContainer: ViewContainer): void {
+ 		this.viewContainerDisposables.deleteAndDispose(viewContainer.id);
+-		this.removeComposite(viewContainer.id);
++		// DevHub: a view container whose extension went away is hidden, not
++		// removed, unless it is gone for good — the same answer a container
++		// gets when its extension is not there at startup
++		// (`onDidRegisterExtensions`). Removing it unpinned it and dropped it
++		// from the stored list, so whether the person had hidden it was
++		// forgotten, and it came back shown when the extension did. In DevHub
++		// that is every dev container rebuild: the container's extensions are
++		// gone until they are installed in the new one, and every workbench
++		// shares the one stored list.
++		if (this.viewDescriptorService.isViewContainerRemovedPermanently(viewContainer.id)) {
++			this.removeComposite(viewContainer.id);
++		} else {
++			this.hideComposite(viewContainer.id);
++		}
+ 	}
+ 
+ 	private updateCompositeBarActionItem(viewContainer: ViewContainer, viewContainerModel: IViewContainerModel): void {

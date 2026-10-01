@@ -236,6 +236,18 @@ everything from then on, because its caches describe a filesystem that has
 been deleted; `containerHostFor` throws it away and builds another. The
 Workspace is untouched: the target is still the same target.
 
+A bring-up that itself made the new container — Reopen Editor in Container
+after the old one was removed — is answered with it rather than refused: the
+host is marked replaced, and the next one adopts the new container.
+
+A new container has none of the extensions the old one had installed, until
+they are installed again. The activity bar keeps an item whose extension is
+away hidden rather than removed (patch 0008), as upstream already does for one
+that is missing when a window opens, so an item a person had hidden stays
+hidden when its extension comes back. Removing it — upstream's answer when an
+extension goes away under an open window — dropped it from the list every
+workbench shares, pin and all, and it came back shown.
+
 ## The transport
 
 ### `ContainerMachine`: where `docker` runs
