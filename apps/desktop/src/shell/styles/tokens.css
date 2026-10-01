@@ -562,7 +562,8 @@ body {
   cursor: default;
 }
 
-/* Diagnostics exist to be pasted somewhere, provider surfaces own their own
+/* Diagnostics exist to be pasted somewhere — a notice's words among them —
+   provider surfaces own their own
    selection model, a GUI Agent's transcript is read and quoted, and a text
    field is a text field. Their text shows the I-beam: `auto` is set where
    the text starts and inherited below it, so a link inside the transcript
@@ -570,6 +571,8 @@ body {
 .failure-title,
 .failure-detail,
 .surface-line,
+.toast-summary,
+.toast-detail,
 .terminal-surface,
 .terminal-surface *,
 .conversation-selectable,
@@ -582,6 +585,8 @@ textarea {
 .failure-title,
 .failure-detail,
 .surface-line,
+.toast-summary,
+.toast-detail,
 .terminal-surface,
 .terminal-surface *,
 .conversation-selectable,

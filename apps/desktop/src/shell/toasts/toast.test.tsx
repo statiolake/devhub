@@ -17,7 +17,13 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppError } from "../../ipc/appShell";
 import { ToastsApp } from "./ToastsApp";
@@ -51,6 +57,7 @@ function mount() {
   /** What was already being listened for, each time the page said it listens. */
   const listening: string[][] = [];
   const heard = new Set<string>();
+  const writeClipboard = vi.fn((_text: string) => Promise.resolve());
 
   window.devhub = {
     onNativeError: (listener: (error: AppError) => void) => {
@@ -82,6 +89,7 @@ function mount() {
     },
     retryApp: () => undefined,
     openSettings: () => Promise.resolve(),
+    writeClipboard,
   } as unknown as typeof window.devhub;
 
   render(<ToastsApp />);
@@ -90,6 +98,7 @@ function mount() {
     /** Every size this page has told main its notices take up. */
     sizes,
     listening,
+    writeClipboard,
     /**
      * A look at the repositories that did or did not finish.
      *
@@ -532,5 +541,22 @@ describe("how much room the page says it needs", () => {
     expect(sizes.at(-1)).toBe("320x96");
     look(2);
     expect(sizes.at(-1)).toBe("0x0");
+  });
+});
+
+describe("copying a notice", () => {
+  afterEach(cleanup);
+
+  it("puts its summary and detail on main's clipboard, and says so", async () => {
+    const page = mount();
+    page.observe("gh", GH_MISSING);
+    const copy = screen.getByRole("button", { name: "Copy" });
+    await act(async () => {
+      fireEvent.click(copy);
+      await Promise.resolve();
+    });
+    expect(page.writeClipboard).toHaveBeenCalledTimes(1);
+    expect(page.writeClipboard.mock.calls[0]?.[0]).toContain(GH_MISSING);
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 });

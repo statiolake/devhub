@@ -35,23 +35,39 @@
  * different guarantees, and both are wanted.
  */
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isImeComposing } from "../accessibility/ime";
 import type { Notice } from "../notices";
+
+/** How long a Copy button says it has copied. */
+export const COPIED_MS = 1500;
+
+/** What Copy puts on the clipboard: the summary, then the detail under it. */
+export function noticeText(notice: Notice): string {
+  return notice.detail ? `${notice.summary}\n${notice.detail}` : notice.summary;
+}
 
 function Toast({
   notice,
   onDismiss,
   onRetry,
   onOpenSettings,
+  onCopy,
 }: {
   readonly notice: Notice;
   readonly onDismiss: () => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
+  readonly onCopy: (text: string) => Promise<void>;
 }) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   return (
     <div
@@ -77,24 +93,34 @@ function Toast({
         {/* The summary says what to do; the detail says what happened. */}
         {notice.detail ? <p className="toast-detail">{notice.detail}</p> : null}
       </div>
-      {notice.actions.length > 0 ? (
-        <div className="toast-actions">
-          {notice.actions.includes("retry") ? (
-            <button type="button" className="toast-action" onClick={onRetry}>
-              Try Again
-            </button>
-          ) : null}
-          {notice.actions.includes("open_settings") ? (
-            <button
-              type="button"
-              className="toast-action"
-              onClick={onOpenSettings}
-            >
-              Open Settings
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Every notice can be copied: an error is most often read in order
+          to be pasted somewhere — an Issue, a search, an Agent. Its words
+          can be selected too; this is the whole of it in one press. */}
+      <div className="toast-actions">
+        <button
+          type="button"
+          className="toast-action"
+          onClick={() => {
+            void onCopy(noticeText(notice)).then(() => setCopied(true));
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {notice.actions.includes("retry") ? (
+          <button type="button" className="toast-action" onClick={onRetry}>
+            Try Again
+          </button>
+        ) : null}
+        {notice.actions.includes("open_settings") ? (
+          <button
+            type="button"
+            className="toast-action"
+            onClick={onOpenSettings}
+          >
+            Open Settings
+          </button>
+        ) : null}
+      </div>
       <button
         type="button"
         className="toast-close"
@@ -114,6 +140,8 @@ export interface ToastStackProps {
   readonly onDismiss: (identity: string) => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
+  /** Put a notice's words on the clipboard. */
+  readonly onCopy: (text: string) => Promise<void>;
   /**
    * Where the measurement is taken.
    *
@@ -129,6 +157,7 @@ export function ToastStack({
   onDismiss,
   onRetry,
   onOpenSettings,
+  onCopy,
   ref,
 }: ToastStackProps) {
   // Nothing is returned when there is nothing to say, and the size that goes
@@ -148,6 +177,7 @@ export function ToastStack({
           }}
           onRetry={onRetry}
           onOpenSettings={onOpenSettings}
+          onCopy={onCopy}
         />
       ))}
     </div>

@@ -120,6 +120,7 @@ export function ToastsApp() {
       onOpenSettings={() => {
         void devhub().openSettings();
       }}
+      onCopy={(text) => devhub().writeClipboard(text)}
     />
   );
 }

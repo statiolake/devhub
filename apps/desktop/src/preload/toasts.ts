@@ -15,7 +15,7 @@ import {
 	type ToastsBridge,
 } from "../ipc/contract.js";
 import type { AppError, NoticeRetiredWire } from "../ipc/appShell.js";
-import { on, openSettings, pageBridge } from "./bridge.js";
+import { on, openSettings, pageBridge, writeClipboard } from "./bridge.js";
 
 const api: ToastsBridge = {
 	...pageBridge(),
@@ -38,6 +38,7 @@ const api: ToastsBridge = {
 		ipcRenderer.send(CHANNELS.noticesListening);
 	},
 	openSettings,
+	writeClipboard,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);
