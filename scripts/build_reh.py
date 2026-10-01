@@ -1065,7 +1065,13 @@ def main() -> int:
 		)
 
 	if not args.skip_provision:
-		subprocess.run([str(REPO_ROOT / "scripts" / "provision-vscode.sh")], check=True)
+		# `--for deps`: the dependencies, the Node toolchain and the patches,
+		# not vscode/out or out-vscode-min — `bundle_server_sources` runs its own
+		# `core-ci`, which transpiles and bundles from src itself. Asking for the
+		# trees would put `npm run compile` in front of every server build.
+		subprocess.run(
+			[str(REPO_ROOT / "scripts" / "provision-vscode.sh"), "--for", "deps"], check=True
+		)
 
 	commit = vscode_commit()
 	identity = reh_identity()

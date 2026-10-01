@@ -28,7 +28,7 @@
 #   * the pnpm workspace's node_modules       (`pnpm install`)
 #   * the VS Code submodule, its Node
 #     toolchain, its npm dependencies, the
-#     DevHub patches and both compiles       (scripts/provision-vscode.sh)
+#     DevHub patches and the VS Code bundle  (scripts/provision-vscode.sh)
 #   * the DevHub packages themselves         (`pnpm run build:packages`)
 #
 # Refused with a message:
@@ -77,7 +77,11 @@ ZIP_NAME="DevHub-darwin-arm64-${DATE}-${SHA}.zip"
 printf '\n==> workspace dependencies\n'
 pnpm install --frozen-lockfile
 
-scripts/provision-vscode.sh
+# Only the bundled tree the app ships (`--for app`): the packaged app never
+# loads vscode/out, so `npm run compile` is `pnpm dev`'s cost, not ours. Locally
+# the bundle is the fast one (DEVHUB_FAST_VSCODE_BUNDLE, step 4b of
+# provision-vscode.sh); with CI set it is `core-ci`, as the nightly ships.
+scripts/provision-vscode.sh --for app
 
 printf '\n==> DevHub packages\n'
 pnpm run build:packages

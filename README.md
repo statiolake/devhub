@@ -331,7 +331,7 @@ used for it.
 
 ```sh
 CI=true pnpm install --frozen-lockfile
-pnpm run provision   # submodule, toolchain, patches, compile, Electron
+pnpm run provision   # submodule, toolchain, patches, compile + bundle, Electron
 pnpm dev             # build apps/desktop and run it
 pnpm run check       # extension checks, format, lint, types, tests
 ```
@@ -354,7 +354,20 @@ CI starts clean, so these only ever miss there.
 
 Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
-redoes every step.
+redoes every step. The two VS Code trees are stamped separately and built only
+for whoever needs them: `--for dev` compiles `vscode/out` (`npm run compile`,
+what `pnpm dev` runs on), `--for app` bundles `vscode/out-vscode-min` (what the
+packaged app ships), `--for all` (the default, `pnpm run provision`) does both.
+`pnpm build` asks for `app` only; `pnpm dev` warns when `vscode/out` is behind
+the patches and names `scripts/provision-vscode.sh --for dev`.
+
+Locally the bundle is the fast one (`DEVHUB_FAST_VSCODE_BUNDLE=1`, the default
+unless `CI` is set): the desktop bundle alone, without `--mangle-privates`, and
+an esbuild transpile into `vscode/out-build` for the main-process bundle instead
+of `npm run compile` — about 2 minutes after a patch edit where it was 5, and
+one bundle's memory (about 5 GB) where `core-ci`'s three parallel bundles passed 16.
+`DEVHUB_FAST_VSCODE_BUNDLE=0` runs upstream's `npm run core-ci` exactly as the
+nightly does; CI refuses to package a fast bundle.
 
 `pnpm dev` also builds the remote extension host for this Mac's CPU
 (`linux-arm64` or `linux-x64`) when it is missing or stale — about 15 minutes,
@@ -395,7 +408,7 @@ pnpm build
 
 From a fresh clone that is the whole procedure: it installs the workspace,
 provisions the VS Code submodule (checkout, the Node the submodule's build
-pins, `npm ci`, DevHub's patches, both compiles, Electron) and assembles
+pins, `npm ci`, DevHub's patches, the bundled VS Code, Electron) and assembles
 
 ```text
 dist/DevHub.app

@@ -150,5 +150,47 @@ class RemoteServers(unittest.TestCase):
 		self.assertFalse((self.app / "Contents" / "Resources" / "reh").exists())
 
 
+class VSCodeStamps(unittest.TestCase):
+	"""The per-tree stamps scripts/provision-vscode.sh writes, as read here."""
+
+	def setUp(self) -> None:
+		self.dir = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.dir)
+		self.stamp = self.dir / "devhub-bundle.stamp"
+
+	def problem(self, text: str | None, *, ci: bool = False) -> str | None:
+		if text is not None:
+			self.stamp.write_text(text)
+		return package_nightly.bundle_stamp_problem(self.stamp, "abc", ci=ci)
+
+	def test_current_bundles_are_accepted(self) -> None:
+		self.assertIsNone(self.problem("abc full"))
+		self.assertIsNone(self.problem("abc fast"))
+		self.assertIsNone(self.problem("abc full", ci=True))
+
+	def test_missing_stale_or_old_format_is_refused(self) -> None:
+		self.assertIn("not bundled", self.problem(None) or "")
+		self.assertIn("not bundled", self.problem("old full") or "")
+		# The single stamp that preceded these held the state alone.
+		self.assertIn("not bundled", self.problem("abc") or "")
+		self.assertIn("not bundled", self.problem("abc slow") or "")
+
+	def test_ci_refuses_a_fast_bundle(self) -> None:
+		self.assertIn("DEVHUB_FAST_VSCODE_BUNDLE=0", self.problem("abc fast", ci=True) or "")
+
+	def test_main_process_tree_prefers_a_current_compile(self) -> None:
+		vscode = self.dir / "vscode"
+		(vscode / "out" / "vs").mkdir(parents=True)
+		compile_stamp = self.dir / "devhub-compile.stamp"
+		tree = package_nightly.main_process_vscode_tree
+		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
+		compile_stamp.write_text("old")
+		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
+		compile_stamp.write_text("abc")
+		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out")
+		shutil.rmtree(vscode / "out")
+		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
+
+
 if __name__ == "__main__":
 	unittest.main()

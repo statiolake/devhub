@@ -267,9 +267,22 @@ def check_inputs() -> None:
 
 	check_compiled_output_is_current()
 
-	# The same state provision-vscode.sh stamps: the submodule HEAD plus the
-	# patch contents, so a bumped submodule with unchanged patches is stale too.
-	stamp = VSCODE_DIR / ".build" / "devhub-source.stamp"
+	problem = bundle_stamp_problem(
+		BUNDLE_STAMP, vscode_source_state(), ci=bool(os.environ.get("CI"))
+	)
+	if problem:
+		fail(problem)
+
+
+# What scripts/provision-vscode.sh stamps each VS Code tree with. Each holds the
+# source state (see vscode_source_state); the bundle's adds how it was made.
+COMPILE_STAMP = VSCODE_DIR / ".build" / "devhub-compile.stamp"
+BUNDLE_STAMP = VSCODE_DIR / ".build" / "devhub-bundle.stamp"
+
+
+def vscode_source_state() -> str:
+	"""The state provision-vscode.sh stamps: the submodule HEAD plus the patch
+	contents, so a bumped submodule with unchanged patches is stale too."""
 	patches = sorted((REPO_ROOT / "patches" / "vscode").glob("*.patch"))
 	head = subprocess.run(
 		["git", "-C", str(VSCODE_DIR), "rev-parse", "HEAD"],
@@ -278,15 +291,56 @@ def check_inputs() -> None:
 	# The shell's command substitution strips trailing newlines before the
 	# shasum; reproduce that byte-for-byte or the two sides disagree forever.
 	source_state = (head.encode() + b"".join(p.read_bytes() for p in patches)).rstrip(b"\n")
-	state = subprocess.run(
+	return subprocess.run(
 		["shasum"], input=source_state,
 		capture_output=True, check=True,
 	).stdout.split()[0].decode()
-	if not stamp.exists() or stamp.read_text().strip() != state:
-		fail(
-			"vscode/out was not compiled from the current patches/vscode/*"
-			"\n       run: scripts/provision-vscode.sh"
+
+
+def _read_stamp(stamp: Path) -> list[str]:
+	try:
+		return stamp.read_text().split()
+	except OSError:
+		return []
+
+
+def bundle_stamp_problem(stamp: Path, state: str, *, ci: bool) -> str | None:
+	"""Why out-vscode-min cannot be packaged, or None when it can.
+
+	The stamp reads "<state> full" (`npm run core-ci`, what the nightly ships)
+	or "<state> fast" (the desktop bundle alone, without `--mangle-privates` —
+	the local default; see step 4b of scripts/provision-vscode.sh). CI must
+	ship the full one, so a fast bundle there is refused rather than released.
+	"""
+	fields = _read_stamp(stamp)
+	if len(fields) != 2 or fields[0] != state or fields[1] not in ("full", "fast"):
+		return (
+			"vscode/out-vscode-min was not bundled from the current submodule and patches/vscode/*"
+			"\n       run: scripts/provision-vscode.sh --for app"
 		)
+	if ci and fields[1] != "full":
+		return (
+			"vscode/out-vscode-min is a fast local bundle (DEVHUB_FAST_VSCODE_BUNDLE=1);"
+			" CI ships the full core-ci one"
+			"\n       run: DEVHUB_FAST_VSCODE_BUNDLE=0 scripts/provision-vscode.sh --for app"
+		)
+	return None
+
+
+def main_process_vscode_tree(compile_stamp: Path, vscode_dir: Path, state: str) -> Path:
+	"""The per-module VS Code tree DevHub's main process is bundled against.
+
+	DevHub's main imports `code-oss-dev/out/vs/...`. When `npm run compile`'s
+	vscode/out is current — always in CI, which provisions everything — that
+	is the tree, as it always was. A `pnpm build` provisions only the bundle
+	(`--for app`) and skips that compile; it then uses out-build, the esbuild
+	transpile of the same source that the bundle step makes beside
+	out-vscode-min (and that upstream's own `core-ci` makes too).
+	"""
+	fields = _read_stamp(compile_stamp)
+	if fields == [state] and (vscode_dir / "out" / "vs").is_dir():
+		return vscode_dir / "out"
+	return vscode_dir / "out-build"
 
 
 def build_builtin_extensions() -> Path:
@@ -635,6 +689,10 @@ def bundle_main_process(target: Path) -> None:
 	if not esbuild.exists():
 		fail(f"missing {esbuild}\n       produce it with: scripts/provision-vscode.sh")
 	target.parent.mkdir(parents=True, exist_ok=True)
+	tree = main_process_vscode_tree(COMPILE_STAMP, VSCODE_DIR, vscode_source_state())
+	if not (tree / "vs").is_dir():
+		fail(f"missing {tree}\n       produce it with: scripts/provision-vscode.sh --for app")
+	print(f"    VS Code modules for the main process from vscode/{tree.name}")
 	run([
 		str(esbuild),
 		str(DESKTOP_DIR / "out" / "main" / "main.js"),
@@ -643,7 +701,7 @@ def bundle_main_process(target: Path) -> None:
 		"--platform=node",
 		"--target=node22",
 		"--packages=external",
-		f"--alias:code-oss-dev={VSCODE_DIR}",
+		f"--alias:code-oss-dev/out={tree}",
 		f"--outfile={target}",
 	])
 	print(f"    bundled the main process into {target.name} ({target.stat().st_size / 1e6:.1f} MB)")

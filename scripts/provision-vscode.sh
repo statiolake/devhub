@@ -7,16 +7,54 @@
 # vscode/ (npm-managed, gitignored by the submodule itself) or vscode-toolchain/.
 #
 # Idempotent: each step is skipped when its output already exists.
-#   --force   redo every step regardless.
+#   --force       redo every step regardless.
+#   --for WHAT    which VS Code build outputs to produce (default: all):
+#                   dev    vscode/out — what `pnpm dev` runs on
+#                   app    vscode/out-vscode-min (+ out-build) — what
+#                          scripts/package-nightly.py packages (`pnpm build`)
+#                   all    both
+#                   deps   neither: dependencies, patches, Electron and the
+#                          built-in extensions only (scripts/build_reh.py runs
+#                          its own `core-ci`)
+#
+# DEVHUB_FAST_VSCODE_BUNDLE decides how out-vscode-min is made; see step 4b.
+# It defaults to 1 on a developer's machine and to 0 when CI is set.
 set -euo pipefail
 
 FORCE=0
-for arg in "$@"; do
-	case "$arg" in
+OUTPUTS=all
+usage() { echo "usage: $(basename "$0") [--force] [--for dev|app|all|deps]" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+	case "$1" in
 		--force) FORCE=1 ;;
-		*) echo "usage: $(basename "$0") [--force]" >&2; exit 2 ;;
+		--for)
+			[ $# -ge 2 ] || usage
+			OUTPUTS="$2"
+			shift
+			;;
+		--for=*) OUTPUTS="${1#--for=}" ;;
+		*) usage ;;
 	esac
+	shift
 done
+WANT_OUT=0
+WANT_BUNDLE=0
+case "$OUTPUTS" in
+	dev) WANT_OUT=1 ;;
+	app) WANT_BUNDLE=1 ;;
+	all) WANT_OUT=1; WANT_BUNDLE=1 ;;
+	deps) ;;
+	*) usage ;;
+esac
+if [ -n "${CI:-}" ]; then
+	FAST_BUNDLE="${DEVHUB_FAST_VSCODE_BUNDLE:-0}"
+else
+	FAST_BUNDLE="${DEVHUB_FAST_VSCODE_BUNDLE:-1}"
+fi
+case "$FAST_BUNDLE" in
+	0 | 1) ;;
+	*) echo "DEVHUB_FAST_VSCODE_BUNDLE must be 0 or 1, not '$FAST_BUNDLE'" >&2; exit 2 ;;
+esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
@@ -163,12 +201,11 @@ printf '%s' "$INSTALL_STATE" > "$INSTALL_STAMP"
 # apply to a newer tag. What belongs here and not there is the stamp: it is the
 # compile below that has to know what its source was.
 step "patches/vscode"
-# What `vscode/out` was built from: the submodule commit *and* the patches on
-# top of it. Both belong in the stamp — a stamp over the patches alone survives
-# a submodule bump unchanged, so the next non-`--force` run would find an `out/`
-# that looks current and skip the compile, leaving DevHub running yesterday's
-# VS Code against today's source.
-SOURCE_STAMP="$VSCODE_DIR/.build/devhub-source.stamp"
+# What the trees below were built from: the submodule commit *and* the patches
+# on top of it. Both belong in the stamps — a stamp over the patches alone
+# survives a submodule bump unchanged, so the next non-`--force` run would find
+# an `out/` that looks current and skip the compile, leaving DevHub running
+# yesterday's VS Code against today's source.
 SOURCE_STATE="$(
 	git -C "$VSCODE_DIR" rev-parse HEAD
 	cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null
@@ -177,35 +214,99 @@ SOURCE_STATE="$(printf '%s' "$SOURCE_STATE" | shasum | cut -d' ' -f1)"
 "$REPO_ROOT/scripts/apply-vscode-patches.sh"
 
 # --- 4. compile ------------------------------------------------------------
-# Two trees come out of this step, and the stamp covers both.
+# Two trees can come out of this step, each under its own stamp, because the
+# two consumers want different ones and each should pay only for its own:
 #
-#   out/              the module-by-module compile. `pnpm dev` runs on it:
-#                     VSCODE_DEV is set, VS Code loads its source graph file by
-#                     file, and a change is one `npm run compile` away.
+#   out/              the module-by-module compile (`npm run compile`, ~90 s,
+#                     plus the extensions' and Copilot's out/). `pnpm dev` runs
+#                     on it: VSCODE_DEV is set, VS Code loads its source graph
+#                     file by file. `--for dev`.
 #   out-vscode-min/   the bundled tree, one file per process. The packaged app
 #                     runs on it, with VSCODE_DEV unset, because that is what
 #                     makes it a built product rather than a checkout that
 #                     happens to be zipped. See scripts/package-nightly.py.
+#                     `--for app`.
 #
-# One stamp for both: a tree that agrees with the source and a tree beside it
-# that does not is the state the stamp exists to make impossible, and "which of
-# the two is stale" is not a question anybody should have to ask.
-step "compile vscode/"
-if [ "$FORCE" = 1 ] \
+# Both stamps start with SOURCE_STATE, so a bump or a patch edit rebuilds
+# exactly the trees that were asked for. A tree that was not asked for is left
+# alone with its stamp still saying what it was built from, so nothing mistakes
+# it for current. scripts/package-nightly.py reads both.
+COMPILE_STAMP="$VSCODE_DIR/.build/devhub-compile.stamp"
+BUNDLE_STAMP="$VSCODE_DIR/.build/devhub-bundle.stamp"
+mkdir -p "$VSCODE_DIR/.build"
+# The single stamp that once covered both trees. Nothing reads it any more.
+rm -f "$VSCODE_DIR/.build/devhub-source.stamp"
+
+step "compile vscode/ (out/)"
+if [ "$WANT_OUT" = 0 ]; then
+	echo "skipped: --for $OUTPUTS does not need vscode/out"
+elif [ "$FORCE" = 1 ] \
 	|| [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
-	|| [ ! -f "$VSCODE_DIR/out-vscode-min/main.js" ] \
-	|| [ "$(cat "$SOURCE_STAMP" 2>/dev/null)" != "$SOURCE_STATE" ]; then
+	|| [ "$(cat "$COMPILE_STAMP" 2>/dev/null)" != "$SOURCE_STATE" ]; then
+	rm -f "$COMPILE_STAMP"
 	(cd "$VSCODE_DIR" && npm run compile)
-	# Upstream's own CI path. It transpiles with esbuild rather than tsc, which
-	# is both faster and the only one that completes here: the tsc path stops on
-	# a declaration-portability error in upstream's own Copilot agent-host
-	# source, which the dev compile never emits declarations for and so never
-	# sees.
-	(cd "$VSCODE_DIR" && npm run core-ci)
-	mkdir -p "$(dirname "$SOURCE_STAMP")"
-	printf '%s' "$SOURCE_STATE" > "$SOURCE_STAMP"
+	printf '%s' "$SOURCE_STATE" > "$COMPILE_STAMP"
 else
-	echo "vscode/out and vscode/out-vscode-min already built from this commit and these patches"
+	echo "vscode/out already compiled from this commit and these patches"
+fi
+
+# --- 4b. bundle ------------------------------------------------------------
+# Two ways to make out-vscode-min. The stamp records which one did
+# ("<SOURCE_STATE> full" or "<SOURCE_STATE> fast"), so switching rebuilds, and
+# scripts/package-nightly.py refuses a fast bundle when CI is set.
+#
+#   full — DEVHUB_FAST_VSCODE_BUNDLE=0, the default when CI is set, so what the
+#     nightly ships: `npm run core-ci`, upstream's own CI path. It transpiles
+#     with esbuild rather than tsc, which is both faster and the only one that
+#     completes here: the tsc path stops on a declaration-portability error in
+#     upstream's own Copilot agent-host source. Besides the desktop bundle it
+#     type-checks with tsgo, bundles the built-in extensions, and bundles
+#     out-vscode-reh-min and out-vscode-reh-web-min in parallel (together the
+#     three peak well past 16 GB).
+#
+#   fast — DEVHUB_FAST_VSCODE_BUNDLE=1, the default locally: only the steps of
+#     `core-ci` the packaged app consumes, run the way core-ci runs them
+#     (runEsbuildBundle in vscode/build/lib/esbuild.ts):
+#       * copy-codicons — the font the bundle copies in as a resource;
+#       * the esbuild transpile into out-build — the per-module tree
+#         package-nightly.py bundles DevHub's main process against when out/
+#         was not compiled (`--for app` does not compile it), ~10 s against
+#         `npm run compile`'s ~90 s;
+#       * the desktop bundle, minified and with NLS, like core-ci's.
+#     Left out: the two server bundles (scripts/build_reh.py runs its own
+#     `core-ci` for them), the extension bundling (package-nightly.py runs
+#     `compile-extensions-build`, which cleans .build/extensions first, so
+#     core-ci's copy was discarded anyway), the tsgo type check, the CDN
+#     source-map URL, and `--mangle-privates`. That flag rewrites native
+#     `#private` fields into short `$a` properties, for V8 speed and size.
+#     Without it the bundle keeps the fields exactly as the source declares
+#     them — the semantics `pnpm dev` runs on — and nothing in VS Code or
+#     DevHub reads a mangled name. NLS stays: it is most of the bundle's time,
+#     but without it a language pack has no message table to apply to.
+if [ "$FAST_BUNDLE" = 1 ]; then BUNDLE_MODE=fast; else BUNDLE_MODE=full; fi
+BUNDLE_STATE="$SOURCE_STATE $BUNDLE_MODE"
+
+step "bundle vscode/ (out-vscode-min, $BUNDLE_MODE)"
+if [ "$WANT_BUNDLE" = 0 ]; then
+	echo "skipped: --for $OUTPUTS does not need vscode/out-vscode-min"
+elif [ "$FORCE" = 1 ] \
+	|| [ ! -f "$VSCODE_DIR/out-vscode-min/main.js" ] \
+	|| [ ! -f "$VSCODE_DIR/out-build/vs/code/electron-main/main.js" ] \
+	|| [ "$(cat "$BUNDLE_STAMP" 2>/dev/null)" != "$BUNDLE_STATE" ]; then
+	rm -f "$BUNDLE_STAMP"
+	if [ "$BUNDLE_MODE" = full ]; then
+		(cd "$VSCODE_DIR" && npm run core-ci)
+	else
+		(
+			cd "$VSCODE_DIR"
+			npm run gulp copy-codicons
+			node build/next/index.ts transpile --out out-build
+			node build/next/index.ts bundle --out out-vscode-min --target desktop --minify --nls
+		)
+	fi
+	printf '%s' "$BUNDLE_STATE" > "$BUNDLE_STAMP"
+else
+	echo "vscode/out-vscode-min already bundled ($BUNDLE_MODE) from this commit and these patches"
 fi
 
 # --- 5. the Electron our main process runs in ------------------------------

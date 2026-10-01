@@ -423,7 +423,9 @@ scripts/build_reh.py linux-arm64          # or only the ones you need
 
 It needs **Docker** — Docker Desktop, colima, or `dockerd` — for the native
 modules and for the start check, and it says so in one sentence when there is
-none. It provisions the submodule first unless you pass `--skip-provision`, and
+none. It provisions the submodule first (`provision-vscode.sh --for deps`: the
+dependencies and patches, not `vscode/out` or `out-vscode-min`, since its own
+`core-ci` bundles from source) unless you pass `--skip-provision`, and
 it edits `vscode/product.json` for the duration of the build and puts it back
 afterwards. That edit is not avoidable: esbuild inlines `product.json` into
 the server bundle, so a server bundled against the submodule's own file calls
