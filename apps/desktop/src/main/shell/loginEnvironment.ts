@@ -42,7 +42,8 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { TerminalLauncher } from "../runtime/runtime.js";
-import { failureText } from "../../model/wire.js";
+import type { AppErrorWire } from "../../ipc/appShell.js";
+import { errorWireAt, failureText, withDetail } from "../../model/wire.js";
 
 /** How long the login shell gets before DevHub stops waiting for it. */
 export const LOGIN_ENVIRONMENT_TIMEOUT_MS = 10_000;
@@ -456,4 +457,22 @@ function variablesOf(parsed: unknown): Readonly<Record<string, string>> {
 
 function errorText(error: unknown): string {
 	return failureText(error);
+}
+
+/**
+ * What is said when the `devhub` command could not be put in a dev container.
+ *
+ * Its own code and not `terminal_launcher_unavailable`, because an attached
+ * window's DevHub terminal is not in the container: it is the Workspace's own
+ * session, run by this Mac's launcher on this Mac's pty host
+ * (`devhubTerminalLocal`). What fails in the container — the relay that
+ * publishes the control socket, the remote extension host whose `node` runs
+ * it — is the container's `devhub` command, and saying "this window has no
+ * DevHub terminal" sent the reader looking for a terminal that worked.
+ *
+ * The detail is the runtime's own sentence, which already names the
+ * container, so nothing is put in front of it.
+ */
+export function containerCommandUnavailable(reason: string): AppErrorWire {
+	return withDetail(errorWireAt("dev_container_command_unavailable"), reason);
 }

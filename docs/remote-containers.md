@@ -122,6 +122,18 @@ also opens files in the window). A `devhub <file>` from inside the container
 names the container as its machine, and the file opens in the window attached
 to it.
 
+It needs the container's remote extension host, whose `node` runs the relay,
+so a container with no server for its platform — a source run that has not
+built one into `dist/reh`, see
+[remote-ssh.md](remote-ssh.md#a-source-run-uses-servers-built-in-the-checkout) —
+has no working `devhub` in there. That is said once, as itself: "The devhub
+command does not work inside this dev container." (`dev_container_command_unavailable`),
+with the runtime's reason as the detail. It is not "This window has no DevHub
+terminal", which it used to be: the window's DevHub terminal is this Mac's
+launcher (see above), installed and asked for without the container, and it
+works. The missing server is the window's connection's own failure too, and
+that one says which `scripts/build_reh.py <target>` builds it.
+
 ## The commands
 
 `extensions/devhub-remote` contributes **Reopen in Container**, **Reopen

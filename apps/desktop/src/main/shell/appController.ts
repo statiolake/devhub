@@ -302,7 +302,10 @@ import {
 	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
-import { windowTerminalLauncher } from "./loginEnvironment.js";
+import {
+	containerCommandUnavailable,
+	windowTerminalLauncher,
+} from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
@@ -5046,8 +5049,11 @@ export class AppController {
 	 *
 	 * A container whose command could not be installed is still a container
 	 * the person asked to edit in, so the window opens anyway — but never in
-	 * silence: the reason is said the way a machine without a terminal
-	 * launcher says it.
+	 * silence, and said as what it is: the `devhub` command in the container.
+	 * It used to be said as `terminal_launcher_unavailable`, which read "This
+	 * window has no DevHub terminal" for a window whose DevHub terminal is
+	 * this Mac's launcher (`devhubTerminalLocal`) and works — see
+	 * `containerCommandUnavailable`.
 	 */
 	private async installContainerCommand(host: ContainerHost): Promise<void> {
 		let unreachable: string | undefined;
@@ -5058,12 +5064,7 @@ export class AppController {
 		}
 		if (unreachable === undefined) return;
 		console.error(`[devhub] devhub command in ${host.id}: ${unreachable}`);
-		this.publishError(
-			withDetail(
-				errorWireAt("terminal_launcher_unavailable"),
-				`${host.where.trim()}: ${unreachable}`,
-			),
-		);
+		this.publishError(containerCommandUnavailable(unreachable));
 	}
 
 	/**

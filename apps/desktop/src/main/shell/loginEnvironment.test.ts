@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	adoptLoginEnvironment,
+	containerCommandUnavailable,
 	windowTerminalLauncher,
 	launchEnvironment,
 	loginEnvironmentSummary,
@@ -309,6 +310,28 @@ describe("what one window is told its DevHub terminal is", () => {
 
 	it("says 'none' when there is no launcher at all", () => {
 		expect(windowTerminalLauncher(undefined)).toBeUndefined();
+	});
+});
+
+describe("a dev container whose devhub command could not be installed", () => {
+	// The window's DevHub terminal is this Mac's launcher, so a failure in the
+	// container must not be said as "this window has no DevHub terminal".
+	const reason =
+		"DevHub's control socket could not be published in the dev container for /w: " +
+		"This DevHub has no remote extension host for linux-arm64";
+
+	it("is said as the container's devhub command, not as a missing terminal", () => {
+		const error = containerCommandUnavailable(reason);
+		expect(error.code).toBe("dev_container_command_unavailable");
+		expect(error.code).not.toBe("terminal_launcher_unavailable");
+		expect(error.summary).toMatch(/devhub command/);
+		expect(error.summary).not.toMatch(/terminal/i);
+	});
+
+	it("carries the runtime's sentence as it is, naming the container once", () => {
+		const error = containerCommandUnavailable(reason);
+		expect(error.detail).toBe(reason);
+		expect(error.detail?.split("dev container for /w").length).toBe(2);
 	});
 });
 
