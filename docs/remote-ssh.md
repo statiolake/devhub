@@ -717,6 +717,20 @@ interactive default is untouched, which is the whole of the rule: one pty host
 in one window runs `tmux attach-session` for the terminal you opened and a bare
 login shell for the task that just started.
 
+**Nor is an extension's terminal.** An extension that runs a command in a
+terminal of its own — Code Runner, a test runner, anything calling
+`vscode.window.createTerminal` without a `shellPath` — gets a fresh plain
+shell, never the DevHub terminal (patch 0007). It sends its command into that
+terminal as keystrokes, so handing it the tmux session would type the command
+into whatever the person had open there. The rule is where the shell is
+resolved: a terminal that reaches `resolveShellLaunchConfig` with no
+executable is one something else made, because DevHub's own terminal always
+arrives with the launcher's path already set (`createTerminal` converts the
+DevHub profile into one). Such a terminal, like a task, runs the profile
+`terminal.integrated.defaultProfile.<os>` names when it names one — DevHub's
+launcher overrides that setting for the interactive terminal only — else the
+machine's default shell.
+
 ### Agents and terminals on the host
 
 There is one `TmuxTerminalRuntime` per `Runtime`, built on first use and cached

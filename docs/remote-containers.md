@@ -84,9 +84,14 @@ container.** Ctrl+`, the `+` button and New Terminal create the DevHub
 terminal on the Workspace's machine; `bash`, `sh` or any other profile chosen
 from the profile list (Create New Terminal (With Profile), the `+` button's
 menu) is a terminal on the container's remote pty host, as in any Dev
-Containers window, and the list shows the container's own shells. Tasks and
-the debugger stay with the container too, and the patch already refuses the
-DevHub profile as the automation shell.
+Containers window, and the list shows the container's own shells. Tasks, the
+debugger and a terminal an extension makes for itself (Code Runner's) stay
+with the container too, as a plain container shell: neither the automation
+path nor an extension's terminal ever resolves to the DevHub launcher (patch
+0007, see `remote-ssh.md`). Create New Integrated Terminal (Local) is the
+DevHub terminal as well: it asks for this Mac by a `file:` cwd and no profile,
+and on this Mac the terminal is the Workspace's tmux session, not a bare login
+shell beside it.
 
 A terminal that cannot start stays open with the reason written in it until a
 key closes it (patch 0005). Upstream closes it at once and says why in a

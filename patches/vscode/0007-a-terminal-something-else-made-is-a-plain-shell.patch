@@ -1,0 +1,78 @@
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
+index 22009a29..88ecba08 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
+@@ -117,6 +117,16 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 				profileName: generatedProfileName,
+ 				isDefault: false
+ 			}, options);
++		} else if (devhubTerminalLauncher) {
++			// DevHub: a terminal that reaches here without a shell is one
++			// something else made — an extension's `createTerminal` (Code
++			// Runner's, a test runner's), a debug console — and the launcher
++			// is DevHub's interactive terminal, and only that, which always
++			// arrives with its path already set (`createTerminal` converts the
++			// DevHub profile into one). What an extension made runs commands
++			// it sends into it, so it gets a fresh plain shell of its own,
++			// never the tmux session a person is working in.
++			resolvedProfile = await this._resolveProfile(await this._devhubPlainProfile(options), options);
+ 		} else {
+ 			resolvedProfile = await this.getDefaultProfile(options);
+ 		}
+@@ -220,7 +230,10 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 		// configured, fall through to the OS default shell below. A configured
+ 		// `automationProfile` still wins; it was answered above.
+ 		const devhubIsDefault = !!devhubTerminalLauncher && defaultProfile?.path === devhubTerminalLauncher;
+-		if (defaultProfile && !(devhubIsDefault && options.allowAutomationShell)) {
++		if (devhubIsDefault && options.allowAutomationShell) {
++			return this._setIconForAutomation(options, await this._devhubPlainProfile(options));
++		}
++		if (defaultProfile) {
+ 			return this._setIconForAutomation(options, defaultProfile);
+ 		}
+ 
+@@ -229,6 +242,25 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 		return this._setIconForAutomation(options, await this._getUnresolvedFallbackDefaultProfile(options));
+ 	}
+ 
++	/**
++	 * DevHub: the plain shell for a terminal that is not DevHub's own — the
++	 * profile `terminal.integrated.defaultProfile.<os>` names, when it names one
++	 * of the available profiles (DevHub's own launcher overrides that setting
++	 * for the interactive terminal, so here is where it still applies), else
++	 * the machine's default shell.
++	 */
++	private async _devhubPlainProfile(options: IShellLaunchConfigResolveOptions): Promise<ITerminalProfile> {
++		await this._terminalProfileService.profilesReady;
++		const name = this._configurationService.getValue(`terminal.integrated.defaultProfile.${this._getOsKey(options.os)}`);
++		if (isString(name) && options.os === OS) {
++			const named = this._terminalProfileService.availableProfiles.find(p => p.profileName === name && p.path !== devhubTerminalLauncher);
++			if (named) {
++				return deepClone(named);
++			}
++		}
++		return this._getUnresolvedFallbackDefaultProfile(options);
++	}
++
+ 	private _setIconForAutomation(options: IShellLaunchConfigResolveOptions, profile: ITerminalProfile): ITerminalProfile {
+ 		if (options.allowAutomationShell) {
+ 			const profileClone = deepClone(profile);
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+index c51f6dd3..f2d2a730 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+@@ -979,7 +979,13 @@ export class TerminalService extends Disposable implements ITerminalService {
+ 		// what sends a terminal to the local backend (`TerminalProcessManager`),
+ 		// the same way "Create New Integrated Terminal (Local)" does. Every other
+ 		// profile, and every task, stays with the container.
+-		if (devhubTerminalLocal && devhubTerminalLauncher && options?.cwd === undefined) {
++		//
++		// "Create New Integrated Terminal (Local)" asks for this Mac by a
++		// `file:` cwd and no profile, and on this Mac the terminal is the
++		// DevHub terminal too — not a bare login shell beside it.
++		const requestedCwd = options?.cwd;
++		const asksForThisMac = options?.config === undefined && URI.isUri(requestedCwd) && requestedCwd.scheme === Schemas.file;
++		if (devhubTerminalLocal && devhubTerminalLauncher && (options?.cwd === undefined || asksForThisMac)) {
+ 			const config = options?.config;
+ 			const isDevhub = config === undefined || (hasKey(config, { path: true }) && (config as { path?: unknown }).path === devhubTerminalLauncher);
+ 			if (isDevhub) {
