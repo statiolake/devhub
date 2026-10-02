@@ -50,9 +50,11 @@ import {
   AGENT_PRESENTATIONS,
 } from "./domain.js";
 import {
-  isSmartButtonsOffset,
-  type SmartButtonsOffset,
+  copySpot,
+  isSmartButtonsSpot,
+  sameSpot,
   type SmartButtonsPlacement,
+  type SmartButtonsSpot,
 } from "./smartButtons.js";
 import {
   isTerminalZoomOffset,
@@ -687,27 +689,24 @@ export class AppModel {
   }
 
   /**
-   * Put one presentation's Smart Buttons where they were dragged, or back in
-   * their default spot (`offset` absent). An offset out of range is a bug in
-   * the caller — the page clamps a drag to the pane before it drops it.
+   * Put one presentation's Smart Buttons where they were dragged — anchored
+   * or free — or back in their default spot (`spot` absent). A spot out of
+   * range is a bug in the caller — the page clamps a drag to the pane before
+   * it drops it.
    */
   placeSmartButtons(
     presentation: AgentPresentation,
-    offset: SmartButtonsOffset | undefined,
+    spot: SmartButtonsSpot | undefined,
   ): boolean {
-    if (offset !== undefined && !isSmartButtonsOffset(offset)) {
+    if (spot !== undefined && !isSmartButtonsSpot(spot)) {
       fail(DomainErrorCode.InvalidSmartButtonsOffset);
     }
-    const current = this.smartButtonsValue[presentation];
-    if (
-      current?.right === offset?.right &&
-      current?.bottom === offset?.bottom
-    ) {
-      return false;
-    }
+    if (sameSpot(this.smartButtonsValue[presentation], spot)) return false;
     const { [presentation]: _dropped, ...others } = this.smartButtonsValue;
     this.smartButtonsValue =
-      offset === undefined ? others : { ...others, [presentation]: offset };
+      spot === undefined
+        ? others
+        : { ...others, [presentation]: copySpot(spot) };
     this.bumpRevision();
     return true;
   }

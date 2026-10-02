@@ -352,18 +352,23 @@ describe("the path a row shows", () => {
 });
 
 describe("where the Smart Buttons were dragged, across the wire", () => {
-  const place = (offset?: unknown, presentation: unknown = "tui") =>
+  const place = (spot?: unknown, presentation: unknown = "tui") =>
     intentFromWire({
       type: "place_smart_buttons",
       presentation,
-      ...(offset === undefined ? {} : { offset }),
+      ...(spot === undefined ? {} : { spot }),
     } as AppIntentWire);
 
   it("carries a place, and a put-back as no place", () => {
     expect(place({ right: 20, bottom: 30 })).toEqual({
       type: "place_smart_buttons",
       presentation: "tui",
-      offset: { right: 20, bottom: 30 },
+      spot: { right: 20, bottom: 30 },
+    });
+    expect(place({ anchored: "top", along: 40 }, "gui")).toEqual({
+      type: "place_smart_buttons",
+      presentation: "gui",
+      spot: { anchored: "top", along: 40 },
     });
     expect(place(undefined, "gui")).toEqual({
       type: "place_smart_buttons",
@@ -373,6 +378,8 @@ describe("where the Smart Buttons were dragged, across the wire", () => {
 
   it("refuses a place that is not one, and a presentation that is neither", () => {
     expect(() => place({ right: -3, bottom: 0 })).toThrow(InvalidIntent);
+    expect(() => place({ anchored: "under", along: 0 })).toThrow(InvalidIntent);
+    expect(() => place({ anchored: "top", along: -1 })).toThrow(InvalidIntent);
     expect(() => place({ right: "20", bottom: 0 })).toThrow(InvalidIntent);
     expect(() => place(null)).toThrow(InvalidIntent);
     expect(() => place({ right: 0, bottom: 0 }, "sideways")).toThrow(

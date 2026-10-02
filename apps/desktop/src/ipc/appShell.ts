@@ -616,14 +616,15 @@ export type AppIntentWire =
 	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
 	/**
-	 * Where one presentation's Smart Buttons were dragged to, in whole pixels
-	 * from the pane's right and bottom edges; absent puts them back in their
-	 * default spot. See `model/smartButtons.ts`.
+	 * Where one presentation's Smart Buttons were dragged to: anchored to an
+	 * edge of the composer (or corner), or free in whole pixels from the
+	 * pane's right and bottom edges; absent puts them back in their default
+	 * spot. See `model/smartButtons.ts`.
 	 */
 	| {
 			readonly type: "place_smart_buttons";
 			readonly presentation: AgentPresentationWire;
-			readonly offset?: SmartButtonsOffsetWire;
+			readonly spot?: SmartButtonsSpotWire;
 	  }
 	| { readonly type: "open_workspace_picker" }
 	| {
@@ -745,8 +746,8 @@ export interface AppSnapshotWire {
 	 * that is absent has them in their default spot.
 	 */
 	readonly smartButtons: {
-		readonly tui?: SmartButtonsOffsetWire;
-		readonly gui?: SmartButtonsOffsetWire;
+		readonly tui?: SmartButtonsSpotWire;
+		readonly gui?: SmartButtonsSpotWire;
 	};
 	readonly workspaces: readonly WorkspaceWire[];
 }
@@ -756,6 +757,19 @@ export interface SmartButtonsOffsetWire {
 	readonly right: number;
 	readonly bottom: number;
 }
+
+/**
+ * A Smart Buttons box attached to an edge of what it stands on (`top` or
+ * `side`), `along` pixels in from that edge's far corner.
+ */
+export interface SmartButtonsAnchoredWire {
+	readonly anchored: "top" | "side";
+	readonly along: number;
+}
+
+export type SmartButtonsSpotWire =
+	| SmartButtonsOffsetWire
+	| SmartButtonsAnchoredWire;
 
 /**
  * The content area, for this selection.

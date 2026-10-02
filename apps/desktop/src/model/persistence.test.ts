@@ -1453,6 +1453,17 @@ describe("the order a person put the rows in, across a restart", () => {
       gui: { right: 40, bottom: 120 },
     });
 
+    // Anchored to the composer is written as such and read back as such.
+    restored.placeSmartButtons("tui", { anchored: "side", along: 8 });
+    await store.saveState(applySnapshot(again.state, restored.snapshot()));
+    expect(
+      (await new JsonStateStore(path).loadState()).state.smart_buttons,
+    ).toEqual({
+      gui: { right: 40, bottom: 120 },
+      tui: { anchored: "side", along: 8 },
+    });
+    restored.placeSmartButtons("tui", undefined);
+
     // Put back is forgotten, not written as a copy of the default.
     restored.placeSmartButtons("gui", undefined);
     await store.saveState(applySnapshot(again.state, restored.snapshot()));
@@ -1466,6 +1477,8 @@ describe("the order a person put the rows in, across a restart", () => {
     for (const smartButtons of [
       { tui: { right: -1, bottom: 0 } },
       { tui: { right: 1.5, bottom: 0 } },
+      { tui: { anchored: "below", along: 0 } },
+      { gui: { anchored: "top", along: 2.5 } },
       { sideways: { right: 0, bottom: 0 } },
     ]) {
       const directory = makeScratchDir("state");

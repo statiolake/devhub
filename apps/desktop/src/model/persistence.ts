@@ -72,10 +72,7 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isTerminalZoomOffset } from "./terminalZoom.js";
-import {
-  isSmartButtonsOffset,
-  type SmartButtonsOffset,
-} from "./smartButtons.js";
+import { isSmartButtonsSpot, type SmartButtonsSpot } from "./smartButtons.js";
 
 /**
  * Version 4 took the close out of the file entirely; version 3 made a close's
@@ -548,9 +545,12 @@ export interface TerminalState {
 }
 
 /**
- * Where each presentation's Smart Buttons were dragged to, in whole pixels
- * from the pane's right and bottom edges. A presentation that is absent has
- * them in their default spot. See `model/smartButtons.ts`.
+ * Where each presentation's Smart Buttons were dragged to: anchored to an edge
+ * of what they stand on (`{ anchored, along }`), or free in whole pixels from
+ * the pane's right and bottom edges (`{ right, bottom }`, the only shape files
+ * written before anchoring have, read as the free places they were). A
+ * presentation that is absent has them in their default spot. See
+ * `model/smartButtons.ts`.
  *
  * No version bump, for the reason `sidebar.collapsed` had none: absent is the
  * default spot, which is what every file written before this means, and an
@@ -558,8 +558,8 @@ export interface TerminalState {
  * always was — a spot, not work.
  */
 export interface SmartButtonsState {
-  tui?: SmartButtonsOffset;
-  gui?: SmartButtonsOffset;
+  tui?: SmartButtonsSpot;
+  gui?: SmartButtonsSpot;
 }
 
 export interface WindowState {
@@ -1142,13 +1142,10 @@ export function validateState(state: PersistedAppState): void {
   decodeObject("terminal", state.terminal);
   decodeObject("smart_buttons", state.smart_buttons);
   for (const presentation of AGENT_PRESENTATIONS) {
-    const offset = state.smart_buttons[presentation];
-    if (offset === undefined) continue;
-    const where = `smart_buttons.${presentation}`;
-    decodeObject(where, offset);
-    decodeNumber(`${where}.right`, offset.right);
-    decodeNumber(`${where}.bottom`, offset.bottom);
-    if (!isSmartButtonsOffset(offset)) fail("STATE_INVALID");
+    const spot = state.smart_buttons[presentation];
+    if (spot === undefined) continue;
+    decodeObject(`smart_buttons.${presentation}`, spot);
+    if (!isSmartButtonsSpot(spot)) fail("STATE_INVALID");
   }
   decodeObject("window", state.window);
   decodeObject("window.frame", state.window.frame);
@@ -2528,11 +2525,24 @@ function decodeSmartButtons(value: unknown): SmartButtonsState {
       fail("STATE_INVALID", `smart_buttons.${key}`);
     }
     const where = `smart_buttons.${key}`;
-    const offset = decodeObject(where, table[key]);
-    state[key as AgentPresentation] = {
-      right: decodeNumber(`${where}.right`, offset["right"]),
-      bottom: decodeNumber(`${where}.bottom`, offset["bottom"]),
-    };
+    const spot = decodeObject(where, table[key]);
+    // Anchored to what the box stands on, or — the only shape there was
+    // before anchoring, which every older file still has — a free offset.
+    state[key as AgentPresentation] =
+      "anchored" in spot
+        ? {
+            anchored:
+              spot["anchored"] === "side"
+                ? "side"
+                : spot["anchored"] === "top"
+                  ? "top"
+                  : fail("STATE_INVALID", `${where}.anchored`),
+            along: decodeNumber(`${where}.along`, spot["along"]),
+          }
+        : {
+            right: decodeNumber(`${where}.right`, spot["right"]),
+            bottom: decodeNumber(`${where}.bottom`, spot["bottom"]),
+          };
   }
   return state;
 }

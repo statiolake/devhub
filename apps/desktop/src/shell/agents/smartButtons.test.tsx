@@ -23,7 +23,7 @@ import type {
   AgentActionWire,
   WorkspaceRepositoryWire,
 } from "../../ipc/contract";
-import type { SmartButtonsOffset } from "../../model/smartButtons";
+import type { SmartButtonsSpot } from "../../model/smartButtons";
 import { AgentPane } from "./AgentPane";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
 import { SmartButtons } from "./SmartButtons";
@@ -165,7 +165,7 @@ function mount({
 }: {
   over?: Partial<AgentWire>;
   repository?: WorkspaceRepositoryWire;
-  stored?: SmartButtonsOffset;
+  stored?: SmartButtonsSpot;
   status?: boolean;
 } = {}) {
   const runAgentAction = vi.fn(() => Promise.resolve({}));
@@ -198,12 +198,11 @@ function box(): HTMLElement {
   return screen.getByRole("toolbar", { name: "Smart Buttons" });
 }
 
-/** The Smart Buttons on screen: every button but the Auto menu's. */
+/** The Smart Buttons on screen, without their switches or the header. */
 function labels(): string[] {
-  return screen
-    .queryAllByRole("button")
-    .filter((button) => !button.classList.contains("smart-buttons-auto"))
-    .map((button) => button.textContent ?? "");
+  return [...document.querySelectorAll(".smart-button")].map(
+    (button) => button.textContent ?? "",
+  );
 }
 
 describe("which Smart Buttons are drawn", () => {
@@ -340,7 +339,7 @@ describe("dragging the box", () => {
     expect(dispatch).toHaveBeenCalledWith({
       type: "place_smart_buttons",
       presentation: "tui",
-      offset: { right: 212, bottom: 112 },
+      spot: { right: 212, bottom: 112 },
     });
     expect(runAgentAction).not.toHaveBeenCalled();
   });
@@ -362,7 +361,7 @@ describe("dragging the box", () => {
     expect(dispatch).toHaveBeenCalledWith({
       type: "place_smart_buttons",
       presentation: "gui",
-      offset: { right: 760, bottom: 576 },
+      spot: { right: 760, bottom: 576 },
     });
   });
 
@@ -394,6 +393,102 @@ describe("dragging the box", () => {
       presentation: "gui",
     });
   });
+
+  it("snaps to the composer's top edge and is remembered anchored", () => {
+    const { dispatch } = mount({ over: { presentation: "gui" } });
+    // From the default spot (right 116, bottom 120) up 10px and left 84px:
+    // still within the snap of the composer's top, so it stays on it.
+    fireEvent.pointerDown(handle(), {
+      button: 0,
+      clientX: 800,
+      clientY: 470,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(handle(), {
+      clientX: 716,
+      clientY: 460,
+      pointerId: 1,
+    });
+    expect(box()).toHaveAttribute("data-anchored", "top");
+    expect(box().style.bottom).toBe("120px");
+    expect(box().style.right).toBe("200px");
+    fireEvent.pointerUp(handle(), { pointerId: 1 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "place_smart_buttons",
+      presentation: "gui",
+      spot: { anchored: "top", along: 100 },
+    });
+  });
+
+  it("forgets a drop back on the default spot rather than storing a copy", () => {
+    const { dispatch } = mount({
+      over: { presentation: "gui" },
+      stored: { right: 300, bottom: 200 },
+    });
+    fireEvent.pointerDown(handle(), {
+      button: 0,
+      clientX: 500,
+      clientY: 400,
+      pointerId: 1,
+    });
+    // To right 116, bottom 125: 5px above the default, so it snaps there.
+    fireEvent.pointerMove(handle(), {
+      clientX: 684,
+      clientY: 475,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(handle(), { pointerId: 1 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "place_smart_buttons",
+      presentation: "gui",
+    });
+  });
+
+  it("moves with the arrow keys, and Home puts it back", () => {
+    const { dispatch } = mount({ stored: { right: 300, bottom: 200 } });
+    const grip = screen.getByRole("button", { name: "Move the Smart Buttons" });
+    fireEvent.keyDown(grip, { key: "ArrowUp" });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "place_smart_buttons",
+      presentation: "tui",
+      spot: { right: 300, bottom: 208 },
+    });
+    fireEvent.keyDown(grip, { key: "Home" });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "place_smart_buttons",
+      presentation: "tui",
+    });
+  });
+});
+
+describe("anchored to the composer", () => {
+  it("rides on the composer as it grows", () => {
+    mount({
+      over: { presentation: "gui" },
+      stored: { anchored: "top", along: 40 },
+    });
+    expect(box()).toHaveAttribute("data-anchored", "top");
+    expect(box().style.right).toBe("140px");
+    expect(box().style.bottom).toBe("120px");
+    cleanup();
+    // A taller prompt: the composer's top is 60px higher.
+    RECTS["conversation-composer-box"] = rect(100, 420, 900, 580);
+    try {
+      mount({
+        over: { presentation: "gui" },
+        stored: { anchored: "top", along: 40 },
+      });
+      expect(box().style.bottom).toBe("180px");
+    } finally {
+      RECTS["conversation-composer-box"] = rect(100, 480, 900, 580);
+    }
+  });
+
+  it("reads a free offset stored before anchoring as the free place it was", () => {
+    mount({ stored: { right: 300, bottom: 200 } });
+    expect(box()).not.toHaveAttribute("data-anchored");
+    expect(box().style.right).toBe("300px");
+  });
 });
 
 /**
@@ -403,7 +498,7 @@ describe("dragging the box", () => {
  * snapshot is the pane drawn again.
  */
 describe("the box in an Agent's pane", () => {
-  function snapshotWith(stored: SmartButtonsOffset | undefined): AppSnapshot {
+  function snapshotWith(stored: SmartButtonsSpot | undefined): AppSnapshot {
     return {
       smartButtons: stored === undefined ? {} : { tui: stored },
       workspaces: [
@@ -436,7 +531,7 @@ describe("the box in an Agent's pane", () => {
       dispatch: vi.fn(() => Promise.resolve(undefined)),
       reportFailure: vi.fn(),
     } as unknown as AgentsValue;
-    const pane = (stored: SmartButtonsOffset | undefined) => (
+    const pane = (stored: SmartButtonsSpot | undefined) => (
       <AgentsContext.Provider value={value}>
         <AgentPane
           snapshot={snapshotWith(stored)}
@@ -447,9 +542,9 @@ describe("the box in an Agent's pane", () => {
     );
     const { container, rerender } = render(pane(undefined));
     const drawn = () =>
-      [
-        ...container.querySelectorAll(".smart-button:not(.smart-buttons-auto)"),
-      ].map((button) => button.textContent);
+      [...container.querySelectorAll(".smart-button")].map(
+        (button) => button.textContent,
+      );
     expect(drawn()).toEqual(["Commit the changes"]);
 
     for (const step of [1, 2, 3]) {
@@ -482,13 +577,91 @@ describe("the box in an Agent's pane", () => {
 });
 
 describe("automatic actions", () => {
-  it("lists the actions that may be automatic, each off until ticked", () => {
+  it("puts an automatic switch on each button whose action may be automatic", () => {
+    const { dispatch, runAgentAction } = mount();
+    const bolt = screen.getByRole("button", {
+      name: "Send “Commit the changes” automatically",
+    });
+    expect(bolt).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(bolt);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "set_automatic_action",
+      agentId: "a-1",
+      actionId: "commit_changes",
+      automatic: true,
+    });
+    // Switching is not pressing.
+    expect(runAgentAction).not.toHaveBeenCalled();
+  });
+
+  it("shows on the very button that it is automatic, and turns it off there", () => {
+    const { dispatch } = mount({
+      over: { automaticActions: ["commit_changes"] } as Partial<AgentWire>,
+    });
+    const bolt = screen.getByRole("button", {
+      name: "Send “Commit the changes” automatically",
+    });
+    expect(bolt).toHaveAttribute("aria-pressed", "true");
+    expect(bolt.closest(".smart-button-line")).toHaveAttribute(
+      "data-automatic",
+    );
+    expect(box()).not.toHaveAttribute("data-quiet");
+    fireEvent.click(bolt);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "set_automatic_action",
+      agentId: "a-1",
+      actionId: "commit_changes",
+      automatic: false,
+    });
+  });
+
+  it("has no switch on a button whose action may not be automatic", () => {
+    render(
+      <AgentsContext.Provider
+        value={
+          {
+            repositoryStatus: {
+              sequence: 1,
+              workspaces: [
+                { ...DIRTY, dirty: false, pullRequest: undefined, ahead: 1 },
+              ],
+            },
+            agentActions: [
+              ...ACTIONS,
+              {
+                id: "open_pr",
+                displayName: "Open a pull request",
+                trigger: "pull_request",
+                button: true,
+              },
+            ],
+            runAgentAction: vi.fn(),
+            dispatch: vi.fn(),
+            reportFailure: vi.fn(),
+          } as unknown as AgentsValue
+        }
+      >
+        <div className="agent-pane">
+          <SmartButtons agent={agent()} stored={undefined} />
+        </div>
+      </AgentsContext.Provider>,
+    );
+    expect(labels()).toContain("Open a pull request");
+    expect(
+      screen.queryByRole("button", {
+        name: "Send “Open a pull request” automatically",
+      }),
+    ).toBeNull();
+  });
+
+  it("lists every action that may be automatic in the header, with when it fires", () => {
     const { dispatch } = mount();
     fireEvent.click(screen.getByRole("button", { name: "Automatic actions" }));
     const menu = screen.getByRole("menu");
     const items = [...menu.querySelectorAll('[role="menuitemcheckbox"]')];
-    // The Issue flow's is not one of them; commit, push and CI are.
-    expect(items.map((item) => item.textContent)).toEqual([
+    // The Issue flow's is not one of them; commit, push and CI are — CI's
+    // although its button is not on screen.
+    expect(items.map((item) => item.getAttribute("aria-label"))).toEqual([
       "Commit the changes",
       "Commit in pieces",
       "Push the commits",
@@ -497,6 +670,9 @@ describe("automatic actions", () => {
     expect(
       items.every((item) => item.getAttribute("aria-checked") === "false"),
     ).toBe(true);
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Fix CI" }),
+    ).toHaveTextContent("When CI starts failing");
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Fix CI" }));
     expect(dispatch).toHaveBeenCalledWith({
       type: "set_automatic_action",
@@ -504,31 +680,22 @@ describe("automatic actions", () => {
       actionId: "fix_ci",
       automatic: true,
     });
-  });
-
-  it("says which are ticked, on the menu, its button and the Smart Button", () => {
-    const { dispatch } = mount({
-      over: { automaticActions: ["commit_changes"] } as Partial<AgentWire>,
-    });
-    const auto = screen.getByRole("button", { name: "Automatic actions" });
-    expect(auto).toHaveTextContent("Auto 1");
-    expect(box()).not.toHaveAttribute("data-quiet");
-    expect(
-      screen.getByRole("button", { name: "Commit the changes" }),
-    ).toHaveAttribute("data-automatic");
-    fireEvent.click(auto);
-    const item = screen.getByRole("menuitemcheckbox", {
-      name: "Commit the changes",
-    });
-    expect(item).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(item);
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "set_automatic_action",
-      agentId: "a-1",
-      actionId: "commit_changes",
-      automatic: false,
-    });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("counts what is automatic on the header's switch", () => {
+    mount({
+      over: {
+        automaticActions: ["commit_changes", "fix_ci"],
+      } as Partial<AgentWire>,
+    });
+    const auto = screen.getByRole("button", { name: "Automatic actions" });
+    expect(auto).toHaveAttribute("data-armed");
+    expect(auto).toHaveTextContent("2");
+    fireEvent.click(auto);
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Fix CI" }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 });

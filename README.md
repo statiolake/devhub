@@ -265,9 +265,11 @@ Agent's bottom right corner — shown only while the Agent is idle and the
 trigger's condition holds for the Workspace's repository, and gone on its own
 when it stops holding. Pressing one queues the filled-in wording for the Agent,
 exactly as the Agent actions sheet (`Cmd+Q Shift+A`) does; the sheet lists
-every action whatever its `button` says. The box is translucent until pointed
-at; drag it by its handle anywhere in the pane (the place is remembered per
-kind of pane), and double-click the handle to put it back.
+every action whatever its `button` says. The buttons stand in a compact stack,
+translucent until pointed at. Drag the box by its handle anywhere in the pane
+(the place is remembered per kind of pane); brought within 16px of the input
+box's top or right edge it snaps to it and stays anchored there as the input
+box grows. Double-click the handle to put it back.
 
 | Trigger | Shown when | Variables | Ships as |
 | --- | --- | --- | --- |
@@ -283,22 +285,24 @@ kind of pane), and double-click the handle to put it back.
 variable with nothing known stays as written. A trigger DevHub does not know is
 refused.
 
-**Automatic actions.** The box's **Auto** menu ticks an action as automatic
-for that one Agent: from then on it is sent on its own at the moment its button
-would appear, as though pressed — review comments arriving on the pull request
-are answered without anybody pressing *Address review comments*. Only `commit`,
-`push`, `unresolved_review_comments` and `ci_failing` actions can be automatic
+**Automatic actions.** The bolt beside a Smart Button switches its action to
+automatic for that one Agent (the header's bolt lists every action that can
+be, with when it fires, for those whose button is not on screen yet): from
+then on it is sent on its own at the moment its button would appear, as
+though pressed — review comments arriving on the pull request are answered
+without anybody pressing *Address review comments*. Only `commit`, `push`,
+`unresolved_review_comments` and `ci_failing` actions can be automatic
 (opening a pull request or readying a draft is a decision about when the work
-is done). Every box starts unticked, the choice is the Agent's and lasts for
-this run of DevHub, and a ticked action's button and the Auto button wear the
-accent's edge. Each event is sent once: a condition starting to hold (CI going
-red again after a run that passed, a pull request of its own), or for review
-comments more unresolved threads than before — not every turn while the
-threads stay unresolved. What was already on screen when the box was ticked,
-and what you sent yourself with the button, is not sent again. Nothing is sent
-while the Agent is busy or has something waiting; the event waits until it is
-idle. With no button offered and nothing ticked, the box shows only while the
-pane is pointed at.
+is done). Every switch starts off, the choice is the Agent's and lasts for
+this run of DevHub, and an automatic action's bolt is lit in the accent. Each
+event is sent once: a condition starting to hold (CI going red again after a
+run that passed, a pull request of its own), or for review comments more
+unresolved threads than before — not every turn while the threads stay
+unresolved. What was already on screen when it was switched on, and what you
+sent yourself with the button, is not sent again. Nothing is sent while the
+Agent is busy or has something waiting; the event waits until it is idle. With
+no button offered and nothing switched on, the box shows only while the pane
+is pointed at.
 
 ```toml
 [agent_actions.ci_failing.fix_ci]   # a built-in: only what you change

@@ -19,45 +19,63 @@
  * Every action under a trigger that holds is offered, unless its `button` is
  * off in Settings; the Agent actions sheet lists every action regardless.
  *
- * **Where.** A GUI Agent's sit on its composer's top edge, touching it; a
+ * **Shape.** A compact stack, one button per line under a header that holds
+ * the drag handle and the automatic actions' switch — never a row that grows
+ * as wide as its wording. A terminal's lines are as wide as their words and
+ * flush right in its corner; a conversation's are all one width, so the stack
+ * reads as one block standing on the composer.
+ *
+ * **Where.** A GUI Agent's stand on its composer's top edge, touching it; a
  * terminal's in the pane's bottom right corner above the queued-message
- * status. The box can be dragged anywhere in the pane by its handle, and main
- * remembers where per presentation (`model/smartButtons.ts`); a double-click
- * on the handle puts it back. What is drawn is always clamped to the pane as
- * it is now, so a smaller window never hides it.
+ * status. The box can be dragged anywhere in the pane by its handle (or moved
+ * with the arrow keys while the handle has focus). Within `SMART_BUTTONS_SNAP`
+ * pixels of the composer's (status's, corner's) top or right edge it snaps to
+ * it and stays anchored there as that grows and moves; anywhere else it is
+ * free. Main remembers where per presentation (`model/smartButtons.ts`); a
+ * double-click on the handle, or Home, puts it back. What is drawn is always
+ * clamped to the pane as it is now, so a smaller window never hides it.
  *
  * **How it looks.** Translucent at rest — it sits over the work — and at full
  * strength while pointed at, holding focus, or being dragged
  * (`smartButtons.css`).
  *
- * **Automatic.** The box's Auto menu lists the actions that may be automatic
- * (`AUTOMATIC_TRIGGERS`), each with a check box, for this Agent only and off
- * until ticked. A ticked one is sent on its own when its button would appear
- * — main decides when (`model/automaticActions.ts`) — and its button, when it
- * is on screen, says so. So the box is there whenever the Agent has an action
- * that may be automatic, not only while a button is offered: the moment to
- * tick "Address review comments" is before the comments arrive. With no
- * button offered and nothing ticked it shows only while the pane is pointed
- * at.
+ * **Automatic.** Said where it acts. A button whose action may be automatic
+ * (`AUTOMATIC_TRIGGERS`) carries its own switch, a bolt beside it: lit, the
+ * action is sent on its own the moment the button would appear — main
+ * decides when (`model/automaticActions.ts`) — for this Agent only, off until
+ * switched on. The bolt in the header opens the same switches for every
+ * action that may be automatic, each with what makes it fire, because the
+ * moment to switch on "Address review comments" is before the comments
+ * arrive, when there is no button to switch. So the box is there whenever the
+ * Agent has such an action, not only while a button is offered; with no
+ * button offered and nothing switched on it shows only while the pane is
+ * pointed at.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentWire } from "../../ipc/appShell";
 import type {
+  AgentActionTriggerWire,
   AgentActionWire,
   WorkspaceRepositoryWire,
 } from "../../ipc/contract";
 import { smartButtonTriggers } from "../../model/agentActions";
 import { isAutomaticTrigger } from "../../model/automaticActions";
 import {
+  anchorBox,
   clampOffset,
-  defaultOffset,
+  defaultSpot,
   draggedOffset,
+  isAnchoredSpot,
+  sameSpot,
+  snapSpot,
+  spotOffset,
   SMART_BUTTONS_DRAG_THRESHOLD,
   SMART_BUTTONS_MARGIN,
   type Box,
   type Size,
   type SmartButtonsOffset,
+  type SmartButtonsSpot,
 } from "../../model/smartButtons";
 import { useAgents } from "./AgentsContext";
 import "./smartButtons.css";
@@ -76,8 +94,16 @@ export function smartButtonActions(
   );
 }
 
+/** When an automatic action fires, in a line, by its trigger. */
+const FIRES_WHEN: Partial<Record<AgentActionTriggerWire, string>> = {
+  commit: "After a turn that leaves uncommitted changes",
+  push: "When there are commits the branch has not pushed",
+  unresolved_review_comments: "When new review comments arrive",
+  ci_failing: "When CI starts failing",
+};
+
 /**
- * What the default spot is attached to.
+ * What the box is anchored to.
  *
  * A GUI Agent's box stands on its composer's box — which every conversation
  * draws, so one that is not there is a surface this component does not know.
@@ -115,10 +141,13 @@ const SPACING = {
   tui: { inset: 0, gap: 4 },
 } as const;
 
+/** How far an arrow key moves the box, in pixels. */
+const KEY_STEP = 8;
+
 interface Metrics {
   readonly pane: Box & Size;
+  readonly anchor: Box;
   readonly box: Size;
-  readonly spot: SmartButtonsOffset;
 }
 
 export function SmartButtons({
@@ -126,8 +155,8 @@ export function SmartButtons({
   stored,
 }: {
   readonly agent: AgentWire;
-  /** Where main remembers this presentation's box was dragged, if anywhere. */
-  readonly stored: SmartButtonsOffset | undefined;
+  /** Where main remembers this presentation's box was put, if anywhere. */
+  readonly stored: SmartButtonsSpot | undefined;
 }) {
   const { repositoryStatus, agentActions, runAgentAction, dispatch } =
     useAgents();
@@ -145,25 +174,47 @@ export function SmartButtons({
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
-    readonly to: SmartButtonsOffset | undefined;
+    readonly to: SmartButtonsSpot | undefined;
   }>();
   if (offered.length === 0 && automatic.length === 0) return null;
 
-  // Before the first measurement — the one render that precedes the layout
-  // effect, never painted — the pane's corner.
-  const resting =
+  const spacing = SPACING[agent.presentation];
+  const fallback = defaultSpot(spacing);
+  const offsetOf = (spot: SmartButtonsSpot): SmartButtonsOffset =>
     metrics === undefined
-      ? (stored ?? {
-          right: SMART_BUTTONS_MARGIN,
-          bottom: SMART_BUTTONS_MARGIN,
-        })
-      : clampOffset(stored ?? metrics.spot, metrics.pane, metrics.box);
-  const drawn = drag?.to ?? resting;
-  const place = (offset: SmartButtonsOffset | undefined) =>
+      ? // Before the first measurement — the one render that precedes the
+        // layout effect, never painted — the pane's corner.
+        isAnchoredSpot(spot)
+        ? { right: SMART_BUTTONS_MARGIN, bottom: SMART_BUTTONS_MARGIN }
+        : spot
+      : clampOffset(
+          spotOffset(spot, metrics.pane, metrics.anchor, metrics.box, spacing),
+          metrics.pane,
+          metrics.box,
+        );
+  const restingSpot = stored ?? fallback;
+  const resting = offsetOf(restingSpot);
+  const shownSpot = drag?.to ?? restingSpot;
+  const drawn = offsetOf(shownSpot);
+  /** The spot a box at this offset belongs at, snapped if near the anchor. */
+  const snapped = (offset: SmartButtonsOffset): SmartButtonsSpot =>
+    metrics === undefined
+      ? offset
+      : snapSpot(offset, metrics.pane, metrics.anchor, metrics.box, spacing);
+  const place = (spot: SmartButtonsSpot | undefined) =>
     dispatch({
       type: "place_smart_buttons",
       presentation: agent.presentation,
-      ...(offset === undefined ? {} : { offset }),
+      // Dropped on the default spot is the default spot: forgotten.
+      ...(spot === undefined || sameSpot(spot, fallback) ? {} : { spot }),
+    });
+  const anchored = isAnchoredSpot(shownSpot) ? shownSpot.anchored : undefined;
+  const setAutomatic = (actionId: string, on: boolean) =>
+    dispatch({
+      type: "set_automatic_action",
+      agentId: agent.id,
+      actionId,
+      automatic: on,
     });
 
   return (
@@ -172,8 +223,10 @@ export function SmartButtons({
       className="smart-buttons"
       role="toolbar"
       aria-label="Smart Buttons"
+      aria-orientation="vertical"
       data-presentation={agent.presentation}
       data-placed={stored === undefined ? "default" : "moved"}
+      {...(anchored === undefined ? {} : { "data-anchored": anchored })}
       {...(drag === undefined ? {} : { "data-dragging": "" })}
       {...(offered.length === 0 && ticked.length === 0 && !menuOpen
         ? { "data-quiet": "" }
@@ -183,96 +236,142 @@ export function SmartButtons({
         bottom: `${String(drawn.bottom)}px`,
       }}
     >
-      <span
-        className="smart-buttons-handle"
-        title="Drag to move the Smart Buttons; double-click to put them back"
-        onPointerDown={(event) => {
-          if (event.button !== 0) return;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          setDrag({
-            pointer: { x: event.clientX, y: event.clientY },
-            from: resting,
-            to: undefined,
-          });
-        }}
-        onPointerMove={(event) => {
-          if (drag === undefined || metrics === undefined) return;
-          const moved = {
-            x: event.clientX - drag.pointer.x,
-            y: event.clientY - drag.pointer.y,
-          };
-          // Under the threshold the handle was pressed, not moved: a
-          // double-click is two of those, and neither is a place to remember.
-          if (
-            drag.to === undefined &&
-            Math.hypot(moved.x, moved.y) < SMART_BUTTONS_DRAG_THRESHOLD
-          ) {
-            return;
-          }
-          setDrag({
-            ...drag,
-            to: draggedOffset(drag.from, moved, metrics.pane, metrics.box),
-          });
-        }}
-        onPointerUp={(event) => {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          const to = drag?.to;
-          if (to === undefined) {
-            setDrag(undefined);
-            return;
-          }
-          // Held where it was dropped until main's snapshot says so, then
-          // drawn from the snapshot; a refusal goes to the page's root and
-          // the box goes back to where main still has it.
-          void place(to).finally(() => setDrag(undefined));
-        }}
-        onPointerCancel={() => setDrag(undefined)}
-        onDoubleClick={() => {
-          void place(undefined);
-        }}
-      >
-        <GripIcon />
-      </span>
-      {offered.map((action) => (
-        <button
-          key={action.id}
-          type="button"
-          className="smart-button"
-          title={`${action.displayName} — sent to ${agent.displayName}${
-            ticked.includes(action.id) ? " (automatic: sent on its own)" : ""
-          }`}
-          {...(ticked.includes(action.id) ? { "data-automatic": "" } : {})}
-          onClick={() => {
-            void runAgentAction(agent.id, action.id);
+      <div className="smart-buttons-header">
+        <span
+          className="smart-buttons-handle"
+          role="button"
+          tabIndex={0}
+          aria-label="Move the Smart Buttons"
+          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home"
+          title="Drag to move; near the input box it snaps to it and stays there. Double-click to put it back."
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDrag({
+              pointer: { x: event.clientX, y: event.clientY },
+              from: resting,
+              to: undefined,
+            });
+          }}
+          onPointerMove={(event) => {
+            if (drag === undefined || metrics === undefined) return;
+            const moved = {
+              x: event.clientX - drag.pointer.x,
+              y: event.clientY - drag.pointer.y,
+            };
+            // Under the threshold the handle was pressed, not moved: a
+            // double-click is two of those, and neither is a place to
+            // remember.
+            if (
+              drag.to === undefined &&
+              Math.hypot(moved.x, moved.y) < SMART_BUTTONS_DRAG_THRESHOLD
+            ) {
+              return;
+            }
+            setDrag({
+              ...drag,
+              to: snapped(
+                draggedOffset(drag.from, moved, metrics.pane, metrics.box),
+              ),
+            });
+          }}
+          onPointerUp={(event) => {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            const to = drag?.to;
+            if (to === undefined) {
+              setDrag(undefined);
+              return;
+            }
+            // Held where it was dropped until main's snapshot says so, then
+            // drawn from the snapshot; a refusal goes to the page's root and
+            // the box goes back to where main still has it.
+            void place(to).finally(() => setDrag(undefined));
+          }}
+          onPointerCancel={() => setDrag(undefined)}
+          onDoubleClick={() => {
+            void place(undefined);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Home") {
+              event.preventDefault();
+              void place(undefined);
+              return;
+            }
+            const step = {
+              ArrowLeft: { x: -KEY_STEP, y: 0 },
+              ArrowRight: { x: KEY_STEP, y: 0 },
+              ArrowUp: { x: 0, y: -KEY_STEP },
+              ArrowDown: { x: 0, y: KEY_STEP },
+            }[event.key];
+            if (step === undefined || metrics === undefined) return;
+            event.preventDefault();
+            void place(
+              snapped(draggedOffset(resting, step, metrics.pane, metrics.box)),
+            );
           }}
         >
-          {action.displayName}
-        </button>
-      ))}
-      {automatic.length > 0 ? (
-        <AutomaticMenu
-          agent={agent}
-          choices={automatic}
-          ticked={ticked}
-          open={menuOpen}
-          setOpen={setMenuOpen}
-          set={(actionId, on) =>
-            dispatch({
-              type: "set_automatic_action",
-              agentId: agent.id,
-              actionId,
-              automatic: on,
-            })
-          }
-        />
-      ) : null}
+          <GripIcon />
+        </span>
+        {automatic.length > 0 ? (
+          <AutomaticMenu
+            agent={agent}
+            choices={automatic}
+            ticked={ticked}
+            open={menuOpen}
+            setOpen={setMenuOpen}
+            set={setAutomatic}
+          />
+        ) : null}
+      </div>
+      {offered.map((action) => {
+        const on = ticked.includes(action.id);
+        return (
+          <div
+            key={action.id}
+            className="smart-button-line"
+            {...(on ? { "data-automatic": "" } : {})}
+          >
+            <button
+              type="button"
+              className="smart-button"
+              title={`${action.displayName} — sent to ${agent.displayName}${
+                on ? " (automatic: also sent on its own)" : ""
+              }`}
+              onClick={() => {
+                void runAgentAction(agent.id, action.id);
+              }}
+            >
+              {action.displayName}
+            </button>
+            {isAutomaticTrigger(action.trigger) ? (
+              <button
+                type="button"
+                className="smart-button-auto"
+                aria-pressed={on}
+                aria-label={`Send “${action.displayName}” automatically`}
+                title={
+                  on
+                    ? `Automatic: sent to ${agent.displayName} on its own. Click to stop.`
+                    : `Click to send this to ${agent.displayName} on its own whenever it appears.`
+                }
+                onClick={() => {
+                  void setAutomatic(action.id, !on);
+                }}
+              >
+                <BoltIcon />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 /**
- * The Auto button and its menu: which actions are sent on their own for this
- * Agent. A check box per action that may be automatic, off until ticked.
+ * The header's bolt and its panel: every action that may be automatic for
+ * this Agent, each switch with what makes it fire — including the ones whose
+ * button is not on screen now.
  */
 function AutomaticMenu({
   agent,
@@ -310,15 +409,22 @@ function AutomaticMenu({
     <span ref={own} className="smart-buttons-automatic">
       <button
         type="button"
-        className="smart-button smart-buttons-auto"
+        className="smart-buttons-auto"
         aria-label="Automatic actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`Actions sent to ${agent.displayName} on their own, the moment their button would appear`}
+        title={
+          count > 0
+            ? `${String(count)} sent to ${agent.displayName} on its own — choose which`
+            : `Choose actions to send to ${agent.displayName} on their own`
+        }
         {...(count > 0 ? { "data-armed": "" } : {})}
         onClick={() => setOpen(!open)}
       >
-        {count > 0 ? `Auto ${String(count)}` : "Auto"}
+        <BoltIcon />
+        {count > 0 ? (
+          <span className="smart-buttons-auto-count">{count}</span>
+        ) : null}
       </button>
       {open ? (
         <div
@@ -326,23 +432,35 @@ function AutomaticMenu({
           role="menu"
           aria-label={`Automatic actions for ${agent.displayName}`}
         >
+          <div className="smart-buttons-menu-intro" role="none">
+            Sent to {agent.displayName} on its own, the moment its button would
+            appear
+          </div>
           {choices.map((choice) => {
             const on = ticked.includes(choice.id);
+            const when = FIRES_WHEN[choice.trigger];
             return (
               <button
                 key={choice.id}
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={on}
+                aria-label={choice.displayName}
+                {...(when === undefined ? {} : { title: when })}
                 className="smart-buttons-menu-item"
                 onClick={() => {
                   void set(choice.id, !on);
                 }}
               >
-                <span className="smart-buttons-check" aria-hidden="true">
-                  {on ? "✓" : ""}
+                <span className="smart-buttons-switch" aria-hidden="true" />
+                <span className="smart-buttons-menu-text">
+                  <span className="smart-buttons-menu-name">
+                    {choice.displayName}
+                  </span>
+                  {when === undefined ? null : (
+                    <span className="smart-buttons-menu-when">{when}</span>
+                  )}
                 </span>
-                {choice.displayName}
               </button>
             );
           })}
@@ -353,12 +471,11 @@ function AutomaticMenu({
 }
 
 /**
- * The pane's size, the box's, and the default spot, kept current.
+ * The pane's place and size, the anchor's, and the box's, kept current.
  *
- * Measured, because the default spot is attached to something whose place is
- * the layout's — a composer that grows with what is typed in it, a status
- * that comes and goes — and a CSS rule cannot say "on top of that element"
- * from outside the surface it is in.
+ * Measured, because the anchor's place is the layout's — a composer that
+ * grows with what is typed in it, a status that comes and goes — and a CSS
+ * rule cannot say "on top of that element" from outside the surface it is in.
  */
 function useMetrics(
   own: React.RefObject<HTMLDivElement | null>,
@@ -379,12 +496,12 @@ function useMetrics(
       const boxRect = box.getBoundingClientRect();
       setMetrics({
         pane: paneRect,
-        box: { width: boxRect.width, height: boxRect.height },
-        spot: defaultOffset(
+        anchor: anchorBox(
           paneRect,
           anchor?.getBoundingClientRect(),
           SPACING[agent.presentation],
         ),
+        box: { width: boxRect.width, height: boxRect.height },
       });
     };
     measure();
@@ -394,8 +511,8 @@ function useMetrics(
     }
     return () => observer.disconnect();
     // `agent` and `count`, beyond the observers: the queued-message status
-    // coming or going (the Agent's `injection`) moves a terminal's spot, and a
-    // button coming or going changes the box's size before any observer has
+    // coming or going (the Agent's `injection`) moves a terminal's anchor, and
+    // a button coming or going changes the box's size before any observer has
     // had a frame to say so.
   }, [own, agent, count]);
   return metrics;
@@ -403,12 +520,20 @@ function useMetrics(
 
 function GripIcon() {
   return (
-    <svg viewBox="0 0 6 10" width="6" height="10" aria-hidden="true">
-      {[1, 5].map((x) =>
-        [1, 5, 9].map((y) => (
+    <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
+      {[1, 5, 9].map((x) =>
+        [1, 5].map((y) => (
           <circle key={`${String(x)}-${String(y)}`} cx={x} cy={y} r="1" />
         )),
       )}
+    </svg>
+  );
+}
+
+function BoltIcon() {
+  return (
+    <svg viewBox="0 0 10 12" width="10" height="12" aria-hidden="true">
+      <path d="M6 0 0 7h4l-1 5 6-7H5z" />
     </svg>
   );
 }

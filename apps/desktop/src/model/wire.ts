@@ -46,7 +46,7 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
-import { isSmartButtonsOffset } from "./smartButtons.js";
+import { copySpot, isSmartButtonsSpot } from "./smartButtons.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -1053,21 +1053,19 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       }
       return { type: "resize_split", ratio: wire.ratio };
     case "place_smart_buttons": {
-      const offset = wire.offset;
+      const spot = wire.spot;
       if (
-        offset !== undefined &&
-        (typeof offset !== "object" ||
-          offset === null ||
-          !isSmartButtonsOffset({ right: offset.right, bottom: offset.bottom }))
+        spot !== undefined &&
+        (typeof spot !== "object" ||
+          spot === null ||
+          !isSmartButtonsSpot(copySpot(spot)))
       ) {
         invalid();
       }
       return {
         type: "place_smart_buttons",
         presentation: tryParse(() => parseAgentPresentation(wire.presentation)),
-        ...(offset === undefined
-          ? {}
-          : { offset: { right: offset.right, bottom: offset.bottom } }),
+        ...(spot === undefined ? {} : { spot: copySpot(spot) }),
       };
     }
     case "resize_sidebar":

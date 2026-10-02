@@ -687,7 +687,7 @@ export class AppCoordinator {
         this.model.setSplitRatio(intent.ratio);
         return this.transitionOutcome(beforeRevision, id);
       case "place_smart_buttons":
-        this.model.placeSmartButtons(intent.presentation, intent.offset);
+        this.model.placeSmartButtons(intent.presentation, intent.spot);
         return this.transitionOutcome(beforeRevision, id);
       case "resize_sidebar":
         this.model.setSidebarWidth(intent.width);
