@@ -152,10 +152,11 @@ function repositoryUrl(remote: string | undefined): string | undefined {
 /**
  * What identifies one remote question.
  *
- * The branch, not the Issue. Two workspaces on the same branch of the same
- * repository are asking the same question and are answered once; the Issue is
- * part of the answer rather than part of the key, because a branch names at
- * most one and most branches name none.
+ * The branch, and the Issue it names. Two workspaces on the same branch of
+ * the same repository are asking the same question and are answered once. The
+ * Issue is in the key because it is in the question (`readBranchStatus` asks
+ * for that Issue): two local branches naming different Issues that resolve to
+ * one remote name must not share an answer.
  */
 function branchKey(reference: BranchReference): string {
 	// Keyed by the name on the remote, because that is the question being
@@ -163,7 +164,13 @@ function branchKey(reference: BranchReference): string {
 	// but push to the same remote branch are asking about the same pull
 	// request, and one whose local name matches another's but pushes elsewhere
 	// is not.
-	return `${reference.owner}/${reference.repository}@${reference.headOwner}:${reference.remoteBranch}`;
+	//
+	// The Issue is in the key too. The answer carries the Issue the branch
+	// named, so two branches that push to the same remote name but name
+	// different Issues — `feature/130-…` still tracking `feature/128-…` — are
+	// two questions; one key made whichever was answered last show its Issue
+	// on both rows.
+	return `${reference.owner}/${reference.repository}@${reference.headOwner}:${reference.remoteBranch}#${String(reference.issueNumber ?? "")}`;
 }
 
 /**
@@ -978,7 +985,12 @@ export class RepositoryStatusWatcher {
 				dirty: entry.dirty,
 				ahead: entry.ahead,
 				defaultBranch: entry.defaultBranch,
-				issue: status?.issue,
+				// Only the Issue the branch names, never one that came with some
+				// other answer: the branch is the one place a row's Issue comes from.
+				issue:
+					status?.issue !== undefined && status.issue.number === issueNumber
+						? status.issue
+						: undefined,
 				pullRequest: status?.pullRequest,
 				// Known which Issue, no answer yet, nothing wrong: the row says it
 				// is asking rather than showing the blank that means "about

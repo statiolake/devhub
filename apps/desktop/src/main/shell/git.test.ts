@@ -723,6 +723,61 @@ describe("the name a branch has on the remote", () => {
 		).toBeUndefined();
 	});
 
+	it("is not another Issue's branch that a new branch was started from", async () => {
+		// `feature/130-…` made from `origin/feature/128-…` tracks it and sits at
+		// the same commit; taking the upstream answered `feature/128-…`, and the
+		// row showed #128's pull request as #130's own.
+		await addRemote("origin");
+		await runGit(command, ["push", "origin", "main:feature/128-tidy"], {
+			cwd: repository,
+		});
+		await runGit(command, ["fetch", "origin"], { cwd: repository });
+		await runGit(command, ["config", "push.default", "simple"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			[
+				"switch",
+				"--track",
+				"-c",
+				"feature/130-other",
+				"origin/feature/128-tidy",
+			],
+			{ cwd: repository },
+		);
+		expect(
+			(await readRepository(command, repository))?.pushBranch,
+		).toBeUndefined();
+	});
+
+	it("is not another Issue's branch even when `%(push)` names it", async () => {
+		// `push.default=upstream` answers `%(push)` with the upstream, so the
+		// same mistake came through the first door as well.
+		await addRemote("origin");
+		await runGit(command, ["push", "origin", "main:feature/128-tidy"], {
+			cwd: repository,
+		});
+		await runGit(command, ["fetch", "origin"], { cwd: repository });
+		await runGit(command, ["config", "push.default", "upstream"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			[
+				"switch",
+				"--track",
+				"-c",
+				"feature/130-other",
+				"origin/feature/128-tidy",
+			],
+			{ cwd: repository },
+		);
+		expect(
+			(await readRepository(command, repository))?.pushBranch,
+		).toBeUndefined();
+	});
+
 	it("is nothing at all when the branch has neither", async () => {
 		expect(
 			(await readRepository(command, repository))?.pushBranch,

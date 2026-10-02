@@ -114,11 +114,11 @@ product names.
 ## The host, the journal, and restarts
 
 The session's command is not the CLI itself but a small POSIX `sh` script, the
-*host* (`main/agent/conversation/hostScript.ts`), which runs the CLI with:
+_host_ (`main/agent/conversation/hostScript.ts`), which runs the CLI with:
 
 - its **stdin** on a FIFO, `in`, that the host itself also holds open, so the
   CLI never sees end-of-file while DevHub is away;
-- its **stdout** appended to a file, `out`, the *journal*. A write never
+- its **stdout** appended to a file, `out`, the _journal_. A write never
   blocks, whether or not DevHub is reading;
 - its **stderr** appended to `err`, and its exit status written to `exit` when
   it ends.
@@ -169,18 +169,18 @@ copy, and the Agents page folds the same events with the same function.
 The sidebar reads a GUI Agent's status from its conversation instead of its
 screen:
 
-| Conversation | Status |
-|---|---|
-| connecting | unknown |
-| broken | error |
-| a request waiting for an answer | waiting |
-| a turn running (from the write of a message until the CLI ends the turn that answers it) | working |
-| a message DevHub holds at the prompt | waiting |
-| the last turn failed | error |
-| something it started still working in the background | background |
-| otherwise | idle |
+| Conversation                                                                             | Status     |
+| ---------------------------------------------------------------------------------------- | ---------- |
+| connecting                                                                               | unknown    |
+| broken                                                                                   | error      |
+| a request waiting for an answer                                                          | waiting    |
+| a turn running (from the write of a message until the CLI ends the turn that answers it) | working    |
+| a message DevHub holds at the prompt                                                     | waiting    |
+| the last turn failed                                                                     | error      |
+| something it started still working in the background                                     | background |
+| otherwise                                                                                | idle       |
 
-*Background* is an Agent whose turn is over while a command it ran in the
+_Background_ is an Agent whose turn is over while a command it ran in the
 background, a subagent it started in the background or a teammate at work is
 still going. It is neither idle nor working, and it has its own quiet mark in
 the Sidebar (the working ring broken into four still arcs, in a quieter
@@ -199,7 +199,7 @@ yellow). Each thing that reads a status treats it on purpose:
 - **The Sidebar's activity line** names the one task, or says how many there
   are.
 
-A terminal Agent is never *Background*: its screen does show Claude's
+A terminal Agent is never _Background_: its screen does show Claude's
 background shells and agents (a `· 1 shell ·` in the footer, one line per
 agent under it), but DevHub has no capture of a prompt at rest with them
 showing to write a rule from, so its status reads the screen as before.
@@ -210,7 +210,7 @@ terminal Agent.
 **Find (Cmd+F).** Cmd+F anywhere in a GUI Agent's pane — the composer
 included, and with the keyboard nowhere in particular, as after a click on the
 transcript's words, which leaves it on the page's body — opens a small find bar at the top right of the conversation, under
-the Continue button: a field, *3 of 12*, *Aa* (match case), ↑ ↓ and ×. Return
+the Continue button: a field, _3 of 12_, _Aa_ (match case), ↑ ↓ and ×. Return
 and Shift+Return in the field, and F3 and Shift+F3 anywhere in the pane while
 the bar is open, go to the next and the previous match, around the ends; Cmd+F
 again puts the keyboard back in the field with its words selected; Esc closes
@@ -226,8 +226,8 @@ The count is exact however large — a one-letter query over a long session
 finds millions — and never holds up the page: the search runs in slices of a
 few milliseconds, one task each, so typing, scrolling and streaming go on
 between them. It searches from the bottom up, so the last match is current as
-soon as it is found and the count grows above it (*120,000 of 120,000…*,
-*Searching…* before the first found), a new keystroke drops the running search, and ↑ ↓ step
+soon as it is found and the count grows above it (_120,000 of 120,000…_,
+_Searching…_ before the first found), a new keystroke drops the running search, and ↑ ↓ step
 through the matches found so far. A match is kept as its offset in its
 entry's text, not as a live `Range` (the page keeps every live range up to
 date on each change to its text); ranges are made only for the matches
@@ -257,11 +257,11 @@ Command key and DevHub adds no search there), and F3 goes to the program in
 the terminal as its escape sequence.
 
 **Background tasks.** Under the composer, beside the context readout, a quiet
-line says what the Agent has working in the background — *2 background
-tasks · Start the dev server, Research the parser* — while anything is.
+line says what the Agent has working in the background — _2 background
+tasks · Start the dev server, Research the parser_ — while anything is.
 Opened, the list takes the composer's whole width under that row, and gives
 each task the glyph a running tool call has, its title and its kind
-(*shell*, *subagent*, *teammate*, or the CLI's own name for another kind). A
+(_shell_, _subagent_, _teammate_, or the CLI's own name for another kind). A
 task whose call is known opens it, by one rule in a narrow pane and a wide
 one: a subagent (or teammate) fills the pane, with ← back to the
 conversation in its header; any other task's call is brought into view in
@@ -283,12 +283,12 @@ task leaves the list when it ends. The list is
 
 **Stopping a background task.** Each task in the opened list has a stop
 button at its right end. Pressed, it asks once more under the task, as Rewind
-does — *Stop this background shell? The command it's running will be
-terminated.* for a shell, *Stop this subagent? Its work so far stays, and it
-won't resume on its own.* for a subagent — and only then asks the CLI (the `stop-task` command). Nothing is
+does — _Stop this background shell? The command it's running will be
+terminated._ for a shell, _Stop this subagent? Its work so far stays, and it
+won't resume on its own._ for a subagent — and only then asks the CLI (the `stop-task` command). Nothing is
 taken off the list on DevHub's say-so: the task leaves when the CLI's own
 account says it ended, and a CLI that refuses says so in an error notice
-(*stop_task was refused: …*, *codex did not stop the subagent: …*). Whether
+(_stop_task was refused: …_, _codex did not stop the subagent: …_). Whether
 a task can be stopped is the adapter's to say (`RunningTask.stoppable`); one
 that cannot has its button greyed, the tooltip saying why:
 
@@ -297,7 +297,7 @@ that cannot has its button greyed, the tooltip saying why:
   the CLI answers with a `task_notification` of status `stopped` and a new
   `background_tasks_changed`. A teammate DevHub adds to the list is not one
   of the CLI's tasks, and `stop_task` is not documented for it: its button is
-  greyed, *A teammate can't be stopped from here.*
+  greyed, _A teammate can't be stopped from here._
 - Codex: a subagent is stopped with the stable `turn/interrupt` on each of
   its threads that runs a turn; it leaves the list when that turn ends. Until
   app-server has said which turn a subagent runs, there is nothing to
@@ -306,7 +306,7 @@ that cannot has its button greyed, the tooltip saying why:
   DevHub does not use; those are not listed anyway.
 
 Each task in the opened list says how long it has run, ticking, as the CLI
-says it (*45s*, *3m 12s*, *1h 5m*). The start is the time the CLI itself
+says it (_45s_, _3m 12s_, _1h 5m_). The start is the time the CLI itself
 wrote on the call that started the task, so a replay after a DevHub restart
 reads the same start from the journal: Claude's `timestamp` on the
 assistant line that carried the call, Codex's `startedAtMs` on the call's
@@ -333,9 +333,9 @@ It covers what a turn does, not everything a CLI's own terminal UI has.
 
 **Everything that is drawn**: Markdown with tables and code (coloured once
 each block is complete), thinking folded, plans, a compaction as a divider
-across the transcript (*Conversation compacted · auto · from 150,000
-to 12,000 tokens*; Codex's too) and, while the CLI is compacting, a dashed
-line at the end, *Compacting the conversation…*, that the divider takes the
+across the transcript (_Conversation compacted · auto · from 150,000
+to 12,000 tokens_; Codex's too) and, while the CLI is compacting, a dashed
+line at the end, _Compacting the conversation…_, that the divider takes the
 place of once it is done (Claude's `system/status` `compacting` until its
 `compact_boundary`, a `status` that says otherwise, or the turn's end; a
 `compact_result` of `failed` is an error notice with `compact_error`; Codex's
@@ -361,12 +361,12 @@ without a reload.
 **A tool call's state** is the glyph at the left of its row: a spinner while
 it runs, ✓ done, ✕ failed or denied, – interrupted, ◦ idle, ? unknown. The
 glyph carries the word as its accessible name and tooltip, and the right of
-the row says only what the glyph cannot: *In the background*, a command's
-*Exit code N*, *Denied*, *Interrupted*, *Idle*, *Unknown*. A plain running or
+the row says only what the glyph cannot: _In the background_, a command's
+_Exit code N_, _Denied_, _Interrupted_, _Idle_, _Unknown_. A plain running or
 done call has nothing there. A call that set work going apart from the turn
 — a command in the background, a subagent in the background, a teammate —
 stands for that work: it is running while the work runs and ends as the work
-ends, not *Done* the moment the launch returned (`workState` in
+ends, not _Done_ the moment the launch returned (`workState` in
 `model/conversation.ts`; every place a call's state is drawn reads it). A
 call that itself failed, was denied or was interrupted is that, whatever it
 started. A subagent's pane header in the column carries the same glyph.
@@ -378,7 +378,7 @@ diff, each line its own row with its old and new line numbers, a long line
 wrapping under itself, the file named relative to the Agent's directory when
 inside it), the plan the latest TodoWrite set, and the images a call gave
 back. A readable view taller than a snippet is cut, its end fading, with
-*Show all* to open it whole and *Show less* to cut it again; closing keeps
+_Show all_ to open it whole and _Show less_ to cut it again; closing keeps
 the button where it was on screen, so the conversation does not jump to
 what came after. Command output, text results, a question's answer and a
 subagent's work have views of their own (the output in the fold, the
@@ -395,7 +395,7 @@ tools DevHub has never heard of still read as what they did.
 **A plan** is a checklist, each step with a box that is empty, half filled
 while the step is under way, or ticked once done: Codex's plan updates, and
 the list a Claude TodoWrite call sets (whose title says how far it has come,
-*TodoWrite: 2 of 5 done*). The latest plan is drawn unfolded under its call;
+_TodoWrite: 2 of 5 done_). The latest plan is drawn unfolded under its call;
 an earlier TodoWrite keeps its checklist folded in its call. The step under
 way is also what the Agent's row says it is doing when no call runs.
 
@@ -408,8 +408,8 @@ gave it:
   with its line numbers, once its result gives one. A failed edit shows the
   change it meant to make, and the CLI's words in its output.
 - A command shows its output, and apart from it what it printed on stderr
-  (Claude keeps the two apart), *Interrupted* when it was stopped, and its
-  exit code when the CLI says it (a failed Claude command's *Exit code N*;
+  (Claude keeps the two apart), _Interrupted_ when it was stopped, and its
+  exit code when the CLI says it (a failed Claude command's _Exit code N_;
   a command that succeeded shows none, since Claude does not report 0).
 - Output too large for the conversation, which Claude saved to a file and
   gave the model only the start of, says so with the file's path and shows
@@ -422,8 +422,8 @@ gave it:
   named where it would be.
 - A Claude command run outside the sandbox (its Bash call's
   `dangerouslyDisableSandbox`) has a faint warm line at the left of its row
-  and a small *unsandboxed* beside its title, which says *Ran outside the
-  sandbox* on hover. It is an everyday thing, so it is only a hint, in the
+  and a small _unsandboxed_ beside its title, which says _Ran outside the
+  sandbox_ on hover. It is an everyday thing, so it is only a hint, in the
   waiting colour of either theme. Codex sandboxes a turn by its permission
   mode, not a call, so its calls carry no mark.
 - A block of a tool result DevHub does not know is a warning notice, like any
@@ -438,7 +438,7 @@ bubble. Claude records them as tagged text (`<command-name>`,
 `<command-args>`, `<local-command-stdout>` and `-stderr`, `<bash-input>`,
 `<bash-stdout>` and `-stderr`); the caveat it writes before them
 (`<local-command-caveat>`) is for the model and is not drawn. Output that no
-recorded command names is drawn as *Command output*.
+recorded command names is drawn as _Command output_.
 
 A slash command sent from the composer (or by a template) is taken as sent
 when the CLI says it ran a command, in whichever of its two forms: a
@@ -453,14 +453,14 @@ is matched to the oldest message sending that invokes a command (`/name`, or
 own way and names the command it ran, not the alias sent (`/cost` runs
 `usage`). This shape was observed on 2.1.273, 2.1.281, 2.1.283 and 2.1.284
 alike; the two fields are not in the Agent SDK's types. Some local commands
-print neither: `/clear` prints `conversation_reset` (drawn as *Context
-cleared*) and then only its `result`, and a `/compact` that compacts prints
+print neither: `/clear` prints `conversation_reset` (drawn as _Context
+cleared_) and then only its `result`, and a `/compact` that compacts prints
 its `status` and `compact_boundary` and then its `result`.
 
 None of that is what ends the turn, though. **A turn ends on the CLI's own
 end-of-turn signal and nothing else**: Claude's `result`, Codex's
 `turn/completed`. From the moment DevHub writes a message the Agent is
-*working* (the adapter says a turn is under way), and the end of the turn
+_working_ (the adapter says a turn is under way), and the end of the turn
 that answers it makes it idle again, whatever the CLI printed or did not
 print in between: an echo or none, a synthetic answer or none, a compaction
 only, an unknown command, an error. Which messages a Claude `result` answers
@@ -474,14 +474,14 @@ working. For Codex the turn a message went to is in the answer to its
 `turn/start` (`turn.id`) or `turn/steer` (`turnId`), and that turn's
 `turn/completed` answers it the same way. What is drawn as sending plays no
 part in the status. If the CLI never answers because it ended, the Agent
-ends as any Agent whose CLI exits does (*The host, the journal, and
-restarts*). One case the order cannot tell apart: a turn the CLI starts by itself (a background task's
+ends as any Agent whose CLI exits does (_The host, the journal, and
+restarts_). One case the order cannot tell apart: a turn the CLI starts by itself (a background task's
 notification) while a command written to it is still unechoed is taken as
 that command's turn, so the command line may be drawn a turn early; it never
 leaves the Agent working.
 
 **Questions the Agent asks** (Claude's AskUserQuestion, Codex's
-requestUserInput) are a card of choices, with an *Other* field where the CLI
+requestUserInput) are a card of choices, with an _Other_ field where the CLI
 takes words of your own. When a single-select question's options carry a
 `preview` (a mockup, a snippet), the card lays the question out side by side,
 as the CLI does: the options on the left, and on the right the preview of the
@@ -499,13 +499,13 @@ exactly two columns — a box with Japanese in it lines up only as well as the
 fonts allow.
 
 The card is a panel of the transcript's own, not a tinted box: its border,
-and *Needs your answer* in the waiting colour. Its controls are the ones the
+and _Needs your answer_ in the waiting colour. Its controls are the ones the
 rest of DevHub uses. A question's header is a small caption over its words;
 its options are rows of a list as DevHub's pickers draw them — the label, and
 its description on one quiet line under it — the pointer washing a row and a
 chosen one drawn as the picker's selection, with a check (the radio or
-checkbox behind each row is there for the keyboard). *Submit*, and a
-permission's *Allow* / *Deny…*, are the small buttons of an inline
+checkbox behind each row is there for the keyboard). _Submit_, and a
+permission's _Allow_ / _Deny…_, are the small buttons of an inline
 confirmation such as Rewind's, at the trailing end.
 
 The answer is said **once**, as your message (below). The answered call has
@@ -531,16 +531,16 @@ record of the answer that is there in every way a conversation is drawn:
   question draws no answer. An answered call whose record has no answers
   breaks the conversation rather than drawing nothing.
 - **Codex**: the reply DevHub wrote to the request, live and from `in.log`
-  on a replay. A question Codex marked secret is drawn as *Hidden*.
+  on a replay. A question Codex marked secret is drawn as _Hidden_.
   `thread/resume` hands back no record of the request, so a resumed Codex
   thread draws no answer bubble for questions asked before it.
 
 **A message the Agent was given that you did not send** — another session's
 message passed on, a subagent's or teammate's report, a plugin's prompt,
 anything that reaches the CLI as a user message without DevHub writing it —
-is not your bubble. It is a muted card on the left, *Message to the Agent
-(not from you)*, with its words as they came, folded after 8 lines behind
-*Show all*. The rule is only who sent it, never what the words look like:
+is not your bubble. It is a muted card on the left, _Message to the Agent
+(not from you)_, with its words as they came, folded after 8 lines behind
+_Show all_. The rule is only who sent it, never what the words look like:
 Claude's live messages are matched to what DevHub wrote (`in.log` on a
 replay), so anything else is not from you; Codex's carry DevHub's own
 client id, and a message in a subagent's thread without one is its parent
@@ -548,7 +548,7 @@ Agent's. A Claude session read back from its file does not say who sent a
 message, so there every message is drawn as yours; in a Codex thread read
 back, the Agent's own messages without DevHub's id are yours (typed at
 Codex's terminal). What the Agent sends to others is a tool call, and its
-row names the recipient (*SendMessage: researcher — …*).
+row names the recipient (_SendMessage: researcher — …_).
 
 **Keys.** In every field where you write something to send — the composer,
 a waiting message being edited, a message to a subagent, an answer typed into
@@ -567,11 +567,11 @@ code block has one in its header.
 **Settings in the composer.** Model, Effort and Permissions sit under the
 message box at the same size as what you type. A value the CLI has not named
 yet says so instead of standing empty: Claude names its model only when the
-first turn starts (its `system/init`), so until then the model reads *Not
-known yet*. Claude's stream-json does not report the effort it runs at
+first turn starts (its `system/init`), so until then the model reads _Not
+known yet_. Claude's stream-json does not report the effort it runs at
 (`system/init` carries an `effort` only on hosts that publish it, and DevHub
-takes it when it does), so an effort nothing has chosen reads *CLI's
-default*: the level the CLI resolves from `--effort`,
+takes it when it does), so an effort nothing has chosen reads _CLI's
+default_: the level the CLI resolves from `--effort`,
 `CLAUDE_CODE_EFFORT_LEVEL`, the saved settings and the model's own default,
 which DevHub does not guess. Codex names its model and effort when the thread
 opens, and a model you pick here shows that model's default effort
@@ -596,7 +596,7 @@ A model the list names in no form is still shown and offered by its own
 name, and the effort says plainly that its levels are not known here.
 
 **Context.** Under the message box, a quiet line says how full the context
-window is, *Context 45% · 90k of 200k*, with a thin meter that turns orange
+window is, _Context 45% · 90k of 200k_, with a thin meter that turns orange
 from 75% and red from 90% (the rule every usage meter keeps). Claude's figure is the
 latest top-level message's tokens (input, cache and output), known as soon as
 that message arrives, against the context window the turn's `result` reports
@@ -613,10 +613,10 @@ subagent's thread, or, under multi-agent v2 (which codex 0.158 runs), a
 card is linked to the thread by whichever comes first. What the thread says
 before its call is named waits, and is drawn under the card once it is; a
 thread no call is named for by the end of the conversation's turn is one
-warning, not one per item. A Codex subagent drawn as running is *Unknown*
+warning, not one per item. A Codex subagent drawn as running is _Unknown_
 once the app-server that ran it is started again (Restart session, live or
-read back from the journal), and one read from a thread's history is *Done*
-if the history says so and *Unknown* otherwise, until its thread's own turn
+read back from the journal), and one read from a thread's history is _Done_
+if the history says so and _Unknown_ otherwise, until its thread's own turn
 says more. A Claude subagent is running from its call
 until its end is told: its call's result, for one run in the foreground; a
 task notification, for one started in the background (whose call's result
@@ -624,15 +624,15 @@ only says it launched) — a `task_notification` event in stream-json, or a
 `<task-notification>` message in the session file, matched by the call's id
 or else the task's. A subagent runs only inside the CLI process that started
 it: one read back from a session file, or left running when the CLI is
-started again (rewind, `/resume`), is *Unknown* unless its end was recorded.
+started again (rewind, `/resume`), is _Unknown_ unless its end was recorded.
 A Claude teammate (an agent team's member, whose Agent call's result says
 `teammate_spawned`) runs beside the conversation rather than inside the call:
-it is *Running* from its spawn, *Idle* when it says it is waiting between
-tasks, *Failed* when its idle notice names a failure, and *Done* once its
+it is _Running_ from its spawn, _Idle_ when it says it is waiting between
+tasks, _Failed_ when its idle notice names a failure, and _Done_ once its
 shutdown is approved. Its protocol messages set that and are not drawn; what
-it says in words is a quiet line, *From researcher: …*. Read back from a
+it says in words is a quiet line, _From researcher: …_. Read back from a
 session file, or once the CLI is started again, a teammate nothing more was
-recorded about is *Unknown*.
+recorded about is _Unknown_.
 A task belongs to the call it was first tied to, for good: a subagent
 woken again by SendMessage keeps its task id, and though the CLI then
 names the SendMessage call on its task events, the news is the subagent's —
@@ -644,8 +644,8 @@ apart from the conversation, through a compaction and across a restart, and
 SendMessage can wake one whose Agent call this transcript never drew (it came
 before the history read back from the session file, or a rewind cut it). Its
 messages still name that call as their `parent_tool_use_id`, so the call is
-drawn where the subagent is first heard of, as *A subagent started earlier in
-this session*, *Unknown* (nothing ties its task to it), with the subagent's
+drawn where the subagent is first heard of, as _A subagent started earlier in
+this session_, _Unknown_ (nothing ties its task to it), with the subagent's
 messages under it. Its task, tied first to the SendMessage call, stands on
 that call.
 A notification that names only its task is matched through the call that
@@ -660,16 +660,16 @@ notification no drawn call started is a notice. Its work is drawn in one place a
 
 - One rule lists subagents in the column, in transcript order: a subagent
   until it ends (running, or idle and able to run again), unless you took it
-  out with the *Beside* toggle on its card. A subagent that ends (done,
+  out with the _Beside_ toggle on its card. A subagent that ends (done,
   failed or unknown) leaves, even one you put back; one filling the pane
   stays there until you leave it. Every subagent is reachable from its card
-  whether it is listed or not, and *Maximize* on the card of one that ended
+  whether it is listed or not, and _Maximize_ on the card of one that ended
   opens it again. One at work is also in the background tasks under the
   composer (above), which opens it filling the pane; an idle teammate is not
   a background task, and is reached from its card.
 - When the pane is wide (1040 px or more), the listed subagents are in a
   column on the right, stacked one above another; one goes back to its card
-  when it ends. The *Beside* toggle on the card of one that has not ended
+  when it ends. The _Beside_ toggle on the card of one that has not ended
   takes it out of the column, or puts it back; one that ended has no toggle.
 - The column is laid out the way VS Code lays out its views. Its left edge
   is a sash: drag it (or focus it and use the arrow keys) to widen or narrow
@@ -685,10 +685,10 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   the others sharing its room in the proportions they had, and comes back
   open at an ordinary size.
 - A pane's header actions are icons (each named for the screen reader and
-  with a tooltip): the fold on the left and *Maximize* on the right in the
+  with a tooltip): the fold on the left and _Maximize_ on the right in the
   column, and ← back to the conversation on the left when the subagent fills
   the pane.
-- *Maximize* fills the pane with one subagent's transcript, and ← in its
+- _Maximize_ fills the pane with one subagent's transcript, and ← in its
   header goes back to the conversation; the composer still talks to the
   conversation.
 - When the pane is narrow there is no column: a subagent is in its card or
@@ -708,25 +708,25 @@ notification no drawn call started is a notice. Its work is drawn in one place a
 - `tool_progress` and `prompt_suggestion`.
 - Of the CLI's other system events, each is drawn as what it says or left
   out by a rule, never as an event DevHub does not know: `away_summary` is an
-  information notice (*While you were away: …*); `informational` a notice at
+  information notice (_While you were away: …_); `informational` a notice at
   its own level; `model_refusal_no_fallback` an error notice with the API's
   reason; `local_command` the command it ran and what it printed, as a
   command line (above); `stop_hook_summary` a warning only when a hook
   failed; `vcs_state_changed` (a command of the CLI's committed, pushed,
   merged or rebased) an information notice saying what was done on which
-  branch (*Pushed main*, *Committed on feature*), and a kind DevHub has no
-  phrase for is named (*Changed the repository (stash) on main*).
+  branch (_Pushed main_, _Committed on feature_), and a kind DevHub has no
+  phrase for is named (_Changed the repository (stash) on main_).
   `permission_denied` (the CLI's own permission check refused a call: a
   rule, or auto mode's classifier) is said on that call, wherever it is
-  drawn, as one quiet line — *Denied by auto mode: Modify Shared Resources* —
+  drawn, as one quiet line — _Denied by auto mode: Modify Shared Resources_ —
   with the CLI's whole message folded under it, and the call reads
-  *Denied*; a call not drawn is told as a line in the subagent it was made in
+  _Denied_; a call not drawn is told as a line in the subagent it was made in
   (its `agent_id`, matched as a task notification's task id is), and only
   one that names neither is a line in the conversation.
   `turn_duration` (the transcript draws no durations),
   `bridge_status` (a remote control of the session, not the conversation),
   `thinking_tokens` are not drawn; `background_tasks_changed` is the list of
-  background tasks under the composer (*Background tasks*, above). A system
+  background tasks under the composer (_Background tasks_, above). A system
   event DevHub has never heard of is an information notice (below).
   Every information notice, whatever it reports, is drawn the one way: a
   quiet line in the faintest ink, smaller than a tool row, with no box, close
@@ -775,7 +775,7 @@ notification no drawn call started is a notice. Its work is drawn in one place a
   transcript as a warning notice with the event folded under it, and the
   conversation goes on.
 - A known event whose shape DevHub does not accept stops the conversation as
-  *protocol mismatch*, naming where in the line it went wrong and the CLI's
+  _protocol mismatch_, naming where in the line it went wrong and the CLI's
   version. The transcript up to that point stays readable. This usually means
   the CLI was updated past what DevHub knows.
 
@@ -785,7 +785,7 @@ A path in the conversation that names a file is a link: a click opens the
 file in DevHub's editor, at the line or lines it names.
 
 **Where paths are found.** In the Agent's prose and inline code, once the
-paragraph has finished streaming; in a tool call's title (*Read: src/a.ts*),
+paragraph has finished streaming; in a tool call's title (_Read: src/a.ts_),
 in its output (a command's output and stderr, grep's `path:line:` lines,
 Glob's list) and in a diff's file header, which opens the file at its first
 changed hunk. Not in a fenced code block of an answer: that is code, and a
@@ -798,10 +798,10 @@ directory (`~/notes/todo.md`), or relative to the Agent's directory: a
 relative word counts when it has a `/` in it or ends in an extension
 (`README.md`). A path has no `:` in it; after the path come:
 
-| Written | Opens at |
-| --- | --- |
-| `src/a.ts:12` or `src/a.ts#L12` | line 12 |
-| `src/a.ts:12:5` | line 12, column 5 |
+| Written                                | Opens at                 |
+| -------------------------------------- | ------------------------ |
+| `src/a.ts:12` or `src/a.ts#L12`        | line 12                  |
+| `src/a.ts:12:5`                        | line 12, column 5        |
 | `src/a.ts:12-20` or `src/a.ts#L12-L20` | lines 12 to 20, selected |
 
 A URL is never a path, and a trailing full stop is the sentence's.
@@ -817,7 +817,7 @@ opens nothing.
 
 **Only files that are there.** A word that could be a path is a link only
 once DevHub has checked that it is a file on the Agent's machine — this Mac,
-or the host an SSH Workspace's Agent runs on — so *and/or* or *e.g.* stays
+or the host an SSH Workspace's Agent runs on — so _and/or_ or _e.g._ stays
 text. The check is one `/bin/sh` per batch of paths through that machine's
 runtime (`main/agent/conversation/pathLinks.ts`), and its answer is kept for
 as long as the conversation is on screen; a word that named nothing is
@@ -867,6 +867,17 @@ the Workspace's pull request from: `upstream` in a fork, else `origin`
 (`issueRepository` in the repository status). A Workspace whose `origin` is
 not a github.com repository has none, and there a bare `#128` stays text.
 
+**Which Issue and pull request a Workspace has.** The Issue is the one its
+checked-out branch names (`feature/128-…` → #128), and only that one: a pull
+request's own title or closing references never replace it, and a branch that
+names none has no Issue on its row. The pull request is the one whose head
+_is_ the branch — matched by the branch's name on the remote and the head
+repository's owner, never by a commit it shares with another branch. A remote
+name that belongs to some other branch is not taken as this one's: the trunk
+a branch was started from, or a branch naming a different Issue
+(`feature/130-…` still tracking `origin/feature/128-…`); the local name is
+asked about instead.
+
 **Nothing is asked of GitHub** to draw a link. Hovering one says its title
 only when DevHub already has it — the Workspace's own Issue and pull request,
 from the Sidebar's status — and the URL otherwise. A browser that could not
@@ -875,7 +886,7 @@ be opened is said the way every other failure on the Agents page is.
 ## Messages that wait, and sending one into a turn
 
 A message you send while the Agent is idle is written to the CLI at once, and
-its bubble is at the end of the conversation at once too, quieter (*sending*)
+its bubble is at the end of the conversation at once too, quieter (_sending_)
 until the CLI takes it: Claude's echo of the message (`--replay-user-messages`),
 its word that it ran a slash command (above), or Codex's `userMessage` item
 puts the message itself in the same place, and so does the end of the turn
@@ -918,7 +929,7 @@ quits while a message is waiting, the message is lost.**
 ### The unsent draft
 
 What you have typed and not sent is kept, though: each GUI Agent has one
-*draft*, the words in its composer with the words of any waiting message
+_draft_, the words in its composer with the words of any waiting message
 you are changing ahead of them. The Agents page tells main a moment
 (400 ms) after typing pauses, and at once when the composer loses the
 keyboard, a send clears it, the pane goes away or the page unloads. Main
@@ -988,7 +999,7 @@ has none.
 - **Codex**: a subagent is a thread of its own, and `turn/start` and
   `turn/steer` take any thread's id. DevHub offers the box only when
   app-server's `thread/started` for that thread says `canAcceptDirectInput:
-  true`. Codex's own terminal UI uses the same field to decide whether a
+true`. Codex's own terminal UI uses the same field to decide whether a
   subagent takes input. The field is not in the pinned protocol schema, and
   a thread that doesn't mention it gets no box. Whether a real multi-agent
   subagent says true hasn't been seen yet: DevHub has been checked only
@@ -1006,7 +1017,7 @@ prompt would take it. A `rate_limit_event` that names no limiting window
 (its `rateLimitType` is optional) changes no window's readout.
 
 When the CLI is not signed in, or its sign-in is refused, the conversation
-stops (*Authentication failed*):
+stops (_Authentication failed_):
 
 - Claude reports it on an answer: an assistant message whose `error` is
   `authentication_failed` (`SDKAssistantMessageError`). What the message
@@ -1062,7 +1073,7 @@ same floating button in the same place, the top right corner of its pane (the
 bottom right is where the pane says what became of a message DevHub queued
 for the Agent, from an Issue assignment or the Agent actions sheet: what it
 waits for, a cancel or a failure; in a GUI pane a message that went is not
-said there, because the transcript shows it, marked *Sent by a template*,
+said there, because the transcript shows it, marked _Sent by a template_,
 where it went). The two
 are one control: the top right corner of the Agent's own column (a terminal
 is its own column), the same distance in, and the same size whichever it
@@ -1281,7 +1292,7 @@ the Workspace's machine:
   the Workspace's directory (`cwd`), sorted by `updated_at`.
 - **Claude** has no listing command. It keeps each session as JSONL under
   `~/.claude/projects/<the directory, every non-alphanumeric character as
-  ->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
+->/` (or under `$CLAUDE_CONFIG_DIR`, from the profile's environment or the
   machine's). DevHub reads the newest 50 files there and never writes to
   them. A title follows the Agent SDK's precedence for a session's display
   name: the latest name a person gave it (`custom-title`, from `/rename` or
@@ -1342,10 +1353,10 @@ is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
   with `--resume <session id>` (a CLI that has named no session yet starts a
   new one); Codex's app-server is started again and resumes the same thread in
   its handshake (`thread/resume`), which draws nothing a second time.
-- The transcript says *Session restarted* where it happened, as one quiet
+- The transcript says _Session restarted_ where it happened, as one quiet
   information line. Nothing the stopped CLI had going goes on: a call still
   running is marked interrupted, a question it asked closes, and its subagents
-  and background tasks end with it (*Unknown*). A message written to it and
+  and background tasks end with it (_Unknown_). A message written to it and
   not yet taken never reached it; messages DevHub still holds are written to
   the new CLI once it is ready.
 - It is what a conversation its CLI stopped is for — signed out, or refusing
@@ -1388,16 +1399,16 @@ and Codex alike.
   under it.
 - **Actions** are only the ones the CLI has a documented request for, offered
   per server as it stands:
-  - *Reconnect* — Claude: `mcp_reconnect` (`reconnectMcpServer(name)`).
+  - _Reconnect_ — Claude: `mcp_reconnect` (`reconnectMcpServer(name)`).
     Codex has no per-server request; its `config/mcpServer/reload` reconnects
     every server, and the panel shows them all working until it answers.
-  - *Enable* / *Disable* — Claude: `mcp_toggle` (`toggleMcpServer(name,
-    enabled)`). Codex keeps this in its config file, which DevHub does not
+  - _Enable_ / _Disable_ — Claude: `mcp_toggle` (`toggleMcpServer(name,
+enabled)`). Codex keeps this in its config file, which DevHub does not
     write, so it is not offered.
-  - *Sign In…* — for a server that needs it (Claude `needs-auth`; Codex
+  - _Sign In…_ — for a server that needs it (Claude `needs-auth`; Codex
     `authenticationRequired`, or no sign-in yet), see below.
-  A request the CLI refused is said in the panel's footer with the CLI's
-  words, until the next action replaces it.
+    A request the CLI refused is said in the panel's footer with the CLI's
+    words, until the next action replaces it.
 - **Signing in** runs the CLI's own documented `mcp login <server>` (Claude
   Code's CLI reference, "claude mcp login"; Codex's `codex mcp login`) on the
   Agent's machine, with the Agent's profile's program and environment, in the
@@ -1479,34 +1490,34 @@ and changes it for this session.
 
 The foot of the Sidebar says how much of Claude's and Codex's rate limits is
 used: one slim row per CLI — its name, a bar, the percentage and when that
-window resets, *12% (until 16:50)* — for its shortest window, by the length
+window resets, _12% (until 16:50)_ — for its shortest window, by the length
 the CLI gives it (Codex's `windowDurationMins`, Claude's `five_hour` and
 `seven_day`): the five-hour one over the seven-day one, and a window of no
 known length last. The reset is the time on
 the 24-hour clock while it is within twelve hours, past midnight too, and the
-date alone in the reader's locale (*10/3*) when further off; an unknown reset
+date alone in the reader's locale (_10/3_) when further off; an unknown reset
 has no parenthesis, and a narrow column cuts the parenthesis before the
 percentage. When the shown window's last reading has passed its reset, the
 window has started again — the account reports an unstarted window as nothing,
-so that old reading is what stays — and the row says so, faded, *0% (reset)*,
+so that old reading is what stays — and the row says so, faded, _0% (reset)_,
 rather than turning to a longer window. The row's bar and numbers are quiet grey until 75%, orange to
 90%, red beyond — by the strictest of the CLI's windows (a reset one counting as
 empty), not only the shown one; when the colour comes from another window, a small caption under
-the bar names it by the CLI's label (*Approaching 7-day limit*, *7-day limit
-nearly reached*). The rows share one grid, so every CLI's bar has the same
+the bar names it by the CLI's label (_Approaching 7-day limit_, _7-day limit
+nearly reached_). The rows share one grid, so every CLI's bar has the same
 width and edges whatever the words beside it. On the collapsed rail the words
 go and the bars stay. The tooltip draws every window each CLI reports — Claude's
 five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
 `primary` and `secondary`, named by their length (`5-hour`, `7-day`) — as a
-labelled bar with the percentage and its reset (*Resets in 2h 10m · 16:40*,
-or the date alone, *10/3*, when over twelve hours away), worked out by the tooltip as it opens. A reading
-whose reset has passed is history: faded, and said to be (*nothing reported
-since*).
+labelled bar with the percentage and its reset (_Resets in 2h 10m · 16:40_,
+or the date alone, _10/3_, when over twelve hours away), worked out by the tooltip as it opens. A reading
+whose reset has passed is history: faded, and said to be (_nothing reported
+since_).
 
 The numbers come from two places, merged per window in main. **DevHub asks
 the accounts itself**, in the background (`main/shell/usageReaders.ts`): one
 long-lived process per CLI, started on this Mac a moment after the window is
-up with the *first* profile of that kind in Settings' order — its command and
+up with the _first_ profile of that kind in Settings' order — its command and
 environment, not its arguments, which are for a conversation — and stopped on
 quit. With several profiles of a kind, only the first is read. Claude's is
 `claude -p` in stream-json with `--no-session-persistence` and hooks off
@@ -1530,15 +1541,15 @@ sparse updates) keeps that window as last seen.
 
 A sign-in with no plan limits — Claude's `rate_limits_available: false`, a
 Codex API key or Bedrock — is a state, not a failure: with no window read, the
-row says *No plan limits* in place of a bar (nothing on the rail), and the
+row says _No plan limits_ in place of a bar (nothing on the rail), and the
 tooltip says why. A profile whose command is not on this Mac starts no reader,
 and the tooltip says that instead. A reader that fails — its process will not
 start or stops, the CLI refuses the request, or answers in a shape DevHub does
 not read (checked strictly, because `get_usage` is experimental) — says so
-once as a notice (*DevHub could not read a CLI's usage limits*), and stops:
+once as a notice (_DevHub could not read a CLI's usage limits_), and stops:
 there is no retry until DevHub is restarted, and the readout goes on with what
-GUI Agents report. A CLI nothing has read says so in the tooltip (*Not read
-yet*) rather than showing zero, and while neither has anything to say nothing
+GUI Agents report. A CLI nothing has read says so in the tooltip (_Not read
+yet_) rather than showing zero, and while neither has anything to say nothing
 is drawn. The conversation itself shows no rate limits, except when one has
 stopped it (below).
 
@@ -1562,13 +1573,13 @@ documented word, read by its adapter onto the turn's end
 A turn the person stopped is never a limit. While such a turn's end is the
 last thing in the conversation — nothing running, written, held or asked
 since — the conversation stands stopped at the limit, and a quiet line at
-its end says what DevHub will do: *Rate limited — resuming at 16:50* (the
+its end says what DevHub will do: _Rate limited — resuming at 16:50_ (the
 time as the Sidebar gives it, within twelve hours; the short date and time
 further off) with **Cancel**. Thirty seconds after the reset (the CLI's clock
 and this Mac's differ), DevHub writes `[agents] resume_after_limit_message`
-(default *続けて*) through the conversation's one send, as the person's: it
-is drawn as their bubble, marked *Sent automatically after the limit
-reset*, and can be rewound to like their own. Nothing is written sooner
+(default _続けて_) through the conversation's one send, as the person's: it
+is drawn as their bubble, marked _Sent automatically after the limit
+reset_, and can be rewound to like their own. Nothing is written sooner
 than thirty seconds after the line appeared.
 
 One rule ends it: anything that moves the conversation on — the person's
@@ -1576,10 +1587,10 @@ words, a turn the Agent starts on its own, Restart session, a rewind,
 `/resume`, the Agent stopped, closed or continued in a terminal — leaves the
 stop no longer standing, and the resume goes with it; so does Cancel. A
 limit whose reset the CLI did not say is not resumed, and the line says so
-(*not resuming by itself: the CLI did not say when the limit resets*), as it
+(_not resuming by itself: the CLI did not say when the limit resets_), as it
 does for one whose reset had already passed when DevHub read it; **Dismiss**
-puts either away. A write that fails is said on the line (*could not
-resume: …*, with a warning's weight) and is not tried again.
+puts either away. A write that fails is said on the line (_could not
+resume: …_, with a warning's weight) and is not tried again.
 
 It survives a restart of DevHub. What was decided about each Agent's last
 stop — its turn end, the journal offset it first stood at, and when the
@@ -1644,24 +1655,24 @@ turned off, a resume already shown is not written when it comes due.
   CLI to the version DevHub knows, fixes it.
 - **A notice about an event DevHub does not know.** Nothing is wrong with
   the conversation. The notice carries the event as the CLI printed it
-  (*Event as received*), which is what a bug report needs, and each kind of
+  (_Event as received_), which is what a bug report needs, and each kind of
   event is said once, however often it arrives. Its level follows one rule:
-  - An event *beside* the conversation, which the CLIs add with new versions
+  - An event _beside_ the conversation, which the CLIs add with new versions
     — a Claude `system` event of a subtype DevHub has never heard of, a
     Codex notification of a method DevHub has never heard of — is a quiet
-    information line, *claude 2.1.0 reported "…"* or *codex … reported `…`*.
+    information line, _claude 2.1.0 reported "…"_ or _codex … reported `…`_.
     The CLI is telling DevHub something about itself; the conversation's
     content does not arrive this way, so nothing of it is missing.
-  - An event that may *be* the conversation — a Claude line of a type,
+  - An event that may _be_ the conversation — a Claude line of a type,
     stream event, delta or content block DevHub has never heard of, a Codex
-    item of a type the protocol does not name — is a warning, *… DevHub
-    does not know*: something the Agent said or did may not be drawn.
+    item of a type the protocol does not name — is a warning, _… DevHub
+    does not know_: something the Agent said or did may not be drawn.
   - An event DevHub knows that arrives broken — a line that is not JSON, a
     known event without a field DevHub reads, a system event with no
     subtype — is not a notice at all: it is a "Protocol mismatch" (above).
 - **The Agent ended by itself.** The notice has the exit code and the end of
   `err`. A CLI that is not on the host's `PATH` shows up here as `command not
-  found`, exactly as it would for a terminal Agent.
+found`, exactly as it would for a terminal Agent.
 - **For a bug report,** the host directory has everything: `out` is what the
   CLI printed, and `in.log` is what DevHub wrote. **Both contain the
   conversation**: your messages, file contents and command output. Read them

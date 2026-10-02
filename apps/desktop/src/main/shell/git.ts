@@ -12,6 +12,7 @@
  * before anything is run.
  */
 
+import { issueNumberFromBranch } from "../../model/github.js";
 import type { Runtime } from "../runtime/runtime.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken, PortFailure } from "../terminal/ports.js";
@@ -557,7 +558,7 @@ async function remoteBranchOf(
 	if (line === undefined) return undefined;
 	const [pushRemote, push, upstreamRemote, upstream] = line.split("\t");
 	const pushed = trimRemote(pushRemote, push);
-	if (pushed !== undefined) return pushed;
+	if (pushed !== undefined) return ownHead(branch, pushed, trunk);
 	// The upstream stands in for the push destination only where it can be
 	// the branch's own head: a branch of `origin` — the remote whose owner a
 	// pull request's head is matched against — that is not `origin`'s trunk.
@@ -568,8 +569,41 @@ async function remoteBranchOf(
 	// ever been opened from `main`. A branch tracking `upstream/main` in a
 	// fork is the same mistake with somebody else's trunk.
 	const tracked = trimRemote(upstreamRemote, upstream);
-	if (upstreamRemote !== "origin" || tracked === trunk) return undefined;
-	return tracked;
+	if (upstreamRemote !== "origin" || tracked === undefined) return undefined;
+	return ownHead(branch, tracked, trunk);
+}
+
+/**
+ * A remote name, kept only when it can be this branch's own head.
+ *
+ * A pull request is this branch's only when its head *is* this branch, and the
+ * remote name is what that head is matched against — so a remote name that
+ * belongs to some other branch hands this row some other branch's pull
+ * request. Two shapes do that, whichever of `%(push)` or `%(upstream)` said it
+ * (`push.default=upstream` answers `%(push)` with the upstream):
+ *
+ * - **The trunk**, for a branch that is not the trunk: started from
+ *   `origin/main` and tracking it.
+ * - **A branch that names a different Issue**: `feature/130-…` started from
+ *   `origin/feature/128-…` tracks it, sits at the same commit, and was shown
+ *   #128's pull request — the "a PR with the same commit is mistaken for this
+ *   branch's" report. A branch says which Issue it is about; a remote name
+ *   that says another is not where it is going.
+ *
+ * Either way the local name stands in, which is what the branch will be
+ * called the first time somebody pushes it.
+ */
+function ownHead(
+	branch: string,
+	remoteName: string,
+	trunk: string | undefined,
+): string | undefined {
+	if (remoteName === branch) return remoteName;
+	if (remoteName === trunk) return undefined;
+	const mine = issueNumberFromBranch(branch);
+	const theirs = issueNumberFromBranch(remoteName);
+	if (theirs !== undefined && theirs !== mine) return undefined;
+	return remoteName;
 }
 
 /** `refs/remotes/origin/release-2` under `origin`, as `release-2`. */

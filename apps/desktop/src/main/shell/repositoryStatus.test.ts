@@ -642,6 +642,51 @@ describe("the pull request out from a branch", () => {
 		);
 	});
 
+	it("shows the Issue the branch names, never one from another answer", async () => {
+		// Two workspaces whose branches name different Issues but resolve to the
+		// same remote name shared one cache entry, so whichever was answered
+		// last put its Issue on both rows.
+		const second = { id: "w-2", root: "/projects/widget-2", runtime: HERE };
+		const branches: Record<string, string> = {
+			[WORKSPACE.root]: "feature/128-tidy",
+			[second.root]: "feature/130-other",
+		};
+		readRepository.mockImplementation((_command: unknown, root: string) =>
+			Promise.resolve({
+				mainWorktree: "/projects/widget",
+				worktree: root,
+				branch: branches[root],
+				pushBranch: "feature/128-tidy",
+				remote: "github.com/example/widget",
+			}),
+		);
+		readBranch.mockImplementation((_command: unknown, root: string) =>
+			Promise.resolve(branches[root]),
+		);
+		readDirty.mockResolvedValue(false);
+		const published: RepositoryStatusWire[] = [];
+		const running = new RepositoryStatusWatcher({
+			gitCommand: () => Promise.resolve({} as never),
+			environment: {},
+			workspaces: () => [WORKSPACE, second],
+			publish: (status) => published.push(status),
+		});
+		running.start();
+		await vi.waitFor(() => {
+			const last = published[published.length - 1];
+			expect(last?.workspaces.length).toBe(2);
+			expect(last?.workspaces.every((row) => row.issue)).toBe(true);
+		});
+		running.stop();
+		const rows = published[published.length - 1]?.workspaces ?? [];
+		expect(rows.find((row) => row.workspaceId === "w-1")?.issue?.number).toBe(
+			128,
+		);
+		expect(rows.find((row) => row.workspaceId === "w-2")?.issue?.number).toBe(
+			130,
+		);
+	});
+
 	it("falls back to the local name for a branch nobody has pushed", async () => {
 		// No push destination, so no remote name to read. The local name is not a
 		// guess here: it is what the branch will be called the first time
