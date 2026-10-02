@@ -719,11 +719,13 @@
  * a reader who sees no colour at all. Under the old two-drawings-plus-colour
  * arrangement this rule could not have been written. */
 .row-link-button.is-issue-open,
+.row-issue-title.is-issue-open,
 .row-link-button.is-pr-open {
   --state-ink: var(--status-idle);
 }
 
 .row-link-button.is-issue-closed,
+.row-issue-title.is-issue-closed,
 .row-link-button.is-pr-merged {
   --state-ink: var(--status-done);
 }
@@ -2026,5 +2028,72 @@ body.is-resizing-split {
 .sidebar[data-collapsed="true"] .sidebar-usage-value,
 .sidebar[data-collapsed="true"] .sidebar-usage-reset,
 .sidebar[data-collapsed="true"] .sidebar-usage-caption {
+  display: none;
+}
+
+/*
+ * The Issue, in the branch's place, when the row knows which Issue it is on.
+ *
+ * `{name} {icon} {title}` then the trailing marks. The select button stops
+ * growing (`.has-issue-title`) and this takes the rest of the line instead, so
+ * the title is the one thing that gives way. Its end is faded by a mask, as
+ * `.row-text`'s is, and not ellipsised.
+ *
+ * With a pull request, the button is pulled 20px under the trailing group — the
+ * width of the pull request's mark, which is always the group's last — and its
+ * padding puts the fade there. The title therefore slides under the mark, which
+ * stays in its one column (it sits at the row's edge, not after the words), and
+ * is raised above this button by coming later in the row.
+ */
+.sidebar-context-button.has-issue-title {
+  flex: none;
+  max-width: 60%;
+}
+
+.row-issue-title {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 0;
+  align-items: center;
+  padding: 0 0 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--row-glyph-ink);
+  gap: var(--space-1);
+  text-align: left;
+  white-space: nowrap;
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+.row-issue-title.has-pr {
+  margin-right: -20px;
+  padding-right: 20px;
+}
+
+.row-issue-title svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.row-issue-title .row-issue-note {
+  flex: none;
+}
+
+.sidebar-row:hover .row-issue-title,
+.sidebar-row:focus-visible .row-issue-title,
+.sidebar-row:has(:focus-visible) .row-issue-title {
+  color: var(--state-ink, var(--row-glyph-ink));
+}
+
+.sidebar[data-collapsed="true"] .row-issue-title {
   display: none;
 }

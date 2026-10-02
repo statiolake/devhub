@@ -180,6 +180,7 @@ function WorkspaceRow({
 
   const dispatch = useSidebarDispatch();
   const selectRow = useSelectRow();
+  const { openExternalUrl } = useSidebar();
 
   // A Workspace on its way out takes no instructions. This is the view half
   // of a fact the model already enforces — a close that is running refuses the
@@ -205,6 +206,7 @@ function WorkspaceRow({
   // compositions of the same facts is how a row comes to name its Issue to one
   // reader and not the other, with neither able to tell.
   const facts = workspaceRowFacts(workspace, repository);
+  const issue = repository?.issue;
   const description = describe(facts);
   const collapsed = snapshot.sidebar.collapsed;
 
@@ -269,7 +271,7 @@ function WorkspaceRow({
             />
           )}
           <button
-            className="sidebar-context-button"
+            className={`sidebar-context-button${issue ? " has-issue-title" : ""}`}
             type="button"
             data-workspace-id={workspace.id}
             data-tree-item-id={`workspace:${workspace.id}`}
@@ -312,7 +314,7 @@ function WorkspaceRow({
                 marks rather than ellipsising into them — see `.row-text`. */}
             <span className="row-text">
               <span className="row-label">{workspace.label}</span>
-              {repository?.branch === undefined ? null : (
+              {repository?.branch === undefined || issue ? null : (
                 <span className="row-branch">
                   {repository.branch}
                   {repository.unborn ? " · empty" : ""}
@@ -320,6 +322,39 @@ function WorkspaceRow({
               )}
             </span>
           </button>
+          {/* When the Issue is known it takes the branch's place after the
+              name: its icon and its title, as a quiet note. The branch is what
+              the Issue was read *from*, so once the Issue is known the Issue is
+              the better answer to "what is this" — and the branch is still a
+              line in this mark's tooltip and in the row's. A button and not
+              part of the select button, because a button cannot go inside a
+              button; it is raised above the select button's hit area like every
+              other mark. It runs under the pull request's mark and fades out
+              there — see `.row-issue-title`. */}
+          {collapsed || !issue ? null : (
+            <button
+              className={`row-issue-title is-issue-${issue.state}${repository?.pullRequest ? " has-pr" : ""}`}
+              type="button"
+              aria-label={issueLabel(issue)}
+              data-tooltip-lines={JSON.stringify([
+                {
+                  icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
+                  text: issueMark(issue),
+                },
+                ...(repository?.branch === undefined
+                  ? []
+                  : [{ icon: "branch", text: repository.branch }]),
+              ])}
+              onClick={() => {
+                openExternalUrl(issue.url);
+              }}
+            >
+              <Glyph
+                name={issue.state === "closed" ? "issueClosed" : "issueOpen"}
+              />
+              <span className="row-note row-issue-note">{issue.title}</span>
+            </button>
+          )}
           {/* The trailing group: what this row is, as marks, each one its own
               hover. Nothing here is words — the numbers and the titles are in
               the tooltip, where there is room for all of them at once. */}
@@ -651,9 +686,10 @@ function WorkspaceGlyph({
 /**
  * What a Workspace row ends with: marks, and only marks.
  *
- * The row's words are its name and its branch, and they are the whole of what
- * it says in words. What is left is what the row is *for* and how it is going
- * out — the Issue and the pull request — in the order a person asks about them.
+ * The row's words are its name and its branch — or, once the Issue is known, its
+ * name and the Issue's title, which takes the branch's place and is not in this
+ * group (see `.row-issue-title`). What is left is how the row is going out: the
+ * pull request, always last so that it is one column down the Sidebar.
  *
  * What this is a checkout of is not here. It is the folder glyph at the row's
  * leading edge, which is the same drawing of the same thing and is the link to
@@ -679,61 +715,10 @@ function WorkspaceMarks({
 }) {
   const editorFact = editorAttachmentFact(editor);
   const { openExternalUrl } = useSidebar();
-  const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
   const ciBadge = pullRequest ? checksBadge(pullRequest) : undefined;
   return (
     <span className="row-marks">
-      {issue ? (
-        <button
-          className={`row-link-button is-issue-${issue.state}`}
-          type="button"
-          aria-label={issueLabel(issue)}
-          data-tooltip-lines={JSON.stringify([
-            {
-              icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
-              text: issueMark(issue),
-            },
-          ])}
-          onClick={() => {
-            openExternalUrl(issue.url);
-          }}
-        >
-          <Glyph
-            name={issue.state === "closed" ? "issueClosed" : "issueOpen"}
-          />
-        </button>
-      ) : null}
-      {pullRequest ? (
-        <button
-          className={`row-link-button is-pr-${pullRequest.state}`}
-          type="button"
-          aria-label={describe(pullRequestFacts(pullRequest))}
-          data-tooltip-lines={JSON.stringify(
-            markLines(pullRequestFacts(pullRequest)),
-          )}
-          onClick={() => {
-            openExternalUrl(pullRequest.url);
-          }}
-        >
-          <Glyph name={pullRequestGlyphName(pullRequest.state)} />
-          {/* Somebody is waiting on an answer in it. On the mark and not
-              beside it, because it is about this pull request and nothing
-              else on the row; coloured at rest, because a conversation you
-              have to hover to find out about is one nobody answers. The count
-              is in the words above. */}
-          {hasUnresolvedConversations(pullRequest) ? (
-            <Glyph name="conversation" className="row-mark-badge" />
-          ) : null}
-          {/* What its CI says, at the opposite corner, and for the same
-              reasons: about this pull request alone, and coloured at rest.
-              Only a failure or a run still going is drawn; the counts are in
-              the words above. */}
-          {ciBadge === undefined ? null : (
-            <Glyph name={ciBadge} className="row-mark-badge" />
-          )}
-        </button>
-      ) : null}
       {/* Asking. The branch is read every couple of seconds and GitHub once a
           minute, so a branch just switched to is on screen well before what it
           is about — and without this the gap looks exactly like a branch that
@@ -777,6 +762,38 @@ function WorkspaceMarks({
           <Glyph name="container" />
         </span>
       )}
+      {/* Last, so the pull request is always the group's last mark and so in
+          one column down the Sidebar whatever else a row has to show. */}
+      {pullRequest ? (
+        <button
+          className={`row-link-button is-pr-${pullRequest.state}`}
+          type="button"
+          aria-label={describe(pullRequestFacts(pullRequest))}
+          data-tooltip-lines={JSON.stringify(
+            markLines(pullRequestFacts(pullRequest)),
+          )}
+          onClick={() => {
+            openExternalUrl(pullRequest.url);
+          }}
+        >
+          <Glyph name={pullRequestGlyphName(pullRequest.state)} />
+          {/* Somebody is waiting on an answer in it. On the mark and not
+              beside it, because it is about this pull request and nothing
+              else on the row; coloured at rest, because a conversation you
+              have to hover to find out about is one nobody answers. The count
+              is in the words above. */}
+          {hasUnresolvedConversations(pullRequest) ? (
+            <Glyph name="conversation" className="row-mark-badge" />
+          ) : null}
+          {/* What its CI says, at the opposite corner, and for the same
+              reasons: about this pull request alone, and coloured at rest.
+              Only a failure or a run still going is drawn; the counts are in
+              the words above. */}
+          {ciBadge === undefined ? null : (
+            <Glyph name={ciBadge} className="row-mark-badge" />
+          )}
+        </button>
+      ) : null}
     </span>
   );
 }

@@ -136,42 +136,82 @@ const WORKING_ON: RepositoryStatusWire = {
 };
 
 describe("a workspace row", () => {
-  it("says its name and the branch it is on, and nothing else in words", () => {
-    // One line, and the words on it are the two facts that tell this row from
-    // the next. Everything else the row knows is a mark at its trailing edge
-    // and a line in its tooltip.
+  it("says its name and the Issue, in the branch's place, when the Issue is known", () => {
+    // `{name} {icon} {title}` and then the pull request's mark. The branch is
+    // not drawn in words: the Issue is the better answer, and the branch is a
+    // line in the Issue's tooltip.
     mount(WORKING_ON);
     const row = document.querySelector(".workspace-row:not(.is-scratch)");
-    expect(row?.querySelector(".row-text")?.textContent).toBe(
-      "widgetfeature/128-tidy",
-    );
+    expect(row?.querySelector(".row-text")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
-    expect(row?.querySelector(".row-branch")?.textContent).toBe(
-      "feature/128-tidy",
+    expect(row?.querySelector(".row-branch")).toBeNull();
+    const title = row?.querySelector(".row-issue-title");
+    expect(title?.textContent).toBe("Tidy the picker");
+    expect(title?.querySelector("svg")?.getAttribute("data-glyph")).toBe(
+      "issueOpen",
     );
-  });
-
-  it("spends no words on the Issue's number or its title", () => {
-    // Both used to be on a line of their own. A Sidebar column is about twenty
-    // characters wide and those twenty belong to the name and the branch: the
-    // number is the part a person already knows, and the title is what the
-    // Issue's own mark says the moment it is hovered.
-    mount(WORKING_ON);
-    const row = document.querySelector(".workspace-row:not(.is-scratch)");
-    expect(row?.querySelector(".row-text")?.textContent).not.toContain("#128");
-    expect(row?.querySelector(".row-text")?.textContent).not.toContain(
-      "Tidy the picker",
-    );
-    // Still one click away, still named for anyone who cannot see it, and the
-    // whole of it under the pointer.
-    const mark = document.querySelector(".row-link-button.is-issue-open");
-    expect(mark).toHaveAttribute(
+    // The title fades under the pull request's mark rather than stopping short.
+    expect(title).toHaveClass("has-pr");
+    expect(title?.querySelector(".row-issue-note")).not.toBeNull();
+    // The pull request is the trailing group's last mark; the Issue is not in
+    // that group any more.
+    const marks = row?.querySelector(".row-marks");
+    expect(marks?.querySelector(".is-issue-open")).toBeNull();
+    expect(marks?.lastElementChild).toHaveClass("is-pr-draft");
+    // Everything the title no longer says in words is in its hover.
+    expect(
+      JSON.parse(title?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toEqual([
+      { icon: "issueOpen", text: "#128 Tidy the picker" },
+      { icon: "branch", text: "feature/128-tidy" },
+    ]);
+    expect(title).toHaveAttribute(
       "aria-label",
       "Issue #128, open: Tidy the picker",
     );
-    expect(
-      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toEqual([{ icon: "issueOpen", text: "#128 Tidy the picker" }]);
+  });
+
+  it("says its name and the branch, with the marks trailing, when the Issue is not known", () => {
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "spike/rework",
+          pullRequest: {
+            number: 9,
+            url: "p",
+            title: "Rework",
+            state: "open",
+            conversations: { unresolved: 0, uncounted: 0 },
+          },
+        },
+      ],
+    });
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
+    expect(row?.querySelector(".row-text")?.textContent).toBe(
+      "widgetspike/rework",
+    );
+    expect(row?.querySelector(".row-branch")?.textContent).toBe("spike/rework");
+    expect(row?.querySelector(".row-issue-title")).toBeNull();
+    expect(row?.querySelector(".row-marks .is-pr-open")).not.toBeNull();
+  });
+
+  it("opens the Issue from its title and from its icon", () => {
+    const { openExternalUrl } = mount(WORKING_ON);
+    const title = document.querySelector(".row-issue-title") as HTMLElement;
+    fireEvent.click(title.querySelector(".row-issue-note") as HTMLElement);
+    fireEvent.click(title.querySelector("svg") as unknown as HTMLElement);
+    expect(openExternalUrl).toHaveBeenCalledTimes(2);
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://github.com/example/widget/issues/128",
+    );
+  });
+
+  it("spends no words on the Issue's number", () => {
+    mount(WORKING_ON);
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
+    expect(row?.textContent).not.toContain("#128");
   });
 
   it("is the same one line for a workspace that is only a repository", () => {
@@ -277,7 +317,7 @@ describe("a workspace row", () => {
         },
       ],
     });
-    const mark = document.querySelector(`.row-link-button.is-issue-${state}`);
+    const mark = document.querySelector(`.row-issue-title.is-issue-${state}`);
     expect(mark).toHaveAttribute(
       "aria-label",
       expect.stringContaining(`Issue #128, ${state}`),
@@ -889,7 +929,7 @@ describe("a workspace row, continued", () => {
     const { openExternalUrl } = mount(WORKING_ON);
 
     fireEvent.click(
-      document.querySelector(".row-link-button.is-issue-open") as HTMLElement,
+      document.querySelector(".row-issue-title.is-issue-open") as HTMLElement,
     );
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget/issues/128",
@@ -909,9 +949,7 @@ describe("a workspace row, continued", () => {
       workspaces: [{ workspaceId: "w-1", branch: "main" }],
     });
     expect(screen.getByText("main")).toBeInTheDocument();
-    expect(
-      document.querySelector(".row-link-button[class*='is-issue']"),
-    ).toBeNull();
+    expect(document.querySelector(".row-issue-title")).toBeNull();
   });
 
   it("says which Issue it is about, and why, when the look failed", () => {
@@ -947,9 +985,7 @@ describe("a workspace row, continued", () => {
     // The branch is still said; it is the fact this row is named by.
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
     // And no Issue mark, because DevHub does not know the state to draw.
-    expect(
-      document.querySelector(".row-link-button[class*='is-issue']"),
-    ).toBeNull();
+    expect(document.querySelector(".row-issue-title")).toBeNull();
   });
 
   it("gives the reason alone when the failure never reached an Issue number", () => {
@@ -982,7 +1018,7 @@ describe("a workspace row, continued", () => {
     // so the Sidebar's foot is not where it is said. See `shell/notices.ts`.
     mount({ ...WORKING_ON, diagnostic: "GitHub answered 502." });
     expect(
-      document.querySelector(".row-link-button.is-issue-open"),
+      document.querySelector(".row-issue-title.is-issue-open"),
     ).toBeInTheDocument();
     expect(screen.queryByText("GitHub answered 502.")).not.toBeInTheDocument();
     expect(document.querySelector(".sidebar-status-note")).toBeNull();

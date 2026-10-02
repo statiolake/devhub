@@ -170,11 +170,11 @@ describe("a Workspace row whose folder is on another machine", () => {
         url: "https://github.com/example/widget/pull/131",
       },
     });
-    // The marks, and only the marks: the number and the title are what the
-    // Issue's own hover says, and the row's words are its name and its branch.
-    expect(screen.queryByText("Tidy the widget")).toBeNull();
+    // The Issue is on the row, in the branch's place, with its title as a
+    // quiet note; the number is only in the hover.
+    expect(screen.queryByText("#128")).toBeNull();
     expect(
-      document.querySelector(".row-link-button.is-issue-open"),
+      document.querySelector(".row-issue-title.is-issue-open"),
     ).toHaveAttribute("aria-label", "Issue #128, open: Tidy the widget");
     expect(
       document.querySelector(".row-link-button.is-pr-open"),
