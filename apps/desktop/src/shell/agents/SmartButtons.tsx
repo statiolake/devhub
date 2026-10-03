@@ -133,11 +133,11 @@ function anchorOf(
 
 /**
  * How the box meets what it stands on: inset from a composer's right edge
- * past its rounded corner and touching its top; a small gap above a status,
+ * past its rounded corner and 8px (`--space-2`) clear of its top; a small gap above a status,
  * right edges lined up.
  */
 const SPACING = {
-  gui: { inset: 16, gap: 0 },
+  gui: { inset: 16, gap: 8 },
   tui: { inset: 0, gap: 4 },
 } as const;
 

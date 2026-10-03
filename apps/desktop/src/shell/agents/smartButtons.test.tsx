@@ -284,7 +284,7 @@ describe("where the box stands", () => {
     expect(box()).toHaveAttribute("data-presentation", "gui");
     // The composer's top is 120px above the pane's bottom; its right edge is
     // 100px in from the pane's, and the box 16px further in.
-    expect(box().style.bottom).toBe("120px");
+    expect(box().style.bottom).toBe("128px");
     expect(box().style.right).toBe("116px");
   });
 
@@ -410,7 +410,7 @@ describe("dragging the box", () => {
       pointerId: 1,
     });
     expect(box()).toHaveAttribute("data-anchored", "top");
-    expect(box().style.bottom).toBe("120px");
+    expect(box().style.bottom).toBe("128px");
     expect(box().style.right).toBe("200px");
     fireEvent.pointerUp(handle(), { pointerId: 1 });
     expect(dispatch).toHaveBeenCalledWith({
@@ -469,7 +469,7 @@ describe("anchored to the composer", () => {
     });
     expect(box()).toHaveAttribute("data-anchored", "top");
     expect(box().style.right).toBe("140px");
-    expect(box().style.bottom).toBe("120px");
+    expect(box().style.bottom).toBe("128px");
     cleanup();
     // A taller prompt: the composer's top is 60px higher.
     RECTS["conversation-composer-box"] = rect(100, 420, 900, 580);
