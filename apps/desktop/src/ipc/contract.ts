@@ -174,6 +174,12 @@ export interface IssueFolderRequest {
 	 */
 	readonly branch?: string;
 	/**
+	 * Check `branch` out in the clone's own folder instead of a worktree —
+	 * made from the default branch if need be, refused if the folder has
+	 * uncommitted changes. Ignored without `branch`.
+	 */
+	readonly inRoot?: boolean;
+	/**
 	 * Start the branch from the `origin` already on disk, the fetch having
 	 * failed and the person having been asked and said to go on.
 	 *

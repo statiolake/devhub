@@ -25,6 +25,8 @@ import { localRuntime } from "../runtime/registry.js";
 import {
 	ensureWorktree,
 	findBranch,
+	issueBranchPlan,
+	switchRootBranch,
 	gitSupportsRelativeWorktrees,
 	gitVersionAtLeast,
 	listBranches,
@@ -812,5 +814,125 @@ describe("the name a branch has on the remote", () => {
 		expect(
 			(await readRepository(command, repository))?.pushBranch,
 		).toBeUndefined();
+	});
+});
+
+/**
+ * A clone like `statiolake/dockim`: the default branch is `master`, and the
+ * Issue's `feature/3-wip` exists nowhere yet.
+ */
+async function masterOrigin(): Promise<void> {
+	await runGit(command, ["branch", "-m", "main", "master"], {
+		cwd: repository,
+	});
+	const origin = join(parent, "origin.git");
+	await runGit(command, ["init", "--bare", "-b", "master", origin]);
+	await runGit(command, ["remote", "add", "origin", origin], {
+		cwd: repository,
+	});
+	await runGit(command, ["push", "-u", "origin", "master"], {
+		cwd: repository,
+	});
+	await runGit(command, ["remote", "set-head", "origin", "--auto"], {
+		cwd: repository,
+	});
+}
+
+describe("an Issue's branch that exists nowhere", () => {
+	it("is dropped from the plan, so the Issue reads as not started", () => {
+		expect(
+			issueBranchPlan({ branch: "feature/3-wip", reachable: false }),
+		).toEqual({ reachable: false });
+		expect(
+			issueBranchPlan({ branch: "feature/3-wip", reachable: true }),
+		).toEqual({ branch: "feature/3-wip", reachable: true });
+		expect(
+			issueBranchPlan({
+				branch: "feature/3-wip",
+				reachable: false,
+				checkedOutAt: "/x",
+			}),
+		).toEqual({
+			branch: "feature/3-wip",
+			reachable: false,
+			checkedOutAt: "/x",
+		});
+	});
+
+	it("is made in a worktree from a `master` default branch", async () => {
+		await masterOrigin();
+		const path = await ensureWorktree(
+			command,
+			repository,
+			{ kind: "issue", number: 3 },
+			"feature/3-wip",
+		);
+		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
+		const wanted = await runGit(command, ["rev-parse", "origin/master"], {
+			cwd: repository,
+		});
+		expect(made.trim()).toBe(wanted.trim());
+	});
+});
+
+describe("a branch in the root checkout", () => {
+	it("is made from the default branch and switched to, without tracking it", async () => {
+		await masterOrigin();
+		await runGit(command, ["checkout", "-b", "side"], { cwd: repository });
+		await writeFile(join(repository, "SIDE"), "side\n");
+		await runGit(command, ["add", "SIDE"], { cwd: repository });
+		await runGit(command, ["commit", "-m", "side"], { cwd: repository });
+
+		const path = await switchRootBranch(
+			command,
+			repository,
+			{ kind: "issue", number: 3 },
+			"feature/3-wip",
+		);
+
+		expect(path).toBe(repository);
+		const head = await runGit(command, ["branch", "--show-current"], {
+			cwd: repository,
+		});
+		expect(head.trim()).toBe("feature/3-wip");
+		const made = await runGit(command, ["rev-parse", "HEAD"], {
+			cwd: repository,
+		});
+		const wanted = await runGit(command, ["rev-parse", "origin/master"], {
+			cwd: repository,
+		});
+		expect(made.trim()).toBe(wanted.trim());
+		await expect(
+			runGit(command, ["rev-parse", "--abbrev-ref", "@{u}"], {
+				cwd: repository,
+			}),
+		).rejects.toThrow();
+	});
+
+	it("switches to a branch that already exists", async () => {
+		await runGit(command, ["branch", "feature/128-tidy"], { cwd: repository });
+		await switchRootBranch(command, repository, ISSUE_128, "feature/128-tidy");
+		const head = await runGit(command, ["branch", "--show-current"], {
+			cwd: repository,
+		});
+		expect(head.trim()).toBe("feature/128-tidy");
+	});
+
+	it("refuses a root with uncommitted changes rather than carry them over", async () => {
+		await writeFile(join(repository, "README"), "changed\n");
+		await expect(
+			switchRootBranch(command, repository, ISSUE_128, "feature/128-wip"),
+		).rejects.toThrow(/uncommitted changes/u);
+		const head = await runGit(command, ["branch", "--show-current"], {
+			cwd: repository,
+		});
+		expect(head.trim()).toBe("main");
+	});
+
+	it("refuses a branch another worktree already has", async () => {
+		await ensureWorktree(command, repository, ISSUE_128, "feature/128-wip");
+		await expect(
+			switchRootBranch(command, repository, ISSUE_128, "feature/128-wip"),
+		).rejects.toThrow(/already checked out in/u);
 	});
 });

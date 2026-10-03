@@ -999,6 +999,99 @@ export async function ensureWorktree(
 }
 
 /**
+ * What an Issue's branch question offers, given where its branch was found.
+ *
+ * A branch that is neither here, on a remote, nor checked out is dropped, so
+ * the Issue reads as not started and its new branch is made from the default
+ * branch. A pull request's head is never passed through this: that branch is
+ * somebody's work, and "it is not here" is worth saying.
+ */
+export function issueBranchPlan<
+	Plan extends {
+		readonly branch?: string;
+		readonly reachable: boolean;
+		readonly checkedOutAt?: string;
+	},
+>(plan: Plan): Plan | { readonly reachable: false } {
+	return plan.reachable || plan.checkedOutAt !== undefined
+		? plan
+		: { reachable: false };
+}
+
+/**
+ * Check a branch out in the repository's own folder rather than in a worktree,
+ * starting it from the remote's default branch when it does not exist yet.
+ *
+ * The same rules as `ensureWorktree` for where the branch comes from — here,
+ * on a remote, or new from `baseRef` without tracking the trunk — and for a
+ * pull request whose branch is nowhere, which is refused rather than invented.
+ *
+ * A root with uncommitted changes is refused: `git switch` would carry them
+ * onto the other branch or stop half-way, and either is a decision about
+ * somebody's unsaved work that is theirs to make. A branch already checked out
+ * in another worktree is refused too, because git gives one branch one folder.
+ */
+export async function switchRootBranch(
+	command: GitCommand,
+	directory: string,
+	work: WorkItem,
+	branch: string,
+	options: WorktreeOptions = {},
+): Promise<string> {
+	const name = branch.trim();
+	if (name.length === 0) {
+		throw workspaceFailure("Enter a branch name.");
+	}
+	const repository = await readRepository(command, directory);
+	if (!repository) {
+		throw workspaceFailure(`${directory} is not a Git repository.`);
+	}
+	if (repository.unborn) {
+		throw workspaceFailure(
+			`${repositoryName(repository.mainWorktree)} has no commits yet. Make the first commit and push it, then try again.`,
+		);
+	}
+	const root = repository.mainWorktree;
+	const current = (
+		await runGit(command, ["branch", "--show-current"], { cwd: root })
+	).trim();
+	if (current === name) return root;
+	const holder = await worktreeForBranch(command, root, name);
+	if (holder !== undefined) {
+		throw workspaceFailure(
+			`${name} is already checked out in ${holder}. Open that folder instead.`,
+		);
+	}
+	if ((await readDirty(command, root)) !== false) {
+		throw workspaceFailure(
+			`${repositoryName(root)} has uncommitted changes. Commit or stash them, or open the branch as a worktree instead.`,
+		);
+	}
+	const pull = work.kind === "pull";
+	if (pull) await fetchOrigin(command, root, options);
+	const here = await findBranch(command, root, name);
+	if (pull && !here) {
+		throw workspaceFailure(
+			`${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
+		);
+	}
+	const args = here
+		? here.kind === "local"
+			? ["switch", name]
+			: ["switch", "-c", name, here.ref]
+		: // Not tracking the trunk it starts from: see `ensureWorktree`.
+			[
+				"switch",
+				"--no-track",
+				"-c",
+				name,
+				await baseRef(command, root, options),
+			];
+	await runGit(command, args, { cwd: root, timeoutMs: NETWORK_TIMEOUT_MS });
+	return root;
+}
+
+/**
  * `git worktree add`, with `--relative-paths` when this git understands it.
  *
  * A worktree's `.git` is a one-line file, `gitdir: <path>`, pointing at its

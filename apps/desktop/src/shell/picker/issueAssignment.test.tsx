@@ -236,7 +236,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New worktree: feature\/128-wip/u,
+      /Create feature\/128-wip in a new worktree/u,
     );
     await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
@@ -276,7 +276,7 @@ describe("assigning an Issue", () => {
     mount();
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     const dialog = await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
@@ -295,7 +295,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New worktree: feature\/128-wip/u,
+      /Create feature\/128-wip in a new worktree/u,
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Agent for example\/widget#128/u,
@@ -344,7 +344,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await choose(/Which example\/widget/u, /\/other\/widget/u);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     await vi.waitFor(() => {
       expect(prepareIssueFolder).toHaveBeenCalledWith({
@@ -370,7 +370,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", PULL_REQUEST);
     await choose(
       /Where to work on/u,
-      /Existing worktree: alice\/fix-the-crash/u,
+      /Open alice\/fix-the-crash in its worktree/u,
     );
 
     await vi.waitFor(() => {
@@ -407,7 +407,10 @@ describe("assigning an Issue", () => {
       listAgentSessions,
     } as unknown as Partial<PickerValue>);
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New worktree/u);
+    await choose(
+      /Where to work on/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
     await screen.findByRole("dialog", { name: /Agent for/u });
 
     expect(prepareIssueFolder).toHaveBeenCalledWith(
@@ -446,8 +449,9 @@ describe("assigning an Issue", () => {
       ),
     ).toBeVisible();
     expect(rowTitles()).toEqual([
-      "New worktree: feature/128-wip",
-      "Root checkout",
+      "Create feature/128-wip in a new worktree",
+      "Create feature/128-wip in the root checkout",
+      "Open the root checkout as it is",
     ]);
   });
 
@@ -457,7 +461,7 @@ describe("assigning an Issue", () => {
     const { prepareIssueFolder, assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
     await answer(/Agent for/u);
 
     expect(prepareIssueFolder).toHaveBeenCalledWith({
@@ -496,7 +500,7 @@ describe("assigning an Issue", () => {
       } as unknown as PickerValue["agentProfiles"],
     });
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     expect(
       await screen.findByRole("option", { name: /New Claude Session/u }),
@@ -548,7 +552,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", PULL_REQUEST);
     await choose(
       /Where to work on example\/widget#128/u,
-      /Check out alice\/fix-the-crash in a new worktree/u,
+      /Open alice\/fix-the-crash in a new worktree/u,
     );
 
     await vi.waitFor(() => {
@@ -581,21 +585,73 @@ describe("assigning an Issue", () => {
 
     expect(
       screen.getByRole("option", {
-        name: /Check out alice\/fix-the-crash in a new worktree/u,
+        name: /Open alice\/fix-the-crash in a new worktree/u,
+      }),
+    ).toHaveTextContent("Checks out the existing branch in ../widget_128");
+    expect(
+      screen.getByRole("option", {
+        name: /Create feature\/128-wip in a new worktree/u,
+      }),
+    ).toHaveTextContent("New branch from the default branch, in ../widget_128");
+    expect(
+      screen.getByRole("option", {
+        name: /Open alice\/fix-the-crash in the root checkout/u,
+      }),
+    ).toHaveTextContent("Switches /projects/widget to the existing branch");
+    expect(
+      screen.getByRole("option", {
+        name: /Create feature\/128-wip in the root checkout/u,
       }),
     ).toHaveTextContent(
-      "Creates ../widget_128 on the branch this work already has",
+      "New branch from the default branch, switched to in /projects/widget",
     );
     expect(
-      screen.getByRole("option", { name: /New worktree: feature\/128-wip/u }),
-    ).toHaveTextContent(
-      "Creates ../widget_128 on a new branch from origin's default branch",
+      screen.getByRole("option", { name: /^Open the root checkout as it is/u }),
+    ).toHaveTextContent("No branch change in /projects/widget");
+  });
+
+  it("switches the root checkout to a new branch when asked to", async () => {
+    const { prepareIssueFolder } = mount();
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on/u,
+      /Create feature\/128-wip in the root checkout/u,
     );
-    expect(
-      screen.getByRole("option", { name: /^Root checkout/u }),
-    ).toHaveTextContent(
-      "Opens /projects/widget on whatever branch it is on now; nothing is checked out or created",
+
+    await vi.waitFor(() => {
+      expect(prepareIssueFolder).toHaveBeenCalledWith({
+        issueUrl: ISSUE,
+        place: { kind: "local", path: "/projects/widget" },
+        branch: "feature/128-wip",
+        inRoot: true,
+        allowStaleBase: false,
+      });
+    });
+  });
+
+  it("switches the root checkout to the branch the work already has", async () => {
+    const { prepareIssueFolder } = mount({
+      assignmentBranch: vi
+        .fn()
+        .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", PULL_REQUEST);
+    await choose(
+      /Where to work on/u,
+      /Open alice\/fix-the-crash in the root checkout/u,
     );
+
+    await vi.waitFor(() => {
+      expect(prepareIssueFolder).toHaveBeenCalledWith({
+        issueUrl: PULL_REQUEST,
+        place: { kind: "local", path: "/projects/widget" },
+        branch: "alice/fix-the-crash",
+        inRoot: true,
+        allowStaleBase: false,
+      });
+    });
   });
 
   it("names a pull request's new worktree by the Issue its branch is for", async () => {
@@ -615,11 +671,9 @@ describe("assigning an Issue", () => {
 
     expect(
       screen.getByRole("option", {
-        name: /Check out feature\/128-short-name in a new worktree/u,
+        name: /Open feature\/128-short-name in a new worktree/u,
       }),
-    ).toHaveTextContent(
-      "Creates ../widget_128 on the branch this work already has",
-    );
+    ).toHaveTextContent("Checks out the existing branch in ../widget_128");
   });
 
   it("names an existing worktree by its folder, and offers no second row for the same branch", async () => {
@@ -640,14 +694,12 @@ describe("assigning an Issue", () => {
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(rowTitles()).toEqual([
-      "Existing worktree: feature/128-wip",
-      "Root checkout",
+      "Open feature/128-wip in its worktree",
+      "Open the root checkout as it is",
     ]);
     expect(
-      screen.getByRole("option", { name: /Existing worktree/u }),
-    ).toHaveTextContent(
-      "Opens ../widget_feature_128-wip, where feature/128-wip is already checked out",
-    );
+      screen.getByRole("option", { name: /in its worktree/u }),
+    ).toHaveTextContent("Already checked out in ../widget_feature_128-wip");
   });
 
   it("offers the root checkout once when the work's branch is checked out there", async () => {
@@ -663,12 +715,13 @@ describe("assigning an Issue", () => {
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(rowTitles()).toEqual([
-      "Root checkout: feature/128-tidy",
-      "New worktree: feature/128-wip",
+      "Create feature/128-wip in a new worktree",
+      "Open feature/128-tidy in the root checkout",
+      "Create feature/128-wip in the root checkout",
     ]);
   });
 
-  it("leads with the branch the work already has, then the two standing answers", async () => {
+  it("orders the five answers: worktrees first, then the root checkout", async () => {
     // Read top to bottom that is the order the decision is considered in, and
     // the branch this work already has leads, because a person assigning a pull
     // request has decided what to work on and it is not a new branch — so it is
@@ -683,9 +736,11 @@ describe("assigning an Issue", () => {
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(rowTitles()).toEqual([
-      "Check out alice/fix-the-crash in a new worktree",
-      "New worktree: feature/128-wip",
-      "Root checkout",
+      "Open alice/fix-the-crash in a new worktree",
+      "Create feature/128-wip in a new worktree",
+      "Open alice/fix-the-crash in the root checkout",
+      "Create feature/128-wip in the root checkout",
+      "Open the root checkout as it is",
     ]);
     // Every row is an answer rather than a name to search among, so they are
     // all pinned and typing narrows nothing away: there is no list here that a
@@ -693,7 +748,7 @@ describe("assigning an Issue", () => {
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "nothing-like-this" },
     });
-    expect(screen.getAllByRole("option")).toHaveLength(3);
+    expect(screen.getAllByRole("option")).toHaveLength(5);
   });
 
   it("says why a clone is being asked about when nobody asked for one", async () => {
@@ -726,7 +781,10 @@ describe("assigning an Issue", () => {
     const { prepareIssueFolder, assignIssue, dispatch } = mount();
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New worktree/u);
+    await choose(
+      /Where to work on/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
     // Escape from the agent question goes back to where to work.
     fireEvent.keyDown(
       await screen.findByRole("dialog", { name: /Agent for/u }),
@@ -763,7 +821,10 @@ describe("assigning an Issue", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New worktree/u);
+    await choose(
+      /Where to work on/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
 
     // The branch question again, redrawn with the reason under it.
     expect(
@@ -786,7 +847,7 @@ describe("assigning an Issue", () => {
     mount({ assignIssue } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
     await answer(/Agent for/u);
 
     // The agent question again, redrawn with the reason under it.
@@ -818,7 +879,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await choose(
       /Where to work on example\/widget#128/u,
-      /New worktree: feature\/128-wip/u,
+      /Create feature\/128-wip in a new worktree/u,
     );
 
     expect(
@@ -849,7 +910,7 @@ describe("assigning an Issue", () => {
     await choose(/Clone example\/widget/u, /\/code\/github/u);
     // A fresh clone is checked out in one place, and that place plus a new
     // worktree is the same location question everybody else gets.
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -875,7 +936,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -944,7 +1005,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
         "https://github.com/example/widget.git",
@@ -1024,7 +1085,7 @@ describe("going on with an earlier session", () => {
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
-    await choose(/Where to work on/u, /Existing worktree/u);
+    await choose(/Where to work on/u, /in its worktree/u);
     await choose(/Agent for/u, /^Claude Session: Fix the crash/u);
 
     // Listed where the Agent will run — the folder, by its path, before it is
@@ -1062,7 +1123,7 @@ describe("going on with an earlier session", () => {
     mount({ listAgentSessions } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /Root checkout/u);
+    await choose(/Where to work on/u, /Open the root checkout as it is/u);
 
     expect(
       await screen.findByRole("option", {
@@ -1082,7 +1143,10 @@ describe("going on with an earlier session", () => {
     mount({ listAgentSessions } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(/Where to work on/u, /New worktree: feature\/128-wip/u);
+    await choose(
+      /Where to work on/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
     await screen.findByRole("dialog", { name: /Agent for/u });
 
     await vi.waitFor(() => {

@@ -74,6 +74,10 @@ const EXISTING_BRANCH = "devhub:existing-branch";
 /** The folder that branch is already checked out in, opened as it is. */
 const OPEN_CHECKOUT = "devhub:open-checkout";
 const ROOT_CHECKOUT = "devhub:root-checkout";
+/** The branch this work already has, switched to in the root checkout. */
+const ROOT_EXISTING_BRANCH = "devhub:root-existing-branch";
+/** `feature/128-wip`, made and switched to in the root checkout. */
+const ROOT_NEW_BRANCH = "devhub:root-new-branch";
 const USE_STALE_BASE = "devhub:use-stale-base";
 
 function Wrong({ what }: { readonly what: string }) {
@@ -363,8 +367,12 @@ function worktreeCount(places: number): string {
  *    it is already checked out in, or a new one;
  * 2. **a new branch**, `feature/128-wip`, in a new worktree, which is what an
  *    Issue nobody has started gets;
- * 3. **the root checkout**, taken as it stands, where nothing is checked out
- *    and which branch to read is the agent's business.
+ * 3. **the branch this work already has, in the root checkout** — opened if it
+ *    is checked out there, switched to otherwise;
+ * 4. **a new branch in the root checkout**, made from the same base as 2 and
+ *    switched to — refused while the root has uncommitted changes;
+ * 5. **the root checkout as it stands**, where nothing is checked out and
+ *    which branch to read is the agent's business.
  *
  * Each row says what choosing it does and where, in the folder names DevHub
  * will use (`worktreeDirectory`: `../widget_128`, named for the Issue whichever
@@ -418,7 +426,7 @@ function branchStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${itemLabel(item)}`,
-      question: `Choose the folder of ${folderName(root)} the agent works in. DevHub makes it if need be, then asks which agent; the folder opens as a workspace when the agent starts.`,
+      question: `Choose where in ${folderName(root)} the agent works. The agent is chosen next.`,
       // Every row is an answer to the question rather than a name to search
       // among, so they are all pinned and the field filters nothing: there is
       // no list here that typing could narrow.
@@ -431,15 +439,23 @@ function branchStep(
         ? // Somewhere the same repository is checked out, so the same
           // machine: git answered from there and could not have named a
           // folder anywhere else.
-          { place: { ...place, path: plan.checkedOutAt }, branch: undefined }
+          {
+            place: { ...place, path: plan.checkedOutAt },
+            branch: undefined,
+            inRoot: false,
+          }
         : {
             place,
             branch:
-              answer.id === NEW_WORKTREE
+              answer.id === NEW_WORKTREE || answer.id === ROOT_NEW_BRANCH
                 ? wip
-                : answer.id === EXISTING_BRANCH
+                : answer.id === EXISTING_BRANCH ||
+                    answer.id === ROOT_EXISTING_BRANCH
                   ? plan.branch
                   : undefined,
+            inRoot:
+              answer.id === ROOT_NEW_BRANCH ||
+              answer.id === ROOT_EXISTING_BRANCH,
           };
     return prepareFolder(services, input, work, choice, false);
   };
@@ -461,73 +477,74 @@ function folderRows(
   wip: string,
 ): readonly PickerItem[] {
   const branch = plan.branch;
-  const rootIsTheWork = branch !== undefined && plan.checkedOutAt === root;
-  return [
-    ...existingBranchRows(plan, root, work),
-    ...(branch === wip
-      ? []
-      : [
-          {
-            id: NEW_WORKTREE,
-            label: `New worktree: ${wip}`,
-            detail: `Creates ${besideRoot(root, worktreeDirectory(root, work, wip))} on a new branch from origin's default branch`,
-            searchText: `new branch worktree ${wip}`,
-          },
-        ]),
-    ...(rootIsTheWork
-      ? []
-      : [
-          {
-            id: ROOT_CHECKOUT,
-            label: "Root checkout",
-            detail: `Opens ${root} on whatever branch it is on now; nothing is checked out or created`,
-            searchText: `repository root ${root}`,
-          },
-        ]),
-  ];
-}
-
-/**
- * The row for the branch this work already has, when there is one to offer.
- *
- * Three cases and one row: the branch is already checked out somewhere, so that
- * folder is what is offered; the branch can be had, so a new worktree for it
- * is; or there is nothing to offer and the list starts at the new branch.
- */
-function existingBranchRows(
-  plan: AssignmentBranchWire,
-  root: string,
-  work: WorkItem,
-): readonly PickerItem[] {
-  const branch = plan.branch;
-  if (branch === undefined) return [];
   const checkedOutAt = plan.checkedOutAt;
-  if (checkedOutAt !== undefined) {
-    return [
-      checkedOutAt === root
+  // The branch this work already has, when it can be had: checked out
+  // somewhere already, or here or on a remote to check out.
+  const existing =
+    branch !== undefined && (checkedOutAt !== undefined || plan.reachable)
+      ? branch
+      : undefined;
+  // Once the work's branch *is* `feature/128-wip`, rows that would "create"
+  // it are not answers of their own.
+  const offerNew = branch !== wip;
+  const rows: PickerItem[] = [];
+  if (existing !== undefined && checkedOutAt !== root) {
+    rows.push(
+      checkedOutAt !== undefined
         ? {
             id: OPEN_CHECKOUT,
-            label: `Root checkout: ${branch}`,
-            detail: `Opens ${root}, where ${branch} is already checked out`,
-            searchText: `${branch} ${checkedOutAt}`,
+            label: `Open ${existing} in its worktree`,
+            detail: `Already checked out in ${besideRoot(root, checkedOutAt)}`,
+            searchText: `existing branch worktree ${existing} ${checkedOutAt}`,
           }
         : {
-            id: OPEN_CHECKOUT,
-            label: `Existing worktree: ${branch}`,
-            detail: `Opens ${besideRoot(root, checkedOutAt)}, where ${branch} is already checked out`,
-            searchText: `${branch} ${checkedOutAt}`,
+            id: EXISTING_BRANCH,
+            label: `Open ${existing} in a new worktree`,
+            detail: `Checks out the existing branch in ${besideRoot(root, worktreeDirectory(root, work, existing))}`,
+            searchText: `existing branch worktree ${existing}`,
           },
-    ];
+    );
   }
-  if (!plan.reachable) return [];
-  return [
-    {
-      id: EXISTING_BRANCH,
-      label: `Check out ${branch} in a new worktree`,
-      detail: `Creates ${besideRoot(root, worktreeDirectory(root, work, branch))} on the branch this work already has`,
-      searchText: `${branch} checkout worktree`,
-    },
-  ];
+  if (offerNew) {
+    rows.push({
+      id: NEW_WORKTREE,
+      label: `Create ${wip} in a new worktree`,
+      detail: `New branch from the default branch, in ${besideRoot(root, worktreeDirectory(root, work, wip))}`,
+      searchText: `new branch worktree ${wip}`,
+    });
+  }
+  if (existing !== undefined && checkedOutAt === root) {
+    rows.push({
+      id: OPEN_CHECKOUT,
+      label: `Open ${existing} in the root checkout`,
+      detail: `Already checked out in ${root}`,
+      searchText: `existing branch root ${existing} ${root}`,
+    });
+  } else if (existing !== undefined && checkedOutAt === undefined) {
+    rows.push({
+      id: ROOT_EXISTING_BRANCH,
+      label: `Open ${existing} in the root checkout`,
+      detail: `Switches ${root} to the existing branch`,
+      searchText: `existing branch root switch ${existing} ${root}`,
+    });
+  }
+  if (offerNew) {
+    rows.push({
+      id: ROOT_NEW_BRANCH,
+      label: `Create ${wip} in the root checkout`,
+      detail: `New branch from the default branch, switched to in ${root}`,
+      searchText: `new branch root switch ${wip} ${root}`,
+    });
+  }
+  if (!(existing !== undefined && checkedOutAt === root)) {
+    rows.push({
+      id: ROOT_CHECKOUT,
+      label: "Open the root checkout as it is",
+      detail: `No branch change in ${root}`,
+      searchText: `repository root as is ${root}`,
+    });
+  }
+  return rows;
 }
 
 /**
@@ -648,6 +665,8 @@ interface FolderChoice {
   readonly place: WorkspacePlaceWire;
   /** The branch whose worktree to open, made if need be; absent is `place` as it is. */
   readonly branch: string | undefined;
+  /** Check `branch` out in `place` itself rather than in a worktree. */
+  readonly inRoot: boolean;
 }
 
 /**
@@ -671,12 +690,18 @@ async function prepareFolder(
     folder = await input.working(
       choice.branch === undefined
         ? `Reading ${baseName(choice.place.path)}…`
-        : `Setting up the worktree for ${choice.branch}…`,
+        : choice.inRoot
+          ? `Switching ${baseName(choice.place.path)} to ${choice.branch}…`
+          : `Setting up the worktree for ${choice.branch}…`,
       () =>
         services.prepareIssueFolder({
           issueUrl: gitHubItemUrl(work.item),
           place: choice.place,
-          ...(choice.branch === undefined ? {} : { branch: choice.branch }),
+          ...(choice.branch === undefined
+            ? {}
+            : choice.inRoot
+              ? { branch: choice.branch, inRoot: true }
+              : { branch: choice.branch }),
           allowStaleBase,
         }),
     );

@@ -405,6 +405,8 @@ import {
 } from "./projects.js";
 import {
 	ensureWorktree,
+	switchRootBranch,
+	issueBranchPlan,
 	fetchBranchFrom,
 	findBranch,
 	refreshOrigin,
@@ -6400,19 +6402,27 @@ export class AppController {
 		}
 		const place = request.place;
 		const location = workspaceLocation(place);
-		const target = request.branch
-			? await ensureWorktree(
-					await this.gitCommand(runtimeFor(location)),
-					place.path,
-					// Which work this is — an Issue, or a pull request whose branch
-					// already exists — follows from the URL rather than from a second
-					// field beside it, because two facts saying the same thing can
-					// disagree. It also names the folder (`worktreeDirectory`).
-					item,
-					request.branch,
-					{ allowStaleBase: request.allowStaleBase },
-				)
-			: place.path;
+		const target = !request.branch
+			? place.path
+			: request.inRoot === true
+				? await switchRootBranch(
+						await this.gitCommand(runtimeFor(location)),
+						place.path,
+						item,
+						request.branch,
+						{ allowStaleBase: request.allowStaleBase },
+					)
+				: await ensureWorktree(
+						await this.gitCommand(runtimeFor(location)),
+						place.path,
+						// Which work this is — an Issue, or a pull request whose branch
+						// already exists — follows from the URL rather than from a second
+						// field beside it, because two facts saying the same thing can
+						// disagree. It also names the folder (`worktreeDirectory`).
+						item,
+						request.branch,
+						{ allowStaleBase: request.allowStaleBase },
+					);
 		// A worktree of a repository on a host is beside it, on that host: git
 		// made it there, and there is nowhere else it could be. So the place the
 		// flow was working in decides the machine, and only the path moves.
@@ -6544,10 +6554,22 @@ export class AppController {
 		// — and only then the convention, which is a guess about a name and is
 		// consulted exactly because most Issues have no record to read.
 		const linked = await readIssueLinkedBranch(item, credentials.token);
+		// Fetched before either answer is looked for, the linked one included:
+		// a branch GitHub's button made a minute ago is on `origin` and not yet
+		// in this clone's refs.
+		await refreshOrigin(git, directory, cancel);
 		const branch =
 			linked ?? (await this.branchNamedFor(git, directory, item, cancel));
 		if (branch === undefined) return { reachable: false };
-		return this.branchWhereabouts(git, directory, branch, undefined);
+		// An Issue's branch that this clone cannot reach is no branch at all for
+		// this question: a link to one that was deleted, or that lives in some
+		// other copy, or a name nobody pushed. Unlike a pull request's head it is
+		// nobody's work to protect, so the Issue is offered as not started — and
+		// the new branch is made from the default branch — rather than offered
+		// a branch that `git worktree add` can never check out.
+		return issueBranchPlan(
+			await this.branchWhereabouts(git, directory, branch, undefined),
+		);
 	}
 
 	/**
@@ -6565,7 +6587,6 @@ export class AppController {
 		item: GitHubItem,
 		cancel?: CancellationToken,
 	): Promise<string | undefined> {
-		await refreshOrigin(git, directory, cancel);
 		const branches = await listBranches(git, directory, cancel);
 		return branches.find(
 			(branch) => issueNumberFromBranch(branch) === item.number,
