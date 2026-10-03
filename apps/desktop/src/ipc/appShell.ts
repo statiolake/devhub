@@ -218,7 +218,11 @@ export interface AppAppearanceWire {
 	readonly terminalMargin: number;
 	readonly terminalTheme: TerminalThemeWire;
 }
-export type AppErrorActionWire = "retry" | "open_settings";
+/** `open_microphone_settings` opens System Settings at Privacy & Security → Microphone. */
+export type AppErrorActionWire =
+	| "retry"
+	| "open_settings"
+	| "open_microphone_settings";
 export type AppErrorCodeWire =
 	| "invalid_intent"
 	| "unknown_context"

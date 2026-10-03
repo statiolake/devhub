@@ -12,8 +12,8 @@
  * prompt the first time (its words are `NSMicrophoneUsageDescription`, set by
  * `scripts/darwin_bundle.py`) and answers from the person's choice after
  * that; a refusal is theirs to undo in System Settings, so that is what the
- * answer says. Electron's own permission check then lets `getUserMedia`
- * through, since DevHub sets no permission handler that would stop it.
+ * answer says. Chromium must then let `getUserMedia` through as well, which
+ * VS Code's session handlers would refuse: see `microphonePermission.ts`.
  */
 
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
@@ -35,8 +35,11 @@ export interface MicrophoneAccess {
 export const MICROPHONE_REFUSED =
 	"DevHub may not use the microphone. Allow it in System Settings → Privacy & Security → Microphone.";
 
+export const MICROPHONE_SETTINGS_URL =
+	"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+
 export const NO_RECOGNISER =
-	"This build of DevHub has no speech recogniser. Build one with scripts/build_whisper.py.";
+	"This build of DevHub has no speech recogniser: devhub-whisper and its model were not found in dist/whisper. Run python3 scripts/build_whisper.py (or set DEVHUB_WHISPER_DIR), then restart DevHub.";
 
 export function registerVoiceIpc(options: {
 	readonly ipcMain: Pick<IpcMain, "handle">;

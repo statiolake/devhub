@@ -24,7 +24,13 @@ import {
   type VoiceApi,
   type VoiceLanguage,
 } from "../../ipc/voice";
-import { concatenate, downsample, level as levelOf, pcm16 } from "./dictation";
+import {
+  concatenate,
+  dictationFailure,
+  downsample,
+  level as levelOf,
+  pcm16,
+} from "./dictation";
 
 export type DictationPhase =
   /** No recogniser in this build, or no bridge: the button says why. */
@@ -104,10 +110,13 @@ export function useDictation(options: {
   // A composer that goes away does not leave the microphone open.
   useEffect(() => () => void release(), [release]);
 
-  const fail = useCallback((message: string) => {
-    setPhase("idle");
-    latest.current.reportFailure(new Error(message));
-  }, []);
+  const fail = useCallback(
+    (stage: "permission" | "open" | "transcribe", error: unknown) => {
+      setPhase("idle");
+      latest.current.reportFailure(dictationFailure(stage, error));
+    },
+    [],
+  );
 
   const finish = useCallback(() => {
     const done = release();
@@ -125,7 +134,7 @@ export function useDictation(options: {
       (result) => {
         setPhase("idle");
         if (!result.ok) {
-          fail(result.reason);
+          fail("transcribe", new Error(result.reason));
           return;
         }
         if (result.value !== "") latest.current.onWords(result.value);
@@ -142,7 +151,7 @@ export function useDictation(options: {
     setPhase("starting");
     const permission = await voice.requestMicrophone();
     if (!permission.ok) {
-      fail(permission.reason);
+      fail("permission", new Error(permission.reason));
       return;
     }
     let stream: MediaStream;
@@ -156,9 +165,7 @@ export function useDictation(options: {
         },
       });
     } catch (error: unknown) {
-      fail(
-        `The microphone could not be opened: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      fail("open", error);
       return;
     }
     const context = new AudioContext();

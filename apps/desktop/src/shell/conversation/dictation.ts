@@ -31,6 +31,47 @@ import {
   type VoiceLanguage,
 } from "../../ipc/voice";
 import { needsSpace } from "../../model/spokenText";
+import { UserFacingFailure } from "../failure";
+
+export const MICROPHONE_DENIED_TITLE = "Microphone access is denied.";
+export const VOICE_FAILED_TITLE = "Voice input failed.";
+
+/**
+ * A dictation failure as the person should read it.
+ *
+ * Refused access — macOS said no (`requestMicrophone`), or Chromium refused
+ * `getUserMedia` with `NotAllowedError` — says so, and offers the one place it
+ * can be undone: System Settings' Microphone pane. Anything else is a voice
+ * failure with its own words under it, and no button: neither "Try Again" nor
+ * DevHub's settings would change the outcome.
+ */
+export function dictationFailure(
+  stage: "permission" | "open" | "transcribe",
+  error: unknown,
+): UserFacingFailure {
+  const message = error instanceof Error ? error.message : String(error);
+  const denied =
+    stage === "permission" ||
+    (stage === "open" &&
+      error instanceof Error &&
+      (error.name === "NotAllowedError" || error.name === "SecurityError"));
+  if (denied) {
+    return new UserFacingFailure(
+      MICROPHONE_DENIED_TITLE,
+      stage === "permission"
+        ? message
+        : `The microphone could not be opened: ${message}. Allow DevHub in System Settings → Privacy & Security → Microphone, then try again.`,
+      ["open_microphone_settings"],
+    );
+  }
+  return new UserFacingFailure(
+    VOICE_FAILED_TITLE,
+    stage === "open"
+      ? `The microphone could not be opened: ${message}`
+      : message,
+    [],
+  );
+}
 
 /** How the shortcut is written wherever the composer names it. */
 export const DICTATION_KEY = "⌘⇧M";

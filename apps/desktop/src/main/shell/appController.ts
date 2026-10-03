@@ -309,7 +309,10 @@ import {
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
-import { registerVoiceIpc } from "../voice/voiceIpc.js";
+import {
+	MICROPHONE_SETTINGS_URL,
+	registerVoiceIpc,
+} from "../voice/voiceIpc.js";
 import { locateWhisper, whisperCandidates } from "../voice/whisper.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
 import { AgentRecords } from "../agent/conversation/agentRecords.js";
@@ -7025,6 +7028,11 @@ export class AppController {
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();
 		});
+		// A fixed URL, never one the page names: the Microphone pane of
+		// Privacy & Security, where a refused dictation is undone.
+		handle(CHANNELS.openMicrophoneSettings, () =>
+			electron.shell.openExternal(MICROPHONE_SETTINGS_URL),
+		);
 		handle(CHANNELS.openExternalUrl, (_event, url: string) =>
 			electron.shell.openExternal(url),
 		);

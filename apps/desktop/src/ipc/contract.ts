@@ -1263,6 +1263,8 @@ export interface ToastsBridge extends PageBridge {
 	 */
 	retryApp(): void;
 	openSettings(): Promise<void>;
+	/** "Open Microphone Settings" on a refused dictation: System Settings → Privacy & Security → Microphone. */
+	openMicrophoneSettings(): Promise<void>;
 	/**
 	 * The page is listening for notices.
 	 *
@@ -1529,6 +1531,7 @@ export const CHANNELS = {
 	cancelInjection: "devhub:cancel-injection",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
+	openMicrophoneSettings: "devhub:open-microphone-settings",
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
 	previewLayout: "devhub:preview-layout",

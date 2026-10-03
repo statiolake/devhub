@@ -7,6 +7,15 @@
  * else runs the shim is in.
  */
 
+import { electron } from "./electron.js";
 import { installBrowserWindowShim } from "./shell/browserWindowShim.js";
+import { letAgentsPageDictate } from "./voice/microphonePermission.js";
 
 installBrowserWindowShim();
+
+// Registered here so it runs before `main.ts`'s own `ready` listener, and so
+// before VS Code installs its permission handlers on the default session:
+// see `voice/microphonePermission.ts`.
+electron.app.once("ready", () => {
+	letAgentsPageDictate(electron.session.defaultSession);
+});

@@ -36,14 +36,18 @@ import type { VoiceApi } from "../../ipc/voice";
 import { EMPTY_SESSION } from "../../model/conversation";
 import {
   concatenate,
+  dictationFailure,
   downsample,
   insertDictation,
   isDictationKey,
   level,
   nextLanguage,
   pcm16,
+  MICROPHONE_DENIED_TITLE,
   savedLanguage,
+  VOICE_FAILED_TITLE,
 } from "./dictation";
+import { toAppError } from "../failure";
 import { draw, fakeActions, installResizeObserver } from "./surfaceTestKit";
 import { transcriptOf } from "./transcriptFixtures";
 
@@ -329,11 +333,13 @@ describe("dictating in the composer", () => {
     const actions = fakeActions({ voice });
     draw(READY, actions);
     fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
-    await waitFor(() =>
-      expect(actions.reportFailure).toHaveBeenCalledWith(
-        new Error("Not allowed."),
-      ),
+    await waitFor(() => expect(actions.reportFailure).toHaveBeenCalled());
+    const reported = toAppError(
+      vi.mocked(actions.reportFailure).mock.calls[0]![0],
     );
+    expect(reported.summary).toBe(MICROPHONE_DENIED_TITLE);
+    expect(reported.detail).toBe("Not allowed.");
+    expect(reported.actions).toEqual(["open_microphone_settings"]);
     expect(screen.getByRole("button", { name: "Dictate" })).toBeEnabled();
   });
 
@@ -349,5 +355,35 @@ describe("dictating in the composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
     await waitFor(() => expect(voice.transcribe).toHaveBeenCalled());
     expect(vi.mocked(voice.transcribe).mock.calls[0]![1]).toBe("ja");
+  });
+});
+
+describe("how a dictation failure reads", () => {
+  it("names a refused microphone and offers the Microphone pane", () => {
+    const denied = new Error("Permission denied");
+    denied.name = "NotAllowedError";
+    const error = toAppError(dictationFailure("open", denied));
+    expect(error.summary).toBe(MICROPHONE_DENIED_TITLE);
+    expect(error.summary).not.toMatch(/native app shell/);
+    expect(error.detail).toContain("Permission denied");
+    expect(error.detail).toContain("Privacy & Security → Microphone");
+    expect(error.actions).toEqual(["open_microphone_settings"]);
+  });
+
+  it("calls anything else a voice failure, with no misleading buttons", () => {
+    const busy = new Error("Device in use");
+    busy.name = "NotReadableError";
+    const open = toAppError(dictationFailure("open", busy));
+    expect(open.summary).toBe(VOICE_FAILED_TITLE);
+    expect(open.detail).toBe(
+      "The microphone could not be opened: Device in use",
+    );
+    expect(open.actions).toEqual([]);
+    const heard = toAppError(
+      dictationFailure("transcribe", new Error("whisper exited 1")),
+    );
+    expect(heard.summary).toBe(VOICE_FAILED_TITLE);
+    expect(heard.detail).toBe("whisper exited 1");
+    expect(heard.actions).toEqual([]);
   });
 });

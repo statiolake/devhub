@@ -8,7 +8,7 @@
  * thing and no way to say the useful one.
  */
 
-import type { AppError } from "../ipc/appShell";
+import type { AppError, AppErrorActionWire } from "../ipc/appShell";
 
 /**
  * A failure whose message is meant for the person using the app.
@@ -23,6 +23,8 @@ export class UserFacingFailure extends Error {
   constructor(
     message: string,
     readonly detail?: string,
+    /** The buttons it offers; the generic pair when it does not say. */
+    readonly actions?: readonly AppErrorActionWire[],
   ) {
     super(message);
     this.name = "UserFacingFailure";
@@ -80,7 +82,12 @@ function unspokenFailure(error: unknown): AppError {
  */
 export function spokenFailure(error: unknown): AppError | undefined {
   if (error instanceof UserFacingFailure) {
-    return { ...FALLBACK_ERROR, summary: error.message, detail: error.detail };
+    return {
+      ...FALLBACK_ERROR,
+      summary: error.message,
+      detail: error.detail,
+      actions: error.actions ?? FALLBACK_ERROR.actions,
+    };
   }
   if (isAppError(error)) return error;
   if (error instanceof Error && error.message.length > 0) {

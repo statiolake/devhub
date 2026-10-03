@@ -38,6 +38,8 @@ const api: ToastsBridge = {
 		ipcRenderer.send(CHANNELS.noticesListening);
 	},
 	openSettings,
+	openMicrophoneSettings: () =>
+		ipcRenderer.invoke(CHANNELS.openMicrophoneSettings) as Promise<void>,
 	writeClipboard,
 };
 

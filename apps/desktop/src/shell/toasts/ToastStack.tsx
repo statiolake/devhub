@@ -49,12 +49,14 @@ function Toast({
   onDismiss,
   onRetry,
   onOpenSettings,
+  onOpenMicrophoneSettings,
   onCopy,
 }: {
   readonly notice: Notice;
   readonly onDismiss: () => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenMicrophoneSettings?: () => void;
   readonly onCopy: (text: string) => Promise<void>;
 }) {
   const dismiss = useRef(onDismiss);
@@ -116,6 +118,16 @@ function Toast({
             Open Settings
           </button>
         ) : null}
+        {notice.actions.includes("open_microphone_settings") &&
+        onOpenMicrophoneSettings ? (
+          <button
+            type="button"
+            className="toast-action"
+            onClick={onOpenMicrophoneSettings}
+          >
+            Open Microphone Settings
+          </button>
+        ) : null}
       </div>
       {/* The summary says what to do; the detail says what happened. It sits
           under the actions as well as the summary, so the buttons cost the
@@ -140,6 +152,8 @@ export interface ToastStackProps {
   readonly onDismiss: (identity: string) => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
+  /** System Settings → Privacy & Security → Microphone. */
+  readonly onOpenMicrophoneSettings?: () => void;
   /** Put a notice's words on the clipboard (Cmd+C on a notice). */
   readonly onCopy: (text: string) => Promise<void>;
   /**
@@ -157,6 +171,7 @@ export function ToastStack({
   onDismiss,
   onRetry,
   onOpenSettings,
+  onOpenMicrophoneSettings,
   onCopy,
   ref,
 }: ToastStackProps) {
@@ -177,6 +192,7 @@ export function ToastStack({
           }}
           onRetry={onRetry}
           onOpenSettings={onOpenSettings}
+          onOpenMicrophoneSettings={onOpenMicrophoneSettings}
           onCopy={onCopy}
         />
       ))}
