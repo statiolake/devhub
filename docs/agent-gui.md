@@ -1113,7 +1113,7 @@ is forgotten.
 (`AUTOMATIC_TRIGGERS` in `model/automaticActions.ts`: commit, push, review
 comments, failing CI) is switched in the header only: its bolt (with a count of what is on) opens the switches
 for every such action, whether or not its button is on screen, each with a
-line saying what makes it fire. The buttons themselves carry no mark of it.
+line saying what makes it fire. A button whose action is switched on is edged in the accent; one whose condition does not hold is still drawn in its place, edged but not pressable (`aria-disabled`), since it fires on its own.
 An automatic action is sent on its own when its button would appear, and
 when it is switched on while its condition already holds. The
 choice is on the Agent (`Agent.automaticActions`, the `set_automatic_action`

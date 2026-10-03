@@ -577,6 +577,64 @@ describe("the box in an Agent's pane", () => {
 });
 
 describe("automatic actions", () => {
+  it("edges a button whose action is automatic, with no switch of its own", () => {
+    const { runAgentAction } = mount({
+      over: { automaticActions: ["commit_changes"] } as Partial<AgentWire>,
+    });
+    const button = screen.getByRole("button", { name: "Commit the changes" });
+    expect(button.closest(".smart-button-line")).toHaveAttribute(
+      "data-automatic",
+    );
+    expect(button).not.toHaveAttribute("aria-disabled");
+    expect(
+      screen.queryByRole("button", {
+        name: "Send \u201cCommit the changes\u201d automatically",
+      }),
+    ).toBeNull();
+    fireEvent.click(button);
+    expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
+  });
+
+  it("leaves a button without the edge when its action is not automatic", () => {
+    mount();
+    expect(
+      screen
+        .getByRole("button", { name: "Commit the changes" })
+        .closest(".smart-button-line"),
+    ).not.toHaveAttribute("data-automatic");
+  });
+
+  it("draws an automatic action whose condition does not hold, edged and not pressable, in order", () => {
+    const { runAgentAction } = mount({
+      over: {
+        automaticActions: ["fix_ci", "push_commits"],
+      } as Partial<AgentWire>,
+    });
+    expect(labels()).toEqual([
+      "Commit the changes",
+      "Push the commits",
+      "Fix CI",
+    ]);
+    const waiting = screen.getByRole("button", { name: "Fix CI" });
+    expect(waiting).toHaveAttribute("aria-disabled", "true");
+    expect(waiting).toHaveAttribute(
+      "title",
+      expect.stringContaining("automatically when its condition arises"),
+    );
+    expect(waiting.closest(".smart-button-line")).toHaveAttribute(
+      "data-automatic",
+    );
+    fireEvent.click(waiting);
+    expect(runAgentAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Commit the changes" }));
+    expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
+  });
+
+  it("does not draw an action that is not automatic when its condition does not hold", () => {
+    mount();
+    expect(labels()).toEqual(["Commit the changes"]);
+  });
+
   it("lists every action that may be automatic in the header, with when it fires", () => {
     const { dispatch } = mount();
     fireEvent.click(screen.getByRole("button", { name: "Automatic actions" }));

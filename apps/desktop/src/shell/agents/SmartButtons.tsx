@@ -43,7 +43,9 @@
  * may be automatic (`AUTOMATIC_TRIGGERS`), each with what makes it fire: switched
  * on, the action is sent on its own the moment its condition holds — main
  * decides when (`model/automaticActions.ts`) — for this Agent only, off until
- * switched on. The buttons themselves carry no mark of it. The box is there whenever the
+ * switched on. A button whose action is switched on is edged in the accent
+ * (the header's bolt stays the only switch); one whose condition does not hold
+ * is still drawn, in its place, but not pressable (`aria-disabled`). The box is there whenever the
  * Agent has such an action, not only while a button is offered; with no
  * button offered and nothing switched on it shows only while the pane is
  * pointed at.
@@ -56,7 +58,7 @@ import type {
   AgentActionWire,
   WorkspaceRepositoryWire,
 } from "../../ipc/contract";
-import { smartButtonTriggers } from "../../model/agentActions";
+import { ACTION_TRIGGERS, smartButtonTriggers } from "../../model/agentActions";
 import { isAutomaticTrigger } from "../../model/automaticActions";
 import {
   anchorBox,
@@ -88,6 +90,38 @@ export function smartButtonActions(
 ): readonly AgentActionWire[] {
   return smartButtonTriggers(agent.status, repository).flatMap((trigger) =>
     actions.filter((action) => action.trigger === trigger && action.button),
+  );
+}
+
+/** One line of the stack: an action, and whether pressing it is on offer. */
+export interface SmartButtonLine {
+  readonly action: AgentActionWire;
+  /** Its condition holds now; false only for a ticked automatic action. */
+  readonly active: boolean;
+}
+
+/**
+ * The lines to draw: the offered actions, plus every action ticked as
+ * automatic whose condition does not hold now (drawn but not pressable —
+ * it fires on its own when the condition arises). One order throughout:
+ * trigger order, then each trigger's own.
+ */
+export function smartButtonLines(
+  agent: Pick<AgentWire, "status" | "automaticActions">,
+  repository: WorkspaceRepositoryWire | undefined,
+  actions: readonly AgentActionWire[],
+): readonly SmartButtonLine[] {
+  const holding = smartButtonTriggers(agent.status, repository);
+  const ticked = agent.automaticActions ?? [];
+  return ACTION_TRIGGERS.flatMap((trigger) =>
+    actions
+      .filter((action) => action.trigger === trigger && action.button)
+      .flatMap((action): SmartButtonLine[] => {
+        if (holding.includes(trigger)) return [{ action, active: true }];
+        return isAutomaticTrigger(trigger) && ticked.includes(action.id)
+          ? [{ action, active: false }]
+          : [];
+      }),
   );
 }
 
@@ -160,20 +194,21 @@ export function SmartButtons({
   const repository = repositoryStatus.workspaces.find(
     (entry) => entry.workspaceId === agent.workspaceId,
   );
-  const offered = smartButtonActions(agent, repository, agentActions);
+  const lines = smartButtonLines(agent, repository, agentActions);
+  const offered = lines.filter((line) => line.active);
   const automatic = agentActions.filter((action) =>
     isAutomaticTrigger(action.trigger),
   );
   const ticked = agent.automaticActions ?? [];
   const [menuOpen, setMenuOpen] = useState(false);
   const own = useRef<HTMLDivElement | null>(null);
-  const metrics = useMetrics(own, agent, offered.length + (menuOpen ? 1 : 0));
+  const metrics = useMetrics(own, agent, lines.length + (menuOpen ? 1 : 0));
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
     readonly to: SmartButtonsSpot | undefined;
   }>();
-  if (offered.length === 0 && automatic.length === 0) return null;
+  if (lines.length === 0 && automatic.length === 0) return null;
 
   const spacing = SPACING[agent.presentation];
   const fallback = defaultSpot(spacing);
@@ -320,16 +355,34 @@ export function SmartButtons({
           />
         ) : null}
       </div>
-      {offered.map((action) => {
+      {lines.map(({ action, active }) => {
+        const on = ticked.includes(action.id);
+        const when = FIRES_WHEN[action.trigger];
         return (
-          <div key={action.id} className="smart-button-line">
+          <div
+            key={action.id}
+            className="smart-button-line"
+            {...(on ? { "data-automatic": "" } : {})}
+          >
             <button
               type="button"
               className="smart-button"
-              title={`${action.displayName} — sent to ${agent.displayName}`}
-              onClick={() => {
-                void runAgentAction(agent.id, action.id);
-              }}
+              {...(active
+                ? {
+                    title: `${action.displayName} — sent to ${agent.displayName}${
+                      on ? " (automatic: also sent on its own)" : ""
+                    }`,
+                    onClick: () => {
+                      void runAgentAction(agent.id, action.id);
+                    },
+                  }
+                : {
+                    "aria-disabled": true,
+                    "data-waiting": "",
+                    title: `${action.displayName} — sent to ${agent.displayName} automatically when its condition arises${
+                      when === undefined ? "" : ` (${when.toLowerCase()})`
+                    }`,
+                  })}
             >
               {action.displayName}
             </button>

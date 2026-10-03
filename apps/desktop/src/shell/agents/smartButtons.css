@@ -115,6 +115,23 @@
   background: var(--selection);
 }
 
+/* Automatic: the line edged in the accent, so an Agent that will act on its
+   own is never a surprise. One whose condition does not hold is drawn but
+   cannot be pressed: it fires by itself when the condition arises. */
+.smart-button-line[data-automatic] .smart-button {
+  border-color: var(--accent);
+}
+
+.smart-button[data-waiting] {
+  color: var(--secondary);
+  cursor: default;
+}
+
+.smart-button[data-waiting]:hover,
+.smart-button[data-waiting]:active {
+  background: var(--chrome);
+}
+
 /* Standing on the composer: the last line's bottom corners meet its top
    edge square. */
 .smart-buttons[data-presentation="gui"][data-anchored="top"]
