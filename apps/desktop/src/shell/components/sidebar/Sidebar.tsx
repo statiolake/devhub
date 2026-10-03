@@ -130,7 +130,6 @@ function WorkspaceRow({
   agentProfilesAvailability,
   onCreateAgent,
   onCloseWorkspace,
-  onRenameAgent,
   onAgentMenu,
   onWorkspaceMenu,
   reorder,
@@ -153,7 +152,6 @@ function WorkspaceRow({
    * decided in one place by whether there is anything in it to lose.
    */
   readonly onCloseWorkspace: (workspace: WorkspaceSnapshot) => void;
-  readonly onRenameAgent: (agent: AgentSnapshot) => void;
   readonly onAgentMenu: (
     agent: AgentSnapshot,
     at: { x: number; y: number },
@@ -578,10 +576,6 @@ function WorkspaceRow({
                           split: event.altKey,
                         })
                       }
-                      // Renaming is what a source list does on a second click at
-                      // rest, and it stays off the row: an icon whose meaning has
-                      // to be guessed is worse than one that is not there.
-                      onDoubleClick={() => onRenameAgent(agent)}
                     >
                       {/* What it is doing, then which Agent it is, then why it
                           may not be doing it — one line, fading out under the
@@ -1295,7 +1289,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
             agentProfilesAvailability={agentProfiles.availability}
             onCreateAgent={openAgentPicker}
             onCloseWorkspace={closeWorkspaceRow}
-            onRenameAgent={openRename}
             onAgentMenu={openAgentMenu}
             onWorkspaceMenu={openWorkspaceMenu}
             reorder={reorder}
@@ -1359,7 +1352,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
                   agentProfilesAvailability={agentProfiles.availability}
                   onCreateAgent={openAgentPicker}
                   onCloseWorkspace={closeWorkspaceRow}
-                  onRenameAgent={openRename}
                   onAgentMenu={openAgentMenu}
                   onWorkspaceMenu={openWorkspaceMenu}
                   reorder={reorder}
