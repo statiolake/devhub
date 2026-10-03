@@ -11,6 +11,7 @@
 import {
 	mkdtemp,
 	mkdir,
+	readFile,
 	realpath,
 	rm,
 	stat,
@@ -24,6 +25,8 @@ import { localRuntime } from "../runtime/registry.js";
 import {
 	ensureWorktree,
 	findBranch,
+	gitSupportsRelativeWorktrees,
+	gitVersionAtLeast,
 	listBranches,
 	remoteForRepository,
 	worktreeForBranch,
@@ -112,6 +115,33 @@ describe("the worktree for a branch", () => {
 		);
 		expect(path).toBe(join(parent, "widget_128"));
 		expect((await stat(path)).isDirectory()).toBe(true);
+	});
+
+	it("links to its repository by a relative path when this git can", async () => {
+		// A relative link is what lets a dev container that mounts the worktree
+		// and the repository side by side read it (`worktreeMount.ts`); an
+		// older git gets the plain command, and the absolute link it always had.
+		const path = await ensureWorktree(
+			command,
+			repository,
+			ISSUE_128,
+			"feature/128-tidy",
+		);
+		const link = (await readFile(join(path, ".git"), "utf8")).trim();
+		if (await gitSupportsRelativeWorktrees(command)) {
+			expect(link).toBe("gitdir: ../widget/.git/worktrees/widget_128");
+		} else {
+			expect(link).toBe(`gitdir: ${repository}/.git/worktrees/widget_128`);
+		}
+	});
+
+	it("reads git's version however a vendor decorates it", () => {
+		expect(gitVersionAtLeast("git version 2.48.0", 2, 48)).toBe(true);
+		expect(gitVersionAtLeast("git version 3.0.1", 2, 48)).toBe(true);
+		expect(gitVersionAtLeast("git version 2.39.5 (Apple Git-154)", 2, 48)).toBe(
+			false,
+		);
+		expect(gitVersionAtLeast("", 2, 48)).toBe(false);
 	});
 
 	it("is found where git says the branch is, whatever the folder is called", async () => {

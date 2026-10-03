@@ -129,6 +129,53 @@ through the repository's root (`/workspaces/<repo>/<sub>`), so
 `/workspaces/<folder name>` — what DevHub used to assume — was a folder that
 did not exist, and every container terminal failed to start in it.
 
+### git in a worktree's container
+
+A Workspace's folder is usually a git worktree, and a worktree's `.git` is a
+one-line file, `gitdir: <path>`, pointing into the main repository's
+`.git/worktrees/<name>`. `devcontainer up` mounts only the worktree, so inside
+the container that link named a folder that was not there and git answered
+"not a git repository" for everything. Two changes fix it, neither of which
+touches the repository's `devcontainer.json`:
+
+- **Worktrees are made with relative links.** `ensureWorktree` runs
+  `git worktree add --relative-paths` when the machine's `git --version` is
+  2.48 or later (`worktreeAddArguments` in `shell/git.ts`), and the plain
+  command on an older git. Existing worktrees, and `worktree.useRelativePaths`,
+  are left alone: `git worktree repair --relative-paths` converts one, and is
+  the person's to run, because a git older than 2.48 (an old container image's,
+  say) cannot read relative links.
+- **The repository's `.git` is mounted beside the worktree** when DevHub runs
+  `devcontainer up` for a linked worktree (`runtime/worktreeMount.ts`). The
+  main checkout, and any folder that is not a worktree, gets nothing extra.
+  - Relative link: the `@devcontainers/cli`'s own
+    `--mount-git-worktree-common-dir` (off by default; its help says it
+    "requires the worktree to be created with relative paths"). It mounts the
+    worktree and the common dir under `/workspaces` with their relative layout
+    kept, so the worktree's folder in the container becomes
+    `/workspaces/<parent>/<worktree>`; `read-configuration` is given the flag
+    too, but only for a container whose `docker inspect` shows the mount. Used
+    only when the machine's `devcontainer up --help` lists the flag; a CLI
+    without it gets no mount and a line in the build log saying to update it.
+    The flag is not applied by the CLI to Docker Compose definitions or to a
+    definition with its own `workspaceMount`.
+  - Absolute link (a worktree from git < 2.48): DevHub adds
+    `--mount type=bind,source=<common dir>,target=<common dir>` — the same
+    absolute path inside, read-write — so the link resolves. The record's
+    back-pointer still names the host path, so do not run `git worktree prune`
+    inside such a container.
+
+A mount is fixed when a container is created. A worktree's container created
+before this (or by a CLI without the flag) keeps working as before, without
+git, and DevHub logs `… was created without the repository's .git mounted …
+Remove the container (docker rm -f <id>) and reopen the editor in its
+container` once per container. Removing it and choosing Reopen Editor in
+Container builds it with the mount.
+
+Not verified end to end: this was written and unit-tested on Linux without
+Docker or macOS, against the 0.89 CLI's source; Docker Desktop's file sharing
+must include the repository's folder (it does for anything under `/Users`).
+
 ### `devhub` inside the container
 
 Installed when the attached window opens, the way it is installed on any

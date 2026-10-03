@@ -970,15 +970,16 @@ export async function ensureWorktree(
 			`${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
 		);
 	}
+	// `--relative-paths` where this git has it: see `worktreeAddArguments`.
+	const add = await worktreeAddArguments(command);
 	const args = here
 		? here.kind === "local"
-			? ["worktree", "add", target, name]
+			? [...add, target, name]
 			: // Started from the remote-tracking ref by name: a branch of the same
 				// name on a second remote must not be able to decide this.
-				["worktree", "add", "-b", name, target, here.ref]
+				[...add, "-b", name, target, here.ref]
 		: [
-				"worktree",
-				"add",
+				...add,
 				// A new branch does not track the trunk it starts from: that is
 				// where it came from, not where it goes, and git's default
 				// `autoSetupMerge` would make `origin/main` its upstream — which
@@ -995,6 +996,64 @@ export async function ensureWorktree(
 		timeoutMs: NETWORK_TIMEOUT_MS,
 	});
 	return target;
+}
+
+/**
+ * `git worktree add`, with `--relative-paths` when this git understands it.
+ *
+ * A worktree's `.git` is a one-line file, `gitdir: <path>`, pointing at its
+ * record in the main repository's `.git/worktrees/<name>`, and git has always
+ * written that path absolute — `/Users/me/src/widget/.git/worktrees/…`. That
+ * is fine on this Mac and fatal in a dev container: the container sees the
+ * worktree at `/workspaces/…`, the absolute path names a folder that is not
+ * there, and every git command inside answers "not a git repository". Git 2.48
+ * added `--relative-paths`, which writes both links (the worktree's `.git` and
+ * the record's `gitdir` back-pointer) relative to each other, so the pair keeps
+ * working wherever the two folders are mounted side by side — which is what
+ * `devcontainer up --mount-git-worktree-common-dir` does (see
+ * `runtime/worktreeMount.ts` and `docs/remote-containers.md`).
+ *
+ * An older git refuses the option outright, so the version is asked first and
+ * an older one gets the plain command: its worktrees work everywhere they
+ * always did, and a container gets the absolute-path fallback mount instead.
+ * Existing worktrees are left as they are, and so is `worktree.useRelativePaths`:
+ * `git worktree repair --relative-paths` converts one, and is the person's to
+ * run, because it rewrites links that a git older than 2.48 — another tool's,
+ * or the one inside an old container image — can no longer read.
+ */
+async function worktreeAddArguments(
+	command: GitCommand,
+): Promise<readonly string[]> {
+	return (await gitSupportsRelativeWorktrees(command))
+		? ["worktree", "add", "--relative-paths"]
+		: ["worktree", "add"];
+}
+
+/** Whether `git worktree add --relative-paths` exists here (git >= 2.48). */
+export async function gitSupportsRelativeWorktrees(
+	command: GitCommand,
+): Promise<boolean> {
+	const version = await runGit(command, ["--version"]).catch(() => "");
+	return gitVersionAtLeast(version, 2, 48);
+}
+
+/**
+ * Whether `git --version`'s answer is at least `major.minor`.
+ *
+ * Read loosely, because vendors decorate it — "git version 2.39.5 (Apple
+ * Git-154)" — and an answer that cannot be read at all is taken as too old:
+ * the plain command is the one every git understands.
+ */
+export function gitVersionAtLeast(
+	answer: string,
+	major: number,
+	minor: number,
+): boolean {
+	const found = /(\d+)\.(\d+)/u.exec(answer);
+	if (!found) return false;
+	const have = Number(found[1]);
+	const haveMinor = Number(found[2]);
+	return have > major || (have === major && haveMinor >= minor);
 }
 
 /**
