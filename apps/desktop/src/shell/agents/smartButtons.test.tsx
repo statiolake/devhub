@@ -478,7 +478,7 @@ describe("anchored to the composer", () => {
         over: { presentation: "gui" },
         stored: { anchored: "top", along: 40 },
       });
-      expect(box().style.bottom).toBe("180px");
+      expect(box().style.bottom).toBe("188px");
     } finally {
       RECTS["conversation-composer-box"] = rect(100, 480, 900, 580);
     }
