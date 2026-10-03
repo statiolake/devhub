@@ -100,11 +100,7 @@ function Toast({
       <span className="toast-mark" aria-hidden="true">
         {notice.live === "alert" ? "!" : "i"}
       </span>
-      <div className="toast-text">
-        <p className="toast-summary">{notice.summary}</p>
-        {/* The summary says what to do; the detail says what happened. */}
-        {notice.detail ? <p className="toast-detail">{notice.detail}</p> : null}
-      </div>
+      <p className="toast-summary">{notice.summary}</p>
       <div className="toast-actions">
         {notice.actions.includes("retry") ? (
           <button type="button" className="toast-action" onClick={onRetry}>
@@ -121,6 +117,10 @@ function Toast({
           </button>
         ) : null}
       </div>
+      {/* The summary says what to do; the detail says what happened. It sits
+          under the actions as well as the summary, so the buttons cost the
+          sentence no width. */}
+      {notice.detail ? <p className="toast-detail">{notice.detail}</p> : null}
       <button
         type="button"
         className="toast-close"

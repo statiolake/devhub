@@ -64,3 +64,25 @@ describe("the notice stack's placement", () => {
     expect(read("./ToastsApp.tsx")).toContain("<ToastStack");
   });
 });
+
+describe("a notice's layout", () => {
+  const toast = read("../styles/toast.css");
+
+  it("keeps the actions in the summary's row and the detail under both", () => {
+    const notice = rule(toast, ".toast");
+    expect(notice).toContain("display: grid");
+    expect(notice).toContain('"mark summary actions close"');
+    expect(notice).toContain('". detail detail close"');
+    expect(rule(toast, ".toast-detail")).toContain("grid-area: detail");
+    expect(rule(toast, ".toast-actions")).toContain("flex-wrap: wrap");
+  });
+
+  it("lets the words be selected and shows the I-beam over them", () => {
+    for (const selector of [".toast-summary", ".toast-detail"]) {
+      const words = rule(toast, selector);
+      expect(words).toContain("user-select: text");
+      expect(words).toContain("cursor: text");
+    }
+    expect(toast).not.toContain("app-region");
+  });
+});
