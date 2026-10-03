@@ -184,7 +184,6 @@
 
 .smart-button[data-waiting] {
   color: var(--secondary);
-  cursor: default;
 }
 
 .smart-button[data-waiting]:hover,
