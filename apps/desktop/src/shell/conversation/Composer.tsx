@@ -51,6 +51,10 @@
  * thumbnail over the field with its own Remove, and goes with the next
  * message (which may be images alone). A file that is not an image a model
  * takes is refused at the page's root, naming it; nothing is dropped quietly.
+ *
+ * The microphone beside Send (or ⌘⇧M in the field) dictates: what is said is
+ * transcribed on this Mac and put in at the caret, to be read and sent like
+ * anything typed. See `dictation.ts`.
  */
 
 import {
@@ -60,6 +64,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type RefObject,
 } from "react";
@@ -87,7 +92,18 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
-import { EditIcon, SendIcon, StopIcon } from "./icons";
+import {
+  DICTATION_KEY,
+  insertDictation,
+  isDictationKey,
+  LANGUAGE_LABELS,
+  nextLanguage,
+  saveLanguage,
+  savedLanguage,
+} from "./dictation";
+import { EditIcon, MicIcon, SendIcon, StopIcon } from "./icons";
+import { useDictation, type Dictation } from "./useDictation";
+import type { VoiceLanguage } from "../../ipc/voice";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
 import { SettingPickers, type SettingPickerHandle } from "./SettingPickers";
 
@@ -543,8 +559,15 @@ export function Composer({
   /** Open the call a background task was started by (`ComposerFooter`). */
   readonly openTask: (call: EntryId) => void;
 }) {
-  const { send, interrupt, reportFailure, openResume, openMcp, restart } =
-    useConversationActions();
+  const {
+    send,
+    interrupt,
+    reportFailure,
+    openResume,
+    openMcp,
+    restart,
+    voice,
+  } = useConversationActions();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<readonly ImageRef[]>([]);
   /** Which of the history the composer is showing, while it is showing one. */
@@ -573,6 +596,30 @@ export function Composer({
   );
 
   const refusal = inputRefusal(transcript.state);
+  const [language, setLanguage] = useState<VoiceLanguage>(() =>
+    savedLanguage(storage()),
+  );
+  const dictation = useDictation({
+    voice,
+    language,
+    reportFailure,
+    // Where the caret is when the words arrive, which is where the person
+    // left it: the recording may have ended seconds ago.
+    onWords: (words) => {
+      const input = inputRef.current;
+      setText((current) => {
+        const start = input?.selectionStart ?? current.length;
+        const end = input?.selectionEnd ?? current.length;
+        const next = insertDictation(current, start, end, words);
+        requestAnimationFrame(() => {
+          input?.focus();
+          input?.setSelectionRange(next.caret, next.caret);
+        });
+        return next.text;
+      });
+      setRecalled(undefined);
+    },
+  });
   const running =
     transcript.state.phase === "ready" && transcript.state.turn === "running";
   // The CLI can take a message now (a running turn takes it in), and a
@@ -693,6 +740,17 @@ export function Composer({
   const ownKeys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const plain =
       !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
+    if (voice !== undefined && isDictationKey(event)) {
+      event.preventDefault();
+      dictation.toggle();
+      return;
+    }
+    if (event.key === "Escape" && dictation.cancel()) {
+      // The recording is thrown away; the turn is not interrupted by the same key.
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (offered.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -796,6 +854,18 @@ export function Composer({
             pickers={pickers}
           />
           <div className="conversation-composer-actions">
+            {voice !== undefined ? (
+              <DictationControls
+                dictation={dictation}
+                language={language}
+                disabled={refusal !== undefined}
+                cycleLanguage={() => {
+                  const next = nextLanguage(language);
+                  setLanguage(next);
+                  saveLanguage(storage(), next);
+                }}
+              />
+            ) : null}
             {running ? (
               <button
                 type="button"
@@ -831,5 +901,84 @@ export function Composer({
         readout={<ContextUsage usage={transcript.usage} />}
       />
     </div>
+  );
+}
+
+/** `localStorage`, where the page has one it may use. */
+function storage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+const DICTATION_TITLES = {
+  idle: `Dictate (${DICTATION_KEY})`,
+  starting: "Opening the microphone…",
+  recording: `Stop and transcribe (${DICTATION_KEY}) — Esc discards`,
+  transcribing: "Transcribing on this Mac…",
+} as const;
+
+/**
+ * The microphone and the language it listens for. The button is the state:
+ * red and pulsing with the level while it records, waiting while it
+ * transcribes, and unavailable — with the reason as its title — in a build
+ * with no recogniser.
+ */
+function DictationControls({
+  dictation,
+  language,
+  disabled,
+  cycleLanguage,
+}: {
+  readonly dictation: Dictation;
+  readonly language: VoiceLanguage;
+  readonly disabled: boolean;
+  readonly cycleLanguage: () => void;
+}) {
+  const { phase } = dictation;
+  const recording = phase === "recording";
+  return (
+    <>
+      {phase !== "unavailable" ? (
+        <button
+          type="button"
+          className="conversation-dictation-language"
+          aria-label={`Dictation language: ${LANGUAGE_LABELS[language]}`}
+          title="The language dictation listens for — click to change"
+          disabled={phase !== "idle"}
+          onClick={cycleLanguage}
+        >
+          {LANGUAGE_LABELS[language]}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="conversation-dictation"
+        data-phase={phase}
+        aria-label={recording ? "Stop dictating" : "Dictate"}
+        aria-pressed={recording}
+        title={
+          phase === "unavailable" ? dictation.reason : DICTATION_TITLES[phase]
+        }
+        disabled={
+          disabled ||
+          phase === "unavailable" ||
+          phase === "starting" ||
+          phase === "transcribing"
+        }
+        style={
+          recording
+            ? ({
+                "--dictation-level": dictation.level.toFixed(2),
+              } as CSSProperties)
+            : undefined
+        }
+        onClick={dictation.toggle}
+      >
+        <MicIcon />
+      </button>
+    </>
   );
 }

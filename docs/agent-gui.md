@@ -1622,6 +1622,63 @@ new. Settings → General → Agents turns it off (`[agents]
 resume_after_limit = false`) and sets the message, which may not be empty;
 turned off, a resume already shown is not written when it comes due.
 
+## Voice input
+
+The microphone beside Send dictates into the composer. Click it, or press
+**⌘⇧M** in the field, and speak; click or press it again to stop. What you
+said is transcribed **on this Mac** and put in at the caret — over the
+selection, if there is one — and is not sent: you read it and send it with
+⌘Return as usual. **Esc** while recording throws the recording away (and does
+not stop a running turn). While it records the button is red and its halo
+follows your voice; while it transcribes it pulses.
+
+The small label beside it is the language Whisper listens for: **Auto**,
+**日本語** or **English**, cycled by clicking and remembered on this Mac. Auto
+is right for Japanese, English and the two mixed almost always; naming one
+helps an utterance too short to tell, or an accent Whisper reads as the other
+language. A Latin word dictated next to Latin text gets a space; next to
+Japanese it gets none.
+
+**Nothing leaves the Mac.** The recogniser is
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) (pinned to v1.9.4,
+built with Metal, no network code compiled in) with the
+`large-v3-turbo` model quantised to q5_0, both inside the app at
+`DevHub.app/Contents/Resources/whisper/`. Nothing is downloaded while DevHub
+runs. On Apple Silicon a ten-second utterance comes back in about a second
+after the first use; the first one after a restart also loads the model.
+
+The first time, macOS asks whether DevHub may use the microphone. If you said
+no, the button says so when pressed; allow it in System Settings → Privacy &
+Security → Microphone.
+
+**What it costs.** The model is 547 MiB, which makes the app about 0.57 GB
+bigger and the zip about 0.5 GB bigger (a quantised model hardly
+compresses). `large-v3-turbo` was chosen over the smaller models because
+`base` and `small` are clearly worse at Japanese, and over `large-v3` because
+turbo's 4-layer decoder makes it several times faster for nearly the same
+accuracy. q5_0 rather than q8_0 (834 MiB) or f16 (1.5 GiB) because the
+accuracy difference is within noise and the size is not.
+
+**How it is built.** `scripts/build_whisper.py` clones whisper.cpp at the
+pinned tag (refusing it if the tag no longer names the pinned commit),
+builds `whisper-cli` statically with the Metal shaders embedded, downloads
+the model and checks it against the SHA-1 whisper.cpp publishes, and caches
+both under `~/.cache/devhub/whisper/` (`DEVHUB_WHISPER_CACHE`). `pnpm build`
+runs it when `dist/whisper` is missing or stale; it needs `cmake`
+(`brew install cmake`). `--without-whisper` packages without it, and the
+composer then shows the microphone as unavailable with the reason. In a
+source run DevHub looks in `dist/whisper` (or `DEVHUB_WHISPER_DIR`), so run
+`scripts/build_whisper.py` once to dictate there.
+
+**How it runs.** The Agents page records (`getUserMedia`, echo cancellation
+and noise suppression on), brings the samples down to 16 kHz 16-bit mono,
+and hands main one finished recording (at most five minutes). Main writes
+it to a temporary WAV, runs `devhub-whisper` on it, reads the transcript,
+joins Whisper's segments into one paragraph without its non-speech markers
+(`[BLANK_AUDIO]`, `(music)`…), and deletes the temporary files. One
+recording is transcribed at a time. See `shell/conversation/dictation.ts`,
+`main/voice/whisper.ts` and `ipc/voice.ts`.
+
 ## Known limits
 
 - **`claude -p` may start defaulting to `--bare`**, which reads an API key

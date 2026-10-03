@@ -20,6 +20,7 @@ import {
 } from "./bridge.js";
 import { conversationApi } from "./conversation.js";
 import { terminalApi } from "./terminal.js";
+import { voiceApi } from "./voice.js";
 
 const api: AgentsBridge = {
 	...pageBridge(),
@@ -33,6 +34,7 @@ const api: AgentsBridge = {
 	writeClipboard,
 	terminal: terminalApi,
 	conversation: conversationApi,
+	voice: voiceApi,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

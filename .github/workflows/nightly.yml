@@ -173,6 +173,18 @@ jobs:
           merge-multiple: true
           path: dist/reh
 
+      # The speech recogniser the composer dictates with: whisper.cpp built
+      # with Metal and its model, both made by scripts/build_whisper.py and
+      # cached where it caches them on a developer's Mac. A miss is a few
+      # minutes of compiling and a 547 MiB download; the key is the script,
+      # which pins both by hash.
+      - name: Restore the speech recogniser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/devhub/whisper
+          key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_whisper.py') }}
+          restore-keys: whisper-${{ runner.os }}-${{ runner.arch }}-
+
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats
       # the install and the provision above, which are idempotent and cost

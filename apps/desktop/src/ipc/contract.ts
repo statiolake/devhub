@@ -14,6 +14,7 @@
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type { ConversationApi } from "./conversation.js";
+import type { VoiceApi } from "./voice.js";
 import type {
 	AgentLaunchWire,
 	AgentProfiles,
@@ -1195,6 +1196,12 @@ export interface AgentsBridge
 	 * main sends every event to. See `ipc/conversation.ts`.
 	 */
 	readonly conversation: ConversationApi;
+	/**
+	 * Dictation into a GUI Agent's composer: the microphone permission, and
+	 * the bundled recogniser that turns a recording into words on this Mac.
+	 * See `ipc/voice.ts`.
+	 */
+	readonly voice: VoiceApi;
 }
 
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */

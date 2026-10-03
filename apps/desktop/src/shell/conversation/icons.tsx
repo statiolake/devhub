@@ -50,6 +50,15 @@ export function RewindIcon() {
   );
 }
 
+export function MicIcon() {
+  return (
+    <Icon>
+      <rect x="5.75" y="1.75" width="4.5" height="8" rx="2.25" />
+      <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25" />
+    </Icon>
+  );
+}
+
 export function StopIcon() {
   return (
     <Icon>

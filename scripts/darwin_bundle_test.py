@@ -16,7 +16,7 @@ from __future__ import annotations
 import plistlib
 import unittest
 
-from darwin_bundle import BASE_APP, ICON_FILE, document_types
+from darwin_bundle import BASE_APP, ICON_FILE, MICROPHONE_USAGE, document_types
 
 # One entry of the shape VS Code's staging step writes, kept small on purpose:
 # the tests below are about the derivation, and the real list is exercised by
@@ -115,6 +115,21 @@ class StagedElectron(unittest.TestCase):
 		self.assertEqual(
 			plistlib.loads(written)["CFBundleDocumentTypes"], list(self.types)
 		)
+
+
+class MicrophoneUsage(unittest.TestCase):
+	"""macOS ends a process that opens the microphone with no usage string."""
+
+	def test_says_what_dictation_does_with_what_it_hears(self) -> None:
+		self.assertIn("DevHub", MICROPHONE_USAGE)
+		self.assertIn("Nothing you say is sent anywhere", MICROPHONE_USAGE)
+
+	def test_is_set_by_the_rename_both_bundles_share(self) -> None:
+		import inspect
+
+		import darwin_bundle
+
+		self.assertIn('"NSMicrophoneUsageDescription": MICROPHONE_USAGE', inspect.getsource(darwin_bundle.rebrand))
 
 
 if __name__ == "__main__":

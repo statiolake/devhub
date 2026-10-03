@@ -19,6 +19,7 @@
 import type { CliDefaults } from "../../model/claudeDefaults";
 import { createContext, useContext } from "react";
 import type { FileRange } from "../../ipc/conversation";
+import type { VoiceApi } from "../../ipc/voice";
 import type {
   EntryId,
   ImageRef,
@@ -121,6 +122,12 @@ export interface ConversationActions {
     range: FileRange | undefined,
   ) => Promise<void>;
   readonly reportFailure: (error: unknown) => void;
+  /**
+   * Dictation (`dictation.ts`): the microphone permission and the bundled
+   * recogniser. Absent where there is neither — a test that does not ask for
+   * it — and the composer then draws no microphone.
+   */
+  readonly voice?: VoiceApi;
 }
 
 const ConversationContext = createContext<ConversationActions | undefined>(

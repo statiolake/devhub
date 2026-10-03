@@ -76,6 +76,19 @@ COPYRIGHT = (
 )
 
 
+# What macOS shows in the microphone prompt, the first time the GUI Agent
+# composer's dictation asks (`docs/agent-gui.md`, "Voice input"). Without the
+# key macOS does not ask at all: it ends the process that touched the
+# microphone. Electron's own bundle and VS Code's staging step may or may not
+# carry one, and theirs would speak for another product, so it is DevHub's
+# sentence, set in the same pass as the name — the source run's bundle needs
+# it as much as the nightly does.
+MICROPHONE_USAGE = (
+	"DevHub listens only while you dictate into an Agent's message box, and "
+	"transcribes what you say on this Mac. Nothing you say is sent anywhere."
+)
+
+
 def document_types(staged: list[dict]) -> list[dict]:
 	"""The file types DevHub offers to open, from the ones VS Code already declared.
 
@@ -225,6 +238,7 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 			"CFBundleIdentifier": BUNDLE_IDENTIFIER,
 			"CFBundleIconFile": ICON_FILE.name,
 			"NSHumanReadableCopyright": COPYRIGHT,
+			"NSMicrophoneUsageDescription": MICROPHONE_USAGE,
 			"CFBundleShortVersionString": devhub_version(),
 			**(main_plist_extra or {}),
 		},

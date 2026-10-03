@@ -1,0 +1,229 @@
+/**
+ * The bundled recogniser, as main runs it (`whisper.ts`) and answers the
+ * Agents page about it (`voiceIpc.ts`).
+ *
+ * whisper.cpp itself is not run here — it is a macOS binary built by
+ * `scripts/build_whisper.py` — so what is pinned is everything around it:
+ * where it is looked for, the WAV it is handed, the command line, how its
+ * transcript is turned into one paragraph, which recordings are refused, and
+ * that only the Agents page is answered.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
+
+import { VOICE_CHANNELS } from "../../ipc/voice.js";
+import {
+	MICROPHONE_REFUSED,
+	NO_RECOGNISER,
+	registerVoiceIpc,
+} from "./voiceIpc.js";
+import {
+	cleanTranscript,
+	locateWhisper,
+	recordingRefusal,
+	wavFile,
+	whisperArgs,
+	whisperCandidates,
+	WHISPER_BINARY,
+	WHISPER_MODEL,
+} from "./whisper.js";
+
+describe("where the recogniser is", () => {
+	it("looks where the environment says, then the bundle, then the source run's dist", () => {
+		expect(
+			whisperCandidates("/A/DevHub.app/Contents/Resources/app", {
+				DEVHUB_WHISPER_DIR: "/elsewhere",
+			}),
+		).toEqual([
+			"/elsewhere",
+			"/A/DevHub.app/Contents/Resources/whisper",
+			"/A/DevHub.app/Contents/dist/whisper",
+		]);
+		expect(whisperCandidates("/repo/apps/desktop", {})).toEqual([
+			"/repo/apps/whisper",
+			"/repo/dist/whisper",
+		]);
+	});
+
+	it("takes the first directory with both the program and the model", () => {
+		const present = new Set([
+			join("/a", WHISPER_BINARY),
+			join("/b", WHISPER_BINARY),
+			join("/b", WHISPER_MODEL),
+		]);
+		expect(locateWhisper(["/a", "/b"], (p) => present.has(p))).toEqual({
+			binary: join("/b", WHISPER_BINARY),
+			model: join("/b", WHISPER_MODEL),
+		});
+		expect(locateWhisper(["/a"], (p) => present.has(p))).toBeUndefined();
+	});
+});
+
+describe("the recording it is handed", () => {
+	it("is a canonical 16 kHz mono 16-bit WAV", () => {
+		const file = wavFile(new Uint8Array([1, 2, 3, 4]));
+		const view = new DataView(file.buffer);
+		const text = (at: number) =>
+			String.fromCharCode(...file.subarray(at, at + 4));
+		expect(file.byteLength).toBe(48);
+		expect(text(0)).toBe("RIFF");
+		expect(view.getUint32(4, true)).toBe(40);
+		expect(text(8)).toBe("WAVE");
+		expect(view.getUint16(20, true)).toBe(1);
+		expect(view.getUint16(22, true)).toBe(1);
+		expect(view.getUint32(24, true)).toBe(16_000);
+		expect(view.getUint32(28, true)).toBe(32_000);
+		expect(view.getUint16(34, true)).toBe(16);
+		expect(text(36)).toBe("data");
+		expect(view.getUint32(40, true)).toBe(4);
+		expect([...file.subarray(44)]).toEqual([1, 2, 3, 4]);
+	});
+
+	it("refuses what is not a sane recording", () => {
+		expect(recordingRefusal("audio")).toMatch(/did not arrive/);
+		expect(recordingRefusal(new Uint8Array(3))).toMatch(/16-bit/);
+		expect(recordingRefusal(new Uint8Array(0))).toMatch(/Nothing/);
+		expect(recordingRefusal(new Uint8Array(301 * 16_000 * 2))).toMatch(
+			/at most 5 minutes/,
+		);
+		expect(recordingRefusal(new Uint8Array(32_000))).toBeUndefined();
+	});
+});
+
+describe("the command line", () => {
+	it("asks for plain text in a file, in the language chosen, with capped threads", () => {
+		expect(
+			whisperArgs({
+				model: "/m.bin",
+				wav: "/t/r.wav",
+				outputBase: "/t/out",
+				language: "ja",
+				threads: 24,
+			}),
+		).toEqual([
+			"-m",
+			"/m.bin",
+			"-f",
+			"/t/r.wav",
+			"-l",
+			"ja",
+			"-t",
+			"8",
+			"-nt",
+			"-np",
+			"-otxt",
+			"-of",
+			"/t/out",
+		]);
+	});
+});
+
+describe("the transcript", () => {
+	it("joins English segments with spaces", () => {
+		expect(cleanTranscript(" Fix the login bug\n and add a test.\n")).toBe(
+			"Fix the login bug and add a test.",
+		);
+	});
+
+	it("joins Japanese segments with nothing between", () => {
+		expect(cleanTranscript("ログインのバグを\n直してください。\n")).toBe(
+			"ログインのバグを直してください。",
+		);
+	});
+
+	it("drops Whisper's markers for what is not speech, but not brackets in a sentence", () => {
+		expect(
+			cleanTranscript(
+				"[BLANK_AUDIO]\n(keyboard clicking)\n[音楽]\n♪\nCall foo(bar) [twice]\n*sigh*\n",
+			),
+		).toBe("Call foo(bar) [twice]");
+		expect(cleanTranscript("[BLANK_AUDIO]\n")).toBe("");
+	});
+});
+
+describe("the Agents page's requests", () => {
+	type Handler = (event: { sender: unknown }, ...args: unknown[]) => unknown;
+
+	function register(
+		options: {
+			installed?: boolean;
+			status?: string;
+			ask?: () => Promise<boolean>;
+		} = {},
+	) {
+		const handlers = new Map<string, Handler>();
+		const page = {};
+		registerVoiceIpc({
+			ipcMain: {
+				handle: (channel: string, handler: Handler) =>
+					void handlers.set(channel, handler),
+			} as never,
+			agentsPage: () => page as never,
+			install:
+				options.installed === false
+					? undefined
+					: { binary: "/nonexistent/devhub-whisper", model: "/m.bin" },
+			microphone: {
+				status: () => options.status ?? "not-determined",
+				ask: options.ask ?? (() => Promise.resolve(true)),
+			},
+		});
+		const call = (channel: string, ...args: unknown[]) =>
+			handlers.get(channel)!({ sender: page }, ...args);
+		return { handlers, call };
+	}
+
+	it("answers no other page", async () => {
+		const { handlers } = register();
+		await expect(
+			handlers.get(VOICE_CHANNELS.status)!({ sender: {} }),
+		).rejects.toThrow(/only the Agents page/);
+	});
+
+	it("says a build with no recogniser has none, and transcribes nothing", async () => {
+		const { call } = register({ installed: false });
+		await expect(call(VOICE_CHANNELS.status)).resolves.toEqual({
+			available: false,
+			reason: NO_RECOGNISER,
+		});
+		await expect(
+			call(VOICE_CHANNELS.transcribe, new Uint8Array(2), "auto"),
+		).resolves.toEqual({ ok: false, reason: NO_RECOGNISER });
+	});
+
+	it("asks macOS for the microphone only when it has not been granted", async () => {
+		const ask = vi.fn(() => Promise.resolve(true));
+		await expect(
+			register({ status: "granted", ask }).call(VOICE_CHANNELS.microphone),
+		).resolves.toEqual({ ok: true, value: true });
+		expect(ask).not.toHaveBeenCalled();
+
+		await expect(
+			register({ ask: () => Promise.resolve(false) }).call(
+				VOICE_CHANNELS.microphone,
+			),
+		).resolves.toEqual({ ok: false, reason: MICROPHONE_REFUSED });
+	});
+
+	it("refuses a bad recording before starting anything", async () => {
+		const { call } = register();
+		await expect(
+			call(VOICE_CHANNELS.transcribe, new Uint8Array(3), "auto"),
+		).resolves.toEqual({
+			ok: false,
+			reason: "The recording is not 16-bit audio.",
+		});
+	});
+
+	it("answers a recogniser that cannot start with the reason, not a rejection", async () => {
+		const { call } = register();
+		const result = (await call(
+			VOICE_CHANNELS.transcribe,
+			new Uint8Array(32_000),
+			"klingon",
+		)) as { ok: boolean; reason?: string };
+		expect(result.ok).toBe(false);
+		expect(result.reason).toMatch(/could not be started/);
+	});
+});

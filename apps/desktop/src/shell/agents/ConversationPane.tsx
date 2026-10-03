@@ -103,6 +103,7 @@ export function ConversationPane({
       openFile: (path: string, range: FileRange | undefined) =>
         bridge.conversation.openFile(agentId, path, range),
       reportFailure,
+      voice: bridge.voice,
     };
   }, [agentId, reportFailure]);
   const [resuming, setResuming] = useState(false);

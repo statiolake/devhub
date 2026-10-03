@@ -2570,6 +2570,82 @@ button.conversation-background-line:hover {
   outline-offset: 2px;
 }
 
+/* Dictation (`dictation.ts`): the microphone, as quiet as a picker until it
+   records. Recording is the one state that must be impossible to miss — the
+   microphone is open — so it is red and grows a halo with the level of what
+   it hears (`--dictation-level`, 0 to 1, set by the composer). Waiting on
+   the microphone or the transcript is a slow pulse of the same quiet button. */
+.conversation-dictation {
+  display: inline-flex;
+  width: 2em;
+  height: 2em;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+}
+
+.conversation-dictation:hover:not(:disabled) {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+.conversation-dictation:disabled {
+  color: var(--tertiary);
+}
+
+.conversation-dictation[data-phase="recording"] {
+  background: var(--danger);
+  box-shadow: 0 0 0 calc(var(--dictation-level, 0) * 6px)
+    color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--surface);
+  transition: box-shadow 80ms linear;
+}
+
+.conversation-dictation:is(
+  [data-phase="starting"],
+  [data-phase="transcribing"]
+) {
+  animation: conversation-dictation-wait 1.2s ease-in-out infinite;
+}
+
+@keyframes conversation-dictation-wait {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-dictation {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.conversation-dictation-language {
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tertiary);
+  font: inherit;
+  font-size: 0.85em;
+}
+
+.conversation-dictation-language:hover:not(:disabled) {
+  background: var(--wash-strong);
+  color: var(--secondary);
+}
+
+:is(.conversation-dictation, .conversation-dictation-language):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* The settings, as pickers in the toolbar: a word and a value, with no box
    until hovered. They are read at the size of what is typed above them —
    the value is what the person checks before sending — and kept quiet by

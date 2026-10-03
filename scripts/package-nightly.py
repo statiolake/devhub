@@ -47,6 +47,11 @@ The layout inside the bundle, and why:
                                     built by scripts/build_reh.py, copied in
                                     by bundle_remote_servers; DevHub copies
                                     the one a far machine needs over to it
+      Resources/whisper/            the speech recogniser the GUI Agent
+                                    composer dictates with — whisper.cpp and
+                                    its model, built and fetched at build
+                                    time by scripts/build_whisper.py, never
+                                    at runtime; copied in by bundle_whisper
       Resources/app/                what Electron loads
         package.json                "main" -> devhub-main.js
         devhub-main.js              generated entry: the environment and the
@@ -115,6 +120,7 @@ Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
                                [--zip-level 0-9|ditto]
                                [--reh-dir DIR | --without-reh]
+                               [--whisper-dir DIR | --without-whisper]
 
 Requires an already-built tree; every missing input names the command that
 produces it. The result is unsigned beyond an ad-hoc signature, which is the
@@ -156,6 +162,11 @@ from darwin_bundle import (  # noqa: E402
 	sign,
 )
 import build_cache  # noqa: E402
+from build_whisper import (  # noqa: E402
+	DEFAULT_OUT_DIR as WHISPER_BUILD_DIR,
+	ensure as ensure_whisper,
+	install_problems as whisper_install_problems,
+)
 from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, bundle_problems  # noqa: E402
 from product_metadata import (  # noqa: E402
 	devhub_commit,
@@ -949,6 +960,32 @@ def bundle_remote_servers(app: Path, reh_dir: Path) -> None:
 	print(f"    {', '.join(REH_TARGETS)}: {total / 1e6:.0f} MB")
 
 
+def bundle_whisper(app: Path, whisper_dir: Path) -> None:
+	"""Put the speech recogniser in the app, or refuse to package.
+
+	Checked deeply (both files re-hashed against their statement) because a
+	half-copied model is not an error anyone sees here: it is a microphone
+	button that fails the first time someone presses it.
+	"""
+	problems = whisper_install_problems(whisper_dir)
+	if problems:
+		fail(
+			"the speech recogniser is not ready to bundle:\n  "
+			+ "\n  ".join(problems)
+			+ "\nBuild it with scripts/build_whisper.py, or pass --without-whisper "
+			"for a bundle whose composer has no voice input."
+		)
+	target = app / "Contents" / "Resources" / "whisper"
+	shutil.rmtree(target, ignore_errors=True)
+	copy_tree(whisper_dir, target, ignore=lambda d, names: {n for n in names if n.endswith(".part")})
+	# A Mach-O under Resources is sealed as a resource by the bundle's
+	# signature, not signed as code, and Apple Silicon kills an arm64 program
+	# with no signature of its own the moment it is spawned. The linker signs
+	# it ad hoc already; this says so explicitly rather than relying on it.
+	run(["codesign", "--force", "--sign", "-", str(target / "devhub-whisper")])
+	print(f"    {directory_size(target) / 1e6:.0f} MB")
+
+
 # --- entry point -----------------------------------------------------------
 
 
@@ -978,6 +1015,16 @@ def main() -> int:
 		action="store_true",
 		help="package without them — a bundle that opens no remote window; CI's check build only",
 	)
+	parser.add_argument(
+		"--whisper-dir",
+		default=str(WHISPER_BUILD_DIR),
+		help="where scripts/build_whisper.py left the speech recogniser (built there if missing)",
+	)
+	parser.add_argument(
+		"--without-whisper",
+		action="store_true",
+		help="package without it — a composer with no voice input; CI's check build only",
+	)
 	args = parser.parse_args()
 
 	if sys.platform != "darwin":
@@ -989,6 +1036,14 @@ def main() -> int:
 		from ensure_reh import ensure as ensure_reh_servers
 
 		if ensure_reh_servers(Path(args.reh_dir).resolve()) != 0:
+			return 1
+
+	if not args.without_whisper:
+		# Also before the long steps, for the same reason: the first build on
+		# a Mac compiles whisper.cpp and downloads its model (~547 MiB), both
+		# cached under ~/.cache/devhub/whisper afterwards.
+		step("speech recogniser")
+		if ensure_whisper(Path(args.whisper_dir).resolve()) != 0:
 			return 1
 
 	step("inputs")
@@ -1026,6 +1081,12 @@ def main() -> int:
 		print("    none: --without-reh (this bundle opens no remote window)")
 	else:
 		bundle_remote_servers(app, Path(args.reh_dir).resolve())
+
+	step("speech recogniser")
+	if args.without_whisper:
+		print("    none: --without-whisper (this bundle's composer takes no dictation)")
+	else:
+		bundle_whisper(app, Path(args.whisper_dir).resolve())
 
 	step("ad-hoc signature")
 	# An Apple Silicon Mac refuses to run a modified bundle with no signature at

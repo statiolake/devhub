@@ -309,6 +309,8 @@ import {
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
+import { registerVoiceIpc } from "../voice/voiceIpc.js";
+import { locateWhisper, whisperCandidates } from "../voice/whisper.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
 import { AgentRecords } from "../agent/conversation/agentRecords.js";
 import {
@@ -1036,6 +1038,18 @@ export class AppController {
 			limitResumes: this.limitResumes,
 		});
 		const agentWiring = this.agentWiring;
+		// Dictation into the GUI Agent composer: the bundled recogniser, if
+		// this build has one, and macOS's microphone permission.
+		registerVoiceIpc({
+			ipcMain: electron.ipcMain,
+			agentsPage: () => shellWindow().agents.contents(),
+			install: locateWhisper(whisperCandidates(APP_ROOT, process.env)),
+			microphone: {
+				status: () =>
+					electron.systemPreferences.getMediaAccessStatus("microphone"),
+				ask: () => electron.systemPreferences.askForMediaAccess("microphone"),
+			},
+		});
 		registerConversationIpc({
 			ipcMain: electron.ipcMain,
 			conversations: agentWiring.conversations,

@@ -48,6 +48,13 @@
 #     them. It does nothing when CI is set: the nightly downloads the servers
 #     its `reh` jobs built. `--without-reh` packages without them, for a
 #     bundle that opens no remote window (CI's check build does that).
+#   * the speech recogniser the GUI Agent composer dictates with, in
+#     dist/whisper — package-nightly.py runs scripts/build_whisper.py when it
+#     is missing or stale: needs cmake, compiles whisper.cpp with Metal (a few
+#     minutes) and downloads its model (547 MiB) once, both cached under
+#     ~/.cache/devhub/whisper. Without cmake it stops, naming it.
+#     `--without-whisper` packages without it: the composer then shows its
+#     microphone as unavailable.
 #
 # Node's own version is deliberately *not* checked: the only Node this build is
 # picky about is the one VS Code's build requires, and provisioning fetches

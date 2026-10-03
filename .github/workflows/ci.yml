@@ -120,7 +120,10 @@ jobs:
         # and this bundle is checked and thrown away, never handed to anyone.
         # scripts/build_reh_test.py and package_nightly_test.py, in
         # `pnpm run check` above, are what keep the bundling itself honest.
-        run: scripts/build-app.sh --without-reh
+        # Without the speech recogniser for the same reason: compiling
+        # whisper.cpp and downloading its 547 MiB model is the nightly's to
+        # spend (scripts/build_whisper_test.py keeps the logic honest here).
+        run: scripts/build-app.sh --without-reh --without-whisper
 
       # The build assembles the bundle and stops there — starting a DevHub has
       # effects on the machine that starts it, which a developer running
