@@ -26,7 +26,7 @@ import type {
 import type { SmartButtonsSpot } from "../../model/smartButtons";
 import { AgentPane } from "./AgentPane";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
-import { SmartButtons } from "./SmartButtons";
+import { SMART_BUTTONS_EXIT_MS, SmartButtons } from "./SmartButtons";
 
 // The pane mounts a live terminal per running Agent, which wants a channel to
 // main; what floats over it is what is under test here.
@@ -678,5 +678,78 @@ describe("automatic actions", () => {
     expect(
       screen.getByRole("menuitemcheckbox", { name: "Fix CI" }),
     ).toHaveAttribute("aria-checked", "true");
+  });
+});
+
+function stubMotion(reduce: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: reduce && query.includes("reduce"),
+  }));
+}
+
+function tree(over: Partial<AgentWire>, menuTop = 100) {
+  RECTS["smart-buttons-menu"] = rect(10, menuTop, 270, menuTop + 80);
+  const value = {
+    repositoryStatus: { sequence: 1, workspaces: [DIRTY] },
+    agentActions: ACTIONS,
+    runAgentAction: vi.fn(),
+    dispatch: vi.fn(() => Promise.resolve(undefined)),
+    reportFailure: vi.fn(),
+  } as unknown as AgentsValue;
+  const shown = agent(over);
+  return (
+    <AgentsContext.Provider value={value}>
+      <div className="agent-pane">
+        <div data-surface-key="agent:a-1" />
+        <SmartButtons agent={shown} stored={undefined} />
+      </div>
+    </AgentsContext.Provider>
+  );
+}
+
+describe("motion", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    delete RECTS["smart-buttons-menu"];
+  });
+
+  it("keeps a button that left mounted, exiting, until the animation is over", () => {
+    vi.useFakeTimers();
+    stubMotion(false);
+    const { rerender } = render(tree({}));
+    expect(labels()).toContain("Commit the changes");
+    rerender(tree({ status: "working" } as Partial<AgentWire>));
+    const line = screen
+      .getByText("Commit the changes")
+      .closest(".smart-button-line");
+    expect(line).toHaveAttribute("data-exiting");
+    act(() => {
+      vi.advanceTimersByTime(SMART_BUTTONS_EXIT_MS + 10);
+    });
+    expect(labels()).toEqual([]);
+  });
+
+  it("removes a button at once under reduced motion", () => {
+    stubMotion(true);
+    const { rerender } = render(tree({}));
+    rerender(tree({ status: "working" } as Partial<AgentWire>));
+    expect(labels()).toEqual([]);
+  });
+
+  it("freezes the Auto panel where it opened, however the box moves", () => {
+    stubMotion(false);
+    const { rerender } = render(tree({}, 100));
+    fireEvent.click(screen.getByRole("button", { name: "Automatic actions" }));
+    expect(screen.getByRole("menu")).toHaveStyle({
+      position: "fixed",
+      left: "10px",
+      top: "100px",
+    });
+    rerender(tree({ status: "working" } as Partial<AgentWire>, 40));
+    expect(screen.getByRole("menu")).toHaveStyle({
+      left: "10px",
+      top: "100px",
+    });
   });
 });

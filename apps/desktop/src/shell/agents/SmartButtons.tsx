@@ -125,6 +125,70 @@ export function smartButtonLines(
   );
 }
 
+/** How long an exiting line stays mounted: its exit animation, plus slack. */
+export const SMART_BUTTONS_EXIT_MS = 220;
+
+/** The person asked for less motion; without `matchMedia`, assume so. */
+function reducedMotion(): boolean {
+  try {
+    return (
+      typeof window.matchMedia !== "function" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  } catch {
+    return true;
+  }
+}
+
+interface Presence {
+  readonly line: SmartButtonLine;
+  readonly exiting: boolean;
+}
+
+/**
+ * The lines to mount: the current ones, and for a moment each line that just
+ * left, in the place it had, so its exit can play. With reduced motion a line
+ * leaves at once.
+ */
+function usePresence(lines: readonly SmartButtonLine[]): readonly Presence[] {
+  const previous = useRef<readonly SmartButtonLine[]>(lines);
+  const [leaving, setLeaving] = useState<
+    readonly { readonly line: SmartButtonLine; readonly index: number }[]
+  >([]);
+  useLayoutEffect(() => {
+    const now = new Set(lines.map((line) => line.action.id));
+    const gone = previous.current
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => !now.has(line.action.id));
+    previous.current = lines;
+    if (gone.length === 0 || reducedMotion()) return;
+    setLeaving((current) => [
+      ...current.filter(
+        (entry) => !gone.some((g) => g.line.action.id === entry.line.action.id),
+      ),
+      ...gone,
+    ]);
+    const ids = gone.map((g) => g.line.action.id);
+    // Not cleared on the next run of this effect: `lines` is a new array
+    // every render, and the render this very update causes would cancel it.
+    setTimeout(() => {
+      setLeaving((current) =>
+        current.filter((entry) => !ids.includes(entry.line.action.id)),
+      );
+    }, SMART_BUTTONS_EXIT_MS);
+  }, [lines]);
+  const now = new Set(lines.map((line) => line.action.id));
+  const merged: Presence[] = lines.map((line) => ({ line, exiting: false }));
+  for (const entry of [...leaving].sort((a, b) => a.index - b.index)) {
+    if (now.has(entry.line.action.id)) continue;
+    merged.splice(Math.min(entry.index, merged.length), 0, {
+      line: entry.line,
+      exiting: true,
+    });
+  }
+  return merged;
+}
+
 /** When an automatic action fires, in a line, by its trigger. */
 const FIRES_WHEN: Partial<Record<AgentActionTriggerWire, string>> = {
   commit: "After a turn that leaves uncommitted changes",
@@ -202,7 +266,8 @@ export function SmartButtons({
   const ticked = agent.automaticActions ?? [];
   const [menuOpen, setMenuOpen] = useState(false);
   const own = useRef<HTMLDivElement | null>(null);
-  const metrics = useMetrics(own, agent, lines.length + (menuOpen ? 1 : 0));
+  const present = usePresence(lines);
+  const metrics = useMetrics(own, agent, present.length + (menuOpen ? 1 : 0));
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
@@ -355,7 +420,7 @@ export function SmartButtons({
           />
         ) : null}
       </div>
-      {lines.map(({ action, active }) => {
+      {present.map(({ line: { action, active }, exiting }) => {
         const on = ticked.includes(action.id);
         const when = FIRES_WHEN[action.trigger];
         return (
@@ -363,6 +428,8 @@ export function SmartButtons({
             key={action.id}
             className="smart-button-line"
             {...(on ? { "data-automatic": "" } : {})}
+            {...(exiting ? { "data-exiting": "", "aria-hidden": true } : {})}
+            {...(exiting ? { inert: true } : {})}
           >
             <button
               type="button"
@@ -414,6 +481,19 @@ function AutomaticMenu({
   readonly set: (actionId: string, automatic: boolean) => Promise<unknown>;
 }) {
   const own = useRef<HTMLSpanElement | null>(null);
+  const menu = useRef<HTMLDivElement | null>(null);
+  // Where the panel was when it opened, in the window. Toggling an action
+  // adds or removes buttons and so moves the box; the panel stays put until
+  // it is closed.
+  const [frozen, setFrozen] = useState<{ left: number; top: number }>();
+  useLayoutEffect(() => {
+    if (!open) {
+      setFrozen(undefined);
+      return;
+    }
+    const rect = menu.current?.getBoundingClientRect();
+    if (rect) setFrozen({ left: rect.left, top: rect.top });
+  }, [open]);
   const count = choices.filter((choice) => ticked.includes(choice.id)).length;
   useEffect(() => {
     if (!open) return;
@@ -456,6 +536,19 @@ function AutomaticMenu({
           className="smart-buttons-menu"
           role="menu"
           aria-label={`Automatic actions for ${agent.displayName}`}
+          ref={menu}
+          {...(frozen === undefined ? {} : { "data-frozen": "" })}
+          style={
+            frozen === undefined
+              ? undefined
+              : {
+                  position: "fixed",
+                  left: `${String(frozen.left)}px`,
+                  top: `${String(frozen.top)}px`,
+                  right: "auto",
+                  bottom: "auto",
+                }
+          }
         >
           <div className="smart-buttons-menu-intro" role="none">
             Sent to {agent.displayName} on its own, the moment its button would

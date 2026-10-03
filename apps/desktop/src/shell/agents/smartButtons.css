@@ -20,7 +20,67 @@
   align-items: end;
   gap: 2px;
   opacity: 0.4;
+  transition:
+    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    right 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    bottom 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Under the pointer the box follows it exactly. */
+.smart-buttons[data-dragging] {
   transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* A line coming and going: fades and takes its height with it, so the stack
+   closes up rather than jumping. An exiting line stays mounted until done. */
+@keyframes smart-button-enter {
+  from {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    max-height: 32px;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes smart-button-exit {
+  from {
+    max-height: 32px;
+    opacity: 1;
+    transform: none;
+  }
+
+  to {
+    max-height: 0;
+    margin-bottom: -2px;
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.smart-button-line {
+  animation: smart-button-enter 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.smart-button-line[data-exiting] {
+  animation: smart-button-exit 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smart-buttons,
+  .smart-buttons[data-dragging] {
+    transition: opacity 120ms linear;
+  }
+
+  .smart-button-line,
+  .smart-button-line[data-exiting] {
+    animation: none;
+  }
 }
 
 .smart-buttons:hover,
@@ -130,16 +190,6 @@
 .smart-button[data-waiting]:hover,
 .smart-button[data-waiting]:active {
   background: var(--chrome);
-}
-
-/* Standing on the composer: the last line's bottom corners meet its top
-   edge square. */
-.smart-buttons[data-presentation="gui"][data-anchored="top"]
-  > .smart-button-line:last-child
-  > * {
-  border-bottom-color: transparent;
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
 }
 
 /* With no button offered and nothing switched on, the box is only its

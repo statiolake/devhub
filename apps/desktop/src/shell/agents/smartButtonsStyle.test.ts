@@ -11,7 +11,10 @@ describe("the box's strength", () => {
   const css = readFileSync(
     fileURLToPath(new URL("smartButtons.css", import.meta.url)),
     "utf8",
-  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    // Enter and exit fades are motion, not strength.
+    .replace(/@keyframes[^{]+\{(?:[^{}]*\{[^{}]*\})*\s*\}/g, "");
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
     ([, selector = "", body = ""]) => ({
       selectors: selector.split(",").map((part) => part.trim()),
