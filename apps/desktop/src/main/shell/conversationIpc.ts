@@ -20,6 +20,7 @@ import {
 	type PendingId,
 	type RewindOutcome,
 } from "../../model/conversation.js";
+import type { CliDefaults } from "../../model/claudeDefaults.js";
 import type { AgentId, AgentPresentation } from "../../model/domain.js";
 import { sessionScope } from "../agent/conversation/resume.js";
 import type {
@@ -59,6 +60,18 @@ export interface ConversationIpcOptions {
 		agentId: AgentId,
 		path: string,
 		selection: FileSelection | undefined,
+	) => Promise<void>;
+	/** The defaults of the Agent's CLI's new sessions (`ConversationApi.cliDefaults`). */
+	readonly cliDefaults: (
+		agentId: AgentId,
+		model: string | undefined,
+	) => Promise<CliDefaults | undefined>;
+	/** Change one in the CLI's user settings (`ConversationApi.setCliDefault`). */
+	readonly setCliDefault: (
+		agentId: AgentId,
+		which: "model" | "effort",
+		value: string,
+		model: string | undefined,
 	) => Promise<void>;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
@@ -227,6 +240,25 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 			throw new Error(`${JSON.stringify(path)} is not a file to open`);
 		return options.openFile(agentId, path, fileSelection(range));
 	});
+
+	handle(CONVERSATION_CHANNELS.cliDefaults, (agentId, model) => {
+		if (model !== undefined && typeof model !== "string")
+			throw new Error(`${JSON.stringify(model)} is not a model`);
+		return options.cliDefaults(agentId, model);
+	});
+
+	handle(
+		CONVERSATION_CHANNELS.setCliDefault,
+		(agentId, which, value, model) => {
+			if (which !== "model" && which !== "effort")
+				throw new Error(`${JSON.stringify(which)} has no default to set`);
+			if (typeof value !== "string")
+				throw new Error(`${JSON.stringify(value)} is not a ${String(which)}`);
+			if (model !== undefined && typeof model !== "string")
+				throw new Error(`${JSON.stringify(model)} is not a model`);
+			return options.setCliDefault(agentId, which, value, model);
+		},
+	);
 
 	handle(
 		CONVERSATION_CHANNELS.rewind,

@@ -632,6 +632,12 @@ export interface Setting {
     readonly id: string;
     readonly label: string;
     readonly detail?: string;
+    /**
+     * A model choice's full model name, as a session reports its model
+     * (`opus` resolves to `claude-opus-…`): what Claude Code saves an effort
+     * for, and what decides the model's own default effort.
+     */
+    readonly resolved?: string;
   }[];
   /**
    * Why the setting can't be changed here, when the Agent listed nothing to

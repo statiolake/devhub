@@ -16,6 +16,7 @@
  * did not happen is reported the way every other failure on the page is.
  */
 
+import type { CliDefaults } from "../../model/claudeDefaults";
 import { createContext, useContext } from "react";
 import type { FileRange } from "../../ipc/conversation";
 import type {
@@ -71,6 +72,23 @@ export interface ConversationActions {
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
   /** Pick one of `SessionFacts[setting].choices` by its id. */
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;
+  /**
+   * The model and effort a new session of the Agent's CLI starts on, and
+   * where each comes from; the effort for `model` (a full model name), when
+   * known. `undefined` for a CLI whose defaults DevHub does not read.
+   */
+  readonly cliDefaults: (
+    model: string | undefined,
+  ) => Promise<CliDefaults | undefined>;
+  /**
+   * Make `value` the CLI's default `setting` for new sessions, in its user
+   * settings (an effort saved for `model`). This session is not changed.
+   */
+  readonly setCliDefault: (
+    setting: "model" | "effort",
+    value: string,
+    model: string | undefined,
+  ) => Promise<void>;
   /** Open the picker of earlier sessions this Agent can go on with (`/resume`). */
   readonly openResume: () => void;
   /** Open the MCP panel: the Agent's MCP servers and what can be done about each (`/mcp`). */

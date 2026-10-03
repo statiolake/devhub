@@ -165,4 +165,18 @@ export const conversationApi: ConversationApi = {
 			path,
 			range,
 		) as Promise<void>,
+	cliDefaults: (agentId, model) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.cliDefaults,
+			agentId,
+			model,
+		) as ReturnType<ConversationApi["cliDefaults"]>,
+	setCliDefault: (agentId, which, value, model) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.setCliDefault,
+			agentId,
+			which,
+			value,
+			model,
+		) as Promise<void>,
 };

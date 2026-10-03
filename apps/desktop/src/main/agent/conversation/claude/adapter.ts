@@ -274,8 +274,12 @@ function modelChoice(
 				? value
 				: `${resolved} (${value})`,
 		...(displayName === undefined ? {} : { detail: displayName }),
+		...(resolved === undefined ? {} : { resolved }),
 	};
 }
+
+/** What a message the CLI wrote itself (an error, an interruption) names as its model. */
+const SYNTHETIC_MODEL = "<synthetic>";
 
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
@@ -905,7 +909,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private modelSettings(
 		reported: string | undefined,
-		effort: string | undefined = this.current.session.effort.current,
+		effort: string | undefined,
 	): Pick<SessionFacts, "model" | "effort"> {
 		const models = this.models ?? [];
 		const listed =
@@ -978,8 +982,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.streaming.clear();
 		this.interrupting = false;
 		this.processEnded(this.current.entries);
+		this.forgetEffort();
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
+	}
+
+	/**
+	 * A CLI started again on this session (a rewind, Restart session) keeps
+	 * its model — the transcript's (model-config, "Model on resume") — but
+	 * not an effort set with `/effort`, which `-p` applies to that process
+	 * only: it resolves the effort afresh, so the effort is unnamed again.
+	 */
+	private forgetEffort(): void {
+		this.setSession(
+			this.modelSettings(this.current.session.model.current, undefined),
+		);
 	}
 
 	/**
@@ -990,6 +1007,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private takeResume(session: string): void {
 		this.endBackground();
 		this.emit({ type: "session-switched", session });
+		// The CLI started on the other session takes that session's model,
+		// read from its history below (`takeAssistant`) until it names it,
+		// and resolves its effort afresh: neither is the session it left.
+		this.setSession(this.modelSettings(undefined, undefined));
 		this.lastUuid = undefined;
 		this.cutBefore.clear();
 		this.ours.clear();
@@ -1024,6 +1045,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.answered.clear();
 		this.streaming.clear();
 		this.interrupting = false;
+		this.forgetEffort();
 		// Not `turn`, which never moves a broken conversation: a new CLI is
 		// the one thing that ends what the stopped one said (signed out, a
 		// refused handshake), and it is greeted afresh.
@@ -1445,7 +1467,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				this.described = facts.commands;
 				this.models = facts.models;
 				this.setSession({
-					...this.modelSettings(this.current.session.model.current),
+					...this.modelSettings(
+						this.current.session.model.current,
+						this.current.session.effort.current,
+					),
 					mode: {
 						current: this.current.session.mode.current ?? facts.currentMode,
 						choices: MODES,
@@ -1466,7 +1491,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				// Done: how the servers stand now is asked again.
 				return this.askMcpStatus();
 			case "set_model":
-				return this.setSession(this.modelSettings(request.model as string));
+				return this.setSession(
+					this.modelSettings(
+						request.model as string,
+						this.current.session.effort.current,
+					),
+				);
 			case "set_permission_mode":
 				return this.setSession({
 					mode: { current: request.mode as string, choices: MODES },
@@ -1619,6 +1649,19 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const parent = this.parentOf(line.parent);
 		this.placed(line.uuid, parent);
 		if (parent === null && when === "live") this.turn("running");
+		if (
+			parent === null &&
+			when === "history" &&
+			line.model !== undefined &&
+			line.model !== SYNTHETIC_MODEL
+		) {
+			// A resumed session keeps the model it was saved with (model-config,
+			// "Model on resume"): its last top-level message's, until the CLI
+			// names it on its first turn.
+			this.setSession(
+				this.modelSettings(line.model, this.current.session.effort.current),
+			);
+		}
 		if (parent === null && line.contextTokens !== undefined) {
 			// The conversation's size is its latest top-level message's: a
 			// subagent's messages are its own context, not this one's.

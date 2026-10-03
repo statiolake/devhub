@@ -38,6 +38,9 @@ export function fakeActions(
     stopTask: vi.fn(() => Promise.resolve()),
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),
+    // No CLI's defaults are known unless a test says so.
+    cliDefaults: vi.fn(() => Promise.resolve(undefined)),
+    setCliDefault: vi.fn(() => Promise.resolve()),
     openResume: vi.fn(),
     openMcp: vi.fn(),
     restart: vi.fn(() => Promise.resolve()),

@@ -507,7 +507,11 @@ describe("the permission fixture", () => {
 		expect(session.model).toEqual({
 			current: "claude-sonnet-5",
 			choices: [
-				{ id: "claude-sonnet-5", label: "claude-sonnet-5" },
+				{
+					id: "claude-sonnet-5",
+					label: "claude-sonnet-5",
+					resolved: "claude-sonnet-5",
+				},
 				{ id: "default", label: "default", detail: "Default" },
 				{ id: "sonnet", label: "sonnet", detail: "Sonnet" },
 			],
@@ -2266,6 +2270,7 @@ describe("the model a session reports, against the models the handshake listed",
 		expect(session.model.choices[0]).toEqual({
 			id: "claude-opus-5-5[1m]",
 			label: "claude-opus-5-5[1m]",
+			resolved: "claude-opus-5-5[1m]",
 		});
 		expect(session.model.choices.slice(1).map((choice) => choice.id)).toEqual([
 			"default",
@@ -2325,6 +2330,7 @@ describe("the model a session reports, against the models the handshake listed",
 		expect(session.model.choices[0]).toEqual({
 			id: "claude-opus-4-1",
 			label: "claude-opus-4-1",
+			resolved: "claude-opus-4-1",
 		});
 		expect(session.effort.choices).toEqual([]);
 		expect(session.effort.unchangeable).toContain("claude-opus-4-1");
@@ -2337,21 +2343,25 @@ describe("the model a session reports, against the models the handshake listed",
 				id: "default",
 				label: "claude-opus-5-5[1m] (default)",
 				detail: "default (label)",
+				resolved: "claude-opus-5-5[1m]",
 			},
 			{
 				id: "opus[1m]",
 				label: "claude-opus-5-5[1m] (opus[1m])",
 				detail: "opus[1m] (label)",
+				resolved: "claude-opus-5-5[1m]",
 			},
 			{
 				id: "sonnet",
 				label: "claude-sonnet-5 (sonnet)",
 				detail: "sonnet (label)",
+				resolved: "claude-sonnet-5",
 			},
 			{
 				id: "haiku",
 				label: "claude-haiku-4-5-20251001 (haiku)",
 				detail: "haiku (label)",
+				resolved: "claude-haiku-4-5-20251001",
 			},
 		]);
 		expect(
@@ -2369,6 +2379,15 @@ describe("the model a session reports, against the models the handshake listed",
 		// A later init that does not say keeps what is known.
 		adapter.received(init({ model: "claude-opus-5-5[1m]" }));
 		expect(adapter.transcript.session.effort.current).toBe("xhigh");
+	});
+
+	it("is forgotten by a CLI started again, which keeps the model: -p sets /effort for its process only", () => {
+		const adapter = started(WITH_1M, "claude-opus-5-5[1m]");
+		adapter.received(init({ model: "claude-opus-5-5[1m]", effort: "xhigh" }));
+		expect(adapter.transcript.session.effort.current).toBe("xhigh");
+		adapter.received(RESTART_MARK);
+		expect(adapter.transcript.session.model.current).toBe("opus[1m]");
+		expect(adapter.transcript.session.effort.current).toBeUndefined();
 	});
 
 	it("offers no effort, and says nothing, for a listed model that takes none", () => {
@@ -2803,6 +2822,14 @@ describe("a resumed session's history", () => {
 		expect(
 			adapter.transcript.entries.filter((each) => each.kind === "notice"),
 		).toEqual([]);
+	});
+
+	it("is on the model it was saved with, before the CLI names it on a first turn", () => {
+		// model-config, "Model on resume": a resumed session keeps the model
+		// of its transcript, whatever the settings say.
+		const adapter = resumed();
+		expect(adapter.transcript.session.model.current).toBe("claude-sonnet-5");
+		expect(adapter.transcript.session.effort.current).toBeUndefined();
 	});
 
 	it("is no turn running now: the conversation is ready once the CLI says so", () => {

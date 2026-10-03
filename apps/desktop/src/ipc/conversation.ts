@@ -11,6 +11,7 @@
  * back), so the page hands a rejection to its root and has nothing to decide.
  */
 
+import type { CliDefaults } from "../model/claudeDefaults.js";
 import type {
 	ConversationEvent,
 	EntryId,
@@ -45,6 +46,8 @@ export const CONVERSATION_CHANNELS = {
 	mcpSignInDismiss: "devhub:conversation:mcp-sign-in-dismiss",
 	resolvePaths: "devhub:conversation:resolve-paths",
 	openFile: "devhub:conversation:open-file",
+	cliDefaults: "devhub:conversation:cli-defaults",
+	setCliDefault: "devhub:conversation:set-cli-default",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
@@ -255,5 +258,26 @@ export interface ConversationApi {
 		agentId: string,
 		path: string,
 		range: FileRange | undefined,
+	): Promise<void>;
+	/**
+	 * The model and effort a new session of the Agent's CLI starts on, and
+	 * where each comes from (`model/claudeDefaults.ts`); the effort for
+	 * `model`, a full model name, when it is known. `undefined` for a CLI
+	 * whose defaults DevHub does not read (Codex).
+	 */
+	cliDefaults(
+		agentId: string,
+		model: string | undefined,
+	): Promise<CliDefaults | undefined>;
+	/**
+	 * Make `value` the default `which` of the Agent's CLI's new sessions, in
+	 * its user settings: an effort is saved for `model` when it is named.
+	 * The session that asked is not changed.
+	 */
+	setCliDefault(
+		agentId: string,
+		which: "model" | "effort",
+		value: string,
+		model: string | undefined,
 	): Promise<void>;
 }

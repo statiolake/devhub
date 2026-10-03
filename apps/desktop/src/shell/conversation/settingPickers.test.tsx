@@ -10,12 +10,14 @@
 
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { CliDefaults } from "../../model/claudeDefaults";
 import { EMPTY_SESSION, type SessionFacts } from "../../model/conversation";
 import { UNKNOWN_VALUE } from "./SettingPickers";
 import {
   draw,
+  fakeActions,
   installResizeObserver,
   openSetting,
   settingPicker,
@@ -332,5 +334,104 @@ describe("how a picker is drawn", () => {
         rule.selector.includes(".conversation-setting-menu"),
     );
     expect(panel?.body).toMatch(/box-shadow:\s*var\(--shadow-dialog\)/);
+  });
+});
+
+describe("the CLI's defaults for new sessions", () => {
+  const SESSION = {
+    ...EMPTY_SESSION,
+    model: {
+      current: "opus",
+      choices: [
+        { id: "default", label: "full-opus (default)", resolved: "full-opus" },
+        { id: "opus", label: "full-opus (opus)", resolved: "full-opus" },
+        { id: "haiku", label: "full-haiku (haiku)", resolved: "full-haiku" },
+      ],
+    },
+    effort: {
+      current: undefined,
+      choices: ["low", "medium", "max"].map((id) => ({ id, label: id })),
+    },
+  };
+
+  function drawn(
+    defaults: CliDefaults = {
+      model: { source: "built-in" },
+      effort: { value: "medium", source: "built-in" },
+    },
+  ) {
+    const cliDefaults = vi.fn(() => Promise.resolve(defaults));
+    const setCliDefault = vi.fn(() => Promise.resolve());
+    draw(withSession(SESSION), fakeActions({ cliDefaults, setCliDefault }));
+    return { cliDefaults, setCliDefault };
+  }
+
+  const marks = (rows: readonly HTMLElement[]) =>
+    rows.map(
+      (row) =>
+        row.querySelector(".conversation-setting-default")?.textContent ?? "",
+    );
+
+  it("says what an effort nothing named resolves to, asked for the session's model", async () => {
+    const { cliDefaults } = drawn();
+    await waitFor(() =>
+      expect(picked("Effort")).toBe(`${UNKNOWN_VALUE.effort} (medium)`),
+    );
+    expect(cliDefaults).toHaveBeenCalledWith("full-opus");
+    expect(settingPicker("Effort").getAttribute("title")).toMatch(
+      /resolves to medium \(Claude Code's own default\)/,
+    );
+  });
+
+  it("marks the default row, the account's own when nothing set one, and offers the others", async () => {
+    drawn();
+    await waitFor(() => expect(picked("Effort")).toMatch(/medium/));
+    expect(marks(openSetting("Model"))).toEqual([
+      "Default",
+      "Make default",
+      "Make default",
+    ]);
+  });
+
+  it("makes a row the default without changing the session, and reads the defaults again", async () => {
+    const { cliDefaults, setCliDefault } = drawn();
+    await waitFor(() => expect(picked("Effort")).toMatch(/medium/));
+    const rows = openSetting("Effort");
+    expect(marks(rows)).toEqual(["Make default", "Default", "Make default"]);
+    fireEvent.click(rows[0]!.querySelector("[data-make-default]")!);
+    expect(setCliDefault).toHaveBeenCalledWith("effort", "low", "full-opus");
+    await waitFor(() => expect(cliDefaults).toHaveBeenCalledTimes(2));
+    // max is a session's only: Claude's settings do not keep it.
+    const max = rows[2]!.querySelector("[data-make-default]")!;
+    expect(max).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(max);
+    expect(setCliDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes the highlighted row the default with Option-Return", async () => {
+    const { setCliDefault } = drawn();
+    await waitFor(() => expect(picked("Effort")).toMatch(/medium/));
+    settingPicker("Model").focus();
+    key("Model", "ArrowDown");
+    key("Model", "ArrowDown");
+    expect(highlighted("Model")).toMatch(/^full-haiku/);
+    fireEvent.keyDown(settingPicker("Model"), { key: "Enter", altKey: true });
+    expect(setCliDefault).toHaveBeenCalledWith("model", "haiku", undefined);
+  });
+
+  it("says when something above the user settings decides the default", async () => {
+    drawn({
+      model: { value: "haiku", source: "project" },
+      effort: { value: "medium", source: "built-in" },
+    });
+    await waitFor(() => expect(picked("Effort")).toMatch(/medium/));
+    const rows = openSetting("Model");
+    expect(marks(rows)).toEqual(["Make default", "Make default", "Default"]);
+    expect(
+      rows[2]!.querySelector("[data-default]")!.getAttribute("title"),
+    ).toMatch(/\.claude\/settings\.json/);
+    expect(
+      rows[0]!.querySelector("[data-make-default]")!.getAttribute("title"),
+    ).toMatch(/sets the default now/);
   });
 });

@@ -479,7 +479,7 @@ export function parsePaneRecords(text: string): readonly PaneRecord[] {
 }
 
 /** Where Claude keeps its state: `CLAUDE_CONFIG_DIR`, the profile's before the machine's. */
-async function claudeConfigDirectory(
+export async function claudeConfigDirectory(
 	runtime: Runtime,
 	profile: SessionProfile,
 ): Promise<string> {

@@ -369,6 +369,10 @@ import {
 	resumeArgs,
 	withSession,
 } from "../agent/conversation/resume.js";
+import {
+	readClaudeDefaults,
+	writeClaudeDefault,
+} from "../agent/conversation/claude/defaults.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -1067,6 +1071,26 @@ export class AppController {
 				),
 			openFile: (agentId, path, selection) =>
 				this.openFromConversation(agentId, path, selection),
+			cliDefaults: async (agentId, model) => {
+				const place = this.claudeAgentPlace(agentId);
+				return place === undefined
+					? undefined
+					: readClaudeDefaults(place.runtime, place.profile, place.root, model);
+			},
+			setCliDefault: async (agentId, which, value, model) => {
+				const place = this.claudeAgentPlace(agentId);
+				if (place === undefined)
+					throw new Error(
+						"Only a Claude Code Agent's defaults can be set from DevHub",
+					);
+				await writeClaudeDefault(
+					place.runtime,
+					place.profile,
+					which,
+					value,
+					model,
+				);
+			},
 			fail: (error) => namedFailure(error),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report
@@ -5685,6 +5709,29 @@ export class AppController {
 			undefined,
 			this.coordinator.model.selection,
 		);
+	}
+
+	/**
+	 * Where a Claude Code Agent's CLI reads its settings: its machine, its
+	 * profile and its Workspace's root. Undefined for an Agent of another CLI.
+	 */
+	private claudeAgentPlace(agentId: AgentId):
+		| {
+				readonly runtime: Runtime;
+				readonly profile: AgentProfile;
+				readonly root: string;
+		  }
+		| undefined {
+		const agent = this.coordinator.model.agent(agentId);
+		const workspace = this.coordinator.model.workspaceForAgent(agentId);
+		if (agent === undefined || workspace === undefined)
+			throw new Error(`no Agent ${agentId} is open`);
+		if (agent.profile.kind !== "claude") return undefined;
+		return {
+			runtime: runtimeById(this.agentMachine(agentId)),
+			profile: agent.profile,
+			root: workspace.root,
+		};
 	}
 
 	/** The machine an Agent runs on, which is its Workspace's. */

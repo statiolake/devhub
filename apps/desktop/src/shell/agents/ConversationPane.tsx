@@ -87,6 +87,13 @@ export function ConversationPane({
         bridge.conversation.answer(agentId, request, answer),
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>
         bridge.conversation.setSetting(agentId, setting, id),
+      cliDefaults: (model: string | undefined) =>
+        bridge.conversation.cliDefaults(agentId, model),
+      setCliDefault: (
+        setting: "model" | "effort",
+        value: string,
+        model: string | undefined,
+      ) => bridge.conversation.setCliDefault(agentId, setting, value, model),
       openResume: () => setResuming(true),
       openMcp: () => setManagingMcp(true),
       restart: () => bridge.conversation.restartSession(agentId),

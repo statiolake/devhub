@@ -2672,6 +2672,34 @@ button.conversation-setting-face:focus-visible {
   white-space: nowrap;
 }
 
+/* The CLI's default for new sessions, at a row's right end: a mark on the
+   default's row, and on every other a button that makes it the default,
+   seen where the row is pointed at or highlighted. */
+.conversation-setting-default {
+  margin-left: auto;
+  padding-left: var(--space-3);
+}
+
+.conversation-setting-default[data-make-default] {
+  visibility: hidden;
+}
+
+.conversation-setting-choice:hover
+  .conversation-setting-default[data-make-default],
+.conversation-setting-choice[aria-selected="true"]
+  .conversation-setting-default[data-make-default] {
+  visibility: visible;
+}
+
+.conversation-setting-default[data-make-default]:hover {
+  text-decoration: underline;
+}
+
+.conversation-setting-default[aria-disabled] {
+  text-decoration: none;
+  opacity: 0.5;
+}
+
 /*
  * The `/` command list: DevHub's list rows (`mac-list-row`, as in the Open
  * Quickly sheets), one line each. The name is never cut; the hint gives way

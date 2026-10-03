@@ -17,6 +17,23 @@
  * command list is, with a check the size of the row's words on the current
  * value. It is a select-only combobox: the keyboard stays on the button and
  * the arrows walk the rows (`aria-activedescendant`).
+ *
+ * # The CLI's defaults
+ *
+ * Choosing a row changes this session only. Beside the rows of the model
+ * and the effort, the picker also says which one the CLI's *new* sessions
+ * start on (`model/claudeDefaults.ts`), with a mark at the row's right end,
+ * and every other row has a button that makes it that default: Claude Code's
+ * user settings are changed, as its own `/model` and `/effort` save them in
+ * a terminal, and this session is left where it is. Option-Return does the
+ * same for the highlighted row. When something above the user settings
+ * decides the default (the profile's arguments, the environment, managed,
+ * local or project settings), the mark and the button say so: a default
+ * saved then does not take effect until that is gone.
+ *
+ * An effort nothing named is the CLI's own, resolved when its process
+ * started (Claude does not report it); it reads as the level that resolves
+ * to — "CLI's default (medium)" — and where that came from is its hint.
  */
 
 import {
@@ -28,6 +45,13 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from "react";
+import {
+  SAVABLE_EFFORTS,
+  SOURCE_WORDS,
+  userSettingsDecide,
+  type CliDefault,
+  type CliDefaults,
+} from "../../model/claudeDefaults";
 import type { Setting, SessionFacts } from "../../model/conversation";
 import {
   useConversationActions,
@@ -61,6 +85,77 @@ const UNKNOWN_HINT: Readonly<Record<SettingName, string>> = {
     "No effort was chosen here, and the Agent does not report the one it runs at: it is the CLI's own, from --effort, its environment, its settings or the model's default",
   mode: "The Agent names its permissions when its first turn starts",
 };
+
+/** The settings that have a CLI's default for new sessions. */
+type DefaultName = "model" | "effort";
+
+function hasDefault(name: SettingName): name is DefaultName {
+  return name === "model" || name === "effort";
+}
+
+/**
+ * The row that is the CLI's default: the one of that value, else the one
+ * that resolves to it; a model nothing set is the account's own default,
+ * which Claude lists as the choice `default`.
+ */
+function defaultRow(
+  rows: readonly SettingChoice[],
+  known: CliDefault,
+): SettingChoice | undefined {
+  const value = known.value ?? (known.source === "built-in" ? "default" : "");
+  return (
+    rows.find((row) => row.id === value) ??
+    rows.find((row) => row.resolved !== undefined && row.resolved === value)
+  );
+}
+
+/** Where a default comes from, in the words a hint says it. */
+function sourceSentence(known: CliDefault): string {
+  return known.source === "built-in"
+    ? "Claude Code's own default"
+    : `set by ${SOURCE_WORDS[known.source]}`;
+}
+
+/**
+ * Why making a row the default would not take effect now — something above
+ * the user settings decides it — or undefined when it would.
+ */
+function shadowedBy(known: CliDefault): string | undefined {
+  return userSettingsDecide(known.source)
+    ? undefined
+    : `${SOURCE_WORDS[known.source]} sets the default now, so new sessions keep that until it is gone`;
+}
+
+/** What a session's effort reads as while nothing named it: the level the CLI resolves. */
+function unknownEffort(known: CliDefault | undefined): string {
+  return known?.value === undefined
+    ? UNKNOWN_VALUE.effort
+    : `${UNKNOWN_VALUE.effort} (${known.value})`;
+}
+
+/** The full name of the session's model, as an effort is saved for it. */
+function modelName(session: SessionFacts): string | undefined {
+  const current = session.model.current;
+  if (current === undefined) return undefined;
+  return (
+    session.model.choices.find((choice) => choice.id === current)?.resolved ??
+    current
+  );
+}
+
+/** What a picker of a setting with a CLI's default is given of it. */
+interface DefaultOffer {
+  readonly known: CliDefault;
+  /** Make the row `id` the default. */
+  readonly set: (id: string) => void;
+}
+
+/** The hint of a value nothing named: the CLI's default, and where it is from, when known. */
+function unknownHint(name: SettingName, known: CliDefault | undefined): string {
+  if (name !== "effort" || known?.value === undefined)
+    return UNKNOWN_HINT[name];
+  return `No effort was chosen here, so the Agent runs at the CLI's own, which resolves to ${known.value} (${sourceSentence(known)}). Claude does not report it, so this is what it started with.`;
+}
 
 /** What the composer holds a picker by: a command that changes a setting opens it. */
 export interface SettingPickerHandle {
@@ -107,10 +202,12 @@ function SettingWords({
   name,
   setting,
   labelId,
+  known,
 }: {
   readonly name: SettingName;
   readonly setting: Setting;
   readonly labelId?: string;
+  readonly known?: CliDefault | undefined;
 }) {
   return (
     <>
@@ -119,7 +216,7 @@ function SettingWords({
       </span>
       <span className="conversation-setting-value">
         {rowsOf(setting).find((row) => row.id === setting.current)?.label ??
-          UNKNOWN_VALUE[name]}
+          (name === "effort" ? unknownEffort(known) : UNKNOWN_VALUE[name])}
       </span>
     </>
   );
@@ -130,11 +227,13 @@ function SettingPicker({
   setting,
   disabled,
   pickerRef,
+  offer,
 }: {
   readonly name: SettingName;
   readonly setting: Setting;
   readonly disabled: boolean;
   readonly pickerRef: RefObject<SettingPickerHandle | null>;
+  readonly offer: DefaultOffer | undefined;
 }) {
   if (setting.choices.length === 0) {
     // Nothing to choose from: the value is a fact to read.
@@ -147,9 +246,9 @@ function SettingPicker({
       >
         <span
           className="conversation-setting-face"
-          title={unknown ? UNKNOWN_HINT[name] : undefined}
+          title={unknown ? unknownHint(name, offer?.known) : undefined}
         >
-          <SettingWords name={name} setting={setting} />
+          <SettingWords name={name} setting={setting} known={offer?.known} />
           {setting.unchangeable === undefined ? null : (
             <span className="conversation-setting-note">
               {setting.unchangeable}
@@ -165,6 +264,7 @@ function SettingPicker({
       setting={setting}
       disabled={disabled}
       pickerRef={pickerRef}
+      offer={offer}
     />
   );
 }
@@ -174,11 +274,13 @@ function ChoosableSetting({
   setting,
   disabled,
   pickerRef,
+  offer,
 }: {
   readonly name: SettingName;
   readonly setting: Setting;
   readonly disabled: boolean;
   readonly pickerRef: RefObject<SettingPickerHandle | null>;
+  readonly offer: DefaultOffer | undefined;
 }) {
   const { setSetting, reportFailure } = useConversationActions();
   const id = useId();
@@ -194,6 +296,17 @@ function ChoosableSetting({
   const open = highlighted !== undefined;
   const unknown = setting.current === undefined;
   const current = rows[currentIndex];
+  const byDefault =
+    offer === undefined ? undefined : defaultRow(rows, offer.known);
+  /** Why a row cannot be made the default, or undefined when it can. */
+  const notSavable = (row: SettingChoice): string | undefined =>
+    name === "effort" && !SAVABLE_EFFORTS.includes(row.id)
+      ? `Claude Code's settings do not keep ${row.id} as a default: it is for one session only`
+      : undefined;
+  const makeDefault = (row: SettingChoice) => {
+    if (offer === undefined || row === byDefault || notSavable(row)) return;
+    offer.set(row.id);
+  };
 
   const show = () => setHighlighted(Math.max(currentIndex, 0));
   const close = () => setHighlighted(undefined);
@@ -225,6 +338,20 @@ function ChoosableSetting({
   }, [open, highlighted]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      open &&
+      event.key === "Enter" &&
+      event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey
+    ) {
+      // Option-Return: the highlighted row becomes the CLI's default.
+      event.preventDefault();
+      const row = rows[highlighted ?? 0];
+      if (row !== undefined) makeDefault(row);
+      return;
+    }
     const plain =
       !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
     if (!plain) return;
@@ -280,7 +407,11 @@ function ChoosableSetting({
         }
         disabled={disabled}
         title={
-          open ? undefined : unknown ? UNKNOWN_HINT[name] : current?.detail
+          open
+            ? undefined
+            : unknown
+              ? unknownHint(name, offer?.known)
+              : current?.detail
         }
         onClick={() => {
           button.current?.focus();
@@ -290,7 +421,12 @@ function ChoosableSetting({
         onKeyDown={onKeyDown}
         onBlur={close}
       >
-        <SettingWords name={name} setting={setting} labelId={`${id}-label`} />
+        <SettingWords
+          name={name}
+          setting={setting}
+          labelId={`${id}-label`}
+          known={offer?.known}
+        />
         <span className="conversation-setting-chevron">
           <ChevronDownIcon />
         </span>
@@ -324,6 +460,38 @@ function ChoosableSetting({
                   {index === currentIndex ? <CheckIcon /> : null}
                 </span>
                 <span className="mac-list-title">{row.label}</span>
+                {offer === undefined ? null : row === byDefault ? (
+                  <span
+                    className="mac-caption conversation-setting-default"
+                    data-default="true"
+                    title={`New sessions start on this: ${sourceSentence(offer.known)}`}
+                  >
+                    Default
+                  </span>
+                ) : (
+                  <span
+                    role="button"
+                    aria-label={`Make ${row.label} the default for new sessions`}
+                    aria-disabled={notSavable(row) !== undefined || undefined}
+                    className="mac-caption conversation-setting-default"
+                    data-make-default="true"
+                    title={
+                      notSavable(row) ??
+                      [
+                        "Make this the default for new sessions, in ~/.claude/settings.json. This session is not changed. (⌥↩)",
+                        shadowedBy(offer.known),
+                      ]
+                        .filter((each) => each !== undefined)
+                        .join(" — ")
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      makeDefault(row);
+                    }}
+                  >
+                    Make default
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -344,6 +512,40 @@ export function SettingPickers({
     Record<SettingName, RefObject<SettingPickerHandle | null>>
   >;
 }) {
+  const { cliDefaults, setCliDefault, reportFailure } =
+    useConversationActions();
+  const model = modelName(session);
+  const [defaults, setDefaults] = useState<CliDefaults | undefined>(undefined);
+  /** Counts the defaults' changes here, so a change is read back. */
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    let current = true;
+    cliDefaults(model).then(
+      (read) => {
+        if (current) setDefaults(read);
+      },
+      // Defaults that can't be read are not offered; the session's own
+      // settings work as they did.
+      () => {
+        if (current) setDefaults(undefined);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [cliDefaults, model, changes]);
+  const offer = (name: SettingName): DefaultOffer | undefined => {
+    if (!hasDefault(name) || defaults === undefined) return undefined;
+    return {
+      known: defaults[name],
+      set: (id) => {
+        setCliDefault(name, id, name === "effort" ? model : undefined).then(
+          () => setChanges((count) => count + 1),
+          reportFailure,
+        );
+      },
+    };
+  };
   return (
     <div className="conversation-settings">
       {SETTING_NAMES.filter((name) => shown(name, session)).map((name) => (
@@ -353,6 +555,7 @@ export function SettingPickers({
           setting={session[name]}
           disabled={disabled}
           pickerRef={pickers[name]}
+          offer={offer(name)}
         />
       ))}
     </div>
