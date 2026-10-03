@@ -39,14 +39,11 @@
  * strength while pointed at, holding focus, or being dragged
  * (`smartButtons.css`).
  *
- * **Automatic.** Said where it acts. A button whose action may be automatic
- * (`AUTOMATIC_TRIGGERS`) carries its own switch, a bolt beside it: lit, the
- * action is sent on its own the moment the button would appear — main
+ * **Automatic.** The bolt in the header opens a switch for every action that
+ * may be automatic (`AUTOMATIC_TRIGGERS`), each with what makes it fire: switched
+ * on, the action is sent on its own the moment its condition holds — main
  * decides when (`model/automaticActions.ts`) — for this Agent only, off until
- * switched on. The bolt in the header opens the same switches for every
- * action that may be automatic, each with what makes it fire, because the
- * moment to switch on "Address review comments" is before the comments
- * arrive, when there is no button to switch. So the box is there whenever the
+ * switched on. The buttons themselves carry no mark of it. The box is there whenever the
  * Agent has such an action, not only while a button is offered; with no
  * button offered and nothing switched on it shows only while the pane is
  * pointed at.
@@ -324,43 +321,18 @@ export function SmartButtons({
         ) : null}
       </div>
       {offered.map((action) => {
-        const on = ticked.includes(action.id);
         return (
-          <div
-            key={action.id}
-            className="smart-button-line"
-            {...(on ? { "data-automatic": "" } : {})}
-          >
+          <div key={action.id} className="smart-button-line">
             <button
               type="button"
               className="smart-button"
-              title={`${action.displayName} — sent to ${agent.displayName}${
-                on ? " (automatic: also sent on its own)" : ""
-              }`}
+              title={`${action.displayName} — sent to ${agent.displayName}`}
               onClick={() => {
                 void runAgentAction(agent.id, action.id);
               }}
             >
               {action.displayName}
             </button>
-            {isAutomaticTrigger(action.trigger) ? (
-              <button
-                type="button"
-                className="smart-button-auto"
-                aria-pressed={on}
-                aria-label={`Send “${action.displayName}” automatically`}
-                title={
-                  on
-                    ? `Automatic: sent to ${agent.displayName} on its own. Click to stop.`
-                    : `Click to send this to ${agent.displayName} on its own whenever it appears.`
-                }
-                onClick={() => {
-                  void setAutomatic(action.id, !on);
-                }}
-              >
-                <BoltIcon />
-              </button>
-            ) : null}
           </div>
         );
       })}

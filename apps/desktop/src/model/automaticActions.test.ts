@@ -74,15 +74,22 @@ describe("automatic actions", () => {
     ]);
   });
 
-  it("is off unless ticked, and never for what was on screen when it was ticked", () => {
+  it("is off unless ticked, and fires once for what already holds when it is ticked", () => {
     const automatic = new AutomaticActions();
+    const on = ["address_review_comments"];
     expect(fired(automatic, agent(pr(2), []))).toEqual([]);
-    expect(fired(automatic, agent(pr(2), ["address_review_comments"]))).toEqual(
-      [],
-    );
-    expect(fired(automatic, agent(pr(4), ["address_review_comments"]))).toEqual(
-      ["address_review_comments"],
-    );
+    expect(fired(automatic, agent(pr(2), on))).toEqual([
+      "address_review_comments",
+    ]);
+    expect(fired(automatic, agent(pr(2), on))).toEqual([]);
+    // Switched off and on again while it still holds: once more.
+    expect(fired(automatic, agent(pr(2), []))).toEqual([]);
+    expect(fired(automatic, agent(pr(2), on))).toEqual([
+      "address_review_comments",
+    ]);
+    expect(fired(automatic, agent(pr(4), on))).toEqual([
+      "address_review_comments",
+    ]);
   });
 
   it("waits for the Agent to be idle with nothing queued", () => {
@@ -101,7 +108,6 @@ describe("automatic actions", () => {
   it("fires CI again only for a new failure", () => {
     const automatic = new AutomaticActions();
     const on = ["fix_ci"];
-    expect(fired(automatic, agent(pr(0, "failing"), []))).toEqual([]);
     expect(fired(automatic, agent(pr(0, "pending"), on))).toEqual([]);
     expect(fired(automatic, agent(pr(0, "failing"), on))).toEqual(["fix_ci"]);
     expect(fired(automatic, agent(pr(0, "failing"), on))).toEqual([]);
@@ -148,9 +154,15 @@ describe("automatic actions", () => {
   it("forgets an Agent that has gone", () => {
     const automatic = new AutomaticActions();
     const on = ["address_review_comments"];
-    fired(automatic, agent(pr(2), on));
+    expect(fired(automatic, agent(pr(2), on))).toEqual([
+      "address_review_comments",
+    ]);
     automatic.observe([], ACTIONS);
-    // Back under the same id, the box ticked anew: what is there is not news.
-    expect(fired(automatic, agent(pr(2), on))).toEqual([]);
+    // Back under the same id with the box ticked and the condition holding:
+    // seen anew, so it fires once.
+    automatic.observe([], ACTIONS);
+    expect(fired(automatic, agent(pr(2), on))).toEqual([
+      "address_review_comments",
+    ]);
   });
 });

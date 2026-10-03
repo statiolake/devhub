@@ -1097,7 +1097,7 @@ rests translucent and comes up to full when pointed at, focused or dragged.
 Its handle drags it anywhere in the pane (or, focused, the arrow keys move it
 8px at a time). Within 16px (`SMART_BUTTONS_SNAP`) of the composer's top edge
 — or its right edge, when there is room beside it — the box snaps to that edge
-and is dropped *anchored*: remembered as an edge and a distance along it, and
+and is dropped _anchored_: remembered as an edge and a distance along it, and
 measured from the composer every time it is drawn, so it rides up as the
 composer grows with a long prompt. A terminal's anchor is the queued-message
 status, or with none its bottom right corner. Dropped anywhere else it is free:
@@ -1109,15 +1109,13 @@ absent is the default, anchored on the top edge), and a double-click on the
 handle — or Home — puts it back; a drop on the default spot is the default and
 is forgotten.
 
-**Automatic actions.** Shown and switched where they act: a button whose
-action's trigger may be automatic (`AUTOMATIC_TRIGGERS` in
-`model/automaticActions.ts`: commit, push, review comments, failing CI) has a
-bolt beside it, a toggle (`aria-pressed`); lit in the accent, with the line
-edged in it, the action is automatic. The header's bolt (with a count of what
-is on) opens the same switches for every such action, including those whose
-button is not on screen, each with a line saying what makes it fire — the
-moment to switch on *Address review comments* is before the comments arrive.
-An automatic action is sent on its own when its button would appear. The
+**Automatic actions.** An action whose trigger may be automatic
+(`AUTOMATIC_TRIGGERS` in `model/automaticActions.ts`: commit, push, review
+comments, failing CI) is switched in the header only: its bolt (with a count of what is on) opens the switches
+for every such action, whether or not its button is on screen, each with a
+line saying what makes it fire. The buttons themselves carry no mark of it.
+An automatic action is sent on its own when its button would appear, and
+when it is switched on while its condition already holds. The
 choice is on the Agent (`Agent.automaticActions`, the `set_automatic_action`
 intent), off by default and not restored after DevHub restarts. Main decides
 when, on the two clocks the conditions move on — the projection (an Agent going idle, a box
@@ -1125,9 +1123,10 @@ ticked) and the repository status (comments, CI) — and sends through the same
 `runAgentAction` a press does. A condition is read as a run of events: an
 episode starts each time it starts to hold, and for review comments a rise in
 the number of unresolved threads is a new event within one; another pull
-request is another episode. Each event is sent once, and an event already
-standing when the box was ticked, or answered by a press of the button, is not
-sent. A reading with no repository status is no news, not the end of an
+request is another episode. Each event is sent once, and an event answered
+by a press of the button is not sent. Ticking a box while the condition holds
+sends once (and so does an Agent that reappears with the box ticked); un-ticking
+and ticking again sends once more. A reading with no repository status is no news, not the end of an
 episode. Nothing goes to an Agent that is not idle or has something queued,
 and one trigger at a time, in trigger order, so pushing is decided on the
 repository committing left. With no button offered and nothing switched on,

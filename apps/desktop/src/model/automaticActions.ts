@@ -27,10 +27,11 @@
  * sentence after every turn, for ever. So each trigger's condition is read as
  * a sequence of events — an *episode* begins each time it starts to hold, and
  * for review comments a rise in the count of unresolved threads is a new
- * event within one — and each event is acted on once. An event that was
- * already there when the box was ticked is not one this fires for (the button
- * for it is on screen to be pressed), and neither is one a person already
- * answered by pressing the button.
+ * event within one — and each event is acted on once. Ticking the
+ * box while the condition already holds counts as such an event: it is sent
+ * once, as soon as the Agent is free (so is an Agent that comes back with the
+ * box ticked and its condition holding). An event a person already answered
+ * by pressing the button is not sent.
  *
  * Nothing is sent to an Agent that is not idle or that already has something
  * waiting for it: the event is kept, and sent once the Agent is free. One
@@ -122,15 +123,15 @@ export class AutomaticActions {
       const ticked = new Set(agent.automaticActions);
       const before = this.#ticked.get(agent.agentId) ?? new Set<string>();
       this.#ticked.set(agent.agentId, ticked);
-      // A box ticked just now: whatever its trigger stands for at this
-      // moment is already on screen as a button, and is not news.
+      // A box ticked just now: the event standing at this moment, if any,
+      // is news to it and is sent once, like any other.
       for (const actionId of ticked) {
         if (before.has(actionId)) continue;
         const trigger = actions.find(
           (action) => action.id === actionId,
         )?.trigger;
         if (trigger === undefined || !isAutomaticTrigger(trigger)) continue;
-        this.#state(agent.agentId, trigger).handled = keys.get(trigger);
+        this.#state(agent.agentId, trigger).handled = undefined;
       }
       if (agent.status !== "idle" || agent.queued > 0) continue;
       for (const trigger of AUTOMATIC_TRIGGERS) {

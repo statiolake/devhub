@@ -74,21 +74,18 @@
 }
 
 .smart-buttons-handle svg,
-.smart-buttons-auto svg,
-.smart-button-auto svg {
+.smart-buttons-auto svg {
   fill: currentcolor;
 }
 
-/* One line: the button, and beside it its own automatic switch when its
-   action may be automatic. */
+/* One line: the button. */
 .smart-button-line {
   display: flex;
   min-width: 0;
   align-items: stretch;
 }
 
-.smart-button,
-.smart-button-auto {
+.smart-button {
   border: 1px solid var(--line-strong);
   background: var(--chrome);
   color: var(--primary);
@@ -108,44 +105,14 @@
   white-space: nowrap;
 }
 
-.smart-button-line:has(.smart-button-auto) .smart-button {
-  border-right-width: 0;
-  border-bottom-right-radius: 0;
-  border-top-right-radius: 0;
-}
-
-.smart-button-auto {
-  display: flex;
-  flex: none;
-  align-items: center;
-  padding: 2px 5px;
-  border-radius: 0 var(--radius-row) var(--radius-row) 0;
-  color: var(--secondary);
-}
-
 .smart-button:hover,
-.smart-button-auto:hover,
 .smart-buttons-auto:hover {
   background: var(--wash-strong);
 }
 
 .smart-button:active,
-.smart-button-auto:active,
 .smart-buttons-auto:active {
   background: var(--selection);
-}
-
-/* Automatic: the switch lit in the accent and the line edged in it, so an
-   Agent that will act on its own is never a surprise — on the very button
-   that will be pressed for it. */
-.smart-button-auto[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.smart-button-line[data-automatic] .smart-button,
-.smart-button-line[data-automatic] .smart-button-auto {
-  border-color: var(--accent);
 }
 
 /* Standing on the composer: the last line's bottom corners meet its top
