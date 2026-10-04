@@ -2,6 +2,11 @@ import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import {
   CONFIG_COUNT_KEY,
+  OFFER_DISMISSED_KEY,
+  OFFER_MESSAGE,
+  OFFER_NEVER,
+  OFFER_REOPEN,
+  offerReopenInContainer,
   refreshAvailability,
   reopenInContainer,
   reopenLocally,
@@ -35,7 +40,15 @@ function world(options: {
   answers?: string;
   /** Whether a build log exists to show. */
   logExists?: boolean;
+  /** The action chosen on the info notice. */
+  offerAnswer?: string;
+  remote?: string;
+  scheme?: string;
+  dismissed?: boolean;
 }) {
+  const infos: string[] = [];
+  const flags = new Map<string, boolean>();
+  if (options.dismissed) flags.set(OFFER_DISMISSED_KEY, true);
   const said: string[] = [];
   const offeredActions: string[][] = [];
   /** What happened to build logs, in order. */
@@ -44,8 +57,17 @@ function world(options: {
   const reattached: ReattachTarget[] = [];
   const offered: string[][] = [];
   const api: CommandsApi = {
-    windowFolder: () => WINDOW,
-    remoteName: () => undefined,
+    windowFolder: () => ({ ...WINDOW, scheme: options.scheme ?? "file" }),
+    remoteName: () => options.remote,
+    showInfo: (message) => {
+      infos.push(message);
+      return Promise.resolve(options.offerAnswer);
+    },
+    getFlag: (key) => flags.get(key) === true,
+    setFlag: (key, value) => {
+      flags.set(key, value);
+      return Promise.resolve();
+    },
     pick: (items) => {
       const labels = items.map((item) => item.label);
       offered.push(labels);
@@ -109,6 +131,8 @@ function world(options: {
     offered,
     logs,
     offeredActions,
+    infos,
+    flags,
   };
 }
 
@@ -216,4 +240,35 @@ test("the when clauses are told how many definitions there are", async () => {
   const { api, devhub, context } = world({ configs: [DEFAULT, PYTHON] });
   await refreshAvailability(api, devhub);
   strictEqual(context.get(CONFIG_COUNT_KEY), 2);
+});
+
+test("a local folder with a definition offers to reopen, and Reopen does", async () => {
+  const w = world({ configs: [DEFAULT], offerAnswer: OFFER_REOPEN });
+  await offerReopenInContainer(w.api, w.devhub);
+  deepStrictEqual(w.infos, [OFFER_MESSAGE]);
+  deepStrictEqual(w.reattached, [{ configPath: DEFAULT.path }]);
+});
+
+test("Don't Show Again is remembered; closing the notice is not", async () => {
+  const never = world({ configs: [DEFAULT], offerAnswer: OFFER_NEVER });
+  await offerReopenInContainer(never.api, never.devhub);
+  strictEqual(never.flags.get(OFFER_DISMISSED_KEY), true);
+  deepStrictEqual(never.reattached, []);
+
+  const closed = world({ configs: [DEFAULT] });
+  await offerReopenInContainer(closed.api, closed.devhub);
+  strictEqual(closed.flags.get(OFFER_DISMISSED_KEY), undefined);
+});
+
+test("no offer in a container, without a definition, once dismissed, or off disk", async () => {
+  for (const options of [
+    { configs: [DEFAULT], remote: "dev-container" },
+    { configs: [] },
+    { configs: [DEFAULT], dismissed: true },
+    { configs: [DEFAULT], scheme: "vscode-remote" },
+  ]) {
+    const w = world(options);
+    await offerReopenInContainer(w.api, w.devhub);
+    deepStrictEqual(w.infos, []);
+  }
 });

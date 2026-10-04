@@ -49,6 +49,11 @@ export interface CommandsApi {
   showBuildLog(path: string): Promise<boolean>;
   /** Run `work` under a progress notification titled `title`. */
   withProgress<T>(title: string, work: () => Promise<T>): Promise<T>;
+  /** An information notification; resolves to the action chosen, if any. */
+  showInfo(message: string, ...actions: string[]): Promise<string | undefined>;
+  /** A per-folder flag, kept in the window's `workspaceState`. */
+  getFlag(key: string): boolean;
+  setFlag(key: string, value: boolean): Promise<void>;
   /** `setContext` for the keys the commands' `when` clauses read. */
   setContext(key: string, value: unknown): void;
 }
@@ -88,6 +93,35 @@ export async function refreshAvailability(
     CONFIG_COUNT_KEY,
     answer.ok ? (answer.devContainers?.configs.length ?? 0) : 0,
   );
+}
+
+/** The notice's text, as the official Dev Containers extension words it. */
+export const OFFER_MESSAGE =
+  "Folder contains a Dev Container configuration file. Reopen folder to develop in a container.";
+export const OFFER_REOPEN = "Reopen in Container";
+export const OFFER_NEVER = "Don't Show Again";
+/** The per-folder flag that {@link OFFER_NEVER} sets. */
+export const OFFER_DISMISSED_KEY = "devhub.devContainerOffer.dismissed";
+
+/**
+ * Offer to reopen a local folder in its dev container, once per window open,
+ * the way the official extension does: only in a local window of a folder that
+ * has a definition, and until "Don't Show Again" (kept per folder). Closing
+ * the notice without choosing only dismisses it for this window.
+ */
+export async function offerReopenInContainer(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+): Promise<void> {
+  const window = api.windowFolder();
+  if (window === undefined || window.scheme !== "file") return;
+  if (api.remoteName() !== undefined) return;
+  if (api.getFlag(OFFER_DISMISSED_KEY)) return;
+  const answer = await devhub.configs(window);
+  if (!answer.ok || (answer.devContainers?.configs.length ?? 0) === 0) return;
+  const chosen = await api.showInfo(OFFER_MESSAGE, OFFER_REOPEN, OFFER_NEVER);
+  if (chosen === OFFER_REOPEN) await reopenInContainer(api, devhub);
+  else if (chosen === OFFER_NEVER) await api.setFlag(OFFER_DISMISSED_KEY, true);
 }
 
 type Choice = {

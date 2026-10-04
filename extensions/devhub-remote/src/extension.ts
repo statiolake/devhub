@@ -25,6 +25,7 @@ import {
   type LogOutput,
 } from "./buildLog";
 import {
+  offerReopenInContainer,
   refreshAvailability,
   reopenInContainer,
   reopenLocally,
@@ -185,6 +186,13 @@ function commandsApiFor(
       vscode.window.showQuickPick([...items], { placeHolder: placeholder }),
     showError: (message, ...actions) =>
       Promise.resolve(vscode.window.showErrorMessage(message, ...actions)),
+    showInfo: (message, ...actions) =>
+      Promise.resolve(
+        vscode.window.showInformationMessage(message, ...actions),
+      ),
+    getFlag: (key) => context.workspaceState.get<boolean>(key) === true,
+    setFlag: (key, value) =>
+      Promise.resolve(context.workspaceState.update(key, value)),
     followBuildLog: async (path) => {
       const follower = await LogFollower.start(path, output(), logFiles);
       const timer = setInterval(() => {
@@ -247,6 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
     void refreshAvailability(commandsApi, devhub).catch(report);
+    void offerReopenInContainer(commandsApi, devhub).catch(report);
   }
   const named = new Set<string>();
   // One resolver, registered for each authority DevHub owns. The same function
