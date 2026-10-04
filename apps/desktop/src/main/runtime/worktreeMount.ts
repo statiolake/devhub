@@ -7,62 +7,81 @@
  * reads is in that main `.git` — git calls it the *common dir*. `devcontainer
  * up` mounts the worktree's folder and nothing beside it, so inside the
  * container the link points at a folder that is not there and git answers
- * "not a git repository" for every command: no status, no commit, no branch
- * row, no Source Control view.
+ * "not a git repository" for every command.
  *
- * The fix is one more mount, of the common dir, placed where the link expects
- * it — and which mount that is depends on how the link was written:
+ * The link can be relative (`../widget/.git/worktrees/x`, what `--relative-paths`
+ * writes) or absolute, and the worktree can sit anywhere in the container — a
+ * definition's own `workspaceMount` puts it at `/workspace`, the CLI's default
+ * at `/workspaces/<name>`. Resolving the host link from there can land on a
+ * path that cannot be mounted (above `/`, or inside the worktree itself): the
+ * field failure was `/workspace/../vscode-pahcer-ui/.git/...`, with nothing
+ * there. So DevHub does not follow the link at all. It makes git's view in
+ * the container independent of the layout, with two mounts:
  *
- * - **Relative** (`gitdir: ../widget/.git/worktrees/x`, what `git worktree add
- *   --relative-paths` writes from git 2.48, and what DevHub asks for when the
- *   machine's git has it — `shell/git.ts`, `worktreeAddArguments`). The
- *   `@devcontainers/cli` does this itself: `--mount-git-worktree-common-dir`
- *   (default off; present in the 0.89 CLI
- *   DevHub was checked against, and probed for with `up --help` before use) mounts the worktree and the common dir
- *   under `/workspaces` with their relative layout on the host kept, so the
- *   relative link — and the record's `gitdir` back-pointer — resolve in the
- *   container exactly as they do here. The flag also moves the worktree's own
- *   folder in the container (`/workspaces/<parent>/<worktree>` rather than
- *   `/workspaces/<worktree>`), which is why `read-configuration` has to be
- *   given it too, and only for a container that was created with it.
- * - **Absolute** (`gitdir: /Users/me/src/widget/.git/worktrees/x`, every git
- *   before 2.48 and every worktree made before DevHub asked for relative
- *   ones). The CLI's flag deliberately does nothing for these, so DevHub adds
- *   a plain `--mount` of the common dir **at the same absolute path** inside
- *   the container: the absolute link then names a folder that is there. The
- *   one thing this cannot fix is the record's back-pointer, which names the
- *   worktree's *host* path; git only reads it to decide whether a worktree is
- *   prunable, so `git worktree prune` must not be run inside the container
- *   (it would forget the worktree). `git worktree repair --relative-paths` on
- *   the Mac converts such a worktree to the first case for good.
+ * 1. the common dir, read-write (commits write objects and refs), at a fixed
+ *    path, `/opt/devhub/git/<repo>-<hash of its host path>.git`;
+ * 2. a one-line file, `gitdir: <that path>/worktrees/<name>`, read-only, over
+ *    the worktree's `.git` inside the workspace mount — a file over a file.
  *
- * Both are read-write, because committing writes objects and refs into the
- * common dir. Neither touches the repository's `devcontainer.json`: the mount
- * is a fact about where this checkout sits on this machine, not about the
- * project, and a teammate opening the main checkout must get the container the
- * file describes. The main checkout itself — and anything that is not a git
- * worktree — gets nothing extra.
+ * The host's own `.git` file is untouched; only the container sees the
+ * replacement. The file lives on the Docker machine in the worktree's own
+ * record, `<common>/worktrees/<name>/devhub-container-gitdir` (git ignores
+ * files it does not know there, and removing the worktree removes it), is
+ * written once before `up` and never rewritten: Docker Desktop binds a single
+ * file by inode, so a file replaced by rename would leave the container on the
+ * old one, and a file that is not there when the container is created becomes
+ * a directory. Its content depends only on the repository's path and the
+ * worktree's name, so it never needs to change.
  *
- * A mount is fixed when a container is created. A container made before this
- * existed (or by a CLI without the flag) keeps working exactly as before,
- * without git; it gets the mount only when it is removed and built again, and
- * `ContainerHost` says so when it finds one (see `missingMountAdvice`).
+ * The CLI's `--mount-git-worktree-common-dir` is no longer used: it only acts
+ * on the CLI's default workspace mount, only for relative links, and moves the
+ * workspace folder; the two mounts work for every case it covers and the ones
+ * it does not.
+ *
+ * What does not work inside: the record's back-pointer
+ * (`<common>/worktrees/<name>/gitdir`) names the worktree's host path, which is
+ * not there, so `git worktree prune` run in the container would delete the
+ * worktree's record. DevHub locks the worktrees it creates (`git worktree lock`,
+ * which prune respects) and unlocks them before removing; a worktree made by
+ * hand should not be pruned from inside its container. `status`, `commit`,
+ * `fetch`, `log`, `branch`, `push` only need the forward link.
+ *
+ * Docker Compose: `--mount` is not something DevHub can rely on reaching a
+ * Compose service, so nothing is added and the person is told which volumes
+ * the compose file needs.
+ *
+ * A mount is fixed when a container is created. A container made without
+ * these mounts keeps working, without git, and `ContainerHost` says so (see
+ * `missingMountAdvice`): it has to be removed and created again.
  */
 
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-/** The flag the `@devcontainers/cli` takes for the relative-link case. */
-export const MOUNT_COMMON_DIR_FLAG = "--mount-git-worktree-common-dir";
+/** Where common dirs are mounted in a container. */
+export const CONTAINER_GIT_ROOT = "/opt/devhub/git";
+
+/** The file, in a worktree's record, that the container sees as its `.git`. */
+export const CONTAINER_DOT_GIT_FILE = "devhub-container-gitdir";
 
 /** What this folder's container needs for git to work in it. */
 export type WorktreeMount =
 	/** Not a linked worktree (the main checkout, or not a repository). */
 	| { readonly kind: "none" }
-	/** A relative link: the CLI's own `--mount-git-worktree-common-dir`. */
-	| { readonly kind: "cli"; readonly commonDir: string }
-	/** An absolute link: `--mount` of the common dir at the same path. */
-	| { readonly kind: "bind"; readonly commonDir: string }
-	/** A relative link and a CLI too old to mount it. Said, not fixed. */
+	/** The common dir at a fixed path, and a `.git` file over the worktree's. */
+	| {
+			readonly kind: "overlay";
+			readonly commonDir: string;
+			/** Where the common dir is mounted in the container. */
+			readonly containerCommonDir: string;
+			/** The file on the Docker machine that becomes the container's `.git`. */
+			readonly dotGitFile: string;
+			/** What that file says. */
+			readonly dotGitContent: string;
+			/** The worktree's `.git` in the container. */
+			readonly containerDotGit: string;
+	  }
+	/** Nothing DevHub can add (Docker Compose, unknown layout). Said, not fixed. */
 	| {
 			readonly kind: "unsupported";
 			readonly commonDir: string;
@@ -77,6 +96,14 @@ export interface WorktreeFacts {
 	/** The contents of `<toplevel>/.git`, if it is a file. */
 	readonly dotGit: string | undefined;
 }
+
+/**
+ * Where the definition puts the worktree in its container, from
+ * `read-configuration` (see `containerLayout`).
+ */
+export type ContainerLayout =
+	| { readonly kind: "compose" }
+	| { readonly kind: "single"; readonly containerToplevel: string };
 
 /**
  * The three lines of `git rev-parse --path-format=absolute --show-toplevel
@@ -112,40 +139,170 @@ export function gitdirLink(dotGit: string): string | undefined {
 	return found?.[1];
 }
 
+/** Whether `path` is `folder` or inside it. */
+function within(folder: string, path: string): boolean {
+	const rest = posix.relative(folder, path);
+	return rest !== ".." && !rest.startsWith("../") && !posix.isAbsolute(rest);
+}
+
+/** `source` and `target` of a `--mount`-style string, unquoted. */
+function mountFields(mount: string): { source?: string; target?: string } {
+	const fields = new Map<string, string>();
+	for (const part of mount.match(/(?:[^,"]|"[^"]*")+/gu) ?? []) {
+		const at = part.indexOf("=");
+		if (at < 0) continue;
+		fields.set(
+			part.slice(0, at).trim().toLowerCase(),
+			part
+				.slice(at + 1)
+				.trim()
+				.replace(/^"(.*)"$/u, "$1"),
+		);
+	}
+	return {
+		source: fields.get("source") ?? fields.get("src"),
+		target:
+			fields.get("target") ?? fields.get("destination") ?? fields.get("dst"),
+	};
+}
+
 /**
- * The mount a folder needs, from what git said about it.
+ * Where the worktree lands in its container, from `read-configuration`'s
+ * merged configuration and `workspace.workspaceFolder`.
  *
- * Pure, so the whole decision is tested without a repository or a CLI:
- * `cliHasFlag` is whether this machine's `devcontainer up --help` lists
- * `--mount-git-worktree-common-dir`.
+ * `hostFolder` is the folder `devcontainer` was given (normally the worktree's
+ * top level). In order: a `workspaceMount` whose source holds the top level
+ * (its target, plus the rest of the path); the CLI's resolved
+ * `workspaceFolder`; the CLI's default, `/workspaces/<name>`.
+ */
+export function containerLayout(
+	hostFolder: string,
+	toplevel: string,
+	configuration: Record<string, unknown>,
+	workspaceFolder: string | undefined,
+): ContainerLayout {
+	if (configuration["dockerComposeFile"] !== undefined) {
+		return { kind: "compose" };
+	}
+	const host = canonicalPath(hostFolder);
+	const stated = configuration["workspaceMount"];
+	if (typeof stated === "string" && stated.trim().length > 0) {
+		const { source, target } = mountFields(
+			stated
+				.replaceAll("${localWorkspaceFolderBasename}", posix.basename(host))
+				.replaceAll("${localWorkspaceFolder}", host),
+		);
+		if (source?.startsWith("/") === true && target?.startsWith("/") === true) {
+			const from = canonicalPath(source);
+			if (within(from, toplevel)) {
+				return {
+					kind: "single",
+					containerToplevel: posix.resolve(
+						target,
+						posix.relative(from, toplevel),
+					),
+				};
+			}
+		}
+	}
+	if (workspaceFolder?.startsWith("/") === true) {
+		return {
+			kind: "single",
+			containerToplevel: posix.resolve(
+				workspaceFolder,
+				posix.relative(host, toplevel),
+			),
+		};
+	}
+	return {
+		kind: "single",
+		containerToplevel: posix.join("/workspaces", posix.basename(toplevel)),
+	};
+}
+
+/**
+ * The fixed container path for a common dir: the repository's folder name,
+ * made safe, and a hash of the host path so two repositories of one name
+ * never share it.
+ */
+export function containerCommonDir(commonDir: string): string {
+	const repository =
+		posix.basename(commonDir) === ".git"
+			? posix.basename(posix.dirname(commonDir))
+			: posix.basename(commonDir).replace(/\.git$/u, "");
+	const safe = repository.replace(/[^A-Za-z0-9._-]/gu, "_") || "repository";
+	const hash = createHash("sha256")
+		.update(commonDir)
+		.digest("hex")
+		.slice(0, 12);
+	return `${CONTAINER_GIT_ROOT}/${safe}-${hash}.git`;
+}
+
+/**
+ * The mount a folder needs, from what git said about it and where the
+ * definition puts it (`undefined` when `read-configuration` could not say).
+ *
+ * Pure, so the whole decision is tested without a repository or a CLI.
  */
 export function planWorktreeMount(
 	facts: WorktreeFacts | undefined,
-	cliHasFlag: boolean,
+	layout: ContainerLayout | undefined,
 ): WorktreeMount {
 	// The main checkout's git dir *is* the common dir; only a linked worktree
 	// has one of its own (`.git/worktrees/<name>`) beside it.
 	if (facts === undefined || facts.gitDir === facts.commonDir) {
 		return { kind: "none" };
 	}
-	const link =
-		facts.dotGit === undefined ? undefined : gitdirLink(facts.dotGit);
 	// No readable `.git` file: a worktree laid out some way DevHub does not
 	// know (`--separate-git-dir`, a submodule). Leaving it alone is what
 	// happened before, and is never worse.
-	if (link === undefined) return { kind: "none" };
-	const { commonDir } = facts;
-	if (link.startsWith("/")) return { kind: "bind", commonDir };
-	return cliHasFlag
-		? { kind: "cli", commonDir }
-		: {
-				kind: "unsupported",
-				commonDir,
-				reason:
-					`this devcontainer CLI has no ${MOUNT_COMMON_DIR_FLAG}, so the ` +
-					`repository's .git (${commonDir}) is not mounted and git will not ` +
-					`work inside the container. Update the devcontainer CLI.`,
-			};
+	if (facts.dotGit === undefined || gitdirLink(facts.dotGit) === undefined) {
+		return { kind: "none" };
+	}
+	const { commonDir, gitDir } = facts;
+	// The record must be `<common>/worktrees/<name>` for the fixed path to
+	// name it; anything else is a layout DevHub leaves alone.
+	if (posix.dirname(gitDir) !== posix.join(commonDir, "worktrees")) {
+		return { kind: "none" };
+	}
+	const fixed = containerCommonDir(commonDir);
+	const name = posix.basename(gitDir);
+	if (layout === undefined) {
+		return {
+			kind: "unsupported",
+			commonDir,
+			reason:
+				`DevHub could not read where the definition puts the folder, so ` +
+				`the repository's .git (${commonDir}) is not mounted and git will ` +
+				`not work inside the container.`,
+		};
+	}
+	if (layout.kind === "compose") {
+		return {
+			kind: "unsupported",
+			commonDir,
+			reason:
+				`its definition uses Docker Compose, where DevHub does not add ` +
+				`mounts to the service, so the repository's .git (${commonDir}) is ` +
+				`not mounted and git will not work inside the container. Add two ` +
+				`volumes to the service in the compose file: ${commonDir}:${fixed} ` +
+				`and ${posix.join(gitDir, CONTAINER_DOT_GIT_FILE)}:<the worktree's ` +
+				`folder in the container>/.git:ro, the second a file containing ` +
+				`"gitdir: ${fixed}/worktrees/${name}".`,
+		};
+	}
+	return {
+		kind: "overlay",
+		commonDir,
+		containerCommonDir: fixed,
+		dotGitFile: posix.join(gitDir, CONTAINER_DOT_GIT_FILE),
+		dotGitContent: `gitdir: ${fixed}/worktrees/${name}\n`,
+		containerDotGit: posix.join(layout.containerToplevel, ".git"),
+	};
+}
+
+function quoted(path: string): string {
+	return path.includes(",") ? `"${path}"` : path;
 }
 
 /**
@@ -156,40 +313,64 @@ export function planWorktreeMount(
  * unquoted comma would be read as the start of the next field.
  */
 export function upArguments(mount: WorktreeMount): readonly string[] {
-	switch (mount.kind) {
-		case "cli":
-			return [MOUNT_COMMON_DIR_FLAG];
-		case "bind": {
-			const path = mount.commonDir.includes(",")
-				? `"${mount.commonDir}"`
-				: mount.commonDir;
-			return ["--mount", `type=bind,source=${path},target=${path}`];
-		}
-		default:
-			return [];
-	}
+	if (mount.kind !== "overlay") return [];
+	return [
+		"--mount",
+		`type=bind,source=${quoted(mount.commonDir)},target=${quoted(mount.containerCommonDir)}`,
+		"--mount",
+		`type=bind,source=${quoted(mount.dotGitFile)},target=${quoted(mount.containerDotGit)},readonly`,
+	];
 }
 
 /**
- * What `read-configuration` is given, for a container that has the mount.
- *
- * Only the CLI's flag changes the answer — it moves the workspace folder —
- * and only a container created with it is laid out that way, so the caller
- * passes `mounted` from the container's own `docker inspect`.
+ * The shell command, run on the Docker machine before `up`, that writes the
+ * container's `.git` file if it is not there yet. Never a rewrite: see the
+ * top of this file.
  */
-export function readConfigurationArguments(
+export function dotGitFileCommand(
 	mount: WorktreeMount,
-	mounted: boolean,
-): readonly string[] {
-	return mount.kind === "cli" && mounted ? [MOUNT_COMMON_DIR_FLAG] : [];
+): readonly string[] | undefined {
+	if (mount.kind !== "overlay") return undefined;
+	return [
+		"sh",
+		"-c",
+		'[ -f "$1" ] || printf "%s" "$2" > "$1"',
+		"sh",
+		mount.dotGitFile,
+		mount.dotGitContent,
+	];
 }
 
 /**
- * The sentence for a container that should have the mount and does not.
+ * Whether a container's mounts (`docker inspect`'s source and destination
+ * pairs) already give git what `mount` asks for: both, each at exactly its
+ * place. A container from before (none, or the CLI flag's, or a mount of the
+ * common dir at its host path) is as good as none.
+ */
+export function hasMount(
+	mount: WorktreeMount,
+	mounts: readonly { readonly source: string; readonly destination: string }[],
+): boolean {
+	if (mount.kind !== "overlay") return false;
+	const has = (source: string, destination: string): boolean =>
+		mounts.some(
+			(one) =>
+				one.source.length > 0 &&
+				one.destination.length > 0 &&
+				canonicalPath(one.source) === source &&
+				canonicalPath(one.destination) === destination,
+		);
+	return (
+		has(mount.commonDir, mount.containerCommonDir) &&
+		has(mount.dotGitFile, mount.containerDotGit)
+	);
+}
+
+/**
+ * The sentence for a container that should have the mounts and does not.
  *
- * It was created before DevHub added the mount (or by hand), and a mount can
- * only be added by creating the container again; the container keeps working
- * meanwhile, without git, so this is advice and not a refusal.
+ * A mount can only be added by creating the container again; the container
+ * keeps working meanwhile, without git, so this is advice and not a refusal.
  */
 export function missingMountAdvice(
 	machineName: string,

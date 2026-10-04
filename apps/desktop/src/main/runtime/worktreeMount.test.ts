@@ -1,138 +1,254 @@
 /**
- * Which mount a dev container gets so git works in a worktree's folder.
+ * Which mounts a dev container gets so git works in a worktree's folder.
  *
- * The decision is pure — what git said about the folder, and whether the CLI
- * has the flag — so it is tested here without a repository, a CLI or docker.
- * The cases are the ones `worktreeMount.ts` names: the main checkout gets
- * nothing, a relative link the CLI's own flag, an absolute link a mount at the
- * same path, and a relative link with an old CLI a sentence instead.
+ * The decision is pure — what git said about the folder, and where the
+ * definition puts it — so it is tested here without a repository, a CLI or
+ * docker. The layouts are the ones from the field: a custom `/workspace`
+ * mount, the CLI's default `/workspaces/<name>`, and an absolute link.
  */
 
 import { describe, expect, it } from "vitest";
 import {
+	CONTAINER_GIT_ROOT,
+	containerCommonDir,
+	containerLayout,
+	dotGitFileCommand,
 	gitdirLink,
+	hasMount,
 	missingMountAdvice,
-	MOUNT_COMMON_DIR_FLAG,
 	parseRevParse,
 	planWorktreeMount,
-	readConfigurationArguments,
 	upArguments,
 	type WorktreeFacts,
 } from "./worktreeMount.js";
 
-const COMMON = "/Users/me/src/widget/.git";
+const MAIN = "/Users/me/src/vscode-pahcer-ui";
+const COMMON = `${MAIN}/.git`;
+const WORKTREE = "/Users/me/src/vscode-pahcer-ui_5";
+const RECORD = `${COMMON}/worktrees/vscode-pahcer-ui_5`;
 
 function worktree(dotGit: string | undefined): WorktreeFacts {
-	return {
-		toplevel: "/Users/me/src/widget-128",
-		gitDir: `${COMMON}/worktrees/widget-128`,
-		commonDir: COMMON,
-		dotGit,
-	};
+	return { toplevel: WORKTREE, gitDir: RECORD, commonDir: COMMON, dotGit };
 }
+
+const RELATIVE = worktree(
+	"gitdir: ../vscode-pahcer-ui/.git/worktrees/vscode-pahcer-ui_5\n",
+);
+const ABSOLUTE = worktree(`gitdir: ${RECORD}\n`);
+const FIXED = containerCommonDir(COMMON);
 
 describe("reading git's answer", () => {
 	it("reads the three absolute paths rev-parse prints", () => {
-		expect(
-			parseRevParse(
-				"/Users/me/src/widget-128\n/Users/me/src/widget/.git/worktrees/widget-128\n/Users/me/src/widget/.git/\n",
-			),
-		).toEqual({
-			toplevel: "/Users/me/src/widget-128",
-			gitDir: `${COMMON}/worktrees/widget-128`,
+		expect(parseRevParse(`${WORKTREE}\n${RECORD}\n${COMMON}/\n`)).toEqual({
+			toplevel: WORKTREE,
+			gitDir: RECORD,
 			// Normalised, so it compares equal to a mount's source.
 			commonDir: COMMON,
 		});
 	});
 
 	it("refuses anything that is not three absolute paths", () => {
-		// A git too old for `--path-format` echoes the option back.
 		expect(parseRevParse("--path-format=absolute\n/a\n.git\n")).toBeUndefined();
 		expect(parseRevParse("")).toBeUndefined();
 	});
 
 	it("reads the link out of a worktree's .git file", () => {
-		expect(gitdirLink("gitdir: ../widget/.git/worktrees/x\n")).toBe(
-			"../widget/.git/worktrees/x",
+		expect(gitdirLink("gitdir: ../w/.git/worktrees/x\n")).toBe(
+			"../w/.git/worktrees/x",
 		);
 		expect(gitdirLink("not a link")).toBeUndefined();
 	});
 });
 
-describe("choosing the mount", () => {
-	it("adds nothing for the main checkout", () => {
-		const main = { ...worktree(undefined), gitDir: COMMON };
-		expect(planWorktreeMount(main, true)).toEqual({ kind: "none" });
-		expect(planWorktreeMount(undefined, true)).toEqual({ kind: "none" });
+describe("the fixed path of a common dir", () => {
+	it("names the repository and a hash of where it is", () => {
+		expect(FIXED).toMatch(
+			new RegExp(
+				`^${CONTAINER_GIT_ROOT}/vscode-pahcer-ui-[0-9a-f]{12}\\.git$`,
+				"u",
+			),
+		);
+		expect(containerCommonDir("/elsewhere/vscode-pahcer-ui/.git")).not.toBe(
+			FIXED,
+		);
+		expect(containerCommonDir("/x/my repo,1/.git")).toMatch(/\/my_repo_1-/u);
+	});
+});
+
+describe("a custom /workspace mount and a relative link", () => {
+	// Inside, git said:
+	// fatal: not a git repository: /workspace/../vscode-pahcer-ui/.git/worktrees/vscode-pahcer-ui_5
+	const layout = containerLayout(
+		WORKTREE,
+		WORKTREE,
+		{
+			workspaceMount:
+				"source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+			workspaceFolder: "/workspace",
+		},
+		"/workspace",
+	);
+
+	it("finds the worktree at the mount's target", () => {
+		expect(layout).toEqual({ kind: "single", containerToplevel: "/workspace" });
 	});
 
-	it("uses the CLI's own flag for a relative link", () => {
-		const mount = planWorktreeMount(
-			worktree("gitdir: ../widget/.git/worktrees/widget-128\n"),
-			true,
-		);
-		expect(mount).toEqual({ kind: "cli", commonDir: COMMON });
-		expect(upArguments(mount)).toEqual([MOUNT_COMMON_DIR_FLAG]);
-	});
-
-	it("mounts the common dir at the same path for an absolute link", () => {
-		const mount = planWorktreeMount(
-			worktree(`gitdir: ${COMMON}/worktrees/widget-128\n`),
-			true,
-		);
-		expect(mount).toEqual({ kind: "bind", commonDir: COMMON });
+	it("mounts the common dir at the fixed path and a .git file over the worktree's", () => {
+		const mount = planWorktreeMount(RELATIVE, layout);
+		expect(mount).toEqual({
+			kind: "overlay",
+			commonDir: COMMON,
+			containerCommonDir: FIXED,
+			dotGitFile: `${RECORD}/devhub-container-gitdir`,
+			dotGitContent: `gitdir: ${FIXED}/worktrees/vscode-pahcer-ui_5\n`,
+			containerDotGit: "/workspace/.git",
+		});
 		expect(upArguments(mount)).toEqual([
 			"--mount",
-			`type=bind,source=${COMMON},target=${COMMON}`,
-		]);
-	});
-
-	it("quotes a path with a comma the way the CLI does", () => {
-		const commonDir = "/Users/me/a,b/.git";
-		expect(upArguments({ kind: "bind", commonDir })).toEqual([
+			`type=bind,source=${COMMON},target=${FIXED}`,
 			"--mount",
-			`type=bind,source="${commonDir}",target="${commonDir}"`,
+			`type=bind,source=${RECORD}/devhub-container-gitdir,target=/workspace/.git,readonly`,
 		]);
 	});
 
-	it("says, rather than fixes, a relative link with a CLI too old for it", () => {
+	it("works however deep the relative path goes", () => {
+		// `../../../x/.git` from `/workspace` would escape `/`; the fixed path
+		// does not care.
+		const deep: WorktreeFacts = {
+			toplevel: "/Users/me/a/b/c/wt",
+			gitDir: "/Users/me/x/.git/worktrees/wt",
+			commonDir: "/Users/me/x/.git",
+			dotGit: "gitdir: ../../../../x/.git/worktrees/wt\n",
+		};
 		const mount = planWorktreeMount(
-			worktree("gitdir: ../widget/.git/worktrees/widget-128\n"),
-			false,
+			deep,
+			containerLayout(
+				deep.toplevel,
+				deep.toplevel,
+				{
+					workspaceMount: `source=${deep.toplevel},target=/workspace,type=bind`,
+				},
+				"/workspace",
+			),
 		);
-		expect(mount.kind).toBe("unsupported");
-		expect(upArguments(mount)).toEqual([]);
-		expect(missingMountAdvice("the container", "abc", mount)).toContain(
-			MOUNT_COMMON_DIR_FLAG,
+		expect(mount.kind).toBe("overlay");
+		if (mount.kind !== "overlay") return;
+		expect(mount.containerDotGit).toBe("/workspace/.git");
+		expect(mount.containerCommonDir).toBe(
+			containerCommonDir("/Users/me/x/.git"),
 		);
 	});
 
-	it("leaves a worktree it cannot read alone", () => {
-		expect(planWorktreeMount(worktree(undefined), true)).toEqual({
-			kind: "none",
+	it("tells the person to recreate a container made without the mounts", () => {
+		const mount = planWorktreeMount(RELATIVE, layout);
+		const before = [{ source: WORKTREE, destination: "/workspace" }];
+		expect(hasMount(mount, before)).toBe(false);
+		expect(missingMountAdvice("the container", "c0ffee", mount)).toContain(
+			"docker rm -f c0ffee",
+		);
+		// The common dir at its host path (the old absolute fallback) is not it.
+		expect(
+			hasMount(mount, [...before, { source: COMMON, destination: COMMON }]),
+		).toBe(false);
+		expect(
+			hasMount(mount, [
+				...before,
+				{ source: `${COMMON}/`, destination: FIXED },
+				{
+					source: `${RECORD}/devhub-container-gitdir`,
+					destination: "/workspace/.git",
+				},
+			]),
+		).toBe(true);
+	});
+
+	it("writes the .git file only when it is not there", () => {
+		const command = dotGitFileCommand(planWorktreeMount(RELATIVE, layout));
+		expect(command?.slice(0, 3)).toEqual([
+			"sh",
+			"-c",
+			'[ -f "$1" ] || printf "%s" "$2" > "$1"',
+		]);
+		expect(dotGitFileCommand({ kind: "none" })).toBeUndefined();
+	});
+});
+
+describe("the CLI's default /workspaces mount", () => {
+	it("puts the .git file over /workspaces/<name>/.git", () => {
+		const layout = containerLayout(WORKTREE, WORKTREE, {}, undefined);
+		expect(layout).toEqual({
+			kind: "single",
+			containerToplevel: "/workspaces/vscode-pahcer-ui_5",
+		});
+		const mount = planWorktreeMount(RELATIVE, layout);
+		expect(mount.kind === "overlay" && mount.containerDotGit).toBe(
+			"/workspaces/vscode-pahcer-ui_5/.git",
+		);
+	});
+
+	it("follows read-configuration's workspaceFolder when it is given", () => {
+		expect(
+			containerLayout(WORKTREE, WORKTREE, {}, "/workspaces/vscode-pahcer-ui_5"),
+		).toEqual({
+			kind: "single",
+			containerToplevel: "/workspaces/vscode-pahcer-ui_5",
 		});
 	});
 });
 
-describe("asking about an existing container", () => {
-	const cli = { kind: "cli", commonDir: COMMON } as const;
+describe("an absolute link", () => {
+	it("gets the same two mounts", () => {
+		const layout = containerLayout(WORKTREE, WORKTREE, {}, "/workspaces/w");
+		expect(planWorktreeMount(ABSOLUTE, layout)).toEqual(
+			planWorktreeMount(RELATIVE, layout),
+		);
+	});
+});
 
-	it("passes the flag to read-configuration only for a container that has the mount", () => {
-		// The flag moves the workspace folder, and a container created without
-		// it has the folder where it always was.
-		expect(readConfigurationArguments(cli, true)).toEqual([
-			MOUNT_COMMON_DIR_FLAG,
-		]);
-		expect(readConfigurationArguments(cli, false)).toEqual([]);
-		expect(
-			readConfigurationArguments({ kind: "bind", commonDir: COMMON }, true),
-		).toEqual([]);
+describe("what is left alone or only said", () => {
+	const layout = { kind: "single", containerToplevel: "/w" } as const;
+
+	it("adds nothing for the main checkout or an unreadable worktree", () => {
+		expect(planWorktreeMount({ ...ABSOLUTE, gitDir: COMMON }, layout)).toEqual({
+			kind: "none",
+		});
+		expect(planWorktreeMount(undefined, layout)).toEqual({ kind: "none" });
+		expect(planWorktreeMount(worktree(undefined), layout)).toEqual({
+			kind: "none",
+		});
 	});
 
-	it("tells the person to recreate a container made without the mount", () => {
-		const advice = missingMountAdvice("the container", "abc123", cli);
-		expect(advice).toContain("docker rm -f abc123");
-		expect(advice).toContain(COMMON);
-		expect(missingMountAdvice("x", "abc", { kind: "none" })).toBeUndefined();
+	it("says what a Docker Compose definition needs", () => {
+		const compose = containerLayout(
+			WORKTREE,
+			WORKTREE,
+			{ dockerComposeFile: "compose.yml" },
+			"/workspace",
+		);
+		expect(compose).toEqual({ kind: "compose" });
+		for (const facts of [RELATIVE, ABSOLUTE]) {
+			const mount = planWorktreeMount(facts, compose);
+			expect(mount.kind).toBe("unsupported");
+			expect(upArguments(mount)).toEqual([]);
+			expect(missingMountAdvice("x", "a", mount)).toContain(FIXED);
+		}
+	});
+
+	it("says, rather than guesses, when the layout is unknown", () => {
+		expect(planWorktreeMount(RELATIVE, undefined).kind).toBe("unsupported");
+		expect(missingMountAdvice("x", "a", { kind: "none" })).toBeUndefined();
+	});
+
+	it("quotes a path with a comma the way the CLI does", () => {
+		const mount = planWorktreeMount(
+			{
+				toplevel: "/a,b/wt",
+				gitDir: "/a,b/r/.git/worktrees/wt",
+				commonDir: "/a,b/r/.git",
+				dotGit: "gitdir: ../r/.git/worktrees/wt\n",
+			},
+			layout,
+		);
+		expect(upArguments(mount)[1]).toContain('source="/a,b/r/.git"');
 	});
 });

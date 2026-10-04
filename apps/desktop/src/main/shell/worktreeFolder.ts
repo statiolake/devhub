@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { RuntimeFileError, type Runtime } from "../runtime/runtime.js";
 import {
 	pruneWorktrees,
+	unlockWorktree,
 	removeWorktree,
 	workspaceFailure,
 	type GitCommand,
@@ -190,6 +191,8 @@ export async function disposeWorktreeFolder(
 	// half-finished `git worktree remove`, and it is the only thing that
 	// authorises the fallback to delete anything.
 	const folder = await readWorktreeFolder(command.runtime, root);
+	// DevHub locks the worktrees it creates; a lock stops both remove and prune.
+	await unlockWorktree(command, mainWorktree, root);
 	if (!(await folderIsDirectory(command.runtime, root))) {
 		await pruneWorktrees(command, mainWorktree);
 		return;

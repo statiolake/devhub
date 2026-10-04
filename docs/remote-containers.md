@@ -48,16 +48,16 @@ same slot.
 
 ## Where things run
 
-| | runs on |
-| --- | --- |
-| the workbench's remote extension host, extensions, language servers | the container |
-| tasks and the debugger (the automation shell) | the container |
-| the editor's DevHub terminal | the Workspace's machine — see below |
-| DevHub terminals, the tmux server behind them | the Workspace's machine |
-| Agents, TUI and GUI | the Workspace's machine |
-| git, worktrees, branch and pull request rows | the Workspace's machine |
-| `docker` and `devcontainer` | the Workspace's machine |
-| the `devhub` command inside the container | the container, reaching DevHub through a relay |
+|                                                                     | runs on                                        |
+| ------------------------------------------------------------------- | ---------------------------------------------- |
+| the workbench's remote extension host, extensions, language servers | the container                                  |
+| tasks and the debugger (the automation shell)                       | the container                                  |
+| the editor's DevHub terminal                                        | the Workspace's machine — see below            |
+| DevHub terminals, the tmux server behind them                       | the Workspace's machine                        |
+| Agents, TUI and GUI                                                 | the Workspace's machine                        |
+| git, worktrees, branch and pull request rows                        | the Workspace's machine                        |
+| `docker` and `devcontainer`                                         | the Workspace's machine                        |
+| the `devhub` command inside the container                           | the container, reaching DevHub through a relay |
 
 A container is not a `Runtime`. `ContainerHost` (`main/runtime/container.ts`)
 shells into it for the half that is about shells — `$HOME`, the server
@@ -82,18 +82,15 @@ Only the `devhub` profile moves, and the rule is one line: **the `devhub`
 terminal runs on the Workspace's machine; every other profile runs in the
 container.** `devhub` is the default unless the person set
 `terminal.integrated.defaultProfile.linux` themselves (see "The profile is
-`devhub`" in `remote-ssh.md`), so with nothing set Ctrl+`, the `+` button and
-New Terminal create the DevHub terminal on the Workspace's machine, and
-`devhub` picked from the list does at any time. `bash`, `sh` or any other
-profile chosen from the profile list (Create New Terminal (With Profile), the
-`+` button's menu) — or set as the default — is a terminal on the container's
+`devhub`" in `remote-ssh.md`), so with nothing set Ctrl+`, the `+`button and
+New Terminal create the DevHub terminal on the Workspace's machine, and`devhub`picked from the list does at any time.`bash`, `sh`or any other
+profile chosen from the profile list (Create New Terminal (With Profile), the`+`button's menu) — or set as the default — is a terminal on the container's
 remote pty host, as in any Dev Containers window, and the list shows the
-container's own shells after `devhub`. Tasks, the debugger and a terminal an
+container's own shells after`devhub`. Tasks, the debugger and a terminal an
 extension makes for itself (Code Runner's) stay with the container too, as a
 plain container shell: neither the automation path nor an extension's terminal
 ever resolves to the DevHub launcher (patch 0003, see `remote-ssh.md`). Create
-New Integrated Terminal (Local) is the DevHub terminal as well while `devhub`
-is the default: it asks for this Mac by a `file:` cwd and no profile, and on
+New Integrated Terminal (Local) is the DevHub terminal as well while `devhub`is the default: it asks for this Mac by a`file:` cwd and no profile, and on
 this Mac the terminal is the Workspace's tmux session, not a bare login shell
 beside it. With another default chosen it is upstream's, a login shell on this
 Mac.
@@ -109,7 +106,7 @@ JavaScript Debug Terminal) comes from the remote extension host. Patch 0003
 does not wait on, filter or replace that answer; it only puts `devhub` in
 front of it and leaves out a profile named `devhub` or one that runs this
 Mac's launcher, which no container shell does. So a list holding `devhub`
-*alone* — not even `sh` or a contributed profile — is a window whose server
+_alone_ — not even `sh` or a contributed profile — is a window whose server
 never answered: no server for the container's platform in this DevHub (a
 source run without `scripts/build_reh.py`; see "A source run uses servers
 built in the checkout" in `remote-ssh.md`) or a connection that did not come
@@ -145,36 +142,54 @@ touches the repository's `devcontainer.json`:
   are left alone: `git worktree repair --relative-paths` converts one, and is
   the person's to run, because a git older than 2.48 (an old container image's,
   say) cannot read relative links.
-- **The repository's `.git` is mounted beside the worktree** when DevHub runs
-  `devcontainer up` for a linked worktree (`runtime/worktreeMount.ts`). The
-  main checkout, and any folder that is not a worktree, gets nothing extra.
-  - Relative link: the `@devcontainers/cli`'s own
-    `--mount-git-worktree-common-dir` (off by default; its help says it
-    "requires the worktree to be created with relative paths"). It mounts the
-    worktree and the common dir under `/workspaces` with their relative layout
-    kept, so the worktree's folder in the container becomes
-    `/workspaces/<parent>/<worktree>`; `read-configuration` is given the flag
-    too, but only for a container whose `docker inspect` shows the mount. Used
-    only when the machine's `devcontainer up --help` lists the flag; a CLI
-    without it gets no mount and a line in the build log saying to update it.
-    The flag is not applied by the CLI to Docker Compose definitions or to a
-    definition with its own `workspaceMount`.
-  - Absolute link (a worktree from git < 2.48): DevHub adds
-    `--mount type=bind,source=<common dir>,target=<common dir>` — the same
-    absolute path inside, read-write — so the link resolves. The record's
-    back-pointer still names the host path, so do not run `git worktree prune`
-    inside such a container.
+- **The repository's `.git` is mounted at a fixed path, and the container
+  sees its own `.git` file** when DevHub runs `devcontainer up` for a linked
+  worktree (`runtime/worktreeMount.ts`). Following the host link from the
+  container's workspace folder does not work in general: with a definition's
+  own `workspaceMount` at `/workspace`, `gitdir: ../vscode-pahcer-ui/.git/...`
+  resolved to `/vscode-pahcer-ui/.git`, which nothing mounted (the field
+  failure `fatal: not a git repository: /workspace/../vscode-pahcer-ui/...`),
+  and a deeper relative path can escape `/` or land inside the worktree. So,
+  for every worktree, relative or absolute link, default or custom
+  `workspaceMount`:
+  - `--mount type=bind,source=<common dir>,target=/opt/devhub/git/<repo>-<hash>.git`
+    (read-write; the hash is of the host path, so two repositories of one name
+    never meet);
+  - `--mount type=bind,source=<common dir>/worktrees/<name>/devhub-container-gitdir,target=<container workspace folder>/.git,readonly`,
+    a file over the worktree's own `.git` inside the workspace mount, saying
+    `gitdir: /opt/devhub/git/<repo>-<hash>.git/worktrees/<name>`. The host's
+    `.git` is untouched.
+
+  The container workspace folder is read from `read-configuration` (a
+  `workspaceMount` target, else `workspace.workspaceFolder`, else
+  `/workspaces/<name>`). The overlay file is written on the Docker machine
+  before `up` only if it is missing, and never rewritten: Docker Desktop binds
+  a single file by inode (a rename-replace leaves the container on the old
+  file) and turns a source that does not exist into a directory. If it cannot
+  be written, no mount is added and the build log says so. The CLI's
+  `--mount-git-worktree-common-dir` is no longer used: it covered only relative
+  links under the default mount, and moved the workspace folder.
+
+  Docker Compose definitions get nothing added; the build log and the advice
+  name the two volumes to add to the service.
+
+  The record's back-pointer (`<common>/worktrees/<name>/gitdir`) names the
+  host path, which is not there in the container, so `git worktree prune` run
+  inside would delete the record (`worktree list` shows it prunable).
+  `status`, `commit`, `fetch`, `push`, `log` and `branch` need only the forward
+  link. DevHub therefore locks the worktrees it creates (`git worktree lock
+--reason "devhub: ..."`, which prune respects) and unlocks before removing
+  one; a worktree made by hand is not locked.
 
 A mount is fixed when a container is created. A worktree's container created
-before this (or by a CLI without the flag) keeps working as before, without
-git, and DevHub logs `… was created without the repository's .git mounted …
-Remove the container (docker rm -f <id>) and reopen the editor in its
-container` once per container. Removing it and choosing Reopen Editor in
-Container builds it with the mount.
+without these mounts keeps working, without git, and DevHub logs `… was
+created without the repository's .git mounted … Remove the container (docker
+rm -f <id>) and reopen the editor in its container` once per container.
+Removing it and choosing Reopen Editor in Container builds it with the mounts.
 
-Not verified end to end: this was written and unit-tested on Linux without
-Docker or macOS, against the 0.89 CLI's source; Docker Desktop's file sharing
-must include the repository's folder (it does for anything under `/Users`).
+Not verified end to end: written and unit-tested on Linux without Docker or
+macOS; Docker Desktop's file sharing must include the repository's folder (it
+does for anything under `/Users`).
 
 ### `devhub` inside the container
 
@@ -226,7 +241,7 @@ VS Code's own **Close Remote Connection** is not in a DevHub workbench (patch
 0006): upstream it reopens the window empty and local, and DevHub has no empty
 window — the request became Scratch, and the editor stayed where it was. The
 way out of a container is Reopen Folder Locally, in the same menu; an SSH
-Workspace *is* its host and is closed from the sidebar.
+Workspace _is_ its host and is closed from the sidebar.
 
 Patch 0005 decides "this is DevHub's workbench" by the product's `hostCommit`,
 which every DevHub build states. An earlier version of that patch had decided it by the window's
@@ -234,7 +249,7 @@ DevHub terminal launcher, and a window whose launcher could not be installed
 has none: that window got Close Remote Connection back, in the palette, the
 File menu and the remote menu beside Reopen Folder Locally, and choosing it
 was the Scratch switch the patch was written to remove. Behind both, DevHub
-main answers an empty window asked for *in place of* a workbench attached to
+main answers an empty window asked for _in place of_ a workbench attached to
 a dev container (`windowToUse`, with no files) as Reopen Folder Locally of
 that Workspace (`AppController.reopenLocallyInsteadOfEmpty`), not as Scratch —
 so upstream's way out, from wherever it is still reached, ends where DevHub's
@@ -282,7 +297,7 @@ folder's own machine, of the definition chosen.
 `devcontainer up` may build an image, so it runs only on an explicit act: a
 reattach from the editor's commands. Restoring an attached editor at launch, a
 workbench rebuilt by the supervisor, and the resolver's first attempt only
-*start* a container that exists (`ContainerHost.prepare`); one that was never
+_start_ a container that exists (`ContainerHost.prepare`); one that was never
 built refuses with the command that builds it, and the row's Reopen Editor in
 Container (which builds it) and Reopen Editor Locally are the ways on. Nothing
 on a timer reaches `up`.
@@ -300,7 +315,7 @@ already running when the tool attached. DevHub's rule fills that in:
   bring-up ran — is stopped the way its definition says when the editor
   leaves it: Reopen Folder Locally, Switch Container, or the Workspace
   closed. `stopContainer` is `docker stop <id>`; `stopCompose` is `docker
-  compose --project-name <p> stop` with the project read from the container's
+compose --project-name <p> stop` with the project read from the container's
   `com.docker.compose.project` label; `none` leaves it.
 - A container DevHub **found running** is left running, whatever the
   definition says.
@@ -465,7 +480,7 @@ What changed is said in one notice (`state_migrated`).
 ## Where to look when it does not connect
 
 1. **`docker ps -a --filter label=devcontainer.local_folder=<folder>
-   --filter label=devcontainer.config_file=<definition>`** — the exact
+--filter label=devcontainer.config_file=<definition>`** — the exact
    question DevHub asks (on the host, for an SSH Workspace).
 2. **The build log** (Dev Containers: Show Build Log), or
    **`devcontainer up --workspace-folder <folder> --config <definition>`** by
@@ -476,7 +491,7 @@ What changed is said in one notice (`state_migrated`).
    it.
 4. **The relay:** `docker exec <id> ls -l ~/.devhub-server/relay.cjs`.
 5. **The extension host log** in the window. `CANNOT use API proposal:
-   resolvers.` means the `product.json` grant for `devhub.devhub-remote` did
+resolvers.` means the `product.json` grant for `devhub.devhub-remote` did
    not apply.
 
 ## The checklist
@@ -487,11 +502,11 @@ What changed is said in one notice (`state_migrated`).
    it runs, and a definition that does not build offers Show Build Log.
 2. The window comes up with `Dev Container: <folder>` (and the definition's
    name) in the status bar; the explorer shows the bind-mounted folder.
-3. Ctrl+` (with no `terminal.integrated.defaultProfile.linux` set): the
-   terminal is `tmux - Local` with the tmux icon and attached to the
-   Workspace's own session on the Workspace's machine
-   (`tmux -L <socket> list-clients`); the `+` menu lists `devhub` first, as
-   the default. Set `defaultProfile.linux` to `bash`: Ctrl+` is a container
+3. Ctrl+`(with no`terminal.integrated.defaultProfile.linux`set): the
+terminal is`tmux - Local` with the tmux icon and attached to the
+Workspace's own session on the Workspace's machine
+(`tmux -L <socket> list-clients`); the `+`menu lists`devhub`first, as
+the default. Set`defaultProfile.linux`to`bash`: Ctrl+` is a container
    shell, and `devhub` from the `+` menu is still the Workspace's session.
    Create New Terminal (With Profile) → `bash`: a shell in the container, in
    the folder, for a folder that is a subfolder of a repository too.

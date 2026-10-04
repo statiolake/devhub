@@ -439,6 +439,24 @@ export async function removeWorktree(
  * the *next* `git worktree add` on that path refuse. Pruning is safe to run
  * when there is nothing to prune, which is what lets the step be repeated.
  */
+/** Why DevHub locks the worktrees it creates. */
+export const WORKTREE_LOCK_REASON =
+	"devhub: keeps git worktree prune in a dev container from forgetting it";
+
+/**
+ * Unlock a worktree DevHub locked, before it is removed or pruned. Never a
+ * failure: a worktree that is not locked (or not there) is what is wanted.
+ */
+export async function unlockWorktree(
+	command: GitCommand,
+	mainWorktree: string,
+	worktree: string,
+): Promise<void> {
+	await runGit(command, ["worktree", "unlock", worktree], {
+		cwd: mainWorktree,
+	}).catch(() => undefined);
+}
+
 export async function pruneWorktrees(
 	command: GitCommand,
 	mainWorktree: string,
@@ -995,6 +1013,15 @@ export async function ensureWorktree(
 		// Checking out a branch that only exists on `origin` fetches it.
 		timeoutMs: NETWORK_TIMEOUT_MS,
 	});
+	// Locked, so a `git worktree prune` run inside its dev container — where
+	// the record's back-pointer names a path that is not there — cannot forget
+	// it (see `runtime/worktreeMount.ts`). `disposeWorktreeFolder` unlocks it
+	// before removing. A git that cannot lock leaves it unlocked, as before.
+	await runGit(
+		command,
+		["worktree", "lock", "--reason", WORKTREE_LOCK_REASON, target],
+		{ cwd: directory },
+	).catch(() => undefined);
 	return target;
 }
 

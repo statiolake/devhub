@@ -100,13 +100,14 @@ import type {
 import type { TmuxDelivery } from "./tmuxDelivery.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 import {
-	canonicalPath,
+	containerLayout,
+	dotGitFileCommand,
+	hasMount,
 	missingMountAdvice,
-	MOUNT_COMMON_DIR_FLAG,
 	planWorktreeMount,
 	parseRevParse,
-	readConfigurationArguments,
 	upArguments,
+	type ContainerLayout,
 	type WorktreeMount,
 } from "./worktreeMount.js";
 
@@ -882,15 +883,27 @@ export class ContainerHost
 		// A worktree's repository is mounted beside it, so git works inside:
 		// see `worktreeMount.ts`. Asked before the log begins, so the command
 		// the log names is the one that ran.
-		const mount = await this.#worktreeMount();
+		let mount = await this.#worktreeMount();
+		// The container's `.git` file has to exist before `up`, or Docker makes
+		// a directory in its place; written once, never rewritten. If it cannot
+		// be written, no mount is added at all, and the log says why.
+		let unwritten: string | undefined;
+		const write = dotGitFileCommand(mount);
+		if (mount.kind === "overlay" && write !== undefined) {
+			const written = await this.#machine.probe?.(write);
+			if (written?.success !== true) {
+				unwritten = `DevHub: could not write ${mount.dotGitFile}, so the repository's .git is not mounted and git will not work inside the container.`;
+				mount = { kind: "none" };
+			}
+		}
 		const extra = upArguments(mount);
 		const log = BuildLogFile.begin(
 			this.#buildLog,
 			`devcontainer up --workspace-folder ${this.#workspaceFolder} --config ${this.#configPath}${extra.map((one) => ` ${one}`).join("")}${this.#machine.where}`,
 		);
-		if (mount.kind === "unsupported") {
-			log.write(Buffer.from(`DevHub: ${mount.reason}\n`, "utf8"));
-		}
+		const said =
+			mount.kind === "unsupported" ? `DevHub: ${mount.reason}` : unwritten;
+		if (said !== undefined) log.write(Buffer.from(`${said}\n`, "utf8"));
 		let result: CommandOutput;
 		try {
 			result = await this.#devcontainerCommand(
@@ -1016,7 +1029,7 @@ export class ContainerHost
 			? parseRevParse(revParse.stdout.toString("utf8"))
 			: undefined;
 		// The main checkout, or no repository: nothing more to ask, and in
-		// particular no `devcontainer --help`, which is a Node start.
+		// particular no `read-configuration`, which is a Node start.
 		if (facts === undefined || facts.gitDir === facts.commonDir) {
 			return { kind: "none" };
 		}
@@ -1024,14 +1037,32 @@ export class ContainerHost
 			"cat",
 			posix.join(facts.toplevel, ".git"),
 		]);
-		const help = await machine.devcontainer(["up", "--help"], PROBE_TIMEOUT_MS);
-		const helpText = `${help.stdout.toString("utf8")}${help.stderr.toString("utf8")}`;
+		// Where the definition puts the folder, so the `.git` file lands over
+		// the worktree's own: a custom `workspaceMount` puts it anywhere.
+		let layout: ContainerLayout | undefined;
+		try {
+			const configured = await this.#devcontainerCommand(
+				"read-configuration",
+				PROBE_TIMEOUT_MS,
+			);
+			const read = parseReadConfiguration(configured.stdout.toString("utf8"));
+			if (read !== undefined) {
+				layout = containerLayout(
+					this.#workspaceFolder,
+					facts.toplevel,
+					read.configuration,
+					read.workspaceFolder,
+				);
+			}
+		} catch {
+			layout = undefined;
+		}
 		return planWorktreeMount(
 			{
 				...facts,
 				dotGit: dotGit.success ? dotGit.stdout.toString("utf8") : undefined,
 			},
-			helpText.includes(MOUNT_COMMON_DIR_FLAG),
+			layout,
 		);
 	}
 
@@ -1048,15 +1079,22 @@ export class ContainerHost
 		const inspected = await this.#docker_([
 			"inspect",
 			"--format",
-			"{{range .Mounts}}{{.Source}}{{println}}{{end}}",
+			"{{range .Mounts}}{{.Source}}\t{{.Destination}}{{println}}{{end}}",
 			containerId,
 		]);
 		const mounted =
 			inspected.code === 0 &&
-			inspected.stdout
-				.toString("utf8")
-				.split("\n")
-				.some((line) => canonicalPath(line.trim()) === mount.commonDir);
+			hasMount(
+				mount,
+				inspected.stdout
+					.toString("utf8")
+					.split("\n")
+					.filter((line) => line.trim().length > 0)
+					.map((line) => {
+						const [source = "", destination = ""] = line.split("\t");
+						return { source: source.trim(), destination: destination.trim() };
+					}),
+			);
 		if (!mounted && !this.#advised.has(containerId)) {
 			this.#advised.add(containerId);
 			const advice = missingMountAdvice(this.machineName, containerId, mount);
@@ -1067,22 +1105,17 @@ export class ContainerHost
 
 	/** `devcontainer read-configuration` for this folder and definition. */
 	async #readConfiguration(containerId?: string): Promise<ReadConfiguration> {
-		// The CLI's worktree flag moves the workspace folder, so it is passed
-		// only for a container that was created with it: asking about one that
-		// was not would name a folder that is not there.
-		let extra: readonly string[] = [];
+		// A container met here is checked for the worktree's mounts once, so
+		// one made without them is reported (see `#hasWorktreeMount`).
 		if (containerId !== undefined) {
-			const mount = await this.#worktreeMount();
-			extra = readConfigurationArguments(
-				mount,
-				await this.#hasWorktreeMount(containerId, mount),
-			);
+			await this.#hasWorktreeMount(
+				containerId,
+				await this.#worktreeMount(),
+			).catch(() => false);
 		}
 		const result = await this.#devcontainerCommand(
 			"read-configuration",
 			PROBE_TIMEOUT_MS,
-			undefined,
-			extra,
 		);
 		const stdout = result.stdout.toString("utf8");
 		const read = parseReadConfiguration(stdout);
