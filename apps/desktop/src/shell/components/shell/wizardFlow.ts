@@ -236,6 +236,10 @@ export async function runWizard(
       // pretending otherwise would leave them retyping a URL that was fine.
       if (!spoken) throw error;
       failure = spoken.summary;
+      // A step that failed before asking anything has no question to show the
+      // reason under, and re-running it would fail the same way again. The
+      // reason goes under the question before it instead.
+      if (!asked) walked.pop();
       step = walked.pop();
     }
   }

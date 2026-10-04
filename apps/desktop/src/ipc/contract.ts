@@ -151,6 +151,11 @@ export interface AssignmentBranchWire {
 	readonly reachable: boolean;
 	/** Where it is already checked out, when it is. Opening that is the offer. */
 	readonly checkedOutAt?: string;
+	/**
+	 * A pull request's state, when GitHub said: a merged or closed one whose
+	 * head is gone is stopped before the branch question with that reason.
+	 */
+	readonly pullRequestState?: "open" | "closed" | "merged";
 }
 
 /**

@@ -20,7 +20,7 @@
  * it back to whichever step caused it.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import type { AgentChoice } from "../components/shell/AgentProfilePicker";
 import type {
   AssignmentBranchWire,
@@ -53,7 +53,7 @@ import {
   type WorkItem,
 } from "../../model/worktrees";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
-import { spokenFailure, toAppError } from "../failure";
+import { spokenFailure, toAppError, UserFacingFailure } from "../failure";
 import { usePicker } from "./PickerContext";
 import { FolderAgentPicker } from "./AgentPickerSheet";
 
@@ -422,9 +422,26 @@ function branchStep(
       if (!spoken) throw error;
       refusal = spoken.summary;
     }
+    // An Issue's branch that cannot be had is no branch at all: the answer is
+    // to create one, not to report that it is missing. Main drops it already
+    // (`issueBranchPlan`); this holds the sheet to the same rule whatever main
+    // sent, so "is on neither this machine…" is only ever said of a pull
+    // request's head.
+    if (!plan.reachable && plan.checkedOutAt === undefined) {
+      // A pull request is work on its head branch and nothing else: no
+      // `feature/<n>-wip` is offered for one. A head that cannot be had stops
+      // the flow here, before the branch question, with the reason under the
+      // question before it.
+      if (item.kind === "pull" && plan.branch !== undefined) {
+        throw new UserFacingFailure(unreachableHead(item, plan));
+      }
+      plan = { reachable: false };
+    }
     const wip = wipBranchForIssue(item.number);
     const answer = await input.ask({
-      ...SHEET,
+      // Every answer is a pinned row, so "Nothing to choose from." would sit
+      // above a list that has rows in it. Only the no-match text applies.
+      emptyNoMatch: SHEET.emptyNoMatch,
       title: `Where to work on ${itemLabel(item)}`,
       question: `Choose where in ${folderName(root)} the agent works. The agent is chosen next.`,
       // Every row is an answer to the question rather than a name to search
@@ -432,7 +449,7 @@ function branchStep(
       // no list here that typing could narrow.
       items: [],
       pinned: folderRows(plan, root, item, wip),
-      note: refusal ?? unreachableBranch(plan),
+      note: refusal,
     });
     const choice: FolderChoice =
       answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined
@@ -486,7 +503,8 @@ function folderRows(
       : undefined;
   // Once the work's branch *is* `feature/128-wip`, rows that would "create"
   // it are not answers of their own.
-  const offerNew = branch !== wip;
+  // A pull request's branch is its head; a new one is never offered for it.
+  const offerNew = work.kind !== "pull" && branch !== wip;
   const rows: PickerItem[] = [];
   if (existing !== undefined && checkedOutAt !== root) {
     rows.push(
@@ -558,18 +576,24 @@ function besideRoot(root: string, path: string): string {
   return parent(path) === parent(root) ? `../${baseName(path)}` : path;
 }
 
-/** The branch exists and is somewhere this clone cannot see. */
-function unreachableBranch(plan: AssignmentBranchWire): ReactNode {
-  if (plan.branch === undefined || plan.reachable) return undefined;
-  return (
-    <Wrong
-      what={
-        plan.fork === undefined
-          ? `${plan.branch} is on neither this machine nor any remote this clone has.`
-          : `${plan.branch} is in ${plan.fork}, which this clone has no remote for, so it cannot be checked out here.`
-      }
-    />
-  );
+/**
+ * Why a pull request's head cannot be worked on here, in the words that are
+ * true of it: merged or closed with the branch deleted, out of a fork with no
+ * remote, or simply not on any remote this clone has.
+ */
+function unreachableHead(item: GitHubItem, plan: AssignmentBranchWire): string {
+  const label = itemLabel(item);
+  const branch = plan.branch ?? "";
+  if (plan.fork !== undefined) {
+    return `${branch} is in ${plan.fork}, which this clone has no remote for, so ${label} cannot be checked out here.`;
+  }
+  if (plan.pullRequestState === "merged") {
+    return `${label} is a merged pull request, and its branch ${branch} no longer exists.`;
+  }
+  if (plan.pullRequestState === "closed") {
+    return `${label} is a closed pull request, and its branch ${branch} no longer exists.`;
+  }
+  return `${branch}, the branch of ${label}, is on neither this machine nor any remote this clone has.`;
 }
 
 /**

@@ -416,6 +416,8 @@ export interface PullRequestHead {
 	readonly branch: string;
 	readonly owner: string;
 	readonly repository: string;
+	/** Open, closed unmerged, or merged — absent when GitHub did not say. */
+	readonly state?: "open" | "closed" | "merged";
 }
 
 /**
@@ -441,6 +443,7 @@ interface GraphQlAnswer {
 				| null;
 			readonly pullRequest?: {
 				readonly headRefName?: string | null;
+				readonly state?: string | null;
 				readonly headRepository?: {
 					readonly name: string;
 					readonly owner: { readonly login: string };
@@ -705,6 +708,7 @@ export async function readPullRequestHead(
 			query: `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){ pullRequest(number:$number){
     headRefName
+    state
     headRepository{ name owner{ login } }
   } }
 }`,
@@ -729,10 +733,18 @@ export async function readPullRequestHead(
 	// the pull request was opened. The pull request's own repository is the only
 	// remaining candidate, and it is the one that is right for every pull request
 	// that was not from a fork — which is nearly all of them.
+	const state = head?.state?.toUpperCase();
 	return {
 		branch,
 		owner: head?.headRepository?.owner.login ?? pullRequest.owner,
 		repository: head?.headRepository?.name ?? pullRequest.repository,
+		...(state === "MERGED"
+			? { state: "merged" as const }
+			: state === "CLOSED"
+				? { state: "closed" as const }
+				: state === "OPEN"
+					? { state: "open" as const }
+					: {}),
 	};
 }
 

@@ -6543,12 +6543,15 @@ export class AppController {
 					);
 			if (remote)
 				await fetchBranchFrom(git, directory, remote, head.branch, cancel);
-			return this.branchWhereabouts(
+			const whereabouts = await this.branchWhereabouts(
 				git,
 				directory,
 				head.branch,
 				sameRepository ? undefined : `${head.owner}/${head.repository}`,
 			);
+			return head.state === undefined
+				? whereabouts
+				: { ...whereabouts, pullRequestState: head.state };
 		}
 		// GitHub's own record first — the branch its Create a branch button made
 		// — and only then the convention, which is a guess about a name and is

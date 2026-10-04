@@ -428,29 +428,92 @@ describe("assigning an Issue", () => {
     );
   });
 
-  it("says a fork's branch cannot be checked out here, and offers the rest", async () => {
-    // The branch exists and is in somebody else's copy. DevHub will not add a
-    // remote to somebody's repository on their behalf, so the row is not there
-    // — and the reason is, rather than a checkout that fails a step later.
+  it("stops before the branch question for a fork's branch this clone cannot reach", async () => {
+    // DevHub will not add a remote on somebody's behalf, and a pull request is
+    // work on its head and nothing else, so there is nothing to ask.
     mount({
       assignmentBranch: vi.fn().mockResolvedValue({
         branch: "patch-1",
         fork: "alice/widget",
         reachable: false,
+        pullRequestState: "open",
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", PULL_REQUEST);
+
+    expect(
+      await screen.findByText(
+        "patch-1 is in alice/widget, which this clone has no remote for, so example/widget#128 cannot be checked out here.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: /Where to work on/u }),
+    ).toBeNull();
+  });
+
+  it("stops before the branch question for a merged pull request whose branch was deleted", async () => {
+    // statiolake/dockim#3: merged into master, head deleted, no wip branch.
+    const { prepareIssueFolder } = mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "claude/auto-detect-container-ports",
+        reachable: false,
+        pullRequestState: "merged",
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", "https://github.com/example/widget/pull/3");
+
+    expect(
+      await screen.findByText(
+        "example/widget#3 is a merged pull request, and its branch claude/auto-detect-container-ports no longer exists.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: /Where to work on/u }),
+    ).toBeNull();
+    expect(screen.queryByText(/feature\/3-wip/u)).toBeNull();
+    expect(prepareIssueFolder).not.toHaveBeenCalled();
+  });
+
+  it("offers an open pull request's head and no new branch", async () => {
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "patch-1",
+        reachable: true,
+        pullRequestState: "open",
       }),
     } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
-    expect(
-      screen.getByText(
-        "patch-1 is in alice/widget, which this clone has no remote for, so it cannot be checked out here.",
-      ),
-    ).toBeVisible();
     expect(rowTitles()).toEqual([
-      "Create feature/128-wip in a new worktree",
-      "Create feature/128-wip in the root checkout",
+      "Open patch-1 in a new worktree",
+      "Open patch-1 in the root checkout",
+      "Open the root checkout as it is",
+    ]);
+    expect(screen.queryByText("Nothing to choose from.")).toBeNull();
+  });
+
+  it("offers a new branch, and says nothing is missing, for an Issue with no branch anywhere", async () => {
+    // A master-only repository and Issue #3: even if main sent the
+    // unreachable wip name back, an Issue's missing branch is one to create.
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "feature/3-wip",
+        reachable: false,
+      }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", "https://github.com/example/widget/issues/3");
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(screen.queryByText(/no longer exists|on neither/u)).toBeNull();
+    expect(screen.queryByText("Nothing to choose from.")).toBeNull();
+    expect(rowTitles()).toEqual([
+      "Create feature/3-wip in a new worktree",
+      "Create feature/3-wip in the root checkout",
       "Open the root checkout as it is",
     ]);
   });
@@ -580,7 +643,7 @@ describe("assigning an Issue", () => {
         .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
     } as unknown as Partial<PickerValue>);
 
-    await answer("Assign Issue", PULL_REQUEST);
+    await answer("Assign Issue", ISSUE);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(
@@ -723,8 +786,8 @@ describe("assigning an Issue", () => {
 
   it("orders the five answers: worktrees first, then the root checkout", async () => {
     // Read top to bottom that is the order the decision is considered in, and
-    // the branch this work already has leads, because a person assigning a pull
-    // request has decided what to work on and it is not a new branch — so it is
+    // the branch this work already has leads, because a person whose Issue has a
+    // branch has decided what to work on and it is not a new branch — so it is
     // also what Return takes on a sheet nobody has typed into.
     mount({
       assignmentBranch: vi
@@ -732,7 +795,7 @@ describe("assigning an Issue", () => {
         .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
     } as unknown as Partial<PickerValue>);
 
-    await answer("Assign Issue", PULL_REQUEST);
+    await answer("Assign Issue", ISSUE);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
     expect(rowTitles()).toEqual([

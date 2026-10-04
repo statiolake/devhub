@@ -875,6 +875,19 @@ describe("an Issue's branch that exists nowhere", () => {
 	});
 });
 
+describe("a merged pull request whose head was deleted (master-only repo, #3)", () => {
+	it("is refused rather than invented, in a worktree or the root", async () => {
+		await masterOrigin();
+		const merged = { kind: "pull", number: 3 } as const;
+		await expect(
+			ensureWorktree(command, repository, merged, "claude/gone"),
+		).rejects.toThrow(/on neither this machine nor any remote/u);
+		await expect(
+			switchRootBranch(command, repository, merged, "claude/gone"),
+		).rejects.toThrow(/on neither this machine nor any remote/u);
+	});
+});
+
 describe("a branch in the root checkout", () => {
 	it("is made from the default branch and switched to, without tracking it", async () => {
 		await masterOrigin();
