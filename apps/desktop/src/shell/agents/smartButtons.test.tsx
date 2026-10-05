@@ -424,6 +424,31 @@ describe("dragging the box", () => {
     });
   });
 
+  it("glides only when a drag enters or leaves a snap, not while following", () => {
+    mount({ over: { presentation: "gui" } });
+    const move = (x: number, y: number) =>
+      act(() => {
+        fireEvent.pointerMove(handle(), {
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+        });
+      });
+    fireEvent.pointerDown(handle(), {
+      button: 0,
+      clientX: 800,
+      clientY: 470,
+      pointerId: 1,
+    });
+    move(716, 460);
+    expect(box()).toHaveAttribute("data-anchored", "top");
+    expect(box()).not.toHaveAttribute("data-snapping");
+    move(400, 300);
+    expect(box()).not.toHaveAttribute("data-anchored");
+    expect(box()).toHaveAttribute("data-snapping");
+    fireEvent.pointerUp(handle(), { pointerId: 1 });
+  });
+
   it("forgets a drop back on the default spot rather than storing a copy", () => {
     const { dispatch } = mount({
       over: { presentation: "gui" },

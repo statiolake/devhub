@@ -150,6 +150,9 @@ interface Presence {
 /** How long the position transition stays on after a snap/dock/undock. */
 export const SMART_BUTTONS_SETTLE_MS = 260;
 
+/** How long a drag's position glides after it enters or leaves a snap. */
+export const SMART_BUTTONS_SNAP_MS = 200;
+
 /**
  * The lines to mount: the current ones, and for a moment each line that just
  * left, in the place it had, so its exit can play. With reduced motion a line
@@ -295,6 +298,32 @@ export function SmartButtons({
     readonly from: SmartButtonsOffset;
     readonly to: SmartButtonsSpot | undefined;
   }>();
+  // Mid-drag: "on" while snapped to the anchor, "off" while free. Only a
+  // change of this lets the position glide; otherwise the box tracks exactly.
+  const dragSnap =
+    drag?.to === undefined ? undefined : isAnchoredSpot(drag.to) ? "on" : "off";
+  const [snapping, setSnapping] = useState(false);
+  const lastSnap = useRef<string | undefined>(undefined);
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(() => () => clearTimeout(snapTimer.current), []);
+  useEffect(() => {
+    const before = lastSnap.current;
+    lastSnap.current = dragSnap;
+    if (dragSnap === undefined) {
+      clearTimeout(snapTimer.current);
+      setSnapping(false);
+      return;
+    }
+    if (before === undefined || before === dragSnap) return;
+    setSnapping(true);
+    clearTimeout(snapTimer.current);
+    snapTimer.current = setTimeout(
+      () => setSnapping(false),
+      SMART_BUTTONS_SNAP_MS,
+    );
+  }, [dragSnap]);
   if (lines.length === 0 && automatic.length === 0) return null;
 
   const spacing = SPACING[agent.presentation];
@@ -355,6 +384,7 @@ export function SmartButtons({
       {...(anchored === undefined ? {} : { "data-anchored": anchored })}
       {...(drag === undefined ? {} : { "data-dragging": "" })}
       {...(settling ? { "data-settling": "" } : {})}
+      {...(snapping && drag !== undefined ? { "data-snapping": "" } : {})}
       {...(offered.length === 0 && ticked.length === 0 && !menuOpen
         ? { "data-quiet": "" }
         : {})}

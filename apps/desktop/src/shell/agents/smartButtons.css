@@ -37,6 +37,15 @@
   transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+/* Mid-drag, entering or leaving a snap zone glides for a moment (set by the
+   component on that change only); otherwise the box tracks the pointer. */
+.smart-buttons[data-dragging][data-snapping] {
+  transition:
+    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    right 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    bottom 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 /* A line coming and going: fades and takes its height with it, so the stack
    closes up rather than jumping. An exiting line stays mounted until done. */
 @keyframes smart-button-enter {
@@ -80,7 +89,8 @@
 @media (prefers-reduced-motion: reduce) {
   .smart-buttons,
   .smart-buttons[data-settling]:not([data-dragging]),
-  .smart-buttons[data-dragging] {
+  .smart-buttons[data-dragging],
+  .smart-buttons[data-dragging][data-snapping] {
     transition: opacity 120ms linear;
   }
 
