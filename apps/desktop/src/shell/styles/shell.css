@@ -2039,14 +2039,14 @@ body.is-resizing-split {
  * the title is the one thing that gives way. Its end is faded by a mask, as
  * `.row-text`'s is, and not ellipsised.
  *
- * With a pull request, the button is pulled 20px under the trailing group — the
- * width of the pull request's mark, which is always the group's last — and its
- * padding puts the fade there. The title therefore slides under the mark, which
- * stays in its one column (it sits at the row's edge, not after the words), and
- * is raised above this button by coming later in the row.
+ * The title's box ends where the trailing group begins, so its fade is
+ * finished before it reaches the pull request's mark: the words never run
+ * underneath a button.
  */
 .sidebar-context-button.has-issue-title {
-  flex: none;
+  /* Yields before anything else on the line: the folder, the title's own
+     column and the marks are never what a narrow row clips. */
+  flex: 0 1 auto;
   max-width: 60%;
 }
 
@@ -2073,11 +2073,6 @@ body.is-resizing-split {
   );
 }
 
-.row-issue-title.has-pr {
-  margin-right: -20px;
-  padding-right: 20px;
-}
-
 .row-issue-title svg {
   width: 14px;
   height: 14px;
@@ -2096,4 +2091,30 @@ body.is-resizing-split {
 
 .sidebar[data-collapsed="true"] .row-issue-title {
   display: none;
+}
+
+/*
+ * A narrow Workspace row, where the line cannot hold everything.
+ *
+ * Priority, highest first: the folder (never clipped: it is `flex: none` and
+ * the name's button is what gives way), the pull request's mark with its
+ * badges, the name, then the Issue's icon and title and the editor's mark. The
+ * last two are dropped whole under 190px, rather than left to be cut in half;
+ * the Issue is still on the row's tooltip and one hover away on the name.
+ */
+.workspace-row {
+  container-name: workspace-row;
+  container-type: inline-size;
+}
+
+@container workspace-row (max-width: 190px) {
+  .row-issue-title,
+  .row-mark-editor {
+    display: none;
+  }
+
+  .sidebar-context-button.has-issue-title {
+    flex: 1 1 auto;
+    max-width: none;
+  }
 }
