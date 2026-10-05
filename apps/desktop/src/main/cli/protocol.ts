@@ -74,6 +74,9 @@ export type ReattachTargetWire =
 	| { readonly kind: "host" }
 	| { readonly configPath: string };
 
+/** Rebuild the container on the way: with the cache, or without. */
+export type RebuildWire = "cache" | "no-cache";
+
 export type ControlRequest =
 	| {
 			/**
@@ -293,6 +296,8 @@ export type ControlRequest =
 			readonly kind: "reattach-editor";
 			readonly window: WindowFolderWire;
 			readonly to: ReattachTargetWire;
+			/** Remove and rebuild the container first. See `RebuildWire`. */
+			readonly rebuild?: RebuildWire;
 	  }
 	| {
 			readonly kind: "terminal-profile";
@@ -500,6 +505,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				kind: "reattach-editor",
 				window: requireWindow(record["window"]),
 				to: requireReattachTarget(record["to"]),
+				...(record["rebuild"] === undefined
+					? {}
+					: { rebuild: requireRebuild(record["rebuild"]) }),
 			};
 		case "terminal-profile":
 			return {
@@ -536,6 +544,11 @@ function requireWindow(value: unknown): WindowFolderWire {
 		path: part("path"),
 		fsPath: part("fsPath"),
 	};
+}
+
+function requireRebuild(value: unknown): RebuildWire {
+	if (value === "cache" || value === "no-cache") return value;
+	throw new Error('rebuild must be "cache" or "no-cache"');
 }
 
 function requireReattachTarget(value: unknown): ReattachTargetWire {

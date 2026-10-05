@@ -9,6 +9,8 @@ import {
   offerReopenInContainer,
   refreshAvailability,
   reopenInContainer,
+  rebuildContainer,
+  rebuildContainerNoCache,
   reopenLocally,
   SHOW_BUILD_LOG,
   showBuildLog,
@@ -55,6 +57,7 @@ function world(options: {
   const logs: string[] = [];
   const context = new Map<string, unknown>();
   const reattached: ReattachTarget[] = [];
+  const rebuilds: (string | undefined)[] = [];
   const offered: string[][] = [];
   const api: CommandsApi = {
     windowFolder: () => ({ ...WINDOW, scheme: options.scheme ?? "file" }),
@@ -113,8 +116,9 @@ function world(options: {
         message: "",
         buildLog: `/logs/${configPath.split("/").at(-2) ?? ""}.log`,
       }),
-    reattach: (_window, to) => {
+    reattach: (_window, to, rebuild) => {
       reattached.push(to);
+      rebuilds.push(rebuild);
       return Promise.resolve(
         options.refuse === undefined
           ? { ok: true, message: "reattached" }
@@ -128,6 +132,7 @@ function world(options: {
     said,
     context,
     reattached,
+    rebuilds,
     offered,
     logs,
     offeredActions,
@@ -271,4 +276,29 @@ test("no offer in a container, without a definition, once dismissed, or off disk
     await offerReopenInContainer(w.api, w.devhub);
     deepStrictEqual(w.infos, []);
   }
+});
+
+test("Rebuild Container rebuilds the container the editor is in, with the cache", async () => {
+  const w = world({
+    configs: [DEFAULT, PYTHON],
+    current: PYTHON.path,
+    remote: "dev-container",
+  });
+  await rebuildContainer(w.api, w.devhub);
+  deepStrictEqual(w.reattached, [{ configPath: PYTHON.path }]);
+  deepStrictEqual(w.rebuilds, ["cache"]);
+});
+
+test("Rebuild Container Without Cache asks DevHub for no cache, and asks which in a local window", async () => {
+  const w = world({ configs: [DEFAULT, PYTHON], picks: () => 1 });
+  await rebuildContainerNoCache(w.api, w.devhub);
+  deepStrictEqual(w.reattached, [{ configPath: PYTHON.path }]);
+  deepStrictEqual(w.rebuilds, ["no-cache"]);
+});
+
+test("Rebuild Container without a definition says so and rebuilds nothing", async () => {
+  const w = world({ configs: [] });
+  await rebuildContainer(w.api, w.devhub);
+  deepStrictEqual(w.reattached, []);
+  deepStrictEqual(w.said, ["This folder has no dev container definition."]);
 });

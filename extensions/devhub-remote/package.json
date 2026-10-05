@@ -70,6 +70,16 @@
         "command": "devhub.showBuildLog",
         "title": "Show Build Log",
         "category": "Dev Containers"
+      },
+      {
+        "command": "devhub.rebuildContainer",
+        "title": "Rebuild Container",
+        "category": "Dev Containers"
+      },
+      {
+        "command": "devhub.rebuildContainerNoCache",
+        "title": "Rebuild Container Without Cache",
+        "category": "Dev Containers"
       }
     ],
     "menus": {
@@ -89,6 +99,14 @@
         {
           "command": "devhub.showBuildLog",
           "when": "devhub.devContainerConfigs > 0"
+        },
+        {
+          "command": "devhub.rebuildContainer",
+          "when": "remoteName == dev-container || devhub.devContainerConfigs > 0"
+        },
+        {
+          "command": "devhub.rebuildContainerNoCache",
+          "when": "remoteName == dev-container || devhub.devContainerConfigs > 0"
         }
       ],
       "statusBar/remoteIndicator": [
@@ -111,6 +129,16 @@
           "command": "devhub.showBuildLog",
           "when": "remoteName == dev-container",
           "group": "remote_20_dev-container_devhub@4"
+        },
+        {
+          "command": "devhub.rebuildContainer",
+          "when": "remoteName == dev-container",
+          "group": "remote_20_dev-container_devhub@5"
+        },
+        {
+          "command": "devhub.rebuildContainerNoCache",
+          "when": "remoteName == dev-container",
+          "group": "remote_20_dev-container_devhub@6"
         }
       ]
     }

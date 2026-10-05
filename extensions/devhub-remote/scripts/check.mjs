@@ -103,6 +103,8 @@ if (
   );
 }
 const expectedCommands = [
+  "devhub.rebuildContainer",
+  "devhub.rebuildContainerNoCache",
   "devhub.reopenInContainer",
   "devhub.reopenLocally",
   "devhub.showBuildLog",

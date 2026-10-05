@@ -22,6 +22,7 @@ import {
 	type ControlResponse,
 	type DevContainerConfigsAnswer,
 	type ReattachTargetWire,
+	type RebuildWire,
 	type RemoteEndpointAnswer,
 	type TerminalProfileAnswer,
 	type WindowFolderWire,
@@ -104,6 +105,7 @@ export interface ControlHandlers {
 	reattachEditor(
 		window: WindowFolderWire,
 		to: ReattachTargetWire,
+		rebuild?: RebuildWire,
 	): Promise<void>;
 }
 
@@ -341,7 +343,11 @@ export async function answerControlRequest(
 				return { ok: true, message: buildLog, buildLog };
 			}
 			case "reattach-editor":
-				await handlers.reattachEditor(request.window, request.to);
+				await handlers.reattachEditor(
+					request.window,
+					request.to,
+					request.rebuild,
+				);
 				return { ok: true, message: "reattached" };
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(

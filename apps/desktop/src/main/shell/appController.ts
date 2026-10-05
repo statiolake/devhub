@@ -5281,6 +5281,7 @@ export class AppController {
 	private async attachEditor(
 		workspaceId: WorkspaceId,
 		next: EditorAttachment,
+		rebuild?: { readonly noCache: boolean },
 	): Promise<void> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (!workspace) {
@@ -5288,16 +5289,47 @@ export class AppController {
 				`no workspace ${workspaceId} is open to attach an editor to`,
 			);
 		}
+		const bringUp = (target: ContainerTarget) =>
+			containerHostFor(target).ensureUp(
+				rebuild === undefined ? { build: true } : { build: true, rebuild },
+			);
+		if (rebuild !== undefined && sameEditorAttachment(workspace.editor, next)) {
+			// A rebuild of the container the editor is in: that workbench is
+			// connected to the container about to be removed, so it is asked to
+			// close first (unsaved work included), then the container is
+			// rebuilt, then a workbench is opened on the new one.
+			const target = containerTargetOf(workspace.location, next);
+			if (target === undefined) return;
+			const vetoed = await this.askEditorToClose(workspaceId);
+			if (vetoed === "close_editor_vetoed") return;
+			if (vetoed !== undefined) {
+				throw workspaceFailure(
+					`The editor for ${workspace.root} could not be closed to rebuild its container (${vetoed}).`,
+				);
+			}
+			this.disposeEditorView(workspaceId);
+			const up = await bringUp(target);
+			await this.dispatchAwaiting({
+				type: "attach_editor",
+				workspaceId,
+				editor: next,
+			});
+			this.dispatchOwn({
+				type: "editor_container_started",
+				workspaceId,
+				containerId: up.containerId,
+			});
+			const view = await this.ensureEditorView(workspace.key);
+			if (view) shellWindow().assertArrangement();
+			return;
+		}
 		if (sameEditorAttachment(workspace.editor, next)) {
 			// Asked for where it already is: a person reopening an editor that
 			// could not open. Its container is built if it has to be — opening
 			// a window only ever starts one — and DevHub's verdict on the
 			// workbench it gave up on is dropped, so the one opened now stays.
 			const target = containerTargetOf(workspace.location, next);
-			const up =
-				target === undefined
-					? undefined
-					: await containerHostFor(target).ensureUp({ build: true });
+			const up = target === undefined ? undefined : await bringUp(target);
 			await this.dispatchAwaiting({
 				type: "attach_editor",
 				workspaceId,
@@ -5325,10 +5357,7 @@ export class AppController {
 			started: workspace.startedContainer,
 		};
 		const target = containerTargetOf(workspace.location, next);
-		const up =
-			target === undefined
-				? undefined
-				: await containerHostFor(target).ensureUp({ build: true });
+		const up = target === undefined ? undefined : await bringUp(target);
 		const vetoed = await this.askEditorToClose(workspaceId);
 		if (vetoed === "close_editor_vetoed") return;
 		if (vetoed !== undefined) {
@@ -5492,9 +5521,17 @@ export class AppController {
 	async reattachEditorFromWindow(
 		uri: WorkspaceUriParts,
 		to: { readonly kind: "host" } | { readonly configPath: string },
+		rebuild?: "cache" | "no-cache",
 	): Promise<void> {
 		const workspace = this.workspaceOfWindow(uri);
-		await this.attachEditor(workspace.id, await this.editorFor(workspace, to));
+		if (rebuild !== undefined && "kind" in to) {
+			throw workspaceFailure("Only a dev container can be rebuilt.");
+		}
+		await this.attachEditor(
+			workspace.id,
+			await this.editorFor(workspace, to),
+			rebuild === undefined ? undefined : { noCache: rebuild === "no-cache" },
+		);
 	}
 
 	/**

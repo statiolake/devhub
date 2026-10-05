@@ -27,6 +27,8 @@ import {
 import {
   offerReopenInContainer,
   refreshAvailability,
+  rebuildContainer,
+  rebuildContainerNoCache,
   reopenInContainer,
   reopenLocally,
   showBuildLog,
@@ -230,7 +232,8 @@ export function activate(context: vscode.ExtensionContext): void {
   if (socketPath !== null) {
     const devhub: DevHubConnection = {
       configs: (window) => requestDevContainerConfigs(socketPath, window),
-      reattach: (window, to) => requestReattachEditor(socketPath, window, to),
+      reattach: (window, to, rebuild) =>
+        requestReattachEditor(socketPath, window, to, rebuild),
       buildLog: (window, configPath) =>
         requestDevContainerBuildLog(socketPath, window, configPath),
     };
@@ -247,6 +250,8 @@ export function activate(context: vscode.ExtensionContext): void {
       ["devhub.reopenLocally", reopenLocally],
       ["devhub.switchContainer", switchContainer],
       ["devhub.showBuildLog", showBuildLog],
+      ["devhub.rebuildContainer", rebuildContainer],
+      ["devhub.rebuildContainerNoCache", rebuildContainerNoCache],
     ] as const) {
       context.subscriptions.push(
         vscode.commands.registerCommand(id, () =>

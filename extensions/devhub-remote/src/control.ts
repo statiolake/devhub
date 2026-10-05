@@ -112,6 +112,9 @@ export interface DevContainerConfigsAnswer {
 /** Where the window's editor is to go: its own machine, or a definition. */
 export type ReattachTarget = { kind: "host" } | { configPath: string };
 
+/** Rebuild the container on the way, with the build cache or without it. */
+export type RebuildMode = "cache" | "no-cache";
+
 /**
  * One request, one line of JSON back — the framing every request on the
  * socket uses. Nothing is caught: see `requestResolveRemote`.
@@ -155,8 +158,14 @@ export function requestReattachEditor(
   socketPath: string,
   window: WindowFolder,
   to: ReattachTarget,
+  rebuild?: RebuildMode,
 ): Promise<{ ok: boolean; message: string }> {
-  return request(socketPath, { kind: "reattach-editor", window, to });
+  return request(socketPath, {
+    kind: "reattach-editor",
+    window,
+    to,
+    ...(rebuild === undefined ? {} : { rebuild }),
+  });
 }
 
 /** DevHub's answer to `dev-container-build-log`. */

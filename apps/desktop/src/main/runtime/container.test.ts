@@ -741,6 +741,32 @@ describe("opening a window starts a container and never builds one", () => {
 	});
 });
 
+describe("rebuilding a container", () => {
+	for (const [noCache, flags] of [
+		[false, ["--remove-existing-container"]],
+		[true, ["--remove-existing-container", "--build-no-cache"]],
+	] as const) {
+		it(`removes the running container and runs up with ${flags.join(" ")}`, async () => {
+			const devcontainer = fakeDevcontainer(() => upSucceeded("d".repeat(64)));
+			const runtime = runtimeWith(
+				fakeDocker((args) => {
+					if (args[0] === "ps")
+						return output(0, psLine("c".repeat(64), "running"));
+					return containerShell(args.at(-1) ?? "") ?? output(0, "/home/vscode");
+				}),
+				devcontainer,
+			);
+			const up = await runtime.ensureUp({ build: true, rebuild: { noCache } });
+			expect(up).toEqual({ containerId: "d".repeat(64), started: true });
+			expect(devcontainer.calls).toHaveLength(1);
+			expect(devcontainer.calls[0]).toEqual(
+				expect.arrayContaining(["up", ...flags]),
+			);
+			expect(devcontainer.calls[0]?.includes("--build-no-cache")).toBe(noCache);
+		});
+	}
+});
+
 describe("nothing a Workspace owns runs in a container", () => {
 	it("refuses a pseudo-terminal, as the bug it would be", () => {
 		const runtime = runtimeWith(

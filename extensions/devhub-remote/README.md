@@ -68,7 +68,7 @@ pnpm --filter devhub-remote check
 builds the extension, typechecks it, runs the tests, runs the static checks
 above, packages the VSIX and verifies the VSIX is byte-for-byte reproducible.
 
-## Reopen in Container, Reopen Folder Locally, Switch Container, Show Build Log
+## Reopen in Container, Reopen Folder Locally, Switch Container, Show Build Log, Rebuild Container
 
 A Workspace is its folder, and its terminals and Agents run where the folder
 is; whether its _editor_ is attached to one of the folder's dev containers is a

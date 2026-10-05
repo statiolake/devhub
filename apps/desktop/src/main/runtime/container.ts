@@ -741,6 +741,13 @@ export class ContainerHost
 	 */
 	async ensureUp(options: {
 		readonly build: boolean;
+		/**
+		 * Rebuild: remove the container this definition has (volumes stay) and
+		 * make it again with `devcontainer up --remove-existing-container`,
+		 * adding `--build-no-cache` (images, Dockerfiles, Compose builds and
+		 * Features alike) when `noCache`. Implies `build`.
+		 */
+		readonly rebuild?: { readonly noCache: boolean };
 	}): Promise<{ readonly containerId: string; readonly started: boolean }> {
 		if (this.#replaced) throw containerReplaced(this.machineName);
 		// One bring-up per container at a time, and every later caller joins it:
@@ -751,10 +758,22 @@ export class ContainerHost
 		// a start-only caller must not be handed a build it did not ask for, nor
 		// a build-allowed one a refusal meant for somebody else. Only the build
 		// can create a container, so the two never make one each.
-		const key = `${this.id}\0${options.build ? "build" : "start"}`;
+		const rebuild = options.rebuild;
+		const key = `${this.id}\0${
+			rebuild === undefined
+				? options.build
+					? "build"
+					: "start"
+				: rebuild.noCache
+					? "rebuild-no-cache"
+					: "rebuild"
+		}`;
 		let bringUp = BRINGING_UP.get(key);
 		if (bringUp === undefined) {
-			const started = this.#bringUp(options.build);
+			const started = this.#bringUp(
+				options.build || rebuild !== undefined,
+				rebuild,
+			);
 			bringUp = started;
 			BRINGING_UP.set(key, started);
 			const done = () => {
@@ -783,11 +802,19 @@ export class ContainerHost
 	}
 
 	/** The running container adopted, or `devcontainer up`'s. */
-	async #bringUp(build: boolean): Promise<{
+	async #bringUp(
+		build: boolean,
+		rebuild?: { readonly noCache: boolean },
+	): Promise<{
 		readonly result: UpResult;
 		readonly remoteUser: string | undefined;
 		readonly started: boolean;
 	}> {
+		if (rebuild !== undefined) {
+			// Never adopt: the point is a new container.
+			const up = await this.#up(rebuildArguments(rebuild));
+			return { result: up, remoteUser: up.remoteUser, started: true };
+		}
 		const state = await this.containerState();
 		if (state.kind === "running") {
 			const adopted = await this.#adopt(state.id);
@@ -873,7 +900,7 @@ export class ContainerHost
 	}
 
 	/** `devcontainer up`, and its JSON read strictly. */
-	async #up(): Promise<UpResult> {
+	async #up(rebuildFlags: readonly string[] = []): Promise<UpResult> {
 		// `--config` always: the definition is part of which container this
 		// is, and leaving the choice to the CLI would let the next `up` answer a
 		// folder with several definitions differently from this one.
@@ -896,7 +923,7 @@ export class ContainerHost
 				mount = { kind: "none" };
 			}
 		}
-		const extra = upArguments(mount);
+		const extra = [...rebuildFlags, ...upArguments(mount)];
 		const log = BuildLogFile.begin(
 			this.#buildLog,
 			`devcontainer up --workspace-folder ${this.#workspaceFolder} --config ${this.#configPath}${extra.map((one) => ` ${one}`).join("")}${this.#machine.where}`,
@@ -1851,6 +1878,15 @@ export function containerNotBuilt(
 			`Build it with: ${upCommand(workspaceFolder, configPath)} — or, for an editor, ` +
 			`with Reopen Editor in Container on the Workspace's right-click menu.`,
 	});
+}
+
+/** What `devcontainer up` is given to rebuild: see `ContainerHost.ensureUp`. */
+export function rebuildArguments(rebuild: {
+	readonly noCache: boolean;
+}): readonly string[] {
+	return rebuild.noCache
+		? ["--remove-existing-container", "--build-no-cache"]
+		: ["--remove-existing-container"];
 }
 
 /** The command a person runs to bring this container up, spelled whole. */

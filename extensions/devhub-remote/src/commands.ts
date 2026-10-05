@@ -24,6 +24,7 @@ import type {
   DevContainerConfig,
   DevContainerConfigsAnswer,
   ReattachTarget,
+  RebuildMode,
   WindowFolder,
 } from "./control";
 
@@ -64,6 +65,7 @@ export interface DevHubConnection {
   reattach(
     window: WindowFolder,
     to: ReattachTarget,
+    rebuild?: RebuildMode,
   ): Promise<{ ok: boolean; message: string }>;
   buildLog(window: WindowFolder, configPath: string): Promise<BuildLogAnswer>;
 }
@@ -179,6 +181,7 @@ async function reattach(
   window: WindowFolder,
   to: ReattachTarget,
   title: string,
+  rebuild?: RebuildMode,
 ): Promise<void> {
   const log =
     "configPath" in to
@@ -189,7 +192,9 @@ async function reattach(
     log === undefined ? undefined : await api.followBuildLog(log);
   let answer: { ok: boolean; message: string };
   try {
-    answer = await api.withProgress(title, () => devhub.reattach(window, to));
+    answer = await api.withProgress(title, () =>
+      devhub.reattach(window, to, rebuild),
+    );
   } finally {
     await following?.stop();
   }
@@ -313,4 +318,57 @@ export async function showBuildLog(
   const log = await buildLogOf(api, devhub, window, chosen);
   if (log === undefined) return;
   await showLogOrSay(api, log);
+}
+
+/**
+ * Rebuild Container: DevHub removes the definition's container (its volumes
+ * stay), builds it again — `devcontainer up --remove-existing-container`,
+ * which honours the build cache — starts it and reopens the window in it.
+ * In a container it is that container; in a local window one definition goes
+ * straight in and several are asked.
+ */
+async function rebuild(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+  mode: RebuildMode,
+): Promise<void> {
+  const window = api.windowFolder();
+  if (window === undefined) return;
+  const found = await configsOf(api, devhub, window);
+  if (found === undefined) return;
+  if (found.configs.length === 0) {
+    void api.showError("This folder has no dev container definition.");
+    return;
+  }
+  const chosen =
+    found.current ??
+    (found.configs.length === 1
+      ? found.configs[0]?.path
+      : (await api.pick(choices(found.configs), "Rebuild which dev container?"))
+          ?.config.path);
+  if (chosen === undefined) return;
+  await reattach(
+    api,
+    devhub,
+    window,
+    { configPath: chosen },
+    mode === "no-cache"
+      ? "Rebuilding the dev container without cache…"
+      : "Rebuilding the dev container…",
+    mode,
+  );
+}
+
+export function rebuildContainer(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+): Promise<void> {
+  return rebuild(api, devhub, "cache");
+}
+
+export function rebuildContainerNoCache(
+  api: CommandsApi,
+  devhub: DevHubConnection,
+): Promise<void> {
+  return rebuild(api, devhub, "no-cache");
 }

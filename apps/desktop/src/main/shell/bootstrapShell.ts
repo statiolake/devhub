@@ -320,10 +320,11 @@ export async function bootstrapShell(
 			controller.devContainerConfigsForWindow(window),
 		devContainerBuildLog: (window, configPath) =>
 			controller.devContainerBuildLogForWindow(window, configPath),
-		reattachEditor: (window, to) =>
+		reattachEditor: (window, to, rebuild) =>
 			controller.reattachEditorFromWindow(
 				window,
 				"kind" in to ? { kind: "host" } : { configPath: to.configPath },
+				rebuild,
 			),
 		installCli: () =>
 			Promise.resolve(
