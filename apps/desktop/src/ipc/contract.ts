@@ -1134,6 +1134,11 @@ export interface SidebarBridge
 	 */
 	onSidebarArea(listener: (area: SidebarAreaWire) => void): () => void;
 	/**
+	 * Whether the chord prefix (`Cmd+Q`) is armed. While it is, each row wears
+	 * the digit that selects it in place of its folder mark.
+	 */
+	onChordArmed(listener: (armed: boolean) => void): () => void;
+	/**
 	 * Raise a tooltip over the window, about a row in this column.
 	 *
 	 * The Sidebar used to draw its own, which is why the rail had none: a box
@@ -1583,6 +1588,8 @@ export const CHANNELS = {
 	toastsSize: "devhub:toasts-size",
 	/** Where main laid the Sidebar, so a row can say where it is in the window. */
 	sidebarAreaChanged: "devhub:sidebar-area-changed",
+	/** The chord prefix was armed or disarmed: the Sidebar numbers its rows. */
+	chordArmedChanged: "devhub:chord-armed-changed",
 	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
 	showTooltip: "devhub:show-tooltip",
 	/** The Sidebar taking it down again, at once. */

@@ -316,7 +316,7 @@ move is made, and the keyboard is placed on the new selection, out of the
 Sidebar too if that is where the chord was typed. A chord typed in the Sidebar
 is not the Sidebar's own Return, and the Sidebar keeping the keys after one
 used to leave them on a row that was no longer selected while the screen had
-moved on. The arrival is placed even when the move changed nothing (`Cmd+Q 1`
+moved on. The arrival is placed even when the move changed nothing (`Cmd+Q 0`
 from the Sidebar with Scratch already selected is still somebody asking to be
 in Scratch). An answer to a question is the same kind of move: a row chosen in
 Go to, and every way of opening a folder (`openFolder`), land in what was

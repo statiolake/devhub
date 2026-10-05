@@ -32,6 +32,7 @@ window.devhub = {
   focusSurface,
   onMenuCommand: () => () => undefined,
   onSidebarArea: () => () => undefined,
+  onChordArmed: () => () => undefined,
   showTooltip: () => undefined,
   hideTooltip: () => undefined,
   releaseTooltip: () => undefined,

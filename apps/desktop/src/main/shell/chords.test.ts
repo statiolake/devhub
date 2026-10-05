@@ -90,7 +90,7 @@ function workspace(
 	};
 }
 
-/** Scratch: today's daily-folder Workspace, entry 1 of every sidebar. */
+/** Scratch: today's daily-folder Workspace, entry 0 of every sidebar. */
 const SCRATCH_ID = "scratch";
 const SCRATCH: NavigationContext = {
 	kind: "workspace",
@@ -149,15 +149,15 @@ function selects(context: NavigationContext) {
 describe("the workspace cycle", () => {
 	const snapshot = snapshotOf({ workspaces: [one, two] });
 
-	it("counts Scratch as the first entry", () => {
-		expect(run("select_entry_1", snapshot)).toEqual(selects(SCRATCH));
-		expect(run("select_entry_3", snapshot)).toEqual(
+	it("counts Scratch as entry 0 and the workspaces from 1", () => {
+		expect(run("select_entry_0", snapshot)).toEqual(selects(SCRATCH));
+		expect(run("select_entry_2", snapshot)).toEqual(
 			selects({ kind: "workspace", workspaceId: "two" }),
 		);
 	});
 
 	it("does nothing for a digit past the end of the list", () => {
-		expect(run("select_entry_7", snapshot)).toBeUndefined();
+		expect(run("select_entry_3", snapshot)).toBeUndefined();
 	});
 
 	it("steps through Scratch and the workspaces, wrapping at both ends", () => {
@@ -1060,11 +1060,11 @@ describe("the order every cycle walks", () => {
 
 	it("names the rows a digit selects in the same order", () => {
 		const snapshot = projected();
-		expect(run("select_entry_2", snapshot)).toEqual(
+		expect(run("select_entry_1", snapshot)).toEqual(
 			selects({ kind: "workspace", workspaceId: ALPHA }),
 		);
 		// The workspace with no Agents is still an entry, and still visited.
-		expect(run("select_entry_3", snapshot)).toEqual(
+		expect(run("select_entry_2", snapshot)).toEqual(
 			selects({ kind: "workspace", workspaceId: MIDDLE }),
 		);
 	});

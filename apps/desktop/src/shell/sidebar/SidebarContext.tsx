@@ -17,7 +17,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 import type {
@@ -58,6 +60,14 @@ export interface SidebarValue {
   readonly reopenEditorInContainer: (workspaceId: string) => void;
   /** Hand a failure to main. What arrived is never raised again. */
   readonly reportFailure: (error: unknown) => void;
+}
+
+/** Whether the chord prefix is armed, as main last said. False until it does. */
+export function useChordArmed(): boolean {
+  const bridge = useMemo(() => devhub(), []);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => bridge.onChordArmed(setArmed), [bridge]);
+  return armed;
 }
 
 export const SidebarContext = createContext<SidebarValue | null>(null);

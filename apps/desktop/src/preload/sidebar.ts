@@ -53,6 +53,7 @@ const api: SidebarBridge = {
 	// One way, both of them: what is being sent is a fact about where the
 	// pointer is resting, not a request waiting on an answer, and a tooltip
 	// that had to await a round trip would arrive after the pointer moved on.
+	onChordArmed: (listener) => on<boolean>(CHANNELS.chordArmedChanged, listener),
 	showTooltip: (request: TooltipRequestWire) => {
 		ipcRenderer.send(CHANNELS.showTooltip, request);
 	},

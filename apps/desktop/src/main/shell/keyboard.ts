@@ -165,10 +165,24 @@ export interface ChordHost {
  * only arming it can miss is a test's driving `handleInput` directly.
  */
 let inputSource: ChordInputSource | undefined;
+let armingObserver: ((armed: boolean) => void) | undefined;
 const router = new KeyRouter(defaultChordLayout(), {
-	armed: () => inputSource?.armed(),
-	disarmed: () => inputSource?.disarmed(),
+	armed: () => {
+		inputSource?.armed();
+		armingObserver?.(true);
+	},
+	disarmed: () => {
+		inputSource?.disarmed();
+		armingObserver?.(false);
+	},
 });
+
+/** Told whenever the prefix is armed or disarmed; the Sidebar numbers its rows by it. */
+export function setArmingObserver(
+	observer: ((armed: boolean) => void) | undefined,
+): void {
+	armingObserver = observer;
+}
 let installed = false;
 
 /**

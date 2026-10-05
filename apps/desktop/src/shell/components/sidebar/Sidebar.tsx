@@ -20,7 +20,11 @@ import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { agentRestart } from "../../../model/domain";
 import { closingDeletesWorktree } from "../../../model/worktrees";
-import { useSidebar, useSidebarDispatch } from "../../sidebar/SidebarContext";
+import {
+  useChordArmed,
+  useSidebar,
+  useSidebarDispatch,
+} from "../../sidebar/SidebarContext";
 import { UsageLimits } from "./UsageLimits";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
@@ -128,12 +132,15 @@ function WorkspaceRow({
   snapshot,
   agentProfiles,
   agentProfilesAvailability,
+  chordDigit,
   onCreateAgent,
   onCloseWorkspace,
   onAgentMenu,
   onWorkspaceMenu,
   reorder,
 }: {
+  /** The digit that selects this row while the prefix is armed, if it has one. */
+  readonly chordDigit?: number | undefined;
   readonly workspace: WorkspaceSnapshot;
   /** Its mark, and whether it is Scratch. See `rowIdentity`. */
   readonly identity: RowIdentity;
@@ -264,6 +271,7 @@ function WorkspaceRow({
           {collapsed ? null : (
             <WorkspaceGlyph
               glyphName={identity.glyph}
+              digit={chordDigit}
               repository={repository}
               description={description}
             />
@@ -305,7 +313,16 @@ function WorkspaceRow({
                 cannot go inside a button. */}
             {collapsed ? (
               <span className="row-glyph" aria-hidden="true">
-                <Glyph name={identity.glyph} />
+                {chordDigit === undefined ? (
+                  <Glyph name={identity.glyph} />
+                ) : (
+                  <span
+                    className="row-glyph-digit"
+                    data-chord-digit={chordDigit}
+                  >
+                    {chordDigit}
+                  </span>
+                )}
               </span>
             ) : null}
             {/* The name, then the branch, on one line that fades out under the
@@ -644,16 +661,26 @@ function WorkspaceRow({
  */
 function WorkspaceGlyph({
   glyphName,
+  digit,
   repository,
   description,
 }: {
+  /** While the chord prefix is armed: the digit that selects this row. */
+  readonly digit?: number | undefined;
   readonly glyphName: GlyphName;
   readonly repository: WorkspaceRepositoryWire | undefined;
   /** What this row is, in the words its select button uses. */
   readonly description: string;
 }) {
   const { openExternalUrl } = useSidebar();
-  const glyph = <Glyph name={glyphName} />;
+  const glyph =
+    digit === undefined ? (
+      <Glyph name={glyphName} />
+    ) : (
+      <span className="row-glyph-digit" data-chord-digit={digit}>
+        {digit}
+      </span>
+    );
   const url = repository?.repositoryUrl;
   if (url === undefined) {
     return (
@@ -925,17 +952,30 @@ export function Sidebar({ snapshot }: SidebarProps) {
   // the rows `Cmd+Q Cmd+N` steps through are the same rows in the same order.
   //
   // Scratch is one of them, drawn first, in the order main counts entries in
-  // (`sidebarWorkspaces`), so `Cmd+Q 1` and the row on top are the same row.
+  // (`sidebarWorkspaces`), so `Cmd+Q 0` and the row on top are the same row.
   const { scratch, rows: workspaces } = useMemo(
     () => sidebarWorkspaces(snapshot),
     [snapshot],
   );
   // Rows that have finished closing, still on screen for as long as it takes
   // them to leave. See `closingExit.ts`.
+  const armed = useChordArmed();
   const exiting = useClosingExit(workspaces);
   const rows = useMemo(
     () => mergeExitingRows(workspaces, exiting),
     [workspaces, exiting],
+  );
+  // The digit each live row answers to while the prefix is armed: `Cmd+Q 1`
+  // is the first workspace below Scratch, as main counts them. A row that is
+  // leaving is not counted, and rows past the ninth keep their folder.
+  const liveDigits = useMemo(
+    () =>
+      new Map(
+        workspaces
+          .slice(0, 9)
+          .map((workspace, index) => [workspace.id, index + 1] as const),
+      ),
+    [workspaces],
   );
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
@@ -1287,6 +1327,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             snapshot={snapshot}
             agentProfiles={agentProfiles.profiles}
             agentProfilesAvailability={agentProfiles.availability}
+            chordDigit={armed ? 0 : undefined}
             onCreateAgent={openAgentPicker}
             onCloseWorkspace={closeWorkspaceRow}
             onAgentMenu={openAgentMenu}
@@ -1350,6 +1391,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
                   snapshot={snapshot}
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
+                  chordDigit={
+                    armed ? liveDigits.get(entry.workspace.id) : undefined
+                  }
                   onCreateAgent={openAgentPicker}
                   onCloseWorkspace={closeWorkspaceRow}
                   onAgentMenu={openAgentMenu}

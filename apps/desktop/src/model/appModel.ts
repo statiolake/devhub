@@ -230,7 +230,7 @@ export interface AppSnapshot {
    *
    * Always one of `workspaces`. It is an ordinary Workspace in every other
    * respect — this id is the whole of what makes the Sidebar draw it as
-   * Scratch, and of what `Cmd+Q Shift+J` and entry 1 select.
+   * Scratch, and of what `Cmd+Q Shift+J` and entry 0 select.
    */
   readonly scratchWorkspaceId: WorkspaceId;
   /** What the content area holds for that selection. */
@@ -1712,7 +1712,7 @@ export class AppModel {
    * only as much of the path above it as the collision needs.
    *
    * Scratch is called Scratch, and this is the one place that says so: the
-   * Sidebar's entry 1, the window title and the picker all read the label.
+   * Sidebar's entry 0, the window title and the picker all read the label.
    * It is called that only while it is today's folder — the same Workspace
    * after midnight is labelled by its folder like any other row. It takes no
    * part in the collisions either way, since nothing else is called Scratch.

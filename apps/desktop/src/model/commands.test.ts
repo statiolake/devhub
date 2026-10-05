@@ -113,11 +113,12 @@ describe("the registry itself", () => {
     expect(commandById("nope")).toBeUndefined();
   });
 
-  it("marks exactly the nine digit commands as digit commands", () => {
+  it("marks exactly the ten digit commands as digit commands", () => {
     const digits = COMMANDS.filter((command) =>
       isSelectEntryCommand(command.id),
     );
     expect(digits.map((command) => command.id)).toEqual([
+      "select_entry_0",
       "select_entry_1",
       "select_entry_2",
       "select_entry_3",
@@ -129,7 +130,7 @@ describe("the registry itself", () => {
       "select_entry_9",
     ]);
     expect(digits.map((command) => command.ordinal)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
     ]);
   });
 });

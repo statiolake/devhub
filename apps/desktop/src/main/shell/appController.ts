@@ -449,6 +449,7 @@ import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
 	installKeyboard,
+	setArmingObserver,
 	runCommand,
 	setChordLayout,
 	type ChordHost,
@@ -1475,6 +1476,9 @@ export class AppController {
 			},
 		};
 		installKeyboard(inputSource, report, chordHost);
+		setArmingObserver((armed) => {
+			this.send(CHANNELS.chordArmedChanged, armed);
+		});
 		this.applyChordLayout();
 		this.installHistoryGestures();
 	}
@@ -1600,7 +1604,7 @@ export class AppController {
 	 * editor, for the toggles that have an opinion (`Landing`).
 	 *
 	 * Placed once more after the move even when the move changed nothing.
-	 * `Cmd+Q 1` on Scratch from the Sidebar selects what is already selected,
+	 * `Cmd+Q 0` on Scratch from the Sidebar selects what is already selected,
 	 * and is still somebody asking to be in Scratch; and the landing is spent
 	 * by this placement and no other, so it cannot linger into a later one
 	 * that nobody asked to land anywhere.

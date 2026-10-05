@@ -2124,3 +2124,19 @@ body.is-resizing-split {
     max-width: none;
   }
 }
+
+/* The digit a row wears in place of its folder while the chord prefix is
+   armed. It fills the glyph's own box, so nothing around it moves, in the
+   rail as in the column. */
+.row-glyph-digit {
+  display: flex;
+  width: var(--sidebar-glyph-ink);
+  height: var(--sidebar-glyph-ink);
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent, currentColor);
+}

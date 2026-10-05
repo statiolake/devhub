@@ -16,7 +16,7 @@
  *
  * The sidebar is a tree, and three of these commands step through it at
  * different levels. All three orders are computed here, from one projection, so
- * `Cmd+Q 3` and three presses of `Cmd+Q Cmd+N` cannot disagree about what the
+ * `Cmd+Q 2` and two presses of `Cmd+Q Cmd+N` cannot disagree about what the
  * list is:
  *
  * The workspaces arrive already in the order the sidebar draws them — the
@@ -25,7 +25,7 @@
  * opened in while the sidebar drew worktrees grouped under their repository,
  * which made every one of these cycles jump around the list on screen.
  *
- * - `sidebarEntries` — Scratch, then the workspaces. What a digit names.
+ * - `sidebarEntries` — Scratch, then the workspaces. What a digit names (0 is Scratch).
  * - `everyAgent` — every Agent there is, in sidebar order, across workspaces.
  *   `Cmd+Q ]` stops at each of them and `Cmd+Q }` at the unread ones, both
  *   walking the tree below from the selection's own row, so that an editor
@@ -204,7 +204,10 @@ export type ChordEffect =
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
-	| { readonly kind: "navigate-history"; readonly direction: "back" | "forward" };
+	| {
+			readonly kind: "navigate-history";
+			readonly direction: "back" | "forward";
+	  };
 
 /** Scratch, then the workspaces in sidebar order. See `sidebarWorkspaces`. */
 function orderedWorkspaces(
@@ -218,7 +221,7 @@ function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
 	return { kind: "workspace", workspaceId: snapshot.scratchWorkspaceId };
 }
 
-/** Scratch, then the workspaces in sidebar order. What a digit names. */
+/** Scratch, then the workspaces in sidebar order. What a digit names (0 is Scratch). */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,
 ): readonly NavigationContext[] {
@@ -344,8 +347,8 @@ export function resolveChord(
 
 	if (isSelectEntryCommand(commandId)) {
 		const entries = sidebarEntries(snapshot);
-		// `ordinal` is one-based, as it is typed: 1 is Scratch.
-		const entry = entries[(definition.ordinal ?? 1) - 1];
+		// `ordinal` is the digit as typed: 0 is Scratch, 1 the first workspace.
+		const entry = entries[definition.ordinal ?? 0];
 		return entry ? { kind: "select-context", context: entry } : undefined;
 	}
 

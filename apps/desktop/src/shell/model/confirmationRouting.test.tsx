@@ -87,6 +87,7 @@ function bridge(dispatch: () => Promise<AppOutcome>) {
     onTheme: () => () => undefined,
     onMenuCommand: () => () => undefined,
     onSidebarArea: () => () => undefined,
+    onChordArmed: () => () => undefined,
     onModals: () => () => undefined,
     showTooltip: () => undefined,
     hideTooltip: () => undefined,

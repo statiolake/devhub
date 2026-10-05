@@ -3,7 +3,7 @@
  *
  * **There is one order, and this is it.** It used to be applied in the Sidebar
  * component, so the sidebar drew one list while `Cmd+Q Cmd+N`, `Cmd+Q ]` and
- * `Cmd+Q 1..9` stepped through another — the order folders happened to be
+ * `Cmd+Q 0..9` stepped through another — the order folders happened to be
  * opened in. Two orders for one list is two answers to "which row is next",
  * and only one of them was ever the one on screen. So the projection carries
  * the order now (`snapshotWire`), every reader takes the array as it comes,

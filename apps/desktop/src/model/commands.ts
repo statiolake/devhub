@@ -46,7 +46,7 @@
  * | `Cmd+Q Alt+↑` / `Alt+↓`     | `move_entry_up` / `move_entry_down` |
  * | `Cmd+Q Cmd+P` / `P`         | `previous_tab`            |
  * | `Cmd+Q G`                   | `open_tab_picker`         |
- * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
+ * | `Cmd+Q 0`…`9`               | `select_entry_0`…`9`      |
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
  * | `Cmd+Q Z`                   | `toggle_split`            |
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
@@ -72,10 +72,11 @@
  *
  * # The decisions behind that table
  *
- * **Scratch is entry 1 and part of the workspace cycle.** It is a row of the
+ * **Scratch is entry 0 and part of the workspace cycle.** It is a row of the
  * sidebar like any other, it is where the global terminal and the folderless
  * workbench live, and a cycle that skipped it would make `Cmd+Q Shift+N` and
- * `Cmd+Q 1` disagree about what the list is. One list, one order: Scratch, then
+ * `Cmd+Q 0` disagree about what the list is. `Cmd+Q 1`…`9` are the first
+ * nine workspaces, counted without Scratch. One list, one order: Scratch, then
  * the workspaces in sidebar order, wrapping at both ends.
  *
  * **`Alt+↑` and `Alt+↓` move the row instead of moving to it.** The order of
@@ -163,7 +164,7 @@
  * **`Cmd+Q Shift+J` is the way back out of Scratch.** Scratch is where the
  * global terminal is, and what a person does with it is *leave what they were
  * doing, use it, and come back* — which is one gesture, not two, and the second
- * half of it is the half no other chord can do: `Cmd+Q 1` gets you there, and
+ * half of it is the half no other chord can do: `Cmd+Q 0` gets you there, and
  * nothing gets you back except remembering which of nine rows you were on.
  * So this chord is the pair of jumps under one key, and the thing it remembers
  * is exactly one selection — where you were *when you jumped*, context and
@@ -315,8 +316,8 @@ import {
  */
 export const DEFAULT_CHORD_PREFIX = "Cmd+q";
 
-/** The nine sidebar rows a digit can name. Scratch is 1. */
-export type SelectEntryDigit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+/** The ten sidebar rows a digit can name. Scratch is 0, the workspaces 1–9. */
+export type SelectEntryDigit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export type SelectEntryCommandId = `select_entry_${SelectEntryDigit}`;
 
@@ -393,21 +394,21 @@ export interface CommandDefinition {
 }
 
 /**
- * `Cmd+Q 1` … `Cmd+Q 9`.
+ * `Cmd+Q 0` … `Cmd+Q 9`.
  *
- * Nine definitions written by a loop rather than by hand: they differ only in
- * the digit, and nine hand-written rows are nine chances to mistype one.
+ * Ten definitions written by a loop rather than by hand: they differ only in
+ * the digit, and ten hand-written rows are ten chances to mistype one.
  */
 const SELECT_ENTRY_COMMANDS: readonly CommandDefinition[] = Array.from(
-  { length: 9 },
+  { length: 10 },
   (_unused, index): CommandDefinition => {
-    const ordinal = (index + 1) as SelectEntryDigit;
+    const ordinal = index as SelectEntryDigit;
     return {
       id: `select_entry_${ordinal}`,
       label:
-        ordinal === 1
-          ? "Select Scratch (sidebar entry 1)"
-          : `Select sidebar entry ${String(ordinal)}`,
+        ordinal === 0
+          ? "Select Scratch"
+          : `Select workspace ${String(ordinal)}`,
       needs: "nothing",
       category: "Navigate",
       defaultKeys: [String(ordinal)],
@@ -725,7 +726,7 @@ export function isCommandId(id: string): id is CommandId {
  * Whether this command selects a numbered sidebar row.
  *
  * A type guard rather than a lookup on `ordinal`, so that resolving a chord can
- * deal with the nine of them once and then switch exhaustively over what is
+ * deal with the ten of them once and then switch exhaustively over what is
  * left — which is what makes a new command a compile error until it is handled.
  */
 export function isSelectEntryCommand(

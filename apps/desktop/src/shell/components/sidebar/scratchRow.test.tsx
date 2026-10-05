@@ -21,6 +21,7 @@ window.devhub = {
   focusSurface: vi.fn(() => Promise.resolve()),
   onMenuCommand: () => () => undefined,
   onSidebarArea: () => () => undefined,
+  onChordArmed: () => () => undefined,
   showTooltip: () => undefined,
   hideTooltip: () => undefined,
   releaseTooltip: () => undefined,
