@@ -463,6 +463,52 @@ the setting, down to the re-fit and the tmux resize the changed geometry
 causes, and there is one zoom for the terminal surface rather than one per
 Agent because there is one appearance.
 
+## Back and Forward
+
+The window keeps a browser's history of the places it has shown, and the title
+bar draws Back and Forward beside the Sidebar button.
+
+**An entry is the selection** (`AppModel.selection`): a Workspace, an Agent,
+or the two side by side, with the presentation it was shown in. That is the
+shell's whole notion of "where you are", so there is no second record of
+pages to drift from it. It is recorded in one place — `AppModel.bumpRevision`
+— so every way the selection moves is recorded without having to remember to
+be: a click, a chord, a new Agent, the selection repaired after a close. The
+rules are `model/navigationHistory.ts`'s, and they are a browser's: going back
+and then somewhere new cuts Forward off; Back and Forward do not record
+themselves (the cursor moves first, so the move arrives at the entry it
+already points to); the same place twice in a row is one entry; the two
+halves of one split are one place (swapping the keyboard between them updates
+the entry); a closed Agent or Workspace is *skipped*, not removed; and only the
+newest 100 entries are kept. Each arrow is disabled when there is nowhere it
+would go, answered by the same rule the move obeys. History is per session:
+the state file says where the window opens, and Back starts there.
+
+**Two histories, and the editor's wins over an editor.** A VS Code workbench
+has its own Back and Forward over cursor positions
+(`workbench.action.navigateBack`/`navigateForward`). Every input is therefore
+decided by the surface it lands on, the way the zoom keys are:
+
+| Input | Over DevHub's own pages (window, Sidebar, Agents) | Over a workbench |
+|---|---|---|
+| `Cmd+[` / `Cmd+]` | app history (`main/shell/historyKeys.ts`) | untouched — VS Code's Outdent/Indent Line |
+| `Ctrl+-` / `Ctrl+Shift+-` | untouched (a terminal's control character) | untouched — VS Code's own Back/Forward |
+| mouse buttons 4/5 (`MouseEvent.button` 3/4) | app history (`shell/historyButtons.ts`) | VS Code's own, by its `mouseBackForwardToNavigate` |
+| `app-command` `browser-backward`/`-forward` | app history (Windows/Linux only; never fires on macOS) | untouched |
+| trackpad `swipe` left/right | app history | untouched |
+| the title bar's arrows | **always app history** | **always app history** |
+
+`Cmd+[`/`Cmd+]` are the Mac's own Back and Forward (Finder, Safari, Xcode),
+free on every DevHub page, and the workbench is left with its bindings intact.
+The arrows always walk the app's history: they are the shell's chrome, above
+every surface, and an arrow whose meaning changed with which pane last had the
+keyboard could not be predicted by looking at it. Keys and gestures raised in
+main are declined while a question is up, as the zoom is; the window-level
+gestures, which say nothing about where the pointer was, are decided by where
+the keyboard is (`ShellWindow.focusTarget`). With the title bar hidden
+(`appearance.title_bar = "hidden"`) there are no arrows, and the keys and the
+mouse still work.
+
 ## Attention is the Dock
 
 There is no ring drawn around the window. A DOM overlay in the window's own

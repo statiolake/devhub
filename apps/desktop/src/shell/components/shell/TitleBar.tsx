@@ -35,6 +35,17 @@
  * rail, and a rail that had to be wide enough for a button would be a rail
  * sized by its chrome again. It dispatches the same `toggle_sidebar` the chord
  * does, so there is one path from either.
+ *
+ * Beside it are Back and Forward, for the same reason they are beside the
+ * sidebar button in Finder: they are about the window — which place it is
+ * showing — and not about anything inside one place. **They always walk the
+ * app's history** (`model/navigationHistory.ts`), never an editor's. The bar
+ * is the shell's chrome, above every surface at once, so an arrow here whose
+ * meaning changed with which pane last had the keyboard would be a button you
+ * could not predict by looking at it; the editor's own Back and Forward are
+ * VS Code's, on VS Code's keys and the mouse's side buttons over the editor.
+ * Each is disabled when there is nowhere it would go, which the model answers
+ * with the same rule the move itself obeys, skipped places and all.
  */
 
 import { useShellPage } from "../../ShellPageContext";
@@ -43,6 +54,10 @@ import type { AppIntent } from "../../../ipc/appShell";
 export interface TitleBarProps {
   /** Whether the Sidebar is a rail right now — what the button reports. */
   readonly sidebarCollapsed: boolean;
+  /** Whether Back would go anywhere. */
+  readonly canGoBack: boolean;
+  /** Whether Forward would go anywhere. */
+  readonly canGoForward: boolean;
   readonly onDispatch: (intent: AppIntent) => void;
 }
 
@@ -69,7 +84,44 @@ function SidebarMark() {
   );
 }
 
-export function TitleBar({ sidebarCollapsed, onDispatch }: TitleBarProps) {
+/** Back and Forward: a chevron, on the same grid as the sidebar mark. */
+function ChevronMark({
+  direction,
+}: {
+  readonly direction: "back" | "forward";
+}) {
+  return (
+    <svg
+      className="sidebar-glyph"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d={
+          direction === "back"
+            ? "M10 3.5 5.5 8l4.5 4.5"
+            : "M6 3.5 10.5 8 6 12.5"
+        }
+      />
+    </svg>
+  );
+}
+
+/**
+ * What the arrows' tooltips name. `Cmd+[` and `Cmd+]` are main's
+ * (`main/shell/historyKeys.ts`), answered over DevHub's own pages; over an
+ * editor those keys are VS Code's, and so is its Back and Forward.
+ */
+export const BACK_TITLE = "Back (Cmd+[)";
+export const FORWARD_TITLE = "Forward (Cmd+])";
+
+export function TitleBar({
+  sidebarCollapsed,
+  canGoBack,
+  canGoForward,
+  onDispatch,
+}: TitleBarProps) {
   const { windowTitle } = useShellPage();
 
   return (
@@ -88,6 +140,30 @@ export function TitleBar({ sidebarCollapsed, onDispatch }: TitleBarProps) {
           }}
         >
           <SidebarMark />
+        </button>
+        <button
+          type="button"
+          className="title-bar-button"
+          aria-label="Back"
+          title={BACK_TITLE}
+          disabled={!canGoBack}
+          onClick={() => {
+            onDispatch({ type: "navigate_history", direction: "back" });
+          }}
+        >
+          <ChevronMark direction="back" />
+        </button>
+        <button
+          type="button"
+          className="title-bar-button"
+          aria-label="Forward"
+          title={FORWARD_TITLE}
+          disabled={!canGoForward}
+          onClick={() => {
+            onDispatch({ type: "navigate_history", direction: "forward" });
+          }}
+        >
+          <ChevronMark direction="forward" />
         </button>
       </div>
       {/*

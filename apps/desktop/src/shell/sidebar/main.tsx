@@ -22,6 +22,8 @@ import { installMonoFont, installPalette } from "../appearance";
 import { installRootFailureHandler } from "../failure";
 import { PageBoundary } from "../PageBoundary";
 import { installSelectionGuard } from "../selection";
+import { installHistoryButtons } from "../historyButtons";
+import { devhub } from "./client";
 import { WINDOW_TITLES } from "../../ipc/windowTitles";
 import { SidebarApp } from "./SidebarApp";
 import "../styles/tokens.css";
@@ -42,6 +44,11 @@ if (!container) {
 // the terminal's, kept current when the settings change.
 installRootFailureHandler();
 installSelectionGuard(document);
+// The mouse's side buttons walk the app's history over this page; over a
+// workbench they are VS Code's own. See `historyButtons.ts`.
+installHistoryButtons(document, (direction) => {
+  void devhub().dispatch({ type: "navigate_history", direction });
+});
 installPalette(document);
 installMonoFont(document);
 

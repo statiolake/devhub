@@ -513,6 +513,10 @@ export function snapshotWire(
     },
     splitRatio: snapshot.splitRatio,
     smartButtons: snapshot.smartButtons,
+    history: {
+      canGoBack: snapshot.history.canGoBack,
+      canGoForward: snapshot.history.canGoForward,
+    },
   };
   if (
     wire.sidebar.width < SIDEBAR_MIN_WIDTH ||
@@ -1079,6 +1083,11 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       return { type: "resize_sidebar", width: wire.width };
     case "toggle_sidebar":
       return { type: "toggle_sidebar" };
+    case "navigate_history":
+      if (wire.direction !== "back" && wire.direction !== "forward") {
+        invalid();
+      }
+      return { type: "navigate_history", direction: wire.direction };
     case "reorder_workspaces":
       if (!Array.isArray(wire.order)) invalid();
       return {

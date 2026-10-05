@@ -1007,3 +1007,86 @@ describe("arranging the rows", () => {
     ).toEqual([AG_A, AG_B]);
   });
 });
+
+describe("Back and Forward", () => {
+  const A = { kind: "workspace", workspaceId: WS_A } as const;
+  const B = { kind: "workspace", workspaceId: WS_B } as const;
+
+  function history(model: AppModel) {
+    return model.snapshot().history;
+  }
+
+  it("has nowhere to go on a fresh model", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    expect(history(model)).toEqual({ canGoBack: false, canGoForward: false });
+  });
+
+  it("walks back and forward over selections without recording its own moves", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.selectContext(A);
+    model.selectContext(B);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(A);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(scratchOf(model));
+    expect(history(model)).toEqual({ canGoBack: false, canGoForward: true });
+    expect(model.navigateHistory("forward")).toBe(true);
+    expect(model.navigateHistory("forward")).toBe(true);
+    expect(model.selection.context).toEqual(B);
+    expect(model.navigateHistory("forward")).toBe(false);
+  });
+
+  it("cuts off Forward when somewhere new is selected after going back", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.selectContext(A);
+    model.selectContext(B);
+    model.navigateHistory("back");
+    model.navigateHistory("back");
+    model.selectContext(B);
+    expect(history(model).canGoForward).toBe(false);
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(scratchOf(model));
+  });
+
+  it("skips a Workspace that has been closed", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.selectContext(A);
+    model.selectContext(B);
+    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(scratchOf(model));
+  });
+
+  it("records a new Agent, and skips it once it has exited", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext(A);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.selectContext(scratchOf(model));
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual({ kind: "agent", agentId: AG_A });
+    model.navigateHistory("forward");
+    model.agentExited(AG_A);
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(A);
+  });
+
+  it("treats the two halves of one split as one place", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.selectContext(scratchOf(model));
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    model.swapSplitFocus();
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(scratchOf(model));
+    model.navigateHistory("forward");
+    // Forward comes back to the split, in the half that was last in front.
+    expect(model.selection).toEqual({ context: A, presentation: "beside" });
+  });
+
+  it("starts again from a reset", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext(A);
+    model.resetHistory();
+    expect(history(model)).toEqual({ canGoBack: false, canGoForward: false });
+  });
+});

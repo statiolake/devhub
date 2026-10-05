@@ -49,6 +49,8 @@ import { strokeKey } from "../../model/chordKeys.js";
 import { ChordInputSource, type InputSourcePort } from "./chordInputSource.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
+import { historyDirectionFor } from "./historyKeys.js";
+import type { NavigationDirection } from "../../model/navigationHistory.js";
 import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
 import {
 	defaultChordLayout,
@@ -124,6 +126,14 @@ export interface ChordHost {
 	 * exactly as an unbound key does.
 	 */
 	terminalZoom(direction: TerminalZoomDirection): boolean;
+	/**
+	 * Back or Forward through the places the window has shown — `Cmd+[` and
+	 * `Cmd+]` on DevHub's own pages (`historyKeys.ts`).
+	 *
+	 * Answers whether it took the key, on the zoom's terms: it declines while
+	 * a question is up, and a declined key travels on untouched.
+	 */
+	navigateHistory(direction: NavigationDirection): boolean;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
 	closeAgent(agentId: string): void;
 	/** Restart this Agent's session, asking first exactly as the row menu's Restart Session does. */
@@ -276,6 +286,13 @@ export function handleInput(
 		// something on one of DevHub's own pages and nothing anywhere else —
 		// and it is asked first because it is the narrower claim: one page,
 		// three chords, none of which the editing keys spell.
+		// Back and Forward, on DevHub's own pages only: over a workbench the
+		// brackets are VS Code's, and so is its own Back and Forward.
+		const direction = historyDirectionFor(url, stroke);
+		if (direction !== undefined && host.navigateHistory(direction)) {
+			take();
+			return;
+		}
 		const zoom = terminalZoomFor(url, stroke);
 		if (zoom !== undefined && host.terminalZoom(zoom)) {
 			take();

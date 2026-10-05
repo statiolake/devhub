@@ -604,6 +604,14 @@ export type AppIntentWire =
 	/** Show the Sidebar as its icon rail, or give it its width back. */
 	| { readonly type: "toggle_sidebar" }
 	/**
+	 * Back, or Forward, through the places this window has shown — the title
+	 * bar's arrows. See `model/navigationHistory.ts`.
+	 */
+	| {
+			readonly type: "navigate_history";
+			readonly direction: "back" | "forward";
+	  }
+	/**
 	 * Where the top-level rows go, whole, as the person just arranged them.
 	 *
 	 * See `model/workspaceOrder.ts` for what may move where. It is the whole
@@ -754,6 +762,18 @@ export interface AppSnapshotWire {
 		readonly gui?: SmartButtonsSpotWire;
 	};
 	readonly workspaces: readonly WorkspaceWire[];
+	/**
+	 * Whether Back and Forward would go anywhere: what enables the title
+	 * bar's arrows.
+	 *
+	 * Optional so that a snapshot written before history existed — every test
+	 * fixture of the page — still reads, and reads as nowhere to go, which is
+	 * also the truth of a window that has only ever shown one thing.
+	 */
+	readonly history?: {
+		readonly canGoBack: boolean;
+		readonly canGoForward: boolean;
+	};
 }
 
 /** A Smart Buttons box's distance from its pane's right and bottom edges. */

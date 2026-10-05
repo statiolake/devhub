@@ -216,6 +216,18 @@ export type UserIntent =
    */
   | { readonly type: "swap_split_focus" }
   /**
+   * Back, or Forward: the selection before (or after) this one.
+   *
+   * Raised by the title bar's arrows and by main for the keys, the mouse's
+   * side buttons and the trackpad's swipe. It carries only the direction —
+   * where that leads is the history the model keeps
+   * (`model/navigationHistory.ts`). With nowhere to go it does nothing.
+   */
+  | {
+      readonly type: "navigate_history";
+      readonly direction: "back" | "forward";
+    }
+  /**
    * Scratch, and back again.
    *
    * Raised by the shell, never by the page — `Cmd+Q Shift+J` — and it carries

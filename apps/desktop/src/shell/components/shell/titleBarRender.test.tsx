@@ -40,7 +40,13 @@ const APPEARANCE = {
   titleBar: "shown",
 } as unknown as AppAppearance;
 
-function mount(collapsed: boolean) {
+function mount(
+  collapsed: boolean,
+  history: { back: boolean; forward: boolean } = {
+    back: false,
+    forward: false,
+  },
+) {
   let publishTitle: (title: string) => void = () => undefined;
   const onDispatch = vi.fn();
 
@@ -71,7 +77,12 @@ function mount(collapsed: boolean) {
   window.devhub = client;
   render(
     <ShellPageProvider>
-      <TitleBar sidebarCollapsed={collapsed} onDispatch={onDispatch} />
+      <TitleBar
+        sidebarCollapsed={collapsed}
+        canGoBack={history.back}
+        canGoForward={history.forward}
+        onDispatch={onDispatch}
+      />
     </ShellPageProvider>,
   );
 
@@ -85,6 +96,8 @@ function mount(collapsed: boolean) {
 }
 
 const button = () => screen.getByRole("button", { name: "Toggle Sidebar" });
+const back = () => screen.getByRole("button", { name: "Back" });
+const forward = () => screen.getByRole("button", { name: "Forward" });
 const name = () => document.querySelector(".title-bar-name");
 
 describe("the title bar DevHub draws", () => {
@@ -130,5 +143,44 @@ describe("the title bar DevHub draws", () => {
     mount(true);
     await act(async () => undefined);
     expect(button()).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("draws Back and Forward, disabled with nowhere to go", async () => {
+    // Disabled, not hidden: the bar does not reflow as history fills.
+    mount(false);
+    await act(async () => undefined);
+    expect(back()).toBeDisabled();
+    expect(forward()).toBeDisabled();
+    expect(back()).toHaveAttribute("title", "Back (Cmd+[)");
+    expect(forward()).toHaveAttribute("title", "Forward (Cmd+])");
+  });
+
+  it("enables each arrow by the model's own answer, separately", async () => {
+    mount(false, { back: true, forward: false });
+    await act(async () => undefined);
+    expect(back()).toBeEnabled();
+    expect(forward()).toBeDisabled();
+  });
+
+  it("reaches `navigate_history` in the direction pressed", async () => {
+    const bar = mount(false, { back: true, forward: true });
+    await act(async () => undefined);
+    act(() => {
+      back().click();
+      forward().click();
+    });
+    expect(bar.onDispatch.mock.calls).toEqual([
+      [{ type: "navigate_history", direction: "back" }],
+      [{ type: "navigate_history", direction: "forward" }],
+    ]);
+  });
+
+  it("dispatches nothing from a disabled arrow", async () => {
+    const bar = mount(false);
+    await act(async () => undefined);
+    act(() => {
+      back().click();
+    });
+    expect(bar.onDispatch).not.toHaveBeenCalled();
   });
 });

@@ -106,6 +106,7 @@ function snapshotOf(workspaces: readonly WorkspaceSnapshot[]): AppSnapshot {
     splitRatio: 0.55,
     smartButtons: {},
     editorHost: { kind: "ready" },
+    history: { canGoBack: false, canGoForward: false },
   } as unknown as AppSnapshot;
 }
 

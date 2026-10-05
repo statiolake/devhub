@@ -662,6 +662,9 @@ export class AppCoordinator {
       case "swap_split_focus":
         this.model.swapSplitFocus();
         return this.transitionOutcome(beforeRevision, id);
+      case "navigate_history":
+        this.model.navigateHistory(intent.direction);
+        return this.transitionOutcome(beforeRevision, id);
       case "toggle_scratch":
         this.model.toggleScratch();
         return this.transitionOutcome(beforeRevision, id);

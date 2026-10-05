@@ -139,9 +139,15 @@
   height: 16px;
 }
 
-.title-bar-button:hover {
+.title-bar-button:hover:not(:disabled) {
   background: var(--wash-strong);
   color: var(--primary);
+}
+
+/* Back or Forward with nowhere to go: still there, so the bar does not
+   reflow as history fills, and plainly not something to press. */
+.title-bar-button:disabled {
+  color: var(--disabled-ink);
 }
 
 /* Pressed means the Sidebar is open — the state the button reports with

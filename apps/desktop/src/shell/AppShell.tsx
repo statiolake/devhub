@@ -149,6 +149,8 @@ function Workbench() {
           not drawn and the Sidebar keeps the lights' band itself. */}
       <TitleBar
         sidebarCollapsed={state.snapshot.sidebar.collapsed}
+        canGoBack={state.snapshot.history?.canGoBack ?? false}
+        canGoForward={state.snapshot.history?.canGoForward ?? false}
         onDispatch={onDispatch}
       />
       {/* And the same band in the other chrome, where there is no bar to be

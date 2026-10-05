@@ -130,6 +130,10 @@ function host(zoomActs = true) {
 			calls.push(`terminalZoom ${direction}`);
 			return zoomActs;
 		},
+		navigateHistory: (direction) => {
+			calls.push(`navigateHistory ${direction}`);
+			return zoomActs;
+		},
 		closeAgent: record("closeAgent"),
 		restartAgent: record("restartAgent"),
 		closeWorkspace: record("closeWorkspace"),
@@ -466,5 +470,34 @@ describe("a chord, as Electron delivers it", () => {
 			expect(taken).toEqual([false]);
 			expect(calls).toEqual([]);
 		}
+	});
+
+	/**
+	 * Back and Forward: taken on DevHub's own pages, never over an editor,
+	 * where the brackets are VS Code's Outdent and Indent and its own Back and
+	 * Forward are on keys this layer never touches.
+	 */
+	it("walks the app's history on Cmd+[ and Cmd+] over DevHub's own pages", () => {
+		const { calls, chordHost } = host();
+		const taken = type(
+			chordHost,
+			[
+				input("BracketLeft", "[", { meta: true }),
+				input("BracketRight", "]", { meta: true }),
+			],
+			`${SHELL_ORIGIN}/sidebar.html`,
+		);
+		expect(taken).toEqual([true, true]);
+		expect(calls).toEqual(["navigateHistory back", "navigateHistory forward"]);
+	});
+
+	it("leaves Cmd+[ and Cmd+] to the editor in a workbench", () => {
+		const { calls, chordHost } = host();
+		const taken = type(chordHost, [
+			input("BracketLeft", "[", { meta: true }),
+			input("Minus", "-", { control: true }),
+		]);
+		expect(taken).toEqual([false, false]);
+		expect(calls).toEqual([]);
 	});
 });

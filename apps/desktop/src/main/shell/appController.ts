@@ -449,6 +449,12 @@ import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard, setChordLayout } from "./keyboard.js";
 import {
+	appCommandDirection,
+	isAppHistorySurface,
+	swipeDirection,
+} from "./historyKeys.js";
+import type { NavigationDirection } from "../../model/navigationHistory.js";
+import {
 	InputSourceHelper,
 	inputSourceHelperPath,
 } from "./inputSourceHelper.js";
@@ -1452,8 +1458,57 @@ export class AppController {
 			openSettings: () => {
 				openSettingsWindow();
 			},
+			navigateHistory: (direction) => this.navigateHistory(direction),
 		});
 		this.applyChordLayout();
+		this.installHistoryGestures();
+	}
+
+	/**
+	 * Back or Forward through the places the window has shown, raised by main.
+	 *
+	 * A move like any chord's (`arrive`): the keyboard goes to what it lands
+	 * on. Declined while a question is up, on the zoom's terms — a modal holds
+	 * the keyboard, and walking away from the place it asks about would be
+	 * answering it by leaving. With nowhere to go the model does nothing, and
+	 * the key is still taken: it was a Back, on a page where Back means this.
+	 */
+	private navigateHistory(direction: NavigationDirection): boolean {
+		if (shellWindow().picker.openModals().length > 0) return false;
+		this.arrive({ type: "navigate_history", direction }, undefined);
+		return true;
+	}
+
+	/**
+	 * The window-level gestures for Back and Forward: Electron's
+	 * `app-command` (the mouse's side buttons on Windows and Linux) and the
+	 * trackpad's `swipe` on macOS.
+	 *
+	 * Neither says which surface it was over, so both are decided by where the
+	 * keyboard is (`focusTarget`), which is the closest thing to "the area the
+	 * person is in" main has. Over a workbench they are left to VS Code, whose
+	 * own Back and Forward are the editor's (`historyKeys.ts`). The pages that
+	 * answer the side buttons in their own DOM (`shell/historyButtons.ts`) are
+	 * left out of `app-command`, so one press is never two moves.
+	 */
+	private installHistoryGestures(): void {
+		const shell = shellWindowIfCreated();
+		if (!shell) return;
+		const ownButtons = ["/agents.html", "/sidebar.html"];
+		shell.window.on("app-command", (_event, command) => {
+			const direction = appCommandDirection(command);
+			if (direction === undefined) return;
+			const url = shell.focusTarget().getURL();
+			if (!isAppHistorySurface(url)) return;
+			if (ownButtons.some((page) => url.includes(page))) return;
+			this.navigateHistory(direction);
+		});
+		shell.window.on("swipe", (_event, swiped) => {
+			const direction = swipeDirection(swiped);
+			if (direction === undefined) return;
+			if (!isAppHistorySurface(shell.focusTarget().getURL())) return;
+			this.navigateHistory(direction);
+		});
 	}
 
 	/**

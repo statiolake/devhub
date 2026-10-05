@@ -63,6 +63,10 @@ import {
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
 import { tabOrder, tabPosition } from "../ipc/appShell.js";
+import {
+  NavigationHistory,
+  type NavigationDirection,
+} from "./navigationHistory.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -258,6 +262,14 @@ export interface AppSnapshot {
    */
   readonly smartButtons: SmartButtonsPlacement;
   readonly editorHost: EditorHostState;
+  /**
+   * Whether Back and Forward would go anywhere — what the title bar's arrows
+   * are enabled by. See `model/navigationHistory.ts`.
+   */
+  readonly history: {
+    readonly canGoBack: boolean;
+    readonly canGoForward: boolean;
+  };
 }
 
 /** What a rolled-back close has to put back, exactly where it was. */
@@ -413,6 +425,17 @@ export class AppModel {
   private smartButtonsValue: SmartButtonsPlacement = {};
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
+  /**
+   * Every selection this window has shown, for Back and Forward.
+   *
+   * Written in one place, `bumpRevision`, rather than by each of the five ways
+   * the selection moves: every one of them ends in a revision, so none of
+   * them can forget to be recorded — a new Agent, a repaired selection after a
+   * close and a rolled-back close included. Going Back moves the cursor
+   * before it selects, so the move it makes is recorded as no change. See
+   * `model/navigationHistory.ts`.
+   */
+  private readonly history: NavigationHistory<NavigationSelection>;
 
   constructor(scratch: Workspace) {
     this.workspaceList.push(scratch);
@@ -421,6 +444,9 @@ export class AppModel {
       context: { kind: "workspace", workspaceId: scratch.id },
       presentation: "full",
     };
+    this.history = new NavigationHistory(this.selectionValue, {
+      same: sameSelection,
+    });
   }
 
   get scratchWorkspaceId(): WorkspaceId {
@@ -470,7 +496,58 @@ export class AppModel {
       terminalZoomOffset: this.terminalZoomOffsetValue,
       smartButtons: this.smartButtonsValue,
       editorHost: this.editorHost,
+      history: {
+        canGoBack: this.canNavigate("back"),
+        canGoForward: this.canNavigate("forward"),
+      },
     };
+  }
+
+  /** Whether Back (or Forward) would select anything. */
+  canNavigate(direction: NavigationDirection): boolean {
+    return this.history.can(direction, (entry) =>
+      this.contextExists(entry.context),
+    );
+  }
+
+  /**
+   * Back or Forward: select the nearest earlier (or later) place that still
+   * exists, and answer whether there was one.
+   *
+   * Selected through `selectContext` like any other move, so it reads the
+   * Agent it lands on and remembers it as the workspace's last, exactly as a
+   * click on its row would. A `beside` entry whose pair has gone since is
+   * shown on its own, which is what `selectContext` does with any `beside`
+   * that has no other half.
+   */
+  navigateHistory(direction: NavigationDirection): boolean {
+    const target = this.history.go(direction, (entry) =>
+      this.contextExists(entry.context),
+    );
+    if (target === undefined) return false;
+    // A `beside` with no pair any more is shown `full`, as `selectContext`
+    // would store it. The entry is corrected *before* the selection moves, so
+    // the move arrives at the entry the cursor points to and is not taken
+    // for a new visit that would cut Forward off.
+    const presentation = this.canPresentBeside(target.context)
+      ? target.presentation
+      : "full";
+    this.history.visit({ context: target.context, presentation }, true);
+    this.selectContext(target.context, presentation);
+    // The arrows' enabled state moved even when the selection did not.
+    this.bumpRevision();
+    return true;
+  }
+
+  /**
+   * Start the history again from the selection as it is now.
+   *
+   * Called once the state file has been read, so the first Back of a session
+   * is not a step back into the Scratch the model was built on before the
+   * restored selection replaced it.
+   */
+  resetHistory(): void {
+    this.history.reset(this.selectionValue);
   }
 
   setEditorHostState(state: EditorHostState): boolean {
@@ -1564,6 +1641,33 @@ export class AppModel {
 
   private bumpRevision(): void {
     this.revision += 1;
+    this.recordSelection();
+  }
+
+  /**
+   * Write the selection into the history, if it moved.
+   *
+   * A move between the two halves of one split is the same place with the
+   * keyboard in the other half (`swapSplitFocus`), so it updates the entry
+   * rather than adding one: Back from a split goes to wherever was before the
+   * split, not to the other half of it.
+   */
+  private recordSelection(): void {
+    const before = this.history.current;
+    const now = this.selectionValue;
+    const workspace = this.splitWorkspace(before.context);
+    const sameSplit =
+      before.presentation === "beside" &&
+      now.presentation === "beside" &&
+      workspace !== undefined &&
+      workspace === this.splitWorkspace(now.context);
+    this.history.visit(now, sameSplit);
+  }
+
+  /** The Workspace whose split this context is a half of, if it still is. */
+  private splitWorkspace(context: NavigationContext): WorkspaceId | undefined {
+    if (context.kind === "workspace") return context.workspaceId;
+    return this.agent(context.agentId)?.workspaceId;
   }
 
   private workspaceSnapshots(): WorkspaceSnapshot[] {

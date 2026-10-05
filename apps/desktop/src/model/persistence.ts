@@ -1400,6 +1400,9 @@ export function hydrateModel(
         break;
     }
   });
+  // Back starts at the restored selection, not at the Scratch the model was
+  // built on a moment ago. See `AppModel.resetHistory`.
+  model.resetHistory();
   return model;
 }
 
