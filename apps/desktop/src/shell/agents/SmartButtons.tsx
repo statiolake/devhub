@@ -286,7 +286,9 @@ export function SmartButtons({
   // Set only by a drop, double-click or key move: the one time the box's
   // position is allowed to glide. Never on mount, page switch or resize.
   const [settling, setSettling] = useState(false);
-  const settleTimer = useRef<ReturnType<typeof setTimeout>>();
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   useEffect(() => () => clearTimeout(settleTimer.current), []);
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
