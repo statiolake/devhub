@@ -141,6 +141,7 @@ function host(zoomActs = true) {
 		refreshRepositories: record("refreshRepositories"),
 		openChordHelp: record("openChordHelp"),
 		openSettings: record("openSettings"),
+		openCommandPalette: record("openCommandPalette"),
 	};
 	return { calls, chordHost };
 }
@@ -192,6 +193,26 @@ function named(commandId: string): string {
 describe("a chord, as Electron delivers it", () => {
 	beforeEach(() => {
 		resetChordRouterForTests();
+	});
+
+	/**
+	 * `Cmd+Q :` opens the command palette on whichever layout made the colon:
+	 * Shift and the semicolon key on a US keyboard, the unshifted key beside L
+	 * (`Quote`) on a JIS one. The character is the stroke.
+	 */
+	it.each([
+		["US", input("Semicolon", ":", { shift: true })],
+		["JIS", input("Quote", ":")],
+	])("opens the command palette on prefix + ':' (%s)", (_layout, colon) => {
+		const { calls, chordHost } = host();
+		expect(type(chordHost, [PREFIX, colon])).toEqual([true, true]);
+		expect(calls).toEqual(["openCommandPalette"]);
+	});
+
+	it("does not open the palette on a semicolon", () => {
+		const { calls, chordHost } = host();
+		type(chordHost, [PREFIX, input("Semicolon", ";")]);
+		expect(calls).toEqual([]);
 	});
 
 	it("swallows the prefix and the second stroke, and runs the command", () => {

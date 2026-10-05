@@ -67,6 +67,8 @@
  * | `Cmd+Q D`                   | `dismiss_alert`           |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
+ * | `Cmd+Q :`                   | `open_command_palette`    |
+ * | (palette only)              | `navigate_back` / `navigate_forward` |
  *
  * # The decisions behind that table
  *
@@ -260,6 +262,16 @@
  * invented meanings — an unbound chord key cancels, so nothing surprising
  * happens if one is typed out of habit.
  *
+ * **`Cmd+Q :` is every command, by name.** The help overlay is a list you
+ * read; the command palette is the same list you choose from, the way VS
+ * Code's `Command-Shift-P` is. It is drawn from this registry, so a command
+ * cannot be on a key and missing from the palette. A command may also be
+ * *palette only* — no default key — when it already has a gesture somewhere
+ * else (`navigate_back`, which is `Cmd+[` on DevHub's own pages) and a chord
+ * for it would take a key some other command wants. `:` is matched as the
+ * character, so it is Shift+; on a US layout and the unshifted key beside L on
+ * a JIS one, and both are the same stroke here.
+ *
  * # The rules
  *
  * - The prefix stays armed until the next key: there is no timeout. A key
@@ -341,7 +353,21 @@ export type CommandId =
   | "refresh_repositories"
   | "dismiss_alert"
   | "open_settings"
-  | "show_chord_help";
+  | "show_chord_help"
+  | "open_command_palette"
+  | "navigate_back"
+  | "navigate_forward";
+
+/**
+ * Which heading a command sits under in the command palette — the prefix of
+ * its row, `Agent: Rename this Agent…`, the way VS Code writes its own.
+ */
+export type CommandCategory =
+  | "Navigate"
+  | "View"
+  | "Workspace"
+  | "Agent"
+  | "DevHub";
 
 /**
  * What has to be selected for a command to have anything to do.
@@ -358,6 +384,8 @@ export interface CommandDefinition {
   /** What it is called, in the help overlay and in Settings. */
   readonly label: string;
   readonly needs: CommandNeeds;
+  /** Its heading in the command palette. */
+  readonly category: CommandCategory;
   /** The second strokes DevHub ships, as key strings. */
   readonly defaultKeys: readonly string[];
   /** Which sidebar row it selects, for the digit commands only. */
@@ -381,6 +409,7 @@ const SELECT_ENTRY_COMMANDS: readonly CommandDefinition[] = Array.from(
           ? "Select Scratch (sidebar entry 1)"
           : `Select sidebar entry ${String(ordinal)}`,
       needs: "nothing",
+      category: "Navigate",
       defaultKeys: [String(ordinal)],
       ordinal,
     };
@@ -400,6 +429,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "forward_prefix",
     label: "Send a real Command-Q to the surface",
     needs: "nothing",
+    category: "DevHub",
     defaultKeys: [DEFAULT_CHORD_PREFIX],
   },
 
@@ -407,24 +437,28 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "next_workspace",
     label: "Next workspace",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["N"],
   },
   {
     id: "previous_workspace",
     label: "Previous workspace",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["P"],
   },
   {
     id: "next_agent",
     label: "Next Agent",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["]", "Cmd+]"],
   },
   {
     id: "previous_agent",
     label: "Previous Agent",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["[", "Cmd+["],
   },
   {
@@ -433,24 +467,28 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "next_unread_agent",
     label: "Next unread Agent",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["}"],
   },
   {
     id: "previous_unread_agent",
     label: "Previous unread Agent",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["{"],
   },
   {
     id: "next_tab",
     label: "Next sidebar row",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["Cmd+n", "n"],
   },
   {
     id: "previous_tab",
     label: "Previous sidebar row",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["Cmd+p", "p"],
   },
   {
@@ -460,6 +498,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "move_entry_up",
     label: "Move this row up",
     needs: "nothing",
+    category: "View",
     // Lower case because that is the canonical spelling of a *named* key —
     // there is no character for Shift to fold into, so the name is the
     // identity and it is compared without regard to case. `Alt+ArrowUp` in a
@@ -470,12 +509,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "move_entry_down",
     label: "Move this row down",
     needs: "nothing",
+    category: "View",
     defaultKeys: ["Alt+arrowdown"],
   },
   {
     id: "open_tab_picker",
     label: "Go to workspace or Agent…",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["g"],
   },
   ...SELECT_ENTRY_COMMANDS,
@@ -484,12 +525,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "toggle_workspace_agent",
     label: "Switch between the workspace and its Agent",
     needs: "workspace",
+    category: "View",
     defaultKeys: ["Cmd+j"],
   },
   {
     id: "toggle_split",
     label: "Show the Agent beside the editor, or alone",
     needs: "workspace",
+    category: "View",
     defaultKeys: ["z"],
   },
   {
@@ -498,18 +541,21 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "toggle_scratch",
     label: "Switch between Scratch and where you were",
     needs: "nothing",
+    category: "Navigate",
     defaultKeys: ["J"],
   },
   {
     id: "swap_split_focus",
     label: "Focus the other pane",
     needs: "split",
+    category: "View",
     defaultKeys: ["o"],
   },
   {
     id: "focus_editor",
     label: "Show the editor",
     needs: "nothing",
+    category: "View",
     defaultKeys: ["e"],
   },
 
@@ -519,12 +565,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "focus_sidebar",
     label: "Focus the sidebar",
     needs: "nothing",
+    category: "View",
     defaultKeys: ["s"],
   },
   {
     id: "toggle_sidebar",
     label: "Collapse the sidebar to its rail, or expand it",
     needs: "nothing",
+    category: "View",
     defaultKeys: ["b"],
   },
 
@@ -532,30 +580,35 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "add_workspace",
     label: "Add Workspace…",
     needs: "nothing",
+    category: "Workspace",
     defaultKeys: ["f"],
   },
   {
     id: "add_agent",
     label: "New Agent in this workspace",
     needs: "workspace",
+    category: "Agent",
     defaultKeys: ["c"],
   },
   {
     id: "open_issue_picker",
     label: "Assign an Issue…",
     needs: "nothing",
+    category: "Workspace",
     defaultKeys: ["i"],
   },
   {
     id: "send_agent_action",
     label: "Send an Agent action…",
     needs: "agent",
+    category: "Agent",
     defaultKeys: ["a"],
   },
   {
     id: "rename_agent",
     label: "Rename this Agent…",
     needs: "agent",
+    category: "Agent",
     defaultKeys: [","],
   },
   {
@@ -564,12 +617,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "mark_agent_unread",
     label: "Mark this Agent as unread",
     needs: "agent",
+    category: "Agent",
     defaultKeys: ["u"],
   },
   {
     id: "close_selection",
     label: "Close what is selected",
     needs: "nothing",
+    category: "Workspace",
     defaultKeys: ["x"],
   },
   {
@@ -578,12 +633,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "restart_agent",
     label: "Restart this Agent's session",
     needs: "agent",
+    category: "Agent",
     defaultKeys: ["R"],
   },
   {
     id: "close_workspace",
     label: "Close this workspace",
     needs: "workspace",
+    category: "Workspace",
     defaultKeys: ["W"],
   },
 
@@ -591,6 +648,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "refresh_repositories",
     label: "Refresh branch, pull request and Issue information",
     needs: "nothing",
+    category: "Workspace",
     defaultKeys: ["r"],
   },
 
@@ -602,6 +660,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "dismiss_alert",
     label: "Dismiss the alert",
     needs: "nothing",
+    category: "DevHub",
     defaultKeys: ["d"],
   },
 
@@ -609,14 +668,42 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "open_settings",
     label: "DevHub Settings…",
     needs: "nothing",
+    category: "DevHub",
     defaultKeys: ["<"],
   },
   {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
+    category: "DevHub",
     // `?` is Shift and the slash key, which is what the physical name says.
     defaultKeys: ["?"],
+  },
+  {
+    // The registry as a list to choose from. Matched as the character `:`,
+    // so US (Shift+;) and JIS (the key beside L) both reach it.
+    id: "open_command_palette",
+    label: "Show all commands…",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: [":"],
+  },
+  {
+    // Palette only: on DevHub's own pages Back is already `Cmd+[`
+    // (`main/shell/historyKeys.ts`), and over a workbench the brackets are
+    // VS Code's, so a chord for it would take a key for nothing.
+    id: "navigate_back",
+    label: "Go Back",
+    needs: "nothing",
+    category: "Navigate",
+    defaultKeys: [],
+  },
+  {
+    id: "navigate_forward",
+    label: "Go Forward",
+    needs: "nothing",
+    category: "Navigate",
+    defaultKeys: [],
   },
 ];
 

@@ -561,10 +561,21 @@ export function Picker({
       onCancel();
       return;
     }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    // Ctrl-N and Ctrl-P are the arrows, as in every Mac text field's list and
+    // in VS Code's own palette.
+    const emacs =
+      event.ctrlKey && !event.metaKey && !event.altKey
+        ? event.key === "n"
+          ? "ArrowDown"
+          : event.key === "p"
+            ? "ArrowUp"
+            : undefined
+        : undefined;
+    const arrow = emacs ?? event.key;
+    if (arrow === "ArrowDown" || arrow === "ArrowUp") {
       event.preventDefault();
       if (rows.length === 0) return;
-      const delta = event.key === "ArrowDown" ? 1 : -1;
+      const delta = arrow === "ArrowDown" ? 1 : -1;
       setActive((current) => (current + delta + rows.length) % rows.length);
       return;
     }

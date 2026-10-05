@@ -51,6 +51,7 @@ import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
 import { historyDirectionFor } from "./historyKeys.js";
 import type { NavigationDirection } from "../../model/navigationHistory.js";
+import type { CommandId } from "../../model/commands.js";
 import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
 import {
 	defaultChordLayout,
@@ -153,6 +154,8 @@ export interface ChordHost {
 	/** The list of chords, drawn from the registry they are run from. */
 	openChordHelp(): void;
 	openSettings(): void;
+	/** Every command, by name — `Cmd+Q :`. */
+	openCommandPalette(): void;
 }
 
 /**
@@ -250,7 +253,31 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 		case "open-settings":
 			host.openSettings();
 			return;
+		case "open-command-palette":
+			host.openCommandPalette();
+			return;
+		case "navigate-history":
+			host.navigateHistory(effect.direction);
+			return;
 	}
+}
+
+/**
+ * Run one command from the registry, the way its chord would.
+ *
+ * The one path a command takes whether it was reached by a key or chosen in
+ * the command palette, so the two cannot disagree about what it does. Answers
+ * whether it did anything: a command with nothing to act on is a no-op.
+ */
+export function runCommand(host: ChordHost, commandId: CommandId): boolean {
+	// Before the first projection there is no model to resolve against, and a
+	// command that arrives then has nothing to act on.
+	const snapshot = host.snapshot();
+	if (!snapshot) return false;
+	const effect = resolveChord(commandId, snapshot);
+	if (!effect) return false;
+	perform(host, effect);
+	return true;
 }
 
 /**
@@ -309,14 +336,9 @@ export function handleInput(
 	// surface would be worse than one that did nothing.
 	take();
 	if (decision.kind !== "run") return;
-	// Before the first projection there is no model to resolve against, and a
-	// chord that arrives then has nothing to act on.
-	const snapshot = host.snapshot();
-	if (!snapshot) return;
-	const effect = resolveChord(decision.commandId, snapshot);
 	// A chord with nothing to act on — no agents, no seventh workspace — is a
 	// no-op by design, not a failure.
-	if (effect) perform(host, effect);
+	runCommand(host, decision.commandId);
 }
 
 function attach(contents: Electron.WebContents, host: ChordHost): void {

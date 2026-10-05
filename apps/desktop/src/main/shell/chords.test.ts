@@ -818,6 +818,20 @@ describe("the commands that need nothing at all", () => {
 		expect(run("show_chord_help", nothing)).toEqual({
 			kind: "open-chord-help",
 		});
+		expect(run("open_command_palette", nothing)).toEqual({
+			kind: "open-command-palette",
+		});
+		// Back and Forward are offered only where the history has somewhere
+		// to go — which is what hides them from the palette otherwise.
+		const history = {
+			...nothing,
+			history: { canGoBack: true, canGoForward: false },
+		};
+		expect(run("navigate_back", history)).toEqual({
+			kind: "navigate-history",
+			direction: "back",
+		});
+		expect(run("navigate_forward", history)).toBeUndefined();
 	});
 
 	it("asks for the alert to go whether or not one is showing", () => {

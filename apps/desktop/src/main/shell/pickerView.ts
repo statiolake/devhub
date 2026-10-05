@@ -170,9 +170,17 @@ export class PickerView {
 		if (index === -1) return;
 		const [modal] = this.open.splice(index, 1);
 		const settle = this.pending.get(id);
-		if (settle && modal?.request.kind === "workbench-dialog") {
+		if (settle && modal) {
 			this.pending.delete(id);
-			settle(response ?? modal.request.cancelId);
+			// A workbench's question closed without an answer is answered with
+			// its own cancel button; any other sheet that waits for a choice
+			// (`choose`) is told -1, which is "nothing was chosen".
+			settle(
+				response ??
+					(modal.request.kind === "workbench-dialog"
+						? modal.request.cancelId
+						: -1),
+			);
 		}
 		this.host?.modalsChanged();
 	}
@@ -219,6 +227,22 @@ export class PickerView {
 			this.host?.window.once("closed", () => {
 				this.closeModal(id);
 			});
+		});
+	}
+
+	/**
+	 * Put up a sheet that answers with a choice, and wait for it.
+	 *
+	 * The sheet closes with the index it chose as its response; closed any
+	 * other way — Escape, or replaced by the same sheet opened again — it
+	 * answers -1.
+	 */
+	async choose(
+		request: Extract<ModalRequest, { kind: "command-palette" }>,
+	): Promise<number> {
+		const id = this.openModal(request);
+		return new Promise<number>((resolve) => {
+			this.pending.set(id, resolve);
 		});
 	}
 

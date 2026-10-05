@@ -200,7 +200,11 @@ export type ChordEffect =
 	  }
 	| { readonly kind: "refresh-repositories" }
 	| { readonly kind: "open-chord-help" }
-	| { readonly kind: "open-settings" };
+	| { readonly kind: "open-settings" }
+	/** Every command, by name: the registry as a picker. */
+	| { readonly kind: "open-command-palette" }
+	/** Back or Forward through the places the window has shown. */
+	| { readonly kind: "navigate-history"; readonly direction: "back" | "forward" };
 
 /** Scratch, then the workspaces in sidebar order. See `sidebarWorkspaces`. */
 function orderedWorkspaces(
@@ -413,6 +417,23 @@ export function resolveChord(
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };
+
+		case "open_command_palette":
+			return { kind: "open-command-palette" };
+
+		case "navigate_back":
+		case "navigate_forward": {
+			// A snapshot from before history existed says nothing, and then
+			// the move is offered and the model decides.
+			const forwards = commandId === "navigate_forward";
+			const history = snapshot.history;
+			if (history && !(forwards ? history.canGoForward : history.canGoBack))
+				return undefined;
+			return {
+				kind: "navigate-history",
+				direction: forwards ? "forward" : "back",
+			};
+		}
 
 		case "focus_editor":
 			// What "focused" means for DevHub's content area is what is selected:

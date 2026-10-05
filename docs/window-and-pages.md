@@ -415,6 +415,35 @@ six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
 
+## Every command, by name: `Cmd+Q :`
+
+The command palette is the command registry (`model/commands.ts`) drawn as a
+picker. Every command there has an id, a label, a category (`Navigate`, `View`,
+`Workspace`, `Agent`, `DevHub`) and what it `needs`; the palette lists each as
+`Category: Label` with the chords actually in effect at its right end, so a
+rebound key reads as the person's own. A command may be palette only — no
+default key — when it already has a gesture elsewhere: `navigate_back` and
+`navigate_forward` are `Cmd+[` / `Cmd+]` on DevHub's own pages, and the chord
+brackets already belong to the Agent cycle.
+
+The stroke is the character `:`, not a physical key, so it is Shift+; on a US
+layout and the unshifted key beside L on a JIS one (`chordKeys.ts`).
+
+Main builds the rows (`model/commandPalette.ts`) when it opens the sheet:
+`forward_prefix` and the palette itself are left out, and a command is listed
+only if `resolveChord` would give it something to do against the current
+snapshot — an Agent's commands are not offered with a workspace selected, Back
+is not offered with nowhere to go back to. Commands run from the palette are
+remembered in memory (eight, most recent first) and lead the list.
+
+It is the ordinary picker on the modal layer, so it draws over a workbench as
+every other sheet does: typing filters with the shared scorer
+(`model/fuzzy.ts`, matching the title and the id), the arrows and Ctrl-N /
+Ctrl-P move, Return runs and Escape closes. The sheet closes with the chosen
+row's index as its response (`PickerView.choose`), and main then runs the
+command through `runCommand` in `keyboard.ts` — the same path a completed chord
+takes — so the palette and the keys cannot disagree about what a command does.
+
 ## Two keys that are not chords
 
 `Cmd+-`, `Cmd+Shift+-` and `Cmd+Shift+0` zoom the Agent panes' text: one pixel

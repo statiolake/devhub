@@ -447,7 +447,17 @@ import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { terminalColors } from "./terminalColors.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
-import { installKeyboard, setChordLayout } from "./keyboard.js";
+import {
+	installKeyboard,
+	runCommand,
+	setChordLayout,
+	type ChordHost,
+} from "./keyboard.js";
+import { resolveChord } from "./chords.js";
+import {
+	commandPaletteRows,
+	rememberRecentCommand,
+} from "../../model/commandPalette.js";
 import {
 	appCommandDirection,
 	isAppHistorySurface,
@@ -465,6 +475,7 @@ import {
 	defaultKeybindings,
 	keysForCommand,
 	resolveBindings,
+	type CommandId,
 	type CommandNeeds,
 } from "../../model/commands.js";
 import {
@@ -1319,7 +1330,7 @@ export class AppController {
 		const report = (failure: unknown) => {
 			this.publishError(errorWire(failure));
 		};
-		installKeyboard(inputSource, report, {
+		const chordHost: ChordHost = {
 			snapshot: () => this.snapshot(),
 			selectContext: (context, presentation, focus) => {
 				this.arrive(
@@ -1459,7 +1470,11 @@ export class AppController {
 				openSettingsWindow();
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
-		});
+			openCommandPalette: () => {
+				void this.openCommandPalette(chordHost);
+			},
+		};
+		installKeyboard(inputSource, report, chordHost);
 		this.applyChordLayout();
 		this.installHistoryGestures();
 	}
@@ -1634,6 +1649,43 @@ export class AppController {
 	 * opposite, and `publishLayoutState` is where it joins the rest.
 	 */
 	private keyboardInSidebar = false;
+
+	/** What the command palette ran lately, most recent first. Memory only. */
+	private recentCommands: readonly CommandId[] = [];
+
+	/**
+	 * `Cmd+Q :` — every command, by name, run through the chord's own path.
+	 *
+	 * The rows are the registry, the chords actually in effect, and only the
+	 * commands that would do something now: availability is the chord resolver
+	 * itself, asked about the snapshot the palette opens on. The choice comes
+	 * back as an index; the sheet is gone before the command runs, so a command
+	 * that opens a sheet of its own (or declines while one is up, like Back)
+	 * meets an empty modal layer.
+	 */
+	private async openCommandPalette(host: ChordHost): Promise<void> {
+		const snapshot = this.snapshot();
+		if (!snapshot) return;
+		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const { prefix, bindings } = resolveBindings(spec);
+		const rows = commandPaletteRows({
+			prefix,
+			bindings,
+			recent: this.recentCommands,
+			available: (id) => resolveChord(id, snapshot) !== undefined,
+		});
+		const chosen = await shellWindow().picker.choose({
+			kind: "command-palette",
+			rows,
+		});
+		const row = rows[chosen];
+		if (!row) return;
+		this.recentCommands = rememberRecentCommand(
+			this.recentCommands,
+			row.commandId,
+		);
+		runCommand(host, row.commandId);
+	}
 
 	/**
 	 * Stop an Agent, asking first, exactly as its own row does.

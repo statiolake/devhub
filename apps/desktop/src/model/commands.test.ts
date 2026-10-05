@@ -34,8 +34,13 @@ describe("the registry itself", () => {
     // The whole reason the defaults are strings: they go through the same
     // parser the file does, so DevHub cannot ship a key a person could not
     // have written.
+    // Palette-only commands have no key, deliberately (see `navigate_back`);
+    // every other command ships at least one.
+    const paletteOnly = new Set(["navigate_back", "navigate_forward"]);
     for (const command of COMMANDS) {
-      expect(command.defaultKeys.length, command.id).toBeGreaterThan(0);
+      if (!paletteOnly.has(command.id)) {
+        expect(command.defaultKeys.length, command.id).toBeGreaterThan(0);
+      }
       for (const text of command.defaultKeys) {
         expect(
           () => parseChordKey(text),

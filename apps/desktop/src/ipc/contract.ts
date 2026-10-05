@@ -1642,6 +1642,17 @@ export interface ChordHelpRowWire {
 	readonly needs?: string;
 }
 
+/** One row of the command palette: a command, by name, and its chords. */
+export interface CommandPaletteRowWire {
+	readonly commandId: string;
+	/** `Category: Label`. */
+	readonly title: string;
+	/** Every chord that reaches it, written out in full: `Cmd+Q Shift+N`. */
+	readonly chords: readonly string[];
+	/** Run from the palette lately; such rows lead the list. */
+	readonly recent: boolean;
+}
+
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
@@ -1696,6 +1707,15 @@ export type ModalRequest =
 			readonly dirty?: boolean;
 	  }
 	| { readonly kind: "chord-help"; readonly rows: readonly ChordHelpRowWire[] }
+	/**
+	 * Every command, by name — `Cmd+Q :`. The sheet closes with the index of
+	 * the row chosen as its response, and main runs that row's command through
+	 * the same path its chord takes.
+	 */
+	| {
+			readonly kind: "command-palette";
+			readonly rows: readonly CommandPaletteRowWire[];
+	  }
 	| {
 			/**
 			 * The wording DevHub is about to say, before it says it.
