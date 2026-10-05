@@ -143,7 +143,12 @@ function reducedMotion(): boolean {
 interface Presence {
   readonly line: SmartButtonLine;
   readonly exiting: boolean;
+  /** Appeared while the panel was showing: plays its enter animation. */
+  readonly entering: boolean;
 }
+
+/** How long the position transition stays on after a snap/dock/undock. */
+export const SMART_BUTTONS_SETTLE_MS = 260;
 
 /**
  * The lines to mount: the current ones, and for a moment each line that just
@@ -152,6 +157,10 @@ interface Presence {
  */
 function usePresence(lines: readonly SmartButtonLine[]): readonly Presence[] {
   const previous = useRef<readonly SmartButtonLine[]>(lines);
+  // Lines there from the first render: they were not "coming", so no enter.
+  const initial = useRef<Set<string>>(
+    new Set(lines.map((line) => line.action.id)),
+  );
   const [leaving, setLeaving] = useState<
     readonly { readonly line: SmartButtonLine; readonly index: number }[]
   >([]);
@@ -161,6 +170,7 @@ function usePresence(lines: readonly SmartButtonLine[]): readonly Presence[] {
       .map((line, index) => ({ line, index }))
       .filter(({ line }) => !now.has(line.action.id));
     previous.current = lines;
+    for (const { line } of gone) initial.current.delete(line.action.id);
     if (gone.length === 0 || reducedMotion()) return;
     setLeaving((current) => [
       ...current.filter(
@@ -178,12 +188,17 @@ function usePresence(lines: readonly SmartButtonLine[]): readonly Presence[] {
     }, SMART_BUTTONS_EXIT_MS);
   }, [lines]);
   const now = new Set(lines.map((line) => line.action.id));
-  const merged: Presence[] = lines.map((line) => ({ line, exiting: false }));
+  const merged: Presence[] = lines.map((line) => ({
+    line,
+    exiting: false,
+    entering: !initial.current.has(line.action.id),
+  }));
   for (const entry of [...leaving].sort((a, b) => a.index - b.index)) {
     if (now.has(entry.line.action.id)) continue;
     merged.splice(Math.min(entry.index, merged.length), 0, {
       line: entry.line,
       exiting: true,
+      entering: false,
     });
   }
   return merged;
@@ -268,6 +283,11 @@ export function SmartButtons({
   const own = useRef<HTMLDivElement | null>(null);
   const present = usePresence(lines);
   const metrics = useMetrics(own, agent, present.length + (menuOpen ? 1 : 0));
+  // Set only by a drop, double-click or key move: the one time the box's
+  // position is allowed to glide. Never on mount, page switch or resize.
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(settleTimer.current), []);
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
@@ -298,13 +318,20 @@ export function SmartButtons({
     metrics === undefined
       ? offset
       : snapSpot(offset, metrics.pane, metrics.anchor, metrics.box, spacing);
-  const place = (spot: SmartButtonsSpot | undefined) =>
-    dispatch({
+  const place = (spot: SmartButtonsSpot | undefined) => {
+    setSettling(true);
+    clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(
+      () => setSettling(false),
+      SMART_BUTTONS_SETTLE_MS,
+    );
+    return dispatch({
       type: "place_smart_buttons",
       presentation: agent.presentation,
       // Dropped on the default spot is the default spot: forgotten.
       ...(spot === undefined || sameSpot(spot, fallback) ? {} : { spot }),
     });
+  };
   const anchored = isAnchoredSpot(shownSpot) ? shownSpot.anchored : undefined;
   const setAutomatic = (actionId: string, on: boolean) =>
     dispatch({
@@ -325,6 +352,7 @@ export function SmartButtons({
       data-placed={stored === undefined ? "default" : "moved"}
       {...(anchored === undefined ? {} : { "data-anchored": anchored })}
       {...(drag === undefined ? {} : { "data-dragging": "" })}
+      {...(settling ? { "data-settling": "" } : {})}
       {...(offered.length === 0 && ticked.length === 0 && !menuOpen
         ? { "data-quiet": "" }
         : {})}
@@ -420,7 +448,7 @@ export function SmartButtons({
           />
         ) : null}
       </div>
-      {present.map(({ line: { action, active }, exiting }) => {
+      {present.map(({ line: { action, active }, exiting, entering }) => {
         const on = ticked.includes(action.id);
         const when = FIRES_WHEN[action.trigger];
         return (
@@ -428,6 +456,7 @@ export function SmartButtons({
             key={action.id}
             className="smart-button-line"
             {...(on ? { "data-automatic": "" } : {})}
+            {...(entering ? { "data-entering": "" } : {})}
             {...(exiting ? { "data-exiting": "", "aria-hidden": true } : {})}
             {...(exiting ? { inert: true } : {})}
           >

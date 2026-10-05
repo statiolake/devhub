@@ -20,6 +20,12 @@
   align-items: end;
   gap: 2px;
   opacity: 0.4;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Position glides only just after a snap, dock or undock (set by the
+   component for a moment), never on mount, page switch or resize. */
+.smart-buttons[data-settling]:not([data-dragging]) {
   transition:
     opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
     right 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -62,7 +68,7 @@
   }
 }
 
-.smart-button-line {
+.smart-button-line[data-entering] {
   animation: smart-button-enter 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -73,11 +79,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .smart-buttons,
+  .smart-buttons[data-settling]:not([data-dragging]),
   .smart-buttons[data-dragging] {
     transition: opacity 120ms linear;
   }
 
-  .smart-button-line,
+  .smart-button-line[data-entering],
   .smart-button-line[data-exiting] {
     animation: none;
   }

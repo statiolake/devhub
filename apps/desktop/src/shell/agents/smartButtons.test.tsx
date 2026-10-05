@@ -26,7 +26,11 @@ import type {
 import type { SmartButtonsSpot } from "../../model/smartButtons";
 import { AgentPane } from "./AgentPane";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
-import { SMART_BUTTONS_EXIT_MS, SmartButtons } from "./SmartButtons";
+import {
+  SMART_BUTTONS_EXIT_MS,
+  SMART_BUTTONS_SETTLE_MS,
+  SmartButtons,
+} from "./SmartButtons";
 
 // The pane mounts a live terminal per running Agent, which wants a channel to
 // main; what floats over it is what is under test here.
@@ -728,6 +732,31 @@ describe("motion", () => {
       vi.advanceTimersByTime(SMART_BUTTONS_EXIT_MS + 10);
     });
     expect(labels()).toEqual([]);
+  });
+
+  it("does not enter-animate buttons present on first render, only later arrivals", () => {
+    stubMotion(false);
+    const { rerender } = render(tree({}));
+    const line = () =>
+      screen.getByText("Commit the changes").closest(".smart-button-line");
+    expect(line()).not.toHaveAttribute("data-entering");
+    rerender(tree({ status: "working" } as Partial<AgentWire>));
+    rerender(tree({}));
+    expect(line()).toHaveAttribute("data-entering");
+  });
+
+  it("allows position transitions only briefly after a placement", () => {
+    vi.useFakeTimers();
+    stubMotion(false);
+    render(tree({}));
+    const box = screen.getByRole("toolbar", { name: "Smart Buttons" });
+    expect(box).not.toHaveAttribute("data-settling");
+    fireEvent.keyDown(screen.getByTitle(/Drag to move/), { key: "Home" });
+    expect(box).toHaveAttribute("data-settling");
+    act(() => {
+      vi.advanceTimersByTime(SMART_BUTTONS_SETTLE_MS + 10);
+    });
+    expect(box).not.toHaveAttribute("data-settling");
   });
 
   it("removes a button at once under reduced motion", () => {
