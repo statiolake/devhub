@@ -44,14 +44,11 @@ import {
 
 export type { KeyStroke } from "./chords.js";
 
-/** The product contract is an exact one-second prefix interval. */
-export const PREFIX_TIMEOUT_MS = 1_000;
-
 export type RouteDecision =
 	/** Swallow it: it must never reach a surface. */
 	| { readonly kind: "consume" }
-	/** Swallow it, and arm the prefix until `deadline`. */
-	| { readonly kind: "armed"; readonly deadline: number }
+	/** Swallow it, and arm the prefix until the next key. */
+	| { readonly kind: "armed" }
 	/** Let it through as an ordinary prefix keystroke. */
 	| { readonly kind: "forward" }
 	/** Swallow it, and run this command. */
@@ -75,7 +72,7 @@ export function defaultChordLayout(): ChordLayout {
 }
 
 export class KeyRouter {
-	private armedUntil: number | undefined;
+	private armed = false;
 	private layout: ChordLayout;
 
 	constructor(
@@ -104,7 +101,7 @@ export class KeyRouter {
 	 * The chord belonged to the application, and the application has been left:
 	 * a key pressed in another app is not DevHub's to complete it with, and the
 	 * input source put in place for the chord is given back now rather than
-	 * left in another application's hands for the rest of the second.
+	 * left in another application's hands.
 	 */
 	leave(): void {
 		this.disarm();
@@ -114,7 +111,7 @@ export class KeyRouter {
 	 * Forget an armed prefix.
 	 *
 	 * The table changing and the application being left (`leave`) are the only
-	 * things besides a key and the deadline that do this, and neither is a
+	 * things besides a key that do this, and neither is a
 	 * *focus* rule: an armed prefix deliberately survives the keyboard moving
 	 * between DevHub's own children.
 	 *
@@ -130,24 +127,20 @@ export class KeyRouter {
 	 * that safe to allow. A chord is about DevHub, not about whichever child
 	 * happens to hold the keyboard, and every command a chord resolves to is
 	 * addressed to the application too — so the second stroke completing
-	 * somewhere else completes the same chord, against the same model. The
-	 * one-second window (`PREFIX_TIMEOUT_MS`) is what bounds it, and it always
-	 * was: what the person armed against is the table and the second, not the
-	 * view.
-	 *
-	 * The listener hears it whenever something was armed, even a deadline that
-	 * has already passed: it keeps its own timer for the deadline, and being
-	 * told twice that a chord is over costs it nothing.
+	 * somewhere else completes the same chord, against the same model. There
+	 * is no timeout: an armed prefix stays armed until the next key, the table
+	 * changing, or the application being left. What the person armed against is
+	 * the table, not the view.
 	 */
 	private disarm(): void {
-		if (this.armedUntil === undefined) return;
-		this.armedUntil = undefined;
+		if (!this.armed) return;
+		this.armed = false;
 		this.listener.disarmed();
 	}
 
-	private arm(deadline: number): void {
-		this.armedUntil = deadline;
-		this.listener.armed(deadline);
+	private arm(): void {
+		this.armed = true;
+		this.listener.armed();
 	}
 
 	/** For tests only: start the next case with nothing armed. */
@@ -155,8 +148,8 @@ export class KeyRouter {
 		this.disarm();
 	}
 
-	isArmed(now: number): boolean {
-		return this.armedUntil !== undefined && now <= this.armedUntil;
+	isArmed(): boolean {
+		return this.armed;
 	}
 
 	private isPrefix(stroke: KeyStroke): boolean {
@@ -164,7 +157,7 @@ export class KeyRouter {
 		return spelled !== undefined && sameChordKey(this.layout.prefix, spelled);
 	}
 
-	route(stroke: KeyStroke, now: number): RouteDecision {
+	route(stroke: KeyStroke): RouteDecision {
 		// **A bare modifier is not a stroke.** Chromium delivers a `keyDown` for
 		// Shift itself before it delivers the shifted key, so `Cmd+Q Shift+P`
 		// arrived here as two strokes: `ShiftLeft`, and then `p` with Shift down.
@@ -183,9 +176,9 @@ export class KeyRouter {
 			return { kind: "consume" };
 		}
 
-		const deadline = this.armedUntil;
+		const wasArmed = this.armed;
 		this.disarm();
-		if (deadline !== undefined && now <= deadline) {
+		if (wasArmed) {
 			const binding = matchChord(this.layout.table, stroke);
 			if (!binding) {
 				// Once the prefix is armed the keyboard belongs to the chord layer.
@@ -199,9 +192,8 @@ export class KeyRouter {
 		}
 
 		if (this.isPrefix(stroke)) {
-			const armed = now + PREFIX_TIMEOUT_MS;
-			this.arm(armed);
-			return { kind: "armed", deadline: armed };
+			this.arm();
+			return { kind: "armed" };
 		}
 		return { kind: "pass" };
 	}

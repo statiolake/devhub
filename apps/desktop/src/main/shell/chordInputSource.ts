@@ -21,13 +21,9 @@
  * # When a chord is over
  *
  * Whenever the router stops being armed, for whatever reason — the chord ran,
- * it was cancelled by a key that completes nothing, the second passed, the
- * table changed, or DevHub stopped being the active application. The router
+ * it was cancelled by a key that completes nothing, the table changed, or DevHub stopped being the active application. The router
  * says so (`ArmingListener`) and this does not ask why: every exit restores the
  * same way, so no exit can be the one that forgets to.
- *
- * The second passing is the one exit no key announces, so it has a timer of
- * its own, set to the router's deadline.
  *
  * # Only what DevHub put there
  *
@@ -59,7 +55,7 @@
  * `TISSelectInputSource`, measured at 2–27 ms with a median of about 15 ms on
  * an Apple Silicon Mac; the pipe to the helper adds hundredths of a
  * millisecond. A second key pressed faster than that after the prefix still
- * reaches the input method and is lost to the chord, which then times out. A
+ * reaches the input method and is lost to the chord, which then stays armed until the next key. A
  * person's gap between releasing Cmd+Q and the next key is several times that,
  * so this is left as it is rather than papered over.
  */
@@ -95,8 +91,8 @@ export interface InputSourcePort {
 
 /** What the router says about the prefix. See `KeyRouter`. */
 export interface ArmingListener {
-	/** The prefix is armed until `deadline` (the router's clock, ms). */
-	armed(deadline: number): void;
+	/** The prefix is armed, and stays so until it is completed or cancelled. */
+	armed(): void;
 	/** It is not armed any more, for whatever reason. */
 	disarmed(): void;
 }
@@ -109,30 +105,20 @@ export class ChordInputSource implements ArmingListener {
 	private held: Promise<InputSourceSwitch | undefined> | undefined;
 	/** The last request made of the port. Every request waits for it. */
 	private tail: Promise<unknown> = Promise.resolve();
-	private timeout: ReturnType<typeof setTimeout> | undefined;
 	private failed = false;
 
 	constructor(
 		private readonly port: InputSourcePort,
 		/** The root surface. Called at most once. */
 		private readonly report: (failure: unknown) => void,
-		private readonly now: () => number = Date.now,
 	) {}
 
-	armed(deadline: number): void {
-		this.clearTimeout();
-		this.timeout = setTimeout(
-			() => {
-				this.disarmed();
-			},
-			Math.max(0, deadline - this.now()),
-		);
+	armed(): void {
 		if (this.failed || this.held !== undefined) return;
 		this.held = this.enqueue(() => this.port.selectAscii());
 	}
 
 	disarmed(): void {
-		this.clearTimeout();
 		const held = this.held;
 		if (held === undefined) return;
 		this.held = undefined;
@@ -140,12 +126,6 @@ export class ChordInputSource implements ArmingListener {
 			const change = await held;
 			if (change !== undefined) await this.port.restore(change);
 		});
-	}
-
-	private clearTimeout(): void {
-		if (this.timeout === undefined) return;
-		clearTimeout(this.timeout);
-		this.timeout = undefined;
 	}
 
 	/**

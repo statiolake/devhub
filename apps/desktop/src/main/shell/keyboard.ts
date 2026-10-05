@@ -163,7 +163,7 @@ export interface ChordHost {
  */
 let inputSource: ChordInputSource | undefined;
 const router = new KeyRouter(defaultChordLayout(), {
-	armed: (deadline) => inputSource?.armed(deadline),
+	armed: () => inputSource?.armed(),
 	disarmed: () => inputSource?.disarmed(),
 });
 let installed = false;
@@ -267,11 +267,10 @@ export function handleInput(
 	url: string,
 	take: () => void,
 	editing: (role: EditingRole) => void,
-	now: number = Date.now(),
 ): void {
 	if (input.type !== "keyDown") return;
 	const stroke = strokeOf(input);
-	const decision = router.route(stroke, now);
+	const decision = router.route(stroke);
 	// `forward` and `pass` both mean the same thing to Electron: leave the
 	// event alone and let the surface have it. They are separate decisions
 	// because they mean different things to a reader.

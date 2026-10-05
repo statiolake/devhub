@@ -262,8 +262,8 @@
  *
  * # The rules
  *
- * - The prefix arms for exactly `PREFIX_TIMEOUT_MS`; after that the next
- *   Command-Q arms again rather than completing.
+ * - The prefix stays armed until the next key: there is no timeout. A key
+ *   that completes nothing cancels it.
  * - **A bare modifier neither completes nor cancels.** Chromium sends a
  *   `keyDown` for Shift before it sends the shifted key, and treating that as a
  *   second stroke is what broke every shifted chord. See `isModifierKey`.

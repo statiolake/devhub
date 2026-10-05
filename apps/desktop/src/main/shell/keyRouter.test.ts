@@ -3,8 +3,7 @@ import { parseChordKey, strokeKey } from "../../model/chordKeys.js";
 import {
 	defaultChordLayout,
 	KeyRouter,
-	PREFIX_TIMEOUT_MS,
-	type KeyStroke,
+		type KeyStroke,
 } from "./keyRouter.js";
 import type { ArmingListener } from "./chordInputSource.js";
 
@@ -53,25 +52,21 @@ describe("the Command-Q chord", () => {
 	});
 
 	it("swallows the first Command-Q and arms instead of quitting", () => {
-		expect(router.route(commandQ, 0)).toEqual({
-			kind: "armed",
-			deadline: PREFIX_TIMEOUT_MS,
-		});
-		expect(router.isArmed(0)).toBe(true);
+		expect(router.route(commandQ)).toEqual({ kind: "armed" });
+		expect(router.isArmed()).toBe(true);
 	});
 
-	it("forwards the second Command-Q within the second", () => {
-		router.route(commandQ, 0);
-		expect(router.route(commandQ, PREFIX_TIMEOUT_MS)).toEqual({
-			kind: "forward",
-		});
+	it("forwards the second Command-Q", () => {
+		router.route(commandQ);
+		expect(router.route(commandQ)).toEqual({ kind: "forward" });
 	});
 
-	it("arms again rather than forwarding after the second has passed", () => {
-		router.route(commandQ, 0);
-		expect(router.route(commandQ, PREFIX_TIMEOUT_MS + 1)).toEqual({
-			kind: "armed",
-			deadline: PREFIX_TIMEOUT_MS * 2 + 1,
+	it("stays armed however long it waits for the next key", () => {
+		router.route(commandQ);
+		expect(router.isArmed()).toBe(true);
+		expect(router.route(stroke("KeyF"))).toEqual({
+			kind: "run",
+			commandId: "add_workspace",
 		});
 	});
 
@@ -87,32 +82,25 @@ describe("the Command-Q chord", () => {
 			stroke("Digit3"),
 			stroke("KeyP", { shift: true }),
 		]) {
-			expect(router.route(key, 0), key.code).toEqual({ kind: "pass" });
+			expect(router.route(key), key.code).toEqual({ kind: "pass" });
 		}
 	});
 
 	it("runs a bound second stroke and swallows an unbound one", () => {
-		router.route(commandQ, 0);
-		expect(router.route(stroke("KeyF"), 10)).toEqual({
+		router.route(commandQ);
+		expect(router.route(stroke("KeyF"))).toEqual({
 			kind: "run",
 			commandId: "add_workspace",
 		});
-		router.route(commandQ, 20);
-		expect(router.route(stroke("KeyY"), 30)).toEqual({ kind: "cancelled" });
-	});
-
-	it("is over once the second has passed", () => {
-		router.route(commandQ, 0);
-		expect(router.route(stroke("KeyZ"), PREFIX_TIMEOUT_MS + 1)).toEqual({
-			kind: "pass",
-		});
+		router.route(commandQ);
+		expect(router.route(stroke("KeyY"))).toEqual({ kind: "cancelled" });
 	});
 
 	it("does not arm and fire on one held-down prefix", () => {
-		expect(router.route({ ...commandQ, isAutoRepeat: true }, 0)).toEqual({
+		expect(router.route({ ...commandQ, isAutoRepeat: true })).toEqual({
 			kind: "consume",
 		});
-		expect(router.isArmed(0)).toBe(false);
+		expect(router.isArmed()).toBe(false);
 	});
 
 	it("takes its layout as data, so an override is another table", () => {
@@ -123,18 +111,18 @@ describe("the Command-Q chord", () => {
 			},
 			IGNORED,
 		);
-		expect(overridden.route(commandQ, 0)).toEqual({ kind: "pass" });
-		overridden.route(stroke("KeyQ", { control: true }), 10);
-		expect(overridden.route(stroke("KeyS"), 20)).toEqual({
+		expect(overridden.route(commandQ)).toEqual({ kind: "pass" });
+		overridden.route(stroke("KeyQ", { control: true }));
+		expect(overridden.route(stroke("KeyS"))).toEqual({
 			kind: "run",
 			commandId: "open_settings",
 		});
 	});
 
 	it("drops an armed prefix when the table changes underneath it", () => {
-		router.route(commandQ, 0);
+		router.route(commandQ);
 		router.setLayout(defaultChordLayout());
-		expect(router.route(stroke("KeyF"), 10)).toEqual({ kind: "pass" });
+		expect(router.route(stroke("KeyF"))).toEqual({ kind: "pass" });
 	});
 
 	/**
@@ -143,7 +131,7 @@ describe("the Command-Q chord", () => {
 	 * The router has no other way to be told to forget one, and that is the
 	 * whole of the "no disarm on focus change" rule: there is one queue for the
 	 * application, so nothing about which child view holds the keyboard can
-	 * reach it. The second is what bounds an arming, and it always was.
+	 * reach it.
 	 */
 	it("has no way to be disarmed by anything but its own table", () => {
 		const reachable = new Set<string>();
@@ -174,10 +162,10 @@ describe("a modifier pressed after the prefix", () => {
 	});
 
 	function chord(modifierCode: string, second: KeyStroke) {
-		router.route(commandQ, 0);
+		router.route(commandQ);
 		// The modifier goes down first. It must neither complete nor cancel.
-		const held = router.route(press("Shift", modifierCode, { shift: true }), 5);
-		return { held, then: router.route(second, 10) };
+		const held = router.route(press("Shift", modifierCode, { shift: true }));
+		return { held, then: router.route(second) };
 	}
 
 	it("keeps the chord armed for Shift+P and Shift+N", () => {
@@ -210,18 +198,18 @@ describe("a modifier pressed after the prefix", () => {
 	});
 
 	it("still works for the unshifted chords that never broke", () => {
-		router.route(commandQ, 0);
-		expect(router.route(stroke("KeyF"), 10)).toEqual({
+		router.route(commandQ);
+		expect(router.route(stroke("KeyF"))).toEqual({
 			kind: "run",
 			commandId: "add_workspace",
 		});
-		router.route(commandQ, 20);
-		expect(router.route(press(",", "Comma"), 30)).toEqual({
+		router.route(commandQ);
+		expect(router.route(press(",", "Comma"))).toEqual({
 			kind: "run",
 			commandId: "rename_agent",
 		});
-		router.route(commandQ, 40);
-		expect(router.route(stroke("Digit1"), 50)).toEqual({
+		router.route(commandQ);
+		expect(router.route(stroke("Digit1"))).toEqual({
 			kind: "run",
 			commandId: "select_entry_1",
 		});
@@ -229,7 +217,7 @@ describe("a modifier pressed after the prefix", () => {
 
 	it("leaves a bare modifier alone when nothing is armed", () => {
 		expect(
-			router.route(press("Shift", "ShiftLeft", { shift: true }), 0),
+			router.route(press("Shift", "ShiftLeft", { shift: true })),
 		).toEqual({
 			kind: "pass",
 		});
@@ -253,9 +241,9 @@ describe("a chord on a US and a JIS keyboard", () => {
 	});
 
 	function second(key: string, code: string, shift = true) {
-		router.route(commandQ, 0);
-		router.route(press("Shift", "ShiftLeft", { shift }), 5);
-		return router.route(press(key, code, { shift }), 10);
+		router.route(commandQ);
+		router.route(press("Shift", "ShiftLeft", { shift }));
+		return router.route(press(key, code, { shift }));
 	}
 
 	const layouts: readonly {
@@ -318,14 +306,14 @@ describe("the arming, as the router reports it", () => {
 	beforeEach(() => {
 		heard = [];
 		router = new KeyRouter(defaultChordLayout(), {
-			armed: (deadline) => heard.push(`armed ${deadline}`),
+			armed: () => heard.push("armed"),
 			disarmed: () => heard.push("disarmed"),
 		});
 	});
 
-	it("reports the prefix with its deadline", () => {
-		router.route(commandQ, 0);
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`]);
+	it("reports the prefix", () => {
+		router.route(commandQ);
+		expect(heard).toEqual(["armed"]);
 	});
 
 	it.each([
@@ -333,50 +321,40 @@ describe("the arming, as the router reports it", () => {
 		["a key that completes nothing", stroke("KeyY")],
 		["the prefix again, which is passed on", commandQ],
 	])("reports the end of the chord on %s", (_name, second) => {
-		router.route(commandQ, 0);
-		router.route(second, 10);
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+		router.route(commandQ);
+		router.route(second);
+		expect(heard).toEqual(["armed", "disarmed"]);
 	});
 
 	it("does not end the chord on a bare modifier", () => {
-		router.route(commandQ, 0);
-		router.route(press("Shift", "ShiftLeft", { shift: true }), 5);
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`]);
+		router.route(commandQ);
+		router.route(press("Shift", "ShiftLeft", { shift: true }));
+		expect(heard).toEqual(["armed"]);
 	});
 
 	it("reports the end when the table changes", () => {
-		router.route(commandQ, 0);
+		router.route(commandQ);
 		router.setLayout(defaultChordLayout());
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+		expect(heard).toEqual(["armed", "disarmed"]);
 	});
 
 	it("reports the end when DevHub is left, and ends the chord", () => {
-		router.route(commandQ, 0);
+		router.route(commandQ);
 		router.leave();
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
-		expect(router.route(stroke("KeyF"), 10)).toEqual({ kind: "pass" });
+		expect(heard).toEqual(["armed", "disarmed"]);
+		expect(router.route(stroke("KeyF"))).toEqual({ kind: "pass" });
 	});
 
 	it("says nothing when nothing was armed", () => {
 		router.leave();
 		router.setLayout(defaultChordLayout());
-		router.route(stroke("KeyF"), 10);
+		router.route(stroke("KeyF"));
 		expect(heard).toEqual([]);
 	});
 
-	it("reports a lapsed prefix as over before arming the next", () => {
-		router.route(commandQ, 0);
-		router.route(commandQ, PREFIX_TIMEOUT_MS + 1);
-		expect(heard).toEqual([
-			`armed ${PREFIX_TIMEOUT_MS}`,
-			"disarmed",
-			`armed ${PREFIX_TIMEOUT_MS * 2 + 1}`,
-		]);
-	});
-
 	it("reports a held-down prefix as over", () => {
-		router.route(commandQ, 0);
-		router.route({ ...commandQ, isAutoRepeat: true }, 10);
-		expect(heard).toEqual([`armed ${PREFIX_TIMEOUT_MS}`, "disarmed"]);
+		router.route(commandQ);
+		router.route({ ...commandQ, isAutoRepeat: true });
+		expect(heard).toEqual(["armed", "disarmed"]);
 	});
 });

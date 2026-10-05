@@ -402,7 +402,7 @@ source is already ASCII-capable.
 The switch is not instant: `TISSelectInputSource` took 2–27 ms, median about
 15 ms, measured on an Apple Silicon Mac (the pipe to the helper adds hundredths
 of a millisecond). A second key pressed within that window after the prefix
-still goes to the input method, and the chord then times out. That is accepted
+still goes to the input method, and the chord then stays armed until the next key. That is accepted
 — the gap between releasing Cmd+Q and the next key is several times longer —
 and there is no guessing the key back from its physical position. Nor is a key
 that arrives with no character (`Process`, `Dead`) read from its position: it

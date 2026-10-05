@@ -152,7 +152,6 @@ function type(
 	url = WORKBENCH,
 ): readonly boolean[] {
 	const taken: boolean[] = [];
-	let at = 0;
 	for (const event of events) {
 		let wasTaken = false;
 		handleInput(
@@ -163,7 +162,6 @@ function type(
 				wasTaken = true;
 			},
 			() => undefined,
-			(at += 10),
 		);
 		taken.push(wasTaken);
 	}
@@ -384,7 +382,6 @@ describe("a chord, as Electron delivers it", () => {
 			`${SHELL_ORIGIN}/settings.html`,
 			() => undefined,
 			(role) => roles.push(role),
-			10,
 		);
 		expect(roles).toEqual(["selectAll"]);
 		// And not on a workbench, which answers its own.
@@ -395,7 +392,6 @@ describe("a chord, as Electron delivers it", () => {
 			WORKBENCH,
 			() => undefined,
 			(role) => roles.push(role),
-			20,
 		);
 		expect(roles).toEqual([]);
 	});

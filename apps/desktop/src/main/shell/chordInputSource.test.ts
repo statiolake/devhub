@@ -62,7 +62,7 @@ describe("the input source while a chord is armed", () => {
 	});
 
 	it("selects an ASCII-capable source when the chord arms", async () => {
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		expect(port.current).toBe(ABC);
 	});
@@ -70,11 +70,10 @@ describe("the input source while a chord is armed", () => {
 	/**
 	 * Every exit is the router's `disarmed` — a chord run, a key that
 	 * completed nothing, the table changing, DevHub left — and they all come
-	 * here the same way, so one case stands for them. The deadline is the one
-	 * no key announces, so it has its own.
+	 * here the same way, so one case stands for them.
 	 */
 	it("puts the previous source back when the chord is over", async () => {
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		source.disarmed();
 		await settle();
@@ -82,26 +81,16 @@ describe("the input source while a chord is armed", () => {
 		expect(reported).toEqual([]);
 	});
 
-	it("puts it back when the second passes with no second key", async () => {
-		source.armed(Date.now() + 1_000);
+	it("stays switched, with no timer, until the router says the chord is over", async () => {
+		source.armed();
 		await settle();
-		await vi.advanceTimersByTimeAsync(999);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(port.current).toBe(ABC);
-		await vi.advanceTimersByTimeAsync(1);
-		expect(port.current).toBe(JAPANESE);
-	});
-
-	it("does not restore twice when the router reports the lapse later", async () => {
-		source.armed(Date.now() + 1_000);
-		await vi.advanceTimersByTimeAsync(1_000);
-		// The router notices a lapsed deadline only on the next key.
-		source.disarmed();
-		await settle();
-		expect(port.log).toEqual(["ascii", `restore ${JAPANESE}`]);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it("does not fight a source the person chose while the chord was armed", async () => {
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		port.current = OTHER;
 		source.disarmed();
@@ -111,7 +100,7 @@ describe("the input source while a chord is armed", () => {
 
 	it("touches nothing when the source was ASCII-capable already", async () => {
 		port.current = ABC;
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		source.disarmed();
 		await settle();
@@ -121,7 +110,7 @@ describe("the input source while a chord is armed", () => {
 
 	it("restores after the switch, even when the chord ends before it is answered", async () => {
 		// No settling between the two: the switch is still on its way.
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		source.disarmed();
 		await settle();
 		expect(port.log).toEqual(["ascii", `restore ${JAPANESE}`]);
@@ -129,9 +118,9 @@ describe("the input source while a chord is armed", () => {
 	});
 
 	it("keeps one chord's restore ahead of the next chord's switch", async () => {
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		source.disarmed();
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		expect(port.log).toEqual(["ascii", `restore ${JAPANESE}`, "ascii"]);
 		expect(port.current).toBe(ABC);
@@ -142,17 +131,17 @@ describe("the input source while a chord is armed", () => {
 
 	it("says a failure once, and asks nothing more of the port", async () => {
 		port.failure = new Error("the helper is not there");
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		source.disarmed();
-		source.armed(Date.now() + 1_000);
-		await vi.advanceTimersByTimeAsync(1_000);
+		source.armed();
+		await settle();
 		expect(reported).toEqual([port.failure]);
 		expect(port.log).toEqual(["ascii"]);
 	});
 
 	it("says a failed restore", async () => {
-		source.armed(Date.now() + 1_000);
+		source.armed();
 		await settle();
 		port.failure = new Error("the helper stopped");
 		source.disarmed();
