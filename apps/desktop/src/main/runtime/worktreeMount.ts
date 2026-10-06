@@ -80,6 +80,13 @@ export type WorktreeMount =
 			readonly dotGitContent: string;
 			/** The worktree's `.git` in the container. */
 			readonly containerDotGit: string;
+			/**
+			 * Where the worktree goes in the container, as the main checkout
+			 * would; absent when DevHub could not tell (see `planWorkspace`).
+			 */
+			readonly workspace?: WorkspaceOverride;
+			/** Why `workspace` is absent, for the build log. */
+			readonly note?: string;
 	  }
 	/** Nothing DevHub can add (Docker Compose, unknown layout). Said, not fixed. */
 	| {
@@ -247,6 +254,7 @@ export function containerCommonDir(commonDir: string): string {
 export function planWorktreeMount(
 	facts: WorktreeFacts | undefined,
 	layout: ContainerLayout | undefined,
+	workspace?: WorkspaceOverride | { readonly unsupported: string },
 ): WorktreeMount {
 	// The main checkout's git dir *is* the common dir; only a linked worktree
 	// has one of its own (`.git/worktrees/<name>`) beside it.
@@ -298,6 +306,11 @@ export function planWorktreeMount(
 		dotGitFile: posix.join(gitDir, CONTAINER_DOT_GIT_FILE),
 		dotGitContent: `gitdir: ${fixed}/worktrees/${name}\n`,
 		containerDotGit: posix.join(layout.containerToplevel, ".git"),
+		...(workspace === undefined
+			? {}
+			: "unsupported" in workspace
+				? { note: workspace.unsupported }
+				: { workspace }),
 	};
 }
 
@@ -315,6 +328,7 @@ function quoted(path: string): string {
 export function upArguments(mount: WorktreeMount): readonly string[] {
 	if (mount.kind !== "overlay") return [];
 	return [
+		...(mount.workspace?.mounts ?? []).flatMap((one) => ["--mount", one]),
 		"--mount",
 		`type=bind,source=${quoted(mount.commonDir)},target=${quoted(mount.containerCommonDir)}`,
 		"--mount",
@@ -388,4 +402,210 @@ export function missingMountAdvice(
 		`${containerId}) and reopen the editor in its container to recreate it ` +
 		`with the mount.`
 	);
+}
+
+/*
+ * Where a worktree goes in its container.
+ *
+ * DevHub makes worktrees as siblings of the main checkout under another name
+ * (`vscode-pahcer-ui` and `vscode-pahcer-ui_5`). Left to the CLI, everything a
+ * definition derives from the folder follows that name: the default
+ * `/workspaces/<name>`, a `workspaceFolder` of
+ * `/workspace/${localWorkspaceFolderBasename}`, a `workspaceMount` of
+ * `${localWorkspaceFolder}/..` that brings the siblings in. Paths a definition,
+ * its scripts or its settings hard-code then point at nothing in a worktree's
+ * container. So for a linked worktree DevHub resolves `workspaceMount` and
+ * `workspaceFolder` as they would be for the *main checkout*, puts the
+ * worktree where the main checkout would be, and hands the CLI the result as
+ * `--override-config` (the definition's own content with those two keys
+ * replaced; the CLI still resolves relative paths against the original file
+ * and still labels the container with the worktree's folder, so each worktree
+ * keeps its own container):
+ *
+ * - no `workspaceMount`: the worktree at `/workspaces/<main checkout's name>`;
+ * - a mount of `${localWorkspaceFolder}` (any target): the same target, the
+ *   worktree as its source;
+ * - a mount of a folder above the main checkout (`${localWorkspaceFolder}/..`
+ *   at `/workspace`): that mount as the main checkout would get it, and the
+ *   worktree bound over the main checkout's place in it, so the siblings are
+ *   there and the folder is the worktree.
+ *
+ * Other uses of `${localWorkspaceFolder}` (mounts, `initializeCommand`) keep
+ * naming the worktree's host folder. Anything else (a volume, a source that is
+ * not the checkout or above it, a bare repository with no main checkout) is
+ * left as the definition says, and the build log says why.
+ */
+
+/** The file, in a worktree's record, given to the CLI as `--override-config`. */
+export const CONTAINER_OVERRIDE_FILE = "devhub-devcontainer.json";
+
+/** What `planWorkspace` decided, written for `--override-config`. */
+export interface WorkspaceOverride {
+	/** The override file on the Docker machine. */
+	readonly file: string;
+	/** Its content: the definition with `workspaceMount`/`workspaceFolder` set. */
+	readonly content: string;
+	/** `--mount` values beside the workspace mount. */
+	readonly mounts: readonly string[];
+	/** The worktree's top level in the container. */
+	readonly containerToplevel: string;
+}
+
+/** The main checkout of a repository whose common dir is `commonDir`. */
+export function mainCheckout(commonDir: string): string | undefined {
+	return posix.basename(commonDir) === ".git"
+		? posix.dirname(commonDir)
+		: undefined;
+}
+
+/**
+ * A `devcontainer.json` (JSON with comments and trailing commas) as an
+ * object, or `undefined` when it is not one.
+ */
+export function parseJsonc(text: string): Record<string, unknown> | undefined {
+	let out = "";
+	let i = 0;
+	while (i < text.length) {
+		const c = text[i] ?? "";
+		if (c === '"') {
+			let j = i + 1;
+			while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+			out += text.slice(i, j + 1);
+			i = j + 1;
+		} else if (c === "/" && text[i + 1] === "/") {
+			while (i < text.length && text[i] !== "\n") i += 1;
+		} else if (c === "/" && text[i + 1] === "*") {
+			const end = text.indexOf("*/", i + 2);
+			i = end < 0 ? text.length : end + 2;
+		} else {
+			out += c;
+			i += 1;
+		}
+	}
+	// Trailing commas, now that comments are gone; a string is skipped whole.
+	const json = out.replace(
+		/("(?:[^"\\]|\\.)*")|,(\s*[}\]])/gu,
+		(all, str, rest) => (typeof str === "string" ? all : (rest as string)),
+	);
+	try {
+		const parsed: unknown = JSON.parse(json);
+		return typeof parsed === "object" &&
+			parsed !== null &&
+			!Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `mount` with its source field replaced. */
+function withSource(mount: string, source: string): string {
+	return (mount.match(/(?:[^,"]|"[^"]*")+/gu) ?? [])
+		.map((part) =>
+			/^\s*(source|src)\s*=/iu.test(part) ? `source=${quoted(source)}` : part,
+		)
+		.join(",");
+}
+
+/**
+ * Where the worktree goes in its container, from the definition as written
+ * (`raw`), the folder `devcontainer` is given, the worktree's top level, the
+ * main checkout and the worktree's record. Pure; see the comment above.
+ */
+export function planWorkspace(
+	raw: Record<string, unknown>,
+	hostFolder: string,
+	toplevel: string,
+	main: string,
+	gitDir: string,
+): WorkspaceOverride | { readonly unsupported: string } {
+	const sub = posix.relative(toplevel, canonicalPath(hostFolder));
+	if (sub === ".." || sub.startsWith("../")) {
+		return { unsupported: `${hostFolder} is not inside ${toplevel}.` };
+	}
+	const mainFolder = posix.join(main, sub);
+	const asMain = (text: string): string =>
+		text
+			.replaceAll("${localWorkspaceFolderBasename}", posix.basename(mainFolder))
+			.replaceAll("${localWorkspaceFolder}", mainFolder);
+	const stated = raw["workspaceMount"];
+	const folder = raw["workspaceFolder"];
+	let workspaceMount: string;
+	let containerToplevel: string;
+	let mounts: string[] = [];
+	if (stated === undefined || stated === null || stated === "") {
+		// The CLI's default: the git root at /workspaces/<its name>.
+		containerToplevel = posix.join("/workspaces", posix.basename(main));
+		workspaceMount = `type=bind,source=${quoted(toplevel)},target=${quoted(containerToplevel)},consistency=cached`;
+	} else if (typeof stated === "string") {
+		const resolved = asMain(stated);
+		const { source, target } = mountFields(resolved);
+		if (source?.startsWith("/") !== true || target?.startsWith("/") !== true) {
+			return {
+				unsupported:
+					`its workspaceMount (${stated}) is not a bind of a host folder, so ` +
+					`DevHub leaves it as written and paths derived from the folder ` +
+					`name follow the worktree's (${posix.basename(toplevel)}).`,
+			};
+		}
+		const from = canonicalPath(source);
+		if (!within(from, main)) {
+			return {
+				unsupported:
+					`its workspaceMount source (${source}) is neither the main ` +
+					`checkout (${main}) nor a folder above it, so DevHub cannot tell ` +
+					`where the worktree belongs and leaves it as written. Use ` +
+					"${localWorkspaceFolder} or a folder above it as the source.",
+			};
+		}
+		containerToplevel = posix.resolve(target, posix.relative(from, main));
+		if (from === main) {
+			workspaceMount = withSource(resolved, toplevel);
+		} else {
+			workspaceMount = resolved;
+			mounts = [
+				`type=bind,source=${quoted(toplevel)},target=${quoted(containerToplevel)}`,
+			];
+		}
+	} else {
+		return { unsupported: "its workspaceMount is not a string." };
+	}
+	const workspaceFolder =
+		typeof folder === "string"
+			? asMain(folder)
+			: posix.join(containerToplevel, sub);
+	return {
+		file: posix.join(gitDir, CONTAINER_OVERRIDE_FILE),
+		content: `${JSON.stringify({ ...raw, workspaceMount, workspaceFolder }, null, "\t")}\n`,
+		mounts,
+		containerToplevel,
+	};
+}
+
+/** `--override-config` for every `devcontainer` command, when there is one. */
+export function configArguments(mount: WorktreeMount): readonly string[] {
+	return mount.kind === "overlay" && mount.workspace !== undefined
+		? ["--override-config", mount.workspace.file]
+		: [];
+}
+
+/**
+ * The command that writes the override file. Rewritten every time: it is read
+ * by the CLI, never bound into a container.
+ */
+export function overrideFileCommand(
+	mount: WorktreeMount,
+): readonly string[] | undefined {
+	if (mount.kind !== "overlay" || mount.workspace === undefined) {
+		return undefined;
+	}
+	return [
+		"sh",
+		"-c",
+		'printf "%s" "$2" > "$1"',
+		"sh",
+		mount.workspace.file,
+		mount.workspace.content,
+	];
 }

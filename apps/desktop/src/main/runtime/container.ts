@@ -100,8 +100,13 @@ import type {
 import type { TmuxDelivery } from "./tmuxDelivery.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 import {
+	configArguments,
 	containerLayout,
 	dotGitFileCommand,
+	mainCheckout,
+	overrideFileCommand,
+	parseJsonc,
+	planWorkspace,
 	hasMount,
 	missingMountAdvice,
 	planWorktreeMount,
@@ -910,6 +915,8 @@ export class ContainerHost
 		// A worktree's repository is mounted beside it, so git works inside:
 		// see `worktreeMount.ts`. Asked before the log begins, so the command
 		// the log names is the one that ran.
+		// Asked again for every `up`: the definition may have changed.
+		this.#mount = undefined;
 		let mount = await this.#worktreeMount();
 		// The container's `.git` file has to exist before `up`, or Docker makes
 		// a directory in its place; written once, never rewritten. If it cannot
@@ -926,11 +933,19 @@ export class ContainerHost
 		const extra = [...rebuildFlags, ...upArguments(mount)];
 		const log = BuildLogFile.begin(
 			this.#buildLog,
-			`devcontainer up --workspace-folder ${this.#workspaceFolder} --config ${this.#configPath}${extra.map((one) => ` ${one}`).join("")}${this.#machine.where}`,
+			`devcontainer up --workspace-folder ${this.#workspaceFolder} --config ${this.#configPath}${[...configArguments(mount), ...extra].map((one) => ` ${one}`).join("")}${this.#machine.where}`,
 		);
 		const said =
 			mount.kind === "unsupported" ? `DevHub: ${mount.reason}` : unwritten;
 		if (said !== undefined) log.write(Buffer.from(`${said}\n`, "utf8"));
+		if (mount.kind === "overlay" && mount.note !== undefined) {
+			log.write(
+				Buffer.from(
+					`DevHub: ${this.machineName} is a git worktree and is not placed where its main checkout would be: ${mount.note}\n`,
+					"utf8",
+				),
+			);
+		}
 		let result: CommandOutput;
 		try {
 			result = await this.#devcontainerCommand(
@@ -970,8 +985,24 @@ export class ContainerHost
 		return parsed.result;
 	}
 
-	/** One `devcontainer <verb>` against this folder and definition. */
-	#devcontainerCommand(
+	/**
+	 * One `devcontainer <verb>` against this folder and definition, with a
+	 * worktree's `--override-config` (see `worktreeMount.ts`).
+	 */
+	async #devcontainerCommand(
+		verb: string,
+		timeoutMs: number,
+		onOutput?: (chunk: Buffer) => void,
+		extra: readonly string[] = [],
+	): Promise<CommandOutput> {
+		return this.#plainDevcontainerCommand(verb, timeoutMs, onOutput, [
+			...configArguments(await this.#worktreeMount()),
+			...extra,
+		]);
+	}
+
+	/** `#devcontainerCommand` without the override: the definition as written. */
+	#plainDevcontainerCommand(
 		verb: string,
 		timeoutMs: number,
 		onOutput?: (chunk: Buffer) => void,
@@ -1064,11 +1095,51 @@ export class ContainerHost
 			"cat",
 			posix.join(facts.toplevel, ".git"),
 		]);
+		const withDotGit = {
+			...facts,
+			dotGit: dotGit.success ? dotGit.stdout.toString("utf8") : undefined,
+		};
+		// Where the main checkout would be in its container, which is where
+		// the worktree goes: see `planWorkspace`.
+		const main = mainCheckout(facts.commonDir);
+		const definition = await machine.probe(["cat", this.#configPath]);
+		const raw = definition.success
+			? parseJsonc(definition.stdout.toString("utf8"))
+			: undefined;
+		let note: { unsupported: string } | undefined;
+		if (raw !== undefined && raw["dockerComposeFile"] === undefined) {
+			const workspace =
+				main === undefined
+					? {
+							unsupported: `the repository has no main checkout (${facts.commonDir}).`,
+						}
+					: planWorkspace(
+							raw,
+							this.#workspaceFolder,
+							facts.toplevel,
+							main,
+							facts.gitDir,
+						);
+			if (!("unsupported" in workspace)) {
+				const planned = planWorktreeMount(
+					withDotGit,
+					{ kind: "single", containerToplevel: workspace.containerToplevel },
+					workspace,
+				);
+				const write = overrideFileCommand(planned);
+				if (write === undefined) return planned;
+				const written = await machine.probe(write);
+				if (written.success) return planned;
+				note = { unsupported: `DevHub could not write ${workspace.file}.` };
+			} else {
+				note = workspace;
+			}
+		}
 		// Where the definition puts the folder, so the `.git` file lands over
 		// the worktree's own: a custom `workspaceMount` puts it anywhere.
 		let layout: ContainerLayout | undefined;
 		try {
-			const configured = await this.#devcontainerCommand(
+			const configured = await this.#plainDevcontainerCommand(
 				"read-configuration",
 				PROBE_TIMEOUT_MS,
 			);
@@ -1084,13 +1155,7 @@ export class ContainerHost
 		} catch {
 			layout = undefined;
 		}
-		return planWorktreeMount(
-			{
-				...facts,
-				dotGit: dotGit.success ? dotGit.stdout.toString("utf8") : undefined,
-			},
-			layout,
-		);
+		return planWorktreeMount(withDotGit, layout, note);
 	}
 
 	/**

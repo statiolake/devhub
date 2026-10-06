@@ -10,6 +10,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	CONTAINER_GIT_ROOT,
+	CONTAINER_OVERRIDE_FILE,
+	configArguments,
+	mainCheckout,
+	overrideFileCommand,
+	parseJsonc,
+	planWorkspace,
 	containerCommonDir,
 	containerLayout,
 	dotGitFileCommand,
@@ -250,5 +256,122 @@ describe("what is left alone or only said", () => {
 			layout,
 		);
 		expect(upArguments(mount)[1]).toContain('source="/a,b/r/.git"');
+	});
+});
+
+describe("a worktree goes where its main checkout would", () => {
+	const plan = (raw: Record<string, unknown>, host = WORKTREE) =>
+		planWorkspace(raw, host, WORKTREE, MAIN, RECORD);
+	const written = (
+		result: ReturnType<typeof plan>,
+	): Record<string, unknown> => {
+		if ("unsupported" in result) throw new Error(result.unsupported);
+		return JSON.parse(result.content) as Record<string, unknown>;
+	};
+
+	it("finds the main checkout from the common dir", () => {
+		expect(mainCheckout(COMMON)).toBe(MAIN);
+		expect(mainCheckout("/srv/bare.git")).toBeUndefined();
+	});
+
+	it("uses /workspaces/<main checkout's name> by default", () => {
+		const result = plan({ image: "x" });
+		expect(result).toMatchObject({
+			containerToplevel: "/workspaces/vscode-pahcer-ui",
+			mounts: [],
+			file: `${RECORD}/${CONTAINER_OVERRIDE_FILE}`,
+		});
+		expect(written(result)).toEqual({
+			image: "x",
+			workspaceMount: `type=bind,source=${WORKTREE},target=/workspaces/vscode-pahcer-ui,consistency=cached`,
+			workspaceFolder: "/workspaces/vscode-pahcer-ui",
+		});
+	});
+
+	it("keeps a subfolder below the main checkout's place", () => {
+		const result = plan({}, `${WORKTREE}/packages/a`);
+		expect(written(result)["workspaceFolder"]).toBe(
+			"/workspaces/vscode-pahcer-ui/packages/a",
+		);
+	});
+
+	it("resolves the folder variables as the main checkout's", () => {
+		const result = plan({
+			workspaceMount:
+				"source=${localWorkspaceFolder},target=/src/${localWorkspaceFolderBasename},type=bind",
+			workspaceFolder: "/src/${localWorkspaceFolderBasename}",
+		});
+		expect(result).toMatchObject({
+			containerToplevel: "/src/vscode-pahcer-ui",
+			mounts: [],
+		});
+		expect(written(result)).toEqual({
+			workspaceMount: `source=${WORKTREE},target=/src/vscode-pahcer-ui,type=bind`,
+			workspaceFolder: "/src/vscode-pahcer-ui",
+		});
+	});
+
+	it("mounts the parent as for the main checkout, and the worktree over its place", () => {
+		const result = plan({
+			workspaceMount:
+				"source=${localWorkspaceFolder}/..,target=/workspace,type=bind",
+			workspaceFolder: "/workspace/${localWorkspaceFolderBasename}",
+		});
+		expect(result).toMatchObject({
+			containerToplevel: "/workspace/vscode-pahcer-ui",
+			mounts: [
+				`type=bind,source=${WORKTREE},target=/workspace/vscode-pahcer-ui`,
+			],
+		});
+		expect(written(result)).toEqual({
+			workspaceMount: `source=${MAIN}/..,target=/workspace,type=bind`,
+			workspaceFolder: "/workspace/vscode-pahcer-ui",
+		});
+		const mount = planWorktreeMount(
+			RELATIVE,
+			{ kind: "single", containerToplevel: "/workspace/vscode-pahcer-ui" },
+			result,
+		);
+		expect(mount.kind === "overlay" && mount.containerDotGit).toBe(
+			"/workspace/vscode-pahcer-ui/.git",
+		);
+		expect(configArguments(mount)).toEqual([
+			"--override-config",
+			`${RECORD}/${CONTAINER_OVERRIDE_FILE}`,
+		]);
+		expect(upArguments(mount).slice(0, 2)).toEqual([
+			"--mount",
+			`type=bind,source=${WORKTREE},target=/workspace/vscode-pahcer-ui`,
+		]);
+		expect(overrideFileCommand(mount)?.at(-2)).toBe(
+			`${RECORD}/${CONTAINER_OVERRIDE_FILE}`,
+		);
+	});
+
+	it("leaves a volume or an unrelated source alone, and says so", () => {
+		expect(
+			plan({ workspaceMount: "source=vol,target=/w,type=volume" }),
+		).toHaveProperty("unsupported");
+		expect(
+			plan({ workspaceMount: "source=/elsewhere,target=/w,type=bind" }),
+		).toHaveProperty("unsupported");
+		const mount = planWorktreeMount(
+			RELATIVE,
+			{ kind: "single", containerToplevel: "/w" },
+			{ unsupported: "why" },
+		);
+		expect(mount).toMatchObject({ kind: "overlay", note: "why" });
+		expect(configArguments(mount)).toEqual([]);
+	});
+
+	it("reads JSON with comments and trailing commas", () => {
+		expect(
+			parseJsonc(
+				'{\n // a comment\n "a": "http://x", /* b */ "b": [1, 2,],\n}\n',
+			),
+		).toEqual({ a: "http://x", b: [1, 2] });
+		expect(parseJsonc('{"a": ",}"}')).toEqual({ a: ",}" });
+		expect(parseJsonc("[1]")).toBeUndefined();
+		expect(parseJsonc("{")).toBeUndefined();
 	});
 });

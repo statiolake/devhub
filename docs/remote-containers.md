@@ -160,9 +160,8 @@ touches the repository's `devcontainer.json`:
     `gitdir: /opt/devhub/git/<repo>-<hash>.git/worktrees/<name>`. The host's
     `.git` is untouched.
 
-  The container workspace folder is read from `read-configuration` (a
-  `workspaceMount` target, else `workspace.workspaceFolder`, else
-  `/workspaces/<name>`). The overlay file is written on the Docker machine
+  The container workspace folder is the main checkout's, not the worktree's
+  (see "Where a worktree lands" below). The overlay file is written on the Docker machine
   before `up` only if it is missing, and never rewritten: Docker Desktop binds
   a single file by inode (a rename-replace leaves the container on the old
   file) and turns a source that does not exist into a directory. If it cannot
@@ -180,6 +179,37 @@ touches the repository's `devcontainer.json`:
   link. DevHub therefore locks the worktrees it creates (`git worktree lock
 --reason "devhub: ..."`, which prune respects) and unlocks before removing
   one; a worktree made by hand is not locked.
+
+### Where a worktree lands in its container
+
+Worktrees are siblings of the main checkout under another name
+(`vscode-pahcer-ui` and `vscode-pahcer-ui_5`). Left to the CLI, everything the
+definition derives from the folder name followed the worktree: the default
+`/workspaces/<name>`, `workspaceFolder: "/workspace/${localWorkspaceFolderBasename}"`,
+a `${localWorkspaceFolder}/..` parent mount. So for a linked worktree (not a
+Compose definition) DevHub resolves `workspaceMount` and `workspaceFolder`
+with `${localWorkspaceFolder}`/`${localWorkspaceFolderBasename}` set to the
+**main checkout's** values, writes the definition with those two keys replaced
+to `<common dir>/worktrees/<name>/devhub-devcontainer.json`, and passes it as
+`--override-config` to every `devcontainer` command (`planWorkspace` in
+`runtime/worktreeMount.ts`). The CLI still resolves relative paths against the
+original file and still labels the container with the worktree's own folder,
+so each worktree keeps its own container, and the main checkout and non-worktree
+folders get no override at all.
+
+| Definition's `workspaceMount`                                            | Worktree's container                                                                                                                    |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| none                                                                     | worktree at `/workspaces/<main checkout's name>`                                                                                        |
+| source `${localWorkspaceFolder}`, any target                             | same target, the worktree as the source                                                                                                 |
+| source above the checkout (`${localWorkspaceFolder}/..` at `/workspace`) | the parent mounted as for the main checkout (siblings visible), plus `--mount` of the worktree over `/workspace/<main checkout's name>` |
+| a volume, or a source that is not the checkout or above it               | left as written; the build log says why, and folder-derived paths follow the worktree's name                                            |
+
+Other uses of `${localWorkspaceFolder}` (extra `mounts`, `initializeCommand`)
+still name the worktree's host folder, and `${localWorkspaceFolderBasename}`
+outside those two keys is still the worktree's name (so per-worktree volume
+names stay distinct). A worktree's container created before this, at
+`/workspaces/<worktree name>`, is reported as missing the `.git` mount and has
+to be recreated.
 
 A mount is fixed when a container is created. A worktree's container created
 without these mounts keeps working, without git, and DevHub logs `… was
