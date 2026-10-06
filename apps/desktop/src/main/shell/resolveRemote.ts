@@ -20,6 +20,7 @@
 
 import type { RemoteResolution } from "../cli/controlServer.js";
 import { editorHostMachine, remoteServerFor } from "../runtime/registry.js";
+import type { PortsConfiguration } from "../runtime/portForward.js";
 import { isPermanent } from "../runtime/remoteServer.js";
 import { failureText } from "../../model/wire.js";
 
@@ -69,6 +70,46 @@ export async function resolveRemoteEndpoint(
 		);
 		return { ok: false, message, retry: !isPermanent(failure) };
 	}
+}
+
+/**
+ * A port on this Mac reaching `host:port` on `machine` — the resolver's
+ * `tunnelFactory`. Only a machine whose host can forward one answers; an SSH
+ * host is refused, and VS Code's Ports view says so.
+ */
+export async function forwardRemotePort(
+	machine: string,
+	host: string,
+	port: number,
+	localPort: number | undefined,
+	requireLocalPort: boolean,
+): Promise<{ readonly localPort: number; close(): void }> {
+	const id = editorHostMachine(machine);
+	const { host: server } = remoteServerFor(id);
+	if (server.forwardPort === undefined) {
+		throw new Error(`DevHub does not forward ports on ${id}.`);
+	}
+	const forward = await server.forwardPort(
+		host,
+		port,
+		localPort,
+		requireLocalPort,
+	);
+	console.log(
+		`[devhub] ${id}: forwarding ${host}:${String(port)} to 127.0.0.1:${String(forward.localPort)}`,
+	);
+	return forward;
+}
+
+/** What `machine`'s dev container definition says about ports. */
+export async function remotePortsConfiguration(
+	machine: string,
+): Promise<PortsConfiguration> {
+	const { host } = remoteServerFor(editorHostMachine(machine));
+	if (host.portsConfiguration === undefined) {
+		return { forwardPorts: [], portsAttributes: {} };
+	}
+	return host.portsConfiguration();
 }
 
 function messageOf(failure: unknown): string {

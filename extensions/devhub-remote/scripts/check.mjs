@@ -42,11 +42,19 @@ for (const [source, label, needle] of required) {
 // Everything the vendored resolver did that DevHub does instead. The one
 // context key there is belongs to the commands (`commands.ts`), never to the
 // resolver or the socket.
-const sources = `${extension}${resolver}${control}`;
+// Port forwarding is the one surface the resolver carries, and only as a
+// question to DevHub: the `tunnelFactory` asks main for a `forward-port` and
+// main listens and relays (`main/runtime/portForward.ts`). A listener of the
+// extension's own would be a second forwarder.
+const ports = await readFile(resolve(root, "src/ports.ts"), "utf8");
+if (!ports.includes('"forward-port"')) {
+  throw new Error("the tunnel factory must ask DevHub for the forward");
+}
+const sources = `${extension}${resolver}${control}${ports}`;
 for (const [label, needle, where] of [
   ["an SSH client", "ssh2", sources],
   ["an ssh config reader", ".ssh/config", sources],
-  ["a port forwarding surface", "tunnelFactory", sources],
+  ["a port forwarder of its own", "createServer", sources],
   ["a context key", "setContext", `${resolver}${control}`],
   ["a settings reader", "getConfiguration", sources],
 ]) {

@@ -15,7 +15,9 @@
   ],
   "api": "none",
   "enabledApiProposals": [
-    "resolvers"
+    "resolvers",
+    "tunnels",
+    "portsAttributes"
   ],
   "capabilities": {
     "untrustedWorkspaces": {

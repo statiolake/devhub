@@ -14,6 +14,7 @@ await build({
     "test/control.test.ts",
     "test/commands.test.ts",
     "test/buildLog.test.ts",
+    "test/ports.test.ts",
   ],
   bundle: true,
   platform: "node",

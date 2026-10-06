@@ -49,6 +49,9 @@ function everythingSaysOk(): ControlHandlers {
 			Promise.resolve({ configs: [], current: undefined }),
 		devContainerBuildLog: () => Promise.resolve("/logs/c.log"),
 		reattachEditor: () => Promise.resolve(),
+		forwardPort: () => Promise.resolve({ localPort: 1, close: () => {} }),
+		devContainerPorts: () =>
+			Promise.resolve({ forwardPorts: [], portsAttributes: {} }),
 		personStarted: () => undefined,
 	};
 }
@@ -81,6 +84,9 @@ describe("the DevHub control socket", () => {
 		calls = [];
 		server = await startControlServer(socketPath, {
 			personStarted: () => undefined,
+			forwardPort: () => Promise.resolve({ localPort: 1, close: () => {} }),
+			devContainerPorts: () =>
+				Promise.resolve({ forwardPorts: [], portsAttributes: {} }),
 			devContainerConfigs: (window) => {
 				calls.push(`configs ${window.scheme}:${window.fsPath}`);
 				return Promise.resolve({
@@ -956,5 +962,119 @@ describe("a refusal the devhub command prints", () => {
 
 	it("prints a failure nobody worded as its own message", async () => {
 		expect(await printed(new Error("boom"))).toBe("boom");
+	});
+});
+
+/**
+ * A port forward lives as long as the connection that asked for it: the
+ * answer comes back on a socket that stays open, and closing that socket is
+ * what ends the forward.
+ */
+describe("a port forward over the control socket", () => {
+	let scratch: string;
+	let server: ControlServer | undefined;
+
+	afterEach(async () => {
+		await server?.close();
+		server = undefined;
+		removeScratchDir(scratch);
+	});
+
+	it("answers with the local port, holds the connection, and closes the forward with it", async () => {
+		scratch = makeSocketDir("cli-forward");
+		const socketPath = join(scratch, "c.sock");
+		const asked: string[] = [];
+		let closed = 0;
+		server = await startControlServer(socketPath, {
+			...everythingSaysOk(),
+			forwardPort: (machine, host, port, localPort, required) => {
+				asked.push(
+					`${machine} ${host}:${String(port)} ${String(localPort)} ${String(required)}`,
+				);
+				return Promise.resolve({
+					localPort: 4321,
+					close: () => {
+						closed++;
+					},
+				});
+			},
+		});
+		const socket = connect(socketPath);
+		socket.setEncoding("utf8");
+		const line = await new Promise<string>((resolve, reject) => {
+			let buffer = "";
+			socket.on("connect", () =>
+				socket.write(
+					`${JSON.stringify({
+						kind: "forward-port",
+						machine: "container:ab",
+						host: "localhost",
+						port: 3000,
+						localPort: 3000,
+					})}\n`,
+				),
+			);
+			socket.on("data", (chunk: string) => {
+				buffer += chunk;
+				if (buffer.includes("\n")) resolve(buffer.split("\n")[0] ?? "");
+			});
+			socket.on("error", reject);
+		});
+		const answer = JSON.parse(line) as ControlResponse;
+		expect(answer.ok).toBe(true);
+		expect(answer.forward).toEqual({ localPort: 4321 });
+		expect(asked).toEqual(["container:ab localhost:3000 3000 false"]);
+		// Still open: the forward stands.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(socket.destroyed).toBe(false);
+		expect(closed).toBe(0);
+		socket.destroy();
+		await vi.waitFor(() => expect(closed).toBe(1));
+	});
+
+	it("refuses a forward nobody could close", async () => {
+		const response = await answerControlRequest(
+			JSON.stringify({
+				kind: "forward-port",
+				machine: "container:ab",
+				host: "localhost",
+				port: 3000,
+			}),
+			everythingSaysOk(),
+		);
+		expect(response.ok).toBe(false);
+	});
+
+	it("refuses a port that is not one", async () => {
+		const response = await answerControlRequest(
+			JSON.stringify({
+				kind: "forward-port",
+				machine: "container:ab",
+				host: "localhost",
+				port: 70000,
+			}),
+			everythingSaysOk(),
+			() => {},
+		);
+		expect(response.ok).toBe(false);
+		expect(response.message).toMatch(/port/u);
+	});
+
+	it("answers what a definition says about ports", async () => {
+		const response = await answerControlRequest(
+			JSON.stringify({ kind: "dev-container-ports", machine: "container:ab" }),
+			{
+				...everythingSaysOk(),
+				devContainerPorts: () =>
+					Promise.resolve({
+						forwardPorts: [{ host: "localhost", port: 3000 }],
+						portsAttributes: { "3000": { label: "web" } },
+					}),
+			},
+		);
+		expect(response.ok).toBe(true);
+		expect(response.ports?.forwardPorts).toEqual([
+			{ host: "localhost", port: 3000 },
+		]);
 	});
 });

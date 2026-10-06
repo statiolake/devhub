@@ -145,7 +145,10 @@ EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
 	# There is no `contribViewsRemote` here: that was for the vendored
 	# extension's `sshHosts` tree view, and DevHub's own Sidebar is the host
 	# list.
-	"devhub.devhub-remote": ["resolvers"],
+	# `tunnels` and `portsAttributes` are its port forwarding: `openTunnel` for a
+	# definition's `forwardPorts`, and its `portsAttributes` applied to the
+	# ports VS Code forwards by itself (`src/ports.ts`).
+	"devhub.devhub-remote": ["resolvers", "tunnels", "portsAttributes"],
 }
 
 

@@ -48,11 +48,36 @@ second copy of any of them would be a second answer to a question that has one,
 and the two would eventually disagree. `scripts/check.mjs` fails if any of it
 reappears here.
 
+## Port forwarding in a dev container
+
+The `dev-container` resolver carries a `tunnelFactory` (`src/ports.ts`). VS
+Code keeps its whole Ports feature — the Ports view, automatic forwarding of
+ports a process in the container starts listening on, the "Your application
+running on port N is available" notification with Open in Browser — switched
+off for a window whose resolver has no tunnel factory, so this is what turns
+it on. The factory makes no forward itself: it sends DevHub a `forward-port`
+request and DevHub listens on `localhost` and relays each connection into the
+container (`apps/desktop/src/main/runtime/portForward.ts`). The request's
+connection stays open for as long as the forward does, so disposing the tunnel,
+closing the window or losing the extension host all end the forward.
+
+VS Code's own settings apply unchanged: `remote.autoForwardPorts` (default on),
+`remote.autoForwardPortsSource` (default `process`), `remote.portsAttributes`.
+When a dev container window opens, the extension also asks DevHub what the
+definition says about ports: `forwardPorts` and `appPort` are forwarded at once
+(`workspace.openTunnel`, labelled from `portsAttributes`), `portsAttributes` /
+`otherPortsAttributes`' `onAutoForward` is applied to the ports VS Code finds
+by itself (`registerPortAttributesProvider`), and `requireLocalPort` makes a
+taken local port an error instead of a different port. SSH windows have no
+tunnel factory yet.
+
 ## The proposed API
 
 `workspace.registerRemoteAuthorityResolver` is a proposed API, so the manifest
 names `resolvers` in `enabledApiProposals` and `scripts/product_metadata.py`
-grants it to this extension. Its type declarations are not in `@types/vscode`
+grants it to this extension. `tunnels` (`openTunnel`) and `portsAttributes`
+(`registerPortAttributesProvider`) are granted the same way, for port
+forwarding. Its type declarations are not in `@types/vscode`
 either — `tsconfig.json` includes
 `vscode/src/vscode-dts/vscode.proposed.resolvers.d.ts` from the submodule, which
 means the typecheck needs a provisioned `vscode/` (`scripts/provision-vscode.sh`)

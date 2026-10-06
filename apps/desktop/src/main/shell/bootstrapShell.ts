@@ -53,7 +53,11 @@ import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
 import { launchCommandFor } from "../cli/launch.js";
-import { resolveRemoteEndpoint } from "./resolveRemote.js";
+import {
+	forwardRemotePort,
+	remotePortsConfiguration,
+	resolveRemoteEndpoint,
+} from "./resolveRemote.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -315,6 +319,11 @@ export async function bootstrapShell(
 		// the model. See `resolveRemote.ts`.
 		resolveRemote: (machine, attempt) =>
 			resolveRemoteEndpoint(machine, attempt),
+		// The resolver's `tunnelFactory`, for the same reason. See
+		// `runtime/portForward.ts`.
+		forwardPort: (machine, host, port, localPort, requireLocalPort) =>
+			forwardRemotePort(machine, host, port, localPort, requireLocalPort),
+		devContainerPorts: (machine) => remotePortsConfiguration(machine),
 		// A workbench's own dev container commands: see `extensions/devhub-remote`.
 		devContainerConfigs: (window) =>
 			controller.devContainerConfigsForWindow(window),

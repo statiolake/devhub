@@ -176,6 +176,25 @@ export interface BuildLogAnswer {
   buildLog?: string;
 }
 
+/** DevHub's answer to `dev-container-ports`. */
+export interface DevContainerPortsAnswer {
+  ok: boolean;
+  message: string;
+  ports?: {
+    forwardPorts: { host: string; port: number }[];
+    portsAttributes: Record<string, unknown>;
+    otherPortsAttributes?: Record<string, unknown>;
+  };
+}
+
+/** What a dev container's definition says about ports. */
+export function requestDevContainerPorts(
+  socketPath: string,
+  machine: string,
+): Promise<DevContainerPortsAnswer> {
+  return request(socketPath, { kind: "dev-container-ports", machine });
+}
+
 /** Where the build log is of the container one of the folder's definitions makes. */
 export function requestDevContainerBuildLog(
   socketPath: string,

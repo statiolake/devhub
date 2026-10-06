@@ -12,7 +12,9 @@
   },
   "include": [
     "src/**/*.ts",
-    "../../vscode/src/vscode-dts/vscode.proposed.resolvers.d.ts"
+    "../../vscode/src/vscode-dts/vscode.proposed.resolvers.d.ts",
+    "../../vscode/src/vscode-dts/vscode.proposed.tunnels.d.ts",
+    "../../vscode/src/vscode-dts/vscode.proposed.portsAttributes.d.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }

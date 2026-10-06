@@ -59,6 +59,12 @@ import type { Pty } from "../terminal/pty.js";
 import type { StreamLaunch } from "./byteStream.js";
 import { BuildLogFile } from "./buildLog.js";
 import { LOCAL_CADENCE } from "./local.js";
+import {
+	PortForwards,
+	portsFromConfiguration,
+	type PortForward,
+	type PortsConfiguration,
+} from "./portForward.js";
 import { shellQuote } from "./quote.js";
 import {
 	describeFailure,
@@ -410,8 +416,9 @@ export const RELAY_SOURCE = `"use strict";
 const net = require("node:net");
 const mode = process.argv[2];
 const target = process.argv[3];
-if (mode === "connect") {
-  const s = net.connect(target);
+if (mode === "connect" || mode === "tcp") {
+  // \`tcp <host> <port>\`: a forwarded port (see \`portForward.ts\`).
+  const s = mode === "tcp" ? net.connect(Number(process.argv[4]), target) : net.connect(target);
   s.on("error", (e) => { process.stderr.write("devhub-relay: " + e.message + "\\n"); process.exit(1); });
   process.stdin.pipe(s);
   s.pipe(process.stdout);
@@ -535,6 +542,18 @@ export class ContainerHost
 	#server: Promise<RemoteServerEndpoint> | undefined;
 	#bridge: { readonly port: number; readonly close: () => void } | undefined;
 	#controlRelay: { readonly stop: () => void } | undefined;
+	/** Ports forwarded out of the container; see \`forwardPort\`. */
+	readonly #ports = new PortForwards((socket, host, port) => {
+		this.#relayTcp(socket, host, port);
+	});
+	/** The relay the forwards use, and the container it was written into. */
+	#portRelay:
+		| {
+				readonly containerId: string;
+				readonly node: string;
+				readonly relay: string;
+		  }
+		| undefined;
 	/** Set once the container id changed underneath this host. */
 	#replaced = false;
 	/** What git needs mounted for this folder. See `#worktreeMount`. */
@@ -1778,6 +1797,77 @@ export class ContainerHost
 		);
 	}
 
+	/**
+	 * A port on this Mac that reaches \`remoteHost:remotePort\` as the container
+	 * sees it — VS Code's tunnel, by way of the resolver's \`tunnelFactory\`. See
+	 * \`portForward.ts\`. The local port is \`localPort\` when it is free, another
+	 * one when not, unless \`requireLocalPort\`.
+	 */
+	async forwardPort(
+		remoteHost: string,
+		remotePort: number,
+		localPort?: number,
+		requireLocalPort = false,
+	): Promise<PortForward> {
+		await this.#ensurePortRelay();
+		return this.#ports.open(
+			remoteHost,
+			remotePort,
+			localPort,
+			requireLocalPort,
+		);
+	}
+
+	/** What the definition says about ports: \`forwardPorts\`, \`appPort\`,
+	 * \`portsAttributes\`. */
+	async portsConfiguration(): Promise<PortsConfiguration> {
+		const { configuration } = await this.#readConfiguration();
+		return portsFromConfiguration(configuration);
+	}
+
+	/** The relay written into the container the forwards go to now. */
+	async #ensurePortRelay(): Promise<{
+		container: UpResult;
+		node: string;
+		relay: string;
+	}> {
+		const container = await this.#currentContainer();
+		const held = this.#portRelay;
+		if (held !== undefined && held.containerId === container.containerId) {
+			return { container, node: held.node, relay: held.relay };
+		}
+		// A rebuilt container is a new filesystem: the relay goes in again.
+		const { node, relay } = await this.#relayPaths();
+		this.#portRelay = { containerId: container.containerId, node, relay };
+		return { container, node, relay };
+	}
+
+	/** One accepted connection on a forwarded port, carried into the container. */
+	#relayTcp(socket: Socket, host: string, port: number): void {
+		void this.#ensurePortRelay()
+			.then(({ container, node, relay }) =>
+				this.#spawnRelayExec(container, [
+					node,
+					relay,
+					"tcp",
+					host,
+					String(port),
+				]),
+			)
+			.then(
+				(child) => {
+					if (child === undefined) socket.destroy();
+					else child.pipe(socket);
+				},
+				(failure: unknown) => {
+					console.warn(
+						`[devhub] ${this.id}: port ${String(port)} could not be reached: ${describeFailure(failure)}`,
+					);
+					socket.destroy();
+				},
+			);
+	}
+
 	reading(): RuntimeReading {
 		return {
 			id: this.id,
@@ -1817,10 +1907,14 @@ export class ContainerHost
 		this.#controlRelay?.stop();
 		this.#controlRelay = undefined;
 		this.#server = undefined;
+		// Forwards stay: each connection asks for the container afresh.
+		this.#portRelay = undefined;
 	}
 
 	async dispose(): Promise<void> {
 		this.#closeBridge();
+		this.#ports.closeAll();
+		this.#portRelay = undefined;
 		this.#controlRelay?.stop();
 		this.#controlRelay = undefined;
 		this.#container = undefined;

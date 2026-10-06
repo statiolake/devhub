@@ -410,6 +410,41 @@ in the container. The resolver then answers `ResolvedAuthority("127.0.0.1",
 `0.0.0.0`: the connection token is the only thing between that port and an
 extension host.
 
+### Forwarded ports: the application's ports, on this Mac
+
+The same relay, pointed at a TCP port in the container (`tcp <host> <port>`)
+instead of the server's socket, is how a dev server in the container reaches a
+browser here — as it does with VS Code's own Dev Containers:
+
+- **Automatic.** VS Code notices a process in the container listening on a
+  port (`remote.autoForwardPortsSource: "process"`, reading `/proc` in the
+  remote extension host), forwards it, lists it in the Ports view and says
+  "Your application running on port N is available" with Open in Browser.
+  `remote.autoForwardPorts` and `remote.portsAttributes` work as upstream.
+- **How.** VS Code keeps the whole Ports feature off for a window whose
+  resolver has no `tunnelFactory`, which is why it did nothing before. The
+  `dev-container` resolver now has one (`extensions/devhub-remote/src/ports.ts`);
+  it sends a `forward-port` request over the control socket, and main
+  (`main/runtime/portForward.ts`, `ContainerHost.forwardPort`) listens on
+  `localhost` — `127.0.0.1` and `::1`, never `0.0.0.0` — and gives every
+  accepted connection a `docker exec -i` running the relay to `host:port` in
+  the container.
+- **A local port that is taken** — the person's own Postgres on 5432 — is not
+  an error: the forward takes another one and the Ports view says which. A
+  port whose `portsAttributes` say `requireLocalPort` is refused instead.
+- **The definition.** When the window opens, `forwardPorts` (`3000` or
+  `"db:5432"`) and `appPort`'s container side are forwarded, labelled from
+  `portsAttributes`; `portsAttributes` and `otherPortsAttributes`'
+  `onAutoForward` (`notify`, `openBrowser`, `silent`, `ignore`, …) apply to
+  the ports VS Code finds itself. They are read with `devcontainer
+read-configuration` (`dev-container-ports`).
+- **Cleanup.** A `forward-port` request's connection stays open for as long as
+  the forward does. Disposing the forward in the Ports view, closing the
+  window, or the extension host dying closes it, and main stops listening;
+  disposing the container's host closes every forward it has.
+
+SSH windows have no tunnel factory yet, so their Ports view stays off.
+
 ### Outbound: DevHub's control socket, inside the container
 
 One long-lived `docker exec` runs the same relay in `listen` mode on a socket

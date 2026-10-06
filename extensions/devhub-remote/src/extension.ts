@@ -41,11 +41,22 @@ import {
   requestDevContainerBuildLog,
   requestDevContainerConfigs,
   requestReattachEditor,
+  requestDevContainerPorts,
   requestResolveRemote,
 } from "./control";
 import {
+  attributesFor,
+  autoForwardAction,
+  labelFor,
+  makeTunnelFactory,
+  requestForwardPort,
+  requiresLocalPort,
+  type PortsConfiguration,
+} from "./ports";
+import {
   CONTAINER_PREFIX,
   containerFromPayload,
+  machineFromAuthority,
   resolveRemote,
   type ResolverApi,
 } from "./resolveRemote";
@@ -270,24 +281,151 @@ export function activate(context: vscode.ExtensionContext): void {
   // identical whether the bytes reach that machine over ssh or over a docker
   // exec. A second registration here, rather than a second extension, is what
   // keeps it that way.
+  // The container this window resolved to, for the tunnel factory: VS Code
+  // hands the factory a port and nothing about which remote it is on.
+  const ports: WindowPorts = { machine: undefined, config: undefined };
   for (const scheme of ["ssh-remote", "dev-container"]) {
+    const resolver: vscode.RemoteAuthorityResolver = {
+      resolve: async (authority, resolveContext) => {
+        const resolved = (await resolveRemote(
+          api,
+          requestResolveRemote,
+          socketPath,
+          authority,
+          resolveContext.resolveAttempt,
+        )) as vscode.ResolverResult;
+        if (scheme === "dev-container") {
+          ports.machine = machineFromAuthority(authority) ?? undefined;
+        }
+        // After the resolve, so that a machine that never came up does not
+        // leave a label claiming a window is editing on it.
+        nameTheHost(context, named, authority);
+        return resolved;
+      },
+    };
+    // Port forwarding: see `ports.ts`. Having a `tunnelFactory` is what turns
+    // on the Ports view and automatic forwarding for the window at all.
+    if (scheme === "dev-container" && socketPath !== null) {
+      resolver.tunnelFactory = tunnelFactoryFor(socketPath, ports);
+      resolver.tunnelFeatures = {
+        elevation: false,
+        public: false,
+        privacyOptions: [],
+      };
+    }
     context.subscriptions.push(
-      vscode.workspace.registerRemoteAuthorityResolver(scheme, {
-        resolve: async (authority, resolveContext) => {
-          const resolved = (await resolveRemote(
-            api,
-            requestResolveRemote,
-            socketPath,
-            authority,
-            resolveContext.resolveAttempt,
-          )) as vscode.ResolverResult;
-          // After the resolve, so that a machine that never came up does not
-          // leave a label claiming a window is editing on it.
-          nameTheHost(context, named, authority);
-          return resolved;
-        },
-      }),
+      vscode.workspace.registerRemoteAuthorityResolver(scheme, resolver),
     );
+  }
+  if (socketPath !== null && vscode.env.remoteName === "dev-container") {
+    void openDefinitionPorts(context, socketPath, ports).catch(
+      (failure: unknown) => {
+        console.warn(
+          `[devhub-remote] the definition's ports could not be forwarded: ${
+            failure instanceof Error ? failure.message : String(failure)
+          }`,
+        );
+      },
+    );
+  }
+}
+
+/** The window's container, and what its definition says about ports. */
+interface WindowPorts {
+  machine: string | undefined;
+  config: PortsConfiguration | undefined;
+}
+
+function tunnelFactoryFor(
+  socketPath: string,
+  ports: WindowPorts,
+): NonNullable<vscode.RemoteAuthorityResolver["tunnelFactory"]> {
+  const factory = makeTunnelFactory(
+    {
+      emitter: () => {
+        const emitter = new vscode.EventEmitter<void>();
+        return {
+          event: emitter.event,
+          fire: () => emitter.fire(),
+          dispose: () => emitter.dispose(),
+        };
+      },
+    },
+    (host, port, localPort, requireLocalPort) => {
+      const machine = ports.machine ?? machineOfThisWindow();
+      if (machine === undefined) {
+        return Promise.reject(
+          new Error("This window is not attached to a dev container."),
+        );
+      }
+      return requestForwardPort(
+        socketPath,
+        machine,
+        host,
+        port,
+        localPort,
+        requireLocalPort,
+      );
+    },
+    (port) => requiresLocalPort(ports.config, port),
+  );
+  return (options) => factory(options) as Thenable<vscode.Tunnel>;
+}
+
+function machineOfThisWindow(): string | undefined {
+  const authority = vscode.env.remoteAuthority;
+  return authority === undefined
+    ? undefined
+    : (machineFromAuthority(authority) ?? undefined);
+}
+
+/**
+ * The definition's `forwardPorts` and `appPort`, forwarded as the window
+ * opens, and its `portsAttributes`' `onAutoForward` applied to the ports VS
+ * Code finds by itself.
+ */
+async function openDefinitionPorts(
+  context: vscode.ExtensionContext,
+  socketPath: string,
+  ports: WindowPorts,
+): Promise<void> {
+  const machine = ports.machine ?? machineOfThisWindow();
+  if (machine === undefined) return;
+  const answer = await requestDevContainerPorts(socketPath, machine);
+  if (!answer.ok || answer.ports === undefined) return;
+  const config = answer.ports;
+  ports.config = config;
+  context.subscriptions.push(
+    vscode.workspace.registerPortAttributesProvider(
+      { portRange: [1, 65536] },
+      {
+        providePortAttributes: ({ port, commandLine }) => {
+          const action = autoForwardAction(
+            attributesFor(config, port, commandLine),
+          );
+          return action === undefined
+            ? undefined
+            : new vscode.PortAttributes(action as vscode.PortAutoForwardAction);
+        },
+      },
+    ),
+  );
+  for (const { host, port } of config.forwardPorts) {
+    const label = labelFor(config, port);
+    try {
+      const tunnel = await vscode.workspace.openTunnel({
+        remoteAddress: { host, port },
+        localAddressPort: port,
+        ...(label === undefined ? {} : { label }),
+      });
+      context.subscriptions.push({ dispose: () => void tunnel.dispose() });
+    } catch (failure) {
+      console.warn(
+        `[devhub-remote] forwardPorts ${host}:${String(port)}: ${
+          failure instanceof Error ? failure.message : String(failure)
+        }`,
+      );
+    }
   }
 }
 

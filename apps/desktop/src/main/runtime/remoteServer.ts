@@ -44,6 +44,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
+import type { PortForward, PortsConfiguration } from "./portForward.js";
 import { shellQuote } from "./quote.js";
 
 /** Where a machine's remote extension host comes from, as far as a runtime
@@ -137,6 +138,19 @@ export interface RemoteServerHost {
 	 * is already on the wire.
 	 */
 	prepare?(): Promise<void>;
+	/**
+	 * A port on this Mac reaching \`remoteHost:remotePort\` on the machine —
+	 * what the resolver's \`tunnelFactory\` asks for. Only dev containers have
+	 * it today; see \`portForward.ts\`.
+	 */
+	forwardPort?(
+		remoteHost: string,
+		remotePort: number,
+		localPort?: number,
+		requireLocalPort?: boolean,
+	): Promise<PortForward>;
+	/** The definition's \`forwardPorts\`, \`appPort\` and \`portsAttributes\`. */
+	portsConfiguration?(): Promise<PortsConfiguration>;
 }
 
 /**

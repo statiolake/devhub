@@ -16,6 +16,7 @@
  */
 
 import { join } from "node:path";
+import type { PortsConfiguration } from "../runtime/portForward.js";
 
 /** Where the running app listens. One per user-data directory, so a scratch
  * run and a real one never meet. */
@@ -300,6 +301,27 @@ export type ControlRequest =
 			readonly rebuild?: RebuildWire;
 	  }
 	| {
+			/**
+			 * A port on this Mac reaching `host:port` on `machine` — a
+			 * workbench's resolver forwarding a port out of a dev container
+			 * (see `main/runtime/portForward.ts`). The one request whose
+			 * connection stays open after the answer: the forward lives exactly
+			 * as long as it, so a workbench that closes — or an extension host
+			 * that dies — takes its forwards with it.
+			 */
+			readonly kind: "forward-port";
+			readonly machine: string;
+			readonly host: string;
+			readonly port: number;
+			readonly localPort?: number;
+			readonly requireLocalPort?: boolean;
+	  }
+	| {
+			/** What a dev container's definition says about ports. */
+			readonly kind: "dev-container-ports";
+			readonly machine: string;
+	  }
+	| {
 			readonly kind: "terminal-profile";
 			readonly machine: string;
 			readonly root: string | null;
@@ -407,6 +429,10 @@ export interface ControlResponse {
 	readonly devContainers?: DevContainerConfigsAnswer;
 	/** A `dev-container-build-log` answer: the log file's path on this Mac. */
 	readonly buildLog?: string;
+	/** A `forward-port` answer: the port on this Mac. */
+	readonly forward?: { readonly localPort: number };
+	/** A `dev-container-ports` answer. */
+	readonly ports?: PortsConfiguration;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -509,6 +535,29 @@ export function parseControlRequest(line: string): ControlRequest {
 					? {}
 					: { rebuild: requireRebuild(record["rebuild"]) }),
 			};
+		case "forward-port":
+			return {
+				kind: "forward-port",
+				machine: requireString(record["machine"], "machine"),
+				host: requireString(record["host"], "host"),
+				port: requirePort(record["port"], "port"),
+				...(record["localPort"] === undefined || record["localPort"] === 0
+					? {}
+					: { localPort: requirePort(record["localPort"], "localPort") }),
+				...(record["requireLocalPort"] === undefined
+					? {}
+					: {
+							requireLocalPort: requireBoolean(
+								record["requireLocalPort"],
+								"requireLocalPort",
+							),
+						}),
+			};
+		case "dev-container-ports":
+			return {
+				kind: "dev-container-ports",
+				machine: requireString(record["machine"], "machine"),
+			};
 		case "terminal-profile":
 			return {
 				kind: "terminal-profile",
@@ -610,6 +659,18 @@ function requirePosition(value: unknown): ControlPosition {
 		line: requireLineOrColumn(record["line"], "line"),
 		column: requireLineOrColumn(record["column"], "column"),
 	};
+}
+
+function requirePort(value: unknown, field: string): number {
+	if (
+		typeof value !== "number" ||
+		!Number.isInteger(value) ||
+		value < 1 ||
+		value > 65535
+	) {
+		throw new Error(`${field} must be a port number`);
+	}
+	return value;
 }
 
 /** A whole number from zero up: how many times something has happened. */

@@ -27,6 +27,7 @@ import {
 	type TerminalProfileAnswer,
 	type WindowFolderWire,
 } from "./protocol.js";
+import type { PortsConfiguration } from "../runtime/portForward.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -69,6 +70,19 @@ export interface ControlHandlers {
 	 * `machine` is the `RuntimeId` of the computer that `root` is a path on, so
 	 * that a path is matched against the Workspaces that are actually on it.
 	 */
+	/**
+	 * A port on this Mac reaching `host:port` on `machine`, open until
+	 * `close` — which the server calls when the asking connection goes away.
+	 */
+	forwardPort(
+		machine: string,
+		host: string,
+		port: number,
+		localPort: number | undefined,
+		requireLocalPort: boolean,
+	): Promise<{ readonly localPort: number; close(): void }>;
+	/** What `machine`'s dev container definition says about ports. */
+	devContainerPorts(machine: string): Promise<PortsConfiguration>;
 	terminalProfile(
 		machine: string,
 		root: string | null,
@@ -205,7 +219,25 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 		if (newline < 0) return;
 		const line = buffer.slice(0, newline);
 		buffer = "";
-		void answerControlRequest(line, handlers).then(answer);
+		let release: (() => void) | undefined;
+		void answerControlRequest(line, handlers, (close) => {
+			release = close;
+		}).then((response) => {
+			if (release === undefined || !response.ok) {
+				answer(response);
+				return;
+			}
+			// Held: the answer is written and the connection kept, and the
+			// forward ends when the connection does.
+			const close = release;
+			answered = true;
+			if (socket.destroyed) {
+				close();
+				return;
+			}
+			socket.once("close", close);
+			socket.write(`${JSON.stringify(response)}\n`);
+		});
 	});
 	socket.on("error", (error) => {
 		// A client that vanished is not DevHub's failure to report; anything
@@ -229,6 +261,7 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 export async function answerControlRequest(
 	line: string,
 	handlers: ControlHandlers,
+	hold?: (close: () => void) => void,
 ): Promise<ControlResponse> {
 	let request: ControlRequest;
 	try {
@@ -349,6 +382,39 @@ export async function answerControlRequest(
 					request.rebuild,
 				);
 				return { ok: true, message: "reattached" };
+			case "forward-port": {
+				// Only over a connection that can be held: a forward nobody
+				// could close would outlive the window that asked for it.
+				if (hold === undefined) {
+					return {
+						ok: false,
+						message: "a port forward needs a connection that stays open",
+					};
+				}
+				const forward = await handlers.forwardPort(
+					request.machine,
+					request.host,
+					request.port,
+					request.localPort,
+					request.requireLocalPort === true,
+				);
+				hold(() => forward.close());
+				return {
+					ok: true,
+					message: `127.0.0.1:${String(forward.localPort)}`,
+					forward: { localPort: forward.localPort },
+				};
+			}
+			case "dev-container-ports": {
+				const ports = await handlers.devContainerPorts(request.machine);
+				return {
+					ok: true,
+					message: ports.forwardPorts
+						.map((entry) => `${entry.host}:${String(entry.port)}`)
+						.join("\n"),
+					ports,
+				};
+			}
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(
 					request.machine,
@@ -394,6 +460,8 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "ping":
 		case "wait-ended":
 		case "resolve-remote":
+		case "forward-port":
+		case "dev-container-ports":
 		case "terminal-profile":
 		case "dev-container-configs":
 		case "dev-container-build-log":
