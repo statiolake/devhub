@@ -549,6 +549,13 @@ function WorkspaceRow({
                   data-tooltip-lines={JSON.stringify(
                     tooltipLines(agentTooltipFacts(agent)),
                   )}
+                  // The prompt cache's line is a countdown, composed when the
+                  // tooltip is drawn (`RowTooltip`), not when the row is.
+                  data-tooltip-cache={
+                    agent.promptCache === undefined
+                      ? undefined
+                      : JSON.stringify(agent.promptCache)
+                  }
                   onContextMenu={(event) => {
                     event.preventDefault();
                     onAgentMenu(agent, {

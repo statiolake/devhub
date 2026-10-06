@@ -23,6 +23,7 @@
  * and they never raise the "DevHub does not know this event" notice.
  */
 
+import type { CacheSample } from "./promptCache.js";
 import {
 	isSentOrigin,
 	SENT_ORIGINS,
@@ -119,6 +120,8 @@ export type ClaudeLine =
 			 * written, cache read) and what it wrote back.
 			 */
 			readonly contextTokens: number | undefined;
+			/** The message's usage, as the prompt cache reads it (`promptCache.ts`). */
+			readonly cache: CacheSample | undefined;
 	  }
 	| {
 			readonly type: "user";
@@ -1363,6 +1366,7 @@ function decodeAssistant(
 		error: f.optionalString(raw.error, "assistant.error"),
 		model: f.optionalString(message.model, "assistant.message.model"),
 		contextTokens: contextTokens(message.usage, f),
+		cache: cacheSample(message.usage, f),
 		timestamp: f.optionalTime(raw.timestamp, "assistant.timestamp"),
 	};
 }
@@ -1384,6 +1388,51 @@ function contextTokens(
 	return counts.every((count) => count === undefined)
 		? undefined
 		: counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+}
+
+function cacheSample(
+	value: JsonValue | undefined,
+	f: Fields,
+): CacheSample | undefined {
+	if (value === undefined || value === null) return undefined;
+	const at = "assistant.message.usage";
+	const usage = f.object(value, at);
+	const write = f.optionalNumber(
+		usage.cache_creation_input_tokens,
+		`${at}.cache_creation_input_tokens`,
+	);
+	const read = f.optionalNumber(
+		usage.cache_read_input_tokens,
+		`${at}.cache_read_input_tokens`,
+	);
+	// A provider that reports no cache counts at all says nothing about a cache.
+	if (write === undefined && read === undefined) return undefined;
+	const split =
+		usage.cache_creation === undefined || usage.cache_creation === null
+			? undefined
+			: f.object(usage.cache_creation, `${at}.cache_creation`);
+	return {
+		inputTokens:
+			f.optionalNumber(usage.input_tokens, `${at}.input_tokens`) ?? 0,
+		outputTokens:
+			f.optionalNumber(usage.output_tokens, `${at}.output_tokens`) ?? 0,
+		cacheWriteTokens: write ?? 0,
+		cacheReadTokens: read ?? 0,
+		write5mTokens:
+			split === undefined
+				? undefined
+				: f.optionalNumber(
+						split.ephemeral_5m_input_tokens,
+						`${at}.cache_creation.ephemeral_5m_input_tokens`,
+					),
+		write1hTokens:
+			split === undefined
+				? undefined
+				: f.optionalNumber(
+						split.ephemeral_1h_input_tokens,
+						`${at}.cache_creation.ephemeral_1h_input_tokens`,
+					),
+	};
 }
 
 function contextWindows(

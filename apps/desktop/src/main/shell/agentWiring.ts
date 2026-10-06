@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { PromptCache } from "../../model/conversation.js";
 
 import { AgentActivityReader } from "../agent/activity.js";
 import { AgentStatusDetector } from "../agent/detect/detector.js";
@@ -624,6 +625,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				status: AgentStatus;
 				runtimeHealth: RuntimeHealth;
 				activity: string | undefined;
+				promptCache?: PromptCache | undefined;
 				injection: AgentInjection;
 				failure: AgentFailure | undefined;
 			}[] = [];
@@ -658,6 +660,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				let reading: {
 					readonly status: AgentStatus;
 					readonly activity: string | undefined;
+					readonly promptCache?: PromptCache | undefined;
 					readonly failure: AgentFailure | undefined;
 				};
 				let send: (text: string) => Promise<void>;
@@ -703,6 +706,9 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					agentId: id,
 					status: reading.status,
 					activity: reading.activity,
+					...(reading.promptCache === undefined
+						? {}
+						: { promptCache: reading.promptCache }),
 					runtimeHealth: health,
 					injection: injections.state(id, reading.status),
 					failure: reading.failure,

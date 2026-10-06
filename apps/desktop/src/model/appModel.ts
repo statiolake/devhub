@@ -62,6 +62,7 @@ import {
   type TerminalZoomDirection,
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
+import type { PromptCache } from "./conversation.js";
 import { tabOrder, tabPosition } from "../ipc/appShell.js";
 import {
   NavigationHistory,
@@ -173,6 +174,8 @@ export interface AgentSnapshot {
   readonly unread: UnreadReason | undefined;
   /** What the Agent says it is doing, or nothing if it has not said. */
   readonly activity: string | undefined;
+  /** Its prompt cache, for a GUI Claude Agent that has reported one. */
+  readonly promptCache: PromptCache | undefined;
   readonly injection: AgentInjection;
   /** The actions ticked as automatic for it. */
   readonly automaticActions: readonly string[];
@@ -1134,6 +1137,13 @@ export class AppModel {
         observation.failure,
       );
       this.setAgentActivity(observation.agentId, observation.activity);
+      if (
+        this.requireAgent(observation.agentId).setPromptCache(
+          observation.promptCache,
+        )
+      ) {
+        this.bumpRevision();
+      }
       this.setAgentInjection(observation.agentId, observation.injection);
       this.setAgentRuntimeHealth(
         observation.agentId,
@@ -1700,6 +1710,7 @@ export class AppModel {
         controlState: agent.controlState,
         unread: agent.unread,
         activity: agent.activity,
+        promptCache: agent.promptCache,
         injection: agent.injection,
         automaticActions: agent.automaticActions,
         failure: agent.failure,

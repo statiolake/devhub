@@ -171,6 +171,12 @@ export interface AgentWire {
 	 */
 	readonly activity: string | undefined;
 	/**
+	 * A GUI Claude Agent's prompt cache, as DevHub worked it out from its
+	 * conversation's usage. Absent when there is nothing to say about one.
+	 * See `PromptCache` in `model/conversation.ts`.
+	 */
+	readonly promptCache?: PromptCacheWire;
+	/**
 	 * Text DevHub is holding for this Agent, and why it has not gone yet.
 	 *
 	 * `queued` is how many instructions are waiting; `waitingFor` is the reason
@@ -1097,6 +1103,18 @@ export type RuntimeHealth = RuntimeHealthWire;
 export type AgentControlState = AgentControlStateWire;
 export type WorkspaceState = WorkspaceStateWire;
 export type WorkspaceSnapshot = WorkspaceWire;
+/** A Claude conversation's prompt cache. See `PromptCache` in `model/conversation.ts`. */
+export interface PromptCacheWire {
+	readonly ttlSeconds: number;
+	readonly ttlKnown: boolean;
+	/** When it goes cold, ms since the epoch; absent when it is already cold. */
+	readonly expiresAt: number | undefined;
+	readonly hitRatio: number | undefined;
+	readonly requests: number;
+	readonly misses: number;
+	readonly recacheTokens: number | undefined;
+}
+
 export type AgentSnapshot = AgentWire;
 export type SidebarSnapshot = SidebarWire;
 export type AppSnapshot = AppSnapshotWire;

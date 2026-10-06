@@ -97,6 +97,7 @@ import {
 	elicitationSubject,
 } from "../elicitation.js";
 import { todoPlan, toolTitle } from "../toolTitle.js";
+import { PromptCacheTracker } from "./promptCache.js";
 import {
 	ASK_USER_QUESTION,
 	NO_TOOL_RESULT,
@@ -476,6 +477,10 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private notices = 0;
 	private commandCount = 0;
 	private compactions = 0;
+	/** The main conversation's prompt cache, from each response's usage. */
+	private readonly promptCache = new PromptCacheTracker();
+	/** The last message the prompt cache counted: the CLI writes one line per block. */
+	private promptCacheMessage: string | undefined;
 	private turns = 0;
 	private users = 0;
 
@@ -1359,6 +1364,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			case "compact_boundary":
 				this.setCompacting(false);
 				this.compactions += 1;
+				this.promptCache.compacted();
 				return this.emit({
 					type: "entry",
 					entry: {
@@ -1661,6 +1667,24 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			this.setSession(
 				this.modelSettings(line.model, this.current.session.effort.current),
 			);
+		}
+		if (
+			parent === null &&
+			line.cache !== undefined &&
+			line.model !== SYNTHETIC_MODEL &&
+			line.messageId !== this.promptCacheMessage
+		) {
+			// One count per response, the main conversation's only: Claude
+			// Code's own `prompt_cache` leaves subagents out too.
+			this.promptCacheMessage = line.messageId;
+			const promptCache = this.promptCache.record(
+				line.cache,
+				line.timestamp ?? Date.now(),
+			);
+			this.emit({
+				type: "usage",
+				usage: { ...(this.current.usage ?? NO_USAGE), promptCache },
+			});
 		}
 		if (parent === null && line.contextTokens !== undefined) {
 			// The conversation's size is its latest top-level message's: a
@@ -2296,6 +2320,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			costUsd: line.costUsd,
 			rateLimits: this.current.usage?.rateLimits,
 			contextTokens: this.current.usage?.contextTokens,
+			promptCache: this.current.usage?.promptCache,
 			contextWindow:
 				(this.mainModel === undefined
 					? undefined

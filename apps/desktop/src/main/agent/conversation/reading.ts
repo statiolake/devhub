@@ -12,6 +12,7 @@ import {
 	conversationActivity,
 	conversationStatus,
 	type ConversationFailureCode,
+	type PromptCache,
 } from "../../../model/conversation.js";
 import type {
 	AgentFailure,
@@ -23,6 +24,7 @@ import type { ConversationReading } from "./conversation.js";
 export interface ConversationObservation {
 	readonly status: AgentStatus;
 	readonly activity: string | undefined;
+	readonly promptCache?: PromptCache | undefined;
 	readonly failure: AgentFailure | undefined;
 }
 
@@ -58,6 +60,7 @@ export function observeConversation(
 	return {
 		status: conversationStatus(transcript),
 		activity: conversationActivity(transcript),
+		promptCache: transcript.usage?.promptCache,
 		failure:
 			state.phase === "broken"
 				? {

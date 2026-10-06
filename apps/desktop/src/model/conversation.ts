@@ -794,6 +794,43 @@ export interface Usage {
    * as last reported.
    */
   readonly rateLimits: readonly RateLimit[] | undefined;
+  /**
+   * The main conversation's prompt cache, as DevHub works it out from the
+   * cache token counts of each API response. Absent until the first response
+   * that reports them, and for a CLI that does not.
+   */
+  readonly promptCache?: PromptCache | undefined;
+}
+
+/**
+ * A conversation's prompt cache: when it goes cold and how well it is used.
+ *
+ * Claude Code computes the same statistics for its status line
+ * (`prompt_cache`, v2.1.251+), but a status line never runs in the `-p`
+ * stream-json mode DevHub drives, so DevHub derives them itself from each
+ * main-conversation response's `usage` — an estimate of the same thing,
+ * computed the same way (see `main/agent/conversation/claude/promptCache.ts`).
+ */
+export interface PromptCache {
+  /** How long the cached prefix lives after it was last read or written. */
+  readonly ttlSeconds: number;
+  /**
+   * Whether the TTL was read off the response (`cache_creation`'s
+   * `ephemeral_5m`/`ephemeral_1h` split) rather than assumed.
+   */
+  readonly ttlKnown: boolean;
+  /**
+   * When the cached prefix goes cold, in ms since the epoch; `undefined`
+   * when the last response reported no cache tokens at all.
+   */
+  readonly expiresAt: number | undefined;
+  /** Cache reads over all input tokens this session, 0..1. */
+  readonly hitRatio: number | undefined;
+  readonly requests: number;
+  /** Requests that re-processed a prefix the cache should still have held. */
+  readonly misses: number;
+  /** Tokens the next request writes again if the cache is cold by then. */
+  readonly recacheTokens: number | undefined;
 }
 
 export interface RateLimit {

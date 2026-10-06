@@ -66,6 +66,16 @@
 import { useCallback, useEffect, useRef } from "react";
 import { devhub } from "../../sidebar/client";
 import type { SidebarAreaWire, TooltipLineWire } from "../../../ipc/contract";
+import type { PromptCacheWire } from "../../../ipc/appShell";
+import { promptCacheFacts } from "./promptCacheFacts";
+import { tooltipLines } from "./rowDescription";
+
+/**
+ * How often a tooltip that counts something down is drawn again while it is
+ * up. Only the lines that changed are sent, so this is a second's clock, not a
+ * second's redraw.
+ */
+const LIVE_TICK_MS = 1000;
 
 /**
  * How long the pointer rests on a row before its tooltip is drawn.
@@ -100,15 +110,27 @@ const HOVER_DELAY_MS = 300;
  * `JSON.stringify` three files away — which is exactly why an exception here
  * would be unactionable noise.
  */
-function tooltipFor(
+export function tooltipFor(
   element: HTMLElement,
+  now: number = Date.now(),
 ): readonly TooltipLineWire[] | undefined {
   const rich = element.dataset["tooltipLines"];
   if (rich !== undefined && rich !== "") {
     const parsed: unknown = JSON.parse(rich);
-    return Array.isArray(parsed) && parsed.length > 0
-      ? (parsed as TooltipLineWire[])
-      : undefined;
+    const lines = Array.isArray(parsed) ? (parsed as TooltipLineWire[]) : [];
+    // An Agent's prompt cache is a countdown, so its line is composed at the
+    // moment it is drawn rather than when the row was: see `LIVE_TICK_MS`.
+    const cache = element.dataset["tooltipCache"];
+    const all =
+      cache === undefined || cache === ""
+        ? lines
+        : [
+            ...lines,
+            ...tooltipLines(
+              promptCacheFacts(JSON.parse(cache) as PromptCacheWire, now),
+            ),
+          ];
+    return all.length > 0 ? all : undefined;
   }
   const text = element.dataset["tooltip"];
   return text === undefined || text === "" ? undefined : [{ text }];
@@ -146,9 +168,15 @@ export function RowTooltip() {
     devhub().releaseTooltip();
   }, []);
 
+  /** What the tooltip up now says, and about which element. */
+  const shown = useRef<{ element: HTMLElement; text: string } | undefined>(
+    undefined,
+  );
+
   const show = useCallback((element: HTMLElement) => {
     const lines = tooltipFor(element);
     if (lines === undefined) return;
+    shown.current = { element, text: JSON.stringify(lines) };
     const sidebar = area.current;
     if (!sidebar) return;
     const box = element.getBoundingClientRect();
@@ -244,7 +272,21 @@ export function RowTooltip() {
     window.addEventListener("scroll", hide, true);
     window.addEventListener("resize", hide);
     window.addEventListener("blur", hide);
+    // A countdown in a tooltip that is up is drawn again as it changes.
+    const tick = setInterval(() => {
+      const current = shown.current;
+      if (
+        current === undefined ||
+        anchor.current !== current.element ||
+        current.element.dataset["tooltipCache"] === undefined
+      )
+        return;
+      const lines = tooltipFor(current.element);
+      if (lines !== undefined && JSON.stringify(lines) !== current.text)
+        show(current.element);
+    }, LIVE_TICK_MS);
     return () => {
+      clearInterval(tick);
       cancelRest();
       // A tooltip outlives this component otherwise. It is drawn by
       // another view, so unmounting takes nothing off the screen —
