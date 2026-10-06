@@ -87,10 +87,8 @@ function ErrorSurface({
         summary={error.summary}
         detail={error.detail ?? undefined}
         actions={actions}
+        technical={`${error.module} · ${error.code} · ${error.runtimeVersion}`}
       />
-      <p className="mac-caption surface-meta">
-        {error.module} · {error.code} · {error.runtimeVersion}
-      </p>
     </section>
   );
 }

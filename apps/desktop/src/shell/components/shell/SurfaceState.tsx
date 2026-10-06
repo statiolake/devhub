@@ -11,7 +11,7 @@
  * layout here, because a Surface with nothing in it is not a document.
  */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export interface SurfaceAction {
   readonly label: string;
@@ -25,12 +25,16 @@ function Frame({
   message,
   actions,
   role,
+  tone = "quiet",
+  technical,
 }: {
   readonly glyph: ReactNode;
   readonly title: string;
   readonly message?: string;
   readonly actions?: readonly SurfaceAction[];
   readonly role: "status" | "alert";
+  readonly tone?: "quiet" | "failure";
+  readonly technical?: string;
 }) {
   const primary = useRef<HTMLButtonElement | null>(null);
 
@@ -52,12 +56,13 @@ function Frame({
   }, [title, message]);
 
   return (
-    <div className="mac mac-empty" role={role}>
+    <div className="mac mac-empty" role={role} data-tone={tone}>
       <span className="mac-empty-glyph" aria-hidden="true">
         {glyph}
       </span>
       <p className="mac-empty-title">{title}</p>
       {message ? <p className="mac-empty-message">{message}</p> : null}
+      {technical ? <TechnicalDetails text={technical} /> : null}
       {actions && actions.length > 0 ? (
         <div className="mac-empty-actions">
           {actions.map((action) => (
@@ -74,6 +79,32 @@ function Frame({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * What a bug report needs and a reader usually does not: folded away, set in
+ * monospace, selectable, and copied whole with one press.
+ */
+function TechnicalDetails({ text }: { readonly text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <details className="mac-empty-technical">
+      <summary>Technical details</summary>
+      <pre className="mac-empty-technical-text">{text}</pre>
+      <button
+        type="button"
+        className="mac-button mac-empty-copy"
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).then(
+            () => setCopied(true),
+            () => setCopied(false),
+          );
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </details>
   );
 }
 
@@ -97,17 +128,22 @@ export function Failure({
   summary,
   detail,
   actions,
+  technical,
 }: {
   readonly summary: string;
   readonly detail?: string;
   readonly actions?: readonly SurfaceAction[];
+  /** Identifiers and raw words for a bug report, folded under the actions. */
+  readonly technical?: string;
 }) {
   return (
     <Frame
       role="alert"
+      tone="failure"
       title={summary}
       message={detail}
       actions={actions}
+      technical={technical}
       glyph={
         <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
           <path d="M16 4.6 30 27.4H2z" />

@@ -9,7 +9,7 @@
  * root like every other failure on the page.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
 import type { FileRange } from "../../ipc/conversation";
 import {
@@ -50,7 +50,8 @@ export function ConversationPane({
   readonly appearance: AppAppearance | undefined;
   readonly hidden: boolean;
 }) {
-  const { reportFailure, repositoryStatus } = useAgents();
+  const { reportFailure: reportAppFailure, repositoryStatus } = useAgents();
+  const reportFailure = useLiveFailure(reportAppFailure);
   const row = repositoryStatus.workspaces.find(
     (entry) => entry.workspaceId === workspaceId,
   );
@@ -177,6 +178,35 @@ export function ConversationPane({
 }
 
 /**
+ * `report`, for as long as the pane is mounted, and nothing after.
+ *
+ * Closing an Agent unmounts its pane while requests about it are still in
+ * flight — the attachment of a conversation that is still starting (a Codex
+ * app-server takes a while), the detach, the draft flushed on the way out.
+ * main answers those with "there is no Agent …", a failure about a pane that
+ * no longer exists, which the page would draw as the app-wide "The native app
+ * shell is unavailable." over the Agent the person just closed. A failure
+ * that lands after its pane is gone has no one to tell, so it is dropped.
+ */
+export function useLiveFailure(
+  report: (error: unknown) => void,
+): (error: unknown) => void {
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  return useCallback(
+    (error: unknown) => {
+      if (live.current) report(error);
+    },
+    [report],
+  );
+}
+
+/**
  * The Agent's transcript as main holds it, kept current.
  *
  * With it, the unsent draft main kept for this Agent, `undefined` until the
@@ -248,11 +278,16 @@ function useConversation(
         setDraft(attachment.draft);
         for (const [revision, event] of early.splice(0)) fold(revision, event);
       })
-      .catch(reportFailure);
+      .catch((error: unknown) => {
+        if (attached) reportFailure(error);
+      });
     return () => {
       attached = false;
+      broken = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
-      bridge.conversation.detach(agentId).catch(reportFailure);
+      // A detach that fails has nothing left to tell: the Agent may already
+      // be gone, and main lets go of the page's attachments by itself.
+      bridge.conversation.detach(agentId).catch(() => undefined);
     };
   }, [agentId, reportFailure]);
   return { transcript, draft };

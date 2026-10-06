@@ -551,6 +551,68 @@
   margin-top: var(--space-2);
 }
 
+/* A failure reads as one before it is read: the glyph takes the danger ink,
+   the title the primary ink, and what the reader may want to quote can be
+   selected. */
+.mac-empty[data-tone="failure"] .mac-empty-glyph {
+  color: var(--danger);
+}
+
+.mac-empty[data-tone="failure"] .mac-empty-title {
+  max-width: 36ch;
+  color: var(--primary);
+  text-wrap: balance;
+}
+
+.mac-empty[data-tone="failure"] .mac-empty-message {
+  max-width: 52ch;
+  color: var(--secondary);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mac-empty-technical {
+  width: min(460px, 100%);
+  margin-top: var(--space-2);
+  text-align: start;
+  font-size: 11px;
+  color: var(--tertiary);
+}
+
+.mac-empty-technical > summary {
+  width: max-content;
+  margin: 0 auto;
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+}
+
+.mac-empty-technical > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+
+.mac-empty-technical-text {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  color: var(--secondary);
+  font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mac-empty-copy {
+  display: block;
+  margin: var(--space-2) 0 0 auto;
+}
+
 /* A spinner for a surface that is waiting on something. */
 .mac-spinner {
   width: 16px;

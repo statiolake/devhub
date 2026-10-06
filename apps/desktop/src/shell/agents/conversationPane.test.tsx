@@ -238,3 +238,63 @@ describe("the kept draft", () => {
     expect(drafts.at(-1)).toBe("half a thought");
   });
 });
+
+describe("closing the Agent", () => {
+  const conversationBridge = () =>
+    (window.devhub as unknown as { conversation: Record<string, unknown> })
+      .conversation;
+  // Closing a Codex GUI Agent while its app-server was still starting drew
+  // "The native app shell is unavailable." over the page: main answered the
+  // pending attach (and the detach) with "there is no Agent …" after the
+  // pane was already gone.
+  function pane() {
+    return render(
+      <ConversationPane
+        agentId="agent-1"
+        workspaceId="workspace-1"
+        label="Agent 1"
+        cli="Codex"
+        appearance={undefined}
+        hidden={false}
+      />,
+    );
+  }
+
+  it("says nothing when the attach it was waiting for fails after it is gone", async () => {
+    let refuse: (error: Error) => void = () => {};
+    conversationBridge().attach = () =>
+      new Promise<ConversationAttachment>((_resolve, reject) => {
+        refuse = reject;
+      });
+    const view = pane();
+    view.unmount();
+    await act(async () => {
+      refuse(new Error("there is no Agent agent-1"));
+    });
+    expect(reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when its detach fails because the Agent is already gone", async () => {
+    conversationBridge().detach = () =>
+      Promise.reject(new Error("there is no Agent agent-1"));
+    const view = await attached();
+    view.unmount();
+    await act(async () => {});
+    expect(reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("folds no event that arrives after it is gone", async () => {
+    const view = await attached();
+    view.unmount();
+    act(() => listener!(9, delta("late")));
+    expect(reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("still reports an attach that fails while it is open", async () => {
+    conversationBridge().attach = () =>
+      Promise.reject(new Error("the conversation did not start"));
+    pane();
+    await act(async () => {});
+    expect(reportFailure).toHaveBeenCalledOnce();
+  });
+});

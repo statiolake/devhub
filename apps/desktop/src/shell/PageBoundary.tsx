@@ -28,6 +28,7 @@ import type { AppError } from "../ipc/appShell";
 import type { PageBridge } from "../ipc/contract";
 import { pageBridge } from "./bridge";
 import { toAppError } from "./failure";
+import { Failure } from "./components/shell/SurfaceState";
 import { reloadPage } from "./pageReload";
 
 interface PageBoundaryProps {
@@ -69,20 +70,18 @@ export class PageBoundary extends Component<
         aria-label="Error surface"
         aria-live="assertive"
       >
-        <div className="surface-state">
-          <p className="mac-title">{error.summary}</p>
-          {error.detail === undefined ? null : (
-            <p className="mac-body">{error.detail}</p>
-          )}
-          <p className="mac-caption surface-meta">
-            {error.module} · {error.code} · {error.runtimeVersion}
-          </p>
-          <div>
-            <button type="button" className="mac-button" onClick={reloadPage}>
-              Reload
-            </button>
-          </div>
-        </div>
+        <Failure
+          summary={error.summary}
+          actions={[{ label: "Reload", primary: true, run: reloadPage }]}
+          technical={[
+            `${error.module} · ${error.code} · ${error.runtimeVersion}`,
+            error.detail,
+          ]
+            .filter(
+              (part) => part !== undefined && part !== null && part !== "",
+            )
+            .join("\n")}
+        />
       </section>
     );
   }
