@@ -147,6 +147,24 @@ for (const menu of ["commandPalette", "statusBar/remoteIndicator"]) {
     }
   }
 }
+// The palette always lists the commands that make sense without a local
+// definition (a checkout can add or remove `.devcontainer`): they scan again
+// when they run. Only Switch Container may depend on the definition count.
+for (const command of [
+  "devhub.reopenInContainer",
+  "devhub.showBuildLog",
+  "devhub.rebuildContainer",
+  "devhub.rebuildContainerNoCache",
+]) {
+  const palette = contributes.menus.commandPalette.find(
+    (entry) => entry.command === command,
+  );
+  if (/devContainerConfigs/u.test(palette.when)) {
+    throw new Error(
+      `${command} must not be hidden in the palette by devhub.devContainerConfigs`,
+    );
+  }
+}
 // One static formatter per authority. Without one, a remote path loses its
 // `~` tildification and the window says nothing about which machine it is on
 // until the resolve finishes and registers the specific formatter.

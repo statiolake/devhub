@@ -111,9 +111,15 @@ socket. Each asks DevHub:
 
 DevHub brings the container up, closes the window the way a Workspace close
 does (VS Code's own unsaved-work question included) and opens the Workspace's
-workbench again on the new authority. Which commands are offered is decided
-when the extension starts and again when one runs: `devhub.devContainerConfigs`
-is how many definitions the folder has.
+workbench again on the new authority. The commands are always in the command
+palette, even in a folder with no `.devcontainer` (a checkout can add or remove
+it); only the ones that make no sense stay hidden (Reopen Folder Locally and
+Switch Container only in a container, Switch only with several definitions).
+A command that needs a definition scans again when it runs and says "No dev
+container configuration found in this folder." when there is none. A file
+watcher on `.devcontainer/**` and `.devcontainer.json` keeps
+`devhub.devContainerConfigs` (how many definitions the folder has) and the
+reopen notice current.
 
 The last answers where DevHub writes the container's `devcontainer up` log on
 this Mac. While a bring-up runs, the extension follows that file into the

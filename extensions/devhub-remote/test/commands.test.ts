@@ -2,6 +2,7 @@ import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import {
   CONFIG_COUNT_KEY,
+  NO_CONFIG_MESSAGE,
   OFFER_DISMISSED_KEY,
   OFFER_MESSAGE,
   OFFER_NEVER,
@@ -300,5 +301,5 @@ test("Rebuild Container without a definition says so and rebuilds nothing", asyn
   const w = world({ configs: [] });
   await rebuildContainer(w.api, w.devhub);
   deepStrictEqual(w.reattached, []);
-  deepStrictEqual(w.said, ["This folder has no dev container definition."]);
+  deepStrictEqual(w.said, [NO_CONFIG_MESSAGE]);
 });

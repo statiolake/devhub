@@ -271,7 +271,31 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
     void refreshAvailability(commandsApi, devhub).catch(report);
-    void offerReopenInContainer(commandsApi, devhub).catch(report);
+    // The reopen notice is offered once per window; until a definition
+    // exists it is not shown, so a later one (a checkout) offers it then.
+    let offered = false;
+    const offer = async (): Promise<void> => {
+      if (offered) return;
+      offered = await offerReopenInContainer(commandsApi, devhub);
+    };
+    void offer().catch(report);
+    // A checkout can add or remove `.devcontainer`: keep the context key and
+    // the offer in step with the files.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const rescan = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshAvailability(commandsApi, devhub).then(offer).catch(report);
+      }, 300);
+    };
+    for (const glob of ["**/.devcontainer/**", "**/.devcontainer.json"]) {
+      const watcher = vscode.workspace.createFileSystemWatcher(glob);
+      watcher.onDidCreate(rescan);
+      watcher.onDidChange(rescan);
+      watcher.onDidDelete(rescan);
+      context.subscriptions.push(watcher);
+    }
+    context.subscriptions.push({ dispose: () => clearTimeout(timer) });
   }
   const named = new Set<string>();
   // One resolver, registered for each authority DevHub owns. The same function

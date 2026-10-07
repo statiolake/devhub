@@ -88,7 +88,7 @@
       "commandPalette": [
         {
           "command": "devhub.reopenInContainer",
-          "when": "remoteName != dev-container && devhub.devContainerConfigs > 0"
+          "when": "remoteName != dev-container"
         },
         {
           "command": "devhub.reopenLocally",
@@ -100,15 +100,15 @@
         },
         {
           "command": "devhub.showBuildLog",
-          "when": "devhub.devContainerConfigs > 0"
+          "when": "true"
         },
         {
           "command": "devhub.rebuildContainer",
-          "when": "remoteName == dev-container || devhub.devContainerConfigs > 0"
+          "when": "true"
         },
         {
           "command": "devhub.rebuildContainerNoCache",
-          "when": "remoteName == dev-container || devhub.devContainerConfigs > 0"
+          "when": "true"
         }
       ],
       "statusBar/remoteIndicator": [

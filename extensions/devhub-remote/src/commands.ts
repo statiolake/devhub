@@ -73,6 +73,14 @@ export interface DevHubConnection {
 /** The action a failed bring-up's notice offers. */
 export const SHOW_BUILD_LOG = "Show Build Log";
 
+/**
+ * Said by a command that needs a definition when a fresh scan finds none. The
+ * commands are always in the palette (a checkout can add or remove
+ * `.devcontainer`), so this is how they say there is nothing to use.
+ */
+export const NO_CONFIG_MESSAGE =
+  "No dev container configuration found in this folder.";
+
 /** The context key the commands' `when` clauses read: how many definitions. */
 export const CONFIG_COUNT_KEY = "devhub.devContainerConfigs";
 
@@ -109,21 +117,25 @@ export const OFFER_DISMISSED_KEY = "devhub.devContainerOffer.dismissed";
  * Offer to reopen a local folder in its dev container, once per window open,
  * the way the official extension does: only in a local window of a folder that
  * has a definition, and until "Don't Show Again" (kept per folder). Closing
- * the notice without choosing only dismisses it for this window.
+ * the notice without choosing only dismisses it for this window. Resolves
+ * false only when there is no definition yet, so a caller may ask again.
  */
 export async function offerReopenInContainer(
   api: CommandsApi,
   devhub: DevHubConnection,
-): Promise<void> {
+): Promise<boolean> {
   const window = api.windowFolder();
-  if (window === undefined || window.scheme !== "file") return;
-  if (api.remoteName() !== undefined) return;
-  if (api.getFlag(OFFER_DISMISSED_KEY)) return;
+  if (window === undefined || window.scheme !== "file") return true;
+  if (api.remoteName() !== undefined) return true;
+  if (api.getFlag(OFFER_DISMISSED_KEY)) return true;
   const answer = await devhub.configs(window);
-  if (!answer.ok || (answer.devContainers?.configs.length ?? 0) === 0) return;
+  if (!answer.ok || (answer.devContainers?.configs.length ?? 0) === 0) {
+    return false;
+  }
   const chosen = await api.showInfo(OFFER_MESSAGE, OFFER_REOPEN, OFFER_NEVER);
   if (chosen === OFFER_REOPEN) await reopenInContainer(api, devhub);
   else if (chosen === OFFER_NEVER) await api.setFlag(OFFER_DISMISSED_KEY, true);
+  return true;
 }
 
 type Choice = {
@@ -228,7 +240,7 @@ export async function reopenInContainer(
   const found = await configsOf(api, devhub, window);
   if (found === undefined) return;
   if (found.configs.length === 0) {
-    void api.showError("This folder has no dev container definition.");
+    void api.showError(NO_CONFIG_MESSAGE);
     return;
   }
   const chosen =
@@ -305,7 +317,7 @@ export async function showBuildLog(
   const found = await configsOf(api, devhub, window);
   if (found === undefined) return;
   if (found.configs.length === 0) {
-    void api.showError("This folder has no dev container definition.");
+    void api.showError(NO_CONFIG_MESSAGE);
     return;
   }
   const chosen =
@@ -337,7 +349,7 @@ async function rebuild(
   const found = await configsOf(api, devhub, window);
   if (found === undefined) return;
   if (found.configs.length === 0) {
-    void api.showError("This folder has no dev container definition.");
+    void api.showError(NO_CONFIG_MESSAGE);
     return;
   }
   const chosen =
