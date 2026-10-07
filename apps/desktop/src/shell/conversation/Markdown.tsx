@@ -22,19 +22,23 @@
  * reference link or a loose list can reach across it.
  */
 
-import { memo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown, {
   type Components,
   type ExtraProps,
 } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
+import { normalizeMath } from "./mathDelimiters";
 import { CodeBlock } from "./CodeBlock";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
 import { linkSpans, pathOfHref, rangeSuffix } from "./textLinks";
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
 
 /** The syntax tree's element, as react-markdown hands it to a component. */
 type Element = NonNullable<ExtraProps["node"]>;
@@ -126,11 +130,17 @@ const LINKS = "dataConversationLinks";
  * with `LinkedText`. Only the wrapping is done here; which words are links is
  * decided when it is drawn.
  */
+function isOpaque(el: Element): boolean {
+  if (el.tagName === "pre" || el.tagName === "a") return true;
+  const classes = el.properties.className;
+  return Array.isArray(classes) && classes.includes("katex");
+}
+
 function rehypeLinks() {
   const visit = (parent: { children: ElementContent[] }) => {
     parent.children = parent.children.map((child): ElementContent => {
       if (child.type === "element") {
-        if (child.tagName !== "pre" && child.tagName !== "a") visit(child);
+        if (!isOpaque(child)) visit(child);
         return child;
       }
       if (child.type !== "text" || linkSpans(child.value).length === 0)
@@ -146,7 +156,14 @@ function rehypeLinks() {
   return (tree: { children: ElementContent[] }) => visit(tree);
 }
 
-const REHYPE_PLUGINS = [rehypeLinks];
+// Math is typeset first so that `rehypeLinks` can leave it alone. A formula
+// that does not parse (a streamed half of one) is drawn as its source.
+const KATEX = [
+  rehypeKatex,
+  { throwOnError: false, strict: "ignore", output: "html", errorColor: "inherit" },
+] as const;
+const REHYPE_PLUGINS = [KATEX, rehypeLinks] as never;
+const REHYPE_PLUGINS_UNSETTLED = [KATEX] as never;
 
 function componentsFor(settled: boolean): Components {
   return {
@@ -165,10 +182,14 @@ function componentsFor(settled: boolean): Components {
         />
       );
     },
-    span({ node, children }) {
-      // Raw HTML is skipped, so every span is one `rehypeLinks` made.
+    span({ node, children, className, style }) {
+      // Raw HTML is skipped, so every span is one `rehypeLinks` or KaTeX made.
       if (node === undefined || !(LINKS in node.properties))
-        return <span>{children}</span>;
+        return (
+          <span className={className} style={style}>
+            {children}
+          </span>
+        );
       return <LinkedText text={textOf(node.children)} />;
     },
     a({ href, children }) {
@@ -196,14 +217,15 @@ const MarkdownDocument = memo(function MarkdownDocument({
   readonly source: string;
   readonly settled: boolean;
 }) {
+  const text = useMemo(() => normalizeMath(source), [source]);
   return (
     <ReactMarkdown
       remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={settled ? REHYPE_PLUGINS : undefined}
+      rehypePlugins={settled ? REHYPE_PLUGINS : REHYPE_PLUGINS_UNSETTLED}
       skipHtml
       components={settled ? SETTLED_COMPONENTS : UNSETTLED_COMPONENTS}
     >
-      {source}
+      {text}
     </ReactMarkdown>
   );
 });
