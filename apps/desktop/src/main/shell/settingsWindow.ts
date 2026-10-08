@@ -167,6 +167,8 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		version: config.version,
 		general: {
 			importLoginEnvironment: config.general.import_login_environment,
+			notifyOnIdle: config.general.notify_on_idle,
+			notifySound: config.general.notify_sound,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -296,7 +298,11 @@ function fromWireSource(source: SettingsWorkspaceSourceWire): WorkspaceSource {
 function fromWireConfig(wire: SettingsConfigWire): Config {
 	return {
 		version: wire.version,
-		general: { import_login_environment: wire.general.importLoginEnvironment },
+		general: {
+			import_login_environment: wire.general.importLoginEnvironment,
+			notify_on_idle: wire.general.notifyOnIdle,
+			notify_sound: wire.general.notifySound,
+		},
 		runtimes: {
 			shell: wire.runtimes.shell,
 			git: wire.runtimes.git,

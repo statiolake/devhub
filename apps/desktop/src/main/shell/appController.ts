@@ -250,6 +250,7 @@ import {
 	projectionAudience,
 } from "./publishAudience.js";
 import { WindowAttention, platformDock } from "./windowAttention.js";
+import { AgentNotifier, type AgentNotification } from "./agentNotifications.js";
 
 /**
  * Which app-wide condition the repository watcher's diagnostic is.
@@ -802,6 +803,49 @@ export class AppController {
 	 * whether it is the one that turns it on. See `windowAttention.ts`.
 	 */
 	private readonly attention = new WindowAttention(platformDock());
+
+	private shellFocused = false;
+	private readonly liveNotifications = new Set<Electron.Notification>();
+
+	/** Notifies when an Agent finishes or needs the person. See `agentNotifications.ts`. */
+	private readonly agentNotifier = new AgentNotifier({
+		settings: () => ({
+			enabled: this.config?.general.notify_on_idle ?? true,
+			sound: this.config?.general.notify_sound ?? true,
+		}),
+		windowFocused: () => this.shellFocused,
+		snapshot: () => this.snapshot(),
+		notify: (notification) => this.showAgentNotification(notification),
+		setTimer: (fn, ms) => setTimeout(fn, ms),
+		clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+	});
+
+	private showAgentNotification(info: AgentNotification): void {
+		const { Notification } = electron;
+		if (!Notification.isSupported()) return;
+		const notification = new Notification({
+			title: info.title,
+			body: info.body,
+			silent: !info.sound,
+			...(info.sound ? { sound: "Glass" } : {}),
+		});
+		this.liveNotifications.add(notification);
+		const done = (): void => {
+			this.liveNotifications.delete(notification);
+		};
+		notification.on("click", () => {
+			done();
+			this.bringToFront();
+			this.dispatchOwn({
+				type: "select_context",
+				context: { kind: "agent", agentId: parseAgentId(info.agentId) },
+				presentation: "full",
+			});
+		});
+		notification.on("close", done);
+		notification.on("failed", done);
+		notification.show();
+	}
 	private readonly machineConditions = new MachineConditions({
 		publish: (source, summary, reason) => {
 			const event = {
@@ -2148,6 +2192,7 @@ export class AppController {
 		// announced — a badge either way, a Dock bounce only while the person
 		// is somewhere else. See `windowAttention.ts`.
 		this.attention.windowFocusChanged(focused);
+		this.shellFocused = focused;
 		// Coming back to the window is a reason to look at the repositories
 		// again, and the trigger DevHub was missing: a person leaves for a
 		// terminal, commits, switches a branch, comes back — and until the poll's
@@ -2546,6 +2591,7 @@ export class AppController {
 		// is answered, rather than by a page that can only be seen when there
 		// is no workbench over it. See `windowAttention.ts`.
 		this.attention.observe(this.snapshot());
+		this.agentNotifier.observe(this.snapshot());
 		// The arrangement is a function of the projection like everything else
 		// here, so it is said here rather than at each place a selection moves.
 		this.publishLayoutState();

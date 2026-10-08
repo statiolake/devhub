@@ -100,6 +100,8 @@ export interface SettingsAppearanceWire {
 
 export interface SettingsGeneralWire {
 	readonly importLoginEnvironment: boolean;
+	readonly notifyOnIdle: boolean;
+	readonly notifySound: boolean;
 }
 
 export interface SettingsRuntimeConfigWire {

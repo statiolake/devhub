@@ -150,7 +150,32 @@ export function GeneralSection({
           help="Use your login shell's environment for everything DevHub runs — the editor and its extensions as well as terminals and agents. Takes effect the next time DevHub starts."
           checked={config.general.importLoginEnvironment}
           onChange={(importLoginEnvironment) => {
-            update({ ...config, general: { importLoginEnvironment } });
+            update({
+              ...config,
+              general: { ...config.general, importLoginEnvironment },
+            });
+          }}
+        />
+      </Group>
+
+      <Group
+        heading="Notifications"
+        note="When an Agent finishes its turn or is waiting for you, DevHub notifies you unless you are already looking at that Agent. Clicking the notification opens the Agent."
+      >
+        <SwitchRow
+          label="Notify when an Agent needs me"
+          help="Show a notification when an Agent goes idle or is waiting for permission or input."
+          checked={config.general.notifyOnIdle}
+          onChange={(notifyOnIdle) => {
+            update({ ...config, general: { ...config.general, notifyOnIdle } });
+          }}
+        />
+        <SwitchRow
+          label="Play a sound"
+          help="Play the system notification sound with it."
+          checked={config.general.notifySound}
+          onChange={(notifySound) => {
+            update({ ...config, general: { ...config.general, notifySound } });
           }}
         />
       </Group>

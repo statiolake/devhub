@@ -355,6 +355,10 @@ export function profilePresentation(
 
 export interface GeneralConfig {
   readonly import_login_environment: boolean;
+  /** Notify (OS notification, in-app toast) when an Agent finishes or needs the person. */
+  readonly notify_on_idle: boolean;
+  /** Play a sound with that notification. */
+  readonly notify_sound: boolean;
 }
 
 export interface RuntimeConfig {
@@ -710,7 +714,11 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
 export function defaultConfig(): Config {
   return {
     version: CONFIG_SCHEMA_VERSION,
-    general: { import_login_environment: true },
+    general: {
+      import_login_environment: true,
+      notify_on_idle: true,
+      notify_sound: true,
+    },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
     keybindings: defaultKeybindings(),
@@ -1892,7 +1900,11 @@ export function interpretConfig(document: unknown): Config {
   if (projectDirectory !== undefined && typeof projectDirectory !== "string") {
     fail("invalid_type", "projects.directory");
   }
-  checkKeys(generalTable, ["import_login_environment"], "general");
+  checkKeys(
+    generalTable,
+    ["import_login_environment", "notify_on_idle", "notify_sound"],
+    "general",
+  );
   const agentsTable = requireTable(table["agents"] ?? {}, "agents");
   checkKeys(
     agentsTable,
@@ -1960,6 +1972,18 @@ export function interpretConfig(document: unknown): Config {
       import_login_environment: optionalBoolean(
         generalTable,
         "import_login_environment",
+        "general",
+        true,
+      ),
+      notify_on_idle: optionalBoolean(
+        generalTable,
+        "notify_on_idle",
+        "general",
+        true,
+      ),
+      notify_sound: optionalBoolean(
+        generalTable,
+        "notify_sound",
         "general",
         true,
       ),
@@ -2138,6 +2162,8 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     version: config.version,
     general: {
       import_login_environment: config.general.import_login_environment,
+      notify_on_idle: config.general.notify_on_idle,
+      notify_sound: config.general.notify_sound,
     },
     runtimes: {
       shell: config.runtimes.shell,

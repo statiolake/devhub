@@ -39,7 +39,11 @@ export function testConfig(
 ): SettingsConfig {
   return {
     version: 1,
-    general: { importLoginEnvironment: true },
+    general: {
+      importLoginEnvironment: true,
+      notifyOnIdle: true,
+      notifySound: true,
+    },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
     agents: {
