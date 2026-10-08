@@ -35,7 +35,7 @@
  * different guarantees, and both are wanted.
  */
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isImeComposing } from "../accessibility/ime";
 import type { Notice } from "../notices";
 
@@ -61,6 +61,16 @@ function Toast({
 }) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = setTimeout(() => {
+      setCopied(false);
+    }, 1500);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [copied]);
   return (
     <div
       className="toast"
@@ -104,6 +114,20 @@ function Toast({
       </span>
       <p className="toast-summary">{notice.summary}</p>
       <div className="toast-actions">
+        {notice.live === "alert" ? (
+          <button
+            type="button"
+            className="toast-action"
+            aria-label="Copy error message"
+            onClick={() => {
+              void onCopy(noticeText(notice)).then(() => {
+                setCopied(true);
+              });
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        ) : null}
         {notice.actions.includes("retry") ? (
           <button type="button" className="toast-action" onClick={onRetry}>
             Try Again

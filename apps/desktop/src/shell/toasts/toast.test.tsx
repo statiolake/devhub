@@ -553,6 +553,24 @@ describe("copying a notice", () => {
     expect(screen.queryByRole("button", { name: /copied?$/i })).toBeNull();
   });
 
+  it("an error toast has a Copy button that copies summary and detail", async () => {
+    const page = mount();
+    page.fail({
+      code: "persistence_degraded",
+      summary: "DevHub could not save its state file.",
+      module: "state",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: [],
+      detail: "EACCES: permission denied",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Copy error message" }));
+    expect(page.writeClipboard).toHaveBeenCalledWith(
+      "DevHub could not save its state file.\nEACCES: permission denied",
+    );
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
   it("Cmd+C with words selected copies the selection", () => {
     const page = mount();
     page.observe("gh", GH_MISSING);
