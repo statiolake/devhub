@@ -6,10 +6,11 @@
  * The arithmetic first — 48 kHz down to Whisper's 16, floats to 16-bit, and
  * where the words land among what was typed — and then the composer: the
  * microphone is there only when the page can dictate, says why when the build
- * has no recogniser, records on a click or ⌘⇧M, sends one 16 kHz recording to
- * main when it stops, puts the transcript in at the caret without sending it,
- * throws a recording away on Esc without stopping the turn, and hands a
- * refusal to the page's root.
+ * has no recogniser, records on a click or ⌘⇧M, streams 16 kHz audio to main
+ * while it records, puts committed words in at the caret as they come (and
+ * shows the tentative ones beside them) without sending, keeps what is typed
+ * meanwhile, throws the rest away on Esc without stopping the turn, and hands
+ * a refusal to the page's root.
  *
  * jsdom has no microphone and no Web Audio, so both are stood in for: the
  * fake processor is fed chunks by the test, as the audio thread would.
@@ -32,7 +33,7 @@ import {
   it,
   vi,
 } from "vitest";
-import type { VoiceApi } from "../../ipc/voice";
+import type { VoiceApi, VoiceUpdate } from "../../ipc/voice";
 import { EMPTY_SESSION } from "../../model/conversation";
 import {
   concatenate,
@@ -43,6 +44,9 @@ import {
   level,
   nextLanguage,
   pcm16,
+  placeDictation,
+  shiftAnchor,
+  StreamingDownsampler,
   MICROPHONE_DENIED_TITLE,
   savedLanguage,
   VOICE_FAILED_TITLE,
@@ -215,15 +219,32 @@ function hear(samples: number) {
   );
 }
 
+type UpdateListener = (session: number, update: VoiceUpdate) => void;
+let updateListener: UpdateListener | undefined;
+
+/** Main's answer to the running dictation, as it would send it. */
+function update(committed: string, tentative = "") {
+  act(() => updateListener?.(7, { committed, tentative }));
+}
+
 function fakeVoice(overrides: Partial<VoiceApi> = {}): VoiceApi {
+  updateListener = undefined;
   return {
     status: vi.fn(() => Promise.resolve({ available: true as const })),
     requestMicrophone: vi.fn(() =>
       Promise.resolve({ ok: true as const, value: true }),
     ),
-    transcribe: vi.fn(() =>
-      Promise.resolve({ ok: true as const, value: "直して" }),
-    ),
+    warm: vi.fn(),
+    begin: vi.fn(() => Promise.resolve({ ok: true as const, value: 7 })),
+    audio: vi.fn(),
+    end: vi.fn(() => Promise.resolve({ ok: true as const, value: "直して" })),
+    cancel: vi.fn(),
+    onUpdate: vi.fn((listener: UpdateListener) => {
+      updateListener = listener;
+      return () => {
+        updateListener = undefined;
+      };
+    }),
     ...overrides,
   };
 }
@@ -267,7 +288,7 @@ describe("dictating in the composer", () => {
     expect(button).toHaveAttribute("title", "No recogniser.");
   });
 
-  it("records, sends 16 kHz to main, and puts the words at the caret unsent", async () => {
+  it("streams 16 kHz to main, and puts the words at the caret unsent", async () => {
     const voice = fakeVoice();
     const actions = fakeActions({ voice });
     draw(READY, actions);
@@ -276,25 +297,66 @@ describe("dictating in the composer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await screen.findByRole("button", { name: "Stop dictating" });
-    hear(4800);
+    expect(voice.warm).toHaveBeenCalled();
+    expect(voice.begin).toHaveBeenCalledWith("auto");
+    // 0.25 s at 16 kHz is sent as soon as it is collected: 12000 at 48 kHz.
+    hear(6000);
+    expect(voice.audio).not.toHaveBeenCalled();
+    hear(6000);
+    expect(voice.audio).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(voice.audio).mock.calls[0]![1].byteLength).toBe(8000);
     hear(4800);
     fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+    // What was left is sent before the end.
+    expect(voice.audio).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(voice.audio).mock.calls[1]![1].byteLength).toBe(3200);
 
     await waitFor(() => expect(composer().value).toBe("これを直して"));
-    expect(voice.transcribe).toHaveBeenCalledTimes(1);
-    const [pcm, language] = vi.mocked(voice.transcribe).mock.calls[0]!;
-    // 9600 samples at 48 kHz is 3200 at 16 kHz, two bytes each.
-    expect(pcm.byteLength).toBe(6400);
-    expect(language).toBe("auto");
+    expect(voice.end).toHaveBeenCalledWith(7);
     expect(tracksStopped).toBe(1);
     expect(actions.send).not.toHaveBeenCalled();
   });
 
+  it("puts committed words in as they come, shows tentative ones, and keeps what is typed meanwhile", async () => {
+    const voice = fakeVoice({
+      end: vi.fn(() =>
+        Promise.resolve({
+          ok: true as const,
+          value: "Fix the bug in the parser.",
+        }),
+      ),
+    });
+    draw(READY, fakeActions({ voice }));
+    fireEvent.change(composer(), { target: { value: "Note: " } });
+    composer().setSelectionRange(6, 6);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    await screen.findByRole("button", { name: "Stop dictating" });
+
+    update("", "Fix the");
+    expect(screen.getByText("Fix the")).toBeInTheDocument();
+    expect(composer().value).toBe("Note: ");
+
+    update("Fix the bug", "in");
+    await waitFor(() => expect(composer().value).toBe("Note: Fix the bug"));
+    expect(screen.getByText("in")).toBeInTheDocument();
+
+    // Typed before where the words go, while dictating.
+    fireEvent.change(composer(), { target: { value: "My note: Fix the bug" } });
+    update("Fix the bug in the", "parser");
+    await waitFor(() =>
+      expect(composer().value).toBe("My note: Fix the bug in the"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+    await waitFor(() =>
+      expect(composer().value).toBe("My note: Fix the bug in the parser."),
+    );
+    expect(screen.queryByText("parser")).toBeNull();
+  });
+
   it("starts and stops on ⌘⇧M", async () => {
     const voice = fakeVoice({
-      transcribe: vi.fn(() =>
-        Promise.resolve({ ok: true as const, value: "hello" }),
-      ),
+      end: vi.fn(() => Promise.resolve({ ok: true as const, value: "hello" })),
     });
     draw(READY, fakeActions({ voice }));
     const shortcut = { code: "KeyM", key: "M", metaKey: true, shiftKey: true };
@@ -320,7 +382,8 @@ describe("dictating in the composer", () => {
     hear(4800);
     fireEvent.keyDown(composer(), { key: "Escape" });
     expect(screen.getByRole("button", { name: "Dictate" })).toBeEnabled();
-    expect(voice.transcribe).not.toHaveBeenCalled();
+    expect(voice.end).not.toHaveBeenCalled();
+    expect(voice.cancel).toHaveBeenCalledWith(7);
     expect(actions.interrupt).not.toHaveBeenCalled();
     expect(tracksStopped).toBe(1);
   });
@@ -351,10 +414,55 @@ describe("dictating in the composer", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await screen.findByRole("button", { name: "Stop dictating" });
-    hear(4800);
-    fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
-    await waitFor(() => expect(voice.transcribe).toHaveBeenCalled());
-    expect(vi.mocked(voice.transcribe).mock.calls[0]![1]).toBe("ja");
+    expect(voice.begin).toHaveBeenCalledWith("ja");
+  });
+});
+
+describe("streaming the recording", () => {
+  it("downsamples pieces as one recording, carrying what does not fill a sample", () => {
+    const whole = Float32Array.from({ length: 441 * 4 }, (_, i) =>
+      Math.sin(i / 7),
+    );
+    const once = downsample(whole, 44_100);
+    const pieces = new StreamingDownsampler(44_100);
+    const streamed = concatenate([
+      pieces.push(whole.subarray(0, 100)),
+      pieces.push(whole.subarray(100, 1000)),
+      pieces.push(whole.subarray(1000)),
+    ]);
+    expect(streamed.length).toBe(once.length);
+    for (let i = 0; i < once.length; i++)
+      expect(streamed[i]).toBeCloseTo(once[i]!, 1);
+  });
+});
+
+describe("where streamed words go", () => {
+  it("moves the place with edits before it, not after it", () => {
+    expect(shiftAnchor("abc", "XXabc", 1)).toBe(3);
+    expect(shiftAnchor("abc", "abcYY", 1)).toBe(1);
+    expect(shiftAnchor("abc", "abc", 2)).toBe(2);
+    // Inside a replaced stretch: after what replaced it.
+    expect(shiftAnchor("abcdef", "abZZef", 3)).toBe(4);
+  });
+
+  it("replaces the selection first, then follows each phrase", () => {
+    let placed = placeDictation(
+      "say WORD now",
+      { start: 4, end: 8, text: "say WORD now" },
+      "hello",
+    );
+    expect(placed.text).toBe("say hello now");
+    placed = placeDictation(placed.text, placed.anchor, "world");
+    expect(placed.text).toBe("say hello world now");
+    const edited = `> ${placed.text}`;
+    placed = placeDictation(edited, placed.anchor, "again");
+    expect(placed.text).toBe("> say hello world again now");
+  });
+
+  it("joins Japanese phrases with nothing between", () => {
+    let placed = placeDictation("", { start: 0, end: 0, text: "" }, "これを");
+    placed = placeDictation(placed.text, placed.anchor, "直して");
+    expect(placed.text).toBe("これを直して");
   });
 });
 

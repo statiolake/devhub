@@ -3,17 +3,26 @@
  * the words land.
  *
  * The microphone button (or ⌘⇧M) starts a recording; the same button or key
- * ends it and sends it to main, which transcribes it on this Mac with the
- * bundled whisper.cpp (`ipc/voice.ts`, `main/voice/whisper.ts`). Esc throws a
- * recording away. While it records the button is red and pulses with the
- * level of what it hears, so it is plain the microphone is open; while main
- * transcribes, the button waits.
+ * ends it. While it records, the audio streams to main a few times a second
+ * and main transcribes it as it comes, on this Mac, with the bundled
+ * whisper.cpp kept loaded (`ipc/voice.ts`, `main/voice/dictationStream.ts`).
+ * While it records the button is red and pulses with the level of what it
+ * hears, so it is plain the microphone is open; after it ends, while main
+ * finishes the last words, the button waits.
  *
- * The words go where the caret was when the recording ended — over the
- * selection, if there was one — with a space put in at either seam where
- * Latin text meets Latin text (`model/spokenText.ts`), and the caret after
- * them. They are not sent: dictation fills the composer, the person reads it,
- * and ⌘Return sends as it always does.
+ * The words come in two kinds. What the person said before their last pause
+ * is committed: it goes into the composer as soon as main has it, and does
+ * not change. What they are saying now is tentative: it is shown, lighter,
+ * under the composer, rewritten as it is heard, and goes in when they pause
+ * or stop. Esc throws away what is not committed yet and ends the recording.
+ *
+ * The committed words go where the caret was when the recording started —
+ * over the selection, if there was one — each phrase after the last, with a
+ * space put in at either seam where Latin text meets Latin text
+ * (`model/spokenText.ts`). Typing elsewhere in the composer meanwhile is
+ * kept: the place the next phrase goes moves with the text around it
+ * (`shiftAnchor`). They are not sent: dictation fills the composer, the
+ * person reads it, and ⌘Return sends as it always does.
  *
  * Which language Whisper listens for is the small label beside the button:
  * Auto, 日本語 or English, chosen by clicking it and kept for this Mac
@@ -136,6 +145,105 @@ export function pcm16(samples: Float32Array): Uint8Array {
     );
   }
   return bytes;
+}
+
+/**
+ * `downsample` for a recording that arrives in pieces: what does not fill a
+ * whole output sample is kept for the next piece, so the pieces join with
+ * no click and no drift.
+ */
+export class StreamingDownsampler {
+  /** Input samples not yet averaged into an output sample. */
+  private carry = new Float32Array(0);
+  /** Input samples before `carry`, and output samples made: the box edges are global, so pieces cannot drift. */
+  private consumed = 0;
+  private made = 0;
+
+  constructor(
+    private readonly fromRate: number,
+    private readonly toRate: number = VOICE_SAMPLE_RATE,
+  ) {
+    if (fromRate < toRate)
+      throw new Error(`cannot upsample from ${fromRate} Hz to ${toRate} Hz`);
+  }
+
+  push(samples: Float32Array): Float32Array {
+    if (this.fromRate === this.toRate) return samples;
+    const input = concatenate([this.carry, samples]);
+    const ratio = this.fromRate / this.toRate;
+    const out: number[] = [];
+    for (;;) {
+      const start = Math.floor(this.made * ratio) - this.consumed;
+      const end = Math.floor((this.made + 1) * ratio) - this.consumed;
+      if (end > input.length) break;
+      let sum = 0;
+      for (let j = start; j < end; j++) sum += input[j]!;
+      out.push(end > start ? sum / (end - start) : 0);
+      this.made++;
+    }
+    const keepFrom = Math.floor(this.made * ratio) - this.consumed;
+    this.carry = input.slice(keepFrom);
+    this.consumed += keepFrom;
+    return Float32Array.from(out);
+  }
+}
+
+/**
+ * Where `at`, an index into `before`, is in `after`: `before` with one
+ * stretch of it replaced (whatever the person typed, pasted or deleted). An
+ * index before the change stays; one after it moves with the text after it;
+ * one inside the change goes to the end of what replaced it.
+ */
+export function shiftAnchor(before: string, after: string, at: number): number {
+  if (before === after) return at;
+  let prefix = 0;
+  const shortest = Math.min(before.length, after.length);
+  while (prefix < shortest && before[prefix] === after[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < shortest - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  )
+    suffix++;
+  if (at <= prefix) return at;
+  if (at >= before.length - suffix) return at + after.length - before.length;
+  return after.length - suffix;
+}
+
+/**
+ * Where the next committed words of a dictation go, and the text as it was
+ * when the last went in — so whatever was typed since can be allowed for.
+ * `start` to `end` is replaced: the selection, the first time; empty after.
+ */
+export interface DictationAnchor {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+/** `words` put in at `anchor` in `text`, allowing for edits since; and where the next words go. */
+export function placeDictation(
+  text: string,
+  anchor: DictationAnchor,
+  words: string,
+): {
+  readonly text: string;
+  readonly caret: number;
+  readonly anchor: DictationAnchor;
+} {
+  const start = Math.min(
+    text.length,
+    shiftAnchor(anchor.text, text, anchor.start),
+  );
+  const end = Math.max(
+    start,
+    Math.min(text.length, shiftAnchor(anchor.text, text, anchor.end)),
+  );
+  const next = insertDictation(text, start, end, words);
+  return {
+    ...next,
+    anchor: { start: next.caret, end: next.caret, text: next.text },
+  };
 }
 
 /** Chunks as they were recorded, as one array. */

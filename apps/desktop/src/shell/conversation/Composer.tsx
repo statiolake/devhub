@@ -94,7 +94,8 @@ import {
 import { ImageView } from "./EntryParts";
 import {
   DICTATION_KEY,
-  insertDictation,
+  placeDictation,
+  type DictationAnchor,
   isDictationKey,
   LANGUAGE_LABELS,
   nextLanguage,
@@ -599,22 +600,45 @@ export function Composer({
   const [language, setLanguage] = useState<VoiceLanguage>(() =>
     savedLanguage(storage()),
   );
+  const dictationAnchor = useRef<DictationAnchor | undefined>(undefined);
   const dictation = useDictation({
     voice,
     language,
     reportFailure,
-    // Where the caret is when the words arrive, which is where the person
-    // left it: the recording may have ended seconds ago.
+    // The words go where the caret was when the recording started, phrase
+    // after phrase, moved along by whatever is typed meanwhile.
+    onBegin: () => {
+      const input = inputRef.current;
+      const current = input?.value ?? text;
+      dictationAnchor.current = {
+        start: input?.selectionStart ?? current.length,
+        end: input?.selectionEnd ?? current.length,
+        text: current,
+      };
+    },
     onWords: (words) => {
       const input = inputRef.current;
       setText((current) => {
-        const start = input?.selectionStart ?? current.length;
-        const end = input?.selectionEnd ?? current.length;
-        const next = insertDictation(current, start, end, words);
-        requestAnimationFrame(() => {
-          input?.focus();
-          input?.setSelectionRange(next.caret, next.caret);
-        });
+        const anchor = dictationAnchor.current ?? {
+          start: current.length,
+          end: current.length,
+          text: current,
+        };
+        // The caret follows the words only if it was where they go: someone
+        // typing elsewhere keeps their caret.
+        const following =
+          input === null ||
+          document.activeElement !== input ||
+          (input.selectionStart === input.selectionEnd &&
+            input.selectionEnd === anchor.end &&
+            current === anchor.text);
+        const next = placeDictation(current, anchor, words);
+        dictationAnchor.current = next.anchor;
+        if (following)
+          requestAnimationFrame(() => {
+            input?.focus();
+            input?.setSelectionRange(next.caret, next.caret);
+          });
         return next.text;
       });
       setRecalled(undefined);
@@ -847,6 +871,17 @@ export function Composer({
             attach(files);
           }}
         />
+        {dictation.tentative !== "" &&
+        (dictation.phase === "recording" ||
+          dictation.phase === "transcribing") ? (
+          <div
+            className="conversation-dictation-tentative"
+            aria-live="polite"
+            title="Still being recognised — goes in when you pause"
+          >
+            {dictation.tentative}
+          </div>
+        ) : null}
         <div className="conversation-composer-toolbar">
           <SettingPickers
             session={transcript.session}
@@ -916,8 +951,8 @@ function storage(): Storage | undefined {
 const DICTATION_TITLES = {
   idle: `Dictate (${DICTATION_KEY})`,
   starting: "Opening the microphone…",
-  recording: `Stop and transcribe (${DICTATION_KEY}) — Esc discards`,
-  transcribing: "Transcribing on this Mac…",
+  recording: `Stop dictating (${DICTATION_KEY}) — Esc discards what is not in yet`,
+  transcribing: "Finishing the last words on this Mac…",
 } as const;
 
 /**
@@ -976,6 +1011,8 @@ function DictationControls({
             : undefined
         }
         onClick={dictation.toggle}
+        onPointerEnter={dictation.warm}
+        onFocus={dictation.warm}
       >
         <MicIcon />
       </button>

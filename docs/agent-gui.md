@@ -1626,11 +1626,16 @@ turned off, a resume already shown is not written when it comes due.
 
 The microphone beside Send dictates into the composer. Click it, or press
 **⌘⇧M** in the field, and speak; click or press it again to stop. What you
-said is transcribed **on this Mac** and put in at the caret — over the
-selection, if there is one — and is not sent: you read it and send it with
-⌘Return as usual. **Esc** while recording throws the recording away (and does
-not stop a running turn). While it records the button is red and its halo
-follows your voice; while it transcribes it pulses.
+say is transcribed **on this Mac while you speak**: the words of the phrase
+you are saying show, lighter and in italics, under the field and are
+corrected as more is heard; when you pause, the phrase goes into the field at
+the caret (over the selection, if there was one), and the next one follows
+it. Typing elsewhere in the field meanwhile is kept. When you stop, the last
+phrase is transcribed once more and put in. Nothing is sent: you read it and
+send it with ⌘Return as usual. **Esc** while recording throws away what has
+not gone in yet and stops (it does not stop a running turn). While it
+records the button is red and its halo follows your voice; while it finishes
+the last phrase it pulses.
 
 The small label beside it is the language Whisper listens for: **Auto**,
 **日本語** or **English**, cycled by clicking and remembered on this Mac. Auto
@@ -1644,8 +1649,13 @@ Japanese it gets none.
 built with Metal, no network code compiled in) with the
 `large-v3-turbo` model quantised to q5_0, both inside the app at
 `DevHub.app/Contents/Resources/whisper/`. Nothing is downloaded while DevHub
-runs. On Apple Silicon a ten-second utterance comes back in about a second
-after the first use; the first one after a restart also loads the model.
+runs. The recogniser is loaded when you point at the microphone or start
+dictating (a second or two, once) and stays loaded until dictation has been
+unused for ten minutes. While loaded, words being spoken show about half a
+second to a second after they are said, a phrase goes into the field within
+about half a second of the pause after it, and stopping takes about as long
+as transcribing the last phrase — a few hundred milliseconds on Apple
+Silicon.
 
 The first time, macOS asks whether DevHub may use the microphone. If you said
 no, the button says so when pressed; allow it in System Settings → Privacy &
@@ -1661,23 +1671,35 @@ accuracy difference is within noise and the size is not.
 
 **How it is built.** `scripts/build_whisper.py` clones whisper.cpp at the
 pinned tag (refusing it if the tag no longer names the pinned commit),
-builds `whisper-cli` statically with the Metal shaders embedded, downloads
+builds `whisper-cli` and `whisper-server` statically with the Metal shaders embedded, downloads
 the model and checks it against the SHA-1 whisper.cpp publishes, and caches
 both under `~/.cache/devhub/whisper/` (`DEVHUB_WHISPER_CACHE`). `pnpm build`
 runs it when `dist/whisper` is missing or stale; it needs `cmake`
 (`brew install cmake`). `--without-whisper` packages without it, and the
 composer then shows the microphone as unavailable with the reason. In a
 source run DevHub looks in `dist/whisper` (or `DEVHUB_WHISPER_DIR`), so run
-`scripts/build_whisper.py` once to dictate there.
+`scripts/build_whisper.py` once to dictate there. A `dist/whisper` built
+before streaming dictation has no `devhub-whisper-server`; dictation still
+works with it, but transcribes only when you stop — run
+`scripts/build_whisper.py` again to get the live words.
 
 **How it runs.** The Agents page records (`getUserMedia`, echo cancellation
-and noise suppression on), brings the samples down to 16 kHz 16-bit mono,
-and hands main one finished recording (at most five minutes). Main writes
-it to a temporary WAV, runs `devhub-whisper` on it, reads the transcript,
-joins Whisper's segments into one paragraph without its non-speech markers
-(`[BLANK_AUDIO]`, `(music)`…), and deletes the temporary files. One
-recording is transcribed at a time. See `shell/conversation/dictation.ts`,
-`main/voice/whisper.ts` and `ipc/voice.ts`.
+and noise suppression on), brings the samples down to 16 kHz 16-bit mono as
+they come, and streams them to main four times a second (at most five
+minutes). Main keeps `devhub-whisper-server` running with the model loaded,
+listening on 127.0.0.1 only, on a port and under a random path it chooses —
+the path is the key to every route — and built without network code, so it
+can fetch nothing. Each dictation is cut into phrases at pauses (an energy
+test per 30 ms frame against the recording's noise floor; a phrase with no
+pause is cut at its quietest point after 20 seconds). The phrase being spoken
+is transcribed again every half second of new audio, and is the tentative
+text; at a pause, the audio up to the middle of the pause is transcribed on
+its own and committed — it never changes again, and is passed to Whisper as
+the prompt for the next phrase. Whisper's segments are joined into one
+paragraph without its non-speech markers (`[BLANK_AUDIO]`, `(music)`…). One
+transcription runs at a time. See `shell/conversation/dictation.ts`,
+`main/voice/dictationStream.ts`, `main/voice/whisperServer.ts` and
+`ipc/voice.ts`.
 
 ## Known limits
 

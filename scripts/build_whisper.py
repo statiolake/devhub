@@ -8,6 +8,7 @@ the bundle, put there by this script at build time:
 
     DevHub.app/Contents/Resources/whisper/
       devhub-whisper                 whisper.cpp's `whisper-cli`, renamed
+      devhub-whisper-server          whisper.cpp's `whisper-server`, renamed
       ggml-large-v3-turbo-q5_0.bin   the model
       whisper.json                   the statement: which of each, and hashes
       LICENSE-whisper.cpp            MIT, travels with the binary
@@ -31,6 +32,15 @@ in it — a Metal driver fault, an out-of-memory on a long recording — would t
 DevHub's main process with it. A child process per recording costs a model
 load (the file is mmapped, so after the first recording that is the page cache
 and well under a second) and dies alone.
+
+Two programs from the one build. `devhub-whisper-server` is what dictation
+uses: it loads the model once and keeps it in GPU memory, so the composer can
+transcribe the recording again every fraction of a second while the person
+speaks and show the words as they come (`main/voice/whisperServer.ts`). It
+listens on 127.0.0.1 only, on a port and under a random path main chooses,
+and is stopped when dictation has been idle a while. `devhub-whisper` (the
+CLI) is the fallback for a directory built before the server was: final text
+only, on stop.
 
 ## Why large-v3-turbo, quantised to q5_0
 
@@ -101,6 +111,9 @@ MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL}"
 MODEL_MIN_BYTES = 500_000_000
 
 BINARY = "devhub-whisper"
+SERVER_BINARY = "devhub-whisper-server"
+# (cmake target, installed name)
+PROGRAMS = (("whisper-cli", BINARY), ("whisper-server", SERVER_BINARY))
 STATEMENT = "whisper.json"
 LICENSE = "LICENSE-whisper.cpp"
 
@@ -118,14 +131,14 @@ CMAKE_FLAGS = (
 	"-DWHISPER_CURL=OFF",
 	"-DWHISPER_SDL2=OFF",
 	"-DWHISPER_BUILD_TESTS=OFF",
-	"-DWHISPER_BUILD_SERVER=OFF",
+	"-DWHISPER_BUILD_SERVER=ON",
 	"-DWHISPER_BUILD_EXAMPLES=ON",
 	"-DCMAKE_OSX_ARCHITECTURES=arm64",
 	"-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
 )
 
 # Bump when the meaning of the binary key changes without its inputs changing.
-KEY_VERSION = "1"
+KEY_VERSION = "2"
 
 
 # --- pure ---------------------------------------------------------------------
@@ -139,7 +152,7 @@ def binary_key(commit: str = WHISPER_CPP_COMMIT, flags: tuple[str, ...] = CMAKE_
 	return h.hexdigest()[:16]
 
 
-def statement(binary_sha256: str, model_sha256: str) -> dict[str, str]:
+def statement(binary_sha256: str, model_sha256: str, server_sha256: str = "") -> dict[str, str]:
 	"""What `whisper.json` says, and what `install_problems` holds a directory to."""
 	return {
 		"engine": "whisper.cpp",
@@ -147,6 +160,8 @@ def statement(binary_sha256: str, model_sha256: str) -> dict[str, str]:
 		"commit": WHISPER_CPP_COMMIT,
 		"binary": BINARY,
 		"binarySha256": binary_sha256,
+		"serverBinary": SERVER_BINARY,
+		"serverSha256": server_sha256,
 		"model": MODEL,
 		"modelSha1": MODEL_SHA1,
 		"modelSha256": model_sha256,
@@ -187,12 +202,13 @@ def install_problems(directory: Path, *, deep: bool = True) -> list[str]:
 		problems.append(f"built from {said.get('commit')}, not {WHISPER_CPP_COMMIT} ({WHISPER_CPP_VERSION})")
 	if said.get("model") != MODEL or said.get("modelSha1") != MODEL_SHA1:
 		problems.append(f"carries {said.get('model')}, not {MODEL}")
-	binary = directory / BINARY
 	model = directory / MODEL
-	if not binary.is_file() or not os.access(binary, os.X_OK):
-		problems.append(f"{binary} is missing or not executable")
-	elif deep and hash_file(binary, "sha256") != said.get("binarySha256"):
-		problems.append(f"{binary} does not hash to its statement")
+	for name, key in ((BINARY, "binarySha256"), (SERVER_BINARY, "serverSha256")):
+		binary = directory / name
+		if not binary.is_file() or not os.access(binary, os.X_OK):
+			problems.append(f"{binary} is missing or not executable")
+		elif deep and hash_file(binary, "sha256") != said.get(key):
+			problems.append(f"{binary} does not hash to its statement")
 	if not model.is_file():
 		problems.append(f"{model} is missing")
 	elif deep and hash_file(model, "sha256") != said.get("modelSha256"):
@@ -261,11 +277,14 @@ def ensure_model(root: Path, *, use_cache: bool = True) -> Path:
 
 
 def ensure_binary(root: Path, *, use_cache: bool = True) -> Path:
-	"""whisper-cli for this commit and these flags, from the cache or built."""
+	"""whisper-cli and whisper-server for this commit and these flags, from the
+	cache or built. Returns the directory holding both (as BINARY, SERVER_BINARY)."""
 	key = binary_key()
-	cached = root / "bin" / key / BINARY
-	if use_cache and cached.is_file() and os.access(cached, os.X_OK):
-		return cached
+	cached_dir = root / "bin" / key
+	if use_cache and all(
+		(cached_dir / name).is_file() and os.access(cached_dir / name, os.X_OK) for _, name in PROGRAMS
+	):
+		return cached_dir
 	for tool in ("git", "cmake"):
 		if shutil.which(tool) is None:
 			fail(f"{tool} is missing; whisper.cpp needs it to build. Install it with: brew install {tool}")
@@ -284,38 +303,48 @@ def ensure_binary(root: Path, *, use_cache: bool = True) -> Path:
 		build = source / "build"
 		subprocess.run(["cmake", "-S", str(source), "-B", str(build), *CMAKE_FLAGS], check=True)
 		subprocess.run(
-			["cmake", "--build", str(build), "--target", "whisper-cli", "--parallel", str(os.cpu_count() or 4)],
+			["cmake", "--build", str(build), "--target", *(t for t, _ in PROGRAMS), "--parallel", str(os.cpu_count() or 4)],
 			check=True,
 		)
-		built = build / "bin" / "whisper-cli"
-		if not built.is_file():
-			fail(f"the build finished without {built}")
-		otool = subprocess.run(["otool", "-L", str(built)], check=True, capture_output=True, text=True).stdout
-		foreign = foreign_libraries(otool)
-		if foreign:
-			fail(f"whisper-cli links libraries a stock macOS does not have: {', '.join(foreign)}")
-		cached.parent.mkdir(parents=True, exist_ok=True)
-		partial = cached.with_suffix(".part")
-		shutil.copyfile(built, partial)
-		partial.chmod(0o755)
-		partial.replace(cached)
-		shutil.copyfile(source / "LICENSE", cached.parent / LICENSE)
-	return cached
+		cached_dir.mkdir(parents=True, exist_ok=True)
+		for target, name in PROGRAMS:
+			built = build / "bin" / target
+			if not built.is_file():
+				fail(f"the build finished without {built}")
+			otool = subprocess.run(["otool", "-L", str(built)], check=True, capture_output=True, text=True).stdout
+			foreign = foreign_libraries(otool)
+			if foreign:
+				fail(f"{target} links libraries a stock macOS does not have: {', '.join(foreign)}")
+			partial = cached_dir / (name + ".part")
+			shutil.copyfile(built, partial)
+			partial.chmod(0o755)
+			partial.replace(cached_dir / name)
+		shutil.copyfile(source / "LICENSE", cached_dir / LICENSE)
+	return cached_dir
 
 
 def install(out_dir: Path, *, use_cache: bool = True) -> None:
 	"""Put the binary, the model and their statement in `out_dir`."""
 	root = cache_root()
-	binary = ensure_binary(root, use_cache=use_cache)
+	binaries = ensure_binary(root, use_cache=use_cache)
 	model = ensure_model(root, use_cache=use_cache)
 	out_dir.mkdir(parents=True, exist_ok=True)
-	for source, name in ((binary, BINARY), (model, MODEL), (binary.parent / LICENSE, LICENSE)):
+	sources = [(binaries / name, name) for _, name in PROGRAMS]
+	for source, name in (*sources, (model, MODEL), (binaries / LICENSE, LICENSE)):
 		partial = out_dir / (name + ".part")
 		shutil.copyfile(source, partial)
 		partial.replace(out_dir / name)
-	(out_dir / BINARY).chmod(0o755)
+	for _, name in PROGRAMS:
+		(out_dir / name).chmod(0o755)
 	(out_dir / STATEMENT).write_text(
-		json.dumps(statement(hash_file(out_dir / BINARY, "sha256"), hash_file(out_dir / MODEL, "sha256")), indent="\t")
+		json.dumps(
+			statement(
+				hash_file(out_dir / BINARY, "sha256"),
+				hash_file(out_dir / MODEL, "sha256"),
+				hash_file(out_dir / SERVER_BINARY, "sha256"),
+			),
+			indent="\t",
+		)
 		+ "\n"
 	)
 

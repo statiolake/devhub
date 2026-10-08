@@ -13,7 +13,9 @@ import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
 
 import { VOICE_CHANNELS } from "../../ipc/voice.js";
+import type { TranscribeOptions, Transcriber } from "./dictationStream.js";
 import {
+	chunkRefusal,
 	MICROPHONE_REFUSED,
 	NO_RECOGNISER,
 	registerVoiceIpc,
@@ -27,6 +29,7 @@ import {
 	whisperCandidates,
 	WHISPER_BINARY,
 	WHISPER_MODEL,
+	WHISPER_SERVER_BINARY,
 } from "./whisper.js";
 
 describe("where the recogniser is", () => {
@@ -57,6 +60,12 @@ describe("where the recogniser is", () => {
 			model: join("/b", WHISPER_MODEL),
 		});
 		expect(locateWhisper(["/a"], (p) => present.has(p))).toBeUndefined();
+		present.add(join("/b", WHISPER_SERVER_BINARY));
+		expect(locateWhisper(["/a", "/b"], (p) => present.has(p))).toEqual({
+			binary: join("/b", WHISPER_BINARY),
+			model: join("/b", WHISPER_MODEL),
+			server: join("/b", WHISPER_SERVER_BINARY),
+		});
 	});
 });
 
@@ -142,6 +151,16 @@ describe("the transcript", () => {
 	});
 });
 
+/** `seconds` of a 220 Hz tone at `amplitude`, as 16-bit PCM bytes: "speech" to the stream's level test. */
+function tone(seconds: number, amplitude = 0.3): Uint8Array {
+	const samples = new Int16Array(Math.round(seconds * 16_000));
+	for (let i = 0; i < samples.length; i++)
+		samples[i] = Math.round(
+			Math.sin((i / 16_000) * 2 * Math.PI * 220) * amplitude * 32767,
+		);
+	return new Uint8Array(samples.buffer);
+}
+
 describe("the Agents page's requests", () => {
 	type Handler = (event: { sender: unknown }, ...args: unknown[]) => unknown;
 
@@ -150,14 +169,23 @@ describe("the Agents page's requests", () => {
 			installed?: boolean;
 			status?: string;
 			ask?: () => Promise<boolean>;
+			transcriber?: Transcriber & { warm?(): Promise<void> };
 		} = {},
 	) {
 		const handlers = new Map<string, Handler>();
-		const page = {};
+		const listeners = new Map<string, Handler>();
+		const sent: unknown[][] = [];
+		const page = {
+			send: (...args: unknown[]) => void sent.push(args),
+			isDestroyed: () => false,
+			once: () => undefined,
+		};
 		registerVoiceIpc({
 			ipcMain: {
 				handle: (channel: string, handler: Handler) =>
 					void handlers.set(channel, handler),
+				on: (channel: string, handler: Handler) =>
+					void listeners.set(channel, handler),
 			} as never,
 			agentsPage: () => page as never,
 			install:
@@ -168,28 +196,40 @@ describe("the Agents page's requests", () => {
 				status: () => options.status ?? "not-determined",
 				ask: options.ask ?? (() => Promise.resolve(true)),
 			},
+			transcriber: options.transcriber,
 		});
 		const call = (channel: string, ...args: unknown[]) =>
 			handlers.get(channel)!({ sender: page }, ...args);
-		return { handlers, call };
+		const emit = (channel: string, ...args: unknown[]) =>
+			listeners.get(channel)!({ sender: page }, ...args);
+		return { handlers, listeners, call, emit, sent };
 	}
 
 	it("answers no other page", async () => {
-		const { handlers } = register();
+		const { handlers, listeners } = register();
 		await expect(
 			handlers.get(VOICE_CHANNELS.status)!({ sender: {} }),
 		).rejects.toThrow(/only the Agents page/);
+		// One-way messages from another page are dropped, not thrown.
+		expect(
+			listeners.get(VOICE_CHANNELS.audio)!(
+				{ sender: {} },
+				1,
+				new Uint8Array(2),
+			),
+		).toBeUndefined();
 	});
 
-	it("says a build with no recogniser has none, and transcribes nothing", async () => {
+	it("says a build with no recogniser has none, and begins nothing", async () => {
 		const { call } = register({ installed: false });
 		await expect(call(VOICE_CHANNELS.status)).resolves.toEqual({
 			available: false,
 			reason: NO_RECOGNISER,
 		});
-		await expect(
-			call(VOICE_CHANNELS.transcribe, new Uint8Array(2), "auto"),
-		).resolves.toEqual({ ok: false, reason: NO_RECOGNISER });
+		await expect(call(VOICE_CHANNELS.begin, "auto")).resolves.toEqual({
+			ok: false,
+			reason: NO_RECOGNISER,
+		});
 	});
 
 	it("asks macOS for the microphone only when it has not been granted", async () => {
@@ -206,23 +246,74 @@ describe("the Agents page's requests", () => {
 		).resolves.toEqual({ ok: false, reason: MICROPHONE_REFUSED });
 	});
 
-	it("refuses a bad recording before starting anything", async () => {
-		const { call } = register();
-		await expect(
-			call(VOICE_CHANNELS.transcribe, new Uint8Array(3), "auto"),
-		).resolves.toEqual({
+	it("refuses audio that is not 16-bit PCM", () => {
+		expect(chunkRefusal(new Uint8Array(3))).toBe(
+			"The recording is not 16-bit audio.",
+		);
+		expect(chunkRefusal("pcm")).toBe("The recording did not arrive as audio.");
+		expect(chunkRefusal(new Uint8Array(4))).toBeUndefined();
+	});
+
+	it("streams a dictation: warms, reports updates to the page, and answers the whole at the end", async () => {
+		const warm = vi.fn(() => Promise.resolve());
+		const transcribe = vi.fn((_pcm: Uint8Array, options: TranscribeOptions) =>
+			Promise.resolve(options.language === "ja" ? "直して" : "?"),
+		);
+		const { call, emit, sent } = register({
+			transcriber: { live: false, transcribe, warm },
+		});
+		const begun = (await call(VOICE_CHANNELS.begin, "ja")) as {
+			ok: true;
+			value: number;
+		};
+		expect(begun.ok).toBe(true);
+		expect(warm).toHaveBeenCalled();
+		emit(VOICE_CHANNELS.audio, begun.value, tone(1));
+		emit(VOICE_CHANNELS.audio, begun.value, new Uint8Array(3)); // dropped
+		await expect(call(VOICE_CHANNELS.end, begun.value)).resolves.toEqual({
+			ok: true,
+			value: "直して",
+		});
+		expect(transcribe).toHaveBeenCalledTimes(1);
+		expect(transcribe.mock.calls[0]![0].byteLength).toBe(32_000);
+		expect(sent).toEqual([
+			[
+				VOICE_CHANNELS.update,
+				begun.value,
+				{ committed: "直して", tentative: "" },
+			],
+		]);
+		await expect(call(VOICE_CHANNELS.end, begun.value)).resolves.toMatchObject({
 			ok: false,
-			reason: "The recording is not 16-bit audio.",
+		});
+	});
+
+	it("transcribes nothing of a cancelled dictation", async () => {
+		const transcribe = vi.fn(() => Promise.resolve("x"));
+		const { call, emit } = register({
+			transcriber: { live: true, transcribe },
+		});
+		const begun = (await call(VOICE_CHANNELS.begin, "auto")) as {
+			value: number;
+		};
+		emit(VOICE_CHANNELS.cancel, begun.value);
+		emit(VOICE_CHANNELS.audio, begun.value, tone(2));
+		expect(transcribe).not.toHaveBeenCalled();
+		await expect(call(VOICE_CHANNELS.end, begun.value)).resolves.toMatchObject({
+			ok: false,
 		});
 	});
 
 	it("answers a recogniser that cannot start with the reason, not a rejection", async () => {
-		const { call } = register();
-		const result = (await call(
-			VOICE_CHANNELS.transcribe,
-			new Uint8Array(32_000),
-			"klingon",
-		)) as { ok: boolean; reason?: string };
+		const { call, emit } = register();
+		const begun = (await call(VOICE_CHANNELS.begin, "klingon")) as {
+			value: number;
+		};
+		emit(VOICE_CHANNELS.audio, begun.value, tone(1));
+		const result = (await call(VOICE_CHANNELS.end, begun.value)) as {
+			ok: boolean;
+			reason?: string;
+		};
 		expect(result.ok).toBe(false);
 		expect(result.reason).toMatch(/could not be started/);
 	});

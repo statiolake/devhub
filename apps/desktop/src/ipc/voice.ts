@@ -7,10 +7,15 @@
  * recogniser because it is a native program in the bundle
  * (`scripts/build_whisper.py`) and only main may start one.
  *
- * What crosses is one finished recording: 16 kHz mono signed 16-bit PCM, the
- * format Whisper reads, as raw little-endian bytes. Not a stream: Whisper
- * transcribes a whole utterance better than it transcribes pieces of one, and
- * a recording of a minute is under two megabytes.
+ * What crosses is a stream: the page sends the microphone as it records —
+ * 16 kHz mono signed 16-bit PCM, the format Whisper reads, as raw
+ * little-endian bytes, a few times a second — and main sends back what it has
+ * heard so far (`VoiceUpdate`). Main keeps the recogniser loaded
+ * (`main/voice/whisperServer.ts`) and transcribes the utterance again every
+ * fraction of a second (`main/voice/dictationStream.ts`): what lies before a
+ * pause is *committed* and never changes again, and what follows the last
+ * pause is *tentative* and is rewritten as more is heard. When the recording
+ * ends, the tentative tail is transcribed one last time and committed.
  *
  * Every request answers with a result rather than rejecting, as the terminal
  * API does: a recogniser that is not in this build, or a microphone the
@@ -48,10 +53,30 @@ export type VoiceResult<T> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly reason: string };
 
+/**
+ * What main has heard so far in one dictation. `committed` only ever grows —
+ * each update's starts with the last one's — so the page can put in just what
+ * is new; `tentative` is the words since the last pause, which the next update
+ * may rewrite.
+ */
+export interface VoiceUpdate {
+	readonly committed: string;
+	readonly tentative: string;
+}
+
 export const VOICE_CHANNELS = {
 	status: "devhub:voice:status",
 	microphone: "devhub:voice:microphone",
-	transcribe: "devhub:voice:transcribe",
+	/** Load the recogniser now, ahead of a dictation that may follow. */
+	warm: "devhub:voice:warm",
+	begin: "devhub:voice:begin",
+	/** One way, page to main: (session, pcm). */
+	audio: "devhub:voice:audio",
+	end: "devhub:voice:end",
+	/** One way, page to main: (session). */
+	cancel: "devhub:voice:cancel",
+	/** One way, main to page: (session, VoiceUpdate). */
+	update: "devhub:voice:update",
 } as const;
 
 export interface VoiceApi {
@@ -63,9 +88,18 @@ export interface VoiceApi {
 	 * may record.
 	 */
 	requestMicrophone(): Promise<VoiceResult<boolean>>;
-	/** The words in one recording (see the module comment for its format). */
-	transcribe(
-		pcm: Uint8Array,
-		language: VoiceLanguage,
-	): Promise<VoiceResult<string>>;
+	/** Start loading the recogniser, if it is not loaded: the microphone is about to be used. */
+	warm(): void;
+	/** Start a dictation in `language`; its session number. */
+	begin(language: VoiceLanguage): Promise<VoiceResult<number>>;
+	/** More of the recording (see the module comment for its format). */
+	audio(session: number, pcm: Uint8Array): void;
+	/** End the recording: everything it said, committed (the last update's `committed` and more). */
+	end(session: number): Promise<VoiceResult<string>>;
+	/** Throw the dictation away. */
+	cancel(session: number): void;
+	/** What main has heard so far, as it hears it. Returns the way to stop listening. */
+	onUpdate(
+		listener: (session: number, update: VoiceUpdate) => void,
+	): () => void;
 }

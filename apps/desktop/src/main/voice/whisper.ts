@@ -2,6 +2,11 @@
  * The bundled speech recogniser: whisper.cpp's `whisper-cli`, as
  * `devhub-whisper`, with the model beside it (`scripts/build_whisper.py`).
  *
+ * This is the fallback. Dictation streams through `devhub-whisper-server`
+ * (`whisperServer.ts`), which keeps the model loaded; a recogniser directory
+ * built before the server was has only the CLI, and with it dictation still
+ * works, transcribed once when the recording ends.
+ *
  * One program per recording. The recording is written to a WAV file in a
  * directory of its own, the program is told to write its transcript as text
  * beside it, and the directory is removed whatever happens. A program per
@@ -30,8 +35,10 @@ import {
 	type VoiceLanguage,
 } from "../../ipc/voice.js";
 import { needsSpace } from "../../model/spokenText.js";
+import type { Transcriber } from "./dictationStream.js";
 
 export const WHISPER_BINARY = "devhub-whisper";
+export const WHISPER_SERVER_BINARY = "devhub-whisper-server";
 export const WHISPER_MODEL = "ggml-large-v3-turbo-q5_0.bin";
 
 /**
@@ -56,6 +63,8 @@ export function whisperCandidates(
 export interface WhisperInstall {
 	readonly binary: string;
 	readonly model: string;
+	/** `devhub-whisper-server`, when the directory has it. */
+	readonly server?: string;
 }
 
 /** The first candidate that holds both the program and the model. */
@@ -66,7 +75,10 @@ export function locateWhisper(
 	for (const directory of candidates) {
 		const binary = join(directory, WHISPER_BINARY);
 		const model = join(directory, WHISPER_MODEL);
-		if (exists(binary) && exists(model)) return { binary, model };
+		if (exists(binary) && exists(model)) {
+			const server = join(directory, WHISPER_SERVER_BINARY);
+			return exists(server) ? { binary, model, server } : { binary, model };
+		}
 	}
 	return undefined;
 }
@@ -195,13 +207,17 @@ export function transcriptionDeadlineMs(seconds: number): number {
 	return 60_000 + seconds * 2_000;
 }
 
-export class Whisper {
+export class Whisper implements Transcriber {
+	readonly live = false;
 	private queue: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly install: WhisperInstall) {}
 
 	/** The words in `pcm` (see `ipc/voice.ts`), after any recording before it. */
-	transcribe(pcm: Uint8Array, language: VoiceLanguage): Promise<string> {
+	transcribe(
+		pcm: Uint8Array,
+		{ language }: { readonly language: VoiceLanguage },
+	): Promise<string> {
 		const run = this.queue.then(() => this.run(pcm, language));
 		this.queue = run.catch(() => undefined);
 		return run;

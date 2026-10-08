@@ -2626,6 +2626,15 @@ button.conversation-background-line:hover {
   }
 }
 
+/* The words being spoken, before the pause that commits them into the field
+   above: lighter and italic, as text that may still change. */
+.conversation-dictation-tentative {
+  padding: 0 var(--space-1);
+  color: var(--tertiary);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
 .conversation-dictation-language {
   padding: 0 var(--space-1);
   border: 0;

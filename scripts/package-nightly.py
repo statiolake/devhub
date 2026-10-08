@@ -982,7 +982,8 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 	# signature, not signed as code, and Apple Silicon kills an arm64 program
 	# with no signature of its own the moment it is spawned. The linker signs
 	# it ad hoc already; this says so explicitly rather than relying on it.
-	run(["codesign", "--force", "--sign", "-", str(target / "devhub-whisper")])
+	for program in ("devhub-whisper", "devhub-whisper-server"):
+		run(["codesign", "--force", "--sign", "-", str(target / program)])
 	print(f"    {directory_size(target) / 1e6:.0f} MB")
 
 

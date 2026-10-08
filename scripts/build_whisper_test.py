@@ -26,6 +26,10 @@ class Pins(unittest.TestCase):
 	def test_cannot_fetch_anything_at_runtime(self) -> None:
 		self.assertIn("-DWHISPER_CURL=OFF", bw.CMAKE_FLAGS)
 
+	def test_builds_the_server_for_streaming_dictation(self) -> None:
+		self.assertIn("-DWHISPER_BUILD_SERVER=ON", bw.CMAKE_FLAGS)
+		self.assertIn(("whisper-server", bw.SERVER_BINARY), bw.PROGRAMS)
+
 	def test_is_one_portable_file(self) -> None:
 		self.assertIn("-DBUILD_SHARED_LIBS=OFF", bw.CMAKE_FLAGS)
 		self.assertIn("-DGGML_METAL_EMBED_LIBRARY=ON", bw.CMAKE_FLAGS)
@@ -61,9 +65,16 @@ class InstallProblems(unittest.TestCase):
 		binary = self.dir / bw.BINARY
 		binary.write_bytes(b"#!/bin/sh\n")
 		binary.chmod(0o755)
+		server = self.dir / bw.SERVER_BINARY
+		server.write_bytes(b"#!/bin/sh\n# server\n")
+		server.chmod(0o755)
 		(self.dir / bw.MODEL).write_bytes(b"model")
 		self.write(
-			bw.statement(bw.hash_file(binary, "sha256"), bw.hash_file(self.dir / bw.MODEL, "sha256"))
+			bw.statement(
+				bw.hash_file(binary, "sha256"),
+				bw.hash_file(self.dir / bw.MODEL, "sha256"),
+				bw.hash_file(server, "sha256"),
+			)
 		)
 
 	def write(self, said: dict) -> None:
@@ -89,6 +100,10 @@ class InstallProblems(unittest.TestCase):
 	def test_refuses_a_binary_that_cannot_run(self) -> None:
 		(self.dir / bw.BINARY).chmod(0o644)
 		self.assertIn("not executable", bw.install_problems(self.dir)[0])
+
+	def test_refuses_a_directory_without_the_server(self) -> None:
+		(self.dir / bw.SERVER_BINARY).unlink()
+		self.assertIn(bw.SERVER_BINARY, bw.install_problems(self.dir)[0])
 
 
 class ModelProblem(unittest.TestCase):
