@@ -65,12 +65,17 @@ function harness(
 		secret: () => "s3cret",
 		sleep: () => new Promise((r) => setTimeout(r, 0)),
 		setTimer: (fn, ms) => {
-			const timer = { fn, ms, cleared: false, unref: () => undefined };
+			const timer = {
+				fn,
+				ms,
+				cleared: false,
+				unref: () => undefined,
+				cancel: () => {
+					timer.cleared = true;
+				},
+			};
 			timers.push(timer);
 			return timer;
-		},
-		clearTimer: (timer) => {
-			(timer as { cleared: boolean }).cleared = true;
 		},
 	};
 	const server = new WhisperServer(

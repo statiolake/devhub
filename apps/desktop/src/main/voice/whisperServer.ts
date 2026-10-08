@@ -42,8 +42,14 @@ export interface WhisperServerDeps {
 	readonly freePort: () => Promise<number>;
 	readonly secret: () => string;
 	readonly sleep: (ms: number) => Promise<void>;
-	readonly setTimer: (fn: () => void, ms: number) => { unref?(): void };
-	readonly clearTimer: (timer: unknown) => void;
+	readonly setTimer: (fn: () => void, ms: number) => TimerHandle;
+}
+
+/** Platform-neutral timer handle (the DOM and Node `setTimeout` types differ). */
+export interface TimerHandle {
+	/** Stop the timer from keeping the process alive, where supported. */
+	unref(): void;
+	cancel(): void;
 }
 
 export function freePort(): Promise<number> {
@@ -66,8 +72,21 @@ export const NODE_DEPS: WhisperServerDeps = {
 	freePort,
 	secret: () => randomBytes(16).toString("hex"),
 	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-	setTimer: (fn, ms) => setTimeout(fn, ms),
-	clearTimer: (timer) => clearTimeout(timer as NodeJS.Timeout),
+	setTimer: (fn, ms) => {
+		const handle = setTimeout(fn, ms);
+		return {
+			unref: () => {
+				if (
+					typeof handle === "object" &&
+					"unref" in handle &&
+					typeof handle.unref === "function"
+				) {
+					handle.unref();
+				}
+			},
+			cancel: () => clearTimeout(handle),
+		};
+	},
 };
 
 /** The server's command line. */
@@ -103,7 +122,7 @@ export class WhisperServer implements Transcriber {
 	readonly live = true;
 	private running: Running | undefined;
 	private queue: Promise<unknown> = Promise.resolve();
-	private idle: unknown;
+	private idle: TimerHandle | undefined;
 	private readonly onExit = () => this.stop();
 
 	constructor(
@@ -138,7 +157,7 @@ export class WhisperServer implements Transcriber {
 	stop(): void {
 		const running = this.running;
 		this.running = undefined;
-		if (this.idle !== undefined) this.deps.clearTimer(this.idle);
+		if (this.idle !== undefined) this.idle.cancel();
 		this.idle = undefined;
 		process.off("exit", this.onExit);
 		if (running !== undefined && !running.exited)
@@ -146,12 +165,12 @@ export class WhisperServer implements Transcriber {
 	}
 
 	private touch(): void {
-		if (this.idle !== undefined) this.deps.clearTimer(this.idle);
+		if (this.idle !== undefined) this.idle.cancel();
 		const timer = this.deps.setTimer(() => {
 			this.idle = undefined;
 			this.stop();
 		}, this.options.idleMs);
-		timer.unref?.();
+		timer.unref();
 		this.idle = timer;
 	}
 
