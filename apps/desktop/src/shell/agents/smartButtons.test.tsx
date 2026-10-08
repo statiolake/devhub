@@ -202,6 +202,13 @@ function box(): HTMLElement {
   return screen.getByRole("toolbar", { name: "Smart Buttons" });
 }
 
+/** The box while it waits, out of sight and so out of the a11y tree. */
+function hiddenBox(): HTMLElement {
+  const found = document.querySelector<HTMLElement>(".smart-buttons");
+  if (!found) throw new Error("no Smart Buttons box");
+  return found;
+}
+
 /** The Smart Buttons on screen, without their switches or the header. */
 function labels(): string[] {
   return [...document.querySelectorAll(".smart-button")].map(
@@ -279,6 +286,92 @@ describe("which Smart Buttons are drawn", () => {
     const { runAgentAction } = mount();
     fireEvent.click(screen.getByRole("button", { name: "Commit the changes" }));
     expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
+  });
+});
+
+describe("a GUI Agent on screen with no composer under it", () => {
+  // The Agent the page has on screen need not have a pane: the pool draws
+  // only running Agents, so one that is starting, stopped or in a Workspace
+  // that is not available is "on screen" with nothing drawn for it. This once
+  // threw, and the page boundary drew "The native app shell is unavailable."
+  // over the whole Agents page.
+  const value = () =>
+    ({
+      repositoryStatus: { sequence: 1, workspaces: [DIRTY] },
+      agentActions: ACTIONS,
+      runAgentAction: vi.fn(() => Promise.resolve({})),
+      dispatch: vi.fn(() => Promise.resolve(undefined)),
+      reportFailure: vi.fn(),
+    }) as unknown as AgentsValue;
+  function shell(withComposer: boolean, context: AgentsValue) {
+    return (
+      <AgentsContext.Provider value={context}>
+        <div className="agent-pane">
+          <div data-surface-key="agent:a-1">
+            {withComposer ? (
+              <div className="conversation-composer-box" />
+            ) : null}
+          </div>
+          <SmartButtons
+            agent={agent({ presentation: "gui" })}
+            stored={undefined}
+          />
+        </div>
+      </AgentsContext.Provider>
+    );
+  }
+
+  it("does not throw, and keeps the box out of sight", () => {
+    expect(() => render(shell(false, value()))).not.toThrow();
+    expect(hiddenBox()).toHaveAttribute("data-waiting");
+    expect(hiddenBox().style.visibility).toBe("hidden");
+  });
+
+  it("stands on the composer once it appears", async () => {
+    const context = value();
+    const { rerender } = render(shell(false, context));
+    await act(async () => {
+      rerender(shell(true, context));
+      await Promise.resolve();
+    });
+    expect(box()).not.toHaveAttribute("data-waiting");
+    expect(box().style.visibility).toBe("");
+    expect(box().style.bottom).toBe("128px");
+    expect(box().style.right).toBe("116px");
+  });
+
+  it("does not take down an Agents page whose Agent on screen is not running", () => {
+    const snapshot = {
+      smartButtons: {},
+      workspaces: [
+        {
+          id: "w-1",
+          label: "example",
+          root: "/example",
+          displayRoot: "/example",
+          state: { kind: "available" },
+          close: { kind: "idle" },
+          agents: [
+            agent({
+              presentation: "gui",
+              controlState: { kind: "starting" },
+            } as unknown as Partial<AgentWire>),
+          ],
+        },
+      ],
+    } as unknown as AppSnapshot;
+    expect(() =>
+      render(
+        <AgentsContext.Provider value={value()}>
+          <AgentPane
+            snapshot={snapshot}
+            appearance={undefined}
+            activeKey="agent:a-1"
+          />
+        </AgentsContext.Provider>,
+      ),
+    ).not.toThrow();
+    expect(hiddenBox()).toHaveAttribute("data-waiting");
   });
 });
 

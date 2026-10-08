@@ -52,6 +52,22 @@ describe("a component that threw while rendering", () => {
     );
   });
 
+  it("calls an internal error what it is, not the native shell going away", () => {
+    const quiet = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    render(
+      <PageBoundary>
+        <Breaks />
+      </PageBoundary>,
+    );
+    quiet.mockRestore();
+
+    const surface = screen.getByLabelText("Error surface");
+    expect(surface).toHaveTextContent("This page hit an error.");
+    expect(surface).not.toHaveTextContent("native app shell is unavailable");
+  });
+
   it("tells main, because a page that has stopped keeps no record", () => {
     const quiet = vi
       .spyOn(console, "error")

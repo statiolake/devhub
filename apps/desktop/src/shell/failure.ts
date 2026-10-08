@@ -62,6 +62,23 @@ export function toAppError(error: unknown): AppError {
   return spokenFailure(error) ?? unspokenFailure(error);
 }
 
+/**
+ * A page that stopped because one of its own components threw.
+ *
+ * Not `toAppError`'s fallback: that one answers a request to main that went
+ * unanswered, where "the native app shell is unavailable" is the truth. A
+ * component that threw is a bug in this page, and saying the native shell is
+ * gone sends the reader after the wrong thing. A failure that carries its own
+ * words (an `AppError`, a `UserFacingFailure`) still says them.
+ */
+export const PAGE_CRASH_SUMMARY = "This page hit an error.";
+
+export function toPageCrashError(error: unknown): AppError {
+  const spoken = spokenFailure(error);
+  if (spoken !== undefined) return spoken;
+  return { ...unspokenFailure(error), summary: PAGE_CRASH_SUMMARY };
+}
+
 function unspokenFailure(error: unknown): AppError {
   return error instanceof Error && error.message.length > 0
     ? { ...FALLBACK_ERROR, detail: error.message }

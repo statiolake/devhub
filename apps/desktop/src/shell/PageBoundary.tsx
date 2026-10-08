@@ -27,7 +27,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import type { AppError } from "../ipc/appShell";
 import type { PageBridge } from "../ipc/contract";
 import { pageBridge } from "./bridge";
-import { toAppError } from "./failure";
+import { toPageCrashError } from "./failure";
 import { Failure } from "./components/shell/SurfaceState";
 import { reloadPage } from "./pageReload";
 
@@ -46,7 +46,7 @@ export class PageBoundary extends Component<
   override state: PageBoundaryState = { error: undefined };
 
   static getDerivedStateFromError(error: unknown): PageBoundaryState {
-    return { error: toAppError(error) };
+    return { error: toPageCrashError(error) };
   }
 
   override componentDidCatch(error: unknown, info: ErrorInfo): void {
@@ -54,8 +54,8 @@ export class PageBoundary extends Component<
     // exactly once, here. It goes to main's log with the failure, because a
     // page that has stopped is not a place to keep a record.
     pageBridge<PageBridge>("current").raiseFailure({
-      ...toAppError(error),
-      detail: [toAppError(error).detail, info.componentStack]
+      ...toPageCrashError(error),
+      detail: [toPageCrashError(error).detail, info.componentStack]
         .filter((part) => part !== undefined && part !== null && part !== "")
         .join("\n"),
     });

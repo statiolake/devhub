@@ -218,8 +218,11 @@ const FIRES_WHEN: Partial<Record<AgentActionTriggerWire, string>> = {
 /**
  * What the box is anchored to.
  *
- * A GUI Agent's box stands on its composer's box — which every conversation
- * draws, so one that is not there is a surface this component does not know.
+ * A GUI Agent's box stands on its composer's box. There are moments with an
+ * Agent on screen and no composer under it — the Agent not (or no longer)
+ * running, so the pool has no pane for it; a pane still mounting — and then
+ * there is nothing to stand on: `undefined`, and the box waits, unseen, until
+ * the composer appears. It once threw here, and took the whole page down.
  * A terminal's stands on the queued-message status in the corner when there
  * is one, and in the corner itself when there is not.
  */
@@ -236,12 +239,7 @@ function anchorOf(
   const composer = pane.querySelector<HTMLElement>(
     `[data-surface-key="agent:${agent.id}"] .conversation-composer-box`,
   );
-  if (!composer) {
-    throw new Error(
-      `GUI Agent ${agent.id} is on screen with no composer for its Smart Buttons to stand on`,
-    );
-  }
-  return composer;
+  return composer ?? undefined;
 }
 
 /**
@@ -285,7 +283,9 @@ export function SmartButtons({
   const [menuOpen, setMenuOpen] = useState(false);
   const own = useRef<HTMLDivElement | null>(null);
   const present = usePresence(lines);
-  const metrics = useMetrics(own, agent, present.length + (menuOpen ? 1 : 0));
+  const measured = useMetrics(own, agent, present.length + (menuOpen ? 1 : 0));
+  const waiting = measured === "waiting";
+  const metrics = waiting ? undefined : measured;
   // Set only by a drop, double-click or key move: the one time the box's
   // position is allowed to glide. Never on mount, page switch or resize.
   const [settling, setSettling] = useState(false);
@@ -388,9 +388,11 @@ export function SmartButtons({
       {...(offered.length === 0 && ticked.length === 0 && !menuOpen
         ? { "data-quiet": "" }
         : {})}
+      {...(waiting ? { "data-waiting": "", "aria-hidden": true } : {})}
       style={{
         right: `${String(drawn.right)}px`,
         bottom: `${String(drawn.bottom)}px`,
+        ...(waiting ? { visibility: "hidden" as const } : {}),
       }}
     >
       <div className="smart-buttons-header">
@@ -660,8 +662,10 @@ function useMetrics(
   own: React.RefObject<HTMLDivElement | null>,
   agent: AgentWire,
   count: number,
-): Metrics | undefined {
-  const [metrics, setMetrics] = useState<Metrics>();
+): Metrics | "waiting" | undefined {
+  const [metrics, setMetrics] = useState<Metrics | "waiting">();
+  // Bumped when a composer that was missing appears, to measure again.
+  const [arrived, setArrived] = useState(0);
   useLayoutEffect(() => {
     const box = own.current;
     const pane = box?.parentElement;
@@ -670,6 +674,15 @@ function useMetrics(
       return;
     }
     const anchor = anchorOf(pane, agent);
+    if (agent.presentation === "gui" && anchor === undefined) {
+      // Nothing to stand on yet: wait, hidden, for the composer to mount.
+      setMetrics("waiting");
+      const watcher = new MutationObserver(() => {
+        if (anchorOf(pane, agent) !== undefined) setArrived((n) => n + 1);
+      });
+      watcher.observe(pane, { childList: true, subtree: true });
+      return () => watcher.disconnect();
+    }
     const measure = () => {
       const paneRect = pane.getBoundingClientRect();
       const boxRect = box.getBoundingClientRect();
@@ -693,7 +706,7 @@ function useMetrics(
     // coming or going (the Agent's `injection`) moves a terminal's anchor, and
     // a button coming or going changes the box's size before any observer has
     // had a frame to say so.
-  }, [own, agent, count]);
+  }, [own, agent, count, arrived]);
   return metrics;
 }
 
