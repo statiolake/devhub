@@ -383,6 +383,63 @@ describe("the CLI's defaults for new sessions", () => {
     );
   });
 
+  it("names the default model before the first turn, and asks the effort for it", async () => {
+    const cliDefaults = vi.fn((model?: string) =>
+      Promise.resolve<CliDefaults>({
+        model: { source: "built-in" },
+        effort: {
+          ...(model === undefined ? {} : { value: "medium" }),
+          source: "built-in",
+        },
+      }),
+    );
+    draw(
+      withSession({
+        ...SESSION,
+        model: {
+          current: undefined,
+          choices: [
+            {
+              id: "default",
+              label: "claude-opus-5-5[1m] (default)",
+              resolved: "claude-opus-5-5[1m]",
+            },
+            { id: "haiku", label: "haiku", resolved: "claude-haiku-4-5" },
+          ],
+        },
+      }),
+      fakeActions({ cliDefaults }),
+    );
+    await waitFor(() =>
+      expect(picked("Model")).toBe("Default (Opus 5.5 (1M))"),
+    );
+    await waitFor(() =>
+      expect(picked("Effort")).toBe(`${UNKNOWN_VALUE.effort} (medium)`),
+    );
+    expect(cliDefaults).toHaveBeenCalledWith("claude-opus-5-5[1m]");
+    expect(settingPicker("Model").getAttribute("title")).toMatch(
+      /new sessions start on claude-opus-5-5\[1m\] \(the account's default/,
+    );
+  });
+
+  it("names a default model the settings set, before the first turn", async () => {
+    draw(
+      withSession({
+        ...SESSION,
+        model: { ...SESSION.model, current: undefined },
+      }),
+      fakeActions({
+        cliDefaults: vi.fn(() =>
+          Promise.resolve<CliDefaults>({
+            model: { value: "haiku", source: "user" },
+            effort: { value: "high", source: "built-in" },
+          }),
+        ),
+      }),
+    );
+    await waitFor(() => expect(picked("Model")).toBe("Default (full-haiku)"));
+  });
+
   it("marks the default row, the account's own when nothing set one, and offers the others", async () => {
     drawn();
     await waitFor(() => expect(picked("Effort")).toMatch(/medium/));

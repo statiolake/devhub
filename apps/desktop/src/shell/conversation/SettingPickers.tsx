@@ -68,9 +68,10 @@ export const SETTING_LABELS: Readonly<Record<SettingName, string>> = {
 };
 
 /**
- * What a picker says while its session has not named its value: the model
- * and permissions are not known yet (Claude names them only when the first
- * turn starts), and an effort nothing has chosen is the CLI's own default —
+ * What a picker says while its session has not named its value and nothing
+ * else tells it: permissions are not known yet (Claude names them only when
+ * the first turn starts); a model is the default new sessions start on when
+ * that is known (`defaultModelWords`), and only otherwise not known yet; and an effort nothing has chosen is the CLI's own default —
  * which Claude does not report, so it is said as that and not as a level.
  */
 export const UNKNOWN_VALUE: Readonly<Record<SettingName, string>> = {
@@ -80,7 +81,8 @@ export const UNKNOWN_VALUE: Readonly<Record<SettingName, string>> = {
 };
 
 const UNKNOWN_HINT: Readonly<Record<SettingName, string>> = {
-  model: "The Agent names its model when its first turn starts",
+  model:
+    "No turn has started, and the Agent's handshake has not yet listed the account's default model, so which model it starts on is not known yet",
   effort:
     "No effort was chosen here, and the Agent does not report the one it runs at: it is the CLI's own, from --effort, its environment, its settings or the model's default",
   mode: "The Agent names its permissions when its first turn starts",
@@ -107,6 +109,48 @@ function defaultRow(
     rows.find((row) => row.id === value) ??
     rows.find((row) => row.resolved !== undefined && row.resolved === value)
   );
+}
+
+/**
+ * A model's short name, as a person says it: `claude-opus-5-5[1m]` is
+ * "Opus 5.5 (1M)", `claude-haiku-4-5-20251001` "Haiku 4.5"; an alias or a
+ * name of another shape is kept as it is.
+ */
+export function shortModelName(model: string): string {
+  const long = model.endsWith("[1m]");
+  const name = long ? model.slice(0, -"[1m]".length) : model;
+  const match = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/u.exec(name);
+  if (match === null) return model;
+  const [, family = "", major = "", minor] = match;
+  const words = `${family.charAt(0).toUpperCase()}${family.slice(1)} ${major}${minor === undefined ? "" : `.${minor}`}`;
+  return long ? `${words} (1M)` : words;
+}
+
+/**
+ * The full name of the model new sessions start on: the default's row in
+ * the handshake's list (its resolved model), else the value the settings
+ * name; undefined when neither says — the account's default before the
+ * handshake has listed it.
+ */
+function defaultModelName(
+  setting: Setting,
+  known: CliDefault | undefined,
+): string | undefined {
+  if (known === undefined) return undefined;
+  const row = defaultRow(setting.choices, known);
+  return row?.resolved ?? known.value;
+}
+
+/**
+ * What a model nothing named yet reads as: "Default (Opus 5.5 (1M))", the
+ * model new sessions start on, or undefined when that is not known.
+ */
+function defaultModelWords(
+  setting: Setting,
+  known: CliDefault | undefined,
+): string | undefined {
+  const name = defaultModelName(setting, known);
+  return name === undefined ? undefined : `Default (${shortModelName(name)})`;
 }
 
 /** Where a default comes from, in the words a hint says it. */
@@ -151,7 +195,16 @@ interface DefaultOffer {
 }
 
 /** The hint of a value nothing named: the CLI's default, and where it is from, when known. */
-function unknownHint(name: SettingName, known: CliDefault | undefined): string {
+function unknownHint(
+  name: SettingName,
+  known: CliDefault | undefined,
+  setting: Setting,
+): string {
+  if (name === "model" && known !== undefined) {
+    const model = defaultModelName(setting, known);
+    if (model !== undefined)
+      return `No turn has started, so the Agent has not named its model yet: new sessions start on ${model} (${known.source === "built-in" ? "the account's default, as Claude Code's handshake lists it" : sourceSentence(known)})`;
+  }
   if (name !== "effort" || known?.value === undefined)
     return UNKNOWN_HINT[name];
   return `No effort was chosen here, so the Agent runs at the CLI's own, which resolves to ${known.value} (${sourceSentence(known)}). Claude does not report it, so this is what it started with.`;
@@ -216,7 +269,11 @@ function SettingWords({
       </span>
       <span className="conversation-setting-value">
         {rowsOf(setting).find((row) => row.id === setting.current)?.label ??
-          (name === "effort" ? unknownEffort(known) : UNKNOWN_VALUE[name])}
+          (name === "effort"
+            ? unknownEffort(known)
+            : name === "model"
+              ? (defaultModelWords(setting, known) ?? UNKNOWN_VALUE.model)
+              : UNKNOWN_VALUE[name])}
       </span>
     </>
   );
@@ -246,7 +303,7 @@ function SettingPicker({
       >
         <span
           className="conversation-setting-face"
-          title={unknown ? unknownHint(name, offer?.known) : undefined}
+          title={unknown ? unknownHint(name, offer?.known, setting) : undefined}
         >
           <SettingWords name={name} setting={setting} known={offer?.known} />
           {setting.unchangeable === undefined ? null : (
@@ -410,7 +467,7 @@ function ChoosableSetting({
           open
             ? undefined
             : unknown
-              ? unknownHint(name, offer?.known)
+              ? unknownHint(name, offer?.known, setting)
               : current?.detail
         }
         onClick={() => {
@@ -514,8 +571,10 @@ export function SettingPickers({
 }) {
   const { cliDefaults, setCliDefault, reportFailure } =
     useConversationActions();
-  const model = modelName(session);
   const [defaults, setDefaults] = useState<CliDefaults | undefined>(undefined);
+  // Before the Agent names its model, an effort is the default model's.
+  const model =
+    modelName(session) ?? defaultModelName(session.model, defaults?.model);
   /** Counts the defaults' changes here, so a change is read back. */
   const [changes, setChanges] = useState(0);
   useEffect(() => {
