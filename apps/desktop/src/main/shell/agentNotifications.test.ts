@@ -26,7 +26,12 @@ function snap(): AppSnapshotWire {
 					{
 						label: "repo",
 						agents: [
-							{ id: "a1", displayName: "Claude", status, activity: " did\n it " },
+							{
+								id: "a1",
+								displayName: "Claude",
+								status,
+								activity: " did\n it ",
+							},
 						],
 					},
 				]

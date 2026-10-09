@@ -160,7 +160,12 @@ function rehypeLinks() {
 // that does not parse (a streamed half of one) is drawn as its source.
 const KATEX = [
   rehypeKatex,
-  { throwOnError: false, strict: "ignore", output: "html", errorColor: "inherit" },
+  {
+    throwOnError: false,
+    strict: "ignore",
+    output: "html",
+    errorColor: "inherit",
+  },
 ] as const;
 const REHYPE_PLUGINS = [KATEX, rehypeLinks] as never;
 const REHYPE_PLUGINS_UNSETTLED = [KATEX] as never;

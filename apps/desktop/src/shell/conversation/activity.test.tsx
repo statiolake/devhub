@@ -11,13 +11,7 @@ import {
   formatElapsed,
   formatTokens,
 } from "./activity";
-import {
-  assistant,
-  put,
-  tool,
-  transcriptOf,
-  user,
-} from "./transcriptFixtures";
+import { assistant, put, tool, transcriptOf, user } from "./transcriptFixtures";
 
 afterEach(cleanup);
 

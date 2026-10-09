@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseChordKey, strokeKey } from "../../model/chordKeys.js";
-import {
-	defaultChordLayout,
-	KeyRouter,
-		type KeyStroke,
-} from "./keyRouter.js";
+import { defaultChordLayout, KeyRouter, type KeyStroke } from "./keyRouter.js";
 import type { ArmingListener } from "./chordInputSource.js";
 
 /**
@@ -216,9 +212,7 @@ describe("a modifier pressed after the prefix", () => {
 	});
 
 	it("leaves a bare modifier alone when nothing is armed", () => {
-		expect(
-			router.route(press("Shift", "ShiftLeft", { shift: true })),
-		).toEqual({
+		expect(router.route(press("Shift", "ShiftLeft", { shift: true }))).toEqual({
 			kind: "pass",
 		});
 	});
