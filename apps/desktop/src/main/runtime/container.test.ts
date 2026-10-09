@@ -31,6 +31,7 @@ import {
 	LOCAL_FOLDER_LABEL,
 	localContainerMachine,
 	parseUpOutcome,
+	type ContainerMachine,
 	type DevContainerCli,
 	type DockerCli,
 } from "./container.js";
@@ -104,6 +105,22 @@ function fakeDevcontainer(
 	};
 }
 
+/**
+ * `docker` and `devcontainer` as given, on a machine that answers the
+ * worktree probe (`git -C <folder> rev-parse …`) itself: the folder is not a
+ * repository. Left to the real `git`, the probe ran on whatever machine runs
+ * the suite, and on a CI Mac it took longer than a test may.
+ */
+function fakeMachine(
+	docker: DockerCli,
+	devcontainer: DevContainerCli,
+): ContainerMachine {
+	return {
+		...localContainerMachine(docker, devcontainer),
+		probe: () => output(128, "", "fatal: not a git repository"),
+	};
+}
+
 /** A build log file of this test run's own. */
 function scratchBuildLog(): string {
 	return join(mkdtempSync(join(tmpdir(), "devhub-build-log-")), "up.log");
@@ -117,7 +134,7 @@ function runtimeWith(
 ): ContainerHost {
 	return new ContainerHost({
 		target: target(configPath),
-		machine: localContainerMachine(docker, devcontainer),
+		machine: fakeMachine(docker, devcontainer),
 		buildLog,
 	});
 }
@@ -1003,7 +1020,7 @@ describe("hearing that a container was started", () => {
 			new ContainerHost({
 				target: target(),
 				buildLog: scratchBuildLog(),
-				machine: localContainerMachine(
+				machine: fakeMachine(
 					fakeDocker((args) => {
 						if (args[0] === "ps") {
 							return output(

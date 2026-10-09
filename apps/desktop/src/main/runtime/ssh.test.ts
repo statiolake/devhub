@@ -1773,18 +1773,7 @@ exit 1
 	});
 
 	it("refuses a forward ssh said it made and did not", async () => {
-		const runtime = new SshRuntime({
-			host: "build-box.example.com",
-			controlDirectory: control,
-			sshPath: join(bin, "ssh"),
-			localEnvironment: {
-				...FAKE_ENVIRONMENT,
-				HOME: remoteHome,
-				DEVHUB_FAKE_SSH_LOG: log,
-				DEVHUB_FAKE_FORWARD: "silent",
-			},
-			tmux: FAKE_TMUX,
-		});
+		const runtime = hosted({ DEVHUB_FAKE_FORWARD: "silent" });
 		// `-O forward` can report success and bind nothing. A workbench pointed
 		// at a port nothing answers on is exactly the silent failure the check
 		// exists to prevent, so this is a sentence rather than an endpoint.
