@@ -152,6 +152,56 @@ describe("a question whose options carry previews", () => {
     ).toHaveTextContent("a column");
   });
 
+  it("marks each row radio or checkbox, and its header as a chip", () => {
+    draw(asked([LAYOUT, { ...LAYOUT, id: "More?", multiSelect: true }]));
+    const radioRow = screen
+      .getAllByRole("radio", { name: /Sidebar/ })[0]!
+      .closest("label")!;
+    expect(radioRow).toHaveAttribute("data-kind", "radio");
+    const boxRow = screen
+      .getByRole("checkbox", { name: /Sidebar/ })
+      .closest("label")!;
+    expect(boxRow).toHaveAttribute("data-kind", "checkbox");
+    expect(
+      document.querySelectorAll(".conversation-question-header"),
+    ).toHaveLength(2);
+  });
+
+  it("numbers questions when there are several, and not when there is one", () => {
+    draw(asked([LAYOUT, { ...LAYOUT, id: "Again?" }]));
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("2 of 2")).toBeInTheDocument();
+    cleanup();
+    draw(asked([LAYOUT]));
+    expect(screen.queryByText(/of 1$/)).toBeNull();
+  });
+
+  it("draws Other as a row of its own, checked once something is written", () => {
+    draw(asked([LAYOUT]));
+    const field = screen.getByRole("textbox", { name: "Layout: other" });
+    const row = field.closest(".conversation-question-other-row")!;
+    expect(row).not.toHaveAttribute("data-filled");
+    fireEvent.change(field, { target: { value: "Grid" } });
+    expect(row).toHaveAttribute("data-filled");
+    expect(row.querySelector(".conversation-question-mark")).toHaveTextContent(
+      "✓",
+    );
+  });
+
+  it("answers with what was written in Other", async () => {
+    const { actions } = draw(asked([LAYOUT]));
+    fireEvent.change(screen.getByRole("textbox", { name: "Layout: other" }), {
+      target: { value: "Grid" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(actions.answer).toHaveBeenCalledWith("q1", {
+        kind: "answers",
+        values: { "Which layout?": "Grid" },
+      }),
+    );
+  });
+
   it("still answers with the option picked", async () => {
     const { actions } = draw(asked([LAYOUT]));
     fireEvent.click(screen.getByRole("radio", { name: /Tabs/ }));

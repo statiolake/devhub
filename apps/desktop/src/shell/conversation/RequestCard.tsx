@@ -272,7 +272,9 @@ function OptionRow({
   shown,
   point,
   control,
+  multiple,
 }: {
+  readonly multiple: boolean;
   readonly label: string;
   readonly description: string;
   readonly picked: boolean;
@@ -286,6 +288,7 @@ function OptionRow({
       className="conversation-question-option"
       data-picked={picked || undefined}
       data-shown={shown || undefined}
+      data-kind={multiple ? "checkbox" : "radio"}
       onMouseEnter={() => point(true)}
       onMouseLeave={() => point(false)}
     >
@@ -319,6 +322,7 @@ function QuestionLayout({
   rows,
   after,
   Frame,
+  position,
 }: {
   readonly question: Question;
   readonly resting: string | undefined;
@@ -328,6 +332,7 @@ function QuestionLayout({
   ) => ReactNode;
   readonly after?: ReactNode;
   readonly Frame: "fieldset" | "div";
+  readonly position?: { readonly index: number; readonly count: number };
 }) {
   const [pointed, setPointed] = useState<string | undefined>(undefined);
   const beside = previewed(question);
@@ -336,10 +341,19 @@ function QuestionLayout({
   const Header = Frame === "fieldset" ? "legend" : "div";
   return (
     <Frame className="conversation-question">
-      {question.header === "" ? null : (
-        <Header className="conversation-question-header">
-          {question.header}
-        </Header>
+      {question.header === "" && position === undefined ? null : (
+        <div className="conversation-question-top">
+          {question.header === "" ? null : (
+            <Header className="conversation-question-header">
+              {question.header}
+            </Header>
+          )}
+          {position === undefined || position.count < 2 ? null : (
+            <span className="conversation-question-step">
+              {position.index + 1} of {position.count}
+            </span>
+          )}
+        </div>
       )}
       <p className="conversation-question-words">{question.text}</p>
       <div
@@ -375,7 +389,9 @@ function QuestionFields({
   other,
   setOther,
   keys,
+  position,
 }: {
+  readonly position: { readonly index: number; readonly count: number };
   readonly question: Question;
   readonly picked: readonly string[];
   readonly pick: (label: string, on: boolean) => void;
@@ -387,6 +403,7 @@ function QuestionFields({
   return (
     <QuestionLayout
       Frame="fieldset"
+      position={position}
       question={question}
       resting={focused ?? picked[0]}
       rows={(shown, point) =>
@@ -395,6 +412,7 @@ function QuestionFields({
             key={option.label}
             label={option.label}
             description={option.description}
+            multiple={question.multiSelect}
             picked={picked.includes(option.label)}
             shown={shown(option.label)}
             point={(on) => point(option.label, on)}
@@ -414,15 +432,24 @@ function QuestionFields({
       }
       after={
         question.allowsOther ? (
-          <textarea
-            className="conversation-question-other"
-            aria-label={`${question.header}: other`}
-            placeholder="Other"
-            rows={1}
-            value={other}
-            onChange={(event) => setOther(event.target.value)}
-            {...keys}
-          />
+          <div
+            className="conversation-question-other-row"
+            data-filled={other.trim() === "" ? undefined : true}
+            data-kind={question.multiSelect ? "checkbox" : "radio"}
+          >
+            <span className="conversation-question-mark" aria-hidden="true">
+              {other.trim() === "" ? "" : "✓"}
+            </span>
+            <textarea
+              className="conversation-question-other"
+              aria-label={`${question.header}: other`}
+              placeholder="Other — type your own answer"
+              rows={1}
+              value={other}
+              onChange={(event) => setOther(event.target.value)}
+              {...keys}
+            />
+          </div>
         ) : null
       }
     />
@@ -454,6 +481,7 @@ export function QuestionRecord({
               ...question.options.map((option) => (
                 <OptionRow
                   key={option.label}
+                  multiple={question.multiSelect}
                   label={option.label}
                   description={option.description}
                   picked={chosen.includes(option.label)}
@@ -464,6 +492,7 @@ export function QuestionRecord({
               answer.written === undefined || answer.secret ? null : (
                 <OptionRow
                   key="written"
+                  multiple={question.multiSelect}
                   label={answer.written}
                   description="Written instead"
                   picked
@@ -534,9 +563,10 @@ function QuestionForm({
         answer();
       }}
     >
-      {questions.map((question) => (
+      {questions.map((question, index) => (
         <QuestionFields
           key={question.id}
+          position={{ index, count: questions.length }}
           question={question}
           picked={picked[question.id] ?? []}
           pick={(label, on) => pick(question, label, on)}
@@ -647,6 +677,7 @@ function FieldControl({
           {input.options.map((option) => (
             <OptionRow
               key={option.value}
+              multiple={input.multiple}
               label={option.label}
               description=""
               picked={chosen.includes(option.value)}

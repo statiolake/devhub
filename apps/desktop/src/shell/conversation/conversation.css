@@ -1771,8 +1771,7 @@
   outline-offset: 2px;
 }
 
-.conversation-request-text textarea,
-.conversation-question-other {
+.conversation-request-text textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 2px var(--space-2);
@@ -1786,8 +1785,7 @@
   resize: vertical;
 }
 
-.conversation-request-text textarea:focus-visible,
-.conversation-question-other:focus-visible {
+.conversation-request-text textarea:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -1px;
 }
@@ -1852,52 +1850,103 @@
   color: var(--danger);
 }
 
-/* A question: its header a small caption over its words, then its options. */
+/* A question: its header a chip over its words, then its options. Questions
+   after the first sit under a hairline, each with its place in the set. */
 .conversation-question {
   min-width: 0;
   padding: 0;
   border: 0;
   margin: var(--space-2) 0 0;
+  container-type: inline-size;
+}
+
+.conversation-request-questions
+  > .conversation-question
+  + .conversation-question {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  margin-top: var(--space-3);
+}
+
+.conversation-question-top {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-1);
+  gap: var(--space-2);
 }
 
 .conversation-question-header {
-  padding: 0;
-  color: var(--secondary);
-  font-size: 0.8em;
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 0.78em;
   font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* An elicitation field's caption stays a plain caption. */
+.conversation-form-field .conversation-question-header {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--secondary);
+}
+
+.conversation-question-step {
+  margin-left: auto;
+  color: var(--tertiary);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
 }
 
 .conversation-question-words {
-  margin: 1px 0 var(--space-1);
+  margin: 0 0 var(--space-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .conversation-question-options {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 1px;
+  gap: var(--space-1);
 }
 
-/* An option is a row of a list, as a picker's (`.mac-list-row`): the pointer
-   washes it, and a chosen one is the picker's selection, with its check. */
-.conversation-question-option {
+/* An option is a selectable row: the whole row is the target, a radio or
+   checkbox mark on its left, its label over a quiet description. The pointer
+   washes it; a chosen one takes an accent border over an accent tint. */
+.conversation-question-option,
+.conversation-question-other-row {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
-  padding: 3px var(--space-2);
-  border-radius: var(--radius-row);
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface);
   gap: var(--space-2);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
 }
 
 label.conversation-question-option:hover,
 .conversation-question-option[data-shown] {
+  border-color: var(--line);
   background: var(--wash);
 }
 
-.conversation-question-option[data-picked] {
-  background: var(--accent);
-  color: var(--accent-ink);
+.conversation-question-option[data-picked],
+.conversation-question-other-row[data-filled] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 
 /* The radio or checkbox is there for the keyboard; the row shows its state. */
@@ -1910,40 +1959,81 @@ label.conversation-question-option:hover,
   pointer-events: none;
 }
 
-.conversation-question-option:has(
-  .conversation-question-control:focus-visible
+.conversation-question-option:has(.conversation-question-control:focus-visible),
+.conversation-question-other-row:has(
+  .conversation-question-other:focus-visible
 ) {
   outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline-offset: 1px;
 }
 
+/* The mark: a ring for one of many, a box for any of many, filled with the
+   accent and its check when chosen. */
 .conversation-question-mark {
+  display: inline-flex;
   flex: none;
-  width: 1em;
-  color: var(--accent);
-  text-align: center;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--tertiary);
+  border-radius: 50%;
+  margin-top: 0.2em;
+  color: var(--accent-ink);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
 }
 
-.conversation-question-option[data-picked] .conversation-question-mark {
-  color: var(--accent-ink);
+[data-kind="checkbox"] > .conversation-question-mark {
+  border-radius: 3px;
+}
+
+.conversation-question-option[data-picked] .conversation-question-mark,
+.conversation-question-other-row[data-filled] .conversation-question-mark {
+  border-color: var(--accent);
+  background: var(--accent);
 }
 
 .conversation-question-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
+  gap: 1px;
+}
+
+.conversation-question-label {
+  overflow-wrap: anywhere;
 }
 
 .conversation-question-description {
-  overflow: hidden;
   color: var(--secondary);
   font-size: 0.85em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-.conversation-question-option[data-picked] .conversation-question-description {
-  color: color-mix(in srgb, var(--accent-ink) 78%, transparent);
+/* Other: a row like the options, its field borderless inside it. */
+.conversation-question-other {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--primary);
+  field-sizing: content;
+  font: inherit;
+  outline: none;
+  resize: none;
+}
+
+.conversation-question-other::placeholder {
+  color: var(--tertiary);
 }
 
 .conversation-question-note {
@@ -1958,18 +2048,26 @@ label.conversation-question-option:hover,
 }
 
 /* A single-select question whose options carry previews: the options on the
-   left, the preview of the one pointed at, focused or picked on the right. */
+   left, the preview of the one pointed at, focused or picked on the right —
+   or under them, when the card is narrow. */
 .conversation-question-body[data-previewed] {
   display: grid;
   align-items: start;
   gap: var(--space-3);
-  grid-template-columns: minmax(12em, 2fr) minmax(0, 3fr);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+}
+
+@container (max-width: 34em) {
+  .conversation-question-body[data-previewed] {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* A preview is Markdown in a monospace box: an ASCII mockup keeps its columns
    (no line is wrapped or its spaces folded), and a long one scrolls inside
    the box rather than growing the card. */
 .conversation-question-preview {
+  min-width: 0;
   max-height: 22em;
   box-sizing: border-box;
   padding: var(--space-2) var(--space-3);
@@ -1994,6 +2092,14 @@ label.conversation-question-option:hover,
 .conversation-question-no-preview {
   margin: 0;
   color: var(--tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-question-option,
+  .conversation-question-other-row,
+  .conversation-question-mark {
+    transition: none;
+  }
 }
 
 /* An answered call's questions, in its fold for reference. */
