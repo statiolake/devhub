@@ -2698,20 +2698,20 @@ button.conversation-background-line:hover {
   width: 100%;
 }
 
-/* Behind the field, in its metrics. Its text is transparent: only the tint
+/* Behind the field, in its metrics; it follows the field by scrollTop, so it
+   draws no scrollbar. Its text is transparent: only the tint
    of a recognised name shows, and the field's own text is drawn over it. */
 .conversation-composer-backdrop {
   position: absolute;
   inset: 0;
   box-sizing: border-box;
   padding: 2px 0;
-  overflow: auto;
+  overflow: hidden;
   color: transparent;
   font: inherit;
   line-height: 1.55;
   overflow-wrap: break-word;
   pointer-events: none;
-  scrollbar-color: transparent transparent;
   white-space: pre-wrap;
 }
 
