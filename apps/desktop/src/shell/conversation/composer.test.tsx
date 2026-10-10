@@ -140,6 +140,41 @@ function press(key: string, init: KeyboardEventInit = {}) {
 /** The modifiers of the send key, ⌘Return. */
 const SEND = { metaKey: true } as const;
 
+describe("skill names", () => {
+  const backdrop = () =>
+    document.querySelector(".conversation-composer-backdrop");
+
+  it("tints a known command under the field without touching its value", () => {
+    draw(withSession());
+    type("/review src");
+    expect(composer()).toHaveValue("/review src");
+    expect(backdrop()?.textContent).toBe("/review src​");
+    expect(
+      [
+        ...document.querySelectorAll(".conversation-composer-backdrop mark"),
+      ].map((mark) => mark.textContent),
+    ).toEqual(["/review"]);
+    expect(backdrop()).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("draws no backdrop for an unknown name", () => {
+    draw(withSession());
+    type("/foo bar");
+    expect(backdrop()).toBeNull();
+  });
+
+  it("tints the person's sent message the same way", () => {
+    draw(withSession([put(user("u1", "/review the diff, /foo"))]));
+    const text = document.querySelector(".conversation-user-text");
+    expect(
+      [...(text?.querySelectorAll(".conversation-skill") ?? [])].map(
+        (span) => span.textContent,
+      ),
+    ).toEqual(["/review"]);
+    expect(text?.textContent).toBe("/review the diff, /foo");
+  });
+});
+
 describe("sending", () => {
   it("sends on ⌘Return and clears the text once the Agent has it", async () => {
     const { actions } = draw(withSession());

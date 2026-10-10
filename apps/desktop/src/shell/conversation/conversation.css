@@ -2592,6 +2592,46 @@ button.conversation-background-line:hover {
   color: var(--tertiary);
 }
 
+/* A recognised command or skill name: a tint behind it and the accent on it.
+   It changes no metric (no padding, border or weight), so the composer's
+   mirror stays character for character under the field. */
+.conversation-skill {
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+}
+
+.conversation-composer-field {
+  position: relative;
+}
+
+.conversation-composer-field .conversation-composer-input {
+  display: block;
+  width: 100%;
+}
+
+/* Behind the field, in its metrics. Its text is transparent: only the tint
+   of a recognised name shows, and the field's own text is drawn over it. */
+.conversation-composer-backdrop {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: 2px 0;
+  overflow: auto;
+  color: transparent;
+  font: inherit;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  scrollbar-color: transparent transparent;
+  white-space: pre-wrap;
+}
+
+.conversation-composer-backdrop .conversation-skill {
+  color: transparent;
+}
+
 .conversation-composer-toolbar {
   display: flex;
   align-items: center;

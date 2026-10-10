@@ -92,6 +92,7 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
+import { SkillBackdrop } from "./skillTokens";
 import {
   DICTATION_KEY,
   placeDictation,
@@ -851,28 +852,31 @@ export function Composer({
             )
           }
         />
-        <textarea
-          ref={inputRef}
-          className="conversation-composer-input"
-          aria-label="Message to the Agent"
-          rows={1}
-          value={text}
-          disabled={refusal !== undefined}
-          placeholder={composerPlaceholder(transcript.state)}
-          aria-controls={
-            offered.length > 0 ? "conversation-completions" : undefined
-          }
-          aria-expanded={offered.length > 0}
-          onChange={(event) => edit(event.target.value)}
-          {...keys}
-          onPaste={(event) => {
-            // Files pasted (a screenshot) are attached; text pastes as text.
-            const files = [...event.clipboardData.files];
-            if (files.length === 0) return;
-            event.preventDefault();
-            attach(files);
-          }}
-        />
+        <div className="conversation-composer-field">
+          <SkillBackdrop text={text} input={inputRef} />
+          <textarea
+            ref={inputRef}
+            className="conversation-composer-input"
+            aria-label="Message to the Agent"
+            rows={1}
+            value={text}
+            disabled={refusal !== undefined}
+            placeholder={composerPlaceholder(transcript.state)}
+            aria-controls={
+              offered.length > 0 ? "conversation-completions" : undefined
+            }
+            aria-expanded={offered.length > 0}
+            onChange={(event) => edit(event.target.value)}
+            {...keys}
+            onPaste={(event) => {
+              // Files pasted (a screenshot) are attached; text pastes as text.
+              const files = [...event.clipboardData.files];
+              if (files.length === 0) return;
+              event.preventDefault();
+              attach(files);
+            }}
+          />
+        </div>
         {dictation.tentative !== "" &&
         (dictation.phase === "recording" ||
           dictation.phase === "transcribing") ? (

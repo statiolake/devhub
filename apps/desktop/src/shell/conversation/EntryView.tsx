@@ -51,6 +51,7 @@ import {
 import { Clip } from "./Clip";
 import { REVEAL_EVENT } from "./findInTranscript";
 import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
+import { SkillText } from "./skillTokens";
 import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
 import { RewindIcon } from "./icons";
 import { clockTime } from "../resetTime";
@@ -273,7 +274,7 @@ function PersonMessageView({
       data-confirming={(confirming && rewindable) || undefined}
     >
       <PersonBubble origin={origin}>
-        {entry.text !== "" ? entry.text : null}
+        {entry.text !== "" ? <SkillText text={entry.text} /> : null}
       </PersonBubble>
       <ImageStrip images={entry.images} />
       <div className="conversation-message-actions">
