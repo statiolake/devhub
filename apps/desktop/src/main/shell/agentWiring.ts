@@ -35,10 +35,7 @@ import {
 } from "../agent/conversation/hostCommand.js";
 import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
-import {
-	ConversationRefused,
-	SessionNotResumable,
-} from "../agent/conversation/failures.js";
+import { ConversationRefused } from "../agent/conversation/failures.js";
 import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
 import type { AgentRecordStore } from "../agent/conversation/agentRecords.js";
 import {
@@ -128,10 +125,10 @@ export interface GuiConversations {
 	of(agentId: AgentId): Promise<AgentConversation>;
 	/**
 	 * The session a GUI Agent's CLI named, for its terminal mode to resume.
-	 * Refused while the CLI has not named one, which it does with its first
-	 * turn: there is nothing to resume yet.
+	 * None while the CLI has not named one, which it does with its first turn:
+	 * there is nothing to resume yet, and a terminal Agent starts afresh.
 	 */
-	session(agentId: AgentId): Promise<string>;
+	session(agentId: AgentId): Promise<string | undefined>;
 	/** The earlier sessions of a GUI Agent's CLI, as its `/resume` offers them: its Workspace's, or every directory's. */
 	pastSessions(
 		agentId: AgentId,
@@ -335,14 +332,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		},
 		async session(agentId) {
 			const conversation = await conversations.of(agentId);
-			const agent = options.model().agent(agentId)!;
-			const session = conversation.reading().transcript.session.sessionId;
-			if (session === undefined) {
-				throw new SessionNotResumable(
-					`“${agent.displayName}” has no session to resume yet: its CLI names one with the first turn. A new terminal Agent from the same profile starts afresh.`,
-				);
-			}
-			return session;
+			return conversation.reading().transcript.session.sessionId;
 		},
 		async of(agentId) {
 			const agent = options.model().agent(agentId);

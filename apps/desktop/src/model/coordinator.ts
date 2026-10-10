@@ -275,7 +275,7 @@ type AgentAct =
   | {
       readonly kind: "continue";
       readonly presentation: AgentPresentation;
-      readonly session: string;
+      readonly session: string | undefined;
     }
   | { readonly kind: "restart" };
 
@@ -1070,7 +1070,7 @@ export class AppCoordinator {
   private beginContinue(
     agentId: AgentId,
     presentation: AgentPresentation,
-    session: string,
+    session: string | undefined,
     id: OperationId,
   ): IntentOutcome {
     const { workspaceId, profileId } = this.continuable(agentId, presentation);

@@ -414,8 +414,12 @@ export type UserIntent =
       readonly agentId: AgentId;
       /** The presentation the new Agent has: the other one than `agentId`'s. */
       readonly presentation: AgentPresentation;
-      /** The session the Agent's CLI is in, which the new Agent resumes. */
-      readonly session: string;
+      /**
+       * The session the Agent's CLI is in, which the new Agent resumes; none
+       * while the CLI has not named one (nothing said yet), when the new Agent
+       * starts a new session instead.
+       */
+      readonly session: string | undefined;
     }
   | {
       readonly type: "confirm_continue_agent";

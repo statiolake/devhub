@@ -43,7 +43,7 @@ export interface ConversationIpcOptions {
 	readonly continueIn: (
 		agentId: AgentId,
 		presentation: AgentPresentation,
-		session: string,
+		session: string | undefined,
 	) => Promise<unknown>;
 	/** Ask the model to restart an Agent's session: the one way the Sidebar and the chord go too. */
 	readonly restart: (agentId: AgentId) => Promise<unknown>;
@@ -175,6 +175,8 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 	});
 
 	handle(CONVERSATION_CHANNELS.continueInTerminal, async (agentId) => {
+		// Before the CLI names a session (its first turn) there is nothing to
+		// resume: the terminal Agent starts a new one, in the same place.
 		const session = await options.conversations.session(agentId);
 		await options.continueIn(agentId, "tui", session);
 	});
