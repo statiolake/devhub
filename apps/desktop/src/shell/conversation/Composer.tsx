@@ -653,9 +653,15 @@ export function Composer({
   const canSendNow =
     transcript.state.phase === "ready" && transcript.state.turn !== "rewinding";
   const history = useMemo(() => inputHistory(transcript), [transcript]);
-  const query = completionQuery(text);
+  const [place, setPlace] = useState({ text, caret: text.length });
+  const [composing, setComposing] = useState(false);
+  // The caret as the field last reported it, for this very text; text set from
+  // outside (history, a restored draft) has its caret at the end.
+  const caret =
+    place.text === text ? Math.min(place.caret, text.length) : text.length;
+  const query = completionQuery(text, caret);
   const offered =
-    query === undefined || dismissed === text
+    query === undefined || dismissed === text || composing
       ? []
       : completions(transcript.session.commands, query);
   const highlighted = Math.min(selected, offered.length - 1);
@@ -737,7 +743,15 @@ export function Composer({
       // name is being typed.
       if (query === undefined)
         throw new Error(`${command.name} was chosen with no name being typed`);
-      edit(completed(text, query, command));
+      const next = completed(text, query, command);
+      edit(next.text);
+      setPlace({ text: next.text, caret: next.caret });
+      const input = inputRef.current;
+      if (input)
+        requestAnimationFrame(() => {
+          input.focus();
+          input.setSelectionRange(next.caret, next.caret);
+        });
       return;
     }
     edit("");
@@ -866,8 +880,26 @@ export function Composer({
               offered.length > 0 ? "conversation-completions" : undefined
             }
             aria-expanded={offered.length > 0}
-            onChange={(event) => edit(event.target.value)}
+            onChange={(event) => {
+              edit(event.target.value);
+              setPlace({
+                text: event.target.value,
+                caret: event.target.selectionStart,
+              });
+            }}
+            onSelect={(event) => {
+              const field = event.currentTarget;
+              setPlace({ text: field.value, caret: field.selectionStart });
+            }}
             {...keys}
+            onCompositionStart={() => {
+              keys.onCompositionStart();
+              setComposing(true);
+            }}
+            onCompositionEnd={() => {
+              keys.onCompositionEnd();
+              setComposing(false);
+            }}
             onPaste={(event) => {
               // Files pasted (a screenshot) are attached; text pastes as text.
               const files = [...event.clipboardData.files];

@@ -34,8 +34,32 @@ describe("tokenizeSkills", () => {
     expect(skills("/foo bar")).toEqual([]);
   });
 
-  it("takes a / only at the start of the message", () => {
-    expect(skills("please /review")).toEqual([]);
+  it("marks a known skill mid-sentence, and after Japanese text", () => {
+    expect(skills("please /review")).toEqual(["/review"]);
+    expect(skills("これを/reviewして")).toEqual(["/review"]);
+    expect(skills("(/review)")).toEqual(["/review"]);
+  });
+
+  it("leaves a built-in command plain mid-sentence", () => {
+    const words = skillWords([command("/", "clear"), command("/", "review")]);
+    const marked = (text: string) =>
+      tokenizeSkills(text, words)
+        .filter((segment) => segment.skill)
+        .map((segment) => segment.text);
+    expect(marked("/clear")).toEqual(["/clear"]);
+    expect(marked("then /clear")).toEqual([]);
+  });
+
+  it("leaves paths and URLs plain", () => {
+    for (const text of [
+      "src/review",
+      "a/review",
+      "~/review",
+      "./review",
+      "see https://x.dev/review",
+      "x //review",
+    ])
+      expect(skills(text)).toEqual([]);
   });
 
   it("takes a $ skill after any whitespace but not inside a word", () => {

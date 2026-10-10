@@ -3,8 +3,9 @@
  *
  * The names are the Agent's own (`SessionFacts.commands`: Claude's
  * `slash_commands`/`skills`, Codex's skills), so a `/foo` the Agent does not
- * know stays plain. A `/` counts only as the message's first word, as both
- * CLIs read one; a `$` after any whitespace. The composer draws the same
+ * know stays plain. A `/` counts as the message's first word, or mid-sentence
+ * where `opensCommand` says a command can start (a built-in command only as
+ * the first word); a `$` after any whitespace. The composer draws the same
  * tokens under its textarea (`SkillBackdrop`); the transcript draws them in
  * a sent message (`SkillText`).
  */
@@ -19,6 +20,11 @@ import {
   type RefObject,
 } from "react";
 import type { SlashCommand } from "../../model/conversation";
+import {
+  midSentenceCommand,
+  nameLength,
+  opensCommand,
+} from "./commandCompletion";
 
 export interface TextSegment {
   readonly text: string;
@@ -52,14 +58,19 @@ export function tokenizeSkills(
     if (end > plain)
       segments.push({ text: text.slice(plain, end), skill: false });
   };
-  for (const match of text.matchAll(/(?<=^|\s)[/$]\S*/gu)) {
+  for (const match of text.matchAll(/[/$][^\s/$]*/gu)) {
     const start = match.index;
-    if (match[0][0] === "/" && start !== 0) continue;
-    let word = match[0];
+    const head = text.slice(0, start);
+    if (match[0][0] === "/") {
+      if (!opensCommand(head)) continue;
+    } else if (head !== "" && !/\s$/u.test(head)) continue;
+    let word = match[0].slice(0, nameLength(match[0].slice(1)) + 1);
     if (!words.has(word)) {
       word = word.replace(TRAILING, "");
       if (!words.has(word)) continue;
     }
+    if (word[0] === "/" && start !== 0 && !midSentenceCommand(word.slice(1)))
+      continue;
     flush(start);
     segments.push({ text: word, skill: true });
     plain = start + word.length;
