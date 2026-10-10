@@ -199,6 +199,10 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			defaultPresentation: config.agents.default_presentation,
 			resumeAfterLimit: config.agents.resume_after_limit,
 			resumeAfterLimitMessage: config.agents.resume_after_limit_message,
+			autoCompactBeforeCacheExpiry:
+				config.agents.auto_compact_before_cache_expiry,
+			autoCompactLeadSeconds: config.agents.auto_compact_lead_seconds,
+			autoCompactMinTokens: config.agents.auto_compact_min_tokens,
 		},
 		agentActions: config.agentActions.map((action) => ({
 			trigger: action.trigger,
@@ -332,6 +336,10 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			default_presentation: wire.agents.defaultPresentation,
 			resume_after_limit: wire.agents.resumeAfterLimit,
 			resume_after_limit_message: wire.agents.resumeAfterLimitMessage,
+			auto_compact_before_cache_expiry:
+				wire.agents.autoCompactBeforeCacheExpiry,
+			auto_compact_lead_seconds: wire.agents.autoCompactLeadSeconds,
+			auto_compact_min_tokens: wire.agents.autoCompactMinTokens,
 		},
 		// The order is the order the window shows them in — the tree is where a
 		// person arranges these — so the position in this list is the `order`

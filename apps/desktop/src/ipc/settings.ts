@@ -194,6 +194,10 @@ export interface SettingsConfigWire {
 		readonly defaultPresentation: "tui" | "gui";
 		readonly resumeAfterLimit: boolean;
 		readonly resumeAfterLimitMessage: string;
+		/** `auto_compact_before_cache_expiry`, with its config-only tuning carried through. */
+		readonly autoCompactBeforeCacheExpiry: boolean;
+		readonly autoCompactLeadSeconds: number;
+		readonly autoCompactMinTokens: number;
 	};
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];

@@ -39,6 +39,10 @@ import { ConversationRefused } from "../agent/conversation/failures.js";
 import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
 import type { AgentRecordStore } from "../agent/conversation/agentRecords.js";
 import {
+	CACHE_KEEP_OFF,
+	type CacheKeepSettings,
+} from "../agent/conversation/cacheKeeper.js";
+import {
 	REAL_CLOCK,
 	type LimitResumeRecord,
 	type LimitResumeSettings,
@@ -102,6 +106,8 @@ export interface AgentWiringOptions {
 	readonly resumeAfterLimit: () => LimitResumeSettings;
 	/** What each GUI Agent's conversation decided about a usage limit, kept across restarts. */
 	readonly limitResumes: AgentRecordStore<LimitResumeRecord>;
+	/** `[agents] auto_compact_*`, as the config says now; off when absent. */
+	readonly cacheKeeping?: () => CacheKeepSettings;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -227,6 +233,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						},
 						clock: REAL_CLOCK,
 					},
+					{ settings: options.cacheKeeping ?? (() => CACHE_KEEP_OFF) },
 				),
 		);
 

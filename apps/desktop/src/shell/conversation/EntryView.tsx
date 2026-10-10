@@ -92,6 +92,8 @@ const ORIGIN_NOTES: Readonly<Record<SentOrigin, string | undefined>> = {
   person: undefined,
   injection: "Sent by a template",
   "after-limit": "Sent automatically after the limit reset",
+  "auto-compact":
+    "Sent automatically to compact before the prompt cache expired",
 };
 
 function PersonBubble({

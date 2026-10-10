@@ -336,6 +336,17 @@ export interface AgentsConfig {
   readonly resume_after_limit: boolean;
   /** What is written: never empty (`resumeMessageProblem`). */
   readonly resume_after_limit_message: string;
+  /**
+   * Whether an idle GUI Claude Agent's conversation is compacted (`/compact`)
+   * shortly before its prompt cache expires, so the next message does not
+   * re-write the whole conversation into the cache. Off by default: the
+   * compaction itself costs tokens.
+   */
+  readonly auto_compact_before_cache_expiry: boolean;
+  /** How long before the cache expires it is compacted, in seconds (> 0). */
+  readonly auto_compact_lead_seconds: number;
+  /** The least context, in tokens, a conversation needs to be worth compacting (>= 0). */
+  readonly auto_compact_min_tokens: number;
 }
 
 /**
@@ -729,6 +740,9 @@ export function defaultConfig(): Config {
       default_presentation: "tui",
       resume_after_limit: true,
       resume_after_limit_message: DEFAULT_RESUME_MESSAGE,
+      auto_compact_before_cache_expiry: false,
+      auto_compact_lead_seconds: 60,
+      auto_compact_min_tokens: 20_000,
     },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
@@ -952,6 +966,19 @@ function optionalNumber(
   const value = table[key];
   if (value === undefined) return fallback;
   if (typeof value !== "number") fail("invalid_type", `${path}.${key}`);
+  return value;
+}
+
+/** An `[agents]` number that must be finite and above zero (or at least zero). */
+function positiveNumber(
+  table: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  zeroAllowed: boolean,
+): number {
+  const value = optionalNumber(table, key, "agents", fallback);
+  if (!Number.isFinite(value) || value < 0 || (!zeroAllowed && value === 0))
+    fail("invalid_type", `agents.${key}`);
   return value;
 }
 
@@ -1912,6 +1939,9 @@ export function interpretConfig(document: unknown): Config {
       "default_presentation",
       "resume_after_limit",
       "resume_after_limit_message",
+      "auto_compact_before_cache_expiry",
+      "auto_compact_lead_seconds",
+      "auto_compact_min_tokens",
     ],
     "agents",
   );
@@ -2091,6 +2121,24 @@ export function interpretConfig(document: unknown): Config {
         "agents",
         defaults.agents.resume_after_limit_message,
       ),
+      auto_compact_before_cache_expiry: optionalBoolean(
+        agentsTable,
+        "auto_compact_before_cache_expiry",
+        "agents",
+        defaults.agents.auto_compact_before_cache_expiry,
+      ),
+      auto_compact_lead_seconds: positiveNumber(
+        agentsTable,
+        "auto_compact_lead_seconds",
+        defaults.agents.auto_compact_lead_seconds,
+        false,
+      ),
+      auto_compact_min_tokens: positiveNumber(
+        agentsTable,
+        "auto_compact_min_tokens",
+        defaults.agents.auto_compact_min_tokens,
+        true,
+      ),
     },
     workspaceSources:
       rawSources === undefined
@@ -2206,6 +2254,10 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       default_presentation: config.agents.default_presentation,
       resume_after_limit: config.agents.resume_after_limit,
       resume_after_limit_message: config.agents.resume_after_limit_message,
+      auto_compact_before_cache_expiry:
+        config.agents.auto_compact_before_cache_expiry,
+      auto_compact_lead_seconds: config.agents.auto_compact_lead_seconds,
+      auto_compact_min_tokens: config.agents.auto_compact_min_tokens,
     },
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({

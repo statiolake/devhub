@@ -253,6 +253,17 @@ export function GeneralSection({
             });
           }}
         />
+        <SwitchRow
+          label="Auto-compact before cache expires"
+          help="When a GUI Claude agent sits idle and its prompt cache is about to expire, send /compact shortly before, so your next message re-caches a short summary instead of the whole conversation. The compaction itself uses tokens, and small conversations are left alone."
+          checked={config.agents.autoCompactBeforeCacheExpiry}
+          onChange={(autoCompactBeforeCacheExpiry) => {
+            update({
+              ...config,
+              agents: { ...config.agents, autoCompactBeforeCacheExpiry },
+            });
+          }}
+        />
         <Row
           label="Resume message"
           help="What is sent for you, shown in the conversation as your message sent automatically."

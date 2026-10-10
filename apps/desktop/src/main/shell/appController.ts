@@ -1103,6 +1103,14 @@ export class AppController {
 				};
 			},
 			limitResumes: this.limitResumes,
+			cacheKeeping: () => {
+				const { agents } = this.requireConfig();
+				return {
+					enabled: agents.auto_compact_before_cache_expiry,
+					leadSeconds: agents.auto_compact_lead_seconds,
+					minTokens: agents.auto_compact_min_tokens,
+				};
+			},
 		});
 		const agentWiring = this.agentWiring;
 		// Dictation into the GUI Agent composer: the bundled recogniser, if

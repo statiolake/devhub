@@ -131,9 +131,16 @@ export type TranscriptEntry =
  * Whom DevHub wrote a user message for: the person (at the composer), a
  * template (an injection), or the person again, by DevHub on their behalf,
  * once a usage limit that stopped the Agent had reset (`after-limit`, see
- * `LimitResume`). Written into the line itself, so a replay says the same.
+ * `LimitResume`), or DevHub compacting an idle conversation before its
+ * prompt cache went cold (`auto-compact`). Written into the line itself, so
+ * a replay says the same.
  */
-export const SENT_ORIGINS = ["person", "injection", "after-limit"] as const;
+export const SENT_ORIGINS = [
+  "person",
+  "injection",
+  "after-limit",
+  "auto-compact",
+] as const;
 export type SentOrigin = (typeof SENT_ORIGINS)[number];
 
 export function isSentOrigin(value: unknown): value is SentOrigin {

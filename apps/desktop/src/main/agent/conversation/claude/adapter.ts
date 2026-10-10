@@ -388,6 +388,10 @@ interface PendingElicitation {
 	readonly entry: undefined;
 }
 
+/** Said after the `/compact` DevHub sent by itself (`CacheKeeper`). */
+const AUTO_COMPACTED =
+	"Auto-compacted to keep the prompt cache warm: the conversation was idle and its cache was about to expire.";
+
 export class ClaudeAdapter implements ProtocolAdapter {
 	private current: Transcript = EMPTY_TRANSCRIPT;
 	private spent = false;
@@ -1203,6 +1207,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 								rewindable: false,
 							},
 			});
+			if (message.origin === "auto-compact")
+				this.notice("info", AUTO_COMPACTED, undefined);
 		}
 		if (answered.some((each) => !each.taken)) this.emitSending();
 	}
@@ -2045,12 +2051,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		parent: EntryId | null,
 	): void {
 		if (parent !== null) return;
+		let automatic = false;
 		if (when === "live") {
 			const taken = this.unanswered.find(
 				(each) => !each.taken && invocation(each.message.text) !== undefined,
 			);
 			if (taken !== undefined) {
 				taken.taken = true;
+				automatic = taken.message.origin === "auto-compact";
 				this.emitSending();
 				this.turn("running");
 			}
@@ -2067,6 +2075,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				failed: false,
 			},
 		});
+		if (automatic) this.notice("info", AUTO_COMPACTED, undefined);
 	}
 
 	/** What a command printed: on the command it follows, or alone when none said what ran. */

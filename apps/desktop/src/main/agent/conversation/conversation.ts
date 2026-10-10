@@ -97,7 +97,18 @@ import {
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ConversationRefused, ConversationStopped } from "./failures.js";
-import { LimitResumer, type LimitResumeOptions } from "./limitResume.js";
+import {
+	AUTO_COMPACT_COMMAND,
+	CACHE_KEEP_OFF,
+	CacheKeeper,
+	type CacheKeepSettings,
+} from "./cacheKeeper.js";
+import {
+	LimitResumer,
+	REAL_CLOCK,
+	type LimitResumeClock,
+	type LimitResumeOptions,
+} from "./limitResume.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
@@ -231,12 +242,17 @@ export class AgentConversation {
 	#idle = false;
 	#heldCount = 0;
 	readonly #limits: LimitResumer;
+	readonly #cacheKeeper: CacheKeeper;
 
 	constructor(
 		host: ConversationHost,
 		adapter: ProtocolAdapter,
 		publish: ConversationPublish,
 		limits: LimitResumeOptions,
+		cacheKeeping: {
+			readonly settings: () => CacheKeepSettings;
+			readonly clock?: LimitResumeClock;
+		} = { settings: () => CACHE_KEEP_OFF },
 	) {
 		this.#host = host;
 		this.#adapter = adapter;
@@ -245,6 +261,11 @@ export class AgentConversation {
 			limits,
 			(resume) => this.#apply({ type: "limit-resume", resume }),
 			() => this.#resumeAfterLimit(),
+		);
+		this.#cacheKeeper = new CacheKeeper(
+			cacheKeeping.settings,
+			cacheKeeping.clock ?? REAL_CLOCK,
+			() => this.#compactBeforeCacheExpires(),
 		);
 	}
 
@@ -449,6 +470,31 @@ export class AgentConversation {
 			} catch (error: unknown) {
 				if (!(error instanceof HostLinkFailure)) throw error;
 				this.#limits.failed(error.message);
+			}
+		}).catch((error: unknown) => this.#crash(error));
+	}
+
+	/**
+	 * The prompt cache is about to go cold on an idle conversation: `/compact`
+	 * is written, marked as DevHub's (`auto-compact`), if it still should be
+	 * (`CacheKeeper.take`). A write that fails is let go: the next warm
+	 * period gets its own chance.
+	 */
+	#compactBeforeCacheExpires(): void {
+		void this.#serial(async () => {
+			if (this.#cancel.isCancelled || this.#rewind !== undefined) return;
+			if (!this.#cacheKeeper.take(this.#transcript)) return;
+			try {
+				await this.#write(
+					this.#adapter.encode({
+						kind: "send",
+						text: AUTO_COMPACT_COMMAND,
+						images: [],
+						origin: "auto-compact",
+					}),
+				);
+			} catch (error: unknown) {
+				if (!(error instanceof HostLinkFailure)) throw error;
 			}
 		}).catch((error: unknown) => this.#crash(error));
 	}
@@ -728,6 +774,7 @@ export class AgentConversation {
 	async stop(): Promise<void> {
 		this.#cancel.cancel();
 		this.#limits.stop();
+		this.#cacheKeeper.stop();
 		await this.#following;
 	}
 
@@ -805,6 +852,7 @@ export class AgentConversation {
 	#crash(error: unknown): void {
 		this.#cancel.cancel();
 		this.#limits.stop();
+		this.#cacheKeeper.stop();
 		this.#crashed = error instanceof Error ? error : new Error(String(error));
 		console.error(
 			"[devhub] a GUI Agent's conversation stopped on a failure DevHub did not expect:",
@@ -843,6 +891,7 @@ export class AgentConversation {
 		// the conversation, never the other way round.
 		if (event.type !== "limit-resume")
 			this.#limits.observe(this.#transcript, this.#offset);
+		this.#cacheKeeper.observe(this.#transcript);
 	}
 
 	/** An edit's rewind is over once the turn has been `rewinding` and is not any more. */
