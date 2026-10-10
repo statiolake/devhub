@@ -2264,25 +2264,32 @@ label.conversation-question-option:hover,
   position: relative;
 }
 
-/* On the box's top edge, at the left, so nothing moves when it appears and
-   the smart buttons keep the right. */
+/* The transcript's last line while a turn runs, as the CLI draws it: after
+   the newest entry, in the history's own flow, quiet and small. */
 .conversation-activity {
-  position: absolute;
-  top: 0;
-  left: var(--space-4);
-  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border-radius: 999px;
-  background: var(--raised);
+  margin-top: var(--space-3);
   color: var(--tertiary);
-  font-size: 0.75em;
+  font-size: 0.85em;
   line-height: 1.6;
-  pointer-events: none;
   user-select: none;
   white-space: nowrap;
+  transition: opacity var(--motion-base) var(--motion-ease);
+}
+
+.conversation-transcript[data-settled] > .conversation-activity {
+  animation: conversation-rise-in var(--motion-base) var(--motion-ease);
+}
+
+.conversation-activity[data-leaving] {
+  opacity: 0;
+}
+
+.conversation-activity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .conversation-activity-dots {
@@ -2314,6 +2321,7 @@ label.conversation-question-option:hover,
 
 .conversation-activity-label {
   color: var(--secondary);
+  animation: conversation-fade-in var(--motion-fast) var(--motion-ease);
 }
 
 @keyframes conversation-activity-pulse {
@@ -2330,6 +2338,85 @@ label.conversation-question-option:hover,
   .conversation-activity-dots span {
     animation: none;
     opacity: 0.6;
+  }
+}
+
+/* Motion: how state changes in the conversation are shown. Each is short
+   (`--motion-*` in tokens.css) and moves only opacity, a few pixels of
+   translate, or a disclosure's own height — never anything while it streams.
+
+   New entries rise in, but only those `useFreshEntries` marks: output that
+   arrived, not a transcript being loaded or redrawn. */
+@keyframes conversation-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
+}
+
+@keyframes conversation-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.conversation-entry[data-fresh] {
+  animation: conversation-rise-in var(--motion-slow) var(--motion-ease);
+}
+
+/* What appears inside an entry once the transcript is drawn: a request for
+   permission or an answer, a notice, an error. `@starting-style` applies to
+   new elements only, so nothing already there replays it. */
+.conversation-transcript[data-settled]
+  :is(.conversation-request, .conversation-notice) {
+  transition:
+    opacity var(--motion-base) var(--motion-ease),
+    transform var(--motion-base) var(--motion-ease);
+}
+
+@starting-style {
+  .conversation-transcript[data-settled]
+    :is(.conversation-request, .conversation-notice) {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
+}
+
+/* Disclosures open and close to their height rather than snapping: the
+   thinking block, a tool's details, a denial, a notice's raw text, an
+   image. Closed, the content leaves layout as before (`content-visibility`
+   switches discretely once the close has run). */
+.conversation-transcript {
+  interpolate-size: allow-keywords;
+}
+
+.conversation-transcript details::details-content {
+  block-size: 0;
+  overflow-y: clip;
+  opacity: 0;
+  transition:
+    block-size var(--motion-base) var(--motion-ease),
+    opacity var(--motion-fast) var(--motion-ease),
+    content-visibility var(--motion-base) allow-discrete;
+}
+
+.conversation-transcript details[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-entry[data-fresh],
+  .conversation-transcript[data-settled] > .conversation-activity,
+  .conversation-activity-label {
+    animation: none;
+  }
+
+  .conversation-activity,
+  .conversation-transcript[data-settled]
+    :is(.conversation-request, .conversation-notice),
+  .conversation-transcript details::details-content {
+    transition: none;
   }
 }
 
@@ -2982,4 +3069,27 @@ button.conversation-setting-face:focus-visible {
   overflow-x: auto;
   overflow-y: hidden;
   margin: 0.6em 0;
+}
+
+/* The composer's own arrivals: the completion list over the field, a
+   message queued to be sent, the words dictation has not committed yet. Each
+   mounts only when it appears, so a plain entry animation is enough. */
+.conversation-completions {
+  animation: conversation-rise-in var(--motion-fast) var(--motion-ease);
+}
+
+.conversation-pending-item {
+  animation: conversation-rise-in var(--motion-base) var(--motion-ease);
+}
+
+.conversation-dictation-tentative {
+  animation: conversation-fade-in var(--motion-fast) var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-completions,
+  .conversation-pending-item,
+  .conversation-dictation-tentative {
+    animation: none;
+  }
 }

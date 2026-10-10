@@ -250,6 +250,15 @@
    * row, so it is the same at any row height; only a change of type size or
    * family would move it. */
   --sidebar-glyph-optical-shift: 1px;
+
+  /* Motion: one easing (quick out, soft settle) and three short durations.
+   * State changes are shown, never performed — nothing here runs long enough
+   * to wait on. Under Reduce Motion each component turns its own off. */
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 220ms;
+  --motion-rise: 4px;
 }
 
 /*

@@ -104,7 +104,6 @@ import {
   savedLanguage,
 } from "./dictation";
 import { EditIcon, MicIcon, SendIcon, StopIcon } from "./icons";
-import { ActivityLine } from "./ActivityLine";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
@@ -857,7 +856,6 @@ export function Composer({
           inputRef.current?.focus();
         }}
       >
-        <ActivityLine transcript={transcript} />
         <Attachments
           images={attachments}
           remove={(image) =>
