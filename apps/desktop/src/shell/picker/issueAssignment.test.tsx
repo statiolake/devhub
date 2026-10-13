@@ -272,6 +272,38 @@ describe("assigning an Issue", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it("offers Just open the editor after the New rows, and opens the folder with no agent", async () => {
+    const { assignIssue, prepareIssueFolder, dispatch } = mount();
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByRole("dialog", {
+      name: /Agent for example\/widget#128/u,
+    });
+    // After the New rows, so the first row, and Return, are unchanged.
+    const rows = await screen.findAllByRole("option");
+    expect(rows[0]).toHaveTextContent(/Claude/u);
+    expect(rows[2]).toHaveTextContent(/Just open the editor/u);
+
+    fireEvent.click(
+      screen.getByRole("option", { name: /Just open the editor/u }),
+    );
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith({
+        issueUrl: ISSUE,
+        place: { kind: "local", path: "/projects/widget_128" },
+        editorOnly: true,
+      });
+    });
+    expect(assignIssue).toHaveBeenCalledTimes(1);
+    expect(prepareIssueFolder).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("asks the agent question in New Agent's words, with the Issue in the title", async () => {
     mount();
 
@@ -1219,7 +1251,11 @@ describe("going on with an earlier session", () => {
       );
     });
     await vi.waitFor(() => {
-      expect(rowTitles()).toEqual(["New Claude Session", "New Cursor Session"]);
+      expect(rowTitles()).toEqual([
+        "New Claude Session",
+        "New Cursor Session",
+        "Just open the editor",
+      ]);
     });
   });
 });

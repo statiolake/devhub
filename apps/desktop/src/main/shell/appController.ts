@@ -6666,6 +6666,11 @@ export class AppController {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
 		}
 		const opening = requestedLocation(request.place);
+		if (request.editorOnly === true) {
+			// "Just open the editor": the folder becomes the selected Workspace
+			// with its editor, and no agent is started or told anything.
+			return this.openFolder(opening);
+		}
 		await this.openFolder(opening);
 		// Not `openFolder(opening, withAgent)`: this flow has more to do around
 		// the creation than that shortcut can express — the Agent goes beside the

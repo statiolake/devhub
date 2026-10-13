@@ -1223,7 +1223,10 @@ sessions DevHub can list, so they have their New row only.
   session (a launch that resumes, below), ⌘Return in the other presentation,
   ⌥Return beside the editor, ⌘⌥Return both, exactly as a New row does.
 - **Assign Issue** makes the folder before it asks which agent, and opens it
-  only once the agent is chosen. Once the person picks a row of "Where to work
+  only once the agent is chosen. Its agent list also has a **Just open the
+  editor** row, after the New rows (so Return still starts the first
+  profile): it opens the folder as the selected Workspace with its editor, and
+  starts no agent and sends no Issue prompt. Once the person picks a row of "Where to work
   on owner/repo#128", DevHub does the folder work and nothing else: it creates
   the worktree, or takes the worktree that branch is already checked out in,
   or the root checkout as it stands. A new worktree is named for the Issue,

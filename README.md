@@ -248,7 +248,8 @@ presentation = "gui"        # optional override of [agents] default_presentation
                             # Assign Issue creates the Issue's worktree (or takes the
                             # existing folder) first, asks with New Agent's list for
                             # that folder, and opens it as a Workspace only with the
-                            # agent; cancelling there leaves the worktree on disk.
+                            # agent; cancelling there leaves the worktree on disk. Its list also has
+                            # "Just open the editor": the Workspace and editor, no agent.
                             # A GUI Agent runs its CLI in structured mode (`claude -p`
                             # stream-json, `codex app-server`) under a small host in its
                             # tmux session, so it outlives a DevHub restart like a TUI one.

@@ -72,6 +72,8 @@ export interface FolderAgentPickerProps {
   readonly step?: number;
   /** Why the last attempt to start the one chosen did not work. */
   readonly failure?: string;
+  /** Offers "Just open the editor", where the folder can be opened alone. */
+  readonly onOpenEditor?: () => void;
   readonly onChoose: (choice: AgentChoice) => void;
   readonly onCancel: () => void;
 }
@@ -86,6 +88,7 @@ export function FolderAgentPicker({
   place,
   step,
   failure,
+  onOpenEditor,
   onChoose,
   onCancel,
 }: FolderAgentPickerProps) {
@@ -102,6 +105,7 @@ export function FolderAgentPicker({
       step={step}
       hint={hint}
       sessionsIn={place}
+      onOpenEditor={onOpenEditor}
       onChoose={onChoose}
       onCancel={onCancel}
     />

@@ -90,12 +90,21 @@ export interface AgentProfilePickerProps {
    * start the Agent in — and then there are only the New rows.
    */
   readonly sessionsIn: WorkspacePlaceWire | undefined;
+  /**
+   * Offers "Just open the editor" after the New rows, for a flow whose folder
+   * can be opened without an agent. Never the first row, so Return is
+   * unchanged.
+   */
+  readonly onOpenEditor?: () => void;
   readonly onChoose: (choice: AgentChoice) => void;
   readonly onCancel: () => void;
 }
 
 /** The kinds whose CLI keeps sessions DevHub can list and resume. */
 const RESUMABLE: readonly AgentProfileKindWire[] = ["claude", "codex"];
+
+/** The row that opens the folder without an agent. */
+const OPEN_EDITOR_ROW = "devhub:open-editor";
 
 /** The quiet last row while a listing is still being read. */
 const READING_ROW = "devhub:sessions-reading";
@@ -117,6 +126,7 @@ export function AgentProfilePicker({
   step,
   hint,
   sessionsIn,
+  onOpenEditor,
   onChoose,
   onCancel,
 }: AgentProfilePickerProps) {
@@ -142,6 +152,14 @@ export function AgentProfilePicker({
         accessory: presentationAccessory(profile),
       };
     });
+    if (onOpenEditor !== undefined) {
+      items.push({
+        id: OPEN_EDITOR_ROW,
+        label: "Just open the editor",
+        detail: "No agent is started",
+        searchText: "editor open no agent without just",
+      });
+    }
     const now = Date.now();
     const offered = new Set<string>();
     const past: { readonly item: PickerItem; readonly at: number }[] = [];
@@ -183,7 +201,7 @@ export function AgentProfilePicker({
       });
     }
     return { items, targets, sessionCount: past.length };
-  }, [profiles, listings]);
+  }, [profiles, listings, onOpenEditor]);
 
   const [activeId, setActiveId] = useState<string>();
   const onActiveChange = useCallback((item: PickerItem | undefined) => {
@@ -247,6 +265,10 @@ export function AgentProfilePicker({
         ? {}
         : { aside: <SessionPreview preview={preview} empty={false} /> })}
       onChoose={(choice) => {
+        if (choice.id === OPEN_EDITOR_ROW && onOpenEditor !== undefined) {
+          onOpenEditor();
+          return;
+        }
         const target = targets.get(choice.id);
         if (target === undefined) {
           // The row taken is one this list drew, from these profiles and

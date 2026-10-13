@@ -736,6 +736,9 @@ async function prepareFolder(
   return agentStep(services, work, folder);
 }
 
+/** The answer of "Just open the editor": the folder, and no agent. */
+const EDITOR_ONLY = Symbol("editor-only");
+
 /**
  * Which agent works on it, in the folder the branch question settled on.
  *
@@ -759,16 +762,29 @@ function agentStep(
 ): WizardStep {
   const { item } = work;
   return async (input) => {
-    const agent = await input.sheet<AgentChoice>((controls) => (
-      <FolderAgentPicker
-        title={`Agent for ${itemLabel(item)}`}
-        place={folder}
-        step={controls.step}
-        failure={controls.failure}
-        onChoose={controls.answer}
-        onCancel={controls.back}
-      />
-    ));
+    const agent = await input.sheet<AgentChoice | typeof EDITOR_ONLY>(
+      (controls) => (
+        <FolderAgentPicker
+          title={`Agent for ${itemLabel(item)}`}
+          place={folder}
+          step={controls.step}
+          failure={controls.failure}
+          onOpenEditor={() => controls.answer(EDITOR_ONLY)}
+          onChoose={controls.answer}
+          onCancel={controls.back}
+        />
+      ),
+    );
+    if (agent === EDITOR_ONLY) {
+      await input.working(`Opening ${itemLabel(item)}…`, () =>
+        services.assignIssue({
+          issueUrl: gitHubItemUrl(item),
+          place: folder,
+          editorOnly: true,
+        }),
+      );
+      return undefined;
+    }
     await input.working(`Starting the agent for ${itemLabel(item)}…`, () =>
       services.assignIssue({
         issueUrl: gitHubItemUrl(item),

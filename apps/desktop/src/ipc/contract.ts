@@ -199,10 +199,22 @@ export interface IssueFolderRequest {
  * The second half: open the folder as the selected Workspace, start an agent
  * in it, and tell it about the Issue — one act, taken once the agent is chosen.
  */
-export interface IssueAssignment {
+export type IssueAssignment = IssueEditorOnly | IssueAgentAssignment;
+
+/** Fields both ways of assigning share. */
+interface IssueAssignmentBase {
 	readonly issueUrl: string;
 	/** The folder `prepareIssueFolder` answered with, on its machine. */
 	readonly place: WorkspacePlaceWire;
+}
+
+/** "Just open the editor": open the folder as the selected Workspace, no agent. */
+export interface IssueEditorOnly extends IssueAssignmentBase {
+	readonly editorOnly: true;
+}
+
+export interface IssueAgentAssignment extends IssueAssignmentBase {
+	readonly editorOnly?: false;
 	readonly profileId: string;
 	/**
 	 * Which action to start the agent with, from `agent_actions`.
