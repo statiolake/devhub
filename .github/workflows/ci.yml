@@ -5,8 +5,8 @@ name: CI
 # The repository is public, so the standard runners cost nothing and there is no
 # reason to make a person remember to ask for a check. The job still needs a
 # macOS runner — the app is a macOS bundle and the packaging step signs it — so
-# it is not free of *time*: `concurrency` below skips a superseded push run's
-# remaining steps (see the "superseded" steps below), and the VS Code build cache keeps the
+# it is not free of *time*: `concurrency` below cancels a branch's older run the
+# moment a newer commit lands on it, and the VS Code build cache keeps the
 # expensive half of the tree between runs.
 #
 # `pnpm run check` here is the same command a developer runs before pushing.
@@ -19,13 +19,12 @@ on:
 permissions:
   contents: read
 
-# No `concurrency` block, deliberately. A cancelled run is reported (and
-# emailed) to the pusher much like a failure, and a concurrency group cancels
-# not only in-progress runs but also any *pending* run it replaces. Instead a
-# push run asks, at the start and before every expensive step, whether main has
-# already moved past its commit; if so it skips the remaining steps and ends
-# green with a notice. The tip of main always runs to completion; pull requests
-# and manual runs are never skipped.
+concurrency:
+  # One live run per branch. A superseded commit's result is not worth waiting
+  # for, and a pull request that is pushed to twice in a minute would otherwise
+  # hold two macOS runners to answer the same question.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -42,32 +41,17 @@ jobs:
     env:
       CI: "true"
     steps:
-      # Push runs only: if the branch already points past this commit, a newer
-      # run is checking it, so skip everything below and finish green.
-      - name: Check whether this commit is superseded
-        if: env.SUPERSEDED != '1' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tip="$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${GITHUB_REF}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-            echo "SUPERSEDED=1" >> "$GITHUB_ENV"
-            echo "::notice title=Superseded::Superseded by ${tip}, skipped"
-          fi
-
       # The submodule is not optional here: `pnpm run check` reads it. The
       # proposal test in scripts/product_metadata_test.py asserts that every
       # API proposal DevHub grants is one this VS Code declares, which means
       # opening files under vscode/src.
       - name: Check out source
-        if: env.SUPERSEDED != '1'
         uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 1
 
       - name: Identify the pinned VS Code
-        if: env.SUPERSEDED != '1'
         id: meta
         run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -75,11 +59,9 @@ jobs:
       # `pnpm store path` to find the cache directory, and a runner starts with
       # no pnpm on its PATH. Corepack ships with the runner's default Node.
       - name: Activate pinned pnpm
-        if: env.SUPERSEDED != '1'
         run: corepack enable && corepack prepare pnpm@11.20.0 --activate
 
       - name: Set up Node.js
-        if: env.SUPERSEDED != '1'
         uses: actions/setup-node@v4
         with:
           node-version: 22.21.1
@@ -87,7 +69,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Set up Rust
-        if: env.SUPERSEDED != '1'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
@@ -96,13 +77,8 @@ jobs:
       # Keyed exactly as the nightly's is, so the two workflows share entries
       # rather than each paying for its own first build of the same tree. See
       # the nightly for what is in it and what deliberately is not.
-      # Restore and save are split (rather than one actions/cache step, whose
-      # post step saves whenever the job succeeds) so that a run skipped as
-      # superseded half-way never saves an unprovisioned tree under this key.
       - name: Restore the provisioned VS Code build
-        id: vscode-cache
-        if: env.SUPERSEDED != '1'
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4
         with:
           path: |
             vscode-toolchain
@@ -115,7 +91,6 @@ jobs:
             hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
 
       - name: Install JavaScript dependencies
-        if: env.SUPERSEDED != '1'
         run: pnpm install --frozen-lockfile
 
       # A checked-out submodule is not a usable one, and `pnpm run check` needs
@@ -123,19 +98,7 @@ jobs:
       # the types in vscode/node_modules, and the tests read fields that only
       # exist once patches/vscode/*.patch is on the tree. Checking out the
       # submodule without this step is how the first run of this workflow failed.
-      - name: Re-check whether this commit is superseded
-        if: env.SUPERSEDED != '1' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tip="$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${GITHUB_REF}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-            echo "SUPERSEDED=1" >> "$GITHUB_ENV"
-            echo "::notice title=Superseded::Superseded by ${tip}, skipped"
-          fi
-
       - name: Provision the VS Code submodule
-        if: env.SUPERSEDED != '1'
         env:
           # The nested installs under build/ and extensions/* download prebuilt
           # binaries from GitHub releases; unauthenticated requests from shared
@@ -143,34 +106,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
 
-      - name: Re-check whether this commit is superseded
-        if: env.SUPERSEDED != '1' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tip="$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${GITHUB_REF}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-            echo "SUPERSEDED=1" >> "$GITHUB_ENV"
-            echo "::notice title=Superseded::Superseded by ${tip}, skipped"
-          fi
-
       - name: Run deterministic checks
-        if: env.SUPERSEDED != '1'
         run: pnpm run check
 
-      - name: Re-check whether this commit is superseded
-        if: env.SUPERSEDED != '1' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tip="$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${GITHUB_REF}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-            echo "SUPERSEDED=1" >> "$GITHUB_ENV"
-            echo "::notice title=Superseded::Superseded by ${tip}, skipped"
-          fi
-
       - name: Build the local workspace
-        if: env.SUPERSEDED != '1'
         env:
           # The built-in extension set and the nested npm installs pull binaries
           # from GitHub releases; unauthenticated requests from shared runner
@@ -186,17 +125,6 @@ jobs:
         # spend (scripts/build_whisper_test.py keeps the logic honest here).
         run: scripts/build-app.sh --without-reh --without-whisper
 
-      - name: Re-check whether this commit is superseded
-        if: env.SUPERSEDED != '1' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tip="$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${GITHUB_REF}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-            echo "SUPERSEDED=1" >> "$GITHUB_ENV"
-            echo "::notice title=Superseded::Superseded by ${tip}, skipped"
-          fi
-
       # The build assembles the bundle and stops there — starting a DevHub has
       # effects on the machine that starts it, which a developer running
       # `pnpm build` never asked for. A runner is disposable, so here the app
@@ -204,17 +132,4 @@ jobs:
       # only way to catch a bundle whose main process comes up and then stops
       # pumping its event loop.
       - name: Smoke-test the packaged app
-        if: env.SUPERSEDED != '1'
         run: pnpm run smoke
-
-      - name: Save the provisioned VS Code build
-        if: env.SUPERSEDED != '1' && steps.vscode-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            vscode-toolchain
-            vscode/node_modules
-            vscode/out
-            vscode/out-vscode-min
-            vscode/.build
-          key: ${{ steps.vscode-cache.outputs.cache-primary-key }}
