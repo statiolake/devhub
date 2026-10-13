@@ -248,6 +248,14 @@ export type AppErrorCodeWire =
 	 * reason. The detail says all three.
 	 */
 	| "settings_refused"
+	/**
+	 * A file DevHub was asked to open is not there (or is a folder): a link
+	 * in a conversation to a file that has gone since it was drawn. Its own
+	 * code so it is said as itself, and not as the catch-all's "the native
+	 * app shell is unavailable", which would latch every other unexplained
+	 * failure behind the same identity.
+	 */
+	| "file_not_found"
 	| "editor_provider_missing"
 	| "editor_port_unavailable"
 	| "editor_unavailable"
@@ -459,6 +467,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	persistence_degraded: "DevHub could not save its state file.",
 	native_unavailable: "The native app shell is unavailable.",
 	settings_refused: "DevHub could not use its settings file.",
+	file_not_found: "File not found.",
 	editor_provider_missing: "Visual Studio Code was not found.",
 	editor_port_unavailable: "The editor's port is already in use.",
 	editor_unavailable: "The editor could not start.",

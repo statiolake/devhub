@@ -229,6 +229,7 @@ import {
 	NamedFailure,
 	namedFailure,
 	namedFailureAt,
+	fileNotFound,
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
@@ -5905,16 +5906,24 @@ export class AppController {
 		path: string,
 		selection: FileSelection | undefined,
 	): Promise<void> {
+		// A click on a link is the person starting an action: it retires the
+		// failure on screen, and the memory of one they dismissed, so one
+		// failed open cannot hold the notice up — or keep the next failure
+		// quiet — after the opens that follow it.
+		this.personStartedAction();
 		const machine = this.agentMachine(agentId);
 		const workspace = this.coordinator.model.workspaceForAgent(agentId);
 		if (!workspace) throw new Error(`no Agent ${agentId} is open`);
 		const runtime = runtimeById(machine);
 		const target = await canonicalise(runtime, path);
 		if (!target.exists) {
-			throw new Error(`${path} is no longer there${runtime.where}.`);
+			throw fileNotFound(path, `It is no longer there${runtime.where}.`);
 		}
 		if (target.isDirectory) {
-			throw new Error(`${target.path} is a folder, not a file to open.`);
+			throw fileNotFound(
+				target.path,
+				`${target.path} is a folder, not a file to open.`,
+			);
 		}
 		const destination = routeAgentOpen(
 			target.path,

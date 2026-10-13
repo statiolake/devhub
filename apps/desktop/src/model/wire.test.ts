@@ -629,3 +629,18 @@ describe("a failure DevHub did not expect", () => {
     expect(failureText("boom")).toBe("boom");
   });
 });
+
+describe("a file that is not there to open", () => {
+  it("is said as itself, not as the app shell's catch-all", async () => {
+    const { fileNotFound, errorWire, namedFailure } = await import("./wire.js");
+    const failure = fileNotFound("/work/gone.ts", "It is no longer there.");
+    expect(failure.wire).toMatchObject({
+      code: "file_not_found",
+      summary: "File not found: /work/gone.ts",
+      detail: "It is no longer there.",
+      actions: [],
+    });
+    // Converted again on its way across IPC, it is still itself.
+    expect(errorWire(namedFailure(failure)).code).toBe("file_not_found");
+  });
+});

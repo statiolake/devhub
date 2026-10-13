@@ -40,6 +40,23 @@ export const FALLBACK_ERROR: AppError = {
   actions: ["retry", "open_settings"],
 };
 
+/**
+ * A file the page was asked to open that is not there, in the words main says
+ * the same thing with (`fileNotFound` in `model/wire.ts`): its own code, so it
+ * is never the catch-all, and nothing to try again.
+ */
+export function fileNotFoundError(path: string, detail?: string): AppError {
+  return {
+    ...FALLBACK_ERROR,
+    code: "file_not_found",
+    module: "editor",
+    summary: `File not found: ${path}`,
+    ...(detail === undefined ? {} : { detail }),
+    timestampMs: Date.now(),
+    actions: [],
+  };
+}
+
 function isAppError(value: unknown): value is AppError {
   if (typeof value !== "object" || value === null) {
     return false;

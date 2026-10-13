@@ -713,6 +713,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
       return "state";
     case "settings_refused":
       return "config";
+    case "file_not_found":
     case "editor_provider_missing":
     case "editor_port_unavailable":
     case "editor_unavailable":
@@ -766,7 +767,9 @@ export function errorWireAt(
     code === "terminal_colors_unreadable" ||
     code === "state_migrated" ||
     code === "input_source_unavailable" ||
-    code === "usage_unreadable"
+    code === "usage_unreadable" ||
+    // Trying again opens the same missing file.
+    code === "file_not_found"
       ? []
       : // Trying again reads the same file; what answers it is fixing the file.
         code === "settings_refused"
@@ -1227,4 +1230,17 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       };
   }
   return invalid();
+}
+
+/**
+ * A file a link named that is not there to open, said as itself: "File not
+ * found: <path>", with why as the detail.
+ */
+export function fileNotFound(path: string, detail: string): NamedFailure {
+  return new NamedFailure(
+    withDetail(
+      withSummary(errorWireAt("file_not_found"), `File not found: ${path}`),
+      detail,
+    ),
+  );
 }

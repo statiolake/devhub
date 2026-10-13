@@ -112,6 +112,69 @@ describe("a path in the Agent's prose", () => {
     expect(actions.reportFailure).toHaveBeenCalledWith(failure);
   });
 
+  it("goes back to plain text when its file has gone, and other links still open", async () => {
+    // One click on a file that had gone since its link was drawn used to
+    // leave the link up, failing the same way every time it was followed.
+    let files = [`${CWD}/src/a.ts`, `${CWD}/src/b.ts`];
+    const resolvePaths = vi.fn(
+      (cwd: string | undefined, paths: readonly string[]) =>
+        Promise.resolve(
+          paths.map((path) => {
+            const absolute = path.startsWith("/") ? path : `${cwd}/${path}`;
+            return files.includes(absolute) ? absolute : null;
+          }),
+        ),
+    );
+    const gone = new Error("File not found: /work/app/src/a.ts");
+    const openFile = vi
+      .fn()
+      .mockRejectedValueOnce(gone)
+      .mockResolvedValue(undefined);
+    const actions = fakeActions({ resolvePaths, openFile });
+    draw(
+      transcriptOf([
+        IN_CWD,
+        put(assistant("a1", "See src/a.ts and src/b.ts for it.\n")),
+      ]),
+      actions,
+    );
+    await answered();
+    expect(links()).toHaveLength(2);
+    files = [`${CWD}/src/b.ts`];
+    fireEvent.click(links()[0]!);
+    await answered();
+    await answered();
+    expect(actions.reportFailure).toHaveBeenCalledWith(gone);
+    expect(resolvePaths).toHaveBeenCalledTimes(2);
+    expect(links().map((link) => link.textContent)).toEqual(["src/b.ts"]);
+    fireEvent.click(links()[0]!);
+    await answered();
+    expect(openFile).toHaveBeenLastCalledWith(`${CWD}/src/b.ts`, undefined);
+    expect(actions.reportFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a file link to nothing as a file not found, not as the native shell", async () => {
+    const actions = fakeActions({ resolvePaths: machineWith([]) });
+    draw(
+      transcriptOf([
+        IN_CWD,
+        put(assistant("a1", "See [the notes](notes/gone.md).\n")),
+      ]),
+      actions,
+    );
+    await answered();
+    fireEvent.click(screen.getByText("the notes"));
+    await answered();
+    expect(actions.openFile).not.toHaveBeenCalled();
+    expect(actions.reportFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "file_not_found",
+        summary: "File not found: notes/gone.md",
+        actions: [],
+      }),
+    );
+  });
+
   it("is not looked for in a fenced code block, nor while it streams", async () => {
     const resolvePaths = machineWith([`${CWD}/src/a.ts`]);
     const view = draw(

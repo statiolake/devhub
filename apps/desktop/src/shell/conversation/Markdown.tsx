@@ -32,6 +32,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { normalizeMath } from "./mathDelimiters";
+import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
@@ -94,9 +95,13 @@ export function ExternalLink({
           void (async () => {
             const [found] = await resolvePaths(cwd, [file.path]);
             if (typeof found !== "string") {
-              throw new Error(
-                `There is no file ${file.path} on the Agent's machine.`,
+              reportFailure(
+                fileNotFoundError(
+                  file.path,
+                  "There is no such file on the Agent's machine.",
+                ),
               );
+              return;
             }
             await openFile(found, file.range);
           })().catch(reportFailure);

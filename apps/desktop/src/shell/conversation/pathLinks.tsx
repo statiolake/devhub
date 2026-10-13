@@ -77,6 +77,11 @@ export class PathLinks {
     queueMicrotask(() => this.#flush());
   }
 
+  /** Forget what `path` named, so it is asked about again when next drawn. */
+  forget(cwd: string | undefined, path: string): void {
+    if (this.#known.delete(keyOf(cwd, path))) this.#emit();
+  }
+
   /** Forget every word that named nothing: the turn that ended may have made it. */
   forgetAbsent(): void {
     let forgot = false;
@@ -182,6 +187,8 @@ export function PathLink({
   readonly candidate: PathCandidate;
   readonly children: ReactNode;
 }) {
+  const links = usePathLinks();
+  const cwd = useAgentCwd();
   const file = useFileOf(candidate.path);
   const { openFile, reportFailure } = useConversationActions();
   if (typeof file !== "string") return <>{children}</>;
@@ -198,7 +205,13 @@ export function PathLink({
         // it was.
         event.preventDefault();
         event.stopPropagation();
-        void openFile(file, candidate.range).catch(reportFailure);
+        void openFile(file, candidate.range).catch((error: unknown) => {
+          // The file has gone since the link was drawn: ask again, so the
+          // word goes back to plain text rather than staying a link that
+          // fails the same way every time it is followed.
+          links.forget(cwd, candidate.path);
+          reportFailure(error);
+        });
       }}
     >
       {children}
