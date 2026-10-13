@@ -63,17 +63,16 @@ TOOLCHAIN_DIR="$REPO_ROOT/vscode-toolchain"
 step() { printf '\n==> %s\n' "$1"; }
 
 # --- 1. the submodule ------------------------------------------------------
-# The pinned commit is the one the *parent repo* records, not whatever the
-# submodule's working tree happens to sit on: `submodule update` checks the
-# recorded gitlink out. So a bump is `git -C vscode checkout <tag>` **and**
-# `git add vscode` before this script runs — provisioning against an unstaged
-# bump would quietly rebuild the old version. The checked-out version is
-# printed for exactly that reason.
+# The pinned commit is the one the *parent repo* records (its index, so a
+# staged bump counts), not whatever the submodule's working tree happens to sit
+# on. When they differ — a `git pull` that brought a bump moves the gitlink but
+# not the checkout — scripts/vscode-submodule.sh takes the DevHub patches off
+# and checks the pinned commit out, refusing if vscode/ holds edits of the
+# developer's own. Everything below is keyed on the submodule commit (the npm
+# stamp, the compile and bundle stamps, the Electron target), so moving it is
+# all it takes for those steps to redo exactly what the bump invalidated.
 step "VS Code submodule"
-if [ "$FORCE" = 1 ] || [ ! -f "$VSCODE_DIR/package.json" ]; then
-	git -C "$REPO_ROOT" submodule update --init --depth 1 -- vscode
-fi
-echo "checked out: $(git -C "$VSCODE_DIR" rev-parse --short HEAD) (VS Code $(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$VSCODE_DIR/package.json" | head -1))"
+"$REPO_ROOT/scripts/vscode-submodule.sh" sync
 
 # --- 2. the Node the VS Code build requires --------------------------------
 # The machine default is whatever the developer runs; VS Code's build refuses

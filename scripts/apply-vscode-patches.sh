@@ -19,9 +19,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 
-git -C "$VSCODE_DIR" checkout -- .
+# The reset refuses, naming the files, when the tree holds edits that are not
+# the patches a previous run applied (scripts/vscode-submodule.sh). After each
+# patch the tree is recorded as DevHub's own, so a run that stops halfway still
+# leaves a tree the next run may reset.
+"$REPO_ROOT/scripts/vscode-submodule.sh" reset
 for patch in "$REPO_ROOT"/patches/vscode/*.patch; do
 	[ -e "$patch" ] || continue
 	echo "applying $(basename "$patch")"
 	git -C "$VSCODE_DIR" apply "$patch"
+	"$REPO_ROOT/scripts/vscode-submodule.sh" record
 done
