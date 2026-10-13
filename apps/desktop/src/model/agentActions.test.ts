@@ -49,6 +49,7 @@ describe("the actions DevHub ships", () => {
       "ready_draft_pull_request",
       "address_review_comments",
       "fix_ci",
+      "send_ok",
     ]);
   });
 
@@ -111,33 +112,34 @@ function withPullRequest(over: Partial<PullRequest>): SmartButtonRepository {
   return repository({ pullRequest: { ...base, ...over } });
 }
 
+/** The triggers that depend on the repository: everything but `always`. */
+function conditional(
+  ...args: Parameters<typeof smartButtonTriggers>
+): readonly string[] {
+  return smartButtonTriggers(...args).filter((trigger) => trigger !== "always");
+}
+
 describe("when a Smart Button is offered", () => {
   it("offers nothing for a repository with nothing to do", () => {
-    expect(smartButtonTriggers("idle", repository())).toEqual([]);
+    expect(conditional("idle", repository())).toEqual([]);
   });
 
   it("offers commit for uncommitted changes", () => {
-    expect(smartButtonTriggers("idle", repository({ dirty: true }))).toEqual([
+    expect(conditional("idle", repository({ dirty: true }))).toEqual([
       "commit",
     ]);
     // Not knowing is not dirty.
-    expect(
-      smartButtonTriggers("idle", repository({ dirty: undefined })),
-    ).toEqual([]);
+    expect(conditional("idle", repository({ dirty: undefined }))).toEqual([]);
   });
 
   it("offers push for commits ahead of the upstream, and not with no upstream", () => {
-    expect(smartButtonTriggers("idle", repository({ ahead: 2 }))).toEqual([
-      "push",
-    ]);
-    expect(
-      smartButtonTriggers("idle", repository({ ahead: undefined })),
-    ).toEqual([]);
+    expect(conditional("idle", repository({ ahead: 2 }))).toEqual(["push"]);
+    expect(conditional("idle", repository({ ahead: undefined }))).toEqual([]);
   });
 
   it("offers a pull request on a branch with none, pushed or not", () => {
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         repository({ pullRequest: undefined, ahead: undefined }),
       ),
@@ -146,13 +148,13 @@ describe("when a Smart Button is offered", () => {
 
   it("does not offer a pull request from the trunk, or when the trunk is not known", () => {
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         repository({ pullRequest: undefined, branch: "main" }),
       ),
     ).toEqual([]);
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         repository({ pullRequest: undefined, defaultBranch: undefined }),
       ),
@@ -160,33 +162,33 @@ describe("when a Smart Button is offered", () => {
   });
 
   it("does not offer a second pull request for a branch whose one was merged", () => {
-    expect(
-      smartButtonTriggers("idle", withPullRequest({ state: "merged" })),
-    ).toEqual([]);
+    expect(conditional("idle", withPullRequest({ state: "merged" }))).toEqual(
+      [],
+    );
   });
 
   it("offers getting a draft ready for a draft pull request", () => {
-    expect(
-      smartButtonTriggers("idle", withPullRequest({ state: "draft" })),
-    ).toEqual(["draft_pull_request"]);
+    expect(conditional("idle", withPullRequest({ state: "draft" }))).toEqual([
+      "draft_pull_request",
+    ]);
   });
 
   it("offers review comments while some are unresolved, or went uncounted", () => {
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         withPullRequest({ conversations: { unresolved: 2, uncounted: 0 } }),
       ),
     ).toEqual(["unresolved_review_comments"]);
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         withPullRequest({ conversations: { unresolved: 0, uncounted: 30 } }),
       ),
     ).toEqual(["unresolved_review_comments"]);
     // On a draft too, beside getting it ready.
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         withPullRequest({
           state: "draft",
@@ -203,11 +205,11 @@ describe("when a Smart Button is offered", () => {
       failing: 1,
       pending: 0,
     };
+    expect(conditional("idle", withPullRequest({ checks: failing }))).toEqual([
+      "ci_failing",
+    ]);
     expect(
-      smartButtonTriggers("idle", withPullRequest({ checks: failing })),
-    ).toEqual(["ci_failing"]);
-    expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         withPullRequest({ checks: { ...failing, state: "pending" } }),
       ),
@@ -217,7 +219,7 @@ describe("when a Smart Button is offered", () => {
   it("offers nothing about a pull request that is closed or merged", () => {
     for (const state of ["closed", "merged"] as const) {
       expect(
-        smartButtonTriggers(
+        conditional(
           "idle",
           withPullRequest({
             state,
@@ -231,7 +233,7 @@ describe("when a Smart Button is offered", () => {
 
   it("offers them in the order the work goes in", () => {
     expect(
-      smartButtonTriggers(
+      conditional(
         "idle",
         repository({
           dirty: true,
@@ -262,13 +264,42 @@ describe("when a Smart Button is offered", () => {
       "error",
       "unknown",
     ] as const) {
-      expect(smartButtonTriggers(status, busy)).toEqual([]);
+      expect(conditional(status, busy)).toEqual([]);
     }
-    expect(smartButtonTriggers("idle", busy)).toEqual(["commit", "push"]);
+    expect(conditional("idle", busy)).toEqual(["commit", "push"]);
   });
 
   it("offers nothing for a Workspace whose repository is not known", () => {
-    expect(smartButtonTriggers("idle", undefined)).toEqual([]);
+    expect(conditional("idle", undefined)).toEqual([]);
+  });
+
+  it("always offers the always trigger while idle, repository or not, and never while busy", () => {
+    expect(smartButtonTriggers("idle", repository())).toEqual(["always"]);
+    expect(smartButtonTriggers("idle", undefined)).toEqual(["always"]);
+    expect(smartButtonTriggers("idle", repository({ dirty: true }))).toEqual([
+      "commit",
+      "always",
+    ]);
+    for (const status of [
+      "working",
+      "waiting",
+      "background",
+      "error",
+    ] as const) {
+      expect(smartButtonTriggers(status, undefined)).toEqual([]);
+    }
+  });
+
+  it("ships an OK button on the always trigger, saying OK", () => {
+    const ok = BUILT_IN_ACTIONS.find((action) => action.id === "send_ok");
+    expect(ok).toMatchObject({
+      displayName: "OK",
+      template: "OK",
+      trigger: "always",
+      confirmBeforeSend: false,
+    });
+    expect(isSmartButtonTrigger("always")).toBe(true);
+    expect(ACTION_VARIABLES.always).toEqual([]);
   });
 });
 

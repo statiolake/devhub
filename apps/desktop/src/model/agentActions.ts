@@ -49,7 +49,8 @@ export type AgentActionTrigger =
   | "pull_request"
   | "draft_pull_request"
   | "unresolved_review_comments"
-  | "ci_failing";
+  | "ci_failing"
+  | "always";
 
 /**
  * Every trigger there is, in the order a person meets them.
@@ -68,6 +69,7 @@ export const ACTION_TRIGGERS: readonly AgentActionTrigger[] = [
   "draft_pull_request",
   "unresolved_review_comments",
   "ci_failing",
+  "always",
 ];
 
 /** Whether a trigger is a Smart Button's: every one but the Issue flow. */
@@ -86,6 +88,7 @@ export const TRIGGER_NAMES: Readonly<Record<AgentActionTrigger, string>> = {
   draft_pull_request: "A draft pull request",
   unresolved_review_comments: "Unresolved review comments",
   ci_failing: "Failing CI",
+  always: "Always",
 };
 
 /**
@@ -127,12 +130,17 @@ export type SmartButtonRepository = Pick<
  *     has review conversations nobody resolved — or ones past the page the
  *     count was read from, which may be.
  *   - `ci_failing`: its pull request is open or a draft and CI says failing.
+ *   - `always`: no condition. Held whenever the Agent is idle, repository
+ *     read or not, so it is the one trigger that survives `repository` being
+ *     undefined. It is never automatic (`AUTOMATIC_TRIGGERS`): an
+ *     always-true condition would fire on every idle.
  */
 export function smartButtonTriggers(
   status: AgentStatusWire,
   repository: SmartButtonRepository | undefined,
 ): readonly AgentActionTrigger[] {
-  if (status !== "idle" || repository === undefined) return [];
+  if (status !== "idle") return [];
+  if (repository === undefined) return ["always"];
   const pullRequest = repository.pullRequest;
   const live =
     pullRequest !== undefined &&
@@ -152,6 +160,7 @@ export function smartButtonTriggers(
       (pullRequest.conversations.unresolved > 0 ||
         pullRequest.conversations.uncounted > 0),
     ci_failing: live && pullRequest.checks?.state === "failing",
+    always: true,
   };
   return ACTION_TRIGGERS.filter((trigger) => holds[trigger]);
 }
@@ -236,6 +245,7 @@ export const ACTION_VARIABLES: Readonly<
   draft_pull_request: ["PR_URL", "PR_NO", "BRANCH"],
   unresolved_review_comments: ["PR_URL", "PR_NO", "UNRESOLVED", "BRANCH"],
   ci_failing: ["PR_URL", "PR_NO", "BRANCH", "FAILING"],
+  always: [],
 };
 
 /**
@@ -268,6 +278,8 @@ const UNRESOLVED_REVIEW_COMMENTS_TEMPLATE = `プルリクエスト #{{PR_NO}} �
 {{PR_URL}}
 未解決のコメントが {{UNRESOLVED}} 件あります。対応した変更は {{BRANCH}} にコミットしてプッシュしてください。
 `;
+
+const OK_TEMPLATE = `OK`;
 
 const CI_FAILING_TEMPLATE = `プルリクエスト #{{PR_NO}} の CI が失敗しています。原因を調べて直してください。
 {{PR_URL}}
@@ -350,6 +362,13 @@ export const BUILT_IN_ACTIONS: readonly {
     displayName: "Fix CI",
     template: CI_FAILING_TEMPLATE,
     trigger: "ci_failing",
+    confirmBeforeSend: false,
+  },
+  {
+    id: "send_ok",
+    displayName: "OK",
+    template: OK_TEMPLATE,
+    trigger: "always",
     confirmBeforeSend: false,
   },
 ];

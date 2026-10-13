@@ -280,6 +280,9 @@ box grows. Double-click the handle to put it back.
 | `draft_pull_request` | the branch's pull request is a draft | `PR_URL`, `PR_NO`, `BRANCH` | Get the draft PR ready |
 | `unresolved_review_comments` | its pull request is open or a draft and has unresolved review conversations | `PR_URL`, `PR_NO`, `UNRESOLVED`, `BRANCH` | Address review comments |
 | `ci_failing` | its pull request is open or a draft and CI is failing | `PR_URL`, `PR_NO`, `BRANCH`, `FAILING` | Fix CI |
+| `always` | the Agent is idle (no other condition; shown even if the repository is unknown) | — | OK |
+
+`always` buttons are hidden while a turn is running like the rest, and are never automatic (an always-true condition would fire on every idle). Hide the built-in OK button with `button = false` under `[agent_actions.always.send_ok]`, or write your own `[agent_actions.always.<id>]`.
 
 `UNRESOLVED` reads `100+` when there were more threads than one page, and a
 variable with nothing known stays as written. A trigger DevHub does not know is

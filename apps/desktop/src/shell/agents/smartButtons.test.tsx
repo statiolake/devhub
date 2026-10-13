@@ -166,7 +166,9 @@ function mount({
   repository = DIRTY,
   stored,
   status,
+  actions = ACTIONS,
 }: {
+  actions?: readonly AgentActionWire[];
   over?: Partial<AgentWire>;
   repository?: WorkspaceRepositoryWire;
   stored?: SmartButtonsSpot;
@@ -176,7 +178,7 @@ function mount({
   const dispatch = vi.fn(() => Promise.resolve(undefined));
   const value = {
     repositoryStatus: { sequence: 1, workspaces: [repository] },
-    agentActions: ACTIONS,
+    agentActions: actions,
     runAgentAction,
     dispatch,
     reportFailure: vi.fn(),
@@ -250,6 +252,24 @@ describe("which Smart Buttons are drawn", () => {
       expect(box()).toHaveAttribute("data-quiet");
       cleanup();
     }
+  });
+
+  it("draws the always button whenever the Agent is idle, and never as an Auto choice", () => {
+    const ok: AgentActionWire = {
+      id: "send_ok",
+      displayName: "OK",
+      trigger: "always",
+      button: true,
+    };
+    const actions = [...ACTIONS, ok];
+    mount({ actions, repository: { ...DIRTY, dirty: false } });
+    expect(labels()).toEqual(["OK"]);
+    cleanup();
+    mount({ actions, repository: DIRTY });
+    expect(labels()).toEqual(["Commit the changes", "OK"]);
+    cleanup();
+    mount({ actions, over: { status: "working" } as Partial<AgentWire> });
+    expect(labels()).toEqual([]);
   });
 
   it("draws no button when no condition holds", () => {

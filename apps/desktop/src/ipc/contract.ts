@@ -122,7 +122,8 @@ export type AgentActionTriggerWire =
 	| "pull_request"
 	| "draft_pull_request"
 	| "unresolved_review_comments"
-	| "ci_failing";
+	| "ci_failing"
+	| "always";
 
 /**
  * The branch an Issue or a pull request already has, and what can be done with

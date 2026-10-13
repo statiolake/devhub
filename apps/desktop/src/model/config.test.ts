@@ -180,6 +180,7 @@ describe("parsing", () => {
       "ready_draft_pull_request",
       "address_review_comments",
       "fix_ci",
+      "send_ok",
     ]);
     for (const action of actions) {
       expect(action.display_name.length).toBeGreaterThan(0);
@@ -220,6 +221,7 @@ describe("parsing", () => {
       "Get the draft PR ready",
       "Address review comments",
       "Fix CI",
+      "OK",
     ]);
     expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
       parseConfig(source),
@@ -242,6 +244,7 @@ describe("parsing", () => {
       ready_draft_pull_request: false,
       address_review_comments: false,
       fix_ci: false,
+      send_ok: false,
     });
   });
 
@@ -482,6 +485,7 @@ describe("parsing", () => {
       "ready_draft_pull_request",
       "address_review_comments",
       "fix_ci",
+      "send_ok",
     ]);
     // The person's own wording survives the move; the trigger comes back from
     // the id, which is all the old shape ever said about it.

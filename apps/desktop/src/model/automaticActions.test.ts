@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AutomaticActions,
+  isAutomaticTrigger,
   type AutomaticAgent,
   type AutomaticActionChoice,
 } from "./automaticActions.js";
@@ -56,6 +57,15 @@ const fired = (
   automatic.observe([one], ACTIONS).map((firing) => firing.actionId);
 
 describe("automatic actions", () => {
+  it("never fires an always-trigger action, even when ticked", () => {
+    const automatic = new AutomaticActions();
+    const choices = [...ACTIONS, { id: "send_ok", trigger: "always" as const }];
+    const one = agent(pr(0), ["send_ok"]);
+    expect(automatic.observe([one], choices)).toEqual([]);
+    expect(automatic.observe([one], choices)).toEqual([]);
+    expect(isAutomaticTrigger("always")).toBe(false);
+  });
+
   it("fires when review comments arrive, once, and again when more do", () => {
     const automatic = new AutomaticActions();
     const on = ["address_review_comments"];
