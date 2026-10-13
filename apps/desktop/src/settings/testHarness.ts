@@ -50,9 +50,9 @@ export function testConfig(
       defaultPresentation: "tui",
       resumeAfterLimit: true,
       resumeAfterLimitMessage: "続けて",
-      autoCompactBeforeCacheExpiry: false,
+      autoCompactBeforeCacheExpiry: true,
       autoCompactLeadSeconds: 60,
-      autoCompactMinTokens: 20_000,
+      autoCompactMinTokens: 100_000,
     },
     runtimes: {
       shell: "/bin/zsh",

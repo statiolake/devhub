@@ -163,8 +163,10 @@ export function TextField({
   onCommit,
   onAbandon,
   trailing,
+  disabled,
 }: {
   readonly label: string;
+  readonly disabled?: boolean;
   readonly value: string;
   readonly placeholder?: string;
   readonly mono?: boolean;
@@ -213,6 +215,7 @@ export function TextField({
           autoFocus={autoFocus}
           aria-label={label}
           aria-invalid={problem !== undefined}
+          disabled={disabled}
           placeholder={placeholder}
           value={text}
           onChange={(event) => {
@@ -314,6 +317,7 @@ export function NumberField({
   min,
   max,
   unit,
+  disabled,
   onCommit,
 }: {
   readonly label: string;
@@ -321,6 +325,7 @@ export function NumberField({
   readonly min: number;
   readonly max: number;
   readonly unit?: string;
+  readonly disabled?: boolean;
   readonly onCommit: (next: number) => void;
 }) {
   const range = `${label} is a number between ${String(min)} and ${String(max)}.`;
@@ -329,6 +334,7 @@ export function NumberField({
       label={label}
       value={String(value)}
       narrow
+      disabled={disabled}
       validate={(next) => {
         const parsed = Number(next.trim());
         if (next.trim().length === 0 || !Number.isFinite(parsed)) return range;

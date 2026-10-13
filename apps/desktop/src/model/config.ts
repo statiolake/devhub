@@ -339,8 +339,9 @@ export interface AgentsConfig {
   /**
    * Whether an idle GUI Claude Agent's conversation is compacted (`/compact`)
    * shortly before its prompt cache expires, so the next message does not
-   * re-write the whole conversation into the cache. Off by default: the
-   * compaction itself costs tokens.
+   * re-write the whole conversation into the cache. On by default (also for
+   * a config without the key); the compaction itself costs tokens, so
+   * conversations under `auto_compact_min_tokens` are left alone.
    */
   readonly auto_compact_before_cache_expiry: boolean;
   /** How long before the cache expires it is compacted, in seconds (> 0). */
@@ -740,9 +741,9 @@ export function defaultConfig(): Config {
       default_presentation: "tui",
       resume_after_limit: true,
       resume_after_limit_message: DEFAULT_RESUME_MESSAGE,
-      auto_compact_before_cache_expiry: false,
+      auto_compact_before_cache_expiry: true,
       auto_compact_lead_seconds: 60,
-      auto_compact_min_tokens: 20_000,
+      auto_compact_min_tokens: 100_000,
     },
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),

@@ -2118,6 +2118,22 @@ describe("going on after a usage limit, as [agents] says", () => {
     expect(defaultConfig().agents.resume_after_limit_message).toBe("続けて");
   });
 
+  it("auto-compacts by default, also for a file without the keys, and keeps an explicit false", () => {
+    const bare = parseConfig(
+      `version = ${String(CONFIG_SCHEMA_VERSION)}\n[agents]\n`,
+    ).agents;
+    expect(bare.auto_compact_before_cache_expiry).toBe(true);
+    expect(bare.auto_compact_min_tokens).toBe(100_000);
+    expect(bare.auto_compact_lead_seconds).toBe(60);
+    const off = parseConfig(
+      withAgents(
+        "auto_compact_before_cache_expiry = false\nauto_compact_min_tokens = 5000",
+      ),
+    ).agents;
+    expect(off.auto_compact_before_cache_expiry).toBe(false);
+    expect(off.auto_compact_min_tokens).toBe(5000);
+  });
+
   it("reads both keys, and writes them back as read", () => {
     const source = withAgents(
       'resume_after_limit = false\nresume_after_limit_message = "Please go on"',

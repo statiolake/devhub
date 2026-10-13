@@ -255,7 +255,7 @@ export function GeneralSection({
         />
         <SwitchRow
           label="Auto-compact before cache expires"
-          help="When a GUI Claude agent sits idle and its prompt cache is about to expire, send /compact shortly before, so your next message re-caches a short summary instead of the whole conversation. The compaction itself uses tokens, and small conversations are left alone."
+          help="When a GUI Claude agent sits idle and its prompt cache is about to expire, send /compact shortly before, so your next message re-caches a short summary instead of the whole conversation. The compaction itself uses tokens, and conversations under the minimum size below are left alone. On by default."
           checked={config.agents.autoCompactBeforeCacheExpiry}
           onChange={(autoCompactBeforeCacheExpiry) => {
             update({
@@ -264,6 +264,44 @@ export function GeneralSection({
             });
           }}
         />
+        <Row
+          label="Minimum context size (tokens)"
+          help="Conversations with less context than this are not compacted, since re-caching them is cheap. Default 100,000."
+        >
+          <NumberField
+            label="Minimum context size (tokens)"
+            value={config.agents.autoCompactMinTokens}
+            min={0}
+            max={Number.MAX_SAFE_INTEGER}
+            unit="tokens"
+            disabled={!config.agents.autoCompactBeforeCacheExpiry}
+            onCommit={(autoCompactMinTokens) => {
+              update({
+                ...config,
+                agents: { ...config.agents, autoCompactMinTokens },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Start this many seconds before expiry"
+          help="How long before the prompt cache expires the compaction is sent. Must be above zero. Default 60."
+        >
+          <NumberField
+            label="Start this many seconds before expiry"
+            value={config.agents.autoCompactLeadSeconds}
+            min={1}
+            max={Number.MAX_SAFE_INTEGER}
+            unit="s"
+            disabled={!config.agents.autoCompactBeforeCacheExpiry}
+            onCommit={(autoCompactLeadSeconds) => {
+              update({
+                ...config,
+                agents: { ...config.agents, autoCompactLeadSeconds },
+              });
+            }}
+          />
+        </Row>
         <Row
           label="Resume message"
           help="What is sent for you, shown in the conversation as your message sent automatically."

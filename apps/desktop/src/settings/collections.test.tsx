@@ -359,9 +359,9 @@ describe("a collection of agent profiles", () => {
           defaultPresentation: "gui",
           resumeAfterLimit: true,
           resumeAfterLimitMessage: "続けて",
-          autoCompactBeforeCacheExpiry: false,
+          autoCompactBeforeCacheExpiry: true,
           autoCompactLeadSeconds: 60,
-          autoCompactMinTokens: 20_000,
+          autoCompactMinTokens: 100_000,
         },
         agentProfiles: [
           { ...PROFILES[0]!, kind: "claude", presentation: "tui" },
@@ -410,9 +410,9 @@ describe("a collection of agent profiles", () => {
         defaultPresentation: "gui",
         resumeAfterLimit: true,
         resumeAfterLimitMessage: "続けて",
-        autoCompactBeforeCacheExpiry: false,
+        autoCompactBeforeCacheExpiry: true,
         autoCompactLeadSeconds: 60,
-        autoCompactMinTokens: 20_000,
+        autoCompactMinTokens: 100_000,
       });
     });
   });
