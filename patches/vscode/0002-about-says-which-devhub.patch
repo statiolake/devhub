@@ -1,5 +1,5 @@
 diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
-index 43e145eb..abcbd1c1 100644
+index 0767bb78..e350bb8c 100644
 --- a/src/vs/base/common/product.ts
 +++ b/src/vs/base/common/product.ts
 @@ -98,6 +98,16 @@ export interface IDictationRuntimeProductConfig {
@@ -20,11 +20,11 @@ index 43e145eb..abcbd1c1 100644
  	readonly quality?: string;
  	readonly commit?: string;
 diff --git a/src/vs/platform/dialogs/electron-browser/dialog.ts b/src/vs/platform/dialogs/electron-browser/dialog.ts
-index 835a4009..14dfb461 100644
+index 39489aa4..1dab57b3 100644
 --- a/src/vs/platform/dialogs/electron-browser/dialog.ts
 +++ b/src/vs/platform/dialogs/electron-browser/dialog.ts
-@@ -11,18 +11,32 @@ import { IProductService } from '../../product/common/productService.js';
- import { process } from '../../../base/parts/sandbox/electron-browser/globals.js';
+@@ -15,13 +15,27 @@ function formatCopilotVersion(version: string | undefined): string {
+ }
  
  export function createNativeAboutDialogDetails(productService: IProductService, osProps: IOSProperties): { title: string; details: string; detailsToCopy: string } {
 -	let version = productService.version;
@@ -49,7 +49,10 @@ index 835a4009..14dfb461 100644
 +		commit = `${productService.hostCommit} (VS Code ${productService.commit})`;
 +	}
 +
- 	const getDetails = (useAgo: boolean): string => {
+ 	const copilotRuntimeVersion = formatCopilotVersion(productService.copilotVersions?.runtime);
+ 	const copilotSdkVersion = formatCopilotVersion(productService.copilotVersions?.sdk);
+ 
+@@ -29,7 +43,7 @@ export function createNativeAboutDialogDetails(productService: IProductService,
  		return localize({ key: 'aboutDetail', comment: ['Electron, Chromium, Node.js, V8 and Copilot are product names that need no translation'] },
  			"Version: {0}\nCommit: {1}\nDate: {2}\nElectron: {3}\nElectronBuildId: {4}\nChromium: {5}\nNode.js: {6}\nV8: {7}\n@github/copilot: {8}\n@github/copilot-sdk: {9}\nOS: {10}",
  			version,

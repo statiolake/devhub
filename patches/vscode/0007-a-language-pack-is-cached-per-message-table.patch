@@ -1,5 +1,5 @@
 diff --git a/src/vs/base/node/nls.ts b/src/vs/base/node/nls.ts
-index 0bb75a11..175f71b5 100644
+index 2015d2e0..dbebe08d 100644
 --- a/src/vs/base/node/nls.ts
 +++ b/src/vs/base/node/nls.ts
 @@ -4,6 +4,7 @@
@@ -10,7 +10,7 @@ index 0bb75a11..175f71b5 100644
  import { promises } from 'fs';
  import { mark } from '../common/performance.js';
  import { ILanguagePacks, INLSConfiguration } from '../../nls.js';
-@@ -75,9 +76,29 @@ export async function resolveNLSConfiguration({ userLocale, osLocale, userDataPa
+@@ -80,9 +81,29 @@ export async function resolveNLSConfiguration({ userLocale, osLocale, userDataPa
  			return defaultNLSConfiguration(userLocale, osLocale, nlsMetadataPath);
  		}
  
@@ -18,16 +18,16 @@ index 0bb75a11..175f71b5 100644
 +		// table, so that is what names its cache folder — not `commit` alone.
 +		// The compiled code looks a message up by its *index* in
 +		// `nls.messages.json`, and `nls.keys.json` says which key each index is
-+		// for this build only. Upstream can key the cache by `commit` because
-+		// every one of its builds has a commit of its own; DevHub's `commit` is
-+		// the submodule's, and stays the same across every build whose
-+		// patches/vscode/ add, drop or move a `localize` call. A table cached for
-+		// an earlier build was then read against this build's indices, and every
-+		// message after the first difference showed its neighbour's translation —
-+		// the Workspace Trust dialog a terminal raises said "Use {0} for terminal
-+		// accessibility help" in Japanese. Hashing the two files the table is made
-+		// from gives every distinct table a folder of its own; the old folders are
-+		// left untouched and age out through LanguagePackCachedDataCleaner.
++		// for this build only. Upstream names the folder by `nlsMetadataHash`,
++		// but only its packaging step stamps that into product.json; without it
++		// upstream falls back to `commit`, and DevHub's `commit` is the
++		// submodule's, the same across every build whose patches/vscode/ add,
++		// drop or move a `localize` call. A table cached for an earlier build was
++		// then read against this build's indices, and every message after the
++		// first difference showed its neighbour's translation. Hashing the two
++		// files the table is made from gives every distinct table a folder of
++		// its own when no `nlsMetadataHash` is stamped; the old folders are left
++		// untouched and age out through LanguagePackCachedDataCleaner.
 +		const [nlsDefaultKeysText, nlsDefaultMessagesText] = await Promise.all([
 +			promises.readFile(join(nlsMetadataPath, 'nls.keys.json'), 'utf-8'),
 +			promises.readFile(join(nlsMetadataPath, 'nls.messages.json'), 'utf-8'),
@@ -36,12 +36,12 @@ index 0bb75a11..175f71b5 100644
 +
  		const languagePackId = `${languagePack.hash}.${resolvedLanguage}`;
  		const globalLanguagePackCachePath = join(userDataPath, 'clp', languagePackId);
--		const commitLanguagePackCachePath = join(globalLanguagePackCachePath, commit);
-+		const commitLanguagePackCachePath = join(globalLanguagePackCachePath, `${commit}.${nlsTableHash}`);
+-		const commitLanguagePackCachePath = join(globalLanguagePackCachePath, nlsMetadataHash ?? commit);
++		const commitLanguagePackCachePath = join(globalLanguagePackCachePath, nlsMetadataHash ?? `${commit}.${nlsTableHash}`);
  		const languagePackMessagesFile = join(commitLanguagePackCachePath, 'nls.messages.json');
  		const translationsConfigFile = join(globalLanguagePackCachePath, 'tcf.json');
  		const languagePackCorruptMarkerFile = join(globalLanguagePackCachePath, 'corrupted.info');
-@@ -114,18 +135,11 @@ export async function resolveNLSConfiguration({ userLocale, osLocale, userDataPa
+@@ -119,18 +140,11 @@ export async function resolveNLSConfiguration({ userLocale, osLocale, userDataPa
  			return result;
  		}
  
