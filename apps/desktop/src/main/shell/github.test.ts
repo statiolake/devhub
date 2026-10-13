@@ -22,6 +22,8 @@ import {
 	readGitHubLogin,
 	readGitHubToken,
 	readIssueLinkedBranch,
+	readIssueProjects,
+	resetProjectScopeMemory,
 	readPullRequestHead,
 } from "./github.js";
 
@@ -322,7 +324,12 @@ describe("the conversations in a branch's pull request", () => {
 	it("is asked on the same query as the pull request, one page of threads", async () => {
 		const fetchMock = withPullRequests([]);
 		await readBranchStatus(REFERENCE, "token");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		// The Projects lanes are a separate, failure-tolerant request.
+		expect(
+			fetchMock.mock.calls.filter((c) =>
+				(c[1] as { body: string }).body.includes("pullRequests("),
+			),
+		).toHaveLength(1);
 		const body = JSON.parse(
 			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
 		) as { query: string; variables: { threads: number } };
@@ -452,7 +459,11 @@ describe("the CI of a branch's pull request", () => {
 	it("is asked on the same query as the pull request, from its head commit", async () => {
 		const fetchMock = withPullRequests([]);
 		await readBranchStatus(REFERENCE, "token");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(
+			fetchMock.mock.calls.filter((c) =>
+				(c[1] as { body: string }).body.includes("pullRequests("),
+			),
+		).toHaveLength(1);
 		const body = JSON.parse(
 			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
 		) as { query: string };
@@ -758,3 +769,60 @@ async function drawnAs(settled: Promise<unknown>) {
 		),
 	);
 }
+
+describe("an Issue's Projects lanes", () => {
+	const ISSUE = { owner: "example", repository: "widget", number: 128 };
+
+	beforeEach(() => {
+		resetProjectScopeMemory();
+	});
+
+	it("are read from projectItems", async () => {
+		answers({
+			data: {
+				repository: {
+					issue: {
+						projectItems: {
+							nodes: [
+								{
+									project: { title: "DevHub Roadmap" },
+									fieldValueByName: { name: "In Review", color: "YELLOW" },
+								},
+							],
+						},
+					},
+				},
+			},
+		});
+		expect(await readIssueProjects(ISSUE, "token")).toEqual({
+			lanes: [
+				{ project: "DevHub Roadmap", status: "In Review", color: "YELLOW" },
+			],
+		});
+	});
+
+	it("are quietly unreadable without read:project, and not asked again soon", async () => {
+		const fetchMock = answers({
+			data: { repository: { issue: null } },
+			errors: [
+				{
+					type: "INSUFFICIENT_SCOPES",
+					message:
+						"Your token has not been granted the required scopes: read:project",
+				},
+			],
+		});
+		expect(await readIssueProjects(ISSUE, "token", 1000)).toEqual({
+			unreadable: true,
+		});
+		expect(await readIssueProjects(ISSUE, "token", 2000)).toEqual({
+			unreadable: true,
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("are nothing, not an error, when the request fails", async () => {
+		answers({ errors: [{ message: "API rate limit exceeded." }] });
+		expect(await readIssueProjects(ISSUE, "token")).toEqual({});
+	});
+});

@@ -2085,6 +2085,25 @@ body.is-resizing-split {
   flex: none;
 }
 
+/* The Projects lane: one letter in a rounded square, the size of the Issue icon
+   so it takes no more room than a glyph. */
+.row-project-badge {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--badge-ink, currentColor);
+  border-radius: 4px;
+  color: var(--badge-ink, currentColor);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.85;
+}
+
 .row-issue-title .row-issue-note {
   flex: none;
 }

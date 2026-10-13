@@ -5,7 +5,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
 } from "react";
 import {
   type AgentProfile,
@@ -33,6 +35,11 @@ import { RowTooltip } from "./RowTooltip";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { StatusMark, unreadShows } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
+import {
+  laneColorToken,
+  primaryLane,
+  statusLetter,
+} from "../../../model/projectStatus";
 import { moveIntent, sourceOfTreeItem } from "./reorder";
 import { useReorder, type Reorder } from "./useReorder";
 import {
@@ -42,6 +49,7 @@ import {
   editorAttachmentFact,
   issueLabel,
   issueMark,
+  issueProjectLine,
   checksBadge,
   hasUnresolvedConversations,
   markLines,
@@ -356,6 +364,9 @@ function WorkspaceRow({
                   icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
                   text: issueMark(issue),
                 },
+                ...(issueProjectLine(issue) === undefined
+                  ? []
+                  : [{ text: issueProjectLine(issue) as string }]),
                 ...(repository?.branch === undefined
                   ? []
                   : [{ icon: "branch", text: repository.branch }]),
@@ -366,6 +377,10 @@ function WorkspaceRow({
             >
               <Glyph
                 name={issue.state === "closed" ? "issueClosed" : "issueOpen"}
+              />
+              <ProjectBadge
+                issue={issue}
+                repository={repository?.issueRepository?.repository}
               />
               <span className="row-note row-issue-note">{issue.title}</span>
             </button>
@@ -666,6 +681,37 @@ function WorkspaceRow({
  * a second, shorter account of which Workspace this is — with the action after
  * it.
  */
+/**
+ * The Issue's Projects lane as one letter in a small rounded square, beside
+ * the Issue icon. Fixed size, so it moves nothing; coloured from the lane's
+ * GitHub colour where known, muted otherwise. Drawn only when a lane is known.
+ */
+function ProjectBadge({
+  issue,
+  repository,
+}: {
+  readonly issue: NonNullable<WorkspaceRepositoryWire["issue"]>;
+  readonly repository: string | undefined;
+}): ReactElement | null {
+  const lane = primaryLane(issue.projects, repository);
+  const letter = statusLetter(lane?.status);
+  if (!lane || letter === undefined) return null;
+  const token = laneColorToken(lane.color);
+  return (
+    <span
+      className="row-project-badge"
+      aria-hidden="true"
+      style={
+        token === undefined
+          ? undefined
+          : ({ "--badge-ink": `var(${token})` } as CSSProperties)
+      }
+    >
+      {letter}
+    </span>
+  );
+}
+
 function WorkspaceGlyph({
   glyphName,
   digit,

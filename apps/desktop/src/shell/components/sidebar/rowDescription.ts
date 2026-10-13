@@ -10,6 +10,10 @@ import type {
   WorkspaceRepositoryWire,
 } from "../../../ipc/contract";
 import type { GlyphName } from "./icons";
+import {
+  PROJECT_SCOPE_HINT,
+  projectsTooltip,
+} from "../../../model/projectStatus";
 import { statusLabel } from "./status";
 import { unreadShows } from "./StatusMark";
 import {
@@ -205,6 +209,17 @@ export function issueLabel(
   issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
 ): string {
   return `Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`;
+}
+
+/**
+ * The Issue's Projects line for a tooltip: boards and lanes, or the one hint
+ * that the token cannot read them. Undefined when there is nothing to say.
+ */
+export function issueProjectLine(
+  issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
+): string | undefined {
+  if (issue.projects?.length) return projectsTooltip(issue.projects);
+  return issue.projectsUnreadable ? PROJECT_SCOPE_HINT : undefined;
 }
 
 /** The pull request, as the row draws it. */
@@ -474,6 +489,9 @@ export function workspaceRowFacts(
           style: "muted",
           href: issue.url,
         }
+      : undefined,
+    issue && issueProjectLine(issue) !== undefined
+      ? { text: issueProjectLine(issue) as string, style: "muted" }
       : undefined,
     ...(pullRequest ? pullRequestFacts(pullRequest) : []),
     repository?.pending

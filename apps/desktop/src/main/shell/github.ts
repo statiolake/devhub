@@ -13,6 +13,12 @@
 import { spawn } from "node:child_process";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import type { IssueReference } from "../../model/github.js";
+import {
+	PROJECT_ITEMS_SELECTION,
+	parseProjectLanes,
+	type GraphQlProjectItems,
+	type ProjectLane,
+} from "../../model/projectStatus.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 
 /**
@@ -64,6 +70,10 @@ export interface IssueStatus {
 	readonly title: string;
 	readonly state: "open" | "closed";
 	readonly url: string;
+	/** Projects (v2) boards and lanes; absent when unreadable. */
+	readonly projects?: readonly ProjectLane[];
+	/** Set when the token lacks `read:project`, so the row can say so once. */
+	readonly projectsUnreadable?: boolean;
 }
 
 /**
@@ -454,7 +464,12 @@ interface GraphQlAnswer {
 			} | null;
 		} | null;
 	} | null;
-	readonly errors?: readonly { readonly message?: string }[] | null;
+	readonly errors?:
+		| readonly {
+				readonly message?: string;
+				readonly type?: string;
+		  }[]
+		| null;
 }
 
 /**
@@ -663,6 +678,17 @@ export async function readBranchStatus(
 			`GitHub has no issue ${reference.owner}/${reference.repository}#${String(reference.issueNumber)}.`,
 		);
 	}
+	const projects =
+		issue && reference.issueNumber !== undefined
+			? await readIssueProjects(
+					{
+						owner: reference.owner,
+						repository: reference.repository,
+						number: reference.issueNumber,
+					},
+					token,
+				)
+			: undefined;
 	return {
 		issue: issue
 			? {
@@ -670,6 +696,8 @@ export async function readBranchStatus(
 					title: issue.title,
 					state: issue.state.toUpperCase() === "CLOSED" ? "closed" : "open",
 					url: issue.url,
+					...(projects?.lanes?.length ? { projects: projects.lanes } : {}),
+					...(projects?.unreadable ? { projectsUnreadable: true } : {}),
 				}
 			: undefined,
 		pullRequest: chosen
@@ -791,6 +819,72 @@ export async function readIssueLinkedBranch(
 		if (name !== undefined && name.length > 0) return name;
 	}
 	return undefined;
+}
+
+/** When the token last failed to read Projects; asked again after a while. */
+let projectScopeMissingAt: number | undefined;
+const PROJECT_SCOPE_RETRY_MS = 10 * 60_000;
+
+/**
+ * The Projects (v2) lanes an Issue sits in. Its own request, because a token
+ * without `read:project` makes `projectItems` an error that nulls the whole
+ * Issue, and the row must not lose the Issue for want of a badge. Never throws:
+ * any failure is "no badge", and a missing scope is remembered so the request
+ * is not repeated every minute for every row.
+ */
+export async function readIssueProjects(
+	issue: IssueReference,
+	token: string,
+	now: number = Date.now(),
+): Promise<{ lanes?: ProjectLane[]; unreadable?: boolean }> {
+	if (
+		projectScopeMissingAt !== undefined &&
+		now - projectScopeMissingAt < PROJECT_SCOPE_RETRY_MS
+	) {
+		return { unreadable: true };
+	}
+	try {
+		const answer = await post(
+			{
+				query: `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){
+    ${PROJECT_ITEMS_SELECTION}
+  } }
+}`,
+				variables: {
+					owner: issue.owner,
+					name: issue.repository,
+					number: issue.number,
+				},
+			},
+			token,
+		);
+		const errors = answer.errors ?? [];
+		if (
+			errors.some(
+				(e) =>
+					e.type === "INSUFFICIENT_SCOPES" ||
+					/read:project|required scopes/i.test(e.message ?? ""),
+			)
+		) {
+			projectScopeMissingAt = now;
+			return { unreadable: true };
+		}
+		if (errors.length > 0) return {};
+		projectScopeMissingAt = undefined;
+		const items = answer.data?.repository?.issue as
+			| { projectItems?: GraphQlProjectItems }
+			| null
+			| undefined;
+		return { lanes: parseProjectLanes(items?.projectItems) };
+	} catch {
+		return {};
+	}
+}
+
+/** For tests: forget a remembered missing scope. */
+export function resetProjectScopeMemory(): void {
+	projectScopeMissingAt = undefined;
 }
 
 async function post(body: unknown, token: string): Promise<GraphQlAnswer> {

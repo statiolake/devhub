@@ -323,6 +323,14 @@ export interface WorkspaceRepositoryWire {
 		readonly number: number;
 		readonly title: string;
 		readonly state: "open" | "closed";
+		/** Projects (v2) boards and Status lanes the Issue is on. */
+		readonly projects?: readonly {
+			readonly project: string;
+			readonly status?: string;
+			readonly color?: string;
+		}[];
+		/** The token cannot read Projects (`read:project` missing). */
+		readonly projectsUnreadable?: boolean;
 	};
 	/**
 	 * The pull request out from the checked-out branch.
