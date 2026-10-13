@@ -53,6 +53,12 @@ export class ConversationRegistry {
 		await conversation.stop();
 	}
 
+	/** `[agents] auto_compact_*` may have changed: every conversation judges itself again. */
+	reconsiderCacheKeeping(): void {
+		for (const conversation of this.#conversations.values())
+			conversation.reconsiderCacheKeeping();
+	}
+
 	onEvent(listener: ConversationEventListener): () => void {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);

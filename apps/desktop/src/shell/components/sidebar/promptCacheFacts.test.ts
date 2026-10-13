@@ -25,6 +25,19 @@ describe("promptCacheFacts", () => {
     expect(fact?.tone).toBe("unknown");
   });
 
+  it("says when DevHub will auto-compact, only when it will", () => {
+    const now = 10_000_000 - 38 * 60_000;
+    const [armed] = promptCacheFacts(
+      { ...cache, autoCompactAt: 10_000_000 - 60_000 },
+      now,
+    );
+    expect(armed?.text).toBe(
+      "Cache: warm · 38m left (1h TTL) · auto-compact in 37m · hit 91% · misses 0",
+    );
+    const [off] = promptCacheFacts(cache, now);
+    expect(off?.text).not.toContain("auto-compact");
+  });
+
   it("turns the waiting colour in the last fifth of its life", () => {
     const [fact] = promptCacheFacts(cache, 10_000_000 - 5 * 60_000);
     expect(fact?.tone).toBe("waiting");

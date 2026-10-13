@@ -838,6 +838,12 @@ export interface PromptCache {
   readonly misses: number;
   /** Tokens the next request writes again if the cache is cold by then. */
   readonly recacheTokens: number | undefined;
+  /**
+   * When DevHub will compact the idle conversation before the cache goes
+   * cold (`[agents] auto_compact_before_cache_expiry`); absent when it will
+   * not. Main's, added to the reading, never the adapter's.
+   */
+  readonly autoCompactAt?: number | undefined;
 }
 
 export interface RateLimit {

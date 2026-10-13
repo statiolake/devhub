@@ -1113,6 +1113,8 @@ export interface PromptCacheWire {
 	readonly requests: number;
 	readonly misses: number;
 	readonly recacheTokens: number | undefined;
+	/** When DevHub will auto-compact before it goes cold; absent when it will not. */
+	readonly autoCompactAt?: number | undefined;
 }
 
 export type AgentSnapshot = AgentWire;

@@ -6477,6 +6477,9 @@ export class AppController {
 		this.publishAppearance();
 		this.publishProfiles();
 		this.publishActions();
+		// `[agents] auto_compact_*` is read when a conversation changes; an
+		// idle one would not notice the setting turned on until too late.
+		this.agentWiring?.conversations.registry.reconsiderCacheKeeping();
 	}
 
 	//#endregion

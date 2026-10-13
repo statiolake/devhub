@@ -54,6 +54,9 @@ export function promptCacheFacts(
         text: [
           `Cache: warm`,
           `${timeLeft(left)} left (${lifetime})`,
+          ...(cache.autoCompactAt === undefined
+            ? []
+            : [`auto-compact in ${timeLeft(cache.autoCompactAt - now)}`]),
           ...stats,
         ].join(" · "),
         spoken: `Prompt cache warm, ${timeLeft(left)} left`,

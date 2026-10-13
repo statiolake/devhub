@@ -145,6 +145,21 @@ export class CacheKeeper {
 		return armed.expiresAt - now >= MIN_REMAINING_MS;
 	}
 
+	/**
+	 * The settings may have changed: the last conversation seen is judged
+	 * again now. Without it, turning the setting on while a conversation sat
+	 * idle armed nothing until its next event — which, for an idle one, is
+	 * after its cache has gone cold.
+	 */
+	reconsider(): void {
+		if (this.#latest !== undefined) this.observe(this.#latest);
+	}
+
+	/** When the armed compaction is due, if one is. */
+	dueAt(): number | undefined {
+		return this.#armed?.at;
+	}
+
 	stop(): void {
 		this.#stopped = true;
 		this.#disarm();
