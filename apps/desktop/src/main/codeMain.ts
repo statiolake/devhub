@@ -89,6 +89,7 @@ import { createWaitMarkerFileSync } from 'code-oss-dev/out/vs/platform/environme
 import { IFileService } from 'code-oss-dev/out/vs/platform/files/common/files.js';
 import { FileService } from 'code-oss-dev/out/vs/platform/files/common/fileService.js';
 import { DiskFileSystemProvider } from 'code-oss-dev/out/vs/platform/files/node/diskFileSystemProvider.js';
+import { GPUProcessMainService, IGPUProcessMainService } from 'code-oss-dev/out/vs/platform/gpu/electron-main/gpuProcessMainService.js';
 import { SyncDescriptor } from 'code-oss-dev/out/vs/platform/instantiation/common/descriptors.js';
 import { IInstantiationService, ServicesAccessor } from 'code-oss-dev/out/vs/platform/instantiation/common/instantiation.js';
 import { InstantiationService } from 'code-oss-dev/out/vs/platform/instantiation/common/instantiationService.js';
@@ -163,13 +164,17 @@ class CodeMain {
 		setUnexpectedErrorHandler(err => console.error(err));
 
 		// Create services
+		mark('code/willCreateMainServices');
 		const [instantiationService, instanceEnvironment, environmentMainService, configurationService, stateMainService, bufferLogger, productService, userDataProfilesMainService] = this.createServices();
+		mark('code/didCreateMainServices');
 
 		try {
 
 			// Init services
 			try {
+				mark('code/willInitMainServices');
 				await this.initServices(environmentMainService, userDataProfilesMainService, configurationService, stateMainService, productService);
+				mark('code/didInitMainServices');
 			} catch (error) {
 
 				// Show a dialog for errors that can be resolved by the user
@@ -206,14 +211,6 @@ class CodeMain {
 					evt.join('instanceLockfile', promises.unlink(environmentMainService.mainLockfile).catch(() => { /* ignored */ }));
 				});
 
-				// Check if Inno Setup is running. Briefly wait for the updating mutex to be released before refusing to launch.
-				const innoSetupActive = await this.checkInnoSetupMutex(productService, logService);
-				if (innoSetupActive) {
-					const message = `${productService.nameShort} is currently being updated. Please wait for the update to complete before launching.`;
-					instantiationService.invokeFunction(this.quit, new Error(message));
-					return;
-				}
-
 				// DevHub: the App Shell window must exist before the first workbench
 				// window is asked for, because that request is what becomes a view
 				// inside it.
@@ -239,6 +236,9 @@ class CodeMain {
 		const services = new ServiceCollection();
 		const disposables = new DisposableStore();
 		process.once('exit', () => disposables.dispose());
+
+		// Capture GPU lifecycle changes before asynchronous startup and window creation.
+		services.set(IGPUProcessMainService, disposables.add(new GPUProcessMainService(app)));
 
 		// Product
 		const productService = { _serviceBrand: undefined, ...product };
@@ -430,6 +430,19 @@ class CodeMain {
 			mark('code/willStartMainServer');
 			mainProcessNodeIpcServer = await nodeIPCServe(environmentMainService.mainIPCHandle);
 			mark('code/didStartMainServer');
+
+			let releasedServerForUpdate = false;
+			const innoSetupActive = await this.checkInnoSetupMutex(productService, logService, () => {
+				mainProcessNodeIpcServer.dispose();
+				releasedServerForUpdate = true;
+			});
+			if (innoSetupActive) {
+				throw new Error(localize('innoSetupActive', "{0} is currently being updated. Please wait for the update to complete before launching.", productService.nameShort));
+			}
+			if (releasedServerForUpdate) {
+				return this.claimInstance(logService, environmentMainService, lifecycleMainService, instantiationService, productService, retry);
+			}
+
 			Event.once(lifecycleMainService.onWillShutdown)(() => mainProcessNodeIpcServer.dispose());
 		} catch (error) {
 
@@ -619,8 +632,8 @@ class CodeMain {
 		app.exit(exitCode);
 	}
 
-	private async checkInnoSetupMutex(productService: IProductService, logService: ILogService): Promise<boolean> {
-		if (!(isWindows && productService.win32MutexName && productService.win32VersionedUpdate && isInnoSetupInstall())) {
+	private async checkInnoSetupMutex(productService: IProductService, logService: ILogService, onActive: () => void): Promise<boolean> {
+		if (!(isWindows && productService.win32MutexName && productService.win32VersionedUpdate && isInnoSetupInstall(productService.target))) {
 			return false;
 		}
 
@@ -631,6 +644,8 @@ class CodeMain {
 			if (!mutex.isActive(updatingMutexName)) {
 				return false;
 			}
+
+			onActive();
 
 			// Wait briefly for setup teardown to release the mutex; Inno's `nowait postinstall` runcode can race the setup process exit.
 			const pollIntervalMs = 250, retries = 120; // 30s total
