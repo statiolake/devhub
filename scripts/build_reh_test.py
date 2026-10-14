@@ -100,7 +100,7 @@ class Targets(unittest.TestCase):
 
 	def test_native_modules_are_built_for_the_targets_libc(self) -> None:
 		self.assertEqual(remote_modules_image("alpine-arm64", "24.18.1"), "node:24.18.1-alpine")
-		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "node:24.18.1-bullseye")
+		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "debian:bullseye")
 		self.assertIn("apk add", toolchain_dockerfile("alpine-x64", "24.18.1"))
 		self.assertIn("apt-get", toolchain_dockerfile("linux-arm64", "24.18.1"))
 		for target in TARGETS:
@@ -440,7 +440,14 @@ class ToolchainImage(unittest.TestCase):
 		self.assertEqual(tag, toolchain_tag("alpine-arm64", "24.18.1"))
 
 	def test_dockerfile_bakes_the_toolchain(self) -> None:
-		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM node:1.2.3-bullseye\n"))
+		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM debian:bullseye\n"))
+		self.assertEqual(remote_modules_image("linux-arm64", "24.21.0"), "debian:bullseye")
+		self.assertEqual(remote_modules_image("alpine-x64", "24.21.0"), "node:24.21.0-alpine")
+		x64 = toolchain_dockerfile("linux-x64", "24.21.0")
+		self.assertIn("https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz", x64)
+		self.assertIn("sha256sum -c", x64)
+		self.assertIn("node-v24.21.0-linux-arm64.tar.xz", toolchain_dockerfile("linux-arm64", "24.21.0"))
+		self.assertNotIn("node:24.21.0-bullseye", x64)
 		self.assertTrue(toolchain_dockerfile("alpine-x64", "1.2.3").startswith("FROM node:1.2.3-alpine\n"))
 
 

@@ -55,9 +55,13 @@ glibc or musl, x64 or arm64. This script does that in a container of the
 target's platform (`remote_modules_image`) before packaging each target, and
 puts the host's own `node_modules` back afterwards:
 
-- glibc targets in `node:<version>-bullseye`, so the addons need no newer
-  glibc than Debian 11's 2.31 — the oldest the Node they run on supports
-  is 2.28, and building on a newer runner would quietly raise that floor.
+- glibc targets in `debian:bullseye` with the pinned Node's official
+  nodejs.org tarball installed (checked against its SHASUMS256.txt), so the
+  addons need no newer glibc than Debian 11's 2.31 — the oldest the Node they
+  run on supports is 2.28, and building on a newer runner would quietly raise
+  that floor. Not `node:<version>-bullseye`: the official images stopped
+  publishing bullseye variants for Node 24 (24.21.0 has only bookworm/trixie,
+  glibc 2.36+).
 - musl targets in `node:<version>-alpine`, which is what upstream does too
   (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME` in `build/npm/postinstall.ts`).
   The C++ runtime that musl Node needs and a stock Alpine lacks is copied in
@@ -218,13 +222,23 @@ def remote_node_version() -> str:
 	raise SystemExit(f"no target= in {REMOTE_DIR / '.npmrc'}")
 
 
+GLIBC_BASE_IMAGE = "debian:bullseye"
+
+
 def remote_modules_image(target: str, node_version: str) -> str:
 	"""The stock image the toolchain image is built on.
 
-	See the module docstring for why bullseye and why alpine.
+	See the module docstring for why bullseye (plus a nodejs.org Node) and why
+	alpine.
 	"""
-	flavour = "alpine" if libc_of(target) == "musl" else "bullseye"
-	return f"node:{node_version}-{flavour}"
+	if libc_of(target) == "musl":
+		return f"node:{node_version}-alpine"
+	return GLIBC_BASE_IMAGE
+
+
+def node_dist_name(target: str, node_version: str) -> str:
+	"""The nodejs.org tarball for a glibc target, e.g. node-v24.21.0-linux-x64."""
+	return f"node-v{node_version}-linux-{arch_of(target)}"
 
 
 def toolchain_dockerfile(target: str, node_version: str) -> str:
@@ -234,15 +248,26 @@ def toolchain_dockerfile(target: str, node_version: str) -> str:
 	`build_from_source` — every addon is compiled against the target's Node and
 	libc, none is a prebuild for some other machine — and patchelf for
 	`musl_runtime_script`. Baked in once instead of installed in every
-	container, which also means the musl bundling needs no network.
+	container, which also means the musl bundling needs no network. For glibc
+	the exact Node is installed from nodejs.org and its sha256 verified.
 	"""
 	base = remote_modules_image(target, node_version)
 	if libc_of(target) == "musl":
 		run = "apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf"
 	else:
+		dist = node_dist_name(target, node_version)
+		url = f"https://nodejs.org/dist/v{node_version}"
 		run = (
 			"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
-			"libkrb5-dev python3 make g++ >/dev/null && rm -rf /var/lib/apt/lists/*"
+			"ca-certificates curl xz-utils libkrb5-dev python3 make g++ >/dev/null"
+			" && rm -rf /var/lib/apt/lists/*"
+			" && cd /tmp"
+			f" && curl -fsSLO {url}/{dist}.tar.xz"
+			f" && curl -fsSL {url}/SHASUMS256.txt | grep ' {dist}.tar.xz$' > SHASUMS256.txt"
+			" && test -s SHASUMS256.txt && sha256sum -c SHASUMS256.txt"
+			f" && tar -xJf {dist}.tar.xz -C /usr/local --strip-components=1 --no-same-owner"
+			f" && rm {dist}.tar.xz SHASUMS256.txt"
+			f" && node --version | grep -qx v{node_version}"
 		)
 	return f"FROM {base}\nRUN {run}\n"
 
@@ -261,11 +286,20 @@ def ensure_toolchain_image(target: str, node_version: str) -> str:
 	have = subprocess.run(["docker", "image", "inspect", tag], capture_output=True)
 	if have.returncode != 0:
 		print(f"  building toolchain image {tag}")
-		subprocess.run(
+		built = subprocess.run(
 			["docker", "build", "--platform", docker_platform(target), "-t", tag, "-"],
 			input=toolchain_dockerfile(target, node_version).encode(),
-			check=True,
 		)
+		if built.returncode != 0:
+			raise SystemExit(
+				f"error: building toolchain image {tag} for {target} failed.\n"
+				f"  base image: {remote_modules_image(target, node_version)}"
+				f" (Node {node_version} from remote/.npmrc)\n"
+				"  If the base image or Node release is missing, check it exists:\n"
+				f"    https://hub.docker.com/v2/repositories/library/node/tags?name={node_version}\n"
+				f"    https://nodejs.org/dist/v{node_version}/\n"
+				"  and adjust remote_modules_image / toolchain_dockerfile in scripts/build_reh.py."
+			)
 	return tag
 
 
