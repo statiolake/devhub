@@ -203,6 +203,55 @@ extension management service, so the gallery (Open VSX), the allow-list and the
 built-in protections are the ones the app itself uses. An option `devhub` does
 not know is refused with a sentence — it is never quietly treated as a path.
 
+### `devhub --tell`: DevHub's own operations, by name
+
+`devhub --tell <subcommand>` asks the running app to do what its window does,
+through the same code the window uses. Text by default; `--tell --json` prints
+data for scripts and agents. `devhub --tell help` lists everything.
+
+```sh
+devhub --tell workspaces                              # open workspaces: id, folder, branch, Issue, agents
+devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
+devhub --tell agents [--workspace W]                  # id, name, kind, status, unread, open requests
+devhub --tell agent new --workspace W [--profile P] [--name N] [--gui|--tui] [--prompt TEXT|-]   # Cmd+Q c
+devhub --tell issue assign <url> [--branch 123-fix-login-timeout] [--repo PATH] [--root]
+              [--profile P] [--action ID] [--prompt TEXT|-] [--editor-only]   # Cmd+Q i
+devhub --tell agent read A [--last N] [--since CURSOR]   # a GUI agent's transcript, with a cursor
+devhub --tell agent send A TEXT|-                     # held until its turn ends, like the composer
+devhub --tell agent interrupt A
+devhub --tell agent requests A                        # open questions (and permission prompts, read-only)
+devhub --tell agent answer A REQUEST --option N... | --text T
+devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
+devhub --tell commands | run <command-id>             # the command palette
+devhub --tell focus A|W | notify TEXT
+```
+
+`W` is a workspace's id, folder, name or `scratch`; `A` is an agent's id, a
+unique prefix of it, or its name. `issue assign` does what the Assign Issue
+sheet does — the first clone DevHub finds (or `--repo`), a worktree of the
+branch (or `--root`), the first Issue action — except that the branch is the
+caller's to name rather than `feature/<n>-wip`.
+
+Two things are deliberately not reachable from a command line. A **permission
+prompt** (may this tool call run?) is the person's, in DevHub: `agent requests`
+lists it as "answer in DevHub" and `agent answer` refuses it. Only questions —
+Claude's AskUserQuestion, Codex's requestUserInput — can be answered, and the
+answer carries a note, "answered via devhub CLI by <agent>", that Claude keeps
+in the target's transcript. An agent cannot answer its own question. Palette
+commands that ask first in the window (close, restart) still ask first.
+
+**The `/devhub` skill.** Every agent DevHub starts on this Mac gets `/devhub`,
+a skill that teaches it this command: open a workspace and an agent, hand an
+Issue to a new agent with a descriptive branch name, watch the others with
+`agent wait` / `agent read`, and answer their questions — delegating rather
+than doing the work itself. DevHub writes the skill on every start into its
+user-data directory (`devhub/agent-skill/`), beside a `bin/devhub` launcher for
+this instance; nothing in `~/.claude` or `~/.codex` is touched. Claude (terminal
+and GUI) is launched with `--add-dir=<that directory>`, from which Claude Code
+loads `.claude/skills/devhub` as `/devhub`. A GUI Codex thread is started with
+`developerInstructions` that point `/devhub` and `$devhub` at the same
+SKILL.md. Terminal Codex agents and agents on SSH hosts do not get it.
+
 ## Configuration
 
 One file: `settings.toml` in `~/.config/devhub/` (or

@@ -2605,6 +2605,16 @@ function answerResponse(
 						typeof value === "string" ? value : value.join(", "),
 					]),
 				),
+				...(answer.notes === undefined
+					? {}
+					: {
+							annotations: Object.fromEntries(
+								Object.entries(answer.notes).map(([question, notes]) => [
+									question,
+									{ notes },
+								]),
+							),
+						}),
 			},
 		};
 	}

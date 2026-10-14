@@ -1116,6 +1116,54 @@ describe("permission requests", () => {
 		});
 	});
 
+	it("carry a note on each answer as Claude's annotation, so the transcript keeps who answered", () => {
+		const adapter = inTurn();
+		const input = {
+			questions: [
+				{
+					question: "Which database?",
+					header: "Database",
+					options: [
+						{ label: "Postgres", description: "" },
+						{ label: "SQLite", description: "" },
+					],
+					multiSelect: false,
+				},
+			],
+		};
+		adapter.received(
+			assistantLine("m", [toolUse("toolu_q", "AskUserQuestion", input)]),
+		);
+		adapter.received(
+			canUseTool("q", {
+				tool_name: "AskUserQuestion",
+				input,
+				tool_use_id: "toolu_q",
+			}),
+		);
+		const [line] = adapter.encode({
+			kind: "answer",
+			request: requestId("q"),
+			answer: {
+				kind: "answers",
+				values: { "Which database?": "SQLite" },
+				notes: { "Which database?": "answered via devhub CLI by Coordinator" },
+			},
+		});
+		expect(JSON.parse(line!).response.response).toEqual({
+			behavior: "allow",
+			updatedInput: {
+				...input,
+				answers: { "Which database?": "SQLite" },
+				annotations: {
+					"Which database?": {
+						notes: "answered via devhub CLI by Coordinator",
+					},
+				},
+			},
+		});
+	});
+
 	it("keep each option's preview", () => {
 		const adapter = inTurn();
 		const input = {

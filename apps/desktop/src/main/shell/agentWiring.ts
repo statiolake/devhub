@@ -50,6 +50,11 @@ import {
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
+	codexDevhubInstructions,
+	withDevhubSkill,
+	type DevhubSkill,
+} from "../agent/devhubSkill.js";
+import {
 	claudeHistory,
 	codexStructuredArgs,
 	listPastSessions,
@@ -108,6 +113,11 @@ export interface AgentWiringOptions {
 	readonly limitResumes: AgentRecordStore<LimitResumeRecord>;
 	/** `[agents] auto_compact_*`, as the config says now; off when absent. */
 	readonly cacheKeeping?: () => CacheKeepSettings;
+	/**
+	 * The `/devhub` skill for Agents on `machine`, or nothing where there is
+	 * none (`agent/devhubSkill.ts`).
+	 */
+	readonly devhubSkill?: (machine: RuntimeId) => DevhubSkill | undefined;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -204,38 +214,47 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		agentId: AgentId,
 		profile: AgentProfile,
 		root: string,
-	): AgentConversation =>
-		registry.get(agentId) ??
-		registry.open(
-			agentId,
-			(publish) =>
-				new AgentConversation(
-					openedLater(async () =>
-						hostOn(
-							new HostLink(
-								options.machineRuntime(machine),
-								await stateDirectory(machine, agentId),
+	): AgentConversation => {
+		const skill = options.devhubSkill?.(machine);
+		const skilled = withDevhubSkill(profile, skill);
+		return (
+			registry.get(agentId) ??
+			registry.open(
+				agentId,
+				(publish) =>
+					new AgentConversation(
+						openedLater(async () =>
+							hostOn(
+								new HostLink(
+									options.machineRuntime(machine),
+									await stateDirectory(machine, agentId),
+								),
+								(session) => guiAgentCli(skilled, session),
 							),
-							(session) => guiAgentCli(profile, session),
 						),
-					),
-					adapterFor(profile, {
-						bootId,
-						cwd: root,
-						clientVersion: options.clientVersion,
-					}),
-					publish,
-					{
-						settings: options.resumeAfterLimit,
-						record: {
-							get: () => options.limitResumes.get(agentId),
-							set: (record) => options.limitResumes.set(agentId, record),
+						adapterFor(profile, {
+							bootId,
+							cwd: root,
+							clientVersion: options.clientVersion,
+							developerInstructions:
+								skill === undefined
+									? undefined
+									: codexDevhubInstructions(skill),
+						}),
+						publish,
+						{
+							settings: options.resumeAfterLimit,
+							record: {
+								get: () => options.limitResumes.get(agentId),
+								set: (record) => options.limitResumes.set(agentId, record),
+							},
+							clock: REAL_CLOCK,
 						},
-						clock: REAL_CLOCK,
-					},
-					{ settings: options.cacheKeeping ?? (() => CACHE_KEEP_OFF) },
-				),
+						{ settings: options.cacheKeeping ?? (() => CACHE_KEEP_OFF) },
+					),
+			)
 		);
+	};
 
 	/** Where an Agent runs and what it runs: what its sessions are read with. */
 	const placeOf = (agentId: AgentId) => {
@@ -470,9 +489,13 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						"the Workspace this Agent belongs to is no longer open",
 					);
 				}
+				const skilled = withDevhubSkill(
+					profile,
+					options.devhubSkill?.(machine),
+				);
 				const cli: AgentSessionCommand = {
 					file: profile.command,
-					args: [...profile.args],
+					args: [...skilled.args],
 					env: Object.fromEntries(profile.env),
 				};
 				// The one place the two presentations differ at launch: a GUI
@@ -495,7 +518,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							await claudeHistory(runtime, profile, workspaceRoot, resumed),
 						);
 					}
-					command = hostSessionCommand(directory, guiAgentCli(profile));
+					command = hostSessionCommand(directory, guiAgentCli(skilled));
 				}
 				await sessions.launch({
 					machine,
@@ -785,6 +808,7 @@ function adapterFor(
 		readonly bootId: string;
 		readonly cwd: string;
 		readonly clientVersion: string;
+		readonly developerInstructions?: string | undefined;
 	},
 ): ProtocolAdapter {
 	switch (profile.kind) {
@@ -795,6 +819,7 @@ function adapterFor(
 				clientVersion: context.clientVersion,
 				cwd: context.cwd,
 				resumeThreadId: codexStructuredArgs(profile.args).resumeThreadId,
+				developerInstructions: context.developerInstructions,
 			});
 		default:
 			throw new Error(`a ${profile.kind} Agent cannot be a GUI Agent`);

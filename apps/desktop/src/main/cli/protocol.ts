@@ -17,6 +17,7 @@
 
 import { join } from "node:path";
 import type { PortsConfiguration } from "../runtime/portForward.js";
+import { tellCommandFrom, type TellCommand } from "./tell/command.js";
 
 /** Where the running app listens. One per user-data directory, so a scratch
  * run and a real one never meet. */
@@ -215,6 +216,17 @@ export type ControlRequest =
 			 * would make the interval whatever the log happened to flush at.
 			 */
 			readonly kind: "metrics";
+	  }
+	| {
+			/**
+			 * `devhub --tell`: one of DevHub's own operations, by name. See
+			 * `tell/command.ts` for the vocabulary and `tell/service.ts` for
+			 * what each one does. `origin` is the asking pane's, as for `open`:
+			 * it is how an answer is credited to the Agent that gave it.
+			 */
+			readonly kind: "tell";
+			readonly command: TellCommand;
+			readonly origin?: string;
 	  }
 	| {
 			/** An Agent for the workspace the current directory belongs to. */
@@ -433,6 +445,8 @@ export interface ControlResponse {
 	readonly forward?: { readonly localPort: number };
 	/** A `dev-container-ports` answer. */
 	readonly ports?: PortsConfiguration;
+	/** A `tell` answer, as data: what `devhub --tell --json` prints. */
+	readonly data?: unknown;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -500,6 +514,14 @@ export function parseControlRequest(line: string): ControlRequest {
 			return { kind: "version" };
 		case "metrics":
 			return { kind: "metrics" };
+		case "tell":
+			return {
+				kind: "tell",
+				command: tellCommandFrom(record["command"]),
+				...(record["origin"] === undefined
+					? {}
+					: { origin: requireString(record["origin"], "origin") }),
+			};
 		case "add-agent":
 			return {
 				kind: "add-agent",

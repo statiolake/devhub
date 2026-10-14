@@ -95,6 +95,7 @@ import {
 	type AppOutcomeWire,
 	type AppSnapshotWire,
 	type CloseDiagnosticWire,
+	type EditorAttachmentWire,
 	type NoticeRetiredWire,
 	type ReplayWire,
 } from "../../ipc/appShell.js";
@@ -435,7 +436,9 @@ import {
 	gitHubItemUrl,
 	issueNumberFromBranch,
 	parseGitHubItemUrl,
+	wipBranchForIssue,
 } from "../../model/github.js";
+import { requestId } from "../../model/conversation.js";
 import type { GitHubItem } from "../../model/github.js";
 import {
 	renderAgentAction,
@@ -449,6 +452,22 @@ import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { terminalColors } from "./terminalColors.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
+import {
+	devhubSkillPaths,
+	writeDevhubSkill,
+	type DevhubSkill,
+} from "../agent/devhubSkill.js";
+import { launcherScript } from "../cli/install.js";
+import { launchCommandFor } from "../cli/launch.js";
+import type { TellCommand } from "../cli/tell/command.js";
+import {
+	callerFromOrigin,
+	TellService,
+	type IssueAssignRequest,
+	type TellAnswer,
+	type TellPorts,
+	type TellWorkspace,
+} from "../cli/tell/service.js";
 import {
 	installKeyboard,
 	setArmingObserver,
@@ -476,6 +495,7 @@ import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
 	defaultKeybindings,
+	isCommandId,
 	keysForCommand,
 	resolveBindings,
 	type CommandId,
@@ -1087,7 +1107,9 @@ export class AppController {
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
+		const skill = this.writeAgentSkill(userDataPath);
 		this.agentWiring = wireAgents({
+			devhubSkill: (machine) => (machine === "local" ? skill : undefined),
 			runtimeFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			model: () => this.coordinator.model,
 			machineOf: (workspaceId) => this.machineOf(workspaceId),
@@ -1242,6 +1264,36 @@ export class AppController {
 		this.repositoryStatus.start();
 		this.watchForWake();
 		this.scratch.start();
+	}
+
+	/**
+	 * The `/devhub` skill and its launcher, rewritten for this run (see
+	 * `agent/devhubSkill.ts`). A skill that cannot be written is said and
+	 * skipped: the Agents start without it, which is how they started before.
+	 */
+	private writeAgentSkill(userDataPath: string): DevhubSkill | undefined {
+		const skill = devhubSkillPaths(userDataPath);
+		try {
+			writeDevhubSkill(
+				skill,
+				launcherScript({
+					execPath: process.execPath,
+					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
+					socketPath: controlSocketPath(userDataPath),
+					commandName: activeProfile().cliCommandName,
+					profile: activeProfile().profile,
+					launchCommand: launchCommandFor(APP_ROOT),
+					home: homedir(),
+					pathValue: process.env["PATH"] ?? "",
+				}),
+			);
+			return skill;
+		} catch (error) {
+			console.error(
+				`[devhub] could not write the /devhub agent skill: ${failureText(error)}`,
+			);
+			return undefined;
+		}
 	}
 
 	/** Every Agent the model has, by id. */
@@ -1528,6 +1580,7 @@ export class AppController {
 				void this.openCommandPalette(chordHost);
 			},
 		};
+		this.chordHost = chordHost;
 		installKeyboard(inputSource, report, chordHost);
 		setArmingObserver((armed) => {
 			this.send(CHANNELS.chordArmedChanged, armed);
@@ -1706,6 +1759,9 @@ export class AppController {
 	 * opposite, and `publishLayoutState` is where it joins the rest.
 	 */
 	private keyboardInSidebar = false;
+
+	/** The keyboard's host, which `devhub --tell run` runs a command through. */
+	private chordHost: ChordHost | undefined;
 
 	/** What the command palette ran lately, most recent first. Memory only. */
 	private recentCommands: readonly CommandId[] = [];
@@ -6345,6 +6401,338 @@ export class AppController {
 	}
 
 	/**
+	 * `devhub --tell`: see `cli/tell/service.ts`. Every port below is a call the
+	 * window itself makes, so an operation asked for on a command line is the
+	 * operation a click would have been.
+	 */
+	tellFromCli(
+		command: TellCommand,
+		origin: string | undefined,
+	): Promise<TellAnswer> {
+		return new TellService(this.tellPorts()).run(
+			command,
+			callerFromOrigin(origin),
+		);
+	}
+
+	private tellPorts(): TellPorts {
+		const newAgent = (before: ReadonlySet<string>): string | undefined =>
+			this.coordinator.model.workspaces
+				.flatMap((workspace) => workspace.agents)
+				.find((agent) => !before.has(agent.id))?.id;
+		return {
+			workspaces: () => this.tellWorkspaces(),
+			profiles: () =>
+				(this.config?.agentProfiles ?? []).map((profile) => ({
+					id: profile.id,
+					kind: profile.kind,
+				})),
+			openWorkspace: async (path, machine, worktree) => {
+				const place: WorkspacePlaceWire = machine.startsWith("ssh:")
+					? { kind: "ssh", host: machine.slice("ssh:".length), path }
+					: { kind: "local", path };
+				let target = place;
+				if (worktree !== undefined) {
+					const number = issueNumberFromBranch(worktree);
+					if (number === undefined) {
+						throw new Error(
+							`${worktree} names no Issue number, and a worktree folder is named by one (like 123-fix-login). Use a branch with the number in it, or 'issue assign'.`,
+						);
+					}
+					target = {
+						...place,
+						path: await ensureWorktree(
+							await this.gitCommand(runtimeFor(workspaceLocation(place))),
+							place.path,
+							{ kind: "issue", number },
+							worktree,
+						),
+					};
+				}
+				const location = requestedLocation(target);
+				await this.openFolder(location);
+				return this.openedWorkspaceId(location);
+			},
+			createAgent: async (workspaceId, profileId, presentation) => {
+				const before = this.modelAgentIds();
+				await this.dispatchAwaiting({
+					type: "create_agent",
+					workspaceId: this.workspaceIdOf(workspaceId),
+					profileId: agentProfileId(profileId),
+					presentation: "full",
+					...(presentation === undefined
+						? {}
+						: { agentPresentation: agentPresentation(presentation) }),
+				});
+				const created = newAgent(before);
+				if (created === undefined)
+					throw new Error("DevHub did not start the agent.");
+				return created;
+			},
+			renameAgent: async (agentId, name) => {
+				await this.dispatchAwaiting({
+					type: "rename_agent",
+					agentId: parseAgentId(agentId),
+					displayName: name,
+				});
+			},
+			queueText: (agentId, text) => {
+				const queued = agents()?.queueInjection(
+					parseAgentId(agentId),
+					text,
+					false,
+				);
+				if (queued === undefined)
+					throw new Error("DevHub's agents are not running yet.");
+			},
+			assignIssue: (request) => this.assignIssueFromCli(request),
+			conversation: async (agentId) => {
+				const agent = this.coordinator.model.agent(parseAgentId(agentId));
+				if (
+					agent === undefined ||
+					agent.presentation !== "gui" ||
+					this.agentWiring === undefined
+				)
+					return undefined;
+				const conversation = await this.agentWiring.conversations.of(agent.id);
+				return {
+					entries: () => conversation.snapshot().transcript.entries,
+					requests: () => conversation.snapshot().transcript.requests,
+					turn: () => {
+						const state = conversation.snapshot().transcript.state;
+						return state.phase === "ready" ? state.turn : state.phase;
+					},
+					submit: (text) => conversation.submit(text, []),
+					interrupt: () => conversation.command({ kind: "interrupt" }),
+					answer: (request, answer) =>
+						conversation.command({
+							kind: "answer",
+							request: requestId(request),
+							answer,
+						}),
+				};
+			},
+			commands: () => {
+				const snapshot = this.snapshot();
+				return COMMANDS.filter(
+					(command) =>
+						command.id !== "forward_prefix" &&
+						command.id !== "open_command_palette",
+				).map((command) => ({
+					id: command.id,
+					label: command.label,
+					category: command.category,
+					available: resolveChord(command.id, snapshot) !== undefined,
+				}));
+			},
+			runCommand: (id) => {
+				if (!isCommandId(id) || this.chordHost === undefined) return false;
+				return runCommand(this.chordHost, id);
+			},
+			focusWorkspace: async (workspaceId) => {
+				await this.dispatchAwaiting(
+					intentFromWire({
+						type: "select_context",
+						context: { kind: "workspace", workspaceId },
+					}),
+				);
+				await this.syncEditorView();
+				this.bringToFront();
+			},
+			focusAgent: async (agentId) => {
+				await this.dispatchAwaiting(
+					intentFromWire({
+						type: "select_context",
+						context: { kind: "agent", agentId },
+					}),
+				);
+				this.bringToFront();
+			},
+			notify: (text) => {
+				const { Notification } = electron;
+				if (!Notification.isSupported())
+					throw new Error("this Mac does not show notifications.");
+				const notification = new Notification({ title: "DevHub", body: text });
+				this.liveNotifications.add(notification);
+				const done = (): void => {
+					this.liveNotifications.delete(notification);
+				};
+				notification.on("click", () => {
+					done();
+					this.bringToFront();
+				});
+				notification.on("close", done);
+				notification.on("failed", done);
+				notification.show();
+			},
+		};
+	}
+
+	/** The model's own id for a Workspace the CLI named by its string. */
+	private workspaceIdOf(id: string): WorkspaceId {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.id === id,
+		);
+		if (!workspace) throw new Error(`no workspace ${id} is open`);
+		return workspace.id;
+	}
+
+	/** The open Workspaces as `--tell workspaces` reports them. */
+	private tellWorkspaces(): readonly TellWorkspace[] {
+		const snapshot = this.snapshot();
+		const context = this.coordinator.model.selection.context;
+		const selected =
+			context.kind === "workspace"
+				? context.workspaceId
+				: this.coordinator.model.workspaceForAgent(context.agentId)?.id;
+		return snapshot.workspaces.map((workspace) => {
+			const repository = this.lastRepositoryStatus.workspaces.find(
+				(entry) => entry.workspaceId === workspace.id,
+			);
+			const number =
+				repository?.branch === undefined
+					? undefined
+					: issueNumberFromBranch(repository.branch);
+			const issueRepository = repository?.issueRepository;
+			return {
+				id: workspace.id,
+				name: workspace.label,
+				root: workspace.root,
+				machine:
+					workspace.location.kind === "ssh"
+						? `ssh:${workspace.location.host}`
+						: "local",
+				scratch: workspace.id === snapshot.scratchWorkspaceId,
+				selected: workspace.id === selected,
+				branch: repository?.branch,
+				worktreeOf:
+					repository?.mainWorktree !== undefined &&
+					repository.mainWorktree !== workspace.root
+						? repository.mainWorktree
+						: undefined,
+				repositoryUrl: repository?.repositoryUrl,
+				issue:
+					number === undefined || issueRepository === undefined
+						? undefined
+						: `https://github.com/${issueRepository.owner}/${issueRepository.repository}/issues/${String(number)}`,
+				container: containerLabel(workspace.editor),
+				agents: workspace.agents.map((agent) => ({
+					id: agent.id,
+					name: agent.displayName,
+					workspaceId: workspace.id,
+					profileId: agent.profileId,
+					kind: agent.profileKind,
+					presentation: agent.presentation === "gui" ? "gui" : "tui",
+					status: agent.status,
+					unread: agent.unread,
+					activity: agent.activity,
+				})),
+			};
+		});
+	}
+
+	/**
+	 * `--tell issue assign`: the Assign Issue sheet's steps, with the person's
+	 * choices given as arguments — the clone (or the first one found, the
+	 * sheet's top row), the branch (or the one the sheet would offer), then
+	 * the folder and the agent.
+	 */
+	private async assignIssueFromCli(request: IssueAssignRequest): Promise<{
+		readonly workspaceId: string;
+		readonly agentId: string | undefined;
+	}> {
+		const config = this.requireConfig();
+		const item = parseGitHubItemUrl(request.url);
+		if (!item)
+			throw new Error("That is not a GitHub Issue or pull request URL.");
+		let clone: WorkspacePlaceWire;
+		if (request.repo !== undefined) {
+			clone = { kind: "local", path: request.repo };
+		} else {
+			const found = await findClones(
+				config,
+				(place) => this.gitCommand(runtimeFor(workspaceLocation(place))),
+				item,
+				this.coordinator.model.workspaces.map(
+					(workspace) => workspace.location,
+				),
+			);
+			const first = found[0];
+			if (first === undefined)
+				throw new Error(
+					`DevHub found no clone of ${item.owner}/${item.repository}. Clone it, or pass --repo <path>.`,
+				);
+			clone = first.place;
+		}
+		let branch = request.branch;
+		if (branch === undefined) {
+			const existing = await this.assignmentBranch(request.url, clone);
+			branch =
+				existing.reachable && existing.branch !== undefined
+					? existing.branch
+					: item.kind === "pull"
+						? undefined
+						: wipBranchForIssue(item.number);
+			if (branch === undefined)
+				throw new Error(
+					`the branch of ${request.url} cannot be reached from ${clone.path}.`,
+				);
+		}
+		const folder = await this.prepareIssueFolder({
+			issueUrl: request.url,
+			place: clone,
+			branch,
+			inRoot: request.place === "root",
+		});
+		if (request.editorOnly) {
+			await this.assignIssue({
+				issueUrl: request.url,
+				place: folder,
+				editorOnly: true,
+			});
+			return {
+				workspaceId: this.openedWorkspaceId(requestedLocation(folder)),
+				agentId: undefined,
+			};
+		}
+		const profile = config.agentProfiles.find(
+			(candidate) => candidate.id === request.profile,
+		);
+		if (profile === undefined)
+			throw new Error(
+				`there is no agent profile called '${String(request.profile)}'.`,
+			);
+		const actions = config.agentActions.filter(
+			(action) => action.enabled && action.trigger === "issue",
+		);
+		const action =
+			request.action === undefined
+				? actions[0]
+				: actions.find((candidate) => candidate.id === request.action);
+		if (request.action !== undefined && action === undefined)
+			throw new Error(
+				`there is no Issue action called '${request.action}'. Configured: ${actions.map((each) => each.id).join(", ") || "none"}.`,
+			);
+		const before = this.modelAgentIds();
+		await this.assignIssue({
+			issueUrl: request.url,
+			place: folder,
+			profileId: profile.id,
+			...(action === undefined ? {} : { actionId: action.id }),
+			split: false,
+			presentation: request.presentation ?? profile.presentation ?? "tui",
+		});
+		const agent = this.coordinator.model.workspaces
+			.flatMap((workspace) => workspace.agents)
+			.find((candidate) => !before.has(candidate.id));
+		return {
+			workspaceId:
+				agent?.workspaceId ?? this.openedWorkspaceId(requestedLocation(folder)),
+			agentId: agent?.id,
+		};
+	}
+
+	/**
 	 * The roots of the open Workspaces **on one machine**.
 	 *
 	 * Machine-scoped for the same reason `terminalProfileFor` is: `/srv/app` on
@@ -7648,4 +8036,10 @@ export function appController(): AppController {
 
 export function appControllerIfCreated(): AppController | undefined {
 	return current;
+}
+
+/** Which dev container a Workspace's editor is in, as `--tell workspaces` names it. */
+function containerLabel(editor: EditorAttachmentWire): string | undefined {
+	if (editor.kind === "host") return undefined;
+	return ("label" in editor ? editor.label : undefined) ?? "default";
 }

@@ -177,6 +177,11 @@ export interface CodexAdapterOptions {
 	readonly cwd: string;
 	/** Continue this thread (`thread/resume`) instead of starting one. */
 	readonly resumeThreadId: string | undefined;
+	/**
+	 * DevHub's own instructions for the thread (the `/devhub` skill's pointer,
+	 * `agent/devhubSkill.ts`), sent with `thread/start` and `thread/resume`.
+	 */
+	readonly developerInstructions?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +706,9 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.call("thread/resume", {
 				threadId: session,
 				cwd: this.options.cwd,
+				...(this.options.developerInstructions === undefined
+					? {}
+					: { developerInstructions: this.options.developerInstructions }),
 			} satisfies ThreadResumeParams);
 		});
 		return { kind: "write", lines };
@@ -1338,6 +1346,10 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	private openThread(): void {
 		const { cwd } = this.options;
+		const instructions =
+			this.options.developerInstructions === undefined
+				? {}
+				: { developerInstructions: this.options.developerInstructions };
 		// A server started again goes on with the thread already open.
 		const resumeThreadId = this.mainThread ?? this.options.resumeThreadId;
 		if (
@@ -1346,11 +1358,15 @@ export class CodexAdapter implements ProtocolAdapter {
 		)
 			return;
 		if (resumeThreadId === undefined) {
-			this.call("thread/start", { cwd } satisfies ThreadStartParams);
+			this.call("thread/start", {
+				cwd,
+				...instructions,
+			} satisfies ThreadStartParams);
 		} else {
 			this.call("thread/resume", {
 				threadId: resumeThreadId,
 				cwd,
+				...instructions,
 			} satisfies ThreadResumeParams);
 		}
 	}

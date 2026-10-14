@@ -9,6 +9,7 @@ import {
 	parseArguments,
 	requestFor,
 	USAGE,
+	withStdinText,
 } from "./devhubCli.js";
 
 describe("what the devhub command was asked to do", () => {
@@ -535,5 +536,76 @@ setTimeout(() => {
 		} finally {
 			delete process.env["DEVHUB_CONTROL_SOCKET"];
 		}
+	});
+});
+
+describe("devhub --tell on the command line", () => {
+	it("hands everything after --tell to its own parser, as typed", () => {
+		expect(
+			parseArguments([
+				"--tell",
+				"--json",
+				"agent",
+				"send",
+				"a1",
+				"--force=yes",
+			]),
+		).toEqual({
+			kind: "tell",
+			json: true,
+			command: { verb: "agent-send", agent: "a1", text: "--force=yes" },
+		});
+	});
+
+	it("says what was wrong with a tell, under --tell's name", () => {
+		expect(
+			parseArguments(["--tell", "agent", "answer", "a", "r", "--allow"]),
+		).toEqual({
+			kind: "invalid",
+			message:
+				"--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+		});
+	});
+
+	it("makes paths absolute where it was typed, and carries the pane's origin", () => {
+		expect(
+			requestFor(
+				parseArguments(["--tell", "workspace", "open", "~/src/app"]),
+				"/work",
+				"/home/d",
+				undefined,
+				{ origin: "local\tscratch\tA1" },
+			),
+		).toEqual({
+			kind: "tell",
+			command: { verb: "workspace-open", path: "/home/d/src/app" },
+			origin: "local\tscratch\tA1",
+		});
+		expect(
+			requestFor(
+				parseArguments(["--tell", "issue", "assign", "u", "--repo", "app"]),
+				"/work",
+				"/home/d",
+			),
+		).toMatchObject({ command: { repo: "/work/app" } });
+	});
+
+	it("puts piped text where '-' stood", () => {
+		expect(
+			withStdinText(
+				{ verb: "agent-send", agent: "a", text: "-" },
+				"long\nmessage\n",
+			),
+		).toEqual({ verb: "agent-send", agent: "a", text: "long\nmessage" });
+		expect(
+			withStdinText({ verb: "agent-new", workspace: "w", prompt: "-" }, "p"),
+		).toEqual({ verb: "agent-new", workspace: "w", prompt: "p" });
+		expect(
+			withStdinText({ verb: "agent-send", agent: "a", text: "hi" }, "ignored"),
+		).toEqual({ verb: "agent-send", agent: "a", text: "hi" });
+	});
+
+	it("mentions --tell in its usage", () => {
+		expect(USAGE).toContain("devhub --tell <subcommand>");
 	});
 });

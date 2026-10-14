@@ -609,6 +609,12 @@ export type RequestAnswer =
   | {
       readonly kind: "answers";
       readonly values: Readonly<Record<string, string | readonly string[]>>;
+      /**
+       * A note per question, by the same key: who answered, when it was not
+       * the person at the card (`devhub --tell agent answer`). Claude keeps it
+       * with the answer (`annotations[…].notes`), so the transcript says so.
+       */
+      readonly notes?: Readonly<Record<string, string>>;
     };
 
 export interface SessionFacts {

@@ -42,6 +42,7 @@ function everythingSaysOk(): ControlHandlers {
 				remote: { port: 1234, connectionToken: "t" },
 			}),
 		metrics: () => Promise.resolve("ok"),
+		tell: () => Promise.resolve({ message: "ok", data: {} }),
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
@@ -151,6 +152,15 @@ describe("the DevHub control socket", () => {
 				);
 			},
 			version: () => Promise.resolve("DevHub 0.1.0\nVS Code 1.0.0\nabc123"),
+			tell: (command, origin) => {
+				calls.push(`tell ${command.verb}${origin ? ` from=${origin}` : ""}`);
+				if (command.verb === "agent-answer")
+					return Promise.reject(new Error("only questions"));
+				return Promise.resolve({
+					message: "2 agents",
+					data: { agents: ["a", "b"] },
+				});
+			},
 			metrics: () => {
 				calls.push("metrics");
 				return Promise.resolve('{"processes":[]}');
@@ -460,6 +470,34 @@ describe("the DevHub control socket", () => {
 			await ask(socketPath, `${JSON.stringify({ kind: "metrics" })}\n`),
 		).toEqual({ ok: true, message: '{"processes":[]}' });
 		expect(calls).toEqual(["metrics"]);
+	});
+
+	it("answers a tell request with its sentence and its data", async () => {
+		expect(
+			await ask(
+				socketPath,
+				`${JSON.stringify({ kind: "tell", command: { verb: "agents" }, origin: "local\tscratch\tA1" })}\n`,
+			),
+		).toEqual({ ok: true, message: "2 agents", data: { agents: ["a", "b"] } });
+		expect(calls).toEqual(["tell agents from=local\tscratch\tA1"]);
+	});
+
+	it("reports a tell the app refused, as a failure", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "tell", command: { verb: "agent-answer", agent: "a", request: "r", options: [1] } })}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(answer.message).toContain("only questions");
+	});
+
+	it("refuses a tell command that is not one", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "tell", command: { verb: "rm -rf" } })}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(calls).toEqual([]);
 	});
 
 	it("refuses a request it does not understand", async () => {

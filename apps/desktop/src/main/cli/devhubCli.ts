@@ -46,6 +46,12 @@ import {
 	waitForClose,
 } from "./wait.js";
 import type { ControlRequest, ControlResponse } from "./protocol.js";
+import {
+	parseTellArguments,
+	STDIN_TEXT,
+	TELL_USAGE,
+	type TellCommand,
+} from "./tell/command.js";
 
 export const USAGE = `devhub — drive the running DevHub from a terminal.
 
@@ -92,6 +98,11 @@ extensions:
                                    which workbench each renderer is showing,
                                    and how often DevHub polls. Take two
                                    readings a known time apart to get a rate.
+  devhub --tell <subcommand> ...   ask DevHub to do what its window does:
+                                   list workspaces and agents, open a
+                                   workspace, start an agent, hand it an
+                                   Issue, read, message and answer agents.
+                                   'devhub --tell help' lists them all
   devhub -h|--help                 show this text
 
 The command talks to DevHub over its control socket. If DevHub is not running
@@ -128,7 +139,12 @@ export type Command =
 	  }
 	| { readonly kind: "list-extensions"; readonly showVersions: boolean }
 	| { readonly kind: "version" }
-	| { readonly kind: "metrics" };
+	| { readonly kind: "metrics" }
+	| {
+			readonly kind: "tell";
+			readonly command: TellCommand;
+			readonly json: boolean;
+	  };
 
 /**
  * What the arguments asked for.
@@ -145,6 +161,14 @@ export type Command =
  * be the last thing anybody suspected.
  */
 export function parseArguments(argv: readonly string[]): Command {
+	// Before anything else reads them: what follows `--tell` is its own
+	// vocabulary, including words of free text that look like options.
+	if (argv[0] === "--tell") {
+		const told = parseTellArguments(argv.slice(1));
+		return told.kind === "invalid"
+			? { kind: "invalid", message: `--tell: ${told.message}` }
+			: { kind: "tell", command: told.command, json: told.json };
+	}
 	const args = splitAssignments(argv);
 	// `devhub` on its own is not a mistake, it is the smallest thing the
 	// command can be asked for: put the app you already have in front of you.
@@ -443,7 +467,72 @@ export function requestFor(
 			return { kind: "version" };
 		case "metrics":
 			return { kind: "metrics" };
+		case "tell":
+			return {
+				kind: "tell",
+				command: expandTellPaths(command.command, cwd, home),
+				...(caller.origin === undefined ? {} : { origin: caller.origin }),
+			};
 	}
+}
+
+/** The paths a `--tell` names, made absolute where the command was typed. */
+function expandTellPaths(
+	command: TellCommand,
+	cwd: string,
+	home: string,
+): TellCommand {
+	switch (command.verb) {
+		case "workspace-open":
+			return { ...command, path: expandPath(command.path, cwd, home) };
+		case "issue-assign":
+			return command.repo === undefined
+				? command
+				: { ...command, repo: expandPath(command.repo, cwd, home) };
+		default:
+			return command;
+	}
+}
+
+/**
+ * Text given as `-` is what is piped in: a prompt or a message too long, or
+ * too full of quotes, for a command line.
+ */
+export function withStdinText(
+	command: TellCommand,
+	stdin: string,
+): TellCommand {
+	const text = stdin.replace(/\n$/, "");
+	switch (command.verb) {
+		case "agent-send":
+			return command.text === STDIN_TEXT ? { ...command, text } : command;
+		case "agent-new":
+		case "issue-assign":
+			return command.prompt === STDIN_TEXT
+				? { ...command, prompt: text }
+				: command;
+		default:
+			return command;
+	}
+}
+
+function readsStdin(command: TellCommand): boolean {
+	switch (command.verb) {
+		case "agent-send":
+			return command.text === STDIN_TEXT;
+		case "agent-new":
+		case "issue-assign":
+			return command.prompt === STDIN_TEXT;
+		default:
+			return false;
+	}
+}
+
+async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
+	let text = "";
+	stream.setEncoding("utf8");
+	for await (const chunk of stream) text += String(chunk);
+	return text;
 }
 
 async function ask(
@@ -478,6 +567,12 @@ async function ask(
 	});
 }
 
+function asRecord(data: unknown): Record<string, unknown> {
+	return typeof data === "object" && data !== null && !Array.isArray(data)
+		? (data as Record<string, unknown>)
+		: { data };
+}
+
 function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -498,6 +593,22 @@ export async function main(argv: readonly string[]): Promise<number> {
 	// opens nothing at all, which leaves the person watching a command that
 	// appeared to work and did not.
 	let command: Command = parsed;
+	if (command.kind === "tell" && command.command.verb === "help") {
+		console.log(TELL_USAGE);
+		return 0;
+	}
+	if (command.kind === "tell" && readsStdin(command.command)) {
+		if (process.stdin.isTTY) {
+			console.error(
+				"devhub: '-' reads the text from what is piped in, and nothing is.",
+			);
+			return 2;
+		}
+		command = {
+			...command,
+			command: withStdinText(command.command, await readAll(process.stdin)),
+		};
+	}
 	if (command.kind === "open-stdin") {
 		if (process.stdin.isTTY) {
 			console.error(
@@ -580,8 +691,17 @@ async function run(
 	// back is always an answer to the request above; see `launch.ts`.
 	const response = await sendOrLaunch(() => ask(socketPath, request), launcher);
 	if (!response.ok) {
+		if (command.kind === "tell" && command.json) {
+			console.log(JSON.stringify({ ok: false, error: response.message }));
+		}
 		console.error(response.message);
 		return 1;
+	}
+	if (command.kind === "tell" && command.json) {
+		console.log(
+			JSON.stringify({ ok: true, ...asRecord(response.data) }, null, 2),
+		);
+		return 0;
 	}
 	if (marker === undefined) {
 		console.log(response.message);

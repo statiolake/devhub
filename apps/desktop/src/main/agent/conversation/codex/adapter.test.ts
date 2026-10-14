@@ -3684,3 +3684,20 @@ describe("a turn the plan's usage limit stopped", () => {
 		});
 	});
 });
+
+describe("DevHub's own instructions for the thread", () => {
+	it("go with thread/start, for the /devhub skill", () => {
+		const harness = new Harness({
+			...OPTIONS,
+			developerInstructions: "read SKILL.md",
+		});
+		const [initialize, account] = fixture("handshake.handwritten.ndjson");
+		harness.start();
+		harness.receive(initialize!);
+		harness.receive(account!);
+		expect(harness.lastWrite()).toMatchObject({
+			method: "thread/start",
+			params: { cwd: CWD, developerInstructions: "read SKILL.md" },
+		});
+	});
+});

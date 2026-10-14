@@ -28,6 +28,7 @@ import {
 	type WindowFolderWire,
 } from "./protocol.js";
 import type { PortsConfiguration } from "../runtime/portForward.js";
+import type { TellCommand } from "./tell/command.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -62,6 +63,11 @@ export interface ControlHandlers {
 	version(): Promise<string>;
 	/** One reading of the app's own cost, as JSON. */
 	metrics(): Promise<string>;
+	/** `devhub --tell`: see `tell/service.ts`. */
+	tell(
+		command: TellCommand,
+		origin: string | undefined,
+	): Promise<{ readonly message: string; readonly data: unknown }>;
 	installCli(): Promise<string>;
 	/**
 	 * The command line the workbench rooted at `root` — or the folderless one,
@@ -322,6 +328,10 @@ export async function answerControlRequest(
 				return { ok: true, message: await handlers.version() };
 			case "metrics":
 				return { ok: true, message: await handlers.metrics() };
+			case "tell": {
+				const answer = await handlers.tell(request.command, request.origin);
+				return { ok: true, message: answer.message, data: answer.data };
+			}
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
 			case "resolve-remote": {
@@ -442,8 +452,9 @@ export async function answerControlRequest(
  * A typed command is the person's next operation, exactly as a click in the
  * window is, and it retires what their last one left on screen by the same
  * rule. A ping, a `--wait` ending, and a workbench asking for its host or its
- * terminal are nobody's next operation. Total, so a new request is a compile
- * error here until somebody says which it is.
+ * terminal are nobody's next operation, and neither is a `tell`, which is
+ * mostly an Agent asking. Total, so a new request is a compile error here
+ * until somebody says which it is.
  */
 function typedByPerson(request: ControlRequest): boolean {
 	switch (request.kind) {
@@ -459,6 +470,7 @@ function typedByPerson(request: ControlRequest): boolean {
 			return true;
 		case "ping":
 		case "wait-ended":
+		case "tell":
 		case "resolve-remote":
 		case "forward-port":
 		case "dev-container-ports":

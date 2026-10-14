@@ -312,6 +312,7 @@ export async function bootstrapShell(
 			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
 		metrics: () => controller.metricsFromCli(),
+		tell: (command, origin) => controller.tellFromCli(command, origin),
 		terminalProfile: (machine, root, workspace) =>
 			controller.terminalProfileFor(machine, root, workspace),
 		// Not on the controller: resolving an authority needs the runtime
