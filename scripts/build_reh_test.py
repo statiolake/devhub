@@ -33,6 +33,7 @@ from build_reh import (
 	TARGETS,
 	bundle_problems,
 	copilot_sdk_staging,
+	package_version,
 	docker_platform,
 	fetch_musl_node,
 	gulp_task,
@@ -291,10 +292,12 @@ class StageBuiltInCopilotSdk(unittest.TestCase):
 		self.addCleanup(lambda: shutil.rmtree(self.vscode, ignore_errors=True))
 		self.staged, self.installed = copilot_sdk_staging(self.vscode)
 
-	def materialize(self, sdk: Path) -> Path:
+	def materialize(self, sdk: Path, version: str | None = "1.0.73") -> Path:
 		index = sdk / "index.d.ts"
 		index.parent.mkdir(parents=True, exist_ok=True)
 		index.write_text("export {};\n")
+		if version is not None:
+			(sdk.parent / "package.json").write_text(json.dumps({"name": "@github/copilot", "version": version}))
 		return index
 
 	def test_same_paths_for_every_target(self) -> None:
@@ -342,6 +345,7 @@ class StageBuiltInCopilotSdk(unittest.TestCase):
 		self.materialize(runtime)
 		self.installed.parent.mkdir(parents=True, exist_ok=True)
 		self.installed.symlink_to(runtime, target_is_directory=True)
+		(self.installed.parent / "package.json").write_text('{"version": "1.0.73"}')
 
 		stage_builtin_copilot_sdk(self.vscode)
 
@@ -349,12 +353,32 @@ class StageBuiltInCopilotSdk(unittest.TestCase):
 		self.assertTrue((self.staged / "index.d.ts").is_file())
 		self.assertFalse((self.staged / "index.d.ts").is_symlink())
 
+	def test_stages_package_json_alongside_the_sdk(self) -> None:
+		# What a macOS build hit: `.build` had `sdk/` (copied by an earlier
+		# version of this step) but no `package.json`, because
+		# build/.moduleignore strips `@github/copilot/**`, and
+		# materializeBuiltInCopilotSdkPlatformFiles reads the version from it.
+		self.materialize(self.staged, version=None)
+		self.materialize(self.installed)
+		(self.installed.parent / "index.js").write_text("// cli\n")
+
+		stage_builtin_copilot_sdk(self.vscode)
+
+		self.assertEqual(package_version(self.staged.parent), "1.0.73")
+		self.assertTrue((self.staged.parent / "index.js").is_file())
+		self.assertTrue((self.staged / "index.d.ts").is_file())
+
+	def test_stops_when_the_installed_package_has_no_version(self) -> None:
+		self.materialize(self.installed, version=None)
+		with self.assertRaises(SystemExit):
+			stage_builtin_copilot_sdk(self.vscode)
+
 	def test_stops_when_there_is_nothing_to_stage(self) -> None:
 		# Building on would spend twenty minutes to reach an error about the
 		# output tree that says nothing about the submodule that is short.
 		with self.assertRaises(SystemExit) as caught:
 			stage_builtin_copilot_sdk(self.vscode)
-		self.assertIn(str(self.installed), str(caught.exception))
+		self.assertIn(str(self.installed.parent), str(caught.exception))
 
 
 def fake_node(machine: int, version: str = "24.18.1", size: int = 21 * 1024 * 1024) -> bytes:

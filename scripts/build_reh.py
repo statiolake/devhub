@@ -611,28 +611,50 @@ def stage_builtin_copilot_sdk(vscode_dir: Path) -> None:
 	Nothing here silences the assertion — the shim still runs and still throws
 	if the tree is wrong. It is given the same input on both architectures
 	instead of a different one.
+	The package around the SDK has to come along too, `package.json` first:
+	`materializeBuiltInCopilotSdkPlatformFiles` reads the extension's
+	`@github/copilot` version from it to fetch the version-matched
+	`@github/copilot-<os>-<arch>` natives (pinned by the extension lockfile)
+	for the *target*, and throws "Could not read a version" without it. Copying
+	only `sdk/` satisfied the first assertion and walked into that one. The
+	compile cannot supply it: `build/.moduleignore` strips `@github/copilot/**`
+	from every production dependency stream, the extension's included — upstream
+	CI ships the extension as a VSIX instead. So the whole installed package is
+	staged, symlinks resolved, whenever `.build` lacks either half.
 	"""
 	staged, installed = copilot_sdk_staging(vscode_dir)
-	if sdk_files(staged):
+	staged_pkg, installed_pkg = staged.parent, installed.parent
+	if sdk_files(staged) and package_version(staged_pkg):
 		return
-	if not sdk_files(installed):
+	if not sdk_files(installed) or not package_version(installed_pkg):
 		raise SystemExit(
-			f"no built-in Copilot SDK files at {installed}: `npm ci` in "
+			f"no built-in Copilot SDK files or no package.json version at "
+			f"{installed_pkg}: `npm ci` in "
 			"extensions/copilot materialises them from the @github/copilot-"
 			"<os>-<arch> package, and every REH package task walks into the "
 			"copy of them in the server tree and fails the build when they are "
 			"absent. Reprovision the submodule (scripts/provision-vscode.sh) "
 			"rather than building a server whose last step cannot run."
 		)
-	# An empty shell left by the compile is in the way of `copytree`, and is
-	# exactly what must not reach the server tree.
-	shutil.rmtree(staged, ignore_errors=True)
-	shutil.copytree(installed, staged, symlinks=False)
-	count = sdk_files(staged)
+	# A partial package left by the compile (an empty `sdk` shell, or `sdk`
+	# without `package.json`) is in the way of `copytree` and must not reach
+	# the server tree.
+	shutil.rmtree(staged_pkg, ignore_errors=True)
+	shutil.copytree(installed_pkg, staged_pkg, symlinks=False, ignore_dangling_symlinks=True)
+	count = sdk_files(staged_pkg)
 	print(
-		f"  staged the built-in Copilot SDK into {staged.parent} "
-		f"({count} file{'' if count == 1 else 's'})"
+		f"  staged the built-in Copilot package @{package_version(staged_pkg)} "
+		f"into {staged_pkg} ({count} file{'' if count == 1 else 's'})"
 	)
+
+
+def package_version(package_dir: Path) -> str | None:
+	"""The `version` in `package_dir/package.json`, or None — as copilot.ts reads it."""
+	try:
+		version = json.loads((package_dir / "package.json").read_text()).get("version")
+	except (OSError, ValueError, AttributeError):
+		return None
+	return version if isinstance(version, str) and version else None
 
 
 HOST_REMOTE_MODULES = REMOTE_DIR / "node_modules.host"
