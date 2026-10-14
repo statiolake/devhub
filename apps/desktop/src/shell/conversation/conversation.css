@@ -2242,16 +2242,36 @@ label.conversation-question-option:hover,
   list-style: none;
 }
 
+/* A queued message: the person's own bubble (`.conversation-user`), dimmed
+   and dashed, with a label saying it waits. Its controls are compact and
+   come up when it is pointed at or has the keyboard. */
 .conversation-pending-item {
-  padding: var(--space-2);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-control);
-  background: var(--wash);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
-.conversation-pending-text {
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+.conversation-pending-label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: var(--space-1);
+  color: var(--tertiary);
+  font-size: 0.8em;
+  gap: 0.4em;
+}
+
+.conversation-pending-item .conversation-user {
+  max-width: 100%;
+}
+
+.conversation-pending-item:not([data-editing]) .conversation-user-text {
+  border: 1px dashed var(--line);
+  background: transparent;
+  opacity: 0.75;
+}
+
+.conversation-pending-item[data-failed] .conversation-user-text {
+  border-color: var(--status-error);
 }
 
 /* Room to change a message in place: it grows with its text as the
@@ -2276,13 +2296,24 @@ label.conversation-question-option:hover,
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
+  justify-content: flex-end;
+  opacity: 0.75;
+  transition: opacity 120ms ease;
   margin-top: var(--space-1);
   font-size: 0.85em;
   gap: var(--space-2);
 }
 
+.conversation-pending-item:hover .conversation-pending-footer,
+.conversation-pending-footer:focus-within,
+.conversation-pending-item[data-editing] .conversation-pending-footer,
+.conversation-pending-item[data-failed] .conversation-pending-footer {
+  opacity: 1;
+}
+
 .conversation-pending-status {
   flex: 1 1 12em;
+  text-align: right;
   min-width: 0;
   color: var(--secondary);
 }

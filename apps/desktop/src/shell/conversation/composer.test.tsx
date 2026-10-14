@@ -1057,6 +1057,18 @@ describe("messages waiting to be sent", () => {
     );
   });
 
+  it("draws each as a user bubble with a queued label and its place", () => {
+    draw(withSession([RUNNING, HELD]));
+    const first = item("look at the tests");
+    expect(first).toHaveTextContent("Queued 1 of 2 · sends after this turn");
+    expect(first.querySelector(".conversation-user")).not.toBeNull();
+    expect(first.querySelector(".conversation-user-text")).toHaveTextContent(
+      "look at the tests",
+    );
+    expect(item("and the docs")).toHaveTextContent("Not sent");
+    expect(item("and the docs")).toHaveAttribute("data-failed");
+  });
+
   it("sends one now, or removes it", () => {
     const { actions } = draw(withSession([RUNNING, HELD]));
     fireEvent.click(

@@ -34,6 +34,15 @@ export function SendIcon() {
   );
 }
 
+export function ClockIcon() {
+  return (
+    <Icon>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5v3l2 1.5" />
+    </Icon>
+  );
+}
+
 export function EditIcon() {
   return (
     <Icon>

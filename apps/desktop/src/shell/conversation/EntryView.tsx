@@ -96,7 +96,7 @@ const ORIGIN_NOTES: Readonly<Record<SentOrigin, string | undefined>> = {
     "Sent automatically to compact before the prompt cache expired",
 };
 
-function PersonBubble({
+export function PersonBubble({
   origin,
   children,
 }: {

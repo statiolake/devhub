@@ -92,7 +92,8 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
-import { SkillBackdrop } from "./skillTokens";
+import { SkillBackdrop, SkillText } from "./skillTokens";
+import { PersonBubble } from "./EntryView";
 import {
   DICTATION_KEY,
   placeDictation,
@@ -103,7 +104,7 @@ import {
   saveLanguage,
   savedLanguage,
 } from "./dictation";
-import { EditIcon, MicIcon, SendIcon, StopIcon } from "./icons";
+import { ClockIcon, EditIcon, MicIcon, SendIcon, StopIcon } from "./icons";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
@@ -231,10 +232,15 @@ function Attachments({
  */
 function PendingItem({
   message,
+  position,
+  total,
   canSendNow,
   reportEdit,
 }: {
   readonly message: PendingMessage;
+  /** Its place in the queue, from 1. */
+  readonly position: number;
+  readonly total: number;
   readonly canSendNow: boolean;
   /** Its changed words while it is open to be changed, else `undefined`: part of the draft. */
   readonly reportEdit: (pending: PendingId, words: string | undefined) => void;
@@ -302,31 +308,46 @@ function PendingItem({
     <li
       className="conversation-pending-item"
       data-failed={message.failure !== undefined || undefined}
+      data-editing={draft !== undefined || undefined}
     >
-      {message.images.length > 0 ? (
-        <div className="conversation-images">
-          {message.images.map((image, index) => (
-            <ImageView key={index} image={image} />
-          ))}
-        </div>
-      ) : null}
-      {draft === undefined ? (
-        <div className="conversation-pending-text">{message.text}</div>
-      ) : (
-        <textarea
-          className="conversation-pending-input"
-          aria-label="Waiting message"
-          rows={3}
-          value={draft}
-          autoFocus
-          onFocus={(event) => {
-            const end = event.currentTarget.value.length;
-            event.currentTarget.setSelectionRange(end, end);
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          {...keys}
-        />
-      )}
+      <div className="conversation-pending-label">
+        <ClockIcon />
+        <span>
+          {message.failure !== undefined
+            ? "Not sent"
+            : total > 1
+              ? `Queued ${position} of ${total} · sends after this turn`
+              : "Queued · sends after this turn"}
+        </span>
+      </div>
+      <div className="conversation-user" data-origin="person">
+        {message.images.length > 0 ? (
+          <div className="conversation-images">
+            {message.images.map((image, index) => (
+              <ImageView key={index} image={image} />
+            ))}
+          </div>
+        ) : null}
+        {draft === undefined ? (
+          <PersonBubble origin="person">
+            {message.text !== "" ? <SkillText text={message.text} /> : null}
+          </PersonBubble>
+        ) : (
+          <textarea
+            className="conversation-pending-input"
+            aria-label="Waiting message"
+            rows={3}
+            value={draft}
+            autoFocus
+            onFocus={(event) => {
+              const end = event.currentTarget.value.length;
+              event.currentTarget.setSelectionRange(end, end);
+            }}
+            onChange={(event) => setDraft(event.target.value)}
+            {...keys}
+          />
+        )}
+      </div>
       <div className="conversation-pending-footer">
         <span className="conversation-pending-status">
           {pendingStatus(message)}
@@ -820,10 +841,12 @@ export function Composer({
     <div className="conversation-composer" onBlur={draft.flush}>
       {transcript.pending.length > 0 ? (
         <ol className="conversation-pending" aria-label="Waiting to be sent">
-          {transcript.pending.map((message) => (
+          {transcript.pending.map((message, index) => (
             <PendingItem
               key={message.id}
               message={message}
+              position={index + 1}
+              total={transcript.pending.length}
               canSendNow={canSendNow}
               reportEdit={reportEdit}
             />
