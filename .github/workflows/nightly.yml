@@ -269,15 +269,16 @@ jobs:
   # ---------------------------------------------------------------------------
   # The remote extension hosts the app carries.
   #
-  # Two legs, one per architecture, each building the glibc and the musl server
-  # of its own architecture: the native addons in `vscode/remote/node_modules`
-  # are compiled for the target (scripts/build_reh.py installs them in a
-  # `node:<version>-bullseye` or `-alpine` container of the runner's own
-  # architecture), and the musl Node comes out of `node:<version>-alpine` the
-  # same way, so a runner of the target's architecture runs all of it natively
-  # rather than under emulation. Each server is then started once, offline, in
-  # a plain container of its platform before it is handed on. Both Linux
-  # runners are free on a public repository.
+  # Two legs. The native addons in `vscode/remote/node_modules` are compiled
+  # for the target (scripts/build_reh.py): both glibc servers the way VS Code
+  # builds its own — in an amd64 `debian:bookworm` container against VS Code's
+  # glibc 2.28 sysroot, arm64 cross-compiled — so both are on the x64 leg; the
+  # musl servers in `node:<version>-alpine` of the target's own architecture,
+  # and the musl Node comes out of that image too, so each runs natively on a
+  # runner of its architecture. Each server is then started once, offline, in
+  # a plain container of its platform before it is handed on (linux-arm64's
+  # under QEMU on the x64 leg). Both Linux runners are free on a public
+  # repository.
   #
   # Built on every night the app is, not only when the submodule moves: the
   # servers are DevHub's patches as much as VS Code's, and the app refuses to
@@ -299,10 +300,10 @@ jobs:
         include:
           - arch: x64
             runner: ubuntu-latest
-            targets: linux-x64 alpine-x64
+            targets: linux-x64 linux-arm64 alpine-x64
           - arch: arm64
             runner: ubuntu-24.04-arm
-            targets: linux-arm64 alpine-arm64
+            targets: alpine-arm64
     env:
       CI: "true"
     steps:
@@ -390,6 +391,14 @@ jobs:
           path: ~/.cache/devhub
           key: reh-${{ matrix.arch }}-${{ steps.reh-identity.outputs.identity }}
           restore-keys: reh-${{ matrix.arch }}-
+
+      # linux-arm64 is cross-compiled on the x64 leg; only starting it once
+      # (`verify_server_starts`) needs to run arm64 code.
+      - name: Let Docker run arm64 containers
+        if: matrix.arch == 'x64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build the servers
         env:

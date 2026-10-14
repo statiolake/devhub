@@ -60,6 +60,13 @@ from build_reh import (
 	store_cached_server,
 	toolchain_dockerfile,
 	toolchain_tag,
+	SYSROOT_RELEASE,
+	SYSROOT_SHA256,
+	VERIFY_GLIBC_SCRIPT,
+	glibc_build_env,
+	glibc_check_script,
+	toolchain_platform,
+	VSCODE_DIR,
 )
 from product_metadata import PRODUCT_OVERRIDES
 
@@ -100,7 +107,7 @@ class Targets(unittest.TestCase):
 
 	def test_native_modules_are_built_for_the_targets_libc(self) -> None:
 		self.assertEqual(remote_modules_image("alpine-arm64", "24.18.1"), "node:24.18.1-alpine")
-		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "debian:bullseye")
+		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "debian:bookworm")
 		self.assertIn("apk add", toolchain_dockerfile("alpine-x64", "24.18.1"))
 		self.assertIn("apt-get", toolchain_dockerfile("linux-arm64", "24.18.1"))
 		for target in TARGETS:
@@ -440,26 +447,113 @@ class ToolchainImage(unittest.TestCase):
 		self.assertEqual(tag, toolchain_tag("alpine-arm64", "24.18.1"))
 
 	def test_dockerfile_bakes_the_toolchain(self) -> None:
-		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM debian:bullseye\n"))
-		self.assertEqual(remote_modules_image("linux-arm64", "24.21.0"), "debian:bullseye")
+		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM debian:bookworm\n"))
+		self.assertEqual(remote_modules_image("linux-arm64", "24.21.0"), "debian:bookworm")
 		self.assertEqual(remote_modules_image("alpine-x64", "24.21.0"), "node:24.21.0-alpine")
 		x64 = toolchain_dockerfile("linux-x64", "24.21.0")
+		arm64 = toolchain_dockerfile("linux-arm64", "24.21.0")
 		self.assertIn("https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz", x64)
-		self.assertIn("sha256sum -c", x64)
-		self.assertIn("node-v24.21.0-linux-arm64.tar.xz", toolchain_dockerfile("linux-arm64", "24.21.0"))
-		self.assertNotIn("node:24.21.0-bullseye", x64)
+		self.assertIn("sha256sum -c SHASUMS256.txt", x64)
+		# the image runs as amd64 for both: npm and node-gyp run on an x64 Node
+		self.assertIn("node-v24.21.0-linux-x64.tar.xz", arm64)
+		self.assertNotIn("linux-arm64.tar.xz", arm64)
 		self.assertTrue(toolchain_dockerfile("alpine-x64", "1.2.3").startswith("FROM node:1.2.3-alpine\n"))
 
-	def test_bullseye_apt_uses_the_archive(self) -> None:
-		# bullseye is EOL: deb.debian.org's security pool 404s
-		for target in ("linux-x64", "linux-arm64"):
+	def test_glibc_toolchain_is_vscodes_2_28_sysroot(self) -> None:
+		for target, triple in (("linux-x64", "x86_64-linux-gnu"), ("linux-arm64", "aarch64-linux-gnu")):
+			with self.subTest(target=target):
+				df = toolchain_dockerfile(target, "24.21.0")
+				asset = f"{triple}-glibc-2.28-gcc-8.5.0.tar.gz"
+				self.assertIn(
+					f"https://github.com/microsoft/vscode-linux-build-agent/releases/download/{SYSROOT_RELEASE}/{asset}", df)
+				self.assertIn(f"echo '{SYSROOT_SHA256[triple]}  {asset}' | sha256sum -c -", df)
+				self.assertIn("-std=gnu++2a", df)
+				gypi = df.split("echo '")[-1].split("' > /root/.gyp/include.gypi")[0]
+				self.assertNotIn("'", gypi)  # echoed inside single quotes
+				self.assertIn("cflags_cc!", gypi)
+				env = glibc_build_env(target)
+				self.assertTrue(env["CC"].endswith(f"/{triple}/bin/{triple}-gcc"))
+				self.assertTrue(env["CXX"].endswith(f"/{triple}/bin/{triple}-g++"))
+				sysroot = f"/opt/vscode-sysroot/{triple}/{triple}/sysroot"
+				self.assertEqual(env["CXXFLAGS"], f"--sysroot={sysroot}")
+				self.assertIn(f"--sysroot={sysroot} -L{sysroot}/usr/lib/{triple}", env["LDFLAGS"])
+				for key, value in env.items():
+					self.assertIn(f'ENV {key}="{value}"', df)
+		self.assertEqual(glibc_build_env("linux-arm64")["npm_config_arch"], "arm64")
+		self.assertNotIn("sysroot", toolchain_dockerfile("alpine-x64", "24.21.0"))
+
+	def test_glibc_toolchain_cross_compiles_on_amd64(self) -> None:
+		# The sysroot's compilers are x86-64 programs; VS Code cross-builds arm64.
+		self.assertEqual(toolchain_platform("linux-arm64"), "linux/amd64")
+		self.assertEqual(toolchain_platform("linux-x64"), "linux/amd64")
+		self.assertEqual(toolchain_platform("alpine-arm64"), "linux/arm64")
+		self.assertEqual(toolchain_platform("alpine-x64"), "linux/amd64")
+
+	def test_no_eol_bullseye_workaround(self) -> None:
+		for target in TARGETS:
 			df = toolchain_dockerfile(target, "24.21.0")
-			self.assertIn("deb http://archive.debian.org/debian bullseye main", df)
-			self.assertIn("deb http://archive.debian.org/debian-security bullseye-security main", df)
-			self.assertIn("Acquire::Check-Valid-Until", df)
-			self.assertNotIn("deb.debian.org", df)
-			self.assertLess(df.index("archive.debian.org"), df.index("apt-get update"))
-		self.assertNotIn("archive.debian.org", toolchain_dockerfile("alpine-arm64", "24.21.0"))
+			self.assertNotIn("bullseye", df)
+			self.assertNotIn("archive.debian.org", df)
+			self.assertNotIn("Check-Valid-Until", df)
+
+	def test_sysroot_pins_match_the_submodule(self) -> None:
+		sysroot_ts = VSCODE_DIR / "build" / "linux" / "debian" / "install-sysroot.ts"
+		checksums = VSCODE_DIR / "build" / "checksums" / "vscode-sysroot.txt"
+		setup_env = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "setup-env.sh"
+		if not (sysroot_ts.is_file() and checksums.is_file() and setup_env.is_file()):
+			self.skipTest("the vscode submodule is not checked out")
+		self.assertIn(f"const version = '{SYSROOT_RELEASE[1:]}';", sysroot_ts.read_text())
+		sums = checksums.read_text()
+		for triple, sha in SYSROOT_SHA256.items():
+			self.assertIn(f"{sha}  {triple}-glibc-2.28-gcc-8.5.0.tar.gz", sums)
+		self.assertIn("VSCODE_REMOTE_SYSROOT_DIR=$PWD/.build/sysroots/glibc-2.28-gcc-8.5.0", setup_env.read_text())
+
+	def test_glibc_floor_check_reuses_vscodes_script(self) -> None:
+		if not VERIFY_GLIBC_SCRIPT.is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		for target, machine in (("linux-x64", "X86-64"), ("linux-arm64", "AArch64")):
+			with self.subTest(target=target):
+				script = glibc_check_script(target)
+				self.assertIn("EXPECTED_GLIBC_VERSION=2.28", script)
+				self.assertIn("VSCODE_SYSROOT_DIR=/opt/vscode-sysroot", script)
+				self.assertIn("SEARCH_PATH=/work", script)
+				self.assertIn("objdump", script)
+				self.assertIn(f"Machine:.*{machine}", script)
+				self.assertTrue(script.startswith("set -e;"))
+
+	def test_glibc_floor_check_fails_above_2_28(self) -> None:
+		# VS Code's script, run here with a stand-in objdump: one symbol from
+		# glibc 2.29 has to fail it, 2.28 has to pass.
+		if not VERIFY_GLIBC_SCRIPT.is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		import subprocess
+		if not shutil.which("bash"):
+			self.skipTest("no bash")
+		for version, code in (("2.28", 0), ("2.29", 1)):
+			with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+				root = Path(tmp)
+				bindir = root / "sysroot" / "x86_64-linux-gnu" / "x86_64-linux-gnu" / "bin"
+				bindir.mkdir(parents=True)
+				(bindir / "objdump").write_text(
+					"#!/bin/sh\n"
+					f"echo '0000000000000000      DF *UND*  0000000000000000 (GLIBC_{version}) memcpy'\n"
+				)
+				(bindir / "objdump").chmod(0o755)
+				server = root / "server"
+				server.mkdir()
+				(server / "a.node").write_text("")
+				env = {
+					"PATH": "/usr/bin:/bin", "EXPECTED_GLIBC_VERSION": "2.28",
+					"EXPECTED_GLIBCXX_VERSION": "3.4.25", "VSCODE_SYSROOT_DIR": str(root / "sysroot"),
+					"VSCODE_ARCH": "x64", "SEARCH_PATH": str(server),
+				}
+				result = subprocess.run(["bash", str(VERIFY_GLIBC_SCRIPT)], env=env, capture_output=True, text=True)
+				self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+
+	def test_glibc_server_starts_on_the_floor(self) -> None:
+		# Debian 10's glibc is 2.28: the server is started where the floor is.
+		self.assertEqual(verify_image("linux-arm64"), "debian:buster-slim")
+		self.assertEqual(verify_image("alpine-x64"), "alpine:3")
 
 
 class ModulesCacheKey(unittest.TestCase):

@@ -279,11 +279,24 @@ devhub-reh-linux-x64/
 **Native modules, for the target.** `vscode/remote/node_modules` holds native
 addons — node-pty, `@parcel/watcher`, kerberos, `@vscode/spdlog`, sqlite3 —
 and the package task ships them as npm installed them. So before packaging
-each target, the script installs them again **in a container of that target's
-platform**: `node:<version>-bullseye` for glibc, so they need no newer glibc
-than Debian 11's 2.31, and `node:<version>-alpine` for musl, which is what
-upstream does for its own Alpine servers. The host's own install is moved
-aside and put back afterwards.
+each target, the script installs them again **for that target**. glibc
+servers are built the way VS Code builds its own: in a `debian:bookworm`
+container (always linux/amd64) with VS Code's cross toolchain and **glibc 2.28
+sysroot** (`vscode-linux-build-agent`'s `<triple>-glibc-2.28-gcc-8.5.0`,
+sha256-pinned from `vscode/build/checksums/vscode-sysroot.txt`) as `CC`/`CXX`
+with `--sysroot`, and `npm_config_arch=arm64` for arm64 — cross-compiled, as
+upstream does, not emulated. So nothing needs a newer glibc than 2.28, the
+floor of the Node 24 the server runs on. musl servers are built in
+`node:<version>-alpine` of the target's platform, which is what upstream does
+for its own Alpine servers. The host's own install is moved aside and put back
+afterwards.
+
+**glibc floor checked.** Each finished glibc tree is then run through VS
+Code's own `build/azure-pipelines/linux/verify-glibc-requirements.sh` (the
+sysroot's `objdump -T` over every `.node` and `node`): anything needing more
+than `GLIBC_2.28` fails the build (GLIBCXX above 3.4.25 only warns, as
+upstream), after a check that each of those files is an ELF of the target's
+architecture.
 
 **musl's C++ runtime goes with it.** The musl Node is linked against
 `libstdc++` and `libgcc_s`, which Alpine does not install by default — VS
@@ -294,8 +307,8 @@ to `$ORIGIN/lib`; musl's loader expands `$ORIGIN` to the binary's own
 directory, so the server starts on an Alpine that has never run `apk`.
 
 **Started before it is packed.** Each finished tree is started — `bin/devhub-
-server --version` — in a plain container of its platform (`debian:bullseye-
-slim` or `alpine:3`) with `--network none`: no compilers, no Node, no route
+server --version` — in a plain container of its platform (`debian:buster-
+slim`, glibc 2.28 exactly, or `alpine:3`) with `--network none`: no compilers, no Node, no route
 out. A server that cannot start on the machines it is for fails the build
 rather than the connection.
 
@@ -452,7 +465,8 @@ secrets (keys are hashes of files and versions, never of the environment):
 | compilers and patchelf | Docker image `devhub-reh-toolchain:<libc>-<arch>-<hash>` | hash of its Dockerfile text and the Node version |
 
 - First build: as before plus a one-off toolchain image build per libc and
-  architecture (a minute or so each); the musl bundling no longer needs
+  architecture (a minute or so each; the glibc ones also download
+  VS Code's sysroot); the musl bundling no longer needs
   network for `apk add patchelf`.
 - A patch-only change (new identity, same lock file): the modules come out of
   `reh-modules`, so the per-target `npm ci` is skipped; the `core-ci` bundle and

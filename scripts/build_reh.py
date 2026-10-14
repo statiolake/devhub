@@ -55,13 +55,17 @@ glibc or musl, x64 or arm64. This script does that in a container of the
 target's platform (`remote_modules_image`) before packaging each target, and
 puts the host's own `node_modules` back afterwards:
 
-- glibc targets in `debian:bullseye` with the pinned Node's official
-  nodejs.org tarball installed (checked against its SHASUMS256.txt), so the
-  addons need no newer glibc than Debian 11's 2.31 — the oldest the Node they
-  run on supports is 2.28, and building on a newer runner would quietly raise
-  that floor. Not `node:<version>-bullseye`: the official images stopped
-  publishing bullseye variants for Node 24 (24.21.0 has only bookworm/trixie,
-  glibc 2.36+).
+- glibc targets the way VS Code builds its own server
+  (`build/azure-pipelines/linux/setup-env.sh`): in `debian:bookworm`, always
+  linux/amd64, with an x64 nodejs.org Node to run npm and VS Code's cross
+  toolchain and glibc 2.28 sysroot (`vscode-linux-build-agent`
+  `<triple>-glibc-2.28-gcc-8.5.0`, sha256 from `build/checksums`) as CC/CXX
+  with `--sysroot`, and `npm_config_arch` for arm64 — cross-compiled, not
+  emulated. So the addons need no newer glibc than 2.28, the floor of the
+  Node 24 they run on; building against the image's own glibc would quietly
+  raise it. `verify_glibc_floor` then runs VS Code's own
+  `verify-glibc-requirements.sh` on the finished server and fails the build
+  if any `.node` or `node` asks for more.
 - musl targets in `node:<version>-alpine`, which is what upstream does too
   (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME` in `build/npm/postinstall.ts`).
   The C++ runtime that musl Node needs and a stock Alpine lacks is copied in
@@ -70,8 +74,10 @@ puts the host's own `node_modules` back afterwards:
 
 The target's own Node comes from VS Code's gulp task: nodejs.org for glibc,
 `node:<version>-alpine` for musl. A container of another architecture runs
-under emulation (`docker run --platform`), which works and is slow; CI builds
-each architecture on a runner of its own.
+under emulation (`docker run --platform`), which works and is slow: on an arm64
+machine that is the glibc toolchain (amd64) and the arm64 server's start check
+on an x64 one. CI builds both glibc servers and alpine-x64 on x64, alpine-arm64
+on arm64.
 
 The Copilot built-in and its native runtime are taken back out afterwards —
 about 470 MB of an 810 MB tree, and DevHub disables AI features outright. See
@@ -115,6 +121,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -222,31 +229,75 @@ def remote_node_version() -> str:
 	raise SystemExit(f"no target= in {REMOTE_DIR / '.npmrc'}")
 
 
-GLIBC_BASE_IMAGE = "debian:bullseye"
+# glibc servers are built the way VS Code builds its own (see
+# vscode/build/azure-pipelines/linux/setup-env.sh): on a current Debian, with
+# the cross toolchain + glibc 2.28 sysroot Microsoft publishes for exactly
+# this, so the addons need nothing newer than glibc 2.28 / GLIBCXX 3.4.25 —
+# the same floor as the Node 24 they run on and as VS Code's own server.
+GLIBC_BASE_IMAGE = "debian:bookworm"
 
+# vscode/build/linux/debian/install-sysroot.ts (`fetchUrl`'s version) and
+# vscode/build/checksums/vscode-sysroot.txt; the remote server's flavour is
+# `-glibc-2.28-gcc-8.5.0` (VSCODE_REMOTE_SYSROOT_DIR in setup-env.sh). A test
+# compares these with the submodule, so a VS Code bump that moves them fails.
+SYSROOT_RELEASE = "v20260212-405735"
+SYSROOT_URL = f"https://github.com/microsoft/vscode-linux-build-agent/releases/download/{SYSROOT_RELEASE}"
+SYSROOT_FLAVOUR = "-glibc-2.28-gcc-8.5.0"
+SYSROOT_SHA256 = {
+	"x86_64-linux-gnu": "1ebb6ef1fe2983269fd0855a88f9c9a37f9b515d16524a9146198e4cabdf34f7",
+	"aarch64-linux-gnu": "bcff71257397f76a4f7a76bbcfc425b4b60b16449e10b01a2cfce574c21d60da",
+}
+SYSROOT_DIR = "/opt/vscode-sysroot"
+EXPECTED_GLIBC_VERSION = "2.28"
+EXPECTED_GLIBCXX_VERSION = "3.4.25"
+VERIFY_GLIBC_SCRIPT = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "verify-glibc-requirements.sh"
 
-# Debian 11 left LTS in August 2026 and moved to archive.debian.org; the
-# image's stock sources (deb.debian.org, incl. debian-security) now 404 on
-# the pool files their indexes still list. Point apt at the archive for all
-# three suites and accept its frozen (expired) Release files. Kept bullseye
-# for its glibc 2.31 floor; building on a newer host against a 2.28 sysroot,
-# as upstream VS Code does, would be the longer-term alternative.
-APT_ARCHIVE_SOURCES = (
-	"printf '%s\\n'"
-	" 'deb http://archive.debian.org/debian bullseye main'"
-	" 'deb http://archive.debian.org/debian bullseye-updates main'"
-	" 'deb http://archive.debian.org/debian-security bullseye-security main'"
-	" > /etc/apt/sources.list"
-	" && rm -f /etc/apt/sources.list.d/*"
-	" && echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99archive"
+# setup-env.sh's ~/.gyp/include.gypi: gcc 8.5 knows C++20 as gnu++2a.
+GYP_INCLUDE = (
+	# No single quote in it: it is echoed inside one.
+	"{\"target_defaults\": {\"conditions\": [[\"OS==\\\"linux\\\"\", {"
+	"\"cflags_cc!\": [\"-std=gnu++20\"], \"cflags_cc\": [\"-std=gnu++2a\"]}]]}}"
 )
+
+
+def sysroot_triple(target: str) -> str:
+	return {"x64": "x86_64-linux-gnu", "arm64": "aarch64-linux-gnu"}[arch_of(target)]
+
+
+def sysroot_asset(target: str) -> str:
+	return f"{sysroot_triple(target)}{SYSROOT_FLAVOUR}.tar.gz"
+
+
+def toolchain_platform(target: str) -> str:
+	"""The platform the toolchain image runs as.
+
+	glibc: always linux/amd64. The sysroot's compilers are x86-64 programs, and
+	VS Code builds its arm64 server the same way — cross-compiled on an x64
+	agent with `npm_config_arch=arm64`, never under emulation. musl: the
+	target's own platform, as `node:<version>-alpine` is.
+	"""
+	return "linux/amd64" if libc_of(target) == "glibc" else docker_platform(target)
+
+
+def glibc_build_env(target: str) -> dict[str, str]:
+	"""setup-env.sh's VSCODE_REMOTE_* toolchain, as build/npm/postinstall.ts
+	hands it to the `remote` install (CC, CXX, CXXFLAGS, LDFLAGS)."""
+	triple = sysroot_triple(target)
+	root = f"{SYSROOT_DIR}/{triple}"
+	sysroot = f"{root}/{triple}/sysroot"
+	return {
+		"CC": f"{root}/bin/{triple}-gcc",
+		"CXX": f"{root}/bin/{triple}-g++",
+		"CXXFLAGS": f"--sysroot={sysroot}",
+		"LDFLAGS": f"--sysroot={sysroot} -L{sysroot}/usr/lib/{triple} -L{sysroot}/lib/{triple}",
+		"npm_config_arch": arch_of(target),
+	}
 
 
 def remote_modules_image(target: str, node_version: str) -> str:
 	"""The stock image the toolchain image is built on.
 
-	See the module docstring for why bullseye (plus a nodejs.org Node) and why
-	alpine.
+	See the module docstring for why bookworm plus a sysroot, and why alpine.
 	"""
 	if libc_of(target) == "musl":
 		return f"node:{node_version}-alpine"
@@ -261,33 +312,41 @@ def node_dist_name(target: str, node_version: str) -> str:
 def toolchain_dockerfile(target: str, node_version: str) -> str:
 	"""The Dockerfile of the image `npm ci` and the musl bundling run in.
 
-	The compilers and the kerberos headers, because `remote/.npmrc` says
-	`build_from_source` — every addon is compiled against the target's Node and
-	libc, none is a prebuild for some other machine — and patchelf for
-	`musl_runtime_script`. Baked in once instead of installed in every
-	container, which also means the musl bundling needs no network. For glibc
-	the exact Node is installed from nodejs.org and its sha256 verified.
+	The compilers, because `remote/.npmrc` says `build_from_source` — every
+	addon is compiled against the target's Node and libc, none is a prebuild
+	for some other machine — and patchelf for `musl_runtime_script`. Baked in
+	once instead of installed in every container, which also means the musl
+	bundling needs no network.
+
+	For glibc: an x64 Node from nodejs.org (sha256 checked) to run npm and
+	node-gyp, VS Code's cross toolchain and glibc 2.28 sysroot for the target
+	(sha256 checked) and its build environment, so `npm ci` compiles for the
+	target's architecture against glibc 2.28 whatever Debian the image is.
 	"""
 	base = remote_modules_image(target, node_version)
 	if libc_of(target) == "musl":
-		run = "apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf"
-	else:
-		dist = node_dist_name(target, node_version)
-		url = f"https://nodejs.org/dist/v{node_version}"
-		run = (
-			APT_ARCHIVE_SOURCES
-			+ " && apt-get update -qq && apt-get install -y -qq --no-install-recommends "
-			"ca-certificates curl xz-utils libkrb5-dev python3 make g++ >/dev/null"
-			" && rm -rf /var/lib/apt/lists/*"
-			" && cd /tmp"
-			f" && curl -fsSLO {url}/{dist}.tar.xz"
-			f" && curl -fsSL {url}/SHASUMS256.txt | grep ' {dist}.tar.xz$' > SHASUMS256.txt"
-			" && test -s SHASUMS256.txt && sha256sum -c SHASUMS256.txt"
-			f" && tar -xJf {dist}.tar.xz -C /usr/local --strip-components=1 --no-same-owner"
-			f" && rm {dist}.tar.xz SHASUMS256.txt"
-			f" && node --version | grep -qx v{node_version}"
-		)
-	return f"FROM {base}\nRUN {run}\n"
+		return f"FROM {base}\nRUN apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf\n"
+	host = node_dist_name("linux-x64", node_version)
+	url = f"https://nodejs.org/dist/v{node_version}"
+	asset = sysroot_asset(target)
+	run = (
+		"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
+		"ca-certificates curl xz-utils python3 make g++ binutils >/dev/null"
+		" && rm -rf /var/lib/apt/lists/*"
+		" && cd /tmp"
+		f" && curl -fsSLO {url}/{host}.tar.xz"
+		f" && curl -fsSL {url}/SHASUMS256.txt | grep ' {host}.tar.xz$' > SHASUMS256.txt"
+		" && test -s SHASUMS256.txt && sha256sum -c SHASUMS256.txt"
+		f" && tar -xJf {host}.tar.xz -C /usr/local --strip-components=1 --no-same-owner"
+		f" && rm {host}.tar.xz SHASUMS256.txt"
+		f" && node --version | grep -qx v{node_version}"
+		f" && curl -fsSLO --retry 5 {SYSROOT_URL}/{asset}"
+		f" && echo '{SYSROOT_SHA256[sysroot_triple(target)]}  {asset}' | sha256sum -c -"
+		f" && mkdir -p {SYSROOT_DIR} && tar -xzf {asset} -C {SYSROOT_DIR} && rm {asset}"
+		f" && mkdir -p /root/.gyp && echo '{GYP_INCLUDE}' > /root/.gyp/include.gypi"
+	)
+	env = "".join(f'ENV {k}="{v}"\n' for k, v in glibc_build_env(target).items())
+	return f"FROM {base}\nRUN {run}\n{env}"
 
 
 def toolchain_tag(target: str, node_version: str) -> str:
@@ -305,7 +364,7 @@ def ensure_toolchain_image(target: str, node_version: str) -> str:
 	if have.returncode != 0:
 		print(f"  building toolchain image {tag}")
 		built = subprocess.run(
-			["docker", "build", "--platform", docker_platform(target), "-t", tag, "-"],
+			["docker", "build", "--platform", toolchain_platform(target), "-t", tag, "-"],
 			input=toolchain_dockerfile(target, node_version).encode(),
 		)
 		if built.returncode != 0:
@@ -313,9 +372,10 @@ def ensure_toolchain_image(target: str, node_version: str) -> str:
 				f"error: building toolchain image {tag} for {target} failed.\n"
 				f"  base image: {remote_modules_image(target, node_version)}"
 				f" (Node {node_version} from remote/.npmrc)\n"
-				"  If the base image or Node release is missing, check it exists:\n"
+				"  If the base image, Node release or sysroot is missing, check it exists:\n"
 				f"    https://hub.docker.com/v2/repositories/library/node/tags?name={node_version}\n"
 				f"    https://nodejs.org/dist/v{node_version}/\n"
+				f"    {SYSROOT_URL}/\n"
 				"  and adjust remote_modules_image / toolchain_dockerfile in scripts/build_reh.py."
 			)
 	return tag
@@ -338,14 +398,54 @@ def remote_modules_script(target: str) -> str:
 	return "set -e; npm ci --ignore-scripts=false"
 
 
+ELF_MACHINE = {"x64": "X86-64", "arm64": "AArch64"}
+
+
+def glibc_check_script(target: str) -> str:
+	"""Fail if the server needs more than glibc 2.28 — or is the wrong arch.
+
+	VS Code's own check (`verify-glibc-requirements.sh`, which its pipeline
+	runs on its server with these same expectations) over every `.node` and
+	`node`, with the sysroot's objdump. Its GLIBCXX overshoot only warns, as
+	upstream. An objdump of another architecture reads no symbols and passes,
+	so first every one of those files has to be an ELF for the target's
+	machine — what a cross-compile gets wrong if an install took the host's.
+	"""
+	machine = ELF_MACHINE[arch_of(target)]
+	arch_check = (
+		"find /work -name '*.node' -not -path '*prebuilds*'"
+		" -not -path '*extensions/node_modules/@parcel/watcher*' -o -type f -name node -perm -u+x"
+		" | while read -r f; do"
+		f" readelf -h \"$f\" | grep -q 'Machine:.*{machine}'"
+		f" || {{ echo \"error: $f is not a {machine} ELF\" >&2; exit 1; }}; done"
+	)
+	upstream = VERIFY_GLIBC_SCRIPT.read_text()
+	env = (
+		f"EXPECTED_GLIBC_VERSION={EXPECTED_GLIBC_VERSION} EXPECTED_GLIBCXX_VERSION={EXPECTED_GLIBCXX_VERSION}"
+		f" VSCODE_SYSROOT_DIR={SYSROOT_DIR} VSCODE_ARCH={arch_of(target)} SEARCH_PATH=/work"
+	)
+	return f"set -e; {arch_check}; {env} bash -c {shlex.quote(upstream)}"
+
+
+def verify_glibc_floor(staging: Path, target: str) -> None:
+	"""Run `glibc_check_script` on a glibc server, in its toolchain image."""
+	if libc_of(target) != "glibc":
+		return
+	image = ensure_toolchain_image(target, remote_node_version())
+	in_container(target, image, staging, glibc_check_script(target))
+	print(f"  {target}: no native code needs more than glibc {EXPECTED_GLIBC_VERSION}")
+
+
 def verify_image(target: str) -> str:
 	"""A plain image of the target's libc to start the finished server in.
 
 	Not the build image: a machine DevHub installs on has no compilers and no
 	Node of its own, and a server that only starts where Node is installed is a
-	server that depends on something it does not carry.
+	server that depends on something it does not carry. For glibc, Debian 10,
+	whose glibc is exactly the 2.28 floor — only pulled and started, never
+	`apt`, so its being end-of-life does not matter.
 	"""
-	return "alpine:3" if libc_of(target) == "musl" else "debian:bullseye-slim"
+	return "alpine:3" if libc_of(target) == "musl" else "debian:buster-slim"
 
 
 def docker_available() -> bool:
@@ -539,13 +639,13 @@ HOST_REMOTE_MODULES = REMOTE_DIR / "node_modules.host"
 
 
 def in_container(target: str, image: str, directory: Path, script: str) -> None:
-	"""Run `script` in `image`, for `target`'s platform, in `directory`.
+	"""Run `script` in `target`'s toolchain `image`, on its platform, in `directory`.
 
 	The directory is mounted at `/work` and is the working directory. The
 	container runs as root, so whatever it wrote is handed back to whoever owns
 	the checkout afterwards, or the next `npm` or `rm` here is refused.
 	"""
-	base = ["docker", "run", "--rm", "--platform", docker_platform(target), "-v", f"{directory}:/work", "-w", "/work"]
+	base = ["docker", "run", "--rm", "--platform", toolchain_platform(target), "-v", f"{directory}:/work", "-w", "/work"]
 	# GitHub's rate limit, for the addons whose install fetches a release
 	# asset; nothing else reads it.
 	subprocess.run([*base, "-e", "GITHUB_TOKEN", image, "sh", "-c", script], check=True)
@@ -865,6 +965,7 @@ def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path
 
 	remove_copilot(staging, target)
 	bundle_musl_runtime(staging, target)
+	verify_glibc_floor(staging, target)
 	verify_server_starts(staging, target)
 
 	tarball = out_dir / tarball_name(target)
