@@ -1,0 +1,2547 @@
+diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
+new file mode 100644
+index 00000000..762cdb6c
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
+@@ -0,0 +1,584 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub native Vim: the workbench half.
++//
++// * Every CodeEditorWidget gets a Vim engine (../common/vimEngine.ts) through
++//   ICodeEditorService.onCodeEditorAdd. That covers file and diff editors (a
++//   diff editor's two sides are CodeEditorWidgets), the SCM commit input,
++//   comment widgets, the debug console input, notebook cells, and so on: they
++//   all register with the service. Editors that act as plain search boxes
++//   (SuggestEnabledInput: settings/extensions search) are left alone.
++// * Normal and visual mode keys are read from the editor's own keydown, before
++//   the keybinding dispatcher, and only when no Cmd/Ctrl/Alt is held (Ctrl-R,
++//   Ctrl-D, Ctrl-U excepted), so menu shortcuts, chords and DevHub's Cmd+Q
++//   prefix are untouched. Nothing is read while an IME composition is active.
++// * Everything modal at workbench level - Esc, and the "nav" state where h j k
++//   l move focus between parts - is a command with a keybinding in the normal
++//   registry, so keybindings.json can rebind or remove it. Esc is registered
++//   at weight EditorCore + 50: every editor-contrib or workbench Esc (suggest,
++//   find widget, peek, parameter hints, rename, notifications, quick input)
++//   outranks it whenever its own `when` holds, and Vim only gets Esc when none
++//   of them wanted it.
++// * `devhubVim.mode` (normal | insert | visual | nav, '' when idle) and
++//   `devhubVim.attached` are context keys for users' own `when` clauses.
++
++import { addDisposableListener, getActiveElement, isEditableElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
++import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
++import { mainWindow } from '../../../../base/browser/window.js';
++import { Event } from '../../../../base/common/event.js';
++import { KeyCode } from '../../../../base/common/keyCodes.js';
++import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
++import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
++import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
++import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
++import { Range } from '../../../../editor/common/core/range.js';
++import { Selection } from '../../../../editor/common/core/selection.js';
++import { localize } from '../../../../nls.js';
++import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
++import { ICommandService } from '../../../../platform/commands/common/commands.js';
++import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
++import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
++import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
++import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
++import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
++import { KeybindingWeight, KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
++import { Registry } from '../../../../platform/registry/common/platform.js';
++import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
++import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
++import { IVimHost, VimEdit, VimEngine, VimPos, VimSharedState } from '../common/vimEngine.js';
++
++const SETTING = 'devhub.vim.enabled';
++
++Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
++	id: 'devhubVim',
++	order: 100,
++	title: localize('devhubVim', "Vim"),
++	type: 'object',
++	properties: {
++		[SETTING]: {
++			type: 'boolean',
++			default: false,
++			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub. Esc from normal mode leaves the text for navigation, where h/j/k/l move between parts and i/Enter return."),
++		},
++	},
++});
++
++const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode of the focused editor or input: normal, insert, visual, nav, or empty."));
++const VIM_ATTACHED = new RawContextKey<boolean>('devhubVim.attached', false, localize('devhubVim.attached', "Whether the focused text editor is driven by DevHub Vim."));
++const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
++
++type CursorStyle = ReturnType<typeof cursorStyleToString>;
++
++/** One CodeEditorWidget with its engine; it is the engine's IVimHost. */
++class VimEditor extends Disposable implements IVimHost {
++
++	readonly engine: VimEngine;
++	private readonly modelListener = this._register(new DisposableStore());
++	private checkpoints: number[] = [];
++	private redoTargets: number[] = [];
++	private userCursorStyle: CursorStyle;
++	private appliedStyle: CursorStyle | undefined;
++	private applyingStyle = false;
++
++	constructor(
++		readonly editor: ICodeEditor,
++		private readonly owner: DevhubVim,
++		shared: VimSharedState,
++	) {
++		super();
++		this.engine = new VimEngine(this, shared);
++		this.userCursorStyle = cursorStyleToString(editor.getOption(EditorOption.cursorStyle));
++
++		this._register(editor.onKeyDown(e => this.onKeyDown(e)));
++		this._register(editor.onDidFocusEditorText(() => owner.update()));
++		this._register(editor.onDidBlurEditorText(() => owner.update()));
++		this._register(editor.onDidChangeModel(() => {
++			this.engine.reset();
++			this.checkpoints = [];
++			this.redoTargets = [];
++			this.modelListener.clear();
++			owner.update();
++		}));
++		this._register(editor.onDidChangeCursorSelection(e => {
++			if (e.source !== 'mouse') {
++				return;
++			}
++			const s = e.selection;
++			this.engine.selectionChanged(
++				{ line: s.selectionStartLineNumber - 1, col: s.selectionStartColumn - 1 },
++				{ line: s.positionLineNumber - 1, col: s.positionColumn - 1 });
++			owner.update();
++		}));
++		this._register(editor.onDidChangeConfiguration(e => {
++			if (!this.applyingStyle && e.hasChanged(EditorOption.cursorStyle)) {
++				// The user (or the workbench re-applying settings) changed it: remember, then re-assert Vim's.
++				this.userCursorStyle = cursorStyleToString(editor.getOption(EditorOption.cursorStyle));
++				this.appliedStyle = undefined;
++				this.syncCursorStyle();
++			}
++		}));
++	}
++
++	override dispose(): void {
++		this.setCursorStyle(this.userCursorStyle);
++		super.dispose();
++	}
++
++	/** Vim mode as the context key spells it. */
++	get mode(): string {
++		const m = this.engine.mode;
++		return m === 'visualLine' ? 'visual' : m;
++	}
++
++	syncCursorStyle(): void {
++		const nav = this.owner.navActive && this.editor.hasTextFocus();
++		this.setCursorStyle(nav ? 'underline-thin' : this.engine.mode === 'insert' ? this.userCursorStyle : 'block');
++	}
++
++	private setCursorStyle(style: CursorStyle): void {
++		if (this.appliedStyle === style) {
++			return;
++		}
++		this.appliedStyle = style;
++		this.applyingStyle = true;
++		try {
++			this.editor.updateOptions({ cursorStyle: style });
++		} finally {
++			this.applyingStyle = false;
++		}
++	}
++
++	private onKeyDown(e: IKeyboardEvent): void {
++		if (this.editor.inComposition || e.keyCode === KeyCode.KEY_IN_COMPOSITION || e.browserEvent.isComposing) {
++			return;
++		}
++		if (this.owner.navActive || this.engine.mode === 'insert' || !this.editor.hasModel()) {
++			return;
++		}
++		const key = toVimKey(e.browserEvent, this.engine.pending);
++		if (key === undefined) {
++			return;
++		}
++		e.preventDefault();
++		e.stopPropagation();
++		this.engine.handleKey(key);
++		this.owner.update();
++	}
++
++	// ---- IVimHost -----------------------------------------------------------
++
++	private get model() {
++		return this.editor.getModel()!;
++	}
++
++	lineCount(): number {
++		return this.model.getLineCount();
++	}
++
++	lineText(line: number): string {
++		return this.model.getLineContent(line + 1);
++	}
++
++	getCursor(): VimPos {
++		const p = this.editor.getPosition();
++		return p ? { line: p.lineNumber - 1, col: p.column - 1 } : { line: 0, col: 0 };
++	}
++
++	setCursor(p: VimPos): void {
++		const position = { lineNumber: p.line + 1, column: p.col + 1 };
++		this.editor.setPosition(position, 'devhubVim');
++		this.editor.revealPosition(position);
++	}
++
++	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean): void {
++		const sel = cursorAtStart
++			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
++			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
++		this.editor.setSelection(sel, 'devhubVim');
++		this.editor.revealPosition(sel.getPosition());
++	}
++
++	applyEdits(edits: readonly VimEdit[]): void {
++		this.editor.executeEdits('devhubVim', edits.map(e => ({
++			range: new Range(e.start.line + 1, e.start.col + 1, e.end.line + 1, e.end.col + 1),
++			text: e.text,
++		})));
++	}
++
++	// Monaco closes undo stops on its own (word boundaries while typing), so
++	// Vim's "one change, one undo" is kept as alternative version ids: `u`
++	// undoes until the model is back at the id it had when the change began.
++
++	beginChange(): void {
++		this.editor.pushUndoStop();
++		this.checkpoints.push(this.model.getAlternativeVersionId());
++		this.redoTargets = [];
++	}
++
++	endChange(): void {
++		this.editor.pushUndoStop();
++		const last = this.checkpoints[this.checkpoints.length - 1];
++		if (last === this.model.getAlternativeVersionId()) {
++			this.checkpoints.pop();
++		}
++	}
++
++	undo(): void {
++		const model = this.model;
++		const target = this.checkpoints.pop();
++		if (target === undefined) {
++			this.editor.trigger('devhubVim', 'undo', null);
++			return;
++		}
++		this.redoTargets.push(model.getAlternativeVersionId());
++		void this.stepUntil(target, () => model.canUndo(), () => model.undo());
++	}
++
++	redo(): void {
++		const model = this.model;
++		const target = this.redoTargets.pop();
++		if (target === undefined) {
++			this.editor.trigger('devhubVim', 'redo', null);
++			return;
++		}
++		this.checkpoints.push(model.getAlternativeVersionId());
++		void this.stepUntil(target, () => model.canRedo(), () => model.redo());
++	}
++
++	private async stepUntil(target: number, can: () => boolean, step: () => void | Promise<void>): Promise<void> {
++		const model = this.model;
++		for (let guard = 0; guard < 10000 && model.getAlternativeVersionId() !== target && can(); guard++) {
++			await step();
++		}
++		this.owner.update();
++	}
++
++	indentUnit(): string {
++		const o = this.model.getOptions();
++		return o.insertSpaces ? ' '.repeat(o.indentSize) : '\t';
++	}
++
++	tabSize(): number {
++		return this.model.getOptions().tabSize;
++	}
++
++	visibleLineCount(): number {
++		return this.editor.getVisibleRanges().reduce((n, r) => n + r.endLineNumber - r.startLineNumber + 1, 0) || 20;
++	}
++
++	setClipboard(text: string): void {
++		this.owner.clipboardCache = text;
++		void this.owner.clipboardService.writeText(text);
++	}
++
++	getClipboard(): string {
++		return this.owner.clipboardCache;
++	}
++
++	prefetchClipboard(): void {
++		this.owner.prefetchClipboard();
++	}
++
++	find(pattern: string, from: VimPos, backwards: boolean): VimPos | undefined {
++		const model = this.model;
++		const at = { lineNumber: from.line + 1, column: from.col + 1 };
++		// smartcase: an upper-case letter makes the search case sensitive.
++		const matchCase = /[A-Z]/.test(pattern);
++		for (const isRegex of [true, false]) {
++			try {
++				const m = backwards
++					? model.findPreviousMatch(pattern, at, isRegex, matchCase, null, false)
++					: model.findNextMatch(pattern, at, isRegex, matchCase, null, false);
++				if (m) {
++					return { line: m.range.startLineNumber - 1, col: m.range.startColumn - 1 };
++				}
++			} catch {
++				// invalid regular expression: retry literally
++			}
++		}
++		return undefined;
++	}
++
++	exCommand(command: string): boolean {
++		const commands: Record<string, string[]> = {
++			'w': ['workbench.action.files.save'],
++			'wa': ['workbench.action.files.saveAll'],
++			'q': ['workbench.action.closeActiveEditor'],
++			'q!': ['workbench.action.revertAndCloseActiveEditor'],
++			'qa': ['workbench.action.closeAllEditors'],
++			'wq': ['workbench.action.files.save', 'workbench.action.closeActiveEditor'],
++			'x': ['workbench.action.files.save', 'workbench.action.closeActiveEditor'],
++			'sp': ['workbench.action.splitEditorDown'],
++			'vs': ['workbench.action.splitEditorRight'],
++			'bn': ['workbench.action.nextEditor'],
++			'bp': ['workbench.action.previousEditor'],
++		};
++		const ids = commands[command];
++		if (!ids) {
++			return false;
++		}
++		void (async () => {
++			for (const id of ids) {
++				await this.owner.commandService.executeCommand(id);
++			}
++		})();
++		return true;
++	}
++}
++
++/** Map a keydown to Vim's key name, or undefined to let the editor have it. */
++function toVimKey(e: KeyboardEvent, pending: boolean): string | undefined {
++	if (e.metaKey || e.altKey) {
++		return undefined;
++	}
++	if (e.ctrlKey) {
++		const ctrl: Record<string, string> = { r: '<C-r>', d: '<C-d>', u: '<C-u>' };
++		return ctrl[e.key.toLowerCase()];
++	}
++	switch (e.key) {
++		case 'Enter': return '<CR>';
++		case 'Backspace': return '<BS>';
++		case 'ArrowLeft': return pending ? undefined : 'h';
++		case 'ArrowRight': return pending ? undefined : 'l';
++		case 'ArrowUp': return pending ? undefined : 'k';
++		case 'ArrowDown': return pending ? undefined : 'j';
++	}
++	return e.key.length === 1 ? e.key : undefined;
++}
++
++export class DevhubVim extends Disposable implements IWorkbenchContribution {
++
++	static readonly ID = 'workbench.contrib.devhubVim';
++	static instance: DevhubVim | undefined;
++
++	private readonly editors = new Map<ICodeEditor, VimEditor>();
++	private readonly attached = this._register(new DisposableStore());
++	private readonly shared = new VimSharedState();
++	private readonly modeKey: IContextKey<string>;
++	private readonly attachedKey: IContextKey<boolean>;
++	private statusEntry: IStatusbarEntryAccessor | undefined;
++	private enabled = false;
++	navActive = false;
++	clipboardCache = '';
++
++	constructor(
++		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
++		@IConfigurationService configurationService: IConfigurationService,
++		@IContextKeyService contextKeyService: IContextKeyService,
++		@IStatusbarService private readonly statusbarService: IStatusbarService,
++		@IKeybindingService private readonly keybindingService: IKeybindingService,
++		@ICommandService readonly commandService: ICommandService,
++		@IClipboardService readonly clipboardService: IClipboardService,
++	) {
++		super();
++		DevhubVim.instance = this;
++		this.modeKey = VIM_MODE.bindTo(contextKeyService);
++		this.attachedKey = VIM_ATTACHED.bindTo(contextKeyService);
++		this._register(configurationService.onDidChangeConfiguration(e => {
++			if (e.affectsConfiguration(SETTING)) {
++				this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
++			}
++		}));
++		this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
++	}
++
++	override dispose(): void {
++		this.setEnabled(false);
++		if (DevhubVim.instance === this) {
++			DevhubVim.instance = undefined;
++		}
++		super.dispose();
++	}
++
++	private setEnabled(enabled: boolean): void {
++		if (enabled === this.enabled) {
++			return;
++		}
++		this.enabled = enabled;
++		this.attached.clear();
++		this.editors.clear();
++		this.navActive = false;
++		this.statusEntry = undefined;
++		if (!enabled) {
++			this.modeKey.reset();
++			this.attachedKey.reset();
++			return;
++		}
++		const store = this.attached;
++		for (const editor of this.codeEditorService.listCodeEditors()) {
++			this.attach(editor);
++		}
++		store.add(this.codeEditorService.onCodeEditorAdd(editor => this.attach(editor)));
++		store.add(this.codeEditorService.onCodeEditorRemove(editor => this.detach(editor)));
++		store.add({ dispose: () => { for (const v of this.editors.values()) { v.dispose(); } } });
++		store.add(Event.runAndSubscribe(onDidRegisterWindow, ({ window, disposables }) => {
++			const local = new DisposableStore();
++			disposables.add(local);
++			store.add(local);
++			local.add(addDisposableListener(window, 'keydown', e => this.onWindowKeyDown(e), true));
++			local.add(addDisposableListener(window, 'pointerdown', () => this.setNav(false), true));
++			local.add(addDisposableListener(window, 'focusin', () => this.update(), true));
++			local.add(addDisposableListener(window, 'focusout', () => queueMicrotask(() => this.update()), true));
++		}, { window: mainWindow, disposables: store }));
++		this.statusEntry = this.statusbarService.addEntry(this.statusProps(''), 'status.devhubVim', StatusbarAlignment.LEFT, -100);
++		store.add(this.statusEntry);
++		this.update();
++	}
++
++	private attach(editor: ICodeEditor): void {
++		if (this.editors.has(editor)) {
++			return;
++		}
++		// Settings / extensions search boxes are editors too, but behave as plain inputs.
++		if (editor.getContainerDomNode().closest('.suggest-input-container')) {
++			return;
++		}
++		this.editors.set(editor, new VimEditor(editor, this, this.shared));
++		this.editors.get(editor)!.syncCursorStyle();
++	}
++
++	private detach(editor: ICodeEditor): void {
++		this.editors.get(editor)?.dispose();
++		this.editors.delete(editor);
++	}
++
++	private focused(): VimEditor | undefined {
++		for (const v of this.editors.values()) {
++			if (v.editor.hasTextFocus()) {
++				return v;
++			}
++		}
++		return undefined;
++	}
++
++	prefetchClipboard(): void {
++		void this.clipboardService.readText().then(t => this.clipboardCache = t, () => { });
++	}
++
++	/** Recompute context keys, cursor styles and the status bar after anything moved. */
++	update(): void {
++		if (!this.enabled) {
++			return;
++		}
++		const v = this.focused();
++		const active = getActiveElement();
++		const mode = this.navActive ? 'nav'
++			: v ? v.mode
++				: active && isEditableElement(active) ? 'insert' : '';
++		this.modeKey.set(mode);
++		this.attachedKey.set(!!v);
++		for (const e of this.editors.values()) {
++			e.syncCursorStyle();
++		}
++		const text = this.navActive ? '-- NAV --' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
++		this.statusEntry?.update(this.statusProps(text));
++	}
++
++	private statusProps(text: string) {
++		return {
++			name: localize('devhubVim.status', "Vim Mode"),
++			text: text || 'VIM',
++			ariaLabel: text || localize('devhubVim.idle', "Vim"),
++		};
++	}
++
++	setNav(nav: boolean): void {
++		if (this.navActive !== nav) {
++			this.navActive = nav;
++			this.update();
++		}
++	}
++
++	/** Esc that no widget wanted, in a Vim editor. */
++	escape(): void {
++		const v = this.focused();
++		if (!v) {
++			return;
++		}
++		if (v.engine.escape() === 'idle') {
++			this.setNav(true);
++		}
++		this.update();
++	}
++
++	/** Esc that no widget wanted, in a plain input (search view, quick input field, ...). */
++	leaveInput(): void {
++		this.setNav(true);
++	}
++
++	enterFromNav(): void {
++		this.setNav(false);
++		const active = getActiveElement();
++		if (!active || !isEditableElement(active)) {
++			// Focus is on a list or tree, not an input: the editor area is the input to go back to.
++			if (active?.closest('.part.editor')) {
++				void this.commandService.executeCommand('workbench.action.focusActiveEditorGroup');
++			}
++		}
++	}
++
++	/**
++	 * In nav mode keys go to the keybinding service before the focused widget
++	 * (a list's type-to-find, an input's typing) sees them, but only for keys
++	 * bound to `devhubVim.*`; other letters are swallowed in text fields.
++	 */
++	private onWindowKeyDown(e: KeyboardEvent): void {
++		if (!this.navActive || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) {
++			return;
++		}
++		const event = new StandardKeyboardEvent(e);
++		const target = e.target as HTMLElement;
++		const result = this.keybindingService.softDispatch(event, target);
++		if (result.kind === ResultKind.KbFound && result.commandId?.startsWith('devhubVim.')) {
++			e.preventDefault();
++			e.stopPropagation();
++			void this.commandService.executeCommand(result.commandId, ...(result.commandArgs === undefined ? [] : [result.commandArgs]));
++			return;
++		}
++		if (e.key.length === 1 && target && isEditableElement(target)) {
++			e.preventDefault();
++			e.stopPropagation();
++		}
++	}
++}
++
++registerWorkbenchContribution2(DevhubVim.ID, DevhubVim, WorkbenchPhase.AfterRestored);
++
++// ---- commands and their default keybindings (all overridable) ---------------
++
++const NAV = ContextKeyExpr.and(ENABLED, VIM_MODE.isEqualTo('nav'));
++
++function rule(id: string, primary: number, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim) => void): void {
++	KeybindingsRegistry.registerCommandAndKeybindingRule({
++		id, primary, when, weight,
++		handler: () => {
++			const vim = DevhubVim.instance;
++			if (vim) {
++				run(vim);
++			}
++		},
++	});
++}
++
++rule('devhubVim.escape', KeyCode.Escape, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.notEqualsTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escape());
++rule('devhubVim.leaveInput', KeyCode.Escape,
++	ContextKeyExpr.and(ENABLED, ContextKeyExpr.has('inputFocus'), VIM_ATTACHED.negate(), VIM_MODE.notEqualsTo('nav'), ContextKeyExpr.has('terminalFocus').negate()),
++	KeybindingWeight.EditorCore + 50, vim => vim.leaveInput());
++
++const navigate: [string, number, string][] = [
++	['devhubVim.nav.left', KeyCode.KeyH, 'workbench.action.navigateLeft'],
++	['devhubVim.nav.down', KeyCode.KeyJ, 'workbench.action.navigateDown'],
++	['devhubVim.nav.up', KeyCode.KeyK, 'workbench.action.navigateUp'],
++	['devhubVim.nav.right', KeyCode.KeyL, 'workbench.action.navigateRight'],
++];
++for (const [id, key, command] of navigate) {
++	rule(id, key, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand(command));
++}
++rule('devhubVim.nav.enter', KeyCode.KeyI, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterFromNav());
++rule('devhubVim.nav.enterInput', KeyCode.Enter, ContextKeyExpr.and(NAV, ContextKeyExpr.has('inputFocus')), KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterFromNav());
++rule('devhubVim.nav.sidebar', KeyCode.KeyS, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusSideBar'));
++rule('devhubVim.nav.panel', KeyCode.KeyP, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusPanel'));
++rule('devhubVim.nav.editor', KeyCode.KeyE, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusActiveEditorGroup'));
+diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
+new file mode 100644
+index 00000000..68e65658
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
+@@ -0,0 +1,1609 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub native Vim: the editor-independent state machine.
++//
++// This file imports nothing, on purpose: it is the whole of Vim's grammar
++// (counts, registers, operators, motions, text objects, visual mode, `.`,
++// the `:`/`/` prompt) against a small `IVimHost` that reads lines and applies
++// edits. The browser half (../browser/devhubVim.contribution.ts) implements
++// the host on top of a CodeEditorWidget and ITextModel; the tests implement it
++// on a string array. Nothing here copies the document: every motion reads the
++// lines it walks over, one `lineText()` at a time, so a keystroke in a large
++// file costs what the motion touches, not the file size.
++//
++// Positions are 0-based { line, col }; `col === lineText(line).length` is the
++// position of the line break. Edit ranges are end-exclusive.
++
++export interface VimPos {
++	readonly line: number;
++	readonly col: number;
++}
++
++export interface VimEdit {
++	readonly start: VimPos;
++	readonly end: VimPos;
++	readonly text: string;
++}
++
++export type VimMode = 'normal' | 'insert' | 'visual' | 'visualLine';
++
++export interface IVimHost {
++	lineCount(): number;
++	lineText(line: number): string;
++	getCursor(): VimPos;
++	setCursor(pos: VimPos): void;
++	/** Show a selection; `end` is exclusive. `cursorAtStart` puts the caret at `start`. */
++	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean): void;
++	/** Apply non-overlapping edits (in pre-edit coordinates) synchronously. */
++	applyEdits(edits: readonly VimEdit[]): void;
++	/** Brackets one Vim change so that `u` undoes it as a single step. */
++	beginChange(): void;
++	endChange(): void;
++	undo(): void;
++	redo(): void;
++	indentUnit(): string;
++	tabSize(): number;
++	visibleLineCount(): number;
++	setClipboard(text: string): void;
++	/** Last known system clipboard text; `prefetchClipboard` refreshes it. */
++	getClipboard(): string;
++	prefetchClipboard(): void;
++	/** Start of the next match of `pattern` from `from` (wrapping), or undefined. */
++	find(pattern: string, from: VimPos, backwards: boolean): VimPos | undefined;
++	/** Ex commands the engine does not know itself (`w`, `q`, ...). */
++	exCommand(command: string): boolean;
++}
++
++export interface VimRegister {
++	readonly text: string;
++	readonly linewise: boolean;
++}
++
++/** State Vim keeps per window rather than per buffer: registers, last search, last f/t. */
++export class VimSharedState {
++	readonly registers = new Map<string, VimRegister>();
++	lastSearch: { pattern: string; backwards: boolean } | undefined;
++	lastFind: { key: string; char: string } | undefined;
++}
++
++interface Range {
++	start: VimPos;
++	end: VimPos; // exclusive
++	linewise: boolean;
++}
++
++interface MotionResult {
++	pos: VimPos;
++	linewise?: boolean;
++	inclusive?: boolean;
++	/** j/k-style motions keep the remembered column. */
++	vertical?: boolean;
++}
++
++type Parse =
++	| { status: 'incomplete' }
++	| { status: 'invalid' }
++	| { status: 'done' };
++
++interface LastChange {
++	register: string | undefined;
++	count: number | undefined;
++	keys: string[];
++	insertText?: string;
++}
++
++const OPERATORS = new Set(['d', 'c', 'y', '>', '<']);
++const CHAR_ARG_MOTIONS = new Set(['f', 't', 'F', 'T']);
++const SIMPLE_MOTIONS = new Set(['h', 'j', 'k', 'l', 'w', 'W', 'b', 'B', 'e', 'E', '0', '^', '$', 'G', ';', ',', '%', 'n', 'N', '<BS>', ' ', '<CR>', '-', '+', '_', '<C-d>', '<C-u>', '*', '#']);
++const BRACKETS: Record<string, [string, string]> = {
++	'(': ['(', ')'], ')': ['(', ')'], 'b': ['(', ')'],
++	'{': ['{', '}'], '}': ['{', '}'], 'B': ['{', '}'],
++	'[': ['[', ']'], ']': ['[', ']'],
++	'<': ['<', '>'], '>': ['<', '>'],
++};
++const QUOTES = new Set(['"', '\'', '`']);
++
++function isWordChar(ch: string): boolean {
++	return /[\p{L}\p{N}_]/u.test(ch);
++}
++
++/** 0 blank (incl. line break), 1 punctuation, 2 keyword; `big` folds 1 into 2. */
++function charClass(ch: string, big: boolean): number {
++	if (ch === '' || ch === '\n' || ch === ' ' || ch === '\t') {
++		return 0;
++	}
++	if (big) {
++		return 2;
++	}
++	return isWordChar(ch) ? 2 : 1;
++}
++
++function cmp(a: VimPos, b: VimPos): number {
++	return a.line - b.line || a.col - b.col;
++}
++
++function pos(line: number, col: number): VimPos {
++	return { line, col };
++}
++
++function escapeRegExp(s: string): string {
++	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++}
++
++export class VimEngine {
++
++	private _mode: VimMode = 'normal';
++	private keys: string[] = [];
++	private desiredCol = 0;
++	private visualAnchor: VimPos = pos(0, 0);
++	private visualHead: VimPos = pos(0, 0);
++	private cmdline: { kind: ':' | '/' | '?'; text: string; operator?: { op: string; register: string | undefined; count: number | undefined } } | undefined;
++	private lastCursor: VimPos | undefined;
++	private message = '';
++	private changeOpen = false;
++	private insertStart: VimPos | undefined;
++	private insertCount = 1;
++	private pendingChange: LastChange | undefined;
++	private lastChange: LastChange | undefined;
++	private replaying = false;
++
++	constructor(private readonly host: IVimHost, private readonly shared: VimSharedState = new VimSharedState()) { }
++
++	get mode(): VimMode {
++		return this._mode;
++	}
++
++	/** True while keys typed so far do not yet form a command, or the `:`/`/` prompt is open. */
++	get pending(): boolean {
++		return this.keys.length > 0 || this.cmdline !== undefined;
++	}
++
++	status(): string {
++		if (this.cmdline) {
++			return this.cmdline.kind + this.cmdline.text;
++		}
++		const name = this._mode === 'insert' ? '-- INSERT --'
++			: this._mode === 'visual' ? '-- VISUAL --'
++				: this._mode === 'visualLine' ? '-- VISUAL LINE --'
++					: 'NORMAL';
++		const extra = this.message || this.keys.join('');
++		return extra ? `${name}  ${extra}` : name;
++	}
++
++	// ---- entry points -------------------------------------------------------
++
++	/**
++	 * Feed one key in normal or visual mode. Keys are single characters or
++	 * `<Esc>`, `<CR>`, `<BS>`, `<C-r>`, `<C-d>`, `<C-u>`. Returns false when the
++	 * key means nothing to Vim here (insert mode), so the caller lets it through.
++	 */
++	handleKey(key: string): boolean {
++		if (this._mode === 'insert') {
++			if (key === '<Esc>') {
++				this.escape();
++				return true;
++			}
++			return false;
++		}
++		this.message = '';
++		if (this.cmdline) {
++			this.cmdlineKey(key);
++			return true;
++		}
++		if (key === '<Esc>') {
++			this.escape();
++			return true;
++		}
++		this.keys.push(key);
++		let result: Parse;
++		try {
++			result = this._mode === 'normal' ? this.runNormal(this.keys) : this.runVisual(this.keys);
++		} catch (err) {
++			this.closeChange();
++			this.message = String(err instanceof Error ? err.message : err);
++			result = { status: 'invalid' };
++		}
++		if (result.status !== 'incomplete') {
++			this.keys = [];
++		}
++		return true;
++	}
++
++	/**
++	 * Esc. Returns 'idle' when Vim had nothing to cancel (normal mode, no pending
++	 * keys), which the workbench takes as "leave the text for navigation".
++	 */
++	escape(): 'handled' | 'idle' {
++		if (this._mode === 'insert') {
++			this.exitInsert();
++			return 'handled';
++		}
++		if (this.cmdline) {
++			this.cmdline = undefined;
++			return 'handled';
++		}
++		if (this.keys.length) {
++			this.keys = [];
++			return 'handled';
++		}
++		if (this._mode === 'visual' || this._mode === 'visualLine') {
++			this._mode = 'normal';
++			this.setNormalCursor(this.visualHead);
++			return 'handled';
++		}
++		this.message = '';
++		return 'idle';
++	}
++
++	/** Called by the host when the user made a selection with the mouse. */
++	selectionChanged(anchor: VimPos, active: VimPos): void {
++		if (this._mode === 'insert') {
++			return;
++		}
++		if (cmp(anchor, active) === 0) {
++			if (this._mode !== 'normal') {
++				this._mode = 'normal';
++			}
++			return;
++		}
++		this._mode = 'visual';
++		this.visualAnchor = anchor;
++		// The editor's selection end is exclusive; Vim's head is the last char.
++		this.visualHead = cmp(active, anchor) > 0 ? this.prevChar(active) ?? active : active;
++		this.renderVisual();
++	}
++
++	/** Put the engine back in normal mode without touching the document. */
++	reset(): void {
++		this.closeChange();
++		this._mode = 'normal';
++		this.keys = [];
++		this.cmdline = undefined;
++		this.insertStart = undefined;
++		this.pendingChange = undefined;
++	}
++
++	// ---- buffer helpers -----------------------------------------------------
++
++	private lastLine(): number {
++		return this.host.lineCount() - 1;
++	}
++
++	private len(line: number): number {
++		return this.host.lineText(line).length;
++	}
++
++	private charAt(p: VimPos): string {
++		const text = this.host.lineText(p.line);
++		return p.col < text.length ? text[p.col] : '\n';
++	}
++
++	private nextChar(p: VimPos): VimPos | undefined {
++		if (p.col < this.len(p.line)) {
++			return pos(p.line, p.col + 1);
++		}
++		return p.line < this.lastLine() ? pos(p.line + 1, 0) : undefined;
++	}
++
++	private prevChar(p: VimPos): VimPos | undefined {
++		if (p.col > 0) {
++			return pos(p.line, p.col - 1);
++		}
++		return p.line > 0 ? pos(p.line - 1, this.len(p.line - 1)) : undefined;
++	}
++
++	private firstNonBlank(line: number): number {
++		const m = /\S/.exec(this.host.lineText(line));
++		return m ? m.index : this.len(line);
++	}
++
++	private clampNormal(p: VimPos): VimPos {
++		const line = Math.max(0, Math.min(p.line, this.lastLine()));
++		const max = Math.max(0, this.len(line) - 1);
++		return pos(line, Math.max(0, Math.min(p.col, max)));
++	}
++
++	private getText(start: VimPos, end: VimPos): string {
++		if (start.line === end.line) {
++			return this.host.lineText(start.line).slice(start.col, end.col);
++		}
++		const parts = [this.host.lineText(start.line).slice(start.col)];
++		for (let l = start.line + 1; l < end.line; l++) {
++			parts.push(this.host.lineText(l));
++		}
++		parts.push(this.host.lineText(end.line).slice(0, end.col));
++		return parts.join('\n');
++	}
++
++	private cursor(): VimPos {
++		if (this._mode === 'visual' || this._mode === 'visualLine') {
++			return this.visualHead;
++		}
++		const c = this.clampNormal(this.host.getCursor());
++		if (!this.lastCursor || cmp(c, this.lastCursor) !== 0) {
++			// Moved by something other than Vim (mouse, another command).
++			this.desiredCol = c.col;
++			this.lastCursor = c;
++		}
++		return c;
++	}
++
++	private setNormalCursor(p: VimPos, keepDesired = false): void {
++		const c = this.clampNormal(p);
++		this.host.setCursor(c);
++		this.lastCursor = c;
++		if (!keepDesired) {
++			this.desiredCol = c.col;
++		}
++	}
++
++	// ---- changes, undo grouping --------------------------------------------
++
++	private openChange(): void {
++		if (!this.changeOpen) {
++			this.changeOpen = true;
++			this.host.beginChange();
++		}
++	}
++
++	private closeChange(): void {
++		if (this.changeOpen) {
++			this.changeOpen = false;
++			this.host.endChange();
++		}
++	}
++
++	private edit(edits: VimEdit[]): void {
++		if (edits.length) {
++			this.openChange();
++			this.host.applyEdits(edits);
++		}
++	}
++
++	private recordChange(change: LastChange): void {
++		if (!this.replaying) {
++			this.lastChange = change;
++		}
++	}
++
++	// ---- registers ----------------------------------------------------------
++
++	private writeRegister(name: string | undefined, text: string, linewise: boolean, yank: boolean): void {
++		if (name === '_') {
++			return;
++		}
++		const value: VimRegister = { text, linewise };
++		const regs = this.shared.registers;
++		if (name === '+' || name === '*') {
++			this.host.setClipboard(linewise ? text + '\n' : text);
++		} else if (name && /^[a-z]$/.test(name)) {
++			regs.set(name, value);
++		} else if (name && /^[A-Z]$/.test(name)) {
++			const prev = regs.get(name.toLowerCase());
++			regs.set(name.toLowerCase(), prev ? { text: prev.text + (linewise || prev.linewise ? '\n' : '') + text, linewise: prev.linewise || linewise } : value);
++		}
++		regs.set('"', value);
++		if (yank && !name) {
++			regs.set('0', value);
++		}
++	}
++
++	private readRegister(name: string | undefined): VimRegister | undefined {
++		if (name === '+' || name === '*') {
++			const text = this.host.getClipboard();
++			return text.endsWith('\n') ? { text: text.slice(0, -1).replace(/\r$/, ''), linewise: true } : { text, linewise: false };
++		}
++		return this.shared.registers.get(name ? name.toLowerCase() : '"');
++	}
++
++	// ---- normal mode --------------------------------------------------------
++
++	private runNormal(k: string[]): Parse {
++		let i = 0;
++		let register: string | undefined;
++		if (k[i] === '"') {
++			this.host.prefetchClipboard();
++			if (k.length < 2) {
++				return { status: 'incomplete' };
++			}
++			register = k[1];
++			i = 2;
++		}
++		let count1: number | undefined;
++		while (i < k.length && /^[0-9]$/.test(k[i]) && !(k[i] === '0' && count1 === undefined)) {
++			count1 = (count1 ?? 0) * 10 + Number(k[i]);
++			i++;
++		}
++		if (i >= k.length) {
++			return { status: 'incomplete' };
++		}
++		const bodyStart = i;
++		const key = k[i];
++		const count = count1;
++		const n = count ?? 1;
++		const cur = this.cursor();
++		const change = (): LastChange => ({ register, count, keys: k.slice(bodyStart) });
++
++		// Aliases that are an operator plus a motion.
++		const alias: Record<string, string[]> = { 'x': ['d', 'l'], 'X': ['d', 'h'], 'D': ['d', '$'], 'C': ['c', '$'], 's': ['c', 'l'], 'S': ['c', 'c'], 'Y': ['y', 'y'] };
++		if (alias[key] && i === k.length - 1) {
++			const [op, motion] = alias[key];
++			if (key === 'x' && this.len(cur.line) === 0) {
++				return { status: 'done' };
++			}
++			const res = this.runOperator(op, register, count, [motion], cur);
++			if (res.status === 'done' && op !== 'y') {
++				this.finishChangeRecord(change(), op);
++			}
++			return res;
++		}
++
++		if (OPERATORS.has(key)) {
++			const rest = k.slice(i + 1);
++			// A second count after the operator multiplies the first (`2d3w`).
++			let j = 0;
++			let count2: number | undefined;
++			while (j < rest.length && /^[0-9]$/.test(rest[j]) && !(rest[j] === '0' && count2 === undefined)) {
++				count2 = (count2 ?? 0) * 10 + Number(rest[j]);
++				j++;
++			}
++			const total = count === undefined && count2 === undefined ? undefined : (count ?? 1) * (count2 ?? 1);
++			const res = this.runOperator(key, register, total, rest.slice(j), cur);
++			if (res.status === 'done' && key !== 'y') {
++				this.finishChangeRecord({ register, count: total, keys: [key, ...rest.slice(j)] }, key);
++			}
++			return res;
++		}
++
++		const motion = this.parseMotion(k, i, count, false, cur);
++		if (motion.status === 'incomplete') {
++			return motion;
++		}
++		if (motion.status === 'ok') {
++			if (motion.result) {
++				const r = motion.result;
++				if (r.vertical) {
++					this.setNormalCursor(pos(r.pos.line, this.desiredCol), true);
++				} else {
++					this.setNormalCursor(r.pos);
++					if (key === '$') {
++						this.desiredCol = Number.MAX_SAFE_INTEGER;
++					}
++				}
++			}
++			return { status: 'done' };
++		}
++
++		switch (key) {
++			case 'i': case 'a': case 'I': case 'A': {
++				let at = cur;
++				if (key === 'a') {
++					at = pos(cur.line, Math.min(cur.col + 1, this.len(cur.line)));
++				} else if (key === 'A') {
++					at = pos(cur.line, this.len(cur.line));
++				} else if (key === 'I') {
++					at = pos(cur.line, this.firstNonBlank(cur.line));
++				}
++				this.openChange();
++				this.enterInsert(at, n, change());
++				return { status: 'done' };
++			}
++			case 'o': case 'O': {
++				const indent = /^\s*/.exec(this.host.lineText(cur.line))![0];
++				this.openChange();
++				if (key === 'o') {
++					this.edit([{ start: pos(cur.line, this.len(cur.line)), end: pos(cur.line, this.len(cur.line)), text: '\n' + indent }]);
++					this.enterInsert(pos(cur.line + 1, indent.length), n, change());
++				} else {
++					this.edit([{ start: pos(cur.line, 0), end: pos(cur.line, 0), text: indent + '\n' }]);
++					this.enterInsert(pos(cur.line, indent.length), n, change());
++				}
++				return { status: 'done' };
++			}
++			case 'p': case 'P': {
++				this.put(register, n, key === 'P', cur);
++				this.recordChange(change());
++				return { status: 'done' };
++			}
++			case 'r': {
++				if (k.length < i + 2) {
++					return { status: 'incomplete' };
++				}
++				const ch = k[i + 1];
++				if (ch.length !== 1 || cur.col + n > this.len(cur.line)) {
++					return { status: 'invalid' };
++				}
++				this.edit([{ start: cur, end: pos(cur.line, cur.col + n), text: ch.repeat(n) }]);
++				this.closeChange();
++				this.setNormalCursor(pos(cur.line, cur.col + n - 1));
++				this.recordChange(change());
++				return { status: 'done' };
++			}
++			case '~': {
++				const text = this.host.lineText(cur.line);
++				const end = Math.min(text.length, cur.col + n);
++				if (end > cur.col) {
++					this.edit([{ start: cur, end: pos(cur.line, end), text: toggleCase(text.slice(cur.col, end)) }]);
++					this.closeChange();
++					this.setNormalCursor(pos(cur.line, end));
++					this.recordChange(change());
++				}
++				return { status: 'done' };
++			}
++			case 'J': {
++				this.join(cur.line, Math.max(2, n));
++				this.recordChange(change());
++				return { status: 'done' };
++			}
++			case 'u': {
++				for (let c = 0; c < n; c++) {
++					this.host.undo();
++				}
++				return { status: 'done' };
++			}
++			case '<C-r>': {
++				for (let c = 0; c < n; c++) {
++					this.host.redo();
++				}
++				return { status: 'done' };
++			}
++			case '.': {
++				this.repeatLastChange(count);
++				return { status: 'done' };
++			}
++			case 'v': case 'V': {
++				this._mode = key === 'v' ? 'visual' : 'visualLine';
++				this.visualAnchor = cur;
++				this.visualHead = cur;
++				this.renderVisual();
++				return { status: 'done' };
++			}
++			case ':': case '/': case '?': {
++				this.cmdline = { kind: key, text: '' };
++				return { status: 'done' };
++			}
++			case 'g': {
++				if (k.length < i + 2) {
++					return { status: 'incomplete' };
++				}
++				return { status: 'invalid' };
++			}
++		}
++		return { status: 'invalid' };
++	}
++
++	private finishChangeRecord(change: LastChange, op: string): void {
++		if (op === 'c') {
++			// Recorded on leaving insert mode, with the typed text.
++			if (this.pendingChange) {
++				this.pendingChange = change;
++			}
++			return;
++		}
++		this.recordChange(change);
++	}
++
++	private repeatLastChange(count: number | undefined): void {
++		const last = this.lastChange;
++		if (!last) {
++			return;
++		}
++		this.replaying = true;
++		try {
++			const keys: string[] = [];
++			if (last.register) {
++				keys.push('"', last.register);
++			}
++			const c = count ?? last.count;
++			if (c !== undefined) {
++				keys.push(...String(c));
++			}
++			keys.push(...last.keys);
++			this.keys = [];
++			for (const key of keys) {
++				this.handleKey(key);
++			}
++			if (this._mode === 'insert') {
++				if (last.insertText) {
++					const at = this.host.getCursor();
++					this.edit([{ start: at, end: at, text: last.insertText }]);
++					this.host.setCursor(this.endOfInsertedText(at, last.insertText));
++				}
++				this.exitInsert();
++			}
++		} finally {
++			this.replaying = false;
++		}
++	}
++
++	private endOfInsertedText(at: VimPos, text: string): VimPos {
++		const lines = text.split('\n');
++		return lines.length === 1 ? pos(at.line, at.col + text.length) : pos(at.line + lines.length - 1, lines[lines.length - 1].length);
++	}
++
++	private enterInsert(at: VimPos, count: number, change: LastChange | undefined): void {
++		this._mode = 'insert';
++		this.host.setCursor(at);
++		this.insertStart = at;
++		this.insertCount = count;
++		this.pendingChange = change;
++	}
++
++	private exitInsert(): void {
++		const start = this.insertStart;
++		let cur = this.host.getCursor();
++		let typed = '';
++		if (start && cmp(cur, start) > 0) {
++			typed = this.getText(start, cur);
++			if (this.insertCount > 1 && typed) {
++				const more = typed.repeat(this.insertCount - 1);
++				this.edit([{ start: cur, end: cur, text: more }]);
++				cur = this.endOfInsertedText(cur, more);
++			}
++		}
++		this.closeChange();
++		if (this.pendingChange) {
++			this.recordChange({ ...this.pendingChange, insertText: typed });
++		}
++		this.pendingChange = undefined;
++		this.insertStart = undefined;
++		this._mode = 'normal';
++		this.setNormalCursor(pos(cur.line, cur.col - 1));
++	}
++
++	// ---- operators ----------------------------------------------------------
++
++	private runOperator(op: string, register: string | undefined, count: number | undefined, rest: string[], cur: VimPos): Parse {
++		if (rest.length === 0) {
++			return { status: 'incomplete' };
++		}
++		const n = count ?? 1;
++		let range: Range | undefined;
++		if (rest[0] === op || (op === 'c' && rest[0] === 'c')) {
++			// dd, cc, yy, >>, <<: count lines.
++			if (rest.length > 1) {
++				return { status: 'invalid' };
++			}
++			const endLine = Math.min(this.lastLine(), cur.line + n - 1);
++			range = { start: pos(cur.line, 0), end: pos(endLine, this.len(endLine)), linewise: true };
++		} else if ((rest[0] === '/' || rest[0] === '?') && rest.length === 1) {
++			// d/pattern<CR>: the prompt finishes the command.
++			this.cmdline = { kind: rest[0], text: '', operator: { op, register, count } };
++			return { status: 'done' };
++		} else if (rest[0] === 'i' || rest[0] === 'a') {
++			if (rest.length < 2) {
++				return { status: 'incomplete' };
++			}
++			range = this.textObject(rest[0], rest[1], n, cur);
++			if (!range) {
++				return { status: 'invalid' };
++			}
++		} else {
++			// `cw` on a word behaves like `ce` (Vim's documented exception), and
++			// on the last char of a word changes just that char.
++			if (op === 'c' && (rest[0] === 'w' || rest[0] === 'W') && charClass(this.charAt(cur), false) !== 0) {
++				if (rest.length > 1) {
++					return { status: 'invalid' };
++				}
++				const e = this.wordEnd(cur, rest[0] === 'W', n, true);
++				range = { start: cur, end: pos(e.line, Math.min(e.col + 1, this.len(e.line))), linewise: false };
++			} else {
++				const m = this.parseMotion(rest, 0, count, true, cur);
++				if (m.status === 'incomplete') {
++					return m;
++				}
++				if (m.status !== 'ok' || !m.result) {
++					return { status: 'invalid' };
++				}
++				range = this.motionRange(cur, m.result);
++			}
++		}
++		this.applyOperator(op, register, range, cur);
++		return { status: 'done' };
++	}
++
++	private motionRange(cur: VimPos, m: MotionResult): Range {
++		if (m.linewise) {
++			const s = Math.min(cur.line, m.pos.line);
++			const e = Math.max(cur.line, m.pos.line);
++			return { start: pos(s, 0), end: pos(e, this.len(e)), linewise: true };
++		}
++		let [a, b] = cmp(cur, m.pos) <= 0 ? [cur, m.pos] : [m.pos, cur];
++		if (m.inclusive) {
++			b = b.col < this.len(b.line) ? pos(b.line, b.col + 1) : (this.nextChar(b) ?? b);
++		} else if (b.col === 0 && b.line > a.line && cmp(m.pos, cur) > 0) {
++			// Exclusive motion ending at column 0: stop at the previous line's end
++			// and, if it started before the first non-blank, go linewise.
++			b = pos(b.line - 1, this.len(b.line - 1));
++			if (a.col <= this.firstNonBlank(a.line)) {
++				return { start: pos(a.line, 0), end: b, linewise: true };
++			}
++		}
++		return { start: a, end: b, linewise: false };
++	}
++
++	private applyOperator(op: string, register: string | undefined, range: Range, cur: VimPos): void {
++		const { start, end, linewise } = range;
++		if (op === '>' || op === '<') {
++			this.shift(start.line, end.line, op === '>');
++			this.closeChange();
++			return;
++		}
++		if (linewise) {
++			const text = this.getText(pos(start.line, 0), pos(end.line, this.len(end.line)));
++			if (op === 'y') {
++				this.writeRegister(register, text, true, true);
++				if (start.line < cur.line) {
++					this.setNormalCursor(pos(start.line, cur.col));
++				}
++				return;
++			}
++			this.writeRegister(register, text, true, false);
++			if (op === 'd') {
++				let s: VimPos;
++				let e: VimPos;
++				if (end.line < this.lastLine()) {
++					s = pos(start.line, 0);
++					e = pos(end.line + 1, 0);
++				} else if (start.line > 0) {
++					s = pos(start.line - 1, this.len(start.line - 1));
++					e = pos(end.line, this.len(end.line));
++				} else {
++					s = pos(0, 0);
++					e = pos(end.line, this.len(end.line));
++				}
++				this.edit([{ start: s, end: e, text: '' }]);
++				this.closeChange();
++				const line = Math.min(start.line, this.lastLine());
++				this.setNormalCursor(pos(line, this.firstNonBlank(line)));
++				return;
++			}
++			// c: keep one line, with the first line's indent.
++			const indent = /^\s*/.exec(this.host.lineText(start.line))![0];
++			this.edit([{ start: pos(start.line, 0), end: pos(end.line, this.len(end.line)), text: indent }]);
++			this.enterInsert(pos(start.line, indent.length), 1, undefined);
++			this.pendingChange = { register: undefined, count: undefined, keys: [] };
++			return;
++		}
++		if (cmp(start, end) >= 0) {
++			if (op === 'c') {
++				this.openChange();
++				this.enterInsert(start, 1, undefined);
++				this.pendingChange = { register: undefined, count: undefined, keys: [] };
++			}
++			return;
++		}
++		const text = this.getText(start, end);
++		this.writeRegister(register, text, false, op === 'y');
++		if (op === 'y') {
++			this.setNormalCursor(start);
++			return;
++		}
++		this.edit([{ start, end, text: '' }]);
++		if (op === 'd') {
++			this.closeChange();
++			this.setNormalCursor(start);
++			return;
++		}
++		this.enterInsert(start, 1, undefined);
++		this.pendingChange = { register: undefined, count: undefined, keys: [] };
++	}
++
++	private shift(from: number, to: number, right: boolean): void {
++		const unit = this.host.indentUnit();
++		const tab = this.host.tabSize();
++		const edits: VimEdit[] = [];
++		for (let l = from; l <= to; l++) {
++			const text = this.host.lineText(l);
++			if (right) {
++				if (text.length) {
++					edits.push({ start: pos(l, 0), end: pos(l, 0), text: unit });
++				}
++			} else {
++				let remove = 0;
++				if (text[0] === '\t') {
++					remove = 1;
++				} else {
++					while (remove < tab && text[remove] === ' ') {
++						remove++;
++					}
++				}
++				if (remove) {
++					edits.push({ start: pos(l, 0), end: pos(l, remove), text: '' });
++				}
++			}
++		}
++		this.edit(edits);
++		this.setNormalCursor(pos(from, this.firstNonBlank(from)));
++	}
++
++	private join(line: number, count: number): void {
++		const last = Math.min(this.lastLine(), line + count - 1);
++		if (last === line) {
++			return;
++		}
++		const edits: VimEdit[] = [];
++		let joinedLength = this.len(line);
++		let cursorCol = 0;
++		for (let l = line; l < last; l++) {
++			const cur = this.host.lineText(l);
++			const next = this.host.lineText(l + 1);
++			const fnb = this.firstNonBlank(l + 1);
++			const rest = next.slice(fnb);
++			const curJoined = l === line ? cur : 'x'; // only "ends with blank" matters below
++			const sep = rest === '' || rest.startsWith(')') || /\s$/.test(curJoined) || (l === line && cur === '') ? '' : ' ';
++			edits.push({ start: pos(l, cur.length), end: pos(l + 1, fnb), text: sep });
++			cursorCol = joinedLength;
++			joinedLength += sep.length + rest.length;
++		}
++		this.edit(edits);
++		this.closeChange();
++		this.setNormalCursor(pos(line, cursorCol));
++	}
++
++	private put(register: string | undefined, count: number, before: boolean, cur: VimPos): void {
++		const reg = this.readRegister(register);
++		if (!reg) {
++			return;
++		}
++		if (reg.linewise) {
++			const block = new Array(count).fill(reg.text).join('\n');
++			if (before) {
++				this.edit([{ start: pos(cur.line, 0), end: pos(cur.line, 0), text: block + '\n' }]);
++				this.closeChange();
++				this.setNormalCursor(pos(cur.line, this.firstNonBlank(cur.line)));
++			} else {
++				const eol = pos(cur.line, this.len(cur.line));
++				this.edit([{ start: eol, end: eol, text: '\n' + block }]);
++				this.closeChange();
++				this.setNormalCursor(pos(cur.line + 1, this.firstNonBlank(cur.line + 1)));
++			}
++			return;
++		}
++		const text = reg.text.repeat(count);
++		const at = before || this.len(cur.line) === 0 ? cur : pos(cur.line, cur.col + 1);
++		this.edit([{ start: at, end: at, text }]);
++		this.closeChange();
++		const end = this.endOfInsertedText(at, text);
++		this.setNormalCursor(pos(end.line, end.col - 1));
++	}
++
++	// ---- motions ------------------------------------------------------------
++
++	private parseMotion(k: string[], i: number, count: number | undefined, forOperator: boolean, cur: VimPos):
++		{ status: 'incomplete' } | { status: 'invalid' } | { status: 'none' } | { status: 'ok'; result: MotionResult | undefined } {
++		const key = k[i];
++		if (key === undefined) {
++			return { status: 'incomplete' };
++		}
++		const n = count ?? 1;
++		if (CHAR_ARG_MOTIONS.has(key)) {
++			if (k.length < i + 2) {
++				return { status: 'incomplete' };
++			}
++			if (k.length > i + 2) {
++				return { status: 'invalid' };
++			}
++			const ch = k[i + 1];
++			if (ch.length !== 1) {
++				return { status: 'invalid' };
++			}
++			this.shared.lastFind = { key, char: ch };
++			return { status: 'ok', result: this.findInLine(cur, key, ch, n, false) };
++		}
++		if (key === 'g') {
++			if (k.length < i + 2) {
++				return { status: 'incomplete' };
++			}
++			if (k.length > i + 2) {
++				return { status: 'invalid' };
++			}
++			const k2 = k[i + 1];
++			if (k2 === 'g') {
++				const line = Math.min(this.lastLine(), (count ?? 1) - 1);
++				return { status: 'ok', result: { pos: pos(line, this.firstNonBlank(line)), linewise: true } };
++			}
++			if (k2 === 'e' || k2 === 'E') {
++				return { status: 'ok', result: { pos: this.wordEndBackward(cur, k2 === 'E', n), inclusive: true } };
++			}
++			return { status: 'none' };
++		}
++		if (!SIMPLE_MOTIONS.has(key)) {
++			return { status: 'none' };
++		}
++		if (k.length > i + 1) {
++			return { status: 'invalid' };
++		}
++		const last = this.lastLine();
++		switch (key) {
++			case 'h': case '<BS>':
++				return { status: 'ok', result: { pos: pos(cur.line, Math.max(0, cur.col - n)) } };
++			case 'l': case ' ': {
++				const max = forOperator ? this.len(cur.line) : Math.max(0, this.len(cur.line) - 1);
++				return { status: 'ok', result: { pos: pos(cur.line, Math.min(max, cur.col + n)) } };
++			}
++			case 'j': case 'k': case '<C-d>': case '<C-u>': {
++				const step = key === '<C-d>' || key === '<C-u>' ? Math.max(1, Math.floor(this.host.visibleLineCount() / 2)) * (count ?? 1) : n;
++				const down = key === 'j' || key === '<C-d>';
++				const line = Math.max(0, Math.min(last, cur.line + (down ? step : -step)));
++				if (line === cur.line && forOperator) {
++					return { status: 'ok', result: undefined };
++				}
++				return { status: 'ok', result: { pos: pos(line, this.desiredColFor(line)), linewise: true, vertical: true } };
++			}
++			case '+': case '<CR>': case '-': case '_': {
++				const delta = key === '-' ? -n : key === '_' ? n - 1 : n;
++				const line = Math.max(0, Math.min(last, cur.line + delta));
++				return { status: 'ok', result: { pos: pos(line, this.firstNonBlank(line)), linewise: true } };
++			}
++			case '0':
++				return { status: 'ok', result: { pos: pos(cur.line, 0) } };
++			case '^':
++				return { status: 'ok', result: { pos: pos(cur.line, this.firstNonBlank(cur.line)) } };
++			case '$': {
++				const line = Math.min(last, cur.line + n - 1);
++				return { status: 'ok', result: { pos: pos(line, Math.max(0, this.len(line) - 1)), inclusive: true } };
++			}
++			case 'G': {
++				const line = count === undefined ? last : Math.max(0, Math.min(last, count - 1));
++				return { status: 'ok', result: { pos: pos(line, this.firstNonBlank(line)), linewise: true } };
++			}
++			case 'w': case 'W': {
++				let p = cur;
++				for (let c = 0; c < n; c++) {
++					p = this.wordForward(p, key === 'W');
++				}
++				return { status: 'ok', result: { pos: p } };
++			}
++			case 'b': case 'B': {
++				let p = cur;
++				for (let c = 0; c < n; c++) {
++					p = this.wordBackward(p, key === 'B');
++				}
++				return { status: 'ok', result: { pos: p } };
++			}
++			case 'e': case 'E':
++				return { status: 'ok', result: { pos: this.wordEnd(cur, key === 'E', n, false), inclusive: true } };
++			case ';': case ',': {
++				const lf = this.shared.lastFind;
++				if (!lf) {
++					return { status: 'ok', result: undefined };
++				}
++				let k2 = lf.key;
++				if (key === ',') {
++					k2 = k2 === 'f' ? 'F' : k2 === 'F' ? 'f' : k2 === 't' ? 'T' : 't';
++				}
++				return { status: 'ok', result: this.findInLine(cur, k2, lf.char, n, true) };
++			}
++			case '%':
++				return { status: 'ok', result: this.matchBracket(cur) };
++			case 'n': case 'N': {
++				const ls = this.shared.lastSearch;
++				if (!ls) {
++					return { status: 'ok', result: undefined };
++				}
++				const back = key === 'N' ? !ls.backwards : ls.backwards;
++				return { status: 'ok', result: this.searchMotion(ls.pattern, back, cur, n) };
++			}
++			case '*': case '#': {
++				const word = this.wordUnderCursor(cur);
++				if (!word) {
++					return { status: 'ok', result: undefined };
++				}
++				const pattern = isWordChar(word[0]) ? `\\b${escapeRegExp(word)}\\b` : escapeRegExp(word);
++				this.shared.lastSearch = { pattern, backwards: key === '#' };
++				return { status: 'ok', result: this.searchMotion(pattern, key === '#', cur, n) };
++			}
++		}
++		return { status: 'none' };
++	}
++
++	private desiredColFor(line: number): number {
++		return Math.min(this.desiredCol, Math.max(0, this.len(line) - 1));
++	}
++
++	private searchMotion(pattern: string, backwards: boolean, cur: VimPos, n: number): MotionResult | undefined {
++		let p = cur;
++		for (let c = 0; c < n; c++) {
++			const from = backwards ? p : (p.col < this.len(p.line) ? pos(p.line, p.col + 1) : p);
++			const found = this.host.find(pattern, from, backwards);
++			if (!found) {
++				this.message = `Pattern not found: ${pattern}`;
++				return undefined;
++			}
++			p = found;
++		}
++		return { pos: p };
++	}
++
++	private wordUnderCursor(cur: VimPos): string | undefined {
++		const text = this.host.lineText(cur.line);
++		let c = cur.col;
++		while (c < text.length && !isWordChar(text[c])) {
++			c++;
++		}
++		if (c >= text.length) {
++			return undefined;
++		}
++		let s = c;
++		let e = c;
++		while (s > 0 && isWordChar(text[s - 1])) {
++			s--;
++		}
++		while (e < text.length && isWordChar(text[e])) {
++			e++;
++		}
++		return text.slice(s, e);
++	}
++
++	private isEmptyLine(p: VimPos): boolean {
++		return p.col === 0 && this.len(p.line) === 0;
++	}
++
++	private wordForward(start: VimPos, big: boolean): VimPos {
++		let p = start;
++		const cls = charClass(this.charAt(p), big);
++		if (cls !== 0) {
++			for (; ;) {
++				const nx = this.nextChar(p);
++				if (!nx) {
++					return pos(p.line, this.len(p.line));
++				}
++				p = nx;
++				if (charClass(this.charAt(p), big) !== cls) {
++					break;
++				}
++			}
++		}
++		let moved = cmp(p, start) !== 0;
++		while (charClass(this.charAt(p), big) === 0) {
++			if (moved && this.isEmptyLine(p)) {
++				break;
++			}
++			const nx = this.nextChar(p);
++			if (!nx) {
++				return pos(p.line, this.len(p.line));
++			}
++			p = nx;
++			moved = true;
++		}
++		return p;
++	}
++
++	private wordBackward(start: VimPos, big: boolean): VimPos {
++		const first = this.prevChar(start);
++		if (!first) {
++			return start;
++		}
++		let p: VimPos = first;
++		while (charClass(this.charAt(p), big) === 0 && !this.isEmptyLine(p)) {
++			const pv = this.prevChar(p);
++			if (!pv) {
++				return p;
++			}
++			p = pv;
++		}
++		if (this.isEmptyLine(p)) {
++			return p;
++		}
++		const cls = charClass(this.charAt(p), big);
++		for (; ;) {
++			if (p.col === 0) {
++				return p;
++			}
++			const pv = this.prevChar(p)!;
++			if (charClass(this.charAt(pv), big) !== cls) {
++				return p;
++			}
++			p = pv;
++		}
++	}
++
++	/** End of the n-th word; `stayIfAtEnd` is the `cw` rule (count the current word). */
++	private wordEnd(start: VimPos, big: boolean, n: number, stayIfAtEnd: boolean): VimPos {
++		let p = start;
++		for (let c = 0; c < n; c++) {
++			if (!(stayIfAtEnd && c === 0 && charClass(this.charAt(p), big) !== 0)) {
++				const nx = this.nextChar(p);
++				if (!nx) {
++					return p;
++				}
++				p = nx;
++				while (charClass(this.charAt(p), big) === 0) {
++					const nn = this.nextChar(p);
++					if (!nn) {
++						return this.clampNormal(p);
++					}
++					p = nn;
++				}
++			}
++			const cls = charClass(this.charAt(p), big);
++			for (; ;) {
++				const nx = this.nextChar(p);
++				if (!nx || nx.line !== p.line || charClass(this.charAt(nx), big) !== cls) {
++					break;
++				}
++				p = nx;
++			}
++		}
++		return p;
++	}
++
++	private wordEndBackward(start: VimPos, big: boolean, n: number): VimPos {
++		let p = start;
++		for (let c = 0; c < n; c++) {
++			const cls = charClass(this.charAt(p), big);
++			// leave the current word
++			while (charClass(this.charAt(p), big) === cls && cls !== 0) {
++				const pv = this.prevChar(p);
++				if (!pv) {
++					return p;
++				}
++				p = pv;
++			}
++			while (charClass(this.charAt(p), big) === 0 && !this.isEmptyLine(p)) {
++				const pv = this.prevChar(p);
++				if (!pv) {
++					return p;
++				}
++				p = pv;
++			}
++		}
++		return p;
++	}
++
++	private findInLine(cur: VimPos, key: string, ch: string, n: number, repeat: boolean): MotionResult | undefined {
++		const text = this.host.lineText(cur.line);
++		const forward = key === 'f' || key === 't';
++		const till = key === 't' || key === 'T';
++		let idx = cur.col;
++		for (let c = 0; c < n; c++) {
++			let from = forward ? idx + 1 : idx - 1;
++			// A repeated `t` must not stick in front of the char it already reached.
++			if (c === 0 && till && repeat) {
++				from = forward ? idx + 2 : idx - 2;
++			}
++			idx = forward ? text.indexOf(ch, from) : (from < 0 ? -1 : text.lastIndexOf(ch, from));
++			if (idx < 0) {
++				return undefined;
++			}
++		}
++		const col = till ? (forward ? idx - 1 : idx + 1) : idx;
++		return { pos: pos(cur.line, col), inclusive: forward };
++	}
++
++	private matchBracket(cur: VimPos): MotionResult | undefined {
++		const text = this.host.lineText(cur.line);
++		let col = cur.col;
++		while (col < text.length && !'()[]{}'.includes(text[col])) {
++			col++;
++		}
++		if (col >= text.length) {
++			return undefined;
++		}
++		const ch = text[col];
++		const [open, close] = BRACKETS[ch];
++		const found = ch === open ? this.scanBracket(pos(cur.line, col), open, close, true) : this.scanBracket(pos(cur.line, col), open, close, false);
++		return found ? { pos: found, inclusive: true } : undefined;
++	}
++
++	/** From a bracket at `from`, find its partner, walking lines lazily. */
++	private scanBracket(from: VimPos, open: string, close: string, forward: boolean): VimPos | undefined {
++		let depth = 0;
++		const last = this.lastLine();
++		for (let line = from.line; forward ? line <= last : line >= 0; line += forward ? 1 : -1) {
++			const text = this.host.lineText(line);
++			let col = line === from.line ? from.col : (forward ? 0 : text.length - 1);
++			for (; forward ? col < text.length : col >= 0; col += forward ? 1 : -1) {
++				const c = text[col];
++				if (c === (forward ? open : close)) {
++					depth++;
++				} else if (c === (forward ? close : open)) {
++					depth--;
++					if (depth === 0) {
++						return pos(line, col);
++					}
++				}
++			}
++		}
++		return undefined;
++	}
++
++	/** Unmatched `open` before `cur` (or at it). */
++	private enclosingOpen(cur: VimPos, open: string, close: string): VimPos | undefined {
++		if (this.charAt(cur) === open) {
++			return cur;
++		}
++		let depth = 0;
++		let p: VimPos | undefined = this.charAt(cur) === close ? this.prevChar(cur) : cur;
++		while (p) {
++			const c = this.charAt(p);
++			if (c === close) {
++				depth++;
++			} else if (c === open) {
++				if (depth === 0) {
++					return p;
++				}
++				depth--;
++			}
++			p = this.prevChar(p);
++		}
++		return undefined;
++	}
++
++	// ---- text objects -------------------------------------------------------
++
++	private textObject(kind: string, ch: string, count: number, cur: VimPos): Range | undefined {
++		if (ch === 'w' || ch === 'W') {
++			return this.wordObject(kind === 'a', ch === 'W', cur);
++		}
++		if (QUOTES.has(ch)) {
++			return this.quoteObject(kind === 'a', ch, cur);
++		}
++		const pair = BRACKETS[ch];
++		if (pair) {
++			let p: VimPos | undefined = cur;
++			let openPos: VimPos | undefined;
++			for (let c = 0; c < count && p; c++) {
++				openPos = this.enclosingOpen(p, pair[0], pair[1]);
++				p = openPos ? this.prevChar(openPos) : undefined;
++			}
++			if (!openPos) {
++				return undefined;
++			}
++			const closePos = this.scanBracket(openPos, pair[0], pair[1], true);
++			if (!closePos) {
++				return undefined;
++			}
++			if (kind === 'a') {
++				return { start: openPos, end: pos(closePos.line, closePos.col + 1), linewise: false };
++			}
++			let start = pos(openPos.line, openPos.col + 1);
++			let end = closePos;
++			// `{` at line end and `}` alone on its line: the inner lines, linewise.
++			if (start.col === this.len(start.line) && start.line < end.line && this.firstNonBlank(end.line) === end.col) {
++				if (end.line - start.line < 2) {
++					return { start: pos(start.line + 1, 0), end: pos(start.line + 1, 0), linewise: false };
++				}
++				return { start: pos(start.line + 1, 0), end: pos(end.line - 1, this.len(end.line - 1)), linewise: true };
++			}
++			if (cmp(start, end) > 0) {
++				start = end;
++			}
++			return { start, end, linewise: false };
++		}
++		return undefined;
++	}
++
++	private wordObject(around: boolean, big: boolean, cur: VimPos): Range | undefined {
++		const text = this.host.lineText(cur.line);
++		if (text.length === 0) {
++			return undefined;
++		}
++		const col = Math.min(cur.col, text.length - 1);
++		const cls = charClass(text[col], big);
++		let s = col;
++		let e = col + 1;
++		while (s > 0 && charClass(text[s - 1], big) === cls) {
++			s--;
++		}
++		while (e < text.length && charClass(text[e], big) === cls) {
++			e++;
++		}
++		if (around) {
++			if (cls === 0) {
++				// on blanks: blanks plus the following word
++				if (e < text.length) {
++					const c2 = charClass(text[e], big);
++					while (e < text.length && charClass(text[e], big) === c2) {
++						e++;
++					}
++				}
++			} else {
++				const e0 = e;
++				while (e < text.length && charClass(text[e], big) === 0) {
++					e++;
++				}
++				if (e === e0) {
++					while (s > 0 && charClass(text[s - 1], big) === 0) {
++						s--;
++					}
++				}
++			}
++		}
++		return { start: pos(cur.line, s), end: pos(cur.line, e), linewise: false };
++	}
++
++	private quoteObject(around: boolean, q: string, cur: VimPos): Range | undefined {
++		const text = this.host.lineText(cur.line);
++		const quotes: number[] = [];
++		for (let c = 0; c < text.length; c++) {
++			if (text[c] === '\\') {
++				c++;
++				continue;
++			}
++			if (text[c] === q) {
++				quotes.push(c);
++			}
++		}
++		let pair: [number, number] | undefined;
++		for (let j = 0; j + 1 < quotes.length; j += 2) {
++			if (quotes[j] <= cur.col && cur.col <= quotes[j + 1]) {
++				pair = [quotes[j], quotes[j + 1]];
++				break;
++			}
++		}
++		if (!pair) {
++			for (let j = 0; j + 1 < quotes.length; j += 2) {
++				if (quotes[j] > cur.col) {
++					pair = [quotes[j], quotes[j + 1]];
++					break;
++				}
++			}
++		}
++		if (!pair) {
++			return undefined;
++		}
++		if (!around) {
++			return { start: pos(cur.line, pair[0] + 1), end: pos(cur.line, pair[1]), linewise: false };
++		}
++		let e = pair[1] + 1;
++		let s = pair[0];
++		if (e < text.length && /\s/.test(text[e])) {
++			while (e < text.length && /\s/.test(text[e])) {
++				e++;
++			}
++		} else {
++			while (s > 0 && /\s/.test(text[s - 1])) {
++				s--;
++			}
++		}
++		return { start: pos(cur.line, s), end: pos(cur.line, e), linewise: false };
++	}
++
++	// ---- visual mode --------------------------------------------------------
++
++	private visualRange(): Range {
++		const [a, b] = cmp(this.visualAnchor, this.visualHead) <= 0 ? [this.visualAnchor, this.visualHead] : [this.visualHead, this.visualAnchor];
++		if (this._mode === 'visualLine') {
++			return { start: pos(a.line, 0), end: pos(b.line, this.len(b.line)), linewise: true };
++		}
++		const end = b.col < this.len(b.line) ? pos(b.line, b.col + 1) : (this.nextChar(b) ?? b);
++		return { start: a, end, linewise: false };
++	}
++
++	private renderVisual(): void {
++		const r = this.visualRange();
++		const backwards = cmp(this.visualHead, this.visualAnchor) < 0;
++		this.host.setSelection(r.start, r.end, backwards);
++	}
++
++	private runVisual(k: string[]): Parse {
++		let i = 0;
++		let register: string | undefined;
++		if (k[i] === '"') {
++			this.host.prefetchClipboard();
++			if (k.length < 2) {
++				return { status: 'incomplete' };
++			}
++			register = k[1];
++			i = 2;
++		}
++		let count: number | undefined;
++		while (i < k.length && /^[0-9]$/.test(k[i]) && !(k[i] === '0' && count === undefined)) {
++			count = (count ?? 0) * 10 + Number(k[i]);
++			i++;
++		}
++		if (i >= k.length) {
++			return { status: 'incomplete' };
++		}
++		const key = k[i];
++		const head = this.visualHead;
++
++		if ((key === 'i' || key === 'a')) {
++			if (k.length < i + 2) {
++				return { status: 'incomplete' };
++			}
++			const r = this.textObject(key, k[i + 1], count ?? 1, head);
++			if (!r) {
++				return { status: 'invalid' };
++			}
++			if (r.linewise) {
++				this._mode = 'visualLine';
++			}
++			this.visualAnchor = r.start;
++			this.visualHead = r.linewise ? r.end : (this.prevChar(r.end) ?? r.end);
++			this.renderVisual();
++			return { status: 'done' };
++		}
++
++		const motion = this.parseMotion(k, i, count, false, head);
++		if (motion.status === 'incomplete') {
++			return motion;
++		}
++		if (motion.status === 'ok') {
++			if (motion.result) {
++				const r = motion.result;
++				const target = r.vertical ? pos(r.pos.line, this.desiredColFor(r.pos.line)) : r.pos;
++				this.visualHead = this.clampNormal(target);
++				if (!r.vertical) {
++					this.desiredCol = this.visualHead.col;
++				}
++				this.renderVisual();
++			}
++			return { status: 'done' };
++		}
++
++		const range = this.visualRange();
++		const leave = (cursor: VimPos) => {
++			this._mode = 'normal';
++			this.setNormalCursor(cursor);
++		};
++		switch (key) {
++			case 'o': {
++				[this.visualAnchor, this.visualHead] = [this.visualHead, this.visualAnchor];
++				this.renderVisual();
++				return { status: 'done' };
++			}
++			case 'v': case 'V': {
++				const target: VimMode = key === 'v' ? 'visual' : 'visualLine';
++				if (this._mode === target) {
++					leave(this.visualHead);
++				} else {
++					this._mode = target;
++					this.renderVisual();
++				}
++				return { status: 'done' };
++			}
++			case 'd': case 'x': case 'X': case 'D': case 'y': case 'Y': case 'c': case 's': case 'S': case 'C': case 'R': {
++				const op = key === 'y' || key === 'Y' ? 'y' : 'cCsSR'.includes(key) ? 'c' : 'd';
++				const linewise = range.linewise || 'XDYSCR'.includes(key);
++				const r: Range = linewise ? { start: pos(range.start.line, 0), end: pos(range.end.line, this.len(range.end.line)), linewise: true } : range;
++				this._mode = 'normal';
++				this.applyOperator(op, register, r, r.start);
++				if (op !== 'c') {
++					this.setNormalCursor(op === 'y' ? r.start : this.host.getCursor());
++				}
++				return { status: 'done' };
++			}
++			case '>': case '<': {
++				this._mode = 'normal';
++				for (let c = 0; c < (count ?? 1); c++) {
++					this.shift(range.start.line, range.end.line, key === '>');
++				}
++				this.closeChange();
++				return { status: 'done' };
++			}
++			case 'J': {
++				this._mode = 'normal';
++				this.join(range.start.line, Math.max(2, range.end.line - range.start.line + 1));
++				return { status: 'done' };
++			}
++			case '~': case 'u': case 'U': {
++				const text = this.getText(range.start, range.end);
++				const out = key === '~' ? toggleCase(text) : key === 'u' ? text.toLowerCase() : text.toUpperCase();
++				this.edit([{ start: range.start, end: range.end, text: out }]);
++				this.closeChange();
++				leave(range.start);
++				return { status: 'done' };
++			}
++			case 'p': case 'P': {
++				const reg = this.readRegister(register);
++				if (!reg) {
++					return { status: 'invalid' };
++				}
++				const replaced = this.getText(range.start, range.end);
++				let text = reg.text;
++				if (reg.linewise && !range.linewise) {
++					text = '\n' + text + '\n';
++				}
++				this.edit([{ start: range.start, end: range.end, text }]);
++				this.closeChange();
++				this.writeRegister(undefined, replaced, range.linewise, false);
++				leave(range.start);
++				return { status: 'done' };
++			}
++			case ':': case '/': case '?': {
++				if (key === ':') {
++					leave(this.visualHead);
++				}
++				this.cmdline = { kind: key, text: '' };
++				return { status: 'done' };
++			}
++			case 'g': {
++				if (k.length < i + 2) {
++					return { status: 'incomplete' };
++				}
++				return { status: 'invalid' };
++			}
++		}
++		return { status: 'invalid' };
++	}
++
++	// ---- the `:` / `/` prompt ----------------------------------------------
++
++	private cmdlineKey(key: string): void {
++		const cl = this.cmdline!;
++		if (key === '<Esc>') {
++			this.cmdline = undefined;
++			return;
++		}
++		if (key === '<BS>') {
++			if (!cl.text) {
++				this.cmdline = undefined;
++			} else {
++				cl.text = cl.text.slice(0, -1);
++			}
++			return;
++		}
++		if (key === '<CR>') {
++			this.cmdline = undefined;
++			if (cl.kind === ':') {
++				this.exCommand(cl.text.trim());
++			} else {
++				this.search(cl.text, cl.kind === '?', cl.operator);
++			}
++			return;
++		}
++		if (key.length === 1) {
++			cl.text += key;
++		}
++	}
++
++	private search(text: string, backwards: boolean, operator?: { op: string; register: string | undefined }): void {
++		const pattern = text || this.shared.lastSearch?.pattern;
++		if (!pattern) {
++			return;
++		}
++		this.shared.lastSearch = { pattern, backwards };
++		const cur = this.cursor();
++		const res = this.searchMotion(pattern, backwards, cur, 1);
++		if (!res) {
++			return;
++		}
++		if (operator) {
++			this.applyOperator(operator.op, operator.register, this.motionRange(cur, res), cur);
++			return;
++		}
++		if (this._mode === 'visual' || this._mode === 'visualLine') {
++			this.visualHead = res.pos;
++			this.renderVisual();
++		} else {
++			this.setNormalCursor(res.pos);
++		}
++	}
++
++	private exCommand(cmd: string): void {
++		if (!cmd) {
++			return;
++		}
++		if (/^\d+$/.test(cmd)) {
++			const line = Math.max(0, Math.min(this.lastLine(), Number(cmd) - 1));
++			this.setNormalCursor(pos(line, this.firstNonBlank(line)));
++			return;
++		}
++		if (cmd === '$') {
++			const line = this.lastLine();
++			this.setNormalCursor(pos(line, this.firstNonBlank(line)));
++			return;
++		}
++		if (cmd === 'noh' || cmd === 'nohlsearch') {
++			return;
++		}
++		if (!this.host.exCommand(cmd)) {
++			this.message = `Not an editor command: ${cmd}`;
++		}
++	}
++}
++
++function toggleCase(s: string): string {
++	let out = '';
++	for (const ch of s) {
++		const up = ch.toUpperCase();
++		out += ch === up ? ch.toLowerCase() : up;
++	}
++	return out;
++}
+diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
+new file mode 100644
+index 00000000..a10321b8
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
+@@ -0,0 +1,322 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import assert from 'assert';
++import type { IVimHost, VimEdit, VimPos } from '../../common/vimEngine.js';
++import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
++
++/** A string-array host: the cursor is drawn as `|` in `state()`. */
++class TestHost implements IVimHost {
++	lines: string[];
++	cursor: VimPos = { line: 0, col: 0 };
++	selection: { start: VimPos; end: VimPos } | undefined;
++	clipboard = '';
++	ex: string[] = [];
++	private undoStack: { lines: string[]; cursor: VimPos }[] = [];
++	private redoStack: { lines: string[]; cursor: VimPos }[] = [];
++	private before: { lines: string[]; cursor: VimPos } | undefined;
++	private changed = false;
++
++	constructor(text: string) {
++		const at = text.indexOf('|');
++		const clean = text.replace('|', '');
++		this.lines = clean.split('\n');
++		if (at >= 0) {
++			const pre = text.slice(0, at).split('\n');
++			this.cursor = { line: pre.length - 1, col: pre[pre.length - 1].length };
++		}
++	}
++	state(): string {
++		const lines = this.lines.slice();
++		const l = lines[this.cursor.line];
++		lines[this.cursor.line] = l.slice(0, this.cursor.col) + '|' + l.slice(this.cursor.col);
++		return lines.join('\n');
++	}
++	lineCount() { return this.lines.length; }
++	lineText(line: number) { return this.lines[line]; }
++	getCursor() { return this.cursor; }
++	setCursor(p: VimPos) { this.cursor = p; this.selection = undefined; }
++	setSelection(start: VimPos, end: VimPos, atStart: boolean) { this.selection = { start, end }; this.cursor = atStart ? start : end; }
++	applyEdits(edits: readonly VimEdit[]) {
++		if (!this.before) { this.undoStack.push({ lines: this.lines.slice(), cursor: this.cursor }); this.redoStack = []; }
++		this.changed = true;
++		const sorted = edits.slice().sort((a, b) => b.start.line - a.start.line || b.start.col - a.start.col);
++		for (const e of sorted) {
++			const head = this.lines[e.start.line].slice(0, e.start.col);
++			const tail = this.lines[e.end.line].slice(e.end.col);
++			const mid = (head + e.text + tail).split('\n');
++			this.lines.splice(e.start.line, e.end.line - e.start.line + 1, ...mid);
++		}
++	}
++	/** Typing in insert mode, as the editor would do it. */
++	type(text: string) {
++		const c = this.cursor;
++		this.applyEdits([{ start: c, end: c, text }]);
++		const parts = text.split('\n');
++		this.cursor = parts.length === 1 ? { line: c.line, col: c.col + text.length } : { line: c.line + parts.length - 1, col: parts[parts.length - 1].length };
++	}
++	beginChange() { this.before = { lines: this.lines.slice(), cursor: this.cursor }; this.changed = false; }
++	endChange() {
++		if (this.before && this.changed) { this.undoStack.push(this.before); this.redoStack = []; }
++		this.before = undefined;
++	}
++	undo() {
++		const s = this.undoStack.pop();
++		if (s) { this.redoStack.push({ lines: this.lines.slice(), cursor: this.cursor }); this.lines = s.lines; this.cursor = s.cursor; }
++	}
++	redo() {
++		const s = this.redoStack.pop();
++		if (s) { this.undoStack.push({ lines: this.lines.slice(), cursor: this.cursor }); this.lines = s.lines; this.cursor = s.cursor; }
++	}
++	indentUnit() { return '\t'; }
++	tabSize() { return 4; }
++	visibleLineCount() { return 10; }
++	setClipboard(t: string) { this.clipboard = t; }
++	getClipboard() { return this.clipboard; }
++	prefetchClipboard() { }
++	find(pattern: string, from: VimPos, backwards: boolean): VimPos | undefined {
++		const re = new RegExp(pattern, 'g');
++		const all: VimPos[] = [];
++		this.lines.forEach((l, line) => { for (const m of l.matchAll(re)) { all.push({ line, col: m.index! }); } });
++		const before = (a: VimPos, b: VimPos) => a.line < b.line || (a.line === b.line && a.col < b.col);
++		if (backwards) {
++			const hits = all.filter(p => before(p, from));
++			return hits.length ? hits[hits.length - 1] : all[all.length - 1];
++		}
++		return all.find(p => !before(p, from)) ?? all[0];
++	}
++	exCommand(cmd: string) { this.ex.push(cmd); return cmd === 'w' || cmd === 'q'; }
++}
++
++function keysOf(s: string): string[] {
++	const out: string[] = [];
++	for (let i = 0; i < s.length; i++) {
++		if (s[i] === '<') {
++			const j = s.indexOf('>', i);
++			if (j > i + 1) { out.push(s.slice(i, j + 1)); i = j; continue; }
++		}
++		out.push(s[i]);
++	}
++	return out;
++}
++
++function run(text: string, keys: string, insert?: string[]): { host: TestHost; vim: VimEngine } {
++	const host = new TestHost(text);
++	const vim = new VimEngine(host, new VimSharedState());
++	const typed = insert ? insert.slice() : [];
++	for (const k of keysOf(keys)) {
++		if (vim.mode === 'insert' && k !== '<Esc>') {
++			host.type(k === '§' ? typed.shift()! : k);
++			continue;
++		}
++		vim.handleKey(k);
++	}
++	return { host, vim };
++}
++
++function check(text: string, keys: string, expected: string) {
++	assert.strictEqual(run(text, keys).host.state(), expected, `${JSON.stringify(text)} ${keys}`);
++}
++
++suite('DevHub Vim engine', () => {
++
++	test('h j k l and counts', () => {
++		check('a|bc\ndef', 'l', 'ab|c\ndef');
++		check('a|bc\ndef', '5l', 'ab|c\ndef');
++		check('ab|c\ndef', 'j', 'abc\nde|f');
++		check('abcdef\nx\nabcdef', '4lj', 'abcdef\n|x\nabcdef');
++		check('abcdef\nx\nabcdef', '4ljj', 'abcdef\nx\nabcd|ef');
++		check('abc', 'h', '|abc');
++	});
++
++	test('word motions', () => {
++		check('|foo bar.baz  qux', 'w', 'foo |bar.baz  qux');
++		check('|foo bar.baz  qux', '3w', 'foo bar.|baz  qux');
++		check('|foo bar.baz  qux', '2W', 'foo bar.baz  |qux');
++		check('foo\n\n|bar', 'b', 'foo\n|\nbar');
++		check('foo bar.baz  |qux', 'b', 'foo bar.|baz  qux');
++		check('foo bar.baz  |qux', 'B', 'foo |bar.baz  qux');
++		check('|foo bar', 'e', 'fo|o bar');
++		check('fo|o bar', 'e', 'foo ba|r');
++		check('foo\n|bar', 'w', 'foo\nba|r');
++		check('|foo\n  bar', 'w', 'foo\n  |bar');
++	});
++
++	test('line motions', () => {
++		check('  ab|c', '0', '|  abc');
++		check('|  abc', '^', '  |abc');
++		check('|  abc', '$', '  ab|c');
++		check('a\nb\n|c', 'gg', '|a\nb\nc');
++		check('|a\nb\nc', 'G', 'a\nb\n|c');
++		check('|a\nb\nc', '2G', 'a\n|b\nc');
++		check('|a\nb\nc', ':2<CR>', 'a\n|b\nc');
++	});
++
++	test('f t F T ; ,', () => {
++		check('|a,b,c,d', 'f,', 'a|,b,c,d');
++		check('|a,b,c,d', '2f,', 'a,b|,c,d');
++		check('|a,b,c,d', 'f,;', 'a,b|,c,d');
++		check('|a,b,c,d', 't,', '|a,b,c,d');
++		check('|abc,def,', 't,;', 'abc,de|f,');
++		check('a,b,c,|d', 'F,', 'a,b,c|,d');
++		check('a,b,c,|d', 'T,', 'a,b,c,|d');
++		check('a,b,c,|d', 'F,,', 'a,b,c|,d');
++	});
++
++	test('% matches brackets across lines', () => {
++		check('|if (a) {\n  x;\n}', '%', 'if (a|) {\n  x;\n}');
++		check('if (a) |{\n  x;\n}', '%', 'if (a) {\n  x;\n|}');
++		check('if (a) {\n  x;\n|}', '%', 'if (a) |{\n  x;\n}');
++	});
++
++	test('operators with motions and counts', () => {
++		check('|foo bar baz', 'dw', '|bar baz');
++		check('|foo bar baz', '2dw', '|baz');
++		check('|foo bar baz', 'd2w', '|baz');
++		check('foo |bar', 'dw', 'foo| ');
++		check('|foo bar', 'de', '| bar');
++		check('fo|o bar', 'd$', 'f|o');
++		check('foo b|ar', 'd0', '|ar');
++		check('|a\nb\nc\nd', 'dj', '|c\nd');
++		check('a\nb\n|c\nd', 'dk', 'a\n|d');
++		check('|a(b, c)d', 'dt)', '|)d');
++		check('|a(b, c)d', 'df)', '|d');
++		check('a\n|b\nc', 'dG', '|a');
++	});
++
++	test('dd yy p P with counts', () => {
++		check('|a\nb\nc', 'dd', '|b\nc');
++		check('|a\nb\nc', '2dd', '|c');
++		check('a\nb\n|c', 'dd', 'a\n|b');
++		check('|a\nb\nc', 'yyp', 'a\n|a\nb\nc');
++		check('|a\nb\nc', 'yyP', '|a\na\nb\nc');
++		check('|a\nb\nc', 'yy2p', 'a\n|a\na\nb\nc');
++		check('|ab', 'ylp', 'a|ab');
++		check('|ab', 'xp', 'b|a');
++		check('|abc', '"ayl"ap', 'a|abc');
++		check('|a\nb', 'ddp', 'b\n|a');
++	});
++
++	test('system clipboard register', () => {
++		const { host } = run('|hello world', '"+yiw');
++		assert.strictEqual(host.clipboard, 'hello');
++		const r = run('|x', '"+yy');
++		assert.strictEqual(r.host.clipboard, 'x\n');
++		const h2 = new TestHost('|ab');
++		h2.clipboard = 'line\n';
++		const v2 = new VimEngine(h2);
++		for (const k of keysOf('"+p')) { v2.handleKey(k); }
++		assert.strictEqual(h2.state(), 'ab\n|line');
++	});
++
++	test('text objects', () => {
++		check('foo b|ar baz', 'diw', 'foo | baz');
++		check('foo b|ar baz', 'daw', 'foo |baz');
++		check('x = "he|llo" + y', 'di"', 'x = "|" + y');
++		check('x = "he|llo" + y', 'da"', 'x = |+ y');
++		check('f(a, |b)', 'di(', 'f(|)');
++		check('f(a, |b)', 'da(', '|f');
++		check('f(a, (|b))', '2di(', 'f(|)');
++		check('if {\n  a;\n  |b;\n}', 'di{', 'if {\n|}');
++		check('x{a|b}y', 'ci{Z<Esc>', 'x{|Z}y');
++	});
++
++	test('c and insert, dot repeat, undo', () => {
++		const { host } = run('|foo bar', 'cw§<Esc>', ['baz']);
++		assert.strictEqual(host.state(), 'ba|z bar');
++		const r = run('|foo bar baz', 'cw§<Esc>w.', ['X']);
++		assert.strictEqual(r.host.state(), 'X |X baz');
++		const r2 = run('|a b c d', 'dw..', []);
++		assert.strictEqual(r2.host.state(), '|d');
++		const r3 = run('|a b c d', 'dwdwuu', []);
++		assert.strictEqual(r3.host.lines.join('\n'), 'a b c d');
++		const r4 = run('|a b c d', 'dwdwuu<C-r>', []);
++		assert.strictEqual(r4.host.lines.join('\n'), 'b c d');
++		const r5 = run('|ab', 'i§<Esc>u', ['xyz']);
++		assert.strictEqual(r5.host.lines.join('\n'), 'ab');
++		const r6 = run('|ab', '3i§<Esc>', ['x']);
++		assert.strictEqual(r6.host.state(), 'xx|xab');
++		const r7 = run('|a\nb', 'A§<Esc>j.', [';']);
++		assert.strictEqual(r7.host.state(), 'a;\nb|;');
++	});
++
++	test('o O A I x r J', () => {
++		const { host } = run('  |a\nb', 'o§<Esc>', ['x']);
++		assert.strictEqual(host.state(), '  a\n  |x\nb');
++		const r = run('  |a', 'O§<Esc>', ['x']);
++		assert.strictEqual(r.host.state(), '  |x\n  a');
++		check('|abc', '2x', '|c');
++		check('|abc', 'rx', '|xbc');
++		check('|abc', '2rx', 'x|xc');
++		check('|a\n   b\nc', 'J', 'a| b\nc');
++		check('|a\nb\nc', '3J', 'a b| c');
++		check('|aB', '~~', 'A|b');
++	});
++
++	test('> and <', () => {
++		check('|a\nb', '>>', '\t|a\nb');
++		check('|a\nb', '>j', '\t|a\n\tb');
++		check('\t|a', '<<', '|a');
++		check('    |a', '<<', '|a');
++	});
++
++	test('visual char and line', () => {
++		check('|abc def', 'vlld', '| def');
++		check('|abc def', 'veyP', 'ab|cabc def');
++		check('a\n|b\nc\nd', 'Vjd', 'a\n|d');
++		check('|abc def', 'viwd', '| def');
++	});
++
++	test('visual change', () => {
++		const { host } = run('|abc def', 'vlc§<Esc>', ['X']);
++		assert.strictEqual(host.state(), '|Xc def');
++	});
++
++	test('search / ? n N and *', () => {
++		check('|foo bar foo bar', '/bar<CR>', 'foo |bar foo bar');
++		check('|foo bar foo bar', '/bar<CR>n', 'foo bar foo |bar');
++		check('|foo bar foo bar', '/bar<CR>nN', 'foo |bar foo bar');
++		check('foo bar foo |bar', '?foo<CR>', 'foo bar |foo bar');
++		check('|foo bar foo', '*', 'foo bar |foo');
++		check('|foo bar baz', 'd/baz<CR>', '|baz');
++	});
++
++	test('ex commands go to the host', () => {
++		const { host, vim } = run('|a', ':w<CR>');
++		assert.deepStrictEqual(host.ex, ['w']);
++		assert.strictEqual(vim.status(), 'NORMAL');
++		const r = run('|a', ':frobnicate<CR>');
++		assert.ok(r.vim.status().includes('Not an editor command'));
++	});
++
++	test('escape reports idle only when nothing is pending', () => {
++		const host = new TestHost('|abc');
++		const vim = new VimEngine(host);
++		assert.strictEqual(vim.escape(), 'idle');
++		vim.handleKey('d');
++		assert.strictEqual(vim.escape(), 'handled');
++		vim.handleKey('i');
++		assert.strictEqual(vim.mode, 'insert');
++		assert.strictEqual(vim.escape(), 'handled');
++		assert.strictEqual(vim.mode, 'normal');
++		vim.handleKey('v');
++		assert.strictEqual(vim.escape(), 'handled');
++		assert.strictEqual(vim.escape(), 'idle');
++	});
++
++	test('large buffers are read lazily', () => {
++		const host = new TestHost('|x');
++		host.lines = new Array(200000).fill('word word');
++		let reads = 0;
++		const orig = host.lineText.bind(host);
++		host.lineText = (l: number) => { reads++; return orig(l); };
++		const vim = new VimEngine(host);
++		reads = 0;
++		for (const k of keysOf('3wdd')) { vim.handleKey(k); }
++		assert.ok(reads < 200, `read ${reads} lines`);
++		vim.handleKey('G');
++		assert.strictEqual(host.cursor.line, 199998);
++	});
++});
+diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
+index 74be4cac..1d18db57 100644
+--- a/src/vs/workbench/workbench.desktop.main.ts
++++ b/src/vs/workbench/workbench.desktop.main.ts
+@@ -219,6 +219,9 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+ // System-wide (OS global) Keybindings
+ import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
+ 
++// DevHub: native Vim (patches/vscode/0008-devhub-vim.patch)
++import './contrib/devhubVim/browser/devhubVim.contribution.js';
++
+ //#endregion
+ 
+ 
