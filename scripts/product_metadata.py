@@ -186,7 +186,10 @@ def vscode_commit() -> str:
 # instead of keeping the server they have. A change that does not alter the
 # output (a comment, a log line) leaves it alone, and so leaves every
 # machine's server where it is.
-REH_REVISION = 1
+#
+# 2: the whole server is built in Linux containers, as upstream builds it,
+# instead of gulp on the Mac with Linux natives swapped in afterwards.
+REH_REVISION = 2
 
 PATCHES_DIR = REPO_ROOT / "patches" / "vscode"
 

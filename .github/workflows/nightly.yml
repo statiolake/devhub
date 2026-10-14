@@ -22,8 +22,9 @@
 # copies onto an SSH host or into a dev container to open a remote window
 # there. The app carries four of them inside itself (Contents/Resources/reh:
 # glibc and musl Linux, x64 and arm64), built here, every time the app is, from
-# the same patched VS Code: two `reh` legs, one per architecture, hand their
-# tarballs to the macOS job, which bundles them. Nothing is published for them
+# the same patched VS Code: two `reh` legs, one per architecture, build them in
+# Linux containers the way VS Code builds its own and hand their tarballs to the
+# macOS job, which bundles them. Nothing is published for them
 # on their own — no far machine and no DevHub downloads a server any more. See
 # docs/remote-ssh.md and scripts/build_reh.py.
 #
@@ -269,28 +270,36 @@ jobs:
   # ---------------------------------------------------------------------------
   # The remote extension hosts the app carries.
   #
-  # Two legs. The native addons in `vscode/remote/node_modules` are compiled
-  # for the target (scripts/build_reh.py): both glibc servers the way VS Code
-  # builds its own — in an amd64 `debian:bookworm` container against VS Code's
-  # glibc 2.28 sysroot, arm64 cross-compiled — so both are on the x64 leg; the
-  # musl servers in `node:<version>-alpine` of the target's own architecture,
-  # and the musl Node comes out of that image too, so each runs natively on a
-  # runner of its architecture. Each server is then started once, offline, in
-  # a plain container of its platform before it is handed on (linux-arm64's
-  # under QEMU on the x64 leg). Both Linux runners are free on a public
-  # repository.
+  # Built the way VS Code builds its own, on Linux x64 for every architecture
+  # (build/azure-pipelines/linux/steps/product-build-linux-setup.yml and
+  # -compile.yml, alpine/product-build-alpine.yml): scripts/build_reh.py runs
+  # upstream's `npm ci` with setup-env.sh's glibc 2.28 sysroot toolchain,
+  # `gulp core-ci` and `gulp vscode-reh-<platform>-<arch>-min-ci` in an amd64
+  # Ubuntu 22.04 container on a copy of the pinned, patched VS Code, and installs
+  # the musl servers' `remote/` in `node:<version>-alpine` of the target's
+  # platform, as upstream's Alpine pipeline does. Nothing is provisioned on the
+  # runner itself: it needs git, python3 and Docker, which ubuntu-latest has.
+  #
+  # One leg per architecture, because one tree serves both servers of an
+  # architecture (`npm ci` with npm_config_arch=<arch>, `core-ci` with
+  # VSCODE_ARCH=<arch>): x64 builds linux-x64 and alpine-x64, arm64
+  # cross-builds linux-arm64 and alpine-arm64, both on x64 runners like
+  # upstream's. QEMU runs the arm64 containers: alpine-arm64's `remote/`
+  # install and each arm64 server's start check.
   #
   # Built on every night the app is, not only when the submodule moves: the
   # servers are DevHub's patches as much as VS Code's, and the app refuses to
-  # carry servers built from other patches than its own.
+  # carry servers built from other patches than its own. A server whose
+  # identity is in the restored cache is a copy; anything else is a full tree
+  # build (roughly 40-60 minutes on these runners, not yet measured).
   # ---------------------------------------------------------------------------
 
   reh:
     name: Servers (${{ matrix.arch }})
     needs: decide
     if: needs.decide.outputs.needed == 'true'
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     strategy:
       # One failing architecture must not cancel the other: knowing that only
       # arm64 is broken is the whole of the diagnosis. The app is not packaged
@@ -299,11 +308,9 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: ubuntu-latest
-            targets: linux-x64 linux-arm64 alpine-x64
+            targets: linux-x64 alpine-x64
           - arch: arm64
-            runner: ubuntu-24.04-arm
-            targets: alpine-arm64
+            targets: linux-arm64 alpine-arm64
     env:
       CI: "true"
     steps:
@@ -313,99 +320,40 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Describe this build
-        id: meta
-        run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      # `npm ci` in vscode/ builds the native addons the server ships, and the
-      # GitHub Linux images carry none of their headers. kerberos is the one
-      # that stops first — `gssapi/gssapi.h: No such file or directory`, on
-      # both architectures — because its prebuild is not for the Node 24 the
-      # toolchain pins, so node-gyp compiles it from source. The rest of the
-      # list is what upstream installs before the same install
-      # (`vscode/build/azure-pipelines/dependencies-check.yml`), minus
-      # `libnotify-bin`, which only its tests use: fixing them one header at a
-      # time would be several nightlies spent rediscovering a list VS Code
-      # already wrote down. macOS needs none of it, which is why this step is
-      # here and not in the packaging job.
-      - name: Install the headers the native addons compile against
+      # The tree is a full VS Code with every nested node_modules, Chromium's
+      # clang and two sysroots: well over 10 GB in the Docker volume, more
+      # than the runner's root disk has free out of the box.
+      - name: Make room for the build tree
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            libkrb5-dev \
-            libx11-dev \
-            libx11-xcb-dev \
-            libxkbfile-dev
-
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      # The same cache the macOS job keeps, keyed the same way and separate from
-      # it by `runner.os` and `runner.arch`. A hit turns provisioning into the
-      # nested npm installs and skips both compiles; the server bundle is then
-      # rebuilt regardless, because it has to be made against DevHub's
-      # product.json rather than the submodule's. See scripts/build_reh.py.
-      - name: Restore the provisioned VS Code build
-        uses: actions/cache@v4
-        with:
-          path: |
-            vscode-toolchain
-            vscode/node_modules
-            vscode/out
-            vscode/out-vscode-min
-            vscode/.build
-          key: >-
-            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
-            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
-
-      - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Provision the VS Code submodule
-        env:
-          # As on the macOS job: the nested installs and the built-in extension
-          # set pull prebuilt binaries from GitHub releases, and unauthenticated
-          # requests from shared runner addresses hit the rate limit.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/provision-vscode.sh
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Work out the servers' identity
         id: reh-identity
         run: echo "identity=$(cd scripts && python3 -c 'from product_metadata import reh_identity; print(reh_identity())')" >> "$GITHUB_OUTPUT"
 
-      # Finished servers by identity and node_modules by lock file; a miss just
-      # builds. See docs/remote-ssh.md.
-      - name: Restore the build caches
+      # Finished servers by identity; a miss builds. The build tree itself is
+      # not cached between nights (it lives in a Docker volume). See
+      # docs/remote-ssh.md.
+      - name: Restore the server cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/devhub
+          path: ~/.cache/devhub/reh
           key: reh-${{ matrix.arch }}-${{ steps.reh-identity.outputs.identity }}
           restore-keys: reh-${{ matrix.arch }}-
 
-      # linux-arm64 is cross-compiled on the x64 leg; only starting it once
-      # (`verify_server_starts`) needs to run arm64 code.
       - name: Let Docker run arm64 containers
-        if: matrix.arch == 'x64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
       - name: Build the servers
         env:
-          # Read by the containers that install the native addons, for the
-          # ones whose install fetches a release asset; only for the rate limit.
+          # Passed into the containers by name, for the downloads upstream's
+          # steps make from GitHub (sysroots, prebuilt binaries); only for the
+          # rate limit.
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/build_reh.py ${{ matrix.targets }} --skip-provision --out-dir dist/reh
+        run: scripts/build_reh.py ${{ matrix.targets }} --out-dir dist/reh
 
       # To the macOS job, which bundles them; nothing is published on its own.
       - name: Hand the servers to the packaging job

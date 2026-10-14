@@ -46,72 +46,82 @@ The server's own `product.json` still states `commit` — the VS Code commit,
 from `packaged_metadata()` — because that is what the server compares a
 connecting client's commit with, and the packaged app states the same one.
 
-## Native modules, per target
+## Built on Linux, the way VS Code builds its own
 
-`vscode/remote/node_modules` holds native addons — node-pty, @parcel/watcher,
-kerberos, @vscode/spdlog, sqlite3 — and the package task copies them into the
-server as npm installed them. So they have to be installed *for the target*:
-glibc or musl, x64 or arm64. This script does that in a container of the
-target's platform (`remote_modules_image`) before packaging each target, and
-puts the host's own `node_modules` back afterwards:
+The whole server is built in Linux containers, on a copy of the pinned VS Code
+of its own — never in the developer's `vscode/` checkout, whose node_modules
+are the Mac's. That is how upstream builds it: on a Linux x64 agent, every
+architecture, `npm ci` at the root with the target's `npm_config_arch` and
+`build/azure-pipelines/linux/setup-env.sh`'s toolchain (VS Code's glibc 2.28
+sysroots, `VSCODE_REMOTE_CC`/`CXX` for `remote/`), then `gulp core-ci` and
+`gulp vscode-reh-<platform>-<arch>-min-ci`. Gulp on the Mac put the Mac's
+natives into the Linux servers (the MSAL broker runtime, git's
+`@vscode/fs-copyfile`), and every patch-up after the fact missed the next one.
+Built on Linux there is nothing to patch up: every native in the tree was
+built for, or picked by npm for, the target.
 
-- glibc targets the way VS Code builds its own server
-  (`build/azure-pipelines/linux/setup-env.sh`): in `debian:bookworm`, always
-  linux/amd64, with an x64 nodejs.org Node to run npm and VS Code's cross
-  toolchain and glibc 2.28 sysroot (`vscode-linux-build-agent`
-  `<triple>-glibc-2.28-gcc-8.5.0`, sha256 from `build/checksums`) as CC/CXX
-  with `--sysroot`, and `npm_config_arch` for arm64 — cross-compiled, not
-  emulated. So the addons need no newer glibc than 2.28, the floor of the
-  Node 24 they run on; building against the image's own glibc would quietly
-  raise it. `verify_glibc_floor` then runs VS Code's own
-  `verify-glibc-requirements.sh` on the finished server and fails the build
-  if any `.node` or `node` asks for more.
-- musl targets in `node:<version>-alpine`, which is what upstream does too
-  (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME` in `build/npm/postinstall.ts`).
-  The C++ runtime that musl Node needs and a stock Alpine lacks is copied in
-  beside it (`bundle_musl_runtime`), so the server starts on an Alpine that has
-  never run `apk add` and cannot.
+`scripts/reh_in_container.sh` holds the steps, in upstream's order, with the
+pipeline files they come from. This script runs them and owns everything
+around them:
 
-The target's own Node comes from VS Code's gulp task: nodejs.org for glibc,
-`node:<version>-alpine` for musl. A container of another architecture runs
-under emulation (`docker run --platform`), which works and is slow: on an arm64
-machine that is the glibc toolchain (amd64) and the arm64 server's start check
-on an x64 one. CI builds both glibc servers and alpine-x64 on x64, alpine-arm64
-on arm64.
+    per architecture   prepare     the builder image (`builder_dockerfile`:
+                                   ubuntu:22.04, upstream's agent, linux/amd64
+                                   always — the sysroot compilers are x86-64
+                                   programs and upstream cross-builds arm64);
+                                   the tree in the Docker volume
+                                   `devhub-reh-work-<arch>`: the pinned commit,
+                                   DevHub's patches and product.json, `npm ci`,
+                                   `core-ci`, the Copilot compile
+    per musl target    musl-remote `remote/` installed again in
+                                   `node:<version>-alpine` of the target's
+                                   platform, as upstream's Alpine pipeline does
+                                   in its own Alpine container, and that image's
+                                   `node` put where the gulp task looks
+    per target         package     `vscode-reh-<platform>-<arch>-min-ci`,
+                                   tarred out to the host
+                       (host)      `remove_copilot`, `drop_glibc_msal_runtime`
+                                   (musl), `bundle_musl_runtime` (musl),
+                                   `refuse_foreign_binaries`,
+                                   `verify_glibc_floor` (glibc; upstream's
+                                   verify-glibc-requirements.sh in the builder),
+                                   `verify_server_starts`, pack, statement
 
-The Copilot built-in and its native runtime are taken back out afterwards —
-about 470 MB of an 810 MB tree, and DevHub disables AI features outright. See
-`remove_copilot` for why that is a deletion rather than an option passed to the
-build.
+linux-<arch> and alpine-<arch> share one tree: both are `npm ci` with
+`npm_config_arch=<arch>` and `core-ci` with `VSCODE_ARCH=<arch>` upstream, and
+differ in `remote/node_modules`, which the tree keeps one of each of. Upstream's
+Alpine pipeline installs the root without setup-env.sh's sysroot compilers;
+here the root natives are built against the 2.28 sysroot either way, and none of
+them is in a musl server (`refuse_foreign_binaries` would say so).
 
-Each server is then started once, offline, in a container of its platform
-(`verify_server_starts`), so a server that cannot start on the machines it is
-for never reaches a bundle.
+On an Apple Silicon Mac the builder runs as amd64 under emulation — Docker
+Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
+emulation") is several times faster than QEMU. Give Docker at least 12 GB of
+memory: `core-ci` bundles three trees at once.
 
-## Three caches, so a rebuild is not twelve minutes
+## The caches, so a rebuild is not an hour
 
-All under `~/.cache/devhub/` (`$XDG_CACHE_HOME/devhub/`), none of it secret:
-
-- `reh/<identity>/` — the finished tarball and statement of each target. A
-  target whose identity is cached is verified against its sha256 and copied
-  into `--out-dir`; nothing is built, and when every target hits, the gulp
-  `core-ci` bundle is skipped too. `prune_stale` cleans `dist/reh`, never this.
-  `DEVHUB_REH_CACHE` moves it; `--no-cache` ignores it; `--prune-cache
-  [--keep N]` drops all but the N most recently used identities (default 2).
-- `reh-modules/<target>-<key>.tar` — `vscode/remote/node_modules` as `npm ci`
-  left it, keyed by the target, the lock file, package.json, .npmrc, the Node
-  version, the toolchain image's id and `REH_REVISION`. A patch-only change
-  moves the identity but not that key, so it skips `npm ci`.
-  `DEVHUB_REH_MODULES_CACHE` moves it.
-- `devhub-reh-toolchain:<libc>-<arch>-<hash>` Docker images with the compilers
-  (and patchelf) baked in, built on first use from the Dockerfile text in this
-  file, so neither `npm ci` nor the musl bundling installs packages again.
+- `~/.cache/devhub/reh/<identity>/` (`$XDG_CACHE_HOME`, `DEVHUB_REH_CACHE`) —
+  the finished tarball and statement of each target. A target whose identity
+  is cached is verified against its sha256 and copied into `--out-dir`, and
+  nothing else happens. `prune_stale` cleans `dist/reh`, never this.
+  `--no-cache` ignores it; `--prune-cache [--keep N]` drops all but the N most
+  recently used identities (default 2).
+- the Docker volume `devhub-reh-work-<arch>` (`DEVHUB_REH_WORK_VOLUME` names
+  the prefix) — the tree, with stamps under `.devhub/`: a new VS Code commit is
+  a new tree; `npm ci` reruns only when a manifest, a lock file, an `.npmrc`,
+  `.nvmrc`, the architecture or the builder image changed; `core-ci` when that
+  or the patches, the product metadata or `WORK_REVISION` did; musl's
+  `remote/` when the dependencies or the musl image did. A failed target rerun
+  costs its own package step. `--reset-work` deletes the volumes.
+- `devhub-reh-builder:<hash>` and `devhub-reh-musl:<arch>-<hash>` images, built
+  on first use from the Dockerfile text in this file.
 
     scripts/build_reh.py [linux-x64 linux-arm64 alpine-x64 alpine-arm64]
-                         [--out-dir dist/reh] [--skip-provision] [--no-cache]
+                         [--out-dir dist/reh] [--no-cache] [--reset-work]
     scripts/build_reh.py --prune-cache [--keep N]
 
-With no targets it builds all four. It needs Docker.
+With no targets it builds all four. It needs Docker; the host needs only
+python3, git and the `vscode` submodule checked out at the pinned commit.
 """
 
 from __future__ import annotations
@@ -122,7 +132,6 @@ import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -130,12 +139,12 @@ import tarfile
 import time
 from pathlib import Path
 
-from product_metadata import PRODUCT_OVERRIDES, REH_REVISION, packaged_metadata, reh_identity, vscode_commit
+from product_metadata import PRODUCT_OVERRIDES, packaged_metadata, reh_identity, vscode_commit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
-PRODUCT_JSON = VSCODE_DIR / "product.json"
 REMOTE_DIR = VSCODE_DIR / "remote"
+IN_CONTAINER_SCRIPT = REPO_ROOT / "scripts" / "reh_in_container.sh"
 
 # Where the servers go unless told otherwise: a source run reads them here
 # (`rehBundleDirectory` in apps/desktop/src/main/shell/appController.ts), and
@@ -154,6 +163,33 @@ GULP_TARGETS: dict[str, tuple[str, str]] = {
 	"alpine-arm64": ("alpine", "arm64"),
 }
 TARGETS = tuple(GULP_TARGETS)
+ARCHES = ("x64", "arm64")
+
+# Bump when a change to reh_in_container.sh or to what this script hands it
+# must recompile trees that are otherwise up to date. (A change to the server
+# that is shipped bumps REH_REVISION in product_metadata.py instead.)
+WORK_REVISION = 1
+
+# The builder image is upstream's Linux agent: Ubuntu 22.04
+# (`1es-ubuntu-22.04-x64`), always amd64.
+BUILDER_BASE_IMAGE = "ubuntu:22.04"
+BUILDER_PLATFORM = "linux/amd64"
+# `build/azure-pipelines/dependencies-check.yml`'s headers (minus
+# libnotify-bin, which only its tests use), git for the tree, xz for Node, and
+# `python` itself: setup-env.sh pipes Chromium's clang updater into `python -`.
+BUILDER_PACKAGES = (
+	"ca-certificates", "curl", "git", "xz-utils", "python3", "python-is-python3",
+	"build-essential", "pkg-config", "libkrb5-dev", "libx11-dev", "libx11-xcb-dev",
+	"libxkbfile-dev",
+)
+
+EXPECTED_GLIBC_VERSION = "2.28"
+EXPECTED_GLIBCXX_VERSION = "3.4.25"
+VERIFY_GLIBC_SCRIPT = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "verify-glibc-requirements.sh"
+
+# Below this, `core-ci` (three esbuild bundles in parallel) is likely to be
+# killed for memory before it says anything useful.
+MIN_DOCKER_MEMORY = 12 * 1024**3
 
 
 def libc_of(target: str) -> str:
@@ -184,37 +220,22 @@ def top_level_dir(target: str) -> str:
 
 
 def gulp_task(target: str) -> str:
-	"""VS Code's own name for the task that assembles this target's tree.
+	"""VS Code's own name for the task that packages this target's tree.
 
-	`-min` is the bundled-and-minified server, which is what a download should
-	be. `-ci` is the half of that task which only *packages*: it takes
-	`out-vscode-reh-min` as it finds it, adds the extensions, the production
-	node_modules, the target's Node and the launcher scripts, and writes the
-	tree. The other half — the one the plain `vscode-reh-<os>-<arch>-min` task
-	runs first — is `compile-build-with-mangling`, and it does not complete on
-	1.136.1: upstream's own `sessionChangesEditor.ts` widens three protected
-	members of the base toggle and action-bar view items, and the mangler
-	refuses ("Protected fields have been made PUBLIC") rather than emit code it
-	cannot shrink.
-
-	`core-ci` is the path around it, and not a workaround invented here: it is
-	the task upstream's own CI runs, it transpiles with esbuild instead, and
-	`scripts/provision-vscode.sh` already uses it for the same reason. Among
-	the three trees it bundles in parallel is `out-vscode-reh-min` — the exact
-	input this task wants. See `bundle_server_sources`.
+	`-min` is the bundled-and-minified server; `-ci` is the half of that task
+	upstream's pipelines run after `core-ci` has bundled `out-vscode-reh-min`:
+	native extensions, the target's Node, the production node_modules, the
+	launcher scripts. `product-build-linux-compile.yml` and
+	`product-build-alpine.yml` run exactly `core-ci` and then this.
 	"""
 	gulp_platform, gulp_arch = GULP_TARGETS[target]
 	return f"vscode-reh-{gulp_platform}-{gulp_arch}-min-ci"
 
 
-def staging_dir(target: str) -> Path:
-	"""Where the gulp task writes the tree: the parent of the submodule.
-
-	VS Code's build root is the parent of `vscode/`, which here is the
-	repository; `.gitignore` covers `vscode-reh-*/` for that reason.
-	"""
+def gulp_output_name(target: str) -> str:
+	"""The tree the task writes beside the VS Code checkout (gulp's BUILD_ROOT)."""
 	gulp_platform, gulp_arch = GULP_TARGETS[target]
-	return REPO_ROOT / f"vscode-reh-{gulp_platform}-{gulp_arch}"
+	return f"vscode-reh-{gulp_platform}-{gulp_arch}"
 
 
 def docker_platform(target: str) -> str:
@@ -222,7 +243,7 @@ def docker_platform(target: str) -> str:
 
 
 def remote_node_version() -> str:
-	"""The Node the server's native addons are built against: remote/.npmrc."""
+	"""The Node the server runs on and its addons are built against: remote/.npmrc."""
 	for line in (REMOTE_DIR / ".npmrc").read_text().splitlines():
 		key, _, value = line.partition("=")
 		if key.strip() == "target":
@@ -230,110 +251,47 @@ def remote_node_version() -> str:
 	raise SystemExit(f"no target= in {REMOTE_DIR / '.npmrc'}")
 
 
-# glibc servers are built the way VS Code builds its own (see
-# vscode/build/azure-pipelines/linux/setup-env.sh): on a current Debian, with
-# the cross toolchain + glibc 2.28 sysroot Microsoft publishes for exactly
-# this, so the addons need nothing newer than glibc 2.28 / GLIBCXX 3.4.25 —
-# the same floor as the Node 24 they run on and as VS Code's own server.
-GLIBC_BASE_IMAGE = "debian:bookworm"
-
-# vscode/build/linux/debian/install-sysroot.ts (`fetchUrl`'s version) and
-# vscode/build/checksums/vscode-sysroot.txt; the remote server's flavour is
-# `-glibc-2.28-gcc-8.5.0` (VSCODE_REMOTE_SYSROOT_DIR in setup-env.sh). A test
-# compares these with the submodule, so a VS Code bump that moves them fails.
-SYSROOT_RELEASE = "v20260212-405735"
-SYSROOT_URL = f"https://github.com/microsoft/vscode-linux-build-agent/releases/download/{SYSROOT_RELEASE}"
-SYSROOT_FLAVOUR = "-glibc-2.28-gcc-8.5.0"
-SYSROOT_SHA256 = {
-	"x86_64-linux-gnu": "1ebb6ef1fe2983269fd0855a88f9c9a37f9b515d16524a9146198e4cabdf34f7",
-	"aarch64-linux-gnu": "bcff71257397f76a4f7a76bbcfc425b4b60b16449e10b01a2cfce574c21d60da",
-}
-SYSROOT_DIR = "/opt/vscode-sysroot"
-EXPECTED_GLIBC_VERSION = "2.28"
-EXPECTED_GLIBCXX_VERSION = "3.4.25"
-VERIFY_GLIBC_SCRIPT = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "verify-glibc-requirements.sh"
-
-# setup-env.sh's ~/.gyp/include.gypi: gcc 8.5 knows C++20 as gnu++2a.
-GYP_INCLUDE = (
-	# No single quote in it: it is echoed inside one.
-	"{\"target_defaults\": {\"conditions\": [[\"OS==\\\"linux\\\"\", {"
-	"\"cflags_cc!\": [\"-std=gnu++20\"], \"cflags_cc\": [\"-std=gnu++2a\"]}]]}}"
-)
+def build_node_version() -> str:
+	"""The Node VS Code's build runs on — `.nvmrc`, as upstream's NodeTool step."""
+	return (VSCODE_DIR / ".nvmrc").read_text().strip()
 
 
-def sysroot_triple(target: str) -> str:
-	return {"x64": "x86_64-linux-gnu", "arm64": "aarch64-linux-gnu"}[arch_of(target)]
+def targets_by_arch(targets: list[str] | tuple[str, ...]) -> list[tuple[str, list[str]]]:
+	"""The targets grouped by the tree that builds them, in a stable order.
 
-
-def sysroot_asset(target: str) -> str:
-	return f"{sysroot_triple(target)}{SYSROOT_FLAVOUR}.tar.gz"
-
-
-def toolchain_platform(target: str) -> str:
-	"""The platform the toolchain image runs as.
-
-	glibc: always linux/amd64. The sysroot's compilers are x86-64 programs, and
-	VS Code builds its arm64 server the same way — cross-compiled on an x64
-	agent with `npm_config_arch=arm64`, never under emulation. musl: the
-	target's own platform, as `node:<version>-alpine` is.
+	x64 before arm64, and within an architecture glibc before musl: the glibc
+	server packages from the `remote/` install `npm ci` just made, so building
+	it first saves one swap of `remote/node_modules`.
 	"""
-	return "linux/amd64" if libc_of(target) == "glibc" else docker_platform(target)
+	plan = []
+	for arch in ARCHES:
+		group = [t for t in TARGETS if t in targets and arch_of(t) == arch]
+		group.sort(key=lambda t: libc_of(t) != "glibc")
+		if group:
+			plan.append((arch, group))
+	return plan
 
 
-def glibc_build_env(target: str) -> dict[str, str]:
-	"""setup-env.sh's VSCODE_REMOTE_* toolchain, as build/npm/postinstall.ts
-	hands it to the `remote` install (CC, CXX, CXXFLAGS, LDFLAGS)."""
-	triple = sysroot_triple(target)
-	root = f"{SYSROOT_DIR}/{triple}"
-	sysroot = f"{root}/{triple}/sysroot"
-	return {
-		"CC": f"{root}/bin/{triple}-gcc",
-		"CXX": f"{root}/bin/{triple}-g++",
-		"CXXFLAGS": f"--sysroot={sysroot}",
-		"LDFLAGS": f"--sysroot={sysroot} -L{sysroot}/usr/lib/{triple} -L{sysroot}/lib/{triple}",
-		"npm_config_arch": arch_of(target),
-	}
+# --- images -----------------------------------------------------------------
 
 
-def remote_modules_image(target: str, node_version: str) -> str:
-	"""The stock image the toolchain image is built on.
+def node_dist_name(node_version: str) -> str:
+	return f"node-v{node_version}-linux-x64"
 
-	See the module docstring for why bookworm plus a sysroot, and why alpine.
+
+def builder_dockerfile(node_version: str) -> str:
+	"""The image every step on the tree runs in: upstream's Linux agent.
+
+	The Node is the one `.nvmrc` names, from nodejs.org, sha256-checked
+	against its SHASUMS256.txt. git is told every directory is safe: the tree
+	lives in a volume and is owned by whoever created it.
 	"""
-	if libc_of(target) == "musl":
-		return f"node:{node_version}-alpine"
-	return GLIBC_BASE_IMAGE
-
-
-def node_dist_name(target: str, node_version: str) -> str:
-	"""The nodejs.org tarball for a glibc target, e.g. node-v24.21.0-linux-x64."""
-	return f"node-v{node_version}-linux-{arch_of(target)}"
-
-
-def toolchain_dockerfile(target: str, node_version: str) -> str:
-	"""The Dockerfile of the image `npm ci` and the musl bundling run in.
-
-	The compilers, because `remote/.npmrc` says `build_from_source` — every
-	addon is compiled against the target's Node and libc, none is a prebuild
-	for some other machine — and patchelf for `musl_runtime_script`. Baked in
-	once instead of installed in every container, which also means the musl
-	bundling needs no network.
-
-	For glibc: an x64 Node from nodejs.org (sha256 checked) to run npm and
-	node-gyp, VS Code's cross toolchain and glibc 2.28 sysroot for the target
-	(sha256 checked) and its build environment, so `npm ci` compiles for the
-	target's architecture against glibc 2.28 whatever Debian the image is.
-	"""
-	base = remote_modules_image(target, node_version)
-	if libc_of(target) == "musl":
-		return f"FROM {base}\nRUN apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf\n"
-	host = node_dist_name("linux-x64", node_version)
+	host = node_dist_name(node_version)
 	url = f"https://nodejs.org/dist/v{node_version}"
-	asset = sysroot_asset(target)
 	run = (
 		"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
-		"ca-certificates curl xz-utils python3 make g++ binutils >/dev/null"
-		" && rm -rf /var/lib/apt/lists/*"
+		+ " ".join(BUILDER_PACKAGES)
+		+ " >/dev/null && rm -rf /var/lib/apt/lists/*"
 		" && cd /tmp"
 		f" && curl -fsSLO {url}/{host}.tar.xz"
 		f" && curl -fsSL {url}/SHASUMS256.txt | grep ' {host}.tar.xz$' > SHASUMS256.txt"
@@ -341,99 +299,247 @@ def toolchain_dockerfile(target: str, node_version: str) -> str:
 		f" && tar -xJf {host}.tar.xz -C /usr/local --strip-components=1 --no-same-owner"
 		f" && rm {host}.tar.xz SHASUMS256.txt"
 		f" && node --version | grep -qx v{node_version}"
-		f" && curl -fsSLO --retry 5 {SYSROOT_URL}/{asset}"
-		f" && echo '{SYSROOT_SHA256[sysroot_triple(target)]}  {asset}' | sha256sum -c -"
-		f" && mkdir -p {SYSROOT_DIR} && tar -xzf {asset} -C {SYSROOT_DIR} && rm {asset}"
-		f" && mkdir -p /root/.gyp && echo '{GYP_INCLUDE}' > /root/.gyp/include.gypi"
+		" && git config --system --add safe.directory '*'"
 	)
-	env = "".join(f'ENV {k}="{v}"\n' for k, v in glibc_build_env(target).items())
-	return f"FROM {base}\nRUN {run}\n{env}"
+	return f"FROM {BUILDER_BASE_IMAGE}\nENV DEBIAN_FRONTEND=noninteractive\nRUN {run}\n"
 
 
-def toolchain_tag(target: str, node_version: str) -> str:
-	"""`devhub-reh-toolchain:<libc>-<arch>-<hash of Dockerfile + node version>`."""
-	digest = hashlib.sha256(
-		(toolchain_dockerfile(target, node_version) + "\0" + node_version).encode()
-	).hexdigest()[:12]
-	return f"devhub-reh-toolchain:{libc_of(target)}-{arch_of(target)}-{digest}"
+def builder_tag(node_version: str) -> str:
+	digest = hashlib.sha256(builder_dockerfile(node_version).encode()).hexdigest()[:12]
+	return f"devhub-reh-builder:{digest}"
 
 
-def ensure_toolchain_image(target: str, node_version: str) -> str:
-	"""The toolchain image's tag, built first if this machine has not got it."""
-	tag = toolchain_tag(target, node_version)
-	have = subprocess.run(["docker", "image", "inspect", tag], capture_output=True)
-	if have.returncode != 0:
-		print(f"  building toolchain image {tag}")
-		built = subprocess.run(
-			["docker", "build", "--platform", toolchain_platform(target), "-t", tag, "-"],
-			input=toolchain_dockerfile(target, node_version).encode(),
+def musl_image(node_version: str) -> str:
+	"""The stock image musl's `remote/` is installed in and its `node` taken from."""
+	return f"node:{node_version}-alpine"
+
+
+def musl_dockerfile(node_version: str) -> str:
+	"""`node:<version>-alpine` with the compilers `remote/.npmrc`'s
+	`build_from_source` needs, and patchelf for `musl_runtime_script` — baked
+	in once, so neither the install nor the bundling installs packages again."""
+	return (
+		f"FROM {musl_image(node_version)}\n"
+		"RUN apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf\n"
+	)
+
+
+def musl_tag(target: str, node_version: str) -> str:
+	digest = hashlib.sha256(musl_dockerfile(node_version).encode()).hexdigest()[:12]
+	return f"devhub-reh-musl:{arch_of(target)}-{digest}"
+
+
+def ensure_image(tag: str, dockerfile: str, docker_platform_name: str) -> str:
+	"""`tag`, built from `dockerfile` for `docker_platform_name` if this machine has not got it."""
+	if subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0:
+		return tag
+	print(f"  building image {tag} ({docker_platform_name})")
+	built = subprocess.run(
+		["docker", "build", "--platform", docker_platform_name, "-t", tag, "-"],
+		input=dockerfile.encode(),
+	)
+	if built.returncode != 0:
+		raise SystemExit(
+			f"error: building image {tag} failed. Its Dockerfile:\n{dockerfile}\n"
+			"If a base image or Node release is missing, check it exists and adjust "
+			"builder_dockerfile / musl_dockerfile in scripts/build_reh.py."
 		)
-		if built.returncode != 0:
-			raise SystemExit(
-				f"error: building toolchain image {tag} for {target} failed.\n"
-				f"  base image: {remote_modules_image(target, node_version)}"
-				f" (Node {node_version} from remote/.npmrc)\n"
-				"  If the base image, Node release or sysroot is missing, check it exists:\n"
-				f"    https://hub.docker.com/v2/repositories/library/node/tags?name={node_version}\n"
-				f"    https://nodejs.org/dist/v{node_version}/\n"
-				f"    {SYSROOT_URL}/\n"
-				"  and adjust remote_modules_image / toolchain_dockerfile in scripts/build_reh.py."
-			)
 	return tag
 
 
-def toolchain_image_id(tag: str) -> str:
-	"""The image's content id, which is what the modules cache is keyed on."""
-	result = subprocess.run(
-		["docker", "image", "inspect", "--format", "{{.Id}}", tag],
-		capture_output=True, text=True, check=True,
-	)
-	return result.stdout.strip()
+def ensure_builder() -> str:
+	node = build_node_version()
+	return ensure_image(builder_tag(node), builder_dockerfile(node), BUILDER_PLATFORM)
 
 
-def remote_modules_script(target: str) -> str:
-	"""What runs in the toolchain image, in `vscode/remote`.
+def ensure_musl_image(target: str) -> str:
+	node = remote_node_version()
+	return ensure_image(musl_tag(target, node), musl_dockerfile(node), docker_platform(target))
 
-	`--ignore-scripts=false` is npm's default and stated only so nobody wonders.
+
+# --- the containers ---------------------------------------------------------
+
+
+def work_volume(arch: str) -> str:
+	"""The Docker volume holding `arch`'s tree. A volume, not a bind mount: on
+	a Mac, `npm ci` into a bind-mounted directory crosses the VM's file sharing
+	for every one of a few hundred thousand files."""
+	return f"{os.environ.get('DEVHUB_REH_WORK_VOLUME', 'devhub-reh-work')}-{arch}"
+
+
+def xfer_dir(arch: str) -> Path:
+	"""The host directory the containers read inputs from and write tarballs to."""
+	return cache_base() / "reh-xfer" / arch
+
+
+def container_argv(
+	image: str,
+	docker_platform_name: str,
+	shell: str,
+	subcommand: str,
+	env: dict[str, str],
+	*,
+	volume: str,
+	xfer: Path,
+	server: Path | None = None,
+) -> list[str]:
+	"""`docker run` for one `reh_in_container.sh` subcommand.
+
+	The tree's volume at /build, DevHub's scripts and patches read-only at
+	/devhub (apply-vscode-patches.sh finds the patches from its own path),
+	the transfer directory at /xfer, and for `verify-glibc` the finished server
+	read-only at /server. GITHUB_TOKEN goes through by name, for the rate
+	limit of the downloads upstream's steps make from GitHub; nothing else of
+	the host's environment does.
 	"""
-	return "set -e; npm ci --ignore-scripts=false"
+	argv = [
+		"docker", "run", "--rm", "--platform", docker_platform_name,
+		"-v", f"{volume}:/build",
+		"-v", f"{REPO_ROOT / 'scripts'}:/devhub/scripts:ro",
+		"-v", f"{REPO_ROOT / 'patches'}:/devhub/patches:ro",
+		"-v", f"{xfer}:/xfer",
+	]
+	if server is not None:
+		argv += ["-v", f"{server}:/server:ro"]
+	argv += ["-e", "GITHUB_TOKEN"]
+	for key in sorted(env):
+		argv += ["-e", f"{key}={env[key]}"]
+	argv += [image, shell, "/devhub/scripts/reh_in_container.sh", subcommand]
+	return argv
 
 
-ELF_MACHINE = {"x64": "X86-64", "arm64": "AArch64"}
+def run_step(argv: list[str]) -> None:
+	subprocess.run(argv, check=True)
 
 
-def glibc_check_script(target: str) -> str:
-	"""Fail if the server needs more than glibc 2.28 — or is the wrong arch.
+# Fields of the product metadata that change on every run and must not make a
+# tree recompile: the build date and DevHub's own commit. Everything else —
+# the identity, the overrides, the API proposals — goes into `source_key`.
+VOLATILE_METADATA = ("date", "hostCommit")
 
-	VS Code's own check (`verify-glibc-requirements.sh`, which its pipeline
-	runs on its server with these same expectations) over every `.node` and
-	`node`, with the sysroot's objdump. Its GLIBCXX overshoot only warns, as
-	upstream. An objdump of another architecture reads no symbols and passes,
-	so first every one of those files has to be an ELF for the target's
-	machine — what a cross-compile gets wrong if an install took the host's.
-	"""
-	machine = ELF_MACHINE[arch_of(target)]
-	arch_check = (
-		"find /work -name '*.node' -not -path '*prebuilds*'"
-		" -not -path '*extensions/node_modules/@parcel/watcher*' -o -type f -name node -perm -u+x"
-		" | while read -r f; do"
-		f" readelf -h \"$f\" | grep -q 'Machine:.*{machine}'"
-		f" || {{ echo \"error: $f is not a {machine} ELF\" >&2; exit 1; }}; done"
+
+def source_key(identity: str, metadata: dict[str, object], revision: int = WORK_REVISION) -> str:
+	"""What the patched, compiled tree depends on besides its dependencies."""
+	stable = {k: v for k, v in metadata.items() if k not in VOLATILE_METADATA}
+	payload = json.dumps({"identity": identity, "metadata": stable, "revision": revision}, sort_keys=True)
+	return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+def commit_date(commit: str) -> str:
+	return subprocess.run(
+		["git", "-C", str(VSCODE_DIR), "show", "-s", "--format=%cI", commit],
+		check=True, capture_output=True, text=True,
+	).stdout.strip()
+
+
+def export_source(commit: str, xfer: Path) -> Path:
+	"""The pinned commit, as `git archive` has it, for `prepare` to unpack."""
+	xfer.mkdir(parents=True, exist_ok=True)
+	tarball = xfer / "vscode-src.tar"
+	subprocess.run(
+		["git", "-C", str(VSCODE_DIR), "archive", "--format=tar", "-o", str(tarball), commit],
+		check=True,
 	)
-	upstream = VERIFY_GLIBC_SCRIPT.read_text()
-	env = (
-		f"EXPECTED_GLIBC_VERSION={EXPECTED_GLIBC_VERSION} EXPECTED_GLIBCXX_VERSION={EXPECTED_GLIBCXX_VERSION}"
-		f" VSCODE_SYSROOT_DIR={SYSROOT_DIR} VSCODE_ARCH={arch_of(target)} SEARCH_PATH=/work"
+	return tarball
+
+
+def prepare_tree(arch: str, commit: str, key: str, metadata: dict[str, object]) -> float:
+	"""Bring `arch`'s tree up to date: source, patches, `npm ci`, `core-ci`."""
+	started = time.monotonic()
+	builder = ensure_builder()
+	xfer = xfer_dir(arch)
+	source = export_source(commit, xfer)
+	(xfer / "product-overrides.json").write_text(json.dumps(metadata, indent="\t") + "\n")
+	env = {
+		"ARCH": arch,
+		"BUILDER_IMAGE": builder,
+		"COMMIT": commit,
+		"COMMIT_DATE": commit_date(commit),
+		"SOURCE_KEY": key,
+	}
+	try:
+		run_step(container_argv(builder, BUILDER_PLATFORM, "bash", "prepare", env, volume=work_volume(arch), xfer=xfer))
+	finally:
+		source.unlink(missing_ok=True)
+	return time.monotonic() - started
+
+
+def install_musl_remote(target: str) -> None:
+	"""`remote/` for musl, and the musl `node`, in the target's Alpine image."""
+	image = ensure_musl_image(target)
+	gulp_platform, gulp_arch = GULP_TARGETS[target]
+	env = {
+		"ARCH": arch_of(target),
+		"GULP_ARCH": gulp_arch,
+		"GULP_PLATFORM": gulp_platform,
+		"MUSL_IMAGE": image,
+		"NODE_VERSION": remote_node_version(),
+		"TARGET": target,
+	}
+	argv = container_argv(
+		image, docker_platform(target), "sh", "musl-remote", env,
+		volume=work_volume(arch_of(target)), xfer=xfer_dir(arch_of(target)),
 	)
-	return f"set -e; {arch_check}; {env} bash -c {shlex.quote(upstream)}"
+	run_step(argv)
+
+
+def package_target(target: str, commit: str) -> Path:
+	"""Run the gulp package task in the tree; the tarball of its output, on the host."""
+	gulp_platform, gulp_arch = GULP_TARGETS[target]
+	env = {
+		"ARCH": arch_of(target),
+		"COMMIT": commit,
+		"GULP_ARCH": gulp_arch,
+		"GULP_PLATFORM": gulp_platform,
+		"LIBC": libc_of(target),
+		"TARGET": target,
+	}
+	xfer = xfer_dir(arch_of(target))
+	run_step(container_argv(
+		ensure_builder(), BUILDER_PLATFORM, "bash", "package", env,
+		volume=work_volume(arch_of(target)), xfer=xfer,
+	))
+	return xfer / f"{target}.tar"
+
+
+def unpack_staging(target: str, tarball: Path) -> Path:
+	"""Unpack the package task's tree next to its tarball, and drop the tarball."""
+	root = tarball.parent / target
+	shutil.rmtree(root, ignore_errors=True)
+	root.mkdir(parents=True)
+	subprocess.run(["tar", "-xf", str(tarball), "-C", str(root)], check=True)
+	tarball.unlink(missing_ok=True)
+	staging = root / gulp_output_name(target)
+	if not staging.is_dir():
+		raise SystemExit(f"{gulp_task(target)} produced no {gulp_output_name(target)}")
+	return staging
+
+
+def glibc_verify_env(target: str) -> dict[str, str]:
+	return {
+		"ARCH": arch_of(target),
+		"EXPECTED_GLIBCXX_VERSION": EXPECTED_GLIBCXX_VERSION,
+		"EXPECTED_GLIBC_VERSION": EXPECTED_GLIBC_VERSION,
+		"TARGET": target,
+	}
 
 
 def verify_glibc_floor(staging: Path, target: str) -> None:
-	"""Run `glibc_check_script` on a glibc server, in its toolchain image."""
+	"""Fail if the glibc server needs more than glibc 2.28.
+
+	Upstream's own check, the step after its server build in
+	`product-build-linux-compile.yml`: `verify-glibc-requirements.sh` with the
+	sysroot's `objdump -T` over every `.node` and `node`, GLIBCXX overshoot only
+	warning. Run in the builder against the tree's own sysroot, on the server as
+	it ships (Copilot already taken out).
+	"""
 	if libc_of(target) != "glibc":
 		return
-	image = ensure_toolchain_image(target, remote_node_version())
-	in_container(target, image, staging, glibc_check_script(target))
+	argv = container_argv(
+		ensure_builder(), BUILDER_PLATFORM, "bash", "verify-glibc", glibc_verify_env(target),
+		volume=work_volume(arch_of(target)), xfer=xfer_dir(arch_of(target)), server=staging,
+	)
+	run_step(argv)
 	print(f"  {target}: no native code needs more than glibc {EXPECTED_GLIBC_VERSION}")
 
 
@@ -455,223 +561,42 @@ def docker_available() -> bool:
 	).returncode == 0
 
 
-def toolchain_node_bin() -> Path:
-	"""The Node `scripts/provision-vscode.sh` fetched for VS Code's build.
-
-	VS Code's build refuses any other version, and the machine's own Node is
-	not it. The provisioning script puts exactly one matching directory in
-	`vscode-toolchain/`; finding it here rather than recomputing the name keeps
-	the two scripts from disagreeing about the platform triple.
-	"""
-	version = (VSCODE_DIR / ".nvmrc").read_text().strip()
-	candidates = sorted((REPO_ROOT / "vscode-toolchain").glob(f"node-v{version}-*/bin"))
-	if not candidates:
-		raise SystemExit(
-			f"no Node {version} in vscode-toolchain/ — run scripts/provision-vscode.sh"
-		)
-	return candidates[0]
+def docker_memory() -> int | None:
+	result = subprocess.run(["docker", "info", "--format", "{{.MemTotal}}"], capture_output=True, text=True)
+	try:
+		return int(result.stdout.strip())
+	except ValueError:
+		return None
 
 
-def write_devhub_product_json() -> str:
-	"""Say DevHub inside the server tarball, and return what was there before.
-
-	The REH build reads `vscode/product.json` at build time — for
-	`serverApplicationName`, which becomes the name of the launcher script, and
-	for the copy `inlineMeta` bakes into the bundled entry points — so the
-	packaged app's trick of writing the merged product.json afterwards does not
-	work here. It has to be true before gulp starts, which means editing the
-	submodule's own file and putting it back. VSCodium does the same thing for
-	the same reason.
-
-	`commit` comes from `packaged_metadata()`, so the server states exactly the
-	forty characters the packaged client states.
-	"""
-	original = PRODUCT_JSON.read_text()
-	product = json.loads(original)
-	product.update(packaged_metadata())
-	PRODUCT_JSON.write_text(json.dumps(product, indent="\t") + "\n")
-	return original
+def emulated() -> bool:
+	"""Whether the amd64 builder runs under emulation on this machine."""
+	return platform.machine().lower() not in ("x86_64", "amd64")
 
 
-def gulp(task: str, commit: str, extra_env: dict[str, str] | None = None) -> float:
-	"""Run one of VS Code's build tasks, and say how long it took."""
-	env = dict(os.environ)
-	env.update(extra_env or {})
-	env["PATH"] = f"{toolchain_node_bin()}{os.pathsep}{env['PATH']}"
-	# `build/lib/getVersion.ts` reads `<repo>/.git/HEAD` as a file. In a
-	# submodule `.git` *is* a file, so that read fails and the build stamps
-	# `commit: undefined` into the server's product.json — which the remote
-	# would then install under a directory called "undefined" and refuse every
-	# client. This is upstream's own override for the case where the checkout
-	# cannot answer, and it is the same hash `packaged_metadata()` uses.
-	env["BUILD_SOURCEVERSION"] = commit
-
-	started = time.monotonic()
-	subprocess.run(["npm", "run", "gulp", "--", task], cwd=VSCODE_DIR, env=env, check=True)
-	return time.monotonic() - started
-
-
-def bundle_server_sources(commit: str) -> float:
-	"""Bundle `out-vscode-reh-min`, the tree the package tasks copy in as `out/`.
-
-	One run serves every target: nothing in it is per-platform. It also rebuilds
-	`out-vscode-min` and `out-vscode-reh-web-min` alongside, because `core-ci`
-	makes the three in parallel and there is no upstream task for one of them —
-	which is a minute or two, not a reason to invent one.
-
-	It has to run inside the window where `vscode/product.json` says DevHub:
-	esbuild inlines `product.json` into the bundles, so a tree bundled against
-	the submodule's own file carries `code-server-oss` in `server-main.js` no
-	matter what the `product.json` beside it says afterwards.
-
-	`compile-copilot-extension-build` follows because `core-ci` does not do it
-	and the package task's last step, `prepareCopilotRipgrepShimTaskREH`, walks
-	into `extensions/copilot/node_modules/@github/copilot/sdk` and fails the
-	build when it is not there. In the full `vscode-reh-...-min` task that
-	compile is one of the steps the mangling half runs; it is one of the things
-	going around that half loses.
-
-	`stage_builtin_copilot_sdk` then checks that the compile actually left SDK
-	*files* in `.build`, because on linux-arm64 it left an empty directory. See
-	that function.
-	"""
-	elapsed = gulp("core-ci", commit)
-	# `VSCODE_QUALITY` because that compile refuses to run on a machine with
-	# `CI` set — every runner, and this session's shell — without being told
-	# which channel it is building for: it stamps a date-based pre-release
-	# version into the extension's package.json for anything but `stable`, and
-	# will not guess. `stable` is what DevHub means; it publishes one channel
-	# and ships the extension at the version the submodule pins. The variable
-	# reaches nothing else here — `product.json` still states no `quality`, and
-	# the server's version suffix is read from there, not from the environment.
-	elapsed += gulp("compile-copilot-extension-build", commit, {"VSCODE_QUALITY": "stable"})
-	stage_builtin_copilot_sdk(VSCODE_DIR)
-	return elapsed
-
-
-# Where the built-in Copilot extension's CLI SDK lives, relative to the
-# submodule and relative to `.build`. Both spellings are the same path because
-# `packageCopilotExtensionStream` writes the extension's production
-# dependencies into `.build` under the path they have in the checkout.
-BUILT_IN_COPILOT_SDK = Path("extensions/copilot/node_modules/@github/copilot/sdk")
-
-
-def copilot_sdk_staging(vscode_dir: Path) -> tuple[Path, Path]:
-	"""The SDK the REH package task reads, and the one npm installed.
-
-	The first is what `prepareCopilotRipgrepShimTaskREH` ends up asserting on:
-	the package task copies `.build/extensions/copilot/**` into the server tree,
-	and the shim step then walks into `<tree>/extensions/copilot/node_modules/
-	@github/copilot/sdk` and throws when it is not there. The second is where
-	`extensions/copilot`'s own postinstall materialises it, out of the
-	`@github/copilot-<os>-<arch>` package npm chose for the machine — the base
-	`@github/copilot` tarball ships two files and nothing else.
-	"""
-	return vscode_dir / ".build" / BUILT_IN_COPILOT_SDK, vscode_dir / BUILT_IN_COPILOT_SDK
-
-
-def sdk_files(sdk: Path) -> int:
-	"""How many regular files the SDK tree holds, symlinks resolved.
-
-	A directory is not the thing the build needs: it is the files under it. The
-	two ways `.build` can hold a directory that carries nothing into the server
-	tree are an *empty* one — `gulp.dest` writes the directory entries a
-	`gulp.src('**')` yields whether or not any file survived the filters — and a
-	*symlinked* one, which a glob that does not follow symlinks walks past. Both
-	answer `is_dir()` and neither answers this.
-	"""
-	if not sdk.is_dir():
-		return 0
-	return sum(1 for path in sdk.rglob("*") if path.is_file())
-
-
-def stage_builtin_copilot_sdk(vscode_dir: Path) -> None:
-	"""Make sure `.build` carries the SDK, as real files, before packaging.
-
-	`compile-copilot-extension-build` is supposed to put it there, by way of
-	`getProductionDependencies('extensions/copilot')` — and on linux-x64 it
-	does. On linux-arm64 it did not (nightlies 34701651753 and 34703272262),
-	and the only thing the build then said was that a directory was missing
-	from the *output* tree, 25 minutes into a job, with nothing pointing at the
-	input that was actually short.
-
-	The first version of this checked `is_dir()` and so answered the wrong
-	question: in run 34703272262 it staged nothing on either architecture and
-	linux-arm64 still failed, because `.build` did hold an `sdk` directory —
-	one with nothing in it that the REH copy could carry. `gulp.dest` recreates
-	the directory entries the source glob yields, so an SDK subtree whose files
-	were all filtered out (or that npm left as a symlink into
-	`@github/copilot-<os>-<arch>`, which a non-following glob walks past)
-	survives into `.build` as an empty shell, and
-	`gulp.src('.build/extensions/copilot/**')` then carries no file out of it
-	and the server tree has no `sdk` at all. So the invariant is stated in
-	files, and satisfied by copying the installed tree with its symlinks
-	resolved — `copytree(symlinks=False)` reads through them, which is what
-	`cp -RL` does and what packaging needs.
-
-	Nothing here silences the assertion — the shim still runs and still throws
-	if the tree is wrong. It is given the same input on both architectures
-	instead of a different one.
-	The package around the SDK has to come along too, `package.json` first:
-	`materializeBuiltInCopilotSdkPlatformFiles` reads the extension's
-	`@github/copilot` version from it to fetch the version-matched
-	`@github/copilot-<os>-<arch>` natives (pinned by the extension lockfile)
-	for the *target*, and throws "Could not read a version" without it. Copying
-	only `sdk/` satisfied the first assertion and walked into that one. The
-	compile cannot supply it: `build/.moduleignore` strips `@github/copilot/**`
-	from every production dependency stream, the extension's included — upstream
-	CI ships the extension as a VSIX instead. So the whole installed package is
-	staged, symlinks resolved, whenever `.build` lacks either half.
-	"""
-	staged, installed = copilot_sdk_staging(vscode_dir)
-	staged_pkg, installed_pkg = staged.parent, installed.parent
-	if sdk_files(staged) and package_version(staged_pkg):
-		return
-	if not sdk_files(installed) or not package_version(installed_pkg):
-		raise SystemExit(
-			f"no built-in Copilot SDK files or no package.json version at "
-			f"{installed_pkg}: `npm ci` in "
-			"extensions/copilot materialises them from the @github/copilot-"
-			"<os>-<arch> package, and every REH package task walks into the "
-			"copy of them in the server tree and fails the build when they are "
-			"absent. Reprovision the submodule (scripts/provision-vscode.sh) "
-			"rather than building a server whose last step cannot run."
-		)
-	# A partial package left by the compile (an empty `sdk` shell, or `sdk`
-	# without `package.json`) is in the way of `copytree` and must not reach
-	# the server tree.
-	shutil.rmtree(staged_pkg, ignore_errors=True)
-	shutil.copytree(installed_pkg, staged_pkg, symlinks=False, ignore_dangling_symlinks=True)
-	count = sdk_files(staged_pkg)
-	print(
-		f"  staged the built-in Copilot package @{package_version(staged_pkg)} "
-		f"into {staged_pkg} ({count} file{'' if count == 1 else 's'})"
+def time_note() -> str:
+	"""What a person waiting for a build should expect. Estimates, not
+	measurements: the build has not been timed on every kind of machine."""
+	where = (
+		"amd64 under emulation here; on a Mac turn on Docker Desktop's Rosetta, QEMU is several times slower"
+		if emulated() else "native amd64 here"
+	)
+	return (
+		"the first build of an architecture's tree (npm ci + core-ci in Linux, "
+		f"{where}) takes roughly 40-60 minutes on x64 Linux and 1.5-2.5 hours on Apple "
+		"Silicon; after that each server is about 5-15 minutes, and a server "
+		"whose identity is cached is a copy"
 	)
 
 
-def package_version(package_dir: Path) -> str | None:
-	"""The `version` in `package_dir/package.json`, or None — as copilot.ts reads it."""
-	try:
-		version = json.loads((package_dir / "package.json").read_text()).get("version")
-	except (OSError, ValueError, AttributeError):
-		return None
-	return version if isinstance(version, str) and version else None
-
-
-HOST_REMOTE_MODULES = REMOTE_DIR / "node_modules.host"
-
-
 def in_container(target: str, image: str, directory: Path, script: str) -> None:
-	"""Run `script` in `target`'s toolchain `image`, on its platform, in `directory`.
+	"""Run `script` in `image` on `target`'s platform, in `directory` mounted at /work.
 
-	The directory is mounted at `/work` and is the working directory. The
-	container runs as root, so whatever it wrote is handed back to whoever owns
-	the checkout afterwards, or the next `npm` or `rm` here is refused.
+	The container runs as root, so whatever it wrote is handed back to whoever
+	runs this script afterwards, or the next `rm` here is refused.
 	"""
-	base = ["docker", "run", "--rm", "--platform", toolchain_platform(target), "-v", f"{directory}:/work", "-w", "/work"]
-	# GitHub's rate limit, for the addons whose install fetches a release
-	# asset; nothing else reads it.
-	subprocess.run([*base, "-e", "GITHUB_TOKEN", image, "sh", "-c", script], check=True)
+	base = ["docker", "run", "--rm", "--platform", docker_platform(target), "-v", f"{directory}:/work", "-w", "/work"]
+	subprocess.run([*base, image, "sh", "-c", script], check=True)
 	if hasattr(os, "getuid") and os.getuid() != 0:
 		subprocess.run(
 			[*base, image, "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/work"],
@@ -691,17 +616,6 @@ def reh_cache_root() -> Path:
 	"""Finished servers, by identity. `DEVHUB_REH_CACHE` overrides."""
 	override = os.environ.get("DEVHUB_REH_CACHE")
 	return Path(override) if override else cache_base() / "reh"
-
-
-def modules_cache_root() -> Path:
-	"""`node_modules` tarballs. `DEVHUB_REH_MODULES_CACHE` overrides."""
-	override = os.environ.get("DEVHUB_REH_MODULES_CACHE")
-	if override:
-		return Path(override)
-	servers = os.environ.get("DEVHUB_REH_CACHE")
-	if servers:
-		return Path(servers).with_name(Path(servers).name + "-modules")
-	return cache_base() / "reh-modules"
 
 
 def sha256_file(path: Path) -> str:
@@ -769,11 +683,10 @@ def store_cached_server(target: str, identity: str, out_dir: Path, root: Path | 
 	touch(cache_dir)
 
 
-def prune_cache(identity: str, keep: int, root: Path | None = None, modules_root: Path | None = None) -> list[str]:
-	"""Delete all but the `keep` most recently used identities, and the oldest
-	module tarballs beyond `keep` * four. The current identity always stays."""
+def prune_cache(identity: str, keep: int, root: Path | None = None) -> list[str]:
+	"""Delete all but the `keep` most recently used identities. The current
+	identity always stays. The work volumes are not touched (`--reset-work`)."""
 	root = root or reh_cache_root()
-	modules_root = modules_root or modules_cache_root()
 	removed: list[str] = []
 	if root.is_dir():
 		dirs = sorted((d for d in root.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
@@ -782,71 +695,17 @@ def prune_cache(identity: str, keep: int, root: Path | None = None, modules_root
 			if d.name not in kept:
 				shutil.rmtree(d)
 				removed.append(str(d))
-	if modules_root.is_dir():
-		tars = sorted(modules_root.glob("*.tar"), key=lambda f: f.stat().st_mtime, reverse=True)
-		for f in tars[max(keep, 0) * len(TARGETS):]:
-			f.unlink()
-			removed.append(str(f))
 	return removed
 
 
-def modules_cache_key(
-	target: str, node_version: str, image_id: str, remote_dir: Path = REMOTE_DIR, revision: int = REH_REVISION
-) -> str:
-	"""What `npm ci` in `vscode/remote` depends on, and nothing else.
-
-	Files and versions only — never the environment — so `GITHUB_TOKEN` and the
-	like cannot reach the key or the cache.
-	"""
-	def content(name: str) -> str:
-		path = remote_dir / name
-		return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "-"
-
-	parts = [
-		target, content("package-lock.json"), content("package.json"), content(".npmrc"),
-		node_version, image_id, str(revision),
-	]
-	return hashlib.sha256("\0".join(parts).encode()).hexdigest()[:32]
+def reset_work(arches: list[str] | tuple[str, ...]) -> None:
+	for arch in arches:
+		subprocess.run(["docker", "volume", "rm", "-f", work_volume(arch)], check=True, capture_output=True)
+		shutil.rmtree(xfer_dir(arch), ignore_errors=True)
+		print(f"removed the {arch} build tree ({work_volume(arch)})")
 
 
-def modules_cache_path(target: str, key: str, root: Path | None = None) -> Path:
-	return (root or modules_cache_root()) / f"{target}-{key}.tar"
-
-
-def install_remote_modules(target: str) -> float:
-	"""Install `vscode/remote`'s dependencies for `target`, in a container.
-
-	The host's own install is moved aside the first time and put back by
-	`restore_remote_modules`, so a developer's checkout is left as provisioning
-	made it. The result is cached as a tarball (`modules_cache_key`) and
-	restored instead of running `npm ci` when nothing it depends on changed.
-	"""
-	node_modules = REMOTE_DIR / "node_modules"
-	if node_modules.exists() and not HOST_REMOTE_MODULES.exists():
-		node_modules.rename(HOST_REMOTE_MODULES)
-	else:
-		shutil.rmtree(node_modules, ignore_errors=True)
-	node_version = remote_node_version()
-	image = ensure_toolchain_image(target, node_version)
-	cached = modules_cache_path(target, modules_cache_key(target, node_version, toolchain_image_id(image)))
-	started = time.monotonic()
-	if cached.is_file():
-		print(f"  restoring vscode/remote modules for {target} from {cached}")
-		try:
-			subprocess.run(["tar", "-xf", str(cached), "-C", str(REMOTE_DIR)], check=True)
-			touch(cached)
-			return time.monotonic() - started
-		except subprocess.CalledProcessError:
-			shutil.rmtree(node_modules, ignore_errors=True)
-			cached.unlink(missing_ok=True)
-	print(f"  installing vscode/remote for {target} in {image}")
-	in_container(target, image, REMOTE_DIR, remote_modules_script(target))
-	cached.parent.mkdir(parents=True, exist_ok=True)
-	partial = cached.with_name(cached.name + ".partial")
-	subprocess.run(["tar", "-cf", str(partial), "-C", str(REMOTE_DIR), "node_modules"], check=True)
-	partial.replace(cached)
-	return time.monotonic() - started
-
+# --- the musl C++ runtime ---------------------------------------------------
 
 # The C++ runtime musl's Node is linked against, which Alpine does not install
 # by default: a stock `alpine` image has neither, and VS Code's own Alpine
@@ -862,8 +721,8 @@ def musl_runtime_script() -> str:
 	to the directory the executable is in, so the server's `node` finds
 	`lib/libstdc++.so.6` beside itself wherever the tree is unpacked, and
 	every native addon it then loads links against the copy already loaded.
-	Out of the toolchain image (patchelf baked in, no network) the addons were compiled in
-	and the `node` came from, so all three agree on the library's version.
+	Out of the same `node:<version>-alpine` the addons were compiled in and
+	the `node` came from, so all three agree on the library's version.
 	"""
 	copies = " ".join(MUSL_RUNTIME)
 	return (
@@ -876,92 +735,11 @@ def musl_runtime_script() -> str:
 def bundle_musl_runtime(staging: Path, target: str) -> None:
 	if libc_of(target) != "musl":
 		return
-	in_container(target, ensure_toolchain_image(target, remote_node_version()), staging, musl_runtime_script())
+	in_container(target, ensure_musl_image(target), staging, musl_runtime_script())
 	print(f"  bundled libstdc++ and libgcc_s beside {target}'s node")
 
 
-def restore_remote_modules() -> None:
-	"""Put the host's `vscode/remote/node_modules` back where it was."""
-	if not HOST_REMOTE_MODULES.exists():
-		return
-	shutil.rmtree(REMOTE_DIR / "node_modules", ignore_errors=True)
-	HOST_REMOTE_MODULES.rename(REMOTE_DIR / "node_modules")
-
-
-# ELF `e_machine` of the binary each target's Node must be.
-ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
-MIN_NODE_BYTES = 20 * 1024 * 1024
-
-
-def musl_node_dir(target: str, node_version: str) -> Path:
-	"""Where VS Code's `node-<platform>-<arch>` gulp task looks for the Node.
-
-	`vscode/build/gulpfile.reh.ts` keeps one directory per build under
-	`.build/node/v<version>/` and downloads only when it is absent.
-	"""
-	gulp_platform, gulp_arch = GULP_TARGETS[target]
-	return VSCODE_DIR / ".build" / "node" / f"v{node_version}" / f"{gulp_platform}-{gulp_arch}"
-
-
-def node_binary_problems(path: Path, target: str, node_version: str) -> list[str]:
-	"""Why `path` is not the Node `node_version` for `target`; empty if it is."""
-	try:
-		size = path.stat().st_size
-		if size < MIN_NODE_BYTES:
-			return [f"{path} is only {size} bytes"]
-		with path.open("rb") as handle:
-			head = handle.read(20)
-			if head[:4] != b"\x7fELF":
-				return [f"{path} is not an ELF binary"]
-			machine = int.from_bytes(head[18:20], "little")
-			wanted = ELF_MACHINES[arch_of(target)]
-			if machine != wanted:
-				return [f"{path} is for ELF machine {machine:#x}, not {wanted:#x} ({arch_of(target)})"]
-			handle.seek(0)
-			needle = f"v{node_version}".encode()
-			tail = b""
-			while chunk := handle.read(8 * 1024 * 1024):
-				if needle in tail + chunk:
-					return []
-				tail = chunk[-len(needle):]
-	except OSError as error:
-		return [str(error)]
-	return [f"{path} does not say it is Node v{node_version}"]
-
-
-def fetch_musl_node(target: str, node_version: str) -> Path:
-	"""Put the musl Node for `target` where VS Code's build will find it.
-
-	Upstream gets it by `execSync("docker run ... cat node")`, whose output
-	buffer is too small for a Node 24 binary (ENOBUFS), and without `--platform`
-	(an arm64 host pulls the wrong image for alpine-x64). nodejs.org has no
-	official musl build and no checksum for it, so there is nothing else to
-	trust. Here the container's stdout goes straight to a file, for the target's
-	platform, and the file is checked before it is put in place.
-	"""
-	directory = musl_node_dir(target, node_version)
-	existing = directory / "node"
-	if existing.is_file() and not node_binary_problems(existing, target, node_version):
-		return existing
-	shutil.rmtree(directory, ignore_errors=True)
-	partial = directory.with_name(directory.name + ".partial")
-	shutil.rmtree(partial, ignore_errors=True)
-	partial.mkdir(parents=True)
-	image = remote_modules_image(target, node_version)
-	print(f"  fetching node {node_version} for {target} from {image}")
-	with (partial / "node").open("wb") as out:
-		subprocess.run(
-			["docker", "run", "--rm", "--platform", docker_platform(target), image, "cat", "/usr/local/bin/node"],
-			stdout=out,
-			check=True,
-		)
-	problems = node_binary_problems(partial / "node", target, node_version)
-	if problems:
-		shutil.rmtree(partial, ignore_errors=True)
-		raise SystemExit(f"the node from {image} for {target} is wrong: {problems[0]}")
-	(partial / "node").chmod(0o755)
-	partial.rename(directory)
-	return directory / "node"
+# --- statements and the bundle ---------------------------------------------
 
 
 def missing_targets(out_dir: Path, targets: tuple[str, ...] | list[str], commit: str, identity: str) -> list[str]:
@@ -973,34 +751,6 @@ def retry_command(out_dir: Path, targets: tuple[str, ...] | list[str], commit: s
 	"""The command that builds only what is still missing; built ones stay."""
 	todo = missing_targets(out_dir, targets, commit, identity)
 	return "scripts/build_reh.py " + " ".join(todo or targets)
-
-
-def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path:
-	"""Install, package, trim, verify and tar one target, and state it."""
-	staging = staging_dir(target)
-	elapsed = install_remote_modules(target)
-	if libc_of(target) == "musl":
-		fetch_musl_node(target, remote_node_version())
-	elapsed += gulp(gulp_task(target), commit)
-
-	if not staging.is_dir():
-		raise SystemExit(f"{gulp_task(target)} produced no {staging}")
-
-	remove_copilot(staging, target)
-	retarget_msal_runtime(staging, target)
-	rebuild_native_extensions(staging, target)
-	bundle_musl_runtime(staging, target)
-	refuse_foreign_binaries(staging, target)
-	verify_glibc_floor(staging, target)
-	verify_server_starts(staging, target)
-
-	tarball = out_dir / tarball_name(target)
-	pack(staging, tarball, top_level_dir(target))
-	write_statement(out_dir, target, commit, identity)
-	store_cached_server(target, identity, out_dir)
-	size_mb = tarball.stat().st_size / 1e6
-	print(f"{tarball.name}: {size_mb:.0f} MB, built in {elapsed / 60:.0f} min")
-	return tarball
 
 
 def statement(target: str, commit: str, identity: str, tarball: Path) -> dict[str, str]:
@@ -1090,6 +840,8 @@ def prune_stale(out_dir: Path, identity: str) -> list[str]:
 	return removed
 
 
+# --- what DevHub takes out, and what it refuses ------------------------------
+
 # The `@github/copilot-<platform>-<arch>` runtime package, by the name
 # `build/lib/copilot.ts` computes for it. Only the target's own is in the tree
 # — `getCopilotExcludeFilter` has already stripped the others — so a glob finds
@@ -1102,42 +854,78 @@ COPILOT_RUNTIME_GLOB = "node_modules/@github/copilot-*-*"
 COPILOT_KEPT = ("node_modules/@github/copilot", "node_modules/@github/copilot-sdk")
 
 
-# `extensions/microsoft-authentication/esbuild.mts` copies the MSAL broker
-# runtime for the platform *gulp runs on* into the extension's dist/. Upstream
-# builds each REH on its own OS, so that is right there; DevHub runs gulp on a
-# Mac, so a Linux server got the macOS Mach-O. The npm package ships every
-# platform's runtime, so the Linux one is taken from it — for exactly the arches
-# upstream's esbuild.mts ships (`linuxArches = ['x64']`), and never for musl:
-# the only Linux runtime there is is linked against glibc. Without it the
-# extension falls back to its non-broker flows, as upstream's linux-arm64 does.
-MSAL_RUNTIME_DIST = VSCODE_DIR / "extensions" / "microsoft-authentication" / "node_modules" / "@azure" / "msal-node-runtime" / "dist"
-MSAL_LINUX_ARCHES = ("x64",)
-MSAL_FILE = re.compile(r"^(lib)?msal.*\.(node|dll|dylib|so)$")
+def remove_copilot(staging: Path, target: str) -> None:
+	"""Take the Copilot built-in and its native runtime back out of the server.
 
+	DevHub pins `chat.disableAIFeatures: true` — fixed, not a preference — so
+	nothing on the remote will ever start the agent host, and what is being
+	deleted is about 470 MB of an 810 MB tree: ~305 MB of built-in extension
+	and ~185 MB of platform runtime, most of it one native binary shipped
+	twice. The tarball goes from 237 MB to 103 MB. Over an SSH connection to a
+	machine being set up for the first time, that is the difference between a
+	wait and a decision.
 
-def retarget_msal_runtime(staging: Path, target: str, runtime_dist: Path = MSAL_RUNTIME_DIST) -> None:
-	"""Replace the host's MSAL runtime in the server with the target's, or none."""
-	dist = staging / "extensions" / "microsoft-authentication" / "dist"
-	if not dist.is_dir():
-		return
-	for f in dist.iterdir():
-		if f.is_file() and MSAL_FILE.match(f.name):
-			f.unlink()
-	if libc_of(target) != "glibc" or arch_of(target) not in MSAL_LINUX_ARCHES:
-		print(f"  {target}: no MSAL broker runtime (upstream ships none for it)")
-		return
-	source = runtime_dist / "linux" / arch_of(target)
-	files = sorted(f for f in source.glob("*") if f.is_file() and MSAL_FILE.match(f.name)) if source.is_dir() else []
-	if not files:
+	This is a deletion after the fact, which is the worse of the two ways to do
+	it, and it is here because the better one does not exist upstream.
+	`packageTask` takes its built-in list from a glob over the submodule's own
+	`extensions/*/package.json` — `copilot` is a local workspace extension, not
+	an entry in `product.json`'s `builtInExtensions`, so the product edit this
+	build makes cannot reach it — and there is no environment variable or flag
+	that turns it off. Nor can the extension simply be left uncompiled: the
+	last step of every REH package task is `prepareCopilotRipgrepShimTaskREH`,
+	which walks into the *output* directory and throws when the SDK is not
+	there. Both routes end at the same wall, so the build makes the whole thing
+	and this takes half of it away again.
+
+	What it must not break is startup, which is why `verify_server_starts`
+	exists and why the two small packages above are kept.
+	"""
+	doomed = [staging / "extensions" / "copilot", *staging.glob(COPILOT_RUNTIME_GLOB)]
+	removed = 0
+	for path in doomed:
+		if not path.exists():
+			continue
+		removed += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+		shutil.rmtree(path)
+
+	# A build that stopped shipping Copilot for some *other* reason — upstream
+	# renaming the package, say — would silently produce a smaller tarball and
+	# tell nobody, and the next person to wonder where the agent host went
+	# would have no thread to pull. So say what was found, and refuse the
+	# silence.
+	if removed == 0:
 		raise SystemExit(
-			f"no Linux MSAL runtime in {source}: run `npm ci` in "
-			"vscode/extensions/microsoft-authentication, or read its esbuild.mts if upstream moved it"
+			f"no Copilot to remove from {staging}: expected extensions/copilot and "
+			f"{COPILOT_RUNTIME_GLOB}, found neither. Upstream has moved; read "
+			"vscode/build/lib/copilot.ts and fix remove_copilot rather than "
+			"shipping a server that quietly differs from the one before it."
 		)
-	for f in files:
-		shutil.copy2(f, dist / f.name)
-	print(f"  {target}: MSAL runtime is linux/{arch_of(target)}'s, not the host's")
+	print(f"  removed {removed / 1e6:.0f} MB of Copilot ({target})")
 
 
+# `extensions/microsoft-authentication/esbuild.mts` copies the MSAL broker
+# runtime into the extension's dist/ by `VSCODE_ARCH` alone (`linuxArches =
+# ['x64']`), not by libc — so upstream's own alpine-x64 server, built with
+# VSCODE_ARCH=x64, carries the glibc runtime too. musl cannot load it; the
+# extension falls back to its non-broker flows, as upstream's linux-arm64 (which
+# gets no runtime at all) always does. Only on musl, only these files.
+MSAL_FILE = re.compile(r"^(lib)?msal.*\.(node|so)$")
+
+
+def drop_glibc_msal_runtime(staging: Path, target: str) -> list[str]:
+	"""Take the glibc-only MSAL broker runtime out of a musl server."""
+	if libc_of(target) != "musl":
+		return []
+	dist = staging / "extensions" / "microsoft-authentication" / "dist"
+	gone = sorted(f.name for f in dist.glob("*") if f.is_file() and MSAL_FILE.match(f.name)) if dist.is_dir() else []
+	for name in gone:
+		(dist / name).unlink()
+	if gone:
+		print(f"  {target}: removed upstream's glibc MSAL broker runtime ({', '.join(gone)})")
+	return gone
+
+
+ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
 MACHO_MAGICS = (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
 PE_SUFFIXES = (".node", ".dll", ".exe")
 
@@ -1157,10 +945,10 @@ def _allowed_foreign(rel: Path, target: str) -> bool:
 def foreign_binaries(staging: Path, target: str) -> list[str]:
 	"""Every file in the server that cannot run on the target.
 
-	Mach-O anywhere, PE for a loadable suffix, an ELF of another machine, and on
-	musl an ELF that needs glibc's libc.so.6. By content, not by name: the
-	glibc check only reads `*.node` and `node`, and a host binary can hide
-	under any name (ripgrep, a helper, a .so).
+	Mach-O anywhere, an ELF of another machine, and on musl an ELF that needs
+	glibc's libc.so.6. By content, not by name: the glibc check only reads
+	`*.node` and `node`, and a wrong binary can hide under any name (ripgrep,
+	a helper, a .so). PE files are inert on Linux (`windows_binaries`).
 	"""
 	machine = ELF_MACHINES[arch_of(target)]
 	problems = []
@@ -1209,125 +997,10 @@ def refuse_foreign_binaries(staging: Path, target: str) -> None:
 	problems = foreign_binaries(staging, target)
 	if problems:
 		raise SystemExit(
-			f"{target}: the server carries binaries that cannot run there "
-			"(most likely built on the gulp host):\n  " + "\n  ".join(problems)
+			f"{target}: the server carries binaries that cannot run there:\n  "
+			+ "\n  ".join(problems)
 		)
 	print(f"  {target}: every binary in the server is for {target}")
-
-
-# build/lib/extensions.ts `nativeExtensions`: "must be built on the platform
-# that is being built". DevHub's gulp runs on the Mac, so their node_modules
-# natives in the server (git's @vscode/fs-copyfile, imported unconditionally
-# by extensions/git/src/repository.ts) are the host's Mach-O.
-NATIVE_EXTENSIONS = ("git", "microsoft-authentication")
-
-
-def native_extension_script() -> str:
-	"""Install an extension's production deps in its toolchain image.
-
-	The extension's own scripts are dropped (they are gulp/dev tasks); its
-	dependencies' install scripts run, so node-gyp builds against the image's
-	toolchain (the glibc 2.28 sysroot via CC/CXX, or Alpine's musl)."""
-	return "set -e; npm pkg delete scripts; npm ci --omit=dev --ignore-scripts=false"
-
-
-def native_packages(node_modules: Path) -> list[Path]:
-	"""Package directories (relative to `node_modules`) holding a `.node` addon."""
-	found = set()
-	for f in node_modules.rglob("*.node"):
-		if f.is_symlink() or not f.is_file():
-			continue
-		parts = f.relative_to(node_modules).parts
-		# innermost node_modules/<name> or node_modules/@scope/<name>
-		idx = 0
-		for i, part in enumerate(parts[:-1]):
-			if part == "node_modules":
-				idx = i + 1
-		n = 2 if parts[idx].startswith("@") else 1
-		found.add(Path(*parts[: idx + n]))
-	return sorted(found)
-
-
-def replace_native_packages(built: Path, staged: Path) -> list[str]:
-	"""Swap every native package in `staged` node_modules for the one in `built`."""
-	replaced = []
-	for rel in native_packages(built):
-		dest = staged / rel
-		if not dest.exists():
-			continue
-		shutil.rmtree(dest)
-		shutil.copytree(built / rel, dest, symlinks=True)
-		replaced.append(str(rel))
-	return replaced
-
-
-def rebuild_native_extensions(staging: Path, target: str, source: Path | None = None) -> None:
-	"""Replace host-built natives of each native extension with target-built ones."""
-	source = source or VSCODE_DIR / "extensions"
-	for name in NATIVE_EXTENSIONS:
-		staged = staging / "extensions" / name / "node_modules"
-		if not staged.is_dir() or not native_packages(staged):
-			continue
-		work = staging.parent / f".native-{target}-{name}"
-		shutil.rmtree(work, ignore_errors=True)
-		work.mkdir(parents=True)
-		for f in ("package.json", "package-lock.json"):
-			shutil.copy2(source / name / f, work / f)
-		image = ensure_toolchain_image(target, remote_node_version())
-		print(f"  {target}: building {name}'s native dependencies in {image}")
-		in_container(target, image, work, native_extension_script())
-		replaced = replace_native_packages(work / "node_modules", staged)
-		shutil.rmtree(work, ignore_errors=True)
-		print(f"  {target}: {name}: target-built {', '.join(replaced) or 'nothing'}")
-
-
-def remove_copilot(staging: Path, target: str) -> None:
-	"""Take the Copilot built-in and its native runtime back out of the server.
-
-	DevHub pins `chat.disableAIFeatures: true` — fixed, not a preference — so
-	nothing on the remote will ever start the agent host, and what is being
-	deleted is about 470 MB of an 810 MB tree: ~305 MB of built-in extension
-	and ~185 MB of platform runtime, most of it one native binary shipped
-	twice. The tarball goes from 237 MB to 103 MB. Over an SSH connection to a
-	machine being set up for the first time, that is the difference between a
-	wait and a decision.
-
-	This is a deletion after the fact, which is the worse of the two ways to do
-	it, and it is here because the better one does not exist upstream.
-	`packageTask` takes its built-in list from a glob over the submodule's own
-	`extensions/*/package.json` — `copilot` is a local workspace extension, not
-	an entry in `product.json`'s `builtInExtensions`, so the product edit this
-	script already makes cannot reach it — and there is no environment variable
-	or flag that turns it off. Nor can the extension simply be left uncompiled:
-	the last step of every REH package task is `prepareCopilotRipgrepShimTaskREH`,
-	which walks into the *output* directory and throws when the SDK is not
-	there. Both routes end at the same wall, so the build makes the whole thing
-	and this takes half of it away again.
-
-	What it must not break is startup, which is why `verify_server_starts`
-	exists and why the two small packages above are kept.
-	"""
-	doomed = [staging / "extensions" / "copilot", *staging.glob(COPILOT_RUNTIME_GLOB)]
-	removed = 0
-	for path in doomed:
-		if not path.exists():
-			continue
-		removed += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-		shutil.rmtree(path)
-
-	# A build that stopped shipping Copilot for some *other* reason — upstream
-	# renaming the package, say — would silently produce a smaller tarball and
-	# tell nobody, and the next person to wonder where the agent host went
-	# would have no thread to pull. So say what was found, and refuse the
-	# silence.
-	if removed == 0:
-		raise SystemExit(
-			f"no Copilot to remove from {staging}: expected extensions/copilot and "
-			f"{COPILOT_RUNTIME_GLOB}, found neither. Upstream has moved; read "
-			"vscode/build/lib/copilot.ts and fix remove_copilot rather than "
-			"shipping a server that quietly differs from the one before it."
-		)
-	print(f"  removed {removed / 1e6:.0f} MB of Copilot ({target})")
 
 
 def verify_server_starts(staging: Path, target: str) -> None:
@@ -1340,24 +1013,15 @@ def verify_server_starts(staging: Path, target: str) -> None:
 	`copilotVersions` lookup and the module resolution that `remove_copilot`
 	could plausibly have broken all happen, and it runs the target's own `node`
 	on the target's own libc, which is the thing a wrong build gets wrong.
-
-	Without Docker it falls back to running it here, when this machine is the
-	target; anything else is said rather than skipped silently.
 	"""
 	launcher = f"bin/{PRODUCT_OVERRIDES['serverApplicationName']}"
-	if docker_available():
-		argv = [
-			"docker", "run", "--rm", "--network", "none",
-			"--platform", docker_platform(target),
-			"-v", f"{staging}:/reh:ro",
-			verify_image(target),
-			f"/reh/{launcher}", "--version",
-		]
-	elif runs_here(target):
-		argv = [str(staging / launcher), "--version"]
-	else:
-		print(f"  NOT VERIFIED: no Docker to start the {target} server in")
-		return
+	argv = [
+		"docker", "run", "--rm", "--network", "none",
+		"--platform", docker_platform(target),
+		"-v", f"{staging}:/reh:ro",
+		verify_image(target),
+		f"/reh/{launcher}", "--version",
+	]
 	result = subprocess.run(argv, capture_output=True, text=True, timeout=300)
 	if result.returncode != 0:
 		raise SystemExit(
@@ -1365,15 +1029,6 @@ def verify_server_starts(staging: Path, target: str) -> None:
 			f"{result.returncode}):\n{result.stdout}{result.stderr}"
 		)
 	print(f"  {target} {launcher} --version: {result.stdout.strip().splitlines()[0]}")
-
-
-def runs_here(target: str) -> bool:
-	"""Whether this machine can execute `target`'s server itself."""
-	if platform.system() != "Linux":
-		return False
-	machine = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "x64"}.get(platform.machine())
-	here_musl = Path("/etc/alpine-release").exists()
-	return (arch_of(target), libc_of(target) == "musl") == (machine, here_musl)
 
 
 def pack(staging: Path, tarball: Path, top_level: str) -> None:
@@ -1392,18 +1047,68 @@ def pack(staging: Path, tarball: Path, top_level: str) -> None:
 		archive.add(staging, arcname=top_level)
 
 
+# The host's post-steps, in order. A test pins it.
+POST_STEPS = (
+	"remove_copilot",
+	"drop_glibc_msal_runtime",
+	"bundle_musl_runtime",
+	"refuse_foreign_binaries",
+	"verify_glibc_floor",
+	"verify_server_starts",
+)
+
+
+def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path:
+	"""Package one target in its tree, then trim, check, tar and state it."""
+	started = time.monotonic()
+	if libc_of(target) == "musl":
+		install_musl_remote(target)
+	staging = unpack_staging(target, package_target(target, commit))
+	try:
+		module = sys.modules[__name__]
+		for name in POST_STEPS:
+			getattr(module, name)(staging, target)
+		tarball = out_dir / tarball_name(target)
+		pack(staging, tarball, top_level_dir(target))
+	finally:
+		shutil.rmtree(staging.parent, ignore_errors=True)
+	write_statement(out_dir, target, commit, identity)
+	store_cached_server(target, identity, out_dir)
+	size_mb = tarball.stat().st_size / 1e6
+	print(f"{tarball.name}: {size_mb:.0f} MB, packaged in {(time.monotonic() - started) / 60:.0f} min")
+	return tarball
+
+
+def require_commit(commit: str) -> None:
+	"""The host only needs the submodule's objects: `git archive` reads them."""
+	have = subprocess.run(
+		["git", "-C", str(VSCODE_DIR), "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True
+	)
+	if have.returncode != 0:
+		raise SystemExit(
+			f"the vscode submodule does not have commit {commit}: run scripts/vscode-submodule.sh sync"
+		)
+
+
+def warn_about_docker() -> None:
+	memory = docker_memory()
+	if memory is not None and memory < MIN_DOCKER_MEMORY:
+		print(
+			f"warning: Docker has {memory / 1024**3:.1f} GB of memory; core-ci needs about "
+			f"{MIN_DOCKER_MEMORY // 1024**3} GB or more and may be killed. Raise it in Docker's settings.",
+			file=sys.stderr,
+		)
+	print(f"  note: {time_note()}")
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 	parser.add_argument("targets", nargs="*", help=f"any of {', '.join(TARGETS)}; default: all four")
 	parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-	parser.add_argument("--no-cache", action="store_true", help="build even targets the cache has")
-	parser.add_argument("--prune-cache", action="store_true", help="clean the caches and exit")
+	parser.add_argument("--no-cache", action="store_true", help="build even targets the server cache has")
+	parser.add_argument("--reset-work", action="store_true", help="delete the build trees of these targets' architectures first")
+	parser.add_argument("--prune-cache", action="store_true", help="clean the server cache and exit")
 	parser.add_argument("--keep", type=int, default=2, help="with --prune-cache: identities to keep (default 2)")
-	parser.add_argument(
-		"--skip-provision",
-		action="store_true",
-		help="the tree is already provisioned (CI does this step itself)",
-	)
 	args = parser.parse_args()
 	if args.prune_cache:
 		for gone in prune_cache(reh_identity(), args.keep):
@@ -1416,19 +1121,9 @@ def main() -> int:
 
 	if not docker_available():
 		raise SystemExit(
-			"build_reh.py needs Docker: each server's native modules are installed "
-			"in a container of its platform, and each server is started in one "
-			"before it is packed. Start Docker (Docker Desktop, colima, or dockerd) "
-			"and run this again."
-		)
-
-	if not args.skip_provision:
-		# `--for deps`: the dependencies, the Node toolchain and the patches,
-		# not vscode/out or out-vscode-min — `bundle_server_sources` runs its own
-		# `core-ci`, which transpiles and bundles from src itself. Asking for the
-		# trees would put `npm run compile` in front of every server build.
-		subprocess.run(
-			[str(REPO_ROOT / "scripts" / "provision-vscode.sh"), "--for", "deps"], check=True
+			"build_reh.py needs Docker: the servers are built in Linux containers, the "
+			"way VS Code builds its own, and each is started in one before it is packed. "
+			"Start Docker (Docker Desktop, colima, or dockerd) and run this again."
 		)
 
 	commit = vscode_commit()
@@ -1438,6 +1133,8 @@ def main() -> int:
 	print(f"remote extension hosts for VS Code {commit}, identity {identity}: {', '.join(targets)}")
 	for target in prune_stale(out_dir, identity):
 		print(f"  removed the {target} server built from another identity")
+	if args.reset_work:
+		reset_work([arch for arch, _ in targets_by_arch(targets)])
 
 	if not args.no_cache:
 		cached = [t for t in targets if restore_cached_server(t, commit, identity, out_dir)]
@@ -1447,30 +1144,29 @@ def main() -> int:
 		if not targets:
 			return 0
 
-	original_product_json = write_devhub_product_json()
-	try:
-		print(f"bundled the server sources in {bundle_server_sources(commit) / 60:.0f} min")
-		for target in targets:
+	require_commit(commit)
+	warn_about_docker()
+	metadata = packaged_metadata()
+	key = source_key(identity, metadata)
+	for arch, group in targets_by_arch(targets):
+		for target in [None, *group]:
 			try:
-				build_target(target, commit, identity, out_dir)
+				if target is None:
+					elapsed = prepare_tree(arch, commit, key, metadata)
+					print(f"the {arch} tree is ready ({elapsed / 60:.0f} min)")
+				else:
+					build_target(target, commit, identity, out_dir)
 			except (subprocess.CalledProcessError, SystemExit) as error:
 				remaining = retry_command(out_dir, targets, commit, identity)
+				failed = f"the {arch} tree" if target is None else target
 				print(
-					f"\nerror: building {target} failed ({error}).\n"
-					f"Servers already built stay in {out_dir}. Retry only what is missing with:\n"
+					f"\nerror: building {failed} failed ({error}).\n"
+					f"Servers already built stay in {out_dir}, and the tree in the Docker volume "
+					f"{work_volume(arch)} keeps every step that finished. Retry only what is missing with:\n"
 					f"  {remaining}",
 					file=sys.stderr,
 				)
 				return 1
-	finally:
-		# Put the submodule's own file back. Leaving DevHub's there would be a
-		# trap for `pnpm dev`: the merged metadata carries `commit`, and a
-		# source run that states one loses syntax highlighting and the terminal
-		# to a `node_modules.asar` it does not have. See
-		# scripts/product_metadata.py.
-		PRODUCT_JSON.write_text(original_product_json)
-		restore_remote_modules()
-
 	return 0
 
 

@@ -45,7 +45,8 @@ class EnsureTest(unittest.TestCase):
 		rc, built, err = self.run_ensure({}, {"linux-x64": ["no"], "alpine-arm64": ["stale"]})
 		self.assertEqual(rc, 0)
 		self.assertEqual(built[0][0], ["linux-x64", "alpine-arm64"])
-		self.assertIn("15 minutes", err)
+		self.assertIn("Linux containers", err)
+		self.assertIn("first build", err)
 
 	def test_failed_build_retry_lists_only_what_is_still_missing(self):
 		problems = {"alpine-x64": ["no"], "alpine-arm64": ["no"]}

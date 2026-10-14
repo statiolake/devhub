@@ -60,7 +60,7 @@ class EnsureTest(unittest.TestCase):
 	def test_missing_builds_with_progress_note(self):
 		rc, calls, out = self.run_ensure(problems=["no linux-arm64 server"])
 		self.assertEqual((rc, calls["build"]), (0, ["linux-arm64"]))
-		self.assertTrue(any("15 minutes" in m and "DEVHUB_SKIP_REH_BUILD" in m for m in out))
+		self.assertTrue(any("first build" in m and "DEVHUB_SKIP_REH_BUILD" in m for m in out))
 
 	def test_no_docker_warns_and_continues(self):
 		rc, calls, out = self.run_ensure(problems=["x"], docker=False)

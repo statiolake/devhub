@@ -43,7 +43,9 @@
 #   * the four remote extension hosts the app carries, in dist/reh, built from
 #     this checkout's VS Code and patches — when any is missing or stale,
 #     package-nightly.py runs scripts/build_reh.py for exactly those first
-#     (scripts/ensure_reh.py): needs Docker, ~15 minutes each, announced up
+#     (scripts/ensure_reh.py): needs Docker, built in Linux containers the
+#     way VS Code builds its own (the first build of an architecture's tree is
+#     an hour or more on Apple Silicon, later ones minutes), announced up
 #     front and logged to dist/reh-build.log. Without Docker it stops, naming
 #     them. It does nothing when CI is set: the nightly downloads the servers
 #     its `reh` jobs built. `--without-reh` packages without them, for a

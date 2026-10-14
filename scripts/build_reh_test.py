@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The servers DevHub carries have to be the servers DevHub reads.
+"""The servers DevHub carries have to be the servers DevHub reads, built the
+way VS Code builds its own.
 
 There is no handshake between the two halves. `scripts/build_reh.py` names
 tarballs and writes a statement beside each; `remoteServer.ts` looks for those
@@ -9,7 +10,12 @@ the two disagree by one character the symptom is a remote window refused with
 the statement and the bundle check are pinned here, and the names are compared
 with the TypeScript that reads them.
 
-    python3 -m unittest discover -s scripts -p "*_test.py"
+The build itself runs in Docker, which these tests do not start. What they pin
+is what is handed to Docker — the commands, the images, the cache keys, the
+order of the steps — and the in-container script's own logic, run here under
+`sh` against a fake tree.
+
+    cd scripts && python3 -m unittest build_reh_test
 """
 
 from __future__ import annotations
@@ -19,64 +25,77 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import build_reh
 from build_reh import (
-	BUILT_IN_COPILOT_SDK,
+	ARCHES,
+	BUILDER_PLATFORM,
 	COPILOT_KEPT,
 	DEFAULT_OUT_DIR,
 	GULP_TARGETS,
+	IN_CONTAINER_SCRIPT,
+	POST_STEPS,
 	REPO_ROOT,
 	TARGETS,
+	VERIFY_GLIBC_SCRIPT,
+	VSCODE_DIR,
+	builder_dockerfile,
+	builder_tag,
 	bundle_problems,
-	copilot_sdk_staging,
-	package_version,
+	cached_server_problems,
+	container_argv,
 	docker_platform,
-	fetch_musl_node,
+	drop_glibc_msal_runtime,
+	foreign_binaries,
+	glibc_verify_env,
+	gulp_output_name,
 	gulp_task,
-	musl_node_dir,
-	node_binary_problems,
-	retry_command,
+	musl_dockerfile,
+	musl_image,
 	musl_runtime_script,
+	musl_tag,
+	prune_cache,
 	prune_stale,
-	remote_modules_image,
-	remote_modules_script,
+	reh_cache_root,
 	remove_copilot,
-	stage_builtin_copilot_sdk,
-	staging_dir,
+	restore_cached_server,
+	retry_command,
+	source_key,
 	statement_name,
+	store_cached_server,
 	tarball_name,
+	targets_by_arch,
 	top_level_dir,
 	verify_image,
+	windows_binaries,
+	work_volume,
 	write_statement,
-	cached_server_problems,
-	modules_cache_key,
-	modules_cache_path,
-	prune_cache,
-	reh_cache_root,
-	restore_cached_server,
-	store_cached_server,
-	toolchain_dockerfile,
-	toolchain_tag,
-	SYSROOT_RELEASE,
-	SYSROOT_SHA256,
-	VERIFY_GLIBC_SCRIPT,
-	glibc_build_env,
-	glibc_check_script,
-	toolchain_platform,
-	VSCODE_DIR,
 )
 from product_metadata import PRODUCT_OVERRIDES
 
 REMOTE_SERVER_TS = REPO_ROOT / "apps" / "desktop" / "src" / "main" / "runtime" / "remoteServer.ts"
 APP_CONTROLLER_TS = REPO_ROOT / "apps" / "desktop" / "src" / "main" / "shell" / "appController.ts"
+APPLY_PATCHES = REPO_ROOT / "scripts" / "apply-vscode-patches.sh"
+NIGHTLY = REPO_ROOT / ".github" / "workflows" / "nightly.yml"
 
 # A hash of the right shape that is obviously not a real one.
 COMMIT = "0" * 32 + "abcdef01"
 IDENTITY = "0123456789ab"
+
+
+def in_container_script() -> str:
+	return IN_CONTAINER_SCRIPT.read_text()
+
+
+def function_body(script: str, name: str) -> str:
+	match = re.search(rf"^{name}\(\) \{{\n(.*?)^\}}\n", script, re.S | re.M)
+	assert match is not None, name
+	return match.group(1)
 
 
 class Targets(unittest.TestCase):
@@ -95,26 +114,17 @@ class Targets(unittest.TestCase):
 		self.assertEqual(gulp_task("alpine-x64"), "vscode-reh-linux-alpine-min-ci")
 		self.assertEqual(gulp_task("alpine-arm64"), "vscode-reh-alpine-arm64-min-ci")
 		self.assertEqual(gulp_task("linux-arm64"), "vscode-reh-linux-arm64-min-ci")
-		self.assertEqual(staging_dir("alpine-x64").name, "vscode-reh-linux-alpine")
+		self.assertEqual(gulp_task("linux-x64"), "vscode-reh-linux-x64-min-ci")
+		self.assertEqual(gulp_output_name("alpine-x64"), "vscode-reh-linux-alpine")
 
 	def test_every_gulp_target_exists_upstream(self) -> None:
-		gulpfile = REPO_ROOT / "vscode" / "build" / "gulpfile.reh.ts"
+		gulpfile = VSCODE_DIR / "build" / "gulpfile.reh.ts"
 		if not gulpfile.is_file():
 			self.skipTest("the vscode submodule is not checked out")
 		text = gulpfile.read_text()
 		for platform, arch in GULP_TARGETS.values():
 			with self.subTest(target=f"{platform}-{arch}"):
 				self.assertIn(f"{{ platform: '{platform}', arch: '{arch}' }}", text)
-
-	def test_native_modules_are_built_for_the_targets_libc(self) -> None:
-		self.assertEqual(remote_modules_image("alpine-arm64", "24.18.1"), "node:24.18.1-alpine")
-		self.assertEqual(remote_modules_image("linux-x64", "24.18.1"), "debian:bookworm")
-		self.assertIn("apk add", toolchain_dockerfile("alpine-x64", "24.18.1"))
-		self.assertIn("apt-get", toolchain_dockerfile("linux-arm64", "24.18.1"))
-		for target in TARGETS:
-			self.assertIn("npm ci", remote_modules_script(target))
-		self.assertEqual(docker_platform("alpine-arm64"), "linux/arm64")
-		self.assertEqual(docker_platform("linux-x64"), "linux/amd64")
 
 	def test_a_musl_server_carries_the_cpp_runtime_alpine_lacks(self) -> None:
 		# A stock Alpine has no libstdc++, and an Alpine with no network cannot
@@ -123,15 +133,18 @@ class Targets(unittest.TestCase):
 		self.assertIn("libstdc++.so.6", script)
 		self.assertIn("libgcc_s.so.1", script)
 		self.assertIn("--set-rpath '$ORIGIN/lib' node", script)
-		# patchelf is baked into the toolchain image; no network at bundling.
+		# patchelf is baked into the musl image; no network at bundling.
 		self.assertNotIn("apk add", script)
-		self.assertIn("patchelf", toolchain_dockerfile("alpine-arm64", "24.18.1"))
+		self.assertIn("patchelf", musl_dockerfile("24.18.1"))
 
 	def test_are_started_on_a_machine_without_node(self) -> None:
 		# The verification image is not the build image: a server that only
 		# starts where Node is installed is not the server a far machine gets.
 		for target in TARGETS:
 			self.assertNotIn("node", verify_image(target))
+		# Debian 10's glibc is 2.28: the glibc server is started where the floor is.
+		self.assertEqual(verify_image("linux-arm64"), "debian:buster-slim")
+		self.assertEqual(verify_image("alpine-x64"), "alpine:3")
 
 
 class Names(unittest.TestCase):
@@ -231,17 +244,11 @@ class Bundle(unittest.TestCase):
 
 
 class RemoveCopilot(unittest.TestCase):
-	"""Which parts of the built tree the deletion takes, and which it leaves.
-
-	The whole reason `remove_copilot` is a deletion rather than a build option
-	is written down in its docstring; what matters here is that it deletes the
-	two big things, keeps the two small ones `server-main.js` reads versions
-	out of, and refuses to be a silent no-op if upstream renames either.
-	"""
+	"""Which parts of the built tree the deletion takes, and which it leaves."""
 
 	def setUp(self) -> None:
 		self.staging = Path(tempfile.mkdtemp(prefix="reh-test-"))
-		self.addCleanup(lambda: __import__("shutil").rmtree(self.staging, ignore_errors=True))
+		self.addCleanup(lambda: shutil.rmtree(self.staging, ignore_errors=True))
 
 	def write(self, relative: str, size: int = 1024) -> Path:
 		path = self.staging / relative
@@ -254,7 +261,8 @@ class RemoveCopilot(unittest.TestCase):
 		runtime = self.write("node_modules/@github/copilot-linux-x64/prebuilds/runtime.node")
 		other = self.write("extensions/git/dist/main.js")
 
-		remove_copilot(self.staging, "linux-x64")
+		with mock.patch("builtins.print"):
+			remove_copilot(self.staging, "linux-x64")
 
 		self.assertFalse(extension.parent.parent.exists())
 		self.assertFalse(runtime.parent.parent.exists())
@@ -264,7 +272,8 @@ class RemoveCopilot(unittest.TestCase):
 		self.write("extensions/copilot/dist/extension.js")
 		kept = [self.write(f"{package}/package.json") for package in COPILOT_KEPT]
 
-		remove_copilot(self.staging, "linux-x64")
+		with mock.patch("builtins.print"):
+			remove_copilot(self.staging, "linux-x64")
 
 		for path in kept:
 			self.assertTrue(path.exists(), path)
@@ -277,280 +286,451 @@ class RemoveCopilot(unittest.TestCase):
 			remove_copilot(self.staging, "linux-x64")
 
 
-class StageBuiltInCopilotSdk(unittest.TestCase):
-	"""The invariant the last step of every REH package task asserts on.
+class Plan(unittest.TestCase):
+	"""One tree per architecture serves both of its servers."""
 
-	`prepareCopilotRipgrepShimTaskREH` walks into the server tree's copy of the
-	built-in Copilot extension and throws when the SDK is not under it. The tree
-	is copied out of `.build`, so `.build` is where the build has to be right,
-	and it is the same requirement whatever the target — which is the half that
-	broke: linux-x64 had it and linux-arm64 did not.
-	"""
+	def test_groups_by_architecture_glibc_first(self) -> None:
+		self.assertEqual(
+			targets_by_arch(list(reversed(TARGETS))),
+			[("x64", ["linux-x64", "alpine-x64"]), ("arm64", ["linux-arm64", "alpine-arm64"])],
+		)
+		self.assertEqual(targets_by_arch(["alpine-arm64"]), [("arm64", ["alpine-arm64"])])
+		self.assertEqual(ARCHES, ("x64", "arm64"))
 
-	def setUp(self) -> None:
-		self.vscode = Path(tempfile.mkdtemp())
-		self.addCleanup(lambda: shutil.rmtree(self.vscode, ignore_errors=True))
-		self.staged, self.installed = copilot_sdk_staging(self.vscode)
-
-	def materialize(self, sdk: Path, version: str | None = "1.0.73") -> Path:
-		index = sdk / "index.d.ts"
-		index.parent.mkdir(parents=True, exist_ok=True)
-		index.write_text("export {};\n")
-		if version is not None:
-			(sdk.parent / "package.json").write_text(json.dumps({"name": "@github/copilot", "version": version}))
-		return index
-
-	def test_same_paths_for_every_target(self) -> None:
-		# Nothing about the SDK's place in the tree is per-platform: the
-		# extension is built once and the shim step looks in one place. A
-		# target-dependent answer here would be the bug, not the fix.
-		self.assertEqual(self.staged, self.vscode / ".build" / BUILT_IN_COPILOT_SDK)
-		self.assertEqual(self.installed, self.vscode / BUILT_IN_COPILOT_SDK)
-
-	def test_fills_in_what_the_compile_did_not_copy(self) -> None:
-		self.materialize(self.installed)
-
-		stage_builtin_copilot_sdk(self.vscode)
-
-		self.assertTrue((self.staged / "index.d.ts").is_file())
-
-	def test_leaves_a_compile_that_did_its_job_alone(self) -> None:
-		self.materialize(self.staged)
-		self.materialize(self.installed)
-		(self.staged / "index.d.ts").write_text("// from the compile\n")
-
-		stage_builtin_copilot_sdk(self.vscode)
-
-		self.assertEqual((self.staged / "index.d.ts").read_text(), "// from the compile\n")
-
-	def test_refills_the_empty_shell_the_compile_left(self) -> None:
-		# What linux-arm64 actually had (nightly 34703272262): `gulp.dest`
-		# recreates the directory entries its source glob yielded, so an SDK
-		# whose files were all filtered out reaches `.build` as a directory
-		# with nothing in it. `is_dir()` says yes and the REH copy still
-		# carries no `sdk` into the server tree.
-		self.staged.mkdir(parents=True)
-		self.materialize(self.installed)
-
-		stage_builtin_copilot_sdk(self.vscode)
-
-		self.assertTrue((self.staged / "index.d.ts").is_file())
-
-	def test_materialises_an_sdk_npm_left_as_a_symlink(self) -> None:
-		# The other shape that answers `is_dir()` and carries nothing: npm's
-		# postinstall points `sdk` at the @github/copilot-<os>-<arch> package
-		# instead of copying it, and a glob that does not follow symlinks walks
-		# straight past. Packaging needs real files, so staging reads through.
-		runtime = self.vscode / "node_modules" / "@github" / "copilot-linux-arm64" / "sdk"
-		self.materialize(runtime)
-		self.installed.parent.mkdir(parents=True, exist_ok=True)
-		self.installed.symlink_to(runtime, target_is_directory=True)
-		(self.installed.parent / "package.json").write_text('{"version": "1.0.73"}')
-
-		stage_builtin_copilot_sdk(self.vscode)
-
-		self.assertFalse(self.staged.is_symlink())
-		self.assertTrue((self.staged / "index.d.ts").is_file())
-		self.assertFalse((self.staged / "index.d.ts").is_symlink())
-
-	def test_stages_package_json_alongside_the_sdk(self) -> None:
-		# What a macOS build hit: `.build` had `sdk/` (copied by an earlier
-		# version of this step) but no `package.json`, because
-		# build/.moduleignore strips `@github/copilot/**`, and
-		# materializeBuiltInCopilotSdkPlatformFiles reads the version from it.
-		self.materialize(self.staged, version=None)
-		self.materialize(self.installed)
-		(self.installed.parent / "index.js").write_text("// cli\n")
-
-		stage_builtin_copilot_sdk(self.vscode)
-
-		self.assertEqual(package_version(self.staged.parent), "1.0.73")
-		self.assertTrue((self.staged.parent / "index.js").is_file())
-		self.assertTrue((self.staged / "index.d.ts").is_file())
-
-	def test_stops_when_the_installed_package_has_no_version(self) -> None:
-		self.materialize(self.installed, version=None)
-		with self.assertRaises(SystemExit):
-			stage_builtin_copilot_sdk(self.vscode)
-
-	def test_stops_when_there_is_nothing_to_stage(self) -> None:
-		# Building on would spend twenty minutes to reach an error about the
-		# output tree that says nothing about the submodule that is short.
-		with self.assertRaises(SystemExit) as caught:
-			stage_builtin_copilot_sdk(self.vscode)
-		self.assertIn(str(self.installed.parent), str(caught.exception))
+	def test_one_volume_per_architecture(self) -> None:
+		with mock.patch.dict(os.environ, {}, clear=False):
+			os.environ.pop("DEVHUB_REH_WORK_VOLUME", None)
+			self.assertEqual(work_volume("x64"), "devhub-reh-work-x64")
+			self.assertEqual(work_volume("arm64"), "devhub-reh-work-arm64")
+		with mock.patch.dict(os.environ, {"DEVHUB_REH_WORK_VOLUME": "ci-reh"}):
+			self.assertEqual(work_volume("arm64"), "ci-reh-arm64")
 
 
-def fake_node(machine: int, version: str = "24.18.1", size: int = 21 * 1024 * 1024) -> bytes:
-	head = b"\x7fELF" + bytes(14) + machine.to_bytes(2, "little")
-	body = f"process v{version} ".encode()
-	return head + body + bytes(size - len(head) - len(body))
+class Images(unittest.TestCase):
+	def test_builder_is_upstreams_linux_agent_on_amd64(self) -> None:
+		df = builder_dockerfile("22.21.1")
+		self.assertTrue(df.startswith("FROM ubuntu:22.04\n"))
+		self.assertEqual(BUILDER_PLATFORM, "linux/amd64")
+		self.assertIn("https://nodejs.org/dist/v22.21.1/node-v22.21.1-linux-x64.tar.xz", df)
+		self.assertIn("sha256sum -c SHASUMS256.txt", df)
+		self.assertIn("node --version | grep -qx v22.21.1", df)
+		# setup-env.sh pipes Chromium's clang updater into `python -`.
+		self.assertIn("python-is-python3", df)
+		for package in ("build-essential", "pkg-config", "libkrb5-dev", "libxkbfile-dev", "libx11-dev", "git"):
+			self.assertIn(package, df)
+		# no sysroot of DevHub's own: setup-env.sh downloads upstream's
+		self.assertNotIn("sysroot", df)
+
+	def test_tags_follow_the_dockerfile(self) -> None:
+		self.assertRegex(builder_tag("22.21.1"), r"^devhub-reh-builder:[0-9a-f]{12}$")
+		self.assertNotEqual(builder_tag("22.21.1"), builder_tag("22.21.2"))
+		self.assertRegex(musl_tag("alpine-arm64", "24.18.1"), r"^devhub-reh-musl:arm64-[0-9a-f]{12}$")
+		self.assertNotEqual(musl_tag("alpine-x64", "24.18.1"), musl_tag("alpine-arm64", "24.18.1"))
+		self.assertNotEqual(musl_tag("alpine-x64", "24.18.1"), musl_tag("alpine-x64", "24.18.2"))
+
+	def test_musl_image_is_node_alpine_with_compilers(self) -> None:
+		self.assertEqual(musl_image("24.18.1"), "node:24.18.1-alpine")
+		df = musl_dockerfile("24.18.1")
+		self.assertTrue(df.startswith("FROM node:24.18.1-alpine\n"))
+		self.assertIn("apk add --no-cache python3 make g++ krb5-dev linux-headers patchelf", df)
+		self.assertEqual(docker_platform("alpine-arm64"), "linux/arm64")
+		self.assertEqual(docker_platform("alpine-x64"), "linux/amd64")
 
 
-class MuslNodeTest(unittest.TestCase):
-	def setUp(self) -> None:
-		self.tmp = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, self.tmp, True)
+class Commands(unittest.TestCase):
+	"""What each step hands to `docker run`."""
 
-	def write(self, data: bytes) -> Path:
-		path = self.tmp / "node"
-		path.write_bytes(data)
-		return path
+	def argv(self, subcommand: str, **kwargs) -> list[str]:
+		return container_argv(
+			"img:1", "linux/amd64", "bash", subcommand, {"B": "2", "A": "1"},
+			volume="devhub-reh-work-x64", xfer=Path("/x"), **kwargs,
+		)
 
-	def test_directory_is_the_one_gulp_checks(self) -> None:
-		# gulpfile.reh.ts: .build/node/v<version>/<platform>-<arch>, the legacy
-		# x64 musl build being platform linux, arch alpine.
-		self.assertEqual(musl_node_dir("alpine-x64", "24.18.1").parts[-2:], ("v24.18.1", "linux-alpine"))
-		self.assertEqual(musl_node_dir("alpine-arm64", "24.18.1").parts[-2:], ("v24.18.1", "alpine-arm64"))
+	def test_mounts_the_volume_scripts_patches_and_xfer(self) -> None:
+		argv = self.argv("prepare")
+		self.assertEqual(argv[:5], ["docker", "run", "--rm", "--platform", "linux/amd64"])
+		joined = " ".join(argv)
+		self.assertIn("-v devhub-reh-work-x64:/build", joined)
+		self.assertIn(f"-v {REPO_ROOT / 'scripts'}:/devhub/scripts:ro", joined)
+		self.assertIn(f"-v {REPO_ROOT / 'patches'}:/devhub/patches:ro", joined)
+		self.assertIn("-v /x:/xfer", joined)
+		self.assertNotIn("/server", joined)
+		self.assertEqual(argv[-4:], ["img:1", "bash", "/devhub/scripts/reh_in_container.sh", "prepare"])
+		# never the developer's vscode/ checkout
+		self.assertNotIn(str(VSCODE_DIR), joined)
 
-	def test_accepts_matching_binary(self) -> None:
-		self.assertEqual(node_binary_problems(self.write(fake_node(0x3E)), "alpine-x64", "24.18.1"), [])
-		self.assertEqual(node_binary_problems(self.write(fake_node(0xB7)), "alpine-arm64", "24.18.1"), [])
+	def test_environment_is_explicit_and_the_token_goes_by_name(self) -> None:
+		argv = self.argv("package")
+		self.assertIn("GITHUB_TOKEN", argv)
+		with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret"}):
+			self.assertNotIn("ghp_secret", " ".join(self.argv("package")))
+		env = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+		self.assertEqual(env, ["GITHUB_TOKEN", "A=1", "B=2"])
 
-	def test_rejects_wrong_arch_version_size_and_format(self) -> None:
-		self.assertTrue(node_binary_problems(self.write(fake_node(0xB7)), "alpine-x64", "24.18.1"))
-		self.assertTrue(node_binary_problems(self.write(fake_node(0x3E, "22.0.0")), "alpine-x64", "24.18.1"))
-		self.assertTrue(node_binary_problems(self.write(b"\x7fELF" + bytes(100)), "alpine-x64", "24.18.1"))
-		self.assertTrue(node_binary_problems(self.write(bytes(25 * 1024 * 1024)), "alpine-x64", "24.18.1"))
-		self.assertTrue(node_binary_problems(self.tmp / "missing", "alpine-x64", "24.18.1"))
+	def test_glibc_check_mounts_the_server_read_only(self) -> None:
+		argv = self.argv("verify-glibc", server=Path("/s/tree"))
+		self.assertIn("/s/tree:/server:ro", argv)
+		env = glibc_verify_env("linux-arm64")
+		self.assertEqual(env["EXPECTED_GLIBC_VERSION"], "2.28")
+		self.assertEqual(env["EXPECTED_GLIBCXX_VERSION"], "3.4.25")
+		self.assertEqual(env["ARCH"], "arm64")
 
-	def fetch(self, target: str, machine: int) -> list:
-		calls = []
-
-		def run(cmd, stdout=None, check=False):
-			calls.append(cmd)
-			stdout.write(fake_node(machine))
-
-		with mock.patch("build_reh.VSCODE_DIR", self.tmp), mock.patch("build_reh.subprocess.run", run):
-			self.path = fetch_musl_node(target, "24.18.1")
+	def recorded(self, target: str) -> list[list[str]]:
+		calls: list[list[str]] = []
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		with mock.patch("build_reh.run_step", calls.append), \
+			mock.patch("build_reh.ensure_builder", return_value="builder:1"), \
+			mock.patch("build_reh.ensure_musl_image", return_value="musl:1"), \
+			mock.patch("build_reh.remote_node_version", return_value="24.18.1"), \
+			mock.patch("build_reh.cache_base", return_value=root):
+			if build_reh.libc_of(target) == "musl":
+				build_reh.install_musl_remote(target)
+			build_reh.package_target(target, COMMIT)
 		return calls
 
-	def test_fetch_streams_for_the_targets_platform(self) -> None:
-		for target, platform, machine in (
-			("alpine-x64", "linux/amd64", 0x3E),
-			("alpine-arm64", "linux/arm64", 0xB7),
+	def test_musl_targets_install_remote_in_their_own_platform(self) -> None:
+		musl, package = self.recorded("alpine-arm64")
+		self.assertEqual(musl[musl.index("--platform") + 1], "linux/arm64")
+		self.assertIn("devhub-reh-work-arm64:/build", musl)
+		self.assertEqual(musl[-4:], ["musl:1", "sh", "/devhub/scripts/reh_in_container.sh", "musl-remote"])
+		for pair in ("GULP_PLATFORM=alpine", "GULP_ARCH=arm64", "NODE_VERSION=24.18.1", "MUSL_IMAGE=musl:1"):
+			self.assertIn(pair, musl)
+		# packaging is the builder's, always amd64, in the same tree
+		self.assertEqual(package[package.index("--platform") + 1], "linux/amd64")
+		self.assertIn("devhub-reh-work-arm64:/build", package)
+		self.assertIn("LIBC=musl", package)
+		self.assertEqual(package[-1], "package")
+
+	def test_alpine_x64_is_upstreams_linux_alpine(self) -> None:
+		musl, package = self.recorded("alpine-x64")
+		self.assertIn("GULP_PLATFORM=linux", package)
+		self.assertIn("GULP_ARCH=alpine", package)
+		self.assertIn("ARCH=x64", package)
+		self.assertIn("devhub-reh-work-x64:/build", musl)
+
+	def test_glibc_targets_package_without_a_musl_step(self) -> None:
+		(package,) = self.recorded("linux-arm64")
+		self.assertIn("LIBC=glibc", package)
+		self.assertIn("ARCH=arm64", package)
+		self.assertIn(f"COMMIT={COMMIT}", package)
+
+
+class SourceKey(unittest.TestCase):
+	METADATA = {"nameShort": "DevHub", "commit": COMMIT, "date": "2026-01-01T00:00:00Z", "hostCommit": "abc"}
+
+	def test_stable_and_sensitive_to_what_the_tree_is_built_from(self) -> None:
+		base = source_key(IDENTITY, self.METADATA)
+		self.assertEqual(base, source_key(IDENTITY, dict(self.METADATA)))
+		self.assertNotEqual(base, source_key("ffffffffffff", self.METADATA))
+		self.assertNotEqual(base, source_key(IDENTITY, {**self.METADATA, "nameShort": "X"}))
+		self.assertNotEqual(base, source_key(IDENTITY, self.METADATA, revision=99))
+
+	def test_a_new_date_or_devhub_commit_does_not_recompile(self) -> None:
+		base = source_key(IDENTITY, self.METADATA)
+		self.assertEqual(base, source_key(IDENTITY, {**self.METADATA, "date": "2027-01-01T00:00:00Z"}))
+		self.assertEqual(base, source_key(IDENTITY, {**self.METADATA, "hostCommit": "def"}))
+
+	def test_environment_never_reaches_the_key(self) -> None:
+		base = source_key(IDENTITY, self.METADATA)
+		with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret"}):
+			self.assertEqual(base, source_key(IDENTITY, self.METADATA))
+
+
+class StepOrder(unittest.TestCase):
+	def test_post_steps(self) -> None:
+		self.assertEqual(
+			POST_STEPS,
+			(
+				"remove_copilot",
+				"drop_glibc_msal_runtime",
+				"bundle_musl_runtime",
+				"refuse_foreign_binaries",
+				"verify_glibc_floor",
+				"verify_server_starts",
+			),
+		)
+
+	def run_target(self, target: str) -> list[str]:
+		calls: list[str] = []
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		staging = root / "xfer" / target / gulp_output_name(target)
+		staging.mkdir(parents=True)
+		(staging / "file").write_text("x")
+		out = root / "out"
+		out.mkdir()
+
+		def step(name):
+			return lambda *a, **k: calls.append(name)
+
+		patches = {name: step(name) for name in POST_STEPS}
+		with mock.patch.multiple("build_reh", **patches), \
+			mock.patch("build_reh.install_musl_remote", step("musl-remote")), \
+			mock.patch("build_reh.package_target", lambda *a: calls.append("package") or root / "t.tar"), \
+			mock.patch("build_reh.unpack_staging", lambda *a: calls.append("unpack") or staging), \
+			mock.patch("build_reh.store_cached_server", step("cache")), \
+			mock.patch("builtins.print"):
+			build_reh.build_target(target, COMMIT, IDENTITY, out)
+		self.assertTrue((out / tarball_name(target)).is_file())
+		self.assertEqual(bundle_problems(out, COMMIT, IDENTITY, required=(target,)), [])
+		self.assertFalse(staging.exists())
+		return calls
+
+	def test_musl(self) -> None:
+		self.assertEqual(self.run_target("alpine-x64"), ["musl-remote", "package", "unpack", *POST_STEPS, "cache"])
+
+	def test_glibc(self) -> None:
+		self.assertEqual(self.run_target("linux-x64"), ["package", "unpack", *POST_STEPS, "cache"])
+
+	def test_main_prepares_each_tree_before_its_targets(self) -> None:
+		calls: list[tuple] = []
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		with mock.patch("sys.argv", ["build_reh.py", "alpine-arm64", "linux-x64", "--no-cache", "--out-dir", str(root)]), \
+			mock.patch("build_reh.docker_available", return_value=True), \
+			mock.patch("build_reh.vscode_commit", return_value=COMMIT), \
+			mock.patch("build_reh.reh_identity", return_value=IDENTITY), \
+			mock.patch("build_reh.require_commit"), \
+			mock.patch("build_reh.warn_about_docker"), \
+			mock.patch("build_reh.packaged_metadata", return_value={"commit": COMMIT}), \
+			mock.patch("build_reh.prepare_tree", lambda arch, *a: calls.append(("prepare", arch)) or 0.0), \
+			mock.patch("build_reh.build_target", lambda t, *a: calls.append(("build", t))), \
+			mock.patch("builtins.print"):
+			self.assertEqual(build_reh.main(), 0)
+		self.assertEqual(calls, [("prepare", "x64"), ("build", "linux-x64"), ("prepare", "arm64"), ("build", "alpine-arm64")])
+
+	def test_a_failed_tree_names_what_to_retry(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+
+		def fail(*a):
+			raise subprocess.CalledProcessError(1, "docker")
+
+		with mock.patch("sys.argv", ["build_reh.py", "linux-arm64", "--no-cache", "--out-dir", str(root)]), \
+			mock.patch("build_reh.docker_available", return_value=True), \
+			mock.patch("build_reh.vscode_commit", return_value=COMMIT), \
+			mock.patch("build_reh.reh_identity", return_value=IDENTITY), \
+			mock.patch("build_reh.require_commit"), \
+			mock.patch("build_reh.warn_about_docker"), \
+			mock.patch("build_reh.packaged_metadata", return_value={}), \
+			mock.patch("build_reh.prepare_tree", fail), \
+			mock.patch("builtins.print") as said:
+			self.assertEqual(build_reh.main(), 1)
+		text = " ".join(str(c.args[0]) for c in said.call_args_list if c.args)
+		self.assertIn("scripts/build_reh.py linux-arm64", text)
+		self.assertIn("devhub-reh-work-arm64", text)
+
+
+class OldPathsAreGone(unittest.TestCase):
+	"""Gulp on the host and the patch-ups after it are not coming back."""
+
+	def test_no_host_gulp_or_patch_ups(self) -> None:
+		for name in (
+			"retarget_msal_runtime", "rebuild_native_extensions", "native_packages",
+			"replace_native_packages", "install_remote_modules", "restore_remote_modules",
+			"write_devhub_product_json", "gulp", "bundle_server_sources", "toolchain_node_bin",
+			"stage_builtin_copilot_sdk", "fetch_musl_node", "modules_cache_key",
 		):
-			calls = self.fetch(target, machine)
-			self.assertEqual(calls[0][calls[0].index("--platform") + 1], platform)
-			self.assertIn("node:24.18.1-alpine", calls[0])
-			self.assertTrue(self.path.is_file())
-			self.assertTrue(self.path.stat().st_mode & 0o100)
-			self.assertEqual(self.path.parent.name, musl_node_dir(target, "24.18.1").name)
+			with self.subTest(name=name):
+				self.assertFalse(hasattr(build_reh, name))
+		source = Path(build_reh.__file__).read_text()
+		self.assertNotIn("provision-vscode.sh", source)
+		self.assertNotIn('"npm", "run", "gulp"', source)
+		self.assertNotIn("--skip-provision", source)
 
-	def test_fetch_reuses_a_good_binary(self) -> None:
-		self.fetch("alpine-x64", 0x3E)
-		self.assertEqual(self.fetch("alpine-x64", 0x3E), [])
-
-	def test_fetch_refuses_wrong_arch_and_leaves_nothing(self) -> None:
-		with self.assertRaises(SystemExit):
-			self.fetch("alpine-x64", 0xB7)
-		with mock.patch("build_reh.VSCODE_DIR", self.tmp):
-			self.assertFalse(musl_node_dir("alpine-x64", "24.18.1").exists())
-
-
-class RetryCommandTest(unittest.TestCase):
-	def test_lists_only_missing_targets(self) -> None:
-		out = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, out, True)
-		with mock.patch("build_reh.bundle_problems", lambda d, c, i, required: [] if required[0] in TARGETS[:2] else ["no"]):
-			self.assertEqual(retry_command(out, TARGETS, "c", "i"), "scripts/build_reh.py alpine-x64 alpine-arm64")
+	def test_the_nightly_does_not_provision_for_the_servers(self) -> None:
+		text = NIGHTLY.read_text()
+		job = text[text.index("\n  reh:\n"):]
+		job = job[: job.index("\n  # ----", 1)]
+		self.assertNotIn("provision-vscode.sh", job)
+		self.assertNotIn("--skip-provision", job)
+		self.assertNotIn("ubuntu-24.04-arm", job)
+		self.assertIn("scripts/build_reh.py ${{ matrix.targets }}", job)
 
 
-if __name__ == "__main__":
-	unittest.main()
+class InContainerScript(unittest.TestCase):
+	"""scripts/reh_in_container.sh: upstream's steps, in upstream's order."""
 
+	def setUp(self) -> None:
+		self.script = in_container_script()
 
-class ToolchainImage(unittest.TestCase):
-	def test_tag_is_per_libc_arch_and_content(self) -> None:
-		tag = toolchain_tag("alpine-arm64", "24.18.1")
-		self.assertRegex(tag, r"^devhub-reh-toolchain:musl-arm64-[0-9a-f]{12}$")
-		self.assertRegex(toolchain_tag("linux-x64", "24.18.1"), r":glibc-x64-")
-		self.assertNotEqual(tag, toolchain_tag("alpine-arm64", "24.18.2"))
-		# the same libc on another arch shares the Dockerfile, not the tag
-		self.assertNotEqual(toolchain_tag("linux-x64", "1"), toolchain_tag("linux-arm64", "1"))
-		self.assertEqual(tag, toolchain_tag("alpine-arm64", "24.18.1"))
+	def test_parses_as_posix_sh_and_bash(self) -> None:
+		for shell in ("sh", "bash"):
+			if not shutil.which(shell):
+				continue
+			with self.subTest(shell=shell):
+				result = subprocess.run([shell, "-n", str(IN_CONTAINER_SCRIPT)], capture_output=True, text=True)
+				self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertTrue(os.access(IN_CONTAINER_SCRIPT, os.X_OK))
 
-	def test_dockerfile_bakes_the_toolchain(self) -> None:
-		self.assertTrue(toolchain_dockerfile("linux-x64", "1.2.3").startswith("FROM debian:bookworm\n"))
-		self.assertEqual(remote_modules_image("linux-arm64", "24.21.0"), "debian:bookworm")
-		self.assertEqual(remote_modules_image("alpine-x64", "24.21.0"), "node:24.21.0-alpine")
-		x64 = toolchain_dockerfile("linux-x64", "24.21.0")
-		arm64 = toolchain_dockerfile("linux-arm64", "24.21.0")
-		self.assertIn("https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz", x64)
-		self.assertIn("sha256sum -c SHASUMS256.txt", x64)
-		# the image runs as amd64 for both: npm and node-gyp run on an x64 Node
-		self.assertIn("node-v24.21.0-linux-x64.tar.xz", arm64)
-		self.assertNotIn("linux-arm64.tar.xz", arm64)
-		self.assertTrue(toolchain_dockerfile("alpine-x64", "1.2.3").startswith("FROM node:1.2.3-alpine\n"))
+	def test_prepare_follows_the_linux_pipeline(self) -> None:
+		body = function_body(self.script, "prepare")
+		order = [
+			"tar -xf \"$X/vscode-src.tar\"",
+			"git -C \"$V\" init -q",
+			"apply-vscode-patches.sh\" --into \"$V\"",
+			"product-overrides.json",
+			"(cd build && npm_ci)",
+			"export npm_config_arch=\"$ARCH\" VSCODE_ARCH=\"$ARCH\"",
+			". ./build/azure-pipelines/linux/setup-env.sh",
+			"node build/npm/preinstall.ts",
+			"npm_ci\n\t\t)",
+			"VSCODE_EXTENSION_TARGET=\"linux-$ARCH\" node build/lib/builtInExtensions.ts",
+			"node build/npm/electronTypes.ts",
+			"npm run gulp core-ci",
+			"VSCODE_QUALITY=stable npm run gulp compile-copilot-extension-build",
+			"stage_copilot_sdk",
+		]
+		positions = [body.index(step) for step in order]
+		self.assertEqual(positions, sorted(positions))
+		for flag in ("ELECTRON_SKIP_BINARY_DOWNLOAD=1", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1", "ONNXRUNTIME_NODE_INSTALL=skip"):
+			self.assertIn(flag, body)
+		self.assertIn("BUILD_SOURCEVERSION=\"$COMMIT\"", body)
+		self.assertIn("GIT_COMMITTER_DATE=\"$COMMIT_DATE\"", body)
 
-	def test_glibc_toolchain_is_vscodes_2_28_sysroot(self) -> None:
-		for target, triple in (("linux-x64", "x86_64-linux-gnu"), ("linux-arm64", "aarch64-linux-gnu")):
-			with self.subTest(target=target):
-				df = toolchain_dockerfile(target, "24.21.0")
-				asset = f"{triple}-glibc-2.28-gcc-8.5.0.tar.gz"
-				self.assertIn(
-					f"https://github.com/microsoft/vscode-linux-build-agent/releases/download/{SYSROOT_RELEASE}/{asset}", df)
-				self.assertIn(f"echo '{SYSROOT_SHA256[triple]}  {asset}' | sha256sum -c -", df)
-				self.assertIn("-std=gnu++2a", df)
-				gypi = df.split("echo '")[-1].split("' > /root/.gyp/include.gypi")[0]
-				self.assertNotIn("'", gypi)  # echoed inside single quotes
-				self.assertIn("cflags_cc!", gypi)
-				env = glibc_build_env(target)
-				self.assertTrue(env["CC"].endswith(f"/{triple}/bin/{triple}-gcc"))
-				self.assertTrue(env["CXX"].endswith(f"/{triple}/bin/{triple}-g++"))
-				sysroot = f"/opt/vscode-sysroot/{triple}/{triple}/sysroot"
-				self.assertEqual(env["CXXFLAGS"], f"--sysroot={sysroot}")
-				self.assertIn(f"--sysroot={sysroot} -L{sysroot}/usr/lib/{triple}", env["LDFLAGS"])
-				for key, value in env.items():
-					self.assertIn(f'ENV {key}="{value}"', df)
-		self.assertEqual(glibc_build_env("linux-arm64")["npm_config_arch"], "arm64")
-		self.assertNotIn("sysroot", toolchain_dockerfile("alpine-x64", "24.21.0"))
+	def test_npm_ci_retries_five_times_as_upstream(self) -> None:
+		body = function_body(self.script, "npm_ci")
+		self.assertIn("npm ci", body)
+		self.assertIn("-lt 5", body)
 
-	def test_glibc_toolchain_cross_compiles_on_amd64(self) -> None:
-		# The sysroot's compilers are x86-64 programs; VS Code cross-builds arm64.
-		self.assertEqual(toolchain_platform("linux-arm64"), "linux/amd64")
-		self.assertEqual(toolchain_platform("linux-x64"), "linux/amd64")
-		self.assertEqual(toolchain_platform("alpine-arm64"), "linux/arm64")
-		self.assertEqual(toolchain_platform("alpine-x64"), "linux/amd64")
+	def test_musl_remote_is_upstreams_alpine_container_install(self) -> None:
+		body = function_body(self.script, "musl_remote")
+		self.assertIn("npm i -g node-gyp-build && npm_ci", body)
+		self.assertIn("@parcel/watcher-*", body)
+		self.assertIn("$V/.build/node/v$NODE_VERSION/$GULP_PLATFORM-$GULP_ARCH", body)
+		self.assertIn("use_remote musl", body)
 
-	def test_no_eol_bullseye_workaround(self) -> None:
-		for target in TARGETS:
-			df = toolchain_dockerfile(target, "24.21.0")
-			self.assertNotIn("bullseye", df)
-			self.assertNotIn("archive.debian.org", df)
-			self.assertNotIn("Check-Valid-Until", df)
+	def test_package_runs_the_ci_task_and_tars_it_out(self) -> None:
+		body = function_body(self.script, "package")
+		self.assertIn("use_remote \"$LIBC\"", body)
+		self.assertIn("npm run gulp \"$out-min-ci\"", body)
+		self.assertIn("out=\"vscode-reh-$GULP_PLATFORM-$GULP_ARCH\"", body)
+		self.assertIn("tar -C \"$B\" -cf", body)
 
-	def test_sysroot_pins_match_the_submodule(self) -> None:
-		sysroot_ts = VSCODE_DIR / "build" / "linux" / "debian" / "install-sysroot.ts"
-		checksums = VSCODE_DIR / "build" / "checksums" / "vscode-sysroot.txt"
+	def test_glibc_check_is_upstreams_with_the_trees_sysroot(self) -> None:
+		body = function_body(self.script, "verify_glibc")
+		self.assertIn("./build/azure-pipelines/linux/verify-glibc-requirements.sh", body)
+		self.assertIn("VSCODE_SYSROOT_DIR=\"$V/.build/sysroots/$SYSROOT_DIR_NAME\"", body)
+		self.assertIn('SYSROOT_DIR_NAME="glibc-2.28-gcc-8.5.0"', self.script)
+
+	def test_sysroot_dir_matches_setup_env(self) -> None:
 		setup_env = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "setup-env.sh"
-		if not (sysroot_ts.is_file() and checksums.is_file() and setup_env.is_file()):
+		if not setup_env.is_file():
 			self.skipTest("the vscode submodule is not checked out")
-		self.assertIn(f"const version = '{SYSROOT_RELEASE[1:]}';", sysroot_ts.read_text())
-		sums = checksums.read_text()
-		for triple, sha in SYSROOT_SHA256.items():
-			self.assertIn(f"{sha}  {triple}-glibc-2.28-gcc-8.5.0.tar.gz", sums)
 		self.assertIn("VSCODE_REMOTE_SYSROOT_DIR=$PWD/.build/sysroots/glibc-2.28-gcc-8.5.0", setup_env.read_text())
 
-	def test_glibc_floor_check_reuses_vscodes_script(self) -> None:
-		if not VERIFY_GLIBC_SCRIPT.is_file():
-			self.skipTest("the vscode submodule is not checked out")
-		for target, machine in (("linux-x64", "X86-64"), ("linux-arm64", "AArch64")):
-			with self.subTest(target=target):
-				script = glibc_check_script(target)
-				self.assertIn("EXPECTED_GLIBC_VERSION=2.28", script)
-				self.assertIn("VSCODE_SYSROOT_DIR=/opt/vscode-sysroot", script)
-				self.assertIn("SEARCH_PATH=/work", script)
-				self.assertIn("objdump", script)
-				self.assertIn(f"Machine:.*{machine}", script)
-				self.assertTrue(script.startswith("set -e;"))
+	def lib(self, root: Path, code: str, **env: str) -> subprocess.CompletedProcess:
+		full = {
+			"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+			"DEVHUB_REH_LIB": "1",
+			"DEVHUB_REH_BUILD": str(root),
+			"DEVHUB_REH_XFER": str(root / "xfer"),
+			**env,
+		}
+		return subprocess.run(
+			["sh", "-c", f". {IN_CONTAINER_SCRIPT}; {code}"], env=full, capture_output=True, text=True
+		)
 
-	def test_glibc_floor_check_fails_above_2_28(self) -> None:
+	def test_remote_node_modules_swap_between_libcs(self) -> None:
+		if not shutil.which("sh"):
+			self.skipTest("no sh")
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		modules = root / "vscode" / "remote" / "node_modules"
+		modules.mkdir(parents=True)
+		(modules / "glibc").write_text("")
+		(root / ".devhub").mkdir()
+
+		result = self.lib(root, "use_remote musl")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertFalse(modules.exists())  # nothing installed for musl yet
+		self.assertTrue((root / ".devhub" / "remote-glibc" / "glibc").is_file())
+		self.assertEqual((root / ".devhub" / "remote.libc").read_text().strip(), "musl")
+
+		modules.mkdir()
+		(modules / "musl").write_text("")
+		self.assertEqual(self.lib(root, "use_remote glibc").returncode, 0)
+		self.assertTrue((modules / "glibc").is_file())
+		self.assertTrue((root / ".devhub" / "remote-musl" / "musl").is_file())
+
+		self.assertEqual(self.lib(root, "use_remote musl; use_remote musl").returncode, 0)
+		self.assertTrue((modules / "musl").is_file())
+		self.assertTrue((root / ".devhub" / "remote-glibc" / "glibc").is_file())
+
+	def copilot_tree(self, root: Path, staged: bool) -> Path:
+		if not shutil.which("node"):
+			self.skipTest("no node")
+		installed = root / "vscode" / "extensions" / "copilot" / "node_modules" / "@github" / "copilot"
+		(installed / "sdk").mkdir(parents=True)
+		(installed / "sdk" / "index.js").write_text("")
+		(installed / "package.json").write_text('{"version": "1.0.73"}')
+		target = root / "vscode" / ".build" / "extensions" / "copilot" / "node_modules" / "@github" / "copilot"
+		if staged:
+			(target / "sdk").mkdir(parents=True)  # the empty shell the compile leaves
+		return target
+
+	def test_copilot_sdk_is_staged_as_files_with_its_package_json(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		staged = self.copilot_tree(root, staged=True)
+		result = self.lib(root, "stage_copilot_sdk")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertTrue((staged / "sdk" / "index.js").is_file())
+		self.assertIn("1.0.73", (staged / "package.json").read_text())
+		# and a second run leaves a good staging alone
+		self.assertEqual(self.lib(root, "stage_copilot_sdk").stdout, "")
+
+	def test_copilot_sdk_without_a_version_stops_the_build(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		self.copilot_tree(root, staged=False)
+		installed = root / "vscode" / "extensions" / "copilot" / "node_modules" / "@github" / "copilot"
+		(installed / "package.json").write_text("{}")
+		result = self.lib(root, "stage_copilot_sdk")
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("no package.json version", result.stderr)
+
+
+class ApplyPatchesInto(unittest.TestCase):
+	"""`apply-vscode-patches.sh --into` patches a copy, not the submodule."""
+
+	def test_applies_every_patch_to_the_given_tree(self) -> None:
+		if not (shutil.which("bash") and shutil.which("git")):
+			self.skipTest("no bash or git")
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		(root / "scripts").mkdir()
+		shutil.copy2(APPLY_PATCHES, root / "scripts" / APPLY_PATCHES.name)
+		(root / "patches" / "vscode").mkdir(parents=True)
+		(root / "patches" / "vscode" / "0001-x.patch").write_text(
+			"--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-upstream\n+devhub\n"
+		)
+		tree = root / "copy"
+		tree.mkdir()
+		subprocess.run(["git", "init", "-q", str(tree)], check=True)
+		(tree / "file.txt").write_text("upstream\n")
+		result = subprocess.run(
+			["bash", str(root / "scripts" / APPLY_PATCHES.name), "--into", str(tree)],
+			capture_output=True, text=True,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual((tree / "file.txt").read_text(), "devhub\n")
+		self.assertFalse((root / "vscode").exists())
+
+	def test_refuses_other_arguments(self) -> None:
+		if not shutil.which("bash"):
+			self.skipTest("no bash")
+		result = subprocess.run(["bash", str(APPLY_PATCHES), "--into"], capture_output=True, text=True)
+		self.assertEqual(result.returncode, 2)
+
+
+class GlibcFloor(unittest.TestCase):
+	def test_upstreams_check_fails_above_2_28(self) -> None:
 		# VS Code's script, run here with a stand-in objdump: one symbol from
 		# glibc 2.29 has to fail it, 2.28 has to pass.
 		if not VERIFY_GLIBC_SCRIPT.is_file():
 			self.skipTest("the vscode submodule is not checked out")
-		import subprocess
 		if not shutil.which("bash"):
 			self.skipTest("no bash")
 		for version, code in (("2.28", 0), ("2.29", 1)):
@@ -574,38 +754,13 @@ class ToolchainImage(unittest.TestCase):
 				result = subprocess.run(["bash", str(VERIFY_GLIBC_SCRIPT)], env=env, capture_output=True, text=True)
 				self.assertEqual(result.returncode, code, result.stdout + result.stderr)
 
-	def test_glibc_server_starts_on_the_floor(self) -> None:
-		# Debian 10's glibc is 2.28: the server is started where the floor is.
-		self.assertEqual(verify_image("linux-arm64"), "debian:buster-slim")
-		self.assertEqual(verify_image("alpine-x64"), "alpine:3")
 
-
-class ModulesCacheKey(unittest.TestCase):
-	def setUp(self) -> None:
-		self.dir = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, self.dir)
-		for name in ("package-lock.json", "package.json", ".npmrc"):
-			(self.dir / name).write_text(name)
-
-	def key(self, target="linux-x64", node="24", image="sha256:a", revision=1) -> str:
-		return modules_cache_key(target, node, image, self.dir, revision)
-
-	def test_stable_and_sensitive_to_every_input(self) -> None:
-		base = self.key()
-		self.assertEqual(base, self.key())
-		for changed in (self.key(target="alpine-x64"), self.key(node="25"), self.key(image="sha256:b"), self.key(revision=2)):
-			self.assertNotEqual(base, changed)
-		for name in ("package-lock.json", "package.json", ".npmrc"):
-			with self.subTest(name=name):
-				(self.dir / name).write_text("changed")
-				self.assertNotEqual(base, self.key())
-				(self.dir / name).write_text(name)
-
-	def test_environment_never_reaches_the_key(self) -> None:
-		base = self.key()
-		with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret"}):
-			self.assertEqual(base, self.key())
-		self.assertNotIn("secret", modules_cache_path("linux-x64", base).name)
+class RetryCommandTest(unittest.TestCase):
+	def test_lists_only_missing_targets(self) -> None:
+		out = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, out, True)
+		with mock.patch("build_reh.bundle_problems", lambda d, c, i, required: [] if required[0] in TARGETS[:2] else ["no"]):
+			self.assertEqual(retry_command(out, TARGETS, "c", "i"), "scripts/build_reh.py alpine-x64 alpine-arm64")
 
 
 class ServerCache(unittest.TestCase):
@@ -637,7 +792,8 @@ class ServerCache(unittest.TestCase):
 		store_cached_server("linux-x64", self.IDENTITY, self.out, self.cache)
 		(self.cache / self.IDENTITY / tarball_name("linux-x64")).write_bytes(b"rotten")
 		fresh = self.out.parent / "fresh"
-		self.assertFalse(restore_cached_server("linux-x64", COMMIT, self.IDENTITY, fresh, self.cache))
+		with mock.patch("builtins.print"):
+			self.assertFalse(restore_cached_server("linux-x64", COMMIT, self.IDENTITY, fresh, self.cache))
 		self.assertFalse((fresh / tarball_name("linux-x64")).exists())
 		self.assertFalse((self.cache / self.IDENTITY / statement_name("linux-x64")).exists())
 
@@ -658,22 +814,14 @@ class PruneCache(unittest.TestCase):
 	def test_keeps_newest_and_the_current_identity(self) -> None:
 		root = Path(tempfile.mkdtemp())
 		self.addCleanup(shutil.rmtree, root)
-		cache, modules = root / "reh", root / "mods"
-		modules.mkdir()
+		cache = root / "reh"
 		for age, name in enumerate(["cur", "new", "mid", "old"]):
 			(cache / name).mkdir(parents=True)
 			os.utime(cache / name, (1000 - age * 10 if name != "cur" else 1, ) * 2)
-		for i in range(10):
-			f = modules / f"t-{i}.tar"
-			f.write_bytes(b"")
-			os.utime(f, (100 + i, 100 + i))
-		removed = prune_cache("cur", 1, cache, modules)
+		removed = prune_cache("cur", 1, cache)
 		self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cur", "new"])
-		self.assertEqual(len(list(modules.glob("*.tar"))), 4)
-		self.assertEqual(len(removed), 2 + 6)
+		self.assertEqual(len(removed), 2)
 
-
-from build_reh import foreign_binaries, native_packages, rebuild_native_extensions, retarget_msal_runtime, windows_binaries  # noqa: E402
 
 MACHO = b"\xcf\xfa\xed\xfe" + b"\0" * 28
 
@@ -682,58 +830,35 @@ def elf(machine: int, extra: bytes = b"") -> bytes:
 	return b"\x7fELF\x02\x01\x01" + b"\0" * 11 + machine.to_bytes(2, "little") + b"\0" * 12 + extra
 
 
-class HostBinaries(unittest.TestCase):
+class ForeignBinaries(unittest.TestCase):
 	def setUp(self) -> None:
 		self.root = Path(tempfile.mkdtemp())
 		self.addCleanup(shutil.rmtree, self.root)
 		self.staging = self.root / "server"
 		self.dist = self.staging / "extensions" / "microsoft-authentication" / "dist"
 		self.dist.mkdir(parents=True)
-		(self.dist / "msal-node-runtime.node").write_bytes(MACHO)
-		(self.dist / "libmsalruntime.dylib").write_bytes(MACHO)
 		(self.dist / "extension.js").write_text("x")
-		self.runtime = self.root / "runtime"
-		(self.runtime / "linux" / "x64").mkdir(parents=True)
-		(self.runtime / "linux" / "x64" / "msal-node-runtime.node").write_bytes(elf(0x3E))
-		(self.runtime / "linux" / "x64" / "libmsalruntime.so").write_bytes(elf(0x3E))
 
-	def retarget(self, target: str) -> list[str]:
-		with mock.patch("builtins.print"):
-			retarget_msal_runtime(self.staging, target, self.runtime)
-		return sorted(f.name for f in self.dist.iterdir())
-
-	def test_linux_x64_gets_the_linux_msal_runtime(self) -> None:
-		self.assertEqual(self.retarget("linux-x64"), ["extension.js", "libmsalruntime.so", "msal-node-runtime.node"])
-		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
-
-	def test_arm64_and_alpine_get_none_as_upstream(self) -> None:
-		for target in ("linux-arm64", "alpine-x64", "alpine-arm64"):
-			(self.dist / "msal-node-runtime.node").write_bytes(MACHO)
-			self.assertEqual(self.retarget(target), ["extension.js"], target)
-
-	def test_missing_linux_runtime_stops_the_build(self) -> None:
-		shutil.rmtree(self.runtime / "linux")
-		with self.assertRaises(SystemExit):
-			self.retarget("linux-x64")
-
-	def test_finds_host_binaries_under_any_name(self) -> None:
+	def test_mach_o_and_wrong_elf_are_fatal_under_any_name(self) -> None:
 		bin_dir = self.staging / "node_modules" / "@vscode" / "ripgrep" / "bin"
 		bin_dir.mkdir(parents=True)
 		(bin_dir / "rg").write_bytes(MACHO)
 		(self.staging / "arm.so").write_bytes(elf(0xB7))
+		(self.staging / "ok.node").write_bytes(elf(0x3E))
 		found = foreign_binaries(self.staging, "linux-x64")
-		self.assertEqual(len(found), 4, found)
+		self.assertEqual(len(found), 2, found)
 		self.assertTrue(any("rg: Mach-O" in p for p in found))
 		self.assertTrue(any("arm.so: ELF for machine" in p for p in found))
+		with self.assertRaises(SystemExit), mock.patch("builtins.print"):
+			build_reh.refuse_foreign_binaries(self.staging, "linux-x64")
 
 	def test_glibc_binary_on_musl(self) -> None:
-		self.retarget("alpine-x64")
 		(self.staging / "a.node").write_bytes(elf(0x3E, b"libc.so.6"))
 		(self.staging / "b.node").write_bytes(elf(0x3E, b"libc.musl-x86_64.so.1"))
 		self.assertEqual(foreign_binaries(self.staging, "alpine-x64"), ["a.node: glibc ELF on a musl target"])
+		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
 
 	def test_only_other_platforms_prebuilds_are_exempt(self) -> None:
-		self.retarget("linux-x64")
 		pb = self.staging / "node_modules" / "x" / "prebuilds"
 		(pb / "darwin-arm64").mkdir(parents=True)
 		(pb / "darwin-arm64" / "x.node").write_bytes(MACHO)
@@ -741,14 +866,6 @@ class HostBinaries(unittest.TestCase):
 		(pb / "linux-x64" / "x.node").write_bytes(MACHO)
 		found = foreign_binaries(self.staging, "linux-x64")
 		self.assertEqual(found, ["node_modules/x/prebuilds/linux-x64/x.node: Mach-O (macOS)"])
-
-
-class WindowsAndNativeExtensions(unittest.TestCase):
-	def setUp(self) -> None:
-		self.root = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, self.root)
-		self.staging = self.root / "server"
-		self.staging.mkdir()
 
 	def test_pe_files_are_inert_not_fatal(self) -> None:
 		js = self.staging / "extensions" / "ms-vscode.js-debug" / "src"
@@ -759,43 +876,19 @@ class WindowsAndNativeExtensions(unittest.TestCase):
 		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), ["fs.node: Mach-O (macOS)"])
 		self.assertEqual(len(windows_binaries(self.staging)), 2)
 
-	def test_native_packages(self) -> None:
-		nm = self.root / "nm"
-		r = nm / "@vscode" / "fs-copyfile" / "build" / "Release"
-		r.mkdir(parents=True)
-		(r / "vscode_fs.node").write_bytes(b"x")
-		(nm / "plain").mkdir()
-		(nm / "plain" / "index.js").write_text("")
-		(nm / "a" / "node_modules" / "b").mkdir(parents=True)
-		(nm / "a" / "node_modules" / "b" / "b.node").write_bytes(b"x")
-		self.assertEqual(native_packages(nm), [Path("@vscode/fs-copyfile"), Path("a/node_modules/b")])
+	def test_musl_servers_lose_upstreams_glibc_msal_runtime(self) -> None:
+		# esbuild.mts picks the runtime by VSCODE_ARCH alone, so alpine-x64
+		# gets linux/x64's glibc one, as upstream's own does.
+		for name in ("msal-node-runtime.node", "libmsalruntime.so"):
+			(self.dist / name).write_bytes(elf(0x3E, b"libc.so.6"))
+		self.assertEqual(drop_glibc_msal_runtime(self.staging, "linux-x64"), [])
+		self.assertEqual(len(foreign_binaries(self.staging, "alpine-x64")), 2)
+		with mock.patch("builtins.print"):
+			gone = drop_glibc_msal_runtime(self.staging, "alpine-x64")
+		self.assertEqual(gone, ["libmsalruntime.so", "msal-node-runtime.node"])
+		self.assertEqual(sorted(f.name for f in self.dist.iterdir()), ["extension.js"])
+		self.assertEqual(foreign_binaries(self.staging, "alpine-x64"), [])
 
-	def test_host_built_extension_natives_are_replaced_with_target_built(self) -> None:
-		rel = Path("@vscode/fs-copyfile/build/Release/vscode_fs.node")
-		staged = self.staging / "extensions" / "git" / "node_modules"
-		(staged / rel).parent.mkdir(parents=True)
-		(staged / rel).write_bytes(MACHO)
-		(staged / "@vscode" / "fs-copyfile" / "stale.txt").write_text("")
-		source = self.root / "src"
-		(source / "git").mkdir(parents=True)
-		(source / "git" / "package.json").write_text("{}")
-		(source / "git" / "package-lock.json").write_text("{}")
 
-		def fake_container(target, image, directory, script):
-			self.assertIn("npm ci --omit=dev", script)
-			self.assertTrue((directory / "package-lock.json").is_file())
-			out = directory / "node_modules" / rel
-			out.parent.mkdir(parents=True)
-			out.write_bytes(elf(0x3E))
-
-		with mock.patch("build_reh.in_container", fake_container), \
-			mock.patch("build_reh.ensure_toolchain_image", return_value="img"), \
-			mock.patch("build_reh.remote_node_version", return_value="24"), \
-			mock.patch("builtins.print"):
-			for target in ("linux-x64", "linux-arm64", "alpine-x64", "alpine-arm64"):
-				(staged / rel).write_bytes(MACHO)
-				rebuild_native_extensions(self.staging, target, source)
-				self.assertEqual((staged / rel).read_bytes(), elf(0x3E), target)
-		self.assertFalse((staged / "@vscode" / "fs-copyfile" / "stale.txt").exists())
-		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
-		self.assertEqual(list(self.root.glob(".native-*")), [])
+if __name__ == "__main__":
+	unittest.main()

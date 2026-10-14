@@ -17,12 +17,11 @@ import os
 import sys
 from pathlib import Path
 
-from build_reh import DEFAULT_OUT_DIR, REPO_ROOT, TARGETS, docker_available
+from build_reh import DEFAULT_OUT_DIR, REPO_ROOT, TARGETS, docker_available, time_note
 from dev_reh import run_build, target_problems
 from product_metadata import reh_identity, vscode_commit
 
 LOG_PATH = REPO_ROOT / "dist" / "reh-build.log"
-MINUTES_EACH = 15
 
 
 def in_ci(env: dict[str, str] | None = None) -> bool:
@@ -67,7 +66,7 @@ def ensure(
 		return 1
 	say(
 		f"remote extension hosts to build: {names} (missing or stale in {directory}). "
-		f"Docker is used; this may take ~{MINUTES_EACH} minutes each. "
+		f"They are built in Linux containers in Docker; {time_note()}. "
 		f"Log: {LOG_PATH}  (skip with --without-reh)"
 	)
 	extra = () if directory == DEFAULT_OUT_DIR else ("--out-dir", str(directory))

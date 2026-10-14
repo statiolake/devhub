@@ -427,16 +427,18 @@ one bundle's memory (about 5 GB) where `core-ci`'s three parallel bundles passed
 nightly does; CI refuses to package a fast bundle.
 
 `pnpm dev` also builds the remote extension host for this Mac's CPU
-(`linux-arm64` or `linux-x64`) when it is missing or stale — about 15 minutes,
-needs Docker. Without Docker, or if the build fails, it warns and starts anyway
+(`linux-arm64` or `linux-x64`) when it is missing or stale — in Linux
+containers, the way VS Code builds its own: the first time an hour or more on
+Apple Silicon, then minutes; needs Docker. Without Docker, or if the build fails, it warns and starts anyway
 (remote windows won't work until `scripts/build_reh.py <target>` succeeds).
 `DEVHUB_SKIP_REH_BUILD=1 pnpm dev` skips it. The other three servers are listed,
 not built; see [docs/remote-ssh.md](docs/remote-ssh.md).
 
-The server builds are cached under `~/.cache/devhub/` (finished tarballs per
-identity, `vscode/remote` modules per target, local toolchain Docker images), so
-a patch-only change skips `npm ci` and returning to a built identity builds
-nothing. `scripts/build_reh.py --prune-cache [--keep N]` cleans it; see the
+The server builds are cached: finished tarballs per identity under
+`~/.cache/devhub/reh`, and a Linux build tree per architecture in the Docker
+volume `devhub-reh-work-<arch>`, so a patch-only change skips `npm ci` and
+returning to a built identity builds nothing. `scripts/build_reh.py
+--prune-cache [--keep N]` cleans the first, `--reset-work` the second; see the
 build section of [docs/remote-ssh.md](docs/remote-ssh.md).
 
 `pnpm dev` runs under the `dev` profile, so a source build and the packaged
@@ -488,8 +490,10 @@ own Node version does not matter — the one VS Code's build insists on is
 fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
 rather than complains about. That includes the four remote extension hosts in
 `dist/reh`: any that is missing or stale is built first, with
-`scripts/build_reh.py <those targets>`, announced up front (about 15 minutes
-each, log in `dist/reh-build.log`). That needs **Docker**; without it the build
+`scripts/build_reh.py <those targets>`, announced up front (in Linux
+containers; the first build of each architecture's tree takes an hour or more on
+Apple Silicon, see [docs/remote-ssh.md](docs/remote-ssh.md); log in
+`dist/reh-build.log`). That needs **Docker**; without it the build
 stops and names the missing targets. `pnpm build -- --without-reh` skips them
 for a bundle that opens no remote window. Under CI (`CI` set) nothing is built:
 the nightly downloads the servers its own jobs built.

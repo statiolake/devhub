@@ -3,10 +3,12 @@
 and test with: the glibc server of its own CPU.
 
 `pnpm dev` calls this before it starts the app (apps/desktop/scripts/dev.sh).
-Apple Silicon wants `linux-arm64`, an Intel Mac `linux-x64`; those run in
-Docker natively, so building them is the ~15 minute case. The musl servers and
-the other architecture are emulated and slower, so they are never built here —
-dev.sh only lists them (see docs/remote-ssh.md).
+Apple Silicon wants `linux-arm64`, an Intel Mac `linux-x64`: the server a
+container on this Mac runs natively. It is built the way every server is
+(scripts/build_reh.py: VS Code's own Linux build in an amd64 container, so under
+Rosetta on Apple Silicon) — the first time is the long case, `time_note()`
+says how long. The musl servers and the other architecture are never built
+here — dev.sh only lists them (see docs/remote-ssh.md).
 
 Nothing in here may stop the app from starting. A server that is present and
 current is a file check, with no Docker call. A missing Docker, a failed build
@@ -21,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from build_reh import DEFAULT_OUT_DIR, REPO_ROOT, bundle_problems, docker_available
+from build_reh import DEFAULT_OUT_DIR, REPO_ROOT, bundle_problems, docker_available, time_note
 from product_metadata import reh_identity, vscode_commit
 
 SKIP_ENV = "DEVHUB_SKIP_REH_BUILD"
@@ -84,7 +86,7 @@ def ensure(
 		)
 		return 0
 	say(
-		f"building {target} — this can take ~15 minutes the first time and after any "
+		f"building {target} in Linux containers: {time_note()}. It is rebuilt after any "
 		"patch or VS Code change. The app starts when it is done "
 		f"(skip with {SKIP_ENV}=1). Log: {LOG_PATH}"
 	)

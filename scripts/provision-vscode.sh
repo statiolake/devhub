@@ -14,8 +14,7 @@
 #                          scripts/package-nightly.py packages (`pnpm build`)
 #                   all    both
 #                   deps   neither: dependencies, patches, Electron and the
-#                          built-in extensions only (scripts/build_reh.py runs
-#                          its own `core-ci`)
+#                          built-in extensions only
 #
 # DEVHUB_FAST_VSCODE_BUNDLE decides how out-vscode-min is made; see step 4b.
 # It defaults to 1 on a developer's machine and to 0 when CI is set.
@@ -272,8 +271,8 @@ fi
 #         was not compiled (`--for app` does not compile it), ~10 s against
 #         `npm run compile`'s ~90 s;
 #       * the desktop bundle, minified and with NLS, like core-ci's.
-#     Left out: the two server bundles (scripts/build_reh.py runs its own
-#     `core-ci` for them), the extension bundling (package-nightly.py runs
+#     Left out: the two server bundles (scripts/build_reh.py builds the
+#     servers in Linux containers from a tree of its own), the extension bundling (package-nightly.py runs
 #     `compile-extensions-build`, which cleans .build/extensions first, so
 #     core-ci's copy was discarded anyway), the tsgo type check, the CDN
 #     source-map URL, and `--mangle-privates`. That flag rewrites native

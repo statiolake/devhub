@@ -276,33 +276,79 @@ devhub-reh-linux-x64/
   node_modules/            the server's production dependencies
 ```
 
-**Native modules, for the target.** `vscode/remote/node_modules` holds native
-addons — node-pty, `@parcel/watcher`, kerberos, `@vscode/spdlog`, sqlite3 —
-and the package task ships them as npm installed them. So before packaging
-each target, the script installs them again **for that target**. glibc
-servers are built the way VS Code builds its own: in a `debian:bookworm`
-container (always linux/amd64) with VS Code's cross toolchain and **glibc 2.28
-sysroot** (`vscode-linux-build-agent`'s `<triple>-glibc-2.28-gcc-8.5.0`,
-sha256-pinned from `vscode/build/checksums/vscode-sysroot.txt`) as `CC`/`CXX`
-with `--sysroot`, and `npm_config_arch=arm64` for arm64 — cross-compiled, as
-upstream does, not emulated. So nothing needs a newer glibc than 2.28, the
-floor of the Node 24 the server runs on. musl servers are built in
-`node:<version>-alpine` of the target's platform, which is what upstream does
-for its own Alpine servers. The host's own install is moved aside and put back
-afterwards.
+**Built on Linux, the way VS Code builds its own.** The whole server is built
+in Linux containers, on a copy of the pinned VS Code of its own — never in the
+developer's `vscode/` checkout, whose `node_modules` are the Mac's. It used to
+be gulp on the Mac with only `remote/node_modules` installed in a container,
+and the Mac's natives leaked into the Linux servers through every other door
+(the MSAL broker runtime, git's `@vscode/fs-copyfile`); each patch-up after the
+fact found the next one. Upstream builds every Linux server on a Linux x64
+agent, and so does this now, step for step
+(`vscode/build/azure-pipelines/linux/steps/product-build-linux-setup.yml`,
+`-compile.yml`, `alpine/product-build-alpine.yml`; the steps are
+`scripts/reh_in_container.sh`):
+
+1. **The tree** — the pinned commit (`git archive` of the submodule's commit),
+   unpacked into the Docker volume `devhub-reh-work-<arch>` as a git repository
+   of its own, DevHub's patches applied (`apply-vscode-patches.sh --into`) and
+   DevHub's `product.json` merged in, so esbuild inlines DevHub's names into the
+   server bundle.
+2. **`npm ci`** — in `build/`, then with `npm_config_arch=<arch>` and
+   `VSCODE_ARCH=<arch>`: `source build/azure-pipelines/linux/setup-env.sh`
+   (VS Code's **glibc 2.28 sysroots** and their compilers; for `remote/`,
+   `VSCODE_REMOTE_CC`/`CXX`/`CXXFLAGS`/`LDFLAGS` against
+   `<triple>-glibc-2.28-gcc-8.5.0`), `node build/npm/preinstall.ts`, `npm ci`
+   (five tries), with upstream's `ELECTRON_SKIP_BINARY_DOWNLOAD`,
+   `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`, `ONNXRUNTIME_NODE_INSTALL=skip`. arm64 is
+   cross-compiled by the sysroot's x86-64 compilers, as upstream does, not
+   built in an arm64 container.
+3. **The compile** — `node build/lib/builtInExtensions.ts`,
+   `node build/npm/electronTypes.ts`, `npm run gulp core-ci`, then
+   `compile-copilot-extension-build` and the Copilot SDK staging below.
+4. **musl only: `remote/` again** — in `node:<version>-alpine` of the target's
+   platform, `npm i -g node-gyp-build && npm ci` in `remote/`, which is what
+   `build/npm/postinstall.ts` runs in upstream's Alpine container
+   (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME`). That image's `node` goes into
+   `.build/node/v<version>/<platform>-<arch>/`, where the gulp task looks
+   before it would try `docker run` itself (which a container cannot).
+5. **`npm run gulp vscode-reh-<platform>-<arch>-min-ci`**, and the tree is
+   tarred out to the host for DevHub's own steps below.
+
+The builder image is upstream's agent: `ubuntu:22.04`, always linux/amd64 (the
+sysroot compilers are x86-64 programs), with the Node `.nvmrc` names
+(sha256-checked) and the headers `dependencies-check.yml` installs. One tree
+per architecture serves both of its servers — upstream's linux and alpine
+builds of an architecture are the same `npm ci` and `core-ci` apart from
+`remote/node_modules`, which the tree keeps one of each of. (Upstream's Alpine
+job installs the root without setup-env.sh; here the root natives are built
+against the 2.28 sysroot either way, and none of them reaches a musl server —
+the foreign-binary check below would say so.)
+
+**The MSAL broker runtime on musl.** `microsoft-authentication`'s esbuild
+copies the broker runtime by `VSCODE_ARCH` alone, so upstream's own alpine-x64
+server carries the glibc `linux/x64` one, which musl cannot load. DevHub takes
+it out of musl servers (`drop_glibc_msal_runtime`); the extension falls back to
+its non-broker flows, as upstream's linux-arm64 (which gets none) always does.
+
+**Every binary is for the target.** `refuse_foreign_binaries` reads every file
+in the finished tree: Mach-O anywhere, an ELF of another machine, or on musl an
+ELF that needs `libc.so.6` fails the build; other platforms' `prebuilds/`
+directories are exempt (packages ship those on purpose and load their own), and
+Windows PE files are only counted — nothing on Linux loads them, and upstream's
+servers carry them too.
 
 **glibc floor checked.** Each finished glibc tree is then run through VS
-Code's own `build/azure-pipelines/linux/verify-glibc-requirements.sh` (the
-sysroot's `objdump -T` over every `.node` and `node`): anything needing more
-than `GLIBC_2.28` fails the build (GLIBCXX above 3.4.25 only warns, as
-upstream), after a check that each of those files is an ELF of the target's
-architecture.
+Code's own `build/azure-pipelines/linux/verify-glibc-requirements.sh` with the
+tree's own sysroot `objdump -T` over every `.node` and `node` — the step after
+upstream's server build — after Copilot is taken out, so it checks what ships:
+anything needing more than `GLIBC_2.28` fails the build (GLIBCXX above 3.4.25
+only warns, as upstream).
 
 **musl's C++ runtime goes with it.** The musl Node is linked against
 `libstdc++` and `libgcc_s`, which Alpine does not install by default — VS
 Code's own Alpine server asks for `apk add libstdc++`, and a container with no
 network cannot do that. So the build copies both out of the same
-`node:<version>-alpine` image into `lib/` and sets the `node` binary's run path
+`node:<version>-alpine` image `remote/` was installed in into `lib/` and sets the `node` binary's run path
 to `$ORIGIN/lib`; musl's loader expands `$ORIGIN` to the binary's own
 directory, so the server starts on an Alpine that has never run `apk`.
 
@@ -322,11 +368,13 @@ an entry in `product.json`'s `builtInExtensions`, so the product edit the script
 already makes cannot reach it; there is no flag or environment variable for it;
 and leaving it uncompiled does not work either, because the last step of every
 REH package task walks into the output looking for its SDK and throws when it
-is not there. That step is also the reason the script stages the SDK into
-`.build` itself before packaging: the compile that is supposed to put it there
-did on linux-x64 and did not on linux-arm64, and the only symptom was a missing
-directory in the output tree twenty-five minutes in. What it stages is _files_,
-not a directory — `gulp.dest` recreates the directory entries its source glob
+is not there. That step is also the reason the build stages the SDK into
+`.build` itself before packaging (`stage_copilot_sdk` in
+`scripts/reh_in_container.sh`): `build/.moduleignore` strips `@github/copilot/**`
+from every production dependency stream, so the compile never puts the package
+there (upstream ships the extension as a downloaded VSIX instead), and the only
+symptom was a missing directory in the output tree twenty-five minutes in. What
+it stages is _files_ and the package's `package.json`, not a directory — `gulp.dest` recreates the directory entries its source glob
 yielded, so an SDK subtree whose files were all filtered out (or that npm left
 as a symlink into `@github/copilot-<os>-<arch>`, which a glob that does not
 follow symlinks walks past) reaches `.build` as an empty shell that satisfies
@@ -338,34 +386,27 @@ above exercises.
 **Where, and when.** On every night the app is packaged, not only when the
 submodule moves: the servers are DevHub's patches as much as VS Code's, and
 the app refuses to carry servers of another identity. Two `reh` legs in
-`.github/workflows/nightly.yml`, one per architecture — `linux-x64` and
-`alpine-x64` on an x64 runner, `linux-arm64` and `alpine-arm64` on an arm64
-one — so every container runs natively rather than under emulation, hand their
-tarballs and statements to the macOS job, which downloads them into `dist/reh`
-before `scripts/build-app.sh`. `scripts/package-nightly.py` then checks all
-four against the app's commit and identity (`bundle_problems`) and refuses to
-package if any is missing or stale; a red `reh` leg therefore means no nightly
-that night rather than a nightly that refuses some machines. Nothing is
-published on its own: the `reh-<commit>` releases earlier nightlies made are
+`.github/workflows/nightly.yml`, one per architecture's tree — `linux-x64` and
+`alpine-x64`, `linux-arm64` and `alpine-arm64` — both on x64 `ubuntu-latest`
+runners as upstream's are, with QEMU for the arm64 containers (alpine-arm64's
+`remote/` install, the arm64 start checks). They run the same
+`scripts/build_reh.py` a Mac does; the runner provisions nothing itself. They
+hand their tarballs and statements to the macOS job, which downloads them into
+`dist/reh` before `scripts/build-app.sh`. `scripts/package-nightly.py` then
+checks all four against the app's commit and identity (`bundle_problems`) and
+refuses to package if any is missing or stale; a red `reh` leg therefore means
+no nightly that night rather than a nightly that refuses some machines. Nothing
+is published on its own: the `reh-<commit>` releases earlier nightlies made are
 no longer read by anything.
 
 Locally, `pnpm build` builds whichever of the four servers is missing or stale
 in `dist/reh` before packaging (`scripts/ensure_reh.py`, using the same check as
-`bundle_problems` and `pnpm dev`): Docker required, ~15 minutes each, log in
-`dist/reh-build.log`. Without Docker it fails naming the targets and
-`--without-reh`. It does nothing when `CI` is set, so the nightly's downloaded
-servers are the only ones used there. When a build fails, the servers already
-built stay in `dist/reh` and the error names only the targets still missing.
-
-The musl `node` is not fetched by VS Code's gulp task: upstream reads it out of
-the `node` Docker image with an `execSync` whose buffer is smaller than a Node
-24 binary (128 MB, `ENOBUFS`) and no `--platform`, so an arm64 Mac pulled the
-wrong image for `alpine-x64`. `scripts/build_reh.py` instead streams
-`/usr/local/bin/node` out of `node:<version>-alpine` for the target's platform
-into `vscode/.build/node/v<version>/`, checks the ELF machine and version, and
-the gulp task then finds it and downloads nothing. Every container the script
-starts passes `--platform`, so an arm64 host builds x64 targets under emulation
-and the reverse.
+`bundle_problems` and `pnpm dev`): Docker required, log in
+`dist/reh-build.log`; how long is under "Building the servers locally". Without
+Docker it fails naming the targets and `--without-reh`. It does nothing when
+`CI` is set, so the nightly's downloaded servers are the only ones used there.
+When a build fails, the servers already built stay in `dist/reh` and the error
+names only the targets still missing.
 
 CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
 it is a bundle that is smoke-tested and thrown away, and building four servers
@@ -432,57 +473,57 @@ build).
 ```sh
 scripts/build_reh.py                      # all four, into dist/reh
 scripts/build_reh.py linux-arm64          # or only the ones you need
+scripts/build_reh.py --reset-work alpine-arm64   # start the arm64 tree over
 ```
 
-It needs **Docker** — Docker Desktop, colima, or `dockerd` — for the native
-modules and for the start check, and it says so in one sentence when there is
-none. It provisions the submodule first (`provision-vscode.sh --for deps`: the
-dependencies and patches, not `vscode/out` or `out-vscode-min`, since its own
-`core-ci` bundles from source) unless you pass `--skip-provision`, and
-it edits `vscode/product.json` for the duration of the build and puts it back
-afterwards. That edit is not avoidable: esbuild inlines `product.json` into
-the server bundle, so a server bundled against the submodule's own file calls
-itself `code-server-oss` no matter what the `product.json` next to it says.
+It needs **Docker** — Docker Desktop, colima, or `dockerd` — and says so in one
+sentence when there is none. The host needs nothing else but `python3`, git and
+the `vscode` submodule checked out at the pinned commit: no `npm ci`, no
+provisioning, and the submodule's own files are never edited.
 
-A target of another architecture than the machine's runs its containers under
-emulation (`docker run --platform`): on an Apple Silicon Mac the arm64 servers
-build natively and the x64 ones slowly. When a build moves `serverIdentity` —
-a patch changed — the servers in `dist/reh` built from the old identity are
-removed, and named, when the first new one is written, so the directory never
-holds a mix that DevHub would half refuse.
+On an **Apple Silicon Mac** the builder runs as amd64 under emulation. Turn on
+Docker Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
+emulation"); QEMU is several times slower. Give Docker **at least 12 GB of
+memory** — `core-ci` bundles three trees in parallel, and the script warns
+below that — and roughly 15 GB of disk per architecture's tree.
 
-The tarballs are around 100 MB each.
+How long, as estimates (not yet timed end to end): the first build of an
+architecture's tree — `npm ci` with every nested install, Chromium's clang and
+two sysroots downloaded, `core-ci` — is roughly **40–60 minutes on x64 Linux and
+1.5–2.5 hours on Apple Silicon** under Rosetta; all four servers are two trees.
+After that each server's package step and checks are about **5–15 minutes**, a
+patch edit costs the `core-ci` again but not `npm ci`, and a server whose
+identity is cached is a copy.
 
-### Three caches (about 12 minutes, then seconds)
+When a build moves `serverIdentity` — a patch changed — the servers in
+`dist/reh` built from the old identity are removed, and named, when the first
+new one is written, so the directory never holds a mix that DevHub would half
+refuse. The tarballs are around 100 MB each.
 
-Everything is under `~/.cache/devhub/` (`$XDG_CACHE_HOME/devhub/`) and holds no
-secrets (keys are hashes of files and versions, never of the environment):
+### The caches
 
-| what | where | key |
+| what | where | redone when |
 |---|---|---|
-| finished servers | `reh/<identity>/devhub-reh-<target>.tar.gz` + `.json` | the identity (commit + patches + `REH_REVISION`) |
-| `vscode/remote/node_modules` per target | `reh-modules/<target>-<key>.tar` | target, sha256 of `package-lock.json`, `package.json`, `.npmrc`, Node version, toolchain image id, `REH_REVISION` |
-| compilers and patchelf | Docker image `devhub-reh-toolchain:<libc>-<arch>-<hash>` | hash of its Dockerfile text and the Node version |
+| finished servers | `~/.cache/devhub/reh/<identity>/devhub-reh-<target>.tar.gz` + `.json` | the identity (commit + patches + `REH_REVISION`) changes |
+| the tree: the pinned commit | Docker volume `devhub-reh-work-<arch>`, `vscode/` | the VS Code commit changes (the whole volume starts over) |
+| patches + `product.json` | same, stamp `.devhub/source.stamp` | the identity, the product metadata (minus its date and DevHub commit) or `WORK_REVISION` changes |
+| `npm ci` (root and every nested install) | same, `.devhub/deps.stamp` | any `package.json`, `package-lock.json`, `.npmrc` or `.nvmrc` as patched, the architecture or the builder image changes |
+| `core-ci` + the Copilot compile | same, `.devhub/compile.stamp` | either of the two above |
+| musl `remote/node_modules` | same, `.devhub/remote-musl` | `npm ci` or the musl image changes |
+| builder and musl images | `devhub-reh-builder:<hash>`, `devhub-reh-musl:<arch>-<hash>` | their Dockerfile text changes |
 
-- First build: as before plus a one-off toolchain image build per libc and
-  architecture (a minute or so each; the glibc ones also download
-  VS Code's sysroot); the musl bundling no longer needs
-  network for `apk add patchelf`.
-- A patch-only change (new identity, same lock file): the modules come out of
-  `reh-modules`, so the per-target `npm ci` is skipped; the `core-ci` bundle and
-  the packaging still run.
-- Returning to an identity already built (switching branches back): each
-  target's tarball is verified against its sha256 and copied into `dist/reh`;
-  when all hit, nothing is bundled or built.
-
-`prune_stale` empties `dist/reh` of other identities but never touches the
-caches. `DEVHUB_REH_CACHE` and `DEVHUB_REH_MODULES_CACHE` move them,
-`--no-cache` ignores the finished-server cache, and
-`scripts/build_reh.py --prune-cache [--keep N]` deletes all but the `N` (default
-2) most recently used identities and the oldest module tarballs; the current
-identity is always kept. Nothing is deleted automatically. CI starts with an
-empty cache unless `actions/cache` restores `~/.cache/devhub`, which the
-nightly's server jobs do.
+Nothing in them is secret: keys are hashes of files and versions, never of the
+environment (`GITHUB_TOKEN` goes into the containers by name and nowhere else).
+A target that fails leaves its tree where it stopped, so a rerun — the command
+the error prints — starts at the failed step. `prune_stale` empties `dist/reh`
+of other identities but never touches the caches. `DEVHUB_REH_CACHE` moves the
+server cache and `DEVHUB_REH_WORK_VOLUME` renames the volumes; `--no-cache`
+ignores the server cache; `scripts/build_reh.py --prune-cache [--keep N]`
+deletes all but the `N` (default 2) most recently used identities, the current
+one always kept; `--reset-work` deletes the volumes of the targets'
+architectures before building. Nothing is deleted automatically. The nightly
+restores `~/.cache/devhub/reh` with `actions/cache`; its trees start fresh each
+night.
 
 `--out-dir` puts them elsewhere; `scripts/package-nightly.py --reh-dir` reads
 them from elsewhere.
@@ -516,8 +557,9 @@ building them takes most of an hour.
 `scripts/dev_reh.py` checks the glibc server of this Mac's CPU (`linux-arm64`
 on Apple Silicon, `linux-x64` on Intel) against the current identity — a file
 check, no Docker — and runs `scripts/build_reh.py <target>` only when it is
-missing or stale. That takes about 15 minutes, and `pnpm dev` says so and why
-(the patches or VS Code changed); the output is also in
+missing or stale. The first time that is the long build above (an hour or
+more on Apple Silicon), and `pnpm dev` says so and why (the patches or VS Code
+changed); the output is also in
 `dist/reh-dev-build.log`. It never blocks the app: without Docker running, or if
 the build fails, it prints a warning with the exact command and starts anyway,
 and remote windows stay refused until the server is built. The other three
