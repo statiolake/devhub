@@ -484,11 +484,33 @@ export function Picker({
     );
   };
 
+  // Only keyboard-driven changes scroll: a row under a hovering pointer is
+  // already visible, and nudging the list beneath it makes it jump.
+  const scrollToActive = useRef(false);
   useEffect(() => {
-    listRef.current
-      ?.querySelector('[aria-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
-  }, [activeId]);
+    if (!scrollToActive.current) return;
+    scrollToActive.current = false;
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !row) return;
+    // Scroll the nearest scrollable ancestor by hand so outer containers and
+    // the window never move. Instant, so reduced motion is respected.
+    let scroller: HTMLElement | null = list;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
+      scroller = scroller.parentElement;
+    }
+    if (!scroller || scroller === document.body) {
+      row.scrollIntoView?.({ block: "nearest" });
+      return;
+    }
+    const box = scroller.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    if (at.top < box.top) scroller.scrollTop -= box.top - at.top;
+    else if (at.bottom > box.bottom) {
+      scroller.scrollTop += at.bottom - box.bottom;
+    }
+    row.scrollIntoView?.({ block: "nearest" });
+  }, [active, activeId]);
 
   /**
    * The row that was taken, once one has been.
@@ -576,7 +598,18 @@ export function Picker({
       event.preventDefault();
       if (rows.length === 0) return;
       const delta = arrow === "ArrowDown" ? 1 : -1;
+      scrollToActive.current = true;
       setActive((current) => (current + delta + rows.length) % rows.length);
+      return;
+    }
+    if (event.key === "PageDown" || event.key === "PageUp") {
+      event.preventDefault();
+      if (rows.length === 0) return;
+      const step = event.key === "PageDown" ? 8 : -8;
+      scrollToActive.current = true;
+      setActive((current) =>
+        Math.min(rows.length - 1, Math.max(0, current + step)),
+      );
       return;
     }
     if (event.key === "Enter") {

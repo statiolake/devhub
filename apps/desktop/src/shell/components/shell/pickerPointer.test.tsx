@@ -111,3 +111,31 @@ describe("the picker and the pointer", () => {
     expect(selected()).toHaveAccessibleName(/Gamut/);
   });
 });
+
+describe("keeping the selected row in view", () => {
+  it("scrolls on keyboard moves, wrap-around and paging, but not on hover", () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    renderPicker();
+    const dialog = screen.getByRole("dialog");
+    spy.mockClear();
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(dialog, { key: "n", ctrlKey: true });
+    expect(spy).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(dialog, { key: "PageDown" });
+    expect(selected()).toHaveAccessibleName(/Gamut/);
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(selected()).toHaveAccessibleName(/Alpha/);
+    fireEvent.keyDown(dialog, { key: "ArrowUp" });
+    expect(selected()).toHaveAccessibleName(/Gamut/);
+    fireEvent.keyDown(dialog, { key: "PageUp" });
+    expect(selected()).toHaveAccessibleName(/Alpha/);
+    spy.mockClear();
+    fireEvent.mouseMove(row(/Beta/), { screenX: 1, screenY: 1 });
+    fireEvent.mouseMove(row(/Beta/), { screenX: 5, screenY: 5 });
+    expect(selected()).toHaveAccessibleName(/Beta/);
+    expect(spy).not.toHaveBeenCalled();
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+});
