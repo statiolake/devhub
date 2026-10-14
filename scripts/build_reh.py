@@ -121,6 +121,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -986,7 +987,9 @@ def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path
 		raise SystemExit(f"{gulp_task(target)} produced no {staging}")
 
 	remove_copilot(staging, target)
+	retarget_msal_runtime(staging, target)
 	bundle_musl_runtime(staging, target)
+	refuse_foreign_binaries(staging, target)
 	verify_glibc_floor(staging, target)
 	verify_server_starts(staging, target)
 
@@ -1096,6 +1099,100 @@ COPILOT_RUNTIME_GLOB = "node_modules/@github/copilot-*-*"
 # their `package.json` versions at startup to fill in `product.copilotVersions`
 # — it tolerates their absence, but there is no reason to make it.
 COPILOT_KEPT = ("node_modules/@github/copilot", "node_modules/@github/copilot-sdk")
+
+
+# `extensions/microsoft-authentication/esbuild.mts` copies the MSAL broker
+# runtime for the platform *gulp runs on* into the extension's dist/. Upstream
+# builds each REH on its own OS, so that is right there; DevHub runs gulp on a
+# Mac, so a Linux server got the macOS Mach-O. The npm package ships every
+# platform's runtime, so the Linux one is taken from it — for exactly the arches
+# upstream's esbuild.mts ships (`linuxArches = ['x64']`), and never for musl:
+# the only Linux runtime there is is linked against glibc. Without it the
+# extension falls back to its non-broker flows, as upstream's linux-arm64 does.
+MSAL_RUNTIME_DIST = VSCODE_DIR / "extensions" / "microsoft-authentication" / "node_modules" / "@azure" / "msal-node-runtime" / "dist"
+MSAL_LINUX_ARCHES = ("x64",)
+MSAL_FILE = re.compile(r"^(lib)?msal.*\.(node|dll|dylib|so)$")
+
+
+def retarget_msal_runtime(staging: Path, target: str, runtime_dist: Path = MSAL_RUNTIME_DIST) -> None:
+	"""Replace the host's MSAL runtime in the server with the target's, or none."""
+	dist = staging / "extensions" / "microsoft-authentication" / "dist"
+	if not dist.is_dir():
+		return
+	for f in dist.iterdir():
+		if f.is_file() and MSAL_FILE.match(f.name):
+			f.unlink()
+	if libc_of(target) != "glibc" or arch_of(target) not in MSAL_LINUX_ARCHES:
+		print(f"  {target}: no MSAL broker runtime (upstream ships none for it)")
+		return
+	source = runtime_dist / "linux" / arch_of(target)
+	files = sorted(f for f in source.glob("*") if f.is_file() and MSAL_FILE.match(f.name)) if source.is_dir() else []
+	if not files:
+		raise SystemExit(
+			f"no Linux MSAL runtime in {source}: run `npm ci` in "
+			"vscode/extensions/microsoft-authentication, or read its esbuild.mts if upstream moved it"
+		)
+	for f in files:
+		shutil.copy2(f, dist / f.name)
+	print(f"  {target}: MSAL runtime is linux/{arch_of(target)}'s, not the host's")
+
+
+MACHO_MAGICS = (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
+PE_SUFFIXES = (".node", ".dll", ".exe")
+
+
+def _allowed_foreign(rel: Path, target: str) -> bool:
+	"""The one documented exemption: a node-gyp-build `prebuilds/<platform>-<arch>/`
+	directory for some *other* platform. Packages ship those for every platform
+	on purpose and load only their own (upstream's glibc check skips
+	`*prebuilds*` for the same reason). The target's own prebuilds stay checked."""
+	parts = rel.parts
+	for i, part in enumerate(parts[:-2]):
+		if part == "prebuilds":
+			return not parts[i + 1].startswith(f"linux-{arch_of(target)}")
+	return False
+
+
+def foreign_binaries(staging: Path, target: str) -> list[str]:
+	"""Every file in the server that cannot run on the target.
+
+	Mach-O anywhere, PE for a loadable suffix, an ELF of another machine, and on
+	musl an ELF that needs glibc's libc.so.6. By content, not by name: the
+	glibc check only reads `*.node` and `node`, and a host binary can hide
+	under any name (ripgrep, a helper, a .so).
+	"""
+	machine = ELF_MACHINES[arch_of(target)]
+	problems = []
+	for path in sorted(staging.rglob("*")):
+		if path.is_symlink() or not path.is_file():
+			continue
+		rel = path.relative_to(staging)
+		with path.open("rb") as fh:
+			head = fh.read(20)
+		why = None
+		if head[:4] in MACHO_MAGICS or (head[:4] == b"\xca\xfe\xba\xbe" and 0 < int.from_bytes(head[4:8], "big") < 30):
+			why = "Mach-O (macOS)"
+		elif head[:2] == b"MZ" and path.suffix.lower() in PE_SUFFIXES:
+			why = "PE (Windows)"
+		elif head[:4] == b"\x7fELF" and len(head) >= 20:
+			got = int.from_bytes(head[18:20], "little" if head[5] == 1 else "big")
+			if got != machine:
+				why = f"ELF for machine {got:#x}, not {machine:#x}"
+			elif libc_of(target) == "musl" and b"libc.so.6" in path.read_bytes():
+				why = "glibc ELF on a musl target"
+		if why and not _allowed_foreign(rel, target):
+			problems.append(f"{rel}: {why}")
+	return problems
+
+
+def refuse_foreign_binaries(staging: Path, target: str) -> None:
+	problems = foreign_binaries(staging, target)
+	if problems:
+		raise SystemExit(
+			f"{target}: the server carries binaries that cannot run there "
+			"(most likely built on the gulp host):\n  " + "\n  ".join(problems)
+		)
+	print(f"  {target}: every binary in the server is for {target}")
 
 
 def remove_copilot(staging: Path, target: str) -> None:

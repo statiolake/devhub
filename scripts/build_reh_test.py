@@ -671,3 +671,73 @@ class PruneCache(unittest.TestCase):
 		self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cur", "new"])
 		self.assertEqual(len(list(modules.glob("*.tar"))), 4)
 		self.assertEqual(len(removed), 2 + 6)
+
+
+from build_reh import foreign_binaries, retarget_msal_runtime  # noqa: E402
+
+MACHO = b"\xcf\xfa\xed\xfe" + b"\0" * 28
+
+
+def elf(machine: int, extra: bytes = b"") -> bytes:
+	return b"\x7fELF\x02\x01\x01" + b"\0" * 11 + machine.to_bytes(2, "little") + b"\0" * 12 + extra
+
+
+class HostBinaries(unittest.TestCase):
+	def setUp(self) -> None:
+		self.root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.root)
+		self.staging = self.root / "server"
+		self.dist = self.staging / "extensions" / "microsoft-authentication" / "dist"
+		self.dist.mkdir(parents=True)
+		(self.dist / "msal-node-runtime.node").write_bytes(MACHO)
+		(self.dist / "libmsalruntime.dylib").write_bytes(MACHO)
+		(self.dist / "extension.js").write_text("x")
+		self.runtime = self.root / "runtime"
+		(self.runtime / "linux" / "x64").mkdir(parents=True)
+		(self.runtime / "linux" / "x64" / "msal-node-runtime.node").write_bytes(elf(0x3E))
+		(self.runtime / "linux" / "x64" / "libmsalruntime.so").write_bytes(elf(0x3E))
+
+	def retarget(self, target: str) -> list[str]:
+		with mock.patch("builtins.print"):
+			retarget_msal_runtime(self.staging, target, self.runtime)
+		return sorted(f.name for f in self.dist.iterdir())
+
+	def test_linux_x64_gets_the_linux_msal_runtime(self) -> None:
+		self.assertEqual(self.retarget("linux-x64"), ["extension.js", "libmsalruntime.so", "msal-node-runtime.node"])
+		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
+
+	def test_arm64_and_alpine_get_none_as_upstream(self) -> None:
+		for target in ("linux-arm64", "alpine-x64", "alpine-arm64"):
+			(self.dist / "msal-node-runtime.node").write_bytes(MACHO)
+			self.assertEqual(self.retarget(target), ["extension.js"], target)
+
+	def test_missing_linux_runtime_stops_the_build(self) -> None:
+		shutil.rmtree(self.runtime / "linux")
+		with self.assertRaises(SystemExit):
+			self.retarget("linux-x64")
+
+	def test_finds_host_binaries_under_any_name(self) -> None:
+		bin_dir = self.staging / "node_modules" / "@vscode" / "ripgrep" / "bin"
+		bin_dir.mkdir(parents=True)
+		(bin_dir / "rg").write_bytes(MACHO)
+		(self.staging / "arm.so").write_bytes(elf(0xB7))
+		found = foreign_binaries(self.staging, "linux-x64")
+		self.assertEqual(len(found), 4, found)
+		self.assertTrue(any("rg: Mach-O" in p for p in found))
+		self.assertTrue(any("arm.so: ELF for machine" in p for p in found))
+
+	def test_glibc_binary_on_musl(self) -> None:
+		self.retarget("alpine-x64")
+		(self.staging / "a.node").write_bytes(elf(0x3E, b"libc.so.6"))
+		(self.staging / "b.node").write_bytes(elf(0x3E, b"libc.musl-x86_64.so.1"))
+		self.assertEqual(foreign_binaries(self.staging, "alpine-x64"), ["a.node: glibc ELF on a musl target"])
+
+	def test_only_other_platforms_prebuilds_are_exempt(self) -> None:
+		self.retarget("linux-x64")
+		pb = self.staging / "node_modules" / "x" / "prebuilds"
+		(pb / "darwin-arm64").mkdir(parents=True)
+		(pb / "darwin-arm64" / "x.node").write_bytes(MACHO)
+		(pb / "linux-x64").mkdir()
+		(pb / "linux-x64" / "x.node").write_bytes(MACHO)
+		found = foreign_binaries(self.staging, "linux-x64")
+		self.assertEqual(found, ["node_modules/x/prebuilds/linux-x64/x.node: Mach-O (macOS)"])
