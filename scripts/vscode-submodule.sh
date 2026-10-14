@@ -42,12 +42,36 @@ marker_path() {
 	printf '%s' "$p"
 }
 
-# Every tracked change and every untracked, non-ignored file, hashed. Empty
-# output means the tree is exactly its HEAD.
+# Tracked files VS Code's own build rewrites while DevHub drives it, so their
+# changes are DevHub's pipeline output, not a developer's edit. They are left
+# out of the fingerprint (recorded after patching, i.e. before any build) and
+# out of the legacy patched-files check; `reset` still reverts them.
+#   extensions/copilot/package.json
+#     scripts/build_reh.py runs `gulp compile-copilot-extension-build`, which,
+#     with `CI` in the environment ("Running in CI environment, applying
+#     package.json patch for correct versioning and pre-release status"),
+#     rewrites the extension's version/pre-release fields. DevHub scripts do
+#     not set CI; it comes from the runner or the developer's shell, and
+#     build_reh.py passes VSCODE_QUALITY=stable so the version stays the
+#     pinned one. The file is rewritten all the same.
+BUILD_WRITTEN=(
+	extensions/copilot/package.json
+)
+
+# Pathspec: the whole tree minus BUILD_WRITTEN.
+build_written_excludes() {
+	local f
+	printf '%s\n' .
+	for f in "${BUILD_WRITTEN[@]}"; do printf ':(exclude)%s\n' "$f"; done
+}
+
+# Every tracked change (bar BUILD_WRITTEN) and every untracked, non-ignored
+# file, hashed. Empty output means the tree is its HEAD, give or take those.
 fingerprint() {
-	local changes
+	local changes excludes
+	mapfile -t excludes < <(build_written_excludes)
 	changes="$(
-		git -C "$VSCODE_DIR" diff --binary HEAD
+		git -C "$VSCODE_DIR" diff --binary HEAD -- "${excludes[@]}"
 		git -C "$VSCODE_DIR" ls-files --others --exclude-standard
 	)"
 	[ -z "$changes" ] && return 0
@@ -56,9 +80,10 @@ fingerprint() {
 
 # Whether every change in the tree is to a file patches/vscode modifies.
 only_patched_files_changed() {
-	local changed patched
+	local changed patched excludes
+	mapfile -t excludes < <(build_written_excludes)
 	[ -z "$(git -C "$VSCODE_DIR" ls-files --others --exclude-standard)" ] || return 1
-	changed="$(git -C "$VSCODE_DIR" diff --name-only HEAD | sort -u)"
+	changed="$(git -C "$VSCODE_DIR" diff --name-only HEAD -- "${excludes[@]}" | sort -u)"
 	patched="$(cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null | sed -n 's|^+++ b/||p' | sort -u)"
 	[ -z "$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$patched"))" ]
 }
@@ -91,11 +116,11 @@ cmd_reset() {
 			exit 1
 		fi
 	fi
-	if [ -n "$fp" ]; then
+	if [ -n "$(git -C "$VSCODE_DIR" status --porcelain)" ]; then
 		git -C "$VSCODE_DIR" checkout -- .
 		git -C "$VSCODE_DIR" clean -fdq
 	fi
-	[ -z "$(fingerprint)" ] || die "vscode/ is still not clean after reverting the DevHub patches"
+	[ -z "$(git -C "$VSCODE_DIR" status --porcelain)" ] || die "vscode/ is still not clean after reverting the DevHub patches"
 	cmd_record
 }
 
