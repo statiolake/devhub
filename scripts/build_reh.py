@@ -225,6 +225,23 @@ def remote_node_version() -> str:
 GLIBC_BASE_IMAGE = "debian:bullseye"
 
 
+# Debian 11 left LTS in August 2026 and moved to archive.debian.org; the
+# image's stock sources (deb.debian.org, incl. debian-security) now 404 on
+# the pool files their indexes still list. Point apt at the archive for all
+# three suites and accept its frozen (expired) Release files. Kept bullseye
+# for its glibc 2.31 floor; building on a newer host against a 2.28 sysroot,
+# as upstream VS Code does, would be the longer-term alternative.
+APT_ARCHIVE_SOURCES = (
+	"printf '%s\\n'"
+	" 'deb http://archive.debian.org/debian bullseye main'"
+	" 'deb http://archive.debian.org/debian bullseye-updates main'"
+	" 'deb http://archive.debian.org/debian-security bullseye-security main'"
+	" > /etc/apt/sources.list"
+	" && rm -f /etc/apt/sources.list.d/*"
+	" && echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99archive"
+)
+
+
 def remote_modules_image(target: str, node_version: str) -> str:
 	"""The stock image the toolchain image is built on.
 
@@ -258,7 +275,8 @@ def toolchain_dockerfile(target: str, node_version: str) -> str:
 		dist = node_dist_name(target, node_version)
 		url = f"https://nodejs.org/dist/v{node_version}"
 		run = (
-			"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
+			APT_ARCHIVE_SOURCES
+			+ " && apt-get update -qq && apt-get install -y -qq --no-install-recommends "
 			"ca-certificates curl xz-utils libkrb5-dev python3 make g++ >/dev/null"
 			" && rm -rf /var/lib/apt/lists/*"
 			" && cd /tmp"

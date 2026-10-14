@@ -450,6 +450,17 @@ class ToolchainImage(unittest.TestCase):
 		self.assertNotIn("node:24.21.0-bullseye", x64)
 		self.assertTrue(toolchain_dockerfile("alpine-x64", "1.2.3").startswith("FROM node:1.2.3-alpine\n"))
 
+	def test_bullseye_apt_uses_the_archive(self) -> None:
+		# bullseye is EOL: deb.debian.org's security pool 404s
+		for target in ("linux-x64", "linux-arm64"):
+			df = toolchain_dockerfile(target, "24.21.0")
+			self.assertIn("deb http://archive.debian.org/debian bullseye main", df)
+			self.assertIn("deb http://archive.debian.org/debian-security bullseye-security main", df)
+			self.assertIn("Acquire::Check-Valid-Until", df)
+			self.assertNotIn("deb.debian.org", df)
+			self.assertLess(df.index("archive.debian.org"), df.index("apt-get update"))
+		self.assertNotIn("archive.debian.org", toolchain_dockerfile("alpine-arm64", "24.21.0"))
+
 
 class ModulesCacheKey(unittest.TestCase):
 	def setUp(self) -> None:
