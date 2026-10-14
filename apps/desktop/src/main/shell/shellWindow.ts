@@ -776,11 +776,11 @@ export class ShellWindow {
 		// renderer — so an announcement sent before `focus()` had moved
 		// anything would be answered with the state it was about to leave.
 		this.publishFocus();
-		if (landing === "terminal") this.landInTerminal();
+		if (landing === "editor") this.landInEditor();
 	}
 
 	/**
-	 * The shell of the workbench the keyboard has just been placed in, for a
+	 * The editor group of the workbench the keyboard has just been placed in, for a
 	 * move that lands there (`Landing` in `chords.ts`).
 	 *
 	 * Asked by the placement that ends the move and by nothing later, so there
@@ -788,22 +788,22 @@ export class ShellWindow {
 	 * the model, the model published the arrangement, and the keyboard was
 	 * placed, all before this line. When the keys did not arrive in a
 	 * workbench — the move landed on an Agent, the workbench is starting or
-	 * gone, a question is standing, DevHub is not in front — there is no shell
-	 * of anything to focus, and the landing is simply not had; the move still
+	 * gone, a question is standing, DevHub is not in front — there is no editor
+	 * group to focus, and the landing is simply not had; the move still
 	 * happened.
 	 */
-	private landInTerminal(): void {
+	private landInEditor(): void {
 		const view = this.views.find(
 			(candidate) =>
 				!candidate.isDestroyed() && this.isSurfaceFocused(candidate),
 		);
 		if (!view) return;
 		// The workbench's own command, forwarded over upstream's own door for
-		// main (`vscode:runAction`) — the same one `Cmd+Q T` goes through. It
-		// creates a terminal when there is none, which is what a person asking
-		// for the shell of an editor that has not had one wants.
+		// main (`vscode:runAction`) — the same door the other forwarded commands use. It
+		// puts the keyboard in the active editor group, not just the view, which
+		// is what a person asking for the editor wants.
 		view.webContents.send("vscode:runAction", {
-			id: "workbench.action.terminal.focus",
+			id: "workbench.action.focusActiveEditorGroup",
 			from: "menu",
 		});
 	}

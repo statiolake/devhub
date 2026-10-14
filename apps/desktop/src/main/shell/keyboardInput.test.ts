@@ -277,7 +277,7 @@ describe("a chord, as Electron delivers it", () => {
 	it("hands the jump to Scratch to the host with the landing a toggle has", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyJ", "J", { shift: true })]);
-		expect(calls).toEqual(["toggleScratch terminal"]);
+		expect(calls).toEqual(["toggleScratch editor"]);
 	});
 
 	it("keeps the chord through the Shift that arrives before the key", () => {

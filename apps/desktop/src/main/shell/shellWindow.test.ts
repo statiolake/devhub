@@ -686,18 +686,18 @@ describe("the shell window's workbench views", () => {
 		});
 
 		/**
-		 * A toggle landing on an editor lands in its shell.
+		 * A toggle landing on an editor lands in its editor group.
 		 *
 		 * `Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at
 		 * an editor ask for it (see `Landing` in `chords.ts`). The command is
 		 * the workbench's, so it is forwarded rather than reimplemented — and
 		 * it is forwarded by the placement that ends the move, after the
-		 * keyboard is in that workbench, never before: a `terminal.focus` sent
-		 * any earlier would focus a terminal in a view the keys are not going
+		 * keyboard is in that workbench, never before: a `focusActiveEditorGroup` sent
+		 * any earlier would focus an editor group in a view the keys are not going
 		 * to. There is nothing kept between the asking and the landing, because
 		 * the move and its placement are one call.
 		 */
-		describe("and the terminal a move lands in", () => {
+		describe("and the editor a move lands in", () => {
 			const runActions = (view: WorkbenchView): unknown[] =>
 				(
 					view.webContents as unknown as {
@@ -706,13 +706,16 @@ describe("the shell window's workbench views", () => {
 				).sent
 					.filter((one) => one.channel === "vscode:runAction")
 					.map((one) => one.payload);
-			const TERMINAL = { id: "workbench.action.terminal.focus", from: "menu" };
+			const EDITOR_GROUP = {
+				id: "workbench.action.focusActiveEditorGroup",
+				from: "menu",
+			};
 
 			it("is focused in the workbench the keyboard has landed in", () => {
 				show(shell, a);
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				expect(focused).toBe(contentsOf(a));
-				expect(runActions(a)).toEqual([TERMINAL]);
+				expect(runActions(a)).toEqual([EDITOR_GROUP]);
 				expect(runActions(b)).toEqual([]);
 			});
 
@@ -726,18 +729,18 @@ describe("the shell window's workbench views", () => {
 
 			it("is asked for once, by the move that asked, and not by later placements", () => {
 				show(shell, a);
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				showPage(shell);
 				show(shell, a);
 				theWindow().emit("focus");
-				expect(runActions(a)).toEqual([TERMINAL]);
+				expect(runActions(a)).toEqual([EDITOR_GROUP]);
 			});
 
 			it("means nothing when the move landed on an Agent", () => {
 				// `Cmd+Q Shift+J` back to an Agent: an Agent is a terminal already.
 				show(shell, a);
 				showPage(shell);
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				expect(focused).toBe(page());
 				expect(runActions(a)).toEqual([]);
 			});
@@ -750,7 +753,7 @@ describe("the shell window's workbench views", () => {
 					surface: { kind: "editor", editorKey: "/folder/not-open" },
 					keyboard: "editor",
 				});
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				for (const view of [a, b, c]) expect(runActions(view)).toEqual([]);
 			});
 
@@ -759,14 +762,14 @@ describe("the shell window's workbench views", () => {
 				// arrived and there is nothing to have landed in.
 				theWindow().inFront = false;
 				show(shell, a);
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				expect(runActions(a)).toEqual([]);
 			});
 
 			it("is dropped while a question stands over the workbench", () => {
 				show(shell, a);
 				shell.picker.openModal({ kind: "workspace-picker" });
-				shell.focusSurface("terminal");
+				shell.focusSurface("editor");
 				expect(runActions(a)).toEqual([]);
 			});
 		});

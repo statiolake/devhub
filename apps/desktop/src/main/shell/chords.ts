@@ -126,11 +126,11 @@ export function matchChord(
  *
  * The toggles are the exception, and both of them, for one reason: `Cmd+Q
  * Cmd+J` and `Cmd+Q Shift+J` are how somebody goes *to the other place they
- * work*, and at an editor that place is its shell. So a toggle that lands on
- * an editor lands in its integrated terminal. Landing on an Agent, it means
- * nothing — an Agent is a terminal already.
+ * work*, and at an editor that place is the editor itself. So a toggle that lands on
+ * an editor lands in the editor group, with the keyboard in it. Landing on an
+ * Agent, it means nothing — an Agent is a terminal already.
  */
-export type Landing = "terminal";
+export type Landing = "editor";
 
 /**
  * What running a chord comes to, once it has been resolved against the model.
@@ -459,7 +459,7 @@ export function resolveChord(
 			// Both directions, unconditionally: the model holds the memory this
 			// turns on, so there is nothing here to decide and nothing to gate
 			// on. On Scratch with nothing remembered it is a no-op there.
-			return { kind: "toggle-scratch", focus: "terminal" };
+			return { kind: "toggle-scratch", focus: "editor" };
 
 		case "toggle_split": {
 			// Both halves of one pair, side by side — the twin of
@@ -510,7 +510,7 @@ export function resolveChord(
 				return {
 					kind: "select-context",
 					context: { kind: "workspace", workspaceId: workspace.id },
-					focus: "terminal",
+					focus: "editor",
 				};
 			}
 			// Back to the Agent you were last in, or the first one if you have

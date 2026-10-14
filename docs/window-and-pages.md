@@ -31,7 +31,7 @@ draws; so it has to be something the pointer can enter. That the box stays up
 while the pointer is in it is arbitrated in **main** (`tooltipView.ts`), not in
 either page: the row and the box are different views, the Sidebar's leave is
 identical whether the pointer went into the tooltip or off to the editor, and
-the tooltip page never hears of the row. The Sidebar sends a *request*
+the tooltip page never hears of the row. The Sidebar sends a _request_
 (`releaseTooltip`), main holds the box for a short grace, and the tooltip
 page's own report of where its pointer is decides. Everything that is not
 about the pointer — a scroll, a resize, the window losing focus, a modal
@@ -48,7 +48,7 @@ appears. The same view, at the same rectangle on screen, added to the window's
 own `contentView` draws and animates. Nothing automated can show this —
 `win.capturePage()` does not include child views either — so it is written
 down here rather than guarded by a screenshot test, and the tests that stand
-in for it are about the *shape*: what a workbench attaches ends up in the
+in for it are about the _shape_: what a workbench attaches ends up in the
 window's child list and never in the workbench's own.
 
 So every view in this window is a **sibling**, including the ones a workbench
@@ -60,7 +60,7 @@ belongs to and below everything the shell draws over the content area.
 `WorkbenchView.contentView` is what makes that possible without a second
 owner of the layout. VS Code believes it is the window's content view; it is a
 container that registers what it is given with `ShellWindow` and wraps that
-view so the two things VS Code says about it become *wishes*:
+view so the two things VS Code says about it become _wishes_:
 
 - the rectangle its renderer measured, which is in the **workbench's own
   document** — the only frame a renderer can measure in. `windowLayout()`
@@ -69,7 +69,7 @@ view so the two things VS Code says about it become *wishes*:
   trip through any page, and can never draw over the Sidebar or an Agent's
   pane;
 - whether VS Code wants it drawn, which is half the answer. It is drawn when
-  that wish is true *and* its workbench is the one on screen, so selecting
+  that wish is true _and_ its workbench is the one on screen, so selecting
   another Workspace takes it away and coming back brings it back where it was.
 
 The workbench going away takes everything it attached out of the window with
@@ -79,7 +79,7 @@ No page measures anything the owner decides. The window's own page used to
 leave a hole for the workbench, measure it with a `ResizeObserver` and report
 it back, which made main's idea of the layout a page's idea of it one frame
 late and made every window resize a round trip through a renderer. Now main
-computes the rectangle and *tells* the page (`workbenchAreaChanged`), and the
+computes the rectangle and _tells_ the page (`workbenchAreaChanged`), and the
 page draws its own states into the same rectangle the workbench is laid into.
 
 **A page's own box is not the window.** `window.innerWidth` inside a
@@ -95,15 +95,15 @@ Seven entries, seven preloads, seven bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
 file main loaded.**
 
-| Page | Entry | What it draws | What it may ask for |
-|---|---|---|---|
-| the window's own page | `index.html` | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout` |
-| the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip` |
-| the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard` |
-| the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
-| the tooltip | `tooltip.html` | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's. |
-| the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
-| Settings | `settings.html` | its own window | `SETTINGS_CHANNELS` in full, plus the failure contract every page has |
+| Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
+| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
+| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip`                                                 |
+| the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
+| the notices           | `toasts.html`   | what the application has to say, over whatever is on screen                                                     | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`                                                                                                                                        |
+| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links              | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                               |
+| the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
+| Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a
 DevHub page" means.
@@ -120,7 +120,7 @@ as an interface; `preload/<page>.ts` builds exactly that object and exposes it;
 `scripts/build-preloads.mjs` bundles each one on its own, because a sandboxed
 preload is one CommonJS file with no module resolver behind it and cannot
 `require` a shared chunk. A member a page does not own is not refused at
-runtime — it is *absent*, which TypeScript can say and a running page cannot
+runtime — it is _absent_, which TypeScript can say and a running page cannot
 work around.
 
 That is not tidiness. `devhub:modals-changed` is sent to the picker view
@@ -230,7 +230,7 @@ never raised again; what began here is raised and never drawn here.**
 `main/shell/publishAudience.ts` is the only thing that decides who is told.
 App-scoped failures go to the `toasts` view — a page with no model, no
 snapshot and nothing else that could fail while it is telling you something
-failed — and it is a child of the shell window, so a notice is drawn *over* a
+failed — and it is a child of the shell window, so a notice is drawn _over_ a
 workbench, which the window's own page could never do.
 
 The Settings window is the one exception, and it is about being seen rather
@@ -240,9 +240,9 @@ report nobody reads.
 
 ## The palette is a third audience
 
-There are three kinds of thing main says, not two. A *projection* describes the
-model and goes to every page that draws from it. A *failure* is an event and
-goes to the one page that draws failures. A *palette* is neither: it is how
+There are three kinds of thing main says, not two. A _projection_ describes the
+model and goes to every page that draws from it. A _failure_ is an event and
+goes to the one page that draws failures. A _palette_ is neither: it is how
 everything in the window is painted, and it goes to every page DevHub draws
 chrome on — which is all seven.
 
@@ -251,7 +251,7 @@ That last one used to go out on the projection audience, which coincided with
 on its bridge, no model behind it, and had therefore never been recoloured at
 runtime. Nobody noticed, because a stale palette is only visible after a theme
 change. The tooltip would have been the second page with the same silent gap —
-the Sidebar *is* in the projection audience, so the tooltip it used to draw
+the Sidebar _is_ in the projection audience, so the tooltip it used to draw
 recoloured correctly, and one on its own page would not have. `chromeAudience`
 states the rule instead of it being a coincidence, and the test on it is that
 every page with `onTheme` is in it.
@@ -265,7 +265,7 @@ answer in `terminal-colors.json` beside `state.json`, and sends it on the
 appearance projection like an edited setting (`main/shell/terminalColors.ts`).
 Palettes named under `[appearance.terminal_theme.light]` / `.dark` win outright.
 
-Three scopes survive underneath this, and they are about *subject* rather than
+Three scopes survive underneath this, and they are about _subject_ rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a
 Workspace's over its surface, and the failure that stopped a page from starting
 fills that page, because there is nothing behind it to draw instead.
@@ -337,19 +337,18 @@ somebody in it was its workbench reporting its own folder back as a second
 `open_folder`, which found the Workspace and selected it. When a workbench
 DevHub builds stopped reporting itself, `Cmd+Q F` stopped arriving anywhere.
 
-Where the keys go *inside* a workbench is the workbench's own business, with
-one exception: **a toggle that lands on an editor lands in its shell.**
+Where the keys go _inside_ a workbench is the workbench's own business, with
+one exception: **a toggle that lands on an editor lands in its editor group.**
 `Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at an editor —
 Scratch on the way out, or the editor it came from on the way back — focus
-that workbench's integrated terminal (`workbench.action.terminal.focus`,
-which creates one when there is none), because the toggles are how somebody
-goes to the other place they work, and at an editor that place is its shell.
-Every other way of choosing the same workbench — a sidebar click, `Cmd+Q
+that workbench's active editor group (`workbench.action.focusActiveEditorGroup`),
+not its integrated terminal, so the keyboard is in the text and not just on the
+view. Every other way of choosing the same workbench — a sidebar click, `Cmd+Q
 N/P`, a digit, the pickers — leaves it wherever it was last typed into.
 
 The intent is `Landing` in `chords.ts`, carried by the effect (`focus:
-"terminal"`) and spent by the placement that ends the move:
-`focusSurface("terminal")`, which forwards the command to the workbench the
+"editor"`) and spent by the placement that ends the move:
+`focusSurface("editor")`, which forwards the command to the workbench the
 keyboard has just been put in, when it is one. Nothing is kept between the
 asking and the landing, because the move, the arrangement it publishes and
 the placement are one synchronous call in main. (It used to be armed on one
@@ -411,7 +410,7 @@ completes nothing and cancels the chord.
 Because the handler is per WebContents and installed for all of them, arming a
 chord in one view and completing it in another is one chord, and the split into
 six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
-`dismiss_alert` used to be routed *to the page* because what they acted on was
+`dismiss_alert` used to be routed _to the page_ because what they acted on was
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
 
@@ -475,7 +474,7 @@ the key is what is matched.
 Plain `Cmd+0` is deliberately unbound, and an unbound chord over a terminal is
 one the terminal gets.
 
-**The size is one number, and it lives in main.** The zoom is an *offset* in
+**The size is one number, and it lives in main.** The zoom is an _offset_ in
 whole pixels from `[appearance] terminal_font_size`, kept in DevHub's own state
 file (`terminal.zoom_offset`, schema version 9) because `settings.toml` is the
 person's file and DevHub does not write it. Editing the setting therefore moves
@@ -508,7 +507,7 @@ and then somewhere new cuts Forward off; Back and Forward do not record
 themselves (the cursor moves first, so the move arrives at the entry it
 already points to); the same place twice in a row is one entry; the two
 halves of one split are one place (swapping the keyboard between them updates
-the entry); a closed Agent or Workspace is *skipped*, not removed; and only the
+the entry); a closed Agent or Workspace is _skipped_, not removed; and only the
 newest 100 entries are kept. Each arrow is disabled when there is nowhere it
 would go, answered by the same rule the move obeys. History is per session:
 the state file says where the window opens, and Back starts there.
@@ -518,14 +517,14 @@ has its own Back and Forward over cursor positions
 (`workbench.action.navigateBack`/`navigateForward`). Every input is therefore
 decided by the surface it lands on, the way the zoom keys are:
 
-| Input | Over DevHub's own pages (window, Sidebar, Agents) | Over a workbench |
-|---|---|---|
-| `Cmd+[` / `Cmd+]` | app history (`main/shell/historyKeys.ts`) | untouched — VS Code's Outdent/Indent Line |
-| `Ctrl+-` / `Ctrl+Shift+-` | untouched (a terminal's control character) | untouched — VS Code's own Back/Forward |
-| mouse buttons 4/5 (`MouseEvent.button` 3/4) | app history (`shell/historyButtons.ts`) | VS Code's own, by its `mouseBackForwardToNavigate` |
-| `app-command` `browser-backward`/`-forward` | app history (Windows/Linux only; never fires on macOS) | untouched |
-| trackpad `swipe` left/right | app history | untouched |
-| the title bar's arrows | **always app history** | **always app history** |
+| Input                                       | Over DevHub's own pages (window, Sidebar, Agents)      | Over a workbench                                   |
+| ------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
+| `Cmd+[` / `Cmd+]`                           | app history (`main/shell/historyKeys.ts`)              | untouched — VS Code's Outdent/Indent Line          |
+| `Ctrl+-` / `Ctrl+Shift+-`                   | untouched (a terminal's control character)             | untouched — VS Code's own Back/Forward             |
+| mouse buttons 4/5 (`MouseEvent.button` 3/4) | app history (`shell/historyButtons.ts`)                | VS Code's own, by its `mouseBackForwardToNavigate` |
+| `app-command` `browser-backward`/`-forward` | app history (Windows/Linux only; never fires on macOS) | untouched                                          |
+| trackpad `swipe` left/right                 | app history                                            | untouched                                          |
+| the title bar's arrows                      | **always app history**                                 | **always app history**                             |
 
 `Cmd+[`/`Cmd+]` are the Mac's own Back and Forward (Finder, Safari, Xcode),
 free on every DevHub page, and the workbench is left with its bindings intact.
@@ -542,7 +541,7 @@ mouse still work.
 
 There is no ring drawn around the window. A DOM overlay in the window's own
 page is behind every workbench view, which is to say hidden exactly when there
-is something to say — so an unread Agent is announced by the *window*: a Dock
+is something to say — so an unread Agent is announced by the _window_: a Dock
 badge, and a critical bounce while DevHub is not in front. See
 `main/shell/windowAttention.ts`.
 
@@ -572,12 +571,12 @@ decidable, and the answer was that it is clipped, because the rail's view is
 below a readable width at all, so the rail had no hover and an expanded row's
 sentence wrapped into a ribbon: one cause, two complaints.
 
-So the tooltip is a child of the *window* whose rectangle is its own content,
+So the tooltip is a child of the _window_ whose rectangle is its own content,
 the way the `toasts` view already is. `RowTooltip.tsx` is a sender now. It
-keeps the three things only it can know — that the pointer has to *rest*
+keeps the three things only it can know — that the pointer has to _rest_
 (300ms; the keyboard does not, because a row reached with the arrows was
 chosen), that there is one tooltip for the whole tree, and what it says — and
-sends an anchor in the *window's* coordinates. That conversion is one addition:
+sends an anchor in the _window's_ coordinates. That conversion is one addition:
 the row's box, plus the rectangle main tells the view it occupies
 (`sidebarAreaChanged`). Never `window.screenX`, and never the view's own box,
 which is stale for a while after main moves it.
@@ -622,10 +621,10 @@ Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before
 stage 0 and after stage 4:
 
-| | median | runs |
-|---|---|---|
+|        | median | runs                                            |
+| ------ | ------ | ----------------------------------------------- |
 | before | 0.977s | 1.542 (cold), 0.955, 0.996, 0.977, 0.973, 0.980 |
-| after | 0.970s | 1.065 (cold), 0.960, 0.949, 0.977, 0.966, 0.975 |
+| after  | 0.970s | 1.065 (cold), 0.960, 0.949, 0.977, 0.966, 0.975 |
 
 Unchanged, to the precision the measurement has. The first paint does not
 depend on a page round trip: every child view is created in `ShellWindow`'s

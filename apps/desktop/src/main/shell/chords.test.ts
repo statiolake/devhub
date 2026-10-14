@@ -436,7 +436,7 @@ describe("the two halves of a workspace", () => {
 			),
 		).toEqual({
 			...selects({ kind: "workspace", workspaceId: "two" }),
-			focus: "terminal",
+			focus: "editor",
 		});
 	});
 
@@ -649,10 +649,10 @@ describe("the layout toggles", () => {
 					context: { kind: "agent", agentId: "b1" },
 				}),
 			),
-		).toEqual({ kind: "toggle-scratch", focus: "terminal" });
+		).toEqual({ kind: "toggle-scratch", focus: "editor" });
 		expect(run("toggle_scratch", snapshotOf())).toEqual({
 			kind: "toggle-scratch",
-			focus: "terminal",
+			focus: "editor",
 		});
 	});
 
