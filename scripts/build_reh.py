@@ -988,6 +988,7 @@ def build_target(target: str, commit: str, identity: str, out_dir: Path) -> Path
 
 	remove_copilot(staging, target)
 	retarget_msal_runtime(staging, target)
+	rebuild_native_extensions(staging, target)
 	bundle_musl_runtime(staging, target)
 	refuse_foreign_binaries(staging, target)
 	verify_glibc_floor(staging, target)
@@ -1172,8 +1173,12 @@ def foreign_binaries(staging: Path, target: str) -> list[str]:
 		why = None
 		if head[:4] in MACHO_MAGICS or (head[:4] == b"\xca\xfe\xba\xbe" and 0 < int.from_bytes(head[4:8], "big") < 30):
 			why = "Mach-O (macOS)"
-		elif head[:2] == b"MZ" and path.suffix.lower() in PE_SUFFIXES:
-			why = "PE (Windows)"
+		elif head[:2] == b"MZ":
+			# Inert on Linux: nothing loads a PE there. Upstream's own Linux
+			# servers carry these (js-debug's win32-*.node natives, loaded only
+			# on win32; PSReadLine DLLs for PowerShell shell integration;
+			# @microsoft/mxc-sdk's Windows sandbox binaries). See windows_binaries.
+			continue
 		elif head[:4] == b"\x7fELF" and len(head) >= 20:
 			got = int.from_bytes(head[18:20], "little" if head[5] == 1 else "big")
 			if got != machine:
@@ -1185,7 +1190,22 @@ def foreign_binaries(staging: Path, target: str) -> list[str]:
 	return problems
 
 
+def windows_binaries(staging: Path) -> list[str]:
+	"""PE files in the server: inert on Linux, and shipped by upstream too."""
+	found = []
+	for path in sorted(staging.rglob("*")):
+		if path.is_symlink() or not path.is_file() or path.suffix.lower() not in PE_SUFFIXES:
+			continue
+		with path.open("rb") as fh:
+			if fh.read(2) == b"MZ":
+				found.append(str(path.relative_to(staging)))
+	return found
+
+
 def refuse_foreign_binaries(staging: Path, target: str) -> None:
+	pe = windows_binaries(staging)
+	if pe:
+		print(f"  {target}: info: {len(pe)} Windows PE file(s) left in place (never loaded on Linux; upstream ships them too)")
 	problems = foreign_binaries(staging, target)
 	if problems:
 		raise SystemExit(
@@ -1193,6 +1213,72 @@ def refuse_foreign_binaries(staging: Path, target: str) -> None:
 			"(most likely built on the gulp host):\n  " + "\n  ".join(problems)
 		)
 	print(f"  {target}: every binary in the server is for {target}")
+
+
+# build/lib/extensions.ts `nativeExtensions`: "must be built on the platform
+# that is being built". DevHub's gulp runs on the Mac, so their node_modules
+# natives in the server (git's @vscode/fs-copyfile, imported unconditionally
+# by extensions/git/src/repository.ts) are the host's Mach-O.
+NATIVE_EXTENSIONS = ("git", "microsoft-authentication")
+
+
+def native_extension_script() -> str:
+	"""Install an extension's production deps in its toolchain image.
+
+	The extension's own scripts are dropped (they are gulp/dev tasks); its
+	dependencies' install scripts run, so node-gyp builds against the image's
+	toolchain (the glibc 2.28 sysroot via CC/CXX, or Alpine's musl)."""
+	return "set -e; npm pkg delete scripts; npm ci --omit=dev --ignore-scripts=false"
+
+
+def native_packages(node_modules: Path) -> list[Path]:
+	"""Package directories (relative to `node_modules`) holding a `.node` addon."""
+	found = set()
+	for f in node_modules.rglob("*.node"):
+		if f.is_symlink() or not f.is_file():
+			continue
+		parts = f.relative_to(node_modules).parts
+		# innermost node_modules/<name> or node_modules/@scope/<name>
+		idx = 0
+		for i, part in enumerate(parts[:-1]):
+			if part == "node_modules":
+				idx = i + 1
+		n = 2 if parts[idx].startswith("@") else 1
+		found.add(Path(*parts[: idx + n]))
+	return sorted(found)
+
+
+def replace_native_packages(built: Path, staged: Path) -> list[str]:
+	"""Swap every native package in `staged` node_modules for the one in `built`."""
+	replaced = []
+	for rel in native_packages(built):
+		dest = staged / rel
+		if not dest.exists():
+			continue
+		shutil.rmtree(dest)
+		shutil.copytree(built / rel, dest, symlinks=True)
+		replaced.append(str(rel))
+	return replaced
+
+
+def rebuild_native_extensions(staging: Path, target: str, source: Path | None = None) -> None:
+	"""Replace host-built natives of each native extension with target-built ones."""
+	source = source or VSCODE_DIR / "extensions"
+	for name in NATIVE_EXTENSIONS:
+		staged = staging / "extensions" / name / "node_modules"
+		if not staged.is_dir() or not native_packages(staged):
+			continue
+		work = staging.parent / f".native-{target}-{name}"
+		shutil.rmtree(work, ignore_errors=True)
+		work.mkdir(parents=True)
+		for f in ("package.json", "package-lock.json"):
+			shutil.copy2(source / name / f, work / f)
+		image = ensure_toolchain_image(target, remote_node_version())
+		print(f"  {target}: building {name}'s native dependencies in {image}")
+		in_container(target, image, work, native_extension_script())
+		replaced = replace_native_packages(work / "node_modules", staged)
+		shutil.rmtree(work, ignore_errors=True)
+		print(f"  {target}: {name}: target-built {', '.join(replaced) or 'nothing'}")
 
 
 def remove_copilot(staging: Path, target: str) -> None:

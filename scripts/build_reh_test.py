@@ -673,7 +673,7 @@ class PruneCache(unittest.TestCase):
 		self.assertEqual(len(removed), 2 + 6)
 
 
-from build_reh import foreign_binaries, retarget_msal_runtime  # noqa: E402
+from build_reh import foreign_binaries, native_packages, rebuild_native_extensions, retarget_msal_runtime, windows_binaries  # noqa: E402
 
 MACHO = b"\xcf\xfa\xed\xfe" + b"\0" * 28
 
@@ -741,3 +741,61 @@ class HostBinaries(unittest.TestCase):
 		(pb / "linux-x64" / "x.node").write_bytes(MACHO)
 		found = foreign_binaries(self.staging, "linux-x64")
 		self.assertEqual(found, ["node_modules/x/prebuilds/linux-x64/x.node: Mach-O (macOS)"])
+
+
+class WindowsAndNativeExtensions(unittest.TestCase):
+	def setUp(self) -> None:
+		self.root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.root)
+		self.staging = self.root / "server"
+		self.staging.mkdir()
+
+	def test_pe_files_are_inert_not_fatal(self) -> None:
+		js = self.staging / "extensions" / "ms-vscode.js-debug" / "src"
+		js.mkdir(parents=True)
+		(js / "win32-app-container-tokens.win32-x64-msvc.node").write_bytes(b"MZ" + b"\0" * 30)
+		(self.staging / "PSReadLine.dll").write_bytes(b"MZ" + b"\0" * 30)
+		(self.staging / "fs.node").write_bytes(MACHO)
+		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), ["fs.node: Mach-O (macOS)"])
+		self.assertEqual(len(windows_binaries(self.staging)), 2)
+
+	def test_native_packages(self) -> None:
+		nm = self.root / "nm"
+		r = nm / "@vscode" / "fs-copyfile" / "build" / "Release"
+		r.mkdir(parents=True)
+		(r / "vscode_fs.node").write_bytes(b"x")
+		(nm / "plain").mkdir()
+		(nm / "plain" / "index.js").write_text("")
+		(nm / "a" / "node_modules" / "b").mkdir(parents=True)
+		(nm / "a" / "node_modules" / "b" / "b.node").write_bytes(b"x")
+		self.assertEqual(native_packages(nm), [Path("@vscode/fs-copyfile"), Path("a/node_modules/b")])
+
+	def test_host_built_extension_natives_are_replaced_with_target_built(self) -> None:
+		rel = Path("@vscode/fs-copyfile/build/Release/vscode_fs.node")
+		staged = self.staging / "extensions" / "git" / "node_modules"
+		(staged / rel).parent.mkdir(parents=True)
+		(staged / rel).write_bytes(MACHO)
+		(staged / "@vscode" / "fs-copyfile" / "stale.txt").write_text("")
+		source = self.root / "src"
+		(source / "git").mkdir(parents=True)
+		(source / "git" / "package.json").write_text("{}")
+		(source / "git" / "package-lock.json").write_text("{}")
+
+		def fake_container(target, image, directory, script):
+			self.assertIn("npm ci --omit=dev", script)
+			self.assertTrue((directory / "package-lock.json").is_file())
+			out = directory / "node_modules" / rel
+			out.parent.mkdir(parents=True)
+			out.write_bytes(elf(0x3E))
+
+		with mock.patch("build_reh.in_container", fake_container), \
+			mock.patch("build_reh.ensure_toolchain_image", return_value="img"), \
+			mock.patch("build_reh.remote_node_version", return_value="24"), \
+			mock.patch("builtins.print"):
+			for target in ("linux-x64", "linux-arm64", "alpine-x64", "alpine-arm64"):
+				(staged / rel).write_bytes(MACHO)
+				rebuild_native_extensions(self.staging, target, source)
+				self.assertEqual((staged / rel).read_bytes(), elf(0x3E), target)
+		self.assertFalse((staged / "@vscode" / "fs-copyfile" / "stale.txt").exists())
+		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
+		self.assertEqual(list(self.root.glob(".native-*")), [])
