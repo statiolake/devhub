@@ -67,6 +67,7 @@ export interface ControlHandlers {
 	tell(
 		command: TellCommand,
 		origin: string | undefined,
+		machine?: string | undefined,
 	): Promise<{ readonly message: string; readonly data: unknown }>;
 	installCli(): Promise<string>;
 	/**
@@ -329,7 +330,11 @@ export async function answerControlRequest(
 			case "metrics":
 				return { ok: true, message: await handlers.metrics() };
 			case "tell": {
-				const answer = await handlers.tell(request.command, request.origin);
+				const answer = await handlers.tell(
+					request.command,
+					request.origin,
+					request.machine,
+				);
 				return { ok: true, message: answer.message, data: answer.data };
 			}
 			case "install-cli":

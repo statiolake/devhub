@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeSocketDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	callerContext,
+	expandWorkspacePath,
 	main,
 	parseArguments,
 	requestFor,
@@ -588,6 +589,38 @@ describe("devhub --tell on the command line", () => {
 				"/home/d",
 			),
 		).toMatchObject({ command: { repo: "/work/app" } });
+	});
+
+	it("says which machine a host's devhub is on, so its paths are read there", () => {
+		const caller = callerContext({
+			DEVHUB_MACHINE: "ssh:box",
+			DEVHUB_ORIGIN: "ssh:box\tw1\tA1",
+		});
+		expect(
+			requestFor(
+				parseArguments(["--tell", "agent", "new", "--workspace", "."]),
+				"/srv/app",
+				"/home/d",
+				undefined,
+				caller,
+			),
+		).toEqual({
+			kind: "tell",
+			command: { verb: "agent-new", workspace: "/srv/app" },
+			origin: "ssh:box\tw1\tA1",
+			machine: "ssh:box",
+		});
+	});
+
+	it("makes a workspace spelled as a relative path absolute, and nothing else", () => {
+		expect(expandWorkspacePath(".", "/srv/app", "/home/d")).toBe("/srv/app");
+		expect(expandWorkspacePath("../lib", "/srv/app", "/home/d")).toBe(
+			"/srv/lib",
+		);
+		expect(expandWorkspacePath("~/x", "/srv/app", "/home/d")).toBe("/home/d/x");
+		expect(expandWorkspacePath("scratch", "/srv", "/home/d")).toBe("scratch");
+		expect(expandWorkspacePath("w1", "/srv", "/home/d")).toBe("w1");
+		expect(expandWorkspacePath("/abs", "/srv", "/home/d")).toBe("/abs");
 	});
 
 	it("puts piped text where '-' stood", () => {

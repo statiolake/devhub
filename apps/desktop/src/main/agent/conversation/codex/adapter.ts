@@ -180,8 +180,13 @@ export interface CodexAdapterOptions {
 	/**
 	 * DevHub's own instructions for the thread (the `/devhub` skill's pointer,
 	 * `agent/devhubSkill.ts`), sent with `thread/start` and `thread/resume`.
+	 * A function is asked each time: on a host the skill's path is known only
+	 * once DevHub has written it there, which is after this adapter is made.
 	 */
-	readonly developerInstructions?: string | undefined;
+	readonly developerInstructions?:
+		| string
+		| (() => string | undefined)
+		| undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -706,9 +711,7 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.call("thread/resume", {
 				threadId: session,
 				cwd: this.options.cwd,
-				...(this.options.developerInstructions === undefined
-					? {}
-					: { developerInstructions: this.options.developerInstructions }),
+				...this.instructions(),
 			} satisfies ThreadResumeParams);
 		});
 		return { kind: "write", lines };
@@ -1344,12 +1347,16 @@ export class CodexAdapter implements ProtocolAdapter {
 		}
 	}
 
+	/** `developerInstructions` as of now: a host's skill is known only once the host is. */
+	private instructions(): { developerInstructions?: string } {
+		const given = this.options.developerInstructions;
+		const text = typeof given === "function" ? given() : given;
+		return text === undefined ? {} : { developerInstructions: text };
+	}
+
 	private openThread(): void {
 		const { cwd } = this.options;
-		const instructions =
-			this.options.developerInstructions === undefined
-				? {}
-				: { developerInstructions: this.options.developerInstructions };
+		const instructions = this.instructions();
 		// A server started again goes on with the thread already open.
 		const resumeThreadId = this.mainThread ?? this.options.resumeThreadId;
 		if (

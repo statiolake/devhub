@@ -454,6 +454,7 @@ import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
 	devhubSkillPaths,
+	devhubSkillText,
 	writeDevhubSkill,
 	type DevhubSkill,
 } from "../agent/devhubSkill.js";
@@ -461,7 +462,7 @@ import { launcherScript } from "../cli/install.js";
 import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
-	callerFromOrigin,
+	tellCaller,
 	TellService,
 	type IssueAssignRequest,
 	type TellAnswer,
@@ -1109,7 +1110,17 @@ export class AppController {
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		const skill = this.writeAgentSkill(userDataPath);
 		this.agentWiring = wireAgents({
-			devhubSkill: (machine) => (machine === "local" ? skill : undefined),
+			// This Mac's skill is written at startup; another machine's is
+			// written there with its `devhub` command, when its terminal
+			// launcher is installed (`RemoteShellRuntime.terminalLauncher`).
+			devhubSkill: async (machine) =>
+				machine === "local"
+					? skill
+					: (
+							await this.terminalLauncherFor(runtimeById(machine)).catch(
+								() => undefined,
+							)
+						)?.skill,
 			runtimeFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			model: () => this.coordinator.model,
 			machineOf: (workspaceId) => this.machineOf(workspaceId),
@@ -4586,6 +4597,7 @@ export class AppController {
 			entryName: TERMINAL_ENTRY_BUNDLE,
 			cliText: readCliEntryBundle(APP_ROOT),
 			cliEntryName: CLI_ENTRY_BUNDLE,
+			skillText: devhubSkillText,
 			serverDataFolderName:
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			serverInstallKey: REH_INSTALL_KEY,
@@ -6408,10 +6420,11 @@ export class AppController {
 	tellFromCli(
 		command: TellCommand,
 		origin: string | undefined,
+		machine?: string | undefined,
 	): Promise<TellAnswer> {
 		return new TellService(this.tellPorts()).run(
 			command,
-			callerFromOrigin(origin),
+			tellCaller(origin, machine),
 		);
 	}
 

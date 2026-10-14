@@ -117,7 +117,9 @@ export interface AgentWiringOptions {
 	 * The `/devhub` skill for Agents on `machine`, or nothing where there is
 	 * none (`agent/devhubSkill.ts`).
 	 */
-	readonly devhubSkill?: (machine: RuntimeId) => DevhubSkill | undefined;
+	readonly devhubSkill?: (
+		machine: RuntimeId,
+	) => Promise<DevhubSkill | undefined>;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -215,28 +217,33 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		profile: AgentProfile,
 		root: string,
 	): AgentConversation => {
-		const skill = options.devhubSkill?.(machine);
-		const skilled = withDevhubSkill(profile, skill);
+		// Known once the host is opened: on another machine the skill is a
+		// file DevHub writes there, which can be after this conversation is
+		// made. The adapter asks for its instructions when it opens a thread,
+		// which is after that.
+		let skill: DevhubSkill | undefined;
 		return (
 			registry.get(agentId) ??
 			registry.open(
 				agentId,
 				(publish) =>
 					new AgentConversation(
-						openedLater(async () =>
-							hostOn(
+						openedLater(async () => {
+							skill = await options.devhubSkill?.(machine);
+							const skilled = withDevhubSkill(profile, skill);
+							return hostOn(
 								new HostLink(
 									options.machineRuntime(machine),
 									await stateDirectory(machine, agentId),
 								),
 								(session) => guiAgentCli(skilled, session),
-							),
-						),
+							);
+						}),
 						adapterFor(profile, {
 							bootId,
 							cwd: root,
 							clientVersion: options.clientVersion,
-							developerInstructions:
+							developerInstructions: () =>
 								skill === undefined
 									? undefined
 									: codexDevhubInstructions(skill),
@@ -491,7 +498,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				}
 				const skilled = withDevhubSkill(
 					profile,
-					options.devhubSkill?.(machine),
+					await options.devhubSkill?.(machine),
 				);
 				const cli: AgentSessionCommand = {
 					file: profile.command,
@@ -808,7 +815,10 @@ function adapterFor(
 		readonly bootId: string;
 		readonly cwd: string;
 		readonly clientVersion: string;
-		readonly developerInstructions?: string | undefined;
+		readonly developerInstructions?:
+			| string
+			| (() => string | undefined)
+			| undefined;
 	},
 ): ProtocolAdapter {
 	switch (profile.kind) {

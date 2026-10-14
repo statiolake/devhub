@@ -646,6 +646,47 @@ describe("the terminal launcher on the host", () => {
 		expect(await readFile(launcher.path, "utf8")).toContain(remoteSocket);
 	});
 
+	it("puts a devhub on the host that says which machine it is on", async () => {
+		const launcher = await runtimeWith().terminalLauncher(spec);
+		expect(launcher.binDirectory).toMatch(
+			new RegExp(`^${remoteHome}/\\.devhub/terminal/bin-[0-9a-f]{12}$`),
+		);
+		const shim = `${launcher.binDirectory ?? ""}/devhub`;
+		const script = await readFile(shim, "utf8");
+		expect(script).toContain("DEVHUB_MACHINE='ssh:build-box.example.com'");
+		expect(script).toContain(`${remoteHome}/.devhub-server/bin/c0ffee/node`);
+		expect(script).toMatch(
+			/DEVHUB_CONTROL_SOCKET='[^']*\/control-[0-9a-f]{12}\.sock'/,
+		);
+		expect((await stat(shim)).mode & 0o777).toBe(0o755);
+	});
+
+	it("writes the /devhub skill on the host, naming the host's devhub", async () => {
+		const launcher = await runtimeWith().terminalLauncher({
+			...spec,
+			skillText: (cli) => `run ${cli}\n`,
+		});
+		const skill = launcher.skill;
+		expect(skill).toBeDefined();
+		expect(skill?.cli).toBe(`${launcher.binDirectory ?? ""}/devhub`);
+		expect(skill?.root).toMatch(
+			new RegExp(`^${remoteHome}/\\.devhub/terminal/skill-[0-9a-f]{12}$`),
+		);
+		expect(skill?.skillFile).toBe(
+			`${skill?.root ?? ""}/.claude/skills/devhub/SKILL.md`,
+		);
+		expect(await readFile(skill?.skillFile ?? "", "utf8")).toBe(
+			`run ${skill?.cli ?? ""}\n`,
+		);
+		expect((await stat(skill?.skillFile ?? "")).mode & 0o777).toBe(0o600);
+		expect((await stat(skill?.root ?? "")).mode & 0o777).toBe(0o700);
+	});
+
+	it("writes no skill when none is asked for", async () => {
+		const launcher = await runtimeWith().terminalLauncher(spec);
+		expect(launcher.skill).toBeUndefined();
+	});
+
 	// A unix socket left by a previous DevHub is a file, and sshd will not bind
 	// over one unless the host was configured to — which is the host's business.
 	// Removing it from this side needs no such configuration.

@@ -366,6 +366,15 @@ export interface RemoteTerminalPaths {
 	readonly cliEntry: string;
 	/** The REH's bundled `node`, which is the Node that is certainly there. */
 	readonly node: string;
+	/**
+	 * The `/devhub` skill's root for Agents on that machine — the directory
+	 * Claude's `--add-dir=` names; the SKILL.md is under
+	 * `.claude/skills/devhub/`. Tagged like the bin directory, because the
+	 * skill names that DevHub's `devhub` by its full path.
+	 */
+	readonly skillRoot: string;
+	/** The SKILL.md itself. */
+	readonly skillFile: string;
 }
 
 /**
@@ -388,8 +397,11 @@ export function remoteTerminalPaths(request: {
 	const directory = posix.join(request.home, REMOTE_DEVHUB_DIRECTORY);
 	const entryRoot = posix.join(directory, REMOTE_ENTRY_DIRECTORY);
 	const tag = remoteProfileTag(request.controlSocketPath);
+	const skillRoot = posix.join(directory, `skill-${tag}`);
 	return {
 		directory,
+		skillRoot,
+		skillFile: posix.join(skillRoot, ".claude", "skills", "devhub", "SKILL.md"),
 		launcher: posix.join(directory, `${TERMINAL_LAUNCHER_NAME}-${tag}`),
 		entryRoot,
 		entry: posix.join(entryRoot, request.entryName),

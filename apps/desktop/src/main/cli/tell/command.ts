@@ -32,7 +32,8 @@ export type TellCommand =
 	| { readonly verb: "agents"; readonly workspace?: string }
 	| {
 			readonly verb: "agent-new";
-			readonly workspace: string;
+			/** Absent: the workspace of the pane that asked (`DEVHUB_ORIGIN`). */
+			readonly workspace?: string;
 			readonly profile?: string;
 			readonly name?: string;
 			readonly prompt?: string;
@@ -111,9 +112,11 @@ workspaces
 agents
   agents [--workspace <w>]         list agents: id, name, kind, status,
                                    unread, open requests, activity
-  agent new --workspace <w> [--profile <p>] [--name <n>] [--gui|--tui]
+  agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]
             [--prompt <text>|-]    start an agent (Cmd+Q c) and, with
-                                   --prompt, tell it something once it is up
+                                   --prompt, tell it something once it is up;
+                                   without --workspace, in the workspace of
+                                   the terminal or agent asking
   agent read <a> [--last <n>] [--since <cursor>]
                                    the transcript of a GUI agent, as text;
                                    prints a cursor to pass as --since
@@ -146,7 +149,8 @@ app
   focus <agent|workspace>          select it in DevHub
   notify <text>                    show a notification in DevHub
 
-<w> is a workspace id, its folder, its name, or "scratch".
+<w> is a workspace id, its folder, its name, or "scratch". A folder is a
+folder on the machine devhub runs on: on an SSH host, the host's.
 <a> is an agent id (or a unique prefix of one) or its name.`;
 
 export type TellParse =
@@ -374,13 +378,10 @@ function parseAgent(
 				switches: ["--gui", "--tui"],
 			});
 			positionals(flags, []);
-			const workspace = one(flags, "--workspace");
-			if (workspace === undefined)
-				throw new Refusal("agent new needs --workspace <w>.");
 			return {
 				verb: "agent-new",
-				workspace,
 				...defined({
+					workspace: one(flags, "--workspace"),
 					profile: one(flags, "--profile"),
 					name: one(flags, "--name"),
 					prompt: one(flags, "--prompt"),
@@ -550,7 +551,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 		case "agent-new":
 			return {
 				verb: "agent-new",
-				workspace: text(record, "workspace"),
+				...optionalText(record, "workspace"),
 				...optionalText(record, "profile"),
 				...optionalText(record, "name"),
 				...optionalText(record, "prompt"),

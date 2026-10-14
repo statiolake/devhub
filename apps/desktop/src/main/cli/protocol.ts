@@ -227,6 +227,13 @@ export type ControlRequest =
 			readonly kind: "tell";
 			readonly command: TellCommand;
 			readonly origin?: string;
+			/**
+			 * Which computer the asking `devhub` runs on (`DEVHUB_MACHINE`, set
+			 * by the shim DevHub writes on a host or in a container), so the
+			 * paths in the command are read on that machine even when no pane
+			 * origin says so: an Agent's own shell, a script on the host.
+			 */
+			readonly machine?: string;
 	  }
 	| {
 			/** An Agent for the workspace the current directory belongs to. */
@@ -521,6 +528,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				...(record["origin"] === undefined
 					? {}
 					: { origin: requireString(record["origin"], "origin") }),
+				...(record["machine"] === undefined
+					? {}
+					: { machine: requireString(record["machine"], "machine") }),
 			};
 		case "add-agent":
 			return {

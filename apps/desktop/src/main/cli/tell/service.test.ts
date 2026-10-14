@@ -9,6 +9,7 @@ import type {
 import {
 	answeredBy,
 	callerFromOrigin,
+	tellCaller,
 	questionAnswer,
 	TellService,
 	type IssueAssignRequest,
@@ -300,6 +301,68 @@ describe("devhub --tell, in the app", () => {
 		await expect(
 			service.run({ verb: "agents", workspace: "nope" }, undefined),
 		).rejects.toThrow(/no open workspace/);
+	});
+
+	it("knows a caller by its machine alone when no pane says more", () => {
+		expect(tellCaller(undefined, "ssh:box")).toEqual({
+			machine: "ssh:box",
+			workspaceId: undefined,
+			agentId: undefined,
+			paneless: true,
+		});
+		expect(tellCaller("ssh:box\tw1\tnone", "ssh:other")).toEqual(
+			callerFromOrigin("ssh:box\tw1\tnone"),
+		);
+		expect(tellCaller(undefined, undefined)).toBeUndefined();
+		expect(tellCaller(undefined, "")).toBeUndefined();
+	});
+
+	it("reads a folder as a folder on the caller's machine", async () => {
+		const { service, ports } = setup();
+		ports.spaces.push(
+			workspace({
+				id: "w2",
+				name: "app-on-box",
+				machine: "ssh:box",
+				agents: [],
+			}),
+		);
+		const fromBox = await service.run(
+			{ verb: "agents", workspace: "/src/app" },
+			tellCaller(undefined, "ssh:box"),
+		);
+		expect(fromBox.message).toBe("No agents are running.");
+		const fromHere = await service.run(
+			{ verb: "agents", workspace: "/src/app" },
+			callerFromOrigin("local\tw1\tnone"),
+		);
+		expect(fromHere.message).toContain("Claude 1");
+		// A caller that cannot say where it is gets every machine's, and
+		// a name that is two of them is refused rather than guessed.
+		await expect(
+			service.run({ verb: "agents", workspace: "/src/app" }, undefined),
+		).rejects.toThrow(/names 2 workspaces/);
+		await expect(
+			service.run(
+				{ verb: "agents", workspace: "/src/app" },
+				tellCaller(undefined, "ssh:elsewhere"),
+			),
+		).rejects.toThrow(/no open workspace/);
+	});
+
+	it("starts an agent in the asking pane's workspace when none is named", async () => {
+		const { service, ports } = setup();
+		await service.run(
+			{ verb: "agent-new" },
+			callerFromOrigin("local\tw1\taaaa1111-0000"),
+		);
+		expect(ports.calls[0]).toMatch(/^create w1 /);
+		await expect(
+			service.run({ verb: "agent-new" }, tellCaller(undefined, "ssh:box")),
+		).rejects.toThrow(/needs --workspace/);
+		await expect(service.run({ verb: "agent-new" }, undefined)).rejects.toThrow(
+			/needs --workspace/,
+		);
 	});
 
 	it("opens a workspace on the caller's machine", async () => {

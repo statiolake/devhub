@@ -58,6 +58,16 @@ describe("devhub --tell's arguments", () => {
 		expect(refusal("workspace", "open")).toContain("<path>");
 	});
 
+	it("reads agent new without a workspace, for the asking pane's", () => {
+		expect(told("agent", "new", "--profile", "claude")).toEqual({
+			verb: "agent-new",
+			profile: "claude",
+		});
+		expect(tellCommandFrom({ verb: "agent-new" })).toEqual({
+			verb: "agent-new",
+		});
+	});
+
 	it("reads agent new", () => {
 		expect(
 			told(
@@ -81,7 +91,6 @@ describe("devhub --tell's arguments", () => {
 			prompt: "fix it",
 			presentation: "gui",
 		});
-		expect(refusal("agent", "new")).toContain("--workspace");
 		expect(
 			refusal("agent", "new", "--workspace", "w", "--gui", "--tui"),
 		).toContain("--gui");

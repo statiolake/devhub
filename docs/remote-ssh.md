@@ -800,6 +800,50 @@ that is **already** reverse-forwarded onto the host. Nothing new is opened:
   at all gets no PATH set: a pane that can run `devhub` and not `ls` would be
   worse than a pane with no `devhub`
 
+#### What it carries, and the `/devhub` skill on a host
+
+Every request the host's `devhub` sends says where it comes from, in two
+fields, because they answer two questions:
+
+- `machine` — `DEVHUB_MACHINE`, written into the shim (`ssh:<host>`, or the
+  container's id): which computer the **paths** in the request are on. A file
+  opens in the Workspace on that machine whose root contains it, `devhub
+  --tell workspace open .` opens the host's folder on the host, and a `<w>`
+  given as a folder (`--workspace /srv/app`, or `.`, made absolute where it was
+  typed) matches only Workspaces on that machine — the host's `/srv/app` is
+  never this Mac's. `--tell` carries it too, so a `devhub` run outside a
+  DevHub pane (an Agent's subshell, a script on the host) still says where it is.
+- `origin` — the pane's `DEVHUB_ORIGIN` (`<machine>\t<workspace>\t<agent>`):
+  which Workspace and Agent is **asking**. `devhub --tell agent new` with no
+  `--workspace` starts the Agent in the asking pane's Workspace, and an answer
+  is credited to the asking Agent.
+
+Agents started on a host get `/devhub` as on this Mac. When the machine's
+launcher is installed, DevHub also writes the skill's `SKILL.md` to
+`~/.devhub/terminal/skill-<tag>/.claude/skills/devhub/` (0700 directory, 0600
+file), naming the host's shim by its full path; a Claude Agent there is given
+`--add-dir=<that directory>`, and a Codex GUI Agent's `developerInstructions`
+point at that `SKILL.md`. A skill that cannot be written is logged and skipped;
+the Agents start without it.
+
+Why a reverse-forwarded socket and not upstream's remote CLI path
+(`VSCODE_IPC_HOOK_CLI` → server → client window): that path exists only in
+terminals the REH's own pty host made (see above), it ends in a workbench
+window rather than in DevHub's main process, and an Agent DevHub starts in tmux
+— with no workbench window open at all — has no window to go through. The
+socket needs only the ssh master DevHub already holds. In a container the same
+shim talks to the same kind of socket, made by a relay in `listen` mode under
+`docker exec` (`docs/remote-containers.md`), so every machine has one protocol.
+
+Security: the forwarded socket is `~/.devhub/terminal/control-<tag>.sock` in
+a 0700 directory owned by the person's account, named by a digest of this
+DevHub's own socket path (so two profiles never share one, and the stale one a
+previous DevHub left is removed before the forward is made). Anyone who can
+reach it can already run commands as that account on that host; it gives them
+nothing more there, but it does let them drive DevHub here — which is why the
+directory is 0700 and why nothing in it is exported through the environment.
+The forward lives on the ssh master and goes with it.
+
 #### The PATH a pane gets
 
 Not through `new-session -e`, and that is not a detail. tmux takes a new pane's

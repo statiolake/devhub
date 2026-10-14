@@ -321,6 +321,13 @@ export interface TerminalLauncherSpec {
 	 */
 	readonly cliText: string;
 	readonly cliEntryName: string;
+	/**
+	 * The `/devhub` skill's SKILL.md, given the path of the `devhub` command
+	 * it should tell an Agent to run (`agent/devhubSkill.ts`). Written beside
+	 * the command on a machine DevHub is not running on, so that an Agent
+	 * there has the skill too. Absent: no skill is written.
+	 */
+	readonly skillText?: ((cli: string) => string) | undefined;
 	/** `product.json`'s `serverDataFolderName`: where the REH lives over there. */
 	readonly serverDataFolderName: string;
 	/**
@@ -411,6 +418,20 @@ export interface TerminalLauncher {
 	 * one in front of it would be DevHub overruling a choice they made.
 	 */
 	readonly binDirectory: string | undefined;
+	/**
+	 * The `/devhub` skill written on this machine, for Agents started here:
+	 * `root` goes to Claude's `--add-dir=`, `skillFile` into Codex's
+	 * instructions, `cli` is the command it names. Undefined on the machine
+	 * DevHub runs on (that skill is written at startup), and where none was
+	 * asked for.
+	 */
+	readonly skill?:
+		| {
+				readonly root: string;
+				readonly skillFile: string;
+				readonly cli: string;
+		  }
+		| undefined;
 }
 
 /** A `forwardLoopbackPort` held open. */

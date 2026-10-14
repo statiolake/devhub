@@ -58,6 +58,7 @@ import {
 	remoteTerminalPaths,
 	remoteCliScript,
 	terminalLauncherScript,
+	type RemoteTerminalPaths,
 } from "../terminal/launcher.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
@@ -1230,6 +1231,7 @@ export abstract class RemoteShellRuntime {
 			}),
 			0o755,
 		);
+		const skill = await this.#installSkill(paths, spec);
 		return {
 			path: paths.launcher,
 			unreachable: await this.publishControlSocket(
@@ -1237,6 +1239,49 @@ export abstract class RemoteShellRuntime {
 				spec.controlSocketPath,
 			),
 			binDirectory: paths.cliBinDirectory,
+			...(skill === undefined ? {} : { skill }),
+		};
+	}
+
+	/**
+	 * The `/devhub` skill for Agents on this machine, naming the `devhub`
+	 * just written here by its full path — so an Agent on a host drives
+	 * DevHub through the same forwarded socket a pane's `devhub` does.
+	 *
+	 * A skill that cannot be written is said and skipped, never a reason to
+	 * refuse the terminals: Agents here then start without it, as before.
+	 */
+	async #installSkill(
+		paths: RemoteTerminalPaths,
+		spec: TerminalLauncherSpec,
+	): Promise<TerminalLauncher["skill"]> {
+		if (spec.skillText === undefined) return undefined;
+		const directory = posix.dirname(paths.skillFile);
+		const made = await this.sh(
+			`mkdir -p -- ${shellQuote(directory)} && chmod 700 ${shellQuote(paths.skillRoot)}`,
+		);
+		if (made.code !== 0) {
+			console.error(
+				`[devhub] ${this.id}: could not make the /devhub skill directory: ${lastLine(made.stderr.toString("utf8"))}`,
+			);
+			return undefined;
+		}
+		try {
+			await this.writeTextFile(
+				paths.skillFile,
+				spec.skillText(paths.cli),
+				0o600,
+			);
+		} catch (failure: unknown) {
+			console.error(
+				`[devhub] ${this.id}: could not write the /devhub skill: ${String(failure)}`,
+			);
+			return undefined;
+		}
+		return {
+			root: paths.skillRoot,
+			skillFile: paths.skillFile,
+			cli: paths.cli,
 		};
 	}
 

@@ -27,6 +27,7 @@
 
 import { connect } from "node:net";
 import { homedir, tmpdir } from "node:os";
+import { posix } from "node:path";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import {
 	commandLauncher,
@@ -472,6 +473,7 @@ export function requestFor(
 				kind: "tell",
 				command: expandTellPaths(command.command, cwd, home),
 				...(caller.origin === undefined ? {} : { origin: caller.origin }),
+				...(caller.machine === undefined ? {} : { machine: caller.machine }),
 			};
 	}
 }
@@ -489,9 +491,37 @@ function expandTellPaths(
 			return command.repo === undefined
 				? command
 				: { ...command, repo: expandPath(command.repo, cwd, home) };
+		case "agents":
+		case "agent-new":
+			return command.workspace === undefined
+				? command
+				: {
+						...command,
+						workspace: expandWorkspacePath(command.workspace, cwd, home),
+					};
 		default:
 			return command;
 	}
+}
+
+/**
+ * A `<w>` spelled as a relative path (`.`, `./x`, `~/x`) made absolute here,
+ * where it was typed: the app cannot know this shell's cwd, and on a host it
+ * is a path on the host. Ids, names and absolute roots pass through.
+ */
+export function expandWorkspacePath(
+	workspace: string,
+	cwd: string,
+	home: string,
+): string {
+	return workspace === "." ||
+		workspace === ".." ||
+		workspace.startsWith("./") ||
+		workspace.startsWith("../") ||
+		workspace === "~" ||
+		workspace.startsWith("~/")
+		? posix.normalize(expandPath(workspace, cwd, home))
+		: workspace;
 }
 
 /**

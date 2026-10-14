@@ -21,8 +21,12 @@
  *   `$devhub` mean "read and follow this SKILL.md". Codex has no flag that
  *   adds a skills directory, and its own skill roots are the person's.
  *
- * Only Agents on this Mac get it: the launcher and the socket are here, and a
- * host's Agent reaching DevHub goes through the host's own `devhub`.
+ * Agents on another machine (an SSH host) get the same text, written there
+ * under `~/.devhub/terminal/skill-<tag>/` by `RemoteShellRuntime.terminalLauncher`
+ * beside the `devhub` shim DevHub installs on that machine, whose full path
+ * it names. That shim reaches this DevHub over the control socket
+ * reverse-forwarded onto the host (`ssh -O forward -R`), and says which
+ * machine it is on, so paths it sends are read there (`docs/remote-ssh.md`).
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -111,7 +115,9 @@ Full reference: \`devhub --tell help\`.
     devhub --tell workspaces                # id, name, folder, branch, Issue, agents
     devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests
 
-W is a workspace id, its folder path, its name, or \`scratch\`. Agents are
+W is a workspace id, its folder path, its name, or \`scratch\`. Folder paths
+are paths on the machine you run on (on an SSH host, the host's); without
+\`--workspace\`, \`agent new\` uses your own workspace. Agents are
 named by id (a unique prefix of 4+ characters works) or by their name.
 Status is one of working, background, waiting (needs somebody), idle, error.
 

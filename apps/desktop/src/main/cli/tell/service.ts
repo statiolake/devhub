@@ -117,6 +117,8 @@ export interface TellCaller {
 	readonly machine: string;
 	readonly agentId: string | undefined;
 	readonly workspaceId: string | undefined;
+	/** Known only by `DEVHUB_MACHINE`: not a DevHub pane, so no workspace or agent. */
+	readonly paneless?: true;
 }
 
 export interface TellAnswer {
@@ -157,7 +159,32 @@ export function callerFromOrigin(
 	};
 }
 
+/**
+ * Who is asking, from both things a request can carry: the pane's
+ * `DEVHUB_ORIGIN` (machine, workspace, agent) and the shim's `DEVHUB_MACHINE`.
+ * The origin wins where it is there; a `devhub` on a host run from somewhere
+ * that is not a DevHub pane — an Agent's own subshell that dropped the
+ * variable, a script — still says which machine its paths are on.
+ */
+export function tellCaller(
+	origin: string | undefined,
+	machine: string | undefined,
+): TellCaller | undefined {
+	const fromOrigin = callerFromOrigin(origin);
+	if (fromOrigin !== undefined) return fromOrigin;
+	if (machine === undefined || machine.length === 0) return undefined;
+	return {
+		machine,
+		agentId: undefined,
+		workspaceId: undefined,
+		paneless: true,
+	};
+}
+
 export class TellService {
+	/** The caller of the command being run, for the names it uses. */
+	private caller: TellCaller | undefined;
+
 	constructor(
 		private readonly ports: TellPorts,
 		private readonly clock: TellClock = REAL_CLOCK,
@@ -167,6 +194,7 @@ export class TellService {
 		command: TellCommand,
 		caller: TellCaller | undefined,
 	): Promise<TellAnswer> {
+		this.caller = caller;
 		switch (command.verb) {
 			case "help":
 				return { message: TELL_USAGE, data: { usage: TELL_USAGE } };
@@ -206,6 +234,16 @@ export class TellService {
 
 	// --- names -------------------------------------------------------------
 
+	/** `<w>` as given, or the workspace of the pane asking when it is left out. */
+	private workspaceOrCallers(name: string | undefined): string {
+		if (name !== undefined) return name;
+		if (this.caller !== undefined && this.caller.paneless !== true)
+			return this.caller.workspaceId ?? "scratch";
+		throw new Error(
+			"agent new needs --workspace <w> here: this devhub is not running in a DevHub terminal or agent, so there is no workspace to default to.",
+		);
+	}
+
 	private workspace(name: string): TellWorkspace {
 		const all = this.ports.workspaces();
 		if (name === "scratch") {
@@ -213,10 +251,15 @@ export class TellService {
 			if (scratch) return scratch;
 		}
 		const trimmed = name.length > 1 ? name.replace(/\/+$/, "") : name;
+		// A folder is a folder on the machine the asking `devhub` runs on:
+		// `/srv/app` typed on a host is not this Mac's `/srv/app`. A caller
+		// that cannot say which machine it is on matches any.
+		const machine = this.caller?.machine;
 		const exact = all.filter(
 			(workspace) =>
 				workspace.id === name ||
-				workspace.root === trimmed ||
+				(workspace.root === trimmed &&
+					(machine === undefined || workspace.machine === machine)) ||
 				workspace.name === name,
 		);
 		if (exact.length === 1) return exact[0]!;
@@ -380,7 +423,9 @@ export class TellService {
 	private async newAgent(
 		command: Extract<TellCommand, { verb: "agent-new" }>,
 	): Promise<TellAnswer> {
-		const workspace = this.workspace(command.workspace);
+		const workspace = this.workspace(
+			this.workspaceOrCallers(command.workspace),
+		);
 		const profile = this.profile(command.profile);
 		const agentId = await this.ports.createAgent(
 			workspace.id,
