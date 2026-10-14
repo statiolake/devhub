@@ -177,3 +177,33 @@ class SubmoduleTest(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class Bash32CompatTest(unittest.TestCase):
+    """Static guard: macOS ships bash 3.2, so scripts/*.sh must avoid
+    bash 4+ constructs."""
+
+    FORBIDDEN = [
+        (r"\bmapfile\b", "mapfile"),
+        (r"\breadarray\b", "readarray"),
+        (r"\bdeclare\s+-[a-zA-Z]*[An]\b", "declare -A/-n"),
+        (r"\$\{[A-Za-z_][A-Za-z_0-9]*(,,|\^\^|,|\^)[^}]*\}", "case-modifying expansion"),
+        (r"\|&", "|&"),
+        (r"&>>", "&>>"),
+        (r"\[-[0-9]+\]|\$\{[A-Za-z_0-9]+:\s+-[0-9]+[:}]", "negative array index"),
+    ]
+
+    def test_no_bash4_constructs(self):
+        import glob
+        import re
+        here = os.path.dirname(os.path.abspath(__file__))
+        problems = []
+        for path in sorted(glob.glob(os.path.join(here, "*.sh"))):
+            with open(path) as fh:
+                for n, line in enumerate(fh, 1):
+                    if line.lstrip().startswith("#"):
+                        continue
+                    for pat, name in self.FORBIDDEN:
+                        if re.search(pat, line):
+                            problems.append(f"{os.path.basename(path)}:{n}: {name}")
+        self.assertEqual(problems, [])

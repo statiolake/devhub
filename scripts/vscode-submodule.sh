@@ -58,20 +58,25 @@ BUILD_WRITTEN=(
 	extensions/copilot/package.json
 )
 
-# Pathspec: the whole tree minus BUILD_WRITTEN.
-build_written_excludes() {
+# Pathspec: the whole tree minus BUILD_WRITTEN. Fills the global PATHSPEC
+# array (no mapfile: bash 3.2). Never contains an empty string.
+PATHSPEC=()
+build_pathspec() {
 	local f
-	printf '%s\n' .
-	for f in "${BUILD_WRITTEN[@]}"; do printf ':(exclude)%s\n' "$f"; done
+	PATHSPEC=(.)
+	for f in ${BUILD_WRITTEN[@]+"${BUILD_WRITTEN[@]}"}; do
+		[ -n "$f" ] || continue
+		PATHSPEC+=(":(exclude)$f")
+	done
 }
 
 # Every tracked change (bar BUILD_WRITTEN) and every untracked, non-ignored
 # file, hashed. Empty output means the tree is its HEAD, give or take those.
 fingerprint() {
-	local changes excludes
-	mapfile -t excludes < <(build_written_excludes)
+	local changes
+	build_pathspec
 	changes="$(
-		git -C "$VSCODE_DIR" diff --binary HEAD -- "${excludes[@]}"
+		git -C "$VSCODE_DIR" diff --binary HEAD -- "${PATHSPEC[@]}"
 		git -C "$VSCODE_DIR" ls-files --others --exclude-standard
 	)"
 	[ -z "$changes" ] && return 0
@@ -80,10 +85,10 @@ fingerprint() {
 
 # Whether every change in the tree is to a file patches/vscode modifies.
 only_patched_files_changed() {
-	local changed patched excludes
-	mapfile -t excludes < <(build_written_excludes)
+	local changed patched
+	build_pathspec
 	[ -z "$(git -C "$VSCODE_DIR" ls-files --others --exclude-standard)" ] || return 1
-	changed="$(git -C "$VSCODE_DIR" diff --name-only HEAD -- "${excludes[@]}" | sort -u)"
+	changed="$(git -C "$VSCODE_DIR" diff --name-only HEAD -- "${PATHSPEC[@]}" | sort -u)"
 	patched="$(cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null | sed -n 's|^+++ b/||p' | sort -u)"
 	[ -z "$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$patched"))" ]
 }
