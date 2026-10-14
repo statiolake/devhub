@@ -365,6 +365,24 @@ export class PickerView {
 		return modal.id;
 	}
 
+	/**
+	 * Some other contents of this window just took the keyboard.
+	 *
+	 * Main's own requests already go through `placeKeyboardIn`, which serves
+	 * this layer first while a sheet stands. This is the half main does not
+	 * ask for: a renderer focusing itself — a conversation page mounting and
+	 * focusing its textarea, a workbench answering a click behind the scrim,
+	 * an Agent's page loading in the background. A sheet is modal, so while
+	 * one stands the keyboard is taken straight back; the window's own
+	 * `focusSurface` puts it wherever it belongs once the last sheet goes.
+	 */
+	reclaimFrom(contents: Electron.WebContents): void {
+		if (!this.isPresent()) return;
+		const own = this.layer.contents();
+		if (!own || own === contents || own.isFocused()) return;
+		this.host?.focusModal(own);
+	}
+
 	/** Whether a question is over the window right now. */
 	isPresent(): boolean {
 		return this.layer.isShown();

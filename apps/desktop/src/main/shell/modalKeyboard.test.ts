@@ -69,8 +69,11 @@ describe("the keyboard while a sheet stands", () => {
 	let placed: FakeWebContents[];
 	let added: number;
 	let windowIsFront: boolean;
+	/** How many times the window was asked to put the keyboard back. */
+	let restored: number;
 
 	beforeEach(() => {
+		restored = 0;
 		placed = [];
 		added = 0;
 		windowIsFront = true;
@@ -87,7 +90,9 @@ describe("the keyboard while a sheet stands", () => {
 					removeChildView: () => undefined,
 				},
 			} as unknown as Electron.BrowserWindow,
-			focusSurface: () => undefined,
+			focusSurface: () => {
+				restored += 1;
+			},
 			// The real gate: `ShellWindow.placeKeyboardIn` declines outright
 			// while another window is in front, and says nothing about it.
 			focusModal: (contents: Electron.WebContents) => {
@@ -161,5 +166,41 @@ describe("the keyboard while a sheet stands", () => {
 
 		expect(modals.isPresent()).toBe(false);
 		expect(placed).toHaveLength(before);
+	});
+
+	it("takes the keyboard back when other contents focus themselves", () => {
+		modals.openModal({ kind: "tab-picker" });
+		const before = placed.length;
+		// An Agent's conversation page mounting behind the sheet and focusing
+		// its textarea: the renderer moved the keyboard, not main.
+		const agentPage = new FakeWebContents();
+		overlay().focused = false;
+		agentPage.focused = true;
+
+		modals.reclaimFrom(agentPage as unknown as Electron.WebContents);
+
+		expect(placed).toHaveLength(before + 1);
+		expect(overlay().focused).toBe(true);
+	});
+
+	it("does not reclaim from itself or with no sheet standing", () => {
+		const other = new FakeWebContents() as unknown as Electron.WebContents;
+		modals.reclaimFrom(other);
+		expect(placed).toHaveLength(0);
+
+		modals.openModal({ kind: "tab-picker" });
+		const before = placed.length;
+		modals.reclaimFrom(overlay() as unknown as Electron.WebContents);
+		modals.reclaimFrom(other);
+		expect(placed).toHaveLength(before);
+	});
+
+	it("hands the keyboard back to the window once the last sheet goes", () => {
+		const id = modals.openModal({ kind: "tab-picker" });
+		expect(restored).toBe(0);
+
+		modals.closeModal(id);
+
+		expect(restored).toBe(1);
 	});
 });

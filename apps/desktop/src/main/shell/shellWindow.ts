@@ -433,6 +433,19 @@ export class ShellWindow {
 		this.toasts.openPage();
 		this.tooltip.openPage();
 		this.picker.openPage();
+		// A sheet is modal: any other contents of this window taking the
+		// keyboard while one stands — a renderer focusing itself, which no
+		// gate in main sees — gives it straight back. See
+		// `PickerView.reclaimFrom`.
+		for (const contents of [
+			this.window.webContents,
+			this.sidebar.contents(),
+			this.agents.contents(),
+			this.toasts.contents(),
+			this.tooltip.contents(),
+		]) {
+			contents?.on("focus", () => this.picker.reclaimFrom(contents));
+		}
 	}
 
 	/**
@@ -494,6 +507,7 @@ export class ShellWindow {
 		// is still the one `isSurfaceFocused` computes — this only says when
 		// it is worth saying again.
 		view.webContents.on("focus", () => {
+			this.picker.reclaimFrom(view.webContents);
 			this.publishFocus();
 			view.focusConfirmed();
 		});
