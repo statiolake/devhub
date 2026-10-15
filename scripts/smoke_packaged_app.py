@@ -13,6 +13,15 @@ directory, sends the `version` request the `devhub` CLI sends, and requires a
 reply. A reply means the main process is still running its event loop after
 startup, which is the property that keeps breaking.
 
+A reply is not the end of startup, though. The control socket opens before
+VS Code's own application starts and before the first workbench view loads,
+and a crash there passed this test for a whole VS Code bump: on Electron 43
+the main process died the moment the first workbench view committed its
+navigation, a second after the socket had answered. So after the reply the
+app is kept running until a workbench view reports that its page finished
+loading, and it has to still be alive when that happens. See
+`wait_for_workbench`.
+
 It also reads the bundle before starting it, for the faults a reply cannot
 rule out. An asset the workbench fetches by path — a wasm file, say — going
 missing takes one feature down and leaves the rest of the app answering
@@ -41,6 +50,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -111,6 +121,55 @@ UNPACKED_DIR = "node_modules.asar.unpacked"
 # Under `Contents/Resources/app`, where packaging copies `apps/desktop/out`.
 # The path `inputSourceHelperPath` in main/shell/inputSourceHelper.ts computes.
 DEVHUB_SPAWNED_BINARY = "out/native/devhub-input-source"
+
+
+# What `WorkbenchView` (apps/desktop/src/main/shell/workbenchView.ts) prints
+# once a workbench's page has loaded: the first workbench a fresh DevHub opens
+# is Scratch, so a startup that gets this far has created a view, navigated it
+# and survived the commit.
+WORKBENCH_LOADED = re.compile(r"\[devhub\] workbench view \d+: its page has finished loading")
+
+
+def workbench_loaded(log_text: str) -> bool:
+	"""Whether the app's output says a workbench view finished loading its page."""
+	return WORKBENCH_LOADED.search(log_text) is not None
+
+
+def wait_for_workbench(
+	process: subprocess.Popen, log_path: Path, deadline: float, settle: float
+) -> str | None:
+	"""None once a workbench has loaded and the app outlived it by `settle`
+	seconds; otherwise why not.
+
+	The settle period is there because "loaded" is said from the main process
+	while the renderer is still starting the workbench, and the main process
+	can still go down underneath it.
+	"""
+	loaded_at: float | None = None
+	while True:
+		now = time.monotonic()
+		code = process.poll()
+		if code is not None:
+			stage = "after a workbench loaded" if loaded_at is not None else "before any workbench loaded"
+			return f"the app exited {stage} (exit status {code}; a negative status is the signal that ended it)"
+		if loaded_at is None:
+			try:
+				if workbench_loaded(log_path.read_text(errors="replace")):
+					loaded_at = now
+			except OSError:
+				pass
+		if loaded_at is not None and now - loaded_at >= settle:
+			return None
+		if now >= deadline:
+			return "no workbench view finished loading in time"
+		time.sleep(0.25)
+
+
+def log_tail(log_path: Path, lines: int = 40) -> str:
+	try:
+		return "\n".join(log_path.read_text(errors="replace").splitlines()[-lines:])
+	except OSError:
+		return "(no output)"
 
 
 def check_bundle_layout(app: Path) -> list[str]:
@@ -217,7 +276,7 @@ def launch_command(
 	return argv, environment
 
 
-def smoke(app: Path, timeout: float) -> int:
+def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 	executable = app / "Contents" / "MacOS" / "DevHub"
 	if not executable.is_file():
 		print(f"not a DevHub bundle: {executable} does not exist", file=sys.stderr)
@@ -236,24 +295,45 @@ def smoke(app: Path, timeout: float) -> int:
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
 	user_data = user_data_directory(state)
+	# A file rather than a pipe: nothing reads a pipe while the app runs, and
+	# an app that fills one blocks on its own console.log.
+	log_path = state / "app.log"
+	log = log_path.open("w")
 	process = subprocess.Popen(
 		argv,
 		env=environment,
-		stdout=subprocess.PIPE,
+		stdout=log,
 		stderr=subprocess.STDOUT,
 		text=True,
 		start_new_session=True,
 	)
+	log.close()
 	try:
-		reply = probe(user_data / "devhub" / "control.sock", time.monotonic() + timeout)
-	except TimeoutError as error:
-		print(f"    the app never answered within {timeout:.0f}s ({error})", file=sys.stderr)
-		print(
-			"    the main process is up but its event loop is not running:\n"
-			"    the packaged app answers no IPC at all in this state.",
-			file=sys.stderr,
-		)
-		return 1
+		started = time.monotonic()
+		try:
+			reply = probe(user_data / "devhub" / "control.sock", started + timeout)
+		except TimeoutError as error:
+			print(f"    the app never answered within {timeout:.0f}s ({error})", file=sys.stderr)
+			print(
+				"    the main process is up but its event loop is not running:\n"
+				"    the packaged app answers no IPC at all in this state.",
+				file=sys.stderr,
+			)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		if not reply.get("ok"):
+			print(f"    the app answered, but with a failure: {reply}", file=sys.stderr)
+			return 1
+		first_line = str(reply.get("message", "")).splitlines()[0:1]
+		print(f"    the control socket answered: {first_line[0] if first_line else reply}")
+
+		problem = wait_for_workbench(process, log_path, started + timeout, settle)
+		if problem is not None:
+			print(f"    {problem}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		print(f"    a workbench view loaded, and the app was still running {settle:.0f}s later")
+		return 0
 	finally:
 		# A stalled app cannot run its own SIGTERM handler — that needs the very
 		# event loop that is gone — so there is nothing gentler than SIGKILL to
@@ -265,13 +345,6 @@ def smoke(app: Path, timeout: float) -> int:
 		process.wait(timeout=30)
 		shutil.rmtree(state, ignore_errors=True)
 
-	if not reply.get("ok"):
-		print(f"    the app answered, but with a failure: {reply}", file=sys.stderr)
-		return 1
-	first_line = str(reply.get("message", "")).splitlines()[0:1]
-	print(f"    the control socket answered: {first_line[0] if first_line else reply}")
-	return 0
-
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__)
@@ -282,8 +355,14 @@ def main() -> int:
 		default=90.0,
 		help="how long to wait for a reply before calling it stalled",
 	)
+	parser.add_argument(
+		"--settle",
+		type=float,
+		default=5.0,
+		help="how long the app must keep running after a workbench view has loaded",
+	)
 	args = parser.parse_args()
-	return smoke(args.app.resolve(), args.timeout)
+	return smoke(args.app.resolve(), args.timeout, args.settle)
 
 
 if __name__ == "__main__":

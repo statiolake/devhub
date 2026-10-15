@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 import {
 	droppedProcessSettings,
+	fenceCodeCachePath,
 	fenceMember,
 	fenceProperty,
 } from "./appFence.js";
@@ -177,5 +179,57 @@ describe("the fence around the process's idea of the OS colour scheme", () => {
 				"nativeTheme.themeSource",
 			),
 		).toThrow(/not an accessor/u);
+	});
+});
+
+describe("the code cache path, set before any page and never again", () => {
+	it("sets upstream's path at once, then answers upstream's own call with nothing", () => {
+		const calls: string[] = [];
+		const session: { setCodeCachePath?: (path: string) => void } = {
+			setCodeCachePath: (path) => {
+				calls.push(path);
+			},
+		};
+		fenceCodeCachePath(session, "/cache/abc");
+		expect(calls).toEqual([join("/cache/abc", "chrome")]);
+
+		// What `CodeApplication.configureSession` asks for, after the App Shell
+		// pages exist. On Electron 43 a second call replaces the live code cache
+		// context and the next workbench navigation crashes the main process.
+		session.setCodeCachePath?.(join("/cache/abc", "chrome"));
+		expect(calls).toHaveLength(1);
+		expect(
+			droppedProcessSettings().filter(
+				(call) => call.member === "session.defaultSession.setCodeCachePath",
+			),
+		).toHaveLength(0);
+	});
+
+	it("refuses a different path, which on a live session would bring the crash back", () => {
+		const calls: string[] = [];
+		const session: { setCodeCachePath?: (path: string) => void } = {
+			setCodeCachePath: (path) => {
+				calls.push(path);
+			},
+		};
+		fenceCodeCachePath(session, "/cache/abc");
+		session.setCodeCachePath?.("/somewhere/else");
+		expect(calls).toHaveLength(1);
+		expect(
+			droppedProcessSettings().some(
+				(call) => call.member === "session.defaultSession.setCodeCachePath",
+			),
+		).toBe(true);
+	});
+
+	it("does nothing without a code cache path, as upstream does", () => {
+		const calls: string[] = [];
+		const setCodeCachePath = (path: string) => {
+			calls.push(path);
+		};
+		const session = { setCodeCachePath };
+		fenceCodeCachePath(session, undefined);
+		expect(calls).toHaveLength(0);
+		expect(session.setCodeCachePath).toBe(setCodeCachePath);
 	});
 });

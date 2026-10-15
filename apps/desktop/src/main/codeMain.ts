@@ -34,7 +34,10 @@
  *       path — stop at DevHub instead. See `shell/appFence.ts`. The order
  *       matters most for `nativeTheme.themeSource`, which `ThemeMainService`
  *       writes from its constructor during `initServices`: that is inside
- *       `startup()`, so the fence is already standing when it runs.
+ *       `startup()`, so the fence is already standing when it runs. It also
+ *       sets Chrome's code cache path while no page exists yet, and fences
+ *       upstream's later call. On Electron 43 that call, once the App Shell
+ *       pages exist, kills the main process (see `fenceCodeCachePath`).
  *    7. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.

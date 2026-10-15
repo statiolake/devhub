@@ -41,6 +41,7 @@
  * and everything after it belongs to the workbench world.
  */
 
+import { join } from "node:path";
 import { electron } from "../electron.js";
 import { appearanceMode } from "./appearanceMode.js";
 
@@ -219,7 +220,64 @@ export function fenceProperty(
 	};
 }
 
+/**
+ * Point Chrome's code cache where VS Code wants it, now, and fence the call.
+ *
+ * Upstream does this from `CodeApplication`'s constructor (`configureSession`
+ * in `vs/code/electron-main/app.ts`): `session.defaultSession.setCodeCachePath`
+ * onto `<codeCachePath>/chrome`. In VS Code that constructor runs before any
+ * renderer exists. In DevHub it does not: `bootstrapShell` builds the App
+ * Shell window and its pages first, so the call lands on a session whose
+ * renderer processes already hold its code cache.
+ *
+ * On Electron 42 that was harmless, because the call re-initialised the
+ * existing `GeneratedCodeCacheContext` in place. Electron 43 replaces it
+ * instead (Chromium patch `fix_add_reinitializegeneratedcodecachecontext_to`):
+ * the old context is shut down, and every renderer process that bound its
+ * code cache host earlier keeps pointing at that dead context. The next
+ * navigation that asks it for a code cache host (the first workbench view's,
+ * which uses `v8CacheOptions: 'bypassHeatCheck'`) crashes the main process:
+ * `GeneratedCodeCacheContext::RunOrPostTask` from
+ * `RenderFrameHostImpl::CreateCodeCacheHostWithKeys` during
+ * `CommitNavigation`, which is a null virtual call. `--no-cached-data` avoids it
+ * only because it skips the call entirely.
+ *
+ * So the call is made here, where upstream means it to run: after `ready` and
+ * before any page. Upstream's later call with the same path then does
+ * nothing, because it is already done. A call with a different path is
+ * refused, because on a live session it would bring the crash back.
+ *
+ * Exported for the test, which drives it against a stand-in session.
+ */
+export function fenceCodeCachePath(
+	session: { setCodeCachePath?: (path: string) => void },
+	codeCachePath: string | undefined,
+): void {
+	const original = session.setCodeCachePath;
+	if (typeof original !== "function" || !codeCachePath) {
+		// Nothing to point anywhere, and upstream checks the same two things
+		// before it calls, so it will not call either.
+		return;
+	}
+	const chromeCachePath = join(codeCachePath, "chrome");
+	original.call(session, chromeCachePath);
+	session.setCodeCachePath = (path: string) => {
+		if (path === chromeCachePath) {
+			return;
+		}
+		refuse("session.defaultSession.setCodeCachePath");
+	};
+}
+
 export function installAppFence(): void {
+	// First, and before any page exists: see `fenceCodeCachePath`.
+	fenceCodeCachePath(
+		electron.session.defaultSession as unknown as {
+			setCodeCachePath?: (path: string) => void;
+		},
+		process.env["VSCODE_CODE_CACHE_PATH"] || undefined,
+	);
+
 	const app = electron.app;
 	for (const [member, answer] of Object.entries(APP_MEMBERS)) {
 		fenceMember(app, member, answer, `app.${member}`);
