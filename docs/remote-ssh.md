@@ -237,8 +237,13 @@ install that did not finish, and is replaced rather than started.
 
 **The key.** `<key>` is `<commit>-<identity>`. The commit is the VS Code
 submodule's; the identity is `reh_identity()` in `scripts/product_metadata.py`,
-twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`
-and a `REH_REVISION` bumped when the build itself changes what it produces.
+twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`,
+the static product metadata the server carries (the overrides and the API
+proposal table), the bytes of the build scripts (`scripts/build_reh.py`,
+`scripts/reh_in_container.sh`) and a `REH_REVISION` bumped when anything else
+changes what the build produces. Hashing the scripts means a fix to them is a
+new identity without anyone remembering a bump, so a prebuilt server made by
+the old script is never reused.
 The app states it as `serverIdentity` beside `serverCommit`, and every server
 built for it states the same pair. So a DevHub whose patches moved names a
 directory no older DevHub installed, installs its own server there, and two
@@ -405,18 +410,51 @@ hand their tarballs and statements to the macOS job, which downloads them into
 `dist/reh` before `scripts/build-app.sh`. `scripts/package-nightly.py` then
 checks all four against the app's commit and identity (`bundle_problems`) and
 refuses to package if any is missing or stale; a red `reh` leg therefore means
-no nightly that night rather than a nightly that refuses some machines. Nothing
-is published on its own: the `reh-<commit>` releases earlier nightlies made are
-no longer read by anything.
+no nightly that night rather than a nightly that refuses some machines. (The
+`reh-<commit>` releases earlier nightlies made are no longer read by anything.)
 
-Locally, `pnpm build` builds whichever of the four servers is missing or stale
-in `dist/reh` before packaging (`scripts/ensure_reh.py`, using the same check as
-`bundle_problems` and `pnpm dev`): Docker required, log in
-`dist/reh-build.log`; how long is under "Building the servers locally". Without
-Docker it fails naming the targets and `--without-reh`. It does nothing when
-`CI` is set, so the nightly's downloaded servers are the only ones used there.
-When a build fails, the servers already built stay in `dist/reh` and the error
-names only the targets still missing.
+**Prebuilt servers.** The `reh-publish` job then puts every server the legs
+built on one rolling prerelease, tag `reh`, named by identity
+(`scripts/reh_release.py`):
+
+    <identity>-devhub-reh-<target>.tar.gz   the tarball, as build_reh.py packed it
+    <identity>-devhub-reh-<target>.json     its statement, unchanged
+
+It uploads only identities the release lacks (the same identity is the same
+server, however often it is rebuilt), each tarball before its statement, and
+deletes all but the six most recently uploaded identities. No far machine and
+no running DevHub reads it; it is for a developer's `pnpm build`.
+
+Locally, `pnpm build` gets whichever of the four servers is missing or stale in
+`dist/reh` before packaging (`scripts/ensure_reh.py`, using the same check as
+`bundle_problems` and `pnpm dev`), per target from the first of:
+
+1. **the local server cache**, `~/.cache/devhub/reh/<identity>/` (below);
+2. **the `reh` release**: one API call lists its assets
+   (`api.github.com/repos/<owner>/<repo>/releases/tags/reh`, with
+   `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token` when there is one, for the
+   rate limit, unauthenticated otherwise; `DEVHUB_REH_REPO` names another
+   repository, origin's is the default), then the statement and the tarball are
+   downloaded without a token. The statement must name this target, commit and
+   identity and `devhub-reh-<target>.tar.gz`; the tarball must hash to its
+   `sha256` and be a readable tar wholly under its `topLevelDirectory`. Only
+   then does it go into the local cache, from which it is copied into
+   `dist/reh` after the cache's own check;
+3. **a local build**, `scripts/build_reh.py <the rest>`: Docker required, log
+   in `dist/reh-build.log`; how long is under "Building the servers locally".
+   Without Docker it fails naming the targets and `--without-reh`.
+
+Each target prints which it came from (`from the local cache`, `downloaded the
+prebuilt server (<url>)`, `built locally`). A download that fails for any
+reason — offline, a timeout, a 403 or a 404, a statement for another identity,
+a checksum mismatch, a corrupted tarball — is one line saying why, followed by
+the local build; it never fails the package by itself. `scripts/ensure_reh.py
+--no-download` (`DEVHUB_REH_SOURCE=build` through `pnpm build`) never asks the
+release; `--download-only` (`DEVHUB_REH_SOURCE=download`) fails instead of
+building what it could not download. It does nothing when `CI` is set, so the
+nightly's own servers are the only ones used there. When a build fails, the
+servers already built stay in `dist/reh` and the error names only the targets
+still missing.
 
 CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
 it is a bundle that is smoke-tested and thrown away, and building four servers
@@ -525,7 +563,7 @@ refuse. The tarballs are around 100 MB each.
 
 | what | where | redone when |
 |---|---|---|
-| finished servers | `~/.cache/devhub/reh/<identity>/devhub-reh-<target>.tar.gz` + `.json` | the identity (commit + patches + `REH_REVISION`) changes |
+| finished servers | `~/.cache/devhub/reh/<identity>/devhub-reh-<target>.tar.gz` + `.json` | the identity (commit + patches + static metadata + build scripts + `REH_REVISION`) changes; also filled by verified downloads from the `reh` release |
 | the tree: the pinned commit | Docker volume `devhub-reh-work-<arch>`, `vscode/` | the VS Code commit changes (the whole volume starts over) |
 | patches + `product.json` | same, stamp `.devhub/source.stamp` | the identity, the product metadata (minus its date and DevHub commit) or `WORK_REVISION` changes |
 | `npm ci` (root and every nested install) | same, `.devhub/deps.stamp` | any `package.json`, `package-lock.json`, `.npmrc` or `.nvmrc` as patched, the architecture or the builder image changes |

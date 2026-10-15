@@ -24,9 +24,11 @@
 # glibc and musl Linux, x64 and arm64), built here, every time the app is, from
 # the same patched VS Code: two `reh` legs, one per architecture, build them in
 # Linux containers the way VS Code builds its own and hand their tarballs to the
-# macOS job, which bundles them. Nothing is published for them
-# on their own — no far machine and no DevHub downloads a server any more. See
-# docs/remote-ssh.md and scripts/build_reh.py.
+# macOS job, which bundles them. No far machine and no running DevHub downloads
+# a server; but `reh-publish` puts each one, by identity, on the rolling `reh`
+# prerelease, so a developer's `pnpm build` (scripts/ensure_reh.py) can fetch
+# the servers it would otherwise spend an hour building. See
+# docs/remote-ssh.md, scripts/build_reh.py and scripts/reh_release.py.
 #
 # A third set of jobs publishes a statically linked tmux, on the same shape and
 # for the same reason: DevHub runs every terminal and every Agent inside tmux on
@@ -356,7 +358,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/build_reh.py ${{ matrix.targets }} --out-dir dist/reh
 
-      # To the macOS job, which bundles them; nothing is published on its own.
+      # To the macOS job, which bundles them, and to `reh-publish`.
       - name: Hand the servers to the packaging job
         uses: actions/upload-artifact@v4
         with:
@@ -366,6 +368,48 @@ jobs:
             dist/reh/*.json
           retention-days: 1
           if-no-files-found: error
+
+  # The servers, by identity, as assets of one rolling prerelease `reh`:
+  # `<identity>-devhub-reh-<target>.tar.gz` and its `.json` statement. A
+  # developer's scripts/ensure_reh.py downloads the ones its checkout's identity
+  # names instead of building them. Only identities the release lacks are
+  # uploaded — the same identity is the same server, every night it is rebuilt —
+  # and all but the six most recently uploaded identities are deleted.
+  # `always()` so one failed architecture does not withhold the other's.
+  reh-publish:
+    name: Publish the prebuilt servers
+    needs: [decide, reh]
+    if: >-
+      always()
+      && needs.decide.result == 'success'
+      && needs.decide.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # For scripts/reh_release.py only; no submodule — the identity is read
+      # from the statements the `reh` legs wrote.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Collect the servers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: reh-*
+          merge-multiple: true
+          path: dist/reh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! ls dist/reh/devhub-reh-*.json >/dev/null 2>&1; then
+            echo "no server was built tonight: nothing to publish. Read the red reh legs." >&2
+            exit 1
+          fi
+          scripts/reh_release.py publish dist/reh --keep 6
 
   # ---------------------------------------------------------------------------
   # tmux: the terminal multiplexer every terminal and every Agent runs inside,

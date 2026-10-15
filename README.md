@@ -489,11 +489,17 @@ line tools (`xcode-select --install`), `python3`, Node, and pnpm `11.20.0`
 own Node version does not matter — the one VS Code's build insists on is
 fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
 rather than complains about. That includes the four remote extension hosts in
-`dist/reh`: any that is missing or stale is built first, with
-`scripts/build_reh.py <those targets>`, announced up front (in Linux
-containers; the first build of each architecture's tree takes an hour or more on
-Apple Silicon, see [docs/remote-ssh.md](docs/remote-ssh.md); log in
-`dist/reh-build.log`). That needs **Docker**; without it the build
+`dist/reh`: any that is missing or stale is taken from the local server cache
+(`~/.cache/devhub/reh`), else downloaded — verified — from the prebuilt servers
+the nightly publishes on the `reh` release when one matches this checkout's
+identity, else built with `scripts/build_reh.py <those targets>`, announced up
+front (in Linux containers; the first build of each architecture's tree takes an
+hour or more on Apple Silicon, see [docs/remote-ssh.md](docs/remote-ssh.md); log
+in `dist/reh-build.log`). Each server says which of the three it came from, and a
+failed download only falls back to the build. `DEVHUB_REH_SOURCE=build pnpm
+build` never downloads; `DEVHUB_REH_SOURCE=download` fails rather than build
+(`scripts/ensure_reh.py --no-download` / `--download-only` on their own). A
+build needs **Docker**; without it the build
 stops and names the missing targets. `pnpm build -- --without-reh` skips them
 for a bundle that opens no remote window. Under CI (`CI` set) nothing is built:
 the nightly downloads the servers its own jobs built.

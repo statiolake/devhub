@@ -80,6 +80,28 @@ class ServerIdentity(unittest.TestCase):
 		self.assertNotEqual(self.identity(commit="1" * 40), before)
 		self.assertNotEqual(self.identity(revision=2), before)
 
+	def test_moves_when_a_build_script_does(self) -> None:
+		# A prebuilt server from before a fix to the script that made it must
+		# not be reused, even when nobody bumped REH_REVISION.
+		script = self.patches / "build_reh.py"
+		script.write_text("one\n")
+		before = self.identity(build_scripts=(script,))
+		self.assertEqual(self.identity(build_scripts=(script,)), before)
+		script.write_text("two\n")
+		self.assertNotEqual(self.identity(build_scripts=(script,)), before)
+
+	def test_moves_with_the_metadata_the_server_carries(self) -> None:
+		before = self.identity(metadata={"nameShort": "DevHub"})
+		self.assertEqual(self.identity(metadata={"nameShort": "DevHub"}), before)
+		self.assertNotEqual(self.identity(metadata={"nameShort": "Other"}), before)
+
+	def test_covers_the_real_build_scripts(self) -> None:
+		from product_metadata import REH_BUILD_SCRIPTS
+
+		names = {p.name for p in REH_BUILD_SCRIPTS}
+		self.assertEqual(names, {"build_reh.py", "reh_in_container.sh"})
+		self.assertTrue(all(p.is_file() for p in REH_BUILD_SCRIPTS))
+
 
 class PackagedMetadata(unittest.TestCase):
 	"""What scripts/package-nightly.py merges over vscode/product.json."""

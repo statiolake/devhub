@@ -47,8 +47,8 @@ That is what `version` and the date are for.
 
 Which remote extension host a build connects to is a third question, and it
 gets two more fields, stated on every build: `serverCommit`, the VS Code
-commit, and `serverIdentity`, `reh_identity()` — a hash of that commit and
-DevHub's patches. A packaged build's `commit` says the first again, but a
+commit, and `serverIdentity`, `reh_identity()` — a hash of that commit,
+DevHub's patches, the build scripts and the static metadata the server carries.A packaged build's `commit` says the first again, but a
 source run has no `commit` and still opens remote windows — SSH hosts and dev
 containers — so it needs another place to say it. Together they name the
 directory the server is installed under on the far machine,
@@ -179,13 +179,18 @@ def vscode_commit() -> str:
 	return head_of(REPO_ROOT / "vscode")
 
 
-# What else, beyond the VS Code commit and DevHub's patches, decides what is
-# in a remote extension host DevHub builds. Bump it when a change to
-# scripts/build_reh.py changes the server it produces — what it deletes, the
-# image it installs native modules in — so far machines install the new one
-# instead of keeping the server they have. A change that does not alter the
-# output (a comment, a log line) leaves it alone, and so leaves every
-# machine's server where it is.
+# What else, beyond the VS Code commit, DevHub's patches, the build scripts and
+# the static product metadata (all hashed by `reh_identity` below), decides
+# what is in a remote extension host DevHub builds. Bump it for a change to the
+# server made outside those files, so far machines install the new one instead
+# of keeping the server they have.
+#
+# The build scripts' bytes (`REH_BUILD_SCRIPTS`) are hashed rather than left to
+# this number, so a fix to them is a new identity even when nobody remembers to
+# bump it: a prebuilt server the nightly published (scripts/reh_release.py) is
+# never reused after the script that made it changed. The cost is that an edit
+# to a comment there is a new identity too, and far machines install a server
+# that is the same as the one they had; that is the safe direction to be wrong.
 #
 # 2: the whole server is built in Linux containers, as upstream builds it,
 # instead of gulp on the Mac with Linux natives swapped in afterwards.
@@ -193,14 +198,38 @@ REH_REVISION = 2
 
 PATCHES_DIR = REPO_ROOT / "patches" / "vscode"
 
+# The scripts that make the server: build_reh.py (the images, what it deletes
+# and checks, how it packs) and the steps it runs in the tree.
+REH_BUILD_SCRIPTS = (
+	REPO_ROOT / "scripts" / "build_reh.py",
+	REPO_ROOT / "scripts" / "reh_in_container.sh",
+)
+
+
+def reh_static_metadata() -> dict[str, object]:
+	"""The part of the product metadata a server is built with that is the same
+	on every run: the overrides and the API proposal table. The rest — the
+	date, DevHub's commit and version, the identity itself — says which build it
+	is and changes nothing the server does."""
+	return {
+		"overrides": PRODUCT_OVERRIDES,
+		"extensionEnabledApiProposals": EXTENSION_ENABLED_API_PROPOSALS,
+	}
+
 
 def reh_identity(
-	commit: str | None = None, patches_dir: Path = PATCHES_DIR, revision: int = REH_REVISION
+	commit: str | None = None,
+	patches_dir: Path = PATCHES_DIR,
+	revision: int = REH_REVISION,
+	build_scripts: tuple[Path, ...] = REH_BUILD_SCRIPTS,
+	metadata: dict[str, object] | None = None,
 ) -> str:
 	"""Which build of the remote extension host this checkout makes.
 
 	Twelve hex characters of a hash over the VS Code commit, every patch in
-	`patches/vscode/` (name and bytes) and `REH_REVISION`. The far machine
+	`patches/vscode/` (name and bytes), the static product metadata the
+	server carries (`reh_static_metadata()`), the build scripts
+	(`REH_BUILD_SCRIPTS`, name and bytes) and `REH_REVISION`. The far machine
 	keeps its server under `bin/<commit>-<identity>`, and both the app
 	(`serverIdentity`) and every server built for it (its statement) say this
 	value — so DevHub can tell a server built from its own patches from one
@@ -216,6 +245,11 @@ def reh_identity(
 	for patch in sorted(patches_dir.glob("*.patch")):
 		digest.update(f"patch {patch.name}\n".encode())
 		digest.update(patch.read_bytes())
+	stated = reh_static_metadata() if metadata is None else metadata
+	digest.update(f"metadata {json.dumps(stated, sort_keys=True)}\n".encode())
+	for script in build_scripts:
+		digest.update(f"script {script.name}\n".encode())
+		digest.update(script.read_bytes())
 	return digest.hexdigest()[:12]
 
 

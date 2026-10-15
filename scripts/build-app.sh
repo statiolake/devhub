@@ -42,8 +42,11 @@
 #     the script is also runnable directly
 #   * the four remote extension hosts the app carries, in dist/reh, built from
 #     this checkout's VS Code and patches — when any is missing or stale,
-#     package-nightly.py runs scripts/build_reh.py for exactly those first
-#     (scripts/ensure_reh.py): needs Docker, built in Linux containers the
+#     package-nightly.py gets exactly those first (scripts/ensure_reh.py):
+#     from the local server cache, else the verified prebuilt server the
+#     nightly published for this identity (the `reh` release; any download
+#     failure falls back to building; DEVHUB_REH_SOURCE=build|download forces
+#     one side), else scripts/build_reh.py: needs Docker, built in Linux containers the
 #     way VS Code builds its own (the first build of an architecture's tree is
 #     an hour or more on Apple Silicon, later ones minutes), announced up
 #     front and logged to dist/reh-build.log. Without Docker it stops, naming
