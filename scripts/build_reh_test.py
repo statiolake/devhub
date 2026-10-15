@@ -629,6 +629,72 @@ class StepOrder(unittest.TestCase):
 		self.assertIn("devhub-reh-work-arm64", text)
 
 
+class ContinueOnFailure(unittest.TestCase):
+	"""A failed target does not stop the others; a failed tree does."""
+
+	def run_main(self, prepare, build) -> tuple[int, list[tuple], str]:
+		calls: list[tuple] = []
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+
+		def prepared(arch, *a):
+			calls.append(("prepare", arch))
+			return prepare(arch)
+
+		def built(target, commit, identity, out_dir):
+			calls.append(("build", target))
+			build(target)
+			(out_dir / tarball_name(target)).write_bytes(b"server")
+			write_statement(out_dir, target, commit, identity)
+
+		with mock.patch("sys.argv", ["build_reh.py", *TARGETS, "--no-cache", "--out-dir", str(root)]), \
+			mock.patch("build_reh.docker_available", return_value=True), \
+			mock.patch("build_reh.vscode_commit", return_value=COMMIT), \
+			mock.patch("build_reh.reh_identity", return_value=IDENTITY), \
+			mock.patch("build_reh.require_commit"), \
+			mock.patch("build_reh.warn_about_docker"), \
+			mock.patch("build_reh.packaged_metadata", return_value={}), \
+			mock.patch("build_reh.prepare_tree", prepared), \
+			mock.patch("build_reh.build_target", built), \
+			mock.patch("builtins.print") as said:
+			status = build_reh.main()
+		text = "\n".join(str(c.args[0]) for c in said.call_args_list if c.args)
+		return status, calls, text
+
+	def test_a_failed_target_lets_the_rest_build_and_all_failures_are_reported(self) -> None:
+		def build(target):
+			if target in ("alpine-x64", "linux-arm64"):
+				raise SystemExit(f"{target}: the server carries binaries that cannot run there")
+
+		status, calls, text = self.run_main(lambda arch: 0.0, build)
+		self.assertEqual(status, 1)
+		self.assertEqual(
+			calls,
+			[("prepare", "x64"), ("build", "linux-x64"), ("build", "alpine-x64"),
+			 ("prepare", "arm64"), ("build", "linux-arm64"), ("build", "alpine-arm64")],
+		)
+		self.assertIn("2 failure(s):", text)
+		self.assertIn("  alpine-x64: alpine-x64: the server carries", text)
+		self.assertIn("  linux-arm64: linux-arm64: the server carries", text)
+		self.assertIn("Retry only what is missing with:\n  scripts/build_reh.py linux-arm64 alpine-x64\n", text + "\n")
+
+	def test_a_failed_tree_stops_the_run(self) -> None:
+		def prepare(arch):
+			raise subprocess.CalledProcessError(1, "docker")
+
+		status, calls, text = self.run_main(prepare, lambda target: None)
+		self.assertEqual(status, 1)
+		self.assertEqual(calls, [("prepare", "x64")])
+		self.assertIn("1 failure(s):", text)
+		self.assertIn("the x64 tree:", text)
+
+	def test_success_reports_nothing(self) -> None:
+		status, calls, text = self.run_main(lambda arch: 0.0, lambda target: None)
+		self.assertEqual(status, 0)
+		self.assertEqual(len(calls), 6)
+		self.assertNotIn("failure", text)
+
+
 class OldPathsAreGone(unittest.TestCase):
 	"""Gulp on the host and the patch-ups after it are not coming back."""
 
@@ -1200,8 +1266,47 @@ class PruneCache(unittest.TestCase):
 MACHO = b"\xcf\xfa\xed\xfe" + b"\0" * 28
 
 
-def elf(machine: int, extra: bytes = b"") -> bytes:
-	return b"\x7fELF\x02\x01\x01" + b"\0" * 11 + machine.to_bytes(2, "little") + b"\0" * 12 + extra
+def elf(machine: int, interp: str | None = None, needed: tuple[str, ...] = (), blob: bytes = b"") -> bytes:
+	"""A well-formed little-endian ELF64: one PT_LOAD over the whole file at
+	address 0, and PT_INTERP / PT_DYNAMIC (DT_NEEDED, DT_STRTAB) when asked —
+	what `elf_links` reads. `blob` is payload: a static glibc binary's bytes
+	contain "libc.so.6" without needing it."""
+	import struct
+
+	phdrs = 1 + (interp is not None) + bool(needed)
+	at = 64 + 56 * phdrs
+	interp_bytes = interp.encode() + b"\0" if interp is not None else b""
+	interp_at, at = at, at + len(interp_bytes)
+	strtab = b"\0" + b"".join(n.encode() + b"\0" for n in needed)
+	strtab_at, at = at, at + len(strtab)
+	at += -at % 8
+	dynamic_at = at
+	dyn, offset = b"", 1
+	for name in needed:
+		dyn += struct.pack("<qQ", 1, offset)
+		offset += len(name) + 1
+	if needed:
+		dyn += struct.pack("<qQ", 5, strtab_at) + struct.pack("<qQ", 0, 0)
+	size = dynamic_at + len(dyn) + len(blob)
+	header = b"\x7fELF\x02\x01\x01" + b"\0" * 9 + struct.pack(
+		"<HHIQQQIHHHHHH", 2, machine, 1, 0, 64, 0, 0, 64, 56, phdrs, 0, 0, 0
+	)
+	ph = struct.pack("<IIQQQQQQ", 1, 5, 0, 0, 0, size, size, 0x1000)
+	if interp is not None:
+		ph += struct.pack("<IIQQQQQQ", 3, 4, interp_at, interp_at, interp_at, len(interp_bytes), len(interp_bytes), 1)
+	if needed:
+		ph += struct.pack("<IIQQQQQQ", 2, 6, dynamic_at, dynamic_at, dynamic_at, len(dyn), len(dyn), 8)
+	body = header + ph + interp_bytes + strtab
+	return body + b"\0" * (dynamic_at - len(body)) + dyn + blob
+
+
+GLIBC_X64 = {"interp": "/lib64/ld-linux-x86-64.so.2", "needed": ("libgcc_s.so.1", "libc.so.6")}
+GLIBC_ARM64 = {"interp": "/lib/ld-linux-aarch64.so.1", "needed": ("libgcc_s.so.1", "libc.so.6")}
+GLIBC_SO = {"needed": ("libstdc++.so.6", "libc.so.6")}
+MUSL_X64 = {"interp": "/lib/ld-musl-x86_64.so.1", "needed": ("libstdc++.so.6", "libc.musl-x86_64.so.1")}
+MUSL_SO = {"needed": ("libc.musl-x86_64.so.1",)}
+# apply-seccomp: statically linked glibc, the string in its bytes all the same.
+STATIC_GLIBC = {"blob": b"GLIBC_TUNABLES\0libc.so.6\0GLIBC_PRIVATE\0"}
 
 
 class ForeignBinaries(unittest.TestCase):
@@ -1227,10 +1332,33 @@ class ForeignBinaries(unittest.TestCase):
 			build_reh.refuse_foreign_binaries(self.staging, "linux-x64")
 
 	def test_glibc_binary_on_musl(self) -> None:
-		(self.staging / "a.node").write_bytes(elf(0x3E, b"libc.so.6"))
-		(self.staging / "b.node").write_bytes(elf(0x3E, b"libc.musl-x86_64.so.1"))
-		self.assertEqual(foreign_binaries(self.staging, "alpine-x64"), ["a.node: glibc ELF on a musl target"])
+		(self.staging / "a.node").write_bytes(elf(0x3E, **GLIBC_SO))
+		(self.staging / "b.node").write_bytes(elf(0x3E, **MUSL_SO))
+		(self.staging / "node").write_bytes(elf(0x3E, **GLIBC_X64))
+		(self.staging / "helper").write_bytes(elf(0x3E, interp="/lib64/ld-linux-x86-64.so.2"))
+		(self.staging / "musl-node").write_bytes(elf(0x3E, **MUSL_X64))
+		self.assertEqual(
+			foreign_binaries(self.staging, "alpine-x64"),
+			["a.node: glibc ELF on a musl target", "helper: glibc ELF on a musl target", "node: glibc ELF on a musl target"],
+		)
 		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), [])
+
+	def test_a_static_binary_runs_on_musl_whatever_strings_it_holds(self) -> None:
+		# @vscode/sandbox-runtime's apply-seccomp, which the old byte search
+		# took for a glibc binary.
+		(self.staging / "apply-seccomp").write_bytes(elf(0x3E, **STATIC_GLIBC))
+		self.assertEqual(build_reh.elf_links(elf(0x3E, **STATIC_GLIBC)), (None, []))
+		self.assertEqual(foreign_binaries(self.staging, "alpine-x64"), [])
+		self.assertEqual(build_reh.scan_binaries(self.staging, "alpine-x64"), [])
+
+	def test_reads_interpreter_and_needed_from_the_program_headers(self) -> None:
+		self.assertEqual(
+			build_reh.elf_links(elf(0xB7, **GLIBC_ARM64)),
+			("/lib/ld-linux-aarch64.so.1", ["libgcc_s.so.1", "libc.so.6"]),
+		)
+		self.assertEqual(build_reh.elf_links(elf(0x3E, **MUSL_SO)), (None, ["libc.musl-x86_64.so.1"]))
+		self.assertIsNone(build_reh.elf_links(b"\x7fELF\x02\x01"))
+		self.assertTrue(build_reh.needs_glibc(b"\x7fELF\x02\x01 libc.so.6"))
 
 	def test_only_other_platforms_prebuilds_are_exempt(self) -> None:
 		pb = self.staging / "node_modules" / "x" / "prebuilds"
@@ -1250,11 +1378,81 @@ class ForeignBinaries(unittest.TestCase):
 		self.assertEqual(foreign_binaries(self.staging, "linux-x64"), ["fs.node: Mach-O (macOS)"])
 		self.assertEqual(len(windows_binaries(self.staging)), 2)
 
+	def test_upstream_ships_is_the_inventory_of_upstreams_own_servers(self) -> None:
+		seccomp = "node_modules/@vscode/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
+		mxc = "node_modules/@microsoft/mxc-sdk/bin/arm64"
+		arm64 = ("linux-arm64", "alpine-arm64")
+		self.assertEqual(
+			[(path, targets, kind) for path, targets, kind, _ in build_reh.UPSTREAM_SHIPS],
+			[
+				(seccomp, arm64, "wrong machine"),
+				(seccomp, ("alpine-x64",), "glibc on musl"),
+				(f"{mxc}/mxc-exec-mac", arm64, "Mach-O"),
+				(f"{mxc}/unix-test-proxy", arm64, "Mach-O"),
+				(f"{mxc}/libmxc_ffi.dylib", arm64, "Mach-O"),
+				(f"{mxc}/lxc-exec", ("alpine-arm64",), "glibc on musl"),
+				(f"{mxc}/libmxc_ffi.so", ("alpine-arm64",), "glibc on musl"),
+			],
+		)
+		for path, targets, kind, why in build_reh.UPSTREAM_SHIPS:
+			self.assertTrue(why, path)
+			self.assertTrue(set(targets) <= set(TARGETS), path)
+			# Never the server's own startup code: node, or a *.node it loads.
+			self.assertNotEqual(Path(path).name, "node")
+			self.assertFalse(path.endswith(".node"), path)
+			self.assertIn(kind, (build_reh.MACH_O, build_reh.WRONG_MACHINE, build_reh.GLIBC_ON_MUSL))
+
+	def upstream_tree(self) -> None:
+		"""The vendored helpers of upstream's arm64 servers, as packaged
+		(@vscode/sandbox-runtime@0.0.1, @microsoft/mxc-sdk@0.9.0)."""
+		seccomp = self.staging / "node_modules" / "@vscode" / "sandbox-runtime" / "vendor" / "seccomp" / "x64"
+		seccomp.mkdir(parents=True)
+		(seccomp / "apply-seccomp").write_bytes(elf(0x3E, **STATIC_GLIBC))
+		mxc = self.staging / "node_modules" / "@microsoft" / "mxc-sdk" / "bin" / "arm64"
+		mxc.mkdir(parents=True)
+		for name in ("mxc-exec-mac", "unix-test-proxy", "libmxc_ffi.dylib"):
+			(mxc / name).write_bytes(MACHO)
+		(mxc / "lxc-exec").write_bytes(elf(0xB7, **GLIBC_ARM64))
+		(mxc / "libmxc_ffi.so").write_bytes(elf(0xB7, needed=("libgcc_s.so.1", "libc.so.6")))
+		(mxc / "wxc-exec.exe").write_bytes(b"MZ" + b"\0" * 30)
+
+	def test_upstreams_arm64_helpers_are_warnings_not_failures(self) -> None:
+		self.upstream_tree()
+		for target, count in (("linux-arm64", 4), ("alpine-arm64", 6)):
+			found = build_reh.scan_binaries(self.staging, target)
+			self.assertEqual(len(found), count, found)
+			self.assertTrue(all(why for *_, why in found), found)
+			self.assertEqual(foreign_binaries(self.staging, target), [])
+			with mock.patch("builtins.print") as said:
+				build_reh.refuse_foreign_binaries(self.staging, target)
+			text = "\n".join(str(c.args[0]) for c in said.call_args_list if c.args)
+			self.assertIn(f"same as upstream's own {target} server", text)
+			self.assertIn("apply-seccomp: wrong machine", text)
+
+	def test_the_allowance_is_by_path_target_and_kind(self) -> None:
+		self.upstream_tree()
+		mxc = self.staging / "node_modules" / "@microsoft" / "mxc-sdk" / "bin" / "arm64"
+		# The same Mach-O on an x64 server, where upstream's filter would have dropped bin/arm64.
+		self.assertIn("node_modules/@microsoft/mxc-sdk/bin/arm64/mxc-exec-mac: Mach-O (macOS)", foreign_binaries(self.staging, "linux-x64"))
+		# A Mach-O anywhere else is still fatal, on every target.
+		(mxc / "lxc-exec").write_bytes(MACHO)
+		(self.staging / "node").write_bytes(MACHO)
+		for target in ("linux-arm64", "alpine-arm64"):
+			self.assertEqual(
+				foreign_binaries(self.staging, target),
+				["node: Mach-O (macOS)", "node_modules/@microsoft/mxc-sdk/bin/arm64/lxc-exec: Mach-O (macOS)"],
+			)
+		# A glibc node on musl is the server not starting: fatal.
+		(self.staging / "node").write_bytes(elf(0xB7, **GLIBC_ARM64))
+		self.assertIn("node: glibc ELF on a musl target", foreign_binaries(self.staging, "alpine-arm64"))
+		with self.assertRaises(SystemExit), mock.patch("builtins.print"):
+			build_reh.refuse_foreign_binaries(self.staging, "alpine-arm64")
+
 	def test_musl_servers_lose_upstreams_glibc_msal_runtime(self) -> None:
 		# esbuild.mts picks the runtime by VSCODE_ARCH alone, so alpine-x64
 		# gets linux/x64's glibc one, as upstream's own does.
 		for name in ("msal-node-runtime.node", "libmsalruntime.so"):
-			(self.dist / name).write_bytes(elf(0x3E, b"libc.so.6"))
+			(self.dist / name).write_bytes(elf(0x3E, **GLIBC_SO))
 		self.assertEqual(drop_glibc_msal_runtime(self.staging, "linux-x64"), [])
 		self.assertEqual(len(foreign_binaries(self.staging, "alpine-x64")), 2)
 		with mock.patch("builtins.print"):

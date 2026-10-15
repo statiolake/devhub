@@ -132,6 +132,16 @@ emulator's memory, which is what the margin is for.
 With no targets it builds all four. It needs Docker; the host needs only
 python3, git and the `vscode` submodule checked out at the pinned commit.
 
+A target that fails does not stop the run: the tree it was packaged from is
+unchanged, so the remaining targets are still built, and every failure is
+listed at the end with the command that builds only what is missing. A tree
+that fails to prepare does stop it — nothing after it has a tree to build in.
+
+`refuse_foreign_binaries` refuses Mach-O, the other architecture's ELFs and,
+on musl, glibc-linked ELFs — except the few vendored helpers upstream's own
+servers ship the same way, listed with their reasons in `UPSTREAM_SHIPS`,
+which it reports as warnings.
+
 ## Natively, on a Linux x64 host without Docker
 
 On a Linux x86-64 machine — upstream's own kind of build agent — `--native`
@@ -156,6 +166,7 @@ import os
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -1027,12 +1038,96 @@ ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
 MACHO_MAGICS = (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
 PE_SUFFIXES = (".node", ".dll", ".exe")
 
+# What a foreign binary is, for the scan and for UPSTREAM_SHIPS below.
+MACH_O = "Mach-O"
+WRONG_MACHINE = "wrong machine"
+GLIBC_ON_MUSL = "glibc on musl"
 
-def _allowed_foreign(rel: Path, target: str) -> bool:
-	"""The one documented exemption: a node-gyp-build `prebuilds/<platform>-<arch>/`
-	directory for some *other* platform. Packages ship those for every platform
-	on purpose and load only their own (upstream's glibc check skips
-	`*prebuilds*` for the same reason). The target's own prebuilds stay checked."""
+
+# --- what upstream ships that cannot run where it is shipped -----------------
+#
+# The scan below is stricter than upstream: VS Code's own servers carry a few
+# vendored helper executables that cannot run on the platform they are in.
+# Each one is only ever spawned on demand by an agent/terminal sandbox feature
+# (which DevHub turns off with `chat.disableAIFeatures`), looks itself up by
+# `process.arch` or `process.platform`, and is never loaded by the server at
+# startup. DevHub ships exactly what upstream ships, so these are reported as
+# "same as upstream" rather than refused. Anything *not* listed here is still
+# fatal: a Mach-O, an ELF of the other machine, or on musl a dynamically
+# glibc-linked ELF — `node` and every `*.node` the server loads among them.
+#
+# Derived from the sources at the pinned commit (2a59476, 1.141.0) and the npm
+# packages they pin, because the official tarballs
+# (update.code.visualstudio.com/commit:<commit>/server-<platform>/stable) were
+# not reachable from where this list was made. Upstream's per-target filters
+# (`vscode/build/gulpfile.reh.ts` → `build/lib/copilot.ts`) strip only other
+# architectures of @github/copilot-*, @vscode/ripgrep-universal and
+# @microsoft/mxc-sdk; nothing filters @vscode/sandbox-runtime, and nothing
+# filters by libc. So, per target:
+#
+#   @vscode/sandbox-runtime@0.0.1 ships one helper, vendor/seccomp/x64/
+#   apply-seccomp: a *static* x86-64 glibc executable (it runs on musl as is;
+#   its bytes merely contain the string "libc.so.6", which is what tripped the
+#   old scan), and no arm64 build at all. Every upstream server carries it,
+#   so linux-arm64 and alpine-arm64 carry an x86-64 binary. The package looks
+#   for vendor/seccomp/<process.arch>/, finds nothing on arm64, and leaves the
+#   seccomp filter off.
+#
+#   @microsoft/mxc-sdk@0.9.0 bin/<arch>/ is kept for x64 and arm64
+#   (`getMxcExcludeFilter`). bin/arm64 mixes platforms: lxc-exec and
+#   libmxc_ffi.so (glibc, aarch64) next to mxc-exec-mac, unix-test-proxy and
+#   libmxc_ffi.dylib (Mach-O, arm64). So linux-arm64 and alpine-arm64 carry
+#   three Mach-O files, and alpine-arm64 two glibc ones. The SDK picks its
+#   binary by `process.platform`; libmxc_ffi is loaded only through koffi,
+#   which `build/.moduleignore` strips from every server. alpine-x64 is built
+#   by the legacy `linux-alpine` task, whose arch `alpine` is not in
+#   `mxcArchitectures`, so it gets no mxc binaries at all; linux-x64's
+#   bin/x64 (glibc ELFs and Windows PEs) is all runnable or inert there.
+#
+#   @vscode/ripgrep-universal keeps only bin/linux-<arch>/rg, which is static
+#   (static-pie on x64) and runs on musl. Copilot's platform runtime is
+#   removed by `remove_copilot`, the glibc MSAL broker runtime on musl by
+#   `drop_glibc_msal_runtime`; koffi's per-platform packages are stripped by
+#   `.moduleignore`.
+#
+# (path in the server, the targets upstream ships it to, what is wrong with
+# it there, why it is harmless). A test pins this list.
+SANDBOX_SECCOMP = "node_modules/@vscode/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
+MXC_ARM64 = "node_modules/@microsoft/mxc-sdk/bin/arm64"
+_SECCOMP_WHY = (
+	"@vscode/sandbox-runtime ships only an x64 helper; on arm64 it looks in vendor/seccomp/arm64/, "
+	"finds nothing and runs without seccomp"
+)
+_MXC_MAC_WHY = "@microsoft/mxc-sdk's macOS sandbox binaries in its bin/arm64/; chosen by process.platform, never on Linux"
+_MXC_GLIBC_WHY = (
+	"@microsoft/mxc-sdk's Linux sandbox helper, glibc-only; spawned on demand by the agent sandbox, "
+	"libmxc_ffi only through koffi, which no server carries"
+)
+UPSTREAM_SHIPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+	(SANDBOX_SECCOMP, ("linux-arm64", "alpine-arm64"), WRONG_MACHINE, _SECCOMP_WHY),
+	(SANDBOX_SECCOMP, ("alpine-x64",), GLIBC_ON_MUSL, "static in 0.0.1, so it runs on musl; were it not, the sandbox it serves is off in DevHub"),
+	(f"{MXC_ARM64}/mxc-exec-mac", ("linux-arm64", "alpine-arm64"), MACH_O, _MXC_MAC_WHY),
+	(f"{MXC_ARM64}/unix-test-proxy", ("linux-arm64", "alpine-arm64"), MACH_O, _MXC_MAC_WHY),
+	(f"{MXC_ARM64}/libmxc_ffi.dylib", ("linux-arm64", "alpine-arm64"), MACH_O, _MXC_MAC_WHY),
+	(f"{MXC_ARM64}/lxc-exec", ("alpine-arm64",), GLIBC_ON_MUSL, _MXC_GLIBC_WHY),
+	(f"{MXC_ARM64}/libmxc_ffi.so", ("alpine-arm64",), GLIBC_ON_MUSL, _MXC_GLIBC_WHY),
+)
+
+
+def upstream_ships(rel: str, target: str, kind: str) -> str | None:
+	"""Why upstream's own `target` server carries `rel` although it is `kind`;
+	None when it does not, and the file is DevHub's problem."""
+	for path, targets, what, why in UPSTREAM_SHIPS:
+		if path == rel and target in targets and what == kind:
+			return why
+	return None
+
+
+def _other_platforms_prebuild(rel: Path, target: str) -> bool:
+	"""A node-gyp-build `prebuilds/<platform>-<arch>/` directory for some
+	*other* platform. Packages ship those for every platform on purpose and
+	load only their own (upstream's glibc check skips `*prebuilds*` for the
+	same reason). The target's own prebuilds stay checked."""
 	parts = rel.parts
 	for i, part in enumerate(parts[:-2]):
 		if part == "prebuilds":
@@ -1040,25 +1135,94 @@ def _allowed_foreign(rel: Path, target: str) -> bool:
 	return False
 
 
-def foreign_binaries(staging: Path, target: str) -> list[str]:
-	"""Every file in the server that cannot run on the target.
+PT_LOAD, PT_DYNAMIC, PT_INTERP = 1, 2, 3
+DT_NULL, DT_NEEDED, DT_STRTAB = 0, 1, 5
 
-	Mach-O anywhere, an ELF of another machine, and on musl an ELF that needs
-	glibc's libc.so.6. By content, not by name: the glibc check only reads
+
+def elf_links(data: bytes) -> tuple[str | None, list[str]] | None:
+	"""An ELF's program interpreter and DT_NEEDED libraries, read from its
+	program headers; None when the file cannot be parsed as one. A static
+	executable has neither (`([], None)`), however many libc strings its
+	bytes happen to contain."""
+	try:
+		is64 = data[4] == 2
+		end = "<" if data[5] == 1 else ">"
+		if is64:
+			phoff, = struct.unpack_from(end + "Q", data, 0x20)
+			phentsize, phnum = struct.unpack_from(end + "HH", data, 0x36)
+			ph_fmt, dyn_fmt = end + "IIQQQQQQ", end + "qQ"
+		else:
+			phoff, = struct.unpack_from(end + "I", data, 0x1C)
+			phentsize, phnum = struct.unpack_from(end + "HH", data, 0x2A)
+			ph_fmt, dyn_fmt = end + "IIIIIIII", end + "iI"
+		loads, interp, dynamic = [], None, None
+		for i in range(phnum):
+			fields = struct.unpack_from(ph_fmt, data, phoff + i * phentsize)
+			if is64:
+				p_type, _, p_offset, p_vaddr, _, p_filesz, _, _ = fields
+			else:
+				p_type, p_offset, p_vaddr, _, p_filesz, _, _, _ = fields
+			if p_type == PT_LOAD:
+				loads.append((p_vaddr, p_offset, p_filesz))
+			elif p_type == PT_INTERP:
+				interp = data[p_offset:p_offset + p_filesz].split(b"\0")[0].decode()
+			elif p_type == PT_DYNAMIC:
+				dynamic = (p_offset, p_filesz)
+		needed: list[str] = []
+		if dynamic:
+			size = struct.calcsize(dyn_fmt)
+			offsets, strtab = [], None
+			for at in range(dynamic[0], dynamic[0] + dynamic[1] - size + 1, size):
+				tag, value = struct.unpack_from(dyn_fmt, data, at)
+				if tag == DT_NULL:
+					break
+				if tag == DT_NEEDED:
+					offsets.append(value)
+				elif tag == DT_STRTAB:
+					strtab = next((value - v + o for v, o, n in loads if v <= value < v + n), None)
+			if offsets and strtab is None:
+				return None
+			for offset in offsets:
+				needed.append(data[strtab + offset:].split(b"\0", 1)[0].decode())
+		return interp, needed
+	except (IndexError, struct.error, UnicodeDecodeError):
+		return None
+
+
+def needs_glibc(data: bytes) -> bool:
+	"""Whether this ELF is dynamically linked against glibc: glibc's loader as
+	its interpreter, or glibc's sonames among what it needs. An ELF that
+	cannot be parsed is judged by whether it names libc.so.6 at all."""
+	links = elf_links(data)
+	if links is None:
+		return b"libc.so.6" in data
+	interp, needed = links
+	if interp and re.search(r"/ld-linux[^/]*$|/ld64\.so\.[0-9]+$", interp):
+		return True
+	return any(name == "libc.so.6" or name.startswith("ld-linux") for name in needed)
+
+
+def scan_binaries(staging: Path, target: str) -> list[tuple[str, str, str, str | None]]:
+	"""Every file in the server that cannot run on the target, as
+	(path, kind, detail, why upstream ships it or None).
+
+	Mach-O anywhere, an ELF of another machine, and on musl an ELF dynamically
+	linked against glibc. By content, not by name: the glibc check only reads
 	`*.node` and `node`, and a wrong binary can hide under any name (ripgrep,
 	a helper, a .so). PE files are inert on Linux (`windows_binaries`).
+	Other platforms' `prebuilds/` are left out entirely.
 	"""
 	machine = ELF_MACHINES[arch_of(target)]
-	problems = []
+	found = []
 	for path in sorted(staging.rglob("*")):
 		if path.is_symlink() or not path.is_file():
 			continue
 		rel = path.relative_to(staging)
 		with path.open("rb") as fh:
 			head = fh.read(20)
-		why = None
+		kind = detail = None
 		if head[:4] in MACHO_MAGICS or (head[:4] == b"\xca\xfe\xba\xbe" and 0 < int.from_bytes(head[4:8], "big") < 30):
-			why = "Mach-O (macOS)"
+			kind, detail = MACH_O, "Mach-O (macOS)"
 		elif head[:2] == b"MZ":
 			# Inert on Linux: nothing loads a PE there. Upstream's own Linux
 			# servers carry these (js-debug's win32-*.node natives, loaded only
@@ -1068,12 +1232,18 @@ def foreign_binaries(staging: Path, target: str) -> list[str]:
 		elif head[:4] == b"\x7fELF" and len(head) >= 20:
 			got = int.from_bytes(head[18:20], "little" if head[5] == 1 else "big")
 			if got != machine:
-				why = f"ELF for machine {got:#x}, not {machine:#x}"
-			elif libc_of(target) == "musl" and b"libc.so.6" in path.read_bytes():
-				why = "glibc ELF on a musl target"
-		if why and not _allowed_foreign(rel, target):
-			problems.append(f"{rel}: {why}")
-	return problems
+				kind, detail = WRONG_MACHINE, f"ELF for machine {got:#x}, not {machine:#x}"
+			elif libc_of(target) == "musl" and needs_glibc(path.read_bytes()):
+				kind, detail = GLIBC_ON_MUSL, "glibc ELF on a musl target"
+		if kind and not _other_platforms_prebuild(rel, target):
+			found.append((rel.as_posix(), kind, detail, upstream_ships(rel.as_posix(), target, kind)))
+	return found
+
+
+def foreign_binaries(staging: Path, target: str) -> list[str]:
+	"""The binaries that make the server unfit to ship: those `scan_binaries`
+	finds that upstream does not ship the same way (`UPSTREAM_SHIPS`)."""
+	return [f"{rel}: {detail}" for rel, _, detail, why in scan_binaries(staging, target) if why is None]
 
 
 def windows_binaries(staging: Path) -> list[str]:
@@ -1092,13 +1262,21 @@ def refuse_foreign_binaries(staging: Path, target: str) -> None:
 	pe = windows_binaries(staging)
 	if pe:
 		print(f"  {target}: info: {len(pe)} Windows PE file(s) left in place (never loaded on Linux; upstream ships them too)")
-	problems = foreign_binaries(staging, target)
+	found = scan_binaries(staging, target)
+	for rel, kind, _, why in found:
+		if why is not None:
+			print(f"  {target}: warning: {rel}: {kind}, same as upstream's own {target} server; {why}")
+	problems = [f"{rel}: {detail}" for rel, _, detail, why in found if why is None]
 	if problems:
 		raise SystemExit(
 			f"{target}: the server carries binaries that cannot run there:\n  "
 			+ "\n  ".join(problems)
 		)
-	print(f"  {target}: every binary in the server is for {target}")
+	shipped = sum(1 for *_, why in found if why is not None)
+	print(
+		f"  {target}: every binary in the server is for {target}"
+		+ (f", but for {shipped} helper(s) upstream ships the same way (UPSTREAM_SHIPS)" if shipped else "")
+	)
 
 
 def verify_server_starts(staging: Path, target: str) -> None:
@@ -1320,6 +1498,28 @@ def warn_about_docker() -> None:
 	print(f"  note: {time_note()}")
 
 
+def report_failures(
+	failures: list[tuple[str, BaseException]], out_dir: Path, targets: list[str], commit: str, identity: str
+) -> None:
+	"""Every failure of this run, then what is left and how to build only that."""
+	remaining = retry_command(out_dir, targets, commit, identity) + (" --native" if NATIVE else "")
+	lines = [f"\n{len(failures)} failure(s):"]
+	for failed, error in failures:
+		lines.append(f"  {failed}: {error}")
+		killed = killed_message(error, NATIVE)
+		if killed:
+			lines.append(f"    {killed}")
+	trees = ", ".join(
+		str(native_work_dir(arch)) if NATIVE else f"the Docker volume {work_volume(arch)}"
+		for arch, _ in targets_by_arch(targets)
+	)
+	lines.append(
+		f"Servers already built stay in {out_dir}, and the trees ({trees}) keep every step that "
+		f"finished. Retry only what is missing with:\n  {remaining}"
+	)
+	print("\n".join(lines), file=sys.stderr)
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 	parser.add_argument("targets", nargs="*", help=f"any of {', '.join(TARGETS)}; default: all four")
@@ -1387,30 +1587,29 @@ def main() -> int:
 		)
 	metadata = packaged_metadata()
 	key = source_key(identity, metadata)
+	failures: list[tuple[str, BaseException]] = []
 	for arch, group in targets_by_arch(targets):
-		for target in [None, *group]:
+		try:
+			elapsed = prepare_tree(arch, commit, key, metadata)
+			print(f"the {arch} tree is ready ({elapsed / 60:.0f} min)")
+		except (subprocess.CalledProcessError, SystemExit) as error:
+			# Every target after this one needs a tree, and the next
+			# architecture's would most likely fail the same way (memory,
+			# network, a patch): stop here.
+			failures.append((f"the {arch} tree", error))
+			break
+		for target in group:
 			try:
-				if target is None:
-					elapsed = prepare_tree(arch, commit, key, metadata)
-					print(f"the {arch} tree is ready ({elapsed / 60:.0f} min)")
-				else:
-					build_target(target, commit, identity, out_dir)
+				build_target(target, commit, identity, out_dir)
 			except (subprocess.CalledProcessError, SystemExit) as error:
-				remaining = retry_command(out_dir, targets, commit, identity)
-				failed = f"the {arch} tree" if target is None else target
-				tree = native_work_dir(arch) if NATIVE else f"the Docker volume {work_volume(arch)}"
-				if NATIVE:
-					remaining += " --native"
-				killed = killed_message(error, NATIVE)
-				print(
-					f"\nerror: building {failed} failed ({error}).\n"
-					+ (f"{killed}\n" if killed else "")
-					+ f"Servers already built stay in {out_dir}, and the tree in {tree} keeps every "
-					+ f"step that finished. Retry only what is missing with:\n"
-					+ f"  {remaining}",
-					file=sys.stderr,
-				)
-				return 1
+				# The tree is still good — packaging and the host's checks only
+				# read it — so the other targets go on, and every failure is
+				# reported together at the end.
+				print(f"\nerror: {target} failed ({error}); going on with the rest.", file=sys.stderr)
+				failures.append((target, error))
+	if failures:
+		report_failures(failures, out_dir, targets, commit, identity)
+		return 1
 	return 0
 
 
