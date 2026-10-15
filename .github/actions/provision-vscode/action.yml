@@ -1,0 +1,104 @@
+name: Provision the VS Code submodule
+description: >-
+  scripts/provision-vscode.sh behind a cache of its expensive outputs. Expects
+  the submodule checked out and Node/pnpm set up (../setup-node-pnpm).
+
+inputs:
+  for:
+    description: provision-vscode.sh --for (dev, app or all).
+    required: false
+    default: all
+  bundle:
+    description: >-
+      How out-vscode-min is made: `full` (upstream's `npm run core-ci`, what the
+      nightly ships) or `fast` (the desktop bundle alone; what the per-push CI
+      tests). See step 4b of scripts/provision-vscode.sh.
+    required: true
+  save-cache:
+    description: >-
+      Save the cache on a miss. Only a job that provisions everything the key
+      promises may save it: a job that asked for less would store a partial
+      tree under the full tree's key, and every later run would rebuild the rest.
+    required: false
+    default: "true"
+  github-token:
+    description: >-
+      For the rate limit only: the nested installs under build/ and
+      extensions/* and the built-in extension downloads fetch prebuilt binaries
+      from GitHub releases, and unauthenticated requests from shared runner
+      addresses get 403.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  vscode-sha:
+    description: The pinned VS Code commit.
+    value: ${{ steps.meta.outputs.vscode_sha }}
+  cache-hit:
+    description: Whether the cache held this exact tree.
+    value: ${{ steps.save.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Identify the pinned VS Code
+      id: meta
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ inputs.bundle }}" in full | fast) ;; *) echo "bundle must be full or fast" >&2; exit 1 ;; esac
+        echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    # The expensive half of what provision-vscode.sh produces, under one key: a
+    # miss costs the full `npm ci` and the compiles. The key is everything the
+    # trees are a function of — the submodule commit, its lockfile, its Node,
+    # DevHub's patches — and the bundle mode, because the stamp records the mode
+    # and a tree of the other mode would be rebuilt anyway.
+    #
+    # Deliberately not here are the nested node_modules that VS Code's
+    # postinstall creates under build/ and extensions/* — 3.4 GB, more than this
+    # cache should carry. Provisioning notices they are missing on a hit and
+    # reinstalls just those, which is minutes; see the script.
+    #
+    # `out-build` is here because the bundle step's stamp check requires it
+    # beside `out-vscode-min`: without it every hit re-ran the whole bundle.
+    - name: Restore and save the provisioned VS Code build
+      id: save
+      if: inputs.save-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          vscode-toolchain
+          vscode/node_modules
+          vscode/out
+          vscode/out-build
+          vscode/out-vscode-min
+          vscode/.build
+        key: >-
+          vscode-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bundle }}-${{ steps.meta.outputs.vscode_sha }}-${{
+          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+
+    - name: Restore the provisioned VS Code build
+      id: restore
+      if: inputs.save-cache != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          vscode-toolchain
+          vscode/node_modules
+          vscode/out
+          vscode/out-build
+          vscode/out-vscode-min
+          vscode/.build
+        key: >-
+          vscode-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bundle }}-${{ steps.meta.outputs.vscode_sha }}-${{
+          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+
+    # Idempotent and stamped: on a hit it re-applies the patches, repairs the
+    # nested installs and skips every compile whose stamp is current.
+    - name: Provision (scripts/provision-vscode.sh --for ${{ inputs.for }})
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        DEVHUB_FAST_VSCODE_BUNDLE: ${{ inputs.bundle == 'fast' && '1' || '0' }}
+      run: scripts/provision-vscode.sh --for "${{ inputs.for }}"

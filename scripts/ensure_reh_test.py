@@ -229,6 +229,43 @@ class DownloadTest(Fixture):
 		self.assertIn("linux-arm64: prebuilt not used (no prebuilt linux-arm64 for identity", err)
 		self.assertIn("linux-arm64: built locally", err)
 
+	def run_from_release(self, github, targets, env):
+		with mock.patch.object(ensure_reh, "target_problems", self.problems), \
+				mock.patch.object(reh_release, "repo_slug", lambda env=None: REPO), \
+				mock.patch.object(reh_release, "github_token", lambda env=None: None), \
+				redirect_stderr(io.StringIO()):
+			return ensure_reh.fetch_published(
+				targets,
+				self.out,
+				env=env,
+				commit=COMMIT,
+				identity=IDENTITY,
+				cache_root=self.cache,
+				lookup=functools.partial(reh_release.release_assets, opener=github),
+				fetch=functools.partial(reh_release.fetch, opener=github),
+			)
+
+	def test_from_release_downloads_under_ci_and_names_the_rest(self):
+		# The nightly's `reh` jobs: CI is set, and what the release lacks is
+		# theirs to build.
+		github = FakeGitHub(published("linux-x64"))
+		missing = self.run_from_release(github, ["linux-x64", "alpine-arm64"], {"CI": "true"})
+		self.assertEqual(missing, ["alpine-arm64"])
+		self.assertTrue((self.out / tarball_name("linux-x64")).is_file())
+		self.assertFalse((self.out / tarball_name("alpine-arm64")).exists())
+
+	def test_from_release_offline_is_everything_missing(self):
+		github = FakeGitHub(error=urllib.error.URLError("offline"))
+		self.assertEqual(self.run_from_release(github, ["linux-x64"], {"CI": "true"}), ["linux-x64"])
+
+	def test_from_release_cli_prints_the_missing(self):
+		out = io.StringIO()
+		with mock.patch.object(ensure_reh, "fetch_published", return_value=["alpine-x64"]) as fetched, \
+				redirect_stdout(out):
+			rc = ensure_reh.main(["--from-release", "alpine-x64", "--out-dir", str(self.out)])
+		self.assertEqual((rc, out.getvalue()), (0, "alpine-x64\n"))
+		self.assertEqual(fetched.call_args.args[0], ["alpine-x64"])
+
 	def test_token_is_sent_to_the_api_only(self):
 		github = FakeGitHub(published(*ensure_reh.TARGETS))
 		self.run_ensure(github, env={"GITHUB_TOKEN": "secret"})

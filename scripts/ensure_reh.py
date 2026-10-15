@@ -17,6 +17,7 @@ any reason — offline, a timeout, a 403 or 404, a checksum mismatch, a
 corrupted tarball — is one line saying why, and the build goes on locally.
 
     scripts/ensure_reh.py [--out-dir dist/reh] [--no-download | --download-only]
+    scripts/ensure_reh.py --from-release TARGET... [--out-dir dist/reh]
 
 `--no-download` (or `DEVHUB_REH_SOURCE=build`) always builds what the cache
 lacks; `--download-only` (or `DEVHUB_REH_SOURCE=download`) fails instead of
@@ -25,11 +26,18 @@ building. `DEVHUB_REH_SOURCE` is how either reaches `pnpm build`.
 It does nothing in CI (`CI` is set there): the nightly downloads the servers
 built by its own `reh` jobs into dist/reh, and a macOS runner must never try to
 build them. A stale set there still fails in package-nightly.py's bundle check.
+
+`--from-release TARGET...` is the one part that does run in CI: each of the
+nightly's `reh` jobs asks it first, so a target whose identity the `reh`
+release already has is downloaded (verified, as above) instead of rebuilt. It
+never builds; it prints the targets it could not get, space-separated, on
+stdout, and the job builds exactly those.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -103,6 +111,30 @@ def download(
 		else:
 			say(f"{target}: the downloaded server did not verify; falling back to a local build")
 	return got
+
+
+def fetch_published(
+	targets: list[str],
+	directory: Path,
+	*,
+	env: dict[str, str] | None = None,
+	commit: str | None = None,
+	identity: str | None = None,
+	cache_root: Path | None = None,
+	lookup=reh_release.release_assets,
+	fetch=reh_release.fetch,
+) -> list[str]:
+	"""Put what the `reh` release has of `targets` into `directory`, CI or not.
+	Returns the targets still missing there. Never builds, never raises."""
+	env = env if env is not None else dict(os.environ)
+	commit = commit or vscode_commit()
+	identity = identity or reh_identity()
+	cache_root = cache_root or reh_cache_root()
+	todo = [t for t in targets if target_problems(t, directory, commit, identity)]
+	if todo:
+		for target in download(todo, directory, commit, identity, cache_root, env=env, lookup=lookup, fetch=fetch):
+			todo.remove(target)
+	return todo
 
 
 def ensure(
@@ -185,7 +217,20 @@ def main(argv: list[str] | None = None) -> int:
 	group = parser.add_mutually_exclusive_group()
 	group.add_argument("--no-download", action="store_true", help="never download; build what the cache lacks")
 	group.add_argument("--download-only", action="store_true", help="fail rather than build")
+	group.add_argument(
+		"--from-release",
+		nargs="+",
+		metavar="TARGET",
+		choices=TARGETS,
+		help="only download these from the reh release (also under CI); print the ones still missing",
+	)
 	args = parser.parse_args(argv)
+	if args.from_release:
+		# stdout is the answer and nothing else: the workflow reads it.
+		with contextlib.redirect_stdout(sys.stderr):
+			missing = fetch_published(args.from_release, args.out_dir.resolve())
+		print(" ".join(missing))
+		return 0
 	mode = "build" if args.no_download else "download" if args.download_only else None
 	return ensure(args.out_dir.resolve(), mode=mode)
 

@@ -22,9 +22,8 @@ CI=true pnpm run build
 git diff --check
 ```
 
-Run focused commands while iterating with `CI=true pnpm --filter @devhub/app test`,
-`cargo test --workspace --locked`, and `cargo clippy --workspace
---all-targets --all-features --locked -- -D warnings`.
+Run focused commands while iterating, e.g. `CI=true pnpm --filter
+@devhub/desktop test`.
 
 `pnpm run build` reuses the extension build and `node_modules.asar` when their
 inputs are unchanged (see README, Development); if a result looks stale, delete
@@ -35,10 +34,10 @@ result looks wrong, compare with `pnpm --filter @devhub/desktop run
 typecheck:tsc` before changing code.
 
 Do not claim hosted CI, macOS artifact generation, signing, or release status
-from a local run. The committed `.github/workflows/ci.yml` describes the
-non-release hosted verification that will be run in the final wave; it is not
-executed as part of local development. Public remotes and publication are
-also final-wave actions and are intentionally absent during local work.
+from a local run. Hosted CI is `.github/workflows/ci.yml` (every push: the
+checks above, split across Linux and macOS jobs, plus a test build of the app
+and the tests that start it) and `.github/workflows/nightly.yml` (the product
+build and its releases); [docs/ci.md](docs/ci.md) describes both.
 
 ## Change boundaries
 

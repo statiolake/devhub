@@ -1,15 +1,25 @@
 name: CI
 
-# The deterministic checks, on every change that reaches main.
+# The per-push checks: every change that reaches main, and every pull request.
 #
-# The repository is public, so the standard runners cost nothing and there is no
-# reason to make a person remember to ask for a check. The job still needs a
-# macOS runner — the app is a macOS bundle and the packaging step signs it — so
-# it is not free of *time*: `concurrency` below cancels a branch's older run the
-# moment a newer commit lands on it, and the VS Code build cache keeps the
-# expensive half of the tree between runs.
+# This workflow answers one question — is this change broken? — as fast as it
+# can. It does not produce anything anyone downloads: the product build (the
+# remote extension hosts, the speech recogniser, the full `core-ci` VS Code
+# bundle, the zip, the release) is the nightly's, and so are the longer tests
+# against that packaged app. See docs/ci.md for the whole pipeline.
 #
-# `pnpm run check` here is the same command a developer runs before pushing.
+#   Test: static checks (Linux) ─────────────────────────────┐
+#   Test: desktop (macOS) ───────────────────────────────────┤  all in parallel
+#   Build: DevHub.app (macOS) ──> Test: app (macOS) ─────────┘
+#
+# Together the jobs run exactly what `pnpm run check` runs, plus a test build
+# of the app and the app-level tests on it. What needs neither macOS nor a
+# provisioned VS Code runs on Linux; the rest is split so that no job waits
+# for another unless it needs its output.
+#
+# The repository is public, so the standard runners cost nothing; they still
+# cost *time*, so `concurrency` cancels a branch's older run the moment a newer
+# commit lands on it.
 on:
   push:
     branches: [main]
@@ -22,114 +32,170 @@ permissions:
 concurrency:
   # One live run per branch. A superseded commit's result is not worth waiting
   # for, and a pull request that is pushed to twice in a minute would otherwise
-  # hold two macOS runners to answer the same question.
+  # hold several macOS runners to answer the same question.
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CI: "true"
+
 jobs:
-  verify:
-    runs-on: macos-15
-    # Sized for the run that has no cache to hit, not the ordinary one. The
-    # cache below is keyed on the submodule commit, so a VS Code bump misses it
-    # by construction and pays for `npm ci` and both compiles from cold — which
-    # is the same work the bump workflow already allows 180 minutes for. At 60
-    # this job was cancelled mid-build on exactly the change it exists to check,
-    # and a bump is the change most worth checking. Every other run restores the
-    # cache and finishes in a few minutes, so this ceiling costs nothing when it
-    # is not needed.
-    timeout-minutes: 150
-    env:
-      CI: "true"
+  # Everything in `pnpm run check` that needs neither macOS nor a provisioned
+  # VS Code: formatting, lint, both extensions' full checks (build, typecheck,
+  # tests, lint, package, reproducibility) and the Python script tests. The
+  # submodule is checked out and patched — cheap, pure git — because the
+  # remote extension typechecks against VS Code's proposed API files and the
+  # script tests read the patched tree.
+  checks:
+    name: "Test: static checks and script tests (Linux)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      # The submodule is not optional here: `pnpm run check` reads it. The
-      # proposal test in scripts/product_metadata_test.py asserts that every
-      # API proposal DevHub grants is one this VS Code declares, which means
-      # opening files under vscode/src.
       - name: Check out source
         uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 1
 
-      - name: Identify the pinned VS Code
-        id: meta
-        run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Apply DevHub's patches to the VS Code source
+        run: scripts/apply-vscode-patches.sh
 
-      # pnpm has to exist before setup-node runs: `cache: pnpm` shells out to
-      # `pnpm store path` to find the cache directory, and a runner starts with
-      # no pnpm on its PATH. Corepack ships with the runner's default Node.
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Format
+        run: pnpm run fmt
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: "Extension: devhub-bridge (build, typecheck, test, lint, package)"
+        run: pnpm run bridge:check
+
+      - name: "Extension: devhub-remote (build, typecheck, test, lint, package)"
+        run: pnpm run remote:check
+
+      - name: Script tests (python3 -m unittest scripts/*_test.py)
+        run: pnpm run test:scripts
+
+  # The desktop app's own typecheck and tests. Both need a provisioned VS Code:
+  # the typecheck resolves DevHub's main process against the submodule's
+  # sources and node_modules, vitest imports the compiled vscode/out, and the
+  # terminal tests load node-pty in VS Code's own Electron. The cache is only
+  # restored here; the build job below provisions everything the key promises
+  # and is the one that saves it.
+  test-desktop:
+    name: "Test: desktop typecheck and unit tests (macOS)"
+    runs-on: macos-15
+    # Sized for a miss (a VS Code bump or a patch edit): `npm ci` and the
+    # compile from cold. A hit is minutes.
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
         with:
-          node-version: 22.21.1
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          submodules: true
+          fetch-depth: 1
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Provision VS Code (vscode/out)
+        uses: ./.github/actions/provision-vscode
         with:
-          toolchain: 1.97.1
-          components: rustfmt,clippy
+          for: dev
+          bundle: fast
+          save-cache: "false"
 
-      # Keyed exactly as the nightly's is, so the two workflows share entries
-      # rather than each paying for its own first build of the same tree. See
-      # the nightly for what is in it and what deliberately is not.
-      - name: Restore the provisioned VS Code build
-        uses: actions/cache@v4
+      - name: Typecheck the desktop app
+        run: pnpm --filter @devhub/desktop typecheck
+
+      - name: Desktop unit tests (vitest, node-pty under Electron)
+        run: pnpm --filter @devhub/desktop test
+
+      # The three script tests the Linux job skips: they read the Electron
+      # bundle provisioning stages, which exists only on a Mac.
+      - name: Script tests that need the provisioned Electron
+        working-directory: scripts
+        run: python3 -m unittest darwin_bundle_test
+
+  # A test build of the app: only what the app-level tests need. No remote
+  # extension hosts, no speech recogniser, no zip, and the fast VS Code bundle
+  # (DEVHUB_FAST_VSCODE_BUNDLE=1, the one a developer's `pnpm build` makes)
+  # instead of the nightly's full `core-ci`. scripts/build_reh_test.py,
+  # build_whisper_test.py and package_nightly_test.py, in the Linux job, keep
+  # the parts it leaves out honest; the nightly builds and tests them for real.
+  build-app:
+    name: "Build: DevHub.app test build (macOS)"
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      DEVHUB_FAST_VSCODE_BUNDLE: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
         with:
-          path: |
-            vscode-toolchain
-            vscode/node_modules
-            vscode/out
-            vscode/out-vscode-min
-            vscode/.build
-          key: >-
-            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
-            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+          submodules: true
+          fetch-depth: 1
 
-      - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
-      # A checked-out submodule is not a usable one, and `pnpm run check` needs
-      # a usable one twice over: typecheck resolves DevHub's main process against
-      # the types in vscode/node_modules, and the tests read fields that only
-      # exist once patches/vscode/*.patch is on the tree. Checking out the
-      # submodule without this step is how the first run of this workflow failed.
-      - name: Provision the VS Code submodule
+      # `all`, not just `app`: this job saves the cache the desktop tests
+      # restore, and they need vscode/out.
+      - name: Provision VS Code
+        uses: ./.github/actions/provision-vscode
+        with:
+          for: all
+          bundle: fast
+
+      - name: Build DevHub.app
         env:
-          # The nested installs under build/ and extensions/* download prebuilt
-          # binaries from GitHub releases; unauthenticated requests from shared
-          # runner addresses hit the rate limit. The token is only for that.
+          # The built-in extension set pulls binaries from GitHub releases;
+          # the token is only there for the rate limit.
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/provision-vscode.sh
+        run: scripts/build-app.sh --without-reh --without-whisper --no-zip
 
-      - name: Run deterministic checks
-        run: pnpm run check
+      # One tar rather than the bundle's 20,000 files: the artifact service
+      # uploads file by file and drops symlinks and modes, which a signed app
+      # bundle needs.
+      - name: Pack the bundle
+        run: tar -cf dist/DevHub.app.tar -C dist DevHub.app
 
-      - name: Build the local workspace
-        env:
-          # The built-in extension set and the nested npm installs pull binaries
-          # from GitHub releases; unauthenticated requests from shared runner
-          # addresses hit the rate limit. The token is only there for that.
-          GITHUB_TOKEN: ${{ github.token }}
-        # Without the remote extension hosts: building the four of them is two
-        # Linux runners for most of an hour, which is the nightly's to spend,
-        # and this bundle is checked and thrown away, never handed to anyone.
-        # scripts/build_reh_test.py and package_nightly_test.py, in
-        # `pnpm run check` above, are what keep the bundling itself honest.
-        # Without the speech recogniser for the same reason: compiling
-        # whisper.cpp and downloading its 547 MiB model is the nightly's to
-        # spend (scripts/build_whisper_test.py keeps the logic honest here).
-        run: scripts/build-app.sh --without-reh --without-whisper
+      - name: Hand the app to the app tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevHub-app-test-build
+          path: dist/DevHub.app.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
 
-      # The build assembles the bundle and stops there — starting a DevHub has
-      # effects on the machine that starts it, which a developer running
-      # `pnpm build` never asked for. A runner is disposable, so here the app
-      # is started and asked something over its control socket: that is the
-      # only way to catch a bundle whose main process comes up and then stops
-      # pumping its event loop.
-      - name: Smoke-test the packaged app
-        run: pnpm run smoke
+  # Tests that start the app. A macOS runner has a GUI session, so this is
+  # where the end-to-end suite goes when there is one; today it is the smoke
+  # test: start the bundle under a throwaway profile and make it answer on its
+  # control socket — the only way to catch a bundle whose main process comes up
+  # and then stops pumping its event loop.
+  test-app:
+    name: "Test: app (macOS)"
+    needs: build-app
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      # For the test scripts only; the app comes from the build job.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Collect the app
+        uses: actions/download-artifact@v4
+        with:
+          name: DevHub-app-test-build
+          path: dist
+
+      - name: Unpack the bundle
+        run: tar -xf dist/DevHub.app.tar -C dist
+
+      - name: Smoke-test the app
+        run: scripts/smoke_packaged_app.py dist/DevHub.app

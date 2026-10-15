@@ -178,6 +178,14 @@ class VSCodeStamps(unittest.TestCase):
 	def test_ci_refuses_a_fast_bundle(self) -> None:
 		self.assertIn("DEVHUB_FAST_VSCODE_BUNDLE=0", self.problem("abc fast", ci=True) or "")
 
+	def test_only_an_explicit_fast_bundle_is_allowed_under_ci(self) -> None:
+		# The per-push CI asks for the fast bundle by name; the nightly never does.
+		must = package_nightly.must_ship_full_bundle
+		self.assertTrue(must({"CI": "true"}))
+		self.assertTrue(must({"CI": "true", "DEVHUB_FAST_VSCODE_BUNDLE": "0"}))
+		self.assertFalse(must({"CI": "true", "DEVHUB_FAST_VSCODE_BUNDLE": "1"}))
+		self.assertFalse(must({}))
+
 	def test_main_process_tree_prefers_a_current_compile(self) -> None:
 		vscode = self.dir / "vscode"
 		(vscode / "out" / "vs").mkdir(parents=True)

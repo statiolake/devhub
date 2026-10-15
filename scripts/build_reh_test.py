@@ -719,7 +719,18 @@ class OldPathsAreGone(unittest.TestCase):
 		self.assertNotIn("provision-vscode.sh", job)
 		self.assertNotIn("--skip-provision", job)
 		self.assertNotIn("ubuntu-24.04-arm", job)
-		self.assertIn("scripts/build_reh.py ${{ matrix.targets }}", job)
+		self.assertIn("scripts/build_reh.py ${{ matrix.target }}", job)
+
+	def test_the_nightly_builds_each_server_in_its_own_job_unless_published(self) -> None:
+		text = NIGHTLY.read_text()
+		job = text[text.index("\n  reh:\n"):]
+		job = job[: job.index("\n  # ----", 1)]
+		matrix = next(line for line in job.splitlines() if line.strip().startswith("target: ["))
+		self.assertEqual(
+			sorted(matrix.split("[", 1)[1].rstrip("]").replace(" ", "").split(",")),
+			sorted(build_reh.TARGETS),
+		)
+		self.assertIn("scripts/ensure_reh.py --from-release", job)
 
 
 class InContainerScript(unittest.TestCase):

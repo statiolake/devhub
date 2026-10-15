@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   plan:
-    name: Is there a newer VS Code?
+    name: "Decide: a newer VS Code?"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -53,7 +53,7 @@ jobs:
         run: scripts/vscode-bump-plan.sh
 
   bump:
-    name: Bump to ${{ needs.plan.outputs.latest }}
+    name: "Bump: VS Code ${{ needs.plan.outputs.latest }} (patch, provision, check)"
     needs: plan
     if: needs.plan.outputs.bump == 'true'
     runs-on: macos-15
@@ -69,21 +69,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      # Node and pnpm only: the bump script installs and provisions itself,
+      # and there is no VS Code cache to restore — its key is the tag that
+      # just changed.
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
         with:
-          node-version: 22.21.1
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          components: rustfmt,clippy
+          install: "false"
 
       # Moves the submodule, re-applies the patches, provisions the new VS Code
       # and runs the checks, writing down what each of them did. It exits 0 even

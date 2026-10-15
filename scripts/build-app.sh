@@ -75,7 +75,7 @@ die() { printf '\nbuild-app.sh: %s\n' "$1" >&2; exit 1; }
 [ "$(uname -m)" = "arm64" ] || die "DevHub is built for Apple Silicon; this machine is $(uname -m)."
 xcode-select -p >/dev/null 2>&1 || die "the Xcode command line tools are missing. Install them with: xcode-select --install"
 command -v python3 >/dev/null 2>&1 || die "python3 is missing. Install it (Xcode command line tools ship one, as does Homebrew's python)."
-command -v pnpm >/dev/null 2>&1 || die "pnpm is missing. Enable it with: corepack enable && corepack prepare pnpm@11.20.0 --activate"
+command -v pnpm >/dev/null 2>&1 || die "pnpm is missing. Enable it with: corepack enable (it reads the version from package.json)"
 
 # The name the nightly release uses, so a local build and a downloaded one are
 # told apart by their contents rather than by where they came from.
@@ -98,5 +98,20 @@ scripts/provision-vscode.sh --for app
 printf '\n==> DevHub packages\n'
 pnpm run build:packages
 
+# `--no-zip` is ours, not package-nightly.py's: stop at dist/DevHub.app. The
+# per-push CI build uses it — its bundle is tested and thrown away, so the zip
+# would be minutes spent on an archive nobody downloads.
+ZIP_ARGS=(--zip --zip-name "$ZIP_NAME")
+PASS=()
+for arg in "$@"; do
+	if [ "$arg" = "--no-zip" ]; then
+		ZIP_ARGS=()
+	else
+		PASS+=("$arg")
+	fi
+done
+
 printf '\n==> DevHub.app\n'
-exec scripts/package-nightly.py --out-dir dist --zip --zip-name "$ZIP_NAME" "$@"
+# (The `${a[@]+...}` spelling: macOS's bash 3.2 calls an empty array unbound
+# under `set -u`.)
+exec scripts/package-nightly.py --out-dir dist ${ZIP_ARGS[@]+"${ZIP_ARGS[@]}"} ${PASS[@]+"${PASS[@]}"}

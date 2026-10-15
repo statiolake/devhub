@@ -1,34 +1,34 @@
-# Package `main` every night and publish the result as a rolling prerelease.
+# The product build: package `main` every night, test the packaged app, and
+# publish it as a rolling prerelease. The per-push CI (ci.yml) only asks
+# whether a change is broken; everything that makes a DevHub someone downloads
+# — the remote extension hosts, the speech recogniser, the full `core-ci`
+# VS Code bundle, the zip, the release — is built here. See docs/ci.md.
+#
+#   Decide ──> Build: REH <target> (x4, parallel) ──> Publish: prebuilt REH
+#                                  └──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
+#   Decide: tmux ──> Build: tmux <target> (x2) ──> Publish: tmux release
 #
 # 18:00 UTC is 03:00 the next morning in JST, so the build that runs is the one
 # for the day's work. A scheduled run first asks scripts/nightly-build-needed.sh
 # whether main has moved since the standing release was cut, and stops there if
-# it has not: rebuilding the same commit costs two hours of a macOS runner,
-# produces an equivalent app, and breaks every existing download link to publish
-# it. A run someone asks for by hand (Actions -> Nightly -> Run workflow, or
-# `gh workflow run Nightly`) always builds — asking for it is the point.
-#
-# The long pole is the VS Code submodule: `npm ci` and `npm run compile` in
-# vscode/ take the better part of half an hour, and they produce exactly the
-# same tree until the submodule commit, its lockfile, its Node version or
-# DevHub's patches change. One cache keyed on all four therefore turns the
-# common nightly run into a build of DevHub's own code plus the packaging step.
+# it has not: rebuilding the same commit costs hours of runners, produces an
+# equivalent app, and breaks every existing download link to publish it. A run
+# someone asks for by hand (Actions -> Nightly -> Run workflow, or `gh workflow
+# run Nightly`) always builds — asking for it is the point.
 #
 # The result is unsigned beyond an ad-hoc signature. Signing needs a paid Apple
 # Developer identity in the repository's secrets; until there is one, the
 # release notes tell people how to clear the quarantine flag themselves.
 #
-# The other half of a DevHub is the remote extension host — the server DevHub
-# copies onto an SSH host or into a dev container to open a remote window
-# there. The app carries four of them inside itself (Contents/Resources/reh:
-# glibc and musl Linux, x64 and arm64), built here, every time the app is, from
-# the same patched VS Code: two `reh` legs, one per architecture, build them in
-# Linux containers the way VS Code builds its own and hand their tarballs to the
-# macOS job, which bundles them. No far machine and no running DevHub downloads
-# a server; but `reh-publish` puts each one, by identity, on the rolling `reh`
-# prerelease, so a developer's `pnpm build` (scripts/ensure_reh.py) can fetch
-# the servers it would otherwise spend an hour building. See
-# docs/remote-ssh.md, scripts/build_reh.py and scripts/reh_release.py.
+# The app carries four remote extension hosts (Contents/Resources/reh: glibc
+# and musl Linux, x64 and arm64) — the server DevHub copies onto an SSH host or
+# into a dev container to open a remote window there. They are built here,
+# every time the app is, from the same patched VS Code, one job per server, and
+# handed to the macOS job, which bundles them. `reh-publish` also puts each, by
+# identity, on the rolling `reh` prerelease, so a developer's `pnpm build`
+# (scripts/ensure_reh.py) and the next night's jobs can download the servers
+# instead of spending an hour building them. See docs/remote-ssh.md,
+# scripts/build_reh.py and scripts/reh_release.py.
 #
 # A third set of jobs publishes a statically linked tmux, on the same shape and
 # for the same reason: DevHub runs every terminal and every Agent inside tmux on
@@ -60,11 +60,14 @@ concurrency:
   group: nightly
   cancel-in-progress: false
 
+env:
+  CI: "true"
+
 jobs:
-  # A minute of a Linux runner to decide whether to spend two hours of a macOS
-  # one. Nothing here needs the submodule or a build.
+  # A minute of a Linux runner to decide whether to spend hours of the others.
+  # Nothing here needs the submodule or a build.
   decide:
-    name: Is there anything new to package?
+    name: "Decide: anything new to package?"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -93,16 +96,172 @@ jobs:
           fi
           scripts/nightly-build-needed.sh "$GITHUB_SHA"
 
+  # ---------------------------------------------------------------------------
+  # The remote extension hosts the app carries.
+  #
+  # Built the way VS Code builds its own, on Linux x64 for every architecture
+  # (build/azure-pipelines/linux/steps/product-build-linux-setup.yml and
+  # -compile.yml, alpine/product-build-alpine.yml): scripts/build_reh.py runs
+  # upstream's `npm ci` with setup-env.sh's glibc 2.28 sysroot toolchain, the
+  # server's part of `gulp core-ci` and `gulp vscode-reh-<platform>-<arch>-min-ci`
+  # in an amd64 Ubuntu 22.04 container on a copy of the pinned, patched VS
+  # Code, and installs the musl servers' `remote/` in `node:<version>-alpine` of
+  # the target's platform, as upstream's Alpine pipeline does. Nothing is
+  # provisioned on the runner itself: it needs git, python3 and Docker, which
+  # ubuntu-latest has. QEMU runs the arm64 containers (alpine-arm64's
+  # `remote/` install and each arm64 server's start check).
+  #
+  # One job per server, all four in parallel. linux-<arch> and alpine-<arch>
+  # could share one tree (`npm ci` + the server's `core-ci`, the long part), and
+  # one job per architecture would prepare it once and package both servers
+  # from it, one after the other. Per server prepares each tree twice, on
+  # separate runners, which costs runner minutes (free here: the repository is
+  # public) and buys wall-clock: the app job waits for the slowest server,
+  # which is now one tree plus one package step rather than one tree plus two
+  # — alpine-arm64's, whose `remote/` install and start check run under QEMU,
+  # no longer queues behind linux-arm64's. It also lets a server that is
+  # already published skip its job outright (below), which a shared job could
+  # only do when both of its servers were. The tree is >10 GB in a Docker
+  # volume, too big for the Actions cache, so it is not carried between jobs.
+  #
+  # Built on every night the app is: the servers are DevHub's patches as much
+  # as VS Code's, and the app refuses servers of another identity. But the
+  # identity is the whole input, so a server whose identity the `reh` release
+  # already has is downloaded (and verified) instead — most nights after the
+  # first one following a VS Code bump or a patch edit.
+  # ---------------------------------------------------------------------------
+
+  reh:
+    name: "Build: REH ${{ matrix.target }}"
+    needs: decide
+    if: needs.decide.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      # One failing server must not cancel the others: knowing that only
+      # alpine-arm64 is broken is the whole of the diagnosis. The app is not
+      # packaged either way — it needs all four.
+      fail-fast: false
+      matrix:
+        target: [linux-x64, alpine-x64, linux-arm64, alpine-arm64]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      # The same verified download a developer's `pnpm build` makes
+      # (scripts/ensure_reh.py); it prints what it could not get.
+      - name: Take the server from the reh release if it is published
+        id: published
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          missing="$(scripts/ensure_reh.py --from-release "$TARGET" --out-dir dist/reh)"
+          if [ -n "$missing" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "$TARGET is not published for this identity: building it"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "$TARGET is published for this identity: downloaded, not building"
+          fi
+
+      # The tree is a full VS Code with every nested node_modules, Chromium's
+      # clang and two sysroots: well over 10 GB in the Docker volume, more than
+      # the runner's root disk has free out of the box.
+      - name: Make room for the build tree
+        if: steps.published.outputs.build == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Let Docker run arm64 containers
+        if: steps.published.outputs.build == 'true' && endsWith(matrix.target, '-arm64')
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build the server
+        if: steps.published.outputs.build == 'true'
+        env:
+          # Passed into the containers by name, for the downloads upstream's
+          # steps make from GitHub (sysroots, prebuilt binaries); only for the
+          # rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/build_reh.py ${{ matrix.target }} --out-dir dist/reh
+
+      # To the macOS job, which bundles it, and to `reh-publish`.
+      - name: Hand the server to the packaging job
+        uses: actions/upload-artifact@v4
+        with:
+          name: reh-${{ matrix.target }}
+          path: |
+            dist/reh/*.tar.gz
+            dist/reh/*.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # The servers, by identity, as assets of one rolling prerelease `reh`:
+  # `<identity>-devhub-reh-<target>.tar.gz` and its `.json` statement. Only
+  # identities the release lacks are uploaded — the same identity is the same
+  # server — and all but the six most recently uploaded identities are deleted.
+  # `always()` so one failed server does not withhold the others.
+  reh-publish:
+    name: "Publish: prebuilt REH (reh release)"
+    needs: [decide, reh]
+    if: >-
+      always()
+      && needs.decide.result == 'success'
+      && needs.decide.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # For scripts/reh_release.py only; no submodule — the identity is read
+      # from the statements the `reh` jobs wrote.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Collect the servers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: reh-*
+          merge-multiple: true
+          path: dist/reh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! ls dist/reh/devhub-reh-*.json >/dev/null 2>&1; then
+            echo "no server was built tonight: nothing to publish. Read the red reh jobs." >&2
+            exit 1
+          fi
+          scripts/reh_release.py publish dist/reh --keep 6
+
+  # ---------------------------------------------------------------------------
+  # The app: built, then tested as the packaged thing people download, then
+  # published. Three jobs, so a red run says which of the three failed.
+  # ---------------------------------------------------------------------------
+
   package:
-    name: DevHub.app (darwin-arm64)
+    name: "Build: DevHub.app (darwin-arm64)"
     # The servers first: the app is not packaged without all four, and
     # package-nightly.py refuses a bundle that would refuse a far machine.
     needs: [decide, reh]
     if: needs.decide.outputs.needed == 'true'
     runs-on: macos-15
     timeout-minutes: 120
-    env:
-      CI: "true"
+    outputs:
+      date: ${{ steps.meta.outputs.date }}
+      sha: ${{ steps.meta.outputs.sha }}
+      vscode_sha: ${{ steps.provision.outputs.vscode-sha }}
+      artifact: DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -116,56 +275,18 @@ jobs:
           {
             echo "date=$(date -u +%Y%m%d)"
             echo "sha=$(git rev-parse --short HEAD)"
-            echo "vscode_sha=$(git -C vscode rev-parse HEAD)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      # The full `core-ci` bundle: this is what ships.
+      - name: Provision VS Code
+        id: provision
+        uses: ./.github/actions/provision-vscode
         with:
-          node-version: 22.21.1
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      # The expensive half of what scripts/provision-vscode.sh produces, under
-      # one key: a miss costs the full npm ci and both compiles. Deliberately
-      # not here are the nested node_modules that VS Code's postinstall creates
-      # under build/ and extensions/* — 3.4 GB, more than this cache should
-      # carry. Provisioning notices they are missing on a hit and reinstalls
-      # just those, which is minutes; see the script.
-      #
-      # `out-vscode-min` is the bundled tree the packaged app ships and is
-      # cached beside `out` because the stamp covers both: a hit that restored
-      # only one of them would find the stamp current, the other tree missing,
-      # and rebuild both. `out-build` is not cached — it is an intermediate
-      # `core-ci` regenerates in the same minute it would take to restore.
-      - name: Restore the provisioned VS Code build
-        id: vscode-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            vscode-toolchain
-            vscode/node_modules
-            vscode/out
-            vscode/out-vscode-min
-            vscode/.build
-          key: >-
-            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
-            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
-
-      - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Provision the VS Code submodule
-        env:
-          # The nested installs under build/ and extensions/* download
-          # prebuilt binaries (ripgrep among them) from GitHub releases;
-          # unauthenticated requests from shared runner addresses hit the
-          # rate limit (403). The token is only there for that limit.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/provision-vscode.sh
+          for: all
+          bundle: full
 
       # Where scripts/package-nightly.py looks for them by default, which is
       # also where scripts/build_reh.py writes on a developer's machine.
@@ -191,8 +312,8 @@ jobs:
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats
       # the install and the provision above, which are idempotent and cost
-      # seconds once the cache has been restored, and then builds DevHub's
-      # packages and assembles the bundle.
+      # seconds once done, and then builds DevHub's packages and assembles the
+      # bundle and its zip.
       - name: Build DevHub.app
         env:
           # The built-in extension set pulls a handful of extensions from
@@ -200,25 +321,63 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: pnpm run build
 
-      # The build assembles the bundle and stops there — starting a DevHub has
-      # effects on the machine that starts it, which a developer running
-      # `pnpm build` never asked for. A runner is disposable, so here the app
-      # is started and asked something over its control socket: that is the
-      # only way to catch a bundle whose main process comes up and then stops
-      # pumping its event loop.
-      - name: Smoke-test the packaged app
-        run: pnpm run smoke
-
-      # The same zip, reachable without a release, for debugging a run.
-      - name: Upload the zip as a workflow artifact
+      # The zip is what is tested and what is released: the test job unpacks
+      # exactly the archive people download.
+      - name: Hand the zip to the test and publish jobs
         uses: actions/upload-artifact@v4
         with:
           name: DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}
           path: dist/*.zip
+          compression-level: 0
           retention-days: 7
           if-no-files-found: error
 
+  # Tests against the packaged app, unpacked from the zip that will be
+  # released. A macOS runner has a GUI session; this is where the longer
+  # end-to-end suite runs once there is one. Today: the smoke test — start the
+  # bundle under a throwaway profile and make it answer on its control socket,
+  # the only way to catch a bundle whose main process comes up and then stops
+  # pumping its event loop.
+  test-app:
+    name: "Test: packaged app (macOS)"
+    needs: package
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      # For the test scripts only; the app comes from the build job.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Collect the zip
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package.outputs.artifact }}
+          path: dist
+
+      - name: Unpack it as a person would
+        run: ditto -x -k dist/*.zip dist
+
+      - name: Smoke-test the packaged app
+        run: scripts/smoke_packaged_app.py dist/DevHub.app
+
+  publish:
+    name: "Publish: nightly release"
+    needs: [package, test-app]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Collect the zip
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package.outputs.artifact }}
+          path: dist
+
       - name: Write the release notes
+        env:
+          VSCODE_SHA: ${{ needs.package.outputs.vscode_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cat > dist/notes.md <<'NOTES'
           A nightly build of DevHub for macOS on Apple Silicon. It is not
@@ -247,9 +406,9 @@ jobs:
           NOTES
           {
             echo ""
-            echo "Built from \`${{ github.sha }}\` with VS Code \`${{ steps.meta.outputs.vscode_sha }}\`."
+            echo "Built from \`$GITHUB_SHA\` with VS Code \`$VSCODE_SHA\`."
             echo ""
-            echo "[The run that produced it](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "[The run that produced it]($RUN_URL)"
           } >> dist/notes.md
 
       # One rolling prerelease, replaced whole: the tag has to move to the
@@ -257,6 +416,10 @@ jobs:
       - name: Publish the nightly release
         env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout here, so `gh` has no working tree to infer the
+          # repository from and has to be told.
+          GH_REPO: ${{ github.repository }}
+          TITLE: Nightly ${{ needs.package.outputs.date }} (${{ needs.package.outputs.sha }})
         run: |
           set -euo pipefail
           if gh release view nightly >/dev/null 2>&1; then
@@ -265,151 +428,9 @@ jobs:
           gh release create nightly \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Nightly ${{ steps.meta.outputs.date }} (${{ steps.meta.outputs.sha }})" \
+            --title "$TITLE" \
             --notes-file dist/notes.md \
             dist/*.zip
-
-  # ---------------------------------------------------------------------------
-  # The remote extension hosts the app carries.
-  #
-  # Built the way VS Code builds its own, on Linux x64 for every architecture
-  # (build/azure-pipelines/linux/steps/product-build-linux-setup.yml and
-  # -compile.yml, alpine/product-build-alpine.yml): scripts/build_reh.py runs
-  # upstream's `npm ci` with setup-env.sh's glibc 2.28 sysroot toolchain,
-  # the server's part of `gulp core-ci` and
-  # `gulp vscode-reh-<platform>-<arch>-min-ci` in an amd64
-  # Ubuntu 22.04 container on a copy of the pinned, patched VS Code, and installs
-  # the musl servers' `remote/` in `node:<version>-alpine` of the target's
-  # platform, as upstream's Alpine pipeline does. Nothing is provisioned on the
-  # runner itself: it needs git, python3 and Docker, which ubuntu-latest has.
-  #
-  # One leg per architecture, because one tree serves both servers of an
-  # architecture (`npm ci` with npm_config_arch=<arch>, `core-ci` with
-  # VSCODE_ARCH=<arch>): x64 builds linux-x64 and alpine-x64, arm64
-  # cross-builds linux-arm64 and alpine-arm64, both on x64 runners like
-  # upstream's. QEMU runs the arm64 containers: alpine-arm64's `remote/`
-  # install and each arm64 server's start check.
-  #
-  # Built on every night the app is, not only when the submodule moves: the
-  # servers are DevHub's patches as much as VS Code's, and the app refuses to
-  # carry servers built from other patches than its own. A server whose
-  # identity is in the restored cache is a copy; anything else is a full tree
-  # build (roughly 40-60 minutes on these runners, not yet measured).
-  # ---------------------------------------------------------------------------
-
-  reh:
-    name: Servers (${{ matrix.arch }})
-    needs: decide
-    if: needs.decide.outputs.needed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    strategy:
-      # One failing architecture must not cancel the other: knowing that only
-      # arm64 is broken is the whole of the diagnosis. The app is not packaged
-      # either way — it needs all four.
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            targets: linux-x64 alpine-x64
-          - arch: arm64
-            targets: linux-arm64 alpine-arm64
-    env:
-      CI: "true"
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-          fetch-depth: 1
-
-      # The tree is a full VS Code with every nested node_modules, Chromium's
-      # clang and two sysroots: well over 10 GB in the Docker volume, more
-      # than the runner's root disk has free out of the box.
-      - name: Make room for the build tree
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
-
-      - name: Work out the servers' identity
-        id: reh-identity
-        run: echo "identity=$(cd scripts && python3 -c 'from product_metadata import reh_identity; print(reh_identity())')" >> "$GITHUB_OUTPUT"
-
-      # Finished servers by identity; a miss builds. The build tree itself is
-      # not cached between nights (it lives in a Docker volume). See
-      # docs/remote-ssh.md.
-      - name: Restore the server cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/devhub/reh
-          key: reh-${{ matrix.arch }}-${{ steps.reh-identity.outputs.identity }}
-          restore-keys: reh-${{ matrix.arch }}-
-
-      - name: Let Docker run arm64 containers
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Build the servers
-        env:
-          # Passed into the containers by name, for the downloads upstream's
-          # steps make from GitHub (sysroots, prebuilt binaries); only for the
-          # rate limit.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/build_reh.py ${{ matrix.targets }} --out-dir dist/reh
-
-      # To the macOS job, which bundles them, and to `reh-publish`.
-      - name: Hand the servers to the packaging job
-        uses: actions/upload-artifact@v4
-        with:
-          name: reh-${{ matrix.arch }}
-          path: |
-            dist/reh/*.tar.gz
-            dist/reh/*.json
-          retention-days: 1
-          if-no-files-found: error
-
-  # The servers, by identity, as assets of one rolling prerelease `reh`:
-  # `<identity>-devhub-reh-<target>.tar.gz` and its `.json` statement. A
-  # developer's scripts/ensure_reh.py downloads the ones its checkout's identity
-  # names instead of building them. Only identities the release lacks are
-  # uploaded — the same identity is the same server, every night it is rebuilt —
-  # and all but the six most recently uploaded identities are deleted.
-  # `always()` so one failed architecture does not withhold the other's.
-  reh-publish:
-    name: Publish the prebuilt servers
-    needs: [decide, reh]
-    if: >-
-      always()
-      && needs.decide.result == 'success'
-      && needs.decide.outputs.needed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      # For scripts/reh_release.py only; no submodule — the identity is read
-      # from the statements the `reh` legs wrote.
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Collect the servers
-        uses: actions/download-artifact@v4
-        with:
-          pattern: reh-*
-          merge-multiple: true
-          path: dist/reh
-
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! ls dist/reh/devhub-reh-*.json >/dev/null 2>&1; then
-            echo "no server was built tonight: nothing to publish. Read the red reh legs." >&2
-            exit 1
-          fi
-          scripts/reh_release.py publish dist/reh --keep 6
 
   # ---------------------------------------------------------------------------
   # tmux: the terminal multiplexer every terminal and every Agent runs inside,
@@ -428,7 +449,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   tmux-decide:
-    name: Is there a new tmux to build?
+    name: "Decide: a new tmux to build?"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -469,7 +490,7 @@ jobs:
           fi
 
   tmux:
-    name: tmux (${{ matrix.target }})
+    name: "Build: tmux ${{ matrix.target }}"
     needs: tmux-decide
     if: needs.tmux-decide.outputs.needed == 'true'
     runs-on: ${{ matrix.runner }}
@@ -522,7 +543,7 @@ jobs:
   # the gate: nothing is published on a night the deciding job said there was
   # no new tmux, and nothing is published if that job itself did not answer.
   tmux-publish:
-    name: Publish the tmux release
+    name: "Publish: tmux release"
     needs: [tmux-decide, tmux]
     if: >-
       always()

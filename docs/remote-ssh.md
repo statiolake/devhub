@@ -400,11 +400,15 @@ above exercises.
 
 **Where, and when.** On every night the app is packaged, not only when the
 submodule moves: the servers are DevHub's patches as much as VS Code's, and
-the app refuses to carry servers of another identity. Two `reh` legs in
-`.github/workflows/nightly.yml`, one per architecture's tree — `linux-x64` and
-`alpine-x64`, `linux-arm64` and `alpine-arm64` — both on x64 `ubuntu-latest`
+the app refuses to carry servers of another identity. Four `reh` jobs in
+`.github/workflows/nightly.yml`, one per server, all on x64 `ubuntu-latest`
 runners as upstream's are, with QEMU for the arm64 containers (alpine-arm64's
-`remote/` install, the arm64 start checks). They run the same
+`remote/` install, the arm64 start checks). Each prepares its architecture's
+tree for itself — twice the tree preparation of one job per architecture, for
+less wall-clock (see [ci.md](ci.md)) — and each first downloads its server
+from the `reh` release below when that has one for this identity
+(`scripts/ensure_reh.py --from-release <target>`), building only when it
+does not. They run the same
 `scripts/build_reh.py` a Mac does; the runner provisions nothing itself. They
 hand their tarballs and statements to the macOS job, which downloads them into
 `dist/reh` before `scripts/build-app.sh`. `scripts/package-nightly.py` then
@@ -452,11 +456,11 @@ the local build; it never fails the package by itself. `scripts/ensure_reh.py
 --no-download` (`DEVHUB_REH_SOURCE=build` through `pnpm build`) never asks the
 release; `--download-only` (`DEVHUB_REH_SOURCE=download`) fails instead of
 building what it could not download. It does nothing when `CI` is set, so the
-nightly's own servers are the only ones used there. When a build fails, the
+nightly's own `reh` jobs decide what is downloaded there. When a build fails, the
 servers already built stay in `dist/reh` and the error names only the targets
 still missing.
 
-CI's check build (`.github/workflows/ci.yml`) packages with `--without-reh`:
+CI's test build (`.github/workflows/ci.yml`) packages with `--without-reh`:
 it is a bundle that is smoke-tested and thrown away, and building four servers
 on every push is the nightly's work. `scripts/build_reh_test.py` and
 `scripts/package_nightly_test.py` hold the names, the statement and the bundle

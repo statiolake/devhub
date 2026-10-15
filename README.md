@@ -382,7 +382,8 @@ third development; the seams exist, the features do not.
 
 ## Development
 
-pnpm `11.20.0`. The Node the VS Code build requires is fetched into a
+pnpm at the version `packageManager` in `package.json` pins (`corepack
+enable` picks it up). The Node the VS Code build requires is fetched into a
 gitignored toolchain directory by provisioning; the machine default is not
 used for it.
 
@@ -424,7 +425,8 @@ an esbuild transpile into `vscode/out-build` for the main-process bundle instead
 of `npm run compile` — about 2 minutes after a patch edit where it was 5, and
 one bundle's memory (about 5 GB) where `core-ci`'s three parallel bundles passed 16.
 `DEVHUB_FAST_VSCODE_BUNDLE=0` runs upstream's `npm run core-ci` exactly as the
-nightly does; CI refuses to package a fast bundle.
+nightly does; under CI a fast bundle is refused unless the run asks for one
+by name (`DEVHUB_FAST_VSCODE_BUNDLE=1`), as the per-push test build does.
 
 `pnpm dev` also builds the remote extension host for this Mac's CPU
 (`linux-arm64` or `linux-x64`) when it is missing or stale — in Linux
@@ -484,8 +486,8 @@ under a throwaway `smoke` profile and asks it something over its control
 socket. CI runs it on every bundle it packages.
 
 What has to be on the machine first: macOS on Apple Silicon, the Xcode command
-line tools (`xcode-select --install`), `python3`, Node, and pnpm `11.20.0`
-(`corepack enable && corepack prepare pnpm@11.20.0 --activate`). The machine's
+line tools (`xcode-select --install`), `python3`, Node, and pnpm (`corepack
+enable` gives the version `package.json` pins). The machine's
 own Node version does not matter — the one VS Code's build insists on is
 fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
 rather than complains about. That includes the four remote extension hosts in
@@ -510,7 +512,10 @@ DevHub's own code is **about a minute**, and a submodule bump or a patch edit
 puts the long part back.
 
 The nightly workflow runs this same `pnpm build`; what it adds is a cache of
-the provisioned submodule, and publishing the zip.
+the provisioned submodule, the tests against the packaged zip, and publishing
+it. The per-push CI builds a stripped-down test build instead
+(`--without-reh --without-whisper --no-zip`); see [docs/ci.md](docs/ci.md)
+for which checks run where.
 
 DevHub's product identity is stated once, in
 [`apps/desktop/product-overrides.json`](apps/desktop/product-overrides.json),

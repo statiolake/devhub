@@ -279,7 +279,7 @@ def check_inputs() -> None:
 	check_compiled_output_is_current()
 
 	problem = bundle_stamp_problem(
-		BUNDLE_STAMP, vscode_source_state(), ci=bool(os.environ.get("CI"))
+		BUNDLE_STAMP, vscode_source_state(), ci=must_ship_full_bundle(os.environ)
 	)
 	if problem:
 		fail(problem)
@@ -313,6 +313,14 @@ def _read_stamp(stamp: Path) -> list[str]:
 		return stamp.read_text().split()
 	except OSError:
 		return []
+
+
+def must_ship_full_bundle(env) -> bool:
+	"""Whether a fast bundle is refused: under CI, unless the run said in so
+	many words that it wants one (`DEVHUB_FAST_VSCODE_BUNDLE=1`). Only the
+	per-push CI says that — its bundle is smoke-tested and thrown away, never
+	released — and the nightly never does."""
+	return bool(env.get("CI")) and env.get("DEVHUB_FAST_VSCODE_BUNDLE") != "1"
 
 
 def bundle_stamp_problem(stamp: Path, state: str, *, ci: bool) -> str | None:

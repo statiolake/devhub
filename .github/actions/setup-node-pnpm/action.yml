@@ -1,0 +1,35 @@
+name: Set up Node.js and pnpm
+description: >-
+  The workspace's Node (.nvmrc) and pnpm (package.json `packageManager`), with
+  the pnpm store cached, and optionally `pnpm install --frozen-lockfile`.
+  Neither version is written here: each is stated once in the repository and
+  read from there.
+
+inputs:
+  install:
+    description: Run `pnpm install --frozen-lockfile` after setting up.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # pnpm has to exist before setup-node runs: `cache: pnpm` shells out to
+    # `pnpm store path` to find the cache directory, and a runner starts with no
+    # pnpm on its PATH. Corepack ships with the runner's default Node; `corepack
+    # install` fetches the version package.json's `packageManager` names.
+    - name: Activate the pinned pnpm
+      shell: bash
+      run: corepack enable && corepack install
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Install JavaScript dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
