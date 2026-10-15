@@ -274,7 +274,8 @@ jobs:
   # (build/azure-pipelines/linux/steps/product-build-linux-setup.yml and
   # -compile.yml, alpine/product-build-alpine.yml): scripts/build_reh.py runs
   # upstream's `npm ci` with setup-env.sh's glibc 2.28 sysroot toolchain,
-  # `gulp core-ci` and `gulp vscode-reh-<platform>-<arch>-min-ci` in an amd64
+  # the server's part of `gulp core-ci` and
+  # `gulp vscode-reh-<platform>-<arch>-min-ci` in an amd64
   # Ubuntu 22.04 container on a copy of the pinned, patched VS Code, and installs
   # the musl servers' `remote/` in `node:<version>-alpine` of the target's
   # platform, as upstream's Alpine pipeline does. Nothing is provisioned on the

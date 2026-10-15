@@ -54,7 +54,10 @@ are the Mac's. That is how upstream builds it: on a Linux x64 agent, every
 architecture, `npm ci` at the root with the target's `npm_config_arch` and
 `build/azure-pipelines/linux/setup-env.sh`'s toolchain (VS Code's glibc 2.28
 sysroots, `VSCODE_REMOTE_CC`/`CXX` for `remote/`), then `gulp core-ci` and
-`gulp vscode-reh-<platform>-<arch>-min-ci`. Gulp on the Mac put the Mac's
+`gulp vscode-reh-<platform>-<arch>-min-ci`. Of `core-ci` the tree runs the
+part a server is made of (`core_ci_server` in the script: the extension
+builds and the server bundle, not the desktop and web bundles, which peak past
+14 GB together and which no server carries). Gulp on the Mac put the Mac's
 natives into the Linux servers (the MSAL broker runtime, git's
 `@vscode/fs-copyfile`), and every patch-up after the fact missed the next one.
 Built on Linux there is nothing to patch up: every native in the tree was
@@ -95,8 +98,9 @@ them is in a musl server (`refuse_foreign_binaries` would say so).
 
 On an Apple Silicon Mac the builder runs as amd64 under emulation — Docker
 Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
-emulation") is several times faster than QEMU. Give Docker at least 12 GB of
-memory: `core-ci` bundles three trees at once.
+emulation") is several times faster than QEMU. Give Docker at least 8 GB of
+memory: `npm ci` builds natives four at a time, and the server bundle with its
+extension builds peaks under 5 GB (measured natively on Linux x64).
 
 ## The caches, so a rebuild is not an hour
 
@@ -122,6 +126,20 @@ memory: `core-ci` bundles three trees at once.
 
 With no targets it builds all four. It needs Docker; the host needs only
 python3, git and the `vscode` submodule checked out at the pinned commit.
+
+## Natively, on a Linux x64 host without Docker
+
+On a Linux x86-64 machine — upstream's own kind of build agent — `--native`
+runs the same `reh_in_container.sh` steps directly on the host, and is chosen
+by itself there when Docker is not available: the tree under
+`~/.cache/devhub/reh-native/<arch>/` (`DEVHUB_REH_NATIVE_WORK`) instead of a
+volume; the host's own `node`, which must be `.nvmrc`'s version; the host's
+compilers, `python`, `curl` and upstream's headers (`BUILDER_PACKAGES`); the
+glibc check with the tree's sysroot; and the start check run on the host —
+`--version`, then a real start until the server says it is listening. It
+builds `linux-x64` only: the musl servers need their Alpine containers, and an
+arm64 server cannot be started on the host to be checked. `--reset-work`
+deletes the native tree.
 """
 
 from __future__ import annotations
@@ -136,6 +154,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -168,7 +188,7 @@ ARCHES = ("x64", "arm64")
 # Bump when a change to reh_in_container.sh or to what this script hands it
 # must recompile trees that are otherwise up to date. (A change to the server
 # that is shipped bumps REH_REVISION in product_metadata.py instead.)
-WORK_REVISION = 1
+WORK_REVISION = 2
 
 # The builder image is upstream's Linux agent: Ubuntu 22.04
 # (`1es-ubuntu-22.04-x64`), always amd64.
@@ -187,9 +207,17 @@ EXPECTED_GLIBC_VERSION = "2.28"
 EXPECTED_GLIBCXX_VERSION = "3.4.25"
 VERIFY_GLIBC_SCRIPT = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "verify-glibc-requirements.sh"
 
-# Below this, `core-ci` (three esbuild bundles in parallel) is likely to be
-# killed for memory before it says anything useful.
-MIN_DOCKER_MEMORY = 12 * 1024**3
+# Below this, the server's part of `core-ci` (the extension builds and the
+# server bundle, measured under 5 GB natively) is likely to be killed for memory
+# before it says anything useful.
+MIN_DOCKER_MEMORY = 8 * 1024**3
+
+# Natively (see the docstring): the targets that can be built, and the commands
+# the host needs besides the `.nvmrc` Node.
+NATIVE_TARGETS = ("linux-x64",)
+NATIVE_COMMANDS = ("git", "python", "curl", "make", "g++", "pkg-config", "tar", "xz")
+# Set by `main` when the build runs on the host rather than in Docker.
+NATIVE = False
 
 
 def libc_of(target: str) -> str:
@@ -408,8 +436,56 @@ def container_argv(
 	return argv
 
 
-def run_step(argv: list[str]) -> None:
-	subprocess.run(argv, check=True)
+def run_step(argv: list[str], env: dict[str, str] | None = None) -> None:
+	subprocess.run(argv, check=True, env=env)
+
+
+def native_work_dir(arch: str) -> Path:
+	"""Natively, the tree that `work_volume(arch)` holds in Docker."""
+	override = os.environ.get("DEVHUB_REH_NATIVE_WORK")
+	return (Path(override) if override else cache_base() / "reh-native") / arch
+
+
+def native_builder(node_version: str) -> str:
+	"""What stands for the builder image in the tree's dependency stamp."""
+	return f"native-{platform.system().lower()}-{platform.machine().lower()}-node{node_version}"
+
+
+def native_command(
+	subcommand: str, env: dict[str, str], *, arch: str, xfer: Path, server: Path | None = None
+) -> tuple[list[str], dict[str, str]]:
+	"""`reh_in_container.sh <subcommand>` on the host: what `container_argv`
+	mounts is passed as paths, and the host's environment goes through."""
+	work = native_work_dir(arch)
+	work.mkdir(parents=True, exist_ok=True)
+	xfer.mkdir(parents=True, exist_ok=True)
+	full = dict(os.environ)
+	full.update(env)
+	full.update({
+		"DEVHUB_REH_BUILD": str(work),
+		"DEVHUB_REH_XFER": str(xfer),
+		"DEVHUB_REH_DEVHUB": str(REPO_ROOT),
+	})
+	if server is not None:
+		full["SERVER"] = str(server)
+	return ["bash", str(IN_CONTAINER_SCRIPT), subcommand], full
+
+
+def tree_step(image: str, subcommand: str, env: dict[str, str], *, arch: str, server: Path | None = None) -> None:
+	"""One `reh_in_container.sh` step on `arch`'s tree: in the builder, or natively."""
+	xfer = xfer_dir(arch)
+	if NATIVE:
+		argv, full = native_command(subcommand, env, arch=arch, xfer=xfer, server=server)
+		run_step(argv, full)
+		return
+	run_step(container_argv(
+		image, BUILDER_PLATFORM, "bash", subcommand, env, volume=work_volume(arch), xfer=xfer, server=server,
+	))
+
+
+def builder() -> str:
+	"""The builder image, or natively what stands for it."""
+	return native_builder(build_node_version()) if NATIVE else ensure_builder()
 
 
 # Fields of the product metadata that change on every run and must not make a
@@ -446,19 +522,19 @@ def export_source(commit: str, xfer: Path) -> Path:
 def prepare_tree(arch: str, commit: str, key: str, metadata: dict[str, object]) -> float:
 	"""Bring `arch`'s tree up to date: source, patches, `npm ci`, `core-ci`."""
 	started = time.monotonic()
-	builder = ensure_builder()
+	image = builder()
 	xfer = xfer_dir(arch)
 	source = export_source(commit, xfer)
 	(xfer / "product-overrides.json").write_text(json.dumps(metadata, indent="\t") + "\n")
 	env = {
 		"ARCH": arch,
-		"BUILDER_IMAGE": builder,
+		"BUILDER_IMAGE": image,
 		"COMMIT": commit,
 		"COMMIT_DATE": commit_date(commit),
 		"SOURCE_KEY": key,
 	}
 	try:
-		run_step(container_argv(builder, BUILDER_PLATFORM, "bash", "prepare", env, volume=work_volume(arch), xfer=xfer))
+		tree_step(image, "prepare", env, arch=arch)
 	finally:
 		source.unlink(missing_ok=True)
 	return time.monotonic() - started
@@ -494,12 +570,8 @@ def package_target(target: str, commit: str) -> Path:
 		"LIBC": libc_of(target),
 		"TARGET": target,
 	}
-	xfer = xfer_dir(arch_of(target))
-	run_step(container_argv(
-		ensure_builder(), BUILDER_PLATFORM, "bash", "package", env,
-		volume=work_volume(arch_of(target)), xfer=xfer,
-	))
-	return xfer / f"{target}.tar"
+	tree_step(builder(), "package", env, arch=arch_of(target))
+	return xfer_dir(arch_of(target)) / f"{target}.tar"
 
 
 def unpack_staging(target: str, tarball: Path) -> Path:
@@ -535,11 +607,7 @@ def verify_glibc_floor(staging: Path, target: str) -> None:
 	"""
 	if libc_of(target) != "glibc":
 		return
-	argv = container_argv(
-		ensure_builder(), BUILDER_PLATFORM, "bash", "verify-glibc", glibc_verify_env(target),
-		volume=work_volume(arch_of(target)), xfer=xfer_dir(arch_of(target)), server=staging,
-	)
-	run_step(argv)
+	tree_step(builder(), "verify-glibc", glibc_verify_env(target), arch=arch_of(target), server=staging)
 	print(f"  {target}: no native code needs more than glibc {EXPECTED_GLIBC_VERSION}")
 
 
@@ -575,16 +643,17 @@ def emulated() -> bool:
 
 
 def time_note() -> str:
-	"""What a person waiting for a build should expect. Estimates, not
-	measurements: the build has not been timed on every kind of machine."""
+	"""What a person waiting for a build should expect. Natively on a 4-CPU
+	Linux x64 machine the first tree took 12 minutes (npm ci 6, the compile 4,
+	the server 2); the Apple Silicon figure is an estimate for emulation."""
 	where = (
 		"amd64 under emulation here; on a Mac turn on Docker Desktop's Rosetta, QEMU is several times slower"
 		if emulated() else "native amd64 here"
 	)
 	return (
-		"the first build of an architecture's tree (npm ci + core-ci in Linux, "
-		f"{where}) takes roughly 40-60 minutes on x64 Linux and 1.5-2.5 hours on Apple "
-		"Silicon; after that each server is about 5-15 minutes, and a server "
+		"the first build of an architecture's tree (npm ci + the compile in Linux, "
+		f"{where}) takes roughly 15-30 minutes on x64 Linux and 1-2 hours on Apple "
+		"Silicon; after that each server is a few minutes, and a server "
 		"whose identity is cached is a copy"
 	)
 
@@ -700,9 +769,14 @@ def prune_cache(identity: str, keep: int, root: Path | None = None) -> list[str]
 
 def reset_work(arches: list[str] | tuple[str, ...]) -> None:
 	for arch in arches:
-		subprocess.run(["docker", "volume", "rm", "-f", work_volume(arch)], check=True, capture_output=True)
+		if NATIVE:
+			where = str(native_work_dir(arch))
+			shutil.rmtree(native_work_dir(arch), ignore_errors=True)
+		else:
+			where = work_volume(arch)
+			subprocess.run(["docker", "volume", "rm", "-f", where], check=True, capture_output=True)
 		shutil.rmtree(xfer_dir(arch), ignore_errors=True)
-		print(f"removed the {arch} build tree ({work_volume(arch)})")
+		print(f"removed the {arch} build tree ({where})")
 
 
 # --- the musl C++ runtime ---------------------------------------------------
@@ -1015,6 +1089,9 @@ def verify_server_starts(staging: Path, target: str) -> None:
 	on the target's own libc, which is the thing a wrong build gets wrong.
 	"""
 	launcher = f"bin/{PRODUCT_OVERRIDES['serverApplicationName']}"
+	if NATIVE:
+		verify_server_starts_natively(staging, target, launcher)
+		return
 	argv = [
 		"docker", "run", "--rm", "--network", "none",
 		"--platform", docker_platform(target),
@@ -1029,6 +1106,58 @@ def verify_server_starts(staging: Path, target: str) -> None:
 			f"{result.returncode}):\n{result.stdout}{result.stderr}"
 		)
 	print(f"  {target} {launcher} --version: {result.stdout.strip().splitlines()[0]}")
+
+
+def native_start_env() -> dict[str, str]:
+	"""Nothing of the host's environment that could hand the server a Node or
+	modules it does not carry: the system PATH only, and a HOME of nobody's."""
+	return {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8"}
+
+
+def verify_server_starts_natively(staging: Path, target: str, launcher: str) -> None:
+	"""Natively: the server's own launcher and `node` on the host's glibc,
+	`--version`, then a real start that must say it is listening."""
+	env = native_start_env()
+	result = subprocess.run([str(staging / launcher), "--version"], capture_output=True, text=True, timeout=300, env=env)
+	if result.returncode != 0:
+		raise SystemExit(
+			f"the {target} server did not start ({staging / launcher} --version exited "
+			f"{result.returncode}):\n{result.stdout}{result.stderr}"
+		)
+	print(f"  {target} {launcher} --version: {result.stdout.strip().splitlines()[0]}")
+	listening = server_listens(staging / launcher, env)
+	if listening is None:
+		raise SystemExit(f"the {target} server started but never said it was listening")
+	print(f"  {target}: {listening}")
+
+
+def server_listens(launcher: Path, env: dict[str, str], timeout: float = 120) -> str | None:
+	"""Start the server on a free local port, wait for its "listening on"
+	line, and stop it. The line, or None if it exited or took too long."""
+	with tempfile.TemporaryDirectory() as data:
+		argv = [
+			str(launcher), "--host", "127.0.0.1", "--port", "0", "--without-connection-token",
+			"--accept-server-license-terms", "--server-data-dir", data,
+		]
+		proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+		timer = threading.Timer(timeout, proc.kill)
+		timer.start()
+		try:
+			assert proc.stdout is not None
+			for line in proc.stdout:
+				if "listening on" in line.lower():
+					return line.strip()
+			return None
+		finally:
+			timer.cancel()
+			proc.terminate()
+			try:
+				proc.wait(timeout=10)
+			except subprocess.TimeoutExpired:
+				proc.kill()
+				proc.wait()
+			if proc.stdout is not None:
+				proc.stdout.close()
 
 
 def pack(staging: Path, tarball: Path, top_level: str) -> None:
@@ -1090,11 +1219,48 @@ def require_commit(commit: str) -> None:
 		)
 
 
+def native_host() -> bool:
+	"""Whether this machine can build natively: Linux on x86-64."""
+	return platform.system() == "Linux" and platform.machine().lower() in ("x86_64", "amd64")
+
+
+def native_refusal(targets: list[str]) -> str | None:
+	"""Why these targets cannot be built natively here; None when they can."""
+	if not native_host():
+		return "--native builds only on a Linux x86-64 host; elsewhere build_reh.py needs Docker"
+	other = [t for t in targets if t not in NATIVE_TARGETS]
+	if other:
+		return (
+			f"{', '.join(other)} cannot be built natively ({', '.join(NATIVE_TARGETS)} only: the musl "
+			"servers are installed in Alpine containers, and an arm64 server cannot be started here "
+			"to be checked). Build them with Docker."
+		)
+	return None
+
+
+def native_problems() -> list[str]:
+	"""What the host lacks for a native build: `.nvmrc`'s Node and the tools."""
+	problems = []
+	want = build_node_version()
+	try:
+		have = subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip()
+	except OSError:
+		have = "none"
+	if have != f"v{want}":
+		problems.append(f"node on PATH is {have or 'none'}, and VS Code builds with v{want} (vscode/.nvmrc)")
+	missing = [c for c in NATIVE_COMMANDS if shutil.which(c) is None]
+	if missing:
+		problems.append(
+			f"missing {', '.join(missing)}; upstream's agent has the packages {' '.join(BUILDER_PACKAGES)}"
+		)
+	return problems
+
+
 def warn_about_docker() -> None:
 	memory = docker_memory()
 	if memory is not None and memory < MIN_DOCKER_MEMORY:
 		print(
-			f"warning: Docker has {memory / 1024**3:.1f} GB of memory; core-ci needs about "
+			f"warning: Docker has {memory / 1024**3:.1f} GB of memory; the build needs about "
 			f"{MIN_DOCKER_MEMORY // 1024**3} GB or more and may be killed. Raise it in Docker's settings.",
 			file=sys.stderr,
 		)
@@ -1107,6 +1273,7 @@ def main() -> int:
 	parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
 	parser.add_argument("--no-cache", action="store_true", help="build even targets the server cache has")
 	parser.add_argument("--reset-work", action="store_true", help="delete the build trees of these targets' architectures first")
+	parser.add_argument("--native", action="store_true", help=f"build on this Linux x64 host without Docker ({', '.join(NATIVE_TARGETS)} only)")
 	parser.add_argument("--prune-cache", action="store_true", help="clean the server cache and exit")
 	parser.add_argument("--keep", type=int, default=2, help="with --prune-cache: identities to keep (default 2)")
 	args = parser.parse_args()
@@ -1119,7 +1286,15 @@ def main() -> int:
 	if unknown:
 		parser.error(f"no such target: {', '.join(unknown)} (DevHub carries {', '.join(TARGETS)})")
 
-	if not docker_available():
+	global NATIVE
+	NATIVE = args.native or (not docker_available() and native_host())
+	if NATIVE:
+		refusal = native_refusal(targets)
+		if refusal:
+			raise SystemExit(refusal)
+		if not args.native:
+			print("Docker is not available; building natively on this Linux x64 host (--native)")
+	elif not docker_available():
 		raise SystemExit(
 			"build_reh.py needs Docker: the servers are built in Linux containers, the "
 			"way VS Code builds its own, and each is started in one before it is packed. "
@@ -1145,7 +1320,18 @@ def main() -> int:
 			return 0
 
 	require_commit(commit)
-	warn_about_docker()
+	if NATIVE:
+		problems = native_problems()
+		if problems:
+			raise SystemExit("cannot build natively here:\n  " + "\n  ".join(problems))
+	else:
+		warn_about_docker()
+	if not os.environ.get("GITHUB_TOKEN"):
+		print(
+			"  note: GITHUB_TOKEN is not set. The sysroot download and npm ci's postinstalls "
+			"(@vscode/ripgrep) use GitHub's API, 60 requests an hour without a token; if npm ci "
+			"fails with a 403, set it (e.g. GITHUB_TOKEN=$(gh auth token)) and run this again."
+		)
 	metadata = packaged_metadata()
 	key = source_key(identity, metadata)
 	for arch, group in targets_by_arch(targets):
@@ -1159,10 +1345,13 @@ def main() -> int:
 			except (subprocess.CalledProcessError, SystemExit) as error:
 				remaining = retry_command(out_dir, targets, commit, identity)
 				failed = f"the {arch} tree" if target is None else target
+				tree = native_work_dir(arch) if NATIVE else f"the Docker volume {work_volume(arch)}"
+				if NATIVE:
+					remaining += " --native"
 				print(
 					f"\nerror: building {failed} failed ({error}).\n"
-					f"Servers already built stay in {out_dir}, and the tree in the Docker volume "
-					f"{work_volume(arch)} keeps every step that finished. Retry only what is missing with:\n"
+					f"Servers already built stay in {out_dir}, and the tree in {tree} keeps every "
+					f"step that finished. Retry only what is missing with:\n"
 					f"  {remaining}",
 					file=sys.stderr,
 				)

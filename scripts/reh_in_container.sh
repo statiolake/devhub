@@ -22,7 +22,8 @@
 #                                 remote/), `node build/npm/preinstall.ts`,
 #                                 `npm ci` (five tries, as upstream)
 #                   compile       built-in extensions, electron types,
-#                                 `npm run gulp core-ci`, then
+#                                 the server's part of `gulp core-ci`
+#                                 (`core_ci_server`), then
 #                                 compile-copilot-extension-build and the SDK
 #                                 staging the REH package task needs (upstream
 #                                 downloads a Copilot VSIX instead)
@@ -67,14 +68,33 @@ need() {
 }
 stamp() { cat "$S/$1.stamp" 2>/dev/null || true; }
 
-# Upstream: `for i in {1..5}; do npm ci && break; ... done`.
+# Upstream: `for i in {1..5}; do npm ci && break; ... done`. Each failure
+# shows the end of npm's own debug log, so a log that ends in "failed 5 times"
+# also says why (a native build's compiler error, a download refused).
 npm_ci() {
 	i=1
 	while ! npm ci; do
-		[ "$i" -lt 5 ] || die "npm ci failed 5 times in $(pwd)"
+		npm_failure_log "$i"
+		[ "$i" -lt 5 ] || die "npm ci failed 5 times in $(pwd); the cause is in npm's log above"
 		echo "npm ci failed $i, trying again..."
 		i=$((i + 1))
 	done
+}
+
+npm_failure_log() {
+	logs="${npm_config_cache:-$HOME/.npm}/_logs"
+	log="$(ls -t "$logs"/*-debug-*.log 2>/dev/null | head -n 1 || true)"
+	if [ -z "$log" ]; then
+		echo "npm ci failed (try $1) in $(pwd); no npm debug log in $logs"
+		return 0
+	fi
+	echo "---- npm ci failed (try $1) in $(pwd); npm's errors, from $log:"
+	if grep -q '^[0-9]* error ' "$log"; then
+		grep '^[0-9]* error ' "$log" | tail -n 80
+	else
+		grep -Ev '^[0-9]+ (silly|verbose|timing|http) ' "$log" | tail -n 60
+	fi
+	echo "---- end of $log"
 }
 
 # What `npm ci` depends on: every manifest, lock file and .npmrc as patched,
@@ -122,6 +142,52 @@ stage_copilot_sdk() {
 	cp -RL "$installed" "$staged"
 	has_copilot_sdk "$staged" || die "copying $installed to $staged left no SDK files"
 	echo "staged the built-in Copilot package into $staged"
+}
+
+# product.builtInExtensions (js-debug, its companion, the profile table), as
+# the client gets them: build/lib/builtInExtensions.ts downloads from the
+# product's gallery when it names one and from the GitHub releases pinned by
+# version and sha256 otherwise. DevHub's product.json names Open VSX, which is
+# for the user's extensions, not for these — upstream's gallery is the
+# Marketplace, and DevHub's own checkout (provision-vscode.sh) has no gallery
+# and takes the GitHub releases. So the download sees product.json without
+# the gallery, and product.json is put back whatever happens. The package task
+# then finds them up to date in .build/builtInExtensions and downloads nothing.
+builtin_extensions() {
+	cp product.json "$S/product.json"
+	node -e '
+		const fs = require("fs");
+		const product = JSON.parse(fs.readFileSync("product.json", "utf8"));
+		delete product.extensionsGallery;
+		fs.writeFileSync("product.json", JSON.stringify(product, null, "\t") + "\n");
+	'
+	if VSCODE_EXTENSION_TARGET="linux-$ARCH" node build/lib/builtInExtensions.ts; then ok=1; else ok=0; fi
+	mv "$S/product.json" product.json
+	[ "$ok" = 1 ] || die "downloading product.builtInExtensions failed"
+}
+
+# The part of upstream's `gulp core-ci` (build/gulpfile.vscode.ts) a server is
+# made of, run the way core-ci runs it. core-ci bundles the desktop workbench,
+# the server and the web server in parallel, and the three peak past 14 GB —
+# more than the builder is given, so the desktop bundle, which no server
+# carries, got the whole build killed for memory. What the package task reads
+# is core-ci's extension builds (.build/extensions, with the Marketplace
+# built-ins) and out-vscode-reh-min; what is left out produces nothing it reads:
+# the desktop and web bundles, the tsgo type check and the per-module
+# transpile into out-build (scripts/provision-vscode.sh's fast bundle leaves
+# out the same, for the same reason). The bundle is the command core-ci's
+# `esbuild-vscode-reh-min` runs (runEsbuildBundle in build/lib/esbuild.ts),
+# after `writeISODate('out-build')`'s file.
+core_ci_server() {
+	step "core-ci for the server: extensions, codicons, out-vscode-reh-min"
+	npm run gulp -- --series check-api-proposal-names copy-codicons \
+		compile-non-native-extensions-build compile-extension-media-build
+	mkdir -p out-build
+	git log -1 --format=%cI HEAD > out-build/date
+	node build/next/index.ts bundle --out out-vscode-reh-min --target server \
+		--minify --mangle-privates --nls \
+		--source-map-base-url "https://main.vscode-cdn.net/sourcemaps/$COMMIT/core"
+	[ -f out-vscode-reh-min/server-main.js ] || die "the server bundle wrote no out-vscode-reh-min/server-main.js"
 }
 
 prepare() {
@@ -173,6 +239,16 @@ prepare() {
 			export npm_config_arch="$ARCH" VSCODE_ARCH="$ARCH"
 			export ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 			export ONNXRUNTIME_NODE_INSTALL=skip FOUNDRY_LOCAL_SKIP_INSTALL=1
+			# setup-env.sh writes $HOME/.gyp/include.gypi, which every later
+			# node-gyp build of that user reads. Natively that is the
+			# developer's own home, so the tree gets one of its own; npm's
+			# cache and configuration and git's stay the user's.
+			home="$HOME"
+			export npm_config_cache="${npm_config_cache:-$home/.npm}"
+			export npm_config_userconfig="${npm_config_userconfig:-$home/.npmrc}"
+			export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$home/.gitconfig}"
+			export HOME="$S/home"
+			mkdir -p "$HOME"
 			set +u
 			. ./build/azure-pipelines/linux/setup-env.sh
 			set -u
@@ -189,10 +265,9 @@ prepare() {
 		use_remote glibc
 		export VSCODE_ARCH="$ARCH" BUILD_SOURCEVERSION="$COMMIT"
 		step "built-in extensions"
-		VSCODE_EXTENSION_TARGET="linux-$ARCH" node build/lib/builtInExtensions.ts
+		builtin_extensions
 		node build/npm/electronTypes.ts
-		step "npm run gulp core-ci"
-		npm run gulp core-ci
+		core_ci_server
 		# VSCODE_QUALITY: the compile refuses to guess a channel with CI set.
 		step "npm run gulp compile-copilot-extension-build"
 		VSCODE_QUALITY=stable npm run gulp compile-copilot-extension-build

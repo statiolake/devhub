@@ -298,13 +298,23 @@ agent, and so does this now, step for step
    (VS Code's **glibc 2.28 sysroots** and their compilers; for `remote/`,
    `VSCODE_REMOTE_CC`/`CXX`/`CXXFLAGS`/`LDFLAGS` against
    `<triple>-glibc-2.28-gcc-8.5.0`), `node build/npm/preinstall.ts`, `npm ci`
-   (five tries), with upstream's `ELECTRON_SKIP_BINARY_DOWNLOAD`,
+   (five tries; each failed try prints npm's own errors from its debug log),
+   with upstream's `ELECTRON_SKIP_BINARY_DOWNLOAD`,
    `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`, `ONNXRUNTIME_NODE_INSTALL=skip`. arm64 is
    cross-compiled by the sysroot's x86-64 compilers, as upstream does, not
-   built in an arm64 container.
-3. **The compile** — `node build/lib/builtInExtensions.ts`,
-   `node build/npm/electronTypes.ts`, `npm run gulp core-ci`, then
-   `compile-copilot-extension-build` and the Copilot SDK staging below.
+   built in an arm64 container. setup-env.sh writes `$HOME/.gyp/include.gypi`,
+   so `HOME` is the tree's own `.devhub/home` for this step (npm's cache and
+   config and git's stay the user's).
+3. **The compile** — `node build/lib/builtInExtensions.ts` with
+   `product.json`'s `extensionsGallery` held back for the call, so the pinned
+   built-ins (js-debug and company) come from their sha256-pinned GitHub
+   releases as on the developer's checkout and not from Open VSX;
+   `node build/npm/electronTypes.ts`; the server's part of `gulp core-ci`
+   (`core_ci_server`: `check-api-proposal-names`, `copy-codicons`, the
+   extension builds, and core-ci's own `out-vscode-reh-min` bundle command —
+   not the desktop and web bundles, which with it peak past 14 GB and which no
+   server carries); then `compile-copilot-extension-build` and the Copilot SDK
+   staging below.
 4. **musl only: `remote/` again** — in `node:<version>-alpine` of the target's
    platform, `npm i -g node-gyp-build && npm ci` in `remote/`, which is what
    `build/npm/postinstall.ts` runs in upstream's Alpine container
@@ -481,19 +491,30 @@ sentence when there is none. The host needs nothing else but `python3`, git and
 the `vscode` submodule checked out at the pinned commit: no `npm ci`, no
 provisioning, and the submodule's own files are never edited.
 
+On a **Linux x86-64 host without Docker** it builds `linux-x64` natively
+instead (`--native`, chosen by itself there): the same `reh_in_container.sh`
+steps run on the host, the tree in `~/.cache/devhub/reh-native/x64/`, the glibc
+check against the tree's sysroot, and the start check runs the server straight
+on the host (`--version`, then a real start until it says it is listening). The
+host needs `.nvmrc`'s Node on `PATH`, `git`, `python`, `curl`, a C/C++
+toolchain, `pkg-config` and upstream's headers (`libkrb5-dev`, `libx11-dev`,
+`libx11-xcb-dev`, `libxkbfile-dev`); the script names what is missing. The
+musl and arm64 servers still need Docker.
+
 On an **Apple Silicon Mac** the builder runs as amd64 under emulation. Turn on
 Docker Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
-emulation"); QEMU is several times slower. Give Docker **at least 12 GB of
-memory** — `core-ci` bundles three trees in parallel, and the script warns
-below that — and roughly 15 GB of disk per architecture's tree.
+emulation"); QEMU is several times slower. Give Docker **at least 8 GB of
+memory** — the compile peaked under 5 GB measured natively, and the script
+warns below 8 — and roughly 15 GB of disk per architecture's tree (the native
+x64 tree was 10 GB).
 
-How long, as estimates (not yet timed end to end): the first build of an
-architecture's tree — `npm ci` with every nested install, Chromium's clang and
-two sysroots downloaded, `core-ci` — is roughly **40–60 minutes on x64 Linux and
-1.5–2.5 hours on Apple Silicon** under Rosetta; all four servers are two trees.
-After that each server's package step and checks are about **5–15 minutes**, a
-patch edit costs the `core-ci` again but not `npm ci`, and a server whose
-identity is cached is a copy.
+How long: natively on a 4-CPU Linux x64 machine the first linux-x64 build took
+**about 12 minutes** — `npm ci` with every nested install, Chromium's clang and
+two sysroots downloaded, 6; the compile, 4; the package step and checks, 2. On
+Apple Silicon under Rosetta expect several times that (an estimate: **1–2
+hours** for a tree; all four servers are two trees). After that each server's
+package step and checks are a few minutes, a patch edit costs the compile
+again but not `npm ci`, and a server whose identity is cached is a copy.
 
 When a build moves `serverIdentity` — a patch changed — the servers in
 `dist/reh` built from the old identity are removed, and named, when the first
@@ -508,7 +529,7 @@ refuse. The tarballs are around 100 MB each.
 | the tree: the pinned commit | Docker volume `devhub-reh-work-<arch>`, `vscode/` | the VS Code commit changes (the whole volume starts over) |
 | patches + `product.json` | same, stamp `.devhub/source.stamp` | the identity, the product metadata (minus its date and DevHub commit) or `WORK_REVISION` changes |
 | `npm ci` (root and every nested install) | same, `.devhub/deps.stamp` | any `package.json`, `package-lock.json`, `.npmrc` or `.nvmrc` as patched, the architecture or the builder image changes |
-| `core-ci` + the Copilot compile | same, `.devhub/compile.stamp` | either of the two above |
+| the compile (`core_ci_server` + the Copilot compile) | same, `.devhub/compile.stamp` | either of the two above |
 | musl `remote/node_modules` | same, `.devhub/remote-musl` | `npm ci` or the musl image changes |
 | builder and musl images | `devhub-reh-builder:<hash>`, `devhub-reh-musl:<arch>-<hash>` | their Dockerfile text changes |
 

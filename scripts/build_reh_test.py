@@ -416,6 +416,113 @@ class Commands(unittest.TestCase):
 		self.assertIn(f"COMMIT={COMMIT}", package)
 
 
+class Native(unittest.TestCase):
+	"""`--native`: the same steps on a Linux x64 host, without Docker."""
+
+	def setUp(self) -> None:
+		patcher = mock.patch("build_reh.NATIVE", True)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		self.root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.root, True)
+
+	def recorded(self, run) -> list[tuple[list[str], dict[str, str]]]:
+		calls: list[tuple[list[str], dict[str, str]]] = []
+		with mock.patch("build_reh.run_step", lambda argv, env=None: calls.append((argv, env))), \
+			mock.patch("build_reh.ensure_builder", side_effect=AssertionError("no Docker natively")), \
+			mock.patch("build_reh.build_node_version", return_value="24.18.0"), \
+			mock.patch("build_reh.cache_base", return_value=self.root), \
+			mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_x"}):
+			run()
+		return calls
+
+	def test_runs_the_same_script_on_the_host(self) -> None:
+		((argv, env),) = self.recorded(lambda: build_reh.package_target("linux-x64", COMMIT))
+		self.assertEqual(argv, ["bash", str(IN_CONTAINER_SCRIPT), "package"])
+		self.assertEqual(env["DEVHUB_REH_BUILD"], str(self.root / "reh-native" / "x64"))
+		self.assertEqual(env["DEVHUB_REH_XFER"], str(self.root / "reh-xfer" / "x64"))
+		self.assertEqual(env["DEVHUB_REH_DEVHUB"], str(REPO_ROOT))
+		for key, value in (("LIBC", "glibc"), ("GULP_PLATFORM", "linux"), ("GULP_ARCH", "x64"), ("COMMIT", COMMIT)):
+			self.assertEqual(env[key], value)
+		# the host's environment goes through: the token, the PATH with its Node
+		self.assertEqual(env["GITHUB_TOKEN"], "ghp_x")
+		self.assertNotIn("docker", " ".join(argv))
+
+	def test_glibc_check_reads_the_staged_server(self) -> None:
+		calls = self.recorded(lambda: build_reh.verify_glibc_floor(Path("/s/tree"), "linux-x64"))
+		((argv, env),) = calls
+		self.assertEqual(argv[-1], "verify-glibc")
+		self.assertEqual(env["SERVER"], "/s/tree")
+		self.assertEqual(env["EXPECTED_GLIBC_VERSION"], "2.28")
+
+	def test_the_builder_stamp_names_the_host_and_its_node(self) -> None:
+		self.assertEqual(build_reh.native_builder("24.18.0").rsplit("-", 1)[-1], "node24.18.0")
+		self.assertTrue(build_reh.native_builder("24.18.0").startswith("native-"))
+
+	def test_only_linux_x64_and_only_on_linux_x64(self) -> None:
+		with mock.patch("build_reh.native_host", return_value=True):
+			self.assertIsNone(build_reh.native_refusal(["linux-x64"]))
+			refusal = build_reh.native_refusal(["linux-x64", "alpine-x64", "linux-arm64"])
+			self.assertIn("alpine-x64, linux-arm64", refusal)
+			self.assertIn("Docker", refusal)
+		with mock.patch("build_reh.native_host", return_value=False):
+			self.assertIn("Linux x86-64", build_reh.native_refusal(["linux-x64"]))
+
+	def test_names_a_wrong_node(self) -> None:
+		with mock.patch("build_reh.build_node_version", return_value="0.0.1"):
+			problems = build_reh.native_problems()
+		self.assertTrue(any("v0.0.1" in p and ".nvmrc" in p for p in problems), problems)
+
+	def main_with(self, argv: list[str], docker: bool, host: bool) -> tuple[int, list[tuple], str]:
+		calls: list[tuple] = []
+		with mock.patch("sys.argv", ["build_reh.py", *argv, "--no-cache", "--out-dir", str(self.root)]), \
+			mock.patch("build_reh.docker_available", return_value=docker), \
+			mock.patch("build_reh.native_host", return_value=host), \
+			mock.patch("build_reh.native_problems", return_value=[]), \
+			mock.patch("build_reh.vscode_commit", return_value=COMMIT), \
+			mock.patch("build_reh.reh_identity", return_value=IDENTITY), \
+			mock.patch("build_reh.require_commit"), \
+			mock.patch("build_reh.warn_about_docker"), \
+			mock.patch("build_reh.packaged_metadata", return_value={}), \
+			mock.patch("build_reh.prepare_tree", lambda arch, *a: calls.append(("prepare", arch, build_reh.NATIVE)) or 0.0), \
+			mock.patch("build_reh.build_target", lambda t, *a: calls.append(("build", t, build_reh.NATIVE))), \
+			mock.patch("builtins.print") as said:
+			try:
+				code = build_reh.main()
+			except SystemExit as stop:
+				code = stop.code
+		text = " ".join(str(c.args[0]) for c in said.call_args_list if c.args)
+		return code, calls, text
+
+	def test_main_builds_natively_when_docker_is_missing_on_linux_x64(self) -> None:
+		code, calls, text = self.main_with(["linux-x64"], docker=False, host=True)
+		self.assertEqual(code, 0)
+		self.assertEqual(calls, [("prepare", "x64", True), ("build", "linux-x64", True)])
+		self.assertIn("--native", text)
+
+	def test_main_uses_docker_when_it_is_there(self) -> None:
+		code, calls, _ = self.main_with(["linux-x64"], docker=True, host=True)
+		self.assertEqual(calls, [("prepare", "x64", False), ("build", "linux-x64", False)])
+
+	def test_main_refuses_musl_natively(self) -> None:
+		code, calls, _ = self.main_with(["alpine-x64", "--native"], docker=False, host=True)
+		self.assertIn("alpine-x64", str(code))
+		self.assertEqual(calls, [])
+
+	def test_a_server_that_says_it_listens_is_started(self) -> None:
+		launcher = self.root / "server"
+		launcher.write_text("#!/bin/sh\necho starting\necho 'Extension host agent listening on 127.0.0.1:4711'\nexec sleep 60\n")
+		launcher.chmod(0o755)
+		self.assertIn("listening on", build_reh.server_listens(launcher, build_reh.native_start_env(), timeout=30))
+		launcher.write_text("#!/bin/sh\necho 'Error: cannot find module'\nexit 1\n")
+		self.assertIsNone(build_reh.server_listens(launcher, build_reh.native_start_env(), timeout=30))
+
+	def test_start_environment_hands_the_server_no_node(self) -> None:
+		env = build_reh.native_start_env()
+		self.assertEqual(env["PATH"], "/usr/bin:/bin")
+		self.assertNotIn("NODE_OPTIONS", env)
+
+
 class SourceKey(unittest.TestCase):
 	METADATA = {"nameShort": "DevHub", "commit": COMMIT, "date": "2026-01-01T00:00:00Z", "hostCommit": "abc"}
 
@@ -576,9 +683,9 @@ class InContainerScript(unittest.TestCase):
 			". ./build/azure-pipelines/linux/setup-env.sh",
 			"node build/npm/preinstall.ts",
 			"npm_ci\n\t\t)",
-			"VSCODE_EXTENSION_TARGET=\"linux-$ARCH\" node build/lib/builtInExtensions.ts",
+			"builtin_extensions",
 			"node build/npm/electronTypes.ts",
-			"npm run gulp core-ci",
+			"core_ci_server",
 			"VSCODE_QUALITY=stable npm run gulp compile-copilot-extension-build",
 			"stage_copilot_sdk",
 		]
@@ -589,10 +696,86 @@ class InContainerScript(unittest.TestCase):
 		self.assertIn("BUILD_SOURCEVERSION=\"$COMMIT\"", body)
 		self.assertIn("GIT_COMMITTER_DATE=\"$COMMIT_DATE\"", body)
 
+	def test_core_ci_for_the_server_is_core_cis_own_tasks_minus_the_client(self) -> None:
+		body = function_body(self.script, "core_ci_server")
+		order = [
+			"--series check-api-proposal-names copy-codicons",
+			"compile-non-native-extensions-build compile-extension-media-build",
+			"git log -1 --format=%cI HEAD > out-build/date",
+			"node build/next/index.ts bundle --out out-vscode-reh-min --target server",
+			"--minify --mangle-privates --nls",
+			'--source-map-base-url "https://main.vscode-cdn.net/sourcemaps/$COMMIT/core"',
+		]
+		positions = [body.index(step) for step in order]
+		self.assertEqual(positions, sorted(positions))
+		# never the desktop bundle, which no server carries and which ran it out of memory
+		self.assertNotIn("core-ci\n", body)
+		self.assertNotIn("--target desktop", body)
+
+	def test_core_ci_for_the_server_matches_upstreams_core_ci(self) -> None:
+		gulpfile = VSCODE_DIR / "build" / "gulpfile.vscode.ts"
+		if not gulpfile.is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		text = gulpfile.read_text()
+		core = text[text.index("task.define('core-ci'"):]
+		core = core[: core.index(")));")]
+		for piece in (
+			"checkApiProposalNamesTask", "copyCodiconsTask", "compileNonNativeExtensionsBuildTask",
+			"compileExtensionMediaBuildTask", "writeISODate('out-build')",
+			"runEsbuildBundle('out-vscode-reh-min', true, true, 'server', `${sourceMappingURLBase}/core`)",
+		):
+			self.assertIn(piece, core)
+		self.assertIn("const sourceMappingURLBase = `https://main.vscode-cdn.net/sourcemaps/${commit}`", text)
+		esbuild = (VSCODE_DIR / "build" / "lib" / "esbuild.ts").read_text()
+		for flag in ("'--minify'", "'--mangle-privates'", "'--nls'", "'--source-map-base-url'"):
+			self.assertIn(flag, esbuild)
+
+	def test_built_in_extensions_come_from_their_pinned_releases(self) -> None:
+		body = function_body(self.script, "builtin_extensions")
+		order = [
+			'cp product.json "$S/product.json"',
+			"delete product.extensionsGallery",
+			'VSCODE_EXTENSION_TARGET="linux-$ARCH" node build/lib/builtInExtensions.ts',
+			'mv "$S/product.json" product.json',
+			"die ",
+		]
+		positions = [body.index(step) for step in order]
+		self.assertEqual(positions, sorted(positions))
+
 	def test_npm_ci_retries_five_times_as_upstream(self) -> None:
 		body = function_body(self.script, "npm_ci")
 		self.assertIn("npm ci", body)
 		self.assertIn("-lt 5", body)
+
+	def test_a_failed_npm_ci_shows_npms_own_error(self) -> None:
+		if not shutil.which("sh"):
+			self.skipTest("no sh")
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		bindir = root / "bin"
+		bindir.mkdir()
+		logs = root / "cache" / "_logs"
+		(bindir / "npm").write_text(
+			"#!/bin/sh\n"
+			f"mkdir -p {logs}\n"
+			f"printf '1 verbose noise\\n2 error gyp ERR! stack Error: 403 downloading headers\\n' > {logs}/2026-01-01T00_00_00_000Z-debug-0.log\n"
+			"exit 1\n"
+		)
+		(bindir / "npm").chmod(0o755)
+		result = self.lib(
+			root, "npm_ci", PATH=f"{bindir}:/usr/bin:/bin", npm_config_cache=str(root / "cache"),
+		)
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("403 downloading headers", result.stdout)
+		self.assertNotIn("verbose noise", result.stdout)
+		self.assertEqual(result.stdout.count("npm ci failed (try"), 5)
+		self.assertIn("failed 5 times", result.stderr)
+
+	def test_setup_env_writes_into_a_home_of_the_trees_own(self) -> None:
+		body = function_body(self.script, "prepare")
+		self.assertLess(body.index('export HOME="$S/home"'), body.index(". ./build/azure-pipelines/linux/setup-env.sh"))
+		for kept in ("npm_config_cache=", "npm_config_userconfig=", "GIT_CONFIG_GLOBAL="):
+			self.assertIn(kept, body)
 
 	def test_musl_remote_is_upstreams_alpine_container_install(self) -> None:
 		body = function_body(self.script, "musl_remote")
