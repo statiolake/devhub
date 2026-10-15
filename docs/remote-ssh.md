@@ -326,7 +326,7 @@ agent, and so does this now, step for step
    (`VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME`). That image's `node` goes into
    `.build/node/v<version>/<platform>-<arch>/`, where the gulp task looks
    before it would try `docker run` itself (which a container cannot).
-5. **`npm run gulp vscode-reh-<platform>-<arch>-min-ci`**, and the tree is
+5. **`npm run gulp vscode-reh-<platform>-<arch>-min-ci`** (as `run_gulp`), and the tree is
    tarred out to the host for DevHub's own steps below.
 
 The builder image is upstream's agent: `ubuntu:22.04`, always linux/amd64 (the
@@ -541,9 +541,18 @@ musl and arm64 servers still need Docker.
 
 On an **Apple Silicon Mac** the builder runs as amd64 under emulation. Turn on
 Docker Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
-emulation"); QEMU is several times slower. Give Docker **at least 8 GB of
-memory** — the compile peaked under 5 GB measured natively, and the script
-warns below 8 — and roughly 15 GB of disk per architecture's tree (the native
+emulation"); QEMU is several times slower. Give Docker **8 GB of memory**
+(Docker Desktop: Settings > Resources; Rancher Desktop: Preferences > Virtual
+Machine; colima: `colima start --memory 8`). The script checks `docker info`
+up front and says so when there is less, and a step the kernel kills for
+memory ends with "killed (out of memory): raise Docker memory to 8 GB".
+Measured natively, no step peaks above 3.4 GB: upstream's extension build
+starts every built-in extension's esbuild and tsgo check at once (some 70
+Node processes, each carrying the emulator's memory under Rosetta or QEMU),
+so `reh_in_container.sh` runs them two at a time through
+`scripts/reh_build_gate.cjs` (`DEVHUB_BUILD_JOBS`), gives gulp a 4 GB heap
+instead of `npm run gulp`'s 8 GB (`DEVHUB_GULP_HEAP_MB`), and runs the heavy
+steps one after another. Roughly 15 GB of disk per architecture's tree (the native
 x64 tree was 10 GB).
 
 How long: natively on a 4-CPU Linux x64 machine the first linux-x64 build took

@@ -68,6 +68,54 @@ need() {
 }
 stamp() { cat "$S/$1.stamp" 2>/dev/null || true; }
 
+# Memory. Measured natively (Linux x64, 4 CPUs), the heaviest steps peak at
+# about 3 GB each: the extension builds, the Copilot compile (its esbuild alone
+# is 2 GB), the server bundle and the package task (gulp itself 2 GB). What
+# kills a smaller machine is how upstream runs them, sized for its agents:
+#
+# - `bundle-non-native-extensions-build` and `compile-extension-media-build`
+#   start every extension's `node esbuild.mts` and tsgo type check at once,
+#   some 70 Node processes and as many esbuild and tsgo programs. Natively
+#   they come and go in seconds; amd64 under Rosetta or QEMU, each carries
+#   the emulator's own memory and they all live for minutes, which is where
+#   a Mac's Docker was killed. scripts/reh_build_gate.cjs, loaded into gulp,
+#   runs at most DEVHUB_BUILD_JOBS of them at a time (2 unless set).
+# - `npm run gulp` lets gulp's heap grow to 8 GB, all of an 8 GB machine.
+#   Gulp needs about 2 GB (the package task, measured); it runs with
+#   DEVHUB_GULP_HEAP_MB (4096) instead.
+# - The steps run one after another, never side by side.
+#
+# A step the kernel kills for memory says so and exits 137 (see `heavy`),
+# which scripts/build_reh.py turns into how much memory Docker needs.
+JOBS="${DEVHUB_BUILD_JOBS:-2}"
+GULP_HEAP_MB="${DEVHUB_GULP_HEAP_MB:-4096}"
+GATE="$S/gate"
+
+# run_gulp ARGS: `npm run gulp ARGS` as package.json's "gulp" script runs
+# it, with the heap above and the gate (scripts/build_reh_test.py holds the
+# two to each other).
+run_gulp() {
+	DEVHUB_BUILD_JOBS="$JOBS" DEVHUB_BUILD_GATE_DIR="$GATE" \
+		node --experimental-strip-types --max-old-space-size="$GULP_HEAP_MB" \
+		--require "$D/scripts/reh_build_gate.cjs" ./node_modules/gulp/bin/gulp.js "$@"
+}
+
+# heavy WHAT CMD...: run a step that can run out of memory. Killed — itself
+# (exit 137) or a child the gate saw SIGKILLed — it says so and exits 137;
+# any other failure exits with its own status.
+heavy() {
+	what="$1"
+	shift
+	rm -f "$GATE/killed"
+	if "$@"; then return 0; else rc=$?; fi
+	if [ "$rc" -eq 137 ] || [ -s "$GATE/killed" ]; then
+		[ ! -s "$GATE/killed" ] || sed 's/^/  killed: /' "$GATE/killed" >&2
+		printf 'reh_in_container.sh: %s was killed, out of memory (exit 137)\n' "$what" >&2
+		exit 137
+	fi
+	exit "$rc"
+}
+
 # Upstream: `for i in {1..5}; do npm ci && break; ... done`. Each failure
 # shows the end of npm's own debug log, so a log that ends in "failed 5 times"
 # also says why (a native build's compiler error, a download refused).
@@ -180,11 +228,11 @@ builtin_extensions() {
 # after `writeISODate('out-build')`'s file.
 core_ci_server() {
 	step "core-ci for the server: extensions, codicons, out-vscode-reh-min"
-	npm run gulp -- --series check-api-proposal-names copy-codicons \
+	heavy "the extension builds" run_gulp --series check-api-proposal-names copy-codicons \
 		compile-non-native-extensions-build compile-extension-media-build
 	mkdir -p out-build
 	git log -1 --format=%cI HEAD > out-build/date
-	node build/next/index.ts bundle --out out-vscode-reh-min --target server \
+	heavy "the server bundle" node build/next/index.ts bundle --out out-vscode-reh-min --target server \
 		--minify --mangle-privates --nls \
 		--source-map-base-url "https://main.vscode-cdn.net/sourcemaps/$COMMIT/core"
 	[ -f out-vscode-reh-min/server-main.js ] || die "the server bundle wrote no out-vscode-reh-min/server-main.js"
@@ -269,8 +317,8 @@ prepare() {
 		node build/npm/electronTypes.ts
 		core_ci_server
 		# VSCODE_QUALITY: the compile refuses to guess a channel with CI set.
-		step "npm run gulp compile-copilot-extension-build"
-		VSCODE_QUALITY=stable npm run gulp compile-copilot-extension-build
+		step "gulp compile-copilot-extension-build"
+		(export VSCODE_QUALITY=stable && heavy "the Copilot compile" run_gulp compile-copilot-extension-build)
 		stage_copilot_sdk
 		echo "$compiled" > "$S/compile.stamp"
 	fi
@@ -309,8 +357,8 @@ package() {
 	[ -d "$R/node_modules" ] || die "no $LIBC remote/node_modules in $V (scripts/build_reh.py --reset-work rebuilds the tree)"
 	if [ "$LIBC" = musl ] && [ -z "$(stamp remote-musl)" ]; then die "remote/ is not installed for musl: musl-remote first"; fi
 	out="vscode-reh-$GULP_PLATFORM-$GULP_ARCH"
-	step "npm run gulp $out-min-ci"
-	VSCODE_ARCH="$ARCH" BUILD_SOURCEVERSION="$COMMIT" npm run gulp "$out-min-ci"
+	step "gulp $out-min-ci"
+	(export VSCODE_ARCH="$ARCH" BUILD_SOURCEVERSION="$COMMIT" && heavy "$out-min-ci" run_gulp "$out-min-ci")
 	[ -d "$B/$out" ] || die "$out-min-ci produced no $B/$out"
 	rm -f "$X/$TARGET.tar" "$X/$TARGET.tar.partial"
 	tar -C "$B" -cf "$X/$TARGET.tar.partial" "$out"

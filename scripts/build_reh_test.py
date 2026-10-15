@@ -365,7 +365,7 @@ class Commands(unittest.TestCase):
 		with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret"}):
 			self.assertNotIn("ghp_secret", " ".join(self.argv("package")))
 		env = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
-		self.assertEqual(env, ["GITHUB_TOKEN", "A=1", "B=2"])
+		self.assertEqual(env, ["GITHUB_TOKEN", "DEVHUB_BUILD_JOBS", "DEVHUB_GULP_HEAP_MB", "A=1", "B=2"])
 
 	def test_glibc_check_mounts_the_server_read_only(self) -> None:
 		argv = self.argv("verify-glibc", server=Path("/s/tree"))
@@ -686,7 +686,7 @@ class InContainerScript(unittest.TestCase):
 			"builtin_extensions",
 			"node build/npm/electronTypes.ts",
 			"core_ci_server",
-			"VSCODE_QUALITY=stable npm run gulp compile-copilot-extension-build",
+			"export VSCODE_QUALITY=stable && heavy \"the Copilot compile\" run_gulp compile-copilot-extension-build",
 			"stage_copilot_sdk",
 		]
 		positions = [body.index(step) for step in order]
@@ -787,7 +787,7 @@ class InContainerScript(unittest.TestCase):
 	def test_package_runs_the_ci_task_and_tars_it_out(self) -> None:
 		body = function_body(self.script, "package")
 		self.assertIn("use_remote \"$LIBC\"", body)
-		self.assertIn("npm run gulp \"$out-min-ci\"", body)
+		self.assertIn("heavy \"$out-min-ci\" run_gulp \"$out-min-ci\"", body)
 		self.assertIn("out=\"vscode-reh-$GULP_PLATFORM-$GULP_ARCH\"", body)
 		self.assertIn("tar -C \"$B\" -cf", body)
 
@@ -873,6 +873,197 @@ class InContainerScript(unittest.TestCase):
 		result = self.lib(root, "stage_copilot_sdk")
 		self.assertNotEqual(result.returncode, 0)
 		self.assertIn("no package.json version", result.stderr)
+
+
+GATE = REPO_ROOT / "scripts" / "reh_build_gate.cjs"
+
+
+class Memory(unittest.TestCase):
+	"""The build fits in DOCKER_MEMORY_GB, and says so when it does not."""
+
+	def lib(self, root: Path, code: str, **env: str) -> subprocess.CompletedProcess:
+		full = {
+			"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+			"DEVHUB_REH_LIB": "1",
+			"DEVHUB_REH_BUILD": str(root),
+			"DEVHUB_REH_XFER": str(root / "xfer"),
+			"DEVHUB_REH_DEVHUB": str(REPO_ROOT),
+			**env,
+		}
+		return subprocess.run(["sh", "-c", f". {IN_CONTAINER_SCRIPT}; {code}"], env=full, capture_output=True, text=True)
+
+	def test_run_gulp_is_the_gulp_npm_script_with_a_heap_and_the_gate(self) -> None:
+		body = function_body(in_container_script(), "run_gulp")
+		ours = " ".join(body.replace("\\\n", " ").split())
+		self.assertIn('--require "$D/scripts/reh_build_gate.cjs"', ours)
+		self.assertIn('DEVHUB_BUILD_JOBS="$JOBS" DEVHUB_BUILD_GATE_DIR="$GATE"', ours)
+		self.assertIn('DEVHUB_BUILD_JOBS:-2', in_container_script())
+		self.assertIn('DEVHUB_GULP_HEAP_MB:-4096', in_container_script())
+		package = VSCODE_DIR / "package.json"
+		if not package.is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		upstream = json.loads(package.read_text())["scripts"]["gulp"]
+		self.assertEqual(
+			upstream, "node --experimental-strip-types --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js",
+			"package.json's gulp script changed: bring run_gulp in reh_in_container.sh along",
+		)
+		expected = upstream.replace("--max-old-space-size=8192", '--max-old-space-size="$GULP_HEAP_MB"').replace(
+			" ./node_modules", ' --require "$D/scripts/reh_build_gate.cjs" ./node_modules'
+		)
+		self.assertIn(expected + ' "$@"', ours)
+
+	def test_every_heavy_step_runs_through_heavy_and_none_through_npm(self) -> None:
+		script = in_container_script()
+		code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+		self.assertNotIn("npm run gulp", code)
+		self.assertIn('heavy "the extension builds" run_gulp --series', function_body(script, "core_ci_server"))
+		self.assertIn('heavy "the server bundle" node build/next/index.ts bundle', function_body(script, "core_ci_server"))
+		self.assertIn('heavy "the Copilot compile" run_gulp', function_body(script, "prepare"))
+		self.assertIn('heavy "$out-min-ci" run_gulp', function_body(script, "package"))
+
+	def test_extension_builds_are_upstreams_all_at_once(self) -> None:
+		"""What the gate is for: if upstream ever limits this itself, the gate can go."""
+		extensions = VSCODE_DIR / "build" / "lib" / "extensions.ts"
+		if not extensions.is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		text = extensions.read_text()
+		self.assertIn("cp.execFile(process.argv[0], [esbuildScript]", text)
+		self.assertIn("...localExtensionsDescriptions.map(extension => {", text)
+		self.assertIn("const child = cp.spawn(process.execPath, args", (VSCODE_DIR / "build" / "lib" / "tsgo.ts").read_text())
+
+	def heavy(self, command: str, killed: str | None = None) -> subprocess.CompletedProcess:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		gate = root / ".devhub" / "gate"
+		gate.mkdir(parents=True)
+		setup = f"printf '%s\\n' '{killed}' > {gate}/killed; " if killed else ""
+		return self.lib(root, f"step_cmd() {{ {setup}{command}; }}; heavy 'the thing' step_cmd; echo after")
+
+	def test_heavy_names_a_kill_and_exits_137(self) -> None:
+		if not shutil.which("sh"):
+			self.skipTest("no sh")
+		result = self.heavy("sh -c 'kill -9 $$'")
+		self.assertEqual(result.returncode, 137)
+		self.assertIn("the thing was killed, out of memory (exit 137)", result.stderr)
+		self.assertNotIn("after", result.stdout)
+
+	def test_heavy_names_a_child_the_gate_saw_killed(self) -> None:
+		if not shutil.which("sh"):
+			self.skipTest("no sh")
+		result = self.heavy("false", killed="node tsc --noEmit")
+		self.assertEqual(result.returncode, 137)
+		self.assertIn("killed: node tsc --noEmit", result.stderr)
+
+	def test_heavy_passes_other_failures_and_success_through(self) -> None:
+		if not shutil.which("sh"):
+			self.skipTest("no sh")
+		failed = self.heavy("sh -c 'exit 3'")
+		self.assertEqual(failed.returncode, 3)
+		self.assertNotIn("out of memory", failed.stderr)
+		ok = self.heavy("true")
+		self.assertEqual(ok.returncode, 0, ok.stderr)
+		self.assertIn("after", ok.stdout)
+
+	def gated(self, jobs: int, children: str) -> tuple[subprocess.CompletedProcess, Path]:
+		if not shutil.which("node") or not shutil.which("flock"):
+			self.skipTest("no node or flock")
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		program = root / "parent.mjs"
+		program.write_text(
+			"import * as cp from 'child_process';\n"
+			"import cpd from 'child_process';\n"
+			f"const children = {children};\n"
+			"const runs = children.map((code, i) => new Promise(resolve => {\n"
+			"  const args = ['-e', code];\n"
+			"  if (i % 2) { cp.spawn(process.execPath, args, {}).on('exit', c => resolve(c)); }\n"
+			"  else { cpd.execFile(process.execPath, args, (e) => resolve(e ? e.code : 0)); }\n"
+			"}));\n"
+			"console.log(JSON.stringify(await Promise.all(runs)));\n"
+		)
+		env = {**os.environ, "DEVHUB_BUILD_JOBS": str(jobs), "DEVHUB_BUILD_GATE_DIR": str(root / "gate")}
+		env.pop("DEVHUB_BUILD_GATE_HELD", None)
+		result = subprocess.run(
+			["node", "--require", str(GATE), str(program)], env=env, capture_output=True, text=True, timeout=120,
+		)
+		return result, root
+
+	def test_gate_runs_at_most_jobs_node_children_at_once(self) -> None:
+		# Each child holds a marker file for 300 ms, and fails if more than
+		# two exist meanwhile; ungated, all six run at once.
+		child = (
+			"const fs=require('fs'),p=require('path'),d=process.env.MARK;"
+			"const f=p.join(d,String(process.pid));fs.writeFileSync(f,'');"
+			"setTimeout(()=>{const n=fs.readdirSync(d).length;fs.unlinkSync(f);"
+			"process.exit(n>2?50:(process.env.DEVHUB_BUILD_GATE_HELD==='1'?7:8))},300)"
+		)
+		marks = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, marks, True)
+		with mock.patch.dict(os.environ, {"MARK": str(marks)}):
+			result, _ = self.gated(2, json.dumps([child] * 6))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout), [7] * 6)  # exit codes pass through; each was gated
+
+	def test_gate_records_a_child_killed_by_sigkill(self) -> None:
+		result, root = self.gated(2, json.dumps(["process.kill(process.pid, 'SIGKILL')", "process.exit(0)"]))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout)[1], 0)
+		killed = (root / "gate" / "killed").read_text()
+		self.assertIn("SIGKILL", killed)
+
+	def test_gate_does_nothing_unless_asked(self) -> None:
+		if not shutil.which("node"):
+			self.skipTest("no node")
+		code = "const cp=require('child_process');const s=cp.spawn;console.log(s.name)"
+		env = {k: v for k, v in os.environ.items() if not k.startswith("DEVHUB_BUILD_")}
+		plain = subprocess.run(["node", "--require", str(GATE), "-e", code], env=env, capture_output=True, text=True)
+		self.assertEqual(plain.stdout.strip(), "spawn")
+
+	def test_docker_memory_is_checked_against_what_the_build_needs(self) -> None:
+		self.assertEqual(build_reh.DOCKER_MEMORY_GB, 8)
+		self.assertIsNone(build_reh.docker_memory_problem(None))
+		# an 8 GB setting reads as a little less in `docker info`
+		self.assertIsNone(build_reh.docker_memory_problem(int(7.7 * 1024**3)))
+		problem = build_reh.docker_memory_problem(4 * 1024**3)
+		self.assertIsNotNone(problem)
+		self.assertIn("4.0 GB", problem)
+		self.assertIn("needs 8 GB", problem)
+		self.assertIn("Rancher Desktop", problem)
+
+	def test_a_kill_is_named_with_the_memory_to_give_docker(self) -> None:
+		for status in (137, -9):
+			message = build_reh.killed_message(subprocess.CalledProcessError(status, "docker"), native=False)
+			self.assertIsNotNone(message)
+			self.assertTrue(message.startswith("killed (out of memory): raise Docker memory to 8 GB"), message)
+		self.assertIn("this machine", build_reh.killed_message(subprocess.CalledProcessError(137, "bash"), native=True))
+		self.assertIsNone(build_reh.killed_message(subprocess.CalledProcessError(1, "docker"), native=False))
+		self.assertIsNone(build_reh.killed_message(SystemExit("no"), native=False))
+
+	def test_main_says_out_of_memory_when_a_step_is_killed(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+
+		def killed(*a):
+			raise subprocess.CalledProcessError(137, "docker")
+
+		with mock.patch("sys.argv", ["build_reh.py", "linux-x64", "--no-cache", "--out-dir", str(root)]), \
+			mock.patch("build_reh.docker_available", return_value=True), \
+			mock.patch("build_reh.vscode_commit", return_value=COMMIT), \
+			mock.patch("build_reh.reh_identity", return_value=IDENTITY), \
+			mock.patch("build_reh.require_commit"), \
+			mock.patch("build_reh.warn_about_docker"), \
+			mock.patch("build_reh.packaged_metadata", return_value={}), \
+			mock.patch("build_reh.prepare_tree", killed), \
+			mock.patch("builtins.print") as said:
+			self.assertEqual(build_reh.main(), 1)
+		text = " ".join(str(c.args[0]) for c in said.call_args_list if c.args)
+		self.assertIn("killed (out of memory): raise Docker memory to 8 GB", text)
+
+	def test_warns_up_front_with_the_amount(self) -> None:
+		with mock.patch("build_reh.docker_memory", return_value=6 * 1024**3), \
+			mock.patch("builtins.print") as said:
+			build_reh.warn_about_docker()
+		self.assertIn("needs 8 GB", str(said.call_args_list[0].args[0]))
 
 
 class ApplyPatchesInto(unittest.TestCase):

@@ -98,9 +98,14 @@ them is in a musl server (`refuse_foreign_binaries` would say so).
 
 On an Apple Silicon Mac the builder runs as amd64 under emulation — Docker
 Desktop's Rosetta (Settings > General > "Use Rosetta for x86_64/amd64
-emulation") is several times faster than QEMU. Give Docker at least 8 GB of
-memory: `npm ci` builds natives four at a time, and the server bundle with its
-extension builds peaks under 5 GB (measured natively on Linux x64).
+emulation") is several times faster than QEMU. Give Docker 8 GB of memory
+(`DOCKER_MEMORY_GB`; the script says so up front when `docker info` reports
+less, and a step the kernel kills for memory is reported as such): measured
+natively on Linux x64, no step peaks above 3.4 GB, once `reh_in_container.sh`
+runs upstream's all-at-once extension builds two at a time
+(`DEVHUB_BUILD_JOBS`, scripts/reh_build_gate.cjs) with gulp's heap at 4 GB
+(`DEVHUB_GULP_HEAP_MB`) — under emulation every process also carries the
+emulator's memory, which is what the margin is for.
 
 ## The caches, so a rebuild is not an hour
 
@@ -207,15 +212,32 @@ EXPECTED_GLIBC_VERSION = "2.28"
 EXPECTED_GLIBCXX_VERSION = "3.4.25"
 VERIFY_GLIBC_SCRIPT = VSCODE_DIR / "build" / "azure-pipelines" / "linux" / "verify-glibc-requirements.sh"
 
-# Below this, the server's part of `core-ci` (the extension builds and the
-# server bundle, measured under 5 GB natively) is likely to be killed for memory
-# before it says anything useful.
-MIN_DOCKER_MEMORY = 8 * 1024**3
+# The memory Docker needs, in GB as its settings name it. Measured natively
+# (Linux x64, 4 CPUs) with reh_in_container.sh's limits, no step peaked above
+# 3.4 GB of process memory: npm ci 2.6, the extension builds 3.4 (2.9
+# upstream's all-at-once way natively, but some 70 emulated processes at once
+# on a Mac), the server bundle 1.8, the Copilot compile 2.9, the package task
+# 2.7; each compile step also passed under a 4 GB hard limit (Copilot's, 5).
+# 8 GB leaves room for the emulator, Docker's own VM and the page cache.
+DOCKER_MEMORY_GB = 8
+# `docker info`'s MemTotal is what the VM's kernel has left, a little under
+# the setting (8 GB set reads 7.7 GiB): below this the setting is too low.
+MIN_DOCKER_MEMORY = int(DOCKER_MEMORY_GB * 0.9 * 1024**3)
+# A step killed by the kernel: reh_in_container.sh's `heavy` exits 137
+# (128 + SIGKILL), as does `docker run` when its container is; -9 is
+# subprocess's own spelling of a SIGKILLed child.
+KILLED_STATUSES = (137, -9)
+# The host's environment that reaches the builder, by name (`docker run -e
+# NAME` passes nothing when NAME is unset): the GitHub token, and
+# reh_in_container.sh's memory knobs — how many extension builds at a time
+# (default 2) and gulp's heap in MB (default 4096).
+PASSED_BY_NAME = ("GITHUB_TOKEN", "DEVHUB_BUILD_JOBS", "DEVHUB_GULP_HEAP_MB")
 
 # Natively (see the docstring): the targets that can be built, and the commands
-# the host needs besides the `.nvmrc` Node.
+# the host needs besides the `.nvmrc` Node (flock, util-linux's, for
+# reh_build_gate.cjs; ubuntu:22.04 has it as an essential package).
 NATIVE_TARGETS = ("linux-x64",)
-NATIVE_COMMANDS = ("git", "python", "curl", "make", "g++", "pkg-config", "tar", "xz")
+NATIVE_COMMANDS = ("git", "python", "curl", "make", "g++", "pkg-config", "tar", "xz", "flock")
 # Set by `main` when the build runs on the host rather than in Docker.
 NATIVE = False
 
@@ -417,8 +439,9 @@ def container_argv(
 	/devhub (apply-vscode-patches.sh finds the patches from its own path),
 	the transfer directory at /xfer, and for `verify-glibc` the finished server
 	read-only at /server. GITHUB_TOKEN goes through by name, for the rate
-	limit of the downloads upstream's steps make from GitHub; nothing else of
-	the host's environment does.
+	limit of the downloads upstream's steps make from GitHub, and so do the
+	memory knobs (`PASSED_BY_NAME`) when set; nothing else of the host's
+	environment does.
 	"""
 	argv = [
 		"docker", "run", "--rm", "--platform", docker_platform_name,
@@ -429,7 +452,8 @@ def container_argv(
 	]
 	if server is not None:
 		argv += ["-v", f"{server}:/server:ro"]
-	argv += ["-e", "GITHUB_TOKEN"]
+	for name in PASSED_BY_NAME:
+		argv += ["-e", name]
 	for key in sorted(env):
 		argv += ["-e", f"{key}={env[key]}"]
 	argv += [image, shell, "/devhub/scripts/reh_in_container.sh", subcommand]
@@ -1256,14 +1280,43 @@ def native_problems() -> list[str]:
 	return problems
 
 
-def warn_about_docker() -> None:
-	memory = docker_memory()
-	if memory is not None and memory < MIN_DOCKER_MEMORY:
-		print(
-			f"warning: Docker has {memory / 1024**3:.1f} GB of memory; the build needs about "
-			f"{MIN_DOCKER_MEMORY // 1024**3} GB or more and may be killed. Raise it in Docker's settings.",
-			file=sys.stderr,
+RAISE_DOCKER_MEMORY = (
+	"Docker Desktop: Settings > Resources > Memory; Rancher Desktop: Preferences > "
+	"Virtual Machine > Memory; colima: `colima start --memory {gb}`"
+)
+
+
+def docker_memory_problem(memory: int | None) -> str | None:
+	"""What to say about Docker's memory before a build; None when it is enough
+	or `docker info` did not say."""
+	if memory is None or memory >= MIN_DOCKER_MEMORY:
+		return None
+	return (
+		f"warning: Docker's VM has {memory / 1024**3:.1f} GB of memory and building the servers "
+		f"needs {DOCKER_MEMORY_GB} GB; with less, a step is likely to be killed for memory. Raise it "
+		f"to {DOCKER_MEMORY_GB} GB ({RAISE_DOCKER_MEMORY.format(gb=DOCKER_MEMORY_GB)}) and run this again."
+	)
+
+
+def killed_message(error: BaseException, native: bool) -> str | None:
+	"""What a step killed by the kernel means; None for any other failure."""
+	if not isinstance(error, subprocess.CalledProcessError) or error.returncode not in KILLED_STATUSES:
+		return None
+	if native:
+		return (
+			f"killed (out of memory): this machine needs about {DOCKER_MEMORY_GB} GB of memory free "
+			"for the build; close what else is running and retry."
 		)
+	return (
+		f"killed (out of memory): raise Docker memory to {DOCKER_MEMORY_GB} GB "
+		f"({RAISE_DOCKER_MEMORY.format(gb=DOCKER_MEMORY_GB)}) and retry."
+	)
+
+
+def warn_about_docker() -> None:
+	problem = docker_memory_problem(docker_memory())
+	if problem:
+		print(problem, file=sys.stderr)
 	print(f"  note: {time_note()}")
 
 
@@ -1348,11 +1401,13 @@ def main() -> int:
 				tree = native_work_dir(arch) if NATIVE else f"the Docker volume {work_volume(arch)}"
 				if NATIVE:
 					remaining += " --native"
+				killed = killed_message(error, NATIVE)
 				print(
 					f"\nerror: building {failed} failed ({error}).\n"
-					f"Servers already built stay in {out_dir}, and the tree in {tree} keeps every "
-					f"step that finished. Retry only what is missing with:\n"
-					f"  {remaining}",
+					+ (f"{killed}\n" if killed else "")
+					+ f"Servers already built stay in {out_dir}, and the tree in {tree} keeps every "
+					+ f"step that finished. Retry only what is missing with:\n"
+					+ f"  {remaining}",
 					file=sys.stderr,
 				)
 				return 1
