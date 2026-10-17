@@ -237,7 +237,8 @@ install that did not finish, and is replaced rather than started.
 
 **The key.** `<key>` is `<commit>-<identity>`. The commit is the VS Code
 submodule's; the identity is `reh_identity()` in `scripts/product_metadata.py`,
-twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`,
+twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`
+and `patches/vscode-overlay/` file,
 the static product metadata the server carries (the overrides and the API
 proposal table), the bytes of the build scripts (`scripts/build_reh.py`,
 `scripts/reh_in_container.sh`) and a `REH_REVISION` bumped when anything else

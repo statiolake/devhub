@@ -3,7 +3,8 @@
 #
 #   scripts/vscode-bump-apply.sh <tag> <report-dir>
 #
-# Stages the submodule bump, re-applies patches/vscode/*.patch on top of it, and
+# Stages the submodule bump, re-applies patches/vscode-overlay/ and
+# patches/vscode/*.patch on top of it, and
 # runs `pnpm run check` against the result. Into <report-dir> it writes:
 #
 #   patches.log    outcome.env   patches=ok|failed
@@ -46,7 +47,10 @@ git -C "$REPO_ROOT" add vscode
 # The patches are applied to the working tree, which `git add vscode` above has
 # already recorded, so the staged bump is the clean tag and the patched tree
 # stays uncommitted — exactly the state provisioning expects.
-step "patches/vscode"
+# apply-vscode-patches.sh tries every patch even after one fails, so
+# patches.log names every patch the bump broke (and an overlay file upstream
+# now has too), not only the first.
+step "patches/vscode and patches/vscode-overlay"
 if "$REPO_ROOT/scripts/apply-vscode-patches.sh" > "$REPORT/patches.log" 2>&1; then
 	PATCHES=ok
 else

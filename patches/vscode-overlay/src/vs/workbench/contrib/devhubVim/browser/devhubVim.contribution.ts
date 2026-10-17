@@ -1,0 +1,1181 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) DevHub contributors. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+// DevHub native Vim: the workbench half.
+//
+// Design: Vim keys are native VS Code keybindings.
+//
+// * The engine (../common/vimEngine.ts) is commands + state + context keys.
+//   Every Vim action is a command with args - `devhubVim.motion {motion}`,
+//   `devhubVim.operator {operator}`, `devhubVim.textObjectPrefix {kind}` /
+//   `devhubVim.textObject {object}`, `devhubVim.count {digit}`,
+//   `devhubVim.register {name}`, `devhubVim.mode {to, at}`,
+//   `devhubVim.action {action}`, `devhubVim.mark {char}`,
+//   `devhubVim.scroll {...}`, `devhubVim.insert {action}`,
+//   `devhubVim.run {command}`, `devhubVim.repeat {command, count}`,
+//   `devhubVim.awaitChar {then}`,
+//   `devhubVim.cmdline {kind}`, `devhubVim.search`, `devhubVim.ex {command}`,
+//   `devhubVim.escape` - run on the focused Vim editor. The engine keeps the
+//   grammar (count, register, pending operator / text object, visual range,
+//   marks, jumps, last change, macros) and composes: `d` marks an operator
+//   pending and the next motion or text object command completes it,
+//   whatever key ran it. The behaviour is Neovim's, defaults included.
+//   Other commands get the count as an argument: `devhubVim.run` and
+//   `devhubVim.repeat` have `${count}` `${rawCount}` `${register}` `${char}`
+//   put into their args where a key runs them (VimEngine.expandVimState),
+//   and are plain functions of their args after that.
+// * The default keymap (../common/vimKeymap.ts) is registered here as
+//   ordinary default keybindings (KeybindingsRegistry), each with a `when` on
+//   the context keys below. They show in the Keyboard Shortcuts editor,
+//   keybindings.json overrides them, `-devhubVim.motion` removes one, and a
+//   user may bind any other command in a Vim mode (it just does not compose
+//   with counts or operators). The editor's own keys that type or erase at
+//   the caret (Backspace, Delete, Tab, Shift-Tab, word / line-start /
+//   line-end deletes, insert line above / below, transpose, line break, and
+//   their macOS Emacs aliases) do not apply outside insert and replace mode
+//   at all: their `when` has EditorContextKeys.devhubVimAllowsTyping, so in
+//   normal, visual, operator-pending and nav mode such a key resolves to the
+//   Vim binding or to nothing, as any other `when` decides. Weight:
+//   EditorContrib, so the editor's other defaults on the same keys (cursor
+//   moves) lose while a Vim mode's `when` holds, and widgets (suggest, ...)
+//   still win; CTRL keys and Tab at WorkbenchContrib + 50, for workbench-wide
+//   defaults (Ctrl-R is Open Recent on macOS, Ctrl-O Open File elsewhere) and
+//   Tab's inline suggestion / next edit accept; Esc at EditorCore + 50, below
+//   every widget's Esc.
+// * `.` and macros replay the commands the engine executed (with captured
+//   characters and the text typed in insert mode), so remapping cannot break
+//   them.
+// * The editor's own keydown is read only where a keybinding cannot be:
+//   the character after `devhubVim.awaitChar` (f t r " q @ m ' `, CTRL-R in
+//   insert mode, or a binding of one's own), the keys typed into the `:` `/`
+//   prompt, the text an IME commits, and a printable key no keybinding took
+//   while a command is half built (it cancels it, as in Vim; the dispatcher
+//   is asked first). Everything else reaches the keybinding dispatcher
+//   untouched, so nothing is handled twice and every Vim key is a keybinding.
+// * `:` commands (../common/vimEx.ts): Vim's editing commands (:s :g :d :m :t
+//   :normal :sort ...) run in the engine; the others are a table of VS Code
+//   commands plus `devhub.vim.exCommands`, whose entries run any commands with
+//   args (`${args}`, `${range}`, `${bang}`, ... placeholders).
+// * 'hlsearch' and 'incsearch' are editor decorations drawn here (the find
+//   widget's colours), for the pattern the engine translated to a JavaScript
+//   regular expression.
+// * Modal "to the bone": outside insert mode an editor is switched to modal
+//   text input in the editor core (editor/browser/controller/editContext/
+//   modalTextInput.ts): typed text, IME composition, paste and drop from any
+//   caller never reach the model, so a key no keybinding takes types nothing.
+//   An IME that is on still composes (its keys dispatch no keybinding); what
+//   it commits goes to VimEngine.handleText: a command waiting for a
+//   character takes it, as does the prompt, and anything else is dropped.
+//   Replace mode is the editor's overtype input mode.
+// * Mode, caret style, modal input and context keys are recomputed from the
+//   engine's state after every command and every focus or model change, never
+//   toggled, and a command that throws leaves the engine in plain normal mode.
+// * From the first key: an editor Vim drives starts modal in normal mode in
+//   its constructor (the start policy given to ModalTextInput below), and
+//   this contribution is BlockStartup, so it exists before the first editor
+//   and attaches to each in that same constructor (onCodeEditorAdd), taking
+//   that state over (ModalTextInput.claim). No editor ever takes text, or
+//   shows the line caret, before Vim is on it.
+// * Esc only ever cancels: pressed any number of times it lands in plain
+//   normal mode and nowhere else.
+// * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
+//   then one key (h j k l, w p t b, s v n c q o, = _ + - < >, H J K L, d ] }:
+//   devhubVim.nav.*, or whatever else the key is bound to while
+//   `devhubVim.mode == 'nav'`). It is one-shot (common/vimKeys.ts
+//   VimNavPrefix). In a Vim editor's insert
+//   mode Ctrl-W is Vim's delete-word-before-the-caret.
+//
+// User documentation: docs/vim.md in the DevHub repository.
+
+import { addDisposableListener, getActiveElement, isEditableElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
+import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
+import { mainWindow } from '../../../../base/browser/window.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { onUnexpectedError } from '../../../../base/common/errors.js';
+import { Event } from '../../../../base/common/event.js';
+import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
+import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+import { KeybindingParser } from '../../../../base/common/keybindingParser.js';
+import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
+import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
+import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
+import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
+import { Position } from '../../../../editor/common/core/position.js';
+import { Range } from '../../../../editor/common/core/range.js';
+import { Selection } from '../../../../editor/common/core/selection.js';
+import { ScrollType } from '../../../../editor/common/editorCommon.js';
+import { InputMode } from '../../../../editor/common/inputMode.js';
+import { ILanguageConfigurationService } from '../../../../editor/common/languages/languageConfigurationRegistry.js';
+import { IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness } from '../../../../editor/common/model.js';
+import { ModelDecorationOptions } from '../../../../editor/common/model/textModel.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { localize } from '../../../../nls.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
+import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
+import { KeybindingWeight, KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { overviewRulerFindMatchForeground } from '../../../../platform/theme/common/colorRegistry.js';
+import { themeColorFromId } from '../../../../platform/theme/common/themeService.js';
+import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
+import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
+import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
+import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
+import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
+import { VimRegex } from '../common/vimRegex.js';
+import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
+
+const SETTING = 'devhub.vim.enabled';
+const EX_SETTING = 'devhub.vim.exCommands';
+const OPTIONS_SETTING = 'devhub.vim.options';
+
+const exStepSchema: IJSONSchema = {
+	type: 'object',
+	required: ['command'],
+	properties: {
+		command: { type: 'string', description: localize('devhubVim.ex.command', "The command to run.") },
+		args: { description: localize('devhubVim.ex.args', "Its arguments. Strings may use ${args}, ${argList}, ${bang}, ${range}, ${line1} and ${line2}.") },
+	},
+};
+const exStepsAlternatives: IJSONSchema[] = [
+	{ type: 'string', description: localize('devhubVim.ex.commandId', "A command id, run without arguments.") },
+	exStepSchema,
+	{ type: 'array', items: { anyOf: [{ type: 'string' }, exStepSchema] }, description: localize('devhubVim.ex.sequence', "Commands run in order, each awaited.") },
+];
+const exStepsSchema: IJSONSchema = { anyOf: exStepsAlternatives };
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'devhubVim',
+	order: 100,
+	title: localize('devhubVim', "Vim"),
+	type: 'object',
+	properties: {
+		[SETTING]: {
+			type: 'boolean',
+			default: false,
+			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub, with Neovim's defaults. Every Vim key is an ordinary keybinding (`devhubVim.*` commands): rebind or remove them in keybindings.json or the Keyboard Shortcuts editor. Esc always ends in normal mode. Ctrl-W then h/j/k/l moves to the part on the left/below/above/right."),
+		},
+		[EX_SETTING]: {
+			type: 'object',
+			default: {},
+			markdownDescription: localize('devhubVim.exCommands', "Your own `:` commands. A name must start with an uppercase letter (as Vim's `:command`), or be a built-in name to override it ({0}). The value is a command id, `{ \"command\": ..., \"args\": ... }`, a list of those (run in order), or `{ \"run\": ..., \"bang\": ... }` where `bang` runs for `:Name!`. In `args`, strings may use `${args}` (the text after the name), `${argList}` (it split on blanks), `${bang}` (true for `!`), `${range}` (`{ start, end }` 1-based lines, null without a range), `${line1}`, `${line2}`. With a range (`:'<,'>Name`, `:%Name`, `:3,7Name`) the lines are selected while the commands run.", Object.keys(BUILTIN_EX_COMMANDS).map(n => `\`${n}\``).join(', ')),
+			additionalProperties: {
+				anyOf: [
+					...exStepsAlternatives,
+					{ type: 'object', required: ['run'], properties: { run: exStepsSchema, bang: exStepsSchema, description: { type: 'string' } } },
+				],
+			},
+		},
+		[OPTIONS_SETTING]: {
+			type: 'object',
+			default: {},
+			markdownDescription: localize('devhubVim.options', "Vim options at startup, as with `:set` (Neovim's defaults otherwise). For example `{ \"ignorecase\": true, \"smartcase\": true }`."),
+			properties: Object.fromEntries(Object.entries(DEFAULT_VIM_OPTIONS).map(([k, v]) => [k, { type: typeof v as 'boolean' | 'number' | 'string', default: v }])),
+		},
+	},
+});
+
+const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode of the focused editor or input: normal, insert, replace, visual, visualLine, visualBlock, operatorPending, cmdline, nav (Ctrl-W waits for its key), or empty."));
+const VIM_ACTIVE = new RawContextKey<boolean>('devhubVim.active', false, localize('devhubVim.active', "Whether the focused text editor is driven by DevHub Vim."));
+/** The PoC's name for `devhubVim.active`, kept for existing `when` clauses. */
+const VIM_ATTACHED = new RawContextKey<boolean>('devhubVim.attached', false, localize('devhubVim.attached', "Same as devhubVim.active."));
+const VIM_ACCEPTS_MOTION = new RawContextKey<boolean>('devhubVim.acceptsMotion', false, localize('devhubVim.acceptsMotion', "A Vim motion, operator, count or action may come next (normal, visual or operator-pending mode, and no key is being captured)."));
+const VIM_HAS_COUNT = new RawContextKey<boolean>('devhubVim.hasCount', false, localize('devhubVim.hasCount', "A Vim count is being typed (so `0` is a digit)."));
+const VIM_PENDING = new RawContextKey<boolean>('devhubVim.pending', false, localize('devhubVim.pending', "A Vim command is half built: a count, register, operator, text object prefix or character argument."));
+const VIM_PENDING_OPERATOR = new RawContextKey<string>('devhubVim.pendingOperator', '', localize('devhubVim.pendingOperator', "The pending Vim operator: delete, change, yank, indent, outdent, reindent, lowercase, uppercase, toggleCase, rot13, format, formatKeep, comment, fold, or empty."));
+const VIM_TEXT_OBJECT_PENDING = new RawContextKey<string>('devhubVim.textObjectPending', '', localize('devhubVim.textObjectPending', "inner or around after Vim's `i` / `a`: the next key names the text object."));
+const VIM_AWAITING_CHAR = new RawContextKey<boolean>('devhubVim.awaitingChar', false, localize('devhubVim.awaitingChar', "The next key is a Vim character argument (f t r \" q @ m ...)."));
+const VIM_RECORDING = new RawContextKey<boolean>('devhubVim.recording', false, localize('devhubVim.recording', "A Vim macro is being recorded."));
+const VIM_VISUAL = new RawContextKey<boolean>('devhubVim.visual', false, localize('devhubVim.visual', "The focused Vim editor is in a visual mode (characterwise, linewise or blockwise)."));
+const VIM_INSERT = new RawContextKey<boolean>('devhubVim.insert', false, localize('devhubVim.insert', "The focused Vim editor is in insert or replace mode."));
+const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
+
+/** The editors Vim drives: all of them but the settings / extensions search boxes, which behave as plain inputs. */
+function vimDrives(container: HTMLElement): boolean {
+	return !container.closest('.suggest-input-container');
+}
+
+// Every editor Vim drives starts modal in normal mode, decided in its
+// constructor before it can take a key (editor core, modalTextInput.ts), so
+// the first frame and the first key of an editor are Vim's even when it
+// exists before DevhubVim does. DevhubVim claims it in attach().
+ModalTextInput.setStartPolicy((accessor, container) => !!accessor.get(IConfigurationService).getValue<boolean>(SETTING) && vimDrives(container));
+
+type CursorStyle = ReturnType<typeof cursorStyleToString>;
+const CURSOR_STYLES: readonly CursorStyle[] = ['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin'];
+
+const HLSEARCH_DECORATION = ModelDecorationOptions.register({
+	description: 'devhub-vim-hlsearch',
+	stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+	className: 'findMatch',
+	showIfCollapsed: true,
+	overviewRuler: { color: themeColorFromId(overviewRulerFindMatchForeground), position: OverviewRulerLane.Center },
+});
+const INCSEARCH_DECORATION = ModelDecorationOptions.register({
+	description: 'devhub-vim-incsearch',
+	stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+	className: 'currentFindMatch',
+	showIfCollapsed: true,
+	zIndex: 13,
+});
+/** Matches drawn for 'hlsearch' at most (around the visible lines first). */
+const HLSEARCH_LIMIT = 5000;
+
+/** One CodeEditorWidget with its engine; it is the engine's IVimHost. */
+class VimEditor extends Disposable implements IVimHost {
+
+	readonly engine: VimEngine;
+	private readonly modelListener = this._register(new DisposableStore());
+	private checkpoints: number[] = [];
+	private redoTargets: number[] = [];
+	private undoQueue: Promise<void> = Promise.resolve();
+	private appliedStyle: CursorStyle | undefined;
+	private applyingStyle = false;
+	private insertStyle: VimCursorStyle;
+	private readonly hlDecorations;
+	private readonly incDecorations;
+	private readonly hlScheduler = this._register(new RunOnceScheduler(() => this.drawHighlight(), 50));
+	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
+
+	constructor(
+		readonly editor: ICodeEditor,
+		private readonly owner: DevhubVim,
+		shared: VimSharedState,
+	) {
+		super();
+		this.engine = new VimEngine(this, shared);
+		// The editor started modal in normal mode (ModalTextInput's start policy, below); from here on it is ours.
+		ModalTextInput.claim(editor.getId());
+		this.insertStyle = this.readInsertCursorStyle();
+		this.hlDecorations = editor.createDecorationsCollection();
+		this.incDecorations = editor.createDecorationsCollection();
+		this._register({ dispose: () => { this.hlDecorations.clear(); this.incDecorations.clear(); } });
+
+		this._register(editor.onKeyDown(e => this.onKeyDown(e)));
+		this._register(editor.onDidFocusEditorText(() => owner.update()));
+		this._register(editor.onDidBlurEditorText(() => owner.update()));
+		this._register(editor.onDidChangeModel(() => {
+			this.engine.reset();
+			this.checkpoints = [];
+			this.redoTargets = [];
+			this.modelListener.clear();
+			this.insertStyle = this.readInsertCursorStyle();
+			this.incDecorations.clear();
+			this.scheduleHighlight();
+			owner.update();
+		}));
+		this._register(editor.onDidChangeModelContent(e => {
+			// marks, the jump list and an insert in progress follow every edit
+			try {
+				this.engine.contentChanged(e.changes.map(c => ({
+					start: { line: c.range.startLineNumber - 1, col: c.range.startColumn - 1 },
+					end: { line: c.range.endLineNumber - 1, col: c.range.endColumn - 1 },
+					text: c.text.replace(/\r\n/g, '\n'),
+				})));
+			} catch (err) {
+				onUnexpectedError(err);
+			}
+			this.scheduleHighlight();
+		}));
+		this._register(editor.onDidScrollChange(e => {
+			if (e.scrollTopChanged && owner.searchHighlight) {
+				this.scheduleHighlight();
+			}
+		}));
+		this._register(editor.onDidChangeCursorSelection(e => {
+			if (e.source !== 'mouse') {
+				return;
+			}
+			const s = e.selection;
+			this.engine.selectionChanged(
+				{ line: s.selectionStartLineNumber - 1, col: s.selectionStartColumn - 1 },
+				{ line: s.positionLineNumber - 1, col: s.positionColumn - 1 });
+			owner.update();
+		}));
+		this._register(editor.onDidChangeConfiguration(e => {
+			if (!this.applyingStyle && e.hasChanged(EditorOption.cursorStyle)) {
+				// Someone else set it (the workbench re-applying settings, a parent
+				// editor's options copied into a peek or inline diff editor, an
+				// extension): Vim's style wins again. What the user wants in insert
+				// mode is read from the settings (readInsertCursorStyle), never from the
+				// editor, whose cursorStyle is Vim's own and leaks into the editors
+				// that copy it.
+				this.appliedStyle = undefined;
+				this.syncCursorStyle();
+			}
+		}));
+		this.scheduleHighlight();
+	}
+
+	override dispose(): void {
+		ModalTextInput.set(this.editor.getId(), false);
+		this.setCursorStyle(this.insertStyle);
+		super.dispose();
+	}
+
+	/** The user's `editor.cursorStyle` for this editor's file and language: the insert-mode caret. */
+	private readInsertCursorStyle(): VimCursorStyle {
+		const model = this.editor.getModel();
+		const value = this.owner.configurationService.getValue<string>('editor.cursorStyle', model ? { resource: model.uri, overrideIdentifier: model.getLanguageId() } : {});
+		return CURSOR_STYLES.includes(value as CursorStyle) ? value as CursorStyle : 'line';
+	}
+
+	context(): VimContext {
+		return this.engine.context();
+	}
+
+	/** Caret style and modal text input, both derived from the current state. */
+	syncCursorStyle(): void {
+		const nav = this.owner.nav.active && this.editor.hasTextFocus();
+		const typing = this.engine.mode === 'insert' || this.engine.mode === 'replace';
+		ModalTextInput.set(this.editor.getId(), !typing);
+		this.setCursorStyle(vimCursorStyle(this.engine.mode, nav, this.insertStyle));
+	}
+
+	/** Re-read the insert caret from the settings and re-apply. */
+	refreshCursorStyle(): void {
+		this.insertStyle = this.readInsertCursorStyle();
+		this.appliedStyle = undefined;
+		this.syncCursorStyle();
+	}
+
+	private setCursorStyle(style: CursorStyle): void {
+		if (this.appliedStyle === style) {
+			return;
+		}
+		this.appliedStyle = style;
+		this.applyingStyle = true;
+		try {
+			this.editor.updateOptions({ cursorStyle: style });
+		} finally {
+			this.applyingStyle = false;
+		}
+	}
+
+	/**
+	 * Only what a keybinding cannot express (see the design comment). Runs
+	 * before the keybinding dispatcher; a key taken here is stopped, so the
+	 * dispatcher never sees it, and a key left alone is never acted on here.
+	 */
+	private onKeyDown(e: IKeyboardEvent): void {
+		if (this.owner.nav.active || !this.editor.hasModel()) {
+			return;
+		}
+		const typing = this.engine.mode === 'insert' || this.engine.mode === 'replace';
+		const be = e.browserEvent;
+		if (this.engine.cmdlineOpen || this.engine.awaitingChar) {
+			const key = captureKey(be);
+			if (key === undefined) {
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			this.guard(() => this.engine.cmdlineOpen ? this.engine.cmdlineKey(key) : this.engine.awaitKey(key));
+			return;
+		}
+		if (typing) {
+			return;
+		}
+		// Vim: a printable key that means nothing here cancels the half-built
+		// command (`d` then a key with no binding). "Any key no binding takes"
+		// cannot be a keybinding; this asks the dispatcher first and acts only
+		// when it has nothing, so every binding (the defaults, the user's, an
+		// extension's) still wins. It types nothing either way: the editor is modal.
+		const keybindings = this.owner.keybindingService;
+		if (!this.engine.pending || typedChar(be) === undefined || keybindings.inChordMode) {
+			return;
+		}
+		if (keybindings.softDispatch(e, e.target).kind === ResultKind.NoMatchingKb) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.guard(() => this.engine.cancelPending());
+		}
+	}
+
+	/** Leaving insert mode: the completion menu, ghost text, signature help, ... go with it (one Esc, as in Vim). */
+	private dismissInsertWidgets(): void {
+		const keys = this.editor.invokeWithinContext(a => a.get(IContextKeyService));
+		for (const d of INSERT_ESCAPE_DISMISSES) {
+			try {
+				if (keys.contextMatchesRules(this.owner.whenExpr(d.when))) {
+					this.editor.trigger('devhubVim', d.command, undefined);
+				}
+			} catch (err) {
+				onUnexpectedError(err);
+			}
+		}
+	}
+
+	/** Text an IME committed while this editor was modal (ModalTextInput.onDidCommitText). */
+	commitText(text: string): void {
+		this.guard(() => this.engine.handleText(text));
+	}
+
+	/** An engine command, or any command a Vim binding names (awaitChar targets). */
+	execute(command: string, args: unknown): void {
+		if (command === 'devhubVim.escape' && (this.engine.mode === 'insert' || this.engine.mode === 'replace')) {
+			this.dismissInsertWidgets();
+		}
+		this.guard(() => {
+			if (!this.engine.execute(command, args)) {
+				void this.executeCommand(command, args);
+			}
+		});
+	}
+
+	/** Whatever happens, the engine, caret and context keys agree afterwards. */
+	private guard(fn: () => void): void {
+		try {
+			fn();
+		} catch (err) {
+			this.engine.recover(err);
+			onUnexpectedError(err);
+		} finally {
+			this.owner.update();
+		}
+	}
+
+	// ---- 'hlsearch' / 'incsearch' -------------------------------------------
+
+	scheduleHighlight(): void {
+		this.hlScheduler.schedule();
+	}
+
+	private drawHighlight(): void {
+		const model = this.editor.getModel();
+		const r = this.owner.searchHighlight;
+		if (!model || !r) {
+			this.hlDecorations.clear();
+			return;
+		}
+		// the visible lines with some margin; the whole file when it is small
+		const visible = this.editor.getVisibleRanges();
+		const lines = model.getLineCount();
+		const from = lines <= 20000 || !visible.length ? 1 : Math.max(1, visible[0].startLineNumber - 500);
+		const to = lines <= 20000 || !visible.length ? lines : Math.min(lines, visible[visible.length - 1].endLineNumber + 500);
+		let decorations: IModelDeltaDecoration[] = [];
+		try {
+			const scope = new Range(from, 1, to, model.getLineMaxColumn(to));
+			decorations = model.findMatches(r.source, scope, true, !r.ignoreCase, null, false, HLSEARCH_LIMIT)
+				.map(m => ({ range: m.range, options: HLSEARCH_DECORATION }));
+		} catch {
+			// the engine compiled it; nothing else can be wrong but the model going away
+		}
+		this.hlDecorations.set(decorations);
+	}
+
+	// ---- IVimHost -----------------------------------------------------------
+
+	private get model() {
+		return this.editor.getModel()!;
+	}
+
+	lineCount(): number {
+		return this.model.getLineCount();
+	}
+
+	lineText(line: number): string {
+		return this.model.getLineContent(line + 1);
+	}
+
+	getCursor(): VimPos {
+		const p = this.editor.getPosition();
+		return p ? { line: p.lineNumber - 1, col: p.column - 1 } : { line: 0, col: 0 };
+	}
+
+	setCursor(p: VimPos): void {
+		const position = { lineNumber: p.line + 1, column: p.col + 1 };
+		this.editor.setPosition(position, 'devhubVim');
+		this.editor.revealPosition(position);
+	}
+
+	getSelection(): { anchor: VimPos; active: VimPos } {
+		const s = this.editor.getSelection();
+		if (!s) {
+			const c = this.getCursor();
+			return { anchor: c, active: c };
+		}
+		return {
+			anchor: { line: s.selectionStartLineNumber - 1, col: s.selectionStartColumn - 1 },
+			active: { line: s.positionLineNumber - 1, col: s.positionColumn - 1 },
+		};
+	}
+
+	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean): void {
+		const sel = cursorAtStart
+			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
+			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
+		this.editor.setSelection(sel, 'devhubVim');
+		this.editor.revealPosition(sel.getPosition());
+	}
+
+	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void {
+		const toSel = (r: VimRange) => cursorAtStart
+			? new Selection(r.end.line + 1, r.end.col + 1, r.start.line + 1, r.start.col + 1)
+			: new Selection(r.start.line + 1, r.start.col + 1, r.end.line + 1, r.end.col + 1);
+		// VS Code's primary selection is the first
+		const sels = [toSel(ranges[primary]), ...ranges.filter((_, i) => i !== primary).map(toSel)];
+		this.editor.setSelections(sels, 'devhubVim');
+		this.editor.revealPosition(sels[0].getPosition());
+	}
+
+	applyEdits(edits: readonly VimEdit[]): void {
+		this.editor.executeEdits('devhubVim', edits.map(e => ({
+			range: new Range(e.start.line + 1, e.start.col + 1, e.end.line + 1, e.end.col + 1),
+			text: e.text,
+		})));
+	}
+
+	// Monaco closes undo stops on its own (word boundaries while typing), so
+	// Vim's "one change, one undo" is kept as alternative version ids: `u`
+	// undoes until the model is back at the id it had when the change began.
+
+	beginChange(): void {
+		this.editor.pushUndoStop();
+		this.checkpoints.push(this.model.getAlternativeVersionId());
+		this.redoTargets = [];
+	}
+
+	endChange(): void {
+		this.editor.pushUndoStop();
+		const last = this.checkpoints[this.checkpoints.length - 1];
+		if (last === this.model.getAlternativeVersionId()) {
+			this.checkpoints.pop();
+		}
+	}
+
+	// `u` and Ctrl-R step this model's own undo stack (never the workbench
+	// `undo` command, which picks its target by focus and may undo something
+	// else, such as a file operation) and run one after another, so a held `u`
+	// cannot interleave two walks. Afterwards the caret is a normal-mode caret
+	// again: undo restores the selection the change started from, which after a
+	// visual-mode change is a range.
+
+	undo(): void {
+		const model = this.model;
+		const target = this.checkpoints.pop();
+		if (target !== undefined) {
+			this.redoTargets.push(model.getAlternativeVersionId());
+		}
+		this.enqueueSteps(target, () => model.canUndo(), () => model.undo());
+	}
+
+	redo(): void {
+		const model = this.model;
+		const target = this.redoTargets.pop();
+		if (target !== undefined) {
+			this.checkpoints.push(model.getAlternativeVersionId());
+		}
+		this.enqueueSteps(target, () => model.canRedo(), () => model.redo());
+	}
+
+	/** Step until the model is at `target`, or once when there is no target. */
+	private enqueueSteps(target: number | undefined, can: () => boolean, step: () => void | Promise<void>): void {
+		const model = this.model;
+		this.undoQueue = this.undoQueue.then(async () => {
+			try {
+				if (target === undefined) {
+					if (!model.isDisposed() && can()) {
+						await step();
+					}
+					return;
+				}
+				for (let guard = 0; guard < 10000 && !model.isDisposed() && model.getAlternativeVersionId() !== target && can(); guard++) {
+					await step();
+				}
+			} finally {
+				const s = this.editor.getModel() === model ? this.editor.getSelection() : null;
+				if (s && !s.isEmpty() && this.engine.mode === 'normal') {
+					this.editor.setPosition(s.getStartPosition(), 'devhubVim');
+				}
+				this.owner.update();
+			}
+		}).catch(onUnexpectedError);
+	}
+
+	indentUnit(): string {
+		const o = this.model.getOptions();
+		return o.insertSpaces ? ' '.repeat(o.indentSize) : '\t';
+	}
+
+	tabSize(): number {
+		return this.model.getOptions().tabSize;
+	}
+
+	visibleLines(): { top: number; bottom: number } {
+		const ranges = this.editor.getVisibleRanges();
+		if (!ranges.length) {
+			const c = this.getCursor().line;
+			return { top: c, bottom: c };
+		}
+		return { top: ranges[0].startLineNumber - 1, bottom: ranges[ranges.length - 1].endLineNumber - 1 };
+	}
+
+	scrollToLine(line: number, at: 'top' | 'center' | 'bottom'): void {
+		const lineNumber = Math.max(1, Math.min(this.model.getLineCount(), line + 1));
+		const top = this.editor.getTopForLineNumber(lineNumber);
+		const height = this.editor.getLayoutInfo().height;
+		const lineHeight = this.editor.getOption(EditorOption.lineHeight);
+		const scrollTop = at === 'top' ? top : at === 'center' ? top - (height - lineHeight) / 2 : top - height + lineHeight;
+		this.editor.setScrollTop(Math.max(0, scrollTop), ScrollType.Immediate);
+	}
+
+	isLineHidden(line: number): boolean {
+		const vm = this.editor._getViewModel();
+		return !!vm && !vm.coordinatesConverter.modelPositionIsVisible(new Position(line + 1, 1));
+	}
+
+	displayLineMove(from: VimPos, count: number): VimPos | undefined {
+		const vm = this.editor._getViewModel();
+		const model = this.model;
+		if (!vm) {
+			const line = from.line + count;
+			return line < 0 || line >= model.getLineCount() ? undefined : { line, col: Math.min(from.col, Math.max(0, model.getLineLength(line + 1) - 1)) };
+		}
+		const view = vm.coordinatesConverter.convertModelPositionToViewPosition(new Position(from.line + 1, from.col + 1));
+		const target = view.lineNumber + count;
+		if (target < 1 || target > vm.getLineCount()) {
+			return undefined;
+		}
+		const column = Math.min(view.column, vm.getLineMaxColumn(target));
+		const m = vm.coordinatesConverter.convertViewPositionToModelPosition(new Position(target, column));
+		const len = model.getLineLength(m.lineNumber);
+		return { line: m.lineNumber - 1, col: Math.min(m.column - 1, Math.max(0, len - 1)) };
+	}
+
+	setClipboard(text: string): void {
+		this.owner.clipboardCache = text;
+		void this.owner.clipboardService.writeText(text);
+	}
+
+	getClipboard(): string {
+		return this.owner.clipboardCache;
+	}
+
+	prefetchClipboard(): void {
+		this.owner.prefetchClipboard();
+	}
+
+	highlightSearch(regex: VimRegex | undefined): void {
+		this.owner.setSearchHighlight(regex);
+	}
+
+	showIncSearch(range: VimRange | undefined): void {
+		if (!range) {
+			this.incDecorations.clear();
+			if (this.incOrigin) {
+				this.editor.setScrollPosition(this.incOrigin, ScrollType.Immediate);
+				this.incOrigin = undefined;
+			}
+			return;
+		}
+		if (!this.incOrigin) {
+			this.incOrigin = { scrollTop: this.editor.getScrollTop(), scrollLeft: this.editor.getScrollLeft() };
+		}
+		const r = new Range(range.start.line + 1, range.start.col + 1, range.end.line + 1, range.end.col + 1);
+		this.incDecorations.set([{ range: r, options: INCSEARCH_DECORATION }]);
+		this.editor.revealRangeInCenterIfOutsideViewport(r, ScrollType.Immediate);
+	}
+
+	lineComment(): string | undefined {
+		const model = this.model;
+		return this.owner.languageConfigurationService.getLanguageConfiguration(model.getLanguageId()).comments?.lineCommentToken;
+	}
+
+	hasRangeFormatter(): boolean {
+		return this.owner.languageFeaturesService.documentRangeFormattingEditProvider.has(this.model);
+	}
+
+	fileName(): string {
+		return this.owner.labelService.getUriLabel(this.model.uri, { relative: true });
+	}
+
+	executeCommand(command: string, args: unknown): Promise<unknown> {
+		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
+	}
+
+	refresh(): void {
+		this.owner.update();
+	}
+}
+
+export class DevhubVim extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.devhubVim';
+	static instance: DevhubVim | undefined;
+
+	private readonly editors = new Map<ICodeEditor, VimEditor>();
+	private readonly attached = this._register(new DisposableStore());
+	private readonly shared = new VimSharedState();
+	private readonly modeKey: IContextKey<string>;
+	private readonly activeKeys: IContextKey<boolean>[];
+	private readonly engineKeys: { [K in keyof VimContext]?: IContextKey<VimContext[K]> };
+	private readonly whenCache = new Map<string, ContextKeyExpression | undefined>();
+	private statusEntry: IStatusbarEntryAccessor | undefined;
+	private enabled = false;
+	/** Whether the editor's overtype input mode is Vim's replace mode (so leaving it puts insert back). */
+	private overtypeOwned = false;
+	/** 'hlsearch': the last pattern, shared by every editor, until :nohlsearch. */
+	searchHighlight: VimRegex | undefined;
+	readonly nav = new VimNavPrefix();
+	clipboardCache = '';
+
+	constructor(
+		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
+		@IConfigurationService readonly configurationService: IConfigurationService,
+		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+		@IStatusbarService private readonly statusbarService: IStatusbarService,
+		@IKeybindingService readonly keybindingService: IKeybindingService,
+		@ICommandService readonly commandService: ICommandService,
+		@IClipboardService readonly clipboardService: IClipboardService,
+		@ILanguageConfigurationService readonly languageConfigurationService: ILanguageConfigurationService,
+		@ILanguageFeaturesService readonly languageFeaturesService: ILanguageFeaturesService,
+		@ILabelService readonly labelService: ILabelService,
+	) {
+		super();
+		DevhubVim.instance = this;
+		this.modeKey = VIM_MODE.bindTo(contextKeyService);
+		this.activeKeys = [VIM_ACTIVE.bindTo(contextKeyService), VIM_ATTACHED.bindTo(contextKeyService)];
+		this.engineKeys = {
+			acceptsMotion: VIM_ACCEPTS_MOTION.bindTo(contextKeyService),
+			hasCount: VIM_HAS_COUNT.bindTo(contextKeyService),
+			pending: VIM_PENDING.bindTo(contextKeyService),
+			pendingOperator: VIM_PENDING_OPERATOR.bindTo(contextKeyService),
+			textObjectPending: VIM_TEXT_OBJECT_PENDING.bindTo(contextKeyService),
+			awaitingChar: VIM_AWAITING_CHAR.bindTo(contextKeyService),
+			recording: VIM_RECORDING.bindTo(contextKeyService),
+			visual: VIM_VISUAL.bindTo(contextKeyService),
+			insert: VIM_INSERT.bindTo(contextKeyService),
+		};
+		this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
+		this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(SETTING)) {
+				this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
+			}
+			if (e.affectsConfiguration(EX_SETTING)) {
+				this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
+			}
+			if (e.affectsConfiguration(OPTIONS_SETTING)) {
+				this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
+			}
+			if (e.affectsConfiguration('editor.cursorStyle')) {
+				for (const v of this.editors.values()) {
+					v.refreshCursorStyle();
+				}
+			}
+		}));
+		this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
+	}
+
+	override dispose(): void {
+		this.setEnabled(false);
+		if (DevhubVim.instance === this) {
+			DevhubVim.instance = undefined;
+		}
+		super.dispose();
+	}
+
+	/** A when clause of the keymap's, parsed once. */
+	whenExpr(when: string): ContextKeyExpression | undefined {
+		if (!this.whenCache.has(when)) {
+			this.whenCache.set(when, ContextKeyExpr.deserialize(when));
+		}
+		return this.whenCache.get(when);
+	}
+
+	private setEnabled(enabled: boolean): void {
+		if (enabled === this.enabled) {
+			return;
+		}
+		this.enabled = enabled;
+		this.attached.clear();
+		this.editors.clear();
+		this.nav.cancel();
+		this.statusEntry = undefined;
+		if (!enabled) {
+			for (const editor of this.codeEditorService.listCodeEditors()) {
+				ModalTextInput.release(editor.getId()); // one that started modal before this heard of the change
+			}
+			this.modeKey.reset();
+			for (const k of this.activeKeys) {
+				k.reset();
+			}
+			for (const k of Object.values(this.engineKeys)) {
+				k.reset();
+			}
+			this.syncOvertype(false);
+			return;
+		}
+		const store = this.attached;
+		for (const editor of this.codeEditorService.listCodeEditors()) {
+			this.attach(editor);
+		}
+		store.add(this.codeEditorService.onCodeEditorAdd(editor => this.attach(editor)));
+		store.add(this.codeEditorService.onCodeEditorRemove(editor => this.detach(editor)));
+		store.add(ModalTextInput.onDidCommitText(({ editorId, text }) => {
+			for (const v of this.editors.values()) {
+				if (v.editor.getId() === editorId) {
+					v.commitText(text);
+				}
+			}
+		}));
+		store.add({ dispose: () => { for (const v of this.editors.values()) { v.dispose(); } } });
+		store.add(Event.runAndSubscribe(onDidRegisterWindow, ({ window, disposables }) => {
+			const local = new DisposableStore();
+			disposables.add(local);
+			store.add(local);
+			local.add(addDisposableListener(window, 'keydown', e => this.onWindowKeyDown(e), true));
+			local.add(addDisposableListener(window, 'pointerdown', () => this.cancelNav(), true));
+			local.add(addDisposableListener(window, 'blur', () => this.cancelNav()));
+			local.add(addDisposableListener(window, 'focusin', () => this.update(), true));
+			local.add(addDisposableListener(window, 'focusout', () => queueMicrotask(() => this.update()), true));
+		}, { window: mainWindow, disposables: store }));
+		this.statusEntry = this.statusbarService.addEntry(this.statusProps(''), 'status.devhubVim', StatusbarAlignment.LEFT, -100);
+		store.add(this.statusEntry);
+		this.update();
+	}
+
+	private attach(editor: ICodeEditor): void {
+		if (this.editors.has(editor)) {
+			return;
+		}
+		if (!vimDrives(editor.getContainerDomNode())) {
+			ModalTextInput.release(editor.getId());
+			return;
+		}
+		this.editors.set(editor, new VimEditor(editor, this, this.shared));
+		this.editors.get(editor)!.syncCursorStyle();
+	}
+
+	private detach(editor: ICodeEditor): void {
+		this.editors.get(editor)?.dispose();
+		this.editors.delete(editor);
+	}
+
+	private focused(): VimEditor | undefined {
+		for (const v of this.editors.values()) {
+			if (v.editor.hasTextFocus()) {
+				return v;
+			}
+		}
+		return undefined;
+	}
+
+	/** A `devhubVim.*` engine command (from a keybinding, the command palette, an ex command): for the focused Vim editor. */
+	execute(command: string, args: unknown): void {
+		this.focused()?.execute(command, args);
+	}
+
+	prefetchClipboard(): void {
+		void this.clipboardService.readText().then(t => this.clipboardCache = t, () => { });
+	}
+
+	/** 'hlsearch' is global, as in Vim: every editor shows the last pattern until :nohlsearch. */
+	setSearchHighlight(regex: VimRegex | undefined): void {
+		this.searchHighlight = regex;
+		for (const v of this.editors.values()) {
+			v.scheduleHighlight();
+		}
+	}
+
+	/** Replace mode is the editor's overtype input mode while a Vim editor in replace mode has the focus. */
+	private syncOvertype(want: boolean): void {
+		if (want && InputMode.getInputMode() !== 'overtype') {
+			InputMode.setInputMode('overtype');
+			this.overtypeOwned = true;
+		} else if (!want && this.overtypeOwned) {
+			this.overtypeOwned = false;
+			if (InputMode.getInputMode() === 'overtype') {
+				InputMode.setInputMode('insert');
+			}
+		}
+	}
+
+	/** Recompute context keys, cursor styles, modal input and the status bar after anything moved. */
+	update(): void {
+		if (!this.enabled) {
+			return;
+		}
+		for (const e of this.editors.values()) {
+			try {
+				e.syncCursorStyle();
+			} catch (err) {
+				onUnexpectedError(err);
+			}
+		}
+		const v = this.focused();
+		const ctx = v?.context();
+		this.syncOvertype(v?.engine.mode === 'replace');
+		const active = getActiveElement();
+		const mode = this.nav.active ? 'nav'
+			: ctx ? ctx.mode
+				: active && isEditableElement(active) ? 'insert' : '';
+		this.modeKey.set(mode);
+		for (const k of this.activeKeys) {
+			k.set(!!v);
+		}
+		const keys = this.engineKeys;
+		keys.acceptsMotion?.set(!this.nav.active && !!ctx?.acceptsMotion);
+		keys.hasCount?.set(!!ctx?.hasCount);
+		keys.pending?.set(!!ctx?.pending);
+		keys.pendingOperator?.set(ctx?.pendingOperator ?? '');
+		keys.textObjectPending?.set(ctx?.textObjectPending ?? '');
+		keys.awaitingChar?.set(!!ctx?.awaitingChar);
+		keys.recording?.set(!!ctx?.recording);
+		keys.visual?.set(!!ctx?.visual);
+		keys.insert?.set(!!ctx?.insert);
+		const text = this.nav.active ? '-- NAV --  ^W' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
+		this.statusEntry?.update(this.statusProps(text));
+	}
+
+	private statusProps(text: string) {
+		return {
+			name: localize('devhubVim.status', "Vim Mode"),
+			text: text || 'VIM',
+			ariaLabel: text || localize('devhubVim.idle', "Vim"),
+		};
+	}
+
+	cancelNav(): void {
+		if (this.nav.active) {
+			this.nav.cancel();
+			this.update();
+		}
+	}
+
+	private navFocus(v: VimEditor | undefined): VimNavFocus {
+		if (v) {
+			return v.engine.mode === 'insert' || v.engine.mode === 'replace' ? 'insert' : v.engine.pending ? 'pending' : 'normal';
+		}
+		if (this.contextKeyService.getContextKeyValue<boolean>('terminalFocus')) {
+			return 'terminal';
+		}
+		const active = getActiveElement();
+		return active && isEditableElement(active) ? 'input' : 'other';
+	}
+
+	/** `<C-w>`: wait for one nav key. */
+	enterNav(): void {
+		const v = this.focused();
+		const focus = this.navFocus(v);
+		if (!this.nav.enter(focus) && focus === 'pending') {
+			// As in Vim, `<C-w>` is not a motion: it aborts the operator / count.
+			v?.execute('devhubVim.escape', undefined);
+		}
+		this.update();
+	}
+
+	/** A nav command: the prefix is over, then the commands (if any) run in order. */
+	runNav(commands: readonly string[]): void {
+		this.cancelNav();
+		void (async () => {
+			for (const c of commands) {
+				await this.commandService.executeCommand(c);
+			}
+		})().catch(onUnexpectedError);
+	}
+
+	/**
+	 * While `<C-w>` waits, its key goes to the keybinding service before the
+	 * focused widget (a list's type-to-find, an input's typing) sees it. A key
+	 * that resolves to a command (a `devhubVim.nav.*` one, a user's
+	 * `devhubVim.mode == 'nav'` binding, any binding that applies here) runs it
+	 * once, as the dispatcher would; any other key ends the prefix
+	 * (VimNavPrefix.key decides whether it is eaten or let through). The prefix
+	 * is over before the command runs. The editor's Backspace / Tab / Delete do
+	 * not apply in nav mode (EditorContextKeys.devhubVimAllowsTyping), so
+	 * Ctrl-W Backspace edits nothing without any filter here.
+	 */
+	private onWindowKeyDown(e: KeyboardEvent): void {
+		if (!this.nav.active) {
+			return;
+		}
+		const event = new StandardKeyboardEvent(e);
+		const found = this.navBinding(event, e.target as HTMLElement);
+		const action = this.nav.key(e, found?.commandId ?? undefined);
+		if (action === 'wait') {
+			return;
+		}
+		this.update();
+		if (action === 'pass') {
+			return;
+		}
+		e.preventDefault();
+		e.stopPropagation();
+		if (action === 'run' && found?.commandId) {
+			this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs])).catch(onUnexpectedError);
+		}
+	}
+
+	/** The command the key resolves to while nav waits, if any. */
+	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
+		const result = this.keybindingService.softDispatch(event, target);
+		return result.kind === ResultKind.KbFound && result.commandId ? { commandId: result.commandId, commandArgs: result.commandArgs } : undefined;
+	}
+}
+
+// BlockStartup: created before the workbench renders its parts, so it exists
+// before the first editor (the restored ones included) and attaches to each
+// editor synchronously, at the end of its constructor (onCodeEditorAdd). With
+// no editor yet its constructor only binds context keys and reads three
+// settings. (At AfterRestored it was created when the workbench was idle after
+// the editors were restored, and the editor took text until then.)
+registerWorkbenchContribution2(DevhubVim.ID, DevhubVim, WorkbenchPhase.BlockStartup);
+
+// ---- the engine's commands and the default Vim keymap ------------------------
+
+const COMMAND_DESCRIPTIONS: Record<string, string> = {
+	'devhubVim.motion': localize('devhubVim.cmd.motion', "Vim: motion { motion, char? } (moves, extends the visual selection, or completes a pending operator)"),
+	'devhubVim.operator': localize('devhubVim.cmd.operator', "Vim: operator { operator: delete | change | yank | indent | outdent | reindent | lowercase | uppercase | toggleCase | rot13 | format | formatKeep | comment | fold }"),
+	'devhubVim.textObjectPrefix': localize('devhubVim.cmd.textObjectPrefix', "Vim: start a text object { kind: inner | around } (i / a)"),
+	'devhubVim.textObject': localize('devhubVim.cmd.textObject', "Vim: text object { object, kind? }"),
+	'devhubVim.forceMotion': localize('devhubVim.cmd.forceMotion', "Vim: force the next motion { type: char | line | block } (o_v, o_V, o_CTRL-V)"),
+	'devhubVim.count': localize('devhubVim.cmd.count', "Vim: count digit { digit }"),
+	'devhubVim.register': localize('devhubVim.cmd.register', "Vim: use register { name }"),
+	'devhubVim.awaitChar': localize('devhubVim.cmd.awaitChar', "Vim: wait for a character, then run { then: { command, args } } with args.char set"),
+	'devhubVim.mode': localize('devhubVim.cmd.mode', "Vim: mode { to: normal | insert | replace | visual | visualLine | visualBlock, at? }"),
+	'devhubVim.action': localize('devhubVim.cmd.action', "Vim: action { action, char? }"),
+	'devhubVim.mark': localize('devhubVim.cmd.mark', "Vim: set a mark { char }"),
+	'devhubVim.scroll': localize('devhubVim.cmd.scroll', "Vim: scroll { by: line | halfPage | page, direction: up | down } or { to: top | center | bottom, firstNonBlank? }"),
+	'devhubVim.insert': localize('devhubVim.cmd.insert', "Vim: an insert-mode command { action, char? }"),
+	'devhubVim.run': localize('devhubVim.cmd.run', "Vim: run a command as a Vim action { command, args?, visual?: exit | keep } or { commands: [...] }; args may use ${count} ${rawCount} ${register} ${char}"),
+	'devhubVim.repeat': localize('devhubVim.cmd.repeat', "Vim: run { command, args? } count times { count: number | \"${count}\" }; args may use ${it} (1, 2, ...) and ${index} (0, 1, ...)"),
+	'devhubVim.cmdline': localize('devhubVim.cmd.cmdline', "Vim: open the prompt { kind: ':' | '/' | '?' }"),
+	'devhubVim.search': localize('devhubVim.cmd.search', "Vim: search { pattern, backwards? }"),
+	'devhubVim.ex': localize('devhubVim.cmd.ex', "Vim: run an ex command line { command }"),
+	'devhubVim.insertText': localize('devhubVim.cmd.insertText', "Vim: insert text in insert mode { text } (macro replay)"),
+	'devhubVim.escape': localize('devhubVim.cmd.escape', "Vim: Esc (cancel one thing; always ends in normal mode)"),
+	'devhubVim.substituteConfirm': localize('devhubVim.cmd.substituteConfirm', "Vim: answer the :s///c question { char: y | n | a | q | l }"),
+};
+
+for (const id of VIM_ENGINE_COMMANDS) {
+	CommandsRegistry.registerCommand({
+		id,
+		handler: (_accessor, args: unknown) => DevhubVim.instance?.execute(id, args),
+		metadata: { description: COMMAND_DESCRIPTIONS[id] ?? id, args: [{ name: 'args', isOptional: true, schema: { type: 'object' } }] },
+	});
+}
+
+const WEIGHTS = VIM_WEIGHTS;
+if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60) {
+	onUnexpectedError(new Error('devhubVim: VIM_WEIGHTS (vimKeymap.ts) no longer match KeybindingWeight'));
+}
+
+// Parsed as keybindings.json is (KeybindingParser), so the JIS keys in
+// scan-code notation (`shift+[Quote]`) are default keybindings like any other:
+// shown, overridable and removable in the Keyboard Shortcuts editor.
+for (const b of DEFAULT_KEYBINDINGS) {
+	const keybinding = KeybindingParser.parseKeybinding(b.key);
+	const when = ContextKeyExpr.deserialize(b.when);
+	if (!keybinding || !when) {
+		onUnexpectedError(new Error(`devhubVim: cannot register the default keybinding ${b.key} -> ${b.command}`));
+		continue;
+	}
+	KeybindingsRegistry.registerKeybinding({
+		id: b.command,
+		args: b.args,
+		keybinding,
+		when: ContextKeyExpr.and(ENABLED, when),
+		weight: WEIGHTS[b.weight ?? 'default'],
+	});
+}
+
+// ---- <C-w> window commands (all overridable) ---------------------------------
+
+const NAV = ContextKeyExpr.and(ENABLED, VIM_MODE.isEqualTo('nav'));
+
+interface Keys {
+	primary: number;
+	secondary?: number[];
+	mac?: { primary: number; secondary?: number[] };
+}
+
+/** Ctrl+key on every platform (KeyMod.WinCtrl is Ctrl on macOS, where CtrlCmd is Cmd). */
+function ctrl(key: KeyCode): number[] {
+	return [KeyMod.CtrlCmd | key, KeyMod.WinCtrl | key];
+}
+
+function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim) => void): void {
+	KeybindingsRegistry.registerCommandAndKeybindingRule({
+		id, ...keys, when, weight,
+		handler: () => {
+			const vim = DevhubVim.instance;
+			if (vim) {
+				run(vim);
+			}
+		},
+	});
+}
+
+// The prefix, Ctrl-W. Not in a Vim editor's insert mode (Ctrl-W deletes a word
+// there, vimKeymap.ts), not in the terminal (the shell's Ctrl-W), not in quick
+// input. While Vim is on it outranks Ctrl-W's defaults: Switch Window on macOS
+// (Cmd-W, close editor, is another key and untouched), close editor elsewhere.
+const [ctrlW, macCtrlW] = ctrl(KeyCode.KeyW);
+rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
+	ContextKeyExpr.and(ENABLED, VIM_MODE.notEqualsTo('nav'),
+		ContextKeyExpr.or(VIM_ACTIVE.negate(), VIM_INSERT.negate()),
+		ContextKeyExpr.has('terminalFocus').negate(), ContextKeyExpr.has('inQuickInput').negate()),
+	KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterNav());
+rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav([]));
+
+/** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs]. */
+const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
+	['left', 'h', true, ['workbench.action.navigateLeft']],
+	['down', 'j', true, ['workbench.action.navigateDown']],
+	['up', 'k', true, ['workbench.action.navigateUp']],
+	['right', 'l', true, ['workbench.action.navigateRight']],
+	['leftArrow', 'left', false, ['workbench.action.navigateLeft']],
+	['downArrow', 'down', false, ['workbench.action.navigateDown']],
+	['upArrow', 'up', false, ['workbench.action.navigateUp']],
+	['rightArrow', 'right', false, ['workbench.action.navigateRight']],
+	['next', 'w', true, ['workbench.action.focusNextGroup']],
+	['previous', 'shift+w', false, ['workbench.action.focusPreviousGroup']],
+	['lastAccessed', 'p', true, ['workbench.action.focusPreviousGroup']],
+	['top', 't', true, ['workbench.action.focusFirstEditorGroup']],
+	['bottom', 'b', true, ['workbench.action.focusLastEditorGroup']],
+	['split', 's', true, ['workbench.action.splitEditorUp']],
+	['splitShift', 'shift+s', false, ['workbench.action.splitEditorUp']],
+	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
+	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
+	['close', 'c', false, ['workbench.action.closeGroup']],
+	['quit', 'q', true, ['workbench.action.closeActiveEditor']],
+	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
+	['equalize', '=', false, ['workbench.action.evenEditorWidths']],
+	['maximizeHeight', 'shift+-', false, ['workbench.action.toggleMaximizeEditorGroup']],
+	['maximizeWidth', 'shift+\\', false, ['workbench.action.toggleMaximizeEditorGroup']],
+	['increaseHeight', 'shift+=', false, ['workbench.action.increaseViewHeight']],
+	['decreaseHeight', '-', false, ['workbench.action.decreaseViewHeight']],
+	['decreaseWidth', 'shift+,', false, ['workbench.action.decreaseViewWidth']],
+	['increaseWidth', 'shift+.', false, ['workbench.action.increaseViewWidth']],
+	['moveFarLeft', 'shift+h', false, ['workbench.action.moveActiveEditorGroupLeft']],
+	['moveFarDown', 'shift+j', false, ['workbench.action.moveActiveEditorGroupDown']],
+	['moveFarUp', 'shift+k', false, ['workbench.action.moveActiveEditorGroupUp']],
+	['moveFarRight', 'shift+l', false, ['workbench.action.moveActiveEditorGroupRight']],
+	// Neovim: <C-w>d / <C-w><C-d> show the diagnostic at the cursor (CTRL-W_d-default)
+	['diagnostic', 'd', true, ['editor.action.showHover']],
+	// 'tagfunc' is the language server's: <C-w>] splits to the definition, <C-w>} previews it
+	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
+	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
+];
+for (const [name, key, withCtrl, commands] of NAV_COMMANDS) {
+	const id = `devhubVim.nav.${name}`;
+	CommandsRegistry.registerCommand(id, () => DevhubVim.instance?.runNav(commands));
+	for (const k of [...jisKeys(key), ...(withCtrl ? jisKeys(`ctrl+${key}`) : [])]) {
+		const keybinding = KeybindingParser.parseKeybinding(k);
+		if (keybinding) {
+			KeybindingsRegistry.registerKeybinding({ id, keybinding, when: NAV, weight: KeybindingWeight.WorkbenchContrib + 50 });
+		} else {
+			onUnexpectedError(new Error(`devhubVim: cannot register ${k} -> ${id}`));
+		}
+	}
+}

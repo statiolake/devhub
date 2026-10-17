@@ -98,12 +98,14 @@ The icon is the official one for the same state: `copilot`, `copilot-snooze`,
 and a spinner while the server starts, you sign in, or a request is in flight.
 
 The dashboard is `StatusBarItem.hover`, the `devhubStatusBarHover` proposed
-API that `patches/vscode/0009-devhub-status-bar-hover.patch` adds to the
-workbench: a generic, declarative hover of headers, text, meters, checkboxes,
-buttons and sections, which any DevHub built-in can be granted
-(`scripts/product_metadata.py`). Its declaration is copied to `typings/`
-(checked against the patch by `pnpm run lint`). On a workbench without the
-patch the item falls back to a plain tooltip and the **Copilot: Show Status**
+API that DevHub adds to the workbench (the hooks in
+`patches/vscode/0009-devhub-status-bar-hover.patch`, the new files under
+`patches/vscode-overlay/`): a generic, declarative hover of headers, text,
+meters, checkboxes, buttons and sections, which any DevHub built-in can be
+granted (`scripts/product_metadata.py`). Its declaration,
+`patches/vscode-overlay/src/vscode-dts/vscode.proposed.devhubStatusBarHover.d.ts`,
+is copied to `typings/` (checked against it by `pnpm run lint`). On a workbench
+without it the item falls back to a plain tooltip and the **Copilot: Show Status**
 menu.
 
 If `statiolake.vscode-copilot-lsp` is installed as well, its completions are

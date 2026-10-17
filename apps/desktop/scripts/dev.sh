@@ -40,14 +40,10 @@ fi
 # So after a patch edit or a bump followed by `pnpm build`, out/ can be
 # yesterday's. Said, not refused: compiling is a minute and a half and the
 # person may be mid-edit on purpose. The state is the one provisioning stamps.
-SOURCE_STATE="$(
-	git -C "$VSCODE_DIR" rev-parse HEAD
-	cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null
-	)"
-SOURCE_STATE="$(printf '%s' "$SOURCE_STATE" | shasum | cut -d' ' -f1)"
+SOURCE_STATE="$("$REPO_ROOT/scripts/vscode-submodule.sh" source-state)"
 if [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
 	|| [ "$(cat "$VSCODE_DIR/.build/devhub-compile.stamp" 2>/dev/null)" != "$SOURCE_STATE" ]; then
-	echo "[devhub] vscode/out is not compiled from this VS Code commit and patches/vscode — run 'scripts/provision-vscode.sh --for dev'" >&2
+	echo "[devhub] vscode/out is not compiled from this VS Code commit, patches/vscode and patches/vscode-overlay — run 'scripts/provision-vscode.sh --for dev'" >&2
 fi
 
 # The built-in set is staged on every run: it is only symlinks, and a stale one

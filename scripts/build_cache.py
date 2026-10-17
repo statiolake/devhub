@@ -77,6 +77,7 @@ def extensions_key(
 	build_dir: Path | None,
 	product_json: Path,
 	node_version: str,
+	overlay_dir: Path | None = None,
 ) -> str:
 	"""Everything `gulp compile-extensions-build` reads that DevHub can change."""
 	h = new_hash()
@@ -84,6 +85,10 @@ def extensions_key(
 	add(h, "node", node_version)
 	for patch in sorted(patches_dir.glob("*.patch")):
 		add(h, f"patch:{patch.name}", hash_file(patch))
+	if overlay_dir is not None and overlay_dir.is_dir():
+		# patches/vscode-overlay/: the files DevHub adds to the tree.
+		for path in sorted(p for p in overlay_dir.rglob("*") if p.is_file()):
+			add(h, f"overlay:{path.relative_to(overlay_dir).as_posix()}", hash_file(path))
 	add(h, "builtin", builtin_extensions_entries(product_json))
 	for line in tree_listing(extensions_dir):
 		add(h, "ext", line)

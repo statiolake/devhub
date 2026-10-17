@@ -198,17 +198,15 @@ printf '%s' "$INSTALL_STATE" > "$INSTALL_STAMP"
 # workflow needs the same step on its own to find out whether the patches still
 # apply to a newer tag. What belongs here and not there is the stamp: it is the
 # compile below that has to know what its source was.
-step "patches/vscode"
+step "patches/vscode and patches/vscode-overlay"
 # What the trees below were built from: the submodule commit *and* the patches
-# on top of it. Both belong in the stamps — a stamp over the patches alone
-# survives a submodule bump unchanged, so the next non-`--force` run would find
-# an `out/` that looks current and skip the compile, leaving DevHub running
-# yesterday's VS Code against today's source.
-SOURCE_STATE="$(
-	git -C "$VSCODE_DIR" rev-parse HEAD
-	cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null
-	)"
-SOURCE_STATE="$(printf '%s' "$SOURCE_STATE" | shasum | cut -d' ' -f1)"
+# and the overlay on top of it (`scripts/vscode-submodule.sh source-state`, the
+# one definition dev.sh and package-nightly.py compare against too). All of it
+# belongs in the stamps — a stamp over the patches alone survives a submodule
+# bump unchanged, so the next non-`--force` run would find an `out/` that looks
+# current and skip the compile, leaving DevHub running yesterday's VS Code
+# against today's source.
+SOURCE_STATE="$("$REPO_ROOT/scripts/vscode-submodule.sh" source-state)"
 "$REPO_ROOT/scripts/apply-vscode-patches.sh"
 
 # --- 4. compile ------------------------------------------------------------

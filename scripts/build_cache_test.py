@@ -62,6 +62,16 @@ class ExtensionsKey(unittest.TestCase):
 		write(self.patches / "0002-b.patch", "b")
 		self.assertNotEqual(base, self.key())
 
+	def test_an_overlay_file_changes_it(self) -> None:
+		overlay = self.root / "overlay"
+		base = self.key(overlay_dir=overlay)
+		self.assertEqual(base, self.key(), "an absent overlay is no overlay")
+		write(overlay / "src" / "vs" / "a.ts", "1")
+		added = self.key(overlay_dir=overlay)
+		self.assertNotEqual(base, added)
+		write(overlay / "src" / "vs" / "a.ts", "2")
+		self.assertNotEqual(added, self.key(overlay_dir=overlay))
+
 	def test_extension_source_change_changes_it(self) -> None:
 		base = self.key()
 		write(self.ext / "git" / "src" / "a.ts", "22")

@@ -52,7 +52,7 @@ runs:
     # The expensive half of what provision-vscode.sh produces, under one key: a
     # miss costs the full `npm ci` and the compiles. The key is everything the
     # trees are a function of — the submodule commit, its lockfile, its Node,
-    # DevHub's patches — and the bundle mode, because the stamp records the mode
+    # DevHub's patches and overlay — and the bundle mode, because the stamp records the mode
     # and a tree of the other mode would be rebuilt anyway.
     #
     # Deliberately not here are the nested node_modules that VS Code's
@@ -76,7 +76,7 @@ runs:
           vscode/.build
         key: >-
           vscode-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bundle }}-${{ steps.meta.outputs.vscode_sha }}-${{
-          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch', 'patches/vscode-overlay/**') }}
 
     - name: Restore the provisioned VS Code build
       id: restore
@@ -92,7 +92,7 @@ runs:
           vscode/.build
         key: >-
           vscode-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bundle }}-${{ steps.meta.outputs.vscode_sha }}-${{
-          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+          hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch', 'patches/vscode-overlay/**') }}
 
     # Idempotent and stamped: on a hit it re-applies the patches, repairs the
     # nested installs and skips every compile whose stamp is current.

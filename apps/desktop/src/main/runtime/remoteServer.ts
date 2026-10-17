@@ -223,9 +223,9 @@ export function rehCommit(product: {
  * patch that changed the server did not change the commit, so every machine
  * that had a server went on running the old one under the same name. The
  * identity is `scripts/product_metadata.py`'s `reh_identity()` — a hash of the
- * commit, every file in `patches/vscode/` and the server build's own revision
- * — stated by the app as `serverIdentity` and by every bundled server beside
- * its tarball. A DevHub whose patches changed names a directory no older
+ * commit, every file in `patches/vscode/` and `patches/vscode-overlay/` and the
+ * server build's own revision — stated by the app as `serverIdentity` and by
+ * every bundled server beside its tarball. A DevHub whose patches changed names a directory no older
  * DevHub installed, so it installs a fresh server instead of adopting a stale
  * one, and two DevHubs of different patch sets on one machine each keep their
  * own.

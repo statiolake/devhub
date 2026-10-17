@@ -79,6 +79,16 @@ class ServerIdentity(unittest.TestCase):
 		patch.write_bytes(patch.read_bytes() + b"# changed\n")
 		self.assertNotEqual(self.identity(), before)
 
+	def test_moves_when_an_overlay_file_does(self) -> None:
+		overlay = self.patches / "overlay"
+		(overlay / "src" / "vs" / "workbench" / "api" / "common").mkdir(parents=True)
+		path = overlay / "src" / "vs" / "workbench" / "api" / "common" / "x.ts"
+		path.write_text("one\n")
+		before = self.identity(overlay_dir=overlay)
+		self.assertEqual(self.identity(overlay_dir=overlay), before)
+		path.write_text("two\n")
+		self.assertNotEqual(self.identity(overlay_dir=overlay), before)
+
 	def test_moves_with_the_commit_and_the_revision(self) -> None:
 		before = self.identity()
 		self.assertNotEqual(self.identity(commit="1" * 40), before)
@@ -214,6 +224,15 @@ class EnabledApiProposals(unittest.TestCase):
 						proposal_is_declared(proposal),
 						f"{extension} is granted {proposal}, which this VS Code does not declare",
 					)
+
+	def test_a_proposal_the_overlay_adds_is_declared(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		self.assertFalse(proposal_is_declared("devhubNothing", root / "patches", root / "overlay"))
+		dts = root / "overlay" / "src" / "vscode-dts" / "vscode.proposed.devhubNothing.d.ts"
+		dts.parent.mkdir(parents=True)
+		dts.write_text("declare module 'vscode' {}\n")
+		self.assertTrue(proposal_is_declared("devhubNothing", root / "patches", root / "overlay"))
 
 	def test_the_table_reaches_product_json(self) -> None:
 		self.assertEqual(

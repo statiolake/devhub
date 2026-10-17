@@ -1,7 +1,15 @@
 # Vim
 
-DevHub's Vim (`"devhub.vim.enabled": true`) is built into the editor
-(`patches/vscode/0008-devhub-vim.patch`, `src/vs/workbench/contrib/devhubVim`).
+DevHub's Vim (`"devhub.vim.enabled": true`) is built into the editor. Where
+the code lives: the engine, its workbench contribution and their tests are new
+files, kept as files under
+[`patches/vscode-overlay/`](../patches/vscode-overlay)
+(`src/vs/workbench/contrib/devhubVim/`, the editor's modal input switch
+`src/vs/editor/browser/controller/editContext/modalTextInput.ts`, and the
+editor tests beside it); the hooks it needs in VS Code's own files are
+[`patches/vscode/0008-devhub-vim.patch`](../patches/vscode/0008-devhub-vim.patch).
+Edit them in `vscode/` and write them back with
+`scripts/vscode-submodule.sh export`.
 It follows **Neovim's defaults** (0.11 / 0.12: `:help vim-differences`,
 `:help default-mappings`, `:help lsp-defaults`): `Y` is `y$`, `Q` replays
 the last recorded macro, `&` is `:&&`, `gc` comments, `grn` renames, CTRL-L

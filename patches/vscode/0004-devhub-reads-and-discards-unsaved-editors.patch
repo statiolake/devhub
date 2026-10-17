@@ -1,8 +1,8 @@
 diff --git a/src/vs/workbench/electron-browser/window.ts b/src/vs/workbench/electron-browser/window.ts
-index b60c0adc..460fb002 100644
+index b60c0adc..e07cc19b 100644
 --- a/src/vs/workbench/electron-browser/window.ts
 +++ b/src/vs/workbench/electron-browser/window.ts
-@@ -365,8 +365,34 @@ export class NativeWindow extends BaseWindow {
+@@ -365,6 +365,32 @@ export class NativeWindow extends BaseWindow {
  			}
  		});
  
@@ -35,5 +35,3 @@ index b60c0adc..460fb002 100644
  		// Allow to update security settings around protocol handlers
  		ipcRenderer.on('vscode:disablePromptForProtocolHandling', (event: unknown, ...argsRaw: unknown[]) => {
  			const kind = argsRaw[0] as 'local' | 'remote';
- 			const setting = kind === 'local' ? 'security.promptForLocalFileProtocolHandling' : 'security.promptForRemoteFileProtocolHandling';
- 			this.configurationService.updateValue(setting, false);

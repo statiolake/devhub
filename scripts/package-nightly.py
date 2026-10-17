@@ -301,20 +301,14 @@ BUNDLE_STAMP = VSCODE_DIR / ".build" / "devhub-bundle.stamp"
 
 
 def vscode_source_state() -> str:
-	"""The state provision-vscode.sh stamps: the submodule HEAD plus the patch
-	contents, so a bumped submodule with unchanged patches is stale too."""
-	patches = sorted((REPO_ROOT / "patches" / "vscode").glob("*.patch"))
-	head = subprocess.run(
-		["git", "-C", str(VSCODE_DIR), "rev-parse", "HEAD"],
-		capture_output=True, check=True, text=True,
-	).stdout
-	# The shell's command substitution strips trailing newlines before the
-	# shasum; reproduce that byte-for-byte or the two sides disagree forever.
-	source_state = (head.encode() + b"".join(p.read_bytes() for p in patches)).rstrip(b"\n")
+	"""The state provision-vscode.sh stamps: the submodule HEAD plus the patches
+	and the overlay, so a bumped submodule with unchanged patches is stale too.
+	Asked of `scripts/vscode-submodule.sh source-state`, the one definition the
+	stamps are written with."""
 	return subprocess.run(
-		["shasum"], input=source_state,
-		capture_output=True, check=True,
-	).stdout.split()[0].decode()
+		[str(REPO_ROOT / "scripts" / "vscode-submodule.sh"), "source-state"],
+		capture_output=True, check=True, text=True,
+	).stdout.strip()
 
 
 def _read_stamp(stamp: Path) -> list[str]:
@@ -343,7 +337,7 @@ def bundle_stamp_problem(stamp: Path, state: str, *, ci: bool) -> str | None:
 	fields = _read_stamp(stamp)
 	if len(fields) != 2 or fields[0] != state or fields[1] not in ("full", "fast"):
 		return (
-			"vscode/out-vscode-min was not bundled from the current submodule and patches/vscode/*"
+			"vscode/out-vscode-min was not bundled from the current submodule, patches/vscode/* and patches/vscode-overlay/"
 			"\n       run: scripts/provision-vscode.sh --for app"
 		)
 	if ci and fields[1] != "full":
@@ -393,6 +387,7 @@ def build_builtin_extensions() -> Path:
 	key = build_cache.extensions_key(
 		vscode_commit=vscode_commit(),
 		patches_dir=REPO_ROOT / "patches" / "vscode",
+		overlay_dir=REPO_ROOT / "patches" / "vscode-overlay",
 		extensions_dir=VSCODE_DIR / "extensions",
 		build_dir=VSCODE_DIR / "build",
 		product_json=VSCODE_DIR / "product.json",

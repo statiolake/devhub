@@ -48,7 +48,7 @@ Moves the \`vscode/\` submodule from **$OLD** to **$NEW**.
 
 | step | result |
 | --- | --- |
-| \`patches/vscode/*.patch\` | $(verdict "$PATCHES") |
+| \`patches/vscode/*.patch\`, \`patches/vscode-overlay/\` | $(verdict "$PATCHES") |
 | \`scripts/provision-vscode.sh\` | $(verdict "$PROVISION") |
 | \`pnpm run check\` | $(verdict "$CHECK") |
 BODY

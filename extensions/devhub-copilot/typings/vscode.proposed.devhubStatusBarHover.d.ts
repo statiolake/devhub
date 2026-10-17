@@ -5,8 +5,9 @@
 
 declare module 'vscode' {
 
-	// DevHub: patches/vscode/0009-devhub-status-bar-hover.patch. Not upstream;
-	// DevHub's product.json enables it for DevHub's own built-in extensions.
+	// DevHub: this file is patches/vscode-overlay/'s, the API behind it
+	// patches/vscode/0009's. Not upstream; DevHub's product.json enables it for
+	// DevHub's own built-in extensions.
 
 	export interface StatusBarItem {
 

@@ -1,0 +1,106 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * DevHub (patches/vscode/0009): what the `devhubStatusBarHover` hover adds to
+ * the Copilot dashboard's stylesheet (contrib/chat/browser/chatStatus/media/
+ * chatStatus.css), which it is drawn with.
+ */
+
+.chat-status-bar-entry-tooltip.devhub-status-bar-hover {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.devhub-status-bar-hover > div.header,
+.devhub-status-bar-hover > .quota-indicator {
+	margin-bottom: 0;
+}
+
+.devhub-status-bar-hover div.header .header-label {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.devhub-status-bar-hover .devhub-hover-header-title,
+.devhub-status-bar-hover .devhub-hover-header-description {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.devhub-status-bar-hover .devhub-hover-text {
+	font-size: 12px;
+	line-height: 16px;
+	overflow-wrap: anywhere;
+}
+
+.devhub-status-bar-hover .devhub-hover-text.muted {
+	color: var(--vscode-descriptionForeground);
+}
+
+.devhub-status-bar-hover .devhub-hover-text .rendered-markdown p {
+	margin: 0;
+}
+
+.devhub-status-bar-hover hr {
+	width: 100%;
+	margin: 2px 0;
+}
+
+.devhub-status-bar-hover .devhub-hover-section {
+	display: flex;
+	flex-direction: column;
+}
+
+.devhub-status-bar-hover .devhub-hover-section-body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 4px;
+}
+
+.devhub-status-bar-hover .devhub-hover-section-body > .quota-indicator {
+	margin-bottom: 0;
+}
+
+.devhub-status-bar-hover .devhub-hover-buttons {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.devhub-status-bar-hover .devhub-hover-buttons .monaco-button {
+	width: auto;
+	flex: 0 1 auto;
+	margin: 0;
+	padding: 2px 10px;
+}
+
+/* An indeterminate meter: a third of the bar sliding across it */
+
+.devhub-status-bar-hover .quota-indicator .quota-bar.indeterminate {
+	overflow: hidden;
+}
+
+.devhub-status-bar-hover .quota-indicator .quota-bar.indeterminate .quota-bit {
+	width: 33%;
+	animation: devhub-status-bar-hover-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes devhub-status-bar-hover-indeterminate {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(300%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.devhub-status-bar-hover .quota-indicator .quota-bar.indeterminate .quota-bit {
+		animation: none;
+		width: 100%;
+		opacity: 0.5;
+	}
+}

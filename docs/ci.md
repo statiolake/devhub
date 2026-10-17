@@ -122,7 +122,8 @@ Nothing is pinned in a workflow that the repository already states:
 - `.github/actions/provision-vscode` — `scripts/provision-vscode.sh` behind a
   cache of its expensive outputs (`vscode/node_modules`, `out`, `out-build`,
   `out-vscode-min`, `.build`, the toolchain), keyed on the submodule commit,
-  its lockfile and Node, DevHub's patches and the bundle mode (`fast` per push,
+  its lockfile and Node, DevHub's patches and overlay (`patches/vscode/`,
+  `patches/vscode-overlay/`) and the bundle mode (`fast` per push,
   `full` nightly). Only a job that provisions everything the key promises may
   save it; the others restore only.
 

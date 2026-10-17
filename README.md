@@ -157,7 +157,13 @@ kinds of thing, and each has a rule:
 - **Patches, only for what none of that can reach.**
   [`patches/vscode/`](patches/vscode) is the exception, and every patch states
   its own reason in its body. Each one is a hook upstream offers no other way
-  to reach, and the set is kept as small as that allows.
+  to reach, and the set is kept as small as that allows. A patch changes only
+  files upstream has; whole files DevHub adds to the tree (the Vim engine, the
+  status bar hover) live as plain files under
+  [`patches/vscode-overlay/`](patches/vscode-overlay), at the path they take in
+  `vscode/`. `scripts/apply-vscode-patches.sh` puts both on the submodule;
+  after editing either in `vscode/`, `scripts/vscode-submodule.sh export`
+  writes the change back to the half it belongs to.
 
 DevHub's own integration ships as a built-in extension,
 [`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench

@@ -113,7 +113,8 @@ class Controller {
   private languageNames?: Map<string, string>;
   /**
    * Whether this build's workbench draws `StatusBarItem.hover`, the
-   * `devhubStatusBarHover` proposal (patches/vscode/0009). Without it the
+   * `devhubStatusBarHover` proposal (patches/vscode/0009 and
+   * patches/vscode-overlay/). Without it the
    * item keeps a plain tooltip and opens the Quick Pick menu.
    */
   private readonly richHover: boolean;
@@ -973,7 +974,7 @@ class Controller {
 
 function supportsRichHover(item: vscode.StatusBarItem): boolean {
   if (!("hover" in item)) {
-    return false; // a workbench without patches/vscode/0009
+    return false; // a workbench without DevHub's devhubStatusBarHover
   }
   try {
     void item.hover; // throws when the proposal is not enabled for us

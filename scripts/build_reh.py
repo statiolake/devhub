@@ -39,8 +39,8 @@ The far machine keeps the server under `~/.devhub-server/bin/<commit>-
 <identity>`. The commit alone used to be the name, and it was not enough:
 DevHub's servers are VS Code *plus DevHub's patches*, a patch that changes the
 server does not move the commit, and every machine went on running the server
-it already had. `reh_identity()` hashes the commit, every patch and the
-build's own revision, so a change to any of them is a new directory.
+it already had. `reh_identity()` hashes the commit, every patch and overlay file and
+the build's own revision, so a change to any of them is a new directory.
 
 The server's own `product.json` still states `commit` — the VS Code commit,
 from `packaged_metadata()` — because that is what the server compares a

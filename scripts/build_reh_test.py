@@ -1169,6 +1169,34 @@ class ApplyPatchesInto(unittest.TestCase):
 		self.assertEqual((tree / "file.txt").read_text(), "devhub\n")
 		self.assertFalse((root / "vscode").exists())
 
+	def test_copies_the_overlay_into_the_given_tree(self) -> None:
+		if not (shutil.which("bash") and shutil.which("git")):
+			self.skipTest("no bash or git")
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		(root / "scripts").mkdir()
+		shutil.copy2(APPLY_PATCHES, root / "scripts" / APPLY_PATCHES.name)
+		(root / "patches" / "vscode").mkdir(parents=True)
+		overlay = root / "patches" / "vscode-overlay" / "src" / "devhub"
+		overlay.mkdir(parents=True)
+		(overlay / "new.ts").write_text("export {};\n")
+		tree = root / "copy"
+		tree.mkdir()
+		subprocess.run(["git", "init", "-q", str(tree)], check=True)
+		(tree / "file.txt").write_text("upstream\n")
+		subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
+		subprocess.run(
+			["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+			check=True,
+		)
+		result = subprocess.run(
+			["bash", str(root / "scripts" / APPLY_PATCHES.name), "--into", str(tree)],
+			capture_output=True, text=True,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual((tree / "src" / "devhub" / "new.ts").read_text(), "export {};\n")
+		self.assertFalse((root / "vscode").exists())
+
 	def test_refuses_other_arguments(self) -> None:
 		if not shutil.which("bash"):
 			self.skipTest("no bash")

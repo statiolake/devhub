@@ -121,18 +121,32 @@ for (const proposal of manifest.enabledApiProposals ?? []) {
 
 /**
  * The status item's dashboard is `StatusBarItem.hover`, DevHub's own proposal.
- * Its declaration is added to VS Code by a patch, so the submodule has it only
- * once the patches are applied; the extension type-checks against a copy in
- * typings/, which has to be the patch's file byte for byte. The patch is found
- * by what it adds, not by its file name, so renumbering patches/vscode/ does
- * not break this check.
+ * Its declaration is added to VS Code by DevHub (a new file, so it lives in
+ * patches/vscode-overlay/), so the submodule has it only once the patches are
+ * applied; the extension type-checks against a copy in typings/, which has to
+ * be DevHub's file byte for byte. The file is found by its path in the tree,
+ * in the overlay or in whichever patch adds it, not by a patch's file name, so
+ * renumbering patches/vscode/ does not break this check.
  */
 if (!manifest.enabledApiProposals?.includes("devhubStatusBarHover")) {
   throw new Error("the devhubStatusBarHover proposal must be enabled");
 }
 const proposalPath = "src/vscode-dts/vscode.proposed.devhubStatusBarHover.d.ts";
-const patchesDir = resolve(root, "../../patches/vscode");
 const addedBy = [];
+try {
+  addedBy.push({
+    name: `patches/vscode-overlay/${proposalPath}`,
+    text: await readFile(
+      resolve(root, "../../patches/vscode-overlay", proposalPath),
+      "utf8",
+    ),
+  });
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    throw error;
+  }
+}
+const patchesDir = resolve(root, "../../patches/vscode");
 for (const name of (await readdir(patchesDir)).sort()) {
   if (!name.endsWith(".patch")) {
     continue;
@@ -143,18 +157,21 @@ for (const name of (await readdir(patchesDir)).sort()) {
     "mu",
   ).exec(patch);
   if (added !== null) {
-    addedBy.push({ name, text: added[1].replace(/^\+/gmu, "") });
+    addedBy.push({
+      name: `patches/vscode/${name}`,
+      text: added[1].replace(/^\+/gmu, ""),
+    });
   }
 }
 if (addedBy.length !== 1) {
   throw new Error(
-    `exactly one of patches/vscode/*.patch must add ${proposalPath}, found ${addedBy.length}`,
+    `exactly one of patches/vscode-overlay/ and patches/vscode/*.patch must add ${proposalPath}, found ${addedBy.length}`,
   );
 }
 const copy = await read("typings/vscode.proposed.devhubStatusBarHover.d.ts");
 if (addedBy[0].text !== copy) {
   throw new Error(
-    `typings/vscode.proposed.devhubStatusBarHover.d.ts differs from the one patches/vscode/${addedBy[0].name} adds`,
+    `typings/vscode.proposed.devhubStatusBarHover.d.ts differs from ${addedBy[0].name}`,
   );
 }
 

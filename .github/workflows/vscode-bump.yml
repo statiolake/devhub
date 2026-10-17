@@ -2,7 +2,8 @@ name: VS Code bump
 
 # Follow upstream VS Code releases: when microsoft/vscode publishes a stable
 # release newer than the tag `vscode/` is pinned to, open a pull request that
-# moves the submodule, re-applies patches/vscode/*.patch and runs the checks.
+# moves the submodule, re-applies patches/vscode-overlay/ and
+# patches/vscode/*.patch and runs the checks.
 #
 # It never merges. A VS Code release can rename an API proposal, move a file a
 # patch reaches into, or change the workbench under DevHub's own subclasses, and

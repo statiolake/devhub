@@ -160,7 +160,8 @@ EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
 	# cursor is never shown. Nothing else in the editor gates that UI: not the
 	# extension id, not `isBuiltin`, not `chat.disableAIFeatures`.
 	# `devhubStatusBarHover` is DevHub's own proposal
-	# (patches/vscode/0009-devhub-status-bar-hover.patch): a status bar item's
+	# (patches/vscode/0009-devhub-status-bar-hover.patch and
+	# patches/vscode-overlay/): a status bar item's
 	# rich hover, drawn by the workbench from the widgets of its Copilot
 	# dashboard, which `chat.disableAIFeatures` hides. The extension's status
 	# item uses it for its dashboard.
@@ -173,15 +174,21 @@ def proposal_declaration_file(proposal: str) -> Path:
 	return VSCODE_DIR / "src" / "vscode-dts" / f"vscode.proposed.{proposal}.d.ts"
 
 
-def proposal_is_declared(proposal: str, patches_dir: Path | None = None) -> bool:
-	"""Whether the pinned VS Code, or one of DevHub's patches to it, declares a proposal.
+def proposal_is_declared(
+	proposal: str, patches_dir: Path | None = None, overlay_dir: Path | None = None
+) -> bool:
+	"""Whether the pinned VS Code, or DevHub's changes to it, declare a proposal.
 
 	A checkout's submodule is the pinned commit until provisioning applies
-	`patches/vscode/`, so a proposal a patch adds is found in the patch.
+	`patches/vscode/` and `patches/vscode-overlay/`, so a proposal DevHub adds
+	is found in the overlay (where a new file belongs) or in a patch.
 	"""
+	relative = f"src/vscode-dts/vscode.proposed.{proposal}.d.ts"
 	if proposal_declaration_file(proposal).is_file():
 		return True
-	added = f"+++ b/src/vscode-dts/vscode.proposed.{proposal}.d.ts\n"
+	if ((overlay_dir or OVERLAY_DIR) / relative).is_file():
+		return True
+	added = f"+++ b/{relative}\n"
 	patches = sorted((patches_dir or PATCHES_DIR).glob("*.patch"))
 	return any(added in patch.read_text(encoding="utf-8") for patch in patches)
 
@@ -208,7 +215,7 @@ def vscode_commit() -> str:
 	return head_of(REPO_ROOT / "vscode")
 
 
-# What else, beyond the VS Code commit, DevHub's patches, the build scripts and
+# What else, beyond the VS Code commit, DevHub's patches and overlay, the build scripts and
 # the static product metadata (all hashed by `reh_identity` below), decides
 # what is in a remote extension host DevHub builds. Bump it for a change to the
 # server made outside those files, so far machines install the new one instead
@@ -226,6 +233,7 @@ def vscode_commit() -> str:
 REH_REVISION = 2
 
 PATCHES_DIR = REPO_ROOT / "patches" / "vscode"
+OVERLAY_DIR = REPO_ROOT / "patches" / "vscode-overlay"
 
 # The scripts that make the server: build_reh.py (the images, what it deletes
 # and checks, how it packs) and the steps it runs in the tree.
@@ -233,6 +241,13 @@ REH_BUILD_SCRIPTS = (
 	REPO_ROOT / "scripts" / "build_reh.py",
 	REPO_ROOT / "scripts" / "reh_in_container.sh",
 )
+
+
+def overlay_files(overlay_dir: Path = OVERLAY_DIR) -> list[str]:
+	"""The files of `patches/vscode-overlay/`, by their path in the tree, sorted."""
+	if not overlay_dir.is_dir():
+		return []
+	return sorted(p.relative_to(overlay_dir).as_posix() for p in overlay_dir.rglob("*") if p.is_file())
 
 
 def reh_static_metadata() -> dict[str, object]:
@@ -249,6 +264,7 @@ def reh_static_metadata() -> dict[str, object]:
 def reh_identity(
 	commit: str | None = None,
 	patches_dir: Path = PATCHES_DIR,
+	overlay_dir: Path = OVERLAY_DIR,
 	revision: int = REH_REVISION,
 	build_scripts: tuple[Path, ...] = REH_BUILD_SCRIPTS,
 	metadata: dict[str, object] | None = None,
@@ -256,7 +272,8 @@ def reh_identity(
 	"""Which build of the remote extension host this checkout makes.
 
 	Twelve hex characters of a hash over the VS Code commit, every patch in
-	`patches/vscode/` (name and bytes), the static product metadata the
+	`patches/vscode/` (name and bytes), every file in `patches/vscode-overlay/`
+	(path and bytes), the static product metadata the
 	server carries (`reh_static_metadata()`), the build scripts
 	(`REH_BUILD_SCRIPTS`, name and bytes) and `REH_REVISION`. The far machine
 	keeps its server under `bin/<commit>-<identity>`, and both the app
@@ -274,6 +291,9 @@ def reh_identity(
 	for patch in sorted(patches_dir.glob("*.patch")):
 		digest.update(f"patch {patch.name}\n".encode())
 		digest.update(patch.read_bytes())
+	for path in overlay_files(overlay_dir):
+		digest.update(f"overlay {path}\n".encode())
+		digest.update((overlay_dir / path).read_bytes())
 	stated = reh_static_metadata() if metadata is None else metadata
 	digest.update(f"metadata {json.dumps(stated, sort_keys=True)}\n".encode())
 	for script in build_scripts:
