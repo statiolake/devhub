@@ -328,6 +328,36 @@ keymap binds `<BS>` (`h`, wrapping), `<Del>` (`x`), `<CR>` (`+`), `<Tab>`
 nothing and cancel a pending operator, rather than move the focus out of the
 editor.
 
+## From the first key
+
+An editor Vim drives is in normal mode from the moment it exists: it is
+modal, has the block caret and `devhubVim.active` / `devhubVim.mode ==
+'normal'` before it can show a frame or take a key, the editors restored at
+startup included. There is no moment after startup (or after a split, a peek
+or diff editor opening) where a key types into the buffer or a `Backspace`
+erases.
+
+How: the editor core asks Vim's start policy in the editor's constructor
+(`ModalTextInput.setStartPolicy`, `modalTextInput.ts`, given by
+`devhubVim.contribution.ts` when it loads, from `devhub.vim.enabled`) and,
+when it says yes, starts the editor modal, with the block caret and those two
+keys bound in the editor's own context-key scope. The Vim layer is a
+`BlockStartup` workbench contribution, so it exists before the workbench
+renders any editor, and it attaches to each one in the same constructor
+(`ICodeEditorService.onCodeEditorAdd`); attaching *claims* the state (the
+editor-scoped keys give way to its global ones) or, for an editor Vim does not
+drive (the settings / extensions search boxes), *releases* it. Vim attaches to
+every code editor but those search boxes: file editors, diff editors, peek /
+inline / embedded editors, and inputs that are editors (SCM message, chat,
+debug console).
+
+The one case that is not covered: `devhub.vim.enabled` set only in a remote
+(SSH / container) machine's settings. A window starts with the copy of those
+cached from its last connection; when there is none yet (the first connection
+to that machine) or it is out of date, the editors opened before the remote
+settings arrive start as plain editors and become Vim editors when they do.
+Put it in your user settings to have Vim from the first key everywhere.
+
 ## Customising keys
 
 `keybindings.json`:

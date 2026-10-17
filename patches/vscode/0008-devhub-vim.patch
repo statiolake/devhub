@@ -1,9 +1,9 @@
 diff --git a/src/vs/editor/browser/controller/editContext/modalTextInput.ts b/src/vs/editor/browser/controller/editContext/modalTextInput.ts
 new file mode 100644
-index 00000000..5a0b887a
+index 00000000..e6633f89
 --- /dev/null
 +++ b/src/vs/editor/browser/controller/editContext/modalTextInput.ts
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,214 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -39,10 +39,29 @@ index 00000000..5a0b887a
 +// registries are) and independent of the global `IME` toggle the keybinding
 +// service flips for chords, so the two never undo each other.
 +//
++// A new editor starts modal (ModalEditorStart). The owner of the modes (the
++// workbench contribution) attaches to an editor when ICodeEditorService
++// announces it, at the end of its constructor, but an editor can exist before
++// its owner does (and the owner may be late: it is a workbench contribution).
++// So the owner gives a start policy when its module loads (`setStartPolicy`),
++// and CodeEditorWidget asks it while it is being constructed: an editor the
++// policy says yes to is, before it can see a key, modal, has a block caret and
++// the scoped context keys `devhubVim.active` / `devhubVim.attached` = true and
++// `devhubVim.mode` = 'normal' (so the editor's typing keys are gated, see
++// EditorContextKeys.devhubVimAllowsTyping). The owner then `claim`s it (it
++// takes over that state: the scoped keys go, its own global ones and caret
++// apply) or `release`s it (an editor the modes do not drive: it is put back
++// as it was asked for). Without a policy, or when it says no, nothing of this
++// happens.
++//
 +// Kept in this one file plus a few guarded lines at each input surface, so an
 +// upstream bump only has to re-place those lines.
 +
 +import { Emitter, Event } from '../../../../base/common/event.js';
++import { IDisposable } from '../../../../base/common/lifecycle.js';
++import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
++import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
++import { IEditorOptions } from '../../../common/config/editorOptions.js';
 +
 +export interface IModalCommittedText {
 +	readonly editorId: string;
@@ -83,9 +102,122 @@ index 00000000..5a0b887a
 +			this._onDidCommitText.fire({ editorId, text });
 +		}
 +	}
++
++	private _startPolicy: ModalStartPolicy | undefined;
++	private readonly _starts = new Map<string, ModalEditorStart>();
++
++	/** Whether a new editor starts modal (the owner of the modes sets it once, when its module loads). */
++	setStartPolicy(policy: ModalStartPolicy | undefined): void {
++		this._startPolicy = policy;
++	}
++
++	/** CodeEditorWidget, while it is constructed: does this editor start modal? */
++	startsModal(instantiationService: IInstantiationService, domElement: HTMLElement): boolean {
++		const policy = this._startPolicy;
++		if (!policy) {
++			return false;
++		}
++		try {
++			return instantiationService.invokeFunction(accessor => policy(accessor, domElement));
++		} catch {
++			return false; // a service the policy reads is missing (a test, an embedder): plain editor
++		}
++	}
++
++	/** Whether the editor still has the state it started with, owned by no one yet. */
++	isStarting(editorId: string): boolean {
++		return this._starts.has(editorId);
++	}
++
++	/** The owner takes the editor over: from now on it decides its modality, caret and context keys. */
++	claim(editorId: string): void {
++		this._starts.get(editorId)?.end(true);
++	}
++
++	/** The owner does not drive this editor: it takes text again, with the caret it was given. */
++	release(editorId: string): void {
++		this._starts.get(editorId)?.end(false);
++	}
++
++	/** @internal ModalEditorStart */
++	_track(editorId: string, start: ModalEditorStart | undefined): void {
++		if (start) {
++			this._starts.set(editorId, start);
++		} else {
++			this._starts.delete(editorId);
++		}
++	}
 +}
 +
++/** `domElement` is the editor's own container, as passed to CodeEditorWidget. */
++export type ModalStartPolicy = (accessor: ServicesAccessor, domElement: HTMLElement) => boolean;
++
 +export const ModalTextInput = new ModalTextInputImpl();
++
++/**
++ * The state an editor starts with when ModalTextInput's start policy says so,
++ * until its owner claims or releases it. Created by CodeEditorWidget's
++ * constructor; synchronous, a few context keys and a set entry.
++ */
++export class ModalEditorStart implements IDisposable {
++
++	/** The caret style of a modal editor no one has claimed yet (Vim's normal mode). */
++	static readonly CURSOR_STYLE = 'block';
++
++	private readonly _keys: IContextKey<boolean | string>[];
++	private _ended = false;
++
++	constructor(
++		private readonly _editorId: string,
++		contextKeyService: IContextKeyService,
++		/** The caret style the editor's creator asked for, put back on release. */
++		private _requestedCursorStyle: IEditorOptions['cursorStyle'],
++		private readonly _applyCursorStyle: (style: NonNullable<IEditorOptions['cursorStyle']>) => void,
++	) {
++		// No default value: `reset` removes the key from the editor's scope, so
++		// the owner's global keys apply after a claim.
++		const key = <T extends boolean | string>(name: string, value: T) => {
++			const k = contextKeyService.createKey<T>(name, undefined);
++			k.set(value);
++			return k;
++		};
++		this._keys = [key('devhubVim.active', true), key('devhubVim.attached', true), key('devhubVim.mode', 'normal')];
++		ModalTextInput._track(_editorId, this);
++		ModalTextInput.set(_editorId, true);
++	}
++
++	/** Options given to the editor before it is claimed: the caret stays the modal one, the request is kept. */
++	filterOptions(options: Readonly<IEditorOptions>): Readonly<IEditorOptions> {
++		if (this._ended || options.cursorStyle === undefined) {
++			return options;
++		}
++		this._requestedCursorStyle = options.cursorStyle;
++		return { ...options, cursorStyle: ModalEditorStart.CURSOR_STYLE };
++	}
++
++	end(claimed: boolean): void {
++		if (this._ended) {
++			return;
++		}
++		this._ended = true;
++		ModalTextInput._track(this._editorId, undefined);
++		for (const k of this._keys) {
++			k.reset();
++		}
++		if (!claimed) {
++			ModalTextInput.set(this._editorId, false);
++			this._applyCursorStyle(this._requestedCursorStyle ?? 'line');
++		}
++	}
++
++	dispose(): void {
++		if (!this._ended) {
++			this._ended = true;
++			ModalTextInput._track(this._editorId, undefined);
++			ModalTextInput.set(this._editorId, false);
++		}
++	}
++}
 diff --git a/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts b/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts
 index bedf3f2c..1b643cac 100644
 --- a/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts
@@ -332,18 +464,52 @@ index 9331eea4..170697a2 100644
  					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
  				}
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
-index b77791a6..16f9a158 100644
+index b77791a6..0d65f26f 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 +++ b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 @@ -66,6 +66,7 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
  import { TextEdit } from '../../../common/core/edits/textEdit.js';
  import { isObject } from '../../../../base/common/types.js';
  import { IUserInteractionService } from '../../../../platform/userInteraction/browser/userInteractionService.js';
-+import { ModalTextInput } from '../../controller/editContext/modalTextInput.js';
++import { ModalEditorStart, ModalTextInput } from '../../controller/editContext/modalTextInput.js';
  
  export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeEditor {
  
-@@ -367,7 +368,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -269,6 +270,9 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 
+ 	public inComposition: boolean = false;
+ 
++	/** DevHub: the modal state this editor started with, until its owner claims it (modalTextInput.ts). */
++	private readonly _modalStart: ModalEditorStart | undefined;
++
+ 	constructor(
+ 		domElement: HTMLElement,
+ 		_options: Readonly<IEditorConstructionOptions>,
+@@ -298,6 +302,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 		this._decorationTypeSubtypes = {};
+ 		this._telemetryData = codeEditorWidgetOptions.telemetryData;
+ 
++		// DevHub: decided before the editor can see a key or draw a caret, see modalTextInput.ts
++		const startsModal = ModalTextInput.startsModal(instantiationService, domElement);
++		const requestedCursorStyle = options.cursorStyle;
++		if (startsModal) {
++			options.cursorStyle = ModalEditorStart.CURSOR_STYLE;
++		}
++
+ 		this._configuration = this._register(this._createConfiguration(codeEditorWidgetOptions.isSimpleWidget || false,
+ 			codeEditorWidgetOptions.contextMenuId ?? (codeEditorWidgetOptions.isSimpleWidget ? MenuId.SimpleEditorContext : MenuId.EditorContext),
+ 			options, accessibilityService));
+@@ -321,6 +332,9 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 				this._contextKeyService.createKey(key, value);
+ 			}
+ 		}
++		this._modalStart = startsModal // DevHub: see modalTextInput.ts
++			? this._register(new ModalEditorStart(this.getId(), this._contextKeyService, requestedCursorStyle, cursorStyle => this._configuration.updateOptions({ cursorStyle })))
++			: undefined;
+ 		this._notificationService = notificationService;
+ 		this._codeEditorService = codeEditorService;
+ 		this._commandService = commandService;
+@@ -367,7 +381,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  
  		const isDropIntoEnabled = () => {
  			return !this._configuration.options.get(EditorOption.readOnly)
@@ -353,7 +519,15 @@ index b77791a6..16f9a158 100644
  		};
  
  		this._register(new dom.DragAndDropObserver(this._domElement, {
-@@ -1168,7 +1170,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -444,6 +459,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 	}
+ 
+ 	public updateOptions(newOptions: Readonly<IEditorOptions> | undefined): void {
++		newOptions = newOptions && this._modalStart ? this._modalStart.filterOptions(newOptions) : newOptions; // DevHub: see modalTextInput.ts
+ 		this._configuration.updateOptions(newOptions || {});
+ 	}
+ 
+@@ -1168,7 +1184,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _startComposition(): void {
@@ -362,7 +536,7 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		this.inComposition = true;
-@@ -1186,7 +1188,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1186,7 +1202,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _type(source: string | null | undefined, text: string): void {
@@ -371,7 +545,7 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		if (source === 'keyboard') {
-@@ -1199,14 +1201,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1199,14 +1215,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _compositionType(source: string | null | undefined, text: string, replacePrevCharCnt: number, replaceNextCharCnt: number, positionDelta: number): void {
@@ -388,7 +562,7 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		const viewModel = this._modelData.viewModel;
-@@ -1919,7 +1921,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1919,7 +1935,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  			// Connect clipboard events from View
  			listenersToRemove.push(view.onWillCopy(e => this._onWillCopy.fire(e)));
  			listenersToRemove.push(view.onWillCut(e => this._onWillCut.fire(e)));
@@ -657,6 +831,149 @@ index 00000000..e0d1d305
 +		}
 +	});
 +});
+diff --git a/src/vs/editor/test/browser/controller/modalEditorStart.test.ts b/src/vs/editor/test/browser/controller/modalEditorStart.test.ts
+new file mode 100644
+index 00000000..1014181c
+--- /dev/null
++++ b/src/vs/editor/test/browser/controller/modalEditorStart.test.ts
+@@ -0,0 +1,137 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub: with DevHub Vim on, an editor is modal (normal mode, block caret,
++// typing keys gated) from its constructor on, before the owner of the modes
++// (the workbench contribution) attaches, so the first key of an editor created
++// before that owner, or while it is late, types nothing.
++
++import assert from 'assert';
++import { DisposableStore } from '../../../../base/common/lifecycle.js';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
++import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
++import { TestConfigurationService } from '../../../../platform/configuration/test/common/testConfigurationService.js';
++import { ContextKeyService } from '../../../../platform/contextkey/browser/contextKeyService.js';
++import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
++import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
++import { ModalTextInput } from '../../../browser/controller/editContext/modalTextInput.js';
++import { ICodeEditorService } from '../../../browser/services/codeEditorService.js';
++import { EditorOption, cursorStyleToString } from '../../../common/config/editorOptions.js';
++import { Handler, TypePayload } from '../../../common/editorCommon.js';
++import { EditorContextKeys } from '../../../common/editorContextKeys.js';
++import { createTextModel } from '../../common/testTextModel.js';
++import { ITestCodeEditor, createCodeEditorServices, instantiateTestCodeEditor } from '../testCodeEditor.js';
++
++const SETTING = 'devhub.vim.enabled';
++
++/** What the owner of the modes would see if it attached in onCodeEditorAdd (the earliest it can). */
++interface IAtAdd { modal: boolean; starting: boolean; active: unknown; mode: unknown; cursor: string; gated: boolean }
++
++suite('DevHub: an editor starts modal when DevHub Vim is on', () => {
++
++	ensureNoDisposablesAreLeakedInTestSuite();
++
++	function withEditor(vimOn: boolean | undefined, policy: boolean, fn: (editor: ITestCodeEditor, keys: IContextKeyService, atAdd: IAtAdd | undefined) => void): void {
++		const disposables = new DisposableStore();
++		const configurationService = new TestConfigurationService(vimOn === undefined ? {} : { [SETTING]: vimOn });
++		const contextKeyService = disposables.add(new ContextKeyService(configurationService));
++		if (policy) {
++			ModalTextInput.setStartPolicy(accessor => !!accessor.get(IConfigurationService).getValue<boolean>(SETTING));
++		}
++		let atAdd: IAtAdd | undefined;
++		let editor: ITestCodeEditor | undefined;
++		try {
++			const model = disposables.add(createTextModel('abc'));
++			const services = new ServiceCollection(
++				[IConfigurationService, configurationService],
++				[IContextKeyService, contextKeyService],
++			);
++			const instantiationService = createCodeEditorServices(disposables, services);
++			// Read the state at the moment ICodeEditorService announces the editor, i.e.
++			// inside its constructor, where DevHub Vim attaches, before it could have done anything.
++			disposables.add(instantiationService.get(ICodeEditorService).onCodeEditorAdd(e => {
++				const scoped = e.invokeWithinContext(a => a.get(IContextKeyService));
++				atAdd = {
++					modal: ModalTextInput.isModal(e.getId()),
++					starting: ModalTextInput.isStarting(e.getId()),
++					active: scoped.getContextKeyValue('devhubVim.active'),
++					mode: scoped.getContextKeyValue('devhubVim.mode'),
++					cursor: cursorStyleToString(e.getOption(EditorOption.cursorStyle)),
++					gated: !scoped.contextMatchesRules(EditorContextKeys.devhubVimAllowsTyping),
++				};
++			}));
++			editor = instantiateTestCodeEditor(instantiationService, model);
++			fn(editor, editor.invokeWithinContext(a => a.get(IContextKeyService)), atAdd);
++		} finally {
++			ModalTextInput.setStartPolicy(undefined);
++			editor?.dispose();
++			disposables.dispose();
++		}
++	}
++
++	function type(editor: ITestCodeEditor, text: string): void {
++		editor.setPosition({ lineNumber: 1, column: 1 });
++		editor.trigger('keyboard', Handler.Type, { text } satisfies TypePayload);
++	}
++
++	test('modal, in normal mode, with a block caret, before anyone attaches; typing is swallowed', () => {
++		withEditor(true, true, (editor, keys, atAdd) => {
++			assert.deepStrictEqual(atAdd, { modal: true, starting: true, active: true, mode: 'normal', cursor: 'block', gated: true });
++			type(editor, 'x');
++			assert.strictEqual(editor.getModel().getValue(), 'abc');
++			// the editor's creator re-applying its options does not bring the line caret back
++			editor.updateOptions({ cursorStyle: 'line' });
++			assert.strictEqual(cursorStyleToString(editor.getOption(EditorOption.cursorStyle)), 'block');
++			assert.strictEqual(keys.contextMatchesRules(EditorContextKeys.devhubVimAllowsTyping), false);
++		});
++	});
++
++	test('a claim hands the state to the owner: still modal, the scoped keys give way to its global ones', () => {
++		withEditor(true, true, (editor, keys) => {
++			ModalTextInput.claim(editor.getId());
++			assert.strictEqual(ModalTextInput.isStarting(editor.getId()), false);
++			assert.strictEqual(ModalTextInput.isModal(editor.getId()), true);
++			assert.strictEqual(keys.getContextKeyValue('devhubVim.active'), undefined);
++			assert.strictEqual(keys.getContextKeyValue('devhubVim.mode'), undefined);
++			type(editor, 'x');
++			assert.strictEqual(editor.getModel().getValue(), 'abc');
++			// the owner's caret now: options pass through
++			editor.updateOptions({ cursorStyle: 'underline' });
++			assert.strictEqual(cursorStyleToString(editor.getOption(EditorOption.cursorStyle)), 'underline');
++		});
++	});
++
++	test('a release puts back a plain editor, with the caret its creator asked for last', () => {
++		withEditor(true, true, (editor, keys) => {
++			editor.updateOptions({ cursorStyle: 'line-thin' });
++			ModalTextInput.release(editor.getId());
++			assert.strictEqual(ModalTextInput.isModal(editor.getId()), false);
++			assert.strictEqual(keys.getContextKeyValue('devhubVim.active'), undefined);
++			assert.strictEqual(cursorStyleToString(editor.getOption(EditorOption.cursorStyle)), 'line-thin');
++			type(editor, 'x');
++			assert.strictEqual(editor.getModel().getValue(), 'xabc');
++		});
++	});
++
++	test('disposed before anyone claimed it: nothing is left modal', () => {
++		let id = '';
++		withEditor(true, true, editor => { id = editor.getId(); });
++		assert.strictEqual(ModalTextInput.isModal(id), false);
++		assert.strictEqual(ModalTextInput.isStarting(id), false);
++	});
++
++	for (const [what, vimOn, policy] of [['Vim off', false, true], ['setting absent', undefined, true], ['no start policy (Vim not in this build)', true, false]] as const) {
++		test(`${what}: an upstream editor`, () => {
++			withEditor(vimOn, policy, (editor, keys, atAdd) => {
++				assert.deepStrictEqual(atAdd, { modal: false, starting: false, active: undefined, mode: undefined, cursor: 'line', gated: false });
++				type(editor, 'x');
++				assert.strictEqual(editor.getModel().getValue(), 'xabc');
++				editor.updateOptions({ cursorStyle: 'underline' });
++				assert.strictEqual(cursorStyleToString(editor.getOption(EditorOption.cursorStyle)), 'underline');
++			});
++		});
++	}
++
++});
 diff --git a/src/vs/editor/test/browser/controller/modalTextInput.test.ts b/src/vs/editor/test/browser/controller/modalTextInput.test.ts
 new file mode 100644
 index 00000000..b03c5876
@@ -745,10 +1062,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..edddadb9
+index 00000000..fbb906be
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1222 @@
+@@ -0,0 +1,1250 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -820,6 +1137,12 @@ index 00000000..edddadb9
 +// * Mode, caret style, modal input and context keys are recomputed from the
 +//   engine's state after every command and every focus or model change, never
 +//   toggled, and a command that throws leaves the engine in plain normal mode.
++// * From the first key: an editor Vim drives starts modal in normal mode in
++//   its constructor (the start policy given to ModalTextInput below), and
++//   this contribution is BlockStartup, so it exists before the first editor
++//   and attaches to each in that same constructor (onCodeEditorAdd), taking
++//   that state over (ModalTextInput.claim). No editor ever takes text, or
++//   shows the line caret, before Vim is on it.
 +// * Esc only ever cancels: pressed any number of times it lands in plain
 +//   normal mode and nowhere else.
 +// * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
@@ -942,6 +1265,17 @@ index 00000000..edddadb9
 +const VIM_US_SHIFTED_DIGITS = new RawContextKey<boolean>(SHIFTED_DIGIT_GATE, true, localize('devhubVim.usShiftedDigits', "Whether Shift+1..0 type !@#$%^&*() on the current keyboard layout (false on JIS)."));
 +const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
 +
++/** The editors Vim drives: all of them but the settings / extensions search boxes, which behave as plain inputs. */
++function vimDrives(container: HTMLElement): boolean {
++	return !container.closest('.suggest-input-container');
++}
++
++// Every editor Vim drives starts modal in normal mode, decided in its
++// constructor before it can take a key (editor core, modalTextInput.ts), so
++// the first frame and the first key of an editor are Vim's even when it
++// exists before DevhubVim does. DevhubVim claims it in attach().
++ModalTextInput.setStartPolicy((accessor, container) => !!accessor.get(IConfigurationService).getValue<boolean>(SETTING) && vimDrives(container));
++
 +type CursorStyle = ReturnType<typeof cursorStyleToString>;
 +const CURSOR_STYLES: readonly CursorStyle[] = ['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin'];
 +
@@ -987,6 +1321,8 @@ index 00000000..edddadb9
 +	) {
 +		super();
 +		this.engine = new VimEngine(this, shared);
++		// The editor started modal in normal mode (ModalTextInput's start policy, below); from here on it is ours.
++		ModalTextInput.claim(editor.getId());
 +		this.insertStyle = this.readInsertCursorStyle();
 +		this.hlDecorations = editor.createDecorationsCollection();
 +		this.incDecorations = editor.createDecorationsCollection();
@@ -1572,6 +1908,9 @@ index 00000000..edddadb9
 +		this.nav.cancel();
 +		this.statusEntry = undefined;
 +		if (!enabled) {
++			for (const editor of this.codeEditorService.listCodeEditors()) {
++				ModalTextInput.release(editor.getId()); // one that started modal before this heard of the change
++			}
 +			this.modeKey.reset();
 +			for (const k of this.activeKeys) {
 +				k.reset();
@@ -1615,8 +1954,8 @@ index 00000000..edddadb9
 +		if (this.editors.has(editor)) {
 +			return;
 +		}
-+		// Settings / extensions search boxes are editors too, but behave as plain inputs.
-+		if (editor.getContainerDomNode().closest('.suggest-input-container')) {
++		if (!vimDrives(editor.getContainerDomNode())) {
++			ModalTextInput.release(editor.getId());
 +			return;
 +		}
 +		this.editors.set(editor, new VimEditor(editor, this, this.shared));
@@ -1790,7 +2129,13 @@ index 00000000..edddadb9
 +	}
 +}
 +
-+registerWorkbenchContribution2(DevhubVim.ID, DevhubVim, WorkbenchPhase.AfterRestored);
++// BlockStartup: created before the workbench renders its parts, so it exists
++// before the first editor (the restored ones included) and attaches to each
++// editor synchronously, at the end of its constructor (onCodeEditorAdd). With
++// no editor yet its constructor only binds context keys and reads three
++// settings. (At AfterRestored it was created when the workbench was idle after
++// the editors were restored, and the editor took text until then.)
++registerWorkbenchContribution2(DevhubVim.ID, DevhubVim, WorkbenchPhase.BlockStartup);
 +
 +// ---- the engine's commands and the default Vim keymap ------------------------
 +
