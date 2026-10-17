@@ -1,0 +1,52 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) DevHub contributors. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The Vim prompt line (../vimCmdline.ts): the window's full width, just above the status bar. */
+
+.monaco-workbench .devhub-vim-cmdline {
+	position: absolute;
+	left: 0;
+	right: 0;
+	/* above the parts and their sashes, below notifications, quick input and context menus */
+	z-index: 40;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	padding: 2px 8px;
+	background-color: var(--vscode-devhubVim-cmdline-background);
+	color: var(--vscode-devhubVim-cmdline-foreground);
+	border-top: 1px solid var(--vscode-devhubVim-cmdline-border, transparent);
+}
+
+.monaco-workbench .devhub-vim-cmdline.hidden {
+	display: none;
+}
+
+.monaco-workbench .devhub-vim-cmdline .devhub-vim-cmdline-prefix {
+	flex: none;
+	white-space: pre;
+	color: var(--vscode-devhubVim-cmdline-prefixForeground);
+}
+
+.monaco-workbench .devhub-vim-cmdline .devhub-vim-cmdline-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.monaco-workbench .devhub-vim-cmdline .monaco-editor,
+.monaco-workbench .devhub-vim-cmdline .monaco-editor-background,
+.monaco-workbench .devhub-vim-cmdline .monaco-editor .margin,
+.monaco-workbench .devhub-vim-cmdline .monaco-editor .inputarea.ime-input {
+	background-color: var(--vscode-devhubVim-cmdline-background);
+}
+
+.monaco-workbench .devhub-vim-cmdline .monaco-editor .mtk1 {
+	color: var(--vscode-devhubVim-cmdline-foreground);
+}
+
+/* CTRL-R waits for its register: Vim shows `"` at the caret */
+.monaco-workbench .devhub-vim-cmdline .devhub-vim-cmdline-register {
+	opacity: 0.6;
+}

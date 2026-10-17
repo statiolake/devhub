@@ -49,11 +49,17 @@
 //   them.
 // * The editor's own keydown is read only where a keybinding cannot be:
 //   the character after `devhubVim.awaitChar` (f t r " q @ m ' `, CTRL-R in
-//   insert mode, or a binding of one's own), the keys typed into the `:` `/`
-//   prompt, the text an IME commits, and a printable key no keybinding took
-//   while a command is half built (it cancels it, as in Vim; the dispatcher
-//   is asked first). Everything else reaches the keybinding dispatcher
-//   untouched, so nothing is handled twice and every Vim key is a keybinding.
+//   insert mode, or a binding of one's own), the text an IME commits, and a
+//   printable key no keybinding took while a command is half built (it
+//   cancels it, as in Vim; the dispatcher is asked first). Everything else
+//   reaches the keybinding dispatcher untouched, so nothing is handled twice
+//   and every Vim key is a keybinding.
+// * The `:` `/` `?` prompt is a one-line editor of its own at the bottom of
+//   the window (vimCmdline.ts), shown for the prompt an engine opened
+//   (VimEngine.cmdlineState, once per prompt) and hidden when the engine
+//   closes it, by `update` like everything else. Its keys are keybindings on
+//   `devhubVim.cmdlineFocus` (common/vimCmdline.ts); it is not a Vim editor
+//   (`vimDrives`).
 // * `:` commands (../common/vimEx.ts): Vim's editing commands (:s :g :d :m :t
 //   :normal :sort ...) run in the engine; the others are a table of VS Code
 //   commands plus `devhub.vim.exCommands`, whose entries run any commands with
@@ -121,6 +127,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
 import { KeybindingWeight, KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
@@ -132,6 +139,8 @@ import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '
 import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
 import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
+import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
+import { IVimCmdlineOrigin, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
 import { VimRegex } from '../common/vimRegex.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 
@@ -200,9 +209,13 @@ const VIM_VISUAL = new RawContextKey<boolean>('devhubVim.visual', false, localiz
 const VIM_INSERT = new RawContextKey<boolean>('devhubVim.insert', false, localize('devhubVim.insert', "The focused Vim editor is in insert or replace mode."));
 const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
 
-/** The editors Vim drives: all of them but the settings / extensions search boxes, which behave as plain inputs. */
-function vimDrives(container: HTMLElement): boolean {
-	return !container.closest('.suggest-input-container');
+/**
+ * The editors Vim drives: all of them but the settings / extensions search
+ * boxes, which behave as plain inputs, and the Vim prompt line itself
+ * (vimCmdline.ts: insert-only, Esc cancels it).
+ */
+export function vimDrives(container: HTMLElement): boolean {
+	return !container.closest(`.suggest-input-container, .${VIM_CMDLINE_CLASS}`);
 }
 
 type CursorStyle = ReturnType<typeof cursorStyleToString>;
@@ -365,14 +378,14 @@ class VimEditor extends Disposable implements IVimHost {
 		}
 		const typing = this.engine.mode === 'insert' || this.engine.mode === 'replace';
 		const be = e.browserEvent;
-		if (this.engine.cmdlineOpen || this.engine.awaitingChar) {
+		if (this.engine.awaitingChar) {
 			const key = captureKey(be);
 			if (key === undefined) {
 				return;
 			}
 			e.preventDefault();
 			e.stopPropagation();
-			this.guard(() => this.engine.cmdlineOpen ? this.engine.cmdlineKey(key) : this.engine.awaitKey(key));
+			this.guard(() => this.engine.awaitKey(key));
 			return;
 		}
 		if (typing) {
@@ -423,6 +436,23 @@ class VimEditor extends Disposable implements IVimHost {
 				void this.executeCommand(command, args);
 			}
 		});
+	}
+
+	/** What the prompt line needs of this editor: where the focus goes back, what runs the line. */
+	cmdlineOrigin(): IVimCmdlineOrigin {
+		const t = this.engine.cmdlineTarget();
+		return {
+			editor: this.editor,
+			target: {
+				history: kind => t.history(kind),
+				changed: text => this.guard(() => t.changed(text)),
+				submit: text => this.guard(() => t.submit(text)),
+				cancel: () => this.guard(() => t.cancel()),
+				registerText: name => t.registerText(name),
+				prepareRegisters: () => t.prepareRegisters(),
+			},
+			sources: this.engine.cmdlineSources(),
+		};
 	}
 
 	/** Whatever happens, the engine, caret and context keys agree afterwards. */
@@ -719,6 +749,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	private overtypeOwned = false;
 	/** 'hlsearch': the last pattern, shared by every editor, until :nohlsearch. */
 	searchHighlight: VimRegex | undefined;
+	/** The prompt line, made when the first prompt opens. */
+	private cmdline: VimCmdline | undefined;
 	readonly nav = new VimNavPrefix();
 	clipboardCache = '';
 
@@ -733,6 +765,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		@ILanguageConfigurationService readonly languageConfigurationService: ILanguageConfigurationService,
 		@ILanguageFeaturesService readonly languageFeaturesService: ILanguageFeaturesService,
 		@ILabelService readonly labelService: ILabelService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		DevhubVim.instance = this;
@@ -791,6 +824,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			return;
 		}
 		this.enabled = enabled;
+		this.cmdline?.dispose();
+		this.cmdline = undefined;
 		this.attached.clear();
 		this.editors.clear();
 		this.nav.cancel();
@@ -893,6 +928,32 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
+	/**
+	 * The prompt line follows the engines: the prompt the focused engine
+	 * opened is shown (once: VimEngine.cmdlineState.id), and a prompt whose
+	 * engine closed it (Esc fed by a macro, the editor's model changed, the
+	 * editor went away) is hidden. Returns whether the line was just shown
+	 * (the focus moved into it).
+	 */
+	private syncCmdline(v: VimEditor | undefined): boolean {
+		const line = this.cmdline;
+		if (line?.openId !== undefined) {
+			const origin = line.originEditor && this.editors.get(line.originEditor);
+			if (!origin || origin.engine.cmdlineState?.id !== line.openId) {
+				line.close();
+			}
+		}
+		const state = v?.engine.cmdlineState;
+		if (!v || !state || state.id === (this.cmdline?.lastShown ?? 0)) {
+			return false;
+		}
+		if (!this.cmdline) {
+			this.cmdline = this.instantiationService.createInstance(VimCmdline);
+		}
+		this.cmdline.open(v.cmdlineOrigin(), state.kind, state.text, state.id);
+		return true;
+	}
+
 	/** Recompute context keys, cursor styles, modal input and the status bar after anything moved. */
 	update(): void {
 		if (!this.enabled) {
@@ -905,13 +966,24 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 				onUnexpectedError(err);
 			}
 		}
+		try {
+			if (this.syncCmdline(this.focused())) {
+				// the focus is in the prompt line now: the state below is the line's
+				this.update();
+				return;
+			}
+		} catch (err) {
+			onUnexpectedError(err);
+		}
+		const prompt = this.cmdline?.hasFocus && this.cmdline.originEditor ? this.editors.get(this.cmdline.originEditor) : undefined;
 		const v = this.focused();
 		const ctx = v?.context();
 		this.syncOvertype(v?.engine.mode === 'replace');
 		const active = getActiveElement();
 		const mode = this.nav.active ? 'nav'
 			: ctx ? ctx.mode
-				: active && isEditableElement(active) ? 'insert' : '';
+				: prompt ? 'cmdline'
+					: active && isEditableElement(active) ? 'insert' : '';
 		this.modeKey.set(mode);
 		for (const k of this.activeKeys) {
 			k.set(!!v);
@@ -926,7 +998,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		keys.recording?.set(!!ctx?.recording);
 		keys.visual?.set(!!ctx?.visual);
 		keys.insert?.set(!!ctx?.insert);
-		const text = this.nav.active ? '-- NAV --  ^W' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
+		const text = this.nav.active ? '-- NAV --  ^W' : v ? v.engine.status() : prompt ? prompt.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
 		this.statusEntry?.update(this.statusProps(text));
 	}
 
@@ -1059,14 +1131,15 @@ for (const id of VIM_ENGINE_COMMANDS) {
 }
 
 const WEIGHTS = VIM_WEIGHTS;
-if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60) {
+if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60 || VIM_WEIGHTS.cmdline !== KeybindingWeight.WorkbenchContrib + 55) {
 	onUnexpectedError(new Error('devhubVim: VIM_WEIGHTS (vimKeymap.ts) no longer match KeybindingWeight'));
 }
 
 // Parsed as keybindings.json is (KeybindingParser), so the JIS keys in
 // scan-code notation (`shift+[Quote]`) are default keybindings like any other:
-// shown, overridable and removable in the Keyboard Shortcuts editor.
-for (const b of DEFAULT_KEYBINDINGS) {
+// shown, overridable and removable in the Keyboard Shortcuts editor. The
+// prompt line's keys (common/vimCmdline.ts) are registered the same way.
+for (const b of [...DEFAULT_KEYBINDINGS, ...CMDLINE_KEYBINDINGS]) {
 	const keybinding = KeybindingParser.parseKeybinding(b.key);
 	const when = ContextKeyExpr.deserialize(b.when);
 	if (!keybinding || !when) {
@@ -1115,7 +1188,7 @@ function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, we
 // (Cmd-W, close editor, is another key and untouched), close editor elsewhere.
 const [ctrlW, macCtrlW] = ctrl(KeyCode.KeyW);
 rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
-	ContextKeyExpr.and(ENABLED, VIM_MODE.notEqualsTo('nav'),
+	ContextKeyExpr.and(ENABLED, VIM_MODE.notEqualsTo('nav'), VIM_CMDLINE_FOCUS.negate(),
 		ContextKeyExpr.or(VIM_ACTIVE.negate(), VIM_INSERT.negate()),
 		ContextKeyExpr.has('terminalFocus').negate(), ContextKeyExpr.has('inQuickInput').negate()),
 	KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterNav());

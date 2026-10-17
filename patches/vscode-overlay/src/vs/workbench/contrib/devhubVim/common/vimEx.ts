@@ -438,6 +438,30 @@ export function completeExName(prefix: string, names: Iterable<string>): string[
 	return [...out].sort();
 }
 
+/** Vim's built-in names with letters, for the prompt's completion: the full name, the shortest abbreviation, the name it is an alias of. */
+export function builtinExNameInfo(): { readonly name: string; readonly abbrev: string; readonly alias?: string }[] {
+	return EX_NAMES.filter(([full]) => /^[A-Za-z]/.test(full)).map(([name, abbrev, alias]) => alias ? { name, abbrev, alias } : { name, abbrev });
+}
+
+/**
+ * The `[range]` at the start of an ex line, as parseExLine reads it (with the
+ * leading blanks and colons): its length, so the prompt's completion knows
+ * where the command name starts.
+ */
+export function exRangeLength(line: string): number {
+	let s = line.replace(/^[\s:]+/, '');
+	if (s.startsWith('%') || s.startsWith('*')) {
+		s = s.slice(1);
+	} else {
+		s = scanAddress(s)[1];
+		while (s.startsWith(',') || s.startsWith(';')) {
+			s = scanAddress(s.slice(1))[1];
+		}
+	}
+	s = s.replace(/^\s+/, '');
+	return line.length - s.length;
+}
+
 /** Every name Tab completes: the built-in full names (no aliases' targets twice) and the user's. */
 export function builtinExNames(): string[] {
 	return EX_NAMES.map(([full]) => full).filter(n => /^[A-Za-z]/.test(n));

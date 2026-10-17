@@ -39,9 +39,11 @@
 // lineText(line).length` is the position of the line break. Edit ranges are
 // end-exclusive.
 
+import type { IVimCmdlineCompletionSources, IVimCmdlineTarget, VimCmdlineKind, VimExCommandInfo, VimOptionInfo } from './vimCmdline.js';
+import { VimCmdlineController, VimStringLine } from './vimCmdline.js';
 import type { ExCommandEntry, ExStep, UserExCommands } from './vimEx.js';
-import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNames, canonicalExName, completeExName, expandExEntry, parseExLine, parseGlobal, parseSubstitute, resolveExAddress, validateUserExCommands } from './vimEx.js';
-import { DEFAULT_KEYBINDINGS, evaluateWhen, keyForChar, keysOf } from './vimKeymap.js';
+import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNameInfo, builtinExNames, canonicalExName, expandExEntry, parseExLine, parseGlobal, parseSubstitute, resolveExAddress, validateUserExCommands } from './vimEx.js';
+import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import type { VimRegex } from './vimRegex.js';
 import { VimRegexError, compileVimRegex, expandReplacement, expandTilde, lineMatches, literalVimPattern, vimRegex } from './vimRegex.js';
 import { addToNumber, charClass, charWidth, colOfVcol, formatLines, isBlank, isWordChar, rot13, toggleCase, vcolOf } from './vimText.js';
@@ -171,7 +173,7 @@ export const DEFAULT_VIM_OPTIONS: Readonly<VimOptions> = {
 	joinspaces: false, tildeop: false, gdefault: false, textwidth: 0, nrformats: 'bin,hex', report: 2,
 };
 
-const OPTION_ALIASES: Record<string, keyof VimOptions> = {
+export const OPTION_ALIASES: Readonly<Record<string, keyof VimOptions>> = {
 	ic: 'ignorecase', scs: 'smartcase', hls: 'hlsearch', is: 'incsearch', ws: 'wrapscan', sol: 'startofline',
 	js: 'joinspaces', top: 'tildeop', gd: 'gdefault', tw: 'textwidth', nf: 'nrformats',
 };
@@ -236,7 +238,50 @@ export class VimSharedState {
 	exNames(): string[] {
 		return [...builtinExNames(), ...this.userEx.table.keys()];
 	}
+
+	/** Every ex command name with what it runs, for the prompt's completion: Vim's (`:sp[lit]`) and `devhub.vim.exCommands`. */
+	exCommandList(): VimExCommandInfo[] {
+		const out: VimExCommandInfo[] = [];
+		for (const { name, abbrev, alias } of builtinExNameInfo()) {
+			const canonical = alias ?? name;
+			const user = this.userEx.table.get(canonical);
+			const short = abbrev === name ? name : `${abbrev}[${name.slice(abbrev.length)}]`;
+			const what = user !== undefined ? describeExEntry(user) + ' (devhub.vim.exCommands)'
+				: ENGINE_EX_COMMANDS.has(canonical) ? 'Vim'
+					: Object.prototype.hasOwnProperty.call(BUILTIN_EX_COMMANDS, canonical) ? describeExEntry(BUILTIN_EX_COMMANDS[canonical]) : '';
+			out.push({ name, detail: `:${short}${alias ? ` = :${alias}` : ''}${what ? ` - ${what}` : ''}`, user: user !== undefined });
+		}
+		for (const [name, entry] of this.userEx.table) {
+			if (/^[A-Z]/.test(name)) {
+				out.push({ name, detail: describeExEntry(entry), user: true });
+			}
+		}
+		return out;
+	}
+
+	/** The options `:set` knows, with their short names and current values. */
+	optionList(): VimOptionInfo[] {
+		const aliases = new Map<string, string>(Object.entries(OPTION_ALIASES).map(([short, long]) => [long, short]));
+		return (Object.keys(DEFAULT_VIM_OPTIONS) as (keyof VimOptions)[]).map(name => {
+			const value = this.options[name];
+			const alias = aliases.get(name);
+			const boolean = typeof value === 'boolean';
+			return { name, ...(alias ? { alias } : {}), boolean, detail: boolean ? (value ? 'on' : 'off') : `=${value}` };
+		});
+	}
 }
+
+/** What an ex table entry runs, in a few words: its description, or its command ids. */
+function describeExEntry(entry: ExCommandEntry): string {
+	if (typeof entry === 'object' && entry !== null && !Array.isArray(entry) && 'run' in entry) {
+		return entry.description ?? describeExEntry(entry.run);
+	}
+	const steps = Array.isArray(entry) ? entry : [entry];
+	return steps.map(s => typeof s === 'string' ? s : (s as ExStep).command).join(', ');
+}
+
+/** Each prompt the engines open gets its own number, so the workbench shows each one once. */
+let cmdlineSequence = 0;
 
 /** Every command the engine executes; the workbench registers each one. */
 export const VIM_ENGINE_COMMANDS = [
@@ -445,7 +490,10 @@ export class VimEngine {
 	/** Visual block made with `$`: every line to its end. */
 	private visualToEol = false;
 	private lastVisual: { mode: 'visual' | 'visualLine' | 'visualBlock'; anchor: VimPos; head: VimPos; toEol: boolean } | undefined;
-	private cmdline: { kind: ':' | '/' | '?'; text: string; origin: VimPos; history?: number; completion?: { base: string; matches: string[]; index: number }; awaitingRegister?: boolean } | undefined;
+	/** The open prompt: its kind, its text (what it starts with; then what the line holds, for 'incsearch'), where the search starts. */
+	private cmdline: { kind: VimCmdlineKind; text: string; origin: VimPos; id: number } | undefined;
+	/** The prompt fed keys type into (`:normal :s/a/b<CR>`, `@a`); the workbench's line otherwise. */
+	private fedPrompt: VimCmdlineController | undefined;
 	private lastCursor: VimPos | undefined;
 	private message = '';
 	private changeOpen = false;
@@ -492,11 +540,78 @@ export class VimEngine {
 
 	/** The next key or IME commit is a character argument. */
 	get awaitingChar(): boolean {
-		return this.awaiting !== undefined || this.cmdline?.awaitingRegister === true;
+		return this.awaiting !== undefined;
 	}
 
 	get cmdlineOpen(): boolean {
 		return this.cmdline !== undefined;
+	}
+
+	/** The open `:` `/` `?` prompt, for the workbench's prompt line: its kind, the text it starts with, its number. */
+	get cmdlineState(): { readonly kind: VimCmdlineKind; readonly text: string; readonly id: number } | undefined {
+		const c = this.cmdline;
+		return c && { kind: c.kind, text: c.text, id: c.id };
+	}
+
+	/** What the prompt line talks to (VimCmdlineController). */
+	cmdlineTarget(): IVimCmdlineTarget {
+		return {
+			history: kind => this.shared.history[kind === ':' ? ':' : '/'],
+			changed: text => this.cmdlineChanged(text),
+			submit: text => this.cmdlineSubmit(text),
+			cancel: () => this.cmdlineCancel(),
+			registerText: name => this.registerText(name),
+			prepareRegisters: () => this.host.prefetchClipboard(),
+		};
+	}
+
+	/** The candidates the engine knows for the prompt's completion (ex commands, options; no open editors). */
+	cmdlineSources(): IVimCmdlineCompletionSources {
+		return { exCommands: () => this.shared.exCommandList(), options: () => this.shared.optionList(), buffers: () => [] };
+	}
+
+	/** The prompt's line changed: 'incsearch' shows where the pattern typed so far matches. */
+	cmdlineChanged(text: string): void {
+		if (!this.cmdline) {
+			return;
+		}
+		this.cmdline.text = text;
+		try {
+			this.updateIncSearch();
+		} catch (err) {
+			this.recover(err);
+		}
+	}
+
+	/** Enter in the prompt: the line runs as `devhubVim.ex` / `devhubVim.search`, with the operator, count and register that waited for it. */
+	cmdlineSubmit(text: string): void {
+		const cl = this.cmdline;
+		if (!cl) {
+			return;
+		}
+		this.closeCmdline();
+		if (cl.kind === ':') {
+			this.pushHistory(':', text.trim());
+			this.execute('devhubVim.ex', { command: text.trim() });
+		} else {
+			this.execute('devhubVim.search', { pattern: text, backwards: cl.kind === '?' });
+		}
+	}
+
+	/** Esc in the prompt (or <BS> on an empty line): abandoned, and the command waiting for it with it. */
+	cmdlineCancel(): void {
+		if (this.cmdline) {
+			this.escape();
+		}
+	}
+
+	/** A register's text, for CTRL-R in the prompt. */
+	registerText(name: string): string | undefined {
+		try {
+			return this.readRegister(name)?.text;
+		} catch {
+			return undefined;
+		}
 	}
 
 	get options(): VimOptions {
@@ -534,9 +649,8 @@ export class VimEngine {
 
 	status(): string {
 		if (this.cmdline) {
-			const c = this.cmdline.completion;
-			const text = this.cmdline.kind + this.cmdline.text + (this.cmdline.awaitingRegister ? '"' : '');
-			return c && c.matches.length > 1 ? `${text}  (${c.matches.join(' ')})` : text;
+			// the prompt line shows the text; here only what waits for it (`d` of `d/foo`), as Vim's 'showcmd'
+			return this.pendingText();
 		}
 		const name = this._mode === 'insert' ? '-- INSERT --'
 			: this._mode === 'replace' ? '-- REPLACE --'
@@ -662,10 +776,6 @@ export class VimEngine {
 	 * a character completes the command, anything else cancels it.
 	 */
 	awaitKey(key: string): void {
-		if (this.cmdline?.awaitingRegister) {
-			this.cmdlineKey(key);
-			return;
-		}
 		if (!this.awaiting) {
 			return;
 		}
@@ -730,18 +840,13 @@ export class VimEngine {
 	/**
 	 * Text an input method committed outside insert mode (it never reached the
 	 * buffer). As in Vim, it is what a command waiting for a character gets:
-	 * f t F T r take its first character, the `:` `/` `?` prompt all of it.
-	 * Otherwise it is dropped, never run as commands. Returns whether it was used.
+	 * f t F T r take its first character (the `:` `/` `?` prompt is an editor
+	 * of its own, where an IME commits as anywhere else). Otherwise it is
+	 * dropped, never run as commands. Returns whether it was used.
 	 */
 	handleText(text: string): boolean {
-		if (this.isInsert() || !text) {
+		if (this.isInsert() || !text || this.cmdline) {
 			return false;
-		}
-		if (this.cmdline) {
-			this.cmdline.text += text.replace(/[\r\n]/g, '');
-			this.cmdline.completion = undefined;
-			this.updateIncSearch();
-			return true;
 		}
 		if (!this.awaiting) {
 			return false;
@@ -842,6 +947,7 @@ export class VimEngine {
 		}
 		this._mode = 'normal';
 		this.cmdline = undefined;
+		this.fedPrompt = undefined;
 		this.insert = undefined;
 		this.insertOnce = undefined;
 		this.confirm = undefined;
@@ -4456,7 +4562,7 @@ export class VimEngine {
 	// ---- the `:` / `/` prompt ----------------------------------------------
 
 	private cmdCmdline(kind: string): void {
-		if ((kind !== ':' && kind !== '/' && kind !== '?') || this.textObjectKind) {
+		if ((kind !== ':' && kind !== '/' && kind !== '?') || this.textObjectKind || this.cmdline) {
 			this.invalid();
 		}
 		const origin = this.isVisual() ? this.visualHead : this.cursor();
@@ -4475,11 +4581,11 @@ export class VimEngine {
 				}
 			}
 			this.resetGrammar();
-			this.cmdline = { kind, text, origin };
+			this.cmdline = { kind, text, origin, id: ++cmdlineSequence };
 			return;
 		}
 		// The operator, count and register wait for the search (`d/foo<CR>`).
-		this.cmdline = { kind, text: '', origin };
+		this.cmdline = { kind, text: '', origin, id: ++cmdlineSequence };
 	}
 
 	private closeCmdline(): void {
@@ -4487,6 +4593,7 @@ export class VimEngine {
 			this.host.showIncSearch(undefined);
 		}
 		this.cmdline = undefined;
+		this.fedPrompt = undefined;
 	}
 
 	private pushHistory(kind: ':' | '/', text: string): void {
@@ -4501,96 +4608,6 @@ export class VimEngine {
 		h.push(text);
 		if (h.length > 100) {
 			h.shift();
-		}
-	}
-
-	/**
-	 * A key typed into the open prompt: a character, or `<Esc>`, `<CR>`, `<BS>`,
-	 * `<Tab>` (completes an ex command name, again for the next match), `<Up>` /
-	 * `<Down>` (history), `<C-u>`, `<C-w>`, `<C-h>`, `<C-r>` {register}.
-	 */
-	cmdlineKey(key: string): void {
-		const cl = this.cmdline;
-		if (!cl) {
-			return;
-		}
-		try {
-			if (cl.awaitingRegister) {
-				cl.awaitingRegister = false;
-				if (Array.from(key).length === 1) {
-					const reg = key === '\x17' ? undefined : this.readRegister(key);
-					if (reg) {
-						cl.text += reg.text.replace(/\n/g, '\r');
-					}
-				}
-				this.updateIncSearch();
-				return;
-			}
-			if (key === '<Esc>' || key === '<C-[>' || key === '<C-c>') {
-				this.escape();
-				return;
-			}
-			if (key === '<Tab>') {
-				if (cl.kind === ':') {
-					this.completeCmdline(cl);
-				}
-				return;
-			}
-			cl.completion = undefined;
-			if (key === '<Up>' || key === '<Down>' || key === '<C-p>' || key === '<C-n>') {
-				const h = this.shared.history[cl.kind === ':' ? ':' : '/'];
-				if (!h.length) {
-					return;
-				}
-				let i = cl.history ?? h.length;
-				i += key === '<Up>' || key === '<C-p>' ? -1 : 1;
-				i = Math.max(0, Math.min(h.length, i));
-				cl.history = i;
-				cl.text = i === h.length ? '' : h[i];
-				this.updateIncSearch();
-				return;
-			}
-			if (key === '<BS>' || key === '<C-h>') {
-				if (!cl.text) {
-					this.closeCmdline();
-					this.resetGrammar();
-				} else {
-					cl.text = Array.from(cl.text).slice(0, -1).join('');
-					this.updateIncSearch();
-				}
-				return;
-			}
-			if (key === '<C-u>') {
-				cl.text = '';
-				this.updateIncSearch();
-				return;
-			}
-			if (key === '<C-w>') {
-				cl.text = cl.text.replace(/(?:[\p{L}\p{N}_]+|[^\p{L}\p{N}_\s]+)?\s*$/u, '');
-				this.updateIncSearch();
-				return;
-			}
-			if (key === '<C-r>') {
-				cl.awaitingRegister = true;
-				this.host.prefetchClipboard();
-				return;
-			}
-			if (key === '<CR>' || key === '<C-j>' || key === '<C-m>') {
-				this.closeCmdline();
-				if (cl.kind === ':') {
-					this.pushHistory(':', cl.text.trim());
-					this.execute('devhubVim.ex', { command: cl.text.trim() });
-				} else {
-					this.execute('devhubVim.search', { pattern: cl.text, backwards: cl.kind === '?' });
-				}
-				return;
-			}
-			if (Array.from(key).length === 1) {
-				cl.text += key;
-				this.updateIncSearch();
-			}
-		} catch (err) {
-			this.recover(err);
 		}
 	}
 
@@ -4611,24 +4628,6 @@ export class VimEngine {
 			this.host.showIncSearch(found);
 		} catch {
 			this.host.showIncSearch(undefined);
-		}
-	}
-
-	private completeCmdline(cl: NonNullable<VimEngine['cmdline']>): void {
-		const c = cl.completion;
-		if (c) {
-			c.index = (c.index + 1) % c.matches.length;
-			cl.text = c.base + c.matches[c.index];
-			return;
-		}
-		const m = /^([^A-Za-z]*)([A-Za-z][A-Za-z0-9]*)?$/.exec(cl.text);
-		if (!m) {
-			return;
-		}
-		const matches = completeExName(m[2] ?? '', this.shared.exNames());
-		if (matches.length) {
-			cl.completion = { base: m[1], matches, index: 0 };
-			cl.text = m[1] + matches[0];
 		}
 	}
 
@@ -5518,7 +5517,7 @@ export class VimEngine {
 		let chord: string[] = [];
 		for (const k of keysOf(keys)) {
 			if (this.cmdline) {
-				this.cmdlineKey(k === '<lt>' ? '<' : k);
+				this.feedPrompt(k === '<lt>' ? '<' : k);
 				continue;
 			}
 			if (this.awaitingChar) {
@@ -5566,6 +5565,23 @@ export class VimEngine {
 			if (this.pending) {
 				this.cancelPending();
 			}
+		}
+	}
+
+	/**
+	 * A fed key while the prompt is open: typed into a line of the engine's
+	 * own, through the prompt's keybindings (vimCmdline.ts), as if the prompt
+	 * line had the focus. Whatever is left open when the keys end is the
+	 * workbench's to show (`@a` of a register holding `/foo`).
+	 */
+	private feedPrompt(k: string): void {
+		const cl = this.cmdline!;
+		if (!this.fedPrompt) {
+			this.fedPrompt = new VimCmdlineController(cl.kind, new VimStringLine(cl.text), this.cmdlineTarget(), this.cmdlineSources());
+		}
+		this.fedPrompt.feedKey(k);
+		if (this.cmdline !== cl) {
+			this.fedPrompt = undefined;
 		}
 	}
 
@@ -5673,17 +5689,5 @@ function splitBar(line: string): string[] {
 
 /** Vim key notation (`x`, `<CR>`, `<C-r>`) to the keymap's notation (`x`, `enter`, `ctrl+r`). */
 function keyName(k: string): string | undefined {
-	const named: Record<string, string> = {
-		'<Esc>': 'escape', '<CR>': 'enter', '<BS>': 'backspace', '<Tab>': 'tab', '<Space>': 'space', '<Left>': 'left', '<Right>': 'right',
-		'<Up>': 'up', '<Down>': 'down', '<Del>': 'delete', '<Home>': 'home', '<End>': 'end',
-	};
-	if (named[k]) {
-		return named[k];
-	}
-	const ctrl = /^<C-(.)>$/i.exec(k);
-	if (ctrl) {
-		const key = keyForChar(ctrl[1].toLowerCase());
-		return key && `ctrl+${key}`;
-	}
-	return Array.from(k).length === 1 ? keyForChar(k) : undefined;
+	return keybindingForVimKey(k);
 }

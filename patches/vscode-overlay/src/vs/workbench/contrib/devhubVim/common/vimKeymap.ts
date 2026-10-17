@@ -40,9 +40,11 @@ export interface VimKeybinding {
 	 * `override`: outranks workbench-wide defaults (Ctrl-R is Open Recent on macOS);
 	 * `escape`: Esc's own weight outside insert mode, below every widget's Esc;
 	 * `insertEscape`: Esc in insert / replace mode, above every editor widget's Esc
-	 * (the widgets are closed by the escape itself, INSERT_ESCAPE_DISMISSES). See VIM_WEIGHTS.
+	 * (the widgets are closed by the escape itself, INSERT_ESCAPE_DISMISSES);
+	 * `cmdline`: the `:` `/` `?` prompt's keys (vimCmdline.ts), above the
+	 * suggest widget's Tab and every workbench default on the CTRL keys. See VIM_WEIGHTS.
 	 */
-	readonly weight?: 'override' | 'escape' | 'insertEscape';
+	readonly weight?: 'override' | 'escape' | 'insertEscape' | 'cmdline';
 }
 
 const BASE = 'editorTextFocus && devhubVim.active';
@@ -398,6 +400,8 @@ export const VIM_WEIGHTS = {
 	override: 250,
 	escape: 50,
 	insertEscape: 260,
+	/** KeybindingWeight.WorkbenchContrib + 55: the prompt's keys, while it has the focus (CMDLINE_KEYBINDINGS). */
+	cmdline: 255,
 } as const;
 
 /** What a US key types with Shift, for the digits and punctuation keys. */
@@ -511,7 +515,25 @@ export function evaluateWhen(when: string, ctx: Readonly<Record<string, unknown>
 	return !!or();
 }
 
-const NAMED_KEY = /^<(?:Esc|CR|BS|Tab|Space|Left|Right|Up|Down|Del|Home|End|lt|Bar|Bslash|NL|[CcSsAaMmDd]-[^>]+)>/;
+/** A key in Vim notation (`<CR>`, `<C-w>`, `x`) as the keymap writes it (`enter`, `ctrl+w`, `x` on its JIS key); undefined when it has none. */
+export function keybindingForVimKey(k: string): string | undefined {
+	const named: Record<string, string> = {
+		'<Esc>': 'escape', '<CR>': 'enter', '<BS>': 'backspace', '<Tab>': 'tab', '<S-Tab>': 'shift+tab', '<Space>': 'space',
+		'<Left>': 'left', '<Right>': 'right', '<Up>': 'up', '<Down>': 'down', '<S-Up>': 'shift+up', '<S-Down>': 'shift+down',
+		'<Del>': 'delete', '<Home>': 'home', '<End>': 'end', '<PageUp>': 'pageup', '<PageDown>': 'pagedown',
+	};
+	if (named[k]) {
+		return named[k];
+	}
+	const ctrl = /^<C-(.)>$/i.exec(k);
+	if (ctrl) {
+		const key = keyForChar(ctrl[1].toLowerCase());
+		return key && `ctrl+${key}`;
+	}
+	return Array.from(k).length === 1 ? keyForChar(k) : undefined;
+}
+
+const NAMED_KEY = /^<(?:Esc|CR|BS|Tab|Space|Left|Right|Up|Down|Del|Home|End|PageUp|PageDown|lt|Bar|Bslash|NL|[CcSsAaMmDd]-[^>]+)>/;
 
 /** Keys in Vim notation (`dw`, `<Esc>`, `<C-r>a`) one by one; `<lt>` is `<`, `<Bar>` `|`, `<Bslash>` `\`. */
 export function keysOf(s: string): string[] {

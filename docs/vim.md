@@ -99,8 +99,10 @@ the insert (`3ix<Esc>`, `3oab<Esc>`).
 \< \> \zs \ze \s \d \w \a \u \l \k`, `[[:alpha:]]`, `\c \C`; see
 `common/vimRegex.ts`), case sensitive by default ('noignorecase'; `:set ic
 scs`), 'wrapscan', 'hlsearch' (every match highlighted until `:noh` /
-CTRL-L), 'incsearch' (the match is shown while typing). The prompt has history
-(`<Up>` `<Down>`), `CTRL-U CTRL-W CTRL-H CTRL-R {register}`.
+CTRL-L), 'incsearch' (the match is shown while typing). `/` and `?` type
+into the prompt line at the bottom of the window (see [The prompt](#the-prompt)):
+history, `CTRL-U CTRL-W CTRL-R {register}`, and `d/foo<CR>` / `c?bar<CR>`
+keep their operator, count and register.
 
 **Scrolling**: `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B <PageDown>
 <PageUp>`, `zt zz zb z<CR> z. z-` (a count is a line number).
@@ -173,6 +175,73 @@ first / last quickfix) have no VS Code counterpart and are not bound.
 (Neovim's development branch turns `Q` into a multicursor toggle; DevHub
 follows the 0.11 / 0.12 release behaviour.)
 
+## The prompt
+
+`:`, `/` and `?` open Vim's command line: one line at the bottom of the
+window, the whole width, just above the status bar (at the bottom edge when
+the status bar is hidden), whatever the editor groups and panels are. It shows
+the prompt character and the line; it is there only while you type a command
+and lies over the bottom of whatever is below it. It takes the editor's font
+and the editor's colours (`devhubVim.cmdline.background`, `.foreground`,
+`.prefixForeground`, `.border` in `workbench.colorCustomizations`; they
+default to `editor.background`, `editor.foreground` and `panel.border`).
+
+The line is an ordinary one-line editor, always in insert mode (it is not a
+Vim editor: `i`, `<Esc>` to normal mode and the Vim keymap do not apply in
+it): the caret, editing in the middle, selection, the clipboard, an IME,
+`Cmd+Z` / `Ctrl+Z` work as in any input. The focus goes back to the editor the
+prompt came from when the line is run or abandoned; clicking elsewhere
+abandons it.
+
+What it starts with is Vim's: `:` in visual mode starts with `'<,'>`,
+`{count}:` with `.,.+{count-1}`; `/` and `?` after an operator (`d/foo<CR>`),
+a count or a register keep them for the search. While a pattern is typed the
+match is shown in the editor ('incsearch'). Enter runs the line as
+`devhubVim.ex` / `devhubVim.search` in the editor it came from (so `:sp`,
+`:w`, `:'<,'>s/a/b/` act there).
+
+Its keys are default keybindings like every other Vim key (`when`:
+`devhubVim.cmdlineFocus`, Keyboard Shortcuts editor: search for
+`devhubVim.cmdline`):
+
+| Key | Command | Does |
+| --- | --- | --- |
+| `Enter` `CTRL-M` `CTRL-J` | `devhubVim.cmdline.submit` | run the line (with the completion menu open, Enter takes the selected match and runs) |
+| `Esc` `CTRL-C` `CTRL-[` | `devhubVim.cmdline.cancel` | abandon the line (`Esc` closes the completion menu first) |
+| `<BS>` `CTRL-H` on an empty line | `devhubVim.cmdline.cancel` | abandon it, as in Vim (otherwise they delete a character) |
+| `<Up>` / `<Down>` | `devhubVim.cmdline.historyPrev` / `historyNext` | older / newer history entry that starts with the text before the caret (`:` and the searches each have their own history) |
+| `CTRL-P` / `CTRL-N`, `<S-Up>` / `<S-Down>`, `<PageUp>` / `<PageDown>` | `devhubVim.cmdline.historyPrev` / `historyNext` `{ "filter": false }` | older / newer entry, any (with the completion menu open `CTRL-N` / `CTRL-P` step through it) |
+| `CTRL-R {register}` | `devhubVim.cmdline.insertRegister` | insert a register at the caret (`"` shows at the caret while it waits; `{ "register": "a" }` inserts `"a` without waiting) |
+| `CTRL-W` | `devhubVim.cmdline.deleteWord` | delete the word before the caret |
+| `CTRL-U` | `devhubVim.cmdline.deleteToStart` | delete everything before the caret |
+| `Tab` / `Shift+Tab` (`:` only) | `devhubVim.cmdline.complete` (`{ "direction": "previous" }`) | complete: one match goes straight into the line; more show VS Code's completion menu, and `Tab` / `Shift+Tab` step through it |
+| `CTRL-Y` (menu open) | `acceptSelectedSuggestion` | take the match and keep typing (into a directory: its files show next) |
+| `CTRL-B` / `CTRL-E` | `cursorHome` / `cursorEnd` | caret to the start / end |
+
+Tab completes, by what is at the caret: ex command names after the range
+(Vim's with their abbreviation and what they run, and your
+`devhub.vim.exCommands`); file names after `:e` `:sp` `:vs` `:new` `:vne`
+`:tabnew` `:tabe` `:sav` (the entries of the directory typed so far, relative
+to the workspace folder, `/` for absolute paths; a bare name also finds the
+workspace's files that match it); option names after `:set` (with `no` /
+`inv` once typed, and the current value); open editors after `:b`. In `/` and
+`?` Tab is typed.
+
+The line's context keys (set inside the line, so they hold while it has the
+focus): `devhubVim.cmdlineFocus`, `devhubVim.cmdlineKind` (`:` `/` `?`),
+`devhubVim.cmdlineEmpty`, `devhubVim.cmdlineAwaitingRegister`, and
+`devhubVim.mode == 'cmdline'`. For example, `CTRL-A` / `CTRL-E` as in a shell
+on Windows and Linux:
+
+```jsonc
+{ "key": "ctrl+a", "command": "cursorHome", "when": "devhubVim.cmdlineFocus" }
+```
+
+Keys that `:normal` and a register run with `@` feed (`:normal /foo<CR>`)
+go through the same keybindings, as if the line had the focus; a register
+that leaves the prompt open (`/foo` without `<CR>`) leaves it open in the
+line.
+
 ## Commands
 
 These are the names keybindings use; they and their arguments are stable.
@@ -194,7 +263,8 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.insert` | `{ "action": name, "char"?: c }` | insert-mode `CTRL-W CTRL-U CTRL-T CTRL-D CTRL-E CTRL-Y CTRL-A CTRL-O CTRL-R`, replace-mode `<BS>` |
 | `devhubVim.run` | `{ "command": id, "args"?: any, "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `K` … |
 | `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
-| `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` |
+| `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` (opens [the prompt](#the-prompt)) |
+| `devhubVim.cmdline.submit` `.cancel` `.historyPrev` `.historyNext` `.insertRegister` `.deleteWord` `.deleteToStart` `.complete` | see [the prompt](#the-prompt) | in the prompt line |
 | `devhubVim.search` | `{ "pattern": p, "backwards"?: bool }` | (what `/` runs) |
 | `devhubVim.ex` | `{ "command": "w" }` | `ZZ ZQ`; run any ex line from a binding |
 | `devhubVim.insertText` | `{ "text": t }` | (macro replay) |
@@ -306,7 +376,7 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | Key | Values |
 | --- | --- |
 | `devhubVim.active` | the focused text editor is driven by Vim (`devhubVim.attached` is the old name) |
-| `devhubVim.mode` | `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending`, `cmdline`, `nav` (after `CTRL-W`), or `''` |
+| `devhubVim.mode` | `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending`, `cmdline` (the prompt line has the focus), `nav` (after `CTRL-W`), or `''` |
 | `devhubVim.visual` | any visual mode |
 | `devhubVim.insert` | insert or replace mode |
 | `devhubVim.acceptsMotion` | a motion, operator, count or action may come next: normal, visual or operator-pending mode, and no key is being captured |
@@ -316,6 +386,10 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | `devhubVim.textObjectPending` | `inner` or `around` after `i` / `a`, or `''` |
 | `devhubVim.awaitingChar` | the next key is a character argument (`f t r " q @ m` …) |
 | `devhubVim.recording` | a macro is being recorded |
+| `devhubVim.cmdlineFocus` | the prompt line has the focus |
+| `devhubVim.cmdlineKind` | `:`, `/` or `?` in the prompt line, or `''` |
+| `devhubVim.cmdlineEmpty` | the prompt line is empty |
+| `devhubVim.cmdlineAwaitingRegister` | `CTRL-R` in the prompt line waits for a register name |
 
 The defaults use these `when` clauses (`common/vimKeymap.ts` `VIM_WHEN`); copy
 them for your own bindings:
@@ -397,8 +471,8 @@ editor, overridable and removable in `keybindings.json`, resolved by the
 same rules as any other binding (its `when` clause, then its weight). Vim's
 defaults get no other precedence. The keystrokes the Vim layer reads itself
 are only those no keybinding can express: the character after a command that
-waits for one (`f t r m " @ q` …, `CTRL-R` in insert mode), the text typed
-into the `:` / `/` prompt, what an IME commits, and — asked of the dispatcher
+waits for one (`f t r m " @ q` …, `CTRL-R` in insert mode and in the
+prompt line), what an IME commits, and — asked of the dispatcher
 first, only when no binding takes the key — a printable key while a command is
 half built, which cancels it as in Vim. While `CTRL-W` waits, its next key is
 resolved by the keybinding service before the focused widget sees it (as a
@@ -571,7 +645,8 @@ open) `:ene[w]` `:tabnew` `:tabe[dit]` `:tabn[ext]` `:tabp[revious]`
 `:sav[eas]` `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
 runs both (not after `:g` and `:normal`, which take `|` as an argument).
-`Tab` in the `:` prompt completes command names; `{count}:` starts with
+`Tab` in the `:` prompt completes command names, file names, `:set` options
+and `:b` buffers (see [The prompt](#the-prompt)); `{count}:` starts with
 `.,.+{count-1}`.
 
 Your own commands go in `settings.json`; they can run any command with any
@@ -690,11 +765,17 @@ On another layout, rebind the symbol keys by scan code in `keybindings.json`
 
 An IME that is on composes as usual in every mode; its keystrokes run no
 keybinding. What it commits outside insert mode is used only as a character
-argument (`f`, `t`, `r`, `"`, …) or `:`/`/` prompt text, and is dropped
+argument (`f`, `t`, `r`, `"`, …), and is dropped
 otherwise.
 
 ## Known gaps
 
+* The prompt line lies over the bottom row of the part below it while it is
+  open (the parts do not move), so a match 'incsearch' shows on that row is
+  under it. `CTRL-R CTRL-W` / `CTRL-R CTRL-A` (the word under the cursor),
+  `CTRL-V` (literal input), `CTRL-K` (digraphs), abbreviations and Tab
+  completion in `/` / `?` are not there; `:e {file}` still opens quick open
+  with the name rather than the file.
 * Not implemented: `U` (undo line), `!` / `=` with 'equalprg' (filter
   through a program), `g@` ('operatorfunc'), `gR` (virtual replace),
   `CTRL-V {char}` / `CTRL-K` (literal / digraph input), `gm` `g0` `g$` `g^`

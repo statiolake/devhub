@@ -6,6 +6,7 @@
 import assert from 'assert';
 import type { IVimHost, VimEdit, VimPos, VimRange } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
+import { VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
 import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
 import type { VimKeybinding } from '../../common/vimKeymap.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VIM_WHEN, evaluateWhen, jisKeys, keyForChar } from '../../common/vimKeymap.js';
@@ -195,6 +196,9 @@ class Vim {
 	readonly shared: VimSharedState;
 	bindings: VimKeybinding[];
 	private chord: string[] = [];
+	/** The prompt line, as the workbench shows it for each prompt the engine opens (vimCmdline.ts). */
+	prompt: VimCmdlineController | undefined;
+	private promptId = 0;
 
 	constructor(text: string, user: readonly UserBinding[] = [], shared = new VimSharedState()) {
 		this.host = new TestHost(text);
@@ -253,13 +257,34 @@ class Vim {
 		return found;
 	}
 
+	/** The open prompt's line, opened as the workbench opens it (once per prompt, with the text the engine starts it with). */
+	promptLine(): VimCmdlineController | undefined {
+		const state = this.vim.cmdlineState;
+		if (!state) {
+			this.prompt = undefined;
+			return undefined;
+		}
+		if (state.id !== this.promptId) {
+			this.promptId = state.id;
+			this.prompt = new VimCmdlineController(state.kind, new VimStringLine(state.text), this.vim.cmdlineTarget(), this.vim.cmdlineSources());
+		}
+		return this.prompt;
+	}
+
+	/** The prompt's text, or undefined when none is open. */
+	promptText(): string | undefined {
+		return this.promptLine()?.line.text;
+	}
+
 	/** One key: a character, or <Esc> <CR> <BS> <Tab> <C-x> <Left> <Right> <Up> <Down> ... */
 	press(k: string): void {
-		// the editor's own keydown: a waiting command's character, the prompt
-		if (this.vim.cmdlineOpen && !this.vim.awaitingChar) {
-			this.vim.cmdlineKey(k);
+		// the prompt line has the focus: its keybindings (CMDLINE_KEYBINDINGS), or typing
+		const prompt = this.promptLine();
+		if (prompt) {
+			prompt.feedKey(k);
 			return;
 		}
+		// the editor's own keydown: a waiting command's character
 		if (this.vim.awaitingChar) {
 			this.vim.awaitKey(k);
 			return;
@@ -1144,7 +1169,7 @@ suite('DevHub Vim ex commands', () => {
 		const shared = new VimSharedState();
 		shared.setUserExCommands({ Sort: { command: 'editor.action.sortLinesAscending', args: { range: '${range}' } } });
 		const v = new Vim('x\n|c\nb\na\ny', [], shared).keys('Vjj:');
-		assert.strictEqual(v.vim.status(), ':\'<,\'>');
+		assert.strictEqual(v.promptText(), '\'<,\'>');
 		v.keys('Sort<CR>');
 		assert.deepStrictEqual(v.host.commands[0].args, { range: { start: 2, end: 4 } });
 		assert.deepStrictEqual(v.host.commands[0].selection, { start: { line: 1, col: 0 }, end: { line: 3, col: 1 } });
@@ -1160,18 +1185,21 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(completeExName('w', ['w', 'wa', 'wq', 'x', 'Write']), ['w', 'wa', 'wq']);
 		const shared = new VimSharedState();
 		shared.setUserExCommands({ Sort: 'a', Split: 'b' });
+		// without the workbench's completion menu (fed keys, here) Tab puts the matches in the line one after another
 		const v = new Vim('|a', [], shared).keys(':S<Tab>');
-		assert.ok(v.vim.status().startsWith(':Sort'), v.vim.status());
+		assert.strictEqual(v.promptText(), 'Sort');
 		v.keys('<Tab>');
-		assert.ok(v.vim.status().startsWith(':Split'), v.vim.status());
-		v.keys('<CR>');
+		assert.strictEqual(v.promptText(), 'Split');
+		v.keys('<S-Tab>');
+		assert.strictEqual(v.promptText(), 'Sort');
+		v.keys('<Tab><CR>');
 		assert.deepStrictEqual(v.host.commands.map(c => c.command), ['b']);
 		const r = new Vim('|a', [], shared).keys(':');
 		for (const ch of '\'<,\'>So') {
 			r.press(ch);
 		}
 		r.press('<Tab>');
-		assert.ok(r.vim.status().startsWith(':\'<,\'>Sort'), r.vim.status());
+		assert.strictEqual(r.promptText(), '\'<,\'>Sort');
 	});
 });
 
@@ -1325,9 +1353,10 @@ suite('DevHub Vim IME commits outside insert mode', () => {
 		assert.strictEqual(r.host.state(), 'a|abc');
 	});
 
-	test('the / prompt takes all of it', () => {
+	test('the / prompt is an editor of its own: the engine leaves what an IME commits there to it', () => {
 		const r = run('|abc 日本語', '/');
-		r.vim.handleText('日本');
+		assert.strictEqual(r.vim.handleText('日本'), false);
+		r.v.promptLine()!.insertText('日本');
 		r.v.press('<CR>');
 		assert.strictEqual(r.host.state(), 'abc |日本語');
 	});
@@ -2211,7 +2240,8 @@ suite('Neovim ex commands', () => {
 
 	test('{count}: is .,.+N-1', () => {
 		const v = new Vim('|a\nb\nc\nd').keys('3:');
-		assert.strictEqual(v.vim.status(), ':.,.+2');
+		assert.strictEqual(v.promptText(), '.,.+2');
+		assert.deepStrictEqual(v.vim.cmdlineState && { kind: v.vim.cmdlineState.kind, text: v.vim.cmdlineState.text }, { kind: ':', text: '.,.+2' });
 		v.keys('d<CR>');
 		assert.strictEqual(v.state(), '|d');
 	});
