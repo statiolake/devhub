@@ -4161,6 +4161,735 @@ index 00000000..a7875183
 +		this._active = false;
 +	}
 +}
+diff --git a/src/vs/workbench/contrib/devhubVim/common/vimRegex.ts b/src/vs/workbench/contrib/devhubVim/common/vimRegex.ts
+new file mode 100644
+index 00000000..3e85c6c2
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/common/vimRegex.ts
+@@ -0,0 +1,475 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub native Vim: Vim regular expressions (`:help pattern`) translated to
++// JavaScript ones, and `:s` replacement strings (`:help sub-replace-special`).
++// Imports nothing.
++//
++// Supported: the four magic levels (\v \m \M \V, default 'magic'), \( \) \%(
++// \| \+ \= \? \{n,m} \{-n,m} \< \> \zs \ze, the character classes \s \S \d \D
++// \w \W \a \A \l \L \u \U \x \X \o \O \h \H \k \K \i \I \f \F \p \P and their
++// \_x forms, [] collections with [:alpha:]-style classes, ~ (the last
++// substitute string), \c \C, \1..\9, \n \t \e \r. Patterns are matched one
++// line at a time (a pattern that needs \n never matches); \%V, \%23l and the
++// other \% items other than \%( \%d \%x \%u are not supported (an error says so).
++
++export interface VimRegex {
++	/** JavaScript source, compiled with the `u` flag (plus `i` when `ignoreCase`). */
++	readonly source: string;
++	readonly ignoreCase: boolean;
++}
++
++export interface VimRegexOptions {
++	readonly ignorecase: boolean;
++	readonly smartcase: boolean;
++	/** The previous substitute string, for `~`. */
++	readonly lastReplacement?: string;
++}
++
++const KEYWORD = '[\\p{L}\\p{N}_]';
++const NOT_KEYWORD = '[^\\p{L}\\p{N}_]';
++
++const CLASSES: Record<string, string> = {
++	s: '[ \\t]', S: '[^ \\t]', d: '[0-9]', D: '[^0-9]', w: '[0-9A-Za-z_]', W: '[^0-9A-Za-z_]',
++	a: '[A-Za-z]', A: '[^A-Za-z]', l: '[a-z]', L: '[^a-z]', u: '[A-Z]', U: '[^A-Z]',
++	x: '[0-9A-Fa-f]', X: '[^0-9A-Fa-f]', o: '[0-7]', O: '[^0-7]', h: '[A-Za-z_]', H: '[^A-Za-z_]',
++	k: KEYWORD, K: NOT_KEYWORD, i: KEYWORD, I: NOT_KEYWORD,
++	f: '[\\p{L}\\p{N}_./\\\\~+,#$%-]', F: '[^\\p{L}\\p{N}_./\\\\~+,#$%-]', p: '[^\\p{Cc}]', P: '[^\\p{Cc}]',
++};
++
++const POSIX: Record<string, string> = {
++	alpha: 'A-Za-z', digit: '0-9', alnum: '0-9A-Za-z', lower: 'a-z', upper: 'A-Z', space: ' \\t\\n\\r\\f\\v',
++	blank: ' \\t', punct: '!-\\/:-@\\[-`{-~', xdigit: '0-9A-Fa-f', cntrl: '\\x00-\\x1f\\x7f', print: ' -~', graph: '!-~',
++	return: '\\r', tab: '\\t', escape: '\\x1b', backspace: '\\x08', ident: '0-9A-Za-z_', keyword: '\\p{L}\\p{N}_', fname: '\\p{L}\\p{N}_./\\\\-',
++};
++
++const JS_SYNTAX = /[\\^$.*+?()[\]{}|/]/;
++
++function lit(ch: string): string {
++	return JS_SYNTAX.test(ch) ? '\\' + ch : ch;
++}
++
++function litString(s: string): string {
++	return Array.from(s).map(lit).join('');
++}
++
++/** Characters with a meaning without a backslash, per magic level (the rest need one). */
++const UNESCAPED_SPECIAL: Record<string, string> = {
++	v: '^$.*[~()|+=?{@<>%&',
++	m: '^$.*[~',
++	M: '^$',
++	V: '',
++};
++
++export class VimRegexError extends Error { }
++
++/** Vim pattern -> JavaScript regex source; throws VimRegexError. */
++export function vimRegex(pattern: string, opts: VimRegexOptions): VimRegex {
++	let magic: 'v' | 'm' | 'M' | 'V' = 'm';
++	let ignoreCase: boolean | undefined;
++	let out = '';
++	let zs = -1;
++	let ze = -1;
++	let depth = 0;
++	const chars = Array.from(pattern);
++	/** Whether the output so far ends where `^` is a line start (pattern start, after `(`, `|`). */
++	const atBranchStart = () => out === '' || /(?:\(\?:|\(|\|)$/.test(out) && !/\\[(|]$/.test(out);
++	let i = 0;
++	const peekSpecial = (at: number): { ch: string; special: boolean; len: number } | undefined => {
++		if (at >= chars.length) {
++			return undefined;
++		}
++		if (chars[at] === '\\' && at + 1 < chars.length) {
++			const c = chars[at + 1];
++			// a backslash makes the unescaped-special ones literal, and the others special
++			return { ch: c, special: !UNESCAPED_SPECIAL[magic].includes(c), len: 2 };
++		}
++		return { ch: chars[at], special: UNESCAPED_SPECIAL[magic].includes(chars[at]), len: 1 };
++	};
++	while (i < chars.length) {
++		const t = peekSpecial(i)!;
++		i += t.len;
++		const { ch, special } = t;
++		if (!special) {
++			out += t.len === 2 && /[A-Za-z0-9]/.test(ch) ? escapeLetter(ch) : lit(ch);
++			continue;
++		}
++		switch (ch) {
++			case 'v': case 'm': case 'M': case 'V':
++				magic = ch;
++				continue;
++			case 'c':
++				ignoreCase = true;
++				continue;
++			case 'C':
++				ignoreCase = false;
++				continue;
++			case '^':
++				out += atBranchStart() ? '^' : '\\^';
++				continue;
++			case '$': {
++				const next = peekSpecial(i);
++				const end = !next || (next.special && (next.ch === '|' || next.ch === ')')) || (next.len === 2 && next.ch === 'n');
++				out += end ? '$' : '\\$';
++				continue;
++			}
++			case '.':
++				out += '.';
++				continue;
++			case '*':
++				out += atBranchStart() ? '\\*' : '*';
++				continue;
++			case '+':
++				out += '+';
++				continue;
++			case '=': case '?':
++				out += '?';
++				continue;
++			case '{': {
++				let body = '';
++				while (i < chars.length && chars[i] !== '}') {
++					if (chars[i] === '\\' && chars[i + 1] === '}') {
++						i++;
++						break;
++					}
++					body += chars[i++];
++				}
++				if (chars[i] === '}') {
++					i++;
++				}
++				const m = /^(-?)(\d*)(?:(,)(\d*))?$/.exec(body);
++				if (!m) {
++					throw new VimRegexError(`Syntax error in \\{${body}}`);
++				}
++				const lazy = m[1] === '-';
++				let q: string;
++				if (!m[3]) {
++					q = m[2] === '' ? '*' : `{${m[2]}}`;
++				} else {
++					q = `{${m[2] || '0'},${m[4]}}`;
++				}
++				out += q + (lazy ? '?' : '');
++				continue;
++			}
++			case '(':
++				out += '(';
++				depth++;
++				continue;
++			case ')':
++				if (depth === 0) {
++					throw new VimRegexError('Unmatched \\)');
++				}
++				depth--;
++				out += ')';
++				continue;
++			case '|':
++				out += '|';
++				continue;
++			case '&':
++				// \& is "and" in Vim (branch concat); approximate with a lookahead of what follows
++				throw new VimRegexError('\\& is not supported');
++			case '<':
++				out += `(?<!${KEYWORD})(?=${KEYWORD})`;
++				continue;
++			case '>':
++				out += `(?<=${KEYWORD})(?!${KEYWORD})`;
++				continue;
++			case '~':
++				out += litString(opts.lastReplacement ?? '');
++				continue;
++			case '[': {
++				const r = collection(chars, i);
++				if (!r) {
++					out += '\\[';
++					continue;
++				}
++				out += r.source;
++				i = r.next;
++				continue;
++			}
++			case '%': {
++				const n = chars[i];
++				if (n === '(') {
++					i++;
++					depth++;
++					out += '(?:';
++					continue;
++				}
++				if (n === 'd' || n === 'x' || n === 'u' || n === 'U' || n === 'o') {
++					i++;
++					const digits = n === 'd' ? /[0-9]/ : n === 'o' ? /[0-7]/ : /[0-9A-Fa-f]/;
++					let num = '';
++					while (i < chars.length && digits.test(chars[i])) {
++						num += chars[i++];
++					}
++					const code = parseInt(num, n === 'd' ? 10 : n === 'o' ? 8 : 16);
++					if (!num || !Number.isFinite(code)) {
++						throw new VimRegexError(`Invalid character code: \\%${n}${num}`);
++					}
++					out += lit(String.fromCodePoint(code));
++					continue;
++				}
++				throw new VimRegexError(`Not supported: \\%${n ?? ''}`);
++			}
++			case 'z': {
++				const n = chars[i++];
++				if (n === 's') {
++					zs = out.length;
++					continue;
++				}
++				if (n === 'e') {
++					ze = out.length;
++					continue;
++				}
++				throw new VimRegexError(`Not supported: \\z${n ?? ''}`);
++			}
++			case '_': {
++				const n = chars[i++];
++				if (n === '.') {
++					out += '[\\s\\S]';
++				} else if (n === '^' || n === '$') {
++					out += n;
++				} else if (n && CLASSES[n]) {
++					out += CLASSES[n];
++				} else {
++					throw new VimRegexError(`Not supported: \\_${n ?? ''}`);
++				}
++				continue;
++			}
++			case '@':
++				throw new VimRegexError('\\@ (look-around) is not supported');
++			default:
++				out += t.len === 2 ? escapeLetter(ch) : lit(ch);
++		}
++	}
++	if (depth !== 0) {
++		throw new VimRegexError('Unmatched \\(');
++	}
++	let source = out;
++	if (zs >= 0 || ze >= 0) {
++		const s = zs >= 0 ? zs : 0;
++		const e = ze >= 0 ? ze : out.length;
++		if (e < s) {
++			throw new VimRegexError('\\ze before \\zs');
++		}
++		source = (s > 0 ? `(?<=${out.slice(0, s)})` : '') + out.slice(s, e) + (e < out.length ? `(?=${out.slice(e)})` : '');
++	}
++	if (ignoreCase === undefined) {
++		ignoreCase = opts.ignorecase && !(opts.smartcase && hasUpper(pattern));
++	}
++	try {
++		new RegExp(source, 'u' + (ignoreCase ? 'i' : ''));
++	} catch (e) {
++		throw new VimRegexError(`Invalid pattern: ${pattern}`);
++	}
++	return { source, ignoreCase };
++}
++
++/** 'smartcase': an upper-case letter that is not part of an item like \S. */
++function hasUpper(pattern: string): boolean {
++	const chars = Array.from(pattern);
++	for (let i = 0; i < chars.length; i++) {
++		if (chars[i] === '\\') {
++			i++;
++			continue;
++		}
++		if (/\p{Lu}/u.test(chars[i])) {
++			return true;
++		}
++	}
++	return false;
++}
++
++function escapeLetter(ch: string): string {
++	if (CLASSES[ch]) {
++		return CLASSES[ch];
++	}
++	switch (ch) {
++		case 'n': return '\\n';
++		case 't': return '\\t';
++		case 'e': return '\\x1b';
++		case 'r': return '\\r';
++		case 'b': return '\\x08';
++	}
++	if (/[1-9]/.test(ch)) {
++		return '\\' + ch;
++	}
++	return lit(ch);
++}
++
++/** `[...]` starting after the `[`; undefined when it has no closing `]` (then `[` is literal). */
++function collection(chars: string[], start: number): { source: string; next: number } | undefined {
++	let i = start;
++	let body = '';
++	let negate = false;
++	if (chars[i] === '^') {
++		negate = true;
++		i++;
++	}
++	if (chars[i] === ']') {
++		body += '\\]';
++		i++;
++	}
++	while (i < chars.length && chars[i] !== ']') {
++		const c = chars[i];
++		if (c === '[' && chars[i + 1] === ':') {
++			const close = chars.indexOf(':', i + 2);
++			if (close > 0 && chars[close + 1] === ']') {
++				const name = chars.slice(i + 2, close).join('');
++				if (POSIX[name] !== undefined) {
++					body += POSIX[name];
++					i = close + 2;
++					continue;
++				}
++			}
++			body += '\\[';
++			i++;
++			continue;
++		}
++		if (c === '\\' && i + 1 < chars.length) {
++			const n = chars[i + 1];
++			i += 2;
++			switch (n) {
++				case 'e': body += '\\x1b'; break;
++				case 't': body += '\\t'; break;
++				case 'r': body += '\\r'; break;
++				case 'n': body += '\\n'; break;
++				case '\\': body += '\\\\'; break;
++				case ']': body += '\\]'; break;
++				case '^': body += '\\^'; break;
++				case '-': body += '\\-'; break;
++				case 'd': {
++					let num = '';
++					while (/[0-9]/.test(chars[i] ?? '')) {
++						num += chars[i++];
++					}
++					body += lit(String.fromCodePoint(Number(num)));
++					break;
++				}
++				default: body += '\\\\' + (/[A-Za-z0-9]/.test(n) ? n : '\\' + n);
++			}
++			continue;
++		}
++		body += c === '[' || c === '/' ? '\\' + c : c;
++		i++;
++	}
++	if (i >= chars.length) {
++		return undefined;
++	}
++	return { source: `[${negate ? '^' : ''}${body}]`, next: i + 1 };
++}
++
++/** A JavaScript RegExp for a translated pattern (global, so `lastIndex` works). */
++export function compileVimRegex(r: VimRegex): RegExp {
++	return new RegExp(r.source, 'gu' + (r.ignoreCase ? 'i' : ''));
++}
++
++/**
++ * All matches in one line, as [start, end) columns (UTF-16). An empty match
++ * advances by one character, as Vim does.
++ */
++export function lineMatches(re: RegExp, text: string, limit = Number.MAX_SAFE_INTEGER): [number, number][] {
++	const out: [number, number][] = [];
++	re.lastIndex = 0;
++	while (out.length < limit) {
++		const m = re.exec(text);
++		if (!m) {
++			break;
++		}
++		out.push([m.index, m.index + m[0].length]);
++		if (m[0].length === 0) {
++			if (re.lastIndex >= text.length) {
++				break;
++			}
++			re.lastIndex += text.codePointAt(re.lastIndex)! > 0xffff ? 2 : 1;
++		}
++	}
++	return out;
++}
++
++// ---- :s replacement strings ------------------------------------------------
++
++type CaseMode = '' | 'u' | 'l' | 'U' | 'L';
++
++/**
++ * Expand a `:s` replacement (`:help sub-replace-special`, 'magic'): & \0 \1..\9
++ * ~ \u \l \U \L \e \E \r \n \t \\ \&. `\r` is a line break, `\n` a NUL, as
++ * in Vim. Returns the text for one match.
++ */
++export function expandReplacement(rep: string, match: RegExpExecArray, lastReplacement: string): string {
++	let out = '';
++	let one: CaseMode = '';
++	let all: CaseMode = '';
++	const add = (s: string) => {
++		for (const ch of s) {
++			let c = ch;
++			if (all === 'U') {
++				c = c.toUpperCase();
++			} else if (all === 'L') {
++				c = c.toLowerCase();
++			}
++			if (one === 'u') {
++				c = c.toUpperCase();
++				one = '';
++			} else if (one === 'l') {
++				c = c.toLowerCase();
++				one = '';
++			}
++			out += c;
++		}
++	};
++	const chars = Array.from(rep);
++	for (let i = 0; i < chars.length; i++) {
++		const c = chars[i];
++		if (c === '&') {
++			add(match[0]);
++			continue;
++		}
++		if (c === '~') {
++			add(lastReplacement);
++			continue;
++		}
++		if (c !== '\\' || i + 1 >= chars.length) {
++			add(c);
++			continue;
++		}
++		const n = chars[++i];
++		if (/[0-9]/.test(n)) {
++			add(match[Number(n)] ?? '');
++			continue;
++		}
++		switch (n) {
++			case 'u': case 'l': one = n; break;
++			case 'U': case 'L': all = n; break;
++			case 'e': case 'E': all = ''; one = ''; break;
++			case 'r': out += '\n'; break;
++			case 'n': out += '\0'; break;
++			case 't': out += '\t'; break;
++			default: add(n);
++		}
++	}
++	return out;
++}
++
++/** The text of a replacement string with `~` expanded (what the next `~` stands for). */
++export function expandTilde(rep: string, lastReplacement: string): string {
++	let out = '';
++	const chars = Array.from(rep);
++	for (let i = 0; i < chars.length; i++) {
++		if (chars[i] === '\\' && i + 1 < chars.length) {
++			out += chars[i] + chars[++i];
++		} else if (chars[i] === '~') {
++			out += lastReplacement;
++		} else {
++			out += chars[i];
++		}
++	}
++	return out;
++}
++
++/** Literal text as a very-nomagic Vim pattern (`\V` + escaped backslashes and `/`). */
++export function literalVimPattern(text: string, delimiter = '/'): string {
++	return '\\V' + text.replace(/\\/g, '\\\\').split(delimiter).join('\\' + delimiter).replace(/\n/g, '\\n');
++}
+diff --git a/src/vs/workbench/contrib/devhubVim/common/vimText.ts b/src/vs/workbench/contrib/devhubVim/common/vimText.ts
+new file mode 100644
+index 00000000..5737093c
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/common/vimText.ts
+@@ -0,0 +1,242 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub native Vim: text helpers with no editor state - character classes,
++// screen columns, CTRL-A / CTRL-X on numbers, g? (rot13), gw/gq text
++// formatting. Imports nothing.
++
++export function isWordChar(ch: string): boolean {
++	return /[\p{L}\p{N}_]/u.test(ch);
++}
++
++/** 0 blank (incl. line break), 1 punctuation, 2 keyword; `big` folds 1 into 2. */
++export function charClass(ch: string, big: boolean): number {
++	if (ch === '' || ch === '\n' || ch === ' ' || ch === '\t') {
++		return 0;
++	}
++	if (big) {
++		return 2;
++	}
++	return isWordChar(ch) ? 2 : 1;
++}
++
++export function isBlank(ch: string): boolean {
++	return ch === ' ' || ch === '\t';
++}
++
++/** The screen column where character `col` of `text` starts (tabs expand to `tabSize`). */
++export function vcolOf(text: string, col: number, tabSize: number): number {
++	let v = 0;
++	for (let i = 0; i < col && i < text.length; i++) {
++		v = text[i] === '\t' ? v + tabSize - (v % tabSize) : v + 1;
++	}
++	return v + Math.max(0, col - text.length);
++}
++
++/** Width on screen of the character at `col` (1 past the end). */
++export function charWidth(text: string, col: number, tabSize: number): number {
++	if (col >= text.length) {
++		return 1;
++	}
++	if (text[col] === '\t') {
++		const v = vcolOf(text, col, tabSize);
++		return tabSize - (v % tabSize);
++	}
++	return 1;
++}
++
++/** The character covering screen column `vcol`, or `text.length` + the columns past the end. */
++export function colOfVcol(text: string, vcol: number, tabSize: number): { col: number; past: number } {
++	let v = 0;
++	for (let i = 0; i < text.length; i++) {
++		const w = text[i] === '\t' ? tabSize - (v % tabSize) : 1;
++		if (vcol < v + w) {
++			return { col: i, past: 0 };
++		}
++		v += w;
++	}
++	return { col: text.length, past: vcol - v };
++}
++
++export function toggleCase(s: string): string {
++	let out = '';
++	for (const ch of s) {
++		const up = ch.toUpperCase();
++		out += ch === up ? ch.toLowerCase() : up;
++	}
++	return out;
++}
++
++export function rot13(s: string): string {
++	return s.replace(/[A-Za-z]/g, c => {
++		const base = c <= 'Z' ? 65 : 97;
++		return String.fromCharCode((c.charCodeAt(0) - base + 13) % 26 + base);
++	});
++}
++
++// ---- CTRL-A / CTRL-X ---------------------------------------------------------
++
++export interface NumberEdit {
++	/** Replaced columns [start, end). */
++	readonly start: number;
++	readonly end: number;
++	readonly text: string;
++	/** Where the cursor goes: the last character of the new number. */
++	readonly cursor: number;
++}
++
++/**
++ * Vim's CTRL-A on `text` from `col`: the number under or after the cursor
++ * ('nrformats' "bin,hex", Neovim's default: 0x / 0b prefixes, decimal with a
++ * leading `-`), plus `delta`. `fromStart` (visual mode) looks from `col` but
++ * never backwards past it. Leading zeros keep the width; hex keeps its case.
++ */
++export function addToNumber(text: string, col: number, delta: number, nrformats: readonly string[], fromStart = false): NumberEdit | undefined {
++	const hex = nrformats.includes('hex');
++	const bin = nrformats.includes('bin');
++	const alpha = nrformats.includes('alpha');
++	// A hex or binary literal containing (or right after) the cursor.
++	const lit = (prefixes: string, digits: RegExp, enabled: boolean): { start: number; end: number } | undefined => {
++		if (!enabled) {
++			return undefined;
++		}
++		const re = new RegExp(`0[${prefixes}]${digits.source}+`, 'g');
++		let m: RegExpExecArray | null;
++		while ((m = re.exec(text))) {
++			const s = m.index;
++			const e = s + m[0].length;
++			if (e > col && (fromStart ? s >= col : true)) {
++				if (s <= col || !/[0-9]/.test(text.slice(col, s))) {
++					return { start: s, end: e };
++				}
++				return undefined;
++			}
++		}
++		return undefined;
++	};
++	// the first digit at or after the cursor (going back to the start of the number under it)
++	let d = col;
++	if (!fromStart) {
++		while (d > 0 && /[0-9]/.test(text[d - 1] ?? '') && /[0-9]/.test(text[d] ?? '')) {
++			d--;
++		}
++	}
++	while (d < text.length && !/[0-9]/.test(text[d])) {
++		d++;
++	}
++	const hexLit = lit('xX', /[0-9A-Fa-f]/, hex);
++	const binLit = lit('bB', /[01]/, bin);
++	const radixLit = [hexLit && { ...hexLit, radix: 16 }, binLit && { ...binLit, radix: 2 }]
++		.filter((x): x is { start: number; end: number; radix: number } => !!x)
++		.sort((a, b) => a.start - b.start)[0];
++	if (alpha) {
++		let a = col;
++		while (a < text.length && !/[A-Za-z0-9]/.test(text[a])) {
++			a++;
++		}
++		if (a < text.length && /[A-Za-z]/.test(text[a]) && (d >= text.length || a < d) && (!radixLit || a < radixLit.start)) {
++			const c = text.charCodeAt(a);
++			const base = c >= 97 ? 97 : 65;
++			const n = Math.max(0, Math.min(25, c - base + delta));
++			return { start: a, end: a + 1, text: String.fromCharCode(base + n), cursor: a };
++		}
++	}
++	if (radixLit && (d >= text.length || radixLit.start <= d)) {
++		const { start, end, radix } = radixLit;
++		const digits = text.slice(start + 2, end);
++		let value = BigInt((radix === 16 ? '0x' : '0b') + digits);
++		const width = BigInt(radix === 16 ? 4 * digits.length : digits.length);
++		const mod = 1n << (width > 64n ? width : 64n);
++		value = ((value + BigInt(delta)) % mod + mod) % mod;
++		let s = value.toString(radix);
++		if (radix === 16 && /[A-F]/.test(digits) && !/[a-f]/.test(digits)) {
++			s = s.toUpperCase();
++		}
++		if (s.length < digits.length) {
++			s = '0'.repeat(digits.length - s.length) + s;
++		}
++		const out = text.slice(start, start + 2) + s;
++		return { start, end, text: out, cursor: start + out.length - 1 };
++	}
++	if (d >= text.length) {
++		return undefined;
++	}
++	let e = d;
++	while (e < text.length && /[0-9]/.test(text[e])) {
++		e++;
++	}
++	let start = d;
++	let negative = false;
++	if (d > 0 && text[d - 1] === '-' && (!fromStart || d - 1 >= col)) {
++		negative = true;
++		start = d - 1;
++	}
++	const digits = text.slice(d, e);
++	let value = BigInt(digits) * (negative ? -1n : 1n) + BigInt(delta);
++	const neg = value < 0n;
++	if (neg) {
++		value = -value;
++	}
++	let s = value.toString();
++	if (digits.length > 1 && digits[0] === '0' && s.length < digits.length) {
++		s = '0'.repeat(digits.length - s.length) + s;
++	}
++	const out = (neg ? '-' : '') + s;
++	return { start, end: e, text: out, cursor: start + out.length - 1 };
++}
++
++// ---- gq / gw --------------------------------------------------------------
++
++/**
++ * Vim's internal formatter (gw, and gq without a formatter): each paragraph
++ * (lines separated by blank lines) is joined and re-broken at `width`,
++ * keeping the first line's indent and a common comment leader (`leader`,
++ * e.g. "//"), as with 'formatoptions' "tcq".
++ */
++export function formatLines(lines: readonly string[], width: number, leader: string | undefined, tabSize: number): string[] {
++	const out: string[] = [];
++	let para: string[] = [];
++	const flush = () => {
++		if (!para.length) {
++			return;
++		}
++		const first = para[0];
++		let prefix = /^\s*/.exec(first)![0];
++		let strip = (l: string) => l.trim();
++		if (leader) {
++			const esc = leader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++			const re = new RegExp(`^(\\s*${esc}\\s?)`);
++			if (para.every(l => re.test(l))) {
++				const m = re.exec(first)!;
++				prefix = m[1].endsWith(' ') ? m[1] : m[1] + ' ';
++				strip = l => l.replace(new RegExp(`^\\s*${esc}`), '').trim();
++			}
++		}
++		const words = para.map(strip).join(' ').split(/\s+/).filter(w => w.length);
++		const prefixWidth = vcolOf(prefix, prefix.length, tabSize);
++		let line = '';
++		for (const w of words) {
++			if (line && prefixWidth + line.length + 1 + w.length > width) {
++				out.push(prefix + line);
++				line = w;
++			} else {
++				line = line ? line + ' ' + w : w;
++			}
++		}
++		out.push((prefix + line).replace(/\s+$/, ''));
++		para = [];
++	};
++	for (const l of lines) {
++		const body = leader ? l.replace(new RegExp(`^\\s*${leader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '') : l;
++		if (!body.trim()) {
++			flush();
++			out.push(l);
++		} else {
++			para.push(l);
++		}
++	}
++	flush();
++	return out;
++}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
 index 00000000..e6e81aa2
@@ -5254,6 +5983,129 @@ index 00000000..e6e81aa2
 +	test('US key notation for characters', () => {
 +		assert.deepStrictEqual(['$', 'G', ':', '"', '{', 'a', ' ', '0', ')', '~'].map(usKeyForChar),
 +			['shift+4', 'shift+g', 'shift+;', 'shift+\'', 'shift+[', 'a', 'space', '0', 'shift+0', 'shift+`']);
++	});
++});
+diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimText.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimText.test.ts
+new file mode 100644
+index 00000000..af63e6cf
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/test/common/vimText.test.ts
+@@ -0,0 +1,117 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import assert from 'assert';
++import { VimRegexError, compileVimRegex, expandReplacement, lineMatches, literalVimPattern, vimRegex } from '../../common/vimRegex.js';
++import { addToNumber, colOfVcol, formatLines, rot13, vcolOf } from '../../common/vimText.js';
++
++const OPTS = { ignorecase: false, smartcase: false };
++
++/** [start, end] of the matches of a Vim pattern in `text`. */
++function matches(pattern: string, text: string, opts: { ignorecase: boolean; smartcase: boolean; lastReplacement?: string } = OPTS): [number, number][] {
++	return lineMatches(compileVimRegex(vimRegex(pattern, opts)), text);
++}
++
++function sub(pattern: string, rep: string, text: string, last = ''): string {
++	const re = new RegExp(vimRegex(pattern, OPTS).source, 'u');
++	const m = re.exec(text)!;
++	return text.slice(0, m.index) + expandReplacement(rep, m, last) + text.slice(m.index + m[0].length);
++}
++
++suite('DevHub Vim regular expressions', () => {
++
++	test('magic: \\( \\| \\+ \\= \\{n,m} \\< \\> and literal + ? ( )', () => {
++		assert.deepStrictEqual(matches('a\\+', 'baaab'), [[1, 4]]);
++		assert.deepStrictEqual(matches('a+', 'a+aa'), [[0, 2]]);
++		assert.deepStrictEqual(matches('colou\\=r', 'color colour'), [[0, 5], [6, 12]]);
++		assert.deepStrictEqual(matches('\\(ab\\)\\{2}', 'ababab'), [[0, 4]]);
++		assert.deepStrictEqual(matches('a\\{-1,}', 'aaa'), [[0, 1], [1, 2], [2, 3]]);
++		assert.deepStrictEqual(matches('\\<is\\>', 'this is'), [[5, 7]]);
++		assert.deepStrictEqual(matches('cat\\|dog', 'dog cat'), [[0, 3], [4, 7]]);
++		assert.deepStrictEqual(matches('f(x)', 'f(x)'), [[0, 4]]);
++		assert.deepStrictEqual(matches('a.c', 'abc a.c'), [[0, 3], [4, 7]]);
++		assert.deepStrictEqual(matches('a\\.c', 'abc a.c'), [[4, 7]]);
++		assert.deepStrictEqual(matches('^\\s*x', '  x x'), [[0, 3]]);
++		assert.deepStrictEqual(matches('x$', 'x x'), [[2, 3]]);
++		assert.deepStrictEqual(matches('a^b', 'a^b'), [[0, 3]]);
++		assert.deepStrictEqual(matches('*a', '*a'), [[0, 2]]);
++	});
++
++	test('\\v very magic, \\V very nomagic, \\M nomagic', () => {
++		assert.deepStrictEqual(matches('\\v(a|b)+', 'xabx'), [[1, 3]]);
++		assert.deepStrictEqual(matches('\\v<x>', 'x xx'), [[0, 1]]);
++		assert.deepStrictEqual(matches('\\Va.b*', 'axb a.b*'), [[4, 8]]);
++		assert.deepStrictEqual(matches('\\Va\\.b', 'axb'), [[0, 3]]);
++		assert.deepStrictEqual(matches('\\Ma*', 'aa*'), [[1, 3]]);
++	});
++
++	test('classes, collections, \\zs \\ze, ~, case', () => {
++		assert.deepStrictEqual(matches('\\d\\+', 'a12b3'), [[1, 3], [4, 5]]);
++		assert.deepStrictEqual(matches('\\u\\l', 'aBcD'), [[1, 3]]);
++		assert.deepStrictEqual(matches('[[:digit:]x]\\+', 'a1x2b'), [[1, 4]]);
++		assert.deepStrictEqual(matches('[^a-c]', 'abcd'), [[3, 4]]);
++		assert.deepStrictEqual(matches('[]]', 'a]'), [[1, 2]]);
++		assert.deepStrictEqual(matches('foo\\zsbar', 'foobar bar'), [[3, 6]]);
++		assert.deepStrictEqual(matches('foo\\zebar', 'foobar foo'), [[0, 3]]);
++		assert.deepStrictEqual(matches('x~', 'xab', { ...OPTS, lastReplacement: 'ab' }), [[0, 3]]);
++		assert.deepStrictEqual(matches('foo\\c', 'FOO'), [[0, 3]]);
++		assert.deepStrictEqual(matches('Foo', 'foo Foo', { ignorecase: true, smartcase: true }), [[4, 7]]);
++		assert.deepStrictEqual(matches('foo', 'foo Foo', { ignorecase: true, smartcase: true }), [[0, 3], [4, 7]]);
++		assert.deepStrictEqual(matches('\\Sx', 'ax', { ignorecase: true, smartcase: true }), [[0, 2]]);
++		assert.deepStrictEqual(matches('\\%d65', 'zA'), [[1, 2]]);
++		assert.throws(() => vimRegex('a\\)', OPTS), VimRegexError);
++		assert.throws(() => vimRegex('\\%V', OPTS), VimRegexError);
++	});
++
++	test('literal patterns (* on a word, v_*)', () => {
++		const p = literalVimPattern('a.b/c\\d');
++		assert.deepStrictEqual(matches(p, 'xa.b/c\\dx'), [[1, 8]]);
++	});
++
++	test(':s replacements: & \\0 \\1 ~ \\u \\U \\L \\e \\r \\n', () => {
++		assert.strictEqual(sub('b', '<&>', 'abc'), 'a<b>c');
++		assert.strictEqual(sub('b', '\\&', 'abc'), 'a&c');
++		assert.strictEqual(sub('\\(a\\)\\(b\\)', '\\2\\1\\0', 'ab'), 'baab');
++		assert.strictEqual(sub('b', 'x~y', 'abc', 'Q'), 'axQyc');
++		assert.strictEqual(sub('\\w\\+', '\\u&', 'foo'), 'Foo');
++		assert.strictEqual(sub('\\w\\+', '\\U&\\Ex', 'foo'), 'FOOx');
++		assert.strictEqual(sub('\\w\\+', '\\L\\u&', 'FOO'), 'Foo');
++		assert.strictEqual(sub(',', '\\r', 'a,b'), 'a\nb');
++		assert.strictEqual(sub(',', '\\n', 'a,b'), 'a\0b');
++	});
++});
++
++suite('DevHub Vim text helpers', () => {
++
++	test('screen columns with tabs', () => {
++		assert.strictEqual(vcolOf('\tab', 1, 4), 4);
++		assert.strictEqual(vcolOf('a\tb', 2, 4), 4);
++		assert.deepStrictEqual(colOfVcol('\tab', 2, 4), { col: 0, past: 0 });
++		assert.deepStrictEqual(colOfVcol('\tab', 5, 4), { col: 2, past: 0 });
++		assert.deepStrictEqual(colOfVcol('ab', 5, 4), { col: 2, past: 3 });
++	});
++
++	test('CTRL-A on numbers', () => {
++		const nf = ['bin', 'hex'];
++		assert.deepStrictEqual(addToNumber('x 9 y', 0, 1, nf), { start: 2, end: 3, text: '10', cursor: 3 });
++		assert.deepStrictEqual(addToNumber('-1', 0, 1, nf), { start: 0, end: 2, text: '0', cursor: 0 });
++		assert.deepStrictEqual(addToNumber('0xff', 1, 1, nf), { start: 0, end: 4, text: '0x100', cursor: 4 });
++		assert.deepStrictEqual(addToNumber('0x0', 0, -1, nf), { start: 0, end: 3, text: '0xffffffffffffffff', cursor: 17 });
++		assert.deepStrictEqual(addToNumber('0x10', 0, 1, []), { start: 0, end: 1, text: '1', cursor: 0 });
++		assert.deepStrictEqual(addToNumber('0b11', 0, 1, nf), { start: 0, end: 4, text: '0b100', cursor: 4 });
++		assert.deepStrictEqual(addToNumber('009', 0, 1, nf), { start: 0, end: 3, text: '010', cursor: 2 });
++		assert.deepStrictEqual(addToNumber('a12b', 2, 1, nf), { start: 1, end: 3, text: '13', cursor: 2 });
++		assert.deepStrictEqual(addToNumber('b', 0, 1, ['alpha']), { start: 0, end: 1, text: 'c', cursor: 0 });
++		assert.strictEqual(addToNumber('abc', 0, 1, nf), undefined);
++	});
++
++	test('rot13 and the internal formatter', () => {
++		assert.strictEqual(rot13('Hello, World'), 'Uryyb, Jbeyq');
++		assert.deepStrictEqual(formatLines(['a b c d e f'], 5, undefined, 4), ['a b c', 'd e f']);
++		assert.deepStrictEqual(formatLines(['  a b', 'c d e', '', 'x'], 7, undefined, 4), ['  a b c', '  d e', '', 'x']);
++		assert.deepStrictEqual(formatLines(['# a b c', '# d'], 7, '#', 4), ['# a b c', '# d']);
++		assert.deepStrictEqual(formatLines(['# a b c d'], 7, '#', 4), ['# a b c', '# d']);
 +	});
 +});
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
