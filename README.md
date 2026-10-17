@@ -164,6 +164,12 @@ defaults are in effect and cannot be uninstalled. It carries the workbench
 defaults and the `devhub.installCli` palette command, and nothing else: the
 websocket protocol it once spoke to a web-era editor server is gone.
 
+GitHub Copilot is built in too, but only completions and Next Edit Suggestions.
+Chat stays off. [`extensions/devhub-copilot`](extensions/devhub-copilot) runs
+the Copilot language server and hands its suggestions to the editor's own
+inline suggestion UI, so NES looks the way it does with the official extension.
+Its README explains what that takes.
+
 ## Lifecycle
 
 Window Close leaves the process, the agents and the tmux sessions running.

@@ -149,20 +149,17 @@ EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
 	# definition's `forwardPorts`, and its `portsAttributes` applied to the
 	# ports VS Code forwards by itself (`src/ports.ts`).
 	"devhub.devhub-remote": ["resolvers", "tunnels", "portsAttributes"],
-	# Copilot LSP (`statiolake.vscode-copilot-lsp`), the user-installed
-	# extension that gives DevHub Copilot completions without Copilot Chat.
+	# DevHub's own Copilot, extensions/devhub-copilot: completions and Next Edit
+	# Suggestions from the Copilot language server, no chat.
 	# `inlineCompletionsAdditions` is what lets an InlineCompletionItem carry
-	# `isInlineEdit` / `showInlineEditMenu` / `jumpToPosition`, and so be drawn
-	# by the editor's own Next Edit Suggestions UI (gutter indicator,
-	# side-by-side, word replacement, jump). Without the grant the extension
-	# host drops those fields without a word
-	# (`extHostLanguageFeatures.ts` `InlineCompletionAdapter`) and the item
-	# is plain ghost text, so a non-prefix edit is never shown. Nothing else
-	# in the editor gates that UI: not the extension id, not `isBuiltin`, not
-	# `chat.disableAIFeatures`. The extension does not have to declare the
-	# proposal itself — product.json's list replaces its own — so it stays
-	# publishable and can probe for the grant at runtime.
-	"statiolake.vscode-copilot-lsp": ["inlineCompletionsAdditions"],
+	# `isInlineEdit` and `showInlineEditMenu`, and so be drawn by the editor's
+	# own inline edit UI (gutter indicator, side-by-side, word replacement,
+	# jump). Without the grant the extension host drops those fields without a
+	# word (`extHostLanguageFeatures.ts`, `InlineCompletionAdapter`), every next
+	# edit becomes ghost text, and ghost text that does not continue at the
+	# cursor is never shown. Nothing else in the editor gates that UI: not the
+	# extension id, not `isBuiltin`, not `chat.disableAIFeatures`.
+	"devhub.devhub-copilot": ["inlineCompletionsAdditions"],
 }
 
 

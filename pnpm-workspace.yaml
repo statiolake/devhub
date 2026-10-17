@@ -13,3 +13,15 @@ packages:
 allowBuilds:
   electron: false
   esbuild: true
+
+# The Copilot language server's single-file executables, ~100 MB per platform.
+# extensions/devhub-copilot runs the package's JavaScript distribution with the
+# extension host's own Electron instead (src/serverLauncher.ts), so these are
+# never read; without this every install downloads this machine's one.
+ignoredOptionalDependencies:
+  - "@github/copilot-language-server-darwin-arm64"
+  - "@github/copilot-language-server-darwin-x64"
+  - "@github/copilot-language-server-linux-arm64"
+  - "@github/copilot-language-server-linux-x64"
+  - "@github/copilot-language-server-win32-arm64"
+  - "@github/copilot-language-server-win32-x64"

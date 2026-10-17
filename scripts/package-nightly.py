@@ -144,6 +144,7 @@ VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
 REMOTE_DIR = REPO_ROOT / "extensions" / "devhub-remote"
+COPILOT_DIR = REPO_ROOT / "extensions" / "devhub-copilot"
 
 # Everything DevHub says about itself that VS Code reads out of product.json —
 # its name, its data folders, its extension gallery, and which build this is —
@@ -241,6 +242,7 @@ def check_compiled_output_is_current() -> None:
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "src", BRIDGE_DIR / "dist", "pnpm --filter @devhub/bridge build"),
 		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter devhub-remote build"),
+		(COPILOT_DIR / "src", COPILOT_DIR / "dist", "pnpm --filter devhub-copilot build"),
 	):
 		if not source.is_dir() or not built.is_dir():
 			continue
@@ -271,6 +273,12 @@ def check_inputs() -> None:
 		# answers. It is a built-in for the same reason the bridge is: a person
 		# cannot be without it.
 		(REMOTE_DIR / "dist" / "extension.js", "pnpm --filter devhub-remote build"),
+		# Copilot, and the language server it starts: the extension's build
+		# stages it in `server/`, because no extension's node_modules ships.
+		# Without either the app opens with no Copilot and says so only in the
+		# extension host log.
+		(COPILOT_DIR / "dist" / "extension.js", "pnpm --filter devhub-copilot build"),
+		(COPILOT_DIR / "server" / "language-server.js", "pnpm --filter devhub-copilot build"),
 	]
 	for path, command in required:
 		if not path.exists():
@@ -865,7 +873,11 @@ def assemble_app_directory(
 
 	step("built-in extensions")
 	copy_tree(staged_extensions, code_oss / "extensions")
-	for source, name in ((BRIDGE_DIR, "devhub-bridge"), (REMOTE_DIR, "devhub-remote")):
+	for source, name in (
+		(BRIDGE_DIR, "devhub-bridge"),
+		(REMOTE_DIR, "devhub-remote"),
+		(COPILOT_DIR, "devhub-copilot"),
+	):
 		copy_tree(
 			source,
 			code_oss / "extensions" / name,

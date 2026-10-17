@@ -1,0 +1,118 @@
+{
+  "name": "devhub-copilot",
+  "displayName": "DevHub Copilot",
+  "description": "GitHub Copilot code completions and Next Edit Suggestions, drawn by the editor's own inline suggestion UI, from the Copilot language server. No chat.",
+  "version": "0.1.0",
+  "publisher": "devhub",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "api": "none",
+  "enabledApiProposals": [
+    "inlineCompletionsAdditions"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "devhub.copilot.signIn",
+        "title": "Sign In",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.signOut",
+        "title": "Sign Out",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.restart",
+        "title": "Restart Language Server",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.toggle",
+        "title": "Toggle Completions",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.showMenu",
+        "title": "Show Status",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.showOutput",
+        "title": "Show Output",
+        "category": "Copilot"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot",
+      "properties": {
+        "devhub.copilot.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the Copilot language server and offer its suggestions."
+        },
+        "devhub.copilot.completions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Copilot code completions as ghost text at the cursor."
+        },
+        "devhub.copilot.nextEditSuggestions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Copilot Next Edit Suggestions: edits anywhere near the cursor, shown with the editor's inline edit UI. How they are drawn is set by the editor.inlineSuggest.edits.* settings."
+        },
+        "devhub.copilot.nextEditSuggestions.extendedRange": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let Next Edit Suggestions propose edits farther from the cursor."
+        },
+        "devhub.copilot.nextEditSuggestions.renameSymbolSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let Next Edit Suggestions follow a local rename to the symbol's other uses."
+        },
+        "devhub.copilot.debug.logging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log the language server protocol traffic, with secret-like values redacted, to the Copilot output."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "fmt:check": "prettier --check src scripts test package.json tsconfig.json README.md",
+    "fmt": "prettier --write src scripts test package.json tsconfig.json README.md",
+    "lint": "node scripts/check.mjs",
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "test": "node scripts/test.mjs",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run lint"
+  },
+  "dependencies": {
+    "@github/copilot-language-server": "1.498.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/vscode": "1.109.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "esbuild": "0.25.12",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2"
+  }
+}

@@ -388,6 +388,9 @@ step "built-in extensions"
 # always was: the staging script below refuses a set with either missing.
 (cd "$REPO_ROOT/extensions/devhub-bridge" && node scripts/build.mjs)
 (cd "$REPO_ROOT/extensions/devhub-remote" && node scripts/build.mjs)
+# The staging script takes a set without Copilot, but a provisioned checkout
+# should not be one: this also stages the language server it starts.
+(cd "$REPO_ROOT/extensions/devhub-copilot" && node scripts/build.mjs)
 "$REPO_ROOT/scripts/stage-builtin-extensions.sh"
 
 printf '\nprovisioned.\n'

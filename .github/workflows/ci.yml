@@ -75,6 +75,9 @@ jobs:
       - name: "Extension: devhub-remote (build, typecheck, test, lint, package)"
         run: pnpm run remote:check
 
+      - name: "Extension: devhub-copilot (build, typecheck, test, lint)"
+        run: pnpm run copilot:check
+
       - name: Script tests (python3 -m unittest scripts/*_test.py)
         run: pnpm run test:scripts
 

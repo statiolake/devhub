@@ -49,6 +49,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_EXTENSIONS="$REPO_ROOT/vscode/extensions"
 BRIDGE="$REPO_ROOT/extensions/devhub-bridge"
 REMOTE="$REPO_ROOT/extensions/devhub-remote"
+COPILOT="$REPO_ROOT/extensions/devhub-copilot"
 BUILD="$REPO_ROOT/vscode/.build"
 # VS Code's built-in set is not all in the submodule. `product.builtInExtensions`
 # names the ones upstream *downloads* at build time — js-debug and friends — and
@@ -75,6 +76,17 @@ fi
 if [ ! -f "$REMOTE/dist/extension.js" ]; then
 	echo "the remote resolver extension is not built — run 'pnpm --filter devhub-remote build'" >&2
 	exit 1
+fi
+# The extension and the language server its build stages beside it. Unlike the
+# two above, a window works without it — it only has no Copilot — so a checkout
+# that has not built it yet is told so and staged without it, rather than not
+# starting at all. The packaged app is stricter: package-nightly.py refuses to
+# build without it.
+copilot=""
+if [ -f "$COPILOT/dist/extension.js" ] && [ -f "$COPILOT/server/language-server.js" ]; then
+	copilot="$COPILOT"
+else
+	echo "the Copilot extension is not built, so this window has no Copilot — run 'pnpm --filter devhub-copilot build'" >&2
 fi
 
 # The names to link, in a fixed order so the hash below names the *set* and not
@@ -114,7 +126,7 @@ unset IFS
 # DevHub's own. Anything that would change the resulting directory has to be in
 # here, or a stale generation would be reused.
 digest="$(
-	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$REMOTE" "$DOWNLOADED" "${names[@]}" \
+	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$REMOTE" "copilot=$copilot" "$DOWNLOADED" "${names[@]}" \
 		${downloaded[@]+"${downloaded[@]}"} |
 		shasum -a 256 | cut -d' ' -f1
 )"
@@ -136,6 +148,9 @@ if [ ! -d "$generation" ]; then
 	# DevHub's own, last, so a name clash would be visible rather than silent.
 	ln -s "$BRIDGE" "$building/devhub-bridge"
 	ln -s "$REMOTE" "$building/devhub-remote"
+	if [ -n "$copilot" ]; then
+		ln -s "$copilot" "$building/devhub-copilot"
+	fi
 
 	# Whoever gets there first wins; the loser's copy is identical by
 	# construction, so it is simply discarded.

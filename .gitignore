@@ -31,6 +31,8 @@ extensions/devhub-bridge/dist/
 extensions/devhub-bridge/build/
 extensions/devhub-remote/dist/
 extensions/devhub-remote/build/
+extensions/devhub-copilot/dist/
+extensions/devhub-copilot/server/
 .pnpm-store/
 .pnpm-debug.log*
 
