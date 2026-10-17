@@ -156,7 +156,8 @@ kinds of thing, and each has a rule:
   ([`shell/appFence.ts`](apps/desktop/src/main/shell/appFence.ts)).
 - **Patches, only for what none of that can reach.**
   [`patches/vscode/`](patches/vscode) is the exception, and every patch states
-  its own reason in its body. There are two.
+  its own reason in its body. Each one is a hook upstream offers no other way
+  to reach, and the set is kept as small as that allows.
 
 DevHub's own integration ships as a built-in extension,
 [`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench

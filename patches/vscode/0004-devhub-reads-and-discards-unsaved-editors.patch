@@ -33,8 +33,7 @@ index b60c0adc..460fb002 100644
 +		});
 +
  		// Allow to update security settings around protocol handlers
--		ipcRenderer.on('vscode:disablePromptForProtocolHandling', (event: unknown, ...argsRaw: unknown[]) => {
-+		ipcRenderer.on('vscode:disablePromptForProtocolHandling',(event: unknown, ...argsRaw: unknown[]) => {
+ 		ipcRenderer.on('vscode:disablePromptForProtocolHandling', (event: unknown, ...argsRaw: unknown[]) => {
  			const kind = argsRaw[0] as 'local' | 'remote';
  			const setting = kind === 'local' ? 'security.promptForLocalFileProtocolHandling' : 'security.promptForRemoteFileProtocolHandling';
  			this.configurationService.updateValue(setting, false);

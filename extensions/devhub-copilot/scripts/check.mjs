@@ -7,7 +7,7 @@
  * does not fail: the editor quietly falls back to ghost text, or to nothing.
  */
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -123,26 +123,38 @@ for (const proposal of manifest.enabledApiProposals ?? []) {
  * The status item's dashboard is `StatusBarItem.hover`, DevHub's own proposal.
  * Its declaration is added to VS Code by a patch, so the submodule has it only
  * once the patches are applied; the extension type-checks against a copy in
- * typings/, which has to be the patch's file byte for byte.
+ * typings/, which has to be the patch's file byte for byte. The patch is found
+ * by what it adds, not by its file name, so renumbering patches/vscode/ does
+ * not break this check.
  */
 if (!manifest.enabledApiProposals?.includes("devhubStatusBarHover")) {
   throw new Error("the devhubStatusBarHover proposal must be enabled");
 }
-const hoverPatch = await readFile(
-  new URL(
-    "../../../patches/vscode/0009-devhub-status-bar-hover.patch",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const declared =
-  /^\+\+\+ b\/src\/vscode-dts\/vscode\.proposed\.devhubStatusBarHover\.d\.ts\n@@[^\n]*\n((?:\+[^\n]*\n)*)/mu.exec(
-    hoverPatch,
-  );
-const copy = await read("typings/vscode.proposed.devhubStatusBarHover.d.ts");
-if (declared === null || declared[1].replace(/^\+/gmu, "") !== copy) {
+const proposalPath = "src/vscode-dts/vscode.proposed.devhubStatusBarHover.d.ts";
+const patchesDir = resolve(root, "../../patches/vscode");
+const addedBy = [];
+for (const name of (await readdir(patchesDir)).sort()) {
+  if (!name.endsWith(".patch")) {
+    continue;
+  }
+  const patch = await readFile(resolve(patchesDir, name), "utf8");
+  const added = new RegExp(
+    `^\\+\\+\\+ b/${proposalPath.replaceAll(".", "\\.")}\\n@@[^\\n]*\\n((?:\\+[^\\n]*\\n)*)`,
+    "mu",
+  ).exec(patch);
+  if (added !== null) {
+    addedBy.push({ name, text: added[1].replace(/^\+/gmu, "") });
+  }
+}
+if (addedBy.length !== 1) {
   throw new Error(
-    "typings/vscode.proposed.devhubStatusBarHover.d.ts differs from the one patches/vscode/0009 adds",
+    `exactly one of patches/vscode/*.patch must add ${proposalPath}, found ${addedBy.length}`,
+  );
+}
+const copy = await read("typings/vscode.proposed.devhubStatusBarHover.d.ts");
+if (addedBy[0].text !== copy) {
+  throw new Error(
+    `typings/vscode.proposed.devhubStatusBarHover.d.ts differs from the one patches/vscode/${addedBy[0].name} adds`,
   );
 }
 
