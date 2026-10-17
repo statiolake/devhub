@@ -309,6 +309,7 @@ import {
 	containerCommandUnavailable,
 	windowTerminalLauncher,
 } from "./loginEnvironment.js";
+import { cliWithWindowTerminal } from "../services/windowTerminal.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
 import { registerConversationIpc } from "./conversationIpc.js";
@@ -4757,11 +4758,12 @@ export class AppController {
 		// the URI, which carries the authority Open Remote - SSH answers for.
 		const windows = await services.windows().open({
 			context: OpenContext.API,
-			cli: this.cliArgs,
-			devhubTerminalLauncher: launcher,
-			...(terminalLocal === undefined
-				? {}
-				: { devhubTerminalLocal: terminalLocal }),
+			// The window's terminal travels in `cli`, which upstream spreads into
+			// the window configuration (`../services/windowTerminal.ts`).
+			cli: cliWithWindowTerminal(this.cliArgs, {
+				devhubTerminalLauncher: launcher,
+				devhubTerminalLocal: terminalLocal,
+			}),
 			urisToOpen:
 				location === undefined || openPath === undefined
 					? []

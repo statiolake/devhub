@@ -45,16 +45,20 @@ import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/
 import { locationKey } from "../../model/domain.js";
 import { editorPlaceFromWorkspaceUri } from "../shell/editorPlace.js";
 import { appController } from "../shell/appController.js";
+import { inheritWindowTerminal } from "./windowTerminal.js";
 
 /** The part of the upstream options DevHub reads, plus the method it replaces. */
 interface WindowsMainServiceInternals {
 	getWindowById(windowId: number): ICodeWindow | undefined;
+	getWindows(): ICodeWindow[];
+	getLastActiveWindow(): ICodeWindow | undefined;
 	openInBrowserWindow(options: OpenBrowserWindowOptions): Promise<ICodeWindow>;
 }
 
 interface OpenBrowserWindowOptions {
 	readonly workspace?: unknown;
 	readonly forceNewWindow?: boolean;
+	readonly forceNewTabbedWindow?: boolean;
 	/** Upstream's `IFilesToOpen`, passed on untouched. */
 	readonly filesToOpen?: unknown;
 	/**
@@ -68,6 +72,43 @@ interface OpenBrowserWindowOptions {
 	 * where "this window is an Extension Development Host" is decided.
 	 */
 	readonly cli?: { readonly extensionDevelopmentPath?: string[] };
+}
+
+/** A workspace identifier's id, which upstream derives from its URI. */
+function workspaceIdOf(workspace: unknown): string | undefined {
+	const id = (workspace as { readonly id?: unknown } | undefined)?.id;
+	return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * The window a request upstream is about to open will replace, if any — the
+ * one whose DevHub terminal it inherits (`windowTerminal.ts`).
+ *
+ * The first half is upstream's own rule in `openInBrowserWindow`: unless the
+ * request forces a new window it reuses `windowToUse`, or else the last active
+ * window that is not an agent sessions window — a reload through `open`
+ * (Remote - SSH resolving its authority) comes this way. The second is a
+ * window reopened after its renderer died (`CodeWindow.destroyWindow`): a new
+ * window for the same workspace, asked for while the dead one is still in the
+ * list, so the window of that workspace is the one it replaces.
+ */
+function replacedWindow(
+	service: WindowsMainServiceInternals,
+	options: OpenBrowserWindowOptions,
+): ICodeWindow | undefined {
+	if (!options.forceNewWindow && !options.forceNewTabbedWindow) {
+		const lastActive = service.getLastActiveWindow();
+		const reused =
+			(options.windowToUse as ICodeWindow | undefined) ??
+			(lastActive?.config?.isSessionsWindow ? undefined : lastActive);
+		if (reused) return reused;
+	}
+	const id = workspaceIdOf(options.workspace);
+	return id === undefined
+		? undefined
+		: service
+				.getWindows()
+				.find((w) => workspaceIdOf(w.config?.workspace) === id);
 }
 
 export class DevHubWindowsMainService extends WindowsMainService {
@@ -219,7 +260,13 @@ const upstreamOpenInBrowserWindow = (
 	console.log(
 		`[devhub] open: '${editorKey}' is new — a workbench view in the shell`,
 	);
-	const window = await upstreamOpenInBrowserWindow.call(this, options);
+	// The window's DevHub terminal: named by DevHub's own open in `cli`, or —
+	// for a reload or a reopen, which DevHub did not ask for — the one the
+	// window being replaced had. See `windowTerminal.ts`.
+	const window = await upstreamOpenInBrowserWindow.call(
+		this,
+		inheritWindowTerminal(options, replacedWindow(this, options)),
+	);
 	controller.bindEditorKeyView(editorKey, window.id);
 	controller.noteLocation(location);
 	return window;

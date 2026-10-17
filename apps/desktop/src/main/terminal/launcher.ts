@@ -55,7 +55,7 @@
  * a dotfiles tool rewrote it wholesale, the keys went with it, and the next
  * reload was a plain zsh again. So the path goes onto the window configuration
  * DevHub opens each window with (`AppController.windowTerminalLauncher` →
- * `INativeWindowConfiguration.devhubTerminalLauncher`), and the patched
+ * `devhubTerminalLauncher`, see `../services/windowTerminal.ts`), and the patched
  * `TerminalProfileService` lists it as the `devhub` profile beside the
  * person's own and makes it the default unless they set
  * `terminal.integrated.defaultProfile.<os>` themselves — the one terminal

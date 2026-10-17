@@ -1,8 +1,8 @@
 diff --git a/src/vs/base/common/platform.ts b/src/vs/base/common/platform.ts
-index d2072dea..9ac07930 100644
+index bc542baa..940f29ce 100644
 --- a/src/vs/base/common/platform.ts
 +++ b/src/vs/base/common/platform.ts
-@@ -60,6 +60,60 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
+@@ -61,6 +61,60 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
  	nodeProcess = process;
  }
  
@@ -63,126 +63,6 @@ index d2072dea..9ac07930 100644
  const isElectronProcess = typeof nodeProcess?.versions?.electron === 'string';
  const isElectronRenderer = isElectronProcess && nodeProcess?.type === 'renderer';
  
-diff --git a/src/vs/platform/window/common/window.ts b/src/vs/platform/window/common/window.ts
-index d073d011..6547253b 100644
---- a/src/vs/platform/window/common/window.ts
-+++ b/src/vs/platform/window/common/window.ts
-@@ -460,6 +460,27 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
- 	mainPid: number;
- 	handle?: VSBuffer;
- 
-+	/**
-+	 * DevHub: the `devhub-terminal` this window's integrated terminal runs.
-+	 *
-+	 * A first-class field rather than an entry in `userEnv`, because it is a
-+	 * per-window fact the renderer has to read synchronously and `userEnv` is
-+	 * not a channel that delivers one: the preload's
-+	 * `Object.assign(process.env, userEnv)` lands on a copy of the sandboxed
-+	 * renderer's environment snapshot, so the value never reaches
-+	 * `vscode.process.env`. Read by `devhubTerminalLauncher` in
-+	 * `base/common/platform.ts`; absent in a window nothing hosts.
-+	 */
-+	devhubTerminalLauncher?: string;
-+
-+	/**
-+	 * DevHub: where the DevHub terminal of a window attached to a dev container
-+	 * runs — on this Mac's pty host, in `cwd`, with the launcher given `args`.
-+	 * Absent in every other window. Read by `devhubTerminalLocal` in
-+	 * `base/common/platform.ts`.
-+	 */
-+	devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
-+
- 	machineId: string;
- 	sqmId: string;
- 	devDeviceId: string;
-diff --git a/src/vs/platform/windows/electron-main/windows.ts b/src/vs/platform/windows/electron-main/windows.ts
-index 7c4f02ef..6ae9ed93 100644
---- a/src/vs/platform/windows/electron-main/windows.ts
-+++ b/src/vs/platform/windows/electron-main/windows.ts
-@@ -94,6 +94,14 @@ export interface IBaseOpenConfiguration {
- export interface IOpenConfiguration extends IBaseOpenConfiguration {
- 	readonly cli: NativeParsedArgs;
- 	readonly userEnv?: IProcessEnvironment;
-+	/**
-+	 * DevHub: the `devhub-terminal` the opened window's terminal runs.
-+	 * Travels exactly where `userEnv` travels; see
-+	 * `INativeWindowConfiguration.devhubTerminalLauncher`.
-+	 */
-+	readonly devhubTerminalLauncher?: string;
-+	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLocal`. */
-+	readonly devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
- 	readonly urisToOpen?: IWindowOpenable[];
- 	readonly waitMarkerFileURI?: URI;
- 	readonly preferNewWindow?: boolean;
-diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
-index d8428b52..cf1a9d86 100644
---- a/src/vs/platform/windows/electron-main/windowsMainService.ts
-+++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
-@@ -66,6 +66,10 @@ type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
- 
- interface IOpenBrowserWindowOptions {
- 	readonly userEnv?: IProcessEnvironment;
-+	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLauncher`. */
-+	readonly devhubTerminalLauncher?: string;
-+	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLocal`. */
-+	readonly devhubTerminalLocal?: { readonly cwd: string; readonly args: readonly string[] };
- 	readonly cli?: NativeParsedArgs;
- 
- 	readonly workspace?: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier;
-@@ -326,6 +330,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 		return {
- 			urisToOpen: [{ workspaceUri: agentSessionsWorkspaceUri }],
- 			userEnv: openConfig.userEnv,
-+			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
-+			devhubTerminalLocal: openConfig.devhubTerminalLocal,
- 			cli: openConfig.cli,
- 			noRecentEntry: true,
- 			context: openConfig.context,
-@@ -625,6 +631,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 			else {
- 				addUsedWindow(await this.openInBrowserWindow({
- 					userEnv: openConfig.userEnv,
-+			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
-+			devhubTerminalLocal: openConfig.devhubTerminalLocal,
- 					cli: openConfig.cli,
- 					initialStartup: openConfig.initialStartup,
- 					filesToOpen,
-@@ -787,6 +795,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 
- 		return this.openInBrowserWindow({
- 			userEnv: openConfig.userEnv,
-+			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
-+			devhubTerminalLocal: openConfig.devhubTerminalLocal,
- 			cli: openConfig.cli,
- 			initialStartup: openConfig.initialStartup,
- 			remoteAuthority,
-@@ -812,6 +822,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 		return this.openInBrowserWindow({
- 			workspace: folderOrWorkspace.workspace,
- 			userEnv: openConfig.userEnv,
-+			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
-+			devhubTerminalLocal: openConfig.devhubTerminalLocal,
- 			cli: openConfig.cli,
- 			initialStartup: openConfig.initialStartup,
- 			remoteAuthority: folderOrWorkspace.remoteAuthority,
-@@ -1500,6 +1512,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 			forceNewWindow: true,
- 			forceEmpty: !cliArgs.length && !folderUris.length && !fileUris.length,
- 			userEnv: openConfig.userEnv,
-+			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
-+			devhubTerminalLocal: openConfig.devhubTerminalLocal,
- 			noRecentEntry: true,
- 			waitMarkerFileURI: openConfig.waitMarkerFileURI,
- 			remoteAuthority,
-@@ -1568,6 +1582,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
- 			remoteAuthority: options.remoteAuthority,
- 			workspace: options.workspace,
- 			userEnv: { ...this.initialUserEnv, ...options.userEnv },
-+			devhubTerminalLauncher: options.devhubTerminalLauncher,
-+			devhubTerminalLocal: options.devhubTerminalLocal,
- 
- 			nls: {
- 				messages: getNLSMessages(),
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
 index 385e1b05..28cb1d99 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
@@ -237,7 +117,7 @@ index f7ce1dab..f0875b95 100644
  				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
  			} else {
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
-index 5e921025..a462a52d 100644
+index 7626ef9a..f34b6565 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts
 @@ -20,7 +20,7 @@ import { ISeparator, normalizeDriveLetter, template, tildify } from '../../../..
@@ -249,7 +129,7 @@ index 5e921025..a462a52d 100644
  import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
  import { URI } from '../../../../base/common/uri.js';
  import { TabFocus } from '../../../../editor/browser/config/tabFocus.js';
-@@ -1753,7 +1753,14 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
+@@ -1761,7 +1761,14 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
  
  		// Only trigger wait on exit when the exit was *not* triggered by the
  		// user (via the `workbench.action.terminal.kill` command).
@@ -376,7 +256,7 @@ index 275ab346..d22a89f5 100644
  		if (options.allowAutomationShell) {
  			const profileClone = deepClone(profile);
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
-index d4d6ba9e..72caa3f2 100644
+index c098f31d..89eaecb9 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 +++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 @@ -9,7 +9,8 @@ import { AutoOpenBarrier } from '../../../../base/common/async.js';
@@ -619,7 +499,7 @@ index d4d6ba9e..72caa3f2 100644
  	}
  
  	registerTerminalProfileProvider(extensionIdentifier: string, id: string, profileProvider: ITerminalProfileProvider): IDisposable {
-@@ -278,6 +439,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+@@ -283,6 +444,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
  	}
  
  	async getContributedDefaultProfile(shellLaunchConfig: IShellLaunchConfig): Promise<IExtensionTerminalProfile | undefined> {

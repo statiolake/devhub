@@ -221,8 +221,8 @@ export function launchEnvironment(
  * naming this Mac's would be a path that machine has never heard of.
  *
  * It travels as a field of the window configuration
- * (`INativeWindowConfiguration.devhubTerminalLauncher`), which the patched
- * `platform.ts` reads. It used to travel as a `DEVHUB_TERMINAL` entry in
+ * (`devhubTerminalLauncher`, through `cli`: `../services/windowTerminal.ts`),
+ * which the patched `platform.ts` reads. It used to travel as a `DEVHUB_TERMINAL` entry in
  * `userEnv`, and it never arrived: VS Code's preload does
  * `Object.assign(process.env, userEnv)`, but the `process` a sandboxed
  * renderer's preload sees materialises `env` from a snapshot, so the

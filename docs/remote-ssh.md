@@ -1041,11 +1041,15 @@ error anywhere.
 
 ### How the window learns its launcher
 
-The launcher is a **field of the window configuration**:
-`INativeWindowConfiguration.devhubTerminalLauncher`, set per window by
-`appController.openEditorView` through `IWindowsMainService.open`, threaded
-through `windowsMainService` exactly where `userEnv` is threaded, and read by
-the patched `platform.ts` from `window.vscode.context.configuration()`. The
+The launcher is a **field of the window configuration**,
+`devhubTerminalLauncher`, set per window by `appController.openEditorView`
+through `IWindowsMainService.open` in the request's `cli` — which upstream
+hands on untouched to `openInBrowserWindow` and spreads into the window
+configuration, so no upstream plumbing is patched for it — and read by the
+patched `platform.ts` from `window.vscode.context.configuration()`. A reload
+or a reopen that DevHub did not ask for inherits it from the window it
+replaces (`DevHubWindowsMainService.openInBrowserWindow`,
+`apps/desktop/src/main/services/windowTerminal.ts`). The
 renderer awaits `resolveConfiguration()` before it imports the workbench
 (`workbench.ts`, `load`), so the value exists before `platform.ts` is
 evaluated, which is what lets `TerminalProfileService` answer it synchronously

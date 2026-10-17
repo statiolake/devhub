@@ -1,8 +1,8 @@
 diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
-index 94aee9da..304a496b 100644
+index 307ac9e9..4d9067bb 100644
 --- a/src/vs/platform/windows/electron-main/windowImpl.ts
 +++ b/src/vs/platform/windows/electron-main/windowImpl.ts
-@@ -772,7 +772,20 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+@@ -789,7 +789,20 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
  
  			// Create the browser window
  			mark('code/willCreateCodeBrowserWindow');
@@ -24,34 +24,3 @@ index 94aee9da..304a496b 100644
  			mark('code/didCreateCodeBrowserWindow');
  
  			this._id = this._win.id;
-@@ -1117,6 +1130,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
- 				const window = (await this.windowsMainService.open({
- 					context: OpenContext.API,
- 					userEnv: this._config.userEnv,
-+					// DevHub: a window that is reopened after its renderer died is
-+					// the same window on the same machine, so it runs the same
-+					// `devhub-terminal`. Without this it would come back with a
-+					// bare shell and nothing saying why.
-+					devhubTerminalLauncher: this._config.devhubTerminalLauncher,
-+					devhubTerminalLocal: this._config.devhubTerminalLocal,
- 					cli: {
- 						...this.environmentMainService.args,
- 						_: [] // we pass in the workspace to open explicitly via `urisToOpen`
-@@ -1312,6 +1331,17 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
- 			}
- 		}
- 
-+		// DevHub: the `devhub-terminal` belongs to the window's *machine*, and a
-+		// reload does not change which machine that is. Remote-SSH resolves its
-+		// authority by reloading the window through `IWindowsMainService.open`,
-+		// which builds a fresh configuration that nobody told — so without this
-+		// the remote window came back with the field unset and its integrated
-+		// terminal fell back to a bare shell, while the local window beside it
-+		// was fine. Preserved unconditionally, unlike `userEnv` above: a window
-+		// is only ever told this once, by the DevHub call that opened it.
-+		configuration.devhubTerminalLauncher ??= (this._config ?? this.pendingLoadConfig)?.devhubTerminalLauncher;
-+		configuration.devhubTerminalLocal ??= (this._config ?? this.pendingLoadConfig)?.devhubTerminalLocal;
-+
- 		// If named pipe was instantiated for the crashpad_handler process, reuse the same
- 		// pipe for new app instances connecting to the original app instance.
- 		// Ref: https://github.com/microsoft/vscode/issues/115874
