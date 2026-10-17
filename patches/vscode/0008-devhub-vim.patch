@@ -1062,10 +1062,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..fbb906be
+index 00000000..f85d09d8
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1250 @@
+@@ -0,0 +1,1245 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -1195,7 +1195,7 @@ index 00000000..fbb906be
 +import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 +import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
 +import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
-+import { DEFAULT_KEYBINDINGS, SHIFTED_DIGIT_GATE, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, SHIFTED_DIGIT_GATE, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
 +import { VimRegex } from '../common/vimRegex.js';
 +import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 +
@@ -2203,7 +2203,7 @@ index 00000000..fbb906be
 +	escape: KeybindingWeight.EditorCore + 50,
 +};
 +
-+for (const b of DEFAULT_KEYBINDINGS) {
++for (const b of [...DEFAULT_KEYBINDINGS, ...HELPER_KEYBINDINGS]) {
 +	const primary = encodeKeybinding(b.key);
 +	const when = ContextKeyExpr.deserialize(effectiveWhen(b));
 +	if (primary === undefined || !when) {
@@ -2220,17 +2220,12 @@ index 00000000..fbb906be
 +	});
 +}
 +
-+// The layout fallback's way out of chord mode (DevhubVim.leaveChordMode): the
-+// first keys of the chords whose second key may be a shifted digit, then F24.
++// The layout fallback's way out of chord mode (DevhubVim.leaveChordMode); its
++// keys (`g F24`, `[ F24`, `] F24`) are registered with the keymap above, each
++// with the when clauses of the chords it serves (vimKeymap.ts
++// HELPER_KEYBINDINGS), so `g` `[` `]` are a chord prefix only where those
++// chords are, never in insert mode or a plain input.
 +CommandsRegistry.registerCommand('devhubVim.leaveChord', () => { });
-+for (const first of [KeyCode.KeyG, KeyCode.BracketLeft, KeyCode.BracketRight]) {
-+	KeybindingsRegistry.registerKeybindingRule({
-+		id: 'devhubVim.leaveChord',
-+		primary: KeyChord(first, KeyCode.F24),
-+		when: ENABLED,
-+		weight: WEIGHTS.default,
-+	});
-+}
 +
 +// ---- <C-w> window commands (all overridable) ---------------------------------
 +
@@ -8389,10 +8384,10 @@ index 00000000..e3baa9c0
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
 new file mode 100644
-index 00000000..7005be1a
+index 00000000..518d5c4e
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,502 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8800,6 +8795,32 @@ index 00000000..7005be1a
 +	}
 +	return found;
 +}
++
++/** The first keys of the default chords whose second key may be a shifted digit (`g*`, `[(`, `])`). */
++export const LEAVE_CHORD_PREFIXES: readonly string[] = ['g', '[', ']'];
++
++/**
++ * Where the chords starting with `first` hold: any of their when clauses. A
++ * chord's first key is a prefix (the dispatcher waits for a second key) for
++ * every binding that starts with it and holds, so a helper on that prefix
++ * must hold exactly where the chords it serves do, or it turns the key into a
++ * prefix where the key should type (insert mode, a plain input). Without the
++ * shifted-digit gate: on a layout where it is off, the gated chords (`g*`,
++ * `[(`) are the ones the layout fallback completes, so the prefix must hold.
++ */
++export function chordPrefixWhen(first: string): string {
++	const whens = [...new Set(DEFAULT_KEYBINDINGS.filter(b => b.key.split(' ').length > 1 && b.key.split(' ')[0] === first).map(b => b.when))];
++	return whens.length ? whens.map(w => `(${w})`).join(' || ') : 'false';
++}
++
++/**
++ * Bindings of DevHub Vim's own beyond the keymap: `{prefix} F24` runs
++ * `devhubVim.leaveChord` (nothing), the layout fallback's way out of chord mode
++ * after it took the chord's second key by character (DevhubVim.leaveChordMode).
++ */
++export const HELPER_KEYBINDINGS: readonly VimKeybinding[] = LEAVE_CHORD_PREFIXES.map(first => ({
++	key: `${first} f24`, command: 'devhubVim.leaveChord', when: chordPrefixWhen(first),
++}));
 +
 +// ---- when clauses and key notation, for :normal and the tests ----------------
 +
@@ -9778,10 +9799,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..c9df4e6a
+index 00000000..2a6ffdc4
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,2026 @@
+@@ -0,0 +1,2089 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -9792,7 +9813,7 @@ index 00000000..c9df4e6a
 +import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 +import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
 +import type { VimKeybinding } from '../../common/vimKeymap.js';
-+import { DEFAULT_KEYBINDINGS, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, LEAVE_CHORD_PREFIXES, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
 +import type { VimRegex } from '../../common/vimRegex.js';
 +import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
 +import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
@@ -10731,6 +10752,69 @@ index 00000000..c9df4e6a
 +		}
 +		for (const mode of ['insert', 'replace', 'nav']) {
 +			assert.ok(!DEFAULT_KEYBINDINGS.some(b => (b.key === 'tab' || b.key === 'shift+tab') && evaluateWhen(effectiveWhen(b), ctx(mode))), mode);
++		}
++	});
++});
++
++suite('DevHub Vim: a printable key is a Vim key only in a Vim editor outside insert mode', () => {
++
++	const ALL = [...DEFAULT_KEYBINDINGS, ...HELPER_KEYBINDINGS];
++
++	/** The first chord types a character: no Ctrl / Alt / Cmd, not a named key (Esc, Tab, arrows, F-keys, ...). */
++	function printableFirst(key: string): boolean {
++		const first = key.split(' ')[0].replace(/^shift\+/, '');
++		return !/(^|\+)(ctrl|alt|cmd|meta|win)\+/.test(key.split(' ')[0]) && (first.length === 1 || first === 'space');
++	}
++
++	function vimCtx(mode: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
++		const typing = mode === 'insert' || mode === 'replace';
++		return {
++			'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
++			'devhubVim.acceptsMotion': !typing && mode !== 'cmdline' && mode !== 'nav', 'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': typing,
++			'devhubVim.textObjectPending': '', 'devhubVim.pending': false, 'devhubVim.awaitingChar': false, suggestWidgetVisible: false, ...extra,
++		};
++	}
++
++	test('none holds in insert / replace / cmdline / nav mode, or with no Vim editor focused', () => {
++		const contexts: [string, Record<string, unknown>][] = [];
++		for (const usShiftedDigits of [true, false]) {
++			for (const mode of ['insert', 'replace', 'cmdline', 'nav']) {
++				for (const awaitingChar of [false, true]) {
++					for (const suggestWidgetVisible of [false, true]) {
++						contexts.push([mode, vimCtx(mode, { 'devhubVim.usShiftedDigits': usShiftedDigits, 'devhubVim.awaitingChar': awaitingChar, suggestWidgetVisible })]);
++					}
++				}
++			}
++			// a plain input, the terminal, a list, a search box: no Vim editor has the focus
++			for (const mode of ['insert', '', 'nav']) {
++				contexts.push([`no Vim editor, mode '${mode}'`, { 'true': true, textInputFocus: mode === 'insert', 'devhubVim.active': false, 'devhubVim.mode': mode, 'devhubVim.usShiftedDigits': usShiftedDigits }]);
++				contexts.push([`a plain editor, mode '${mode}'`, { 'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': false, 'devhubVim.mode': mode, 'devhubVim.usShiftedDigits': usShiftedDigits }]);
++			}
++		}
++		const printable = ALL.filter(b => printableFirst(b.key));
++		assert.ok(printable.some(b => b.key === 'g f24') && printable.some(b => b.key === 'j'));
++		for (const [what, c] of contexts) {
++			const holding = printable.filter(b => evaluateWhen(effectiveWhen(b), c)).map(b => `${b.key} -> ${b.command}`);
++			assert.deepStrictEqual(holding, [], `${what} ${JSON.stringify(c)}`);
++		}
++	});
++
++	test('the chord-mode helpers hold exactly where a chord they serve does, on any layout', () => {
++		for (const first of LEAVE_CHORD_PREFIXES) {
++			const helper = HELPER_KEYBINDINGS.find(b => b.key === `${first} f24`)!;
++			assert.ok(helper, first);
++			const chords = DEFAULT_KEYBINDINGS.filter(b => b.key.startsWith(`${first} `));
++			assert.ok(chords.length > 0, first);
++			for (const mode of ['normal', 'visual', 'visualLine', 'visualBlock', 'operatorPending', 'insert', 'replace', 'cmdline', 'nav']) {
++				for (const extra of [{}, { 'devhubVim.textObjectPending': 'inner', 'devhubVim.acceptsMotion': false }, { 'devhubVim.hasCount': true }]) {
++					const c = vimCtx(mode, { 'devhubVim.usShiftedDigits': true, ...extra });
++					assert.strictEqual(evaluateWhen(helper.when, c), chords.some(b => evaluateWhen(b.when, c)), `${first} in ${mode} ${JSON.stringify(extra)}`);
++					// the shifted-digit chords' prefix still holds where the layout fallback completes them (JIS)
++					const jis = { ...c, 'devhubVim.usShiftedDigits': false };
++					assert.strictEqual(evaluateWhen(effectiveWhen(helper), jis), chords.some(b => evaluateWhen(b.when, jis)), `${first} in ${mode} (JIS)`);
++				}
++			}
++			assert.ok(evaluateWhen(helper.when, vimCtx('normal')), `${first} is a prefix in normal mode`);
 +		}
 +	});
 +});

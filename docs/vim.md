@@ -547,7 +547,9 @@ Code's notation cannot name other than by scan code (`[Equal]`,
   a key that types `^ * @ ( ) $ % # &` and that no keybinding takes runs the
   default entry for that character, also as the second key of a chord (the
   chord is then ended through `devhubVim.leaveChord`, bound to `g`/`[`/`]`
-  followed by F24). So `^`, `*`, `@q`, `di(`, `$`, `g*`, `[(` work on JIS out
+  followed by F24, each with the `when` clauses of the default chords that
+  start with that key, so `g` `[` `]` wait for a second key only where those
+  chords apply: never in insert mode or outside a Vim editor). So `^`, `*`, `@q`, `di(`, `$`, `g*`, `[(` work on JIS out
   of the box, and Shift-6 (`&`) is not `^`.
 * To rebind one of those characters on JIS, bind the physical key by scan
   code, e.g. `{ "key": "[Equal]", "command": "devhubVim.motion", "args": {
