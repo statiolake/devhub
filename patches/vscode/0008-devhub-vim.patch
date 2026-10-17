@@ -440,10 +440,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..efa70fdc
+index 00000000..c0a09dff
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,680 @@
+@@ -0,0 +1,717 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -474,24 +474,32 @@ index 00000000..efa70fdc
 +//   toggled, and a command that throws leaves the engine in plain normal mode
 +//   (VimEngine.recover), so no exception or event order can strand an editor
 +//   in a mode whose caret or input does not match.
-+// * Everything modal at workbench level - Esc, and the "nav" state where h j k
-+//   l move focus between parts - is a command with a keybinding in the normal
-+//   registry, so keybindings.json can rebind or remove it. Nav never traps a
-+//   text editor: there Esc, or any key nav does not bind, goes back to normal
-+//   mode (the key then does what it does in normal mode). Esc is registered
-+//   at weight EditorCore + 50: every editor-contrib or workbench Esc (suggest,
-+//   find widget, peek, parameter hints, rename, notifications, quick input)
-+//   outranks it whenever its own `when` holds, and Vim only gets Esc when none
-+//   of them wanted it.
-+// * `devhubVim.mode` (normal | insert | visual | nav, '' when idle) and
-+//   `devhubVim.attached` are context keys for users' own `when` clauses.
++// * Esc only ever cancels (insert, the prompt, pending keys, visual): pressed
++//   any number of times it lands in plain normal mode and nowhere else. It is
++//   registered at weight EditorCore + 50: every editor-contrib or workbench
++//   Esc (suggest, find widget, peek, parameter hints, rename, notifications,
++//   quick input) outranks it whenever its own `when` holds, and Vim only gets
++//   Esc when none of them wanted it.
++// * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
++//   then h j k l (devhubVim.nav.left/down/up/right, also with Ctrl held, as
++//   Vim takes `<C-w><C-h>`). It is one-shot (common/vimKeys.ts VimNavPrefix):
++//   the key after the prefix ends it whatever it is, so focus lands in the
++//   target part as that part is - a Vim editor in its own mode, the explorer
++//   or a panel as a list, a plain input as an input - and `<C-w>` works from
++//   there too (except in the terminal, whose Ctrl-W is the shell's). In a Vim
++//   editor's insert mode Ctrl-W is Vim's delete-word-before-the-caret
++//   (`deleteWordLeft`). All of these are keybindings in the normal registry,
++//   so keybindings.json can rebind or remove any of them.
++// * `devhubVim.mode` (normal | insert | visual | nav, '' when idle; nav while
++//   the prefix waits) and `devhubVim.attached` are context keys for users' own
++//   `when` clauses.
 +
 +import { addDisposableListener, getActiveElement, isEditableElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
 +import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 +import { mainWindow } from '../../../../base/browser/window.js';
 +import { onUnexpectedError } from '../../../../base/common/errors.js';
 +import { Event } from '../../../../base/common/event.js';
-+import { KeyCode } from '../../../../base/common/keyCodes.js';
++import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 +import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 +import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 +import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
@@ -512,7 +520,7 @@ index 00000000..efa70fdc
 +import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 +import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 +import { IVimHost, VimEdit, VimEngine, VimPos, VimSharedState } from '../common/vimEngine.js';
-+import { VimCursorStyle, toVimKey, vimCursorStyle } from '../common/vimKeys.js';
++import { VimCursorStyle, VimNavFocus, VimNavPrefix, toVimKey, vimCursorStyle } from '../common/vimKeys.js';
 +
 +const SETTING = 'devhub.vim.enabled';
 +
@@ -525,12 +533,12 @@ index 00000000..efa70fdc
 +		[SETTING]: {
 +			type: 'boolean',
 +			default: false,
-+			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub. Esc from normal mode leaves the text for navigation, where h/j/k/l move between parts; i or Enter goes back (in a text editor so do Esc and any other Vim key)."),
++			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub. Esc always ends in normal mode. Ctrl-W then h/j/k/l moves to the part on the left/below/above/right, as Vim's window commands do (rebind `devhubVim.nav.enter` and `devhubVim.nav.*` in keybindings.json)."),
 +		},
 +	},
 +});
 +
-+const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode of the focused editor or input: normal, insert, visual, nav, or empty."));
++const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode of the focused editor or input: normal, insert, visual, nav (Ctrl-W waits for its key), or empty."));
 +const VIM_ATTACHED = new RawContextKey<boolean>('devhubVim.attached', false, localize('devhubVim.attached', "Whether the focused text editor is driven by DevHub Vim."));
 +const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
 +
@@ -614,7 +622,7 @@ index 00000000..efa70fdc
 +
 +	/** Caret style and modal text input, both derived from the current state. */
 +	syncCursorStyle(): void {
-+		const nav = this.owner.navActive && this.editor.hasTextFocus();
++		const nav = this.owner.nav.active && this.editor.hasTextFocus();
 +		ModalTextInput.set(this.editor.getId(), this.engine.mode !== 'insert');
 +		this.setCursorStyle(vimCursorStyle(this.engine.mode, nav, this.insertStyle));
 +	}
@@ -640,7 +648,7 @@ index 00000000..efa70fdc
 +	}
 +
 +	private onKeyDown(e: IKeyboardEvent): void {
-+		if (this.owner.navActive || this.engine.mode === 'insert' || !this.editor.hasModel()) {
++		if (this.owner.nav.active || this.engine.mode === 'insert' || !this.editor.hasModel()) {
 +			// Insert mode: the IME composes as usual (Esc ends a composition before it reaches Vim).
 +			return;
 +		}
@@ -871,13 +879,13 @@ index 00000000..efa70fdc
 +	private readonly attachedKey: IContextKey<boolean>;
 +	private statusEntry: IStatusbarEntryAccessor | undefined;
 +	private enabled = false;
-+	navActive = false;
++	readonly nav = new VimNavPrefix();
 +	clipboardCache = '';
 +
 +	constructor(
 +		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
 +		@IConfigurationService readonly configurationService: IConfigurationService,
-+		@IContextKeyService contextKeyService: IContextKeyService,
++		@IContextKeyService private readonly contextKeyService: IContextKeyService,
 +		@IStatusbarService private readonly statusbarService: IStatusbarService,
 +		@IKeybindingService private readonly keybindingService: IKeybindingService,
 +		@ICommandService readonly commandService: ICommandService,
@@ -915,7 +923,7 @@ index 00000000..efa70fdc
 +		this.enabled = enabled;
 +		this.attached.clear();
 +		this.editors.clear();
-+		this.navActive = false;
++		this.nav.cancel();
 +		this.statusEntry = undefined;
 +		if (!enabled) {
 +			this.modeKey.reset();
@@ -941,7 +949,8 @@ index 00000000..efa70fdc
 +			disposables.add(local);
 +			store.add(local);
 +			local.add(addDisposableListener(window, 'keydown', e => this.onWindowKeyDown(e), true));
-+			local.add(addDisposableListener(window, 'pointerdown', () => this.setNav(false), true));
++			local.add(addDisposableListener(window, 'pointerdown', () => this.cancelNav(), true));
++			local.add(addDisposableListener(window, 'blur', () => this.cancelNav()));
 +			local.add(addDisposableListener(window, 'focusin', () => this.update(), true));
 +			local.add(addDisposableListener(window, 'focusout', () => queueMicrotask(() => this.update()), true));
 +		}, { window: mainWindow, disposables: store }));
@@ -994,12 +1003,12 @@ index 00000000..efa70fdc
 +		}
 +		const v = this.focused();
 +		const active = getActiveElement();
-+		const mode = this.navActive ? 'nav'
++		const mode = this.nav.active ? 'nav'
 +			: v ? v.mode
 +				: active && isEditableElement(active) ? 'insert' : '';
 +		this.modeKey.set(mode);
 +		this.attachedKey.set(!!v);
-+		const text = this.navActive ? '-- NAV --' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
++		const text = this.nav.active ? '-- NAV --  ^W' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
 +		this.statusEntry?.update(this.statusProps(text));
 +	}
 +
@@ -1011,77 +1020,81 @@ index 00000000..efa70fdc
 +		};
 +	}
 +
-+	setNav(nav: boolean): void {
-+		if (this.navActive !== nav) {
-+			this.navActive = nav;
++	cancelNav(): void {
++		if (this.nav.active) {
++			this.nav.cancel();
 +			this.update();
 +		}
 +	}
 +
-+	/** Esc that no widget wanted, in a Vim editor. */
++	/** Esc that no widget wanted, in a Vim editor: Vim's Esc, never anything more. */
 +	escape(): void {
 +		const v = this.focused();
 +		if (!v) {
 +			return;
 +		}
 +		try {
-+			if (v.engine.escape() === 'idle') {
-+				this.setNav(true);
-+			}
++			v.engine.escape();
 +		} finally {
 +			this.update();
 +		}
 +	}
 +
-+	/** Esc in nav while a Vim editor has the focus: back to its normal mode. */
-+	escapeNav(): void {
-+		this.setNav(false);
-+	}
-+
-+	/** Esc that no widget wanted, in a plain input (search view, quick input field, ...). */
-+	leaveInput(): void {
-+		this.setNav(true);
-+	}
-+
-+	enterFromNav(): void {
-+		this.setNav(false);
++	private navFocus(v: VimEditor | undefined): VimNavFocus {
++		if (v) {
++			return v.engine.mode === 'insert' ? 'insert' : v.engine.pending ? 'pending' : 'normal';
++		}
++		if (this.contextKeyService.getContextKeyValue<boolean>('terminalFocus')) {
++			return 'terminal';
++		}
 +		const active = getActiveElement();
-+		if (!active || !isEditableElement(active)) {
-+			// Focus is on a list or tree, not an input: the editor area is the input to go back to.
-+			if (active?.closest('.part.editor')) {
-+				void this.commandService.executeCommand('workbench.action.focusActiveEditorGroup');
-+			}
++		return active && isEditableElement(active) ? 'input' : 'other';
++	}
++
++	/** `<C-w>`: wait for one nav key. */
++	enterNav(): void {
++		const v = this.focused();
++		const focus = this.navFocus(v);
++		if (!this.nav.enter(focus) && focus === 'pending') {
++			// As in Vim, `<C-w>` is not a motion: it aborts the operator / count.
++			v?.engine.escape();
++		}
++		this.update();
++	}
++
++	/** A nav command: the prefix is over, then the command (if any) runs. */
++	runNav(command: string | undefined): void {
++		this.cancelNav();
++		if (command) {
++			void this.commandService.executeCommand(command);
 +		}
 +	}
 +
 +	/**
-+	 * In nav mode keys go to the keybinding service before the focused widget
-+	 * (a list's type-to-find, an input's typing) sees them, but only for keys
-+	 * bound to `devhubVim.*`; other letters are swallowed in text fields.
++	 * While `<C-w>` waits, its key goes to the keybinding service before the
++	 * focused widget (a list's type-to-find, an input's typing) sees it. A key
++	 * bound to a `devhubVim.nav.*` command runs it; any other key ends the
++	 * prefix (VimNavPrefix.key decides whether it is eaten or let through).
 +	 */
 +	private onWindowKeyDown(e: KeyboardEvent): void {
-+		if (!this.navActive || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) {
++		if (!this.nav.active) {
 +			return;
 +		}
 +		const event = new StandardKeyboardEvent(e);
-+		const target = e.target as HTMLElement;
-+		const result = this.keybindingService.softDispatch(event, target);
-+		if (result.kind === ResultKind.KbFound && result.commandId?.startsWith('devhubVim.')) {
-+			e.preventDefault();
-+			e.stopPropagation();
-+			void this.commandService.executeCommand(result.commandId, ...(result.commandArgs === undefined ? [] : [result.commandArgs]));
++		const result = this.keybindingService.softDispatch(event, e.target as HTMLElement);
++		const found = result.kind === ResultKind.KbFound && result.commandId?.startsWith('devhubVim.nav.') ? result : undefined;
++		const action = this.nav.key(e, found?.commandId ?? undefined);
++		if (action === 'wait') {
 +			return;
 +		}
-+		if (this.focused() && event.keyCode !== KeyCode.Escape && toVimKey(e, false) !== undefined) {
-+			// Nav never traps a text editor: a key nav does not bind (`u` after
-+			// one Esc too many) leaves nav and reaches the editor, whose Vim
-+			// handler reads it in normal mode.
-+			this.setNav(false);
++		this.update();
++		if (action === 'pass') {
 +			return;
 +		}
-+		if (e.key.length === 1 && target && isEditableElement(target)) {
-+			e.preventDefault();
-+			e.stopPropagation();
++		e.preventDefault();
++		e.stopPropagation();
++		if (action === 'run' && found?.commandId) {
++			void this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs]));
 +		}
 +	}
 +}
@@ -1092,9 +1105,20 @@ index 00000000..efa70fdc
 +
 +const NAV = ContextKeyExpr.and(ENABLED, VIM_MODE.isEqualTo('nav'));
 +
-+function rule(id: string, primary: number, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim) => void): void {
++interface Keys {
++	primary: number;
++	secondary?: number[];
++	mac?: { primary: number; secondary?: number[] };
++}
++
++/** Ctrl+key on every platform (KeyMod.WinCtrl is Ctrl on macOS, where CtrlCmd is Cmd). */
++function ctrl(key: KeyCode): number[] {
++	return [KeyMod.CtrlCmd | key, KeyMod.WinCtrl | key];
++}
++
++function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim) => void): void {
 +	KeybindingsRegistry.registerCommandAndKeybindingRule({
-+		id, primary, when, weight,
++		id, ...keys, when, weight,
 +		handler: () => {
 +			const vim = DevhubVim.instance;
 +			if (vim) {
@@ -1104,29 +1128,42 @@ index 00000000..efa70fdc
 +	});
 +}
 +
-+rule('devhubVim.escape', KeyCode.Escape, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.notEqualsTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escape());
-+rule('devhubVim.nav.escape', KeyCode.Escape, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.isEqualTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escapeNav());
-+rule('devhubVim.leaveInput', KeyCode.Escape,
-+	ContextKeyExpr.and(ENABLED, ContextKeyExpr.has('inputFocus'), VIM_ATTACHED.negate(), VIM_MODE.notEqualsTo('nav'), ContextKeyExpr.has('terminalFocus').negate()),
-+	KeybindingWeight.EditorCore + 50, vim => vim.leaveInput());
++rule('devhubVim.escape', { primary: KeyCode.Escape }, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.notEqualsTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escape());
 +
-+const navigate: [string, number, string][] = [
++// The prefix, Ctrl-W. Not in a Vim editor's insert mode (Ctrl-W deletes a word
++// there, below), not in the terminal (the shell's Ctrl-W), not in quick input.
++// While Vim is on it outranks Ctrl-W's defaults: Switch Window on macOS (Cmd-W,
++// close editor, is another key and untouched), close editor elsewhere.
++const [ctrlW, macCtrlW] = ctrl(KeyCode.KeyW);
++rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
++	ContextKeyExpr.and(ENABLED, VIM_MODE.notEqualsTo('nav'),
++		ContextKeyExpr.or(VIM_ATTACHED.negate(), VIM_MODE.notEqualsTo('insert')),
++		ContextKeyExpr.has('terminalFocus').negate(), ContextKeyExpr.has('inQuickInput').negate()),
++	KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterNav());
++rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav(undefined));
++
++const navigate: [string, KeyCode, string][] = [
 +	['devhubVim.nav.left', KeyCode.KeyH, 'workbench.action.navigateLeft'],
 +	['devhubVim.nav.down', KeyCode.KeyJ, 'workbench.action.navigateDown'],
 +	['devhubVim.nav.up', KeyCode.KeyK, 'workbench.action.navigateUp'],
 +	['devhubVim.nav.right', KeyCode.KeyL, 'workbench.action.navigateRight'],
 +];
 +for (const [id, key, command] of navigate) {
-+	rule(id, key, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand(command));
++	const [c, macC] = ctrl(key);
++	rule(id, { primary: key, secondary: [c], mac: { primary: key, secondary: [macC] } }, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => vim.runNav(command));
 +}
-+rule('devhubVim.nav.enter', KeyCode.KeyI, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterFromNav());
-+rule('devhubVim.nav.enterInput', KeyCode.Enter, ContextKeyExpr.and(NAV, ContextKeyExpr.has('inputFocus')), KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterFromNav());
-+rule('devhubVim.nav.sidebar', KeyCode.KeyS, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusSideBar'));
-+rule('devhubVim.nav.panel', KeyCode.KeyP, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusPanel'));
-+rule('devhubVim.nav.editor', KeyCode.KeyE, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusActiveEditorGroup'));
++
++// Insert mode: Vim's Ctrl-W, delete the word before the caret.
++KeybindingsRegistry.registerKeybindingRule({
++	id: 'deleteWordLeft',
++	primary: ctrlW,
++	mac: { primary: macCtrlW },
++	when: ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.isEqualTo('insert'), ContextKeyExpr.has('editorTextFocus'), ContextKeyExpr.has('editorReadonly').negate()),
++	weight: KeybindingWeight.WorkbenchContrib + 50,
++});
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
 new file mode 100644
-index 00000000..0dd8d2db
+index 00000000..478a7897
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
 @@ -0,0 +1,1661 @@
@@ -1384,38 +1421,38 @@ index 00000000..0dd8d2db
 +	}
 +
 +	/**
-+	 * Esc. Returns 'idle' when Vim had nothing to cancel (normal mode, no pending
-+	 * keys), which the workbench takes as "leave the text for navigation".
++	 * Esc: cancel one thing (insert, the prompt, pending keys and count, visual
++	 * mode), as Vim does. In normal mode with nothing pending it does nothing,
++	 * so Esc pressed any number of times always ends in plain normal mode and
++	 * nowhere else; the workbench never takes it as a way out of the text.
 +	 */
-+	escape(): 'handled' | 'idle' {
++	escape(): void {
 +		try {
-+			return this.doEscape();
++			this.doEscape();
 +		} catch (err) {
 +			this.recover(err);
-+			return 'handled';
 +		}
 +	}
 +
-+	private doEscape(): 'handled' | 'idle' {
++	private doEscape(): void {
 +		if (this._mode === 'insert') {
 +			this.exitInsert();
-+			return 'handled';
++			return;
 +		}
 +		if (this.cmdline) {
 +			this.cmdline = undefined;
-+			return 'handled';
++			return;
 +		}
 +		if (this.keys.length) {
 +			this.keys = [];
-+			return 'handled';
++			return;
 +		}
 +		if (this._mode === 'visual' || this._mode === 'visualLine') {
 +			this._mode = 'normal';
 +			this.setNormalCursor(this.visualHead);
-+			return 'handled';
++			return;
 +		}
 +		this.message = '';
-+		return 'idle';
 +	}
 +
 +	/** Called by the host when the user made a selection with the mouse. */
@@ -2793,17 +2830,18 @@ index 00000000..0dd8d2db
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
 new file mode 100644
-index 00000000..42d5c9ea
+index 00000000..cfaf39a0
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,153 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
 + *--------------------------------------------------------------------------------------------*/
 +
-+// DevHub native Vim: keydown -> Vim key name, and the mode -> cursor style rule.
-+// Imports nothing, so the tests run it as they run the engine.
++// DevHub native Vim: keydown -> Vim key name, the mode -> cursor style rule,
++// and the `<C-w>` window prefix. Imports nothing, so the tests run it as they
++// run the engine.
 +
 +/** The parts of a KeyboardEvent the mapping reads. */
 +export interface VimKeyEvent {
@@ -2850,8 +2888,8 @@ index 00000000..42d5c9ea
 +
 +/**
 + * The one rule for the caret: the user's own style in insert mode, a block in
-+ * every other Vim mode, a thin underline while Esc has left the text for
-+ * navigation. Computed from the state each time (never toggled), so no
++ * every other Vim mode, a thin underline while the `<C-w>` prefix waits for
++ * its key. Computed from the state each time (never toggled), so no
 + * sequence of events can leave a stale style behind.
 + */
 +export function vimCursorStyle(mode: string, nav: boolean, insertStyle: VimCursorStyle): VimCursorStyle {
@@ -2860,12 +2898,101 @@ index 00000000..42d5c9ea
 +	}
 +	return mode === 'insert' ? insertStyle : 'block';
 +}
++
++/** Where the keyboard focus is when the `<C-w>` prefix is pressed. */
++export type VimNavFocus =
++	/** a Vim editor in normal or visual mode, nothing pending */
++	| 'normal'
++	/** a Vim editor with keys pending (an operator, a count, the `:` `/` prompt) */
++	| 'pending'
++	/** a Vim editor in insert mode */
++	| 'insert'
++	/** a plain input (search view, find widget, ...): it has no normal mode */
++	| 'input'
++	| 'terminal'
++	/** a list, tree or anything else that is not text */
++	| 'other';
++
++/** What the workbench does with a keydown while the prefix waits. */
++export type VimNavKeyAction =
++	/** run the `devhubVim.nav.*` command the keybindings bind the key to */
++	| 'run'
++	/** the key is not the prefix's: it does what it does anyway */
++	| 'pass'
++	/** eat the key: it only cancels the prefix */
++	| 'swallow'
++	/** a lone modifier: keep waiting for the key it modifies */
++	| 'wait';
++
++const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS']);
++
++/**
++ * Vim's window prefix, workbench wide: `<C-w>` then one key, as in Vim's
++ * `<C-w>h` / `<C-w>j` / `<C-w>k` / `<C-w>l`. It is one-shot: whatever the next
++ * key is, the prefix is over afterwards, so there is no mode to get stuck in
++ * and Esc never has anything to do with it except cancel it.
++ *
++ * Esc is not a way in. Vim users press Esc by habit, any number of times,
++ * and the promise is that it always lands in plain normal mode.
++ */
++export class VimNavPrefix {
++
++	private _active = false;
++
++	get active(): boolean {
++		return this._active;
++	}
++
++	/**
++	 * The prefix key. Returns whether it now waits for its key. Refused where
++	 * `<C-w>` means something else: in a Vim editor's insert mode (delete the
++	 * word before the caret, as in Vim), with Vim keys pending (Vim's `<C-w>`
++	 * aborts an operator; the caller cancels them) and in the terminal (the
++	 * shell's delete-word).
++	 */
++	enter(focus: VimNavFocus): boolean {
++		if (focus === 'insert' || focus === 'pending' || focus === 'terminal') {
++			return false;
++		}
++		this._active = true;
++		return true;
++	}
++
++	/**
++	 * A keydown while the prefix waits; `command` is the `devhubVim.nav.*`
++	 * command the keybindings bind it to here (h j k l by default), if any.
++	 * Every key but a lone modifier ends the prefix. A key nav does not bind
++	 * cancels it and is eaten, as in Vim; Cmd chords and IME keys are let
++	 * through (Cmd-W still closes the editor).
++	 */
++	key(e: { readonly key: string; readonly keyCode: number; readonly isComposing: boolean; readonly metaKey: boolean }, command: string | undefined): VimNavKeyAction {
++		if (!this._active) {
++			return 'pass';
++		}
++		if (MODIFIER_KEYS.has(e.key)) {
++			return 'wait';
++		}
++		this._active = false;
++		if (e.isComposing || e.keyCode === 229 || e.key === 'Process') {
++			return 'pass';
++		}
++		if (command) {
++			return 'run';
++		}
++		return e.metaKey ? 'pass' : 'swallow';
++	}
++
++	/** A click, a focus change, a window switch: the prefix is forgotten. */
++	cancel(): void {
++		this._active = false;
++	}
++}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..b69f418c
+index 00000000..d13f5805
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,598 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2874,8 +3001,8 @@ index 00000000..b69f418c
 +import assert from 'assert';
 +import type { IVimHost, VimEdit, VimPos } from '../../common/vimEngine.js';
 +import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
-+import type { VimKeyEvent } from '../../common/vimKeys.js';
-+import { toVimKey, vimCursorStyle } from '../../common/vimKeys.js';
++import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
++import { VimNavPrefix, toVimKey, vimCursorStyle } from '../../common/vimKeys.js';
 +
 +/** A string-array host: the cursor is drawn as `|` in `state()`. */
 +class TestHost implements IVimHost {
@@ -3161,19 +3288,25 @@ index 00000000..b69f418c
 +		assert.ok(r.vim.status().includes('Not an editor command'));
 +	});
 +
-+	test('escape reports idle only when nothing is pending', () => {
++	test('escape cancels one thing at a time, then does nothing', () => {
 +		const host = new TestHost('|abc');
 +		const vim = new VimEngine(host);
-+		assert.strictEqual(vim.escape(), 'idle');
++		vim.escape();
++		assert.strictEqual(vim.mode, 'normal');
++		assert.strictEqual(host.state(), '|abc');
 +		vim.handleKey('d');
-+		assert.strictEqual(vim.escape(), 'handled');
++		vim.escape();
++		assert.strictEqual(vim.pending, false);
 +		vim.handleKey('i');
 +		assert.strictEqual(vim.mode, 'insert');
-+		assert.strictEqual(vim.escape(), 'handled');
++		vim.escape();
 +		assert.strictEqual(vim.mode, 'normal');
 +		vim.handleKey('v');
-+		assert.strictEqual(vim.escape(), 'handled');
-+		assert.strictEqual(vim.escape(), 'idle');
++		vim.escape();
++		assert.strictEqual(vim.mode, 'normal');
++		vim.escape();
++		assert.strictEqual(vim.mode, 'normal');
++		assert.strictEqual(vim.status(), 'NORMAL');
 +	});
 +
 +	test('large buffers are read lazily', () => {
@@ -3209,6 +3342,22 @@ index 00000000..b69f418c
 +			// and the next command is a plain normal-mode command
 +			vim.handleKey('l');
 +			assert.strictEqual(vim.mode, 'normal', keys);
++		}
++	});
++
++	test('Esc mashed any number of times is plain normal mode, from every state', () => {
++		for (const keys of pendings) {
++			const { host, vim } = run('ab|c\ndef', keys);
++			for (let i = 0; i < 7; i++) {
++				vim.handleKey('<Esc>');
++			}
++			assert.strictEqual(vim.mode, 'normal', keys);
++			assert.strictEqual(vim.pending, false, keys);
++			assert.strictEqual(vim.status(), 'NORMAL', keys);
++			assert.strictEqual(vimCursorStyle(vim.mode, false, 'line'), 'block', keys);
++			const before = host.state();
++			vim.handleKey('<Esc>');
++			assert.strictEqual(host.state(), before, `${keys}: Esc in normal mode moved or edited`);
 +		}
 +	});
 +
@@ -3278,6 +3427,103 @@ index 00000000..b69f418c
 +	});
 +});
 +
++suite('DevHub Vim <C-w> nav prefix', () => {
++
++	/** The default nav keybindings, as the workbench registers them (when devhubVim.mode == nav). */
++	const bindings: Record<string, string> = {
++		'h': 'devhubVim.nav.left', 'j': 'devhubVim.nav.down', 'k': 'devhubVim.nav.up', 'l': 'devhubVim.nav.right',
++		'Escape': 'devhubVim.nav.escape',
++	};
++
++	function key(k: string, extra: { metaKey?: boolean; isComposing?: boolean; keyCode?: number } = {}) {
++		return { key: k, keyCode: 0, isComposing: false, metaKey: false, ...extra };
++	}
++
++	function press(nav: VimNavPrefix, k: string, extra: { metaKey?: boolean; isComposing?: boolean; keyCode?: number } = {}) {
++		const bound = nav.active && !extra.metaKey ? bindings[k] : undefined;
++		return { action: nav.key(key(k, extra), bound), command: bound };
++	}
++
++	test('Esc never enters nav: only <C-w> does', () => {
++		const nav = new VimNavPrefix();
++		const { vim } = run('ab|c', '');
++		for (let i = 0; i < 5; i++) {
++			vim.handleKey('<Esc>');
++			assert.strictEqual(nav.active, false);
++			assert.strictEqual(vim.mode, 'normal');
++		}
++		assert.strictEqual(nav.enter('normal'), true);
++		assert.strictEqual(nav.active, true);
++		assert.strictEqual(vimCursorStyle(vim.mode, nav.active, 'line'), 'underline-thin');
++	});
++
++	test('<C-w> h j k l run the nav command once, then the prefix is over', () => {
++		for (const [k, command] of [['h', 'devhubVim.nav.left'], ['j', 'devhubVim.nav.down'], ['k', 'devhubVim.nav.up'], ['l', 'devhubVim.nav.right']]) {
++			const nav = new VimNavPrefix();
++			nav.enter('normal');
++			assert.deepStrictEqual(press(nav, k), { action: 'run', command }, k);
++			assert.strictEqual(nav.active, false, k);
++			// one-shot: the next h is a plain key again
++			assert.strictEqual(press(nav, k).action, 'pass', k);
++		}
++	});
++
++	test('Esc in nav cancels it; the editor is still in plain normal mode', () => {
++		const { host, vim } = run('ab|c', '');
++		const nav = new VimNavPrefix();
++		nav.enter('normal');
++		assert.strictEqual(press(nav, 'Escape').action, 'run');
++		assert.strictEqual(nav.active, false);
++		vim.handleKey('<Esc>');
++		assert.strictEqual(vim.mode, 'normal');
++		assert.strictEqual(vim.pending, false);
++		assert.strictEqual(host.state(), 'ab|c');
++		assert.strictEqual(vimCursorStyle(vim.mode, nav.active, 'line'), 'block');
++	});
++
++	test('a key nav does not bind cancels it and is eaten, as in Vim', () => {
++		const nav = new VimNavPrefix();
++		nav.enter('other');
++		assert.strictEqual(press(nav, 'u').action, 'swallow');
++		assert.strictEqual(nav.active, false);
++		nav.enter('input');
++		assert.strictEqual(press(nav, 'x').action, 'swallow');
++	});
++
++	test('modifiers wait; Cmd chords and IME keys pass through', () => {
++		const nav = new VimNavPrefix();
++		nav.enter('normal');
++		assert.strictEqual(press(nav, 'Shift').action, 'wait');
++		assert.strictEqual(press(nav, 'Control').action, 'wait');
++		assert.strictEqual(nav.active, true);
++		assert.strictEqual(press(nav, 'w', { metaKey: true }).action, 'pass');
++		assert.strictEqual(nav.active, false);
++		nav.enter('normal');
++		assert.strictEqual(press(nav, 'h', { keyCode: 229 }).action, 'pass');
++		assert.strictEqual(nav.active, false);
++	});
++
++	test('where <C-w> means something else it is not the prefix', () => {
++		const refused: VimNavFocus[] = ['insert', 'pending', 'terminal'];
++		for (const focus of refused) {
++			const nav = new VimNavPrefix();
++			assert.strictEqual(nav.enter(focus), false, focus);
++			assert.strictEqual(nav.active, false, focus);
++		}
++		for (const focus of ['normal', 'input', 'other'] as VimNavFocus[]) {
++			assert.strictEqual(new VimNavPrefix().enter(focus), true, focus);
++		}
++	});
++
++	test('a click or focus change forgets the prefix', () => {
++		const nav = new VimNavPrefix();
++		nav.enter('other');
++		nav.cancel();
++		assert.strictEqual(nav.active, false);
++		assert.strictEqual(press(nav, 'h').action, 'pass');
++	});
++});
++
 +suite('DevHub Vim IME commits outside insert mode', () => {
 +
 +	test('dropped unless a command waits for a character', () => {
@@ -3333,6 +3579,9 @@ index 00000000..b69f418c
 +		assert.strictEqual(toVimKey(ev('j', { altKey: true }), false), undefined);
 +		assert.strictEqual(toVimKey(ev('r', { ctrlKey: true }), false), '<C-r>');
 +		assert.strictEqual(toVimKey(ev('x', { ctrlKey: true }), false), undefined);
++		// Ctrl-W is not the editor's: it reaches the keybindings (devhubVim.nav.enter)
++		assert.strictEqual(toVimKey(ev('w', { ctrlKey: true }), false), undefined);
++		assert.strictEqual(toVimKey(ev('w', { ctrlKey: true }), true), undefined);
 +	});
 +
 +	test('IME keys are the IME\'s, never Vim keys', () => {
