@@ -115,7 +115,11 @@ left, as 'nosplitbelow' 'nosplitright'; `n` with a new file), `c` (close the
 group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
-a split / peek). In insert mode `CTRL-W` deletes a word, as in Vim.
+a split / peek). In insert mode `CTRL-W` deletes a word, as in Vim. Any
+other command can follow `CTRL-W` too: a binding whose `when` tests
+`devhubVim.mode` (`devhubVim.mode == 'nav'`) runs once and the prefix ends,
+as with the defaults (see [Customising keys](#customising-keys)); a key with
+no such binding only ends the prefix.
 
 ## Neovim defaults and VS Code
 
@@ -299,6 +303,13 @@ pending.
   { "key": "q", "command": "devhubVim.textObject", "args": { "object": "doubleQuote" },
     "when": "editorTextFocus && devhubVim.active && devhubVim.textObjectPending" },
 
+  // <C-w>n: next editor in the group instead of "split with a new file".
+  // After CTRL-W any binding with a `when` on devhubVim.mode == 'nav' runs once
+  // and the prefix ends; remove the default on the key so the list stays clear.
+  { "key": "n", "command": "workbench.action.nextEditorInGroup",
+    "when": "devhubVim.mode == 'nav'" },
+  { "key": "n", "command": "-devhubVim.nav.new" },
+
   // Ctrl-S saves in normal mode (an ex command from a key)
   { "key": "ctrl+s", "command": "devhubVim.ex", "args": { "command": "w" },
     "when": "editorTextFocus && devhubVim.active && devhubVim.mode == 'normal'" }
@@ -314,6 +325,12 @@ Notes:
 * A binding to a plain VS Code command runs it as is: it does not take the
   pending count, operator or register, and it is not part of `.` or a macro.
   Wrap it in `devhubVim.run` to give it a count and visual mode.
+* After `CTRL-W` (`devhubVim.mode == 'nav'`) the next key runs the binding
+  it resolves to if that is a `devhubVim.nav.*` command or its `when` tests
+  `devhubVim.mode`; any command works (with its `args`), and the prefix is
+  over before it runs. Other bindings that happen to match there (the
+  editor's Backspace, a list's keys) do not run: the key only ends the
+  prefix. Only a single key, not a chord, follows `CTRL-W`.
 * `devhubVim.awaitChar` runs `then.command` with `then.args` plus `"char"`;
   the character is the next key typed, or the first character an IME commits.
   Any command can be the target, not just `devhubVim.*` ones.

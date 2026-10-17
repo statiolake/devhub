@@ -440,10 +440,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..621ff06a
+index 00000000..f95f397b
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1202 @@
+@@ -0,0 +1,1226 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -511,8 +511,9 @@ index 00000000..621ff06a
 +//   normal mode and nowhere else.
 +// * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
 +//   then one key (h j k l, w p t b, s v n c q o, = _ + - < >, H J K L, d ] }:
-+//   devhubVim.nav.*). It is one-shot (common/vimKeys.ts VimNavPrefix). In a
-+//   Vim editor's insert mode Ctrl-W is Vim's delete-word-before-the-caret.
++//   devhubVim.nav.*, or any binding whose `when` tests devhubVim.mode). It
++//   is one-shot (common/vimKeys.ts VimNavPrefix). In a Vim editor's insert
++//   mode Ctrl-W is Vim's delete-word-before-the-caret.
 +//
 +// User documentation: docs/vim.md in the DevHub repository.
 +
@@ -525,6 +526,7 @@ index 00000000..621ff06a
 +import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
 +import { KeyChord, KeyCode, KeyCodeUtils, KeyMod } from '../../../../base/common/keyCodes.js';
 +import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
++import { equals } from '../../../../base/common/objects.js';
 +import { isMacintosh } from '../../../../base/common/platform.js';
 +import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 +import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
@@ -559,7 +561,7 @@ index 00000000..621ff06a
 +import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 +import { DEFAULT_KEYBINDINGS, SHIFTED_DIGIT_GATE, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
 +import { VimRegex } from '../common/vimRegex.js';
-+import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
++import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, navTakesBinding, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 +
 +const SETTING = 'devhub.vim.enabled';
 +const EX_SETTING = 'devhub.vim.exCommands';
@@ -1439,16 +1441,17 @@ index 00000000..621ff06a
 +	/**
 +	 * While `<C-w>` waits, its key goes to the keybinding service before the
 +	 * focused widget (a list's type-to-find, an input's typing) sees it. A key
-+	 * bound to a `devhubVim.nav.*` command runs it; any other key ends the
-+	 * prefix (VimNavPrefix.key decides whether it is eaten or let through).
++	 * bound to a `devhubVim.nav.*` command, or to any command with a `when` on
++	 * `devhubVim.mode` (a user's `devhubVim.mode == 'nav'` binding), runs it
++	 * once; any other key ends the prefix (VimNavPrefix.key decides whether it
++	 * is eaten or let through). The prefix is over before the command runs.
 +	 */
 +	private onWindowKeyDown(e: KeyboardEvent): void {
 +		if (!this.nav.active) {
 +			return;
 +		}
 +		const event = new StandardKeyboardEvent(e);
-+		const result = this.keybindingService.softDispatch(event, e.target as HTMLElement);
-+		const found = result.kind === ResultKind.KbFound && result.commandId?.startsWith('devhubVim.nav.') ? result : undefined;
++		const found = this.navBinding(event, e.target as HTMLElement);
 +		const action = this.nav.key(e, found?.commandId ?? undefined);
 +		if (action === 'wait') {
 +			return;
@@ -1460,8 +1463,29 @@ index 00000000..621ff06a
 +		e.preventDefault();
 +		e.stopPropagation();
 +		if (action === 'run' && found?.commandId) {
-+			void this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs]));
++			this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs])).catch(onUnexpectedError);
 +		}
++	}
++
++	/** The binding the key resolves to while nav waits, if it is nav's (navTakesBinding). */
++	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
++		const result = this.keybindingService.softDispatch(event, target);
++		if (result.kind !== ResultKind.KbFound || !result.commandId) {
++			return undefined;
++		}
++		const found = { commandId: result.commandId, commandArgs: result.commandArgs };
++		if (navTakesBinding(found.commandId, undefined)) {
++			return found;
++		}
++		// softDispatch names the command, not the binding: find the binding of
++		// this key to it that matches here, and look at its `when`.
++		const chord = this.keybindingService.resolveKeyboardEvent(event).getDispatchChords()[0];
++		const context = this.contextKeyService.getContext(target);
++		const ours = chord !== null && this.keybindingService.getKeybindings().some(item =>
++			item.command === found.commandId && item.chords.length === 1 && item.chords[0] === chord
++			&& equals(item.commandArgs, found.commandArgs)
++			&& !!item.when && navTakesBinding(item.command, item.when.keys()) && item.when.evaluate(context));
++		return ours ? found : undefined;
 +	}
 +}
 +
@@ -8193,10 +8217,10 @@ index 00000000..d302d6f5
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
 new file mode 100644
-index 00000000..c27efa1f
+index 00000000..1f442da1
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,184 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8294,7 +8318,7 @@ index 00000000..c27efa1f
 +
 +/** What the workbench does with a keydown while the prefix waits. */
 +export type VimNavKeyAction =
-+	/** run the `devhubVim.nav.*` command the keybindings bind the key to */
++	/** run the command the keybindings bind the key to while nav waits (navTakesBinding) */
 +	| 'run'
 +	/** the key is not the prefix's: it does what it does anyway */
 +	| 'pass'
@@ -8302,6 +8326,21 @@ index 00000000..c27efa1f
 +	| 'swallow'
 +	/** a lone modifier: keep waiting for the key it modifies */
 +	| 'wait';
++
++/**
++ * Whether a keybinding that resolves while the `<C-w>` prefix waits is nav's:
++ * a `devhubVim.nav.*` command, or any other command whose binding's `when`
++ * tests `devhubVim.mode` (written for nav: `devhubVim.mode == 'nav'`, so
++ * `<C-w>n` can be `workbench.action.nextEditorInGroup`). Other bindings that
++ * happen to match there (the editor's Backspace / Tab / Enter commands, a
++ * list's keys) are not run: after `<C-w>` such a key only ends the prefix.
++ */
++export function navTakesBinding(command: string | null | undefined, whenKeys: readonly string[] | undefined): boolean {
++	if (!command) {
++		return false;
++	}
++	return command.startsWith('devhubVim.nav.') || !!whenKeys?.includes('devhubVim.mode');
++}
 +
 +/**
 + * Vim's window prefix, workbench wide: `<C-w>` then one key, as in Vim's
@@ -8336,11 +8375,13 @@ index 00000000..c27efa1f
 +	}
 +
 +	/**
-+	 * A keydown while the prefix waits; `command` is the `devhubVim.nav.*`
-+	 * command the keybindings bind it to here (h j k l by default), if any.
-+	 * Every key but a lone modifier ends the prefix. A key nav does not bind
-+	 * cancels it and is eaten, as in Vim; Cmd chords and IME keys are let
-+	 * through (Cmd-W still closes the editor).
++	 * A keydown while the prefix waits; `command` is the command the
++	 * keybindings bind it to here, if navTakesBinding accepts it: a
++	 * `devhubVim.nav.*` one (h j k l by default) or any command bound with a
++	 * `when` on `devhubVim.mode` (`devhubVim.mode == 'nav'`). Every key but a
++	 * lone modifier ends the prefix, also one that runs a command. A key nav
++	 * does not bind cancels it and is eaten, as in Vim; Cmd chords and IME
++	 * keys are let through (Cmd-W still closes the editor).
 +	 */
 +	key(e: { readonly key: string; readonly keyCode: number; readonly isComposing: boolean; readonly metaKey: boolean }, command: string | undefined): VimNavKeyAction {
 +		if (!this._active) {
@@ -9095,10 +9136,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..81b5243d
+index 00000000..65ac28a5
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,1926 @@
+@@ -0,0 +1,1947 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -9112,7 +9153,7 @@ index 00000000..81b5243d
 +import { DEFAULT_KEYBINDINGS, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
 +import type { VimRegex } from '../../common/vimRegex.js';
 +import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
-+import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
++import { VimNavPrefix, captureKey, navTakesBinding, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
 +
 +/** A string-array host: the cursor is drawn as `|` in `state()`. */
 +class TestHost implements IVimHost {
@@ -10152,6 +10193,27 @@ index 00000000..81b5243d
 +		for (const focus of ['normal', 'input', 'other'] as VimNavFocus[]) {
 +			assert.strictEqual(new VimNavPrefix().enter(focus), true, focus);
 +		}
++	});
++
++	test('any binding written for nav runs once after <C-w>, then the prefix is over', () => {
++		// a user's { key: 'n', command: 'workbench.action.nextEditorInGroup', when: "devhubVim.mode == 'nav'" }
++		assert.strictEqual(navTakesBinding('workbench.action.nextEditorInGroup', ['devhubVim.mode']), true);
++		assert.strictEqual(navTakesBinding('devhubVim.nav.left', undefined), true);
++		// what else happens to match there (the editor's Backspace, a list's keys) is not nav's
++		assert.strictEqual(navTakesBinding('deleteLeft', ['textInputFocus']), false);
++		assert.strictEqual(navTakesBinding('tab', undefined), false);
++		assert.strictEqual(navTakesBinding(undefined, ['devhubVim.mode']), false);
++		const nav = new VimNavPrefix();
++		nav.enter('normal');
++		assert.strictEqual(nav.key(key('n'), 'workbench.action.nextEditorInGroup'), 'run');
++		assert.strictEqual(nav.active, false);
++		assert.strictEqual(nav.key(key('n'), undefined), 'pass');
++	});
++
++	test('no default Vim key binding matches while nav waits', () => {
++		const ctx = { editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.mode': 'nav', 'devhubVim.usShiftedDigits': true };
++		const matching = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(effectiveWhen(b), ctx)).map(b => b.key);
++		assert.deepStrictEqual(matching, []);
 +	});
 +
 +	test('a click or focus change forgets the prefix', () => {
