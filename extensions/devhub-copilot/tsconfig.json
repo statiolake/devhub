@@ -12,7 +12,8 @@
   },
   "include": [
     "src/**/*.ts",
-    "../../vscode/src/vscode-dts/vscode.proposed.inlineCompletionsAdditions.d.ts"
+    "../../vscode/src/vscode-dts/vscode.proposed.inlineCompletionsAdditions.d.ts",
+    "typings/*.d.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }

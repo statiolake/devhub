@@ -45,7 +45,10 @@ export class NextEditProvider implements vscode.InlineCompletionItemProvider {
     context: vscode.InlineCompletionContext,
     token: vscode.CancellationToken,
   ): Promise<vscode.InlineCompletionList | undefined> {
-    if (!this.options.isEnabled() || !shouldSynchronizeDocument(document)) {
+    if (
+      !this.options.isEnabled(document) ||
+      !shouldSynchronizeDocument(document)
+    ) {
       return undefined;
     }
     // The suggest widget is open: the editor shows only items that extend

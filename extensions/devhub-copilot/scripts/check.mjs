@@ -119,4 +119,31 @@ for (const proposal of manifest.enabledApiProposals ?? []) {
   }
 }
 
+/**
+ * The status item's dashboard is `StatusBarItem.hover`, DevHub's own proposal.
+ * Its declaration is added to VS Code by a patch, so the submodule has it only
+ * once the patches are applied; the extension type-checks against a copy in
+ * typings/, which has to be the patch's file byte for byte.
+ */
+if (!manifest.enabledApiProposals?.includes("devhubStatusBarHover")) {
+  throw new Error("the devhubStatusBarHover proposal must be enabled");
+}
+const hoverPatch = await readFile(
+  new URL(
+    "../../../patches/vscode/0009-devhub-status-bar-hover.patch",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const declared =
+  /^\+\+\+ b\/src\/vscode-dts\/vscode\.proposed\.devhubStatusBarHover\.d\.ts\n@@[^\n]*\n((?:\+[^\n]*\n)*)/mu.exec(
+    hoverPatch,
+  );
+const copy = await read("typings/vscode.proposed.devhubStatusBarHover.d.ts");
+if (declared === null || declared[1].replace(/^\+/gmu, "") !== copy) {
+  throw new Error(
+    "typings/vscode.proposed.devhubStatusBarHover.d.ts differs from the one patches/vscode/0009 adds",
+  );
+}
+
 console.log("DevHub Copilot static checks passed");

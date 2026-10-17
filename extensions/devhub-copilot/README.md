@@ -68,8 +68,43 @@ server on this machine share.
 | `devhub.copilot.nextEditSuggestions.renameSymbolSuggestions` | `true`  |
 | `devhub.copilot.debug.logging`                               | `false` |
 
-Click the status bar item to see the server's status and the remaining usage,
-or to turn Copilot off, sign in or out, or restart the server.
+`devhub.copilot.completions.enabled` and
+`devhub.copilot.nextEditSuggestions.enabled` can be set per language
+(`"[markdown]": { "devhub.copilot.completions.enabled": false }`); the
+dashboard's "for <language>" checkboxes write exactly that.
+
+## The status bar dashboard
+
+DevHub pins `chat.disableAIFeatures`, which hides the official Copilot status
+item and its dashboard. This extension's item has a dashboard of its own,
+drawn by the workbench with the same widgets and stylesheet as the official
+one: hover over the item, or click it to pin it open with keyboard focus
+inside (Tab between the controls, Space to toggle, Escape to close).
+
+- the header: the GitHub account and plan, and Show Output, Restart Language
+  Server and Settings;
+- the server: running, or a moving bar while it starts or while you sign in,
+  or its error with Restart;
+- the code completions quota as a meter of what is used, with its reset date,
+  when the plan has a limit;
+- Suggestions: Code completions and Next edit suggestions, everywhere and for
+  the active editor's language (a three-state box: on, off, or as everywhere);
+- Snooze 5 min (then +5 min or Resume) hides suggestions in this window;
+- Sign In to GitHub or Sign Out, and Turn Off Copilot.
+
+The icon is the official one for the same state: `copilot`, `copilot-snooze`,
+`copilot-unavailable` (off, or both kinds off for this language),
+`copilot-not-connected` (signed out), `copilot-warning` (error, quota used up),
+and a spinner while the server starts, you sign in, or a request is in flight.
+
+The dashboard is `StatusBarItem.hover`, the `devhubStatusBarHover` proposed
+API that `patches/vscode/0009-devhub-status-bar-hover.patch` adds to the
+workbench: a generic, declarative hover of headers, text, meters, checkboxes,
+buttons and sections, which any DevHub built-in can be granted
+(`scripts/product_metadata.py`). Its declaration is copied to `typings/`
+(checked against the patch by `pnpm run lint`). On a workbench without the
+patch the item falls back to a plain tooltip and the **Copilot: Show Status**
+menu.
 
 If `statiolake.vscode-copilot-lsp` is installed as well, its completions are
 excluded and you are asked to disable it. Left enabled, it would start a second

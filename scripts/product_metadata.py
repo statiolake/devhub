@@ -159,13 +159,31 @@ EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
 	# edit becomes ghost text, and ghost text that does not continue at the
 	# cursor is never shown. Nothing else in the editor gates that UI: not the
 	# extension id, not `isBuiltin`, not `chat.disableAIFeatures`.
-	"devhub.devhub-copilot": ["inlineCompletionsAdditions"],
+	# `devhubStatusBarHover` is DevHub's own proposal
+	# (patches/vscode/0009-devhub-status-bar-hover.patch): a status bar item's
+	# rich hover, drawn by the workbench from the widgets of its Copilot
+	# dashboard, which `chat.disableAIFeatures` hides. The extension's status
+	# item uses it for its dashboard.
+	"devhub.devhub-copilot": ["inlineCompletionsAdditions", "devhubStatusBarHover"],
 }
 
 
 def proposal_declaration_file(proposal: str) -> Path:
-	"""Where the pinned VS Code declares a proposed API, if it has it at all."""
+	"""Where the VS Code DevHub builds declares a proposed API, if it has it at all."""
 	return VSCODE_DIR / "src" / "vscode-dts" / f"vscode.proposed.{proposal}.d.ts"
+
+
+def proposal_is_declared(proposal: str, patches_dir: Path | None = None) -> bool:
+	"""Whether the pinned VS Code, or one of DevHub's patches to it, declares a proposal.
+
+	A checkout's submodule is the pinned commit until provisioning applies
+	`patches/vscode/`, so a proposal a patch adds is found in the patch.
+	"""
+	if proposal_declaration_file(proposal).is_file():
+		return True
+	added = f"+++ b/src/vscode-dts/vscode.proposed.{proposal}.d.ts\n"
+	patches = sorted((patches_dir or PATCHES_DIR).glob("*.patch"))
+	return any(added in patch.read_text(encoding="utf-8") for patch in patches)
 
 
 def devhub_commit() -> str:

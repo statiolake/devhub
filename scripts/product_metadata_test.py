@@ -24,7 +24,7 @@ from product_metadata import (
 	devhub_commit,
 	packaged_metadata,
 	product_metadata,
-	proposal_declaration_file,
+	proposal_is_declared,
 	reh_identity,
 	vscode_commit,
 )
@@ -140,7 +140,7 @@ class EnabledApiProposals(unittest.TestCase):
 			for proposal in proposals:
 				with self.subTest(extension=extension, proposal=proposal):
 					self.assertTrue(
-						proposal_declaration_file(proposal).is_file(),
+						proposal_is_declared(proposal),
 						f"{extension} is granted {proposal}, which this VS Code does not declare",
 					)
 

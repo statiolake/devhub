@@ -18,7 +18,8 @@ export const EXECUTE_SERVER_COMMAND = "devhub.copilot._executeServerCommand";
 
 export interface ProviderOptions {
   getClient: () => CopilotLspClient | undefined;
-  isEnabled: () => boolean;
+  /** Whether to offer suggestions in this document now. */
+  isEnabled: (document: vscode.TextDocument) => boolean;
   log: (message: string) => void;
 }
 
@@ -43,7 +44,10 @@ export class CompletionProvider implements vscode.InlineCompletionItemProvider {
     context: vscode.InlineCompletionContext,
     token: vscode.CancellationToken,
   ): Promise<vscode.InlineCompletionList | undefined> {
-    if (!this.options.isEnabled() || !shouldSynchronizeDocument(document)) {
+    if (
+      !this.options.isEnabled(document) ||
+      !shouldSynchronizeDocument(document)
+    ) {
       return undefined;
     }
     const client = this.options.getClient();

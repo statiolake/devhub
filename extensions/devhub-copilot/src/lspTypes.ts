@@ -92,6 +92,17 @@ export interface LspStatus {
   command?: LspStatusCommand;
 }
 
+/**
+ * `checkStatus`: whether the server's GitHub session is signed in, and as
+ * whom. `status` is `OK`, `MaybeOk` or `AlreadySignedIn` when it is,
+ * `NotAuthorized` for an account without Copilot, and `NotSignedIn` or
+ * another word when it is not.
+ */
+export interface LspCheckStatusResponse {
+  status?: string;
+  user?: string;
+}
+
 export interface LspSignInResponse {
   /**
    * The Language Server may return an empty object when an existing session is

@@ -15,7 +15,8 @@
   ],
   "api": "none",
   "enabledApiProposals": [
-    "inlineCompletionsAdditions"
+    "inlineCompletionsAdditions",
+    "devhubStatusBarHover"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -49,6 +50,16 @@
         "category": "Copilot"
       },
       {
+        "command": "devhub.copilot.snooze",
+        "title": "Snooze Suggestions for 5 Minutes",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.cancelSnooze",
+        "title": "Cancel Snooze",
+        "category": "Copilot"
+      },
+      {
         "command": "devhub.copilot.showMenu",
         "title": "Show Status",
         "category": "Copilot"
@@ -70,12 +81,14 @@
         "devhub.copilot.completions.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Offer Copilot code completions as ghost text at the cursor."
+          "description": "Offer Copilot code completions as ghost text at the cursor. Can be set per language, e.g. in `[markdown]`.",
+          "scope": "language-overridable"
         },
         "devhub.copilot.nextEditSuggestions.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Offer Copilot Next Edit Suggestions: edits anywhere near the cursor, shown with the editor's inline edit UI. How they are drawn is set by the editor.inlineSuggest.edits.* settings."
+          "description": "Offer Copilot Next Edit Suggestions: edits anywhere near the cursor, shown with the editor's inline edit UI. How they are drawn is set by the editor.inlineSuggest.edits.* settings. Can be set per language.",
+          "scope": "language-overridable"
         },
         "devhub.copilot.nextEditSuggestions.extendedRange": {
           "type": "boolean",

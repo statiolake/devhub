@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { JsonRpcConnection, type CancellationTokenLike } from "./jsonRpc";
 import type {
+  LspCheckStatusResponse,
   LspCommand,
   LspConfigurationItem,
   LspInlineCompletionItem,
@@ -257,6 +258,13 @@ export class CopilotLspClient {
   public signIn(): Promise<LspSignInResponse | null> {
     return this.requireConnection().request<LspSignInResponse | null>(
       "signIn",
+      {},
+    );
+  }
+
+  public checkStatus(): Promise<LspCheckStatusResponse | null> {
+    return this.requireConnection().request<LspCheckStatusResponse | null>(
+      "checkStatus",
       {},
     );
   }

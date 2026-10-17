@@ -25,10 +25,19 @@ import type {
 } from "./lspTypes";
 import { NextEditProvider } from "./nextEditProvider";
 import {
-  formatCompletionsQuotaLabel,
-  formatQuotaLines,
-  type CopilotQuota,
-} from "./quota";
+  accountFromStatus,
+  buildHover,
+  COMPLETIONS_SETTING,
+  isSnoozed,
+  NEXT_EDITS_SETTING,
+  SET_SETTING_COMMAND,
+  SNOOZE_MS,
+  statusBarAppearance,
+  type AccountState,
+  type DashboardState,
+  type FeatureSetting,
+} from "./dashboard";
+import { formatQuotaLines, type CopilotQuota } from "./quota";
 import { redactLogMessage, redactSecrets } from "./redaction";
 import { resolveLanguageServerLaunch } from "./serverLauncher";
 import { statusOf, type CopilotState } from "./status";
@@ -97,10 +106,25 @@ class Controller {
   private disposed = false;
   private enabled: boolean;
   private signingIn = false;
+  private starting = false;
+  private account: AccountState = { kind: "unknown" };
+  private snoozedUntil?: number;
+  private snoozeTimer?: NodeJS.Timeout;
+  private languageNames?: Map<string, string>;
+  /**
+   * Whether this build's workbench draws `StatusBarItem.hover`, the
+   * `devhubStatusBarHover` proposal (patches/vscode/0009). Without it the
+   * item keeps a plain tooltip and opens the Quick Pick menu.
+   */
+  private readonly richHover: boolean;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusBar.name = "Copilot";
-    this.statusBar.command = "devhub.copilot.showMenu";
+    this.richHover = supportsRichHover(this.statusBar);
+    // With the hover, an item without a command pins it open on click.
+    this.statusBar.command = this.richHover
+      ? undefined
+      : "devhub.copilot.showMenu";
     this.enabled = this.setting("enable", true);
     this.fileWatchers = new WorkspaceFileWatcher(
       (workspaceUri, changes) =>
@@ -134,17 +158,26 @@ class Controller {
     // Signed out, the server answers every request with "Not authenticated";
     // asking on each keystroke would only fill the log with it.
     const canAsk = () =>
-      this.enabled && statusOf(this.state()).kind !== "signedOut";
+      this.enabled &&
+      statusOf(this.state()).kind !== "signedOut" &&
+      this.account.kind !== "signedOut" &&
+      this.account.kind !== "notAuthorized" &&
+      !isSnoozed({ snoozedUntil: this.snoozedUntil, now: Date.now() });
+    // Both settings are language-overridable, so they are read for the
+    // document being asked about.
+    const enabledFor = (document: vscode.TextDocument, key: string) =>
+      vscode.workspace.getConfiguration(SECTION, document).get(key, true);
     const completions = new CompletionProvider({
       getClient,
       log,
-      isEnabled: () => canAsk() && this.setting("completions.enabled", true),
+      isEnabled: (document) =>
+        canAsk() && enabledFor(document, COMPLETIONS_SETTING),
     });
     const nextEdits = new NextEditProvider({
       getClient,
       log,
-      isEnabled: () =>
-        canAsk() && this.setting("nextEditSuggestions.enabled", true),
+      isEnabled: (document) =>
+        canAsk() && enabledFor(document, NEXT_EDITS_SETTING),
     });
     this.context.subscriptions.push(
       vscode.commands.registerCommand("devhub.copilot.signIn", () =>
@@ -165,6 +198,17 @@ class Controller {
       vscode.commands.registerCommand("devhub.copilot.showOutput", () =>
         this.output.show(true),
       ),
+      vscode.commands.registerCommand("devhub.copilot.snooze", () =>
+        this.snooze(),
+      ),
+      vscode.commands.registerCommand("devhub.copilot.cancelSnooze", () =>
+        this.cancelSnooze(),
+      ),
+      vscode.commands.registerCommand(
+        SET_SETTING_COMMAND,
+        (key: unknown, languageId: unknown, value: unknown) =>
+          this.setFeatureSetting(key, languageId, value),
+      ),
       vscode.commands.registerCommand(
         EXECUTE_SERVER_COMMAND,
         (command: unknown) => this.executeServerCommand(command),
@@ -182,9 +226,21 @@ class Controller {
           excludes: [SUPERSEDED_EXTENSION],
         },
       ),
-      vscode.workspace.onDidChangeConfiguration((event) =>
-        this.onConfigurationChanged(event),
-      ),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        this.onConfigurationChanged(event);
+        this.onSettingsChanged(event);
+      }),
+      // The hover's "for <language>" toggles follow the active editor.
+      vscode.window.onDidChangeActiveTextEditor(() => this.updateStatusBar()),
+      vscode.workspace.onDidOpenTextDocument((document) => {
+        if (document === vscode.window.activeTextEditor?.document) {
+          this.updateStatusBar(); // its language was changed
+        }
+      }),
+      vscode.extensions.onDidChange(() => {
+        this.languageNames = undefined;
+      }),
+      { dispose: () => clearTimeout(this.snoozeTimer) },
       this.statusBar,
       this.fileWatchers,
       this.output,
@@ -229,6 +285,8 @@ class Controller {
       return;
     }
     this.lastServerStatus = undefined;
+    this.starting = true;
+    this.updateStatusBar();
     const folders = vscode.workspace.workspaceFolders ?? [];
     // The server runs on this machine (extensionKind `ui`), so only a local
     // folder can be its working directory; a remote one is a path that is
@@ -251,6 +309,7 @@ class Controller {
       this.log("Copilot language server started.");
       this.scheduleStableRecoveryReset();
       this.startQuotaRefresh();
+      void this.refreshAccount();
     } catch (error) {
       this.log(
         `Could not start the Copilot language server: ${formatError(error)}`,
@@ -264,6 +323,7 @@ class Controller {
         "Copilot could not start. See the Copilot output for details.",
       );
     } finally {
+      this.starting = false;
       this.updateStatusBar();
     }
   }
@@ -336,7 +396,7 @@ class Controller {
       this.signingIn = false;
       this.updateStatusBar();
     }
-    await this.refreshQuota();
+    await Promise.all([this.refreshQuota(), this.refreshAccount()]);
   }
 
   private async signOut(): Promise<void> {
@@ -345,7 +405,8 @@ class Controller {
     }
     try {
       await this.client.signOut();
-      await this.refreshQuota();
+      this.account = { kind: "signedOut" };
+      await Promise.all([this.refreshQuota(), this.refreshAccount()]);
       void vscode.window.showInformationMessage("Copilot signed out.");
     } catch (error) {
       this.log(`Sign-out failed: ${formatError(error)}`);
@@ -446,9 +507,21 @@ class Controller {
     }
   }
 
+  private onSettingsChanged(event: vscode.ConfigurationChangeEvent): void {
+    if (event.affectsConfiguration(SECTION)) {
+      this.updateStatusBar(); // the hover's toggles
+    }
+  }
+
   private onServerStatus(status: CopilotClientStatus): void {
+    const previous = this.lastServerStatus;
     this.lastServerStatus = status;
     this.updateStatusBar();
+    if (previous !== undefined && previous.kind !== status.kind) {
+      // Signed in or out elsewhere (another client of the same store), or
+      // the session expired.
+      void this.refreshAccount();
+    }
     if (status.message.length > 0) {
       this.log(
         `Language server status: ${status.kind}${status.busy ? " (busy)" : ""}: ${status.message}`,
@@ -614,10 +687,10 @@ class Controller {
       // nothing here reads the official extension's namespace.
       github: {
         copilot: {
-          "nextEditSuggestions.enabled": this.setting(
-            "nextEditSuggestions.enabled",
-            true,
-          ),
+          // The providers decide per document (the setting is
+          // language-overridable); the server only has to be willing.
+          "nextEditSuggestions.enabled":
+            this.enabledAnywhere(NEXT_EDITS_SETTING),
           "nextEditSuggestions.extendedRange": this.setting(
             "nextEditSuggestions.extendedRange",
             true,
@@ -652,21 +725,235 @@ class Controller {
   }
 
   private updateStatusBar(): void {
-    const status = statusOf(this.state());
-    const quota =
-      this.quotaState?.kind === "loaded"
-        ? formatCompletionsQuotaLabel(this.quotaState.quota)
-        : undefined;
-    this.statusBar.text = `$(copilot) ${status.icon}${quota === undefined ? "" : ` ${quota}`}`;
-    this.statusBar.tooltip = [
-      `Copilot: ${status.summary}`,
-      ...this.quotaLines(),
-    ].join("\n");
+    const state = this.dashboardState();
+    const appearance = statusBarAppearance(state);
+    this.statusBar.text = appearance.text;
+    if (this.richHover) {
+      this.statusBar.hover = buildHover(
+        state,
+        (id) => new vscode.ThemeIcon(id),
+      );
+    } else {
+      this.statusBar.tooltip = [appearance.summary, ...this.quotaLines()].join(
+        "\n",
+      );
+    }
     this.statusBar.accessibilityInformation = {
-      label: `Copilot: ${status.summary}`,
+      label: appearance.summary,
       role: "button",
     };
     this.statusBar.show();
+  }
+
+  private dashboardState(): DashboardState {
+    const status = statusOf(this.state());
+    const editor = vscode.window.activeTextEditor;
+    const languageId = editor?.document.languageId;
+    const server: DashboardState["server"] = this.starting
+      ? "starting"
+      : !this.enabled
+        ? "stopped"
+        : status.kind === "error"
+          ? "error"
+          : this.client.isReady
+            ? "running"
+            : "stopped";
+    return {
+      enabled: this.enabled,
+      server,
+      busy: this.lastServerStatus?.busy === true,
+      signingIn: this.signingIn,
+      // The server's own words about signing in count too: they arrive
+      // before any checkStatus answer does.
+      account:
+        status.kind === "signedOut" ? { kind: "signedOut" } : this.account,
+      message:
+        this.lastServerStatus !== undefined &&
+        this.lastServerStatus.message.length > 0
+          ? redactLogMessage(this.lastServerStatus.message)
+          : undefined,
+      quota:
+        this.quotaState === undefined
+          ? undefined
+          : this.quotaState.kind === "loaded"
+            ? this.quotaState
+            : { kind: "failed" },
+      snoozedUntil: this.snoozedUntil,
+      now: Date.now(),
+      locale: vscode.env.language,
+      language:
+        languageId === undefined
+          ? undefined
+          : { id: languageId, name: this.languageName(languageId) },
+      completions: this.featureSetting(COMPLETIONS_SETTING, editor?.document),
+      nextEdits: this.featureSetting(NEXT_EDITS_SETTING, editor?.document),
+    };
+  }
+
+  private featureSetting(
+    key: string,
+    document: vscode.TextDocument | undefined,
+  ): FeatureSetting {
+    const global = this.setting(key, true);
+    if (document === undefined) {
+      return { global };
+    }
+    const inspection = vscode.workspace
+      .getConfiguration(SECTION, document)
+      .inspect<boolean>(key);
+    return {
+      global,
+      language:
+        inspection?.workspaceFolderLanguageValue ??
+        inspection?.workspaceLanguageValue ??
+        inspection?.globalLanguageValue,
+    };
+  }
+
+  /** Whether a setting is on anywhere: by default or for some language. */
+  private enabledAnywhere(key: string): boolean {
+    if (this.setting(key, true)) {
+      return true;
+    }
+    const inspection = vscode.workspace
+      .getConfiguration(SECTION)
+      .inspect<boolean>(key);
+    return (inspection?.languageIds ?? []).some(
+      (languageId) =>
+        vscode.workspace
+          .getConfiguration(SECTION, { languageId })
+          .get<boolean>(key, true) === true,
+    );
+  }
+
+  /**
+   * A hover checkbox: `languageId` null for the setting itself, else that
+   * language's override, where `'mixed'` removes the override. Written where
+   * the value already is (workspace or user), as the toggle command does.
+   */
+  private async setFeatureSetting(
+    key: unknown,
+    languageId: unknown,
+    value: unknown,
+  ): Promise<void> {
+    if (
+      (key !== COMPLETIONS_SETTING && key !== NEXT_EDITS_SETTING) ||
+      (value !== true && value !== false && value !== "mixed")
+    ) {
+      return;
+    }
+    try {
+      if (typeof languageId !== "string") {
+        const configuration = vscode.workspace.getConfiguration(SECTION);
+        const inspection = configuration.inspect<boolean>(key);
+        await configuration.update(
+          key,
+          value === true,
+          inspection?.workspaceValue !== undefined
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global,
+        );
+        return;
+      }
+      const configuration = vscode.workspace.getConfiguration(SECTION, {
+        languageId,
+      });
+      const inspection = configuration.inspect<boolean>(key);
+      if (value === "mixed") {
+        if (inspection?.workspaceLanguageValue !== undefined) {
+          await configuration.update(
+            key,
+            undefined,
+            vscode.ConfigurationTarget.Workspace,
+            true,
+          );
+        }
+        if (inspection?.globalLanguageValue !== undefined) {
+          await configuration.update(
+            key,
+            undefined,
+            vscode.ConfigurationTarget.Global,
+            true,
+          );
+        }
+        return;
+      }
+      await configuration.update(
+        key,
+        value,
+        inspection?.workspaceLanguageValue !== undefined
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global,
+        true,
+      );
+    } catch (error) {
+      this.log(`Could not change ${SECTION}.${key}: ${formatError(error)}`);
+      void vscode.window.showErrorMessage(
+        `Could not change ${SECTION}.${key}: ${formatError(error)}`,
+      );
+    }
+  }
+
+  private snooze(): void {
+    const now = Date.now();
+    this.snoozedUntil = Math.max(now, this.snoozedUntil ?? now) + SNOOZE_MS;
+    clearTimeout(this.snoozeTimer);
+    this.snoozeTimer = setTimeout(
+      () => this.cancelSnooze(),
+      this.snoozedUntil - now,
+    );
+    this.updateStatusBar();
+  }
+
+  private cancelSnooze(): void {
+    clearTimeout(this.snoozeTimer);
+    this.snoozeTimer = undefined;
+    this.snoozedUntil = undefined;
+    this.updateStatusBar();
+  }
+
+  /** The server's `checkStatus`: who is signed in. */
+  private async refreshAccount(): Promise<void> {
+    if (!this.client.isReady) {
+      return;
+    }
+    try {
+      this.account = accountFromStatus(await this.client.checkStatus());
+    } catch (error) {
+      this.log(`Could not check the sign-in status: ${formatError(error)}`);
+      this.account = { kind: "unknown" };
+    }
+    this.updateStatusBar();
+  }
+
+  /**
+   * A language's display name, from the `aliases` its extension contributes;
+   * the API has no lookup of its own.
+   */
+  private languageName(languageId: string): string {
+    if (this.languageNames === undefined) {
+      this.languageNames = new Map();
+      for (const extension of vscode.extensions.all) {
+        const languages: unknown =
+          extension.packageJSON?.contributes?.languages;
+        if (!Array.isArray(languages)) {
+          continue;
+        }
+        for (const language of languages) {
+          const id: unknown = language?.id;
+          const alias: unknown = language?.aliases?.[0];
+          if (
+            typeof id === "string" &&
+            typeof alias === "string" &&
+            alias.length > 0 &&
+            !this.languageNames.has(id)
+          ) {
+            this.languageNames.set(id, alias);
+          }
+        }
+      }
+    }
+    return this.languageNames.get(languageId) ?? languageId;
   }
 
   private log(message: string, details?: unknown): void {
@@ -681,6 +968,18 @@ class Controller {
     const next = this.lifecycle.then(task, task);
     this.lifecycle = next.catch(() => undefined);
     return next;
+  }
+}
+
+function supportsRichHover(item: vscode.StatusBarItem): boolean {
+  if (!("hover" in item)) {
+    return false; // a workbench without patches/vscode/0009
+  }
+  try {
+    void item.hover; // throws when the proposal is not enabled for us
+    return true;
+  } catch {
+    return false;
   }
 }
 
