@@ -1,9 +1,449 @@
+diff --git a/src/vs/editor/browser/controller/editContext/modalTextInput.ts b/src/vs/editor/browser/controller/editContext/modalTextInput.ts
+new file mode 100644
+index 00000000..5a0b887a
+--- /dev/null
++++ b/src/vs/editor/browser/controller/editContext/modalTextInput.ts
+@@ -0,0 +1,82 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub: modal text input, for Vim's normal/visual/operator-pending modes
++// (src/vs/workbench/contrib/devhubVim).
++//
++// A keybinding layer (what an extension such as VSCodeVim can do) only sees
++// keydown. Text reaches the model by other routes too: an IME composition is
++// drawn into the model as it is typed (EditContext's `textupdate`, or the
++// hidden <textarea>'s composition events), `beforeinput` turns Enter into a
++// newline, paste and drop insert text, and any contribution can call
++// `editor.trigger(.., 'type', ..)`. So while an editor is modal its text
++// input is cut where it enters the editor core:
++//
++// * CodeEditorWidget drops `type`, `replacePreviousChar`, `compositionType`,
++//   `compositionStart` and `paste` (from the keyboard or from any other
++//   caller), marks paste events handled (so paste-as providers stay out too)
++//   and refuses drops. Edits that are commands (the Vim engine's own
++//   `executeEdits`, undo, formatting, code actions, cut) are untouched: this
++//   gates typed text, not the model.
++// * The input surfaces let the OS input method run (as in terminal Vim, an
++//   IME that is on composes; its keys are not reinterpreted as commands) but
++//   keep the composition out of the editor: nothing is drawn inline, no
++//   composition decoration is left behind, and when the composition ends the
++//   input surface is put back to the model's text. The committed text is
++//   handed to `onDidCommitText` instead, so the mode's owner can give it to a
++//   command that waits for a character (Vim's f/t/r, the `/` prompt) and
++//   drop it otherwise.
++//
++// The switch is per editor (keyed by `ICodeEditor.getId()`, as the EditContext
++// registries are) and independent of the global `IME` toggle the keybinding
++// service flips for chords, so the two never undo each other.
++//
++// Kept in this one file plus a few guarded lines at each input surface, so an
++// upstream bump only has to re-place those lines.
++
++import { Emitter, Event } from '../../../../base/common/event.js';
++
++export interface IModalCommittedText {
++	readonly editorId: string;
++	readonly text: string;
++}
++
++class ModalTextInputImpl {
++
++	private readonly _modal = new Set<string>();
++	private readonly _onDidChange = new Emitter<string>();
++	/** Fires with the editor id whose modal state changed. */
++	readonly onDidChange: Event<string> = this._onDidChange.event;
++
++	private readonly _onDidCommitText = new Emitter<IModalCommittedText>();
++	/** Text an input method committed in a modal editor; it did not reach the model. */
++	readonly onDidCommitText: Event<IModalCommittedText> = this._onDidCommitText.event;
++
++	isModal(editorId: string): boolean {
++		return this._modal.has(editorId);
++	}
++
++	/** While `modal`, no typed text, IME composition, paste or drop reaches that editor's model. */
++	set(editorId: string, modal: boolean): void {
++		if (modal === this._modal.has(editorId)) {
++			return;
++		}
++		if (modal) {
++			this._modal.add(editorId);
++		} else {
++			this._modal.delete(editorId);
++		}
++		this._onDidChange.fire(editorId);
++	}
++
++	/** Called by the input surfaces when a composition ends in a modal editor. */
++	commit(editorId: string, text: string): void {
++		if (text) {
++			this._onDidCommitText.fire({ editorId, text });
++		}
++	}
++}
++
++export const ModalTextInput = new ModalTextInputImpl();
+diff --git a/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts b/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts
+index bedf3f2c..1b643cac 100644
+--- a/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts
++++ b/src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts
+@@ -34,6 +34,7 @@ import { OffsetRange } from '../../../../common/core/ranges/offsetRange.js';
+ import { ILogService } from '../../../../../platform/log/common/log.js';
+ import { inputLatency } from '../../../../../base/browser/performance.js';
+ import { ViewportData } from '../../../../common/viewLayout/viewLinesViewportData.js';
++import { ModalTextInput } from '../modalTextInput.js';
+ 
+ // Corresponds to classes in nativeEditContext.css
+ enum CompositionClassName {
+@@ -73,6 +74,10 @@ export class NativeEditContext extends AbstractEditContext {
+ 	private _scrollLeft: number = 0;
+ 
+ 	private readonly _focusTracker: FocusTracker;
++	private readonly _ownerID: string;
++	/** DevHub: the text of a composition running in a modal editor (see _endModalComposition). */
++	private _modalComposition: string | undefined;
++	private _lastSelectionBounds: DOMRect | undefined;
+ 
+ 	constructor(
+ 		ownerID: string,
+@@ -84,6 +89,7 @@ export class NativeEditContext extends AbstractEditContext {
+ 		@ILogService private readonly logService: ILogService
+ 	) {
+ 		super(context);
++		this._ownerID = ownerID;
+ 
+ 		this.domNode = new FastDomNode(document.createElement('div'));
+ 		this.domNode.setClassName(`native-edit-context`);
+@@ -193,11 +199,34 @@ export class NativeEditContext extends AbstractEditContext {
+ 		}));
+ 
+ 		// Edit context events
+-		this._register(editContextAddDisposableListener(this._editContext, 'textformatupdate', (e) => this._handleTextFormatUpdate(e)));
+-		this._register(editContextAddDisposableListener(this._editContext, 'characterboundsupdate', (e) => this._updateCharacterBounds(e)));
++		this._register(editContextAddDisposableListener(this._editContext, 'textformatupdate', (e) => {
++			if (this._isModal()) {
++				return; // DevHub: no composition underline in a modal editor
++			}
++			this._handleTextFormatUpdate(e);
++		}));
++		this._register(editContextAddDisposableListener(this._editContext, 'characterboundsupdate', (e) => {
++			if (this._isModal()) {
++				// DevHub: the composed text is not in the model; the IME window goes at the caret.
++				const at = this._lastSelectionBounds ?? new DOMRect();
++				this._editContext.updateCharacterBounds(e.rangeStart, Array.from({ length: Math.max(0, e.rangeEnd - e.rangeStart) }, () => at));
++				return;
++			}
++			this._updateCharacterBounds(e);
++		}));
+ 		let highSurrogateCharacter: string | undefined;
+ 		this._register(editContextAddDisposableListener(this._editContext, 'textupdate', (e) => {
+ 			inputLatency.onInput();
++			if (this._isModal()) {
++				// DevHub: keep it out of the model (modalTextInput.ts).
++				if (this._modalComposition !== undefined) {
++					this._modalComposition = e.text;
++				} else {
++					this._modalComposition = e.text;
++					this._endModalComposition();
++				}
++				return;
++			}
+ 			const text = e.text;
+ 			if (text.length === 1) {
+ 				const charCode = text.charCodeAt(0);
+@@ -221,6 +250,10 @@ export class NativeEditContext extends AbstractEditContext {
+ 			this._emitTypeEvent(this._viewController, e);
+ 		}));
+ 		this._register(editContextAddDisposableListener(this._editContext, 'compositionstart', (e) => {
++			if (this._isModal()) {
++				this._modalComposition = '';
++				return;
++			}
+ 			this._updateEditContext();
+ 			// Utlimately fires onDidCompositionStart() on the editor to notify for example suggest model of composition state
+ 			// Updates the composition state of the cursor controller which determines behavior of typing with interceptors
+@@ -229,6 +262,10 @@ export class NativeEditContext extends AbstractEditContext {
+ 			this._context.viewModel.onCompositionStart();
+ 		}));
+ 		this._register(editContextAddDisposableListener(this._editContext, 'compositionend', (e) => {
++			if (this._modalComposition !== undefined) {
++				this._endModalComposition();
++				return;
++			}
+ 			this._updateEditContext();
+ 			// Utlimately fires compositionEnd() on the editor to notify for example suggest model of composition state
+ 			// Updates the composition state of the cursor controller which determines behavior of typing with interceptors
+@@ -391,6 +428,27 @@ export class NativeEditContext extends AbstractEditContext {
+ 		}
+ 	}
+ 
++	/**
++	 * DevHub: in a modal editor (Vim normal mode, see modalTextInput.ts) the IME
++	 * composes in the EditContext only. Nothing reaches the model or is drawn
++	 * inline; at the end the committed text goes to ModalTextInput and the
++	 * EditContext is put back to the model's text.
++	 */
++	private _isModal(): boolean {
++		return ModalTextInput.isModal(this._ownerID);
++	}
++
++	private _endModalComposition(): void {
++		const text = this._modalComposition ?? '';
++		this._modalComposition = undefined;
++		this._decorations = this._context.viewModel.model.deltaDecorations(this._decorations, []);
++		// Diff against what the EditContext really holds (the composed text), not against our cache.
++		this._previousEditContextText = this._editContext.text;
++		this._previousEditContextSelection = new OffsetRange(this._editContext.selectionStart, this._editContext.selectionEnd);
++		this._updateEditContext();
++		ModalTextInput.commit(this._ownerID, text);
++	}
++
+ 	// --- Private methods ---
+ 
+ 	private _onKeyUp(e: KeyboardEvent) {
+@@ -572,6 +630,7 @@ export class NativeEditContext extends AbstractEditContext {
+ 		}
+ 
+ 		const selectionBounds = new DOMRect(left, top, width, height);
++		this._lastSelectionBounds = selectionBounds;
+ 		this._editContext.updateSelectionBounds(selectionBounds);
+ 		this._editContext.updateControlBounds(selectionBounds);
+ 	}
+diff --git a/src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts b/src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts
+index 9b79bfb6..fc805abd 100644
+--- a/src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts
++++ b/src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts
+@@ -41,6 +41,7 @@ import { ariaLabelForScreenReaderContent, newlinecount, SimplePagedScreenReaderS
+ import { _debugComposition, ITypeData, TextAreaState } from './textAreaEditContextState.js';
+ import { getMapForWordSeparators, WordCharacterClass } from '../../../../common/core/wordCharacterClassifier.js';
+ import { TextAreaEditContextRegistry } from './textAreaEditContextRegistry.js';
++import { ModalTextInput } from '../modalTextInput.js';
+ 
+ export interface IVisibleRangeProvider {
+ 	visibleRangeForPosition(position: Position): HorizontalPosition | null;
+@@ -144,6 +145,9 @@ export class TextAreaEditContext extends AbstractEditContext {
+ 	public readonly textArea: FastDomNode<HTMLTextAreaElement>;
+ 	public readonly textAreaCover: FastDomNode<HTMLElement>;
+ 	private readonly _textAreaInput: TextAreaInput;
++	private readonly _ownerID: string;
++	/** DevHub: the text of a composition running in a modal editor, see modalTextInput.ts. */
++	private _modalComposition: string | undefined;
+ 
+ 	constructor(
+ 		ownerID: string,
+@@ -155,6 +159,7 @@ export class TextAreaEditContext extends AbstractEditContext {
+ 		@IInstantiationService private readonly _instantiationService: IInstantiationService
+ 	) {
+ 		super(context);
++		this._ownerID = ownerID;
+ 
+ 		this._viewController = viewController;
+ 		this._visibleRangeProvider = visibleRangeProvider;
+@@ -329,6 +334,12 @@ export class TextAreaEditContext extends AbstractEditContext {
+ 		}));
+ 
+ 		this._register(this._textAreaInput.onCompositionStart((e) => {
++			if (ModalTextInput.isModal(this._ownerID)) {
++				// DevHub: the IME composes in the hidden <textarea> only; it is not
++				// shown inline and its text does not reach the model.
++				this._modalComposition = '';
++				return;
++			}
+ 
+ 			// The textarea might contain some content when composition starts.
+ 			//
+@@ -417,6 +428,10 @@ export class TextAreaEditContext extends AbstractEditContext {
+ 		}));
+ 
+ 		this._register(this._textAreaInput.onCompositionUpdate((e: ICompositionData) => {
++			if (this._modalComposition !== undefined) {
++				this._modalComposition = e.data;
++				return;
++			}
+ 			if (!this._visibleTextArea) {
+ 				return;
+ 			}
+@@ -426,6 +441,13 @@ export class TextAreaEditContext extends AbstractEditContext {
+ 		}));
+ 
+ 		this._register(this._textAreaInput.onCompositionEnd(() => {
++			if (this._modalComposition !== undefined) {
++				const text = this._modalComposition;
++				this._modalComposition = undefined;
++				this._textAreaInput.writeNativeTextAreaContent('modalCompositionEnd');
++				ModalTextInput.commit(this._ownerID, text);
++				return;
++			}
+ 
+ 			this._visibleTextArea = null;
+ 
+diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
+index b77791a6..16f9a158 100644
+--- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
++++ b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
+@@ -66,6 +66,7 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
+ import { TextEdit } from '../../../common/core/edits/textEdit.js';
+ import { isObject } from '../../../../base/common/types.js';
+ import { IUserInteractionService } from '../../../../platform/userInteraction/browser/userInteractionService.js';
++import { ModalTextInput } from '../../controller/editContext/modalTextInput.js';
+ 
+ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeEditor {
+ 
+@@ -367,7 +368,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 
+ 		const isDropIntoEnabled = () => {
+ 			return !this._configuration.options.get(EditorOption.readOnly)
+-				&& this._configuration.options.get(EditorOption.dropIntoEditor).enabled;
++				&& this._configuration.options.get(EditorOption.dropIntoEditor).enabled
++				&& !ModalTextInput.isModal(this.getId()); // DevHub: see modalTextInput.ts
+ 		};
+ 
+ 		this._register(new dom.DragAndDropObserver(this._domElement, {
+@@ -1168,7 +1170,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 	}
+ 
+ 	private _startComposition(): void {
+-		if (!this._modelData) {
++		if (!this._modelData || ModalTextInput.isModal(this.getId())) { // DevHub: see modalTextInput.ts
+ 			return;
+ 		}
+ 		this.inComposition = true;
+@@ -1186,7 +1188,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 	}
+ 
+ 	private _type(source: string | null | undefined, text: string): void {
+-		if (!this._modelData || text.length === 0) {
++		if (!this._modelData || text.length === 0 || ModalTextInput.isModal(this.getId())) { // DevHub: see modalTextInput.ts
+ 			return;
+ 		}
+ 		if (source === 'keyboard') {
+@@ -1199,14 +1201,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 	}
+ 
+ 	private _compositionType(source: string | null | undefined, text: string, replacePrevCharCnt: number, replaceNextCharCnt: number, positionDelta: number): void {
+-		if (!this._modelData) {
++		if (!this._modelData || ModalTextInput.isModal(this.getId())) { // DevHub: see modalTextInput.ts
+ 			return;
+ 		}
+ 		this._modelData.viewModel.compositionType(text, replacePrevCharCnt, replaceNextCharCnt, positionDelta, source);
+ 	}
+ 
+ 	private _paste(source: string | null | undefined, text: string, pasteOnNewLine: boolean, multicursorText: string[] | null, mode: string | null, isBlock: boolean, clipboardEvent?: ClipboardEvent): void {
+-		if (!this._modelData) {
++		if (!this._modelData || ModalTextInput.isModal(this.getId())) { // DevHub: see modalTextInput.ts
+ 			return;
+ 		}
+ 		const viewModel = this._modelData.viewModel;
+@@ -1919,7 +1921,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 			// Connect clipboard events from View
+ 			listenersToRemove.push(view.onWillCopy(e => this._onWillCopy.fire(e)));
+ 			listenersToRemove.push(view.onWillCut(e => this._onWillCut.fire(e)));
+-			listenersToRemove.push(view.onWillPaste(e => this._onWillPaste.fire(e)));
++			listenersToRemove.push(view.onWillPaste(e => {
++				if (ModalTextInput.isModal(this.getId())) {
++					e.setHandled(); // DevHub: no paste (nor paste-as provider) into a modal editor, see modalTextInput.ts
++					return;
++				}
++				this._onWillPaste.fire(e);
++			}));
+ 		}
+ 
+ 		this._modelData = new ModelData(model, viewModel, view, hasRealView, listenersToRemove, attachedView);
+diff --git a/src/vs/editor/test/browser/controller/modalTextInput.test.ts b/src/vs/editor/test/browser/controller/modalTextInput.test.ts
+new file mode 100644
+index 00000000..b03c5876
+--- /dev/null
++++ b/src/vs/editor/test/browser/controller/modalTextInput.test.ts
+@@ -0,0 +1,80 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import assert from 'assert';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
++import { ModalTextInput } from '../../../browser/controller/editContext/modalTextInput.js';
++import { PastePayload } from '../../../browser/editorBrowser.js';
++import { Range } from '../../../common/core/range.js';
++import { CompositionTypePayload, Handler, ReplacePreviousCharPayload, TypePayload } from '../../../common/editorCommon.js';
++import { ITestCodeEditor, withTestCodeEditor } from '../testCodeEditor.js';
++
++suite('DevHub modal text input', () => {
++	ensureNoDisposablesAreLeakedInTestSuite();
++
++	function typeEverything(editor: ITestCodeEditor): void {
++		editor.trigger('keyboard', Handler.Type, { text: 'x' } satisfies TypePayload);
++		editor.trigger('keyboard', Handler.CompositionStart, {});
++		editor.trigger('keyboard', Handler.ReplacePreviousChar, { text: 'う', replaceCharCnt: 0 } satisfies ReplacePreviousCharPayload);
++		editor.trigger('keyboard', Handler.CompositionType, { text: 'な', replacePrevCharCnt: 0, replaceNextCharCnt: 0, positionDelta: 0 } satisfies CompositionTypePayload);
++		editor.trigger('keyboard', Handler.CompositionEnd, {});
++		editor.trigger('keyboard', Handler.Paste, { text: 'pasted', pasteOnNewLine: false, multicursorText: null, mode: null, isBlock: false } satisfies PastePayload);
++		editor.trigger('someExtension', Handler.Type, { text: 'y' } satisfies TypePayload);
++	}
++
++	test('no typed text, composition or paste reaches a modal editor; commands still edit', () => {
++		withTestCodeEditor('abc', {}, editor => {
++			const id = editor.getId();
++			try {
++				ModalTextInput.set(id, true);
++				assert.strictEqual(ModalTextInput.isModal(id), true);
++				editor.setPosition({ lineNumber: 1, column: 1 });
++				typeEverything(editor);
++				assert.strictEqual(editor.getModel().getValue(), 'abc');
++				assert.strictEqual(editor.inComposition, false);
++
++				editor.executeEdits('vim', [{ range: new Range(1, 4, 1, 4), text: '!' }]);
++				assert.strictEqual(editor.getModel().getValue(), 'abc!');
++
++				ModalTextInput.set(id, false);
++				editor.setPosition({ lineNumber: 1, column: 1 });
++				editor.trigger('keyboard', Handler.Type, { text: 'x' } satisfies TypePayload);
++				assert.strictEqual(editor.getModel().getValue(), 'xabc!');
++			} finally {
++				ModalTextInput.set(id, false);
++			}
++		});
++	});
++
++	test('the switch is per editor and fires only on a change', () => {
++		const fired: string[] = [];
++		const listener = ModalTextInput.onDidChange(id => fired.push(id));
++		try {
++			ModalTextInput.set('a', true);
++			ModalTextInput.set('a', true);
++			ModalTextInput.set('b', false);
++			assert.strictEqual(ModalTextInput.isModal('a'), true);
++			assert.strictEqual(ModalTextInput.isModal('b'), false);
++			ModalTextInput.set('a', false);
++			assert.deepStrictEqual(fired, ['a', 'a']);
++		} finally {
++			listener.dispose();
++			ModalTextInput.set('a', false);
++		}
++	});
++
++	test('a commit is reported only when there is text', () => {
++		const commits: string[] = [];
++		const listener = ModalTextInput.onDidCommitText(e => commits.push(`${e.editorId}:${e.text}`));
++		try {
++			ModalTextInput.commit('a', '');
++			ModalTextInput.commit('a', 'あ');
++			assert.deepStrictEqual(commits, ['a:あ']);
++		} finally {
++			listener.dispose();
++			ModalTextInput.set('a', false);
++		}
++	});
++});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..762cdb6c
+index 00000000..efa70fdc
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,584 @@
+@@ -0,0 +1,680 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -20,10 +460,25 @@ index 00000000..762cdb6c
 +// * Normal and visual mode keys are read from the editor's own keydown, before
 +//   the keybinding dispatcher, and only when no Cmd/Ctrl/Alt is held (Ctrl-R,
 +//   Ctrl-D, Ctrl-U excepted), so menu shortcuts, chords and DevHub's Cmd+Q
-+//   prefix are untouched. Nothing is read while an IME composition is active.
++//   prefix are untouched.
++// * Modal "to the bone": outside insert mode an editor is switched to modal
++//   text input in the editor core (editor/browser/controller/editContext/
++//   modalTextInput.ts): typed text, IME composition, paste and drop from any
++//   caller never reach the model, and nothing is drawn inline. An IME that
++//   is on still composes, as in terminal Vim; its keys are not Vim keys
++//   (no reinterpretation by physical key). What it commits goes to
++//   VimEngine.handleText: a command waiting for a character (f t F T r)
++//   takes it, as does the `:` `/` prompt, and anything else is dropped.
++// * Mode, caret style and modal input are recomputed from the engine's state
++//   after every key and every focus or model change (vimCursorStyle), never
++//   toggled, and a command that throws leaves the engine in plain normal mode
++//   (VimEngine.recover), so no exception or event order can strand an editor
++//   in a mode whose caret or input does not match.
 +// * Everything modal at workbench level - Esc, and the "nav" state where h j k
 +//   l move focus between parts - is a command with a keybinding in the normal
-+//   registry, so keybindings.json can rebind or remove it. Esc is registered
++//   registry, so keybindings.json can rebind or remove it. Nav never traps a
++//   text editor: there Esc, or any key nav does not bind, goes back to normal
++//   mode (the key then does what it does in normal mode). Esc is registered
 +//   at weight EditorCore + 50: every editor-contrib or workbench Esc (suggest,
 +//   find widget, peek, parameter hints, rename, notifications, quick input)
 +//   outranks it whenever its own `when` holds, and Vim only gets Esc when none
@@ -34,9 +489,11 @@ index 00000000..762cdb6c
 +import { addDisposableListener, getActiveElement, isEditableElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
 +import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 +import { mainWindow } from '../../../../base/browser/window.js';
++import { onUnexpectedError } from '../../../../base/common/errors.js';
 +import { Event } from '../../../../base/common/event.js';
 +import { KeyCode } from '../../../../base/common/keyCodes.js';
 +import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
++import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 +import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 +import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 +import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
@@ -55,6 +512,7 @@ index 00000000..762cdb6c
 +import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 +import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 +import { IVimHost, VimEdit, VimEngine, VimPos, VimSharedState } from '../common/vimEngine.js';
++import { VimCursorStyle, toVimKey, vimCursorStyle } from '../common/vimKeys.js';
 +
 +const SETTING = 'devhub.vim.enabled';
 +
@@ -67,7 +525,7 @@ index 00000000..762cdb6c
 +		[SETTING]: {
 +			type: 'boolean',
 +			default: false,
-+			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub. Esc from normal mode leaves the text for navigation, where h/j/k/l move between parts and i/Enter return."),
++			description: localize('devhubVim.enabled', "Modal (Vim) editing in every editor and input, built into DevHub. Esc from normal mode leaves the text for navigation, where h/j/k/l move between parts; i or Enter goes back (in a text editor so do Esc and any other Vim key)."),
 +		},
 +	},
 +});
@@ -77,6 +535,7 @@ index 00000000..762cdb6c
 +const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
 +
 +type CursorStyle = ReturnType<typeof cursorStyleToString>;
++const CURSOR_STYLES: readonly CursorStyle[] = ['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin'];
 +
 +/** One CodeEditorWidget with its engine; it is the engine's IVimHost. */
 +class VimEditor extends Disposable implements IVimHost {
@@ -85,9 +544,10 @@ index 00000000..762cdb6c
 +	private readonly modelListener = this._register(new DisposableStore());
 +	private checkpoints: number[] = [];
 +	private redoTargets: number[] = [];
-+	private userCursorStyle: CursorStyle;
++	private undoQueue: Promise<void> = Promise.resolve();
 +	private appliedStyle: CursorStyle | undefined;
 +	private applyingStyle = false;
++	private insertStyle: VimCursorStyle;
 +
 +	constructor(
 +		readonly editor: ICodeEditor,
@@ -96,7 +556,7 @@ index 00000000..762cdb6c
 +	) {
 +		super();
 +		this.engine = new VimEngine(this, shared);
-+		this.userCursorStyle = cursorStyleToString(editor.getOption(EditorOption.cursorStyle));
++		this.insertStyle = this.readInsertCursorStyle();
 +
 +		this._register(editor.onKeyDown(e => this.onKeyDown(e)));
 +		this._register(editor.onDidFocusEditorText(() => owner.update()));
@@ -106,6 +566,7 @@ index 00000000..762cdb6c
 +			this.checkpoints = [];
 +			this.redoTargets = [];
 +			this.modelListener.clear();
++			this.insertStyle = this.readInsertCursorStyle();
 +			owner.update();
 +		}));
 +		this._register(editor.onDidChangeCursorSelection(e => {
@@ -120,8 +581,12 @@ index 00000000..762cdb6c
 +		}));
 +		this._register(editor.onDidChangeConfiguration(e => {
 +			if (!this.applyingStyle && e.hasChanged(EditorOption.cursorStyle)) {
-+				// The user (or the workbench re-applying settings) changed it: remember, then re-assert Vim's.
-+				this.userCursorStyle = cursorStyleToString(editor.getOption(EditorOption.cursorStyle));
++				// Someone else set it (the workbench re-applying settings, a parent
++				// editor's options copied into a peek or inline diff editor, an
++				// extension): Vim's style wins again. What the user wants in insert
++				// mode is read from the settings (readInsertCursorStyle), never from the
++				// editor, whose cursorStyle is Vim's own and leaks into the editors
++				// that copy it.
 +				this.appliedStyle = undefined;
 +				this.syncCursorStyle();
 +			}
@@ -129,8 +594,16 @@ index 00000000..762cdb6c
 +	}
 +
 +	override dispose(): void {
-+		this.setCursorStyle(this.userCursorStyle);
++		ModalTextInput.set(this.editor.getId(), false);
++		this.setCursorStyle(this.insertStyle);
 +		super.dispose();
++	}
++
++	/** The user's `editor.cursorStyle` for this editor's file and language: the insert-mode caret. */
++	private readInsertCursorStyle(): VimCursorStyle {
++		const model = this.editor.getModel();
++		const value = this.owner.configurationService.getValue<string>('editor.cursorStyle', model ? { resource: model.uri, overrideIdentifier: model.getLanguageId() } : {});
++		return CURSOR_STYLES.includes(value as CursorStyle) ? value as CursorStyle : 'line';
 +	}
 +
 +	/** Vim mode as the context key spells it. */
@@ -139,9 +612,18 @@ index 00000000..762cdb6c
 +		return m === 'visualLine' ? 'visual' : m;
 +	}
 +
++	/** Caret style and modal text input, both derived from the current state. */
 +	syncCursorStyle(): void {
 +		const nav = this.owner.navActive && this.editor.hasTextFocus();
-+		this.setCursorStyle(nav ? 'underline-thin' : this.engine.mode === 'insert' ? this.userCursorStyle : 'block');
++		ModalTextInput.set(this.editor.getId(), this.engine.mode !== 'insert');
++		this.setCursorStyle(vimCursorStyle(this.engine.mode, nav, this.insertStyle));
++	}
++
++	/** Re-read the insert caret from the settings and re-apply. */
++	refreshCursorStyle(): void {
++		this.insertStyle = this.readInsertCursorStyle();
++		this.appliedStyle = undefined;
++		this.syncCursorStyle();
 +	}
 +
 +	private setCursorStyle(style: CursorStyle): void {
@@ -158,20 +640,43 @@ index 00000000..762cdb6c
 +	}
 +
 +	private onKeyDown(e: IKeyboardEvent): void {
-+		if (this.editor.inComposition || e.keyCode === KeyCode.KEY_IN_COMPOSITION || e.browserEvent.isComposing) {
-+			return;
-+		}
 +		if (this.owner.navActive || this.engine.mode === 'insert' || !this.editor.hasModel()) {
++			// Insert mode: the IME composes as usual (Esc ends a composition before it reaches Vim).
 +			return;
 +		}
++		// IME keys are left to the IME (toVimKey); the editor core keeps what it
++		// composes out of the model and hands the commit to commitText.
 +		const key = toVimKey(e.browserEvent, this.engine.pending);
 +		if (key === undefined) {
 +			return;
 +		}
 +		e.preventDefault();
 +		e.stopPropagation();
-+		this.engine.handleKey(key);
-+		this.owner.update();
++		this.handleKey(key);
++	}
++
++	/** Text an IME committed while this editor was modal (ModalTextInput.onDidCommitText). */
++	commitText(text: string): void {
++		try {
++			this.engine.handleText(text);
++		} catch (err) {
++			this.engine.recover(err);
++			onUnexpectedError(err);
++		} finally {
++			this.owner.update();
++		}
++	}
++
++	/** Feed one key; whatever happens, the engine, caret and context keys agree afterwards. */
++	handleKey(key: string): void {
++		try {
++			this.engine.handleKey(key);
++		} catch (err) {
++			this.engine.recover(err);
++			onUnexpectedError(err);
++		} finally {
++			this.owner.update();
++		}
 +	}
 +
 +	// ---- IVimHost -----------------------------------------------------------
@@ -232,34 +737,53 @@ index 00000000..762cdb6c
 +		}
 +	}
 +
++	// `u` and Ctrl-R step this model's own undo stack (never the workbench
++	// `undo` command, which picks its target by focus and may undo something
++	// else, such as a file operation) and run one after another, so a held `u`
++	// cannot interleave two walks. Afterwards the caret is a normal-mode caret
++	// again: undo restores the selection the change started from, which after a
++	// visual-mode change is a range.
++
 +	undo(): void {
 +		const model = this.model;
 +		const target = this.checkpoints.pop();
-+		if (target === undefined) {
-+			this.editor.trigger('devhubVim', 'undo', null);
-+			return;
++		if (target !== undefined) {
++			this.redoTargets.push(model.getAlternativeVersionId());
 +		}
-+		this.redoTargets.push(model.getAlternativeVersionId());
-+		void this.stepUntil(target, () => model.canUndo(), () => model.undo());
++		this.enqueueSteps(target, () => model.canUndo(), () => model.undo());
 +	}
 +
 +	redo(): void {
 +		const model = this.model;
 +		const target = this.redoTargets.pop();
-+		if (target === undefined) {
-+			this.editor.trigger('devhubVim', 'redo', null);
-+			return;
++		if (target !== undefined) {
++			this.checkpoints.push(model.getAlternativeVersionId());
 +		}
-+		this.checkpoints.push(model.getAlternativeVersionId());
-+		void this.stepUntil(target, () => model.canRedo(), () => model.redo());
++		this.enqueueSteps(target, () => model.canRedo(), () => model.redo());
 +	}
 +
-+	private async stepUntil(target: number, can: () => boolean, step: () => void | Promise<void>): Promise<void> {
++	/** Step until the model is at `target`, or once when there is no target. */
++	private enqueueSteps(target: number | undefined, can: () => boolean, step: () => void | Promise<void>): void {
 +		const model = this.model;
-+		for (let guard = 0; guard < 10000 && model.getAlternativeVersionId() !== target && can(); guard++) {
-+			await step();
-+		}
-+		this.owner.update();
++		this.undoQueue = this.undoQueue.then(async () => {
++			try {
++				if (target === undefined) {
++					if (!model.isDisposed() && can()) {
++						await step();
++					}
++					return;
++				}
++				for (let guard = 0; guard < 10000 && !model.isDisposed() && model.getAlternativeVersionId() !== target && can(); guard++) {
++					await step();
++				}
++			} finally {
++				const s = this.editor.getModel() === model ? this.editor.getSelection() : null;
++				if (s && !s.isEmpty() && this.engine.mode === 'normal') {
++					this.editor.setPosition(s.getStartPosition(), 'devhubVim');
++				}
++				this.owner.update();
++			}
++		}).catch(onUnexpectedError);
 +	}
 +
 +	indentUnit(): string {
@@ -335,26 +859,6 @@ index 00000000..762cdb6c
 +	}
 +}
 +
-+/** Map a keydown to Vim's key name, or undefined to let the editor have it. */
-+function toVimKey(e: KeyboardEvent, pending: boolean): string | undefined {
-+	if (e.metaKey || e.altKey) {
-+		return undefined;
-+	}
-+	if (e.ctrlKey) {
-+		const ctrl: Record<string, string> = { r: '<C-r>', d: '<C-d>', u: '<C-u>' };
-+		return ctrl[e.key.toLowerCase()];
-+	}
-+	switch (e.key) {
-+		case 'Enter': return '<CR>';
-+		case 'Backspace': return '<BS>';
-+		case 'ArrowLeft': return pending ? undefined : 'h';
-+		case 'ArrowRight': return pending ? undefined : 'l';
-+		case 'ArrowUp': return pending ? undefined : 'k';
-+		case 'ArrowDown': return pending ? undefined : 'j';
-+	}
-+	return e.key.length === 1 ? e.key : undefined;
-+}
-+
 +export class DevhubVim extends Disposable implements IWorkbenchContribution {
 +
 +	static readonly ID = 'workbench.contrib.devhubVim';
@@ -372,7 +876,7 @@ index 00000000..762cdb6c
 +
 +	constructor(
 +		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
-+		@IConfigurationService configurationService: IConfigurationService,
++		@IConfigurationService readonly configurationService: IConfigurationService,
 +		@IContextKeyService contextKeyService: IContextKeyService,
 +		@IStatusbarService private readonly statusbarService: IStatusbarService,
 +		@IKeybindingService private readonly keybindingService: IKeybindingService,
@@ -386,6 +890,11 @@ index 00000000..762cdb6c
 +		this._register(configurationService.onDidChangeConfiguration(e => {
 +			if (e.affectsConfiguration(SETTING)) {
 +				this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
++			}
++			if (e.affectsConfiguration('editor.cursorStyle')) {
++				for (const v of this.editors.values()) {
++					v.refreshCursorStyle();
++				}
 +			}
 +		}));
 +		this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
@@ -419,6 +928,13 @@ index 00000000..762cdb6c
 +		}
 +		store.add(this.codeEditorService.onCodeEditorAdd(editor => this.attach(editor)));
 +		store.add(this.codeEditorService.onCodeEditorRemove(editor => this.detach(editor)));
++		store.add(ModalTextInput.onDidCommitText(({ editorId, text }) => {
++			for (const v of this.editors.values()) {
++				if (v.editor.getId() === editorId) {
++					v.commitText(text);
++				}
++			}
++		}));
 +		store.add({ dispose: () => { for (const v of this.editors.values()) { v.dispose(); } } });
 +		store.add(Event.runAndSubscribe(onDidRegisterWindow, ({ window, disposables }) => {
 +			const local = new DisposableStore();
@@ -464,10 +980,17 @@ index 00000000..762cdb6c
 +		void this.clipboardService.readText().then(t => this.clipboardCache = t, () => { });
 +	}
 +
-+	/** Recompute context keys, cursor styles and the status bar after anything moved. */
++	/** Recompute context keys, cursor styles, modal input and the status bar after anything moved. */
 +	update(): void {
 +		if (!this.enabled) {
 +			return;
++		}
++		for (const e of this.editors.values()) {
++			try {
++				e.syncCursorStyle();
++			} catch (err) {
++				onUnexpectedError(err);
++			}
 +		}
 +		const v = this.focused();
 +		const active = getActiveElement();
@@ -476,9 +999,6 @@ index 00000000..762cdb6c
 +				: active && isEditableElement(active) ? 'insert' : '';
 +		this.modeKey.set(mode);
 +		this.attachedKey.set(!!v);
-+		for (const e of this.editors.values()) {
-+			e.syncCursorStyle();
-+		}
 +		const text = this.navActive ? '-- NAV --' : v ? v.engine.status() : mode === 'insert' ? '-- INSERT --' : '';
 +		this.statusEntry?.update(this.statusProps(text));
 +	}
@@ -504,10 +1024,18 @@ index 00000000..762cdb6c
 +		if (!v) {
 +			return;
 +		}
-+		if (v.engine.escape() === 'idle') {
-+			this.setNav(true);
++		try {
++			if (v.engine.escape() === 'idle') {
++				this.setNav(true);
++			}
++		} finally {
++			this.update();
 +		}
-+		this.update();
++	}
++
++	/** Esc in nav while a Vim editor has the focus: back to its normal mode. */
++	escapeNav(): void {
++		this.setNav(false);
 +	}
 +
 +	/** Esc that no widget wanted, in a plain input (search view, quick input field, ...). */
@@ -544,6 +1072,13 @@ index 00000000..762cdb6c
 +			void this.commandService.executeCommand(result.commandId, ...(result.commandArgs === undefined ? [] : [result.commandArgs]));
 +			return;
 +		}
++		if (this.focused() && event.keyCode !== KeyCode.Escape && toVimKey(e, false) !== undefined) {
++			// Nav never traps a text editor: a key nav does not bind (`u` after
++			// one Esc too many) leaves nav and reaches the editor, whose Vim
++			// handler reads it in normal mode.
++			this.setNav(false);
++			return;
++		}
 +		if (e.key.length === 1 && target && isEditableElement(target)) {
 +			e.preventDefault();
 +			e.stopPropagation();
@@ -570,6 +1105,7 @@ index 00000000..762cdb6c
 +}
 +
 +rule('devhubVim.escape', KeyCode.Escape, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.notEqualsTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escape());
++rule('devhubVim.nav.escape', KeyCode.Escape, ContextKeyExpr.and(ENABLED, VIM_ATTACHED, VIM_MODE.isEqualTo('nav')), KeybindingWeight.EditorCore + 50, vim => vim.escapeNav());
 +rule('devhubVim.leaveInput', KeyCode.Escape,
 +	ContextKeyExpr.and(ENABLED, ContextKeyExpr.has('inputFocus'), VIM_ATTACHED.negate(), VIM_MODE.notEqualsTo('nav'), ContextKeyExpr.has('terminalFocus').negate()),
 +	KeybindingWeight.EditorCore + 50, vim => vim.leaveInput());
@@ -590,10 +1126,10 @@ index 00000000..762cdb6c
 +rule('devhubVim.nav.editor', KeyCode.KeyE, NAV, KeybindingWeight.WorkbenchContrib + 50, vim => void vim.commandService.executeCommand('workbench.action.focusActiveEditorGroup'));
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
 new file mode 100644
-index 00000000..68e65658
+index 00000000..0dd8d2db
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
-@@ -0,0 +1,1609 @@
+@@ -0,0 +1,1661 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -773,39 +1309,78 @@ index 00000000..68e65658
 +
 +	/**
 +	 * Feed one key in normal or visual mode. Keys are single characters or
-+	 * `<Esc>`, `<CR>`, `<BS>`, `<C-r>`, `<C-d>`, `<C-u>`. Returns false when the
-+	 * key means nothing to Vim here (insert mode), so the caller lets it through.
++	 * `<Esc>`, `<CR>`, `<BS>`, `<Tab>`, `<C-r>`, `<C-d>`, `<C-u>`. Returns false
++	 * when the key means nothing to Vim here (insert mode), so the caller lets it
++	 * through. Never throws: a failing command ends in normal mode (`recover`).
 +	 */
 +	handleKey(key: string): boolean {
-+		if (this._mode === 'insert') {
++		if (this._mode === 'insert' && key !== '<Esc>') {
++			return false;
++		}
++		try {
++			this.message = '';
 +			if (key === '<Esc>') {
 +				this.escape();
 +				return true;
 +			}
-+			return false;
-+		}
-+		this.message = '';
-+		if (this.cmdline) {
-+			this.cmdlineKey(key);
-+			return true;
-+		}
-+		if (key === '<Esc>') {
-+			this.escape();
-+			return true;
-+		}
-+		this.keys.push(key);
-+		let result: Parse;
-+		try {
-+			result = this._mode === 'normal' ? this.runNormal(this.keys) : this.runVisual(this.keys);
++			if (this.cmdline) {
++				this.cmdlineKey(key);
++				return true;
++			}
++			this.keys.push(key);
++			const result = this._mode === 'normal' ? this.runNormal(this.keys) : this.runVisual(this.keys);
++			if (result.status !== 'incomplete') {
++				this.keys = [];
++			}
 +		} catch (err) {
-+			this.closeChange();
-+			this.message = String(err instanceof Error ? err.message : err);
-+			result = { status: 'invalid' };
-+		}
-+		if (result.status !== 'incomplete') {
-+			this.keys = [];
++			this.recover(err);
 +		}
 +		return true;
++	}
++
++	/**
++	 * Text an input method committed outside insert mode (it never reached the
++	 * buffer). As in Vim, it is what a command waiting for a character gets:
++	 * f t F T r take its first character, the `:` `/` `?` prompt all of it.
++	 * Otherwise it is dropped, never run as commands. Returns whether it was used.
++	 */
++	handleText(text: string): boolean {
++		if (this._mode === 'insert' || !text) {
++			return false;
++		}
++		if (this.cmdline) {
++			this.cmdline.text += text.replace(/[\r\n]/g, '');
++			return true;
++		}
++		if (!this.awaitsCharacter()) {
++			return false;
++		}
++		return this.handleKey(Array.from(text)[0]);
++	}
++
++	/** The keys so far end in a command that takes a character argument. */
++	private awaitsCharacter(): boolean {
++		const last = this.keys[this.keys.length - 1];
++		if (last === undefined || (!CHAR_ARG_MOTIONS.has(last) && last !== 'r')) {
++			return false;
++		}
++		// `"f` names register f, it does not wait for a character.
++		return !(this.keys.length >= 2 && this.keys[this.keys.length - 2] === '"');
++	}
++
++	/**
++	 * Whatever a command threw half way, the engine ends in plain normal mode:
++	 * no pending keys, no prompt, no open change, no visual selection on screen.
++	 * The message says what went wrong.
++	 */
++	recover(err: unknown): void {
++		this.reset();
++		this.message = String(err instanceof Error ? err.message : err);
++		try {
++			this.setNormalCursor(this.host.getCursor());
++		} catch {
++			// the host itself is broken; the state above is still sane
++		}
 +	}
 +
 +	/**
@@ -813,6 +1388,15 @@ index 00000000..68e65658
 +	 * keys), which the workbench takes as "leave the text for navigation".
 +	 */
 +	escape(): 'handled' | 'idle' {
++		try {
++			return this.doEscape();
++		} catch (err) {
++			this.recover(err);
++			return 'handled';
++		}
++	}
++
++	private doEscape(): 'handled' | 'idle' {
 +		if (this._mode === 'insert') {
 +			this.exitInsert();
 +			return 'handled';
@@ -854,7 +1438,11 @@ index 00000000..68e65658
 +
 +	/** Put the engine back in normal mode without touching the document. */
 +	reset(): void {
-+		this.closeChange();
++		try {
++			this.closeChange();
++		} catch {
++			// closeChange marked the change closed before the host threw
++		}
 +		this._mode = 'normal';
 +		this.keys = [];
 +		this.cmdline = undefined;
@@ -2203,12 +2791,81 @@ index 00000000..68e65658
 +	}
 +	return out;
 +}
+diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
+new file mode 100644
+index 00000000..42d5c9ea
+--- /dev/null
++++ b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
+@@ -0,0 +1,63 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub native Vim: keydown -> Vim key name, and the mode -> cursor style rule.
++// Imports nothing, so the tests run it as they run the engine.
++
++/** The parts of a KeyboardEvent the mapping reads. */
++export interface VimKeyEvent {
++	readonly key: string;
++	readonly keyCode: number;
++	readonly isComposing: boolean;
++	readonly ctrlKey: boolean;
++	readonly metaKey: boolean;
++	readonly altKey: boolean;
++}
++
++/**
++ * Map a keydown to Vim's key name, or undefined to let the editor have it.
++ * A key that belongs to an IME (229 / "Process", or one typed while composing)
++ * is never a Vim key: as in terminal Vim, an IME that is on composes, and only
++ * what it commits counts (VimEngine.handleText).
++ */
++export function toVimKey(e: VimKeyEvent, pending: boolean): string | undefined {
++	if (e.isComposing || e.keyCode === 229 || e.key === 'Process') {
++		return undefined;
++	}
++	if (e.metaKey || e.altKey) {
++		return undefined;
++	}
++	if (e.ctrlKey) {
++		const ctrl: Record<string, string> = { r: '<C-r>', d: '<C-d>', u: '<C-u>' };
++		return ctrl[e.key.toLowerCase()];
++	}
++	switch (e.key) {
++		case 'Enter': return '<CR>';
++		case 'Backspace': return '<BS>';
++		// Tab would run the editor's `tab` command, which indents: text reaching
++		// the model from normal mode. Vim gets it (and ignores it) instead.
++		case 'Tab': return '<Tab>';
++		case 'ArrowLeft': return pending ? undefined : 'h';
++		case 'ArrowRight': return pending ? undefined : 'l';
++		case 'ArrowUp': return pending ? undefined : 'k';
++		case 'ArrowDown': return pending ? undefined : 'j';
++	}
++	return e.key.length === 1 ? e.key : undefined;
++}
++
++export type VimCursorStyle = 'line' | 'block' | 'underline' | 'line-thin' | 'block-outline' | 'underline-thin';
++
++/**
++ * The one rule for the caret: the user's own style in insert mode, a block in
++ * every other Vim mode, a thin underline while Esc has left the text for
++ * navigation. Computed from the state each time (never toggled), so no
++ * sequence of events can leave a stale style behind.
++ */
++export function vimCursorStyle(mode: string, nav: boolean, insertStyle: VimCursorStyle): VimCursorStyle {
++	if (nav) {
++		return 'underline-thin';
++	}
++	return mode === 'insert' ? insertStyle : 'block';
++}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..a10321b8
+index 00000000..b69f418c
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,476 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2217,6 +2874,8 @@ index 00000000..a10321b8
 +import assert from 'assert';
 +import type { IVimHost, VimEdit, VimPos } from '../../common/vimEngine.js';
 +import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
++import type { VimKeyEvent } from '../../common/vimKeys.js';
++import { toVimKey, vimCursorStyle } from '../../common/vimKeys.js';
 +
 +/** A string-array host: the cursor is drawn as `|` in `state()`. */
 +class TestHost implements IVimHost {
@@ -2529,6 +3188,158 @@ index 00000000..a10321b8
 +		assert.ok(reads < 200, `read ${reads} lines`);
 +		vim.handleKey('G');
 +		assert.strictEqual(host.cursor.line, 199998);
++	});
++});
++
++suite('DevHub Vim modes stay consistent', () => {
++
++	/** Every way of being "in the middle of something" in normal-side modes. */
++	const pendings = ['d', '2d', '"a', 'c', 'g', 'f', 'r', ':', '/', 'v', 'V', 'vj', 'd/', 'di', 'i', 'A', 'o', 'cw'];
++
++	test('Esc from any state ends in plain normal mode', () => {
++		for (const keys of pendings) {
++			const { vim } = run('ab|c\ndef', keys);
++			vim.handleKey('<Esc>');
++			if (vim.mode !== 'normal' || vim.pending) {
++				vim.handleKey('<Esc>');
++			}
++			assert.strictEqual(vim.mode, 'normal', keys);
++			assert.strictEqual(vim.pending, false, keys);
++			assert.strictEqual(vim.status(), 'NORMAL', keys);
++			// and the next command is a plain normal-mode command
++			vim.handleKey('l');
++			assert.strictEqual(vim.mode, 'normal', keys);
++		}
++	});
++
++	test('a command that throws half way leaves normal mode, no pending keys, a closed change', () => {
++		for (const keys of ['dw', 'x', 'p', 'ciw', 'vjd', 'Vd', 'o', '~', 'J', '>>']) {
++			const host = new TestHost('|abc def\nghi');
++			const vim = new VimEngine(host);
++			vim.handleKey('y');
++			vim.handleKey('y');
++			let open = 0;
++			const begin = host.beginChange.bind(host);
++			const end = host.endChange.bind(host);
++			host.beginChange = () => { open++; begin(); };
++			host.endChange = () => { open--; end(); };
++			host.applyEdits = () => { throw new Error('model is gone'); };
++			for (const k of keysOf(keys)) {
++				vim.handleKey(k);
++			}
++			assert.strictEqual(vim.mode, 'normal', keys);
++			assert.strictEqual(vim.pending, false, keys);
++			assert.strictEqual(open, 0, `${keys}: change left open`);
++			assert.strictEqual(host.selection, undefined, `${keys}: visual selection left on screen`);
++			assert.ok(vim.status().includes('model is gone'), keys);
++		}
++	});
++
++	test('a throwing host during Esc out of insert still lands in normal mode', () => {
++		const host = new TestHost('|abc');
++		const vim = new VimEngine(host);
++		vim.handleKey('i');
++		host.type('xy');
++		const setCursor = host.setCursor.bind(host);
++		let fail = true;
++		host.setCursor = (p: VimPos) => { if (fail) { fail = false; throw new Error('boom'); } setCursor(p); };
++		assert.doesNotThrow(() => vim.handleKey('<Esc>'));
++		assert.strictEqual(vim.mode, 'normal');
++		assert.strictEqual(vim.pending, false);
++	});
++
++	test('u with nothing to undo, u after a change, u in visual mode', () => {
++		let r = run('|abc', 'u');
++		assert.strictEqual(r.vim.mode, 'normal');
++		assert.strictEqual(r.host.state(), '|abc');
++
++		r = run('|abc def', 'ciwxyz<Esc>u');
++		assert.strictEqual(r.vim.mode, 'normal');
++		assert.strictEqual(r.host.lines[0], 'abc def');
++
++		// visual `u` is "lowercase", not undo, and returns to normal mode
++		r = run('|ABC DEF', 'veu');
++		assert.strictEqual(r.vim.mode, 'normal');
++		assert.strictEqual(r.host.state(), '|abc DEF');
++		r.vim.handleKey('u');
++		assert.strictEqual(r.host.lines[0], 'ABC DEF');
++		assert.strictEqual(r.vim.mode, 'normal');
++	});
++
++	test('the caret style is a function of the state', () => {
++		assert.strictEqual(vimCursorStyle('insert', false, 'line'), 'line');
++		assert.strictEqual(vimCursorStyle('insert', false, 'underline'), 'underline');
++		for (const m of ['normal', 'visual', 'visualLine']) {
++			assert.strictEqual(vimCursorStyle(m, false, 'line'), 'block', m);
++		}
++		for (const m of ['normal', 'insert', 'visual']) {
++			assert.strictEqual(vimCursorStyle(m, true, 'line'), 'underline-thin', m);
++		}
++	});
++});
++
++suite('DevHub Vim IME commits outside insert mode', () => {
++
++	test('dropped unless a command waits for a character', () => {
++		const { host, vim } = run('|abc', '');
++		assert.strictEqual(vim.handleText('じっこう'), false);
++		assert.strictEqual(host.state(), '|abc');
++		assert.strictEqual(vim.mode, 'normal');
++		assert.strictEqual(vim.pending, false);
++	});
++
++	test('f t r and operators take the first committed character', () => {
++		let r = run('|ab日本語', 'f');
++		assert.strictEqual(r.vim.handleText('本'), true);
++		assert.strictEqual(r.host.state(), 'ab日|本語');
++		r = run('|ab日本語', 'dt');
++		r.vim.handleText('語');
++		assert.strictEqual(r.host.state(), '|語');
++		r = run('|abc', 'r');
++		r.vim.handleText('あい');
++		assert.strictEqual(r.host.state(), '|あbc');
++		assert.strictEqual(r.vim.pending, false);
++		// `"f` names a register; a commit there is dropped
++		r = run('|abc', '"');
++		assert.strictEqual(r.vim.handleText('f'), false);
++	});
++
++	test('the / prompt takes all of it', () => {
++		const r = run('|abc 日本語', '/');
++		r.vim.handleText('日本');
++		r.vim.handleKey('<CR>');
++		assert.strictEqual(r.host.state(), 'abc |日本語');
++	});
++});
++
++suite('DevHub Vim keys', () => {
++
++	function ev(key: string, extra: Partial<VimKeyEvent> = {}): VimKeyEvent {
++		return { key, keyCode: 0, isComposing: false, ctrlKey: false, metaKey: false, altKey: false, ...extra };
++	}
++
++	test('plain keys', () => {
++		assert.strictEqual(toVimKey(ev('j'), false), 'j');
++		assert.strictEqual(toVimKey(ev('G'), false), 'G');
++		assert.strictEqual(toVimKey(ev('Enter'), false), '<CR>');
++		assert.strictEqual(toVimKey(ev('ArrowDown'), false), 'j');
++		assert.strictEqual(toVimKey(ev('ArrowDown'), true), undefined);
++		assert.strictEqual(toVimKey(ev('Tab'), false), '<Tab>');
++		assert.strictEqual(toVimKey(ev('Escape'), false), undefined);
++	});
++
++	test('modifiers', () => {
++		assert.strictEqual(toVimKey(ev('c', { metaKey: true }), false), undefined);
++		assert.strictEqual(toVimKey(ev('j', { altKey: true }), false), undefined);
++		assert.strictEqual(toVimKey(ev('r', { ctrlKey: true }), false), '<C-r>');
++		assert.strictEqual(toVimKey(ev('x', { ctrlKey: true }), false), undefined);
++	});
++
++	test('IME keys are the IME\'s, never Vim keys', () => {
++		assert.strictEqual(toVimKey(ev('Process', { keyCode: 229 }), false), undefined);
++		assert.strictEqual(toVimKey(ev('j', { keyCode: 229 }), false), undefined);
++		assert.strictEqual(toVimKey(ev('u', { isComposing: true }), false), undefined);
++		assert.strictEqual(toVimKey(ev('Enter', { isComposing: true }), false), undefined);
 +	});
 +});
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
