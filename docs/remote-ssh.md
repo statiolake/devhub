@@ -238,7 +238,11 @@ install that did not finish, and is replaced rather than started.
 **The key.** `<key>` is `<commit>-<identity>`. The commit is the VS Code
 submodule's; the identity is `reh_identity()` in `scripts/product_metadata.py`,
 twelve hex digits of a hash over that commit, every `patches/vscode/*.patch`
-and `patches/vscode-overlay/` file,
+and `patches/vscode-overlay/` file a server can contain (a patch or overlay
+file only the client has — the Vim engine, the workbench, the editor's browser
+half, the Electron main process: `REH_CLIENT_ONLY`, checked against the
+server bundle's import graph by `scripts/product_metadata_test.py` — is not a
+new server),
 the static product metadata the server carries (the overrides and the API
 proposal table), the bytes of the build scripts (`scripts/build_reh.py`,
 `scripts/reh_in_container.sh`) and a `REH_REVISION` bumped when anything else

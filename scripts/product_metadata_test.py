@@ -14,6 +14,7 @@ app to say why. It happened, which is why these tests exist.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -22,8 +23,10 @@ from pathlib import Path
 
 from product_metadata import (
 	EXTENSION_ENABLED_API_PROPOSALS,
-	PATCHES_DIR,
+	REPO_ROOT,
 	VSCODE_DIR,
+	is_client_only,
+	overlay_files,
 	devhub_commit,
 	nls_metadata_hash,
 	packaged_metadata,
@@ -55,8 +58,15 @@ class ServerIdentity(unittest.TestCase):
 	def setUp(self) -> None:
 		self.patches = Path(tempfile.mkdtemp(prefix="patches-"))
 		self.addCleanup(lambda: shutil.rmtree(self.patches, ignore_errors=True))
-		for patch in sorted(PATCHES_DIR.glob("*.patch"))[:2]:
-			shutil.copyfile(patch, self.patches / patch.name)
+		# One patch the server bundles, one it does not.
+		(self.patches / "0001-server.patch").write_text(
+			"--- a/src/vs/workbench/api/common/extHost.protocol.ts\n"
+			"+++ b/src/vs/workbench/api/common/extHost.protocol.ts\n@@ -1 +1 @@\n-a\n+b\n"
+		)
+		(self.patches / "0002-client.patch").write_text(
+			"--- a/src/vs/workbench/browser/parts/x.ts\n"
+			"+++ b/src/vs/workbench/browser/parts/x.ts\n@@ -1 +1 @@\n-a\n+b\n"
+		)
 
 	def identity(self, **overrides: object) -> str:
 		arguments: dict = {"commit": "0" * 40, "patches_dir": self.patches, "revision": 1}
@@ -75,9 +85,31 @@ class ServerIdentity(unittest.TestCase):
 		# did not move, and every machine kept the server it already had.
 		before = self.identity()
 		self.assertEqual(self.identity(), before)
-		patch = next(self.patches.glob("*.patch"))
+		patch = self.patches / "0001-server.patch"
 		patch.write_bytes(patch.read_bytes() + b"# changed\n")
 		self.assertNotEqual(self.identity(), before)
+
+	def test_ignores_a_patch_no_server_contains(self) -> None:
+		before = self.identity()
+		patch = self.patches / "0002-client.patch"
+		patch.write_bytes(patch.read_bytes() + b"# changed\n")
+		self.assertEqual(self.identity(), before)
+		# One file the server has is enough to make it the server's.
+		patch.write_text(
+			patch.read_text()
+			+ "--- a/src/vs/platform/keybinding/common/keybindingsRegistry.ts\n"
+			"+++ b/src/vs/platform/keybinding/common/keybindingsRegistry.ts\n@@ -1 +1 @@\n-a\n+b\n"
+		)
+		self.assertNotEqual(self.identity(), before)
+
+	def test_ignores_an_overlay_file_no_server_contains(self) -> None:
+		overlay = self.patches / "overlay"
+		path = overlay / "src" / "vs" / "workbench" / "contrib" / "devhubVim" / "common" / "vimEngine.ts"
+		path.parent.mkdir(parents=True)
+		path.write_text("one\n")
+		before = self.identity(overlay_dir=overlay)
+		path.write_text("two\n")
+		self.assertEqual(self.identity(overlay_dir=overlay), before)
 
 	def test_moves_when_an_overlay_file_does(self) -> None:
 		overlay = self.patches / "overlay"
@@ -115,6 +147,64 @@ class ServerIdentity(unittest.TestCase):
 		names = {p.name for p in REH_BUILD_SCRIPTS}
 		self.assertEqual(names, {"build_reh.py", "reh_in_container.sh"})
 		self.assertTrue(all(p.is_file() for p in REH_BUILD_SCRIPTS))
+
+
+class ClientOnlyPaths(unittest.TestCase):
+	"""`REH_CLIENT_ONLY` holds only what no server contains.
+
+	The server is esbuild bundles of upstream's server entry points
+	(`node build/next/index.ts bundle --target server`), so what it contains is
+	their import graph. This bundles that graph from the patched tree (a
+	checkout where scripts/apply-vscode-patches.sh has run, as CI's checks job
+	does) with the esbuild DevHub's own build has, and fails on any module of it
+	the identity leaves out.
+	"""
+
+	def esbuild(self) -> str:
+		for candidate in (
+			REPO_ROOT / "apps" / "desktop" / "node_modules" / ".bin" / "esbuild",
+			VSCODE_DIR / "node_modules" / ".bin" / "esbuild",
+		):
+			if candidate.is_file():
+				return str(candidate)
+		found = shutil.which("esbuild")
+		if found is None:
+			self.skipTest("no esbuild (pnpm install)")
+		return found
+
+	def entry_points(self) -> list[str]:
+		index = (VSCODE_DIR / "build" / "next" / "index.ts").read_text()
+		block = re.search(r"const serverEntryPoints = \[(.*?)\];", index, re.S)
+		self.assertIsNotNone(block, "build/next/index.ts no longer lists serverEntryPoints")
+		entries = re.findall(r"'([^']+)'", block.group(1))
+		bootstrap = (VSCODE_DIR / "build" / "lib" / "esbuild.ts").read_text()
+		server = re.search(r"case 'server':\s*case 'server-web':\s*return \[([^\]]*)\]", bootstrap)
+		self.assertIsNotNone(server, "build/lib/esbuild.ts no longer lists the server's bootstrap entry points")
+		entries += re.findall(r"'([^']+)'", server.group(1))
+		return [f"src/{entry}.ts" for entry in entries]
+
+	def test_no_server_module_is_left_out_of_the_identity(self) -> None:
+		if not (VSCODE_DIR / "build" / "next" / "index.ts").is_file():
+			self.skipTest("the vscode submodule is not checked out")
+		if not all((VSCODE_DIR / p).is_file() for p in overlay_files()):
+			self.skipTest("the vscode submodule is not patched (scripts/apply-vscode-patches.sh)")
+		esbuild = self.esbuild()
+		with tempfile.TemporaryDirectory() as tmp:
+			meta = Path(tmp) / "meta.json"
+			result = subprocess.run(
+				[
+					esbuild, *self.entry_points(), "--bundle", "--platform=node", "--format=esm",
+					"--packages=external", "--external:electron", "--loader:.css=empty",
+					f"--outdir={tmp}/out", f"--metafile={meta}", "--log-level=error",
+				],
+				cwd=VSCODE_DIR, capture_output=True, text=True,
+			)
+			self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+			inputs = set(json.loads(meta.read_text())["inputs"])
+		# The graph is the real one: the extension host's half of the hover is in it.
+		self.assertIn("src/vs/workbench/api/common/extHostStatusBar.ts", inputs)
+		self.assertIn("src/vs/workbench/api/common/devhubStatusBarHover.ts", inputs)
+		self.assertEqual(sorted(p for p in inputs if is_client_only(p)), [])
 
 
 class PackagedMetadata(unittest.TestCase):

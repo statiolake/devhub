@@ -250,6 +250,57 @@ def overlay_files(overlay_dir: Path = OVERLAY_DIR) -> list[str]:
 	return sorted(p.relative_to(overlay_dir).as_posix() for p in overlay_dir.rglob("*") if p.is_file())
 
 
+# Paths in the VS Code tree that no remote extension host contains, so that a
+# change DevHub makes to them alone is not a new server. The server is
+# `node build/next/index.ts bundle --target server` (scripts/reh_in_container.sh,
+# `core_ci_server`): esbuild bundles of upstream's server entry points
+# (`serverEntryPoints` and the `server` bootstrap entries), which contain only
+# the modules those entry points import, packaged with product.json, the
+# extensions and node_modules (gulpfile.reh.ts `packageTask`). The workbench,
+# the editor's browser half and the Electron main process are none of those,
+# so the Vim engine, the editor's modal input, the hover's renderer and the
+# window patches stay out of the identity. The extension host *is* on the
+# server (remote extensions run there): the extHost half of the status bar
+# hover, `src/vs/workbench/api/common/`, is in the identity, and so is every
+# patch with one file outside this list (0008 changes keybindingsRegistry.ts,
+# which the extension host bundles). scripts/product_metadata_test.py bundles
+# the server's import graph from the tree and fails if any path here is in it.
+#
+# An entry ending in "/" is a directory, anything else one file.
+REH_CLIENT_ONLY = (
+	"src/vs/base/common/product.ts",  # 0002 adds types only
+	"src/vs/editor/browser/",
+	"src/vs/editor/common/editorContextKeys.ts",
+	"src/vs/editor/contrib/",
+	"src/vs/editor/test/",
+	"src/vs/platform/dialogs/electron-browser/",
+	"src/vs/platform/windows/electron-main/",
+	"src/vs/workbench/api/browser/",
+	"src/vs/workbench/api/test/",
+	"src/vs/workbench/browser/",
+	"src/vs/workbench/contrib/devhubVim/",
+	"src/vs/workbench/contrib/remote/browser/",
+	"src/vs/workbench/contrib/terminal/browser/",
+	"src/vs/workbench/electron-browser/",
+	"src/vs/workbench/workbench.desktop.main.ts",
+)
+
+
+def is_client_only(path: str, client_only: tuple[str, ...] = REH_CLIENT_ONLY) -> bool:
+	"""Whether `path` (in the VS Code tree) is in no server DevHub builds."""
+	return any(path.startswith(entry) if entry.endswith("/") else path == entry for entry in client_only)
+
+
+def patch_paths(patch: Path) -> list[str]:
+	"""The files of the VS Code tree a patch changes."""
+	paths = []
+	for line in patch.read_text(encoding="utf-8").splitlines():
+		for prefix in ("+++ b/", "--- a/"):
+			if line.startswith(prefix) and line[len(prefix):] not in paths:
+				paths.append(line[len(prefix):])
+	return paths
+
+
 def reh_static_metadata() -> dict[str, object]:
 	"""The part of the product metadata a server is built with that is the same
 	on every run: the overrides and the API proposal table. The rest — the
@@ -268,12 +319,15 @@ def reh_identity(
 	revision: int = REH_REVISION,
 	build_scripts: tuple[Path, ...] = REH_BUILD_SCRIPTS,
 	metadata: dict[str, object] | None = None,
+	client_only: tuple[str, ...] = REH_CLIENT_ONLY,
 ) -> str:
 	"""Which build of the remote extension host this checkout makes.
 
 	Twelve hex characters of a hash over the VS Code commit, every patch in
-	`patches/vscode/` (name and bytes), every file in `patches/vscode-overlay/`
-	(path and bytes), the static product metadata the
+	`patches/vscode/` (name and bytes) and every file in
+	`patches/vscode-overlay/` (path and bytes) that can reach the server — all
+	but a patch whose every file is in `REH_CLIENT_ONLY` and an overlay file
+	that is —, the static product metadata the
 	server carries (`reh_static_metadata()`), the build scripts
 	(`REH_BUILD_SCRIPTS`, name and bytes) and `REH_REVISION`. The far machine
 	keeps its server under `bin/<commit>-<identity>`, and both the app
@@ -289,9 +343,13 @@ def reh_identity(
 	digest.update(f"revision {revision}\n".encode())
 	digest.update(f"commit {commit or vscode_commit()}\n".encode())
 	for patch in sorted(patches_dir.glob("*.patch")):
+		if all(is_client_only(p, client_only) for p in patch_paths(patch)):
+			continue
 		digest.update(f"patch {patch.name}\n".encode())
 		digest.update(patch.read_bytes())
 	for path in overlay_files(overlay_dir):
+		if is_client_only(path, client_only):
+			continue
 		digest.update(f"overlay {path}\n".encode())
 		digest.update((overlay_dir / path).read_bytes())
 	stated = reh_static_metadata() if metadata is None else metadata
