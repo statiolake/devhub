@@ -184,7 +184,8 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.action` | `{ "action": name, "char"?: c }` | see the list below |
 | `devhubVim.scroll` | `{ "by": "line" \| "halfPage" \| "page", "direction": "up" \| "down" }` or `{ "to": "top" \| "center" \| "bottom", "firstNonBlank"?: bool }` | `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B zt zz zb z<CR> z. z-` |
 | `devhubVim.insert` | `{ "action": name, "char"?: c }` | insert-mode `CTRL-W CTRL-U CTRL-T CTRL-D CTRL-E CTRL-Y CTRL-A CTRL-O CTRL-R`, replace-mode `<BS>` |
-| `devhubVim.run` | `{ "command": id, "args"?: any, "count"?: "repeat" \| "ignore", "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `]d` … |
+| `devhubVim.run` | `{ "command": id, "args"?: any, "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `K` … |
+| `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
 | `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` |
 | `devhubVim.search` | `{ "pattern": p, "backwards"?: bool }` | (what `/` runs) |
 | `devhubVim.ex` | `{ "command": "w" }` | `ZZ ZQ`; run any ex line from a binding |
@@ -194,11 +195,64 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.nav.enter` | — | `CTRL-W` |
 | `devhubVim.nav.<name>` | — | after `CTRL-W`: `left down up right` (`h j k l`, also with CTRL), `leftArrow downArrow upArrow rightArrow`, `next` (`w`), `previous` (`W`), `lastAccessed` (`p`), `top` (`t`), `bottom` (`b`), `split` / `splitShift` (`s S`), `vsplit` (`v`), `new` (`n`), `close` (`c`), `quit` (`q`), `only` (`o`), `equalize` (`=`), `maximizeHeight` (`_`), `maximizeWidth` (`\|`), `increaseHeight` (`+`), `decreaseHeight` (`-`), `decreaseWidth` (`<`), `increaseWidth` (`>`), `moveFarLeft/Down/Up/Right` (`H J K L`), `diagnostic` (`d`), `definitionSplit` (`]`), `definitionPreview` (`}`), `escape` |
 
-`devhubVim.run` runs a VS Code command as a Vim command: a count runs it that
-many times (`"count": "ignore"` once), it is recorded in macros, and in visual
-mode it runs with the selection on screen and then leaves visual mode
-(`"visual": "keep"` keeps visual mode and takes the selection the command
-made, as smart select does).
+### Counts, `devhubVim.run` and `devhubVim.repeat`
+
+A count is typed with ordinary keybindings: `1`–`9` (and `0` once a count is
+being typed, `devhubVim.hasCount`) run `devhubVim.count { digit }`. Vim's own
+commands (motions, operators, text objects, `x`, `p`, …) compose with it as
+in Vim: `2d3w` deletes six words, `3j`, `v3j`, `d2i(`.
+
+For any other command the count is an **argument**, put in where the key
+runs the command. When a key (or a macro replay) runs `devhubVim.run` or
+`devhubVim.repeat`, these placeholders in its args — anywhere in the tree,
+in strings or as whole values — are replaced once, and the pending count and
+register are consumed:
+
+| Placeholder | Value |
+| --- | --- |
+| `${count}` | the count, or 1 |
+| `${rawCount}` | the count, or `null` |
+| `${register}` | the register given with `"x`, or `"` |
+| `${char}` | the character an `awaitChar` got (in its `then` args), or empty |
+
+A string that is exactly one placeholder becomes the value (`"${count}"` is
+the number 3); inside a longer string it is text (`"tab ${count}"`). After
+that the commands are plain functions of their args:
+
+* `devhubVim.run { command, args? }` (or `{ commands: [...] }`, run in order)
+  runs it as a Vim action: it is recorded in macros (with the values the
+  placeholders had), and in visual mode it runs with the selection on screen
+  and then leaves visual mode (`"visual": "keep"` keeps visual mode and takes
+  the selection the command made, as smart select does). It does not repeat.
+* `devhubVim.repeat { command, args?, count }` runs `command` `count` times,
+  in order (each awaited). `count` is a number or `"${count}"`; 0 runs
+  nothing (at most 1000). In each iteration `${it}` is 1, 2, … and `${index}`
+  0, 1, … in its `args`. A nested repeat's `args` see only their own loop's
+  `${it}` (its `count` may use the outer one). Repeating `devhubVim.run` is one
+  Vim action: visual mode ends once, after the last iteration.
+
+The defaults that a count repeats (`3]d`) are `devhubVim.repeat` of
+`devhubVim.run` with `"count": "${count}"`; the ones it does not (`3K`) are
+plain `devhubVim.run`. Examples:
+
+```jsonc
+// Vim's {count}gt: go to editor {count}
+{ "key": "g t", "command": "devhubVim.run",
+  "args": { "command": "workbench.action.openEditorAtIndex", "args": "${count}" },
+  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
+// 3<C-n>: the third next problem
+{ "key": "ctrl+n", "command": "devhubVim.repeat",
+  "args": { "command": "editor.action.marker.next", "count": "${count}" },
+  "when": "editorTextFocus && devhubVim.active && devhubVim.mode == 'normal'" },
+// always three lines down, whatever the count
+{ "key": "g j", "command": "devhubVim.repeat",
+  "args": { "command": "devhubVim.motion", "args": { "motion": "down" }, "count": 3 },
+  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" },
+// repeat of run: fold {count} times, on the visual selection too, leaving visual mode once
+{ "key": "z c", "command": "devhubVim.repeat",
+  "args": { "command": "devhubVim.run", "args": { "command": "editor.fold" }, "count": "${count}" },
+  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
+```
 
 Motions: `left right charBackward charForward up down displayUp displayDown
 wordForward WORDForward wordBackward WORDBackward wordEnd WORDEnd
@@ -425,7 +479,7 @@ Put it in your user settings to have Vim from the first key everywhere.
   { "key": "j", "command": "-devhubVim.motion" },
 
   // VS Code's go to definition on gd (Neovim's gd is "go to local declaration")
-  { "key": "g d", "command": "devhubVim.run", "args": { "command": "editor.action.revealDefinition", "count": "ignore" },
+  { "key": "g d", "command": "devhubVim.run", "args": { "command": "editor.action.revealDefinition" },
     "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
 
   // Space as a leader key (Space alone then no longer moves right)
@@ -463,7 +517,8 @@ Notes:
   chord has no timeout; in normal mode that is what Vim does too.
 * A binding to a plain VS Code command runs it as is: it does not take the
   pending count, operator or register, and it is not part of `.` or a macro.
-  Wrap it in `devhubVim.run` to give it a count and visual mode.
+  Wrap it in `devhubVim.run` for visual mode, macros and the count as
+  `${count}`, in `devhubVim.repeat` to repeat it (see above).
 * After `CTRL-W` (`devhubVim.mode == 'nav'`) the next key runs whatever it
   resolves to there, as the keybinding dispatcher would (any command, with
   its `args`), and the prefix is over before it runs. The editor's typing
@@ -644,7 +699,8 @@ otherwise.
   other character as one (wide CJK characters are one column in blocks).
 * Uppercase marks (`mA`) are kept per editor, not across files; the jump list
   is per editor and continues in VS Code's navigation history at its ends.
-* Macros and `.` record `devhubVim.*` commands (and `devhubVim.run`),
+* Macros and `.` record `devhubVim.*` commands (and `devhubVim.run` /
+  `devhubVim.repeat`, in macros, with the values their placeholders had),
   captured characters, typed insert text and ex lines; plain VS Code commands
   bound to keys are not recorded. `"ap` after `qa…q` does not paste the macro
   as keys (macros are commands); a register *yanked* as text runs as keys.

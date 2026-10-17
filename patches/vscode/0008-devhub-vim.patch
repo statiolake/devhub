@@ -1102,10 +1102,10 @@ index 0d95d0bf..5ac0b265 100644
  		let keybindingsLen = 0;
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..b0cd6579
+index 00000000..ed7d5382
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1175 @@
+@@ -0,0 +1,1181 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -1122,13 +1122,18 @@ index 00000000..b0cd6579
 +//   `devhubVim.register {name}`, `devhubVim.mode {to, at}`,
 +//   `devhubVim.action {action}`, `devhubVim.mark {char}`,
 +//   `devhubVim.scroll {...}`, `devhubVim.insert {action}`,
-+//   `devhubVim.run {command}`, `devhubVim.awaitChar {then}`,
++//   `devhubVim.run {command}`, `devhubVim.repeat {command, count}`,
++//   `devhubVim.awaitChar {then}`,
 +//   `devhubVim.cmdline {kind}`, `devhubVim.search`, `devhubVim.ex {command}`,
 +//   `devhubVim.escape` - run on the focused Vim editor. The engine keeps the
 +//   grammar (count, register, pending operator / text object, visual range,
 +//   marks, jumps, last change, macros) and composes: `d` marks an operator
 +//   pending and the next motion or text object command completes it,
 +//   whatever key ran it. The behaviour is Neovim's, defaults included.
++//   Other commands get the count as an argument: `devhubVim.run` and
++//   `devhubVim.repeat` have `${count}` `${rawCount}` `${register}` `${char}`
++//   put into their args where a key runs them (VimEngine.expandVimState),
++//   and are plain functions of their args after that.
 +// * The default keymap (../common/vimKeymap.ts) is registered here as
 +//   ordinary default keybindings (KeybindingsRegistry), each with a `when` on
 +//   the context keys below. They show in the Keyboard Shortcuts editor,
@@ -2150,7 +2155,8 @@ index 00000000..b0cd6579
 +	'devhubVim.mark': localize('devhubVim.cmd.mark', "Vim: set a mark { char }"),
 +	'devhubVim.scroll': localize('devhubVim.cmd.scroll', "Vim: scroll { by: line | halfPage | page, direction: up | down } or { to: top | center | bottom, firstNonBlank? }"),
 +	'devhubVim.insert': localize('devhubVim.cmd.insert', "Vim: an insert-mode command { action, char? }"),
-+	'devhubVim.run': localize('devhubVim.cmd.run', "Vim: run a VS Code command as a Vim command { command, args?, count?: repeat | ignore, visual?: exit | keep } or { commands: [...] }"),
++	'devhubVim.run': localize('devhubVim.cmd.run', "Vim: run a command as a Vim action { command, args?, visual?: exit | keep } or { commands: [...] }; args may use ${count} ${rawCount} ${register} ${char}"),
++	'devhubVim.repeat': localize('devhubVim.cmd.repeat', "Vim: run { command, args? } count times { count: number | \"${count}\" }; args may use ${it} (1, 2, ...) and ${index} (0, 1, ...)"),
 +	'devhubVim.cmdline': localize('devhubVim.cmd.cmdline', "Vim: open the prompt { kind: ':' | '/' | '?' }"),
 +	'devhubVim.search': localize('devhubVim.cmd.search', "Vim: search { pattern, backwards? }"),
 +	'devhubVim.ex': localize('devhubVim.cmd.ex', "Vim: run an ex command line { command }"),
@@ -2283,10 +2289,10 @@ index 00000000..b0cd6579
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
 new file mode 100644
-index 00000000..4c5c14e1
+index 00000000..376fe27c
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
-@@ -0,0 +1,5541 @@
+@@ -0,0 +1,5689 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2543,6 +2549,7 @@ index 00000000..4c5c14e1
 +	'devhubVim.scroll',
 +	'devhubVim.insert',
 +	'devhubVim.run',
++	'devhubVim.repeat',
 +	'devhubVim.cmdline',
 +	'devhubVim.search',
 +	'devhubVim.ex',
@@ -2637,7 +2644,11 @@ index 00000000..4c5c14e1
 +};
 +
 +/** Commands still meaningful in insert mode (all others are ignored there). */
-+const INSERT_COMMANDS = new Set<string>(['devhubVim.escape', 'devhubVim.insertText', 'devhubVim.ex', 'devhubVim.mode', 'devhubVim.insert', 'devhubVim.awaitChar', 'devhubVim.run']);
++const INSERT_COMMANDS = new Set<string>(['devhubVim.escape', 'devhubVim.insertText', 'devhubVim.ex', 'devhubVim.mode', 'devhubVim.insert', 'devhubVim.awaitChar', 'devhubVim.run', 'devhubVim.repeat']);
++/** Commands whose args get the Vim state placeholders (`${count}` ...) expanded when a key runs them (expandVimState). */
++const EXPANDING_COMMANDS = new Set<string>(['devhubVim.run', 'devhubVim.repeat']);
++/** The most iterations a `devhubVim.repeat` runs. */
++const MAX_REPEAT = 1000;
 +/** Not recorded into a macro: what they lead to is (the command an awaited char completes, the ex line, the search). */
 +const NOT_IN_MACROS = new Set<string>(['devhubVim.awaitChar', 'devhubVim.cmdline']);
 +const MACRO_CONTROL = new Set<string>(['recordMacro', 'stopMacro']);
@@ -2662,6 +2673,44 @@ index 00000000..4c5c14e1
 +
 +function pos(line: number, col: number): VimPos {
 +	return { line, col };
++}
++
++/**
++ * Substitute `${name}` placeholders in an args tree: a string that is exactly
++ * one placeholder becomes the value (a number stays a number, null stays
++ * null); a placeholder inside a longer string becomes text (null: empty).
++ * Unknown names are left as they are. With `loop` (a repeat's `${it}`), a
++ * nested `devhubVim.repeat` keeps its own inner `args`: only the innermost
++ * loop's `${it}` is visible there.
++ */
++export function substitutePlaceholders(value: unknown, vars: Readonly<Record<string, string | number | null>>, loop = false): unknown {
++	if (typeof value === 'string') {
++		const whole = /^\$\{(\w+)\}$/.exec(value);
++		if (whole && Object.prototype.hasOwnProperty.call(vars, whole[1])) {
++			return vars[whole[1]];
++		}
++		return value.replace(/\$\{(\w+)\}/g, (m, name: string) => Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name] ?? '') : m);
++	}
++	if (Array.isArray(value)) {
++		return value.map(v => substitutePlaceholders(v, vars, loop));
++	}
++	if (isRecord(value)) {
++		const out: Record<string, unknown> = {};
++		for (const [k, v] of Object.entries(value)) {
++			out[k] = loop && k === 'args' && value.command === 'devhubVim.repeat' && isRecord(v) ? substituteRepeatSpec(v, vars) : substitutePlaceholders(v, vars, loop);
++		}
++		return out;
++	}
++	return value;
++}
++
++/** A `devhubVim.repeat`'s own args under an outer loop: its `count` (and command) take the outer `${it}`, its inner `args` do not. */
++export function substituteRepeatSpec(spec: Readonly<Record<string, unknown>>, vars: Readonly<Record<string, string | number | null>>): Readonly<Record<string, unknown>> {
++	const out: Record<string, unknown> = {};
++	for (const [k, v] of Object.entries(spec)) {
++		out[k] = k === 'args' ? v : substitutePlaceholders(v, vars, true);
++	}
++	return out;
 +}
 +
 +function isRecord(v: unknown): v is Args {
@@ -2702,6 +2751,8 @@ index 00000000..4c5c14e1
 +	private insertOnce: { eol: boolean; armed: boolean } | undefined;
 +	private lastChange: LastChange | undefined;
 +	private replaying = false;
++	/** > 0 while `devhubVim.run` / `devhubVim.repeat` run their own steps: those are neither expanded nor recorded again. */
++	private nestedDepth = 0;
 +	private readonly marks = new Map<string, VimPos>();
 +	private jumps: VimPos[] = [];
 +	private jumpIndex = 0;
@@ -2841,15 +2892,20 @@ index 00000000..4c5c14e1
 +		if (!handler) {
 +			return false;
 +		}
-+		const a: Args = isRecord(args) ? args : {};
++		let a: Args = isRecord(args) ? args : {};
 +		if (this.isInsert() && !INSERT_COMMANDS.has(command)) {
 +			return true;
++		}
++		const nested = this.nestedDepth > 0;
++		if (!nested && EXPANDING_COMMANDS.has(command)) {
++			// the entry point: the Vim state goes into the args once, and what is recorded is the result
++			a = this.expandVimState(a, typeof a.char === 'string' ? a.char : undefined);
 +		}
 +		try {
 +			this.message = '';
 +			this.steps.push({ command, args: a });
 +			handler(a);
-+			if (this.recordingMacro && !this.playingMacro && !this.replaying && !NOT_IN_MACROS.has(command) && !(command === 'devhubVim.action' && MACRO_CONTROL.has(str(a.action)))) {
++			if (!nested && this.recordingMacro && !this.playingMacro && !this.replaying && !NOT_IN_MACROS.has(command) && !(command === 'devhubVim.action' && MACRO_CONTROL.has(str(a.action)))) {
 +				this.recordingMacro.steps.push({ command, args: a });
 +			}
 +		} catch (err) {
@@ -2943,10 +2999,27 @@ index 00000000..4c5c14e1
 +		this.awaiting = undefined;
 +		const args = { ...then.args, char: ch };
 +		if (!this.execute(then.command, args)) {
++			// a VS Code command: it gets the Vim state placeholders too (`${char}`, `${count}` ...)
++			const expanded = this.expandVimState(args, ch);
 +			this.resetGrammar();
-+			this.runSteps([{ command: then.command, args }]);
++			this.runSteps([{ command: then.command, args: expanded }]);
 +		}
 +		return true;
++	}
++
++	/**
++	 * The Vim state a key's command sees, put into its args: `${count}` (the
++	 * count, or 1), `${rawCount}` (the count, or null), `${register}` (the
++	 * register named with `"x`, or `"`), `${char}` (the character an
++	 * `awaitChar` got, or empty). Done once, where a key (or a replay) runs
++	 * `devhubVim.run` / `devhubVim.repeat`; the command then consumes the
++	 * count and register. `${it}` / `${index}` are left for `devhubVim.repeat`.
++	 */
++	private expandVimState(a: Args, ch: string | undefined): Args {
++		const count = this.effectiveCount();
++		const vars = { count: count ?? 1, rawCount: count ?? null, register: this.register ?? '"', char: ch ?? '' };
++		const out = substitutePlaceholders(a, vars);
++		return isRecord(out) ? out : a;
 +	}
 +
 +	/**
@@ -3455,6 +3528,7 @@ index 00000000..4c5c14e1
 +		'devhubVim.scroll': a => this.cmdScroll(a),
 +		'devhubVim.insert': a => this.cmdInsert(str(a.action), charArg(a.char)),
 +		'devhubVim.run': a => this.cmdRun(a),
++		'devhubVim.repeat': a => this.cmdRepeat(a),
 +		'devhubVim.cmdline': a => this.cmdCmdline(str(a.kind)),
 +		'devhubVim.search': a => this.cmdSearch(str(a.pattern), a.backwards === true),
 +		'devhubVim.ex': a => {
@@ -5362,23 +5436,33 @@ index 00000000..4c5c14e1
 +
 +	// ---- devhubVim.run: a VS Code command as a Vim command ----------------------
 +
-+	private cmdRun(a: Args): void {
++	/** The steps one `devhubVim.run` runs: `{ command, args? }` or `{ commands: [...] }`. */
++	private runStepsOf(a: Args): ExStep[] {
 +		const command = str(a.command);
 +		const list = Array.isArray(a.commands) ? (a.commands as unknown[]).filter((c): c is ExStep => isRecord(c) && typeof c.command === 'string' && !!c.command) : undefined;
 +		if ((!command && !list?.length) || this.operator || this.textObjectKind) {
 +			this.invalid(command || list?.length ? '' : 'devhubVim.run needs { "command": ... } or { "commands": [...] }');
 +		}
-+		const times = a.count === 'ignore' ? 1 : Math.min(100, this.effectiveCount() ?? 1);
-+		const one: ExStep[] = list ?? [a.args === undefined ? { command } : { command, args: a.args }];
-+		const steps: ExStep[] = [];
-+		for (let t = 0; t < times; t++) {
-+			steps.push(...one);
-+		}
++		return list ?? [a.args === undefined ? { command } : { command, args: a.args }];
++	}
++
++	/**
++	 * `devhubVim.run`: a command (or several, in order) as a Vim action. Its
++	 * args are what the key gave, with the Vim state already put in
++	 * (expandVimState); it consumes the count and register and does not repeat
++	 * (wrap it in `devhubVim.repeat` for that). In visual mode the commands run
++	 * with the selection on screen, then visual mode ends (`"visual": "keep"`:
++	 * the selection the commands made is the visual area).
++	 */
++	private cmdRun(a: Args): void {
++		this.runAsAction(this.runStepsOf(a), a.visual === 'keep');
++	}
++
++	private runAsAction(steps: ExStep[], keep: boolean): void {
 +		this.resetGrammar();
 +		if (this.isVisual()) {
-+			const keep = a.visual === 'keep';
 +			this.saveVisual();
-+			this.runSteps(steps, () => {
++			this.runNested(steps, () => {
 +				if (keep) {
 +					// the command changed the selection (smart select): it is the visual area now
 +					const s = this.host.getSelection();
@@ -5397,7 +5481,77 @@ index 00000000..4c5c14e1
 +			});
 +			return;
 +		}
-+		this.runSteps(steps);
++		this.runNested(steps);
++	}
++
++	/**
++	 * `devhubVim.repeat { command, args?, count }`: `command` with `args`,
++	 * `count` times, in order (each awaited). `count` is a number (or a
++	 * numeric string, as `"${count}"` gives); 0 runs nothing. In each
++	 * iteration `${it}` is 1, 2, ... and `${index}` 0, 1, ... in `args`; a
++	 * nested repeat's `args` keep theirs (only the innermost loop is visible).
++	 * Repeating `devhubVim.run` is one Vim action: visual mode ends once, after
++	 * the last iteration.
++	 */
++	private cmdRepeat(a: Args): void {
++		const command = str(a.command);
++		const n = typeof a.count === 'number' ? a.count : a.count === undefined ? 1 : Number(a.count);
++		if (!command || !Number.isInteger(n) || n < 0 || this.operator || this.textObjectKind) {
++			this.invalid(command ? 'devhubVim.repeat: "count" must be a whole number' : 'devhubVim.repeat needs { "command": ..., "count": ... }');
++		}
++		const times = Math.min(MAX_REPEAT, n);
++		const iteration = (i: number): unknown => {
++			const vars = { it: i + 1, index: i };
++			return a.args === undefined ? undefined : command === 'devhubVim.repeat' && isRecord(a.args) ? substituteRepeatSpec(a.args, vars) : substitutePlaceholders(a.args, vars, true);
++		};
++		if (command === 'devhubVim.run') {
++			const steps: ExStep[] = [];
++			let keep = false;
++			for (let i = 0; i < times; i++) {
++				const args = iteration(i);
++				const inner = isRecord(args) ? args : {};
++				keep = inner.visual === 'keep';
++				steps.push(...this.runStepsOf(inner));
++			}
++			this.runAsAction(steps, keep);
++			return;
++		}
++		const steps: ExStep[] = [];
++		for (let i = 0; i < times; i++) {
++			const args = iteration(i);
++			steps.push(args === undefined ? { command } : { command, args });
++		}
++		this.resetGrammar();
++		this.runNested(steps);
++	}
++
++	/** Steps of run / repeat: engine commands run in the engine, not expanded or recorded again; VS Code commands are awaited in turn. */
++	private runNested(steps: readonly ExStep[], after?: () => void): void {
++		void (async () => {
++			try {
++				for (const s of steps) {
++					let handled: boolean;
++					this.nestedDepth++;
++					try {
++						handled = this.execute(s.command, s.args);
++					} finally {
++						this.nestedDepth--;
++					}
++					if (!handled) {
++						await this.host.executeCommand(s.command, s.args);
++					}
++				}
++			} catch (err) {
++				this.message = String(err instanceof Error ? err.message : err);
++			} finally {
++				try {
++					after?.();
++				} catch {
++					// the editor went away while the commands ran
++				}
++				this.host.refresh();
++			}
++		})();
 +	}
 +
 +	// ---- motions ------------------------------------------------------------
@@ -8355,10 +8509,10 @@ index 00000000..e3baa9c0
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
 new file mode 100644
-index 00000000..5ff09160
+index 00000000..0855fbb0
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,535 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8374,8 +8528,8 @@ index 00000000..5ff09160
 +// The tests resolve keys against this same table, so what is tested is what
 +// ships. Most entries run `devhubVim.*` engine commands (they compose with
 +// counts, operators, registers, `.` and macros); Vim commands that are VS Code
-+// features (folds, LSP, diagnostics, windows) run through `devhubVim.run`,
-+// which takes the count (`3]d`) and visual mode, or are bound to the VS Code
++// features (folds, LSP, diagnostics, windows) run through `devhubVim.run`
++// (visual mode), in `devhubVim.repeat` where a count repeats them (`3]d`), or are bound to the VS Code
 +// command directly where Vim has no grammar around them (insert-mode CTRL-S).
 +//
 +// The keymap targets the Apple JIS keyboard (macOS, JIS hardware). It is
@@ -8486,9 +8640,16 @@ index 00000000..5ff09160
 +	return { key, command: 'devhubVim.insert', args: { action: name }, when, weight: 'override' };
 +}
 +
-+/** A VS Code command as a Vim command: `devhubVim.run` (count repeats it; in visual mode it runs on the selection). */
-+function run(key: string, command: string, when: string = W.normal, extra: Record<string, unknown> = {}): VimKeybinding {
-+	return { key, command: 'devhubVim.run', args: { command, ...extra }, when };
++/**
++ * A VS Code command as a Vim command: `devhubVim.run` (in visual mode it runs
++ * on the selection), wrapped in `devhubVim.repeat` with `"count": "${count}"`
++ * so a count repeats it (`3]d`); `{ count: 'ignore' }`: run once, the count is
++ * dropped (`3K`).
++ */
++function run(key: string, command: string, when: string = W.normal, extra: { count?: 'ignore' } = {}): VimKeybinding {
++	return extra.count === 'ignore'
++		? { key, command: 'devhubVim.run', args: { command }, when }
++		: { key, command: 'devhubVim.repeat', args: { command: 'devhubVim.run', args: { command }, count: '${count}' }, when };
 +}
 +
 +function ex(key: string, command: string, when: string = W.normal): VimKeybinding {
@@ -9796,10 +9957,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..f81061a1
+index 00000000..eaccf338
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,2156 @@
+@@ -0,0 +1,2261 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -10508,7 +10669,7 @@ index 00000000..f81061a1
 +suite('DevHub Vim keymap is keybindings', () => {
 +
 +	test('every default entry is an engine command (or a VS Code command in insert mode) with a when clause', () => {
-+		const ids = new Set(['devhubVim.motion', 'devhubVim.operator', 'devhubVim.textObjectPrefix', 'devhubVim.textObject', 'devhubVim.forceMotion', 'devhubVim.count', 'devhubVim.register', 'devhubVim.awaitChar', 'devhubVim.mode', 'devhubVim.action', 'devhubVim.mark', 'devhubVim.scroll', 'devhubVim.insert', 'devhubVim.run', 'devhubVim.cmdline', 'devhubVim.ex', 'devhubVim.escape']);
++		const ids = new Set(['devhubVim.motion', 'devhubVim.operator', 'devhubVim.textObjectPrefix', 'devhubVim.textObject', 'devhubVim.forceMotion', 'devhubVim.count', 'devhubVim.register', 'devhubVim.awaitChar', 'devhubVim.mode', 'devhubVim.action', 'devhubVim.mark', 'devhubVim.scroll', 'devhubVim.insert', 'devhubVim.run', 'devhubVim.repeat', 'devhubVim.cmdline', 'devhubVim.ex', 'devhubVim.escape']);
 +		const plainInInsert = new Set(['hideSuggestWidget', 'editor.action.inlineSuggest.hide', 'deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
 +		for (const b of DEFAULT_KEYBINDINGS) {
 +			assert.ok(ids.has(b.command) || (plainInInsert.has(b.command) && b.when.includes('devhubVim.insert')), b.command);
@@ -11780,6 +11941,111 @@ index 00000000..f81061a1
 +		await flush();
 +		assert.deepStrictEqual(v.host.commands.map(c => [c.command, c.selection]), [['editor.action.quickFix', { start: { line: 0, col: 0 }, end: { line: 0, col: 2 } }]]);
 +		assert.strictEqual(v.vim.mode, 'normal');
++	});
++});
++
++suite('DevHub Vim: counts are keybindings; devhubVim.run and devhubVim.repeat take them as args', () => {
++
++	const N = 'editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == \'normal\'';
++	const calls = async (v: Vim) => {
++		await flush();
++		return v.host.commands.map(c => [c.command, c.args]);
++	};
++
++	test('a count is the digit keys\' devhubVim.count: before an operator, between it and the motion, in visual mode', () => {
++		check('|a b c d e f g h', '2d3w', '|g h');
++		check('|a b c d e f g h', 'd2w', '|c d e f g h');
++		check('|a\nb\nc\nd\ne', 'V2jd', '|d\ne');
++		check('|abcdef', '10x', '|');
++		// 0 is a digit after one, the line start otherwise
++		check('abc|def', '0', '|abcdef');
++		const digits = DEFAULT_KEYBINDINGS.filter(b => b.command === 'devhubVim.count').map(b => b.key).sort();
++		assert.deepStrictEqual(digits, ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
++	});
++
++	test('run: ${count} / ${rawCount} / ${register} are put into the args when the key runs it, then consumed', async () => {
++		const user = [{ key: 'g t', command: 'devhubVim.run', args: { command: 'workbench.action.openEditorAtIndex', args: '${count}' }, when: N },
++			{ key: 'g shift+t', command: 'devhubVim.run', args: { command: 'x.raw', args: { n: '${rawCount}', label: 'n=${rawCount} r=${register}' } }, when: N }];
++		let v = new Vim('|abc', user).keys('3gt');
++		assert.deepStrictEqual(await calls(v), [['workbench.action.openEditorAtIndex', 3]]);
++		assert.strictEqual(v.vim.context().hasCount, false);
++		v = new Vim('|abc', user).keys('gt');
++		assert.deepStrictEqual(await calls(v), [['workbench.action.openEditorAtIndex', 1]]);
++		v = new Vim('|abc', user).keys('gT');
++		assert.deepStrictEqual(await calls(v), [['x.raw', { n: null, label: 'n= r="' }]]);
++		v = new Vim('|abc', user).keys('"a12gT');
++		assert.deepStrictEqual(await calls(v), [['x.raw', { n: 12, label: 'n=12 r=a' }]]);
++		// the next command has no count left
++		v = new Vim('|abcdef', user).keys('3gtx');
++		await flush();
++		assert.strictEqual(v.state(), '|bcdef');
++	});
++
++	test('repeat: a literal count, a ${count} count, ${it} and ${index}', async () => {
++		const user = [{ key: 'ctrl+n', command: 'devhubVim.repeat', args: { command: 'editor.action.marker.next', count: '${count}' }, when: N },
++			{ key: 'g a', command: 'devhubVim.repeat', args: { command: 'x.it', args: { it: '${it}', index: '${index}', s: '#${it}' }, count: 3 }, when: N },
++			{ key: 'g b', command: 'devhubVim.repeat', args: { command: 'devhubVim.motion', args: { motion: 'right' }, count: '${count}' }, when: N }];
++		let v = new Vim('|abc', user).keys('3<C-n>');
++		assert.deepStrictEqual(await calls(v), [['editor.action.marker.next', undefined], ['editor.action.marker.next', undefined], ['editor.action.marker.next', undefined]]);
++		v = new Vim('|abc', user).keys('<C-n>');
++		assert.deepStrictEqual((await calls(v)).length, 1);
++		v = new Vim('|abc', user).keys('5ga');
++		assert.deepStrictEqual(await calls(v), [['x.it', { it: 1, index: 0, s: '#1' }], ['x.it', { it: 2, index: 1, s: '#2' }], ['x.it', { it: 3, index: 2, s: '#3' }]]);
++		v = new Vim('|abcdef', user).keys('3gb');
++		assert.strictEqual(v.state(), 'abc|def');
++		// a literal count of 0 runs nothing
++		v = new Vim('|abcdef', [{ key: 'g b', command: 'devhubVim.repeat', args: { command: 'devhubVim.motion', args: { motion: 'right' }, count: 0 }, when: N }]).keys('gb');
++		assert.strictEqual(v.state(), '|abcdef');
++	});
++
++	test('repeat of run: one Vim action, nested repeats see their own ${it}', async () => {
++		const user = [{
++			key: 'g a', when: N, command: 'devhubVim.repeat', args: {
++				count: 2, command: 'devhubVim.repeat', args: { count: '${it}', command: 'x.inner', args: { inner: '${it}' } },
++			},
++		}, {
++			key: 'g b', when: 'editorTextFocus && devhubVim.active && devhubVim.acceptsMotion', command: 'devhubVim.repeat',
++			args: { command: 'devhubVim.run', args: { command: 'x.sel', args: '${it}' }, count: '${count}' },
++		}];
++		let v = new Vim('|abc', user).keys('ga');
++		// the outer loop's ${it} is the inner count (1, then 2); inside, the inner loop's
++		assert.deepStrictEqual(await calls(v), [['x.inner', { inner: 1 }], ['x.inner', { inner: 1 }], ['x.inner', { inner: 2 }]]);
++		v = new Vim('|abc', user).keys('vl2gb');
++		const sel = { start: { line: 0, col: 0 }, end: { line: 0, col: 2 } };
++		await flush();
++		assert.deepStrictEqual(v.host.commands.map(c => [c.command, c.args, c.selection]), [['x.sel', 1, sel], ['x.sel', 2, sel]]);
++		assert.strictEqual(v.vim.mode, 'normal');
++	});
++
++	test('a macro replays the expanded values; the count is consumed once', async () => {
++		const user = [{ key: 'g t', command: 'devhubVim.run', args: { command: 'x.tab', args: '${count}' }, when: N }];
++		const v = new Vim('|abc', user).keys('qa4gtq');
++		await flush();
++		v.host.commands = [];
++		v.keys('@a');
++		assert.deepStrictEqual(await calls(v), [['x.tab', 4]]);
++		v.host.commands = [];
++		// a count on @a replays the macro that many times, each with the value recorded
++		v.keys('2@a');
++		assert.deepStrictEqual(await calls(v), [['x.tab', 4], ['x.tab', 4]]);
++	});
++
++	test('${char} after awaitChar', async () => {
++		const user = [{ key: 'g c', command: 'devhubVim.awaitChar', args: { then: { command: 'devhubVim.run', args: { command: 'x.char', args: { c: '${char}', n: '${count}' } } } }, when: N },
++			{ key: 'g d', command: 'devhubVim.awaitChar', args: { then: { command: 'x.direct', args: { c: 'got ${char}' } } }, when: N }];
++		let v = new Vim('|abc', user).keys('2gcz');
++		assert.deepStrictEqual(await calls(v), [['x.char', { c: 'z', n: 2 }]]);
++		v = new Vim('|abc', user).keys('gdq');
++		assert.deepStrictEqual(await calls(v), [['x.direct', { c: 'got q', char: 'q' }]]);
++	});
++
++	test('the default keymap: a count repeats ]d, is dropped by K', async () => {
++		const repeated = DEFAULT_KEYBINDINGS.find(b => b.key === '[Backslash] d')!;
++		assert.deepStrictEqual([repeated.command, repeated.args], ['devhubVim.repeat', { command: 'devhubVim.run', args: { command: 'editor.action.marker.next' }, count: '${count}' }]);
++		const once = DEFAULT_KEYBINDINGS.find(b => b.key === 'shift+k')!;
++		assert.deepStrictEqual([once.command, once.args], ['devhubVim.run', { command: 'editor.action.showHover' }]);
++		const v = new Vim('|abc').keys('3K');
++		assert.deepStrictEqual(await calls(v), [['editor.action.showHover', undefined]]);
 +	});
 +});
 +
