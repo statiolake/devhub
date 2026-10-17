@@ -129,6 +129,10 @@ jobs:
           CHECK: ${{ steps.outcome.outputs.check }}
         run: |
           set -euo pipefail
+          # Idempotent; the label is what lets a later bump find this pull
+          # request again (scripts/vscode_bump_supersede.py).
+          gh label create vscode-bump --force \
+            --description "Opened by the VS Code bump workflow" --color 0e8a16
           scripts/vscode-bump-body.sh "$OLD" "$NEW" "$RUNNER_TEMP/bump-report" > "$RUNNER_TEMP/body.md"
           # Draft when anything went wrong: a pull request that says "ready"
           # over a failing check is the one people learn to stop reading.
@@ -140,5 +144,31 @@ jobs:
             --base "$BASE" \
             --head "$BRANCH" \
             --title "chore: follow VS Code $NEW" \
+            --label vscode-bump \
             --body-file "$RUNNER_TEMP/body.md" \
             "${draft[@]}"
+
+  # Once the pull request for the newest release exists, the ones for older
+  # releases are dead ends: close them and delete their branches. Also runs
+  # when no new pull request was needed because one is already open, so a
+  # run that was cut short before this step is finished by the next one.
+  supersede:
+    name: "Close: superseded bump pull requests"
+    needs: [plan, bump]
+    if: >-
+      ${{ always() && needs.plan.result == 'success'
+      && needs.plan.outputs.latest != ''
+      && (needs.bump.result == 'success' || needs.bump.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Close older bump pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ needs.plan.outputs.latest }}
+        run: scripts/vscode_bump_supersede.py "$NEW"

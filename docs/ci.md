@@ -11,7 +11,15 @@ Two workflows answer two different questions, and nothing is done twice:
   packaged app, and the releases.
 
 A third, **VS Code bump** (`.github/workflows/vscode-bump.yml`), opens a pull
-request when upstream VS Code has a newer stable release.
+request when upstream VS Code has a newer stable release. Its pull requests
+carry the `vscode-bump` label and a `bump/vscode-<version>` branch; when the
+pull request for a version exists (new, or already open from an earlier run),
+the `Close:` job closes every older open pull request with both, comments
+"Superseded by #N (VS Code X).", and deletes its branch
+(`scripts/vscode_bump_supersede.py`; versions are compared numerically, and a
+fork's or unlabelled pull request is never touched). A same-version pull
+request is reused, never duplicated: the plan skips a version whose branch
+or pull request already exists.
 
 Job names say which stage a job is: `Decide:`, `Build:`, `Test:` or
 `Publish:`.
