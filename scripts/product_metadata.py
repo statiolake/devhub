@@ -282,6 +282,35 @@ def reh_identity(
 	return digest.hexdigest()[:12]
 
 
+def nls_metadata_hash(nls_metadata_dir: Path, commit: str) -> str:
+	"""`nlsMetadataHash` for the bundled VS Code tree in `nls_metadata_dir`.
+
+	VS Code caches a language pack translated into the build's own message
+	table under `<userData>/clp/<pack>/<nlsMetadataHash ?? commit>`
+	(`src/vs/base/node/nls.ts`). The compiled code looks a message up by its
+	*index* in `nls.messages.json`, and `nls.keys.json` says which key each
+	index is for this build only. `commit` is the submodule's, the same for
+	every DevHub build whose patches add, drop or move a `localize` call, so a
+	table cached by an earlier build would be read against this build's
+	indices and every message after the first difference would show its
+	neighbour's translation. Upstream's packaging stamps this hash into
+	product.json (`build/gulpfile.vscode.ts`, and `gulpfile.reh.ts` for the
+	servers, which DevHub builds through it); DevHub writes the desktop
+	product.json itself, so it stamps it here.
+
+	The same bytes as upstream's `computeNLSMetadataHash`
+	(`build/lib/nlsMetadata.ts`): sha256 of commit, NUL, nls.keys.json, NUL,
+	nls.messages.json, in hex.
+	"""
+	digest = hashlib.sha256()
+	digest.update(commit.encode())
+	digest.update(b"\0")
+	digest.update((nls_metadata_dir / "nls.keys.json").read_bytes())
+	digest.update(b"\0")
+	digest.update((nls_metadata_dir / "nls.messages.json").read_bytes())
+	return digest.hexdigest()
+
+
 def head_of(tree: Path) -> str:
 	return subprocess.run(
 		["git", "-C", str(tree), "rev-parse", "HEAD"],

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveNLSConfiguration } from "code-oss-dev/out/vs/base/node/nls.js";
 
 // A language pack is translated once into the build's own message table and
-// cached under `<userData>/clp`. The compiled workbench looks a message up by
-// its index in that table, and DevHub's `commit` is the VS Code submodule's: it
-// stays the same while patches/vscode/ add or drop `localize` calls. These
-// tests hold the cache to the table it was made from — see
-// patches/vscode/0007-a-language-pack-is-cached-per-message-table.patch.
+// cached under `<userData>/clp/<pack>/<nlsMetadataHash ?? commit>`. The
+// compiled workbench looks a message up by its index in that table, and
+// DevHub's `commit` is the VS Code submodule's: it stays the same while
+// patches/vscode/ add or drop `localize` calls. So the packaged product.json
+// states `nlsMetadataHash`, as upstream's packaging does, computed over the
+// bundled tree's table — `nls_metadata_hash` in scripts/product_metadata.py,
+// written by `write_product_json` in scripts/package-nightly.py. These tests
+// hold the cache to the table it was made from with that hash stated.
 
 const COMMIT = "a44adf7f53e00964ab890f9f8758a334f1fc15bc";
 
@@ -90,8 +94,31 @@ async function writeBuild(name: string, build: Build): Promise<string> {
 	return dir;
 }
 
+/**
+ * The `nlsMetadataHash` the packaged product.json of the build at
+ * `nlsMetadataPath` states: upstream's `computeNLSMetadataHash`
+ * (build/lib/nlsMetadata.ts), which scripts/product_metadata.py reproduces and
+ * scripts/product_metadata_test.py holds to upstream's own implementation.
+ */
+async function stampedHash(nlsMetadataPath: string): Promise<string> {
+	const [keys, messages] = await Promise.all([
+		readFile(join(nlsMetadataPath, "nls.keys.json")),
+		readFile(join(nlsMetadataPath, "nls.messages.json")),
+	]);
+	return createHash("sha256")
+		.update(COMMIT)
+		.update("\0")
+		.update(keys)
+		.update("\0")
+		.update(messages)
+		.digest("hex");
+}
+
 /** What the workbench of the build at `nlsMetadataPath` would read. */
-async function translatedTable(nlsMetadataPath: string): Promise<{
+async function translatedTable(
+	nlsMetadataPath: string,
+	{ stamped = true }: { stamped?: boolean } = {},
+): Promise<{
 	file: string;
 	messages: string[];
 }> {
@@ -101,6 +128,7 @@ async function translatedTable(nlsMetadataPath: string): Promise<{
 		commit: COMMIT,
 		userDataPath,
 		nlsMetadataPath,
+		...(stamped ? { nlsMetadataHash: await stampedHash(nlsMetadataPath) } : {}),
 	});
 	const file = config.languagePack?.messagesFile;
 	if (!file) throw new Error("the language pack was not used");
@@ -135,14 +163,35 @@ describe("the translated message table a language pack is cached as", () => {
 		expect(reworded.messages[0]).toBe("Press any key to close this terminal.");
 	});
 
-	it("is reused by the same build, and kept beside the commit it was made for", async () => {
+	it("is reused by the same build, under the hash its product.json states", async () => {
 		const build = await writeBuild("build", AFTER);
 		const first = await translatedTable(build);
 		const second = await translatedTable(build);
 
 		expect(second.file).toBe(first.file);
-		expect(first.file).toContain(
-			join(userDataPath, "clp", "pack-hash.ja", `${COMMIT}.`),
+		expect(first.file).toBe(
+			join(
+				userDataPath,
+				"clp",
+				"pack-hash.ja",
+				await stampedHash(build),
+				"nls.messages.json",
+			),
 		);
+	});
+
+	it("is the earlier build's when no hash is stated, which is why it is", async () => {
+		// Upstream keys the cache by `commit` alone without the stamp. This is
+		// the bug the stamp exists for: should it ever stop being one, the stamp
+		// is no longer needed.
+		await translatedTable(await writeBuild("before", BEFORE), {
+			stamped: false,
+		});
+
+		const after = await translatedTable(await writeBuild("after", AFTER), {
+			stamped: false,
+		});
+
+		expect(after.messages[0]).not.toBe("Press any key to close the terminal.");
 	});
 });

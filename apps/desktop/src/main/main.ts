@@ -210,6 +210,7 @@ if (userLocale) {
 		userLocale,
 		osLocale,
 		commit: product.commit,
+		nlsMetadataHash: product.nlsMetadataHash,
 		userDataPath,
 		nlsMetadataPath: vscodeOutDir
 	});
@@ -795,6 +796,7 @@ async function resolveNlsConfiguration(): Promise<INLSConfiguration> {
 		userLocale,
 		osLocale,
 		commit: product.commit,
+		nlsMetadataHash: product.nlsMetadataHash,
 		userDataPath,
 		nlsMetadataPath: vscodeOutDir
 	});

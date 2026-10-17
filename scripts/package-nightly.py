@@ -172,6 +172,7 @@ from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, 
 from product_metadata import (  # noqa: E402
 	devhub_commit,
 	devhub_version,
+	nls_metadata_hash,
 	packaged_metadata,
 	reh_identity,
 	vscode_commit,
@@ -734,7 +735,7 @@ def bundle_main_process(target: Path) -> None:
 	print(f"    bundled the main process into {target.name} ({target.stat().st_size / 1e6:.1f} MB)")
 
 
-def write_product_json(target: Path) -> None:
+def write_product_json(target: Path, nls_metadata_dir: Path) -> None:
 	"""VS Code's product metadata, saying DevHub where it says Code - OSS.
 
 	`packaged_metadata` carries DevHub's names, the build it was made from, and
@@ -742,9 +743,17 @@ def write_product_json(target: Path) -> None:
 	a packaged app may state. A source run gets everything but that field,
 	through `vscode/product.overrides.json`, from the same module. See the
 	docstring of scripts/product_metadata.py.
+
+	`nlsMetadataHash` is what upstream's packaging stamps beside `commit`, over
+	the message table of the bundled tree in `nls_metadata_dir` (the `out/`
+	the app runs): it names the folder a language pack's translation is cached
+	in, so a build whose patches moved a `localize` call does not read an
+	earlier build's table. See `nls_metadata_hash`. A source run states no
+	`commit` and so never uses a language pack cache at all.
 	"""
 	product = json.loads((VSCODE_DIR / "product.json").read_text())
 	product.update(packaged_metadata())
+	product["nlsMetadataHash"] = nls_metadata_hash(nls_metadata_dir, str(product["commit"]))
 	target.write_text(json.dumps(product, indent="\t") + "\n")
 
 
@@ -865,7 +874,7 @@ def assemble_app_directory(
 
 	step("vscode metadata")
 	shutil.copyfile(VSCODE_DIR / "package.json", code_oss / "package.json")
-	write_product_json(code_oss / "product.json")
+	write_product_json(code_oss / "product.json", code_oss / "out")
 	for name in ("LICENSE.txt", "ThirdPartyNotices.txt"):
 		source = VSCODE_DIR / name
 		if source.exists():

@@ -13,7 +13,9 @@ app to say why. It happened, which is why these tests exist.
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +23,9 @@ from pathlib import Path
 from product_metadata import (
 	EXTENSION_ENABLED_API_PROPOSALS,
 	PATCHES_DIR,
+	VSCODE_DIR,
 	devhub_commit,
+	nls_metadata_hash,
 	packaged_metadata,
 	product_metadata,
 	proposal_is_declared,
@@ -123,6 +127,73 @@ class PackagedMetadata(unittest.TestCase):
 		# — a tag, a `-dirty` suffix — is a path the app then cannot find.
 		commit = packaged_metadata()["commit"]
 		self.assertRegex(commit, r"^[0-9a-f]{40}$")
+
+
+class NlsMetadataHash(unittest.TestCase):
+	"""`nlsMetadataHash`, the name of a language pack's cached translation.
+
+	Without it VS Code keys the cache by `commit` alone, which DevHub's patches
+	do not move, so a build whose patches moved a `localize` call read an
+	earlier build's translated table and showed each message's neighbour.
+	"""
+
+	COMMIT = "a44adf7f53e00964ab890f9f8758a334f1fc15bc"
+	KEYS = b'[["vs/a",["k1","k2"]]]'
+	MESSAGES = b'["One","Two"]'
+	# What upstream's computeNLSMetadataHash (vscode/build/lib/nlsMetadata.ts
+	# at 1.141) answers for the table above.
+	UPSTREAM = "2565876f0c380cb3092a2bb5c35e52a51925f301825f37d558732dc11144930c"
+
+	def setUp(self) -> None:
+		self.out = Path(tempfile.mkdtemp(prefix="nls-"))
+		self.addCleanup(lambda: shutil.rmtree(self.out, ignore_errors=True))
+		self.write(self.KEYS, self.MESSAGES)
+
+	def write(self, keys: bytes, messages: bytes) -> None:
+		(self.out / "nls.keys.json").write_bytes(keys)
+		(self.out / "nls.messages.json").write_bytes(messages)
+
+	def test_is_upstreams_hash(self) -> None:
+		self.assertEqual(nls_metadata_hash(self.out, self.COMMIT), self.UPSTREAM)
+
+	def test_agrees_with_the_pinned_upstream_implementation(self) -> None:
+		# The same check against the submodule's own source, where a Node that
+		# runs TypeScript is at hand: a bump that changes the algorithm fails
+		# here instead of silently caching per commit again.
+		source = VSCODE_DIR / "build" / "lib" / "nlsMetadata.ts"
+		if not source.is_file() or shutil.which("node") is None:
+			self.skipTest("no vscode/build/lib/nlsMetadata.ts or node")
+		script = (
+			f"import({json_string(source.as_uri())})"
+			f".then(m => console.log(m.computeNLSMetadataHash({json_string(str(self.out))}, {json_string(self.COMMIT)})))"
+		)
+		result = subprocess.run(
+			["node", "--experimental-strip-types", "--no-warnings", "-e", script],
+			capture_output=True,
+			text=True,
+		)
+		if result.returncode != 0:
+			self.skipTest(f"node cannot run TypeScript here: {result.stderr.strip()[:200]}")
+		self.assertEqual(result.stdout.strip(), nls_metadata_hash(self.out, self.COMMIT))
+
+	def test_moves_when_the_table_does_under_the_same_commit(self) -> None:
+		before = nls_metadata_hash(self.out, self.COMMIT)
+		self.write(b'[["vs/a",["k0","k1","k2"]]]', b'["Zero","One","Two"]')
+		self.assertNotEqual(nls_metadata_hash(self.out, self.COMMIT), before)
+
+	def test_moves_when_only_an_english_message_does(self) -> None:
+		before = nls_metadata_hash(self.out, self.COMMIT)
+		self.write(self.KEYS, b'["One!","Two"]')
+		self.assertNotEqual(nls_metadata_hash(self.out, self.COMMIT), before)
+
+	def test_moves_with_the_commit(self) -> None:
+		self.assertNotEqual(
+			nls_metadata_hash(self.out, "0" * 40), nls_metadata_hash(self.out, self.COMMIT)
+		)
+
+
+def json_string(value: str) -> str:
+	return json.dumps(value)
 
 
 class EnabledApiProposals(unittest.TestCase):

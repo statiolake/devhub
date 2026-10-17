@@ -484,7 +484,7 @@ module and key, because it has to serve every build of the version it was
 written for. `resolveNLSConfiguration` (`vscode/src/vs/base/node/nls.ts`) joins
 the two once — walks `nls.keys.json` in order and writes the pack's translation,
 or the English message where it has none, at each index — and caches the result
-as `<userData>/clp/<pack hash>.<locale>/<commit>/nls.messages.json`. The main
+as `<userData>/clp/<pack hash>.<locale>/<nlsMetadataHash ?? commit>/nls.messages.json`. The main
 process does that for the app (`apps/desktop/src/main/main.ts`), and the
 remote server does it for itself (`remoteLanguagePacks.ts`, under
 `~/.devhub-server/data`).
@@ -505,17 +505,22 @@ same file. It is not a language pack version mismatch: a pack written for
 another VS Code only lacks some keys, and a missing key falls back to English;
 it never moves another key's translation into its place.
 
-`patches/vscode/0007-a-language-pack-is-cached-per-message-table.patch` names the
-folder `<commit>.<hash>` instead, the hash being the first 16 hex digits of a
-SHA-256 over `nls.keys.json` and `nls.messages.json` — exactly the two inputs
-the cached table is made from besides the pack, whose own hash is already in the
-parent folder's name. A build with the same table finds the folder it made; a
-build with a different one makes its own. Hashing the files rather than adding a
-build number to `product.json` keeps the key correct however the build was made,
-and it applies unchanged to the remote server, which is the same function. The
-cost is reading the two files at startup when a language pack is in use, which
-the cache-miss path read anyway. Folders made under the old naming, plain
-`<commit>`, are never read again, and VS Code's
+Upstream has the answer already, and only its packaging uses it: when
+`product.json` states `nlsMetadataHash`, `nls.ts` names the folder by that
+instead of `commit`. Upstream's packaging steps compute it
+(`computeNLSMetadataHash`, `vscode/build/lib/nlsMetadata.ts`: a SHA-256 over
+`commit`, `nls.keys.json` and `nls.messages.json` — exactly the inputs the
+cached table is made from besides the pack, whose own hash is already in the
+parent folder's name) and stamp it into `product.json`. The remote servers get
+it that way, because `scripts/reh_in_container.sh` packages them with
+upstream's own `gulpfile.reh.ts`. The desktop app's `product.json` is written
+by DevHub (`write_product_json` in `scripts/package-nightly.py`), so DevHub
+computes the same value over the bundled tree it ships (`nls_metadata_hash` in
+`scripts/product_metadata.py`, held to upstream's implementation by
+`scripts/product_metadata_test.py`) and stamps it there. A build with the same
+table finds the folder it made; a build with a different one makes its own. A
+source run states no `commit`, and `nls.ts` uses no language pack cache for it
+at all. Folders made under other names are never read again, and VS Code's
 `LanguagePackCachedDataCleaner` removes them once they have gone untouched for
 a week (DevHub states no `quality`, which the cleaner reads as a non-stable
 build).

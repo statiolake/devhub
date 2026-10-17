@@ -115,6 +115,51 @@ class DownloadedBuiltins(unittest.TestCase):
 		self.assertIn("ms-vscode.js-debug", names)
 
 
+class ProductJson(unittest.TestCase):
+	"""The packaged app's product.json, written over vscode/product.json."""
+
+	def setUp(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		self.vscode = root / "vscode"
+		self.vscode.mkdir()
+		(self.vscode / "product.json").write_text(json.dumps({"nameShort": "Code - OSS"}))
+		self.out = root / "out"
+		self.out.mkdir()
+		(self.out / "nls.keys.json").write_text('[["vs/a",["k"]]]')
+		(self.out / "nls.messages.json").write_text('["m"]')
+		self.target = root / "product.json"
+		for patcher in (
+			mock.patch.object(package_nightly, "VSCODE_DIR", self.vscode),
+			mock.patch.object(
+				package_nightly, "packaged_metadata", return_value={"commit": "c" * 40}
+			),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def written(self) -> dict:
+		package_nightly.write_product_json(self.target, self.out)
+		return json.loads(self.target.read_text())
+
+	def test_stamps_the_nls_metadata_hash_of_the_tree_it_ships(self) -> None:
+		from product_metadata import nls_metadata_hash
+
+		product = self.written()
+		self.assertEqual(product["commit"], "c" * 40)
+		self.assertEqual(product["nlsMetadataHash"], nls_metadata_hash(self.out, "c" * 40))
+
+	def test_a_moved_message_table_is_a_new_hash(self) -> None:
+		before = self.written()["nlsMetadataHash"]
+		(self.out / "nls.messages.json").write_text('["m", "n"]')
+		self.assertNotEqual(self.written()["nlsMetadataHash"], before)
+
+	def test_a_tree_without_a_message_table_is_an_error(self) -> None:
+		(self.out / "nls.keys.json").unlink()
+		with self.assertRaises(OSError):
+			package_nightly.write_product_json(self.target, self.out)
+
+
 class RemoteServers(unittest.TestCase):
 	"""The four servers go into Contents/Resources/reh, or packaging stops."""
 
