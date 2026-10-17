@@ -1060,12 +1060,52 @@ index 00000000..b03c5876
 +		}
 +	});
 +});
+diff --git a/src/vs/platform/keybinding/common/keybindingsRegistry.ts b/src/vs/platform/keybinding/common/keybindingsRegistry.ts
+index 0d95d0bf..5ac0b265 100644
+--- a/src/vs/platform/keybinding/common/keybindingsRegistry.ts
++++ b/src/vs/platform/keybinding/common/keybindingsRegistry.ts
+@@ -59,6 +59,15 @@ export interface IExtensionKeybindingRule {
+ 	isBuiltinExtension?: boolean;
+ }
+ 
++/** DevHub: see IKeybindingsRegistry.registerKeybinding. */
++export interface IDefaultKeybindingRule {
++	id: string;
++	keybinding: Keybinding;
++	args?: unknown;
++	weight: number;
++	when: ContextKeyExpression | null | undefined;
++}
++
+ export const enum KeybindingWeight {
+ 	EditorCore = 0,
+ 	EditorContrib = 100,
+@@ -75,6 +84,8 @@ export interface ICommandAndKeybindingRule<Args extends unknown[] = unknown[]> e
+ 
+ export interface IKeybindingsRegistry {
+ 	registerKeybindingRule(rule: IKeybindingRule): IDisposable;
++	/** DevHub: a default keybinding given as a parsed Keybinding (scan-code chords too, as in keybindings.json); DevHub Vim's keymap. */
++	registerKeybinding(rule: IDefaultKeybindingRule): IDisposable;
+ 	setExtensionKeybindings(rules: IExtensionKeybindingRule[]): void;
+ 	registerCommandAndKeybindingRule<Args extends unknown[] = unknown[]>(desc: ICommandAndKeybindingRule<Args>): IDisposable;
+ 	getDefaultKeybindings(): IKeybindingItem[];
+@@ -149,6 +160,10 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
+ 		return result;
+ 	}
+ 
++	public registerKeybinding(rule: IDefaultKeybindingRule): IDisposable {
++		return this._registerDefaultKeybinding(rule.keybinding, rule.id, rule.args, rule.weight, 0, rule.when);
++	}
++
+ 	public setExtensionKeybindings(rules: IExtensionKeybindingRule[]): void {
+ 		const result: IKeybindingItem[] = [];
+ 		let keybindingsLen = 0;
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..fc46abba
+index 00000000..b0cd6579
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1269 @@
+@@ -0,0 +1,1175 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -1113,12 +1153,10 @@ index 00000000..fc46abba
 +// * The editor's own keydown is read only where a keybinding cannot be:
 +//   the character after `devhubVim.awaitChar` (f t r " q @ m ' `, CTRL-R in
 +//   insert mode, or a binding of one's own), the keys typed into the `:` `/`
-+//   prompt, a printable key no keybinding took while a command is half built
-+//   (it cancels it, as in Vim), and, on layouts whose shifted digits are not
-+//   US-like (JIS), the US shifted-digit characters ^ * @ ( ) $ % # & by
-+//   character, also as the second key of a chord (`g*`, `[(`) (vimKeymap.ts
-+//   explains why). Everything else reaches the keybinding dispatcher
-+//   untouched, so nothing is handled twice.
++//   prompt, the text an IME commits, and a printable key no keybinding took
++//   while a command is half built (it cancels it, as in Vim; the dispatcher
++//   is asked first). Everything else reaches the keybinding dispatcher
++//   untouched, so nothing is handled twice and every Vim key is a keybinding.
 +// * `:` commands (../common/vimEx.ts): Vim's editing commands (:s :g :d :m :t
 +//   :normal :sort ...) run in the engine; the others are a table of VS Code
 +//   commands plus `devhub.vim.exCommands`, whose entries run any commands with
@@ -1161,9 +1199,9 @@ index 00000000..fc46abba
 +import { onUnexpectedError } from '../../../../base/common/errors.js';
 +import { Event } from '../../../../base/common/event.js';
 +import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
-+import { KeyChord, KeyCode, KeyCodeUtils, KeyMod } from '../../../../base/common/keyCodes.js';
++import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
++import { KeybindingParser } from '../../../../base/common/keybindingParser.js';
 +import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
-+import { isMacintosh } from '../../../../base/common/platform.js';
 +import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 +import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 +import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
@@ -1186,7 +1224,6 @@ index 00000000..fc46abba
 +import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 +import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
 +import { KeybindingWeight, KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
-+import { IKeyboardLayoutService } from '../../../../platform/keyboardLayout/common/keyboardLayout.js';
 +import { ILabelService } from '../../../../platform/label/common/label.js';
 +import { Registry } from '../../../../platform/registry/common/platform.js';
 +import { overviewRulerFindMatchForeground } from '../../../../platform/theme/common/colorRegistry.js';
@@ -1195,7 +1232,7 @@ index 00000000..fc46abba
 +import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 +import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
 +import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
-+import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, SHIFTED_DIGIT_GATE, VIM_WEIGHTS, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 +import { VimRegex } from '../common/vimRegex.js';
 +import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 +
@@ -1262,7 +1299,6 @@ index 00000000..fc46abba
 +const VIM_RECORDING = new RawContextKey<boolean>('devhubVim.recording', false, localize('devhubVim.recording', "A Vim macro is being recorded."));
 +const VIM_VISUAL = new RawContextKey<boolean>('devhubVim.visual', false, localize('devhubVim.visual', "The focused Vim editor is in a visual mode (characterwise, linewise or blockwise)."));
 +const VIM_INSERT = new RawContextKey<boolean>('devhubVim.insert', false, localize('devhubVim.insert', "The focused Vim editor is in insert or replace mode."));
-+const VIM_US_SHIFTED_DIGITS = new RawContextKey<boolean>(SHIFTED_DIGIT_GATE, true, localize('devhubVim.usShiftedDigits', "Whether Shift+1..0 type !@#$%^&*() on the current keyboard layout (false on JIS)."));
 +const ENABLED = ContextKeyExpr.equals(`config.${SETTING}`, true);
 +
 +/** The editors Vim drives: all of them but the settings / extensions search boxes, which behave as plain inputs. */
@@ -1311,8 +1347,6 @@ index 00000000..fc46abba
 +	private readonly incDecorations;
 +	private readonly hlScheduler = this._register(new RunOnceScheduler(() => this.drawHighlight(), 50));
 +	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
-+	/** The character typed before the key that started a chord (`g` of `g*`), for the layout fallback. */
-+	private chordChar: string | undefined;
 +
 +	constructor(
 +		readonly editor: ICodeEditor,
@@ -1453,35 +1487,16 @@ index 00000000..fc46abba
 +		if (typing) {
 +			return;
 +		}
-+		const ch = typedChar(be);
++		// Vim: a printable key that means nothing here cancels the half-built
++		// command (`d` then a key with no binding). "Any key no binding takes"
++		// cannot be a keybinding; this asks the dispatcher first and acts only
++		// when it has nothing, so every binding (the defaults, the user's, an
++		// extension's) still wins. It types nothing either way: the editor is modal.
 +		const keybindings = this.owner.keybindingService;
-+		if (ch === undefined) {
++		if (!this.engine.pending || typedChar(be) === undefined || keybindings.inChordMode) {
 +			return;
 +		}
-+		if (keybindings.inChordMode) {
-+			// `g*` `[(` on a layout whose shifted digits are not US-like: the second key by character
-+			const fallback = this.chordChar !== undefined ? this.owner.layoutFallback(ch, e.target, this.chordChar) : undefined;
-+			if (fallback) {
-+				e.preventDefault();
-+				e.stopPropagation();
-+				this.owner.leaveChordMode(e.target);
-+				this.execute(fallback.command, fallback.args);
-+			}
-+			return;
-+		}
-+		const result = keybindings.softDispatch(e, e.target);
-+		if (result.kind !== ResultKind.NoMatchingKb) {
-+			this.chordChar = result.kind === ResultKind.MoreChordsNeeded ? ch : undefined;
-+			return; // the dispatcher has it
-+		}
-+		const fallback = this.owner.layoutFallback(ch, e.target);
-+		if (fallback) {
-+			e.preventDefault();
-+			e.stopPropagation();
-+			this.execute(fallback.command, fallback.args);
-+		} else if (this.engine.pending) {
-+			// Vim: a key that means nothing here cancels the half-built command.
-+			// (It types nothing either way: the editor is modal.)
++		if (keybindings.softDispatch(e, e.target).kind === ResultKind.NoMatchingKb) {
 +			e.preventDefault();
 +			e.stopPropagation();
 +			this.guard(() => this.engine.cancelPending());
@@ -1806,7 +1821,6 @@ index 00000000..fc46abba
 +	private readonly modeKey: IContextKey<string>;
 +	private readonly activeKeys: IContextKey<boolean>[];
 +	private readonly engineKeys: { [K in keyof VimContext]?: IContextKey<VimContext[K]> };
-+	private readonly usShiftedDigitsKey: IContextKey<boolean>;
 +	private readonly whenCache = new Map<string, ContextKeyExpression | undefined>();
 +	private statusEntry: IStatusbarEntryAccessor | undefined;
 +	private enabled = false;
@@ -1825,7 +1839,6 @@ index 00000000..fc46abba
 +		@IKeybindingService readonly keybindingService: IKeybindingService,
 +		@ICommandService readonly commandService: ICommandService,
 +		@IClipboardService readonly clipboardService: IClipboardService,
-+		@IKeyboardLayoutService private readonly keyboardLayoutService: IKeyboardLayoutService,
 +		@ILanguageConfigurationService readonly languageConfigurationService: ILanguageConfigurationService,
 +		@ILanguageFeaturesService readonly languageFeaturesService: ILanguageFeaturesService,
 +		@ILabelService readonly labelService: ILabelService,
@@ -1845,9 +1858,6 @@ index 00000000..fc46abba
 +			visual: VIM_VISUAL.bindTo(contextKeyService),
 +			insert: VIM_INSERT.bindTo(contextKeyService),
 +		};
-+		this.usShiftedDigitsKey = VIM_US_SHIFTED_DIGITS.bindTo(contextKeyService);
-+		this.usShiftedDigitsKey.set(this.computeUsShiftedDigits());
-+		this._register(keyboardLayoutService.onDidChangeKeyboardLayout(() => this.usShiftedDigitsKey.set(this.computeUsShiftedDigits())));
 +		this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
 +		this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
 +		this._register(configurationService.onDidChangeConfiguration(e => {
@@ -1877,50 +1887,12 @@ index 00000000..fc46abba
 +		super.dispose();
 +	}
 +
-+	/** Shift + the digit row types `!@#$%^&*()` (US-like), so the defaults' `shift+N` mean what they say. */
-+	private computeUsShiftedDigits(): boolean {
-+		const mapping = this.keyboardLayoutService.getRawKeyboardMapping() as Record<string, { withShift?: string } | undefined> | null;
-+		if (!mapping) {
-+			return true;
-+		}
-+		const codes = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'];
-+		return codes.every((code, i) => {
-+			const withShift = mapping[code]?.withShift;
-+			return withShift === undefined || withShift === US_SHIFTED_DIGITS[i];
-+		});
-+	}
-+
 +	/** A when clause of the keymap's, parsed once. */
 +	whenExpr(when: string): ContextKeyExpression | undefined {
 +		if (!this.whenCache.has(when)) {
 +			this.whenCache.set(when, ContextKeyExpr.deserialize(when));
 +		}
 +		return this.whenCache.get(when);
-+	}
-+
-+	/** On a non-US digit row: the default entry for a US shifted-digit character no keybinding took (`prefix`: the chord's first key). */
-+	layoutFallback(ch: string, target: HTMLElement, prefix?: string): VimKeybinding | undefined {
-+		if (this.usShiftedDigitsKey.get() !== false) {
-+			return undefined;
-+		}
-+		const context = this.contextKeyService.getContext(target);
-+		return layoutFallbackBinding(ch, when => {
-+			if (!this.whenCache.has(when)) {
-+				this.whenCache.set(when, ContextKeyExpr.deserialize(when));
-+			}
-+			return !!this.whenCache.get(when)?.evaluate(context);
-+		}, prefix);
-+	}
-+
-+	/**
-+	 * End the keybinding service's chord mode after the layout fallback took the
-+	 * chord's second key: dispatch the chord's F24 completion (`g F24`, bound to
-+	 * `devhubVim.leaveChord`, which does nothing).
-+	 */
-+	leaveChordMode(target: HTMLElement): void {
-+		const browserEvent = new KeyboardEvent('keydown', { key: 'F24', code: 'F24' });
-+		Object.defineProperty(browserEvent, 'keyCode', { get: () => 135 });
-+		this.keybindingService.dispatchEvent(new StandardKeyboardEvent(browserEvent), target);
 +	}
 +
 +	private setEnabled(enabled: boolean): void {
@@ -2195,61 +2167,29 @@ index 00000000..fc46abba
 +	});
 +}
 +
-+/** keybindings.json notation ("shift+4", "g g", "g r n", "ctrl+r") to keybinding numbers (one per chord when there are more than two). */
-+function encodeKeybinding(key: string): number | number[] | undefined {
-+	const chords = key.split(' ').map(chord => {
-+		const parts = chord.split('+');
-+		const last = parts[parts.length - 1] === '' ? '+' : parts[parts.length - 1];
-+		const keyCode = KeyCodeUtils.fromUserSettings(last);
-+		if (keyCode === KeyCode.Unknown) {
-+			return undefined;
-+		}
-+		let mods = 0;
-+		for (const m of parts.slice(0, -1)) {
-+			mods |= m === 'shift' ? KeyMod.Shift
-+				: m === 'alt' ? KeyMod.Alt
-+					: m === 'ctrl' ? (isMacintosh ? KeyMod.WinCtrl : KeyMod.CtrlCmd)
-+						: (isMacintosh ? KeyMod.CtrlCmd : KeyMod.WinCtrl);
-+		}
-+		return mods | keyCode;
-+	});
-+	if (chords.some(c => c === undefined) || chords.length > 3) {
-+		return undefined;
-+	}
-+	if (chords.length === 3) {
-+		return chords as number[];
-+	}
-+	return chords.length === 2 ? KeyChord(chords[0]!, chords[1]!) : chords[0];
-+}
-+
 +const WEIGHTS = VIM_WEIGHTS;
 +if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60) {
 +	onUnexpectedError(new Error('devhubVim: VIM_WEIGHTS (vimKeymap.ts) no longer match KeybindingWeight'));
 +}
 +
-+for (const b of [...DEFAULT_KEYBINDINGS, ...HELPER_KEYBINDINGS]) {
-+	const primary = encodeKeybinding(b.key);
-+	const when = ContextKeyExpr.deserialize(effectiveWhen(b));
-+	if (primary === undefined || !when) {
++// Parsed as keybindings.json is (KeybindingParser), so the JIS keys in
++// scan-code notation (`shift+[Quote]`) are default keybindings like any other:
++// shown, overridable and removable in the Keyboard Shortcuts editor.
++for (const b of DEFAULT_KEYBINDINGS) {
++	const keybinding = KeybindingParser.parseKeybinding(b.key);
++	const when = ContextKeyExpr.deserialize(b.when);
++	if (!keybinding || !when) {
 +		onUnexpectedError(new Error(`devhubVim: cannot register the default keybinding ${b.key} -> ${b.command}`));
 +		continue;
 +	}
-+	KeybindingsRegistry.registerKeybindingRule({
++	KeybindingsRegistry.registerKeybinding({
 +		id: b.command,
 +		args: b.args,
-+		// Three chords ("g r n"): the registry decodes an array of chords (decodeKeybinding), one number cannot hold them.
-+		primary: primary as number,
++		keybinding,
 +		when: ContextKeyExpr.and(ENABLED, when),
 +		weight: WEIGHTS[b.weight ?? 'default'],
 +	});
 +}
-+
-+// The layout fallback's way out of chord mode (DevhubVim.leaveChordMode); its
-+// keys (`g F24`, `[ F24`, `] F24`) are registered with the keymap above, each
-+// with the when clauses of the chords it serves (vimKeymap.ts
-+// HELPER_KEYBINDINGS), so `g` `[` `]` are a chord prefix only where those
-+// chords are, never in insert mode or a plain input.
-+CommandsRegistry.registerCommand('devhubVim.leaveChord', () => { });
 +
 +// ---- <C-w> window commands (all overridable) ---------------------------------
 +
@@ -2290,57 +2230,63 @@ index 00000000..fc46abba
 +	KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterNav());
 +rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav([]));
 +
-+/** `<C-w>{key}`: [command id suffix, key, also with Ctrl held, shifted, commands it runs]. */
-+const NAV_COMMANDS: readonly [string, KeyCode, boolean, boolean, readonly string[]][] = [
-+	['left', KeyCode.KeyH, true, false, ['workbench.action.navigateLeft']],
-+	['down', KeyCode.KeyJ, true, false, ['workbench.action.navigateDown']],
-+	['up', KeyCode.KeyK, true, false, ['workbench.action.navigateUp']],
-+	['right', KeyCode.KeyL, true, false, ['workbench.action.navigateRight']],
-+	['leftArrow', KeyCode.LeftArrow, false, false, ['workbench.action.navigateLeft']],
-+	['downArrow', KeyCode.DownArrow, false, false, ['workbench.action.navigateDown']],
-+	['upArrow', KeyCode.UpArrow, false, false, ['workbench.action.navigateUp']],
-+	['rightArrow', KeyCode.RightArrow, false, false, ['workbench.action.navigateRight']],
-+	['next', KeyCode.KeyW, true, false, ['workbench.action.focusNextGroup']],
-+	['previous', KeyCode.KeyW, false, true, ['workbench.action.focusPreviousGroup']],
-+	['lastAccessed', KeyCode.KeyP, true, false, ['workbench.action.focusPreviousGroup']],
-+	['top', KeyCode.KeyT, true, false, ['workbench.action.focusFirstEditorGroup']],
-+	['bottom', KeyCode.KeyB, true, false, ['workbench.action.focusLastEditorGroup']],
-+	['split', KeyCode.KeyS, true, false, ['workbench.action.splitEditorUp']],
-+	['splitShift', KeyCode.KeyS, false, true, ['workbench.action.splitEditorUp']],
-+	['vsplit', KeyCode.KeyV, true, false, ['workbench.action.splitEditorLeft']],
-+	['new', KeyCode.KeyN, true, false, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
-+	['close', KeyCode.KeyC, false, false, ['workbench.action.closeGroup']],
-+	['quit', KeyCode.KeyQ, true, false, ['workbench.action.closeActiveEditor']],
-+	['only', KeyCode.KeyO, true, false, ['workbench.action.closeEditorsInOtherGroups']],
-+	['equalize', KeyCode.Equal, false, false, ['workbench.action.evenEditorWidths']],
-+	['maximizeHeight', KeyCode.Minus, false, true, ['workbench.action.toggleMaximizeEditorGroup']],
-+	['maximizeWidth', KeyCode.Backslash, false, true, ['workbench.action.toggleMaximizeEditorGroup']],
-+	['increaseHeight', KeyCode.Equal, false, true, ['workbench.action.increaseViewHeight']],
-+	['decreaseHeight', KeyCode.Minus, false, false, ['workbench.action.decreaseViewHeight']],
-+	['decreaseWidth', KeyCode.Comma, false, true, ['workbench.action.decreaseViewWidth']],
-+	['increaseWidth', KeyCode.Period, false, true, ['workbench.action.increaseViewWidth']],
-+	['moveFarLeft', KeyCode.KeyH, false, true, ['workbench.action.moveActiveEditorGroupLeft']],
-+	['moveFarDown', KeyCode.KeyJ, false, true, ['workbench.action.moveActiveEditorGroupDown']],
-+	['moveFarUp', KeyCode.KeyK, false, true, ['workbench.action.moveActiveEditorGroupUp']],
-+	['moveFarRight', KeyCode.KeyL, false, true, ['workbench.action.moveActiveEditorGroupRight']],
++/** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs]. */
++const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
++	['left', 'h', true, ['workbench.action.navigateLeft']],
++	['down', 'j', true, ['workbench.action.navigateDown']],
++	['up', 'k', true, ['workbench.action.navigateUp']],
++	['right', 'l', true, ['workbench.action.navigateRight']],
++	['leftArrow', 'left', false, ['workbench.action.navigateLeft']],
++	['downArrow', 'down', false, ['workbench.action.navigateDown']],
++	['upArrow', 'up', false, ['workbench.action.navigateUp']],
++	['rightArrow', 'right', false, ['workbench.action.navigateRight']],
++	['next', 'w', true, ['workbench.action.focusNextGroup']],
++	['previous', 'shift+w', false, ['workbench.action.focusPreviousGroup']],
++	['lastAccessed', 'p', true, ['workbench.action.focusPreviousGroup']],
++	['top', 't', true, ['workbench.action.focusFirstEditorGroup']],
++	['bottom', 'b', true, ['workbench.action.focusLastEditorGroup']],
++	['split', 's', true, ['workbench.action.splitEditorUp']],
++	['splitShift', 'shift+s', false, ['workbench.action.splitEditorUp']],
++	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
++	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
++	['close', 'c', false, ['workbench.action.closeGroup']],
++	['quit', 'q', true, ['workbench.action.closeActiveEditor']],
++	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
++	['equalize', '=', false, ['workbench.action.evenEditorWidths']],
++	['maximizeHeight', 'shift+-', false, ['workbench.action.toggleMaximizeEditorGroup']],
++	['maximizeWidth', 'shift+\\', false, ['workbench.action.toggleMaximizeEditorGroup']],
++	['increaseHeight', 'shift+=', false, ['workbench.action.increaseViewHeight']],
++	['decreaseHeight', '-', false, ['workbench.action.decreaseViewHeight']],
++	['decreaseWidth', 'shift+,', false, ['workbench.action.decreaseViewWidth']],
++	['increaseWidth', 'shift+.', false, ['workbench.action.increaseViewWidth']],
++	['moveFarLeft', 'shift+h', false, ['workbench.action.moveActiveEditorGroupLeft']],
++	['moveFarDown', 'shift+j', false, ['workbench.action.moveActiveEditorGroupDown']],
++	['moveFarUp', 'shift+k', false, ['workbench.action.moveActiveEditorGroupUp']],
++	['moveFarRight', 'shift+l', false, ['workbench.action.moveActiveEditorGroupRight']],
 +	// Neovim: <C-w>d / <C-w><C-d> show the diagnostic at the cursor (CTRL-W_d-default)
-+	['diagnostic', KeyCode.KeyD, true, false, ['editor.action.showHover']],
++	['diagnostic', 'd', true, ['editor.action.showHover']],
 +	// 'tagfunc' is the language server's: <C-w>] splits to the definition, <C-w>} previews it
-+	['definitionSplit', KeyCode.BracketRight, true, false, ['editor.action.revealDefinitionAside']],
-+	['definitionPreview', KeyCode.BracketRight, false, true, ['editor.action.peekDefinition']],
++	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
++	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
 +];
-+for (const [name, key, withCtrl, shifted, commands] of NAV_COMMANDS) {
-+	const k = shifted ? KeyMod.Shift | key : key;
-+	const [c, macC] = ctrl(k);
-+	rule(`devhubVim.nav.${name}`, withCtrl ? { primary: k, secondary: [c], mac: { primary: k, secondary: [macC] } } : { primary: k },
-+		NAV, KeybindingWeight.WorkbenchContrib + 50, vim => vim.runNav(commands));
++for (const [name, key, withCtrl, commands] of NAV_COMMANDS) {
++	const id = `devhubVim.nav.${name}`;
++	CommandsRegistry.registerCommand(id, () => DevhubVim.instance?.runNav(commands));
++	for (const k of [...jisKeys(key), ...(withCtrl ? jisKeys(`ctrl+${key}`) : [])]) {
++		const keybinding = KeybindingParser.parseKeybinding(k);
++		if (keybinding) {
++			KeybindingsRegistry.registerKeybinding({ id, keybinding, when: NAV, weight: KeybindingWeight.WorkbenchContrib + 50 });
++		} else {
++			onUnexpectedError(new Error(`devhubVim: cannot register ${k} -> ${id}`));
++		}
++	}
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
 new file mode 100644
-index 00000000..0b139635
+index 00000000..4c5c14e1
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimEngine.ts
-@@ -0,0 +1,5540 @@
+@@ -0,0 +1,5541 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2384,7 +2330,7 @@ index 00000000..0b139635
 +
 +import type { ExCommandEntry, ExStep, UserExCommands } from './vimEx.js';
 +import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNames, canonicalExName, completeExName, expandExEntry, parseExLine, parseGlobal, parseSubstitute, resolveExAddress, validateUserExCommands } from './vimEx.js';
-+import { DEFAULT_KEYBINDINGS, evaluateWhen, keysOf, usKeyForChar } from './vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, evaluateWhen, keyForChar, keysOf } from './vimKeymap.js';
 +import type { VimRegex } from './vimRegex.js';
 +import { VimRegexError, compileVimRegex, expandReplacement, expandTilde, lineMatches, literalVimPattern, vimRegex } from './vimRegex.js';
 +import { addToNumber, charClass, charWidth, colOfVcol, formatLines, isBlank, isWordChar, rot13, toggleCase, vcolOf } from './vimText.js';
@@ -7780,7 +7726,7 @@ index 00000000..0b139635
 +	private whenContext(): Record<string, unknown> {
 +		const c = this.context();
 +		return {
-+			'true': true, editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.usShiftedDigits': true,
++			'true': true, editorTextFocus: true, 'devhubVim.active': true,
 +			'devhubVim.mode': c.mode, 'devhubVim.acceptsMotion': c.acceptsMotion, 'devhubVim.hasCount': c.hasCount,
 +			'devhubVim.pending': c.pending, 'devhubVim.pendingOperator': c.pendingOperator, 'devhubVim.textObjectPending': c.textObjectPending,
 +			'devhubVim.awaitingChar': c.awaitingChar, 'devhubVim.recording': c.recording, 'devhubVim.visual': c.visual, 'devhubVim.insert': c.insert,
@@ -7877,9 +7823,10 @@ index 00000000..0b139635
 +	}
 +	const ctrl = /^<C-(.)>$/i.exec(k);
 +	if (ctrl) {
-+		return `ctrl+${ctrl[1].toLowerCase()}`;
++		const key = keyForChar(ctrl[1].toLowerCase());
++		return key && `ctrl+${key}`;
 +	}
-+	return Array.from(k).length === 1 ? usKeyForChar(k) : undefined;
++	return Array.from(k).length === 1 ? keyForChar(k) : undefined;
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimEx.ts b/src/vs/workbench/contrib/devhubVim/common/vimEx.ts
 new file mode 100644
@@ -8408,10 +8355,10 @@ index 00000000..e3baa9c0
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
 new file mode 100644
-index 00000000..fac3b40c
+index 00000000..5ff09160
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,528 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8431,24 +8378,24 @@ index 00000000..fac3b40c
 +// which takes the count (`3]d`) and visual mode, or are bound to the VS Code
 +// command directly where Vim has no grammar around them (insert-mode CTRL-S).
 +//
-+// Keys are written in keybindings.json notation for a US layout. On macOS
-+// VS Code dispatches by physical key but resolves letters and the punctuation
-+// keys by the character they produce (`shift+;` is "the key that types `:`",
-+// on a JIS keyboard the unshifted `:` key), so those work on any layout. The
-+// shifted digits are the exception: `shift+6` is always Shift + the 6 key,
-+// which types `^` only on US-like layouts (`&` on JIS). Bindings on shifted
-+// digits are therefore gated on `devhubVim.usShiftedDigits`; on other layouts
-+// the editor dispatches those characters (! @ # $ % ^ & * ( )) by character
-+// to the same default entry (`layoutFallbackBinding`, also as the second key
-+// of a chord: `g*`, `[(`), because VS Code's notation cannot name, e.g., JIS
-+// `^` other than by scan code (`[Equal]`).
++// The keymap targets the Apple JIS keyboard (macOS, JIS hardware). It is
++// written below by character, in keybindings.json notation for a US layout
++// (`shift+8` is `*`, `shift+;` is `:`), because that is how Vim's keys read;
++// DEFAULT_KEYBINDINGS is that table with every punctuation key and shifted
++// digit put on the physical JIS key that types the character, in scan-code
++// notation (`*` -> `shift+[Quote]`, `^` -> `[Equal]`, `:` -> `[Quote]`,
++// `g*` -> `g shift+[Quote]`; JIS_KEYS). Those are what is registered, shown
++// in the Keyboard Shortcuts editor and resolved: there is no character
++// fallback and no layout context key. Letters, digits and named keys are
++// layout independent and stay as they are. On another layout, rebind the
++// symbol keys by scan code (docs/vim.md, Keyboard layouts).
 +
 +export interface VimKeybinding {
 +	/** keybindings.json notation; chords are separated by spaces ("g g", "g r n"). */
 +	readonly key: string;
 +	readonly command: string;
 +	readonly args?: Readonly<Record<string, unknown>>;
-+	/** A when clause, without the shifted-digit gate (see `effectiveWhen`). */
++	/** A when clause. */
 +	readonly when: string;
 +	/**
 +	 * `override`: outranks workbench-wide defaults (Ctrl-R is Open Recent on macOS);
@@ -8550,7 +8497,8 @@ index 00000000..fac3b40c
 +
 +const OVERRIDE = 'override';
 +
-+export const DEFAULT_KEYBINDINGS: readonly VimKeybinding[] = [
++/** The keymap by character, in US notation (see the top of the file). DEFAULT_KEYBINDINGS is what is registered. */
++const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 +	// Outside insert mode Esc cancels one thing and an editor widget's Esc
 +	// (hover, peek, find, the marker widget, a snippet) comes first. In insert and
 +	// replace mode one Esc is always back in normal mode: it outranks the widgets'
@@ -8806,98 +8754,70 @@ index 00000000..fac3b40c
 +	insertEscape: 260,
 +} as const;
 +
-+/** What Shift + 1 2 ... 9 0 type on a US layout. */
-+export const US_SHIFTED_DIGITS = '!@#$%^&*()';
++/** What a US key types with Shift, for the digits and punctuation keys. */
++const US_SHIFTED: Readonly<Record<string, string>> = {
++	'1': '!', '2': '@', '3': '#', '4': '$', '5': '%', '6': '^', '7': '&', '8': '*', '9': '(', '0': ')',
++	'`': '~', '-': '_', '=': '+', '[': '{', ']': '}', '\\': '|', ';': ':', '\'': '"', ',': '<', '.': '>', '/': '?',
++};
++const US_PUNCTUATION = '`-=[]\\;\',./';
 +
-+const SHIFTED_DIGIT_KEY = /^shift\+[0-9]$/;
-+
-+/** Whether the binding sits on a shifted digit, whose character depends on the layout. */
-+export function isLayoutGated(b: VimKeybinding): boolean {
-+	return b.key.split(' ').some(chord => SHIFTED_DIGIT_KEY.test(chord));
-+}
-+
-+export const SHIFTED_DIGIT_GATE = 'devhubVim.usShiftedDigits';
-+
-+/** The when clause the binding is registered with. */
-+export function effectiveWhen(b: VimKeybinding): string {
-+	return isLayoutGated(b) ? `${b.when} && ${SHIFTED_DIGIT_GATE}` : b.when;
-+}
-+
-+const US_SHIFTED_PUNCTUATION: Record<string, string> = {
-+	'~': '`', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': '\'', '<': ',', '>': '.', '?': '/',
++/**
++ * Apple JIS (macOS): the physical key, in scan-code notation, that types each
++ * ASCII symbol. The row of digits types `! " # $ % & ' ( )` with Shift; then
++ * `- =`, `^ ~`, `¥ |`; `@ \``, `[ {`; `; +`, `: *`, `] }`; `, <`, `. >`,
++ * `/ ?`, and `_` on the ろ key with or without Shift. `\` is Option-¥ (or ¥
++ * itself with the Japanese input source's "¥ key types \" setting).
++ */
++export const JIS_KEYS: Readonly<Record<string, readonly string[]>> = {
++	'!': ['shift+[Digit1]'], '"': ['shift+[Digit2]'], '#': ['shift+[Digit3]'], '$': ['shift+[Digit4]'], '%': ['shift+[Digit5]'],
++	'&': ['shift+[Digit6]'], '\'': ['shift+[Digit7]'], '(': ['shift+[Digit8]'], ')': ['shift+[Digit9]'],
++	'-': ['[Minus]'], '=': ['shift+[Minus]'], '^': ['[Equal]'], '~': ['shift+[Equal]'], '|': ['shift+[IntlYen]'], '\\': ['alt+[IntlYen]', '[IntlYen]'],
++	'@': ['[BracketLeft]'], '`': ['shift+[BracketLeft]'], '[': ['[BracketRight]'], '{': ['shift+[BracketRight]'],
++	';': ['[Semicolon]'], '+': ['shift+[Semicolon]'], ':': ['[Quote]'], '*': ['shift+[Quote]'], ']': ['[Backslash]'], '}': ['shift+[Backslash]'],
++	',': ['[Comma]'], '<': ['shift+[Comma]'], '.': ['[Period]'], '>': ['shift+[Period]'], '/': ['[Slash]'], '?': ['shift+[Slash]'],
++	'_': ['[IntlRo]', 'shift+[IntlRo]'],
 +};
 +
-+/** The US-layout keybinding notation for typing `ch` ('$' -> 'shift+4', 'G' -> 'shift+g', ' ' -> 'space'). */
-+export function usKeyForChar(ch: string): string | undefined {
++/** The JIS keys for one chord in US notation (`shift+8` -> `shift+[Quote]`, `ctrl+[` -> `ctrl+[BracketRight]`); others as they are. */
++function jisChord(chord: string): readonly string[] {
++	const parts = chord.split('+');
++	const base = parts[parts.length - 1] === '' ? '+' : parts[parts.length - 1];
++	const mods = parts.slice(0, parts[parts.length - 1] === '' ? -2 : -1);
++	const shift = mods.includes('shift');
++	const ch = shift && US_SHIFTED[base] !== undefined ? US_SHIFTED[base] : !shift && base.length === 1 && US_PUNCTUATION.includes(base) ? base : undefined;
++	const keys = ch === undefined ? undefined : JIS_KEYS[ch];
++	if (!keys) {
++		return [chord];
++	}
++	const others = mods.filter(m => m !== 'shift');
++	return keys.map(k => [...others, k].join('+'));
++}
++
++/** Every JIS key sequence for a key sequence in US notation. */
++export function jisKeys(key: string): string[] {
++	let out: string[] = [''];
++	for (const chord of key.split(' ')) {
++		out = out.flatMap(prefix => jisChord(chord).map(c => prefix ? `${prefix} ${c}` : c));
++	}
++	return out;
++}
++
++/** The default keymap as registered: KEYMAP_BY_CHARACTER on the Apple JIS keys. */
++export const DEFAULT_KEYBINDINGS: readonly VimKeybinding[] = KEYMAP_BY_CHARACTER.flatMap(b => jisKeys(b.key).map(key => key === b.key ? b : { ...b, key }));
++
++/** The keymap's notation for typing `ch` on Apple JIS ('$' -> 'shift+[Digit4]', 'G' -> 'shift+g', ' ' -> 'space'). */
++export function keyForChar(ch: string): string | undefined {
 +	if (ch === ' ') {
 +		return 'space';
 +	}
-+	if (/^[a-z0-9]$/.test(ch) || (ch.length === 1 && '`-=[]\\;\',./'.includes(ch))) {
++	if (/^[a-z0-9]$/.test(ch)) {
 +		return ch;
 +	}
 +	if (/^[A-Z]$/.test(ch)) {
 +		return `shift+${ch.toLowerCase()}`;
 +	}
-+	const digit = US_SHIFTED_DIGITS.indexOf(ch);
-+	if (digit >= 0 && ch.length === 1) {
-+		return `shift+${(digit + 1) % 10}`;
-+	}
-+	const base = US_SHIFTED_PUNCTUATION[ch];
-+	return base ? `shift+${base}` : undefined;
++	return JIS_KEYS[ch]?.[0];
 +}
-+
-+/**
-+ * On a layout whose shifted digits are not US-like, the default entry for a
-+ * US shifted-digit character (`^` -> the `shift+6` entry) whose when clause
-+ * holds, if any: the editor runs it for a keydown that typed that character
-+ * and that no keybinding took. `prefix` is the character typed before it when
-+ * that key started a chord (`g` for `g*`, `[` for `[(`). Later entries win, as
-+ * in the keybinding resolver.
-+ */
-+export function layoutFallbackBinding(ch: string, whenHolds: (when: string) => boolean, prefix?: string): VimKeybinding | undefined {
-+	if (ch.length !== 1 || !US_SHIFTED_DIGITS.includes(ch)) {
-+		return undefined;
-+	}
-+	const second = usKeyForChar(ch);
-+	const first = prefix === undefined ? undefined : usKeyForChar(prefix);
-+	if (prefix !== undefined && !first) {
-+		return undefined;
-+	}
-+	const key = first ? `${first} ${second}` : second;
-+	let found: VimKeybinding | undefined;
-+	for (const b of DEFAULT_KEYBINDINGS) {
-+		if (b.key === key && whenHolds(b.when)) {
-+			found = b;
-+		}
-+	}
-+	return found;
-+}
-+
-+/** The first keys of the default chords whose second key may be a shifted digit (`g*`, `[(`, `])`). */
-+export const LEAVE_CHORD_PREFIXES: readonly string[] = ['g', '[', ']'];
-+
-+/**
-+ * Where the chords starting with `first` hold: any of their when clauses. A
-+ * chord's first key is a prefix (the dispatcher waits for a second key) for
-+ * every binding that starts with it and holds, so a helper on that prefix
-+ * must hold exactly where the chords it serves do, or it turns the key into a
-+ * prefix where the key should type (insert mode, a plain input). Without the
-+ * shifted-digit gate: on a layout where it is off, the gated chords (`g*`,
-+ * `[(`) are the ones the layout fallback completes, so the prefix must hold.
-+ */
-+export function chordPrefixWhen(first: string): string {
-+	const whens = [...new Set(DEFAULT_KEYBINDINGS.filter(b => b.key.split(' ').length > 1 && b.key.split(' ')[0] === first).map(b => b.when))];
-+	return whens.length ? whens.map(w => `(${w})`).join(' || ') : 'false';
-+}
-+
-+/**
-+ * Bindings of DevHub Vim's own beyond the keymap: `{prefix} F24` runs
-+ * `devhubVim.leaveChord` (nothing), the layout fallback's way out of chord mode
-+ * after it took the chord's second key by character (DevhubVim.leaveChordMode).
-+ */
-+export const HELPER_KEYBINDINGS: readonly VimKeybinding[] = LEAVE_CHORD_PREFIXES.map(first => ({
-+	key: `${first} f24`, command: 'devhubVim.leaveChord', when: chordPrefixWhen(first),
-+}));
 +
 +// ---- when clauses and key notation, for :normal and the tests ----------------
 +
@@ -9876,10 +9796,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..b11d4d26
+index 00000000..f81061a1
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,2184 @@
+@@ -0,0 +1,2156 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -9890,7 +9810,7 @@ index 00000000..b11d4d26
 +import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 +import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
 +import type { VimKeybinding } from '../../common/vimKeymap.js';
-+import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, LEAVE_CHORD_PREFIXES, VIM_WEIGHTS, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VIM_WHEN, evaluateWhen, jisKeys, keyForChar } from '../../common/vimKeymap.js';
 +import type { VimRegex } from '../../common/vimRegex.js';
 +import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
 +import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
@@ -10056,12 +9976,6 @@ index 00000000..b11d4d26
 +	readonly when?: string;
 +}
 +
-+/** What a physical keypress resolves to on a JIS keyboard (VS Code's macOS mapper; see vimKeymap.ts). */
-+const JIS: Record<string, string[]> = {
-+	'"': ['shift+\'', 'shift+2'], '\'': ['\'', 'shift+7'], '&': ['shift+6'], '(': ['shift+8'], ')': ['shift+9'],
-+	'^': ['[Equal]'], '@': ['[BracketLeft]'], '*': ['shift+[Quote]'], '$': ['shift+4'], '%': ['shift+5'], '#': ['shift+3'],
-+};
-+
 +/** Vim key notation to keybinding notation, for the keys tests press. */
 +const NAMED: Record<string, string> = {
 +	'<Esc>': 'escape', '<CR>': 'enter', '<BS>': 'backspace', '<Tab>': 'tab', '<S-Tab>': 'shift+tab', '<Space>': 'space', '<Del>': 'delete',
@@ -10074,7 +9988,7 @@ index 00000000..b11d4d26
 +		return NAMED[k];
 +	}
 +	const c = /^<C-(.)>$/.exec(k);
-+	return c ? `ctrl+${c[1].toLowerCase()}` : undefined;
++	return c ? `ctrl+${keyForChar(c[1].toLowerCase())}` : undefined;
 +}
 +
 +class Vim {
@@ -10082,10 +9996,7 @@ index 00000000..b11d4d26
 +	readonly vim: VimEngine;
 +	readonly shared: VimSharedState;
 +	bindings: VimKeybinding[];
-+	usShiftedDigits = true;
-+	layout: Record<string, string[]> = {};
 +	private chord: string[] = [];
-+	private chordChar: string | undefined;
 +
 +	constructor(text: string, user: readonly UserBinding[] = [], shared = new VimSharedState()) {
 +		this.host = new TestHost(text);
@@ -10114,7 +10025,6 @@ index 00000000..b11d4d26
 +			'editorTextFocus': true,
 +			'textInputFocus': true,
 +			'devhubVim.active': true,
-+			'devhubVim.usShiftedDigits': this.usShiftedDigits,
 +			'devhubVim.mode': c.mode,
 +			'devhubVim.acceptsMotion': c.acceptsMotion,
 +			'devhubVim.hasCount': c.hasCount,
@@ -10138,7 +10048,7 @@ index 00000000..b11d4d26
 +		const ctx = this.context();
 +		let found: VimKeybinding | undefined;
 +		for (const b of this.bindings) {
-+			if (keys.includes(b.key) && evaluateWhen(effectiveWhen(b), ctx)) {
++			if (keys.includes(b.key) && evaluateWhen(b.when, ctx)) {
 +				found = b;
 +			}
 +		}
@@ -10157,7 +10067,8 @@ index 00000000..b11d4d26
 +			return;
 +		}
 +		const named = keyFor(k);
-+		const keys = named ? [named] : this.layout[k] ?? [usKeyForChar(k) ?? k];
++		// a character is pressed on the Apple JIS key that types it
++		const keys = named ? [named] : [keyForChar(k) ?? k];
 +		const full = keys.map(key => [...this.chord, key].join(' '));
 +		const match = this.resolve(full);
 +		if (match) {
@@ -10166,31 +10077,18 @@ index 00000000..b11d4d26
 +			return;
 +		}
 +		const ctx = this.context();
-+		const prefix = this.bindings.find(b => full.some(f => b.key.startsWith(f + ' ')) && evaluateWhen(effectiveWhen(b), ctx));
++		const prefix = this.bindings.find(b => full.some(f => b.key.startsWith(f + ' ')) && evaluateWhen(b.when, ctx));
 +		if (prefix) {
-+			if (!this.chord.length) {
-+				this.chordChar = k;
-+			}
 +			this.chord.push(keys[0]);
 +			return;
 +		}
 +		if (this.chord.length) {
-+			// the editor's keydown in chord mode: a shifted-digit character on a non-US layout (`g*` on JIS)
-+			const fb = !this.usShiftedDigits && this.chord.length === 1 && Array.from(k).length === 1 ? layoutFallbackBinding(k, when => evaluateWhen(when, ctx), this.chordChar) : undefined;
 +			this.chord = []; // "the key combination is not a command"
-+			if (fb) {
-+				this.run(fb);
-+			}
 +			return;
 +		}
-+		// no keybinding: the editor's keydown (layout fallback, an unbound key cancels the pending command)
-+		if (!this.vim.context().insert && Array.from(k).length === 1) {
-+			const fb = this.usShiftedDigits ? undefined : layoutFallbackBinding(k, when => evaluateWhen(when, ctx));
-+			if (fb) {
-+				this.run(fb);
-+			} else if (this.vim.pending) {
-+				this.vim.cancelPending();
-+			}
++		// no keybinding: the editor's keydown (an unbound key cancels the pending command)
++		if (!this.vim.context().insert && Array.from(k).length === 1 && this.vim.pending) {
++			this.vim.cancelPending();
 +		}
 +	}
 +
@@ -10617,9 +10515,8 @@ index 00000000..b11d4d26
 +			assert.ok(b.when.includes('devhubVim.active'), b.key);
 +			assert.ok(b.key.split(' ').length <= 3, b.key);
 +		}
-+		// shifted digits (layout dependent) are gated, nothing else is
-+		assert.deepStrictEqual([...new Set(DEFAULT_KEYBINDINGS.filter(isLayoutGated).map(b => b.key))].sort(),
-+			['[ shift+9', '] shift+0', 'g shift+3', 'g shift+7', 'g shift+8', 'shift+0', 'shift+2', 'shift+3', 'shift+4', 'shift+5', 'shift+6', 'shift+7', 'shift+8', 'shift+9']);
++		// no layout context key: the keys are the Apple JIS keys
++		assert.ok(DEFAULT_KEYBINDINGS.every(b => !b.when.includes('usShiftedDigits')));
 +	});
 +
 +	test('two entries for the same key never hold at once', () => {
@@ -10635,7 +10532,7 @@ index 00000000..b11d4d26
 +								for (const pending of [true, false]) {
 +									for (const suggestWidgetVisible of insert ? [true, false] : [false]) {
 +										contexts.push({
-+											'true': true, editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.usShiftedDigits': true, 'devhubVim.mode': mode,
++											'true': true, editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
 +											'devhubVim.acceptsMotion': acceptsMotion, 'devhubVim.hasCount': hasCount, 'devhubVim.textObjectPending': textObjectPending,
 +											'devhubVim.recording': recording, 'devhubVim.pending': pending, 'devhubVim.pendingOperator': pendingOperator,
 +											'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': insert, 'devhubVim.awaitingChar': false, suggestWidgetVisible,
@@ -10651,7 +10548,7 @@ index 00000000..b11d4d26
 +		for (const ctx of contexts) {
 +			const seen = new Map<string, VimKeybinding>();
 +			for (const b of DEFAULT_KEYBINDINGS) {
-+				if (evaluateWhen(effectiveWhen(b), ctx)) {
++				if (evaluateWhen(b.when, ctx)) {
 +					assert.ok(!seen.has(b.key), `${b.key}: ${JSON.stringify(seen.get(b.key)?.args)} and ${JSON.stringify(b.args)} in ${JSON.stringify(ctx)}`);
 +					seen.set(b.key, b);
 +				}
@@ -10753,24 +10650,42 @@ index 00000000..b11d4d26
 +		assert.ok(new Vim('|a').keys('@z').vim.status().includes('empty'));
 +	});
 +
-+	test('a layout whose shifted digits are not US (JIS) still has ^ * @ ( ) by character', () => {
-+		const jis = (text: string, keys: string) => {
-+			const v = new Vim(text);
-+			v.usShiftedDigits = false;
-+			v.layout = JIS;
-+			return v.keys(keys);
++	test('the symbol keys are the Apple JIS keys, by scan code', () => {
++		const expected: Record<string, string> = {
++			'^': '[Equal]', '$': 'shift+[Digit4]', '%': 'shift+[Digit5]', '#': 'shift+[Digit3]', '*': 'shift+[Quote]', ':': '[Quote]',
++			'"': 'shift+[Digit2]', '\'': 'shift+[Digit7]', '@': '[BracketLeft]', '`': 'shift+[BracketLeft]', '&': 'shift+[Digit6]',
++			'(': 'shift+[Digit8]', ')': 'shift+[Digit9]', '~': 'shift+[Equal]', '{': 'shift+[BracketRight]', '}': 'shift+[Backslash]',
++			'[': '[BracketRight]', ']': '[Backslash]', ';': '[Semicolon]', '+': 'shift+[Semicolon]', '-': '[Minus]', '=': 'shift+[Minus]',
++			',': '[Comma]', '.': '[Period]', '<': 'shift+[Comma]', '>': 'shift+[Period]', '/': '[Slash]', '?': 'shift+[Slash]', '_': '[IntlRo]', '|': 'shift+[IntlYen]',
 +		};
++		const keys = new Set(DEFAULT_KEYBINDINGS.map(b => b.key));
++		for (const [ch, key] of Object.entries(expected)) {
++			assert.strictEqual(keyForChar(ch), key, ch);
++			assert.ok(keys.has(key), `${ch}: ${key} is bound`);
++		}
++		for (const key of ['g shift+[Quote]', 'g shift+[Digit3]', '[BracketRight] shift+[Digit8]', '[Backslash] shift+[Digit9]', 'shift+[IntlRo]', 'ctrl+[BracketRight]', 'ctrl+[Backslash]']) {
++			assert.ok(keys.has(key), key);
++		}
++		// the US notation of a symbol is gone (it means another character on JIS)
++		for (const key of ['shift+6', 'shift+8', 'shift+;', '[', 'g shift+8', '[ shift+9', 'ctrl+[', 'shift+\'']) {
++			assert.ok(!keys.has(key), key);
++		}
++		assert.deepStrictEqual(jisKeys('g shift+8'), ['g shift+[Quote]']);
++		assert.deepStrictEqual(jisKeys('shift+-'), ['[IntlRo]', 'shift+[IntlRo]']);
++		assert.deepStrictEqual(jisKeys('ctrl+r'), ['ctrl+r']);
++	});
++
++	test('the symbol commands work, pressed on the JIS keys', () => {
++		const jis = (text: string, keys: string) => new Vim(text).keys(keys);
 +		assert.strictEqual(jis('ab  |c', '^').state(), '|ab  c');
 +		assert.strictEqual(jis('|ab c', '$').state(), 'ab |c');
-+		// JIS Shift-6 types `&`: it is not `^`
-+		assert.strictEqual(jis('ab  |c', '&').state(), 'ab  |c');
-+		// JIS Shift-2 types `"`: the register, not `@`
 +		assert.strictEqual(jis('|abc', '"ayl"ap').state(), 'a|abc');
 +		assert.strictEqual(jis('|a b c', 'qqdwq@q').state(), '|c');
 +		assert.strictEqual(jis('f(a, |b)', 'di(').state(), 'f(|)');
 +		assert.strictEqual(jis('f(a, |b)', 'di)').state(), 'f(|)');
 +		assert.strictEqual(jis('|foo bar foo', '*').state(), 'foo bar |foo');
 +		assert.strictEqual(jis('|(a)', '%').state(), '(a|)');
++		assert.strictEqual(jis('|a\nb', '_').state(), '|a\nb');
 +	});
 +});
 +
@@ -10779,7 +10694,7 @@ index 00000000..b11d4d26
 +	function ctx(mode: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
 +		const typing = mode === 'insert' || mode === 'replace';
 +		return {
-+			'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.usShiftedDigits': true, 'devhubVim.mode': mode,
++			'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
 +			'devhubVim.acceptsMotion': !typing && mode !== 'cmdline' && mode !== 'nav', 'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': typing,
 +			'devhubVim.textObjectPending': '', 'devhubVim.pending': mode === 'operatorPending', 'devhubVim.awaitingChar': false, ...extra,
 +		};
@@ -10824,23 +10739,25 @@ index 00000000..b11d4d26
 +		for (const [mode, extra] of [['normal', {}], ['visual', {}], ['visualLine', {}], ['visualBlock', {}], ['operatorPending', {}],
 +			['operatorPending', { 'devhubVim.acceptsMotion': false, 'devhubVim.textObjectPending': 'inner' }]] as [string, Record<string, unknown>][]) {
 +			for (const key of ['tab', 'shift+tab']) {
-+				assert.ok(DEFAULT_KEYBINDINGS.some(b => b.key === key && evaluateWhen(effectiveWhen(b), ctx(mode, extra))), `${key} in ${mode} ${JSON.stringify(extra)}`);
++				assert.ok(DEFAULT_KEYBINDINGS.some(b => b.key === key && evaluateWhen(b.when, ctx(mode, extra))), `${key} in ${mode} ${JSON.stringify(extra)}`);
 +			}
 +		}
 +		for (const mode of ['insert', 'replace', 'nav']) {
-+			assert.ok(!DEFAULT_KEYBINDINGS.some(b => (b.key === 'tab' || b.key === 'shift+tab') && evaluateWhen(effectiveWhen(b), ctx(mode))), mode);
++			assert.ok(!DEFAULT_KEYBINDINGS.some(b => (b.key === 'tab' || b.key === 'shift+tab') && evaluateWhen(b.when, ctx(mode))), mode);
 +		}
 +	});
 +});
 +
 +suite('DevHub Vim: a printable key is a Vim key only in a Vim editor outside insert mode', () => {
 +
-+	const ALL = [...DEFAULT_KEYBINDINGS, ...HELPER_KEYBINDINGS];
++	const ALL = DEFAULT_KEYBINDINGS;
++	const JIS_CHORDS = new Set(Object.values(JIS_KEYS).flat());
 +
-+	/** The first chord types a character: no Ctrl / Alt / Cmd, not a named key (Esc, Tab, arrows, F-keys, ...). */
++	/** The first chord types a character: a JIS symbol key, or no Ctrl / Alt / Cmd and not a named key (Esc, Tab, arrows, F-keys, ...). */
 +	function printableFirst(key: string): boolean {
-+		const first = key.split(' ')[0].replace(/^shift\+/, '');
-+		return !/(^|\+)(ctrl|alt|cmd|meta|win)\+/.test(key.split(' ')[0]) && (first.length === 1 || first === 'space');
++		const chord = key.split(' ')[0];
++		const first = chord.replace(/^shift\+/, '');
++		return JIS_CHORDS.has(chord) || (!/(^|\+)(ctrl|alt|cmd|meta|win)\+/.test(chord) && (first.length === 1 || first === 'space'));
 +	}
 +
 +	function vimCtx(mode: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -10854,46 +10771,26 @@ index 00000000..b11d4d26
 +
 +	test('none holds in insert / replace / cmdline / nav mode, or with no Vim editor focused', () => {
 +		const contexts: [string, Record<string, unknown>][] = [];
-+		for (const usShiftedDigits of [true, false]) {
-+			for (const mode of ['insert', 'replace', 'cmdline', 'nav']) {
-+				for (const awaitingChar of [false, true]) {
-+					for (const suggestWidgetVisible of [false, true]) {
-+						contexts.push([mode, vimCtx(mode, { 'devhubVim.usShiftedDigits': usShiftedDigits, 'devhubVim.awaitingChar': awaitingChar, suggestWidgetVisible })]);
-+					}
++		for (const mode of ['insert', 'replace', 'cmdline', 'nav']) {
++			for (const awaitingChar of [false, true]) {
++				for (const suggestWidgetVisible of [false, true]) {
++					contexts.push([mode, vimCtx(mode, { 'devhubVim.awaitingChar': awaitingChar, suggestWidgetVisible })]);
 +				}
 +			}
-+			// a plain input, the terminal, a list, a search box: no Vim editor has the focus
-+			for (const mode of ['insert', '', 'nav']) {
-+				contexts.push([`no Vim editor, mode '${mode}'`, { 'true': true, textInputFocus: mode === 'insert', 'devhubVim.active': false, 'devhubVim.mode': mode, 'devhubVim.usShiftedDigits': usShiftedDigits }]);
-+				contexts.push([`a plain editor, mode '${mode}'`, { 'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': false, 'devhubVim.mode': mode, 'devhubVim.usShiftedDigits': usShiftedDigits }]);
-+			}
++		}
++		// a plain input, the terminal, a list, a search box: no Vim editor has the focus
++		for (const mode of ['insert', '', 'nav']) {
++			contexts.push([`no Vim editor, mode '${mode}'`, { 'true': true, textInputFocus: mode === 'insert', 'devhubVim.active': false, 'devhubVim.mode': mode }]);
++			contexts.push([`a plain editor, mode '${mode}'`, { 'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': false, 'devhubVim.mode': mode }]);
 +		}
 +		const printable = ALL.filter(b => printableFirst(b.key));
-+		assert.ok(printable.some(b => b.key === 'g f24') && printable.some(b => b.key === 'j'));
++		assert.ok(printable.some(b => b.key === 'g shift+[Quote]') && printable.some(b => b.key === '[Quote]') && printable.some(b => b.key === 'j'));
 +		for (const [what, c] of contexts) {
-+			const holding = printable.filter(b => evaluateWhen(effectiveWhen(b), c)).map(b => `${b.key} -> ${b.command}`);
++			const holding = printable.filter(b => evaluateWhen(b.when, c)).map(b => `${b.key} -> ${b.command}`);
 +			assert.deepStrictEqual(holding, [], `${what} ${JSON.stringify(c)}`);
 +		}
 +	});
 +
-+	test('the chord-mode helpers hold exactly where a chord they serve does, on any layout', () => {
-+		for (const first of LEAVE_CHORD_PREFIXES) {
-+			const helper = HELPER_KEYBINDINGS.find(b => b.key === `${first} f24`)!;
-+			assert.ok(helper, first);
-+			const chords = DEFAULT_KEYBINDINGS.filter(b => b.key.startsWith(`${first} `));
-+			assert.ok(chords.length > 0, first);
-+			for (const mode of ['normal', 'visual', 'visualLine', 'visualBlock', 'operatorPending', 'insert', 'replace', 'cmdline', 'nav']) {
-+				for (const extra of [{}, { 'devhubVim.textObjectPending': 'inner', 'devhubVim.acceptsMotion': false }, { 'devhubVim.hasCount': true }]) {
-+					const c = vimCtx(mode, { 'devhubVim.usShiftedDigits': true, ...extra });
-+					assert.strictEqual(evaluateWhen(helper.when, c), chords.some(b => evaluateWhen(b.when, c)), `${first} in ${mode} ${JSON.stringify(extra)}`);
-+					// the shifted-digit chords' prefix still holds where the layout fallback completes them (JIS)
-+					const jis = { ...c, 'devhubVim.usShiftedDigits': false };
-+					assert.strictEqual(evaluateWhen(effectiveWhen(helper), jis), chords.some(b => evaluateWhen(b.when, jis)), `${first} in ${mode} (JIS)`);
-+				}
-+			}
-+			assert.ok(evaluateWhen(helper.when, vimCtx('normal')), `${first} is a prefix in normal mode`);
-+		}
-+	});
 +});
 +
 +suite('DevHub Vim: one Esc leaves insert mode, whatever editor widget shows', () => {
@@ -10919,18 +10816,18 @@ index 00000000..b11d4d26
 +		return {
 +			'true': true, editorTextFocus: true, editorFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
 +			'devhubVim.acceptsMotion': !typing, 'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': typing,
-+			'devhubVim.textObjectPending': '', 'devhubVim.pending': false, 'devhubVim.awaitingChar': false, 'devhubVim.usShiftedDigits': true,
++			'devhubVim.textObjectPending': '', 'devhubVim.pending': false, 'devhubVim.awaitingChar': false,
 +			...(widget ? { [widget]: true } : {}),
 +		};
 +	}
 +
 +	/** The binding the dispatcher runs for `key`: the highest weight whose when holds (later registration on a tie). */
 +	function winner(key: string, c: Record<string, unknown>): string | undefined {
-+		const vim = DEFAULT_KEYBINDINGS.filter(b => b.key === key).map(b => [b.command, VIM_WEIGHTS[b.weight ?? 'default'], effectiveWhen(b)] as [string, number, string]);
++		const vim = DEFAULT_KEYBINDINGS.filter(b => b.key === key).map(b => [b.command, VIM_WEIGHTS[b.weight ?? 'default'], b.when] as [string, number, string]);
 +		// VS Code's on Windows / Linux: Outdent Lines on CTRL-[, Copy on CTRL-C
 +		const others: Record<string, [string, number, string][]> = {
 +			'escape': UPSTREAM,
-+			'ctrl+[': [['editor.action.outdentLines', 100, 'editorTextFocus']],
++			'ctrl+[BracketRight]': [['editor.action.outdentLines', 100, 'editorTextFocus']],
 +			'ctrl+c': [['editor.action.clipboardCopyAction', 100, 'textInputFocus']],
 +		};
 +		const all = [...(others[key] ?? []), ...vim].filter(([, , when]) => evaluateWhen(when, c));
@@ -10941,7 +10838,7 @@ index 00000000..b11d4d26
 +	test('in insert and replace mode Esc, CTRL-[ and CTRL-C are Vim\'s over every widget\'s Esc', () => {
 +		for (const mode of ['insert', 'replace']) {
 +			for (const widget of [undefined, ...WIDGETS]) {
-+				for (const key of ['escape', 'ctrl+[', 'ctrl+c']) {
++				for (const key of ['escape', 'ctrl+[BracketRight]', 'ctrl+c']) {
 +					assert.strictEqual(winner(key, ctx(mode, widget)), 'devhubVim.escape', `${key} in ${mode} with ${widget}`);
 +				}
 +			}
@@ -10951,7 +10848,7 @@ index 00000000..b11d4d26
 +	test('outside insert mode a widget\'s Esc comes first, as before', () => {
 +		for (const mode of ['normal', 'visual', 'operatorPending']) {
 +			assert.strictEqual(winner('escape', ctx(mode, undefined)), 'devhubVim.escape', mode);
-+			assert.strictEqual(winner('ctrl+[', ctx(mode, undefined)), 'devhubVim.escape', `ctrl+[ in ${mode}`);
++			assert.strictEqual(winner('ctrl+[BracketRight]', ctx(mode, undefined)), 'devhubVim.escape', `ctrl+[ in ${mode}`);
 +			for (const widget of WIDGETS) {
 +				assert.notStrictEqual(winner('escape', ctx(mode, widget)), 'devhubVim.escape', `${mode} with ${widget}`);
 +			}
@@ -10973,21 +10870,21 @@ index 00000000..b11d4d26
 +
 +	test('CTRL-E closes the completion menu and CTRL-] the inline suggestion, staying in insert mode; otherwise they are what they were', () => {
 +		const insert = (extra: Record<string, unknown>) => ({ ...ctx('insert', undefined), ...extra });
-+		const vimFor = (key: string, c: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(effectiveWhen(b), c)).map(b => [b.command, b.args]);
++		const vimFor = (key: string, c: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(b.when, c)).map(b => [b.command, b.args]);
 +		assert.deepStrictEqual(vimFor('ctrl+e', insert({ suggestWidgetVisible: true })), [['hideSuggestWidget', undefined]]);
 +		assert.deepStrictEqual(vimFor('ctrl+e', insert({})), [['devhubVim.insert', { action: 'copyFromBelow' }]]);
 +		for (const k of ['inlineSuggestionVisible', 'inlineEditIsVisible']) {
-+			assert.deepStrictEqual(vimFor('ctrl+]', insert({ [k]: true })), [['editor.action.inlineSuggest.hide', undefined]], k);
++			assert.deepStrictEqual(vimFor('ctrl+[Backslash]', insert({ [k]: true })), [['editor.action.inlineSuggest.hide', undefined]], k);
 +		}
 +		// no Vim entry: VS Code's own CTRL-] (indent lines) applies, as before
-+		assert.deepStrictEqual(vimFor('ctrl+]', insert({})), []);
++		assert.deepStrictEqual(vimFor('ctrl+[Backslash]', insert({})), []);
 +		// and they outrank VS Code's defaults on those keys where they apply (editor.action.indentLines: EditorContrib)
 +		for (const b of DEFAULT_KEYBINDINGS.filter(b => b.command === 'hideSuggestWidget' || b.command === 'editor.action.inlineSuggest.hide')) {
 +			assert.ok(VIM_WEIGHTS[b.weight ?? 'default'] > 100, b.key);
 +		}
 +		// in normal mode CTRL-E is still the scroll and CTRL-] the definition
 +		assert.deepStrictEqual(vimFor('ctrl+e', { ...ctx('normal', undefined), suggestWidgetVisible: true }).map(([c]) => c), ['devhubVim.scroll']);
-+		assert.deepStrictEqual(vimFor('ctrl+]', { ...ctx('normal', undefined), inlineSuggestionVisible: true }).map(([c]) => c), ['devhubVim.run']);
++		assert.deepStrictEqual(vimFor('ctrl+[Backslash]', { ...ctx('normal', undefined), inlineSuggestionVisible: true }).map(([c]) => c), ['devhubVim.run']);
 +	});
 +});
 +
@@ -11179,7 +11076,7 @@ index 00000000..b11d4d26
 +
 +	test('<C-w> <BS> / <Tab> / <Del> edit nothing: the editor\'s typing keys do not apply in nav mode', () => {
 +		for (const active of [true, false]) {
-+			const ctx = { editorTextFocus: true, textInputFocus: true, 'devhubVim.active': active, 'devhubVim.mode': 'nav', 'devhubVim.usShiftedDigits': true };
++			const ctx = { editorTextFocus: true, textInputFocus: true, 'devhubVim.active': active, 'devhubVim.mode': 'nav' };
 +			assert.deepStrictEqual(EDITOR_TYPING_KEYS.filter(b => evaluateWhen(b.when, ctx)).map(b => b.key), [], `active: ${active}`);
 +		}
 +		const nav = new VimNavPrefix();
@@ -11188,8 +11085,8 @@ index 00000000..b11d4d26
 +	});
 +
 +	test('no default Vim key binding matches while nav waits', () => {
-+		const ctx = { editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.mode': 'nav', 'devhubVim.usShiftedDigits': true };
-+		const matching = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(effectiveWhen(b), ctx)).map(b => b.key);
++		const ctx = { editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.mode': 'nav' };
++		const matching = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(b.when, ctx)).map(b => b.key);
 +		assert.deepStrictEqual(matching, []);
 +	});
 +
@@ -11272,9 +11169,9 @@ index 00000000..b11d4d26
 +		assert.strictEqual(typedChar(ev('Enter', { isComposing: true })), undefined);
 +	});
 +
-+	test('US key notation for characters', () => {
-+		assert.deepStrictEqual(['$', 'G', ':', '"', '{', 'a', ' ', '0', ')', '~'].map(usKeyForChar),
-+			['shift+4', 'shift+g', 'shift+;', 'shift+\'', 'shift+[', 'a', 'space', '0', 'shift+0', 'shift+`']);
++	test('key notation for characters (Apple JIS)', () => {
++		assert.deepStrictEqual(['$', 'G', ':', '"', '{', 'a', ' ', '0', ')', '~'].map(keyForChar),
++			['shift+[Digit4]', 'shift+g', '[Quote]', 'shift+[Digit2]', 'shift+[BracketRight]', 'a', 'space', '0', 'shift+[Digit9]', 'shift+[Equal]']);
 +	});
 +});
 +
@@ -12039,13 +11936,8 @@ index 00000000..b11d4d26
 +		}
 +	});
 +
-+	test('JIS: g* [( ]) & ) by character, also as the second key of a chord', () => {
-+		const jis = (text: string, keys: string) => {
-+			const v = new Vim(text);
-+			v.usShiftedDigits = false;
-+			v.layout = JIS;
-+			return v.keys(keys).state();
-+		};
++	test('JIS: g* [( ]) & ) are ordinary chords', () => {
++		const jis = (text: string, keys: string) => new Vim(text).keys(keys).state();
 +		assert.strictEqual(jis('|foo foobar foo', 'g*'), 'foo |foobar foo');
 +		assert.strictEqual(jis('f(a, (b|), c)', '[('), 'f(a, |(b), c)');
 +		assert.strictEqual(jis('f(a, (b), |c)', '])'), 'f(a, (b), c|)');

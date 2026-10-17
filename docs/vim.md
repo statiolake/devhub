@@ -198,8 +198,7 @@ These are the names keybindings use; they and their arguments are stable.
 many times (`"count": "ignore"` once), it is recorded in macros, and in visual
 mode it runs with the selection on screen and then leaves visual mode
 (`"visual": "keep"` keeps visual mode and takes the selection the command
-made, as smart select does). `devhubVim.leaveChord` is internal (see
-[Keyboard layouts](#keyboard-layouts)).
+made, as smart select does).
 
 Motions: `left right charBackward charForward up down displayUp displayDown
 wordForward WORDForward wordBackward WORDBackward wordEnd WORDEnd
@@ -255,7 +254,6 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | `devhubVim.textObjectPending` | `inner` or `around` after `i` / `a`, or `''` |
 | `devhubVim.awaitingChar` | the next key is a character argument (`f t r " q @ m` …) |
 | `devhubVim.recording` | a macro is being recorded |
-| `devhubVim.usShiftedDigits` | Shift+1…0 type `!@#$%^&*()` on this layout (false on JIS); see [Keyboard layouts](#keyboard-layouts) |
 
 The defaults use these `when` clauses (`common/vimKeymap.ts` `VIM_WHEN`); copy
 them for your own bindings:
@@ -329,6 +327,30 @@ keymap binds `<BS>` (`h`, wrapping), `<Del>` (`x`), `<CR>` (`+`), `<Tab>`
 / `<S-Tab>` (visual and operator-pending mode, after `i` / `a`) they do
 nothing and cancel a pending operator, rather than move the focus out of the
 editor.
+
+## Every key is a keybinding
+
+Every Vim key is a native VS Code keybinding: shown in the Keyboard Shortcuts
+editor, overridable and removable in `keybindings.json`, resolved by the
+same rules as any other binding (its `when` clause, then its weight). Vim's
+defaults get no other precedence. The keystrokes the Vim layer reads itself
+are only those no keybinding can express: the character after a command that
+waits for one (`f t r m " @ q` …, `CTRL-R` in insert mode), the text typed
+into the `:` / `/` prompt, what an IME commits, and — asked of the dispatcher
+first, only when no binding takes the key — a printable key while a command is
+half built, which cancels it as in Vim. While `CTRL-W` waits, its next key is
+resolved by the keybinding service before the focused widget sees it (as a
+chord's second key is).
+
+Weights above the editor's own (`EditorContrib`) exist only where a VS Code
+default would otherwise win:
+
+| Weight | Where | Why |
+| --- | --- | --- |
+| `EditorContrib` | most keys | above the editor's cursor keys (`EditorCore`), below the widgets' keys (suggest, find, …) |
+| `WorkbenchContrib + 50` | `CTRL-` keys, `<Tab>` | workbench-wide defaults on them (Open Recent on `CTRL-R` on macOS, Quick Open on `CTRL-O`, inline suggestion accept on `<Tab>`, Outdent Lines on `CTRL-[`); the `CTRL-W` prefix and its keys |
+| `EditorCore + 50` | `<Esc>` outside insert mode | below every widget's Esc, so the widget closes first |
+| `WorkbenchContrib + 60` | `<Esc>` `CTRL-[` `CTRL-C` in insert mode | above every widget's Esc ([Esc](#esc)) |
 
 ## Esc
 
@@ -560,36 +582,46 @@ Indentation (`>>`, `CTRL-T`, `:retab`) uses the editor's tab size and
 
 ## Keyboard layouts
 
-Default keys are written in VS Code's US notation. On macOS VS Code dispatches
-by physical key (`keyboard.dispatch: code`, the default) but resolves letters
-and the punctuation keys **by the character they produce**: `shift+;` means
-"the key that types `:`", which on a JIS keyboard is the unshifted `:` key;
-`shift+[` is `{`, `shift+'` is `"`, ``shift+` `` is `~`, and so on. Those work on
-every layout as Vim expects.
+The default keymap targets the **Apple JIS keyboard** (macOS, JIS hardware,
+with the ABC / 英数 input source). Letters, digits, `ctrl+…` letters and the
+named keys are the same on every layout; every symbol key is bound to the
+physical JIS key that types it, in scan-code notation (`vimKeymap.ts`
+`JIS_KEYS`):
 
-The shifted digits are different: VS Code treats `shift+6` as Shift + the 6
-key, whatever it types. On a US-like layout that is `^`; on JIS it is `&`
-(and Shift-2 is `"`, Shift-8 is `(`). JIS `^`, `@` and `*` sit on keys VS
-Code's notation cannot name other than by scan code (`[Equal]`,
-`[BracketLeft]`, `shift+[Quote]`). So:
+| Vim | JIS key | Vim | JIS key | Vim | JIS key |
+| --- | --- | --- | --- | --- | --- |
+| `!` | `shift+[Digit1]` | `"` | `shift+[Digit2]` | `#` | `shift+[Digit3]` |
+| `$` | `shift+[Digit4]` | `%` | `shift+[Digit5]` | `&` | `shift+[Digit6]` |
+| `'` | `shift+[Digit7]` | `(` | `shift+[Digit8]` | `)` | `shift+[Digit9]` |
+| `-` | `[Minus]` | `=` | `shift+[Minus]` | `^` | `[Equal]` |
+| `~` | `shift+[Equal]` | `\|` | `shift+[IntlYen]` | `@` | `[BracketLeft]` |
+| `` ` `` | `shift+[BracketLeft]` | `[` | `[BracketRight]` | `{` | `shift+[BracketRight]` |
+| `;` | `[Semicolon]` | `+` | `shift+[Semicolon]` | `:` | `[Quote]` |
+| `*` | `shift+[Quote]` | `]` | `[Backslash]` | `}` | `shift+[Backslash]` |
+| `,` `<` | `[Comma]`, `shift+[Comma]` | `.` `>` | `[Period]`, `shift+[Period]` | `/` `?` | `[Slash]`, `shift+[Slash]` |
+| `_` | `[IntlRo]` (also with Shift) | `CTRL-[` | `ctrl+[BracketRight]` | `CTRL-]` | `ctrl+[Backslash]` |
 
-* The defaults on `shift+0`…`shift+9` (`^ $ % # * @ ( ) &`, and as the second
-  key of `g* g# g& [( ])`) carry `&& devhubVim.usShiftedDigits`, which is
-  false when the layout's Shift+digit row is not `!@#$%^&*()`.
-* On such a layout the editor dispatches those characters **by character**:
-  a key that types `^ * @ ( ) $ % # &` and that no keybinding takes runs the
-  default entry for that character, also as the second key of a chord (the
-  chord is then ended through `devhubVim.leaveChord`, bound to `g`/`[`/`]`
-  followed by F24, each with the `when` clauses of the default chords that
-  start with that key, so `g` `[` `]` wait for a second key only where those
-  chords apply: never in insert mode or outside a Vim editor). So `^`, `*`, `@q`, `di(`, `$`, `g*`, `[(` work on JIS out
-  of the box, and Shift-6 (`&`) is not `^`.
-* To rebind one of those characters on JIS, bind the physical key by scan
-  code, e.g. `{ "key": "[Equal]", "command": "devhubVim.motion", "args": {
-  "motion": "firstNonBlank" }, "when": "…" }` — a binding on the key wins over
-  the character fallback.
-* `keyboard.dispatch: keyCode` uses the browser's key codes instead; the
-  defaults are tested with the default (`code`).
+Chords are ordinary chords: `g*` is `g shift+[Quote]`, `[(` is
+`[BracketRight] shift+[Digit8]`, `])` is `[Backslash] shift+[Digit9]`. These are
+the keys you see, change and remove in the Keyboard Shortcuts editor (it shows
+them by the character your layout gives them). There is no character fallback
+and no layout context key: a key does what its binding says.
+
+The keymap source is written by character (US notation, `shift+8` for `*`)
+and turned into the JIS keys when it is registered, so the table above is
+the whole layout dependence.
+
+On another layout, rebind the symbol keys by scan code in `keybindings.json`
+(remove the JIS one and add yours), e.g. `^` on a US keyboard:
+
+```jsonc
+{ "key": "[Equal]", "command": "-devhubVim.motion" },
+{ "key": "shift+[Digit6]", "command": "devhubVim.motion", "args": { "motion": "firstNonBlank" },
+  "when": "config.devhub.vim.enabled && editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" }
+```
+
+`keyboard.dispatch: keyCode` makes VS Code ignore scan codes; keep the default
+(`code`).
 
 An IME that is on composes as usual in every mode; its keystrokes run no
 keybinding. What it commits outside insert mode is used only as a character
