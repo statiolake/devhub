@@ -116,10 +116,11 @@ group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
 a split / peek). In insert mode `CTRL-W` deletes a word, as in Vim. Any
-other command can follow `CTRL-W` too: a binding whose `when` tests
-`devhubVim.mode` (`devhubVim.mode == 'nav'`) runs once and the prefix ends,
-as with the defaults (see [Customising keys](#customising-keys)); a key with
-no such binding only ends the prefix.
+other command can follow `CTRL-W` too: whatever the key is bound to while
+`devhubVim.mode == 'nav'` runs once and the prefix ends, as with the defaults
+(see [Customising keys](#customising-keys)); a key bound to nothing only ends
+the prefix. Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
+edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mode-keys)).
 
 ## Neovim defaults and VS Code
 
@@ -274,6 +275,59 @@ A key that is the second half of a doubled operator has its own entry, e.g.
 word motion / search back while `comment` / `formatKeep` / `rot13` is
 pending.
 
+## Typing keys are insert-mode keys
+
+A key that types or erases at the caret is character input, so it applies
+only where typed text reaches the buffer: in insert mode (and replace mode,
+where Vim's insert-mode keys work too). In normal, visual, operator-pending,
+`:` / `/` and nav mode such a key resolves to the Vim binding on it, or to
+nothing, by its `when` clause like any other binding: there is no special
+case for it in the Vim layer, and no weight that has to outrank the editor.
+
+VS Code's own defaults for those keys carry the clause (`EditorContextKeys.
+devhubVimAllowsTyping` in the editor core; the Keyboard Shortcuts editor shows
+it in their `when`):
+
+| Keys (VS Code defaults) | Command |
+| --- | --- |
+| `Backspace`, `Shift+Backspace`; macOS `Ctrl+H`, `Ctrl+Backspace` | `deleteLeft` |
+| `Delete`; macOS `Ctrl+D`, `Ctrl+Delete` | `deleteRight` |
+| `Tab` / `Shift+Tab` | `tab` / `outdent` |
+| macOS `Ctrl+O` (line break, the caret stays) | `lineBreakInsert` |
+| `Ctrl+Backspace` / `Ctrl+Delete`; macOS `Alt+Backspace` / `Alt+Delete` | `deleteWordLeft` / `deleteWordRight` |
+| macOS `Ctrl+Alt+Backspace` / `Ctrl+Alt+Delete` | `deleteWordPartLeft` / `deleteWordPartRight` |
+| macOS `Cmd+Backspace` | `deleteAllLeft` |
+| macOS `Cmd+Delete`, `Ctrl+K` | `deleteAllRight` |
+| `Ctrl+Enter` / `Ctrl+Shift+Enter` (macOS `Cmd`) | `editor.action.insertLineAfter` / `insertLineBefore` |
+| macOS `Ctrl+T` | `editor.action.transposeLetters` |
+
+`Enter` and printable keys have no keybinding: they are typed text, which a
+Vim editor outside insert mode never takes (see the design note in
+`devhubVim.contribution.ts`). Line-level and selection commands are not
+character input and run in every mode: delete / move / copy lines
+(`Ctrl+Shift+K`, `Alt+Up/Down`, `Shift+Alt+Up/Down`), indent / outdent lines
+(`Ctrl+]` / `Ctrl+[`), comments (`Ctrl+/`, `Shift+Alt+A`), cut / copy /
+paste, undo / redo, formatting, rename, code actions. Cursor movement and
+selection keys are not gated either: where Vim binds them (arrows, `Home`
+`End` `PageUp` `PageDown`) Vim's binding wins by weight.
+
+Write your own text-editing bindings the same way, so that they leave normal
+mode alone and work as before without Vim:
+
+```jsonc
+{ "key": "ctrl+k", "command": "deleteAllRight",
+  "when": "textInputFocus && (!devhubVim.active || devhubVim.mode == 'insert')" }
+```
+
+(The defaults also hold in replace mode and never after `CTRL-W`:
+`devhubVim.mode == 'insert' || devhubVim.mode == 'replace' ||
+!devhubVim.active && devhubVim.mode != 'nav'`.) Outside insert mode the Vim
+keymap binds `<BS>` (`h`, wrapping), `<Del>` (`x`), `<CR>` (`+`), `<Tab>`
+(`CTRL-I` in normal mode) and `<S-Tab>`; where Vim has no meaning for `<Tab>`
+/ `<S-Tab>` (visual and operator-pending mode, after `i` / `a`) they do
+nothing and cancel a pending operator, rather than move the focus out of the
+editor.
+
 ## Customising keys
 
 `keybindings.json`:
@@ -304,8 +358,8 @@ pending.
     "when": "editorTextFocus && devhubVim.active && devhubVim.textObjectPending" },
 
   // <C-w>n: next editor in the group instead of "split with a new file".
-  // After CTRL-W any binding with a `when` on devhubVim.mode == 'nav' runs once
-  // and the prefix ends; remove the default on the key so the list stays clear.
+  // After CTRL-W the binding for devhubVim.mode == 'nav' runs once and the
+  // prefix ends; remove the default on the key so the list stays clear.
   { "key": "n", "command": "workbench.action.nextEditorInGroup",
     "when": "devhubVim.mode == 'nav'" },
   { "key": "n", "command": "-devhubVim.nav.new" },
@@ -325,12 +379,12 @@ Notes:
 * A binding to a plain VS Code command runs it as is: it does not take the
   pending count, operator or register, and it is not part of `.` or a macro.
   Wrap it in `devhubVim.run` to give it a count and visual mode.
-* After `CTRL-W` (`devhubVim.mode == 'nav'`) the next key runs the binding
-  it resolves to if that is a `devhubVim.nav.*` command or its `when` tests
-  `devhubVim.mode`; any command works (with its `args`), and the prefix is
-  over before it runs. Other bindings that happen to match there (the
-  editor's Backspace, a list's keys) do not run: the key only ends the
-  prefix. Only a single key, not a chord, follows `CTRL-W`.
+* After `CTRL-W` (`devhubVim.mode == 'nav'`) the next key runs whatever it
+  resolves to there, as the keybinding dispatcher would (any command, with
+  its `args`), and the prefix is over before it runs. The editor's typing
+  keys do not apply in nav mode, so `CTRL-W <BS>` deletes nothing; a key
+  bound to nothing only ends the prefix. Only a single key, not a chord,
+  follows `CTRL-W`.
 * `devhubVim.awaitChar` runs `then.command` with `then.args` plus `"char"`;
   the character is the next key typed, or the first character an IME commits.
   Any command can be the target, not just `devhubVim.*` ones.

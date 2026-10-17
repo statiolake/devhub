@@ -280,6 +280,57 @@ index 9b79bfb6..fc805abd 100644
  
  			this._visibleTextArea = null;
  
+diff --git a/src/vs/editor/browser/coreCommands.ts b/src/vs/editor/browser/coreCommands.ts
+index 9331eea4..170697a2 100644
+--- a/src/vs/editor/browser/coreCommands.ts
++++ b/src/vs/editor/browser/coreCommands.ts
+@@ -1985,7 +1985,7 @@ export namespace CoreEditingCommands {
+ 				precondition: EditorContextKeys.writable,
+ 				kbOpts: {
+ 					weight: CORE_WEIGHT,
+-					kbExpr: EditorContextKeys.textInputFocus,
++					kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 					primary: 0,
+ 					mac: { primary: KeyMod.WinCtrl | KeyCode.KeyO }
+ 				}
+@@ -2007,7 +2007,8 @@ export namespace CoreEditingCommands {
+ 					weight: CORE_WEIGHT,
+ 					kbExpr: ContextKeyExpr.and(
+ 						EditorContextKeys.editorTextFocus,
+-						EditorContextKeys.tabDoesNotMoveFocus
++						EditorContextKeys.tabDoesNotMoveFocus,
++						EditorContextKeys.devhubVimAllowsTyping // DevHub: character input, see devhubVimAllowsTyping
+ 					),
+ 					primary: KeyMod.Shift | KeyCode.Tab
+ 				}
+@@ -2030,7 +2031,8 @@ export namespace CoreEditingCommands {
+ 					weight: CORE_WEIGHT,
+ 					kbExpr: ContextKeyExpr.and(
+ 						EditorContextKeys.editorTextFocus,
+-						EditorContextKeys.tabDoesNotMoveFocus
++						EditorContextKeys.tabDoesNotMoveFocus,
++						EditorContextKeys.devhubVimAllowsTyping // DevHub: character input, see devhubVimAllowsTyping
+ 					),
+ 					primary: KeyCode.Tab
+ 				}
+@@ -2051,7 +2053,7 @@ export namespace CoreEditingCommands {
+ 				precondition: undefined,
+ 				kbOpts: {
+ 					weight: CORE_WEIGHT,
+-					kbExpr: EditorContextKeys.textInputFocus,
++					kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 					primary: KeyCode.Backspace,
+ 					secondary: [KeyMod.Shift | KeyCode.Backspace],
+ 					mac: { primary: KeyCode.Backspace, secondary: [KeyMod.Shift | KeyCode.Backspace, KeyMod.WinCtrl | KeyCode.KeyH, KeyMod.WinCtrl | KeyCode.Backspace] }
+@@ -2076,7 +2078,7 @@ export namespace CoreEditingCommands {
+ 				precondition: undefined,
+ 				kbOpts: {
+ 					weight: CORE_WEIGHT,
+-					kbExpr: EditorContextKeys.textInputFocus,
++					kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 					primary: KeyCode.Delete,
+ 					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
+ 				}
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 index b77791a6..16f9a158 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
@@ -352,6 +403,260 @@ index b77791a6..16f9a158 100644
  		}
  
  		this._modelData = new ModelData(model, viewModel, view, hasRealView, listenersToRemove, attachedView);
+diff --git a/src/vs/editor/common/editorContextKeys.ts b/src/vs/editor/common/editorContextKeys.ts
+index 64dad4cf..1b4dd727 100644
+--- a/src/vs/editor/common/editorContextKeys.ts
++++ b/src/vs/editor/common/editorContextKeys.ts
+@@ -4,7 +4,7 @@
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import * as nls from '../../nls.js';
+-import { RawContextKey } from '../../platform/contextkey/common/contextkey.js';
++import { ContextKeyExpr, ContextKeyExpression, RawContextKey } from '../../platform/contextkey/common/contextkey.js';
+ 
+ export namespace EditorContextKeys {
+ 
+@@ -52,6 +52,25 @@ export namespace EditorContextKeys {
+ 	export const hasSingleSelection = hasMultipleSelections.toNegated();
+ 	export const tabMovesFocus = new RawContextKey<boolean>('editorTabMovesFocus', false, nls.localize('editorTabMovesFocus', "Whether `Tab` will move focus out of the editor"));
+ 	export const tabDoesNotMoveFocus = tabMovesFocus.toNegated();
++
++	/**
++	 * DevHub: where a key that types or erases at the caret applies (Enter, Tab,
++	 * Backspace, Delete and their aliases, word / line-start / line-end deletes,
++	 * insert line above / below, transpose, line break). Those are character
++	 * input, so they apply exactly where typed text reaches the model: always
++	 * without DevHub Vim (`devhubVim.active` is never set), and in a Vim editor
++	 * only in insert and replace mode. Not while Vim's `<C-w>` prefix waits
++	 * (`devhubVim.mode == 'nav'`), wherever the focus is. In every other Vim mode
++	 * such a key resolves to the Vim keymap's binding, or to nothing, as with
++	 * any other `when`. Line-level commands (delete / move / copy / indent /
++	 * comment lines) and the clipboard are not character input and stay
++	 * ungated. src/vs/workbench/contrib/devhubVim, docs/vim.md in DevHub.
++	 */
++	export const devhubVimAllowsTyping: ContextKeyExpression = ContextKeyExpr.or(
++		ContextKeyExpr.and(ContextKeyExpr.not('devhubVim.active'), ContextKeyExpr.notEquals('devhubVim.mode', 'nav')),
++		ContextKeyExpr.equals('devhubVim.mode', 'insert'),
++		ContextKeyExpr.equals('devhubVim.mode', 'replace'),
++	)!;
+ 	export const isInEmbeddedEditor = new RawContextKey<boolean>('isInEmbeddedEditor', false, true);
+ 	export const canUndo = new RawContextKey<boolean>('canUndo', false, true);
+ 	export const canRedo = new RawContextKey<boolean>('canRedo', false, true);
+diff --git a/src/vs/editor/contrib/caretOperations/browser/transpose.ts b/src/vs/editor/contrib/caretOperations/browser/transpose.ts
+index 35ac2207..75d7d26a 100644
+--- a/src/vs/editor/contrib/caretOperations/browser/transpose.ts
++++ b/src/vs/editor/contrib/caretOperations/browser/transpose.ts
+@@ -12,6 +12,7 @@ import { Range } from '../../../common/core/range.js';
+ import { ICommand } from '../../../common/editorCommon.js';
+ import { EditorContextKeys } from '../../../common/editorContextKeys.js';
+ import * as nls from '../../../../nls.js';
++import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+ 
+ class TransposeLettersAction extends EditorAction {
+@@ -22,7 +23,7 @@ class TransposeLettersAction extends EditorAction {
+ 			label: nls.localize2('transposeLetters.label', "Transpose Letters"),
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: 0,
+ 				mac: {
+ 					primary: KeyMod.WinCtrl | KeyCode.KeyT
+diff --git a/src/vs/editor/contrib/linesOperations/browser/linesOperations.ts b/src/vs/editor/contrib/linesOperations/browser/linesOperations.ts
+index 8e69736c..61fbeaf9 100644
+--- a/src/vs/editor/contrib/linesOperations/browser/linesOperations.ts
++++ b/src/vs/editor/contrib/linesOperations/browser/linesOperations.ts
+@@ -7,6 +7,7 @@ import { KeyChord, KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+ import * as nls from '../../../../nls.js';
+ import { MenuId } from '../../../../platform/actions/common/actions.js';
+ import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
++import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+ import { CoreEditingCommands } from '../../../browser/coreCommands.js';
+ import { IActiveCodeEditor, ICodeEditor } from '../../../browser/editorBrowser.js';
+@@ -662,7 +663,7 @@ export class InsertLineBeforeAction extends EditorAction {
+ 			label: nls.localize2('lines.insertBefore', "Insert Line Above"),
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.editorTextFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.editorTextFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter,
+ 				weight: KeybindingWeight.EditorContrib
+ 			},
+@@ -688,7 +689,7 @@ export class InsertLineAfterAction extends EditorAction {
+ 			label: nls.localize2('lines.insertAfter', "Insert Line Below"),
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.editorTextFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.editorTextFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: KeyMod.CtrlCmd | KeyCode.Enter,
+ 				weight: KeybindingWeight.EditorContrib
+ 			},
+@@ -756,7 +757,7 @@ export class DeleteAllLeftAction extends AbstractDeleteAllToBoundaryAction {
+ 			label: nls.localize2('lines.deleteAllLeft', "Delete All Left"),
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: 0,
+ 				mac: { primary: KeyMod.CtrlCmd | KeyCode.Backspace },
+ 				weight: KeybindingWeight.EditorContrib
+@@ -834,7 +835,7 @@ export class DeleteAllRightAction extends AbstractDeleteAllToBoundaryAction {
+ 			label: nls.localize2('lines.deleteAllRight', "Delete All Right"),
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: 0,
+ 				mac: { primary: KeyMod.WinCtrl | KeyCode.KeyK, secondary: [KeyMod.CtrlCmd | KeyCode.Delete] },
+ 				weight: KeybindingWeight.EditorContrib
+diff --git a/src/vs/editor/contrib/wordOperations/browser/wordOperations.ts b/src/vs/editor/contrib/wordOperations/browser/wordOperations.ts
+index 8e944c23..43d5196b 100644
+--- a/src/vs/editor/contrib/wordOperations/browser/wordOperations.ts
++++ b/src/vs/editor/contrib/wordOperations/browser/wordOperations.ts
+@@ -419,7 +419,7 @@ export class DeleteWordLeft extends DeleteWordLeftCommand {
+ 			id: 'deleteWordLeft',
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: KeyMod.CtrlCmd | KeyCode.Backspace,
+ 				mac: { primary: KeyMod.Alt | KeyCode.Backspace },
+ 				weight: KeybindingWeight.EditorContrib
+@@ -458,7 +458,7 @@ export class DeleteWordRight extends DeleteWordRightCommand {
+ 			id: 'deleteWordRight',
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: KeyMod.CtrlCmd | KeyCode.Delete,
+ 				mac: { primary: KeyMod.Alt | KeyCode.Delete },
+ 				weight: KeybindingWeight.EditorContrib
+diff --git a/src/vs/editor/contrib/wordPartOperations/browser/wordPartOperations.ts b/src/vs/editor/contrib/wordPartOperations/browser/wordPartOperations.ts
+index 9bee3f0e..468270cf 100644
+--- a/src/vs/editor/contrib/wordPartOperations/browser/wordPartOperations.ts
++++ b/src/vs/editor/contrib/wordPartOperations/browser/wordPartOperations.ts
+@@ -13,6 +13,7 @@ import { EditorContextKeys } from '../../../common/editorContextKeys.js';
+ import { ITextModel } from '../../../common/model.js';
+ import { DeleteWordCommand, MoveWordCommand } from '../../wordOperations/browser/wordOperations.js';
+ import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
++import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+ 
+ export class DeleteWordPartLeft extends DeleteWordCommand {
+@@ -23,7 +24,7 @@ export class DeleteWordPartLeft extends DeleteWordCommand {
+ 			id: 'deleteWordPartLeft',
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: 0,
+ 				mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | KeyCode.Backspace },
+ 				weight: KeybindingWeight.EditorContrib
+@@ -48,7 +49,7 @@ export class DeleteWordPartRight extends DeleteWordCommand {
+ 			id: 'deleteWordPartRight',
+ 			precondition: EditorContextKeys.writable,
+ 			kbOpts: {
+-				kbExpr: EditorContextKeys.textInputFocus,
++				kbExpr: ContextKeyExpr.and(EditorContextKeys.textInputFocus, EditorContextKeys.devhubVimAllowsTyping), // DevHub: character input, see devhubVimAllowsTyping
+ 				primary: 0,
+ 				mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | KeyCode.Delete },
+ 				weight: KeybindingWeight.EditorContrib
+diff --git a/src/vs/editor/test/browser/controller/devhubVimAllowsTyping.test.ts b/src/vs/editor/test/browser/controller/devhubVimAllowsTyping.test.ts
+new file mode 100644
+index 00000000..e0d1d305
+--- /dev/null
++++ b/src/vs/editor/test/browser/controller/devhubVimAllowsTyping.test.ts
+@@ -0,0 +1,88 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) DevHub contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++// DevHub: the editor's keys that type or erase at the caret apply only where
++// typed text reaches the model (EditorContextKeys.devhubVimAllowsTyping): always
++// without DevHub Vim, in Vim's insert and replace mode with it.
++
++import assert from 'assert';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
++import { IContext } from '../../../../platform/contextkey/common/contextkey.js';
++import { KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
++import { EditorContextKeys } from '../../../common/editorContextKeys.js';
++import '../../../browser/coreCommands.js';
++import '../../../contrib/caretOperations/browser/transpose.js';
++import '../../../contrib/linesOperations/browser/linesOperations.js';
++import '../../../contrib/wordOperations/browser/wordOperations.js';
++import '../../../contrib/wordPartOperations/browser/wordPartOperations.js';
++
++/** Commands whose default keys are character input (some only have macOS keys). */
++const GATED = [
++	'deleteLeft', 'deleteRight', 'tab', 'outdent', 'lineBreakInsert',
++	'deleteWordLeft', 'deleteWordRight', 'deleteWordPartLeft', 'deleteWordPartRight',
++	'deleteAllLeft', 'deleteAllRight', 'editor.action.insertLineAfter', 'editor.action.insertLineBefore',
++	'editor.action.transposeLetters',
++];
++/** Bound on every platform, so this test always sees their keys. */
++const GATED_EVERYWHERE = ['deleteLeft', 'deleteRight', 'tab', 'outdent', 'deleteWordLeft', 'deleteWordRight', 'editor.action.insertLineAfter', 'editor.action.insertLineBefore'];
++/** Line-level commands: not character input, they run in any Vim mode. */
++const UNGATED = ['editor.action.deleteLines', 'editor.action.moveLinesUpAction', 'editor.action.moveLinesDownAction', 'editor.action.copyLinesUpAction', 'editor.action.copyLinesDownAction', 'editor.action.indentLines', 'editor.action.outdentLines'];
++
++function context(values: Record<string, unknown>): IContext {
++	const all: Record<string, unknown> = { editorTextFocus: true, textInputFocus: true, editorFocus: true, ...values };
++	return { getValue: <T>(key: string) => all[key] as T };
++}
++
++/** [what, context keys, the editor's typing keys apply] */
++const CASES: [string, Record<string, unknown>, boolean][] = [
++	['no Vim (keys never set)', {}, true],
++	['Vim off', { 'devhubVim.active': false, 'devhubVim.mode': '' }, true],
++	['a plain input while Vim is on', { 'devhubVim.active': false, 'devhubVim.mode': 'insert' }, true],
++	['insert mode', { 'devhubVim.active': true, 'devhubVim.mode': 'insert' }, true],
++	['replace mode', { 'devhubVim.active': true, 'devhubVim.mode': 'replace' }, true],
++	['normal mode', { 'devhubVim.active': true, 'devhubVim.mode': 'normal' }, false],
++	['visual mode', { 'devhubVim.active': true, 'devhubVim.mode': 'visual' }, false],
++	['visual line mode', { 'devhubVim.active': true, 'devhubVim.mode': 'visualLine' }, false],
++	['visual block mode', { 'devhubVim.active': true, 'devhubVim.mode': 'visualBlock' }, false],
++	['operator-pending mode', { 'devhubVim.active': true, 'devhubVim.mode': 'operatorPending' }, false],
++	['the : / prompt', { 'devhubVim.active': true, 'devhubVim.mode': 'cmdline' }, false],
++	['<C-w> waiting in a Vim editor', { 'devhubVim.active': true, 'devhubVim.mode': 'nav' }, false],
++	['<C-w> waiting in a plain input', { 'devhubVim.active': false, 'devhubVim.mode': 'nav' }, false],
++];
++
++suite('DevHub Vim: the editor\'s typing keys apply only where text is typed', () => {
++
++	ensureNoDisposablesAreLeakedInTestSuite();
++
++	test('the shared expression', () => {
++		// test/common/vimEngine.test.ts (devhubVim) models the editor's keys with this same string
++		assert.strictEqual(EditorContextKeys.devhubVimAllowsTyping.serialize(),
++			'devhubVim.mode == \'insert\' || devhubVim.mode == \'replace\' || !devhubVim.active && devhubVim.mode != \'nav\'');
++		for (const [what, values, applies] of CASES) {
++			assert.strictEqual(EditorContextKeys.devhubVimAllowsTyping.evaluate(context(values)), applies, what);
++		}
++	});
++
++	test('every default key of the character-input commands carries it (the Keyboard Shortcuts editor shows it)', () => {
++		const items = KeybindingsRegistry.getDefaultKeybindings();
++		for (const id of GATED_EVERYWHERE) {
++			assert.ok(items.some(i => i.command === id), `${id} has a default key`);
++		}
++		for (const item of items.filter(i => GATED.includes(i.command ?? ''))) {
++			assert.ok(item.when?.keys().includes('devhubVim.mode'), `${item.command}: ${item.when?.serialize()}`);
++			for (const [what, values, applies] of CASES) {
++				assert.strictEqual(item.when!.evaluate(context({ editorTabMovesFocus: false, ...values })), applies, `${item.command} in ${what}: ${item.when!.serialize()}`);
++			}
++		}
++	});
++
++	test('line-level commands are not character input and keep their upstream when', () => {
++		const items = KeybindingsRegistry.getDefaultKeybindings().filter(i => UNGATED.includes(i.command ?? ''));
++		assert.ok(items.length >= UNGATED.length);
++		for (const item of items) {
++			assert.ok(!item.when?.keys().some(k => k.startsWith('devhubVim.')), `${item.command}: ${item.when?.serialize()}`);
++		}
++	});
++});
 diff --git a/src/vs/editor/test/browser/controller/modalTextInput.test.ts b/src/vs/editor/test/browser/controller/modalTextInput.test.ts
 new file mode 100644
 index 00000000..b03c5876
@@ -440,10 +745,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..f95f397b
+index 00000000..edddadb9
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1226 @@
+@@ -0,0 +1,1222 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -472,11 +777,19 @@ index 00000000..f95f397b
 +//   the context keys below. They show in the Keyboard Shortcuts editor,
 +//   keybindings.json overrides them, `-devhubVim.motion` removes one, and a
 +//   user may bind any other command in a Vim mode (it just does not compose
-+//   with counts or operators). Weight: EditorContrib, so the editor's own
-+//   defaults on the same keys (deleteLeft, cursor moves, tab) lose while a
-+//   Vim mode's `when` holds, and widgets (suggest, ...) still win; CTRL keys
-+//   and Tab at WorkbenchContrib + 50 (Ctrl-R is Open Recent on macOS); Esc at
-+//   EditorCore + 50, below every widget's Esc.
++//   with counts or operators). The editor's own keys that type or erase at
++//   the caret (Backspace, Delete, Tab, Shift-Tab, word / line-start /
++//   line-end deletes, insert line above / below, transpose, line break, and
++//   their macOS Emacs aliases) do not apply outside insert and replace mode
++//   at all: their `when` has EditorContextKeys.devhubVimAllowsTyping, so in
++//   normal, visual, operator-pending and nav mode such a key resolves to the
++//   Vim binding or to nothing, as any other `when` decides. Weight:
++//   EditorContrib, so the editor's other defaults on the same keys (cursor
++//   moves) lose while a Vim mode's `when` holds, and widgets (suggest, ...)
++//   still win; CTRL keys and Tab at WorkbenchContrib + 50, for workbench-wide
++//   defaults (Ctrl-R is Open Recent on macOS, Ctrl-O Open File elsewhere) and
++//   Tab's inline suggestion / next edit accept; Esc at EditorCore + 50, below
++//   every widget's Esc.
 +// * `.` and macros replay the commands the engine executed (with captured
 +//   characters and the text typed in insert mode), so remapping cannot break
 +//   them.
@@ -511,8 +824,9 @@ index 00000000..f95f397b
 +//   normal mode and nowhere else.
 +// * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
 +//   then one key (h j k l, w p t b, s v n c q o, = _ + - < >, H J K L, d ] }:
-+//   devhubVim.nav.*, or any binding whose `when` tests devhubVim.mode). It
-+//   is one-shot (common/vimKeys.ts VimNavPrefix). In a Vim editor's insert
++//   devhubVim.nav.*, or whatever else the key is bound to while
++//   `devhubVim.mode == 'nav'`). It is one-shot (common/vimKeys.ts
++//   VimNavPrefix). In a Vim editor's insert
 +//   mode Ctrl-W is Vim's delete-word-before-the-caret.
 +//
 +// User documentation: docs/vim.md in the DevHub repository.
@@ -526,7 +840,6 @@ index 00000000..f95f397b
 +import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
 +import { KeyChord, KeyCode, KeyCodeUtils, KeyMod } from '../../../../base/common/keyCodes.js';
 +import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
-+import { equals } from '../../../../base/common/objects.js';
 +import { isMacintosh } from '../../../../base/common/platform.js';
 +import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 +import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
@@ -561,7 +874,7 @@ index 00000000..f95f397b
 +import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 +import { DEFAULT_KEYBINDINGS, SHIFTED_DIGIT_GATE, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
 +import { VimRegex } from '../common/vimRegex.js';
-+import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, navTakesBinding, typedChar, vimCursorStyle } from '../common/vimKeys.js';
++import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 +
 +const SETTING = 'devhub.vim.enabled';
 +const EX_SETTING = 'devhub.vim.exCommands';
@@ -1441,10 +1754,13 @@ index 00000000..f95f397b
 +	/**
 +	 * While `<C-w>` waits, its key goes to the keybinding service before the
 +	 * focused widget (a list's type-to-find, an input's typing) sees it. A key
-+	 * bound to a `devhubVim.nav.*` command, or to any command with a `when` on
-+	 * `devhubVim.mode` (a user's `devhubVim.mode == 'nav'` binding), runs it
-+	 * once; any other key ends the prefix (VimNavPrefix.key decides whether it
-+	 * is eaten or let through). The prefix is over before the command runs.
++	 * that resolves to a command (a `devhubVim.nav.*` one, a user's
++	 * `devhubVim.mode == 'nav'` binding, any binding that applies here) runs it
++	 * once, as the dispatcher would; any other key ends the prefix
++	 * (VimNavPrefix.key decides whether it is eaten or let through). The prefix
++	 * is over before the command runs. The editor's Backspace / Tab / Delete do
++	 * not apply in nav mode (EditorContextKeys.devhubVimAllowsTyping), so
++	 * Ctrl-W Backspace edits nothing without any filter here.
 +	 */
 +	private onWindowKeyDown(e: KeyboardEvent): void {
 +		if (!this.nav.active) {
@@ -1467,25 +1783,10 @@ index 00000000..f95f397b
 +		}
 +	}
 +
-+	/** The binding the key resolves to while nav waits, if it is nav's (navTakesBinding). */
++	/** The command the key resolves to while nav waits, if any. */
 +	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
 +		const result = this.keybindingService.softDispatch(event, target);
-+		if (result.kind !== ResultKind.KbFound || !result.commandId) {
-+			return undefined;
-+		}
-+		const found = { commandId: result.commandId, commandArgs: result.commandArgs };
-+		if (navTakesBinding(found.commandId, undefined)) {
-+			return found;
-+		}
-+		// softDispatch names the command, not the binding: find the binding of
-+		// this key to it that matches here, and look at its `when`.
-+		const chord = this.keybindingService.resolveKeyboardEvent(event).getDispatchChords()[0];
-+		const context = this.contextKeyService.getContext(target);
-+		const ours = chord !== null && this.keybindingService.getKeybindings().some(item =>
-+			item.command === found.commandId && item.chords.length === 1 && item.chords[0] === chord
-+			&& equals(item.commandArgs, found.commandArgs)
-+			&& !!item.when && navTakesBinding(item.command, item.when.keys()) && item.when.evaluate(context));
-+		return ours ? found : undefined;
++		return result.kind === ResultKind.KbFound && result.commandId ? { commandId: result.commandId, commandArgs: result.commandArgs } : undefined;
 +	}
 +}
 +
@@ -7743,10 +8044,10 @@ index 00000000..e3baa9c0
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
 new file mode 100644
-index 00000000..d302d6f5
+index 00000000..7005be1a
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
-@@ -0,0 +1,468 @@
+@@ -0,0 +1,476 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -7818,6 +8119,12 @@ index 00000000..d302d6f5
 +	insert: `${BASE} && devhubVim.insert && !devhubVim.awaitingChar`,
 +	replace: `${BASE} && devhubVim.mode == 'replace' && !devhubVim.awaitingChar`,
 +	escape: `devhubVim.active && devhubVim.mode != 'nav'`,
++	/**
++	 * every mode of a Vim editor but insert and replace (and nav): where a key
++	 * that types or erases a character is a Vim command or nothing, because the
++	 * editor's own ones do not apply (EditorContextKeys.devhubVimAllowsTyping)
++	 */
++	notTyping: `${BASE} && !devhubVim.insert && devhubVim.mode != 'nav'`,
 +} as const;
 +
 +const W = VIM_WHEN;
@@ -8005,7 +8312,9 @@ index 00000000..d302d6f5
 +
 +	// ---- jumps, marks, the change list ----
 +	action('ctrl+o', 'jumpBack', W.normal, OVERRIDE), action('ctrl+i', 'jumpForward', W.normal, OVERRIDE), action('tab', 'jumpForward', W.normal, OVERRIDE),
-+	action('tab', 'ignore', W.visual, OVERRIDE),
++	// <Tab> elsewhere and <S-Tab> are no Vim commands: they do nothing (a pending
++	// operator is cancelled), and do not move the focus out of the editor
++	action('tab', 'ignore', `${W.notTyping} && devhubVim.mode != 'normal'`, OVERRIDE), action('shift+tab', 'ignore', W.notTyping, OVERRIDE),
 +	action('g ;', 'changeOlder', W.normal), action('g ,', 'changeNewer', W.normal),
 +
 +	// ---- macros ----
@@ -8217,10 +8526,10 @@ index 00000000..d302d6f5
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
 new file mode 100644
-index 00000000..1f442da1
+index 00000000..3ad4aff3
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeys.ts
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,172 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8318,7 +8627,7 @@ index 00000000..1f442da1
 +
 +/** What the workbench does with a keydown while the prefix waits. */
 +export type VimNavKeyAction =
-+	/** run the command the keybindings bind the key to while nav waits (navTakesBinding) */
++	/** run the command the keybindings bind the key to while nav waits, whatever it is */
 +	| 'run'
 +	/** the key is not the prefix's: it does what it does anyway */
 +	| 'pass'
@@ -8326,21 +8635,6 @@ index 00000000..1f442da1
 +	| 'swallow'
 +	/** a lone modifier: keep waiting for the key it modifies */
 +	| 'wait';
-+
-+/**
-+ * Whether a keybinding that resolves while the `<C-w>` prefix waits is nav's:
-+ * a `devhubVim.nav.*` command, or any other command whose binding's `when`
-+ * tests `devhubVim.mode` (written for nav: `devhubVim.mode == 'nav'`, so
-+ * `<C-w>n` can be `workbench.action.nextEditorInGroup`). Other bindings that
-+ * happen to match there (the editor's Backspace / Tab / Enter commands, a
-+ * list's keys) are not run: after `<C-w>` such a key only ends the prefix.
-+ */
-+export function navTakesBinding(command: string | null | undefined, whenKeys: readonly string[] | undefined): boolean {
-+	if (!command) {
-+		return false;
-+	}
-+	return command.startsWith('devhubVim.nav.') || !!whenKeys?.includes('devhubVim.mode');
-+}
 +
 +/**
 + * Vim's window prefix, workbench wide: `<C-w>` then one key, as in Vim's
@@ -8376,12 +8670,15 @@ index 00000000..1f442da1
 +
 +	/**
 +	 * A keydown while the prefix waits; `command` is the command the
-+	 * keybindings bind it to here, if navTakesBinding accepts it: a
-+	 * `devhubVim.nav.*` one (h j k l by default) or any command bound with a
-+	 * `when` on `devhubVim.mode` (`devhubVim.mode == 'nav'`). Every key but a
-+	 * lone modifier ends the prefix, also one that runs a command. A key nav
-+	 * does not bind cancels it and is eaten, as in Vim; Cmd chords and IME
-+	 * keys are let through (Cmd-W still closes the editor).
++	 * keybindings bind it to here (`devhubVim.mode == 'nav'` holds): a
++	 * `devhubVim.nav.*` one (h j k l by default), a user's binding with that
++	 * `when`, or any other binding that applies here. No key is filtered: the
++	 * editor's keys that type or erase a character (Backspace, Tab, Enter ...)
++	 * do not apply while nav waits (EditorContextKeys.devhubVimAllowsTyping),
++	 * so they resolve to nothing. Every key but a lone modifier ends the
++	 * prefix, also one that runs a command. A key nothing binds cancels it and
++	 * is eaten, as in Vim; Cmd chords and IME keys are let through (Cmd-W
++	 * still closes the editor).
 +	 */
 +	key(e: { readonly key: string; readonly keyCode: number; readonly isComposing: boolean; readonly metaKey: boolean }, command: string | undefined): VimNavKeyAction {
 +		if (!this._active) {
@@ -9136,10 +9433,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..65ac28a5
+index 00000000..c9df4e6a
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,1947 @@
+@@ -0,0 +1,2026 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -9153,7 +9450,7 @@ index 00000000..65ac28a5
 +import { DEFAULT_KEYBINDINGS, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
 +import type { VimRegex } from '../../common/vimRegex.js';
 +import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
-+import { VimNavPrefix, captureKey, navTakesBinding, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
++import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
 +
 +/** A string-array host: the cursor is drawn as `|` in `state()`. */
 +class TestHost implements IVimHost {
@@ -9293,6 +9590,21 @@ index 00000000..65ac28a5
 +
 +// ---- the driver: keys resolved against the keymap, as the workbench does ----
 +
++/**
++ * The editor's own keys that type or erase a character (coreCommands.ts), with
++ * the `when` they are registered with: EditorContextKeys.devhubVimAllowsTyping
++ * (editor/test/browser/controller/devhubVimAllowsTyping.test.ts checks the
++ * string). They weigh less than the Vim keymap, so they come first.
++ */
++const ALLOWS_TYPING = 'devhubVim.mode == \'insert\' || devhubVim.mode == \'replace\' || !devhubVim.active && devhubVim.mode != \'nav\'';
++const EDITOR_TYPING_KEYS: readonly VimKeybinding[] = [
++	{ key: 'backspace', command: 'deleteLeft', when: `textInputFocus && (${ALLOWS_TYPING})` },
++	{ key: 'shift+backspace', command: 'deleteLeft', when: `textInputFocus && (${ALLOWS_TYPING})` },
++	{ key: 'delete', command: 'deleteRight', when: `textInputFocus && (${ALLOWS_TYPING})` },
++	{ key: 'tab', command: 'tab', when: `editorTextFocus && !editorTabMovesFocus && (${ALLOWS_TYPING})` },
++	{ key: 'shift+tab', command: 'outdent', when: `editorTextFocus && !editorTabMovesFocus && (${ALLOWS_TYPING})` },
++];
++
 +interface UserBinding {
 +	readonly key: string;
 +	/** `-id` removes the default entries for `id` (on `key`), as in keybindings.json. */
@@ -9309,7 +9621,7 @@ index 00000000..65ac28a5
 +
 +/** Vim key notation to keybinding notation, for the keys tests press. */
 +const NAMED: Record<string, string> = {
-+	'<Esc>': 'escape', '<CR>': 'enter', '<BS>': 'backspace', '<Tab>': 'tab', '<Space>': 'space', '<Del>': 'delete',
++	'<Esc>': 'escape', '<CR>': 'enter', '<BS>': 'backspace', '<Tab>': 'tab', '<S-Tab>': 'shift+tab', '<Space>': 'space', '<Del>': 'delete',
 +	'<Left>': 'left', '<Right>': 'right', '<Up>': 'up', '<Down>': 'down', '<Home>': 'home', '<End>': 'end',
 +	'<PageDown>': 'pagedown', '<PageUp>': 'pageup',
 +};
@@ -9341,7 +9653,7 @@ index 00000000..65ac28a5
 +	}
 +
 +	static withUser(user: readonly UserBinding[]): VimKeybinding[] {
-+		let out = DEFAULT_KEYBINDINGS.slice();
++		let out = [...EDITOR_TYPING_KEYS, ...DEFAULT_KEYBINDINGS];
 +		for (const u of user) {
 +			if (u.command.startsWith('-')) {
 +				out = out.filter(b => !(b.command === u.command.slice(1) && (!u.key || b.key === u.key)));
@@ -9357,6 +9669,7 @@ index 00000000..65ac28a5
 +		return {
 +			'true': true,
 +			'editorTextFocus': true,
++			'textInputFocus': true,
 +			'devhubVim.active': true,
 +			'devhubVim.usShiftedDigits': this.usShiftedDigits,
 +			'devhubVim.mode': c.mode,
@@ -10018,6 +10331,65 @@ index 00000000..65ac28a5
 +	});
 +});
 +
++suite('DevHub Vim: the editor\'s typing keys are insert-mode keys', () => {
++
++	function ctx(mode: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
++		const typing = mode === 'insert' || mode === 'replace';
++		return {
++			'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.usShiftedDigits': true, 'devhubVim.mode': mode,
++			'devhubVim.acceptsMotion': !typing && mode !== 'cmdline' && mode !== 'nav', 'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': typing,
++			'devhubVim.textObjectPending': '', 'devhubVim.pending': mode === 'operatorPending', 'devhubVim.awaitingChar': false, ...extra,
++		};
++	}
++
++	test('they apply without Vim, in insert and replace mode, and nowhere else', () => {
++		const keys = (c: Record<string, unknown>) => EDITOR_TYPING_KEYS.filter(b => evaluateWhen(b.when, c)).map(b => b.key);
++		const all = EDITOR_TYPING_KEYS.map(b => b.key);
++		assert.deepStrictEqual(keys({ editorTextFocus: true, textInputFocus: true }), all);
++		assert.deepStrictEqual(keys({ editorTextFocus: true, textInputFocus: true, 'devhubVim.active': false, 'devhubVim.mode': 'insert' }), all);
++		assert.deepStrictEqual(keys(ctx('insert')), all);
++		assert.deepStrictEqual(keys(ctx('replace')), all);
++		for (const mode of ['normal', 'visual', 'visualLine', 'visualBlock', 'operatorPending', 'cmdline', 'nav']) {
++			assert.deepStrictEqual(keys(ctx(mode)), [], mode);
++		}
++		assert.deepStrictEqual(keys(ctx('operatorPending', { 'devhubVim.acceptsMotion': false, 'devhubVim.textObjectPending': 'inner' })), []);
++	});
++
++	test('so outside insert mode <BS> <Del> <Tab> <S-Tab> are Vim keys: Vim\'s binding or nothing, no weight needed against the editor', () => {
++		assert.strictEqual(run('ab|c', '<BS>').host.state(), 'a|bc'); // h, as 'whichwrap' b
++		assert.strictEqual(run('ab|c', '<Del>').host.state(), 'a|b');
++		let v = new Vim('a|bc');
++		v.keys('<S-Tab>');
++		assert.strictEqual(v.state(), 'a|bc');
++		assert.deepStrictEqual(v.host.commands, []);
++		// <Tab> after an operator, after `di`, in visual mode: nothing happens, and the operator is cancelled
++		v = new Vim('a|bc');
++		v.keys('v<Tab>');
++		assert.strictEqual(v.vim.mode, 'visual');
++		assert.deepStrictEqual(v.host.commands, []);
++		for (const keys of ['d<Tab>', 'di<Tab>', 'v<Tab><Esc>']) {
++			v = new Vim('a|bc');
++			v.keys(keys);
++			assert.strictEqual(v.state(), 'a|bc', keys);
++			assert.deepStrictEqual(v.host.commands, [], keys);
++			assert.strictEqual(v.vim.context().pendingOperator, '', keys);
++			assert.strictEqual(v.vim.pending, false, keys);
++		}
++	});
++
++	test('<Tab> and <S-Tab> are bound in every mode the editor\'s Tab does not apply to', () => {
++		for (const [mode, extra] of [['normal', {}], ['visual', {}], ['visualLine', {}], ['visualBlock', {}], ['operatorPending', {}],
++			['operatorPending', { 'devhubVim.acceptsMotion': false, 'devhubVim.textObjectPending': 'inner' }]] as [string, Record<string, unknown>][]) {
++			for (const key of ['tab', 'shift+tab']) {
++				assert.ok(DEFAULT_KEYBINDINGS.some(b => b.key === key && evaluateWhen(effectiveWhen(b), ctx(mode, extra))), `${key} in ${mode} ${JSON.stringify(extra)}`);
++			}
++		}
++		for (const mode of ['insert', 'replace', 'nav']) {
++			assert.ok(!DEFAULT_KEYBINDINGS.some(b => (b.key === 'tab' || b.key === 'shift+tab') && evaluateWhen(effectiveWhen(b), ctx(mode))), mode);
++		}
++	});
++});
++
 +suite('DevHub Vim ex commands', () => {
 +
 +	test('parsing', () => {
@@ -10195,19 +10567,23 @@ index 00000000..65ac28a5
 +		}
 +	});
 +
-+	test('any binding written for nav runs once after <C-w>, then the prefix is over', () => {
++	test('whatever the key is bound to while nav waits runs once after <C-w>, then the prefix is over', () => {
 +		// a user's { key: 'n', command: 'workbench.action.nextEditorInGroup', when: "devhubVim.mode == 'nav'" }
-+		assert.strictEqual(navTakesBinding('workbench.action.nextEditorInGroup', ['devhubVim.mode']), true);
-+		assert.strictEqual(navTakesBinding('devhubVim.nav.left', undefined), true);
-+		// what else happens to match there (the editor's Backspace, a list's keys) is not nav's
-+		assert.strictEqual(navTakesBinding('deleteLeft', ['textInputFocus']), false);
-+		assert.strictEqual(navTakesBinding('tab', undefined), false);
-+		assert.strictEqual(navTakesBinding(undefined, ['devhubVim.mode']), false);
 +		const nav = new VimNavPrefix();
 +		nav.enter('normal');
 +		assert.strictEqual(nav.key(key('n'), 'workbench.action.nextEditorInGroup'), 'run');
 +		assert.strictEqual(nav.active, false);
 +		assert.strictEqual(nav.key(key('n'), undefined), 'pass');
++	});
++
++	test('<C-w> <BS> / <Tab> / <Del> edit nothing: the editor\'s typing keys do not apply in nav mode', () => {
++		for (const active of [true, false]) {
++			const ctx = { editorTextFocus: true, textInputFocus: true, 'devhubVim.active': active, 'devhubVim.mode': 'nav', 'devhubVim.usShiftedDigits': true };
++			assert.deepStrictEqual(EDITOR_TYPING_KEYS.filter(b => evaluateWhen(b.when, ctx)).map(b => b.key), [], `active: ${active}`);
++		}
++		const nav = new VimNavPrefix();
++		nav.enter('normal');
++		assert.strictEqual(nav.key(key('Backspace'), undefined), 'swallow');
 +	});
 +
 +	test('no default Vim key binding matches while nav waits', () => {
