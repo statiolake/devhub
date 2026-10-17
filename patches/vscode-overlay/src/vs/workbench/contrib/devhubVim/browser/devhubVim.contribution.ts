@@ -72,12 +72,14 @@
 // * Mode, caret style, modal input and context keys are recomputed from the
 //   engine's state after every command and every focus or model change, never
 //   toggled, and a command that throws leaves the engine in plain normal mode.
-// * From the first key: an editor Vim drives starts modal in normal mode in
-//   its constructor (the start policy given to ModalTextInput below), and
-//   this contribution is BlockStartup, so it exists before the first editor
-//   and attaches to each in that same constructor (onCodeEditorAdd), taking
-//   that state over (ModalTextInput.claim). No editor ever takes text, or
-//   shows the line caret, before Vim is on it.
+// * From the first key: this contribution is BlockStartup, so it exists
+//   before the first editor, and it attaches its engine to each editor in
+//   that editor's constructor (onCodeEditorAdd fires synchronously at its
+//   end), where the editor is made modal, in normal mode, with Vim's caret,
+//   before it can have focus, a key or a frame. Editors that exist already
+//   when Vim is turned on are attached then (listCodeEditors). There is no
+//   other mechanism: an editor is either driven by an engine or an ordinary
+//   editor, never modal with no engine to leave normal mode.
 // * Esc only ever cancels: pressed any number of times it lands in plain
 //   normal mode and nowhere else.
 // * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
@@ -203,12 +205,6 @@ function vimDrives(container: HTMLElement): boolean {
 	return !container.closest('.suggest-input-container');
 }
 
-// Every editor Vim drives starts modal in normal mode, decided in its
-// constructor before it can take a key (editor core, modalTextInput.ts), so
-// the first frame and the first key of an editor are Vim's even when it
-// exists before DevhubVim does. DevhubVim claims it in attach().
-ModalTextInput.setStartPolicy((accessor, container) => !!accessor.get(IConfigurationService).getValue<boolean>(SETTING) && vimDrives(container));
-
 type CursorStyle = ReturnType<typeof cursorStyleToString>;
 const CURSOR_STYLES: readonly CursorStyle[] = ['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin'];
 
@@ -252,8 +248,6 @@ class VimEditor extends Disposable implements IVimHost {
 	) {
 		super();
 		this.engine = new VimEngine(this, shared);
-		// The editor started modal in normal mode (ModalTextInput's start policy, below); from here on it is ours.
-		ModalTextInput.claim(editor.getId());
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
@@ -802,9 +796,6 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.nav.cancel();
 		this.statusEntry = undefined;
 		if (!enabled) {
-			for (const editor of this.codeEditorService.listCodeEditors()) {
-				ModalTextInput.release(editor.getId()); // one that started modal before this heard of the change
-			}
 			this.modeKey.reset();
 			for (const k of this.activeKeys) {
 				k.reset();
@@ -849,11 +840,13 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			return;
 		}
 		if (!vimDrives(editor.getContainerDomNode())) {
-			ModalTextInput.release(editor.getId());
 			return;
 		}
-		this.editors.set(editor, new VimEditor(editor, this, this.shared));
-		this.editors.get(editor)!.syncCursorStyle();
+		// Synchronous, in the editor's constructor (onCodeEditorAdd): modal in
+		// normal mode with Vim's caret before the editor can take a key.
+		const v = new VimEditor(editor, this, this.shared);
+		this.editors.set(editor, v);
+		v.syncCursorStyle();
 	}
 
 	private detach(editor: ICodeEditor): void {

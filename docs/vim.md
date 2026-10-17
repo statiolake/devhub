@@ -454,19 +454,21 @@ startup included. There is no moment after startup (or after a split, a peek
 or diff editor opening) where a key types into the buffer or a `Backspace`
 erases.
 
-How: the editor core asks Vim's start policy in the editor's constructor
-(`ModalTextInput.setStartPolicy`, `modalTextInput.ts`, given by
-`devhubVim.contribution.ts` when it loads, from `devhub.vim.enabled`) and,
-when it says yes, starts the editor modal, with the block caret and those two
-keys bound in the editor's own context-key scope. The Vim layer is a
-`BlockStartup` workbench contribution, so it exists before the workbench
-renders any editor, and it attaches to each one in the same constructor
-(`ICodeEditorService.onCodeEditorAdd`); attaching *claims* the state (the
-editor-scoped keys give way to its global ones) or, for an editor Vim does not
-drive (the settings / extensions search boxes), *releases* it. Vim attaches to
-every code editor but those search boxes: file editors, diff editors, peek /
-inline / embedded editors, and inputs that are editors (SCM message, chat,
-debug console).
+How: the Vim layer is a `BlockStartup` workbench contribution, so it exists
+before the workbench renders any editor, and it attaches its engine to each
+editor inside that editor's constructor: `ICodeEditorService.onCodeEditorAdd`
+fires synchronously at its end, before the editor can have focus, take a key
+or paint. Attaching makes the editor modal (`modalTextInput.ts`) in normal mode
+with the block caret right there; the context keys follow the focused editor.
+Editors that exist when Vim is turned on are attached at that moment. Vim
+attaches to every code editor but the settings / extensions search boxes:
+file editors, diff editors, peek / inline / embedded editors, and inputs that
+are editors (SCM message, chat, debug console, comments). There is no other
+mechanism, so an editor is either a Vim editor with its engine (`i` enters
+insert mode) or a plain one — never modal without an engine. (An earlier
+version made editors modal in their constructor, with context keys of their
+own, until the engine claimed them; an editor left in that state — reported in
+the SCM commit message box — was stuck: nothing typed and `i` did nothing.)
 
 The one case that is not covered: `devhub.vim.enabled` set only in a remote
 (SSH / container) machine's settings. A window starts with the copy of those

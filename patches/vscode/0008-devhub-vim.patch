@@ -244,52 +244,18 @@ index 9331eea4..170697a2 100644
  					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
  				}
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
-index b77791a6..0d65f26f 100644
+index b77791a6..16f9a158 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 +++ b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 @@ -66,6 +66,7 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
  import { TextEdit } from '../../../common/core/edits/textEdit.js';
  import { isObject } from '../../../../base/common/types.js';
  import { IUserInteractionService } from '../../../../platform/userInteraction/browser/userInteractionService.js';
-+import { ModalEditorStart, ModalTextInput } from '../../controller/editContext/modalTextInput.js';
++import { ModalTextInput } from '../../controller/editContext/modalTextInput.js';
  
  export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeEditor {
  
-@@ -269,6 +270,9 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
- 
- 	public inComposition: boolean = false;
- 
-+	/** DevHub: the modal state this editor started with, until its owner claims it (modalTextInput.ts). */
-+	private readonly _modalStart: ModalEditorStart | undefined;
-+
- 	constructor(
- 		domElement: HTMLElement,
- 		_options: Readonly<IEditorConstructionOptions>,
-@@ -298,6 +302,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
- 		this._decorationTypeSubtypes = {};
- 		this._telemetryData = codeEditorWidgetOptions.telemetryData;
- 
-+		// DevHub: decided before the editor can see a key or draw a caret, see modalTextInput.ts
-+		const startsModal = ModalTextInput.startsModal(instantiationService, domElement);
-+		const requestedCursorStyle = options.cursorStyle;
-+		if (startsModal) {
-+			options.cursorStyle = ModalEditorStart.CURSOR_STYLE;
-+		}
-+
- 		this._configuration = this._register(this._createConfiguration(codeEditorWidgetOptions.isSimpleWidget || false,
- 			codeEditorWidgetOptions.contextMenuId ?? (codeEditorWidgetOptions.isSimpleWidget ? MenuId.SimpleEditorContext : MenuId.EditorContext),
- 			options, accessibilityService));
-@@ -321,6 +332,9 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
- 				this._contextKeyService.createKey(key, value);
- 			}
- 		}
-+		this._modalStart = startsModal // DevHub: see modalTextInput.ts
-+			? this._register(new ModalEditorStart(this.getId(), this._contextKeyService, requestedCursorStyle, cursorStyle => this._configuration.updateOptions({ cursorStyle })))
-+			: undefined;
- 		this._notificationService = notificationService;
- 		this._codeEditorService = codeEditorService;
- 		this._commandService = commandService;
-@@ -367,7 +381,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -367,7 +368,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  
  		const isDropIntoEnabled = () => {
  			return !this._configuration.options.get(EditorOption.readOnly)
@@ -299,15 +265,7 @@ index b77791a6..0d65f26f 100644
  		};
  
  		this._register(new dom.DragAndDropObserver(this._domElement, {
-@@ -444,6 +459,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
- 	}
- 
- 	public updateOptions(newOptions: Readonly<IEditorOptions> | undefined): void {
-+		newOptions = newOptions && this._modalStart ? this._modalStart.filterOptions(newOptions) : newOptions; // DevHub: see modalTextInput.ts
- 		this._configuration.updateOptions(newOptions || {});
- 	}
- 
-@@ -1168,7 +1184,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1168,7 +1170,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _startComposition(): void {
@@ -316,7 +274,7 @@ index b77791a6..0d65f26f 100644
  			return;
  		}
  		this.inComposition = true;
-@@ -1186,7 +1202,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1186,7 +1188,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _type(source: string | null | undefined, text: string): void {
@@ -325,7 +283,7 @@ index b77791a6..0d65f26f 100644
  			return;
  		}
  		if (source === 'keyboard') {
-@@ -1199,14 +1215,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1199,14 +1201,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _compositionType(source: string | null | undefined, text: string, replacePrevCharCnt: number, replaceNextCharCnt: number, positionDelta: number): void {
@@ -342,7 +300,7 @@ index b77791a6..0d65f26f 100644
  			return;
  		}
  		const viewModel = this._modelData.viewModel;
-@@ -1919,7 +1935,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1919,7 +1921,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  			// Connect clipboard events from View
  			listenersToRemove.push(view.onWillCopy(e => this._onWillCopy.fire(e)));
  			listenersToRemove.push(view.onWillCut(e => this._onWillCut.fire(e)));
