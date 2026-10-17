@@ -80,7 +80,9 @@ insert at the start / end of the lines), `c C s S R d x D X y Y r J gJ u U ~ >
 
 **Insert mode**: `<Esc> CTRL-[ CTRL-C`, `CTRL-W` / `CTRL-U` (with Neovim's
 undo break first), `CTRL-H`, `CTRL-R {register}`, `CTRL-O {command}`, `CTRL-T` /
-`CTRL-D` (indent), `CTRL-E` / `CTRL-Y` (character below / above), `CTRL-A`
+`CTRL-D` (indent), `CTRL-E` / `CTRL-Y` (character below / above; `CTRL-E`
+with the completion menu open closes it, see [Esc](#esc)), `CTRL-]` (dismiss
+the inline suggestion), `CTRL-A`
 (last inserted text), `CTRL-S` (signature help, Neovim `i_CTRL-S`),
 `CTRL-N` / `CTRL-P` / `CTRL-X CTRL-O` (VS Code's suggestions). Counts repeat
 the insert (`3ix<Esc>`, `3oab<Esc>`).
@@ -327,6 +329,37 @@ keymap binds `<BS>` (`h`, wrapping), `<Del>` (`x`), `<CR>` (`+`), `<Tab>`
 / `<S-Tab>` (visual and operator-pending mode, after `i` / `a`) they do
 nothing and cancel a pending operator, rather than move the focus out of the
 editor.
+
+## Esc
+
+In insert and replace mode one `<Esc>` (or `CTRL-[`, `CTRL-C`) is always back
+in normal mode, whatever editor widget is showing: it outranks every Esc an
+editor widget binds (its weight is `WorkbenchContrib + 60`, above the peek
+view's `WorkbenchContrib + 50`) and closes the transient insert-mode widgets
+on its way out: the completion menu (`hideSuggestWidget`), the inline
+suggestion / next edit suggestion (`editor.action.inlineSuggest.hide`),
+signature help (`closeParameterHints`), an editor message
+(`leaveEditorMessage`) and linked editing (`cancelLinkedEditingInput`). A
+snippet session is not closed (its placeholders stay, and it ends when the
+caret leaves them, as with LuaSnip or Neovim's `vim.snippet`); the find widget
+and a peek view stay open too, and the next `<Esc>`, in normal mode, closes
+them.
+
+Outside insert mode `<Esc>` is as before: an editor widget's Esc (hover, peek,
+find, the problem widget, a snippet, the completion menu) comes first (Vim's
+Esc has `EditorCore + 50`), and Vim's Esc cancels one pending thing. `CTRL-[`
+there has `WorkbenchContrib + 50`: no widget binds it, but on Windows and
+Linux VS Code's Outdent Lines does.
+
+To close a widget and stay in insert mode:
+
+| Key (insert / replace mode) | When | Does |
+| --- | --- | --- |
+| `CTRL-E` | the completion menu shows | closes it (Vim's `complete_CTRL-E`); otherwise `CTRL-E` inserts the character below |
+| `CTRL-]` | an inline suggestion / next edit suggestion shows | dismisses it (copilot.vim's `<Plug>(copilot-dismiss)`); otherwise VS Code's `CTRL-]` (indent lines) |
+
+On Windows and Linux `CTRL-C` in insert mode is Vim's (leave insert mode), not
+copy; copy in normal or visual mode (`y`, or `CTRL-C` there as before).
 
 ## From the first key
 

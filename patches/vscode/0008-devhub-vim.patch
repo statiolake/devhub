@@ -1062,10 +1062,10 @@ index 00000000..b03c5876
 +});
 diff --git a/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
 new file mode 100644
-index 00000000..f85d09d8
+index 00000000..fc46abba
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/browser/devhubVim.contribution.ts
-@@ -0,0 +1,1245 @@
+@@ -0,0 +1,1269 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -1195,7 +1195,7 @@ index 00000000..f85d09d8
 +import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 +import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
 +import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
-+import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, SHIFTED_DIGIT_GATE, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, SHIFTED_DIGIT_GATE, VIM_WEIGHTS, US_SHIFTED_DIGITS, VimKeybinding, effectiveWhen, layoutFallbackBinding } from '../common/vimKeymap.js';
 +import { VimRegex } from '../common/vimRegex.js';
 +import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 +
@@ -1488,6 +1488,20 @@ index 00000000..f85d09d8
 +		}
 +	}
 +
++	/** Leaving insert mode: the completion menu, ghost text, signature help, ... go with it (one Esc, as in Vim). */
++	private dismissInsertWidgets(): void {
++		const keys = this.editor.invokeWithinContext(a => a.get(IContextKeyService));
++		for (const d of INSERT_ESCAPE_DISMISSES) {
++			try {
++				if (keys.contextMatchesRules(this.owner.whenExpr(d.when))) {
++					this.editor.trigger('devhubVim', d.command, undefined);
++				}
++			} catch (err) {
++				onUnexpectedError(err);
++			}
++		}
++	}
++
 +	/** Text an IME committed while this editor was modal (ModalTextInput.onDidCommitText). */
 +	commitText(text: string): void {
 +		this.guard(() => this.engine.handleText(text));
@@ -1495,6 +1509,9 @@ index 00000000..f85d09d8
 +
 +	/** An engine command, or any command a Vim binding names (awaitChar targets). */
 +	execute(command: string, args: unknown): void {
++		if (command === 'devhubVim.escape' && (this.engine.mode === 'insert' || this.engine.mode === 'replace')) {
++			this.dismissInsertWidgets();
++		}
 +		this.guard(() => {
 +			if (!this.engine.execute(command, args)) {
 +				void this.executeCommand(command, args);
@@ -1873,6 +1890,14 @@ index 00000000..f85d09d8
 +		});
 +	}
 +
++	/** A when clause of the keymap's, parsed once. */
++	whenExpr(when: string): ContextKeyExpression | undefined {
++		if (!this.whenCache.has(when)) {
++			this.whenCache.set(when, ContextKeyExpr.deserialize(when));
++		}
++		return this.whenCache.get(when);
++	}
++
 +	/** On a non-US digit row: the default entry for a US shifted-digit character no keybinding took (`prefix`: the chord's first key). */
 +	layoutFallback(ch: string, target: HTMLElement, prefix?: string): VimKeybinding | undefined {
 +		if (this.usShiftedDigitsKey.get() !== false) {
@@ -2197,11 +2222,10 @@ index 00000000..f85d09d8
 +	return chords.length === 2 ? KeyChord(chords[0]!, chords[1]!) : chords[0];
 +}
 +
-+const WEIGHTS = {
-+	default: KeybindingWeight.EditorContrib,
-+	override: KeybindingWeight.WorkbenchContrib + 50,
-+	escape: KeybindingWeight.EditorCore + 50,
-+};
++const WEIGHTS = VIM_WEIGHTS;
++if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60) {
++	onUnexpectedError(new Error('devhubVim: VIM_WEIGHTS (vimKeymap.ts) no longer match KeybindingWeight'));
++}
 +
 +for (const b of [...DEFAULT_KEYBINDINGS, ...HELPER_KEYBINDINGS]) {
 +	const primary = encodeKeybinding(b.key);
@@ -8384,10 +8408,10 @@ index 00000000..e3baa9c0
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
 new file mode 100644
-index 00000000..518d5c4e
+index 00000000..fac3b40c
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/common/vimKeymap.ts
-@@ -0,0 +1,502 @@
+@@ -0,0 +1,555 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -8426,8 +8450,13 @@ index 00000000..518d5c4e
 +	readonly args?: Readonly<Record<string, unknown>>;
 +	/** A when clause, without the shifted-digit gate (see `effectiveWhen`). */
 +	readonly when: string;
-+	/** `override`: outranks workbench-wide defaults (Ctrl-R is Open Recent on macOS); `escape`: Esc's own weight. */
-+	readonly weight?: 'override' | 'escape';
++	/**
++	 * `override`: outranks workbench-wide defaults (Ctrl-R is Open Recent on macOS);
++	 * `escape`: Esc's own weight outside insert mode, below every widget's Esc;
++	 * `insertEscape`: Esc in insert / replace mode, above every editor widget's Esc
++	 * (the widgets are closed by the escape itself, INSERT_ESCAPE_DISMISSES). See VIM_WEIGHTS.
++	 */
++	readonly weight?: 'override' | 'escape' | 'insertEscape';
 +}
 +
 +const BASE = 'editorTextFocus && devhubVim.active';
@@ -8522,9 +8551,17 @@ index 00000000..518d5c4e
 +const OVERRIDE = 'override';
 +
 +export const DEFAULT_KEYBINDINGS: readonly VimKeybinding[] = [
-+	{ key: 'escape', command: 'devhubVim.escape', when: W.escape, weight: 'escape' },
-+	{ key: 'ctrl+[', command: 'devhubVim.escape', when: W.escape, weight: 'escape' },
-+	{ key: 'ctrl+c', command: 'devhubVim.escape', args: { interrupt: true }, when: W.escape, weight: 'escape' },
++	// Outside insert mode Esc cancels one thing and an editor widget's Esc
++	// (hover, peek, find, the marker widget, a snippet) comes first. In insert and
++	// replace mode one Esc is always back in normal mode: it outranks the widgets'
++	// Esc and closes the transient ones itself (INSERT_ESCAPE_DISMISSES).
++	{ key: 'escape', command: 'devhubVim.escape', when: `${W.escape} && !devhubVim.insert`, weight: 'escape' },
++	// CTRL-[ is no widget's key, but on Windows / Linux VS Code's Outdent Lines (EditorContrib)
++	{ key: 'ctrl+[', command: 'devhubVim.escape', when: `${W.escape} && !devhubVim.insert`, weight: OVERRIDE },
++	{ key: 'ctrl+c', command: 'devhubVim.escape', args: { interrupt: true }, when: `${W.escape} && !devhubVim.insert`, weight: 'escape' },
++	{ key: 'escape', command: 'devhubVim.escape', when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
++	{ key: 'ctrl+[', command: 'devhubVim.escape', when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
++	{ key: 'ctrl+c', command: 'devhubVim.escape', args: { interrupt: true }, when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
 +
 +	// ---- motions (they compose with a count, an operator and visual mode) ----
 +	motion('h', 'left'), motion('left', 'left', W.arrow),
@@ -8714,7 +8751,13 @@ index 00000000..518d5c4e
 +	// Neovim: i_CTRL-W / i_CTRL-U start a new undo step first (i_CTRL-W-default)
 +	insert('ctrl+w', 'deleteWordBefore'), insert('ctrl+u', 'deleteLineBefore'),
 +	insert('ctrl+t', 'indent'), insert('ctrl+d', 'outdent'),
-+	insert('ctrl+e', 'copyFromBelow'), insert('ctrl+y', 'copyFromAbove'),
++	insert('ctrl+e', 'copyFromBelow', `${W.insert} && !suggestWidgetVisible`), insert('ctrl+y', 'copyFromAbove'),
++	// Cancel only, stay in insert mode: CTRL-E closes the completion menu (Vim's
++	// complete_CTRL-E), CTRL-] dismisses the inline suggestion / next edit
++	// (copilot.vim's <Plug>(copilot-dismiss)); elsewhere CTRL-E is i_CTRL-E and
++	// CTRL-] stays VS Code's (indent lines).
++	{ key: 'ctrl+e', command: 'hideSuggestWidget', when: `${W.insert} && suggestWidgetVisible`, weight: OVERRIDE },
++	{ key: 'ctrl+]', command: 'editor.action.inlineSuggest.hide', when: `${W.insert} && (inlineSuggestionVisible || inlineEditIsVisible)`, weight: OVERRIDE },
 +	insert('ctrl+a', 'insertLastInserted'), insert('ctrl+o', 'oneCommand'),
 +	awaitChar('ctrl+r', 'devhubVim.insert', { action: 'insertRegister' }, W.insert, OVERRIDE),
 +	insert('backspace', 'backspace', W.replace), insert('ctrl+h', 'backspace', W.replace),
@@ -8728,6 +8771,40 @@ index 00000000..518d5c4e
 +	{ key: 'ctrl+p', command: 'selectPrevSuggestion', when: `${W.insert} && suggestWidgetVisible`, weight: OVERRIDE },
 +	{ key: 'ctrl+x ctrl+o', command: 'editor.action.triggerSuggest', when: W.insert, weight: OVERRIDE },
 +];
++
++/**
++ * What leaving insert mode (Esc, CTRL-[, CTRL-C) closes first, each where its
++ * `when` holds in the editor: the completion menu, the inline suggestion /
++ * next edit, signature help and an editor message. Not a snippet session
++ * (it is not a widget: its placeholders stay, and it ends by its own rules
++ * when the caret leaves them, as LuaSnip's and Neovim's vim.snippet do), not
++ * the find widget or a peek (they stay until an Esc in normal mode, as
++ * there).
++ */
++export const INSERT_ESCAPE_DISMISSES: readonly { readonly command: string; readonly when: string }[] = [
++	{ command: 'hideSuggestWidget', when: 'suggestWidgetVisible' },
++	{ command: 'editor.action.inlineSuggest.hide', when: 'inlineSuggestionVisible || inlineEditIsVisible' },
++	{ command: 'closeParameterHints', when: 'parameterHintsVisible' },
++	{ command: 'leaveEditorMessage', when: 'messageVisible' },
++	// linked editing (an HTML tag pair) is typing in two places: it ends with the insert
++	{ command: 'cancelLinkedEditingInput', when: 'LinkedEditingInputVisible' },
++];
++
++/**
++ * The weights the entries are registered with (KeybindingWeight: EditorCore 0,
++ * EditorContrib 100, WorkbenchContrib 200; devhubVim.contribution.ts checks).
++ * `insertEscape` is above every Esc an editor widget binds while the editor has
++ * text focus: hideSuggestWidget and editor.action.inlineSuggest.hide
++ * (EditorContrib + 90), cancelLinkedEditingInput (+ 99), closeParameterHints
++ * (+ 75), closeMarkersNavigation (+ 50), leaveSnippet and leaveEditorMessage
++ * (+ 30), closeFindWidget (+ 5), closeReferenceSearch (WorkbenchContrib + 50).
++ */
++export const VIM_WEIGHTS = {
++	default: 100,
++	override: 250,
++	escape: 50,
++	insertEscape: 260,
++} as const;
 +
 +/** What Shift + 1 2 ... 9 0 type on a US layout. */
 +export const US_SHIFTED_DIGITS = '!@#$%^&*()';
@@ -9799,10 +9876,10 @@ index 00000000..5737093c
 +}
 diff --git a/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
 new file mode 100644
-index 00000000..2a6ffdc4
+index 00000000..b11d4d26
 --- /dev/null
 +++ b/src/vs/workbench/contrib/devhubVim/test/common/vimEngine.test.ts
-@@ -0,0 +1,2089 @@
+@@ -0,0 +1,2184 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) DevHub contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -9813,7 +9890,7 @@ index 00000000..2a6ffdc4
 +import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 +import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
 +import type { VimKeybinding } from '../../common/vimKeymap.js';
-+import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, LEAVE_CHORD_PREFIXES, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
++import { DEFAULT_KEYBINDINGS, HELPER_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, LEAVE_CHORD_PREFIXES, VIM_WEIGHTS, VIM_WHEN, effectiveWhen, evaluateWhen, isLayoutGated, layoutFallbackBinding, usKeyForChar } from '../../common/vimKeymap.js';
 +import type { VimRegex } from '../../common/vimRegex.js';
 +import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
 +import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
@@ -10534,7 +10611,7 @@ index 00000000..2a6ffdc4
 +
 +	test('every default entry is an engine command (or a VS Code command in insert mode) with a when clause', () => {
 +		const ids = new Set(['devhubVim.motion', 'devhubVim.operator', 'devhubVim.textObjectPrefix', 'devhubVim.textObject', 'devhubVim.forceMotion', 'devhubVim.count', 'devhubVim.register', 'devhubVim.awaitChar', 'devhubVim.mode', 'devhubVim.action', 'devhubVim.mark', 'devhubVim.scroll', 'devhubVim.insert', 'devhubVim.run', 'devhubVim.cmdline', 'devhubVim.ex', 'devhubVim.escape']);
-+		const plainInInsert = new Set(['deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
++		const plainInInsert = new Set(['hideSuggestWidget', 'editor.action.inlineSuggest.hide', 'deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
 +		for (const b of DEFAULT_KEYBINDINGS) {
 +			assert.ok(ids.has(b.command) || (plainInInsert.has(b.command) && b.when.includes('devhubVim.insert')), b.command);
 +			assert.ok(b.when.includes('devhubVim.active'), b.key);
@@ -10816,6 +10893,101 @@ index 00000000..2a6ffdc4
 +			}
 +			assert.ok(evaluateWhen(helper.when, vimCtx('normal')), `${first} is a prefix in normal mode`);
 +		}
++	});
++});
++
++suite('DevHub Vim: one Esc leaves insert mode, whatever editor widget shows', () => {
++
++	/** VS Code 1.141's editor widgets that bind Esc while the editor has text focus: [command, weight, when]. */
++	const UPSTREAM: [string, number, string][] = [
++		['hideSuggestWidget', 190, 'suggestWidgetVisible && textInputFocus'],
++		['editor.action.inlineSuggest.hide', 190, 'editorTextFocus && (inlineSuggestionVisible || inlineEditIsVisible)'],
++		['cancelLinkedEditingInput', 199, 'editorTextFocus && LinkedEditingInputVisible'],
++		['closeParameterHints', 175, 'editorFocus && parameterHintsVisible'],
++		['closeMarkersNavigation', 150, 'editorFocus && markersNavigationVisible'],
++		['leaveSnippet', 130, 'editorTextFocus && inSnippetMode'],
++		['leaveEditorMessage', 130, 'editorFocus && messageVisible'],
++		['closeFindWidget', 105, 'editorFocus && findWidgetVisible'],
++		['editor.cancelOperation', 100, 'editorTextFocus && cancellableOperation'],
++		['closeReferenceSearch', 250, 'inPeekEditor && !config.editor.stablePeek'],
++		['closeReferenceSearch', 250, 'referenceSearchVisible && !config.editor.stablePeek && editorTextFocus'],
++	];
++	const WIDGETS = ['suggestWidgetVisible', 'inlineSuggestionVisible', 'inlineEditIsVisible', 'LinkedEditingInputVisible', 'parameterHintsVisible', 'markersNavigationVisible', 'inSnippetMode', 'messageVisible', 'findWidgetVisible', 'cancellableOperation', 'inPeekEditor', 'referenceSearchVisible'];
++
++	function ctx(mode: string, widget: string | undefined): Record<string, unknown> {
++		const typing = mode === 'insert' || mode === 'replace';
++		return {
++			'true': true, editorTextFocus: true, editorFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
++			'devhubVim.acceptsMotion': !typing, 'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': typing,
++			'devhubVim.textObjectPending': '', 'devhubVim.pending': false, 'devhubVim.awaitingChar': false, 'devhubVim.usShiftedDigits': true,
++			...(widget ? { [widget]: true } : {}),
++		};
++	}
++
++	/** The binding the dispatcher runs for `key`: the highest weight whose when holds (later registration on a tie). */
++	function winner(key: string, c: Record<string, unknown>): string | undefined {
++		const vim = DEFAULT_KEYBINDINGS.filter(b => b.key === key).map(b => [b.command, VIM_WEIGHTS[b.weight ?? 'default'], effectiveWhen(b)] as [string, number, string]);
++		// VS Code's on Windows / Linux: Outdent Lines on CTRL-[, Copy on CTRL-C
++		const others: Record<string, [string, number, string][]> = {
++			'escape': UPSTREAM,
++			'ctrl+[': [['editor.action.outdentLines', 100, 'editorTextFocus']],
++			'ctrl+c': [['editor.action.clipboardCopyAction', 100, 'textInputFocus']],
++		};
++		const all = [...(others[key] ?? []), ...vim].filter(([, , when]) => evaluateWhen(when, c));
++		all.sort((a, b) => a[1] - b[1]);
++		return all.at(-1)?.[0];
++	}
++
++	test('in insert and replace mode Esc, CTRL-[ and CTRL-C are Vim\'s over every widget\'s Esc', () => {
++		for (const mode of ['insert', 'replace']) {
++			for (const widget of [undefined, ...WIDGETS]) {
++				for (const key of ['escape', 'ctrl+[', 'ctrl+c']) {
++					assert.strictEqual(winner(key, ctx(mode, widget)), 'devhubVim.escape', `${key} in ${mode} with ${widget}`);
++				}
++			}
++		}
++	});
++
++	test('outside insert mode a widget\'s Esc comes first, as before', () => {
++		for (const mode of ['normal', 'visual', 'operatorPending']) {
++			assert.strictEqual(winner('escape', ctx(mode, undefined)), 'devhubVim.escape', mode);
++			assert.strictEqual(winner('ctrl+[', ctx(mode, undefined)), 'devhubVim.escape', `ctrl+[ in ${mode}`);
++			for (const widget of WIDGETS) {
++				assert.notStrictEqual(winner('escape', ctx(mode, widget)), 'devhubVim.escape', `${mode} with ${widget}`);
++			}
++		}
++	});
++
++	test('leaving insert closes the transient widgets, not the find widget, a peek or a snippet session', () => {
++		const closes = (widget: string) => INSERT_ESCAPE_DISMISSES.filter(d => evaluateWhen(d.when, { [widget]: true })).map(d => d.command);
++		assert.deepStrictEqual(closes('suggestWidgetVisible'), ['hideSuggestWidget']);
++		assert.deepStrictEqual(closes('inlineSuggestionVisible'), ['editor.action.inlineSuggest.hide']);
++		assert.deepStrictEqual(closes('inlineEditIsVisible'), ['editor.action.inlineSuggest.hide']);
++		assert.deepStrictEqual(closes('parameterHintsVisible'), ['closeParameterHints']);
++		assert.deepStrictEqual(closes('messageVisible'), ['leaveEditorMessage']);
++		assert.deepStrictEqual(closes('LinkedEditingInputVisible'), ['cancelLinkedEditingInput']);
++		for (const widget of ['findWidgetVisible', 'inPeekEditor', 'referenceSearchVisible', 'inSnippetMode', 'markersNavigationVisible']) {
++			assert.deepStrictEqual(closes(widget), [], widget);
++		}
++	});
++
++	test('CTRL-E closes the completion menu and CTRL-] the inline suggestion, staying in insert mode; otherwise they are what they were', () => {
++		const insert = (extra: Record<string, unknown>) => ({ ...ctx('insert', undefined), ...extra });
++		const vimFor = (key: string, c: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(effectiveWhen(b), c)).map(b => [b.command, b.args]);
++		assert.deepStrictEqual(vimFor('ctrl+e', insert({ suggestWidgetVisible: true })), [['hideSuggestWidget', undefined]]);
++		assert.deepStrictEqual(vimFor('ctrl+e', insert({})), [['devhubVim.insert', { action: 'copyFromBelow' }]]);
++		for (const k of ['inlineSuggestionVisible', 'inlineEditIsVisible']) {
++			assert.deepStrictEqual(vimFor('ctrl+]', insert({ [k]: true })), [['editor.action.inlineSuggest.hide', undefined]], k);
++		}
++		// no Vim entry: VS Code's own CTRL-] (indent lines) applies, as before
++		assert.deepStrictEqual(vimFor('ctrl+]', insert({})), []);
++		// and they outrank VS Code's defaults on those keys where they apply (editor.action.indentLines: EditorContrib)
++		for (const b of DEFAULT_KEYBINDINGS.filter(b => b.command === 'hideSuggestWidget' || b.command === 'editor.action.inlineSuggest.hide')) {
++			assert.ok(VIM_WEIGHTS[b.weight ?? 'default'] > 100, b.key);
++		}
++		// in normal mode CTRL-E is still the scroll and CTRL-] the definition
++		assert.deepStrictEqual(vimFor('ctrl+e', { ...ctx('normal', undefined), suggestWidgetVisible: true }).map(([c]) => c), ['devhubVim.scroll']);
++		assert.deepStrictEqual(vimFor('ctrl+]', { ...ctx('normal', undefined), inlineSuggestionVisible: true }).map(([c]) => c), ['devhubVim.run']);
 +	});
 +});
 +
