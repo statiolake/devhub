@@ -162,4 +162,31 @@ describe("the wizard on screen", () => {
       await screen.findByRole("dialog", { name: "Repository" }),
     ).toBeVisible();
   });
+
+  it("does not take the focus back from a field opened over its working panel", async () => {
+    // The prompt-review sheet opens over the Issue wizard while the agent
+    // starts; the wizard re-renders on every projection change, and its
+    // working panel used to re-focus itself each time, leaving the sheet's
+    // textarea unfocused.
+    const never = new Promise<void>(() => {
+      /* never settles */
+    });
+    const first: WizardStep = async (input) => {
+      await input.working("Starting the agent…", () => never);
+      return undefined;
+    };
+    const { rerender } = render(<Wizard start={first} onFinished={vi.fn()} />);
+    const panel = await screen.findByRole("dialog", {
+      name: "Starting the agent…",
+    });
+    expect(document.activeElement).toBe(panel);
+
+    const field = document.createElement("textarea");
+    document.body.appendChild(field);
+    field.focus();
+    rerender(<Wizard start={first} onFinished={vi.fn()} />);
+
+    expect(document.activeElement).toBe(field);
+    field.remove();
+  });
 });

@@ -44,6 +44,11 @@ type Screen =
       readonly back: () => void;
     };
 
+/** Focus the node when it mounts; being a stable function, it runs once only. */
+function takeFocusOnce(node: HTMLElement | null): void {
+  node?.focus();
+}
+
 export function Wizard({ start, onFinished }: WizardProps) {
   const [screen, setScreen] = useState<Screen>();
   // The flow is started once and outlives every render of it. A second run
@@ -132,10 +137,15 @@ export function Wizard({ start, onFinished }: WizardProps) {
           role="dialog"
           aria-modal="true"
           aria-label={screen.message}
-          // The panel takes focus so that Escape reaches it wherever the
-          // person's focus was when the step began.
+          // The panel takes focus once, when it appears, so that Escape
+          // reaches it wherever the person's focus was when the step began.
+          // A stable ref: an inline callback is a new function every render,
+          // React calls it again each time, and this panel would take the
+          // keyboard back from whatever sheet had since opened over the same
+          // page (the prompt review, which opens while the agent starts and
+          // while this panel is still up) on every projection change.
           tabIndex={-1}
-          ref={(node) => node?.focus()}
+          ref={takeFocusOnce}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
