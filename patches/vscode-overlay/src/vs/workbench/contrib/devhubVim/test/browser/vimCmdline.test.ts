@@ -234,6 +234,31 @@ suite('DevHub Vim: the prompt line', () => {
 		assert.strictEqual(model.getValue(), 'tabonly');
 	}));
 
+	test(':e {file} and :sp {file} run devhubVim.edit / devhubVim.open with the file and the editor they came from', () => withPrompt(async ({ vim, origin, run, type }) => {
+		const seen: [string, unknown][] = [];
+		// the commands the ex lines run, as the contribution's command service gets them
+		const service = vim.commandService;
+		const execute = service.executeCommand;
+		service.executeCommand = async (id: string, ...args: unknown[]) => { seen.push([id, args[0]]); return undefined as never; };
+		try {
+			const from = origin.getModel()!.uri.toString();
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			type('e src/main.ts');
+			run('devhubVim.cmdline.submit');
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			type('sp %:h/x');
+			run('devhubVim.cmdline.submit');
+			await new Promise(r => setTimeout(r, 0));
+			assert.deepStrictEqual(seen, [
+				['devhubVim.edit', { file: 'src/main.ts', bang: false, from }],
+				['workbench.action.splitEditorUp', undefined],
+				['devhubVim.open', { file: '%:h/x', replace: true, from }],
+			]);
+		} finally {
+			service.executeCommand = execute;
+		}
+	}));
+
 	test('every prompt command is registered with a keybinding on devhubVim.cmdlineFocus, and CTRL-W\'s nav prefix is not there', () => {
 		const defaults = KeybindingsRegistry.getDefaultKeybindings();
 		for (const id of VIM_CMDLINE_COMMANDS) {

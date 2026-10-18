@@ -207,7 +207,7 @@ suite('DevHub Vim prompt: completion', () => {
 	test('ex command names: Vim\'s by prefix with their abbreviation and what they run, and the user\'s with a detail', () => {
 		const items = cmdlineCompletions({ kind: 'command', start: 0, typed: 'sp' }, SOURCES);
 		assert.deepStrictEqual(items.map(i => i.label), ['split']);
-		assert.strictEqual(items[0].detail, ':sp[lit] - workbench.action.splitEditorUp');
+		assert.strictEqual(items[0].detail, ':sp[lit] - workbench.action.splitEditorUp, devhubVim.open');
 		const subst = cmdlineCompletions({ kind: 'command', start: 0, typed: 'substitute' }, SOURCES);
 		assert.strictEqual(subst[0].detail, ':s[ubstitute] - Vim');
 		const user = cmdlineCompletions({ kind: 'command', start: 0, typed: 'G' }, SOURCES);

@@ -648,8 +648,9 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_COMMANDS`): `:w[rite]`
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
-`:xa[ll]` `:sp[lit]` `:vs[plit]` `:new` `:vne[w]` `:e[dit][!] [file]` (quick
-open) `:ene[w]` `:tabnew` `:tabe[dit]` `:tabn[ext]` `:tabp[revious]`
+`:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
+`:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
+[File names](#file-names)) `:tabn[ext]` `:tabp[revious]`
 `:tabc[lose]` `:tabo[nly]` `:tabfir[st]` `:tabl[ast]` `:bn[ext]` `:bp[revious]`
 `:bd[elete][!]` `:bf[irst]` `:bl[ast]` `:ls` `:buffers` `:b[uffer] {name}`
 `:sav[eas]` `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
@@ -658,6 +659,58 @@ runs both (not after `:g` and `:normal`, which take `|` as an argument).
 `Tab` in the `:` prompt completes command names, file names, `:set` options
 and `:b` buffers (see [The prompt](#the-prompt)); `{count}:` starts with
 `.,.+{count-1}`.
+
+### File names
+
+`:e {file}`, `:sp {file}`, `:vs {file}`, `:new {file}`, `:vne {file}`,
+`:tabe {file}` and `:tabnew {file}` open the file itself:
+
+* A relative name is relative to Vim's current directory, which is the
+  workspace folder of the file you are in (in a multi-root workspace the
+  folder that contains it, otherwise the first folder; without a workspace
+  the file's own directory). `/…` is absolute, `~` / `~/…` is the home
+  directory, `%` is the current file with Vim's `:p` `:h` `:t` `:r` `:e`
+  modifiers (`:e %:h/test.ts`, `:sp %:r.css`), and `\ ` `\%` `\*` are a
+  literal blank, `%` and `*`.
+* In a remote workspace (SSH, a container) the name is a path on the remote
+  machine: it is put into the workspace folder's URI, never read as a local
+  path.
+* A file that does not exist opens as a new file for that path (Vim's new
+  buffer): it is untitled until you save, and saving writes it there without
+  asking for a name.
+* A name with `*` opens quick open with it; a directory opens quick open in
+  that directory.
+* `:e` without a name reads the current file again; when it has unsaved
+  changes that is `E37: No write since last change (add ! to override)`, and
+  `:e!` drops the changes and reads it again.
+* `:sp {file}` / `:vs {file}` / `:new {file}` split (above / left, as
+  'nosplitbelow' 'nosplitright') and open the file in the new group in place
+  of the copy the split made; without a name they keep the copy (`:new` /
+  `:vne`: a new untitled file).
+
+They are two commands that an override can use too:
+`devhubVim.edit { "file": "${args}", "bang": "${bang}" }` (`:e`) and
+`devhubVim.open { "file": "${args}", "replace": true, "untitled": true }` (the
+file in the active group; `replace`: instead of its active editor, the copy a
+split just made; `untitled`: with no file, a new untitled one). An override of
+`split` / `vsplit` / `new` / `vnew` that splits the other way passes the file
+on like this:
+
+```jsonc
+"devhub.vim.exCommands": {
+  // 'splitbelow' 'splitright'
+  "split": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }],
+  "vsplit": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }],
+  "new": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }],
+  "vnew": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }]
+}
+```
+
+(An override without the `devhubVim.open` step only splits, and `:sp {file}`
+drops the name.) `:w {file}` and `:sav {file}` do not take a name: `:w`
+writes the current file, `:sav` asks for one (see [Known gaps](#known-gaps)).
+
+### Your own commands
 
 Your own commands go in `settings.json`; they can run any command with any
 args, like a keybinding. Names must start with an uppercase letter (as Vim's
@@ -784,14 +837,18 @@ otherwise.
   open (the parts do not move), so a match 'incsearch' shows on that row is
   under it. `CTRL-R CTRL-W` / `CTRL-R CTRL-A` (the word under the cursor),
   `CTRL-V` (literal input), `CTRL-K` (digraphs), abbreviations and Tab
-  completion in `/` / `?` are not there; `:e {file}` still opens quick open
-  with the name rather than the file.
+  completion in `/` / `?` are not there. In file names `#` (the alternate
+  file), `**` and `` `cmd` `` are not expanded, and `+cmd` / `++opt` are read
+  as part of the name.
+* `:w {file}` writes the current file (the name is not used: Vim would write
+  a copy there), and `:sav[eas] {file}` asks for the name in VS Code's save
+  dialog.
 * Not implemented: `U` (undo line), `!` / `=` with 'equalprg' (filter
   through a program), `g@` ('operatorfunc'), `gR` (virtual replace),
   `CTRL-V {char}` / `CTRL-K` (literal / digraph input), `gm` `g0` `g$` `g^`
   (screen-line column motions), `[m ]m`, `[* ]*` `[/ ]/`, `zh zl zs ze`
   (horizontal scrolling), `zn zN zi zx`, the command-line window (`q:`), `:let`
-  and other Vimscript, `:r[ead]`, `:w {file}`, `:!`, `:make`, the location list
+  and other Vimscript, `:r[ead]`, `:!`, `:make`, the location list
   / tags / argument list, `CTRL-W x r T`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
 * Patterns are matched one line at a time: `\n` and `\_x` in a pattern never

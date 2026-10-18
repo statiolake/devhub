@@ -84,6 +84,12 @@ const SAVE = 'workbench.action.files.save';
 const CLOSE = 'workbench.action.closeActiveEditor';
 const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
 const QUICK_OPEN = (prefix: string): ExStep => ({ command: 'workbench.action.quickOpen', args: prefix });
+/**
+ * `devhubVim.open` (browser/vimEdit.ts): the file argument (`${args}`) opened
+ * in the active group; `replace` takes the place of the editor a split just
+ * copied there, `untitled` opens a new untitled file when there is no argument.
+ */
+const OPEN = (options: { replace?: true; untitled?: true }): ExStep => ({ command: 'devhubVim.open', args: { file: '${args}', ...options } });
 
 /** Built-in ex commands that run VS Code commands, by canonical name. */
 export const BUILTIN_EX_COMMANDS: Readonly<Record<string, ExCommandEntry>> = {
@@ -96,14 +102,16 @@ export const BUILTIN_EX_COMMANDS: Readonly<Record<string, ExCommandEntry>> = {
 	xit: [SAVE, CLOSE],
 	xall: ['workbench.action.files.saveAll', 'workbench.action.closeAllEditors'],
 	// 'nosplitbelow' / 'nosplitright' (the defaults): the new window is above / left, and gets the focus
-	split: 'workbench.action.splitEditorUp',
-	vsplit: 'workbench.action.splitEditorLeft',
-	new: ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile'],
-	vnew: ['workbench.action.splitEditorLeft', 'workbench.action.files.newUntitledFile'],
-	edit: { run: QUICK_OPEN('${args}'), bang: 'workbench.action.files.revert' },
+	// `:sp {file}` ...: the split, then the file in the new window (devhubVim.open)
+	split: ['workbench.action.splitEditorUp', OPEN({ replace: true })],
+	vsplit: ['workbench.action.splitEditorLeft', OPEN({ replace: true })],
+	new: ['workbench.action.splitEditorUp', OPEN({ replace: true, untitled: true })],
+	vnew: ['workbench.action.splitEditorLeft', OPEN({ replace: true, untitled: true })],
+	// `:e {file}` opens it (a new file at that path when it does not exist), `:e` reloads (E37 when modified), `:e!` discards the changes
+	edit: { command: 'devhubVim.edit', args: { file: '${args}', bang: '${bang}' } },
 	enew: 'workbench.action.files.newUntitledFile',
-	tabnew: 'workbench.action.files.newUntitledFile',
-	tabedit: QUICK_OPEN('${args}'),
+	tabnew: OPEN({ untitled: true }),
+	tabedit: OPEN({ untitled: true }),
 	tabnext: 'workbench.action.nextEditor',
 	tabprevious: 'workbench.action.previousEditor',
 	tabclose: { run: CLOSE, bang: REVERT_CLOSE },
@@ -184,6 +192,125 @@ export function validateUserExCommands(raw: unknown): UserExCommands {
 		}
 	}
 	return { table, errors };
+}
+
+// ---- file arguments ------------------------------------------------------------
+
+/** Where a file argument is resolved: paths (`/`-separated) in the file system of the workspace. */
+export interface ExFileContext {
+	/** Vim's current directory: relative names start here. */
+	readonly cwd: string;
+	/** The current file (`%`), if it has a name. */
+	readonly current?: string;
+	/** The user's home directory (`~`). */
+	readonly home?: string;
+}
+
+/** A file argument resolved: an absolute path, a pattern for quick open (`*`), or Vim's error. */
+export type ExFileArg = { readonly path: string } | { readonly glob: string } | { readonly error: string };
+
+function posixDirname(p: string): string {
+	const i = p.replace(/\/+$/, '').lastIndexOf('/');
+	return i <= 0 ? '/' : p.slice(0, i);
+}
+
+function posixBasename(p: string): string {
+	const t = p.replace(/\/+$/, '');
+	return t.slice(t.lastIndexOf('/') + 1);
+}
+
+/** `.` and `..` and repeated slashes resolved; absolute in, absolute out. */
+export function normalizeExPath(p: string): string {
+	const out: string[] = [];
+	for (const part of p.split('/')) {
+		if (part === '' || part === '.') {
+			continue;
+		}
+		if (part === '..') {
+			out.pop();
+		} else {
+			out.push(part);
+		}
+	}
+	return '/' + out.join('/');
+}
+
+/** Vim's filename modifiers on a path (`:p` `:h` `:t` `:r` `:e`), in order. */
+function applyFileModifiers(path: string, mods: string): string {
+	let p = path;
+	for (const m of mods.split(':').slice(1)) {
+		switch (m) {
+			case 'p': break; // already absolute
+			case 'h': p = posixDirname(p); break;
+			case 't': p = posixBasename(p); break;
+			case 'r': {
+				const tail = posixBasename(p);
+				const dot = tail.lastIndexOf('.');
+				p = dot > 0 ? p.slice(0, p.length - (tail.length - dot)) : p;
+				break;
+			}
+			case 'e': {
+				const tail = posixBasename(p);
+				const dot = tail.lastIndexOf('.');
+				p = dot > 0 ? tail.slice(dot + 1) : '';
+				break;
+			}
+		}
+	}
+	return p;
+}
+
+/**
+ * A file argument of `:e` `:sp` `:vs` `:new` `:vne` `:tabe` `:tabnew`, as Vim
+ * reads it: relative to the current directory (`ctx.cwd`), `/...` absolute
+ * (`C:\...` / `C:/...` too), `~` / `~/...` the home directory, `%` the current
+ * file with `:p` `:h` `:t` `:r` `:e` modifiers (`%:h/x`), `\ ` `\%` `\#` `\*`
+ * a literal blank, `%`, `#`, `*`. A name with `*` is a pattern (for quick open).
+ * Undefined: no argument.
+ */
+export function resolveExFileArg(arg: string, ctx: ExFileContext): ExFileArg | undefined {
+	let typed = arg.trim();
+	if (!typed) {
+		return undefined;
+	}
+	if (/(^|[^\\])\*/.test(typed)) {
+		return { glob: typed };
+	}
+	if (/^[A-Za-z]:[\\/]/.test(typed)) {
+		typed = '/' + typed.replace(/\\/g, '/');
+	}
+	let out = '';
+	let i = 0;
+	if (typed === '~' || typed.startsWith('~/')) {
+		if (ctx.home === undefined) {
+			return { error: 'No home directory for ~' };
+		}
+		out = ctx.home.replace(/\/+$/, '');
+		i = 1;
+	}
+	while (i < typed.length) {
+		const c = typed[i];
+		if (c === '\\' && i + 1 < typed.length && ' %#*\\'.includes(typed[i + 1])) {
+			out += typed[i + 1];
+			i += 2;
+			continue;
+		}
+		if (c === '%') {
+			const mods = /^(:[phtre])*/.exec(typed.slice(i + 1))![0];
+			if (ctx.current === undefined) {
+				return { error: 'E499: Empty file name for \'%\' or \'#\', only works with ":p:h"' };
+			}
+			out += applyFileModifiers(ctx.current, mods);
+			i += 1 + mods.length;
+			continue;
+		}
+		out += c;
+		i++;
+	}
+	if (out.startsWith('/')) {
+		return { path: normalizeExPath(out) };
+	}
+	return { path: normalizeExPath(ctx.cwd + '/' + out) };
 }
 
 // ---- parsing ------------------------------------------------------------------

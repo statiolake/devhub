@@ -1165,6 +1165,33 @@ suite('DevHub Vim ex commands', () => {
 		assert.strictEqual(v.state(), 'a\nb\n|c');
 	});
 
+	test(':e :sp :vs :new :vne :tabe :tabnew pass their file to devhubVim.edit / devhubVim.open, and an override can too', async () => {
+		const run = async (line: string, shared?: VimSharedState) => {
+			const v = new Vim('|a', [], shared).keys(`:${line}<CR>`);
+			await flush();
+			return v.host.commands.map(c => c.args === undefined ? [c.command] : [c.command, c.args]);
+		};
+		assert.deepStrictEqual(await run('e src/main.ts'), [['devhubVim.edit', { file: 'src/main.ts', bang: false }]]);
+		assert.deepStrictEqual(await run('edit'), [['devhubVim.edit', { file: '', bang: false }]]);
+		assert.deepStrictEqual(await run('e!'), [['devhubVim.edit', { file: '', bang: true }]]);
+		assert.deepStrictEqual(await run('sp %:h/x.ts'), [['workbench.action.splitEditorUp'], ['devhubVim.open', { file: '%:h/x.ts', replace: true }]]);
+		assert.deepStrictEqual(await run('vs'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true }]]);
+		assert.deepStrictEqual(await run('new n.txt'), [['workbench.action.splitEditorUp'], ['devhubVim.open', { file: 'n.txt', replace: true, untitled: true }]]);
+		assert.deepStrictEqual(await run('vne'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true, untitled: true }]]);
+		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.open', { file: '~/notes.md', untitled: true }]]);
+		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.open', { file: '', untitled: true }]]);
+		// 'splitbelow' as an override (the user's settings): the split of their choice, the file passed on with ${args}
+		const shared = new VimSharedState();
+		shared.setUserExCommands({ split: ['workbench.action.splitEditorDown', { command: 'devhubVim.open', args: { file: '${args}', replace: true } }] });
+		assert.deepStrictEqual(await run('sp x', shared), [['workbench.action.splitEditorDown'], ['devhubVim.open', { file: 'x', replace: true }]]);
+		// what the command answers with (E37 ...) is the message
+		const e = new Vim('|a');
+		e.host.executeCommand = async () => { throw new Error('E37: No write since last change (add ! to override)'); };
+		e.keys(':e<CR>');
+		await flush();
+		assert.ok(e.vim.status().includes('E37'), e.vim.status());
+	});
+
 	test(':\'<,\'> from visual mode passes the selected lines', () => {
 		const shared = new VimSharedState();
 		shared.setUserExCommands({ Sort: { command: 'editor.action.sortLinesAscending', args: { range: '${range}' } } });
@@ -2233,6 +2260,7 @@ suite('Neovim ex commands', () => {
 		assert.ok(v.vim.status().includes('E518'), v.vim.status());
 		check('|a\nb\nc', ':1d|1d<CR>', '|c');
 		const s = new Vim('|a').keys(':sp<CR>');
+		// (the second step, devhubVim.open, runs once the split is awaited)
 		assert.deepStrictEqual(s.host.commands.map(c => c.command), ['workbench.action.splitEditorUp']);
 		const w = new Vim('|a').keys(':wri<CR>');
 		assert.deepStrictEqual(w.host.commands.map(c => c.command), ['workbench.action.files.save']);

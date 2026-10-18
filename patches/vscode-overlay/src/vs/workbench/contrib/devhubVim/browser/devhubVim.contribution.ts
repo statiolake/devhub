@@ -141,6 +141,7 @@ import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
+import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VimRegex } from '../common/vimRegex.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 
@@ -723,6 +724,10 @@ class VimEditor extends Disposable implements IVimHost {
 	}
 
 	executeCommand(command: string, args: unknown): Promise<unknown> {
+		if ((VIM_EDIT_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
+			// `:e {file}` `:sp {file}` ...: `%` and the current directory are this editor's, even after a split moved the focus
+			args = { ...(args as object | undefined), from: this.model.uri.toString() };
+		}
 		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
 	}
 
