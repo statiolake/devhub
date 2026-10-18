@@ -614,6 +614,36 @@ never flickers there first. A selection is not changed: visual mode's
 selection may end at the end of the line (its end is exclusive in VS Code). A
 drag past the end of the line selects up to and including the last character.
 
+In the visual modes the block caret is on the character the Vim cursor is on,
+as in Vim, not one cell to its right. The selection is VS Code's, with an
+exclusive end, so it holds exactly the text Vim selected (copying it, or any
+command that reads the selection, gets that text), and VS Code would draw its
+caret at the selection's end: after the last character. DevHub draws it on
+the cursor's character instead, and leaves the selection as it is:
+
+- `v` puts the block on the character under it; `l` / `h` move it one cell at
+  a time, also where the selection turns around the start; `o` puts it on the
+  other end's character.
+- `V` keeps it on the cursor's column although whole lines are selected, and
+  moves it with `h` `l` `w` `$` ... though the selected lines stay the same.
+- `CTRL-V`: the main block is on the corner the cursor is on, and each other
+  line's caret on that line's edge on the cursor's side; `O` and `o` move them.
+- `$` puts it on the last character of the line. On an empty line it is at
+  column 1 of that line, not at the start of the next one (where the selection
+  ends, to take in the empty line's newline).
+- A wide character, an emoji or a letter with combining marks is one block; a
+  wrapped line has it on the screen line the character is on.
+- A mouse drag and `gv` have it on the cursor's character as well, the same
+  one `o` and the next motion start from.
+
+The window scrolls to that character, and the active (and relative) line
+numbers are its line's. Where the caret is drawn is all that changes: the
+selection, the cursor position extensions and commands read, the screen
+reader's cursor and the caret style (block, unless your settings say
+otherwise) are VS Code's. It is a hook in the editor's caret drawing
+(`ModalCursor.viewPositions` in `modalCursor.ts`, called from
+`viewCursors.ts` and `lineNumbers.ts`), set by the Vim engine's mode.
+
 In insert mode the caret is VS Code's: `A`, `a` on the last character and a
 click put it after the last character, and `<Esc>` moves it one left, once.
 `CTRL-O` puts it on the last character for its one command and back after it.

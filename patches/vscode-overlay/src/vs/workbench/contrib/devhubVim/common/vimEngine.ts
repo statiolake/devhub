@@ -538,6 +538,11 @@ export class VimEngine {
 		return this._mode;
 	}
 
+	/** In a visual mode, the character the cursor is on (the head: `o` swaps it with the other end); undefined otherwise. */
+	visualCursor(): VimPos | undefined {
+		return this.isVisual() ? this.visualHead : undefined;
+	}
+
 	/** True while a command is half built, or the `:`/`/` prompt is open. */
 	get pending(): boolean {
 		return this.grammarPending() || this.cmdline !== undefined;

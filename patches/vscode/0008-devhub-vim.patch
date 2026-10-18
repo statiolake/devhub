@@ -243,6 +243,51 @@ index 9331eea4..170697a2 100644
  					primary: KeyCode.Delete,
  					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
  				}
+diff --git a/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts b/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts
+index 31234a17..ddaf2aa5 100644
+--- a/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts
++++ b/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts
+@@ -8,6 +8,7 @@ import * as platform from '../../../../base/common/platform.js';
+ import { DynamicViewOverlay } from '../../view/dynamicViewOverlay.js';
+ import { RenderLineNumbersType, EditorOption } from '../../../common/config/editorOptions.js';
+ import { Position } from '../../../common/core/position.js';
++import { ModalCursor } from '../../../common/cursor/modalCursor.js';
+ import { Range } from '../../../common/core/range.js';
+ import { RenderingContext } from '../../view/renderingContext.js';
+ import { ViewContext } from '../../../common/viewModel/viewContext.js';
+@@ -71,7 +72,7 @@ export class LineNumbersOverlay extends DynamicViewOverlay {
+ 		return true;
+ 	}
+ 	public override onCursorStateChanged(e: viewEvents.ViewCursorStateChangedEvent): boolean {
+-		const primaryViewPosition = e.selections[0].getPosition();
++		const primaryViewPosition = ModalCursor.viewPositions(this._context.viewModel, e.selections.slice(0, 1), e.modelSelections.slice(0, 1))[0]; // DevHub: where the caret is drawn, see modalCursor.ts
+ 		this._lastCursorModelPosition = this._context.viewModel.coordinatesConverter.convertViewPositionToModelPosition(primaryViewPosition);
+ 
+ 		let shouldRender = false;
+diff --git a/src/vs/editor/browser/viewParts/viewCursors/viewCursors.ts b/src/vs/editor/browser/viewParts/viewCursors/viewCursors.ts
+index d3fd3861..7528fa29 100644
+--- a/src/vs/editor/browser/viewParts/viewCursors/viewCursors.ts
++++ b/src/vs/editor/browser/viewParts/viewCursors/viewCursors.ts
+@@ -22,6 +22,7 @@ import { registerThemingParticipant } from '../../../../platform/theme/common/th
+ import { isHighContrast } from '../../../../platform/theme/common/theme.js';
+ import { CursorChangeReason } from '../../../common/cursorEvents.js';
+ import { WindowIntervalTimer, getWindow } from '../../../../base/browser/dom.js';
++import { ModalCursor } from '../../../common/cursor/modalCursor.js';
+ 
+ /**
+  * View cursors is a view part responsible for rendering the primary cursor and
+@@ -159,10 +160,7 @@ export class ViewCursors extends ViewPart {
+ 
+ 	}
+ 	public override onCursorStateChanged(e: viewEvents.ViewCursorStateChangedEvent): boolean {
+-		const positions: Position[] = [];
+-		for (let i = 0, len = e.selections.length; i < len; i++) {
+-			positions[i] = e.selections[i].getPosition();
+-		}
++		const positions: Position[] = ModalCursor.viewPositions(this._context.viewModel, e.selections, e.modelSelections); // DevHub: a visual mode's caret is on its cursor character, see modalCursor.ts
+ 		this._onCursorPositionChanged(positions[0], positions.slice(1), e.reason);
+ 
+ 		const selectionIsEmpty = e.selections[0].isEmpty();
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 index b77791a6..335cac73 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
@@ -325,6 +370,27 @@ index b77791a6..335cac73 100644
  		}
  
  		this._modelData = new ModelData(model, viewModel, view, hasRealView, listenersToRemove, attachedView);
+diff --git a/src/vs/editor/common/cursor/cursor.ts b/src/vs/editor/common/cursor/cursor.ts
+index a0608348..64cb8bac 100644
+--- a/src/vs/editor/common/cursor/cursor.ts
++++ b/src/vs/editor/common/cursor/cursor.ts
+@@ -8,6 +8,7 @@ import * as strings from '../../../base/common/strings.js';
+ import { CursorCollection } from './cursorCollection.js';
+ import { CursorConfiguration, CursorState, EditOperationResult, EditOperationType, IColumnSelectData, PartialCursorState, ICursorSimpleModel } from '../cursorCommon.js';
+ import { CursorContext } from './cursorContext.js';
++import { ModalCursor } from './modalCursor.js';
+ import { DeleteOperations } from './cursorDeleteOperations.js';
+ import { CursorChangeReason } from '../cursorEvents.js';
+ import { CompositionOutcome, TypeOperations } from './cursorTypeOperations.js';
+@@ -406,7 +407,7 @@ export class CursorsController extends Disposable {
+ 
+ 	private _emitStateChangedIfNecessary(eventsCollector: ViewModelEventsCollector, source: string | null | undefined, reason: CursorChangeReason, oldState: CursorModelState | null, reachedMaxCursorCount: boolean): boolean {
+ 		const newState = CursorModelState.from(this._model, this);
+-		if (newState.equals(oldState)) {
++		if (newState.equals(oldState) && !ModalCursor.redraws(this.context.viewModel)) { // DevHub: the view hears of a visual caret that moved in a selection that did not, see modalCursor.ts
+ 			return false;
+ 		}
+ 
 diff --git a/src/vs/editor/common/cursor/oneCursor.ts b/src/vs/editor/common/cursor/oneCursor.ts
 index 17bdb4e6..4278db0d 100644
 --- a/src/vs/editor/common/cursor/oneCursor.ts

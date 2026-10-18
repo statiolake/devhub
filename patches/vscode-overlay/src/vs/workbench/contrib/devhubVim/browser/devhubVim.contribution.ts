@@ -79,6 +79,9 @@
 //   the editor's cursor (editor/common/cursor/modalCursor.ts) that this
 //   contribution switches by the engine's mode: a click, a restored view
 //   state, undo or any other caller cannot put it there, not even for a frame.
+//   In a visual mode the block caret is drawn on the cursor's character (the
+//   engine's visual head), not after the selection's last one where VS Code
+//   would draw it; the selection is left as it is (ModalCursor.setVisual).
 // * Mode, caret style, modal input and context keys are recomputed from the
 //   engine's state after every command and every focus or model change, never
 //   toggled, and a command that throws leaves the engine in plain normal mode.
@@ -266,6 +269,8 @@ class VimEditor extends Disposable implements IVimHost {
 	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
 	/** Inside scrollToLine's cursor move: the cursor is not revealed, the scroll says where the window goes. */
 	private revealSuppressed = 0;
+	/** The primary selection last put for a visual mode, with the character its cursor is on. */
+	private visualPrimary: { selection: Selection; cursor: Position } | undefined;
 
 	constructor(
 		readonly editor: ICodeEditor,
@@ -277,6 +282,9 @@ class VimEditor extends Disposable implements IVimHost {
 		// Outside insert and replace mode the caret is on a character, at every
 		// cursor move, whoever makes it (the editor core applies it, modalCursor.ts).
 		this._register(ModalCursor.set(editor.getId(), () => !this.typing()));
+		// In a visual mode the caret is drawn on the cursor's character, not after
+		// the selection's last one (modalCursor.ts); the selection stays as it is.
+		this._register(ModalCursor.setVisual(editor.getId(), () => this.engine.visualCursor() ? { primary: this.visualPrimary } : undefined));
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
@@ -591,8 +599,22 @@ class VimEditor extends Disposable implements IVimHost {
 		const sel = cursorAtStart
 			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
 			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
-		this.editor.setSelection(sel, 'devhubVim');
-		this.reveal(sel.getPosition());
+		const caret = this.noteVisual(sel);
+		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, 'devhubVim'));
+		this.reveal(caret);
+	}
+
+	/**
+	 * Before a selection is put: in a visual mode, the character its caret is
+	 * drawn on (the cursor's, which the selection does not say: `V` covers whole
+	 * lines, a forward selection ends after its last character). That is the
+	 * position revealed, too. The selection is then put with ModalCursor.redraw,
+	 * so the caret is drawn anew though the selection may be the same.
+	 */
+	private noteVisual(primary: Selection): IPosition {
+		const head = this.engine.visualCursor();
+		this.visualPrimary = head ? { selection: primary, cursor: new Position(head.line + 1, head.col + 1) } : undefined;
+		return this.visualPrimary?.cursor ?? primary.getPosition();
 	}
 
 	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void {
@@ -601,8 +623,9 @@ class VimEditor extends Disposable implements IVimHost {
 			: new Selection(r.start.line + 1, r.start.col + 1, r.end.line + 1, r.end.col + 1);
 		// VS Code's primary selection is the first
 		const sels = [toSel(ranges[primary]), ...ranges.filter((_, i) => i !== primary).map(toSel)];
-		this.editor.setSelections(sels, 'devhubVim');
-		this.reveal(sels[0].getPosition());
+		const caret = this.noteVisual(sels[0]);
+		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelections(sels, 'devhubVim'));
+		this.reveal(caret);
 	}
 
 	applyEdits(edits: readonly VimEdit[]): void {
