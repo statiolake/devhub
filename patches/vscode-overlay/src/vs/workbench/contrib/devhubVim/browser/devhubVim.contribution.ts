@@ -111,7 +111,7 @@ import { ModalTextInput } from '../../../../editor/browser/controller/editContex
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
-import { Position } from '../../../../editor/common/core/position.js';
+import { IPosition, Position } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
 import { ScrollType } from '../../../../editor/common/editorCommon.js';
@@ -254,6 +254,8 @@ class VimEditor extends Disposable implements IVimHost {
 	private readonly incDecorations;
 	private readonly hlScheduler = this._register(new RunOnceScheduler(() => this.drawHighlight(), 50));
 	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
+	/** Inside scrollToLine's cursor move: the cursor is not revealed, the scroll says where the window goes. */
+	private revealSuppressed = 0;
 
 	constructor(
 		readonly editor: ICodeEditor,
@@ -519,7 +521,23 @@ class VimEditor extends Disposable implements IVimHost {
 	setCursor(p: VimPos): void {
 		const position = { lineNumber: p.line + 1, column: p.col + 1 };
 		this.editor.setPosition(position, 'devhubVim');
-		this.editor.revealPosition(position);
+		this.reveal(position);
+	}
+
+	/**
+	 * How this editor scrolls: animated when the user's `editor.smoothScrolling`
+	 * is on, as VS Code's own scroll and reveal commands do (they pass
+	 * ScrollType.Smooth, which the editor's scrollable animates only then).
+	 */
+	scrollType(): ScrollType {
+		return this.editor.getOption(EditorOption.smoothScrolling) ? ScrollType.Smooth : ScrollType.Immediate;
+	}
+
+	/** Bring the caret into view (against where the window is going, so an animation in flight is not fought). */
+	private reveal(position: IPosition): void {
+		if (!this.revealSuppressed) {
+			this.editor.revealPosition(position, this.scrollType());
+		}
 	}
 
 	getSelection(): { anchor: VimPos; active: VimPos } {
@@ -539,7 +557,7 @@ class VimEditor extends Disposable implements IVimHost {
 			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
 			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
 		this.editor.setSelection(sel, 'devhubVim');
-		this.editor.revealPosition(sel.getPosition());
+		this.reveal(sel.getPosition());
 	}
 
 	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void {
@@ -549,7 +567,7 @@ class VimEditor extends Disposable implements IVimHost {
 		// VS Code's primary selection is the first
 		const sels = [toSel(ranges[primary]), ...ranges.filter((_, i) => i !== primary).map(toSel)];
 		this.editor.setSelections(sels, 'devhubVim');
-		this.editor.revealPosition(sels[0].getPosition());
+		this.reveal(sels[0].getPosition());
 	}
 
 	applyEdits(edits: readonly VimEdit[]): void {
@@ -635,7 +653,19 @@ class VimEditor extends Disposable implements IVimHost {
 		return this.model.getOptions().tabSize;
 	}
 
+	/**
+	 * The lines completely in the window where it is going: during a smooth
+	 * scroll that is the animation's target, not the frame on screen, so a
+	 * CTRL-D pressed (or repeating) while the last one still animates goes on
+	 * from where that one ends, as VS Code's editorScroll does.
+	 */
 	visibleLines(): { top: number; bottom: number } {
+		const vm = this.editor._getViewModel();
+		if (vm && this.editor.getLayoutInfo().height > 0) {
+			const view = vm.getCompletelyVisibleViewRangeAtScrollTop(vm.viewLayout.getFutureViewport().top);
+			const range = vm.coordinatesConverter.convertViewRangeToModelRange(view);
+			return { top: range.startLineNumber - 1, bottom: range.endLineNumber - 1 };
+		}
 		const ranges = this.editor.getVisibleRanges();
 		if (!ranges.length) {
 			const c = this.getCursor().line;
@@ -644,13 +674,31 @@ class VimEditor extends Disposable implements IVimHost {
 		return { top: ranges[0].startLineNumber - 1, bottom: ranges[ranges.length - 1].endLineNumber - 1 };
 	}
 
-	scrollToLine(line: number, at: 'top' | 'center' | 'bottom'): void {
+	/**
+	 * One scroll per command: the target is computed first, the cursor is put
+	 * (by `moveCursor`) without a reveal of its own, and then the window goes to
+	 * the target in one setScrollTop, animated when `editor.smoothScrolling` is
+	 * on. A new target while an animation runs retargets it (the scrollable
+	 * combines the two) instead of starting over from where the last one began.
+	 * A reveal here would be a second scroll: computed against the target it is
+	 * a no-op at best, and when it is under a line from the frame on screen the
+	 * editor makes it immediate, which jumps the animation to its end.
+	 */
+	scrollToLine(line: number, at: 'top' | 'center' | 'bottom', moveCursor?: () => void): void {
 		const lineNumber = Math.max(1, Math.min(this.model.getLineCount(), line + 1));
 		const top = this.editor.getTopForLineNumber(lineNumber);
 		const height = this.editor.getLayoutInfo().height;
 		const lineHeight = this.editor.getOption(EditorOption.lineHeight);
 		const scrollTop = at === 'top' ? top : at === 'center' ? top - (height - lineHeight) / 2 : top - height + lineHeight;
-		this.editor.setScrollTop(Math.max(0, scrollTop), ScrollType.Immediate);
+		if (moveCursor) {
+			this.revealSuppressed++;
+			try {
+				moveCursor();
+			} finally {
+				this.revealSuppressed--;
+			}
+		}
+		this.editor.setScrollTop(Math.max(0, scrollTop), this.scrollType());
 	}
 
 	isLineHidden(line: number): boolean {
@@ -697,7 +745,7 @@ class VimEditor extends Disposable implements IVimHost {
 		if (!range) {
 			this.incDecorations.clear();
 			if (this.incOrigin) {
-				this.editor.setScrollPosition(this.incOrigin, ScrollType.Immediate);
+				this.editor.setScrollPosition(this.incOrigin, this.scrollType());
 				this.incOrigin = undefined;
 			}
 			return;
@@ -707,7 +755,7 @@ class VimEditor extends Disposable implements IVimHost {
 		}
 		const r = new Range(range.start.line + 1, range.start.col + 1, range.end.line + 1, range.end.col + 1);
 		this.incDecorations.set([{ range: r, options: INCSEARCH_DECORATION }]);
-		this.editor.revealRangeInCenterIfOutsideViewport(r, ScrollType.Immediate);
+		this.editor.revealRangeInCenterIfOutsideViewport(r, this.scrollType());
 	}
 
 	lineComment(): string | undefined {

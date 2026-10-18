@@ -107,7 +107,8 @@ class TestHost implements IVimHost {
 	indentUnit() { return '\t'; }
 	tabSize() { return 4; }
 	visibleLines() { return { top: this.top, bottom: Math.min(this.lines.length - 1, this.top + this.visible - 1) }; }
-	scrollToLine(line: number, at: 'top' | 'center' | 'bottom') {
+	scrollToLine(line: number, at: 'top' | 'center' | 'bottom', moveCursor?: () => void) {
+		moveCursor?.();
 		this.top = Math.max(0, at === 'top' ? line : at === 'bottom' ? line - this.visible + 1 : line - Math.floor(this.visible / 2));
 	}
 	isLineHidden(line: number) { return this.hidden.has(line); }

@@ -105,7 +105,16 @@ history, `CTRL-U CTRL-W CTRL-R {register}`, and `d/foo<CR>` / `c?bar<CR>`
 keep their operator, count and register.
 
 **Scrolling**: `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B <PageDown>
-<PageUp>`, `zt zz zb z<CR> z. z-` (a count is a line number).
+<PageUp>`, `zt zz zb z<CR> z. z-` (a count is a line number). They follow
+`editor.smoothScrolling` as VS Code's own scroll commands do: animated when it
+is on, at once when it is off. Each is one scroll: the window's target and the
+cursor (the same number of lines for `CTRL-D` / `CTRL-U`, `'scroll'` being
+half the window or the count) are worked out first, the cursor is put there
+without a reveal of its own, and the window goes to the target. Pressed again
+(or held) while the last one still animates, a scroll goes on from where that
+one ends, not from the frame on screen. A cursor that leaves the window by a
+motion (`G`, `gg`, `n`, `H` `M` `L`, a search) is revealed with the same
+scroll type, and the 'incsearch' preview scrolls the same way.
 
 **Folds** (VS Code's folding): `zo zO zc zC za zA zv zR zM zj zk [z zf zd zE`.
 `j` / `k` move over a closed fold.

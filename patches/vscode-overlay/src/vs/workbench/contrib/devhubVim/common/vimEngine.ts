@@ -113,8 +113,13 @@ export interface IVimHost {
 	tabSize(): number;
 	/** The first and last line on screen (0-based). */
 	visibleLines(): { top: number; bottom: number };
-	/** Scroll so that `line` is at the top, center or bottom of the window. */
-	scrollToLine(line: number, at: 'top' | 'center' | 'bottom'): void;
+	/**
+	 * Scroll so that `line` is at the top, center or bottom of the window
+	 * (animated when the editor scrolls smoothly). `moveCursor` runs first and
+	 * the cursor or selection it sets is not revealed: it is in the window the
+	 * scroll goes to, and one command is one scroll.
+	 */
+	scrollToLine(line: number, at: 'top' | 'center' | 'bottom', moveCursor?: () => void): void;
 	/** Whether the line is inside a closed fold (hidden). */
 	isLineHidden(line: number): boolean;
 	/** `count` screen lines down (negative: up) from `from` (gj / gk); undefined when there is none. */
@@ -3180,9 +3185,8 @@ export class VimEngine {
 			// zt zz zb (z<CR> z. z- also go to the first non-blank); a count is the line
 			const line = count !== undefined ? this.clampLine(count - 1) : cur.line;
 			const at = to === 'top' ? 'top' : to === 'bottom' ? 'bottom' : 'center';
-			this.host.scrollToLine(line, at);
 			const target = a.firstNonBlank === true ? pos(line, this.firstNonBlank(line)) : pos(line, line === cur.line ? cur.col : this.colForDesired(line));
-			this.moveCursorKeepVisual(target, a.firstNonBlank !== true);
+			this.host.scrollToLine(line, at, () => this.moveCursorKeepVisual(target, a.firstNonBlank !== true));
 			this.complete(undefined);
 			return;
 		}
@@ -3229,10 +3233,8 @@ export class VimEngine {
 				line = Math.min(cur.line, newTop + height - 1);
 			}
 		}
-		this.host.scrollToLine(newTop, 'top');
-		if (line !== cur.line) {
-			this.moveCursorKeepVisual(this.lineTarget(line), !this.options.startofline);
-		}
+		// the cursor first (not revealed), then the one scroll to the new top
+		this.host.scrollToLine(newTop, 'top', line !== cur.line ? () => this.moveCursorKeepVisual(this.lineTarget(line), !this.options.startofline) : undefined);
 		this.complete(undefined);
 	}
 
