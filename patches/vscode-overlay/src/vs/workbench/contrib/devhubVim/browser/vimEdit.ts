@@ -56,6 +56,32 @@ export interface VimFileBase {
 	readonly ctx: ExFileContext;
 }
 
+/**
+ * Vim's current directory for `current`: its workspace folder, the first
+ * folder, its own directory, the home directory. `%` is `current` when it
+ * is a file there (same file system); `~` the home directory there.
+ * (The `:` prompt's file completion resolves the directory typed the same way.)
+ */
+export async function resolveFileBase(workspaceService: IWorkspaceContextService, pathService: IPathService, current: URI | undefined): Promise<VimFileBase> {
+	const folders = workspaceService.getWorkspace().folders;
+	const folder = (current && workspaceService.getWorkspaceFolder(current)) ?? folders[0];
+	const home = await pathService.userHome().catch(() => undefined);
+	const named = current && current.scheme !== Schemas.untitled ? current : undefined;
+	const cwd = folder?.uri ?? (named ? dirname(named) : home);
+	if (!cwd) {
+		throw new Error('E32: No file name');
+	}
+	const sameFs = (u: URI | undefined) => !!u && u.scheme === cwd.scheme && u.authority === cwd.authority;
+	return {
+		cwd,
+		ctx: {
+			cwd: cwd.path,
+			...(sameFs(named) ? { current: named!.path } : {}),
+			...(sameFs(home) ? { home: home!.path } : {}),
+		},
+	};
+}
+
 /** What `devhubVim.edit` and `devhubVim.open` do, on the workbench's services. */
 export class VimFileCommands {
 
@@ -80,29 +106,9 @@ export class VimFileCommands {
 		return EditorResourceAccessor.getOriginalUri(this.editorService.activeEditor, { supportSideBySide: SideBySideEditor.PRIMARY });
 	}
 
-	/**
-	 * Vim's current directory for `current`: its workspace folder, the first
-	 * folder, its own directory, the home directory. `%` is `current` when it
-	 * is a file there (same file system); `~` the home directory there.
-	 */
-	async base(current: URI | undefined): Promise<VimFileBase> {
-		const folders = this.workspaceService.getWorkspace().folders;
-		const folder = (current && this.workspaceService.getWorkspaceFolder(current)) ?? folders[0];
-		const home = await this.pathService.userHome().catch(() => undefined);
-		const named = current && current.scheme !== Schemas.untitled ? current : undefined;
-		const cwd = folder?.uri ?? (named ? dirname(named) : home);
-		if (!cwd) {
-			throw new Error('E32: No file name');
-		}
-		const sameFs = (u: URI | undefined) => !!u && u.scheme === cwd.scheme && u.authority === cwd.authority;
-		return {
-			cwd,
-			ctx: {
-				cwd: cwd.path,
-				...(sameFs(named) ? { current: named!.path } : {}),
-				...(sameFs(home) ? { home: home!.path } : {}),
-			},
-		};
+	/** Vim's current directory for `current` (see resolveFileBase). */
+	base(current: URI | undefined): Promise<VimFileBase> {
+		return resolveFileBase(this.workspaceService, this.pathService, current);
 	}
 
 	/** The argument resolved: a resource, a quick open pattern, or undefined for none. Vim's errors are thrown. */

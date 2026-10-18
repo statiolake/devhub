@@ -242,10 +242,10 @@ directory and `:e src/` what is in `src`), with nothing picked in it: it only
 shows what `Tab` would complete, and `Enter` still runs what you typed. `Tab`,
 `<Down>` or `CTRL-N` pick a match, `CTRL-Y` takes it and lets you go on typing,
 `Enter` takes it and runs the line, `Esc` abandons the line (with the menu,
-in one press). The workspace file search for a bare name never holds the menu
-up: it starts after a short pause in typing (a newer name cancels it), the
-menu shows the directory's entries at once, and the files join it when the
-search answers. `"devhub.vim.cmdline.autoComplete": false` turns the menu as
+in one press). File names are the entries of the directory typed so far, as
+Vim lists them (`:e ` the workspace folder's, `:e src/foo/` those of
+`src/foo`; `~/`, `/abs/` and `%:h/` resolve as `:e` resolves them, in a remote
+workspace on the remote side); the workspace is not searched. `"devhub.vim.cmdline.autoComplete": false` turns the menu as
 you type off: then it shows on `Tab` only, as before. `/` and `?` have no
 completion.
 

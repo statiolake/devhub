@@ -40,7 +40,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IWorkspace, IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { IFileQuery, ISearchComplete, ISearchService } from '../../../../services/search/common/search.js';
+import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { DevhubVim, vimDrives } from '../../browser/devhubVim.contribution.js';
 import { VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VimCmdline } from '../../browser/vimCmdline.js';
@@ -67,9 +67,6 @@ suite('DevHub Vim: the prompt line', () => {
 		type(text: string): void;
 		visible(): boolean;
 	}
-
-	/** The workspace file search the line's completion runs (quick open's), as a test sets it. */
-	let fileSearch: ((query: IFileQuery, token?: CancellationToken) => Promise<ISearchComplete>) | undefined;
 
 	function withPrompt(fn: (env: Env) => void | Promise<void>): Promise<void> {
 		const disposables = new DisposableStore();
@@ -99,17 +96,22 @@ suite('DevHub Vim: the prompt line', () => {
 				}],
 				[IFileService, new class extends mock<IFileService>() {
 					override async resolve(resource: URI) {
-						const names = resource.path === '/ws' ? [['src', true], ['README.md', false], ['.git', true]] : resource.path === '/ws/src' ? [['main.ts', false]] : undefined;
+						const dirs: Record<string, [string, boolean][]> = {
+							'/ws': [['src', true], ['README.md', false], ['.git', true]],
+							'/ws/src': [['main.ts', false], ['foo', true]],
+							'/ws/src/foo': [['bar.ts', false], ['baz', true]],
+							'/home/me': [['notes.txt', false], ['docs', true]],
+							'/etc': [['hosts', false]],
+						};
+						const names = resource.scheme === 'file' ? dirs[resource.path] : undefined;
 						if (!names) {
 							throw new Error('not found');
 						}
 						return { children: names.map(([name, isDirectory]) => ({ name, isDirectory })) } as unknown as IFileStatWithMetadata;
 					}
 				}],
-				[ISearchService, new class extends mock<ISearchService>() {
-					override fileSearch(query: IFileQuery, token?: CancellationToken): Promise<ISearchComplete> {
-						return fileSearch ? fileSearch(query, token) : Promise.reject(new Error('no search'));
-					}
+				[IPathService, new class extends mock<IPathService>() {
+					override userHome(): Promise<URI> & URI { return Promise.resolve(URI.file('/home/me')) as Promise<URI> & URI; }
 				}],
 			));
 			const vim = disposables.add(instantiation.createInstance(DevhubVim));
@@ -129,7 +131,6 @@ suite('DevHub Vim: the prompt line', () => {
 			await fn(env);
 		};
 		return run().finally(() => {
-			fileSearch = undefined;
 			disposables.dispose();
 			root.remove();
 		});
@@ -235,7 +236,7 @@ suite('DevHub Vim: the prompt line', () => {
 		assert.deepStrictEqual(await labels('set hls'), ['hlsearch', 'hls'].filter(l => l.startsWith('hls')));
 		assert.deepStrictEqual(await labels('b ma'), ['main.ts']);
 		assert.deepStrictEqual(await labels('e '), ['README.md', 'src/'], 'the directory, sorted, without dot files');
-		assert.deepStrictEqual(await labels('e src/'), ['src/main.ts']);
+		assert.deepStrictEqual(await labels('e src/'), ['src/foo/', 'src/main.ts']);
 		assert.deepStrictEqual(await labels('s/x'), []);
 		// Tab with one match puts it in the line (no menu)
 		model.setValue('');
@@ -369,58 +370,43 @@ suite('DevHub Vim: the prompt line', () => {
 		}
 	}));
 
-	test('file completion as you type: the directory at once, the search after a pause, cancelled by a newer name, and merged in when it answers', () => withPrompt(async ({ vim, line }) => {
-		const searches: { pattern: string; token?: CancellationToken; resolve(names: string[]): void }[] = [];
-		fileSearch = (query, token) => new Promise<ISearchComplete>(resolve => {
-			searches.push({ pattern: query.filePattern ?? '', token, resolve: names => resolve({ results: names.map(n => ({ resource: URI.joinPath(ROOT, n) })), messages: [] }) });
-		});
+	test('file completion lists the entries of the directory typed, and never searches the workspace', () => withPrompt(async ({ vim, line, origin }) => {
 		vim.execute('devhubVim.cmdline', { kind: ':' });
-		const cmdline = VimCmdline.current!;
-		// (quick open's query builder needs the workbench; the search service gets the pattern)
-		(cmdline as unknown as { queryBuilder: unknown }).queryBuilder = { file: (_folders: unknown, o: { filePattern: string }) => ({ filePattern: o.filePattern }) };
-		const model = line().getModel()!;
-		const ask = async (text: string, triggerKind: CompletionTriggerKind) => {
+		const ask = async (text: string) => {
+			const model = line().getModel()!;
 			model.setValue(text);
 			line().setPosition({ lineNumber: 1, column: text.length + 1 });
 			const providers = vim.languageFeaturesService.completionProvider.ordered(model);
-			const t0 = Date.now();
-			const list = await providers[0].provideCompletionItems(model, new Position(1, text.length + 1), { triggerKind }, CancellationToken.None) as CompletionList;
-			return { labels: list.suggestions.map(s => s.label as string), incomplete: list.incomplete, ms: Date.now() - t0 };
+			const list = await providers[0].provideCompletionItems(model, new Position(1, text.length + 1), { triggerKind: CompletionTriggerKind.Invoke }, CancellationToken.None) as CompletionList;
+			assert.ok(list, text);
+			assert.ok(!list.incomplete, 'the list is complete: nothing is added to it later');
+			return list.suggestions.map(s => s.label as string);
 		};
-		const rec = recordSuggest(line());
+		// the workspace folder's entries (hidden ones only for a dot), whatever is typed after them
+		assert.deepStrictEqual(await ask('e '), ['README.md', 'src/']);
+		assert.deepStrictEqual(await ask('e ma'), ['README.md', 'src/'], 'a name typed does not search: the menu filters the directory');
+		assert.deepStrictEqual(await ask('e .'), ['.git/', 'README.md', 'src/']);
+		// a directory typed, nested too
+		assert.deepStrictEqual(await ask('e src/'), ['src/foo/', 'src/main.ts']);
+		assert.deepStrictEqual(await ask('e src/ma'), ['src/foo/', 'src/main.ts']);
+		assert.deepStrictEqual(await ask('e src/foo/'), ['src/foo/bar.ts', 'src/foo/baz/']);
+		assert.deepStrictEqual(await ask('sp ./src//foo/b'), ['./src//foo/bar.ts', './src//foo/baz/']);
+		assert.deepStrictEqual(await ask('e src/nope/'), []);
+		// the home directory, an absolute one
+		assert.deepStrictEqual(await ask('e ~/'), ['~/docs/', '~/notes.txt']);
+		assert.deepStrictEqual(await ask('e /etc/'), ['/etc/hosts']);
+		// a pattern is no directory
+		assert.deepStrictEqual(await ask('e *.ts/'), []);
+		// %:h is the directory of the file the prompt came from
+		const model2 = createTextModel('x', undefined, undefined, URI.file('/ws/src/main.ts'));
 		try {
-			// typed: answers at once with what the directory has, no search yet (it waits for a pause)
-			const first = await ask('e m', CompletionTriggerKind.TriggerForIncompleteCompletions);
-			assert.deepStrictEqual([first.labels, first.incomplete], [['README.md', 'src/'], true]);
-			assert.ok(first.ms < 1000);
-			assert.strictEqual(searches.length, 0);
-			const second = await ask('e ma', CompletionTriggerKind.TriggerForIncompleteCompletions);
-			assert.deepStrictEqual(second.labels, ['README.md', 'src/']);
-			await new Promise(r => setTimeout(r, 200));
-			// only the last name was searched for: the first never started
-			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma']);
-			searches[0].resolve(['src/main.ts']);
-			await new Promise(r => setTimeout(r, 0));
-			// the menu is asked again, as typing asks it (nothing selected)
-			assert.deepStrictEqual(rec.calls, ['trigger auto']);
-			const third = await ask('e ma', CompletionTriggerKind.TriggerForIncompleteCompletions);
-			assert.deepStrictEqual(third.labels, ['README.md', 'src/', 'src/main.ts'], 'the answer is kept for the same name');
-			// a newer name cancels the search in flight
-			await ask('e mai', CompletionTriggerKind.TriggerForIncompleteCompletions);
-			await new Promise(r => setTimeout(r, 200));
-			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma', 'mai']);
-			await ask('e mx', CompletionTriggerKind.TriggerForIncompleteCompletions);
-			assert.strictEqual(searches[1].token?.isCancellationRequested, true);
-			// Tab (an explicit request) waits for the search
-			rec.calls.length = 0;
-			const tab = ask('e READ', CompletionTriggerKind.Invoke);
-			await new Promise(r => setTimeout(r, 0));
-			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma', 'mai', 'READ']);
-			searches[2].resolve(['docs/READING.md']);
-			assert.deepStrictEqual((await tab).labels, ['README.md', 'src/', 'docs/READING.md']);
-			assert.deepStrictEqual(rec.calls, []);
+			origin.setModel(model2);
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			assert.deepStrictEqual(await ask('e %:h/'), ['%:h/foo/', '%:h/main.ts']);
+			assert.deepStrictEqual(await ask('e %:h/foo/'), ['%:h/foo/bar.ts', '%:h/foo/baz/']);
 		} finally {
-			rec.restore();
+			origin.setModel(null);
+			model2.dispose();
 		}
 	}));
 

@@ -37,21 +37,16 @@
 // 'never'`), so Enter runs the line as typed; Tab / Down / CTRL-N pick a
 // match, and Enter, CTRL-Y take it. `/` and `?` have no completion.
 //
-// File names come from two places: the directory typed so far (IFileService,
-// cached for the prompt) and, for a bare name, the workspace's file search.
-// VS Code's suggest shows nothing until every provider of a group answered,
-// so the search never holds the menu up: as you type it starts after a short
-// pause (a newer name cancels the one before), the menu shows what is there at
-// once and says it is incomplete, and when the search answers for the line
-// still there, the menu is asked again and the files join it.
+// File names are the entries of the directory typed so far, as Vim lists them
+// (IFileService, cached for the prompt): the directory part of the argument is
+// resolved as `:e` does (the workspace folder, `~`, `/abs`, `%:h`, in the
+// workspace's file system, remote ones too). The workspace is never searched.
 
 import { addDisposableListener, getWindow, onDidUnregisterWindow } from '../../../../base/browser/dom.js';
 import { CodeWindow } from '../../../../base/browser/window.js';
-import { raceTimeout, timeout } from '../../../../base/common/async.js';
-import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
-import { dirname, joinPath, relativePath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { applyFontInfo } from '../../../../editor/browser/config/domFontInfo.js';
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
@@ -60,7 +55,7 @@ import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/c
 import { EditorOption, IEditorOptions } from '../../../../editor/common/config/editorOptions.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
-import { CompletionContext, CompletionItem, CompletionItemKind, CompletionList, CompletionTriggerKind } from '../../../../editor/common/languages.js';
+import { CompletionItem, CompletionItemKind, CompletionList } from '../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../editor/common/model.js';
 import { ModelDecorationOptions } from '../../../../editor/common/model/textModel.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
@@ -80,9 +75,10 @@ import { PANEL_BORDER } from '../../../common/theme.js';
 import { EditorsOrder } from '../../../common/editor.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
-import { QueryBuilder } from '../../../services/search/common/queryBuilder.js';
-import { ISearchService } from '../../../services/search/common/search.js';
+import { IPathService } from '../../../services/path/common/pathService.js';
 import type { IVimCmdlineCompletionSources, IVimCmdlineLine, IVimCmdlineTarget, IVimCmdlineUi, VimCmdlineCompletionItem, VimCmdlineKind } from '../common/vimCmdline.js';
+import { resolveExFileArg } from '../common/vimEx.js';
+import { resolveFileBase } from './vimEdit.js';
 import { VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdlineController, cmdlineCompletionContext, cmdlineCompletions, splitFileArg } from '../common/vimCmdline.js';
 import { captureKey } from '../common/vimKeys.js';
 import './media/vimCmdline.css';
@@ -95,10 +91,6 @@ export const VIM_CMDLINE_SCHEME = 'devhubvim-cmdline';
 export const VIM_CMDLINE_AUTOCOMPLETE_SETTING = 'devhub.vim.cmdline.autoComplete';
 /** Characters after which the menu shows by itself: a command's argument begins, a directory ends. */
 export const VIM_CMDLINE_TRIGGER_CHARACTERS: readonly string[] = [' ', '/'];
-/** The pause in typing before the workspace file search starts (each newer name cancels the older search). */
-const FILE_SEARCH_DEBOUNCE = 120;
-/** How long a completion request typed as you go waits for the search before it answers without it. */
-const FILE_SEARCH_BUDGET = 50;
 
 export const VIM_CMDLINE_FOCUS = new RawContextKey<boolean>(VIM_CMDLINE_CONTEXT.focus, false, localize('devhubVim.cmdlineFocus', "The Vim prompt line (: / ?) has the keyboard focus."));
 const VIM_CMDLINE_KIND = new RawContextKey<string>(VIM_CMDLINE_CONTEXT.kind, '', localize('devhubVim.cmdlineKind', "The kind of the Vim prompt that has the focus: ':' (an ex command), '/' or '?' (a search), or empty."));
@@ -211,7 +203,7 @@ class CmdlineView extends Disposable {
 		return {
 			quickSuggestions: auto ? { other: 'on', comments: 'on', strings: 'on' } : false,
 			suggestOnTriggerCharacters: auto,
-			// the default 10ms: the provider answers without waiting on the file search
+			// the default 10ms
 			quickSuggestionsDelay: 10,
 			acceptSuggestionOnEnter: 'off',
 			tabCompletion: 'off',
@@ -343,18 +335,15 @@ export class VimCmdline extends Disposable {
 	private shownId = 0;
 	/** The line is being given up because the focus left it: no focus to hand back. */
 	private leaving = false;
-	private queryBuilder: QueryBuilder | undefined;
 	/** The open prompt's directory listings, by URI (each typed key would ask the file service again). */
 	private readonly dirCache = new Map<string, Promise<readonly IFileStat[] | undefined>>();
-	/** The workspace file search for the name typed last; a newer name cancels it. */
-	private fileSearch: { readonly name: string; readonly cts: CancellationTokenSource; readonly promise: Promise<readonly URI[] | undefined>; results?: readonly URI[] } | undefined;
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IFileService private readonly fileService: IFileService,
-		@ISearchService private readonly searchService: ISearchService,
+		@IPathService private readonly pathService: IPathService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
 	) {
@@ -388,7 +377,7 @@ export class VimCmdline extends Disposable {
 		this._register(languageFeaturesService.completionProvider.register({ scheme: VIM_CMDLINE_SCHEME, hasAccessToAllModels: true }, {
 			_debugDisplayName: 'devhubVimCmdline',
 			triggerCharacters: [...VIM_CMDLINE_TRIGGER_CHARACTERS],
-			provideCompletionItems: (model, position, context, token) => this.provideCompletions(model, position.column - 1, context, token),
+			provideCompletionItems: (model, position, _context, token) => this.provideCompletions(model, position.column - 1, token),
 		}));
 		this._register(toDisposable(() => this.resetFileCompletion()));
 	}
@@ -637,7 +626,7 @@ export class VimCmdline extends Disposable {
 		return true;
 	}
 
-	private async provideCompletions(model: ITextModel, caret: number, context: CompletionContext, token: CancellationToken): Promise<CompletionList | undefined> {
+	private async provideCompletions(model: ITextModel, caret: number, token: CancellationToken): Promise<CompletionList | undefined> {
 		const s = this.session;
 		if (!s || s.view.model !== model || s.controller.kind !== ':') {
 			return undefined;
@@ -647,10 +636,10 @@ export class VimCmdline extends Disposable {
 		if (!ctx) {
 			return undefined;
 		}
-		// Tab (an explicit request) waits for the file search; as you type the menu does not
-		const explicit = context.triggerKind === CompletionTriggerKind.Invoke;
-		const files = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin, explicit, token) : undefined;
-		const items = files ? files.items : cmdlineCompletions(ctx, s.sources);
+		const items = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin) : cmdlineCompletions(ctx, s.sources);
+		if (token.isCancellationRequested) {
+			return undefined;
+		}
 		let end = caret;
 		const word = ctx.kind === 'command' ? /[A-Za-z0-9]/ : /\S/;
 		while (end < text.length && word.test(text[end])) {
@@ -673,14 +662,12 @@ export class VimCmdline extends Disposable {
 			range,
 			...(it.kind === 'folder' ? { command: into } : {}),
 		}));
-		return { suggestions, incomplete: ctx.kind === 'file' };
+		return { suggestions };
 	}
 
-	/** A new prompt, or none: the cached listings and the search in flight go. */
+	/** A new prompt, or none: the cached listings go. */
 	private resetFileCompletion(): void {
 		this.dirCache.clear();
-		this.fileSearch?.cts.dispose(true);
-		this.fileSearch = undefined;
 	}
 
 	private listDirectory(dir: URI): Promise<readonly IFileStat[] | undefined> {
@@ -691,59 +678,6 @@ export class VimCmdline extends Disposable {
 			this.dirCache.set(key, p);
 		}
 		return p;
-	}
-
-	/**
-	 * The workspace's files matching `name` (quick open's file search), one
-	 * search at a time: the same name shares the search in flight (or its
-	 * answer), a different one cancels it. As you type it starts after
-	 * FILE_SEARCH_DEBOUNCE without a newer key; Tab starts it at once.
-	 */
-	private searchFiles(name: string, immediate: boolean): NonNullable<VimCmdline['fileSearch']> {
-		const current = this.fileSearch;
-		if (current?.name === name) {
-			return current;
-		}
-		current?.cts.dispose(true);
-		const cts = new CancellationTokenSource();
-		const folders = this.workspaceService.getWorkspace().folders;
-		const search = async () => {
-			if (!immediate) {
-				await timeout(FILE_SEARCH_DEBOUNCE, cts.token);
-			}
-			this.queryBuilder ??= this.instantiationService.createInstance(QueryBuilder);
-			const query = this.queryBuilder.file(folders, { filePattern: name, sortByScore: true, maxResults: 50 });
-			const found = await this.searchService.fileSearch(query, cts.token);
-			return cts.token.isCancellationRequested ? undefined : found.results.map(r => r.resource);
-		};
-		const entry: NonNullable<VimCmdline['fileSearch']> = {
-			name, cts,
-			promise: search().then(results => {
-				entry.results = results;
-				return results;
-			}, () => undefined), // cancelled by a newer name, or failed: it completes nothing
-		};
-		this.fileSearch = entry;
-		return entry;
-	}
-
-	/**
-	 * The search for `name` answered after the menu was shown without it: ask
-	 * the menu again so the files join it, if the line still completes that
-	 * name and nothing in the menu was picked (asking again would unpick it).
-	 * Asked as typing asks, so nothing is selected.
-	 */
-	private searchArrived(name: string): void {
-		const s = this.session;
-		if (!s || !s.view.autoComplete || this.fileSearch?.name !== name) {
-			return;
-		}
-		const line = s.controller.line;
-		const ctx = cmdlineCompletionContext(line.text, line.caret);
-		if (ctx?.kind !== 'file' || ctx.typed !== name || s.view.menuPicked) {
-			return;
-		}
-		SuggestController.get(s.view.editor)?.triggerSuggest(undefined, true);
 	}
 
 	/** Open editors, most recent first, for `:b`. */
@@ -762,66 +696,29 @@ export class VimCmdline extends Disposable {
 		return out;
 	}
 
-	/** The directory relative names start from: the workspace folder of the origin's file (the first one), or its directory. */
-	private baseDirectory(origin: IVimCmdlineOrigin): URI | undefined {
-		const resource = origin.editor.getModel()?.uri;
-		const folder = (resource && this.workspaceService.getWorkspaceFolder(resource)) ?? this.workspaceService.getWorkspace().folders[0];
-		if (folder) {
-			return folder.uri;
-		}
-		return resource && resource.scheme !== 'untitled' ? dirname(resource) : undefined;
-	}
-
 	/**
 	 * File names for `:e` `:sp` ...: the entries of the directory typed so far
-	 * (relative to the workspace folder, or absolute), as Vim lists them, and
-	 * for a bare name also the workspace's files that match it (quick open's
-	 * file search).
+	 * (its directory part resolved as `:e` resolves it: relative to the
+	 * workspace folder, `~`, absolute, `%:h`), as Vim lists them.
 	 */
-	private async fileItems(typed: string, origin: IVimCmdlineOrigin, explicit: boolean, token: CancellationToken): Promise<{ items: VimCmdlineCompletionItem[] }> {
-		const base = this.baseDirectory(origin);
-		if (!base) {
-			return { items: [] };
-		}
+	private async fileItems(typed: string, origin: IVimCmdlineOrigin): Promise<VimCmdlineCompletionItem[]> {
 		const { dir, base: name } = splitFileArg(typed);
-		const out: VimCmdlineCompletionItem[] = [];
-		const seen = new Set<string>();
-		const add = (label: string, kind: 'file' | 'folder', detail?: string) => {
-			if (!seen.has(label)) {
-				seen.add(label);
-				out.push({ label, kind, ...(detail ? { detail } : {}) });
+		let dirUri: URI;
+		try {
+			const base = await resolveFileBase(this.workspaceService, this.pathService, origin.editor.getModel()?.uri);
+			const r = resolveExFileArg(dir || '.', base.ctx);
+			if (!r || !('path' in r)) {
+				return []; // a pattern, or Vim's error: nothing to list
 			}
-		};
-		const path = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
-		const dirUri = path.startsWith('/') ? base.with({ path }) : path ? joinPath(base, path) : base;
-		// not a directory (yet): the search below, or nothing
+			dirUri = base.cwd.with({ path: r.path, query: '', fragment: '' });
+		} catch {
+			return []; // no directory to start from
+		}
+		// not a directory (yet): nothing
 		const children = [...(await this.listDirectory(dirUri) ?? [])]
 			.filter(c => !c.name.startsWith('.') || name.startsWith('.'))
 			.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-		for (const c of children) {
-			add(dir + c.name + (c.isDirectory ? '/' : ''), c.isDirectory ? 'folder' : 'file');
-		}
-		const folders = this.workspaceService.getWorkspace().folders;
-		if (!dir && name && folders.length && !token.isCancellationRequested) {
-			const search = this.searchFiles(name, explicit);
-			const found = search.results ?? (explicit ? await search.promise : await raceTimeout(search.promise, FILE_SEARCH_BUDGET));
-			if (found) {
-				for (const r of found) {
-					const rel = relativePath(base, r);
-					if (rel) {
-						add(rel, 'file');
-					}
-				}
-			} else if (!explicit) {
-				// shown without the search; it joins the menu when it answers
-				void search.promise.then(results => {
-					if (results) {
-						this.searchArrived(name);
-					}
-				});
-			}
-		}
-		return { items: out };
+		return children.map((c): VimCmdlineCompletionItem => ({ label: dir + c.name + (c.isDirectory ? '/' : ''), kind: c.isDirectory ? 'folder' : 'file' }));
 	}
 }
 
