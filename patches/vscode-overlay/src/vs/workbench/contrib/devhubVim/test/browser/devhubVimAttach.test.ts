@@ -28,6 +28,8 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { ContextKeyService } from '../../../../../platform/contextkey/browser/contextKeyService.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
+import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { KeybindingsRegistry } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ServiceCollection } from '../../../../../platform/instantiation/common/serviceCollection.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
@@ -39,6 +41,18 @@ const SETTING = 'devhub.vim.enabled';
 
 /** A test editor (focus is set by hand) with a model. */
 type VimTestEditor = TestCodeEditor & ITestCodeEditor;
+
+/**
+ * A simple widget, as the SCM input, the debug console input, chat and comment
+ * inputs are (`isSimpleWidget: true`). TestCodeEditor's test configuration
+ * drops that option, so it is put back here: CodeEditorWidget then never sets
+ * `editorTextFocus` / `editorFocus` for it, as in the workbench.
+ */
+class TestSimpleWidget extends TestCodeEditor {
+	override get isSimpleWidget(): boolean {
+		return true;
+	}
+}
 
 class TestStatusbarService extends mock<IStatusbarService>() {
 	override addEntry(): IStatusbarEntryAccessor {
@@ -74,7 +88,7 @@ suite('DevHub Vim: an editor is a Vim editor from its first key', () => {
 					const scoped = disposables.add(contextKeyService.createScoped(outer));
 					services = disposables.add(instantiationService.createChild(new ServiceCollection([IContextKeyService, scoped])));
 				}
-				const editor = disposables.add(services.createInstance(TestCodeEditor, element, { cursorStyle: 'line' }, { isSimpleWidget: kind === 'scm', contributions: [] }));
+				const editor = disposables.add(services.createInstance(kind === 'scm' ? TestSimpleWidget : TestCodeEditor, element, { cursorStyle: 'line' }, { isSimpleWidget: kind === 'scm', contributions: [] }));
 				editor.setModel(disposables.add(createTextModel('abc')));
 				return editor as VimTestEditor;
 			};
@@ -101,11 +115,35 @@ suite('DevHub Vim: an editor is a Vim editor from its first key', () => {
 		editor.trigger('keyboard', Handler.Type, { text } satisfies TypePayload);
 	}
 
-	/** What a focus does to the state Vim reads (a test editor has no view to be focused). */
-	function focus(vim: DevhubVim, editor: VimTestEditor): void {
-		editor.setHasTextFocus(true);
-		EditorContextKeys.editorTextFocus.bindTo(editor.invokeWithinContext(a => a.get(IContextKeyService))).set(true);
+	/**
+	 * What a focus does to the state Vim reads (a test editor has no view to be
+	 * focused): the editor's own focus keys as CodeEditorWidget sets them —
+	 * `textInputFocus` always, `editorTextFocus` / `editorFocus` only for a full
+	 * editor, never for a simple widget such as the SCM input — and the other
+	 * editors' focus gone.
+	 */
+	function focus(vim: DevhubVim, editor: VimTestEditor, others: VimTestEditor[] = []): void {
+		for (const [e, has] of [...others.map(o => [o, false] as const), [editor, true] as const]) {
+			e.setHasTextFocus(has);
+			const keys = e.invokeWithinContext(a => a.get(IContextKeyService));
+			EditorContextKeys.textInputFocus.bindTo(keys).set(has);
+			EditorContextKeys.editorTextFocus.bindTo(keys).set(has && !e.isSimpleWidget);
+			EditorContextKeys.focus.bindTo(keys).set(has && !e.isSimpleWidget);
+		}
 		vim.update();
+	}
+
+	/** The default keybinding of `command` with `args`, as the dispatcher would resolve it in `editor` (its when holds there). */
+	function bindingHolds(editor: ICodeEditor, command: string, args: unknown): boolean {
+		const keys = editor.invokeWithinContext(a => a.get(IContextKeyService));
+		const rules = KeybindingsRegistry.getDefaultKeybindings().filter(k => k.command === command && JSON.stringify(k.commandArgs) === JSON.stringify(args));
+		assert.ok(rules.length > 0, `${command} ${JSON.stringify(args)} is a default keybinding`);
+		return rules.some(r => keys.contextMatchesRules(r.when ?? undefined));
+	}
+
+	/** A key's command run as the dispatcher runs it: the registered command, not the contribution directly. */
+	function runCommand(editor: VimTestEditor, command: string, args: unknown): void {
+		editor.invokeWithinContext(a => CommandsRegistry.getCommand(command)!.handler(a, args));
 	}
 
 	for (const kind of ['editor', 'scm'] as const) {
@@ -137,6 +175,53 @@ suite('DevHub Vim: an editor is a Vim editor from its first key', () => {
 			});
 		});
 	}
+
+	test('with a full editor open and the SCM input focused, `i` holds in the SCM input and changes only its mode; typing then reaches it', () => {
+		withVim(true, (create, vim) => {
+			const main = create('editor');
+			const scm = create('scm');
+			// the main editor was focused first (the "active" editor), then the commit message box
+			focus(vim, main);
+			focus(vim, scm, [main]);
+			const scmKeys = scm.invokeWithinContext(a => a.get(IContextKeyService));
+			assert.strictEqual(scmKeys.getContextKeyValue('editorTextFocus'), false, 'a simple widget never has editorTextFocus');
+			assert.strictEqual(scmKeys.getContextKeyValue('devhubVim.mode'), 'normal');
+			assert.strictEqual(bindingHolds(scm, 'devhubVim.mode', { to: 'insert', at: 'before' }), true, '`i` applies in the SCM input');
+			runCommand(scm, 'devhubVim.mode', { to: 'insert', at: 'before' });
+			assert.strictEqual(scmKeys.getContextKeyValue('devhubVim.mode'), 'insert');
+			assert.strictEqual(ModalTextInput.isModal(scm.getId()), false);
+			assert.strictEqual(ModalTextInput.isModal(main.getId()), true, 'the main editor stays in normal mode');
+			type(scm, 'x');
+			assert.strictEqual(scm.getModel()?.getValue(), 'xabc');
+			type(main, 'x');
+			assert.strictEqual(main.getModel()?.getValue(), 'abc');
+			// Esc and the next keys are the SCM input's too
+			assert.strictEqual(bindingHolds(scm, 'devhubVim.escape', undefined), true);
+			runCommand(scm, 'devhubVim.escape', undefined);
+			assert.strictEqual(ModalTextInput.isModal(scm.getId()), true);
+			// back in the main editor: its own mode, its own keys
+			focus(vim, main, [scm]);
+			assert.strictEqual(bindingHolds(main, 'devhubVim.mode', { to: 'insert', at: 'before' }), true);
+			runCommand(main, 'devhubVim.mode', { to: 'insert', at: 'before' });
+			assert.strictEqual(ModalTextInput.isModal(main.getId()), false);
+			assert.strictEqual(ModalTextInput.isModal(scm.getId()), true);
+		});
+	});
+
+	test('the SCM input swapping its model (another repository) keeps a working Vim editor', () => {
+		withVim(true, (create, vim) => {
+			const scm = create('scm');
+			focus(vim, scm);
+			runCommand(scm, 'devhubVim.mode', { to: 'insert', at: 'before' });
+			scm.setModel(store.add(createTextModel('other')));
+			// a new model starts in normal mode, modal, and `i` works on it
+			assert.strictEqual(ModalTextInput.isModal(scm.getId()), true);
+			assert.strictEqual(bindingHolds(scm, 'devhubVim.mode', { to: 'insert', at: 'before' }), true);
+			runCommand(scm, 'devhubVim.mode', { to: 'insert', at: 'before' });
+			type(scm, 'y');
+			assert.strictEqual(scm.getModel()?.getValue(), 'yother');
+		});
+	});
 
 	test('an editor made while Vim is off is a plain one, and becomes a Vim editor when Vim is turned on', () => {
 		withVim(false, (create, vim) => {

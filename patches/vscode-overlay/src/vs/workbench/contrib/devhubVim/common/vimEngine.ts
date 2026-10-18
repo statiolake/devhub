@@ -5601,7 +5601,7 @@ export class VimEngine {
 	private whenContext(): Record<string, unknown> {
 		const c = this.context();
 		return {
-			'true': true, editorTextFocus: true, 'devhubVim.active': true,
+			'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true,
 			'devhubVim.mode': c.mode, 'devhubVim.acceptsMotion': c.acceptsMotion, 'devhubVim.hasCount': c.hasCount,
 			'devhubVim.pending': c.pending, 'devhubVim.pendingOperator': c.pendingOperator, 'devhubVim.textObjectPending': c.textObjectPending,
 			'devhubVim.awaitingChar': c.awaitingChar, 'devhubVim.recording': c.recording, 'devhubVim.visual': c.visual, 'devhubVim.insert': c.insert,

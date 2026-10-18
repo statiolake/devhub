@@ -47,7 +47,14 @@ export interface VimKeybinding {
 	readonly weight?: 'override' | 'escape' | 'insertEscape' | 'cmdline';
 }
 
-const BASE = 'editorTextFocus && devhubVim.active';
+/**
+ * A Vim editor has the keyboard focus. `textInputFocus`, not `editorTextFocus`:
+ * VS Code sets `editorTextFocus` for full editors only, never for a simple
+ * widget (the SCM commit message, the debug console input, chat and comment
+ * inputs), which are Vim editors too; `devhubVim.active` already says the
+ * focused editor is one (DevhubVim.focused).
+ */
+const BASE = 'textInputFocus && devhubVim.active';
 const MOTION = `${BASE} && devhubVim.acceptsMotion`;
 
 /** The when clauses the defaults use; copy them for your own bindings. */

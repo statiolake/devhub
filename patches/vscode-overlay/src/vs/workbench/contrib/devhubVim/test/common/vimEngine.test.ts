@@ -755,7 +755,7 @@ suite('DevHub Vim keymap is keybindings', () => {
 								for (const pending of [true, false]) {
 									for (const suggestWidgetVisible of insert ? [true, false] : [false]) {
 										contexts.push({
-											'true': true, editorTextFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
+											'true': true, editorTextFocus: true, textInputFocus: true, 'devhubVim.active': true, 'devhubVim.mode': mode,
 											'devhubVim.acceptsMotion': acceptsMotion, 'devhubVim.hasCount': hasCount, 'devhubVim.textObjectPending': textObjectPending,
 											'devhubVim.recording': recording, 'devhubVim.pending': pending, 'devhubVim.pendingOperator': pendingOperator,
 											'devhubVim.visual': mode.startsWith('visual'), 'devhubVim.insert': insert, 'devhubVim.awaitingChar': false, suggestWidgetVisible,
@@ -1011,6 +1011,23 @@ suite('DevHub Vim: a printable key is a Vim key only in a Vim editor outside ins
 		for (const [what, c] of contexts) {
 			const holding = printable.filter(b => evaluateWhen(b.when, c)).map(b => `${b.key} -> ${b.command}`);
 			assert.deepStrictEqual(holding, [], `${what} ${JSON.stringify(c)}`);
+		}
+	});
+
+	test('a simple widget (SCM commit message, debug console, chat, comment input) has the whole keymap: VS Code sets no editorTextFocus there', () => {
+		// CodeEditorWidget: editorTextFocus = hasTextFocus && !isSimpleWidget, textInputFocus = hasTextFocus
+		for (const mode of ['normal', 'visual', 'visualLine', 'operatorPending', 'insert', 'replace']) {
+			const full = vimCtx(mode);
+			const simple = { ...full, editorTextFocus: false, editorFocus: false };
+			const inFull = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(b.when, full)).map(b => `${b.key} -> ${b.command}`);
+			const inSimple = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(b.when, simple)).map(b => `${b.key} -> ${b.command}`);
+			assert.ok(inFull.length > 0, mode);
+			assert.deepStrictEqual(inSimple, inFull, mode);
+		}
+		const normal = { ...vimCtx('normal'), editorTextFocus: false };
+		assert.deepStrictEqual(DEFAULT_KEYBINDINGS.filter(b => b.key === 'i' && evaluateWhen(b.when, normal)).map(b => [b.command, b.args]), [['devhubVim.mode', { to: 'insert', at: 'before' }]]);
+		for (const w of Object.values(VIM_WHEN)) {
+			assert.ok(!w.includes('editorTextFocus'), w);
 		}
 	});
 
@@ -2039,7 +2056,7 @@ suite('Neovim scrolling and folds', () => {
 
 suite('DevHub Vim: counts are keybindings; devhubVim.run and devhubVim.repeat take them as args', () => {
 
-	const N = 'editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == \'normal\'';
+	const N = 'textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == \'normal\'';
 	const calls = async (v: Vim) => {
 		await flush();
 		return v.host.commands.map(c => [c.command, c.args]);
@@ -2097,7 +2114,7 @@ suite('DevHub Vim: counts are keybindings; devhubVim.run and devhubVim.repeat ta
 				count: 2, command: 'devhubVim.repeat', args: { count: '${it}', command: 'x.inner', args: { inner: '${it}' } },
 			},
 		}, {
-			key: 'g b', when: 'editorTextFocus && devhubVim.active && devhubVim.acceptsMotion', command: 'devhubVim.repeat',
+			key: 'g b', when: 'textInputFocus && devhubVim.active && devhubVim.acceptsMotion', command: 'devhubVim.repeat',
 			args: { command: 'devhubVim.run', args: { command: 'x.sel', args: '${it}' }, count: '${count}' },
 		}];
 		let v = new Vim('|abc', user).keys('ga');

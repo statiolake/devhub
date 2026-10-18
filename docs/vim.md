@@ -327,19 +327,19 @@ plain `devhubVim.run`. Examples:
 // Vim's {count}gt: go to editor {count}
 { "key": "g t", "command": "devhubVim.run",
   "args": { "command": "workbench.action.openEditorAtIndex", "args": "${count}" },
-  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
+  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
 // 3<C-n>: the third next problem
 { "key": "ctrl+n", "command": "devhubVim.repeat",
   "args": { "command": "editor.action.marker.next", "count": "${count}" },
-  "when": "editorTextFocus && devhubVim.active && devhubVim.mode == 'normal'" },
+  "when": "textInputFocus && devhubVim.active && devhubVim.mode == 'normal'" },
 // always three lines down, whatever the count
 { "key": "g j", "command": "devhubVim.repeat",
   "args": { "command": "devhubVim.motion", "args": { "motion": "down" }, "count": 3 },
-  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" },
+  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
 // repeat of run: fold {count} times, on the visual selection too, leaving visual mode once
 { "key": "z c", "command": "devhubVim.repeat",
   "args": { "command": "devhubVim.run", "args": { "command": "editor.fold" }, "count": "${count}" },
-  "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
+  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
 ```
 
 Motions: `left right charBackward charForward up down displayUp displayDown
@@ -402,18 +402,21 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | `devhubVim.cmdlineAwaitingRegister` | `CTRL-R` in the prompt line waits for a register name |
 
 The defaults use these `when` clauses (`common/vimKeymap.ts` `VIM_WHEN`); copy
-them for your own bindings:
+them for your own bindings. They start with `textInputFocus`, not
+`editorTextFocus`: VS Code never sets `editorTextFocus` in an input that is an
+editor (the SCM commit message, the debug console, chat), so a binding on it
+does not apply there although the input is a Vim editor (`devhubVim.active`):
 
 | Name | When |
 | --- | --- |
-| motion | `editorTextFocus && devhubVim.active && devhubVim.acceptsMotion` |
+| motion | `textInputFocus && devhubVim.active && devhubVim.acceptsMotion` |
 | normal | motion `&& devhubVim.mode == 'normal'` |
 | normal or visual | motion `&& devhubVim.mode != 'operatorPending'` |
 | not visual | motion `&& !devhubVim.visual` |
 | visual | motion `&& devhubVim.visual` |
 | operator pending | motion `&& devhubVim.mode == 'operatorPending'` |
-| text object (after `i`/`a`) | `editorTextFocus && devhubVim.active && devhubVim.textObjectPending` |
-| insert | `editorTextFocus && devhubVim.active && devhubVim.insert && !devhubVim.awaitingChar` |
+| text object (after `i`/`a`) | `textInputFocus && devhubVim.active && devhubVim.textObjectPending` |
+| insert | `textInputFocus && devhubVim.active && devhubVim.insert && !devhubVim.awaitingChar` |
 
 A key that is the second half of a doubled operator has its own entry, e.g.
 `u` → `devhubVim.operator lowercase` when `devhubVim.pendingOperator ==
@@ -552,7 +555,12 @@ mechanism, so an editor is either a Vim editor with its engine (`i` enters
 insert mode) or a plain one — never modal without an engine. (An earlier
 version made editors modal in their constructor, with context keys of their
 own, until the engine claimed them; an editor left in that state — reported in
-the SCM commit message box — was stuck: nothing typed and `i` did nothing.)
+the SCM commit message box — was stuck: nothing typed and `i` did nothing.
+The keymap's `when` clauses then still said `editorTextFocus`, which VS Code
+sets for full editors only, so in those inputs the engine was attached but no
+Vim key applied; they say `textInputFocus` now.) An input's own keys that the
+Vim keymap does not bind still apply in every mode (`Ctrl+Enter` commits from
+the SCM message).
 
 The one case that is not covered: `devhub.vim.enabled` set only in a remote
 (SSH / container) machine's settings. A window starts with the copy of those
@@ -569,26 +577,26 @@ Put it in your user settings to have Vim from the first key everywhere.
 [
   // Colemak-style: move "down" to n, keep it composable (dn, 3n, vn all work)
   { "key": "n", "command": "devhubVim.motion", "args": { "motion": "down" },
-    "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" },
+    "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
   { "key": "j", "command": "-devhubVim.motion" },
 
   // VS Code's go to definition on gd (Neovim's gd is "go to local declaration")
   { "key": "g d", "command": "devhubVim.run", "args": { "command": "editor.action.revealDefinition" },
-    "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
+    "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
 
   // Space as a leader key (Space alone then no longer moves right)
   { "key": "space f", "command": "workbench.action.quickOpen",
-    "when": "editorTextFocus && devhubVim.active && devhubVim.mode == 'normal'" },
+    "when": "textInputFocus && devhubVim.active && devhubVim.mode == 'normal'" },
 
   // A sneak-like "s<char>" that composes: ds, also works
   { "key": "s", "command": "devhubVim.awaitChar",
     "args": { "then": { "command": "devhubVim.motion", "args": { "motion": "tillForward" } } },
-    "when": "editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" },
+    "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
   { "key": "s", "command": "-devhubVim.action" },
 
   // "q" as an extra text object for quotes: diq, vaq
   { "key": "q", "command": "devhubVim.textObject", "args": { "object": "doubleQuote" },
-    "when": "editorTextFocus && devhubVim.active && devhubVim.textObjectPending" },
+    "when": "textInputFocus && devhubVim.active && devhubVim.textObjectPending" },
 
   // <C-w>n: next editor in the group instead of "split with a new file".
   // After CTRL-W the binding for devhubVim.mode == 'nav' runs once and the
@@ -599,7 +607,7 @@ Put it in your user settings to have Vim from the first key everywhere.
 
   // Ctrl-S saves in normal mode (an ex command from a key)
   { "key": "ctrl+s", "command": "devhubVim.ex", "args": { "command": "w" },
-    "when": "editorTextFocus && devhubVim.active && devhubVim.mode == 'normal'" }
+    "when": "textInputFocus && devhubVim.active && devhubVim.mode == 'normal'" }
 ]
 ```
 
@@ -820,7 +828,7 @@ On another layout, rebind the symbol keys by scan code in `keybindings.json`
 ```jsonc
 { "key": "[Equal]", "command": "-devhubVim.motion" },
 { "key": "shift+[Digit6]", "command": "devhubVim.motion", "args": { "motion": "firstNonBlank" },
-  "when": "config.devhub.vim.enabled && editorTextFocus && devhubVim.active && devhubVim.acceptsMotion" }
+  "when": "config.devhub.vim.enabled && textInputFocus && devhubVim.active && devhubVim.acceptsMotion" }
 ```
 
 `keyboard.dispatch: keyCode` makes VS Code ignore scan codes; keep the default
