@@ -626,8 +626,12 @@ the cursor's character instead, and leaves the selection as it is:
   other end's character.
 - `V` keeps it on the cursor's column although whole lines are selected, and
   moves it with `h` `l` `w` `$` ... though the selected lines stay the same.
-- `CTRL-V`: the main block is on the corner the cursor is on, and each other
-  line's caret on that line's edge on the cursor's side; `O` and `o` move them.
+- `CTRL-V`: as in Vim there is one cursor: a single block caret, on the corner
+  the cursor is on (`o` and `O` move it to the other corners). The block's
+  per-line selections are only there for the highlight (they are what copy and
+  the commands read), so no caret is drawn on the other lines; leave block mode
+  and multiple cursors you add yourself are drawn one caret each, as before.
+  Plain `v` and `V` are unchanged.
 - `$` puts it on the last character of the line. On an empty line it is at
   column 1 of that line, not at the start of the next one (where the selection
   ends, to take in the empty line's newline).
@@ -637,8 +641,8 @@ the cursor's character instead, and leaves the selection as it is:
   one `o` and the next motion start from.
 
 The window scrolls to that character, and the active (and relative) line
-numbers are its line's. Where the caret is drawn is all that changes: the
-selection, the cursor position extensions and commands read, the screen
+numbers are its line's (in block mode, the one caret's). Where the caret is
+drawn is all that changes: the selection, the cursor position extensions and commands read, the screen
 reader's cursor and the caret style (block, unless your settings say
 otherwise) are VS Code's. It is a hook in the editor's caret drawing
 (`ModalCursor.viewPositions` in `modalCursor.ts`, called from

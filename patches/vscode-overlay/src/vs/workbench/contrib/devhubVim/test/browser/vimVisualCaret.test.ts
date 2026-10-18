@@ -162,20 +162,58 @@ suite('DevHub Vim: a visual mode\'s caret is drawn on the cursor character', () 
 		assert.strictEqual(env.activeLine(), 1);
 	}));
 
-	test('CTRL-V: the primary block is on the cursor\'s corner, each line\'s caret on its edge on the cursor\'s side', () => withVim('abcdef\nabcdef\nabcdef', env => {
+	test('CTRL-V: one caret, on the cursor\'s corner; the per-line selections stay for the highlight', () => withVim('abcdef\nabcdef\nabcdef', env => {
 		env.editor.setPosition({ lineNumber: 1, column: 2 });
 		visual(env, 'visualBlock');
 		motion(env, 'right');
 		motion(env, 'down');
 		assert.deepStrictEqual(env.editor.getSelections()!.map(s => `${s}`), ['[2,2 -> 2,4]', '[1,2 -> 1,4]']);
-		assert.deepStrictEqual(env.drawn(), ['(2,3)', '(1,3)']);
+		assert.deepStrictEqual(env.drawn(), ['(2,3)']);
 		env.run('devhubVim.action', { action: 'swapVisualEnds' });
-		assert.deepStrictEqual(env.drawn(), ['(1,2)', '(2,2)']);
+		assert.deepStrictEqual(env.drawn(), ['(1,2)']);
 		env.run('devhubVim.action', { action: 'swapVisualCorner' });
 		assert.strictEqual(env.caret(), '(1,3)');
 		motion(env, 'lineEnd');
 		assert.strictEqual(env.caret(), '(1,6)', '`$`: the last character of the cursor\'s line');
 	}));
+
+	test('CTRL-V over 3 lines: one caret; `o` and `O` move it; leaving block mode restores every cursor', () => withVim('abcdef\nabcdef\nabcdef\nabcdef', env => {
+		env.editor.setPosition({ lineNumber: 1, column: 2 });
+		visual(env, 'visualBlock');
+		motion(env, 'right');
+		motion(env, 'down');
+		motion(env, 'down');
+		assert.strictEqual(env.editor.getSelections()!.length, 3, 'the selections highlight every line');
+		assert.deepStrictEqual(env.drawn(), ['(3,3)']);
+		assert.strictEqual(env.activeLine(), 3);
+		env.run('devhubVim.action', { action: 'swapVisualEnds' }); // o: the opposite corner
+		assert.strictEqual(env.editor.getSelections()!.length, 3);
+		assert.deepStrictEqual(env.drawn(), ['(1,2)']);
+		assert.strictEqual(env.activeLine(), 1);
+		env.run('devhubVim.action', { action: 'swapVisualCorner' }); // O: the other corner on the same line
+		assert.deepStrictEqual(env.drawn(), ['(1,3)']);
+		env.run('devhubVim.escape');
+		assert.strictEqual(env.mode(), 'normal');
+		// genuine multiple cursors, no longer a block
+		env.editor.setSelections([new Selection(1, 2, 1, 2), new Selection(3, 2, 3, 2), new Selection(4, 3, 4, 3)]);
+		assert.deepStrictEqual([...env.drawn()].sort(), ['(1,2)', '(3,2)', '(4,3)']);
+	}));
+
+	test('plain visual and `V` keep drawing a caret per cursor; Vim off draws VS Code\'s', async () => {
+		await withVim('abcdef\nabcdef\nabcdef', env => {
+			visual(env);
+			env.editor.setSelections([new Selection(1, 2, 1, 4), new Selection(3, 2, 3, 4)]);
+			assert.strictEqual(env.drawn().length, 2);
+			env.run('devhubVim.escape');
+			visual(env, 'visualLine');
+			env.editor.setSelections([new Selection(1, 1, 2, 1), new Selection(3, 1, 3, 7)]);
+			assert.strictEqual(env.drawn().length, 2);
+		});
+		await withVim('abcdef\nabcdef\nabcdef', env => {
+			env.editor.setSelections([new Selection(1, 2, 1, 4), new Selection(2, 2, 2, 4), new Selection(3, 2, 3, 4)]);
+			assert.deepStrictEqual([...env.drawn()].sort(), ['(1,4)', '(2,4)', '(3,4)']);
+		}, {}, false);
+	});
 
 	test('`$`: the block is on the last character, in `v` and in `V`', () => withVim('abc\nxyz', env => {
 		visual(env);

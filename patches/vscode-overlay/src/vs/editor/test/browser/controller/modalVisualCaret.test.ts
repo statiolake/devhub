@@ -145,6 +145,27 @@ suite('DevHub modal cursor: a visual mode\'s caret is drawn on its cursor charac
 		});
 	});
 
+	test('visual-block: only the primary caret is drawn, every selection stays; not for other selections or other modes', () => {
+		withCarets('abcdef\nabcdef\nabcdef', {}, (editor, view, state) => {
+			const lines = [new Selection(2, 2, 2, 4), new Selection(1, 2, 1, 4), new Selection(3, 2, 3, 4)];
+			state.visual = { primary: { selection: lines[0], cursor: new Position(2, 3) }, block: true };
+			editor.setSelections(lines);
+			assert.deepStrictEqual(view.drawn(), ['(2,3)']);
+			assert.strictEqual(editor.getSelections()!.length, 3);
+			// the primary is not the one the owner made: the genuine cursors are all drawn
+			editor.setSelections([lines[1], lines[0], lines[2]]);
+			assert.strictEqual(view.drawn().length, 3);
+			// block mode off (plain visual): a caret per selection
+			state.visual = { primary: { selection: lines[0], cursor: new Position(2, 3) } };
+			ModalCursor.redraw(editor.getId(), () => editor.setSelections(lines));
+			assert.strictEqual(view.drawn().length, 3);
+			// no visual mode at all
+			state.visual = undefined;
+			ModalCursor.redraw(editor.getId(), () => editor.setSelections(lines));
+			assert.deepStrictEqual([...view.drawn()].sort(), ['(1,4)', '(2,4)', '(3,4)']);
+		});
+	});
+
 	test('outside a visual mode, and without an owner, the caret is at the active end as in VS Code', () => {
 		withCarets('abcdef', {}, (editor, view, state) => {
 			state.visual = undefined;

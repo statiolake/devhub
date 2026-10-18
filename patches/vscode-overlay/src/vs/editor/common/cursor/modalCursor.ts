@@ -54,6 +54,13 @@
 // Everything else (the cursor state, events, the IME's anchor, accessibility)
 // stays the selection's.
 //
+// In visual-block mode (`block`) Vim has one cursor, while the selection is one
+// range per line to highlight the block: only the primary caret is drawn, so
+// `viewPositions` returns just the primary's position and the view part drops
+// the secondary carets (the selections themselves, and so the highlight, are
+// untouched). Outside it, and for any cursors that are not the block's, every
+// caret is drawn as before.
+//
 // The caret can move where the selection does not (`V` then `l`: the lines
 // are the same, the cursor's column is not). The cursor states are the same
 // then, so the cursor would tell no one; `redraw` has CursorsController
@@ -81,6 +88,12 @@ export interface IModalVisual {
 	 * primary selection.
 	 */
 	readonly primary?: { readonly selection: Selection; readonly cursor: Position };
+	/**
+	 * Visual-block mode: the selections (one per line) are there to highlight
+	 * the block, and Vim has one cursor, so only the primary caret is drawn.
+	 * Applies while the primary selection is the one the owner made.
+	 */
+	readonly block?: boolean;
 }
 
 class ModalCursorImpl {
@@ -168,6 +181,9 @@ class ModalCursorImpl {
 			const onChar = caret.column < viewModel.model.getLineMaxColumn(caret.lineNumber);
 			// on a character: past any injected text before it, and on the view line a wrap starts with it
 			positions[i] = viewModel.coordinatesConverter.convertModelPositionToViewPosition(caret, onChar ? PositionAffinity.Right : PositionAffinity.None);
+		}
+		if (visual.block && visual.primary && modelSelections.length && visual.primary.selection.equalsSelection(modelSelections[0])) {
+			return positions.slice(0, 1); // one caret, the block's per-line selections stay highlighted
 		}
 		return positions;
 	}

@@ -284,7 +284,7 @@ class VimEditor extends Disposable implements IVimHost {
 		this._register(ModalCursor.set(editor.getId(), () => !this.typing()));
 		// In a visual mode the caret is drawn on the cursor's character, not after
 		// the selection's last one (modalCursor.ts); the selection stays as it is.
-		this._register(ModalCursor.setVisual(editor.getId(), () => this.engine.visualCursor() ? { primary: this.visualPrimary } : undefined));
+		this._register(ModalCursor.setVisual(editor.getId(), () => this.engine.visualCursor() ? { primary: this.visualPrimary, block: this.engine.mode === 'visualBlock' } : undefined));
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
