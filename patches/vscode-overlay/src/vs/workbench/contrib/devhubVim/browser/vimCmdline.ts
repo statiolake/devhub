@@ -431,6 +431,16 @@ export class VimCmdline extends Disposable {
 			return;
 		}
 		this.session = undefined;
+		// The line's widgets go with it: the completion menu (Esc abandons the line
+		// with its menu, as Vim's wildmenu) and a snippet session; the line has no
+		// parameter hints or other contributions to close.
+		if (s.view.menuVisible) {
+			SuggestController.get(s.view.editor)?.cancelSuggestWidget();
+		}
+		const snippet = SnippetController2.get(s.view.editor);
+		if (snippet?.isInSnippet()) {
+			snippet.cancel();
+		}
 		s.view.registerDecoration.clear();
 		s.view.awaitingKey.set(false);
 		s.view.container.classList.add('hidden');

@@ -254,6 +254,55 @@ suite('DevHub Vim prompt: keybindings', () => {
 		assert.ok(CMDLINE_KEYBINDINGS.some(b => b.key === 'ctrl+[BracketRight]' && b.command === 'devhubVim.cmdline.cancel'));
 	});
 
+	test('one Esc (CTRL-C, CTRL-[) abandons the line, also while the completion menu or any other editor widget shows', () => {
+		// VS Code 1.141's Esc bindings that can hold in a focused one-line editor: [command, weight, when]
+		const upstream: [string, number, string][] = [
+			['hideSuggestWidget', 190, 'suggestWidgetVisible && textInputFocus'],
+			['editor.action.inlineSuggest.hide', 190, 'editorTextFocus && (inlineSuggestionVisible || inlineEditIsVisible)'],
+			['cancelLinkedEditingInput', 199, 'editorTextFocus && LinkedEditingInputVisible'],
+			['closeParameterHints', 175, 'editorFocus && parameterHintsVisible'],
+			['closeMarkersNavigation', 150, 'editorFocus && markersNavigationVisible'],
+			['leaveSnippet', 130, 'editorTextFocus && inSnippetMode'],
+			['leaveEditorMessage', 130, 'editorFocus && messageVisible'],
+			['closeFindWidget', 105, 'editorFocus && findWidgetVisible'],
+			['editor.cancelOperation', 100, 'editorTextFocus && cancellableOperation'],
+			['closeReferenceSearch', 250, 'inPeekEditor && !config.editor.stablePeek'],
+			['closeReferenceSearch', 250, 'referenceSearchVisible && !config.editor.stablePeek && editorTextFocus'],
+		];
+		const others: Record<string, [string, number, string][]> = {
+			'escape': upstream,
+			'ctrl+[BracketRight]': [['editor.action.outdentLines', 100, 'editorTextFocus']],
+			'ctrl+c': [['editor.action.clipboardCopyAction', 100, 'textInputFocus'], ['hideSuggestWidget', 190, 'suggestWidgetVisible && textInputFocus']],
+		};
+		/** The binding the dispatcher runs: the highest weight whose when holds (later registration on a tie). */
+		const winner = (key: string, ctx: Record<string, unknown>) => {
+			const all = [...(others[key] ?? []), ...CMDLINE_KEYBINDINGS.filter(b => b.key === key).map(b => [b.command, VIM_WEIGHTS[b.weight ?? 'default'], b.when] as [string, number, string])]
+				.filter(([, , when]) => evaluateWhen(when, ctx));
+			all.sort((a, b) => a[1] - b[1]);
+			return all.at(-1)?.[0];
+		};
+		const widgets = ['suggestWidgetVisible', 'inlineSuggestionVisible', 'inlineEditIsVisible', 'LinkedEditingInputVisible', 'parameterHintsVisible', 'markersNavigationVisible', 'inSnippetMode', 'messageVisible', 'findWidgetVisible', 'cancellableOperation', 'inPeekEditor', 'referenceSearchVisible'];
+		for (const kind of [':', '/', '?'] as const) {
+			for (const text of ['', 'e src/ma']) {
+				for (const widget of [undefined, ...widgets]) {
+					const ctx = { ...new VimCmdlineController(kind, new VimStringLine(text), new TestTarget()).context(widget === 'suggestWidgetVisible'), editorFocus: true, ...(widget ? { [widget]: true } : {}) };
+					for (const key of ['escape', 'ctrl+[BracketRight]', 'ctrl+c']) {
+						assert.strictEqual(winner(key, ctx), 'devhubVim.cmdline.cancel', `${key} in ${kind}${text} with ${widget}`);
+					}
+				}
+			}
+		}
+		// fed keys (`:normal :e x<Esc>`, a register) take the same binding with the menu open
+		const target = new TestTarget();
+		const c = new VimCmdlineController(':', new VimStringLine('e x'), target);
+		const ctx = c.context(true);
+		assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === 'escape' && evaluateWhen(b.when, ctx)).map(b => b.command), ['devhubVim.cmdline.cancel']);
+		// <Up> / <Down> still give way to the menu: they step through it
+		for (const k of ['up', 'down']) {
+			assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === k && evaluateWhen(b.when, ctx)), [], k);
+		}
+	});
+
 	test('the Vim keymap does not apply in the prompt line: it is not a Vim editor', () => {
 		const ctx = new VimCmdlineController(':', new VimStringLine(''), new TestTarget()).context();
 		const applying = DEFAULT_KEYBINDINGS.filter(b => evaluateWhen(b.when, ctx));

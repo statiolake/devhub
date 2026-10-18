@@ -22,6 +22,8 @@ import { Position } from '../../../../../editor/common/core/position.js';
 import { CompletionItemLabel, CompletionTriggerKind } from '../../../../../editor/common/languages.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
+import { Context as SuggestContext } from '../../../../../editor/contrib/suggest/browser/suggest.js';
+import { SuggestController } from '../../../../../editor/contrib/suggest/browser/suggestController.js';
 import { createTextModel } from '../../../../../editor/test/common/testTextModel.js';
 import { TestCodeEditor, createCodeEditorServices } from '../../../../../editor/test/browser/testCodeEditor.js';
 import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
@@ -165,7 +167,18 @@ suite('DevHub Vim: the prompt line', () => {
 		vim.execute('devhubVim.cmdline', { kind: ':' });
 		assert.strictEqual(line().getModel()?.getValue(), '.,.+2');
 		assert.deepStrictEqual(line().getPosition()?.toJSON(), { lineNumber: 1, column: 6 });
+		// the completion menu goes with the line (one Esc, as Vim's wildmenu)
+		const suggest = SuggestController.get(line())!;
+		const menu = SuggestContext.Visible.bindTo(line().invokeWithinContext(a => a.get(IContextKeyService)));
+		menu.set(true);
+		let hidden = 0;
+		const cancelSuggest = suggest.cancelSuggestWidget;
+		// (the real one would build the suggest widget, which needs a layout this DOM has not)
+		suggest.cancelSuggestWidget = () => { hidden++; };
 		run('devhubVim.cmdline.cancel');
+		suggest.cancelSuggestWidget = cancelSuggest;
+		menu.set(false);
+		assert.strictEqual(hidden, 1);
 		assert.strictEqual(visible(), false);
 		vim.execute('devhubVim.operator', { operator: 'delete' });
 		vim.execute('devhubVim.cmdline', { kind: '/' });

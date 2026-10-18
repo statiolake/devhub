@@ -207,7 +207,7 @@ Its keys are default keybindings like every other Vim key (`when`:
 | Key | Command | Does |
 | --- | --- | --- |
 | `Enter` `CTRL-M` `CTRL-J` | `devhubVim.cmdline.submit` | run the line (with the completion menu open, Enter takes the selected match and runs) |
-| `Esc` `CTRL-C` `CTRL-[` | `devhubVim.cmdline.cancel` | abandon the line (`Esc` closes the completion menu first) |
+| `Esc` `CTRL-C` `CTRL-[` | `devhubVim.cmdline.cancel` | abandon the line, with the completion menu if it is open (one `Esc`, as Vim's wildmenu) |
 | `<BS>` `CTRL-H` on an empty line | `devhubVim.cmdline.cancel` | abandon it, as in Vim (otherwise they delete a character) |
 | `<Up>` / `<Down>` | `devhubVim.cmdline.historyPrev` / `historyNext` | older / newer history entry that starts with the text before the caret (`:` and the searches each have their own history) |
 | `CTRL-P` / `CTRL-N`, `<S-Up>` / `<S-Down>`, `<PageUp>` / `<PageDown>` | `devhubVim.cmdline.historyPrev` / `historyNext` `{ "filter": false }` | older / newer entry, any (with the completion menu open `CTRL-N` / `CTRL-P` step through it) |
@@ -235,6 +235,16 @@ on Windows and Linux:
 
 ```jsonc
 { "key": "ctrl+a", "command": "cursorHome", "when": "devhubVim.cmdlineFocus" }
+```
+
+`Esc` abandons the line even while the completion menu shows: its weight is
+above the menu's own `Esc` (and every other `Esc` an editor widget binds).
+To close only the menu, take the match with `CTRL-Y` or keep typing; or, if
+you want `Esc` to close the menu first as in VS Code's inputs, bind it in
+`keybindings.json` (your own bindings win over every default):
+
+```jsonc
+{ "key": "escape", "command": "hideSuggestWidget", "when": "devhubVim.cmdlineFocus && suggestWidgetVisible" }
 ```
 
 Keys that `:normal` and a register run with `@` feed (`:normal /foo<CR>`)

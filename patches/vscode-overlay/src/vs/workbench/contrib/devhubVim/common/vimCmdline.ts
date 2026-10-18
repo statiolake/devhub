@@ -10,7 +10,7 @@
 // that editor's own. What makes it Vim's command line are commands
 // (`devhubVim.cmdline.*`), each an ordinary keybinding on
 // `devhubVim.cmdlineFocus` (CMDLINE_KEYBINDINGS): Enter submits, Esc / CTRL-C
-// / CTRL-[ cancel, <BS> on an empty line cancels, <Up> / <Down> walk the
+// / CTRL-[ cancel (also while the completion menu shows), <BS> on an empty line cancels, <Up> / <Down> walk the
 // history (only the entries starting with the text before the caret, as in
 // Vim), CTRL-P / CTRL-N walk all of it, CTRL-R {register} inserts a register,
 // CTRL-W / CTRL-U delete the word / everything before the caret, Tab completes.
@@ -76,16 +76,19 @@ function key(k: string, command: string, when: string, args?: Record<string, unk
 /**
  * The prompt's default keys (US notation, put on the Apple JIS keys like the
  * Vim keymap). Where VS Code's suggest widget has a key of its own while it
- * shows (<Up> <Down> <Esc>), the prompt's key gives way to it; Tab and Enter
+ * shows (<Up> <Down>), the prompt's key gives way to it; Tab, Enter and Esc
  * do not: Tab steps through the matches (Vim's 'wildmenu'), Enter takes the
- * selected one and runs the line. `ctrl+...` is Control on macOS too.
+ * selected one and runs the line, and Esc / CTRL-C / CTRL-[ abandon the line
+ * with the menu (as Esc abandons Vim's command line with its wildmenu; the
+ * prompt's weight is above the suggest widget's Esc, EditorContrib + 90, and
+ * every other Esc an editor binds). `ctrl+...` is Control on macOS too.
  */
 const KEYS_BY_CHARACTER: readonly VimKeybinding[] = [
 	key('enter', 'devhubVim.cmdline.submit', NO_MENU),
 	key('enter', 'devhubVim.cmdline.submit', MENU, { accept: true }),
 	key('ctrl+m', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
 	key('ctrl+j', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
-	key('escape', 'devhubVim.cmdline.cancel', NO_MENU),
+	key('escape', 'devhubVim.cmdline.cancel', FOCUS),
 	key('ctrl+c', 'devhubVim.cmdline.cancel', FOCUS),
 	key('ctrl+[', 'devhubVim.cmdline.cancel', FOCUS),
 	// Vim: <BS> / CTRL-H on an empty command line abandons it
