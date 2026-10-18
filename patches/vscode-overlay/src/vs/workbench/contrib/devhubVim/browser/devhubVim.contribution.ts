@@ -74,7 +74,11 @@
 //   An IME that is on still composes (its keys dispatch no keybinding); what
 //   it commits goes to VimEngine.handleText: a command waiting for a
 //   character takes it, as does the prompt, and anything else is dropped.
-//   Replace mode is the editor's overtype input mode.
+//   Replace mode is the editor's overtype input mode. The caret is on a
+//   character outside insert mode, never past the end of a line, as a rule of
+//   the editor's cursor (editor/common/cursor/modalCursor.ts) that this
+//   contribution switches by the engine's mode: a click, a restored view
+//   state, undo or any other caller cannot put it there, not even for a frame.
 // * Mode, caret style, modal input and context keys are recomputed from the
 //   engine's state after every command and every focus or model change, never
 //   toggled, and a command that throws leaves the engine in plain normal mode.
@@ -111,6 +115,7 @@ import { ModalTextInput } from '../../../../editor/browser/controller/editContex
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
+import { ModalCursor } from '../../../../editor/common/cursor/modalCursor.js';
 import { IPosition, Position } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
@@ -269,6 +274,9 @@ class VimEditor extends Disposable implements IVimHost {
 	) {
 		super();
 		this.engine = new VimEngine(this, shared);
+		// Outside insert and replace mode the caret is on a character, at every
+		// cursor move, whoever makes it (the editor core applies it, modalCursor.ts).
+		this._register(ModalCursor.set(editor.getId(), () => !this.typing()));
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
@@ -347,12 +355,34 @@ class VimEditor extends Disposable implements IVimHost {
 		return this.engine.context();
 	}
 
-	/** Caret style and modal text input, both derived from the current state. */
+	private typing(): boolean {
+		return this.engine.mode === 'insert' || this.engine.mode === 'replace';
+	}
+
+	/** Caret style, modal text input and the caret's column, all derived from the current state. */
 	syncCursorStyle(): void {
 		const nav = this.owner.nav.active && this.editor.hasTextFocus();
-		const typing = this.engine.mode === 'insert' || this.engine.mode === 'replace';
+		const typing = this.typing();
 		ModalTextInput.set(this.editor.getId(), !typing);
+		if (!typing) {
+			this.caretOnCharacter();
+		}
 		this.setCursorStyle(vimCursorStyle(this.engine.mode, nav, this.insertStyle));
+	}
+
+	/**
+	 * Every cursor move outside insert mode keeps the caret on a character
+	 * (ModalCursor). A caret that was past the end of its line before that held
+	 * (an editor Vim was just turned on for, or one whose engine went back to
+	 * normal mode without moving it: a model change, a command that threw) is
+	 * put through the same rule once, in the same task, before a frame.
+	 */
+	private caretOnCharacter(): void {
+		const model = this.editor.getModel();
+		const selections = this.editor.getSelections();
+		if (model && selections?.some(s => s.isEmpty() && s.positionColumn > 1 && s.positionColumn === model.getLineMaxColumn(s.positionLineNumber))) {
+			this.editor.setSelections(selections, 'devhubVim');
+		}
 	}
 
 	/** Re-read the insert caret from the settings and re-apply. */

@@ -5,8 +5,9 @@ the code lives: the engine, its workbench contribution and their tests are new
 files, kept as files under
 [`patches/vscode-overlay/`](../patches/vscode-overlay)
 (`src/vs/workbench/contrib/devhubVim/`, the editor's modal input switch
-`src/vs/editor/browser/controller/editContext/modalTextInput.ts`, and the
-editor tests beside it); the hooks it needs in VS Code's own files are
+`src/vs/editor/browser/controller/editContext/modalTextInput.ts`, its caret
+rule `src/vs/editor/common/cursor/modalCursor.ts`, and the editor tests
+beside them); the hooks it needs in VS Code's own files are
 [`patches/vscode/0008-devhub-vim.patch`](../patches/vscode/0008-devhub-vim.patch).
 Edit them in `vscode/` and write them back with
 `scripts/vscode-submodule.sh export`.
@@ -590,6 +591,32 @@ cached from its last connection; when there is none yet (the first connection
 to that machine) or it is out of date, the editors opened before the remote
 settings arrive start as plain editors and become Vim editors when they do.
 Put it in your user settings to have Vim from the first key everywhere.
+
+## The caret
+
+Outside insert and replace mode the caret is on a character, as in Vim: it is
+never after the last character of a line, except on an empty line (column 1;
+'virtualedit' is not supported). That holds however the caret is put there,
+not only by Vim's own commands: a click past the end of a line lands on the
+last character, and so does a caret restored at the end of a line (reopening a
+file, switching back to an editor), undo putting back where a change began,
+an edit pushing the caret, multiple cursors, a column selection, and any
+other command or extension that sets the position (go to definition,
+references, search results, the outline, breadcrumbs). The last character is
+the whole last cell: a wide character, an emoji, a letter with its combining
+marks.
+
+It is a rule of the editor core, not a correction made afterwards: every
+cursor state is checked where the editor makes it
+(`modalCursor.ts`, called from the cursor's own `_setState`), so no event,
+frame or saved view state ever has the caret past the end, and the block caret
+never flickers there first. A selection is not changed: visual mode's
+selection may end at the end of the line (its end is exclusive in VS Code). A
+drag past the end of the line selects up to and including the last character.
+
+In insert mode the caret is VS Code's: `A`, `a` on the last character and a
+click put it after the last character, and `<Esc>` moves it one left, once.
+`CTRL-O` puts it on the last character for its one command and back after it.
 
 ## Customising keys
 

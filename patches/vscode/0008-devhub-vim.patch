@@ -244,18 +244,19 @@ index 9331eea4..170697a2 100644
  					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
  				}
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
-index b77791a6..16f9a158 100644
+index b77791a6..335cac73 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 +++ b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
-@@ -66,6 +66,7 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
+@@ -66,6 +66,8 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
  import { TextEdit } from '../../../common/core/edits/textEdit.js';
  import { isObject } from '../../../../base/common/types.js';
  import { IUserInteractionService } from '../../../../platform/userInteraction/browser/userInteractionService.js';
 +import { ModalTextInput } from '../../controller/editContext/modalTextInput.js';
++import { ModalCursor } from '../../../common/cursor/modalCursor.js';
  
  export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeEditor {
  
-@@ -367,7 +368,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -367,7 +369,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  
  		const isDropIntoEnabled = () => {
  			return !this._configuration.options.get(EditorOption.readOnly)
@@ -265,7 +266,7 @@ index b77791a6..16f9a158 100644
  		};
  
  		this._register(new dom.DragAndDropObserver(this._domElement, {
-@@ -1168,7 +1170,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1168,7 +1171,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _startComposition(): void {
@@ -274,7 +275,7 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		this.inComposition = true;
-@@ -1186,7 +1188,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1186,7 +1189,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _type(source: string | null | undefined, text: string): void {
@@ -283,7 +284,7 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		if (source === 'keyboard') {
-@@ -1199,14 +1201,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1199,14 +1202,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _compositionType(source: string | null | undefined, text: string, replacePrevCharCnt: number, replaceNextCharCnt: number, positionDelta: number): void {
@@ -300,7 +301,16 @@ index b77791a6..16f9a158 100644
  			return;
  		}
  		const viewModel = this._modelData.viewModel;
-@@ -1919,7 +1921,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1784,6 +1787,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+ 			}
+ 		);
+ 
++		ModalCursor.bind(viewModel, this.getId()); // DevHub: see modalCursor.ts
++
+ 		// Someone might destroy the model from under the editor, so prevent any exceptions by setting a null model
+ 		listenersToRemove.push(model.onWillDispose(() => this.setModel(null)));
+ 
+@@ -1919,7 +1924,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  			// Connect clipboard events from View
  			listenersToRemove.push(view.onWillCopy(e => this._onWillCopy.fire(e)));
  			listenersToRemove.push(view.onWillCut(e => this._onWillCut.fire(e)));
@@ -315,6 +325,26 @@ index b77791a6..16f9a158 100644
  		}
  
  		this._modelData = new ModelData(model, viewModel, view, hasRealView, listenersToRemove, attachedView);
+diff --git a/src/vs/editor/common/cursor/oneCursor.ts b/src/vs/editor/common/cursor/oneCursor.ts
+index 17bdb4e6..4278db0d 100644
+--- a/src/vs/editor/common/cursor/oneCursor.ts
++++ b/src/vs/editor/common/cursor/oneCursor.ts
+@@ -9,6 +9,7 @@ import { Position } from '../core/position.js';
+ import { Range } from '../core/range.js';
+ import { Selection } from '../core/selection.js';
+ import { PositionAffinity, TrackedRangeStickiness } from '../model.js';
++import { ModalCursor } from './modalCursor.js';
+ 
+ /**
+  * Represents a single cursor.
+@@ -142,6 +143,7 @@ export class Cursor {
+ 
+ 			modelState = new SingleCursorState(selectionStart, modelState.selectionStartKind, selectionStartLeftoverVisibleColumns, position, leftoverVisibleColumns);
+ 		}
++		[modelState, viewState] = ModalCursor.clamp(context, modelState, viewState); // DevHub: a modal editor's caret sits on a character, see modalCursor.ts
+ 
+ 		if (!viewState) {
+ 			// We only have the model state => compute the view state
 diff --git a/src/vs/editor/common/editorContextKeys.ts b/src/vs/editor/common/editorContextKeys.ts
 index 64dad4cf..1b4dd727 100644
 --- a/src/vs/editor/common/editorContextKeys.ts
