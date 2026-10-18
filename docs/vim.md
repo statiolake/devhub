@@ -215,15 +215,15 @@ Its keys are default keybindings like every other Vim key (`when`:
 
 | Key | Command | Does |
 | --- | --- | --- |
-| `Enter` `CTRL-M` `CTRL-J` | `devhubVim.cmdline.submit` | run the line (with the completion menu open, Enter takes the selected match and runs) |
+| `Enter` `CTRL-M` `CTRL-J` | `devhubVim.cmdline.submit` | run the line exactly as typed; with a match picked in the completion menu (`Tab`, `<Down>`, `CTRL-N`), take it first, then run. A menu that showed by itself as you type has nothing picked, so `:w` Enter is `:w` whatever it lists |
 | `Esc` `CTRL-C` `CTRL-[` | `devhubVim.cmdline.cancel` | abandon the line, with the completion menu if it is open (one `Esc`, as Vim's wildmenu) |
 | `<BS>` `CTRL-H` on an empty line | `devhubVim.cmdline.cancel` | abandon it, as in Vim (otherwise they delete a character) |
-| `<Up>` / `<Down>` | `devhubVim.cmdline.historyPrev` / `historyNext` | older / newer history entry that starts with the text before the caret (`:` and the searches each have their own history) |
+| `<Up>` / `<Down>` | `devhubVim.cmdline.historyPrev` / `historyNext` | older / newer history entry that starts with the text before the caret (`:` and the searches each have their own history). With the completion menu open, `<Down>` picks in it, and `<Up>` does once a match is picked; before that `<Up>` is the history (and closes the menu) |
 | `CTRL-P` / `CTRL-N`, `<S-Up>` / `<S-Down>`, `<PageUp>` / `<PageDown>` | `devhubVim.cmdline.historyPrev` / `historyNext` `{ "filter": false }` | older / newer entry, any (with the completion menu open `CTRL-N` / `CTRL-P` step through it) |
 | `CTRL-R {register}` | `devhubVim.cmdline.insertRegister` | insert a register at the caret (`"` shows at the caret while it waits; `{ "register": "a" }` inserts `"a` without waiting) |
 | `CTRL-W` | `devhubVim.cmdline.deleteWord` | delete the word before the caret |
 | `CTRL-U` | `devhubVim.cmdline.deleteToStart` | delete everything before the caret |
-| `Tab` / `Shift+Tab` (`:` only) | `devhubVim.cmdline.complete` (`{ "direction": "previous" }`) | complete: one match goes straight into the line; more show VS Code's completion menu, and `Tab` / `Shift+Tab` step through it |
+| `Tab` / `Shift+Tab` (`:` only) | `devhubVim.cmdline.complete` (`{ "direction": "previous" }`) | complete: with the menu open, pick the next / previous match in it (shown in the line); otherwise one match goes straight into the line, and more show the menu with the first picked |
 | `CTRL-Y` (menu open) | `acceptSelectedSuggestion` | take the match and keep typing (into a directory: its files show next) |
 | `CTRL-B` / `CTRL-E` | `cursorHome` / `cursorEnd` | caret to the start / end |
 
@@ -235,6 +235,19 @@ to the workspace folder, `/` for absolute paths; a bare name also finds the
 workspace's files that match it); option names after `:set` (with `no` /
 `inv` once typed, and the current value); open editors after `:b`. In `/` and
 `?` Tab is typed.
+
+In a `:` line the menu also shows by itself as you type, as IntelliSense does
+in an editor (after a letter, and after a blank or `/`, so `:e ` lists the
+directory and `:e src/` what is in `src`), with nothing picked in it: it only
+shows what `Tab` would complete, and `Enter` still runs what you typed. `Tab`,
+`<Down>` or `CTRL-N` pick a match, `CTRL-Y` takes it and lets you go on typing,
+`Enter` takes it and runs the line, `Esc` abandons the line (with the menu,
+in one press). The workspace file search for a bare name never holds the menu
+up: it starts after a short pause in typing (a newer name cancels it), the
+menu shows the directory's entries at once, and the files join it when the
+search answers. `"devhub.vim.cmdline.autoComplete": false` turns the menu as
+you type off: then it shows on `Tab` only, as before. `/` and `?` have no
+completion.
 
 The line's context keys (set inside the line, so they hold while it has the
 focus): `devhubVim.cmdlineFocus`, `devhubVim.cmdlineKind` (`:` `/` `?`),
@@ -674,7 +687,8 @@ VS Code commands (`common/vimEx.ts` `BUILTIN_EX_COMMANDS`): `:w[rite]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
 runs both (not after `:g` and `:normal`, which take `|` as an argument).
 `Tab` in the `:` prompt completes command names, file names, `:set` options
-and `:b` buffers (see [The prompt](#the-prompt)); `{count}:` starts with
+and `:b` buffers, and the menu of them shows as you type (see [The
+prompt](#the-prompt)); `{count}:` starts with
 `.,.+{count-1}`.
 
 ### File names

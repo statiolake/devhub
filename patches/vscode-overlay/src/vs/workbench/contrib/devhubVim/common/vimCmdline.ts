@@ -14,6 +14,10 @@
 // history (only the entries starting with the text before the caret, as in
 // Vim), CTRL-P / CTRL-N walk all of it, CTRL-R {register} inserts a register,
 // CTRL-W / CTRL-U delete the word / everything before the caret, Tab completes.
+// In a `:` line the completion menu also shows by itself as you type
+// (`devhub.vim.cmdline.autoComplete`), with nothing selected: Enter runs the
+// line exactly as typed unless a match was picked (Tab, Down, CTRL-N), and
+// then takes that match first.
 // VimCmdlineController implements them on an IVimCmdlineLine: the browser
 // editor, or a string (VimStringLine) for keys the engine feeds itself
 // (`:normal /foo<CR>`, a register run with `@a`) and for the tests. Fed keys
@@ -64,10 +68,13 @@ const C = VIM_CMDLINE_CONTEXT;
 const FOCUS = C.focus;
 const NO_MENU = `${FOCUS} && !suggestWidgetVisible`;
 const MENU = `${FOCUS} && suggestWidgetVisible`;
+/** The menu shows and a match in it was picked (Tab, Down, CTRL-N); a menu that showed by itself has none. */
+const PICKED = `${MENU} && suggestWidgetHasFocusedSuggestion`;
+const NOT_PICKED = `${MENU} && !suggestWidgetHasFocusedSuggestion`;
 const EX = `${FOCUS} && ${C.kind} == ':'`;
 
 /** The when clauses the prompt's defaults use. */
-export const VIM_CMDLINE_WHEN = { focus: FOCUS, noMenu: NO_MENU, menu: MENU, ex: EX } as const;
+export const VIM_CMDLINE_WHEN = { focus: FOCUS, noMenu: NO_MENU, menu: MENU, picked: PICKED, notPicked: NOT_PICKED, ex: EX } as const;
 
 function key(k: string, command: string, when: string, args?: Record<string, unknown>): VimKeybinding {
 	return { key: k, command, when, weight: 'cmdline', ...(args ? { args } : {}) };
@@ -76,16 +83,19 @@ function key(k: string, command: string, when: string, args?: Record<string, unk
 /**
  * The prompt's default keys (US notation, put on the Apple JIS keys like the
  * Vim keymap). Where VS Code's suggest widget has a key of its own while it
- * shows (<Up> <Down>), the prompt's key gives way to it; Tab, Enter and Esc
- * do not: Tab steps through the matches (Vim's 'wildmenu'), Enter takes the
- * selected one and runs the line, and Esc / CTRL-C / CTRL-[ abandon the line
+ * shows (<Down>, and <Up> once a match is picked), the prompt's key gives
+ * way to it; Tab, Enter and Esc do not: Tab steps through the matches (Vim's
+ * 'wildmenu'), Enter runs the line as typed, taking the picked match first
+ * when there is one (a menu that showed by itself as you typed has none, so
+ * `:w` Enter is `:w` whatever it lists), and Esc / CTRL-C / CTRL-[ abandon the line
  * with the menu (as Esc abandons Vim's command line with its wildmenu; the
  * prompt's weight is above the suggest widget's Esc, EditorContrib + 90, and
  * every other Esc an editor binds). `ctrl+...` is Control on macOS too.
  */
 const KEYS_BY_CHARACTER: readonly VimKeybinding[] = [
 	key('enter', 'devhubVim.cmdline.submit', NO_MENU),
-	key('enter', 'devhubVim.cmdline.submit', MENU, { accept: true }),
+	key('enter', 'devhubVim.cmdline.submit', NOT_PICKED),
+	key('enter', 'devhubVim.cmdline.submit', PICKED, { accept: true }),
 	key('ctrl+m', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
 	key('ctrl+j', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
 	key('escape', 'devhubVim.cmdline.cancel', FOCUS),
@@ -97,6 +107,8 @@ const KEYS_BY_CHARACTER: readonly VimKeybinding[] = [
 	key('ctrl+h', 'deleteLeft', `${FOCUS} && !${C.empty}`),
 	// history: <Up> <Down> only the entries that start like the line, <S-Up> <PageUp> CTRL-P (no menu) all
 	key('up', 'devhubVim.cmdline.historyPrev', NO_MENU),
+	// the menu that shows as you type does not take <Up> from the history until a match in it is picked
+	key('up', 'devhubVim.cmdline.historyPrev', NOT_PICKED),
 	key('down', 'devhubVim.cmdline.historyNext', NO_MENU),
 	key('shift+up', 'devhubVim.cmdline.historyPrev', NO_MENU, { filter: false }),
 	key('shift+down', 'devhubVim.cmdline.historyNext', NO_MENU, { filter: false }),
@@ -165,8 +177,10 @@ export interface IVimCmdlineTarget {
 export interface IVimCmdlineUi {
 	/** Tab: show / step through the completion menu. False: none here, the controller cycles the matches in the line. */
 	complete(direction: 'next' | 'previous'): boolean;
-	/** Take the match the completion menu has selected, if it shows. */
+	/** Take the match the completion menu has selected, if it shows and one is (none is until the user picks one). */
 	acceptCompletion(): void;
+	/** Hide the completion menu (the history replaced the line). */
+	closeCompletion?(): void;
 	/** CTRL-R waits for its register (the line shows `"` at the caret). */
 	awaitingRegister(waiting: boolean): void;
 }
@@ -361,7 +375,7 @@ export class VimCmdlineController {
 	}
 
 	/** The context keys as the prompt's `when` clauses read them (the browser sets the same in its element). */
-	context(menu = false): Record<string, unknown> {
+	context(menu = false, picked = false): Record<string, unknown> {
 		return {
 			'true': true,
 			[C.focus]: true,
@@ -370,6 +384,7 @@ export class VimCmdlineController {
 			[C.awaitingRegister]: this._awaitingRegister,
 			'devhubVim.mode': 'cmdline',
 			suggestWidgetVisible: menu,
+			suggestWidgetHasFocusedSuggestion: menu && picked,
 			editorTextFocus: true,
 			textInputFocus: true,
 		};
@@ -486,6 +501,7 @@ export class VimCmdlineController {
 		h.index = i;
 		const next = i === entries.length ? h.original : entries[i];
 		h.shown = next;
+		this.ui?.closeCompletion?.();
 		this.replaceAll(next);
 	}
 

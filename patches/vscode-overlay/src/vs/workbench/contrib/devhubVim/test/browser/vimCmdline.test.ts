@@ -19,7 +19,8 @@ import { mock } from '../../../../../base/test/common/mock.js';
 import { ModalTextInput } from '../../../../../editor/browser/controller/editContext/modalTextInput.js';
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { Position } from '../../../../../editor/common/core/position.js';
-import { CompletionItemLabel, CompletionTriggerKind } from '../../../../../editor/common/languages.js';
+import { EditorOption } from '../../../../../editor/common/config/editorOptions.js';
+import { CompletionItemLabel, CompletionList, CompletionTriggerKind } from '../../../../../editor/common/languages.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { Context as SuggestContext } from '../../../../../editor/contrib/suggest/browser/suggest.js';
@@ -39,10 +40,10 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IWorkspace, IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { ISearchService } from '../../../../services/search/common/search.js';
+import { IFileQuery, ISearchComplete, ISearchService } from '../../../../services/search/common/search.js';
 import { IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { DevhubVim, vimDrives } from '../../browser/devhubVim.contribution.js';
-import { VIM_CMDLINE_CLASS, VimCmdline } from '../../browser/vimCmdline.js';
+import { VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VimCmdline } from '../../browser/vimCmdline.js';
 import { VIM_CMDLINE_COMMANDS } from '../../common/vimCmdline.js';
 
 const ROOT = URI.file('/ws');
@@ -57,6 +58,7 @@ suite('DevHub Vim: the prompt line', () => {
 		readonly vim: DevhubVim;
 		readonly origin: TestCodeEditor;
 		readonly instantiation: IInstantiationService;
+		readonly configuration: TestConfigurationService;
 		readonly root: HTMLElement;
 		/** The line's editor, once a prompt has been shown. */
 		line(): ICodeEditor;
@@ -65,6 +67,9 @@ suite('DevHub Vim: the prompt line', () => {
 		type(text: string): void;
 		visible(): boolean;
 	}
+
+	/** The workspace file search the line's completion runs (quick open's), as a test sets it. */
+	let fileSearch: ((query: IFileQuery, token?: CancellationToken) => Promise<ISearchComplete>) | undefined;
 
 	function withPrompt(fn: (env: Env) => void | Promise<void>): Promise<void> {
 		const disposables = new DisposableStore();
@@ -101,7 +106,11 @@ suite('DevHub Vim: the prompt line', () => {
 						return { children: names.map(([name, isDirectory]) => ({ name, isDirectory })) } as unknown as IFileStatWithMetadata;
 					}
 				}],
-				[ISearchService, new class extends mock<ISearchService>() { }],
+				[ISearchService, new class extends mock<ISearchService>() {
+					override fileSearch(query: IFileQuery, token?: CancellationToken): Promise<ISearchComplete> {
+						return fileSearch ? fileSearch(query, token) : Promise.reject(new Error('no search'));
+					}
+				}],
 			));
 			const vim = disposables.add(instantiation.createInstance(DevhubVim));
 			const element = root.appendChild(mainWindow.document.createElement('div'));
@@ -111,7 +120,7 @@ suite('DevHub Vim: the prompt line', () => {
 			EditorContextKeys.editorTextFocus.bindTo(origin.invokeWithinContext(a => a.get(IContextKeyService))).set(true);
 			vim.update();
 			const env: Env = {
-				vim, origin, instantiation, root,
+				vim, origin, instantiation, root, configuration: configurationService,
 				line: () => VimCmdline.current!.lineEditor(mainWindow)!,
 				run: (id, args) => instantiation.invokeFunction(a => CommandsRegistry.getCommand(id)!.handler(a, args)),
 				type: text => env.line().trigger('keyboard', 'type', { text }),
@@ -120,6 +129,7 @@ suite('DevHub Vim: the prompt line', () => {
 			await fn(env);
 		};
 		return run().finally(() => {
+			fileSearch = undefined;
 			disposables.dispose();
 			root.remove();
 		});
@@ -256,6 +266,161 @@ suite('DevHub Vim: the prompt line', () => {
 			]);
 		} finally {
 			service.executeCommand = execute;
+		}
+	}));
+
+	/** The line's suggest controller with the methods the prompt's keys reach recorded (the real widget needs a layout this DOM has not). */
+	function recordSuggest(editor: ICodeEditor): { calls: string[]; restore(): void } {
+		const suggest = SuggestController.get(editor)!;
+		const calls: string[] = [];
+		const saved = { accept: suggest.acceptSelectedSuggestion, next: suggest.selectNextSuggestion, trigger: suggest.triggerSuggest, cancel: suggest.cancelSuggestWidget };
+		suggest.acceptSelectedSuggestion = () => { calls.push('accept'); };
+		suggest.selectNextSuggestion = () => { calls.push('next'); };
+		suggest.triggerSuggest = (_from, auto) => { calls.push(auto ? 'trigger auto' : 'trigger'); };
+		suggest.cancelSuggestWidget = () => { calls.push('cancel'); };
+		return {
+			calls,
+			restore: () => {
+				suggest.acceptSelectedSuggestion = saved.accept;
+				suggest.selectNextSuggestion = saved.next;
+				suggest.triggerSuggest = saved.trigger;
+				suggest.cancelSuggestWidget = saved.cancel;
+			},
+		};
+	}
+
+	/** The menu as the suggest widget's context keys say: shown, and whether a match in it is selected. */
+	function menuState(editor: ICodeEditor, visible: boolean, picked: boolean): void {
+		const keys = editor.invokeWithinContext(a => a.get(IContextKeyService));
+		SuggestContext.Visible.bindTo(keys).set(visible);
+		SuggestContext.HasFocusedSuggestion.bindTo(keys).set(picked);
+	}
+
+	test('a `:` line completes as you type (space and `/` trigger it), with nothing selected; `/` and `?` do not', () => withPrompt(({ vim, line, run, instantiation }) => {
+		vim.execute('devhubVim.cmdline', { kind: ':' });
+		const editor = line();
+		assert.deepStrictEqual(editor.getOption(EditorOption.quickSuggestions), { other: 'on', comments: 'on', strings: 'on' });
+		assert.strictEqual(editor.getOption(EditorOption.suggestOnTriggerCharacters), true);
+		const suggest = editor.getOption(EditorOption.suggest);
+		assert.strictEqual(suggest.selectionMode, 'never', 'a menu that shows by itself has nothing selected');
+		assert.strictEqual(suggest.filterGraceful, true);
+		assert.strictEqual(editor.getOption(EditorOption.acceptSuggestionOnEnter), 'off');
+		assert.strictEqual(editor.getOption(EditorOption.tabCompletion), 'off');
+		const providers = instantiation.invokeFunction(a => a.get(ILanguageFeaturesService)).completionProvider.ordered(editor.getModel()!);
+		assert.deepStrictEqual([...providers[0].triggerCharacters ?? []].sort(), [' ', '/']);
+		run('devhubVim.cmdline.cancel');
+		for (const kind of ['/', '?']) {
+			vim.execute('devhubVim.cmdline', { kind });
+			assert.deepStrictEqual(line().getOption(EditorOption.quickSuggestions), { other: 'off', comments: 'off', strings: 'off' }, kind);
+			assert.strictEqual(line().getOption(EditorOption.suggestOnTriggerCharacters), false, kind);
+			run('devhubVim.cmdline.cancel');
+		}
+	}));
+
+	test('devhub.vim.cmdline.autoComplete off: the menu shows on Tab only', () => withPrompt(({ vim, line, run, configuration }) => {
+		void configuration.setUserConfiguration(VIM_CMDLINE_AUTOCOMPLETE_SETTING, false);
+		vim.execute('devhubVim.cmdline', { kind: ':' });
+		assert.deepStrictEqual(line().getOption(EditorOption.quickSuggestions), { other: 'off', comments: 'off', strings: 'off' });
+		assert.strictEqual(line().getOption(EditorOption.suggestOnTriggerCharacters), false);
+		run('devhubVim.cmdline.cancel');
+	}));
+
+	test('Enter with the menu open and nothing picked runs what was typed; a picked match is taken first; Tab picks', () => withPrompt(async ({ vim, origin, line, run, type }) => {
+		const seen: [string, unknown][] = [];
+		const service = vim.commandService;
+		const execute = service.executeCommand;
+		service.executeCommand = async (id: string, ...args: unknown[]) => { seen.push([id, args[0]]); return undefined as never; };
+		const from = origin.getModel()!.uri.toString();
+		try {
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			type('e src/ma');
+			const rec = recordSuggest(line());
+			try {
+				// the menu showed by itself: nothing in it is selected
+				menuState(line(), true, false);
+				run('devhubVim.cmdline.complete');
+				assert.deepStrictEqual(rec.calls, ['next'], 'Tab selects in the menu');
+				rec.calls.length = 0;
+				// Enter (and CTRL-M, which takes a match when there is one) with nothing picked
+				run('devhubVim.cmdline.submit', { accept: true });
+				assert.deepStrictEqual(rec.calls.filter(c => c === 'accept'), []);
+			} finally {
+				menuState(line(), false, false);
+				rec.restore();
+			}
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			type('e src/ma');
+			const rec2 = recordSuggest(line());
+			try {
+				menuState(line(), true, true);
+				run('devhubVim.cmdline.submit', { accept: true });
+				assert.deepStrictEqual(rec2.calls.filter(c => c === 'accept'), ['accept'], 'a picked match is taken');
+			} finally {
+				menuState(line(), false, false);
+				rec2.restore();
+			}
+			await new Promise(r => setTimeout(r, 0));
+			assert.deepStrictEqual(seen, [
+				['devhubVim.edit', { file: 'src/ma', bang: false, from }],
+				['devhubVim.edit', { file: 'src/ma', bang: false, from }],
+			]);
+		} finally {
+			service.executeCommand = execute;
+		}
+	}));
+
+	test('file completion as you type: the directory at once, the search after a pause, cancelled by a newer name, and merged in when it answers', () => withPrompt(async ({ vim, line }) => {
+		const searches: { pattern: string; token?: CancellationToken; resolve(names: string[]): void }[] = [];
+		fileSearch = (query, token) => new Promise<ISearchComplete>(resolve => {
+			searches.push({ pattern: query.filePattern ?? '', token, resolve: names => resolve({ results: names.map(n => ({ resource: URI.joinPath(ROOT, n) })), messages: [] }) });
+		});
+		vim.execute('devhubVim.cmdline', { kind: ':' });
+		const cmdline = VimCmdline.current!;
+		// (quick open's query builder needs the workbench; the search service gets the pattern)
+		(cmdline as unknown as { queryBuilder: unknown }).queryBuilder = { file: (_folders: unknown, o: { filePattern: string }) => ({ filePattern: o.filePattern }) };
+		const model = line().getModel()!;
+		const ask = async (text: string, triggerKind: CompletionTriggerKind) => {
+			model.setValue(text);
+			line().setPosition({ lineNumber: 1, column: text.length + 1 });
+			const providers = vim.languageFeaturesService.completionProvider.ordered(model);
+			const t0 = Date.now();
+			const list = await providers[0].provideCompletionItems(model, new Position(1, text.length + 1), { triggerKind }, CancellationToken.None) as CompletionList;
+			return { labels: list.suggestions.map(s => s.label as string), incomplete: list.incomplete, ms: Date.now() - t0 };
+		};
+		const rec = recordSuggest(line());
+		try {
+			// typed: answers at once with what the directory has, no search yet (it waits for a pause)
+			const first = await ask('e m', CompletionTriggerKind.TriggerForIncompleteCompletions);
+			assert.deepStrictEqual([first.labels, first.incomplete], [['README.md', 'src/'], true]);
+			assert.ok(first.ms < 1000);
+			assert.strictEqual(searches.length, 0);
+			const second = await ask('e ma', CompletionTriggerKind.TriggerForIncompleteCompletions);
+			assert.deepStrictEqual(second.labels, ['README.md', 'src/']);
+			await new Promise(r => setTimeout(r, 200));
+			// only the last name was searched for: the first never started
+			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma']);
+			searches[0].resolve(['src/main.ts']);
+			await new Promise(r => setTimeout(r, 0));
+			// the menu is asked again, as typing asks it (nothing selected)
+			assert.deepStrictEqual(rec.calls, ['trigger auto']);
+			const third = await ask('e ma', CompletionTriggerKind.TriggerForIncompleteCompletions);
+			assert.deepStrictEqual(third.labels, ['README.md', 'src/', 'src/main.ts'], 'the answer is kept for the same name');
+			// a newer name cancels the search in flight
+			await ask('e mai', CompletionTriggerKind.TriggerForIncompleteCompletions);
+			await new Promise(r => setTimeout(r, 200));
+			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma', 'mai']);
+			await ask('e mx', CompletionTriggerKind.TriggerForIncompleteCompletions);
+			assert.strictEqual(searches[1].token?.isCancellationRequested, true);
+			// Tab (an explicit request) waits for the search
+			rec.calls.length = 0;
+			const tab = ask('e READ', CompletionTriggerKind.Invoke);
+			await new Promise(r => setTimeout(r, 0));
+			assert.deepStrictEqual(searches.map(s => s.pattern), ['ma', 'mai', 'READ']);
+			searches[2].resolve(['docs/READING.md']);
+			assert.deepStrictEqual((await tab).labels, ['README.md', 'src/', 'docs/READING.md']);
+			assert.deepStrictEqual(rec.calls, []);
+		} finally {
+			rec.restore();
 		}
 	}));
 

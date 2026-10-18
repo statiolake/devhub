@@ -140,7 +140,7 @@ import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit
 import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
-import { IVimCmdlineOrigin, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
+import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
 import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VimRegex } from '../common/vimRegex.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
@@ -191,6 +191,11 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: {},
 			markdownDescription: localize('devhubVim.options', "Vim options at startup, as with `:set` (Neovim's defaults otherwise). For example `{ \"ignorecase\": true, \"smartcase\": true }`."),
 			properties: Object.fromEntries(Object.entries(DEFAULT_VIM_OPTIONS).map(([k, v]) => [k, { type: typeof v as 'boolean' | 'number' | 'string', default: v }])),
+		},
+		[VIM_CMDLINE_AUTOCOMPLETE_SETTING]: {
+			type: 'boolean',
+			default: true,
+			markdownDescription: localize('devhubVim.cmdline.autoComplete', "In the `:` prompt, show the completion menu (ex commands, `:set` options, `:b` buffers, `:e` files) as you type, as IntelliSense does. Nothing in it is selected until you pick a match (Tab, Down, CTRL-N), so Enter runs the line exactly as typed. Off: the menu shows on Tab only."),
 		},
 	},
 });

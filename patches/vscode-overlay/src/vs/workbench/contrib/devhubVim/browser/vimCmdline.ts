@@ -30,10 +30,25 @@
 // Completion is VS Code's suggest widget on the line's model (scheme
 // `devhubvim-cmdline`): ex command names, file names after `:e` `:sp` `:vs`
 // `:new` `:tabnew` ..., option names after `:set`, open editors after `:b`.
+// In a `:` line it shows by itself as you type, as IntelliSense does
+// (quickSuggestions, and a blank or `/` as trigger characters), unless
+// `devhub.vim.cmdline.autoComplete` is off (then Tab alone shows it). A menu
+// that showed by itself has nothing selected (`suggest.selectionMode:
+// 'never'`), so Enter runs the line as typed; Tab / Down / CTRL-N pick a
+// match, and Enter, CTRL-Y take it. `/` and `?` have no completion.
+//
+// File names come from two places: the directory typed so far (IFileService,
+// cached for the prompt) and, for a bare name, the workspace's file search.
+// VS Code's suggest shows nothing until every provider of a group answered,
+// so the search never holds the menu up: as you type it starts after a short
+// pause (a newer name cancels the one before), the menu shows what is there at
+// once and says it is incomplete, and when the search answers for the line
+// still there, the menu is asked again and the files join it.
 
 import { addDisposableListener, getWindow, onDidUnregisterWindow } from '../../../../base/browser/dom.js';
 import { CodeWindow } from '../../../../base/browser/window.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { raceTimeout, timeout } from '../../../../base/common/async.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { dirname, joinPath, relativePath } from '../../../../base/common/resources.js';
@@ -45,7 +60,7 @@ import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/c
 import { EditorOption, IEditorOptions } from '../../../../editor/common/config/editorOptions.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
-import { CompletionItem, CompletionItemKind, CompletionList } from '../../../../editor/common/languages.js';
+import { CompletionContext, CompletionItem, CompletionItemKind, CompletionList, CompletionTriggerKind } from '../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../editor/common/model.js';
 import { ModelDecorationOptions } from '../../../../editor/common/model/textModel.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
@@ -56,7 +71,7 @@ import { localize } from '../../../../nls.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
-import { IFileService } from '../../../../platform/files/common/files.js';
+import { IFileService, IFileStat } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
 import { contrastBorder, editorBackground, editorForeground, registerColor } from '../../../../platform/theme/common/colorRegistry.js';
@@ -76,6 +91,14 @@ import './media/vimCmdline.css';
 export const VIM_CMDLINE_CLASS = 'devhub-vim-cmdline';
 /** The URI scheme of the line's model: completion is registered for it alone. */
 export const VIM_CMDLINE_SCHEME = 'devhubvim-cmdline';
+/** The setting: the completion menu of a `:` line shows as you type (true), or on Tab alone. */
+export const VIM_CMDLINE_AUTOCOMPLETE_SETTING = 'devhub.vim.cmdline.autoComplete';
+/** Characters after which the menu shows by itself: a command's argument begins, a directory ends. */
+export const VIM_CMDLINE_TRIGGER_CHARACTERS: readonly string[] = [' ', '/'];
+/** The pause in typing before the workspace file search starts (each newer name cancels the older search). */
+const FILE_SEARCH_DEBOUNCE = 120;
+/** How long a completion request typed as you go waits for the search before it answers without it. */
+const FILE_SEARCH_BUDGET = 50;
 
 export const VIM_CMDLINE_FOCUS = new RawContextKey<boolean>(VIM_CMDLINE_CONTEXT.focus, false, localize('devhubVim.cmdlineFocus', "The Vim prompt line (: / ?) has the keyboard focus."));
 const VIM_CMDLINE_KIND = new RawContextKey<string>(VIM_CMDLINE_CONTEXT.kind, '', localize('devhubVim.cmdlineKind', "The kind of the Vim prompt that has the focus: ':' (an ex command), '/' or '?' (a search), or empty."));
@@ -117,6 +140,8 @@ class CmdlineView extends Disposable {
 	readonly registerDecoration;
 	/** The prompt's listeners on this view (VimCmdline.view). */
 	readonly listeners = this._register(new DisposableStore());
+	/** The open prompt's kind: only a `:` line completes (by itself, with the setting on). */
+	private kind: VimCmdlineKind | undefined;
 
 	constructor(
 		readonly window: CodeWindow,
@@ -158,9 +183,47 @@ class CmdlineView extends Disposable {
 			if (e.affectsConfiguration('editor')) {
 				this.editor.updateOptions(this.options());
 				this.syncFont();
+			} else if (e.affectsConfiguration(VIM_CMDLINE_AUTOCOMPLETE_SETTING)) {
+				this.editor.updateOptions(this.completionOptions());
 			}
 		}));
 		this.syncFont();
+	}
+
+	/** The prompt's kind: the completion options follow it. */
+	setKind(kind: VimCmdlineKind): void {
+		this.kind = kind;
+		this.editor.updateOptions(this.completionOptions());
+	}
+
+	/** Whether the menu of the open prompt shows as you type. */
+	get autoComplete(): boolean {
+		return this.kind === ':' && this.configurationService.getValue<boolean>(VIM_CMDLINE_AUTOCOMPLETE_SETTING) !== false;
+	}
+
+	/**
+	 * Completion: in a `:` line as you type (with the setting on), never with
+	 * a match selected by itself, never taken by Enter or Tab on the editor's
+	 * own terms (Enter and Tab are the prompt's keys).
+	 */
+	completionOptions(): IEditorOptions {
+		const auto = this.autoComplete;
+		return {
+			quickSuggestions: auto ? { other: 'on', comments: 'on', strings: 'on' } : false,
+			suggestOnTriggerCharacters: auto,
+			// the default 10ms: the provider answers without waiting on the file search
+			quickSuggestionsDelay: 10,
+			acceptSuggestionOnEnter: 'off',
+			tabCompletion: 'off',
+			suggestSelection: 'first',
+			snippetSuggestions: 'none',
+			suggest: {
+				showWords: false, showSnippets: false, preview: true, insertMode: 'replace', filterGraceful: true, showStatusBar: false, showInlineDetails: true,
+				// a menu that showed by itself has nothing selected: Enter runs what was typed (Tab still selects the first)
+				selectionMode: 'never',
+				snippetsPreventQuickSuggestions: false,
+			},
+		};
 	}
 
 	/** One line, the editor's font, nothing around the text; Tab and Enter are the prompt's keys. */
@@ -211,14 +274,7 @@ class CmdlineView extends Disposable {
 			revealHorizontalRightPadding: 5,
 			defaultColorDecorators: 'never',
 			unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },
-			// completion only on Tab (devhubVim.cmdline.complete), and Enter is the prompt's
-			quickSuggestions: false,
-			suggestOnTriggerCharacters: false,
-			acceptSuggestionOnEnter: 'off',
-			tabCompletion: 'off',
-			suggestSelection: 'first',
-			snippetSuggestions: 'none',
-			suggest: { showWords: false, showSnippets: false, preview: true, insertMode: 'replace', filterGraceful: true, showStatusBar: false, showInlineDetails: true },
+			...this.completionOptions(),
 			allowVariableLineHeights: false,
 			allowVariableFonts: false,
 			allowVariableFontsInAccessibilityMode: false,
@@ -235,6 +291,11 @@ class CmdlineView extends Disposable {
 
 	get menuVisible(): boolean {
 		return !!this.editor.invokeWithinContext(a => a.get(IContextKeyService)).getContextKeyValue<boolean>('suggestWidgetVisible');
+	}
+
+	/** A match in the menu is selected: the user picked one (Tab, Down, CTRL-N), or Tab showed the menu. */
+	get menuPicked(): boolean {
+		return this.menuVisible && !!this.editor.invokeWithinContext(a => a.get(IContextKeyService)).getContextKeyValue<boolean>('suggestWidgetHasFocusedSuggestion');
 	}
 }
 
@@ -283,6 +344,10 @@ export class VimCmdline extends Disposable {
 	/** The line is being given up because the focus left it: no focus to hand back. */
 	private leaving = false;
 	private queryBuilder: QueryBuilder | undefined;
+	/** The open prompt's directory listings, by URI (each typed key would ask the file service again). */
+	private readonly dirCache = new Map<string, Promise<readonly IFileStat[] | undefined>>();
+	/** The workspace file search for the name typed last; a newer name cancels it. */
+	private fileSearch: { readonly name: string; readonly cts: CancellationTokenSource; readonly promise: Promise<readonly URI[] | undefined>; results?: readonly URI[] } | undefined;
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
@@ -322,8 +387,10 @@ export class VimCmdline extends Disposable {
 		// a simple widget's model is not synchronized to the extension host: the provider has to say it can see it
 		this._register(languageFeaturesService.completionProvider.register({ scheme: VIM_CMDLINE_SCHEME, hasAccessToAllModels: true }, {
 			_debugDisplayName: 'devhubVimCmdline',
-			provideCompletionItems: (model, position, _context, token) => this.provideCompletions(model, position.column - 1, token),
+			triggerCharacters: [...VIM_CMDLINE_TRIGGER_CHARACTERS],
+			provideCompletionItems: (model, position, context, token) => this.provideCompletions(model, position.column - 1, context, token),
 		}));
+		this._register(toDisposable(() => this.resetFileCompletion()));
 	}
 
 	/** The number of the prompt last shown. */
@@ -380,8 +447,14 @@ export class VimCmdline extends Disposable {
 		const ui: IVimCmdlineUi = {
 			complete: d => this.complete(d),
 			acceptCompletion: () => {
-				if (view.menuVisible) {
+				// only a match the user picked: a menu that showed by itself has none, and Enter runs the line as typed
+				if (view.menuPicked) {
 					view.editor.trigger('devhubVim', 'acceptSelectedSuggestion', {});
+				}
+			},
+			closeCompletion: () => {
+				if (view.menuVisible) {
+					SuggestController.get(view.editor)?.cancelSuggestWidget();
 				}
 			},
 			awaitingRegister: on => {
@@ -391,6 +464,8 @@ export class VimCmdline extends Disposable {
 			},
 		};
 		const controller = new VimCmdlineController(kind, new EditorLine(view.editor, view.model), target, sources, ui);
+		this.resetFileCompletion();
+		view.setKind(kind);
 		view.model.setValue(text);
 		this.session = { view, origin, controller, id, sources };
 		view.kindKey.set(kind);
@@ -431,6 +506,7 @@ export class VimCmdline extends Disposable {
 			return;
 		}
 		this.session = undefined;
+		this.resetFileCompletion();
 		// The line's widgets go with it: the completion menu (Esc abandons the line
 		// with its menu, as Vim's wildmenu) and a snippet session; the line has no
 		// parameter hints or other contributions to close.
@@ -561,7 +637,7 @@ export class VimCmdline extends Disposable {
 		return true;
 	}
 
-	private async provideCompletions(model: ITextModel, caret: number, token: CancellationToken): Promise<CompletionList | undefined> {
+	private async provideCompletions(model: ITextModel, caret: number, context: CompletionContext, token: CancellationToken): Promise<CompletionList | undefined> {
 		const s = this.session;
 		if (!s || s.view.model !== model || s.controller.kind !== ':') {
 			return undefined;
@@ -571,7 +647,10 @@ export class VimCmdline extends Disposable {
 		if (!ctx) {
 			return undefined;
 		}
-		const items = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin, token) : cmdlineCompletions(ctx, s.sources);
+		// Tab (an explicit request) waits for the file search; as you type the menu does not
+		const explicit = context.triggerKind === CompletionTriggerKind.Invoke;
+		const files = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin, explicit, token) : undefined;
+		const items = files ? files.items : cmdlineCompletions(ctx, s.sources);
 		let end = caret;
 		const word = ctx.kind === 'command' ? /[A-Za-z0-9]/ : /\S/;
 		while (end < text.length && word.test(text[end])) {
@@ -582,6 +661,8 @@ export class VimCmdline extends Disposable {
 			command: CompletionItemKind.Function, option: CompletionItemKind.Property, buffer: CompletionItemKind.File,
 			file: CompletionItemKind.File, folder: CompletionItemKind.Folder,
 		};
+		// a directory taken (CTRL-Y, Enter on it): on into it, the menu shown as typing shows it (nothing selected) when that is on
+		const into = { id: 'editor.action.triggerSuggest', title: '', ...(s.view.autoComplete ? { arguments: [{ auto: true }] } : {}) };
 		const suggestions: CompletionItem[] = items.map((it, i) => ({
 			label: it.label,
 			detail: it.detail,
@@ -590,10 +671,79 @@ export class VimCmdline extends Disposable {
 			filterText: it.label,
 			sortText: String(i).padStart(5, '0'),
 			range,
-			// a directory taken with CTRL-Y: on into it
-			...(it.kind === 'folder' ? { command: { id: 'editor.action.triggerSuggest', title: '' } } : {}),
+			...(it.kind === 'folder' ? { command: into } : {}),
 		}));
 		return { suggestions, incomplete: ctx.kind === 'file' };
+	}
+
+	/** A new prompt, or none: the cached listings and the search in flight go. */
+	private resetFileCompletion(): void {
+		this.dirCache.clear();
+		this.fileSearch?.cts.dispose(true);
+		this.fileSearch = undefined;
+	}
+
+	private listDirectory(dir: URI): Promise<readonly IFileStat[] | undefined> {
+		const key = dir.toString();
+		let p = this.dirCache.get(key);
+		if (!p) {
+			p = this.fileService.resolve(dir).then(stat => stat.children ?? [], () => undefined);
+			this.dirCache.set(key, p);
+		}
+		return p;
+	}
+
+	/**
+	 * The workspace's files matching `name` (quick open's file search), one
+	 * search at a time: the same name shares the search in flight (or its
+	 * answer), a different one cancels it. As you type it starts after
+	 * FILE_SEARCH_DEBOUNCE without a newer key; Tab starts it at once.
+	 */
+	private searchFiles(name: string, immediate: boolean): NonNullable<VimCmdline['fileSearch']> {
+		const current = this.fileSearch;
+		if (current?.name === name) {
+			return current;
+		}
+		current?.cts.dispose(true);
+		const cts = new CancellationTokenSource();
+		const folders = this.workspaceService.getWorkspace().folders;
+		const search = async () => {
+			if (!immediate) {
+				await timeout(FILE_SEARCH_DEBOUNCE, cts.token);
+			}
+			this.queryBuilder ??= this.instantiationService.createInstance(QueryBuilder);
+			const query = this.queryBuilder.file(folders, { filePattern: name, sortByScore: true, maxResults: 50 });
+			const found = await this.searchService.fileSearch(query, cts.token);
+			return cts.token.isCancellationRequested ? undefined : found.results.map(r => r.resource);
+		};
+		const entry: NonNullable<VimCmdline['fileSearch']> = {
+			name, cts,
+			promise: search().then(results => {
+				entry.results = results;
+				return results;
+			}, () => undefined), // cancelled by a newer name, or failed: it completes nothing
+		};
+		this.fileSearch = entry;
+		return entry;
+	}
+
+	/**
+	 * The search for `name` answered after the menu was shown without it: ask
+	 * the menu again so the files join it, if the line still completes that
+	 * name and nothing in the menu was picked (asking again would unpick it).
+	 * Asked as typing asks, so nothing is selected.
+	 */
+	private searchArrived(name: string): void {
+		const s = this.session;
+		if (!s || !s.view.autoComplete || this.fileSearch?.name !== name) {
+			return;
+		}
+		const line = s.controller.line;
+		const ctx = cmdlineCompletionContext(line.text, line.caret);
+		if (ctx?.kind !== 'file' || ctx.typed !== name || s.view.menuPicked) {
+			return;
+		}
+		SuggestController.get(s.view.editor)?.triggerSuggest(undefined, true);
 	}
 
 	/** Open editors, most recent first, for `:b`. */
@@ -628,10 +778,10 @@ export class VimCmdline extends Disposable {
 	 * for a bare name also the workspace's files that match it (quick open's
 	 * file search).
 	 */
-	private async fileItems(typed: string, origin: IVimCmdlineOrigin, token: CancellationToken): Promise<VimCmdlineCompletionItem[]> {
+	private async fileItems(typed: string, origin: IVimCmdlineOrigin, explicit: boolean, token: CancellationToken): Promise<{ items: VimCmdlineCompletionItem[] }> {
 		const base = this.baseDirectory(origin);
 		if (!base) {
-			return [];
+			return { items: [] };
 		}
 		const { dir, base: name } = splitFileArg(typed);
 		const out: VimCmdlineCompletionItem[] = [];
@@ -642,36 +792,36 @@ export class VimCmdline extends Disposable {
 				out.push({ label, kind, ...(detail ? { detail } : {}) });
 			}
 		};
-		try {
-			const path = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
-			const dirUri = path.startsWith('/') ? base.with({ path }) : path ? joinPath(base, path) : base;
-			const stat = await this.fileService.resolve(dirUri);
-			const children = [...(stat.children ?? [])]
-				.filter(c => !c.name.startsWith('.') || name.startsWith('.'))
-				.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-			for (const c of children) {
-				add(dir + c.name + (c.isDirectory ? '/' : ''), c.isDirectory ? 'folder' : 'file');
-			}
-		} catch {
-			// not a directory (yet): the search below, or nothing
+		const path = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
+		const dirUri = path.startsWith('/') ? base.with({ path }) : path ? joinPath(base, path) : base;
+		// not a directory (yet): the search below, or nothing
+		const children = [...(await this.listDirectory(dirUri) ?? [])]
+			.filter(c => !c.name.startsWith('.') || name.startsWith('.'))
+			.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		for (const c of children) {
+			add(dir + c.name + (c.isDirectory ? '/' : ''), c.isDirectory ? 'folder' : 'file');
 		}
 		const folders = this.workspaceService.getWorkspace().folders;
 		if (!dir && name && folders.length && !token.isCancellationRequested) {
-			try {
-				this.queryBuilder ??= this.instantiationService.createInstance(QueryBuilder);
-				const query = this.queryBuilder.file(folders, { filePattern: name, sortByScore: true, maxResults: 50 });
-				const found = await this.searchService.fileSearch(query, token);
-				for (const r of found.results) {
-					const rel = relativePath(base, r.resource);
+			const search = this.searchFiles(name, explicit);
+			const found = search.results ?? (explicit ? await search.promise : await raceTimeout(search.promise, FILE_SEARCH_BUDGET));
+			if (found) {
+				for (const r of found) {
+					const rel = relativePath(base, r);
 					if (rel) {
 						add(rel, 'file');
 					}
 				}
-			} catch {
-				// a search that failed or was cancelled completes nothing more
+			} else if (!explicit) {
+				// shown without the search; it joins the menu when it answers
+				void search.promise.then(results => {
+					if (results) {
+						this.searchArrived(name);
+					}
+				});
 			}
 		}
-		return out;
+		return { items: out };
 	}
 }
 

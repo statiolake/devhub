@@ -155,17 +155,45 @@ suite('DevHub Vim prompt: the line\'s commands', () => {
 		assert.strictEqual(q.shown, 'alpha|');
 	});
 
-	test('Enter with the completion menu open takes the selected match first', () => {
+	test('Enter with the completion menu open takes the match the user picked first', () => {
 		const order: string[] = [];
 		const target = new TestTarget();
 		const ui: IVimCmdlineUi = { complete: () => true, acceptCompletion: () => order.push('accept'), awaitingRegister: () => { } };
 		const p = prompt(':', 'spl', 3, target, SOURCES, ui);
-		const menu = p.c.context(true);
-		const enter = CMDLINE_KEYBINDINGS.filter(b => b.key === 'enter' && evaluateWhen(b.when, menu));
+		const picked = p.c.context(true, true);
+		const enter = CMDLINE_KEYBINDINGS.filter(b => b.key === 'enter' && evaluateWhen(b.when, picked));
 		assert.strictEqual(enter.length, 1);
 		p.c.run(enter[0].command, enter[0].args);
 		target.calls.forEach(c => order.push(c));
 		assert.deepStrictEqual(order, ['accept', 'submit spl']);
+	});
+
+	test('Enter with the menu that showed as you type, nothing picked in it, runs exactly what was typed', () => {
+		const order: string[] = [];
+		const target = new TestTarget();
+		const ui: IVimCmdlineUi = { complete: () => true, acceptCompletion: () => order.push('accept'), awaitingRegister: () => { } };
+		const p = prompt(':', 'w', 1, target, SOURCES, ui);
+		const menu = p.c.context(true, false);
+		const enter = CMDLINE_KEYBINDINGS.filter(b => b.key === 'enter' && evaluateWhen(b.when, menu));
+		assert.deepStrictEqual(enter.map(b => [b.command, b.args]), [['devhubVim.cmdline.submit', undefined]]);
+		p.c.run(enter[0].command, enter[0].args);
+		target.calls.forEach(c => order.push(c));
+		assert.deepStrictEqual(order, ['submit w']);
+	});
+
+	test('<Up> walks the history over a menu with nothing picked (and closes it); <Down> and Tab pick in it', () => {
+		const closed: string[] = [];
+		const target = new TestTarget({ colon: ['edit a', 'write'], search: [] });
+		const ui: IVimCmdlineUi = { complete: () => true, acceptCompletion: () => { }, awaitingRegister: () => { }, closeCompletion: () => closed.push('close') };
+		const p = prompt(':', 'e', 1, target, SOURCES, ui);
+		const menu = p.c.context(true, false);
+		const up = CMDLINE_KEYBINDINGS.filter(b => b.key === 'up' && evaluateWhen(b.when, menu));
+		assert.deepStrictEqual(up.map(b => b.command), ['devhubVim.cmdline.historyPrev']);
+		p.c.run(up[0].command, up[0].args);
+		assert.strictEqual(p.line.text, 'edit a');
+		assert.deepStrictEqual(closed, ['close']);
+		assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === 'down' && evaluateWhen(b.when, menu)), [], 'the menu\'s own Down selects');
+		assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === 'tab' && evaluateWhen(b.when, menu)).map(b => b.command), ['devhubVim.cmdline.complete']);
 	});
 
 	test('Tab: the completion menu of the browser line; the controller cycles itself only without one', () => {
@@ -297,9 +325,10 @@ suite('DevHub Vim prompt: keybindings', () => {
 		const c = new VimCmdlineController(':', new VimStringLine('e x'), target);
 		const ctx = c.context(true);
 		assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === 'escape' && evaluateWhen(b.when, ctx)).map(b => b.command), ['devhubVim.cmdline.cancel']);
-		// <Up> / <Down> still give way to the menu: they step through it
+		// once a match is picked, <Up> / <Down> give way to the menu: they step through it
+		const picked = c.context(true, true);
 		for (const k of ['up', 'down']) {
-			assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === k && evaluateWhen(b.when, ctx)), [], k);
+			assert.deepStrictEqual(CMDLINE_KEYBINDINGS.filter(b => b.key === k && evaluateWhen(b.when, picked)), [], k);
 		}
 	});
 
@@ -314,10 +343,11 @@ suite('DevHub Vim prompt: keybindings', () => {
 			{ menu: false, text: '', kind: ':' as const },
 			{ menu: false, text: 'x', kind: ':' as const },
 			{ menu: true, text: 'x', kind: ':' as const },
+			{ menu: true, picked: true, text: 'x', kind: ':' as const },
 			{ menu: false, text: 'x', kind: '/' as const },
 		];
 		for (const st of states) {
-			const ctx = new VimCmdlineController(st.kind, new VimStringLine(st.text), new TestTarget()).context(st.menu);
+			const ctx = new VimCmdlineController(st.kind, new VimStringLine(st.text), new TestTarget()).context(st.menu, 'picked' in st && st.picked);
 			const seen = new Map<string, string>();
 			for (const b of CMDLINE_KEYBINDINGS.filter(b => evaluateWhen(b.when, ctx))) {
 				assert.ok(!seen.has(b.key), `${b.key} twice: ${seen.get(b.key)} and ${b.command} (${JSON.stringify(st)})`);
