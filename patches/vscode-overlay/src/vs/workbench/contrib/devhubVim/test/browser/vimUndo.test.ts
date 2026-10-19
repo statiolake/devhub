@@ -5,12 +5,12 @@
 
 // DevHub Vim: undo is VS Code's. `u` and CTRL-R run the `undo` / `redo`
 // commands on the model's own undo stack, so an undo step is whatever VS Code
-// made one (a format on save, a code action). The engine makes Vim's steps by
-// closing the stack element where a change begins and ends, and while an
-// insert is open typing does not close it at every word
-// (ModalCursor.setUndoGroup, cursor.ts): one insert, one step. After an undo
-// or redo, from any key or menu, a Vim editor outside insert mode is in
-// normal mode with one collapsed caret.
+// made one (a format on save, a code action). The engine closes the stack
+// element where a change begins and ends, so each normal-mode change is a
+// step of its own; inside an insert the editor's own typing stops apply (a
+// word, a newline, ...) as in any editor. After an undo or redo, from any key
+// or menu, a Vim editor outside insert mode is in normal mode with one
+// collapsed caret.
 
 import assert from 'assert';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -33,7 +33,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { DevhubVim } from '../../browser/devhubVim.contribution.js';
 
-suite('DevHub Vim: undo is VS Code\'s, in Vim\'s steps', () => {
+suite('DevHub Vim: undo is VS Code\'s, normal-mode changes are steps', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
@@ -98,29 +98,73 @@ suite('DevHub Vim: undo is VS Code\'s, in Vim\'s steps', () => {
 		}
 	};
 
-	test('an insert, words, spaces, newlines and backspaces typed in it, is one undo step', () => withVim('x', async ({ vim, editor, text, mode, undo, redo }) => {
-		vim.execute('devhubVim.mode', { to: 'insert', at: 'before' });
+	const script = (editor: TestCodeEditor) => {
 		type(editor, 'foo bar.baz\n  qux');
 		editor.trigger('keyboard', 'deleteLeft', null);
 		type(editor, 'x');
 		editor.trigger('keyboard', 'tab', null);
 		type(editor, 'y');
+	};
+
+	/** The texts after each undo, until the undo stack is empty (the first is the text before any). */
+	const undoAll = async (text: () => string, undo: () => Promise<void>): Promise<string[]> => {
+		const seen = [text()];
+		for (let i = 0; i < 50; i++) {
+			await undo();
+			if (text() === seen[seen.length - 1]) {
+				break;
+			}
+			seen.push(text());
+		}
+		return seen;
+	};
+
+	test('an insert follows VS Code\'s typing undo stops: words, newlines, Tab and Backspace are steps', () => withVim('x', async ({ vim, editor, text, mode, undo, redo }) => {
+		vim.execute('devhubVim.mode', { to: 'insert', at: 'before' });
+		script(editor);
 		vim.execute('devhubVim.escape', undefined);
-		assert.strictEqual(text(), 'foo bar.baz\n  qux   yx');
-		await undo();
-		assert.strictEqual(text(), 'x');
+		const typed = 'foo bar.baz\n  qux   yx';
+		assert.strictEqual(text(), typed);
+		const steps = await undoAll(text, undo);
+		assert.ok(steps.length > 3, `several steps, not one: ${JSON.stringify(steps)}`);
+		assert.strictEqual(steps[0], typed);
+		assert.strictEqual(steps[steps.length - 1], 'x');
 		assert.strictEqual(mode(), 'normal');
 		await redo();
-		assert.strictEqual(text(), 'foo bar.baz\n  qux   yx');
+		assert.notStrictEqual(text(), 'x');
 		assert.strictEqual(mode(), 'normal');
 		assert.ok(editor.getSelection()!.isEmpty());
 	}));
 
-	test('without Vim the same typing is VS Code\'s several steps (the rule is Vim\'s only)', () => withVim('x', async ({ editor, text, undo }) => {
-		type(editor, 'foo bar baz');
+	test('the steps of an insert are those of the same typing without Vim', async () => {
+		let withoutVim: string[] = [];
+		await withVim('x', async ({ editor, text, undo }) => {
+			script(editor);
+			withoutVim = await undoAll(text, undo);
+		}, false);
+		await withVim('x', async ({ vim, editor, text, undo }) => {
+			vim.execute('devhubVim.mode', { to: 'insert', at: 'before' });
+			script(editor);
+			vim.execute('devhubVim.escape', undefined);
+			assert.deepStrictEqual(await undoAll(text, undo), withoutVim);
+		});
+	});
+
+	test('an insert is not joined to the normal-mode change before it, nor to the one after it', () => withVim('a b c', async ({ vim, editor, text, undo }) => {
+		vim.execute('devhubVim.action', { action: 'deleteChar' });
+		assert.strictEqual(text(), ' b c');
+		vim.execute('devhubVim.mode', { to: 'insert', at: 'before' });
+		type(editor, 'foo');
+		vim.execute('devhubVim.escape', undefined);
+		vim.execute('devhubVim.action', { action: 'deleteChar' });
+		const after = text();
 		await undo();
-		assert.notStrictEqual(text(), 'x');
-	}, false));
+		assert.notStrictEqual(text(), after);
+		assert.ok(text().includes('foo'), text());
+		const steps = await undoAll(text, undo);
+		assert.ok(steps.includes(' b c'), JSON.stringify(steps));
+		assert.strictEqual(steps[steps.length - 1], 'a b c');
+	}));
 
 	test('each normal-mode change is one step; an edit made with its own undo stops (format on save) is its own', () => withVim('a b c d', async ({ vim, editor, text, undo, redo }) => {
 		vim.execute('devhubVim.operator', { operator: 'delete' });
@@ -183,11 +227,12 @@ suite('DevHub Vim: undo is VS Code\'s, in Vim\'s steps', () => {
 	test('Cmd+Z in insert mode stays in insert mode, as in VS Code', () => withVim('x', async ({ vim, editor, text, mode, undo }) => {
 		vim.execute('devhubVim.mode', { to: 'insert', at: 'before' });
 		type(editor, 'ab cd');
+		const typed = text();
 		await undo();
-		assert.strictEqual(text(), 'x');
+		assert.notStrictEqual(text(), typed);
 		assert.strictEqual(mode(), 'insert');
 		type(editor, 'z');
 		vim.execute('devhubVim.escape', undefined);
-		assert.strictEqual(text(), 'zx');
+		assert.ok(text().includes('z'), text());
 	}));
 });

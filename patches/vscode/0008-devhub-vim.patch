@@ -193,18 +193,10 @@ index 9b79bfb6..fc805abd 100644
  			this._visibleTextArea = null;
  
 diff --git a/src/vs/editor/browser/coreCommands.ts b/src/vs/editor/browser/coreCommands.ts
-index 9331eea4..9952c245 100644
+index 9331eea4..170697a2 100644
 --- a/src/vs/editor/browser/coreCommands.ts
 +++ b/src/vs/editor/browser/coreCommands.ts
-@@ -31,6 +31,7 @@ import { IViewModel } from '../common/viewModel.js';
- import { ISelection } from '../common/core/selection.js';
- import { getActiveElement, isEditableElement } from '../../base/browser/dom.js';
- import { EnterOperation } from '../common/cursor/cursorTypeEditOperations.js';
-+import { ModalCursor } from '../common/cursor/modalCursor.js';
- import { TextEditorSelectionSource } from '../../platform/editor/common/editor.js';
- 
- const CORE_WEIGHT = KeybindingWeight.EditorCore;
-@@ -1985,7 +1986,7 @@ export namespace CoreEditingCommands {
+@@ -1985,7 +1985,7 @@ export namespace CoreEditingCommands {
  				precondition: EditorContextKeys.writable,
  				kbOpts: {
  					weight: CORE_WEIGHT,
@@ -213,7 +205,7 @@ index 9331eea4..9952c245 100644
  					primary: 0,
  					mac: { primary: KeyMod.WinCtrl | KeyCode.KeyO }
  				}
-@@ -2007,7 +2008,8 @@ export namespace CoreEditingCommands {
+@@ -2007,7 +2007,8 @@ export namespace CoreEditingCommands {
  					weight: CORE_WEIGHT,
  					kbExpr: ContextKeyExpr.and(
  						EditorContextKeys.editorTextFocus,
@@ -223,19 +215,7 @@ index 9331eea4..9952c245 100644
  					),
  					primary: KeyMod.Shift | KeyCode.Tab
  				}
-@@ -2015,9 +2017,9 @@ export namespace CoreEditingCommands {
- 		}
- 
- 		public runCoreEditingCommand(editor: ICodeEditor, viewModel: IViewModel, args: unknown): void {
--			editor.pushUndoStop();
-+			if (!ModalCursor.joinsUndo(viewModel)) { editor.pushUndoStop(); } // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 			editor.executeCommands(this.id, TypeOperations.outdent(viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection)));
--			editor.pushUndoStop();
-+			if (!ModalCursor.joinsUndo(viewModel)) { editor.pushUndoStop(); } // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 		}
- 	});
- 
-@@ -2030,7 +2032,8 @@ export namespace CoreEditingCommands {
+@@ -2030,7 +2031,8 @@ export namespace CoreEditingCommands {
  					weight: CORE_WEIGHT,
  					kbExpr: ContextKeyExpr.and(
  						EditorContextKeys.editorTextFocus,
@@ -245,19 +225,7 @@ index 9331eea4..9952c245 100644
  					),
  					primary: KeyCode.Tab
  				}
-@@ -2038,9 +2041,9 @@ export namespace CoreEditingCommands {
- 		}
- 
- 		public runCoreEditingCommand(editor: ICodeEditor, viewModel: IViewModel, args: unknown): void {
--			editor.pushUndoStop();
-+			if (!ModalCursor.joinsUndo(viewModel)) { editor.pushUndoStop(); } // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 			editor.executeCommands(this.id, TypeOperations.tab(viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection)));
--			editor.pushUndoStop();
-+			if (!ModalCursor.joinsUndo(viewModel)) { editor.pushUndoStop(); } // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 		}
- 	});
- 
-@@ -2051,7 +2054,7 @@ export namespace CoreEditingCommands {
+@@ -2051,7 +2053,7 @@ export namespace CoreEditingCommands {
  				precondition: undefined,
  				kbOpts: {
  					weight: CORE_WEIGHT,
@@ -266,16 +234,7 @@ index 9331eea4..9952c245 100644
  					primary: KeyCode.Backspace,
  					secondary: [KeyMod.Shift | KeyCode.Backspace],
  					mac: { primary: KeyCode.Backspace, secondary: [KeyMod.Shift | KeyCode.Backspace, KeyMod.WinCtrl | KeyCode.KeyH, KeyMod.WinCtrl | KeyCode.Backspace] }
-@@ -2061,7 +2064,7 @@ export namespace CoreEditingCommands {
- 
- 		public runCoreEditingCommand(editor: ICodeEditor, viewModel: IViewModel, args: unknown): void {
- 			const [shouldPushStackElementBefore, commands] = DeleteOperations.deleteLeft(viewModel.getPrevEditOperationType(), viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection), viewModel.getCursorAutoClosedCharacters());
--			if (shouldPushStackElementBefore) {
-+			if (shouldPushStackElementBefore && !ModalCursor.joinsUndo(viewModel)) { // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 				editor.pushUndoStop();
- 			}
- 			editor.executeCommands(this.id, commands);
-@@ -2076,7 +2079,7 @@ export namespace CoreEditingCommands {
+@@ -2076,7 +2078,7 @@ export namespace CoreEditingCommands {
  				precondition: undefined,
  				kbOpts: {
  					weight: CORE_WEIGHT,
@@ -284,15 +243,6 @@ index 9331eea4..9952c245 100644
  					primary: KeyCode.Delete,
  					mac: { primary: KeyCode.Delete, secondary: [KeyMod.WinCtrl | KeyCode.KeyD, KeyMod.WinCtrl | KeyCode.Delete] }
  				}
-@@ -2085,7 +2088,7 @@ export namespace CoreEditingCommands {
- 
- 		public runCoreEditingCommand(editor: ICodeEditor, viewModel: IViewModel, args: unknown): void {
- 			const [shouldPushStackElementBefore, commands] = DeleteOperations.deleteRight(viewModel.getPrevEditOperationType(), viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection));
--			if (shouldPushStackElementBefore) {
-+			if (shouldPushStackElementBefore && !ModalCursor.joinsUndo(viewModel)) { // DevHub: a Vim insert is one undo step, see modalCursor.ts
- 				editor.pushUndoStop();
- 			}
- 			editor.executeCommands(this.id, commands);
 diff --git a/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts b/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts
 index 31234a17..ddaf2aa5 100644
 --- a/src/vs/editor/browser/viewParts/lineNumbers/lineNumbers.ts
@@ -398,7 +348,7 @@ index b77791a6..fc9b6da4 100644
  		listenersToRemove.push(model.onWillDispose(() => this.setModel(null)));
  
 diff --git a/src/vs/editor/common/cursor/cursor.ts b/src/vs/editor/common/cursor/cursor.ts
-index a0608348..a34cc8da 100644
+index a0608348..64cb8bac 100644
 --- a/src/vs/editor/common/cursor/cursor.ts
 +++ b/src/vs/editor/common/cursor/cursor.ts
 @@ -8,6 +8,7 @@ import * as strings from '../../../base/common/strings.js';
@@ -409,26 +359,7 @@ index a0608348..a34cc8da 100644
  import { DeleteOperations } from './cursorDeleteOperations.js';
  import { CursorChangeReason } from '../cursorEvents.js';
  import { CompositionOutcome, TypeOperations } from './cursorTypeOperations.js';
-@@ -358,7 +359,8 @@ export class CursorsController extends Disposable {
- 			return;
- 		}
- 
--		if (opResult.shouldPushStackElementBefore) {
-+		const joinsUndo = ModalCursor.joinsUndo(this.context.viewModel); // DevHub: a Vim insert is one undo step, see modalCursor.ts
-+		if (opResult.shouldPushStackElementBefore && !joinsUndo) {
- 			this._model.pushStackElement();
- 		}
- 
-@@ -386,7 +388,7 @@ export class CursorsController extends Disposable {
- 			this._prevEditOperationType = opResult.type;
- 		}
- 
--		if (opResult.shouldPushStackElementAfter) {
-+		if (opResult.shouldPushStackElementAfter && !joinsUndo) {
- 			this._model.pushStackElement();
- 		}
- 	}
-@@ -406,7 +408,7 @@ export class CursorsController extends Disposable {
+@@ -406,7 +407,7 @@ export class CursorsController extends Disposable {
  
  	private _emitStateChangedIfNecessary(eventsCollector: ViewModelEventsCollector, source: string | null | undefined, reason: CursorChangeReason, oldState: CursorModelState | null, reachedMaxCursorCount: boolean): boolean {
  		const newState = CursorModelState.from(this._model, this);

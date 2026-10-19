@@ -105,9 +105,10 @@ export interface IVimHost {
 	/** Apply non-overlapping edits (in pre-edit coordinates) synchronously. */
 	applyEdits(edits: readonly VimEdit[]): void;
 	/**
-	 * Brackets one Vim change so that `u` (VS Code's undo) undoes it as a
-	 * single step: the undo step is closed at both ends, and typing does not
-	 * close it in between.
+	 * Brackets one Vim change: the undo step is closed at both ends, so `u`
+	 * (VS Code's undo) never undoes part of a normal-mode change together with
+	 * what came before or after it. Typing in an insert keeps VS Code's own
+	 * undo stops in between.
 	 */
 	beginChange(): void;
 	endChange(): void;

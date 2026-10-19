@@ -671,16 +671,17 @@ step where a Vim change begins and where it ends, so
 
 * each normal-mode change (`dw`, `x`, `p`, `>>`, `:s`, a visual `c`, `.`) is
   one step, and `:g` with all it runs is one;
-* an insert, from `i` / `a` / `o` / `c…` / `R` to `<Esc>`, is one step: VS
-  Code would close a step at every word, space, newline, `Tab` and
-  `Backspace` typed, and while a Vim insert is open it does not
-  (`ModalCursor.setUndoGroup`, the typing rules in the editor's `cursor.ts`
-  and `coreCommands.ts`). A count's repeats (`3ix<Esc>`) are in the same step.
-* As in Vim (and Neovim's defaults) the insert is broken by `CTRL-W` / `CTRL-U`
-  (before they delete), `CTRL-O`, and moving the caret (arrows, a click); and
-  VS Code's own steps stay where VS Code makes them inside an insert too:
-  accepting a completion, a snippet or an inline suggestion, format on type,
-  `Alt+Backspace`.
+* an insert is **not** one step: while you type in it, undo stops are VS
+  Code's, as in any editor (about a word, a newline, `Tab` or `Backspace`
+  typed), so `u` takes back a word or a line of what you typed, not the whole
+  insert. The insert as a whole does not run into the change before it or the
+  one after it: the step is closed where the insert begins and where it ends
+  (`<Esc>`). A count's repeats (`3ix<Esc>`) are added when the insert ends,
+  in the same step as the last of the typing.
+* `CTRL-W` / `CTRL-U` break the insert first (before they delete), as in
+  Neovim, so their deletion is a step of its own; moving the caret (arrows, a
+  click) breaks it as in VS Code, and so do accepting a completion, a snippet
+  or an inline suggestion, format on type and `Alt+Backspace`.
 
 After an undo or redo — from `u`, `CTRL-R`, `:undo`, `Cmd+Z` or the menu — the
 caret is where VS Code puts it back (the selection the change started from),
@@ -702,7 +703,7 @@ and decrement; `Shift+Insert` / `Shift+Delete` paste and cut there.) Vim's own r
 | --- | --- | --- | --- |
 | normal | the line (VS Code's `editor.emptySelectionClipboard`) | cuts the line | pastes at the caret as VS Code does: before the character the block is on, the caret after the pasted text (on a character); a copied whole line goes in above the current line. One undo step; normal mode stays |
 | visual (`v` `V` `CTRL-V`) | copies the selected text; **visual mode stays** | cuts the selection, back to normal mode | replaces the selection, back to normal mode |
-| insert / replace | VS Code's | VS Code's | VS Code's (part of the insert's undo step) |
+| insert / replace | VS Code's | VS Code's | VS Code's (with VS Code's undo stops) |
 
 Visual mode stays after `Cmd+C` because a GUI copy changes nothing: the
 selection is still there to act on (`d`, `>`, `Cmd+X`) or to leave with
