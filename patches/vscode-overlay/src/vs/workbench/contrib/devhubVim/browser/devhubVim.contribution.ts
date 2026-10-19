@@ -69,8 +69,9 @@
 //   regular expression.
 // * Modal "to the bone": outside insert mode an editor is switched to modal
 //   text input in the editor core (editor/browser/controller/editContext/
-//   modalTextInput.ts): typed text, IME composition, paste and drop from any
+//   modalTextInput.ts): typed text, IME composition and drop from any
 //   caller never reach the model, so a key no keybinding takes types nothing.
+//   A paste does (Cmd+V is a command, as cut and undo are).
 //   An IME that is on still composes (its keys dispatch no keybinding); what
 //   it commits goes to VimEngine.handleText: a command waiting for a
 //   character takes it, as does the prompt, and anything else is dropped.
@@ -100,7 +101,9 @@
 //   endChange), and while an insert is open the editor's typing does not
 //   close it on its own (ModalCursor.setUndoGroup): one insert, one step.
 //   After any undo or redo outside insert mode the editor is in normal mode
-//   with one collapsed caret (afterUndo).
+//   with one collapsed caret (settle). Cmd+C / Cmd+X / Cmd+V are VS Code's
+//   clipboard actions in every mode; a cut or paste over the visual
+//   selection ends visual mode the same way.
 // * Esc only ever cancels: pressed any number of times it lands in plain
 //   normal mode and nowhere else.
 // * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
@@ -268,7 +271,12 @@ class VimEditor extends Disposable implements IVimHost {
 	/** Between beginChange and endChange: one Vim change, one undo step. */
 	private changeOpen = false;
 	private undoQueue: Promise<void> = Promise.resolve();
-	private undoSettle = false;
+	/** settle() is queued (after an undo / redo, or a paste or cut over the visual selection). */
+	private settleQueued = false;
+	/** Inside applyEdits: the engine's own edits. */
+	private applying = 0;
+	/** The selections a visual mode put, as ranges (what Cmd+X / Cmd+V replace). */
+	private visualRanges: Range[] = [];
 	private appliedStyle: CursorStyle | undefined;
 	private applyingStyle = false;
 	private insertStyle: VimCursorStyle;
@@ -324,12 +332,20 @@ class VimEditor extends Disposable implements IVimHost {
 			} catch (err) {
 				onUnexpectedError(err);
 			}
-			if ((e.isUndoing || e.isRedoing) && !this.undoSettle) {
-				// the cursor is put back after the edit, in this same task
-				this.undoSettle = true;
-				queueMicrotask(() => this.afterUndo());
+			if (e.isUndoing || e.isRedoing) {
+				this.queueSettle();
+			} else if (!this.applying && this.engine.mode.startsWith('visual') && e.changes.length > 0 && e.changes.every(c => this.visualRanges.some(r => r.equalsRange(c.range)))) {
+				// Cmd+X, Cmd+V or any other command that wrote over the visual
+				// selection: back in normal mode, as Vim's d / c / p leave visual mode
+				this.queueSettle();
 			}
 			this.scheduleHighlight();
+		}));
+		this._register(editor.onWillPaste(() => {
+			// Cmd+V outside insert mode (VS Code's paste, modalTextInput.ts): a half-built command is dropped first
+			if (!this.typing() && this.engine.pending) {
+				this.engine.cancelPending();
+			}
 		}));
 		this._register(editor.onDidScrollChange(e => {
 			if (e.scrollTopChanged && owner.searchHighlight) {
@@ -615,6 +631,7 @@ class VimEditor extends Disposable implements IVimHost {
 			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
 			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
 		const caret = this.noteVisual(sel);
+		this.visualRanges = this.visualPrimary ? [sel] : [];
 		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, 'devhubVim'));
 		this.reveal(caret);
 	}
@@ -639,15 +656,21 @@ class VimEditor extends Disposable implements IVimHost {
 		// VS Code's primary selection is the first
 		const sels = [toSel(ranges[primary]), ...ranges.filter((_, i) => i !== primary).map(toSel)];
 		const caret = this.noteVisual(sels[0]);
+		this.visualRanges = this.visualPrimary ? sels : [];
 		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelections(sels, 'devhubVim'));
 		this.reveal(caret);
 	}
 
 	applyEdits(edits: readonly VimEdit[]): void {
-		this.editor.executeEdits('devhubVim', edits.map(e => ({
-			range: new Range(e.start.line + 1, e.start.col + 1, e.end.line + 1, e.end.col + 1),
-			text: e.text,
-		})));
+		this.applying++;
+		try {
+			this.editor.executeEdits('devhubVim', edits.map(e => ({
+				range: new Range(e.start.line + 1, e.start.col + 1, e.end.line + 1, e.end.col + 1),
+				text: e.text,
+			})));
+		} finally {
+			this.applying--;
+		}
 	}
 
 	// Undo is VS Code's: `u` and CTRL-R are the `undo` / `redo` commands (the
@@ -690,16 +713,27 @@ class VimEditor extends Disposable implements IVimHost {
 		}).catch(onUnexpectedError);
 	}
 
+	private queueSettle(): void {
+		if (!this.settleQueued) {
+			// the cursor is put after the edit, in this same task
+			this.settleQueued = true;
+			queueMicrotask(() => this.settle());
+		}
+	}
+
 	/**
-	 * After an undo or redo, by any means (`u`, CTRL-R, `Cmd+Z`, the Edit menu,
-	 * another file's refactoring undone): outside insert mode the editor is in
-	 * normal mode with one caret. VS Code puts back the selection the change
-	 * started from, which after a visual-mode change is the visual area; the
-	 * caret goes to its start, where Vim puts it (the change's start), and the
-	 * caret rule keeps it on a character (modalCursor.ts).
+	 * After an edit Vim did not make that leaves it in no mode of its own: an
+	 * undo or redo by any means (`u`, CTRL-R, `Cmd+Z`, the Edit menu, another
+	 * file's refactoring undone), or a Cmd+X / Cmd+V (or any command) over the
+	 * visual selection. Outside insert mode the editor is then in normal mode
+	 * with one caret. VS Code puts back the selection the change started from,
+	 * which after a visual-mode change is the visual area; the caret goes to
+	 * its start, where Vim puts it (the change's start), and the caret rule
+	 * keeps it on a character (modalCursor.ts). After a paste the caret is
+	 * VS Code's, after the pasted text.
 	 */
-	private afterUndo(): void {
-		this.undoSettle = false;
+	private settle(): void {
+		this.settleQueued = false;
 		if (!this.editor.getModel() || this.typing()) {
 			return;
 		}

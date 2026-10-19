@@ -20,11 +20,10 @@ suite('DevHub modal text input', () => {
 		editor.trigger('keyboard', Handler.ReplacePreviousChar, { text: 'う', replaceCharCnt: 0 } satisfies ReplacePreviousCharPayload);
 		editor.trigger('keyboard', Handler.CompositionType, { text: 'な', replacePrevCharCnt: 0, replaceNextCharCnt: 0, positionDelta: 0 } satisfies CompositionTypePayload);
 		editor.trigger('keyboard', Handler.CompositionEnd, {});
-		editor.trigger('keyboard', Handler.Paste, { text: 'pasted', pasteOnNewLine: false, multicursorText: null, mode: null, isBlock: false } satisfies PastePayload);
 		editor.trigger('someExtension', Handler.Type, { text: 'y' } satisfies TypePayload);
 	}
 
-	test('no typed text, composition or paste reaches a modal editor; commands still edit', () => {
+	test('no typed text or composition reaches a modal editor; commands still edit', () => {
 		withTestCodeEditor('abc', {}, editor => {
 			const id = editor.getId();
 			try {
@@ -42,6 +41,23 @@ suite('DevHub modal text input', () => {
 				editor.setPosition({ lineNumber: 1, column: 1 });
 				editor.trigger('keyboard', Handler.Type, { text: 'x' } satisfies TypePayload);
 				assert.strictEqual(editor.getModel().getValue(), 'xabc!');
+			} finally {
+				ModalTextInput.set(id, false);
+			}
+		});
+	});
+
+	test('a paste is a command: it reaches a modal editor (Cmd+V in Vim\'s normal and visual mode), as cut does', () => {
+		withTestCodeEditor('abc', {}, editor => {
+			const id = editor.getId();
+			try {
+				ModalTextInput.set(id, true);
+				editor.setPosition({ lineNumber: 1, column: 2 });
+				editor.trigger('keyboard', Handler.Paste, { text: 'XY', pasteOnNewLine: false, multicursorText: null, mode: null, isBlock: false } satisfies PastePayload);
+				assert.strictEqual(editor.getModel().getValue(), 'aXYbc');
+				editor.setSelection(new Range(1, 1, 1, 3));
+				editor.trigger('keyboard', Handler.Cut, null);
+				assert.strictEqual(editor.getModel().getValue(), 'Ybc');
 			} finally {
 				ModalTextInput.set(id, false);
 			}

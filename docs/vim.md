@@ -483,7 +483,7 @@ Vim editor outside insert mode never takes (see the design note in
 character input and run in every mode: delete / move / copy lines
 (`Ctrl+Shift+K`, `Alt+Up/Down`, `Shift+Alt+Up/Down`), indent / outdent lines
 (`Ctrl+]` / `Ctrl+[`), comments (`Ctrl+/`, `Shift+Alt+A`), cut / copy /
-paste, undo / redo, formatting, rename, code actions. Cursor movement and
+paste ([The clipboard](#the-clipboard)), undo / redo, formatting, rename, code actions. Cursor movement and
 selection keys are not gated either: where Vim binds them (arrows, `Home`
 `End` `PageUp` `PageDown`) Vim's binding wins by weight.
 
@@ -689,6 +689,37 @@ a selection put back (after a visual-mode change) collapses to its start,
 where the change began, and a visual mode that was on when you pressed
 `Cmd+Z` ends. The caret rule keeps it on a character. `Cmd+Z` in insert mode
 undoes and stays in insert mode, as in VS Code.
+
+## The clipboard
+
+`Cmd+C` / `Cmd+X` / `Cmd+V` are VS Code's clipboard actions in every mode, as
+in any GUI editor: the same keybindings, the Edit menu and the context menu,
+with nothing of Vim's in between. (On Windows and Linux, where the modifier
+is `Ctrl`, `CTRL-V` and `CTRL-X` outside insert mode are Vim's: visual block
+and decrement; `Shift+Insert` / `Shift+Delete` paste and cut there.) Vim's own registers are unchanged (`"+y`, `"+p`, `"*`).
+
+| Mode | `Cmd+C` | `Cmd+X` | `Cmd+V` |
+| --- | --- | --- | --- |
+| normal | the line (VS Code's `editor.emptySelectionClipboard`) | cuts the line | pastes at the caret as VS Code does: before the character the block is on, the caret after the pasted text (on a character); a copied whole line goes in above the current line. One undo step; normal mode stays |
+| visual (`v` `V` `CTRL-V`) | copies the selected text; **visual mode stays** | cuts the selection, back to normal mode | replaces the selection, back to normal mode |
+| insert / replace | VS Code's | VS Code's | VS Code's (part of the insert's undo step) |
+
+Visual mode stays after `Cmd+C` because a GUI copy changes nothing: the
+selection is still there to act on (`d`, `>`, `Cmd+X`) or to leave with
+`Esc`, as in VS Code itself. `y` (or `"+y`) is Vim's copy that ends visual
+mode. A cut or paste ends it because the selection is gone, as Vim's `d` and
+`p` do: whatever command writes over the whole visual selection (a paste
+with a paste-as provider too) is back in normal mode, with the caret where VS
+Code put it; an edit elsewhere (moving lines with `Alt+Up`) leaves visual
+mode alone. A half-built command (`d` waiting for its motion) is dropped by
+the paste. The modal input layer (`modalTextInput.ts`) still keeps typed
+text and IME compositions out of the buffer outside insert mode; a paste is
+a command, like undo, and is no longer swallowed there.
+
+Dropping text or files onto the editor (from another app or the explorer)
+still only works in insert mode: a drop puts text where the mouse is, which
+outside insert mode would be an edit no Vim command made, and an accidental
+drop onto a modal editor would go unnoticed.
 
 ## Words between scripts
 

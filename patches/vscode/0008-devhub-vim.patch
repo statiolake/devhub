@@ -339,7 +339,7 @@ index d3fd3861..7528fa29 100644
  
  		const selectionIsEmpty = e.selections[0].isEmpty();
 diff --git a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
-index b77791a6..335cac73 100644
+index b77791a6..fc9b6da4 100644
 --- a/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 +++ b/src/vs/editor/browser/widget/codeEditor/codeEditorWidget.ts
 @@ -66,6 +66,8 @@ import { TextModelEditSource, EditSources } from '../../../common/textModelEditS
@@ -379,7 +379,7 @@ index b77791a6..335cac73 100644
  			return;
  		}
  		if (source === 'keyboard') {
-@@ -1199,14 +1202,14 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
+@@ -1199,7 +1202,7 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  	}
  
  	private _compositionType(source: string | null | undefined, text: string, replacePrevCharCnt: number, replaceNextCharCnt: number, positionDelta: number): void {
@@ -388,14 +388,6 @@ index b77791a6..335cac73 100644
  			return;
  		}
  		this._modelData.viewModel.compositionType(text, replacePrevCharCnt, replaceNextCharCnt, positionDelta, source);
- 	}
- 
- 	private _paste(source: string | null | undefined, text: string, pasteOnNewLine: boolean, multicursorText: string[] | null, mode: string | null, isBlock: boolean, clipboardEvent?: ClipboardEvent): void {
--		if (!this._modelData) {
-+		if (!this._modelData || ModalTextInput.isModal(this.getId())) { // DevHub: see modalTextInput.ts
- 			return;
- 		}
- 		const viewModel = this._modelData.viewModel;
 @@ -1784,6 +1787,8 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
  			}
  		);
@@ -405,21 +397,6 @@ index b77791a6..335cac73 100644
  		// Someone might destroy the model from under the editor, so prevent any exceptions by setting a null model
  		listenersToRemove.push(model.onWillDispose(() => this.setModel(null)));
  
-@@ -1919,7 +1924,13 @@ export class CodeEditorWidget extends Disposable implements editorBrowser.ICodeE
- 			// Connect clipboard events from View
- 			listenersToRemove.push(view.onWillCopy(e => this._onWillCopy.fire(e)));
- 			listenersToRemove.push(view.onWillCut(e => this._onWillCut.fire(e)));
--			listenersToRemove.push(view.onWillPaste(e => this._onWillPaste.fire(e)));
-+			listenersToRemove.push(view.onWillPaste(e => {
-+				if (ModalTextInput.isModal(this.getId())) {
-+					e.setHandled(); // DevHub: no paste (nor paste-as provider) into a modal editor, see modalTextInput.ts
-+					return;
-+				}
-+				this._onWillPaste.fire(e);
-+			}));
- 		}
- 
- 		this._modelData = new ModelData(model, viewModel, view, hasRealView, listenersToRemove, attachedView);
 diff --git a/src/vs/editor/common/cursor/cursor.ts b/src/vs/editor/common/cursor/cursor.ts
 index a0608348..a34cc8da 100644
 --- a/src/vs/editor/common/cursor/cursor.ts

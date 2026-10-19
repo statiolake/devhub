@@ -10,16 +10,19 @@
 // keydown. Text reaches the model by other routes too: an IME composition is
 // drawn into the model as it is typed (EditContext's `textupdate`, or the
 // hidden <textarea>'s composition events), `beforeinput` turns Enter into a
-// newline, paste and drop insert text, and any contribution can call
+// newline, a drop inserts text, and any contribution can call
 // `editor.trigger(.., 'type', ..)`. So while an editor is modal its text
 // input is cut where it enters the editor core:
 //
-// * CodeEditorWidget drops `type`, `replacePreviousChar`, `compositionType`,
-//   `compositionStart` and `paste` (from the keyboard or from any other
-//   caller), marks paste events handled (so paste-as providers stay out too)
-//   and refuses drops. Edits that are commands (the Vim engine's own
-//   `executeEdits`, undo, formatting, code actions, cut) are untouched: this
-//   gates typed text, not the model.
+// * CodeEditorWidget drops `type`, `replacePreviousChar`, `compositionType`
+//   and `compositionStart` (from the keyboard or from any other caller) and
+//   refuses drops (from outside the editor: a file or text dragged in).
+//   Edits that are commands (the Vim engine's own `executeEdits`, undo,
+//   formatting, code actions) are untouched: this gates typed text, not the
+//   model. The clipboard is a command too: Cmd+C / Cmd+X / Cmd+V (VS Code's
+//   clipboard actions, and the paste-as providers with them) work in every
+//   mode, as in a GUI editor; the owner of the modes decides what a paste
+//   or a cut over a selection does to its mode.
 // * The input surfaces let the OS input method run (as in terminal Vim, an
 //   IME that is on composes; its keys are not reinterpreted as commands) but
 //   keep the composition out of the editor: nothing is drawn inline, no
@@ -69,7 +72,7 @@ class ModalTextInputImpl {
 		return this._modal.has(editorId);
 	}
 
-	/** While `modal`, no typed text, IME composition, paste or drop reaches that editor's model. */
+	/** While `modal`, no typed text, IME composition or drop reaches that editor's model (a paste does: it is a command). */
 	set(editorId: string, modal: boolean): void {
 		if (modal === this._modal.has(editorId)) {
 			return;
