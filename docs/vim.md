@@ -893,15 +893,16 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:se[t] {option}` | see [Options](#options) |
 | `:reg[isters]` `:di[splay]` `:marks` | shown in the status bar |
 | `:@{reg}` `:@:` `:=` `:ret[ab]` `:le[ft]` `:ri[ght]` `:ce[nter]` | |
+| `:[range]w[rite][!] {file}` `:w >> [file]` `:sav[eas][!] {file}` `:[line]r[ead] [file]` | see [Writing and reading files](#writing-and-reading-files) |
 
-VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]`
+VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
 `:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
 [File names](#file-names)) `:tabn[ext]` `:tabp[revious]`
 `:tabc[lose]` `:tabo[nly]` `:tabfir[st]` `:tabl[ast]` `:bn[ext]` `:bp[revious]`
 `:bd[elete][!]` `:bf[irst]` `:bl[ast]` `:ls` `:buffers` `:b[uffer] {name}`
-`:sav[eas]` `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
+`:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
 runs both, the second after the first has finished (not after `:g` and
 `:normal`, which take `|` as an argument; see [How a `:` line
@@ -957,8 +958,37 @@ on like this:
 ```
 
 (An override without the `devhubVim.open` step only splits, and `:sp {file}`
-drops the name.) `:w {file}` and `:sav {file}` do not take a name: `:w`
-writes the current file, `:sav` asks for one (see [Known gaps](#known-gaps)).
+drops the name.)
+
+### Writing and reading files
+
+The name is resolved as for `:e` (the workspace folder, `~`, `%`, `%:h`, a
+remote workspace's own file system), and nothing asks for a name:
+
+* `:w` is VS Code's Save (format on save and the other save participants
+  apply); `:w %` too.
+* `:w {file}` writes the whole buffer to that file and keeps editing this one
+  (Vim's "write a copy"); `:[range]w {file}` writes those lines. A file that
+  exists is `E13: File exists (add ! to override)`; `:w! {file}` overwrites
+  it. A directory is E502.
+* `:[range]w` without a name, for part of the buffer, is `E140: Use ! to
+  write partial buffer`; `:[range]w!` writes just those lines over the file
+  on disk (the buffer stays as it is, now different from the file).
+* `:w >> {file}` appends the buffer (or `:[range]w >> {file}` the lines) to the
+  file, a new one if there is none; `:w >>` appends to the current file.
+* An untitled buffer written whole (`:w {file}`) takes that name, as in Vim
+  (it is `:sav {file}`).
+* `:sav[eas] {file}` writes the buffer there (E13 when the file exists,
+  `:sav!` overwrites) and goes on editing the new file in the same editor;
+  the old file is left as it was on disk, its unsaved changes moved to the
+  new one (VS Code's Save As without the dialog).
+* `:r {file}` puts the file's lines below the cursor line (`:{n}r` below line
+  n, `:0r` above the first, `:$r` at the end), as one undo step, the cursor
+  on the first of them; `:r` alone reads the current file. A file that cannot
+  be read is `E484: Can't open file`.
+* What was written is Vim's message: `"name" [New] 3L, 42B written` /
+  `appended`. Line ends are the buffer's (LF or CRLF), with one at the end
+  of the file; the encoding is UTF-8.
 
 ### How a `:` line runs
 
@@ -1177,15 +1207,14 @@ otherwise.
   completion in `/` / `?` are not there. In file names `#` (the alternate
   file), `**` and `` `cmd` `` are not expanded, and `+cmd` / `++opt` are read
   as part of the name.
-* `:w {file}` writes the current file (the name is not used: Vim would write
-  a copy there), and `:sav[eas] {file}` asks for the name in VS Code's save
-  dialog.
+* `:w` and `:r` know no `++opt` / `+cmd`, and `:w {file}` writes UTF-8
+  (not the buffer's encoding).
 * Not implemented: `U` (undo line), `!` / `=` with 'equalprg' (filter
   through a program), `g@` ('operatorfunc'), `gR` (virtual replace),
   `CTRL-V {char}` / `CTRL-K` (literal / digraph input), `gm` `g0` `g$` `g^`
   (screen-line column motions), `[m ]m`, `[* ]*` `[/ ]/`, `zh zl zs ze`
   (horizontal scrolling), `zn zN zi zx`, the command-line window (`q:`), `:let`
-  and other Vimscript, `:r[ead]`, `:!`, `:make`, the location list
+  and other Vimscript, `:!`, `:make`, the location list
   / tags / argument list, `CTRL-W x r T`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
 * Patterns are JavaScript regular expressions (VS Code's find), not Vim's:

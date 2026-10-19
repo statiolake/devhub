@@ -138,8 +138,20 @@ class TestHost implements IVimHost {
 	lineComment() { return this.comment; }
 	hasRangeFormatter() { return this.formatter; }
 	fileName() { return 'test.txt'; }
+	/** What the workbench's commands answer (a file's lines, a filter's output ...): a value, or a rejection when it throws. */
+	answer: ((command: string, args: unknown) => unknown) | undefined;
 	executeCommand(command: string, args: unknown): Promise<unknown> {
 		this.commands.push({ command, args, selection: this.selection });
+		if (this.answer) {
+			try {
+				const a = this.answer(command, args);
+				if (a !== undefined) {
+					return Promise.resolve(a);
+				}
+			} catch (err) {
+				return Promise.reject(err);
+			}
+		}
 		if (command === 'editor.action.commentLine' && this.selection) {
 			// what VS Code's toggle does, simply
 			const s = this.selection.start.line;
@@ -1534,6 +1546,70 @@ suite('DevHub Vim ex commands', () => {
 		// completion lists them with the buffer's values
 		const opts = v.vim.cmdlineSources().options().filter(o => ['tabstop', 'shiftwidth', 'expandtab'].includes(o.name)).map(o => [o.name, o.detail]);
 		assert.deepStrictEqual(opts, [['expandtab', 'on'], ['shiftwidth', '=0'], ['tabstop', '=4']]);
+	});
+
+	test(':w [file], :w >> file, :[range]w! file, :sav file go to the workbench\'s file commands; E140 for a part without !', async () => {
+		const run = async (text: string, line: string) => {
+			const v = new Vim(text);
+			v.host.answer = command => command.startsWith('_devhubVim.') ? '"f" 1L, 2B written' : undefined;
+			v.keys(`:${line}<CR>`);
+			await flush();
+			return { v, commands: v.host.commands.map(c => c.args === undefined ? [c.command] : [c.command, c.args]) };
+		};
+		assert.deepStrictEqual((await run('|a\nb', 'w')).commands, [['workbench.action.files.save']]);
+		assert.deepStrictEqual((await run('|a\nb', '%w')).commands, [['workbench.action.files.save']]);
+		const copy = await run('|a\nb', 'w copy.txt');
+		assert.deepStrictEqual(copy.commands, [['_devhubVim.writeFile', { file: 'copy.txt', lines: ['a', 'b'], append: false, force: false, whole: true }]]);
+		assert.ok(copy.v.vim.status().includes('written'), copy.v.vim.status());
+		assert.deepStrictEqual((await run('a\n|b\nc', '2,3w! part.txt')).commands, [['_devhubVim.writeFile', { file: 'part.txt', lines: ['b', 'c'], append: false, force: true, whole: false }]]);
+		assert.deepStrictEqual((await run('|a', 'w >> log.txt')).commands, [['_devhubVim.writeFile', { file: 'log.txt', lines: ['a'], append: true, force: false, whole: true }]]);
+		assert.deepStrictEqual((await run('|a', 'w>>')).commands, [['_devhubVim.writeFile', { file: '', lines: ['a'], append: true, force: false, whole: true }]]);
+		const partial = await run('|a\nb', '1w');
+		assert.deepStrictEqual(partial.commands, []);
+		assert.ok(partial.v.vim.status().includes('E140'), partial.v.vim.status());
+		assert.deepStrictEqual((await run('|a', 'sav! b.txt')).commands, [['_devhubVim.saveAs', { file: 'b.txt', force: true }]]);
+		const none = await run('|a', 'sav');
+		assert.ok(none.v.vim.status().includes('E471'), none.v.vim.status());
+		// what the command throws is the message, and the rest of the line does not run
+		const v = new Vim('|a');
+		v.host.answer = command => { if (command === '_devhubVim.writeFile') { throw new Error('E13: File exists (add ! to override)'); } return undefined; };
+		v.keys(':w x | noh | s/a/b/<CR>');
+		await flush();
+		assert.ok(v.vim.status().includes('E13'), v.vim.status());
+		assert.strictEqual(v.state(), '|a');
+	});
+
+	test(':r file puts its lines below the line (:0r above the first), as one undo step, the cursor on the first', async () => {
+		const v = new Vim('a\n|b\nc');
+		v.host.answer = (command, args) => {
+			if (command !== '_devhubVim.readFile') {
+				return undefined;
+			}
+			if ((args as { file: string }).file !== 'x') {
+				throw new Error('E484: Can\'t open file nope');
+			}
+			return ['  x1', 'x2'];
+		};
+		v.keys(':r x<CR>');
+		await flush();
+		assert.strictEqual(v.state(), 'a\nb\n  |x1\nx2\nc');
+		v.keys(':0r x<CR>');
+		await flush();
+		assert.strictEqual(v.state(), '  |x1\nx2\na\nb\n  x1\nx2\nc');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\n  x1\nx2\nc');
+		v.keys(':$r nope<CR>');
+		await flush();
+		assert.ok(v.vim.status().includes('E484'), v.vim.status());
+		// the line it goes below is followed while the file is read
+		const w = new Vim('|a\nb');
+		let release: (lines: string[]) => void = () => { };
+		w.host.answer = command => command === '_devhubVim.readFile' ? new Promise<string[]>(r => release = r) : undefined;
+		w.keys(':2r x<CR>');
+		w.keys('ggOz<Esc>');
+		release(['new']);
+		await flush();
+		assert.strictEqual(w.host.lines.join('\n'), 'z\na\nb\nnew');
 	});
 
 	test('@: repeats the line typed, not the commands :g ran', () => {

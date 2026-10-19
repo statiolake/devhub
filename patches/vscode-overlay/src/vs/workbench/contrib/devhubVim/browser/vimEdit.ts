@@ -31,13 +31,34 @@
 // editor that runs the command (devhubVim.contribution.ts), so `%` and the
 // workspace folder are the ones of that editor even after a split moved the
 // focus; without it (a keybinding) the active editor is used.
+//
+// The engine's `:w {file}` `:w >> {file}` `:sav {file}` `:r {file}`
+// (vimEngine.ts exWrite, exSaveAs, exRead) write and read through three
+// internal commands here, on the same resolution and the workspace's file
+// system (IFileService), without a dialog:
+//
+//   _devhubVim.writeFile { file, lines, append, force, whole }
+//                                            the lines to the file (E13 when it
+//                                            exists, without force); `>>`
+//                                            appends; the current file itself
+//                                            is saved; an untitled buffer
+//                                            written whole takes the name
+//                                            (as `:sav`)
+//   _devhubVim.saveAs { file, force }        `:sav`: the buffer written there
+//                                            (E13 without force), its editor
+//                                            replaced by the file's, the old
+//                                            file left as it was on disk
+//   _devhubVim.readFile { file }             the file's lines (E484)
 
+import { VSBuffer } from '../../../../base/common/buffer.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { dirname, isEqual, relativePath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IModelService } from '../../../../editor/common/services/model.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor, IUntypedEditorInput, SideBySideEditor } from '../../../common/editor.js';
@@ -47,7 +68,7 @@ import { IPathService } from '../../../services/path/common/pathService.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
 import { ExFileArg, ExFileContext, resolveExFileArg } from '../common/vimEx.js';
 
-export const VIM_EDIT_COMMANDS = ['devhubVim.edit', 'devhubVim.open'] as const;
+export const VIM_EDIT_COMMANDS = ['devhubVim.edit', 'devhubVim.open', '_devhubVim.writeFile', '_devhubVim.saveAs', '_devhubVim.readFile'] as const;
 
 /** Where a file argument resolves, for one command. */
 export interface VimFileBase {
@@ -93,6 +114,8 @@ export class VimFileCommands {
 		@ITextFileService private readonly textFileService: ITextFileService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IModelService private readonly modelService: IModelService,
+		@ILabelService private readonly labelService: ILabelService,
 	) { }
 
 	/** The file the command is for: `from`, or the active editor's. */
@@ -211,6 +234,119 @@ export class VimFileCommands {
 	private async quickOpen(text: string): Promise<void> {
 		await this.commandService.executeCommand('workbench.action.quickOpen', text);
 	}
+
+	/** A file argument that must name one file (`:w` `:sav` `:r`): its resource, or Vim's error. */
+	private async target(file: unknown, current: URI | undefined): Promise<URI> {
+		const r = await this.resolve(file, current);
+		if (r === undefined) {
+			throw new Error('E32: No file name');
+		}
+		if ('glob' in r) {
+			throw new Error('E77: Too many file names');
+		}
+		return r.resource;
+	}
+
+	/** Vim's "written" line: `"name" [New] 3L, 42B written`. */
+	private written(resource: URI, lines: number, bytes: number, isNew: boolean, verb: string): string {
+		return `"${this.labelService.getUriLabel(resource, { relative: true })}"${isNew ? ' [New]' : ''} ${lines}L, ${bytes}B ${verb}`;
+	}
+
+	/** `:[range]w[!] [>>] [file]`: see the comment at the top. Returns the message. */
+	async writeFile(args: unknown): Promise<string> {
+		const a = record(args);
+		const current = this.current(a.from);
+		const lines = Array.isArray(a.lines) ? a.lines.map(String) : [];
+		const append = a.append === true;
+		const force = a.force === true;
+		const whole = a.whole === true;
+		const named = typeof a.file === 'string' && a.file.trim() !== '';
+		if (!named && (!current || current.scheme === Schemas.untitled)) {
+			throw new Error('E32: No file name');
+		}
+		const resource = named ? await this.target(a.file, current) : current!;
+		const isCurrent = !!current && isEqual(resource, current);
+		if (isCurrent && whole && !append) {
+			await this.textFileService.save(resource, { force: true });
+			return this.written(resource, lines.length, VSBuffer.fromString(lines.join('\n') + '\n').byteLength, false, 'written');
+		}
+		let stat: { readonly isDirectory: boolean } | undefined;
+		try {
+			stat = await this.fileService.stat(resource);
+		} catch {
+			stat = undefined;
+		}
+		if (stat?.isDirectory) {
+			throw new Error(`E502: "${this.labelService.getUriLabel(resource, { relative: true })}" is a directory`);
+		}
+		if (stat && !append && !force && !isCurrent) {
+			throw new Error('E13: File exists (add ! to override)');
+		}
+		if (!append && whole && current?.scheme === Schemas.untitled) {
+			// a buffer with no name takes the name it is written to, as `:sav`
+			await this.saveAs({ file: a.file, force, from: current.toString() });
+			return this.written(resource, lines.length, VSBuffer.fromString(lines.join('\n') + '\n').byteLength, !stat, 'written');
+		}
+		const eol = (current && this.modelService.getModel(current)?.getEOL()) || '\n';
+		let text = lines.join(eol) + eol;
+		if (append && stat) {
+			const before = (await this.fileService.readFile(resource)).value.toString();
+			text = before + (before && !before.endsWith('\n') ? eol : '') + text;
+		}
+		try {
+			await this.fileService.writeFile(resource, VSBuffer.fromString(text));
+		} catch (e) {
+			throw new Error(`E212: Can't open file for writing: ${e instanceof Error ? e.message : String(e)}`);
+		}
+		return this.written(resource, lines.length, VSBuffer.fromString(lines.join(eol) + eol).byteLength, !stat, append ? 'appended' : 'written');
+	}
+
+	/** `:sav[!] {file}`: see the comment at the top. */
+	async saveAs(args: unknown): Promise<string> {
+		const a = record(args);
+		const current = this.current(a.from);
+		if (!current) {
+			throw new Error('E32: No file name');
+		}
+		const resource = await this.target(a.file, current);
+		if (!isEqual(resource, current) && a.force !== true && await this.fileService.exists(resource)) {
+			throw new Error('E13: File exists (add ! to override)');
+		}
+		const saved = await this.textFileService.saveAs(current, resource);
+		if (!saved) {
+			throw new Error(`E212: Can't open file for writing: ${this.labelService.getUriLabel(resource, { relative: true })}`);
+		}
+		// the editors of the old buffer show the new file now (the old one is reverted, as saveAs leaves it)
+		if (!isEqual(saved, current)) {
+			for (const { editor, groupId } of this.editorService.findEditors(current)) {
+				await this.editorService.replaceEditors([{ editor, replacement: { resource: saved, options: { pinned: true } } }], groupId);
+			}
+		}
+		const model = this.modelService.getModel(saved);
+		return this.written(saved, model?.getLineCount() ?? 0, model ? VSBuffer.fromString(model.getValue()).byteLength : 0, false, 'written');
+	}
+
+	/** `:r {file}`: the file's lines. */
+	async readFile(args: unknown): Promise<string[]> {
+		const a = record(args);
+		const current = this.current(a.from);
+		const resource = typeof a.file === 'string' && a.file.trim() ? await this.target(a.file, current) : current;
+		if (!resource || resource.scheme === Schemas.untitled) {
+			throw new Error('E32: No file name');
+		}
+		let text: string;
+		try {
+			text = (await this.fileService.readFile(resource)).value.toString();
+		} catch {
+			throw new Error(`E484: Can't open file ${typeof a.file === 'string' ? a.file.trim() : ''}`);
+		}
+		text = text.replace(/^\uFEFF/, '');
+		const lines = text.split(/\r?\n/);
+		if (lines.length > 1 && lines[lines.length - 1] === '') {
+			lines.pop();
+		}
+		return lines;
+	}
 }
 
 function record(args: unknown): Record<string, unknown> {
@@ -225,6 +361,14 @@ CommandsRegistry.registerCommand({
 		args: [{ name: 'args', isOptional: true, schema: { type: 'object' } }],
 	},
 });
+
+for (const [id, run] of [
+	['_devhubVim.writeFile', (c: VimFileCommands, args: unknown) => c.writeFile(args)],
+	['_devhubVim.saveAs', (c: VimFileCommands, args: unknown) => c.saveAs(args)],
+	['_devhubVim.readFile', (c: VimFileCommands, args: unknown) => c.readFile(args)],
+] as const) {
+	CommandsRegistry.registerCommand(id, (accessor, args: unknown) => run(accessor.get(IInstantiationService).createInstance(VimFileCommands), args));
+}
 
 CommandsRegistry.registerCommand({
 	id: 'devhubVim.open',

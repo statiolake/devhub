@@ -4853,7 +4853,11 @@ export class VimEngine {
 		const spec = p.spec;
 		if (spec.engine) {
 			this.message = '';
-			this.runEngineEx(spec.engine, range, p.bang, RAW_ARG_COMMANDS.has(spec.engine) ? p.args : p.args.trim(), cur);
+			this.runEngineEx(spec.engine, range, p.bang, RAW_ARG_COMMANDS.has(spec.engine) ? p.args : p.args.trim(), cur, {
+				// `:0r`: the address 0 (resolved, it is the first line)
+				zero: p.range?.[1] === '0',
+				fail: () => state.failed = true,
+			});
 			return !/^E\d+:/.test(this.message);
 		}
 		const inv = exInvocation(spec, p, range, cur.line, this.lastLine());
@@ -4962,7 +4966,7 @@ export class VimEngine {
 	}
 
 	/** Vim's own ex commands. */
-	private runEngineEx(name: string, range: { start: number; end: number } | undefined, bang: boolean, args: string, cur: VimPos): void {
+	private runEngineEx(name: string, range: { start: number; end: number } | undefined, bang: boolean, args: string, cur: VimPos, how: { zero?: boolean; fail?: () => void } = {}): void {
 		const r = range ?? { start: cur.line, end: cur.line };
 		// a trailing count: `:d 3` is 3 lines from the range's last line
 		const withCount = (rest: string): { start: number; end: number; rest: string } => {
@@ -5187,8 +5191,105 @@ export class VimEngine {
 			case '=':
 				this.message = String((range ? range.end : this.lastLine()) + 1);
 				return;
+			case 'write':
+				this.exWrite(range, bang, args, how.fail);
+				return;
+			case 'saveas':
+				this.callHost('_devhubVim.saveAs', { file: args, force: bang }, m => this.message = typeof m === 'string' ? m : '', how.fail);
+				return;
+			case 'read':
+				this.exRead(how.zero ? -1 : range ? range.end : cur.line, args, how.fail);
+				return;
 		}
 		this.message = `E492: Not an editor command: ${name}`;
+	}
+
+	/**
+	 * A command whose answer the engine uses (what was written, a file's or a
+	 * filter's lines): `then` gets it once it is there, and what is sequenced
+	 * after waits for it (`wait`); a failure is the message (and `failed`).
+	 */
+	private callHost(command: string, args: unknown, then: (result: unknown) => void, failed?: () => void): void {
+		this.wait((async () => {
+			try {
+				then(await this.host.executeCommand(command, args));
+			} catch (err) {
+				this.message = String(err instanceof Error ? err.message : err);
+				failed?.();
+			} finally {
+				this.host.refresh();
+			}
+		})());
+	}
+
+	/**
+	 * `:[range]w[!] [file]`, `:w >> [file]` (`:help :w_f`, `:w_a`): without a
+	 * file the whole buffer is VS Code's Save (a part of it only with `!`:
+	 * E140); with one, the lines go to that file (E13 when it exists, without
+	 * `!`), written by `_devhubVim.writeFile` (browser/vimEdit.ts) in the
+	 * workspace's file system.
+	 */
+	private exWrite(range: { start: number; end: number } | undefined, bang: boolean, args: string, failed?: () => void): void {
+		let file = args;
+		let append = false;
+		if (file.startsWith('>>')) {
+			append = true;
+			file = file.slice(2).trim();
+		}
+		const r = range ?? { start: 0, end: this.lastLine() };
+		const whole = r.start === 0 && r.end === this.lastLine();
+		if (!file && !append) {
+			if (!whole && !bang) {
+				this.message = 'E140: Use ! to write partial buffer';
+				failed?.();
+				return;
+			}
+			if (whole) {
+				this.runSteps([{ command: 'workbench.action.files.save' }], undefined, failed);
+				return;
+			}
+		}
+		const lines: string[] = [];
+		for (let l = r.start; l <= r.end; l++) {
+			lines.push(this.host.lineText(l));
+		}
+		this.callHost('_devhubVim.writeFile', { file, lines, append, force: bang, whole }, m => this.message = typeof m === 'string' ? m : '', failed);
+	}
+
+	/**
+	 * `:r [file]` (`:help :r`): the file's lines below `line` (-1: above the
+	 * first, `:0r`), one undo step; the cursor on the first of them. The line
+	 * is followed while the file is read (a mark), as any mark follows edits.
+	 */
+	private exRead(line: number, file: string, failed?: () => void): void {
+		const tag = `\u0000r${Date.now()}:${Math.random()}`;
+		if (line >= 0) {
+			this.marks.set(tag, pos(line, 0));
+		}
+		this.callHost('_devhubVim.readFile', { file }, result => {
+			const at = line < 0 ? -1 : this.marks.get(tag)?.line;
+			this.marks.delete(tag);
+			if (at === undefined) {
+				return; // the line went away meanwhile
+			}
+			this.insertLines(at, Array.isArray(result) ? result.map(String) : []);
+		}, () => {
+			this.marks.delete(tag);
+			failed?.();
+		});
+	}
+
+	/** Lines below `at` (-1: above the first), as one change; the cursor on the first, `'[` `']` around them. */
+	private insertLines(at: number, lines: readonly string[]): void {
+		if (!lines.length) {
+			return;
+		}
+		this.insertLinesAfter(at, lines.join('\n'));
+		this.closeChange();
+		const first = at + 1;
+		this.setMark('[', pos(first, 0));
+		this.setMark(']', pos(first + lines.length - 1, 0));
+		this.setNormalCursor(pos(first, this.firstNonBlank(first)));
 	}
 
 	/** An ex address argument (`:m 0`, `:t .`, `:co $`) to a line (0-based; -1 is "before the first line"). */

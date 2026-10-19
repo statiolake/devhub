@@ -110,7 +110,7 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['move', 'm'], ['copy', 'co'], ['t', 't', 'copy'], ['join', 'j'], ['put', 'pu'], ['normal', 'norm'], ['sort', 'sor'],
 	['undo', 'u'], ['redo', 'red'], ['mark', 'ma'], ['k', 'k', 'mark'], ['set', 'se'], ['setlocal', 'setl', 'set'],
 	['registers', 'reg'], ['display', 'di', 'registers'],
-	['marks', 'marks'], ['retab', 'ret'], ['left', 'le'], ['right', 'ri'], ['center', 'ce'],
+	['marks', 'marks'], ['retab', 'ret'], ['left', 'le'], ['right', 'ri'], ['center', 'ce'], ['read', 'r'],
 	['&', '&'], ['&&', '&&'], ['~', '~'], ['<', '<'], ['>', '>'], ['@', '@'], ['=', '='],
 ];
 
@@ -189,7 +189,8 @@ const FILE = { nargs: '?', complete: 'file' } as const;
 
 /** Every built-in ex command, by canonical name. */
 export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
-	write: vs(SAVE, { bang: true, nargs: '?', complete: 'file' }),
+	// `:w` saves; `:[range]w[!] {file}` and `:w >> {file}` write to a file (vimEngine.ts exWrite)
+	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%' }),
 	wall: vs(SAVE_ALL, { bang: true }),
 	update: vs(SAVE, { bang: true }),
 	quit: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true }),
@@ -221,7 +222,8 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	blast: vs('workbench.action.lastEditorInGroup', { bang: true }),
 	buffers: vs('workbench.action.showAllEditors', { bang: true }),
 	buffer: vs({ command: 'workbench.action.quickOpen', args: 'edt ${args}' }, { bang: true, nargs: '?', complete: 'buffer' }),
-	saveas: vs('workbench.action.files.saveAs', { bang: true, nargs: '?', complete: 'file' }),
+	// `:sav[!] {file}`: written there (E13 when it exists, without !), and the editor is that file's (vimEngine.ts exSaveAs)
+	saveas: vim('saveas', { range: 'none', bang: true, nargs: '1', complete: 'file' }),
 	close: vs('workbench.action.closeGroup', { bang: true }),
 	only: vs('workbench.action.closeEditorsInOtherGroups', { bang: true }),
 	cnext: vs('editor.action.marker.nextInFiles', { bang: true }),
@@ -260,6 +262,8 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	'>': vim('>'),
 	'@': vim('@', { range: 'line' }),
 	'=': vim('=', { range: 'line', nargs: 'none' }),
+	// `:r [file]`: its lines below the line (`:0r` above the first)
+	read: vim('read', { range: 'line', bang: true, nargs: '?', complete: 'file' }),
 };
 
 // ---- the user's commands ----------------------------------------------------------
