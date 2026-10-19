@@ -1,0 +1,7 @@
+# SwiftPM build output and editor state.
+.build/
+.swiftpm/
+Package.resolved
+# Clips and results people make with compare.py / speech-bench mic --save.
+/clips/
+/results/

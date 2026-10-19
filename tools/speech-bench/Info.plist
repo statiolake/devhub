@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.devhub.speech-bench</string>
+	<key>CFBundleName</key>
+	<string>speech-bench</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>speech-bench records from the microphone to measure on-device speech recognition. Audio stays on this Mac.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>speech-bench measures on-device speech recognition (SpeechAnalyzer). Audio stays on this Mac.</string>
+</dict>
+</plist>
