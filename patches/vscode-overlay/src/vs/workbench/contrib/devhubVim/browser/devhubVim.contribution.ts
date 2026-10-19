@@ -19,7 +19,7 @@
 //   `devhubVim.cmdline {kind}`, `devhubVim.search`, `devhubVim.ex {command}`,
 //   `devhubVim.escape` - run on the focused Vim editor. The engine keeps the
 //   grammar (count, register, pending operator / text object, visual range,
-//   marks, jumps, last change, macros) and composes: `d` marks an operator
+//   marks, last change, macros) and composes: `d` marks an operator
 //   pending and the next motion or text object command completes it,
 //   whatever key ran it. The behaviour is Neovim's, defaults included.
 //   Other commands get the count as an argument: `devhubVim.run` and
@@ -143,6 +143,7 @@ import { localize } from '../../../../nls.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { TextEditorSelectionSource } from '../../../../platform/editor/common/editor.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -263,6 +264,17 @@ const INCSEARCH_DECORATION = ModelDecorationOptions.register({
 /** Matches drawn for 'hlsearch' at most (around the visible lines first). */
 const HLSEARCH_LIMIT = 5000;
 
+/**
+ * The source a cursor move is put with. A Vim jump is VS Code's JUMP (what Go
+ * to Definition and Go to Line use): VS Code's history (Go Back / Go Forward,
+ * which CTRL-O / CTRL-I are) adds an entry for it even a few lines away, and
+ * its navigation locations get both ends. Every other move is the user's own,
+ * which the history only records once it is 10 lines or more away.
+ */
+function selectionSource(jump: boolean | undefined): string {
+	return jump ? TextEditorSelectionSource.JUMP : 'devhubVim';
+}
+
 /** One CodeEditorWidget with its engine; it is the engine's IVimHost. */
 class VimEditor extends Disposable implements IVimHost {
 
@@ -317,7 +329,7 @@ class VimEditor extends Disposable implements IVimHost {
 			owner.update();
 		}));
 		this._register(editor.onDidChangeModelContent(e => {
-			// marks, the jump list and an insert in progress follow every edit
+			// marks and an insert in progress follow every edit
 			try {
 				this.engine.contentChanged(e.changes.map(c => ({
 					start: { line: c.range.startLineNumber - 1, col: c.range.startColumn - 1 },
@@ -587,9 +599,9 @@ class VimEditor extends Disposable implements IVimHost {
 		return p ? { line: p.lineNumber - 1, col: p.column - 1 } : { line: 0, col: 0 };
 	}
 
-	setCursor(p: VimPos): void {
+	setCursor(p: VimPos, jump?: boolean): void {
 		const position = { lineNumber: p.line + 1, column: p.col + 1 };
-		this.editor.setPosition(position, 'devhubVim');
+		this.editor.setPosition(position, selectionSource(jump));
 		this.reveal(position);
 	}
 
@@ -621,13 +633,13 @@ class VimEditor extends Disposable implements IVimHost {
 		};
 	}
 
-	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean): void {
+	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean, jump?: boolean): void {
 		const sel = cursorAtStart
 			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
 			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
 		const caret = this.noteVisual(sel);
 		this.visualRanges = this.visualPrimary ? [sel] : [];
-		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, 'devhubVim'));
+		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, selectionSource(jump)));
 		this.reveal(caret);
 	}
 
@@ -644,7 +656,7 @@ class VimEditor extends Disposable implements IVimHost {
 		return this.visualPrimary?.cursor ?? primary.getPosition();
 	}
 
-	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void {
+	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean, jump?: boolean): void {
 		const toSel = (r: VimRange) => cursorAtStart
 			? new Selection(r.end.line + 1, r.end.col + 1, r.start.line + 1, r.start.col + 1)
 			: new Selection(r.start.line + 1, r.start.col + 1, r.end.line + 1, r.end.col + 1);
@@ -652,7 +664,7 @@ class VimEditor extends Disposable implements IVimHost {
 		const sels = [toSel(ranges[primary]), ...ranges.filter((_, i) => i !== primary).map(toSel)];
 		const caret = this.noteVisual(sels[0]);
 		this.visualRanges = this.visualPrimary ? sels : [];
-		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelections(sels, 'devhubVim'));
+		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelections(sels, selectionSource(jump)));
 		this.reveal(caret);
 	}
 

@@ -146,6 +146,11 @@ function run(key: string, command: string, when: string = W.normal, extra: { cou
 		: { key, command: 'devhubVim.repeat', args: { command: 'devhubVim.run', args: { command }, count: '${count}' }, when };
 }
 
+/** A step in VS Code's history (normal mode), `count` times: `{ command: 'devhubVim.repeat', args: { command, count: '${count}' } }`. */
+function history(key: string, command: string, weight?: 'override'): VimKeybinding {
+	return { key, command: 'devhubVim.repeat', args: { command, count: '${count}' }, when: W.normal, ...(weight ? { weight } : {}) };
+}
+
 function ex(key: string, command: string, when: string = W.normal): VimKeybinding {
 	return { key, command: 'devhubVim.ex', args: { command }, when };
 }
@@ -293,12 +298,16 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	// Neovim: v_@ runs the register on every selected line (v_@-default)
 	awaitChar('shift+2', 'devhubVim.action', { action: 'visualPlayMacro' }, W.visual),
 
-	// ---- jumps, marks, the change list ----
-	action('ctrl+o', 'jumpBack', W.normal, OVERRIDE), action('ctrl+i', 'jumpForward', W.normal, OVERRIDE), action('tab', 'jumpForward', W.normal, OVERRIDE),
+	// ---- jumps and the change list: VS Code's history ----
+	// CTRL-O / CTRL-I (<Tab>) are Go Back / Go Forward, `g;` / `g,` Go Back / Forward in
+	// Edit Locations, with a count (`3<C-o>`); Vim's jumps (G / n % `a ...) are
+	// recorded there as VS Code's own jumps are, so the one history serves both
+	history('ctrl+o', 'workbench.action.navigateBack', OVERRIDE), history('ctrl+i', 'workbench.action.navigateForward', OVERRIDE),
+	history('tab', 'workbench.action.navigateForward', OVERRIDE),
 	// <Tab> elsewhere and <S-Tab> are no Vim commands: they do nothing (a pending
 	// operator is cancelled), and do not move the focus out of the editor
 	action('tab', 'ignore', `${W.notTyping} && devhubVim.mode != 'normal'`, OVERRIDE), action('shift+tab', 'ignore', W.notTyping, OVERRIDE),
-	action('g ;', 'changeOlder', W.normal), action('g ,', 'changeNewer', W.normal),
+	history('g ;', 'workbench.action.navigateBackInEditLocations'), history('g ,', 'workbench.action.navigateForwardInEditLocations'),
 
 	// ---- macros ----
 	awaitChar('q', 'devhubVim.action', { action: 'recordMacro' }, W.notRecording),

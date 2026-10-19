@@ -56,9 +56,11 @@ class TestHost implements IVimHost {
 	lineCount() { return this.lines.length; }
 	lineText(line: number) { return this.lines[line]; }
 	getCursor() { return this.cursor; }
-	setCursor(p: VimPos) { this.cursor = p; this.selection = undefined; this.selections = undefined; }
+	/** Where each cursor or selection put as a Vim jump (TextEditorSelectionSource.JUMP) landed. */
+	jumps: VimPos[] = [];
+	setCursor(p: VimPos, jump?: boolean) { this.cursor = p; this.selection = undefined; this.selections = undefined; if (jump) { this.jumps.push(p); } }
 	getSelection() { return this.selection ? { anchor: this.selection.start, active: this.selection.end } : { anchor: this.cursor, active: this.cursor }; }
-	setSelection(start: VimPos, end: VimPos, atStart: boolean) { this.selection = { start, end }; this.selections = undefined; this.cursor = atStart ? start : end; }
+	setSelection(start: VimPos, end: VimPos, atStart: boolean, jump?: boolean) { this.selection = { start, end }; this.selections = undefined; this.cursor = atStart ? start : end; if (jump) { this.jumps.push(this.cursor); } }
 	setSelections(ranges: readonly VimRange[], primary: number, atStart: boolean) {
 		this.selections = ranges.slice();
 		this.selection = { start: ranges[0].start, end: ranges[ranges.length - 1].end };
@@ -1629,37 +1631,55 @@ suite('Neovim motions', () => {
 		assert.ok(v.vim.status().includes('E20'), v.vim.status());
 	});
 
-	test('jumps: CTRL-O CTRL-I \'\' ``', async () => {
+	test('jumps are VS Code jumps; \'\' and `` go back to where the last one came from', () => {
 		const v = new Vim(lines(20));
 		v.keys('5G');
-		v.keys('G');
-		v.keys('<C-o>');
-		assert.strictEqual(v.host.cursor.line, 4);
-		v.keys('<C-o>');
-		assert.strictEqual(v.host.cursor.line, 0);
-		v.keys('<C-i>');
-		assert.strictEqual(v.host.cursor.line, 4);
-		v.keys('<Tab>');
-		assert.strictEqual(v.host.cursor.line, 19);
+		assert.deepStrictEqual(v.host.jumps.map(p => p.line), [4]);
+		v.keys('jG');
+		assert.deepStrictEqual(v.host.jumps.map(p => p.line), [4, 19]);
+		// plain motions are not jumps
+		v.keys('kkkj');
+		assert.strictEqual(v.host.jumps.length, 2);
 		v.keys('\'\'');
-		assert.strictEqual(v.host.cursor.line, 4);
+		assert.strictEqual(v.host.cursor.line, 5);
 		v.keys('``');
-		assert.strictEqual(v.host.cursor.line, 19);
-		// at the start of the list CTRL-O goes back in VS Code's history
-		const w = new Vim('a\nb');
-		w.keys('<C-o>');
-		await flush();
-		assert.deepStrictEqual(w.host.commands.map(c => c.command), ['workbench.action.navigateBack']);
+		assert.strictEqual(v.host.cursor.line, 17);
+		assert.deepStrictEqual(v.host.jumps.map(p => p.line), [4, 19, 5, 17]);
+		// a mark, a search, %, H, :{n}, gg, and a jump in visual mode
+		const w = new Vim('|a(\nfoo\n)\nfoo\nb');
+		w.keys('jmajjj`a');
+		w.keys('/foo<CR>');
+		w.keys('gg%');
+		w.keys(':4<CR>');
+		w.keys('H');
+		w.keys('vG');
+		assert.deepStrictEqual(w.host.jumps.map(p => p.line), [1, 3, 0, 2, 3, 0, 4]);
+		// a jump that goes nowhere is none
+		const x = new Vim('|a');
+		x.keys('gg');
+		assert.deepStrictEqual(x.host.jumps, []);
 	});
 
-	test('the change list: g; g,', () => {
-		const v = new Vim(lines(10)).keys('2Gx8GxggG');
-		v.keys('g;');
-		assert.strictEqual(v.host.cursor.line, 7);
-		v.keys('g;');
-		assert.strictEqual(v.host.cursor.line, 1);
+	test('CTRL-O CTRL-I <Tab> g; g, are VS Code\'s history, with a count', async () => {
+		const v = new Vim('a\nb');
+		v.keys('<C-o>');
+		await flush();
+		v.keys('3<C-i>');
+		await flush();
+		v.keys('<Tab>');
+		await flush();
+		v.keys('2g;');
+		await flush();
 		v.keys('g,');
-		assert.strictEqual(v.host.cursor.line, 7);
+		await flush();
+		assert.deepStrictEqual(v.host.commands.map(c => c.command), [
+			'workbench.action.navigateBack',
+			'workbench.action.navigateForward', 'workbench.action.navigateForward', 'workbench.action.navigateForward',
+			'workbench.action.navigateForward',
+			'workbench.action.navigateBackInEditLocations', 'workbench.action.navigateBackInEditLocations',
+			'workbench.action.navigateForwardInEditLocations',
+		]);
+		assert.strictEqual(v.host.state(), '|a\nb');
 	});
 
 	test('gj gk (display lines), j k over closed folds', () => {

@@ -127,9 +127,25 @@ scroll type, and the 'incsearch' preview scrolls the same way.
 **Marks and jumps**: `m{a-zA-Z}`, `` ` `` and `'` to marks; marks follow
 inserted and deleted lines (a deleted line takes its marks with it); special
 marks `` ` `` / `'` (previous context), `[ ]` (last change / yank), `< >`
-(last visual area), `.` (last change), `^` (last insert). `CTRL-O CTRL-I <Tab>`
-walk the jump list (at its ends they continue in VS Code's navigation history,
-across files), `g; g,` the change list.
+(last visual area), `.` (last change), `^` (last insert).
+
+**Jumps are VS Code's history.** There is no jump list or change list of
+Vim's own: `CTRL-O` / `CTRL-I` (and `<Tab>`) are VS Code's Go Back / Go
+Forward (`workbench.action.navigateBack` / `navigateForward`), `g;` / `g,`
+Go Back / Go Forward in Edit Locations
+(`workbench.action.navigateBackInEditLocations` / `navigateForwardInEditLocations`),
+each with a count (`3<C-o>`), across files and editor groups as
+`workbench.editor.navigationScope` says. Vim's jumps — `G` `gg` `:{n}` `/`
+`?` `n` `N` `*` `#` `%` `(` `)` `{` `}` `[(` `[[` `H` `M` `L` `gd` `gD` and
+marks (`` `a `` `'a` `` `` `` `''`) — put the cursor as a jump (`TextEditorSelectionSource.JUMP`,
+what Go to Definition uses), so the history records where each came from and
+where it went even when it is only a few lines away, and they also set the
+`` ` `` / `'` mark. Every other cursor move (`j`, `w`, `CTRL-D`, a click,
+VS Code's own commands) is recorded as VS Code records any move: replacing
+the current entry, or a new one 10 lines or more away. So `CTRL-O` also
+goes back over VS Code's Go to Definition, Go to Symbol, a search in the
+find widget or a click in another file, and Go Back (`ctrl+-`) over Vim's
+jumps: one history, not two.
 
 **Macros**: `q{reg}` … `q` (`qA` appends), `@{reg}`, `@@`, `@:`, `Q`
 (Neovim: the last recorded register), counts, visual `@{reg}` (runs it on
@@ -172,6 +188,8 @@ edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mod
 | `i_CTRL-S` | signature help | `editor.action.triggerParameterHints` |
 | `CTRL-]` `CTRL-W ]` `CTRL-W }` | tag jump via 'tagfunc' (LSP) | `editor.action.revealDefinition` / `revealDefinitionAside` / `peekDefinition` |
 | `CTRL-T` | back in the tag stack | `workbench.action.navigateBack` |
+| `CTRL-O` `CTRL-I` `<Tab>` | the jump list | `workbench.action.navigateBack` / `navigateForward` (a count repeats) |
+| `g;` `g,` | the change list | `workbench.action.navigateBackInEditLocations` / `navigateForwardInEditLocations` (a count repeats) |
 | `gq` | LSP 'formatexpr' | `editor.action.formatSelection` on the lines (Vim's formatting when there is no formatter) |
 | `]d` `[d` | next / previous diagnostic | `editor.action.marker.next` / `.prev` (a count repeats) |
 | `]D` `[D` | last / first diagnostic | `gg` then `editor.action.marker.prev` / `G` then `.next` |
@@ -398,8 +416,8 @@ changeToLineEnd substituteChar substituteLine yankLine yankToLineEnd put
 putBefore putAfterCursorEnd putBeforeCursorEnd putIndented putIndentedBefore
 replaceChar toggleCase joinLines joinLinesRaw increment decrement
 blankLineAbove blankLineBelow undo redo repeat recordMacro stopMacro playMacro
-playLastRecorded repeatSubstitute repeatSubstituteAll reselect jumpBack
-jumpForward changeOlder changeNewer noHighlight ignore`. In visual mode the
+playLastRecorded repeatSubstitute repeatSubstituteAll reselect noHighlight
+ignore`. In visual mode the
 same actions act on the selection (`x` deletes it, `p` replaces it, `J` joins
 its lines, …) and there are also `lowercase uppercase swapVisualEnds
 swapVisualCorner incrementProgressive decrementProgressive visualInsert
@@ -1058,8 +1076,11 @@ otherwise.
   match across lines; `\%V`, `\%23l`, `\@<=` and friends are not supported (an
   error says so). Screen columns count a tab as 'tabstop' cells and every
   other character as one (wide CJK characters are one column in blocks).
-* Uppercase marks (`mA`) are kept per editor, not across files; the jump list
-  is per editor and continues in VS Code's navigation history at its ends.
+* Uppercase marks (`mA`) are kept per editor, not across files. The jump
+  list and change list are VS Code's history (see Marks and jumps): `:jumps`,
+  `:changes` and `:clearjumps` do not exist, a big move that is no Vim jump
+  (`20j`, `CTRL-D`) is an entry when it goes 10 lines or more, as in VS Code,
+  and entries a few lines apart on separate lines are not merged as Vim's are.
 * Macros and `.` record `devhubVim.*` commands (and `devhubVim.run` /
   `devhubVim.repeat`, in macros, with the values their placeholders had),
   captured characters, typed insert text and ex lines; plain VS Code commands

@@ -12,7 +12,7 @@
 // What makes it Vim is the grammar state it keeps between commands - count,
 // register, pending operator, pending text object (`i`/`a`), a forced motion
 // type (`dv`), a command waiting for a character (f t r " q @ m ' `), the
-// visual range, marks, the jump list, the last change and macros - and
+// visual range, marks, the last change and macros - and
 // publishes as context keys (`context()`), so that a keybinding's `when` can
 // tell, e.g., `0` the count digit from `0` the motion. Composition happens
 // here: `d` only marks an operator as pending, and whatever motion or text
@@ -95,13 +95,14 @@ export interface IVimHost {
 	lineCount(): number;
 	lineText(line: number): string;
 	getCursor(): VimPos;
-	setCursor(pos: VimPos): void;
+	/** `jump`: a Vim jump (G, /, %, a mark ...), which VS Code's history records as one (TextEditorSelectionSource.JUMP). */
+	setCursor(pos: VimPos, jump?: boolean): void;
 	/** The editor's selection (after a command that changed it). */
 	getSelection(): { anchor: VimPos; active: VimPos };
 	/** Show a selection; `end` is exclusive. `cursorAtStart` puts the caret at `start`. */
-	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean): void;
+	setSelection(start: VimPos, end: VimPos, cursorAtStart: boolean, jump?: boolean): void;
 	/** Several selections (visual block: one per line); the caret is in `ranges[primary]`, at its start when `cursorAtStart`. */
-	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void;
+	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean, jump?: boolean): void;
 	/** Apply non-overlapping edits (in pre-edit coordinates) synchronously. */
 	applyEdits(edits: readonly VimEdit[]): void;
 	/**
@@ -341,7 +342,7 @@ interface MotionResult {
 	vertical?: boolean;
 	/** Moves to the end of the line and keeps going there on j/k ($). */
 	toEol?: boolean;
-	/** A jump: the jump list remembers where it came from. */
+	/** A jump: the `'` mark remembers where it came from, and VS Code's history records it as a jump. */
 	jump?: boolean;
 	/** For registers: % ( ) ` / ? n N { } always write register 1. */
 	bigMotion?: boolean;
@@ -518,10 +519,8 @@ export class VimEngine {
 	/** > 0 while `devhubVim.run` / `devhubVim.repeat` run their own steps: those are neither expanded nor recorded again. */
 	private nestedDepth = 0;
 	private readonly marks = new Map<string, VimPos>();
-	private jumps: VimPos[] = [];
-	private jumpIndex = 0;
-	private changes: VimPos[] = [];
-	private changeIndex = 0;
+	/** The next cursor or selection the engine puts is a jump (VS Code's history records it as Go to Definition's). */
+	private jumping = false;
 	private hlActive = false;
 
 	// grammar: what the commands so far have built up
@@ -753,6 +752,8 @@ export class VimEngine {
 				this.recover(err);
 			}
 		}
+		// a jump that put no cursor (an error after it) does not make the next move one
+		this.jumping = false;
 		this.resumeInsertOnce();
 		return true;
 	}
@@ -1100,7 +1101,7 @@ export class VimEngine {
 	/** Put the normal-mode caret at `p`; unless `keepDesired`, the column j/k come back to is its screen column. */
 	private setNormalCursor(p: VimPos, keepDesired = false): void {
 		const c = this.clampNormal(p);
-		this.host.setCursor(c);
+		this.host.setCursor(c, this.takeJump());
 		this.lastCursor = c;
 		if (!keepDesired) {
 			this.desiredCol = vcolOf(this.host.lineText(c.line), c.col, this.host.tabSize());
@@ -1144,7 +1145,6 @@ export class VimEngine {
 			this.host.applyEdits(edits);
 			const first = edits.reduce((a, e) => cmp(e.start, a.start) < 0 ? e : a, edits[0]);
 			this.setMark('.', first.start);
-			this.pushChangePos(first.start);
 		}
 	}
 
@@ -1156,7 +1156,7 @@ export class VimEngine {
 
 	/**
 	 * The document changed (any edit: the engine's, typing, another command),
-	 * in pre-edit coordinates. Marks, the jump list and an insert in progress
+	 * in pre-edit coordinates. Marks and an insert in progress
 	 * follow the text as Vim's do (a deleted line takes its marks with it).
 	 */
 	contentChanged(changes: readonly VimEdit[]): void {
@@ -1192,9 +1192,6 @@ export class VimEngine {
 					this.marks.delete(k);
 				}
 			}
-			const mapList = (list: VimPos[]) => list.map(p => move(p) ?? pos(Math.min(c.start.line, Math.max(0, p.line)), 0));
-			this.jumps = mapList(this.jumps);
-			this.changes = mapList(this.changes);
 			if (this.lastVisual) {
 				this.lastVisual = { ...this.lastVisual, anchor: move(this.lastVisual.anchor) ?? c.start, head: move(this.lastVisual.head) ?? c.start };
 			}
@@ -1253,27 +1250,23 @@ export class VimEngine {
 		return pos(line, Math.min(p.col, Math.max(0, this.len(line))));
 	}
 
-	private pushJump(from: VimPos): void {
-		this.jumps = this.jumps.slice(0, this.jumpIndex).filter(p => p.line !== from.line);
-		this.jumps.push(from);
-		if (this.jumps.length > 100) {
-			this.jumps.shift();
-		}
-		this.jumpIndex = this.jumps.length;
+	/**
+	 * A jump from `from` (G, gg, a search, `%`, a mark, :{n}, H M L ...): the
+	 * `'` mark is set, and the cursor or selection the engine puts next tells
+	 * the editor it is a jump (TextEditorSelectionSource.JUMP, as Go to
+	 * Definition does), so VS Code's history (CTRL-O / CTRL-I, Go Back / Go
+	 * Forward) records where it came from and where it went, even a few lines
+	 * away. There is no jump list of the engine's own.
+	 */
+	private jumpFrom(from: VimPos): void {
 		this.setMark('\'', from);
+		this.jumping = true;
 	}
 
-	private pushChangePos(p: VimPos): void {
-		const last = this.changes[this.changes.length - 1];
-		if (last && last.line === p.line) {
-			this.changes[this.changes.length - 1] = p;
-		} else {
-			this.changes.push(p);
-			if (this.changes.length > 100) {
-				this.changes.shift();
-			}
-		}
-		this.changeIndex = this.changes.length;
+	private takeJump(): boolean {
+		const j = this.jumping;
+		this.jumping = false;
+		return j;
 	}
 
 	// ---- registers ----------------------------------------------------------
@@ -1401,7 +1394,7 @@ export class VimEngine {
 	/** The cursor (normal) or the visual head goes where a motion went. */
 	private moveTo(r: MotionResult, from: VimPos): void {
 		if (r.jump && cmp(r.pos, from) !== 0) {
-			this.pushJump(from);
+			this.jumpFrom(from);
 		}
 		if (this.isVisual()) {
 			const target = r.vertical ? pos(r.pos.line, this.colForDesired(r.pos.line)) : r.pos;
@@ -1948,42 +1941,6 @@ export class VimEngine {
 				this.renderVisual();
 				break;
 			}
-			case 'jumpBack': case 'jumpForward': {
-				if (action === 'jumpBack') {
-					if (this.jumpIndex >= this.jumps.length) {
-						this.pushJump(cur);
-						this.jumpIndex = this.jumps.length - 1;
-					}
-					const target = this.jumpIndex - n;
-					if (target < 0) {
-						this.resetGrammar();
-						this.runSteps([{ command: 'workbench.action.navigateBack' }]);
-						return;
-					}
-					this.jumpIndex = target;
-				} else {
-					const target = this.jumpIndex + n;
-					if (target >= this.jumps.length) {
-						this.resetGrammar();
-						this.runSteps([{ command: 'workbench.action.navigateForward' }]);
-						return;
-					}
-					this.jumpIndex = target;
-				}
-				const p = this.jumps[this.jumpIndex];
-				this.setMark('\'', cur);
-				this.setNormalCursor(this.clampNormal(p));
-				break;
-			}
-			case 'changeOlder': case 'changeNewer': {
-				const target = this.changeIndex + (action === 'changeOlder' ? -n : n);
-				if (!this.changes.length || target < 0 || target >= this.changes.length) {
-					this.invalid(action === 'changeOlder' ? 'E662: At start of changelist' : 'E663: At end of changelist');
-				}
-				this.changeIndex = target;
-				this.setNormalCursor(this.changes[target]);
-				break;
-			}
 			case 'noHighlight':
 				this.hlActive = false;
 				this.host.highlightSearch(undefined);
@@ -2057,12 +2014,12 @@ export class VimEngine {
 			}
 			const tab = this.host.tabSize();
 			const headLeft = vcolOf(this.host.lineText(this.visualHead.line), this.visualHead.col, tab) <= r.block!.left && !this.visualToEol;
-			this.host.setSelections(ranges, primary, headLeft);
+			this.host.setSelections(ranges, primary, headLeft, this.takeJump());
 			return;
 		}
 		const r = this.visualRange();
 		const backwards = cmp(this.visualHead, this.visualAnchor) < 0;
-		this.host.setSelection(r.start, r.end, backwards);
+		this.host.setSelection(r.start, r.end, backwards, this.takeJump());
 	}
 
 	private saveVisual(): void {
@@ -4761,7 +4718,7 @@ export class VimEngine {
 			if (range) {
 				// :{n} - with 'nostartofline' the column is kept
 				const target = this.lineTarget(range.end);
-				this.pushJump(cur);
+				this.jumpFrom(cur);
 				this.setNormalCursor(target, !this.options.startofline);
 			} else {
 				this.message = `E492: Not an editor command: ${line}`;
