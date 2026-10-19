@@ -9,9 +9,7 @@
   "engines": {
     "vscode": "^1.82.0"
   },
-  "extensionKind": [
-    "ui"
-  ],
+  "extensionKind": "ui",
   "capabilities": {
     "virtualWorkspaces": true,
     "untrustedWorkspaces": {
