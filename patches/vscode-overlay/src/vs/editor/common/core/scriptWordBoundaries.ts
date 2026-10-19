@@ -30,7 +30,7 @@
 //   the highlight's occurrences, find with "Match Whole Word") also ends where
 //   the script changes (`isBoundary`).
 // * DevHub's Vim (src/vs/workbench/contrib/devhubVim/common/vimText.ts
-//   charClassAt) takes the classes of its `w b e ge iw aw * \< \>` from
+//   charClassAt) takes the classes of its `w b e ge iw aw *` from
 //   `scriptClassAt`, as Vim's utf_class (punctuation of every script is one
 //   class there, and every class change is a boundary).
 //
@@ -89,16 +89,6 @@ const CLASSES: readonly [RegExp, ScriptClass][] = [
 	[new RegExp(FULLWIDTH_ALNUM, 'u'), ScriptClass.FullwidthAlnum],
 	[new RegExp(CJK_PUNCTUATION, 'u'), ScriptClass.CjkPunctuation],
 	[new RegExp(WORD, 'u'), ScriptClass.Word],
-];
-
-/**
- * The keyword classes as regular expression sources (for a pattern with the
- * `u` flag): every keyword character (`[\p{L}\p{N}_]`) is in exactly one.
- * DevHub Vim's `\<` / `\>` end a word where the class changes, as Vim's do.
- */
-export const KEYWORD_CLASS_SOURCES: readonly string[] = [
-	HIRAGANA, KATAKANA, KANJI, HANGUL, FULLWIDTH_ALNUM,
-	`(?!${HIRAGANA}|${KATAKANA}|${KANJI}|${HANGUL}|${FULLWIDTH_ALNUM})${WORD}`,
 ];
 
 function classOfCodePoint(cp: number): ScriptClass | undefined {

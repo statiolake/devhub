@@ -8,6 +8,7 @@ import type { IVimCmdlineCompletionSources, IVimCmdlineTarget, IVimCmdlineUi, Vi
 import { CMDLINE_KEYBINDINGS, VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdlineController, VimStringLine, cmdlineCompletionContext, cmdlineCompletions, registerAsLine, splitFileArg, wordBeforeCaret } from '../../common/vimCmdline.js';
 import type { IVimHost, VimPos, VimRange } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
+import { vimFindHost } from './vimFindHost.js';
 import { exRangeLength } from '../../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, VIM_WEIGHTS, evaluateWhen, keysOf } from '../../common/vimKeymap.js';
 
@@ -384,6 +385,7 @@ function engine(text: string, shared = new VimSharedState()) {
 		visibleLines: () => ({ top: 0, bottom: h.lines.length - 1 }), scrollToLine: () => { }, isLineHidden: () => false,
 		displayLineMove: () => undefined, setClipboard: () => { }, getClipboard: () => '', prefetchClipboard: () => { },
 		highlightSearch: () => { }, showIncSearch: (r: VimRange | undefined) => { h.incsearch = r; }, lineComment: () => '//',
+		...vimFindHost(() => h.lines), previewSubstitute: () => { },
 		hasRangeFormatter: () => false, fileName: () => 'f.txt',
 		executeCommand: (command: string, args: unknown) => { h.commands.push({ command, args }); return Promise.resolve(undefined); },
 		refresh: () => { },

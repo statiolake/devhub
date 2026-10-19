@@ -11,6 +11,7 @@
 
 import assert from 'assert';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -157,6 +158,30 @@ suite('DevHub Vim: the prompt line', () => {
 		// typing is the editor's own: insert mode all the time
 		const prefix = editor.getContainerDomNode().closest(`.${VIM_CMDLINE_CLASS}`)!.querySelector('.devhub-vim-cmdline-prefix');
 		assert.strictEqual(prefix?.textContent, '/');
+	}));
+
+	test('inccommand: typing :s shows each match struck through with its replacement; Esc takes it away, Enter replaces in one undo step', () => withPrompt(async ({ vim, origin, run, type, configuration }) => {
+		const preview = () => origin.getModel()!.getAllDecorations().filter(d => d.options.description === 'devhub-vim-inccommand')
+			.map(d => `${d.range.startLineNumber}:${d.range.startColumn}-${d.range.endColumn}>${d.options.after?.content}`);
+		await configuration.setUserConfiguration(VIM_CMDLINE_AUTOCOMPLETE_SETTING, false);
+		vim.execute('devhubVim.cmdline', { kind: ':' });
+		type('%s/(b)c/[$1]/g');
+		await timeout(60);
+		assert.deepStrictEqual(preview(), ['1:2-4>[b]', '1:6-8>[b]']);
+		assert.strictEqual(origin.getModel()!.getValue(), 'abc abc\nb');
+		run('devhubVim.cmdline.cancel');
+		await timeout(60);
+		assert.deepStrictEqual(preview(), []);
+		vim.execute('devhubVim.cmdline', { kind: ':' });
+		type('%s/c\\nb/!/');
+		await timeout(60);
+		assert.deepStrictEqual(preview(), ['1:7-2>!']);
+		run('devhubVim.cmdline.submit');
+		await timeout(60);
+		assert.deepStrictEqual(preview(), []);
+		assert.strictEqual(origin.getModel()!.getValue(), 'abc ab!');
+		origin.getModel()!.undo();
+		assert.strictEqual(origin.getModel()!.getValue(), 'abc abc\nb');
 	}));
 
 	test('typing previews the match in the origin; Enter runs the search there and hides the line', () => withPrompt(({ vim, origin, line, run, type, visible }) => {

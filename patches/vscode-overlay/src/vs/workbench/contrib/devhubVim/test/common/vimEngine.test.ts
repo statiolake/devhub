@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import type { IVimHost, VimEdit, VimPos, VimRange } from '../../common/vimEngine.js';
+import type { IVimHost, VimEdit, VimMatch, VimPos, VimRange, VimSearchQuery, VimSubstitution } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
+import { vimFindHost } from './vimFindHost.js';
 import { VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
 import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
 import type { VimKeybinding } from '../../common/vimKeymap.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VIM_WHEN, evaluateWhen, jisKeys, keyForChar } from '../../common/vimKeymap.js';
-import type { VimRegex } from '../../common/vimRegex.js';
 import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
 import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
 import { ScriptWordBoundaries } from '../../../../../editor/common/core/scriptWordBoundaries.js';
@@ -27,7 +27,9 @@ class TestHost implements IVimHost {
 	hidden = new Set<number>();
 	comment: string | undefined = '//';
 	formatter = false;
-	highlighted: VimRegex | undefined;
+	highlighted: VimSearchQuery | undefined;
+	/** What 'inccommand' shows (computed at once: the test host does not debounce). */
+	preview: readonly VimSubstitution[] | undefined;
 	incsearch: VimRange | undefined;
 	/** Every edit, as the editor reports content changes. */
 	onEdit: ((edits: readonly VimEdit[]) => void) | undefined;
@@ -122,7 +124,12 @@ class TestHost implements IVimHost {
 	setClipboard(t: string) { this.clipboard = t; }
 	getClipboard() { return this.clipboard; }
 	prefetchClipboard() { }
-	highlightSearch(r: VimRegex | undefined) { this.highlighted = r; }
+	highlightSearch(r: VimSearchQuery | undefined) { this.highlighted = r; }
+	previewSubstitute(compute: (() => readonly VimSubstitution[] | undefined) | undefined) { this.preview = compute?.(); }
+	private readonly find = vimFindHost(() => this.lines);
+	findMatches(q: VimSearchQuery, within: VimRange, limit: number) { return this.find.findMatches(q, within, limit); }
+	findNextMatch(q: VimSearchQuery, from: VimPos, backwards: boolean) { return this.find.findNextMatch(q, from, backwards); }
+	replaceString(rep: string, m: VimMatch) { return this.find.replaceString(rep, m); }
 	showIncSearch(r: VimRange | undefined) { this.incsearch = r; }
 	lineComment() { return this.comment; }
 	hasRangeFormatter() { return this.formatter; }
@@ -656,10 +663,10 @@ suite('DevHub Vim: words end where the script changes (devhub.editor.wordBoundar
 		check('a|😀b', 'diw', 'a|b');
 	});
 
-	test('* and \\< \\>: the word under the cursor in one script, matched where scripts change', () => {
+	test('*: the word under the cursor in one script, matched by whole word where scripts change (VS Code\'s Match Whole Word)', () => {
 		check('|漢字ひらがな\nfoo 漢字カタカナ\n漢字', '*', '漢字ひらがな\nfoo |漢字カタカナ\n漢字');
 		check('漢字ひ|らがな\nひらがなx', '*', '漢字ひらがな\n|ひらがなx');
-		check('|漢字ひらがな\n漢字x', '/\\<漢字\\><CR>', '漢字ひらがな\n|漢字x');
+		check('|漢字ひらがな\n漢字x', '*', '漢字ひらがな\n|漢字x');
 	});
 
 	test('off: CJK text is one word, as before', () => {
@@ -2029,21 +2036,30 @@ suite('Neovim visual modes', () => {
 
 suite('Neovim search', () => {
 
-	test('case sensitivity: \\c \\C, ignorecase, smartcase', () => {
+	test('case sensitivity: ignorecase, smartcase', () => {
 		check('|x Foo foo', '/foo<CR>', 'x Foo |foo');
-		check('|x Foo foo', '/foo\\c<CR>', 'x |Foo foo');
+		check('|x Foo foo', ':set ic scs<CR>/foo<CR>', 'x |Foo foo');
+		check('|x FOO foo', ':set ic scs<CR>/\\W\\w+<CR>', 'x| FOO foo');
 		check('|x foo Foo', ':set ic<CR>/Foo<CR>', 'x |foo Foo');
 		check('|x foo Foo', ':set ic scs<CR>/Foo<CR>', 'x foo |Foo');
 	});
 
-	test('Vim regex syntax in / and :s', () => {
-		check('|x foobar foo', '/\\<foo\\><CR>', 'x foobar |foo');
-		check('|ab aab', '/a\\{2}<CR>', 'ab |aab');
-		check('|cat dog', '/\\(dog\\|cat\\)s\\=<CR>', 'cat |dog');
-		check('|a1 b22', '/\\d\\+<CR>n', 'a1 b|22');
-		check('|foo=bar', '/=\\zsbar<CR>', 'foo=|bar');
-		check('|x foo(1)', '/\\Vfoo(<CR>', 'x |foo(1)');
-		check('|x a+b', '/\\va\\+<CR>', 'x |a+b');
+	test('patterns are JavaScript regular expressions, as in VS Code\'s find', () => {
+		check('|x foobar foo', '/\\bfoo\\b<CR>', 'x foobar |foo');
+		check('|ab aab', '/a{2}<CR>', 'ab |aab');
+		check('|cat dog', '/(dog|cat)s?<CR>', 'cat |dog');
+		check('|a1 b22', '/\\d+<CR>n', 'a1 b|22');
+		check('|foo=bar', '/(?<==)bar<CR>', 'foo=|bar');
+		check('|x foo(1)', '/foo\\(<CR>', 'x |foo(1)');
+		check('|x a+b', '/a\\+<CR>', 'x |a+b');
+		check('|a/b a', '/\\/b<CR>', 'a|/b a');
+		// multiline, as VS Code's find: \n matches the line break
+		check('|ab\nc\nb\nd', '/b\\nd<CR>', 'ab\nc\n|b\nd');
+		check('|ab\nc\nb\nd', '/b\\nd<CR>N', 'ab\nc\n|b\nd');
+		// an invalid one is an error, and the cursor stays
+		const v = new Vim('|a(b').keys('/(b<CR>');
+		assert.strictEqual(v.host.state(), '|a(b');
+		assert.match(v.vim.status(), /E383/);
 	});
 
 	test('search offsets /e /+1 and n with count; * g* whole and partial words', () => {
@@ -2306,6 +2322,64 @@ suite('Neovim ex commands', () => {
 		assert.ok(!e.vim.status().includes('E486'), e.vim.status());
 	});
 
+	test(':s is VS Code\'s find: JavaScript regex, the range and its lines only, smartcase, i / I', () => {
+		check('|a1 a2\nb a3\na4', ':1,2s/a(\\d)/<$1>/g<CR>', '<1> <2>\n|b <3>\na4');
+		check('|x.y xzy', ':s/x\\.y/Q/g<CR>', '|Q xzy');
+		check('|Ab ab', ':set ic scs<CR>:s/ab/X/g<CR>', '|X X');
+		check('|Ab ab', ':set ic scs<CR>:s/Ab/X/g<CR>', '|X ab');
+		check('|Ab ab', ':s/ab/X/gi<CR>', '|X X');
+		check('|Ab ab', ':set ic<CR>:s/ab/X/gI<CR>', '|Ab X');
+		// a multiline match: one edit, one undo step
+		const v = new Vim('|a\nb\na\nb').keys(':%s/a\\nb/ab/<CR>');
+		assert.strictEqual(v.host.state(), 'ab\n|ab');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\na\nb');
+		// an invalid pattern is an error, the text stays
+		const w = new Vim('|a(b').keys(':s/(/x/<CR>');
+		assert.strictEqual(w.host.state(), '|a(b');
+		assert.match(w.vim.status(), /E383/);
+	});
+
+	test('inccommand: what :s would do while it is typed, matches only while the pattern is, nothing after Esc or Enter', () => {
+		const v = new Vim('|a1 a2\nb a3\na4');
+		const shown = () => v.host.preview?.map(x => `${x.range.start.line}:${x.range.start.col}-${x.range.end.line}:${x.range.end.col}=${x.text ?? '(match)'}`);
+		v.keys(':%s/a');
+		assert.deepStrictEqual(shown(), ['0:0-0:1=(match)', '1:2-1:3=(match)', '2:0-2:1=(match)']);
+		v.keys('(\\d');
+		// half typed: no preview, no error
+		assert.strictEqual(v.host.preview, undefined);
+		v.keys(')/[$1]');
+		assert.deepStrictEqual(shown(), ['0:0-0:2=[1]', '1:2-1:4=[3]', '2:0-2:2=[4]']);
+		v.keys('/g');
+		assert.deepStrictEqual(shown(), ['0:0-0:2=[1]', '0:3-0:5=[2]', '1:2-1:4=[3]', '2:0-2:2=[4]']);
+		v.keys('<Esc>');
+		assert.strictEqual(v.host.preview, undefined);
+		assert.strictEqual(v.host.lines.join('\n'), 'a1 a2\nb a3\na4');
+		// the range: only its lines; Enter replaces and the preview goes
+		v.keys(':2,3s/a/X/');
+		assert.deepStrictEqual(shown(), ['1:2-1:3=X', '2:0-2:1=X']);
+		v.keys('<CR>');
+		assert.strictEqual(v.host.preview, undefined);
+		assert.strictEqual(v.host.lines.join('\n'), 'a1 a2\nb X3\nX4');
+		// not :s, or off: nothing
+		v.keys(':sort');
+		assert.strictEqual(v.host.preview, undefined);
+		v.keys('<Esc>');
+		const off = new VimSharedState();
+		off.inccommand = '';
+		const w = new Vim('|a', [], off).keys(':s/a/b/');
+		assert.strictEqual(w.host.preview, undefined);
+	});
+
+	test('inccommand shows the lines on screen (and a few around), at most a thousand', () => {
+		const v = new Vim(lines(400, () => 'aaaa'));
+		v.host.visible = 10;
+		v.keys(':%s/a/b/g');
+		const p = v.host.preview!;
+		assert.ok(p.length > 0 && p.length <= 1000, String(p.length));
+		assert.ok(p.every(x => x.range.start.line <= 9 + 50), 'only around the window');
+	});
+
 	test(':s///c asks for every match: y n a q l <Esc>', () => {
 		check('|aaa\naa', ':%s/a/b/gc<CR>yny', 'bab\n|aa');
 		check('|aaa\naa', ':%s/a/b/gc<CR>ya', 'bbb\n|bb');
@@ -2325,14 +2399,14 @@ suite('Neovim ex commands', () => {
 	});
 
 	test(':s replacement specials: & \\0 \\1 \\u \\U \\r ~, other delimiters, empty pattern', () => {
-		check('|ab', ':s/\\(a\\)\\(b\\)/\\2\\1/<CR>', '|ba');
-		check('|abc', ':s/b/[&]/<CR>', '|a[b]c');
-		check('|foo bar', ':s/\\w\\+/\\u&/g<CR>', '|Foo Bar');
-		check('|foo bar', ':s/foo/\\U&\\E!/<CR>', '|FOO! bar');
-		check('|a,b,c', ':s/,/\\r/g<CR>', 'a\nb\n|c');
+		check('|ab', ':s/(a)(b)/$2$1/<CR>', '|ba');
+		check('|abc', ':s/b/[$&]/<CR>', '|a[b]c');
+		check('|abc', ':s/b/&/<CR>', '|a&c');
+		check('|a,b,c', ':s/,/\\n/g<CR>', 'a\nb\n|c');
+		check('|a\nb\nc', ':%s/a\\nb/x/<CR>', '|x\nc');
 		check('|a/b', ':s#/#-#<CR>', '|a-b');
 		check('|x a a', '/a<CR>:s//b/g<CR>', '|x b b');
-		check('|ab\nab', ':s/a/X/<CR>j:s/b/~Y/<CR>', 'Xb\n|aXY');
+		check('|ab\nab', ':s/a/X/<CR>j:s/b/~Y/<CR>', 'Xb\n|a~Y');
 	});
 
 	test(':g :v with :d :s :normal :m0, one undo step', () => {
@@ -2370,7 +2444,7 @@ suite('Neovim ex commands', () => {
 		check('|b\nA\nc', ':sort i<CR>', '|A\nb\nc');
 		check('|x10\nx9\nx100', ':sort n<CR>', '|x9\nx10\nx100');
 		check('|b\na\nb\na', ':sort u<CR>', '|a\nb');
-		check('|a3 z\nb1 y\nc2 x', ':sort /\\a\\d /<CR>', '|c2 x\nb1 y\na3 z');
+		check('|a3 z\nb1 y\nc2 x', ':sort /[a-z]\\d /<CR>', '|c2 x\nb1 y\na3 z');
 		check('|a3\nb1\nc2', ':sort /\\d/ r<CR>', '|b1\nc2\na3');
 	});
 

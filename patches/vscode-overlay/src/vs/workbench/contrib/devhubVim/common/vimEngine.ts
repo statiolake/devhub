@@ -35,6 +35,12 @@
 // one `lineText()` at a time, so a command in a large file costs what it
 // touches, not the file size.
 //
+// Patterns (`/ ? * # n`, `:s`, `:g`, `:sort /pat/`, `gn`) are JavaScript
+// regular expressions, matched by VS Code's find (the host's findMatches /
+// findNextMatch: TextModel's, with "Use Regular Expression" on, multiline
+// as VS Code's find is), and `:s` replacement strings are the find widget's
+// ($1 $& \n \t \u \U \l \L). Vim's regex dialect is not translated.
+//
 // Positions are 0-based { line, col } (UTF-16 columns); `col ===
 // lineText(line).length` is the position of the line break. Edit ranges are
 // end-exclusive.
@@ -44,8 +50,7 @@ import { VimCmdlineController, VimStringLine } from './vimCmdline.js';
 import type { ExCommandEntry, ExStep, UserExCommands } from './vimEx.js';
 import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNameInfo, builtinExNames, canonicalExName, expandExEntry, parseExLine, parseGlobal, parseSubstitute, resolveExAddress, validateUserExCommands } from './vimEx.js';
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
-import type { VimRegex } from './vimRegex.js';
-import { VimRegexError, compileVimRegex, expandReplacement, expandTilde, lineMatches, literalVimPattern, vimRegex } from './vimRegex.js';
+import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
 
 export interface VimPos {
@@ -135,10 +140,26 @@ export interface IVimHost {
 	/** Last known system clipboard text; `prefetchClipboard` refreshes it. */
 	getClipboard(): string;
 	prefetchClipboard(): void;
-	/** 'hlsearch': highlight every match of `regex` (undefined: none). */
-	highlightSearch(regex: VimRegex | undefined): void;
+	/**
+	 * VS Code's find over `within` (TextModel.findMatches, with "Use Regular
+	 * Expression" on): at most `limit` matches, in order, with their groups.
+	 */
+	findMatches(query: VimSearchQuery, within: VimRange, limit: number): VimMatch[];
+	/** VS Code's Find Next / Find Previous from `from` (TextModel.findNextMatch / findPreviousMatch: they wrap around the file). */
+	findNextMatch(query: VimSearchQuery, from: VimPos, backwards: boolean): VimMatch | undefined;
+	/** The find widget's replace string for a match (`$1` `$&` `\n` `\t` `\u` `\U` `\l` `\L`: parseReplaceString). */
+	replaceString(replacement: string, match: VimMatch): string;
+	/** 'hlsearch': highlight every match of `query` (undefined: none). */
+	highlightSearch(query: VimSearchQuery | undefined): void;
 	/** 'incsearch': show this match while the pattern is typed (undefined: back to where the view was). */
 	showIncSearch(range: VimRange | undefined): void;
+	/**
+	 * 'inccommand': show what the `:s` being typed would do. The host runs
+	 * `compute` (soon, debounced) and draws what it returns: each match struck
+	 * through with its replacement after it, or only highlighted (`text`
+	 * undefined) while just the pattern is typed. Undefined clears it.
+	 */
+	previewSubstitute(compute: (() => readonly VimSubstitution[] | undefined) | undefined): void;
 	/** The language's line comment token (`//`), for `gc` text objects and gq. */
 	lineComment(): string | undefined;
 	/** Whether a formatter can format a range (`gq` uses it, as Neovim's LSP 'formatexpr'). */
@@ -162,6 +183,76 @@ export interface VimRegister {
 export interface VimStep {
 	readonly command: string;
 	readonly args: Readonly<Record<string, unknown>>;
+}
+
+/** A search as VS Code's find runs it. */
+export interface VimSearchQuery {
+	/** A JavaScript regular expression (VS Code's find with "Use Regular Expression" on). */
+	readonly pattern: string;
+	readonly matchCase: boolean;
+	/** VS Code's "Match Whole Word" (`editor.wordSeparators`, and where the script changes). */
+	readonly wholeWord: boolean;
+}
+
+export interface VimMatch {
+	readonly range: VimRange;
+	/** The match and its groups ($0, $1, ...), for the replace string. */
+	readonly groups: readonly string[];
+}
+
+/** One replacement `:s` makes (or, `text` undefined, a match 'inccommand' only highlights). */
+export interface VimSubstitution {
+	readonly range: VimRange;
+	readonly text: string | undefined;
+}
+
+/** Why a JavaScript regular expression does not compile (as VS Code's find compiles it), or undefined. */
+export function regexError(pattern: string): string | undefined {
+	try {
+		new RegExp(pattern, 'gmu');
+		return undefined;
+	} catch (e) {
+		return e instanceof Error ? e.message : String(e);
+	}
+}
+
+/**
+ * Whether a pattern matches case ('ignorecase', 'smartcase'): with
+ * 'smartcase' an uppercase letter in the pattern makes it match case; the
+ * letters of escapes (`\W` `\S` `\D` `\B` `\p{Lu}` `\u00e9` ...) and group
+ * names do not count.
+ */
+export function patternMatchCase(pattern: string, ignorecase: boolean, smartcase: boolean): boolean {
+	if (!ignorecase) {
+		return true;
+	}
+	if (!smartcase) {
+		return false;
+	}
+	const bare = pattern.replace(/\\[pPk]\{[^}]*\}|\\k<[^>]*>|\(\?<[^>=!][^>]*>|\\u\{[0-9a-fA-F]+\}|\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|\\c[A-Za-z]|\\./g, '');
+	return /\p{Lu}/u.test(bare);
+}
+
+/**
+ * What `:s` replaces in lines `lines.start`..`lines.end`: VS Code's matches
+ * of `query` there (the first that starts on each line, without `global`),
+ * each with its replace string; at most `limit`.
+ */
+export function substitutions(host: Pick<IVimHost, 'findMatches' | 'replaceString' | 'lineText'>, query: VimSearchQuery, replacement: string | undefined, lines: { start: number; end: number }, global: boolean, limit = Number.MAX_SAFE_INTEGER): VimSubstitution[] {
+	const within = { start: pos(lines.start, 0), end: pos(lines.end, host.lineText(lines.end).length) };
+	const out: VimSubstitution[] = [];
+	let lastLine = -1;
+	for (const m of host.findMatches(query, within, global ? limit : Number.MAX_SAFE_INTEGER)) {
+		if (!global && m.range.start.line === lastLine) {
+			continue;
+		}
+		lastLine = m.range.start.line;
+		out.push({ range: m.range, text: replacement === undefined ? undefined : host.replaceString(replacement, m) });
+		if (out.length >= limit) {
+			break;
+		}
+	}
+	return out;
 }
 
 /** The options `:set` knows, with Neovim's defaults. */
@@ -196,14 +287,16 @@ export class VimSharedState {
 	readonly macros = new Map<string, readonly VimStep[]>();
 	lastMacro: string | undefined;
 	lastRecorded: string | undefined;
-	lastSearch: { pattern: string; backwards: boolean; offset?: string } | undefined;
+	/** `wholeWord` and `exactCase` (no 'smartcase'): what `*` / `#` / `gd` searched for. */
+	lastSearch: { pattern: string; backwards: boolean; offset?: string; wholeWord?: boolean; exactCase?: boolean } | undefined;
 	lastFind: { key: string; char: string } | undefined;
 	lastSubstitute: { pattern: string; replacement: string; flags: string } | undefined;
-	lastReplacement = '';
 	lastInserted = '';
 	lastEx = '';
 	readonly history: { ':': string[]; '/': string[] } = { ':': [], '/': [] };
 	options: VimOptions = { ...DEFAULT_VIM_OPTIONS };
+	/** `devhub.vim.inccommand`: 'nosplit' previews `:s` in the editor as it is typed, '' does not. */
+	inccommand = 'nosplit';
 	private userEx: UserExCommands = validateUserExCommands(undefined);
 
 	/** The `devhub.vim.exCommands` setting. */
@@ -409,6 +502,9 @@ const AWAIT_LABELS: Record<string, string> = {
 const INSERT_COMMANDS = new Set<string>(['devhubVim.escape', 'devhubVim.insertText', 'devhubVim.ex', 'devhubVim.mode', 'devhubVim.insert', 'devhubVim.awaitChar', 'devhubVim.run', 'devhubVim.repeat']);
 /** Commands whose args get the Vim state placeholders (`${count}` ...) expanded when a key runs them (expandVimState). */
 const EXPANDING_COMMANDS = new Set<string>(['devhubVim.run', 'devhubVim.repeat']);
+/** 'inccommand' previews at most this many replacements, on the lines on screen and this many around them. */
+const INCCOMMAND_LIMIT = 1000;
+const INCCOMMAND_MARGIN = 50;
 /** The most iterations a `devhubVim.repeat` runs. */
 const MAX_REPEAT = 1000;
 /** Not recorded into a macro: what they lead to is (the command an awaited char completes, the ex line, the search). */
@@ -1921,7 +2017,7 @@ export class VimEngine {
 				break;
 			case 'repeatSubstitute': case 'repeatSubstituteAll':
 				this.resetGrammar();
-				this.runEx(action === 'repeatSubstitute' ? '&&' : '%s//~/&');
+				this.runEx(action === 'repeatSubstitute' ? '&&' : '%~&');
 				break;
 			case 'reselect': {
 				const v = this.lastVisual;
@@ -2267,7 +2363,7 @@ export class VimEngine {
 			case 'visualSearchForward': case 'visualSearchBackward': {
 				const text = range.block ? this.blockText(range) : this.getText(range.start, range.end);
 				leave(range.start);
-				this.cmdSearch(literalVimPattern(text, action === 'visualSearchForward' ? '/' : '?'), action === 'visualSearchBackward', 1);
+				this.cmdSearch(literalPattern(text, action === 'visualSearchForward' ? '/' : '?'), action === 'visualSearchBackward', 1);
 				return false;
 			}
 			case 'visualPlayMacro': {
@@ -3526,11 +3622,12 @@ export class VimEngine {
 					return undefined;
 				}
 				const back = name === 'searchPrevious' ? !ls.backwards : ls.backwards;
-				const r = this.searchMotion(ls.pattern, back, cur, n);
+				const q = this.lastSearchQuery()!;
+				const r = this.searchMotion(q, back, cur, n);
 				if (r) {
-					this.highlight(ls.pattern);
+					this.highlight(q);
 				}
-				return r && { ...r, jump: true };
+				return r && { pos: r.pos, bigMotion: true, jump: true };
 			}
 			case 'searchWordForward': case 'searchWordBackward': case 'searchWordForwardPartial': case 'searchWordBackwardPartial': {
 				const word = this.wordUnderCursor(cur);
@@ -3539,19 +3636,19 @@ export class VimEngine {
 					return undefined;
 				}
 				const backwards = name === 'searchWordBackward' || name === 'searchWordBackwardPartial';
-				const whole = !name.endsWith('Partial') && isKeywordClass(charClassAt(word.text, 0, false));
-				const esc = literalVimPattern(word.text, backwards ? '?' : '/').slice(2);
-				const pattern = whole ? `\\<${esc.replace(/^\\V/, '')}\\>` : esc;
-				const vpat = `\\V${pattern}`;
-				this.shared.lastSearch = { pattern: vpat, backwards };
-				this.pushHistory('/', vpat);
+				// VS Code's Match Whole Word, as Vim's \< \> (which also end a word where the script changes)
+				const wholeWord = !name.endsWith('Partial') && isKeywordClass(charClassAt(word.text, 0, false));
+				const pattern = escapeRegExpCharacters(word.text);
+				this.shared.lastSearch = { pattern, backwards, wholeWord, exactCase: true };
+				this.pushHistory('/', literalPattern(word.text, backwards ? '?' : '/'));
+				const q = this.lastSearchQuery()!;
 				// * starts from the start of the word under the cursor, so the next match is the next occurrence
 				const from = backwards ? pos(cur.line, word.start) : cur;
-				const r = this.searchMotion(vpat, backwards, from, n, true);
+				const r = this.searchMotion(q, backwards, from, n);
 				if (r) {
-					this.highlight(vpat);
+					this.highlight(q);
 				}
-				return r && { ...r, jump: true };
+				return r && { pos: r.pos, bigMotion: true, jump: true };
 			}
 			case 'sentenceForward': case 'sentenceBackward': {
 				let p = cur;
@@ -3649,15 +3746,12 @@ export class VimEngine {
 					}
 					from = l;
 				}
-				const vpat = `\\V\\<${literalVimPattern(word.text).slice(2)}\\>`;
-				const re = this.compile(vpat);
-				for (let l = from; l <= cur.line; l++) {
-					const m = lineMatches(re, this.host.lineText(l), 1)[0];
-					if (m) {
-						this.shared.lastSearch = { pattern: vpat, backwards: false };
-						this.highlight(vpat);
-						return { pos: pos(l, m[0]), jump: true };
-					}
+				this.shared.lastSearch = { pattern: escapeRegExpCharacters(word.text), backwards: false, wholeWord: true, exactCase: true };
+				const q = this.lastSearchQuery()!;
+				const m = this.host.findMatches(q, { start: pos(from, 0), end: pos(cur.line, this.len(cur.line)) }, 1)[0];
+				if (m) {
+					this.highlight(q);
+					return { pos: m.range.start, jump: true };
 				}
 				return undefined;
 			}
@@ -3670,81 +3764,75 @@ export class VimEngine {
 		return m ? m.index : -1;
 	}
 
-	private compile(pattern: string): RegExp {
-		try {
-			return compileVimRegex(vimRegex(pattern, { ignorecase: this.options.ignorecase, smartcase: this.options.smartcase, lastReplacement: this.shared.lastReplacement }));
-		} catch (e) {
-			if (e instanceof VimRegexError) {
-				this.invalid(e.message);
-			}
-			throw e;
+	/** A typed pattern as VS Code's find runs it ('ignorecase' / 'smartcase' decide the case; an invalid one is an error). */
+	private query(pattern: string, opts: { wholeWord?: boolean; exactCase?: boolean; caseFlag?: 'i' | 'I' } = {}): VimSearchQuery {
+		const err = regexError(pattern);
+		if (err !== undefined) {
+			this.invalid(`E383: Invalid search string: ${pattern} (${err})`);
 		}
+		const matchCase = opts.caseFlag ? opts.caseFlag === 'I' : opts.exactCase ? !this.options.ignorecase : patternMatchCase(pattern, this.options.ignorecase, this.options.smartcase);
+		return { pattern, matchCase, wholeWord: opts.wholeWord === true };
 	}
 
-	private highlight(pattern: string): void {
-		if (!this.options.hlsearch) {
+	/** The last search as a query (with the case options as they are now), or undefined. */
+	private lastSearchQuery(): VimSearchQuery | undefined {
+		const ls = this.shared.lastSearch;
+		return ls && this.query(ls.pattern, { wholeWord: ls.wholeWord, exactCase: ls.exactCase });
+	}
+
+	private highlight(q: VimSearchQuery | undefined): void {
+		if (!this.options.hlsearch || !q) {
 			return;
 		}
-		try {
-			this.host.highlightSearch(vimRegex(pattern, { ignorecase: this.options.ignorecase, smartcase: this.options.smartcase, lastReplacement: this.shared.lastReplacement }));
-			this.hlActive = true;
-		} catch {
-			// an invalid pattern was reported where it was used
-		}
+		this.host.highlightSearch(q);
+		this.hlActive = true;
 	}
 
-	/** The next match of a Vim pattern after `from` (before it, backwards), wrapping with 'wrapscan'. */
-	private findMatch(re: RegExp, from: VimPos, backwards: boolean, acceptAt = false): VimRange | undefined {
-		const last = this.lastLine();
-		const total = last + 1;
-		const limit = this.options.wrapscan ? total + 1 : (backwards ? from.line + 1 : total - from.line);
-		for (let i = 0; i < limit; i++) {
-			const line = backwards ? ((from.line - i) % total + total) % total : (from.line + i) % total;
-			if (!this.options.wrapscan && ((backwards && from.line - i < 0) || (!backwards && from.line + i > last))) {
-				break;
-			}
-			const text = this.host.lineText(line);
-			const ms = lineMatches(re, text);
-			const wrapped = backwards ? from.line - i < 0 : from.line + i > last;
-			if (backwards) {
-				for (let k = ms.length - 1; k >= 0; k--) {
-					const m = ms[k];
-					if (i === 0 && !wrapped && m[0] >= from.col) {
-						continue;
-					}
-					if (i === total && m[0] < from.col) {
-						continue;
-					}
-					return { start: pos(line, m[0]), end: pos(line, m[1]) };
-				}
-			} else {
-				for (const m of ms) {
-					if (i === 0 && !wrapped && (acceptAt ? m[0] < from.col : m[0] <= from.col)) {
-						continue;
-					}
-					if (i === total && m[0] > from.col) {
-						continue;
-					}
-					return { start: pos(line, m[0]), end: pos(line, m[1]) };
-				}
-			}
-		}
-		return undefined;
-	}
-
-	private searchMotion(pattern: string, backwards: boolean, cur: VimPos, n: number, fromWordStart = false): MotionResult | undefined {
-		const re = this.compile(pattern);
-		let p = cur;
-		for (let c = 0; c < n; c++) {
-			const found = this.findMatch(re, p, backwards, false);
-			if (!found) {
-				this.message = `E486: Pattern not found: ${pattern}`;
+	/**
+	 * The next match after `from` (before it, backwards; at it too with
+	 * `acceptAt`), as VS Code's Find Next / Find Previous finds it, wrapping
+	 * around the file with 'wrapscan' only.
+	 */
+	private findMatch(q: VimSearchQuery, from: VimPos, backwards: boolean, acceptAt = false): VimMatch | undefined {
+		if (backwards) {
+			const m = this.host.findNextMatch(q, from, true);
+			if (!m) {
 				return undefined;
 			}
-			p = found.start;
+			const wrapped = cmp(m.range.start, from) >= 0;
+			return wrapped && !this.options.wrapscan ? undefined : m;
 		}
-		void fromWordStart;
-		return { pos: p, bigMotion: true };
+		// Vim's forward search starts after the cursor: at the next character, or the next line
+		const after = acceptAt ? from : from.col < this.len(from.line) ? pos(from.line, from.col + 1) : from.line < this.lastLine() ? pos(from.line + 1, 0) : pos(0, 0);
+		const m = this.host.findNextMatch(q, after, false);
+		if (!m) {
+			return undefined;
+		}
+		const c = cmp(m.range.start, from);
+		const wrapped = acceptAt ? c < 0 : c <= 0;
+		return wrapped && !this.options.wrapscan ? undefined : m;
+	}
+
+	/** The match under the cursor or the next one (the previous one, backwards): what `gn` / `gN` select. */
+	private matchAtOrNext(q: VimSearchQuery, cur: VimPos, backwards: boolean): VimMatch | undefined {
+		const here = this.host.findMatches(q, { start: pos(cur.line, 0), end: pos(cur.line, this.len(cur.line)) }, 1000)
+			.find(m => cmp(m.range.start, cur) <= 0 && cmp(cur, m.range.end) < 0);
+		return here ?? this.findMatch(q, cur, backwards, !backwards);
+	}
+
+	/** `n` times to the next match; the last match found. */
+	private searchMotion(q: VimSearchQuery, backwards: boolean, cur: VimPos, n: number): { pos: VimPos; match: VimMatch } | undefined {
+		let p = cur;
+		let found: VimMatch | undefined;
+		for (let c = 0; c < n; c++) {
+			found = this.findMatch(q, p, backwards, false);
+			if (!found) {
+				this.message = `E486: Pattern not found: ${q.pattern}`;
+				return undefined;
+			}
+			p = found.range.start;
+		}
+		return found && { pos: p, match: found };
 	}
 
 	private wordUnderCursor(cur: VimPos): { text: string; start: number } | undefined {
@@ -4163,16 +4251,15 @@ export class VimEngine {
 					this.message = 'E35: No previous regular expression';
 					return undefined;
 				}
-				const re = this.compile(ls.pattern);
-				const back = ch === 'gN';
+				const q = this.lastSearchQuery()!;
 				// gn: the match under the cursor, or the next one
-				const found = this.findMatch(re, back ? this.nextChar(cur) ?? cur : cur, back, true);
+				const found = this.matchAtOrNext(q, cur, ch === 'gN');
 				if (!found) {
 					this.message = `E486: Pattern not found: ${ls.pattern}`;
 					return undefined;
 				}
-				this.highlight(ls.pattern);
-				return { start: found.start, end: found.end, linewise: false };
+				this.highlight(q);
+				return { start: found.range.start, end: found.range.end, linewise: false };
 			}
 		}
 		if (QUOTES.has(ch)) {
@@ -4567,6 +4654,8 @@ export class VimEngine {
 	private closeCmdline(): void {
 		if (this.cmdline && this.cmdline.kind !== ':') {
 			this.host.showIncSearch(undefined);
+		} else if (this.cmdline) {
+			this.host.previewSubstitute(undefined);
 		}
 		this.cmdline = undefined;
 		this.fedPrompt = undefined;
@@ -4587,24 +4676,29 @@ export class VimEngine {
 		}
 	}
 
-	/** 'incsearch': show where the pattern typed so far matches. */
+	/** 'incsearch': show where the pattern typed so far matches; 'inccommand': what the `:s` typed so far would do. */
 	private updateIncSearch(): void {
 		const cl = this.cmdline;
-		if (!cl || cl.kind === ':' || !this.options.incsearch) {
+		if (cl?.kind === ':') {
+			if (this.shared.inccommand === 'nosplit') {
+				this.host.previewSubstitute(() => this.cmdline === cl ? this.substitutePreview(cl.text) : undefined);
+			}
+			return;
+		}
+		if (!cl || !this.options.incsearch) {
 			return;
 		}
 		if (!cl.text) {
 			this.host.showIncSearch(undefined);
 			return;
 		}
-		try {
-			const { pattern } = splitSearchOffset(cl.text, cl.kind);
-			const re = compileVimRegex(vimRegex(pattern, { ignorecase: this.options.ignorecase, smartcase: this.options.smartcase, lastReplacement: this.shared.lastReplacement }));
-			const found = this.findMatch(re, cl.origin, cl.kind === '?');
-			this.host.showIncSearch(found);
-		} catch {
+		const { pattern } = splitSearchOffset(cl.text, cl.kind);
+		if (regexError(pattern) !== undefined) {
+			// half typed (`(foo`): nothing to show yet, and no error
 			this.host.showIncSearch(undefined);
+			return;
 		}
+		this.host.showIncSearch(this.findMatch(this.query(pattern), cl.origin, cl.kind === '?')?.range);
 	}
 
 	private cmdSearch(text: string, backwards: boolean, count?: number): void {
@@ -4620,10 +4714,12 @@ export class VimEngine {
 			return;
 		}
 		this.pushHistory('/', text || pattern);
-		this.shared.lastSearch = { pattern, backwards, offset };
+		// `//` searches for the last pattern as it was (a `*` one by whole word)
+		this.shared.lastSearch = typed ? { pattern, backwards, offset } : { ...this.shared.lastSearch!, backwards, offset };
 		const cur = this.cursor();
-		const res = this.searchMotion(pattern, backwards, cur, count ?? this.effectiveCount() ?? 1);
-		if (!res) {
+		const q = this.lastSearchQuery()!;
+		const found = this.searchMotion(q, backwards, cur, count ?? this.effectiveCount() ?? 1);
+		if (!found) {
 			if (op) {
 				this.invalid(this.message);
 			}
@@ -4632,7 +4728,8 @@ export class VimEngine {
 			this.message = msg;
 			return;
 		}
-		this.highlight(pattern);
+		const res: MotionResult = { pos: found.pos, bigMotion: true };
+		this.highlight(q);
 		if (offset) {
 			const m = /^([esb]?)([+-]?\d*)$/.exec(offset);
 			if (m) {
@@ -4642,8 +4739,7 @@ export class VimEngine {
 					res.pos = pos(line, this.firstNonBlank(line));
 					res.linewise = n !== 0 || offset !== '';
 				} else if (m[1] === 'e') {
-					const found = this.findMatch(this.compile(pattern), backwards ? (this.nextChar(res.pos) ?? res.pos) : res.pos, backwards, true);
-					const end = found ? (this.prevChar(found.end) ?? found.end) : res.pos;
+					const end = this.prevChar(found.match.range.end) ?? found.match.range.end;
 					res.pos = this.clampNormal(pos(end.line, end.col + n));
 					res.inclusive = true;
 				} else {
@@ -4672,6 +4768,39 @@ export class VimEngine {
 	 * lines selected (so a command that works on the selection, such as
 	 * sorting, gets them), then the caret goes back to the range's first line.
 	 */
+	/** An ex line's range as lines (undefined: a mark or match it names is not there); a `/pat/` in it is the last search only with `remember`. */
+	private exRange(p: ReturnType<typeof parseExLine>, cur: VimPos, remember: boolean): { start: number; end: number } | undefined {
+		if (!p.range) {
+			return undefined;
+		}
+		const ctx = {
+			cursorLine: cur.line,
+			lastLine: this.lastLine(),
+			visual: this.lastVisual ? { start: this.getMark('<')!.line, end: this.getMark('>')!.line } : undefined,
+			mark: (name: string) => this.getMark(name)?.line,
+			search: (pattern: string, backwards: boolean, fromLine: number) => {
+				const last = this.shared.lastSearch;
+				const pat = pattern || last?.pattern;
+				if (!pat) {
+					return undefined;
+				}
+				const ls = pattern ? { pattern: pat, backwards } : { ...last!, backwards };
+				if (remember) {
+					this.shared.lastSearch = ls;
+				}
+				const q = this.query(ls.pattern, { wholeWord: ls.wholeWord, exactCase: ls.exactCase });
+				const found = this.findMatch(q, backwards ? pos(fromLine, 0) : pos(fromLine, this.len(fromLine)), backwards);
+				return found?.range.start.line;
+			},
+		};
+		const a = resolveExAddress(p.range[0], ctx);
+		const b = p.semicolon && a !== undefined ? resolveExAddress(p.range[1], { ...ctx, cursorLine: a }) : resolveExAddress(p.range[1], ctx);
+		if (a === undefined || b === undefined) {
+			return undefined;
+		}
+		return a <= b ? { start: a, end: b } : { start: b, end: a };
+	}
+
 	private runEx(line: string): void {
 		if (!line.trim()) {
 			return;
@@ -4690,29 +4819,11 @@ export class VimEngine {
 		const cur = this.cursor();
 		let range: { start: number; end: number } | undefined;
 		if (p.range) {
-			const ctx = {
-				cursorLine: cur.line,
-				lastLine: this.lastLine(),
-				visual: this.lastVisual ? { start: this.getMark('<')!.line, end: this.getMark('>')!.line } : undefined,
-				mark: (name: string) => this.getMark(name)?.line,
-				search: (pattern: string, backwards: boolean, fromLine: number) => {
-					const pat = pattern || this.shared.lastSearch?.pattern;
-					if (!pat) {
-						return undefined;
-					}
-					this.shared.lastSearch = { pattern: pat, backwards };
-					const re = this.compile(pat);
-					const found = this.findMatch(re, backwards ? pos(fromLine, 0) : pos(fromLine, this.len(fromLine)), backwards);
-					return found?.start.line;
-				},
-			};
-			const a = resolveExAddress(p.range[0], ctx);
-			const b = p.semicolon && a !== undefined ? resolveExAddress(p.range[1], { ...ctx, cursorLine: a }) : resolveExAddress(p.range[1], ctx);
-			if (a === undefined || b === undefined) {
+			range = this.exRange(p, cur, true);
+			if (!range) {
 				this.message = p.range.some(r => r.startsWith('\'')) ? 'E20: Mark not set' : `E16: Invalid range`;
 				return;
 			}
-			range = a <= b ? { start: a, end: b } : { start: b, end: a };
 		}
 		if (!p.name) {
 			if (range) {
@@ -4787,7 +4898,7 @@ export class VimEngine {
 				this.host.highlightSearch(undefined);
 				return;
 			case 'substitute': case '&': case '&&': case '~':
-				this.exSubstitute(name, r, args, range !== undefined);
+				this.exSubstitute(name, r, args);
 				return;
 			case 'global': case 'vglobal':
 				this.exGlobal(name === 'vglobal' || bang, range ?? { start: 0, end: this.lastLine() }, args);
@@ -5044,139 +5155,151 @@ export class VimEngine {
 		this.setNormalCursor(pos(line, this.firstNonBlank(line)));
 	}
 
-	/** :s :& :&& :~ (`:help :s`). */
-	private exSubstitute(name: string, r: { start: number; end: number }, args: string, hasRange: boolean): void {
+	/** The pattern, replacement and flags a `:s` / `:&` / `:&&` / `:~` line means, or the error (E35). */
+	private substituteArgs(name: string, args: string): { pattern: string; replacement: string; flags: string; count: number | undefined; upTo?: 'pattern' | 'replacement' | 'flags' } | string {
 		const last = this.shared.lastSubstitute;
-		let pattern: string;
-		let replacement: string;
-		let flags: string;
-		let count: number | undefined;
+		const ps = parseSubstitute(args);
 		if (name === 'substitute') {
-			const ps = parseSubstitute(args);
 			if (ps.pattern === undefined) {
 				if (!last) {
-					this.message = 'E35: No previous regular expression';
-					return;
+					return 'E35: No previous regular expression';
 				}
-				pattern = last.pattern;
-				replacement = last.replacement;
-				flags = ps.flags.startsWith('&') ? last.flags + ps.flags.slice(1) : ps.flags;
-			} else {
-				pattern = ps.pattern || this.shared.lastSearch?.pattern || '';
-				if (!pattern) {
-					this.message = 'E35: No previous regular expression';
-					return;
-				}
-				replacement = ps.replacement === '~' ? this.shared.lastReplacement : expandTilde(ps.replacement ?? '', this.shared.lastReplacement);
-				flags = ps.flags.startsWith('&') && last ? last.flags + ps.flags.slice(1) : ps.flags.replace(/^&/, '');
+				return { pattern: last.pattern, replacement: last.replacement, flags: ps.flags.startsWith('&') ? last.flags + ps.flags.slice(1) : ps.flags, count: ps.count };
 			}
-			count = ps.count;
-		} else {
-			if (!last) {
-				this.message = 'E35: No previous regular expression';
-				return;
+			const pattern = ps.pattern || this.shared.lastSearch?.pattern || '';
+			if (!pattern) {
+				return 'E35: No previous regular expression';
 			}
-			const ps = parseSubstitute(args);
-			// :& keeps nothing unless given &; :&& keeps the flags; :~ uses the last search pattern
-			pattern = name === '~' ? (this.shared.lastSearch?.pattern ?? last.pattern) : last.pattern;
-			replacement = last.replacement;
-			flags = (name === '&&' ? last.flags : '') + ps.flags.replace(/^&/, ps.flags.startsWith('&') ? last.flags : '');
-			count = ps.count;
+			const flags = ps.flags.startsWith('&') && last ? last.flags + ps.flags.slice(1) : ps.flags.replace(/^&/, '');
+			return { pattern, replacement: ps.replacement ?? '', flags, count: ps.count, upTo: ps.upTo };
 		}
+		if (!last) {
+			return 'E35: No previous regular expression';
+		}
+		// :& keeps nothing unless given &; :&& keeps the flags; :~ uses the last search pattern
+		const pattern = name === '~' ? (this.shared.lastSearch?.pattern ?? last.pattern) : last.pattern;
+		const flags = (name === '&&' ? last.flags : '') + ps.flags.replace(/^&/, ps.flags.startsWith('&') ? last.flags : '');
+		return { pattern, replacement: last.replacement, flags, count: ps.count };
+	}
+
+	/** The query `:s` searches with: 'ignorecase' / 'smartcase', or the `i` / `I` flag. */
+	private substituteQuery(pattern: string, flags: string): VimSearchQuery {
+		return this.query(pattern, { caseFlag: flags.includes('I') ? 'I' : flags.includes('i') ? 'i' : undefined });
+	}
+
+	private substituteGlobal(flags: string): boolean {
+		return flags.includes('g') !== this.options.gdefault;
+	}
+
+	/**
+	 * :s :& :&& :~ (`:help :s`). The pattern is a JavaScript regular
+	 * expression matched by VS Code's find, the replacement the find widget's
+	 * replace string; the range, the count and the flags (g c e i I n &) are
+	 * Vim's. All of it is one undo step.
+	 */
+	private exSubstitute(name: string, r: { start: number; end: number }, args: string): void {
+		const a = this.substituteArgs(name, args);
+		if (typeof a === 'string') {
+			this.message = a;
+			return;
+		}
+		const { pattern, replacement, flags, count } = a;
 		if (count !== undefined) {
 			r = { start: r.end, end: this.clampLine(r.end + count - 1) };
 		}
-		void hasRange;
+		const q = this.substituteQuery(pattern, flags);
 		this.shared.lastSubstitute = { pattern, replacement, flags: flags.replace(/[cn]/g, '') };
-		this.shared.lastReplacement = replacement;
 		this.shared.lastSearch = { pattern, backwards: false };
-		let global = flags.includes('g');
-		if (this.options.gdefault) {
-			global = !global;
-		}
+		const global = this.substituteGlobal(flags);
 		const countOnly = flags.includes('n');
-		let regex: VimRegex;
-		try {
-			regex = vimRegex(pattern, { ignorecase: this.options.ignorecase, smartcase: this.options.smartcase, lastReplacement: this.shared.lastReplacement });
-		} catch (e) {
-			this.message = e instanceof Error ? e.message : String(e);
-			return;
-		}
-		if (flags.includes('i')) {
-			regex = { ...regex, ignoreCase: true };
-		} else if (flags.includes('I')) {
-			regex = { ...regex, ignoreCase: false };
-		}
-		const re = new RegExp(regex.source, 'gu' + (regex.ignoreCase ? 'i' : ''));
 		if (flags.includes('c') && !countOnly) {
-			this.confirm = { re, replacement, global, line: r.start, col: 0, end: r.end, subs: 0, lines: new Set(), lastLine: -1, pattern, origin: this.cursor() };
+			this.confirm = { query: q, replacement, global, from: pos(r.start, 0), endLine: r.end, subs: 0, lines: new Set(), lastLine: -1, pattern, origin: this.cursor() };
 			this.openChange();
 			this.confirmNext(false);
 			return;
 		}
-		const edits: VimEdit[] = [];
-		let subs = 0;
-		let linesChanged = 0;
-		let lastLine = -1;
-		let delta = 0;
-		for (let l = r.start; l <= r.end; l++) {
-			const text = this.host.lineText(l);
-			re.lastIndex = 0;
-			let out = '';
-			let at = 0;
-			let n = 0;
-			let m: RegExpExecArray | null;
-			while ((m = re.exec(text))) {
-				n++;
-				out += text.slice(at, m.index) + expandReplacement(replacement, m, this.shared.lastReplacement);
-				at = m.index + m[0].length;
-				if (m[0].length === 0) {
-					if (re.lastIndex >= text.length) {
-						break;
-					}
-					out += text.slice(at, at + 1);
-					at++;
-					re.lastIndex = at;
-				}
-				if (!global) {
-					break;
-				}
-			}
-			if (n) {
-				subs += n;
-				linesChanged++;
-				lastLine = l;
-				if (!countOnly) {
-					out += text.slice(at);
-					edits.push({ start: pos(l, 0), end: pos(l, text.length), text: out });
-					delta += out.split('\n').length - 1;
-				}
-			}
-		}
-		if (!subs) {
+		const subs = substitutions(this.host, q, countOnly ? undefined : replacement, r, global);
+		const linesChanged = new Set(subs.map(x => x.range.start.line)).size;
+		if (!subs.length) {
 			if (!flags.includes('e')) {
 				this.message = `E486: Pattern not found: ${pattern}`;
 			}
 			return;
 		}
 		if (countOnly) {
-			this.message = `${subs} match${subs === 1 ? '' : 'es'} on ${linesChanged} line${linesChanged === 1 ? '' : 's'}`;
+			this.message = `${subs.length} match${subs.length === 1 ? '' : 'es'} on ${linesChanged} line${linesChanged === 1 ? '' : 's'}`;
 			return;
 		}
-		this.edit(edits);
+		// where the last replacement ends once every edit is in (the edits are in pre-edit coordinates)
+		let delta = 0;
+		for (const x of subs) {
+			delta += x.text!.split('\n').length - 1 - (x.range.end.line - x.range.start.line);
+		}
+		const lastSub = subs[subs.length - 1];
+		this.edit(subs.map(x => ({ start: x.range.start, end: x.range.end, text: x.text! })));
+		const finalLine = this.clampLine(lastSub.range.end.line + delta);
 		this.closeChange();
-		this.highlight(pattern);
-		const finalLine = this.clampLine(lastLine + delta);
+		this.highlight(q);
 		this.setMark('[', pos(r.start, 0));
 		this.setMark(']', pos(finalLine, 0));
 		this.setNormalCursor(pos(finalLine, this.firstNonBlank(finalLine)));
 		if (linesChanged > this.options.report) {
-			this.message = `${subs} substitution${subs === 1 ? '' : 's'} on ${linesChanged} line${linesChanged === 1 ? '' : 's'}`;
+			this.message = `${subs.length} substitution${subs.length === 1 ? '' : 's'} on ${linesChanged} line${linesChanged === 1 ? '' : 's'}`;
 		}
 	}
 
+	/**
+	 * 'inccommand': while `:[range]s/pat/rep/flags` is typed, what it would
+	 * replace on the lines on screen (and a little around them), at most
+	 * INCCOMMAND_LIMIT; only the matches while just the pattern is typed.
+	 * Undefined when the line is no `:s`, its pattern does not compile yet or
+	 * its range is not there.
+	 */
+	substitutePreview(line: string): VimSubstitution[] | undefined {
+		const p = parseExLine(line);
+		const name = canonicalExName(p.name);
+		if (name !== 'substitute' || !/^[^A-Za-z0-9\s"|\\&]/.test(p.args)) {
+			return undefined;
+		}
+		const a = this.substituteArgs(name, p.args);
+		if (typeof a === 'string' || regexError(a.pattern) !== undefined || !a.pattern) {
+			return undefined;
+		}
+		let r: { start: number; end: number } | undefined;
+		try {
+			r = p.range ? this.exRange(p, this.cursor(), false) : { start: this.cursor().line, end: this.cursor().line };
+		} catch {
+			r = undefined;
+		}
+		if (!r) {
+			return undefined;
+		}
+		if (a.count !== undefined) {
+			r = { start: r.end, end: this.clampLine(r.end + a.count - 1) };
+		}
+		const view = this.host.visibleLines();
+		const start = Math.max(r.start, view.top - INCCOMMAND_MARGIN);
+		const end = Math.min(r.end, view.bottom + INCCOMMAND_MARGIN);
+		if (start > end) {
+			return [];
+		}
+		const q = this.substituteQuery(a.pattern, a.flags);
+		return substitutions(this.host, q, a.upTo === 'pattern' ? undefined : a.replacement, { start, end }, this.substituteGlobal(a.flags), INCCOMMAND_LIMIT);
+	}
+
 	/** `:s///c` in progress: the next match waits for y / n / a / q / l. */
-	private confirm: { re: RegExp; replacement: string; global: boolean; line: number; col: number; end: number; subs: number; lines: Set<number>; lastLine: number; pattern: string; origin: VimPos } | undefined;
+	private confirm: { query: VimSearchQuery; replacement: string; global: boolean; from: VimPos; endLine: number; subs: number; lines: Set<number>; lastLine: number; pattern: string; origin: VimPos } | undefined;
+
+	/** The match `:s///c` asks about next: VS Code's next match from where it is, in the range. */
+	private confirmMatch(): VimMatch | undefined {
+		const c = this.confirm!;
+		const last = Math.min(c.endLine, this.lastLine());
+		if (c.from.line > last) {
+			return undefined;
+		}
+		const m = this.host.findNextMatch(c.query, c.from, false);
+		return m && cmp(m.range.start, c.from) >= 0 && m.range.start.line <= last ? m : undefined;
+	}
 
 	/** Find the next match to confirm (or, with `all`, replace every remaining one); finish when there is none. */
 	private confirmNext(all: boolean): void {
@@ -5184,18 +5307,11 @@ export class VimEngine {
 		if (!c) {
 			return;
 		}
-		while (c.line <= c.end && c.line <= this.lastLine()) {
-			const text = this.host.lineText(c.line);
-			c.re.lastIndex = c.col;
-			const m = c.col <= text.length ? c.re.exec(text) : null;
-			if (!m) {
-				c.line++;
-				c.col = 0;
-				continue;
-			}
+		let m: VimMatch | undefined;
+		while ((m = this.confirmMatch())) {
 			if (!all) {
-				this.host.showIncSearch({ start: pos(c.line, m.index), end: pos(c.line, m.index + m[0].length) });
-				this.host.setCursor(pos(c.line, m.index));
+				this.host.showIncSearch(m.range);
+				this.host.setCursor(m.range.start);
 				this.lastCursor = undefined;
 				this.awaiting = { command: 'devhubVim.substituteConfirm', args: {} };
 				this.message = `replace with ${c.replacement} (y/n/a/q/l)?`;
@@ -5206,24 +5322,29 @@ export class VimEngine {
 		this.finishConfirm();
 	}
 
-	/** Replace the match at the confirm position and move past it. */
-	private confirmReplace(m: RegExpExecArray): void {
+	/** Where `:s///c` goes on from after `at` (past an empty match by a character; the next line without `g`). */
+	private confirmAdvance(at: VimPos, empty: boolean): void {
 		const c = this.confirm!;
-		const out = expandReplacement(c.replacement, m, this.shared.lastReplacement);
-		this.edit([{ start: pos(c.line, m.index), end: pos(c.line, m.index + m[0].length), text: out }]);
-		c.subs++;
-		const added = out.split('\n').length - 1;
-		c.lines.add(c.line);
-		const endAt = endOfText(pos(c.line, m.index), out);
-		c.end += added;
-		c.lastLine = endAt.line;
 		if (!c.global) {
-			c.line = endAt.line + 1;
-			c.col = 0;
+			c.from = pos(at.line + 1, 0);
+		} else if (empty) {
+			c.from = at.col < this.len(at.line) ? pos(at.line, at.col + 1) : pos(at.line + 1, 0);
 		} else {
-			c.line = endAt.line;
-			c.col = endAt.col + (m[0].length === 0 ? 1 : 0);
+			c.from = at;
 		}
+	}
+
+	/** Replace the match at the confirm position and move past it. */
+	private confirmReplace(m: VimMatch): void {
+		const c = this.confirm!;
+		const out = this.host.replaceString(c.replacement, m);
+		this.edit([{ start: m.range.start, end: m.range.end, text: out }]);
+		c.subs++;
+		c.lines.add(m.range.start.line);
+		const endAt = endOfText(m.range.start, out);
+		c.endLine += out.split('\n').length - 1 - (m.range.end.line - m.range.start.line);
+		c.lastLine = endAt.line;
+		this.confirmAdvance(endAt, cmp(m.range.start, m.range.end) === 0);
 	}
 
 	private cmdSubstituteConfirm(ch: string | undefined): void {
@@ -5231,9 +5352,7 @@ export class VimEngine {
 		if (!c) {
 			return;
 		}
-		const text = this.host.lineText(c.line);
-		c.re.lastIndex = c.col;
-		const m = c.re.exec(text);
+		const m = this.confirmMatch();
 		if (!m || ch === 'q' || ch === undefined) {
 			this.finishConfirm();
 			return;
@@ -5248,12 +5367,7 @@ export class VimEngine {
 				this.finishConfirm();
 				return;
 			case 'n':
-				if (c.global) {
-					c.col = m.index + Math.max(1, m[0].length);
-				} else {
-					c.line++;
-					c.col = 0;
-				}
+				this.confirmAdvance(m.range.end, cmp(m.range.start, m.range.end) === 0);
 				this.confirmNext(false);
 				return;
 			case 'a':
@@ -5273,7 +5387,7 @@ export class VimEngine {
 		this.awaiting = undefined;
 		this.host.showIncSearch(undefined);
 		this.closeChange();
-		this.highlight(c.pattern);
+		this.highlight(c.query);
 		if (c.lastLine >= 0) {
 			const l = this.clampLine(c.lastLine);
 			this.setNormalCursor(pos(l, this.firstNonBlank(l)));
@@ -5292,13 +5406,18 @@ export class VimEngine {
 			return;
 		}
 		const pattern = g.pattern || this.shared.lastSearch?.pattern || '';
-		const re = this.compile(pattern);
-		this.shared.lastSearch = { pattern, backwards: false };
+		if (!pattern) {
+			this.message = 'E35: No previous regular expression';
+			return;
+		}
+		this.shared.lastSearch = g.pattern ? { pattern, backwards: false } : { ...this.shared.lastSearch!, backwards: false };
+		const q = this.lastSearchQuery()!;
+		// the lines a match starts on (VS Code's find over the range)
+		const hit = new Set(this.host.findMatches(q, { start: pos(r.start, 0), end: pos(r.end, this.len(r.end)) }, Number.MAX_SAFE_INTEGER).map(m => m.range.start.line));
 		const tag = `\u0000g${Date.now()}`;
 		const marked: string[] = [];
 		for (let l = r.start; l <= r.end; l++) {
-			re.lastIndex = 0;
-			if (re.test(this.host.lineText(l)) !== invert) {
+			if (hit.has(l) !== invert) {
 				const name = `${tag}:${l}`;
 				this.marks.set(name, pos(l, 0));
 				marked.push(name);
@@ -5337,9 +5456,7 @@ export class VimEngine {
 			this.changeBatch--;
 			this.closeChange();
 		}
-		if (this.shared.lastSearch) {
-			this.highlight(this.shared.lastSearch.pattern);
-		}
+		this.highlight(q);
 	}
 
 	/** :sort [!] [i] [n] [x] [u] [r] [/pat/] */
@@ -5356,21 +5473,21 @@ export class VimEngine {
 		const hex = flags.includes('x');
 		const unique = flags.includes('u');
 		const byMatch = flags.includes('r');
-		const re = pat ? this.compile(pat) : undefined;
+		const q = pat ? this.query(pat) : undefined;
 		const lines: string[] = [];
 		for (let l = r.start; l <= r.end; l++) {
 			lines.push(this.host.lineText(l));
 		}
-		const key = (line: string): string => {
-			if (!re) {
+		const key = (line: string, l: number): string => {
+			if (!q) {
 				return line;
 			}
-			re.lastIndex = 0;
-			const m = re.exec(line);
+			// the first match on the line, as VS Code's find finds it
+			const m = this.host.findMatches(q, { start: pos(l, 0), end: pos(l, line.length) }, 1)[0];
 			if (!m) {
 				return byMatch ? '' : line;
 			}
-			return byMatch ? m[0] : line.slice(m.index + m[0].length);
+			return byMatch ? m.groups[0] ?? line.slice(m.range.start.col, m.range.end.col) : line.slice(m.range.end.col);
 		};
 		const numberOf = (s: string): number => {
 			const m = hex ? /-?(?:0[xX])?[0-9a-fA-F]+/.exec(s) : /-?\d+/.exec(s);
@@ -5379,7 +5496,7 @@ export class VimEngine {
 			}
 			return hex ? parseInt(m[0].replace(/^(-?)0[xX]/, '$1'), 16) : Number(m[0]);
 		};
-		const items = lines.map((line, i) => ({ line, i, k: key(line) }));
+		const items = lines.map((line, i) => ({ line, i, k: key(line, r.start + i) }));
 		items.sort((a, b) => {
 			let c: number;
 			if (numeric || hex) {
@@ -5476,7 +5593,7 @@ export class VimEngine {
 		if (!this.options.hlsearch) {
 			this.host.highlightSearch(undefined);
 		} else if (this.hlActive && this.shared.lastSearch) {
-			this.highlight(this.shared.lastSearch.pattern);
+			this.highlight(this.lastSearchQuery());
 		}
 		if (shown.length) {
 			this.message = shown.join('  ');
@@ -5621,6 +5738,12 @@ function appendRegister(prev: VimRegister, value: VimRegister): VimRegister {
 		return { text: prev.text + '\n' + value.text, type: 'block' };
 	}
 	return { text: prev.text + value.text, type: 'char' };
+}
+
+/** Text as a pattern that matches it literally, in a `/` (or `?`) search line. */
+function literalPattern(text: string, delimiter: '/' | '?'): string {
+	const esc = escapeRegExpCharacters(text);
+	return delimiter === '/' ? esc.replace(/\//g, '\\/') : esc;
 }
 
 /** A search line `pat/e+1` split into the pattern and the offset (`:help search-offset`). */

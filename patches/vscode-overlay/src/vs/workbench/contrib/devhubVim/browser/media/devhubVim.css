@@ -1,0 +1,17 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) DevHub contributors. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* 'inccommand' (../devhubVim.contribution.ts): what the `:s` being typed would replace, struck through, and its replacement after it. */
+
+.monaco-editor .devhub-vim-inccommand-old {
+	text-decoration: line-through;
+	opacity: 0.6;
+	background-color: var(--vscode-diffEditor-removedTextBackground);
+}
+
+.monaco-editor .devhub-vim-inccommand-new {
+	background-color: var(--vscode-diffEditor-insertedTextBackground);
+	color: var(--vscode-editor-foreground);
+}

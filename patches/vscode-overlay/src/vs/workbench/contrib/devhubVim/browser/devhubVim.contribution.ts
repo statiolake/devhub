@@ -136,7 +136,7 @@ import { Selection } from '../../../../editor/common/core/selection.js';
 import { ScrollType } from '../../../../editor/common/editorCommon.js';
 import { InputMode } from '../../../../editor/common/inputMode.js';
 import { ILanguageConfigurationService } from '../../../../editor/common/languages/languageConfigurationRegistry.js';
-import { IModelDeltaDecoration, OverviewRulerLane, TrackedRangeStickiness } from '../../../../editor/common/model.js';
+import { FindMatch, IModelDeltaDecoration, InjectedTextCursorStops, OverviewRulerLane, TrackedRangeStickiness } from '../../../../editor/common/model.js';
 import { ModelDecorationOptions } from '../../../../editor/common/model/textModel.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { localize } from '../../../../nls.js';
@@ -156,18 +156,20 @@ import { overviewRulerFindMatchForeground } from '../../../../platform/theme/com
 import { themeColorFromId } from '../../../../platform/theme/common/themeService.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
-import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimPos, VimRange, VimSharedState } from '../common/vimEngine.js';
+import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimMatch, VimPos, VimRange, VimSearchQuery, VimSharedState, VimSubstitution } from '../common/vimEngine.js';
+import { parseReplaceString } from '../../../../editor/contrib/find/browser/replacePattern.js';
+import './media/devhubVim.css';
 import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
 import { VIM_EDIT_COMMANDS } from './vimEdit.js';
-import { VimRegex } from '../common/vimRegex.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 
 const SETTING = 'devhub.vim.enabled';
 const EX_SETTING = 'devhub.vim.exCommands';
 const OPTIONS_SETTING = 'devhub.vim.options';
+const INCCOMMAND_SETTING = 'devhub.vim.inccommand';
 
 const exStepSchema: IJSONSchema = {
 	type: 'object',
@@ -211,6 +213,12 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: {},
 			markdownDescription: localize('devhubVim.options', "Vim options at startup, as with `:set` (Neovim's defaults otherwise). For example `{ \"ignorecase\": true, \"smartcase\": true }`."),
 			properties: Object.fromEntries(Object.entries(DEFAULT_VIM_OPTIONS).map(([k, v]) => [k, { type: typeof v as 'boolean' | 'number' | 'string', default: v }])),
+		},
+		[INCCOMMAND_SETTING]: {
+			type: 'string',
+			enum: ['nosplit', ''],
+			default: 'nosplit',
+			markdownDescription: localize('devhubVim.inccommand', "Neovim's 'inccommand': while `:s/pattern/replacement/` is typed, show in the editor what it would replace (on the lines on screen): each match struck through with its replacement after it, and just the matches while only the pattern is typed. Esc takes it all away, Enter replaces. `\"\"`: no preview."),
 		},
 		[VIM_CMDLINE_AUTOCOMPLETE_SETTING]: {
 			type: 'boolean',
@@ -261,6 +269,19 @@ const INCSEARCH_DECORATION = ModelDecorationOptions.register({
 	showIfCollapsed: true,
 	zIndex: 13,
 });
+/** 'inccommand': a match `:s` would replace (struck through), and what replaces it after it. */
+const INCCOMMAND_OLD_CLASS = 'devhub-vim-inccommand-old';
+const INCCOMMAND_NEW_CLASS = 'devhub-vim-inccommand-new';
+function inccommandDecoration(text: string): ModelDecorationOptions {
+	return ModelDecorationOptions.createDynamic({
+		description: 'devhub-vim-inccommand',
+		stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+		inlineClassName: INCCOMMAND_OLD_CLASS,
+		showIfCollapsed: true,
+		// a line break in the replacement is shown as one character
+		after: { content: text.replace(/\n/g, '\u21b5'), inlineClassName: INCCOMMAND_NEW_CLASS, cursorStops: InjectedTextCursorStops.None },
+	});
+}
 /** Matches drawn for 'hlsearch' at most (around the visible lines first). */
 const HLSEARCH_LIMIT = 5000;
 
@@ -273,6 +294,23 @@ const HLSEARCH_LIMIT = 5000;
  */
 function selectionSource(jump: boolean | undefined): string {
 	return jump ? TextEditorSelectionSource.JUMP : 'devhubVim';
+}
+
+function toRange(r: VimRange): Range {
+	return new Range(r.start.line + 1, r.start.col + 1, r.end.line + 1, r.end.col + 1);
+}
+
+function toVimMatch(m: FindMatch): VimMatch {
+	const r = m.range;
+	return {
+		range: { start: { line: r.startLineNumber - 1, col: r.startColumn - 1 }, end: { line: r.endLineNumber - 1, col: r.endColumn - 1 } },
+		groups: m.matches ?? [],
+	};
+}
+
+/** `devhub.vim.inccommand`: 'nosplit' unless turned off. */
+function inccommandOf(value: unknown): string {
+	return value === '' ? '' : 'nosplit';
 }
 
 /** One CodeEditorWidget with its engine; it is the engine's IVimHost. */
@@ -293,6 +331,10 @@ class VimEditor extends Disposable implements IVimHost {
 	private readonly hlDecorations;
 	private readonly incDecorations;
 	private readonly hlScheduler = this._register(new RunOnceScheduler(() => this.drawHighlight(), 50));
+	private readonly previewDecorations;
+	/** 'inccommand': what the `:s` being typed would do, computed and drawn shortly after the last key. */
+	private previewCompute: (() => readonly VimSubstitution[] | undefined) | undefined;
+	private readonly previewScheduler = this._register(new RunOnceScheduler(() => this.drawPreview(), 30));
 	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
 	/** Inside scrollToLine's cursor move: the cursor is not revealed, the scroll says where the window goes. */
 	private revealSuppressed = 0;
@@ -315,7 +357,8 @@ class VimEditor extends Disposable implements IVimHost {
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
-		this._register({ dispose: () => { this.hlDecorations.clear(); this.incDecorations.clear(); } });
+		this.previewDecorations = editor.createDecorationsCollection();
+		this._register({ dispose: () => { this.hlDecorations.clear(); this.incDecorations.clear(); this.previewDecorations.clear(); } });
 
 		this._register(editor.onKeyDown(e => this.onKeyDown(e)));
 		this._register(editor.onDidFocusEditorText(() => owner.update()));
@@ -325,6 +368,7 @@ class VimEditor extends Disposable implements IVimHost {
 			this.modelListener.clear();
 			this.insertStyle = this.readInsertCursorStyle();
 			this.incDecorations.clear();
+			this.previewSubstitute(undefined);
 			this.scheduleHighlight();
 			owner.update();
 		}));
@@ -572,12 +616,41 @@ class VimEditor extends Disposable implements IVimHost {
 		let decorations: IModelDeltaDecoration[] = [];
 		try {
 			const scope = new Range(from, 1, to, model.getLineMaxColumn(to));
-			decorations = model.findMatches(r.source, scope, true, !r.ignoreCase, null, false, HLSEARCH_LIMIT)
+			decorations = model.findMatches(r.pattern, scope, true, r.matchCase, this.wordSeparators(r), false, HLSEARCH_LIMIT)
 				.map(m => ({ range: m.range, options: HLSEARCH_DECORATION }));
 		} catch {
-			// the engine compiled it; nothing else can be wrong but the model going away
+			// the engine checked the pattern; nothing else can be wrong but the model going away
 		}
 		this.hlDecorations.set(decorations);
+	}
+
+	/** VS Code's Match Whole Word: the editor's word separators (null: any match). */
+	private wordSeparators(q: VimSearchQuery): string | null {
+		return q.wholeWord ? this.editor.getOption(EditorOption.wordSeparators) : null;
+	}
+
+	previewSubstitute(compute: (() => readonly VimSubstitution[] | undefined) | undefined): void {
+		this.previewCompute = compute;
+		if (compute) {
+			this.previewScheduler.schedule();
+		} else {
+			this.previewScheduler.cancel();
+			this.previewDecorations.clear();
+		}
+	}
+
+	private drawPreview(): void {
+		let subs: readonly VimSubstitution[] | undefined;
+		try {
+			subs = this.previewCompute?.();
+		} catch {
+			// a line typed half-way: no preview, no error
+			subs = undefined;
+		}
+		this.previewDecorations.set((subs ?? []).map(x => ({
+			range: toRange(x.range),
+			options: x.text === undefined ? HLSEARCH_DECORATION : inccommandDecoration(x.text),
+		})));
 	}
 
 	// ---- IVimHost -----------------------------------------------------------
@@ -846,8 +919,24 @@ class VimEditor extends Disposable implements IVimHost {
 		this.owner.prefetchClipboard();
 	}
 
-	highlightSearch(regex: VimRegex | undefined): void {
-		this.owner.setSearchHighlight(regex);
+	findMatches(query: VimSearchQuery, within: VimRange, limit: number): VimMatch[] {
+		return this.model.findMatches(query.pattern, toRange(within), true, query.matchCase, this.wordSeparators(query), true, limit).map(toVimMatch);
+	}
+
+	findNextMatch(query: VimSearchQuery, from: VimPos, backwards: boolean): VimMatch | undefined {
+		const at = new Position(from.line + 1, from.col + 1);
+		const m = backwards
+			? this.model.findPreviousMatch(query.pattern, at, true, query.matchCase, this.wordSeparators(query), true)
+			: this.model.findNextMatch(query.pattern, at, true, query.matchCase, this.wordSeparators(query), true);
+		return m ? toVimMatch(m) : undefined;
+	}
+
+	replaceString(replacement: string, match: VimMatch): string {
+		return parseReplaceString(replacement).buildReplaceString(match.groups as string[]);
+	}
+
+	highlightSearch(query: VimSearchQuery | undefined): void {
+		this.owner.setSearchHighlight(query);
 	}
 
 	showIncSearch(range: VimRange | undefined): void {
@@ -910,7 +999,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	/** Whether the editor's overtype input mode is Vim's replace mode (so leaving it puts insert back). */
 	private overtypeOwned = false;
 	/** 'hlsearch': the last pattern, shared by every editor, until :nohlsearch. */
-	searchHighlight: VimRegex | undefined;
+	searchHighlight: VimSearchQuery | undefined;
 	/** The prompt line, made when the first prompt opens. */
 	private cmdline: VimCmdline | undefined;
 	readonly nav = new VimNavPrefix();
@@ -946,6 +1035,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		};
 		this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
 		this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
+		this.shared.inccommand = inccommandOf(configurationService.getValue(INCCOMMAND_SETTING));
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SETTING)) {
 				this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
@@ -955,6 +1045,9 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			}
 			if (e.affectsConfiguration(OPTIONS_SETTING)) {
 				this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
+			}
+			if (e.affectsConfiguration(INCCOMMAND_SETTING)) {
+				this.shared.inccommand = inccommandOf(configurationService.getValue(INCCOMMAND_SETTING));
 			}
 			if (e.affectsConfiguration('editor.cursorStyle')) {
 				for (const v of this.editors.values()) {
@@ -1070,8 +1163,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	}
 
 	/** 'hlsearch' is global, as in Vim: every editor shows the last pattern until :nohlsearch. */
-	setSearchHighlight(regex: VimRegex | undefined): void {
-		this.searchHighlight = regex;
+	setSearchHighlight(query: VimSearchQuery | undefined): void {
+		this.searchHighlight = query;
 		for (const v of this.editors.values()) {
 			v.scheduleHighlight();
 		}

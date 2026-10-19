@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { KEYWORD_CLASS_SOURCES, ScriptClass, ScriptWordBoundaries, scriptClassAt } from '../../../common/core/scriptWordBoundaries.js';
+import { ScriptClass, ScriptWordBoundaries, scriptClassAt } from '../../../common/core/scriptWordBoundaries.js';
 
 suite('DevHub: script classes and word boundaries between scripts', () => {
 
@@ -74,12 +74,5 @@ suite('DevHub: script classes and word boundaries between scripts', () => {
 		assert.strictEqual(narrow('漢字ひらがなカナ', 3), 'ひらがな');
 		assert.strictEqual(narrow('漢字ひらがなカナ', 9), 'カナ');
 		assert.strictEqual(narrow('foo_bar', 3), 'foo_bar');
-	});
-
-	test('the keyword classes partition [\\p{L}\\p{N}_] as scriptClassAt does', () => {
-		const res = KEYWORD_CLASS_SOURCES.map(s => new RegExp(`^(?:${s})$`, 'u'));
-		for (const ch of ['漢', 'ひ', 'カ', 'ー', 'Ａ', '１', 'a', '_', 'é', '한', '々']) {
-			assert.strictEqual(res.filter(r => r.test(ch)).length, 1, ch);
-		}
 	});
 });

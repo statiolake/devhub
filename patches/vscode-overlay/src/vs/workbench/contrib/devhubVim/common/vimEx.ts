@@ -413,7 +413,7 @@ export interface ExAddressContext {
 	readonly visual: { readonly start: number; readonly end: number } | undefined;
 	/** The line of mark `name` (0-based), if set. */
 	readonly mark?: (name: string) => number | undefined;
-	/** The next (or previous) line matching a Vim pattern, from `line` exclusive, wrapping; empty pattern = the last search. */
+	/** The next (or previous) line matching a pattern (a JavaScript regex, VS Code's find), from `line` exclusive, wrapping; empty pattern = the last search. */
 	readonly search?: (pattern: string, backwards: boolean, line: number) => number | undefined;
 }
 
@@ -602,6 +602,8 @@ export interface ParsedSubstitute {
 	readonly replacement?: string;
 	readonly flags: string;
 	readonly count?: number;
+	/** Where the line ends, for 'inccommand': in the pattern (no delimiter after it yet), in the replacement, or after it. */
+	readonly upTo?: 'pattern' | 'replacement' | 'flags';
 }
 
 /** `/{pattern}/{string}/[flags] [count]` with any non-alphanumeric delimiter. */
@@ -632,11 +634,12 @@ export function parseSubstitute(args: string): ParsedSubstitute {
 	const start = i;
 	let pattern = part();
 	if (pattern === undefined) {
-		return { pattern: args.slice(start), replacement: '', flags: '' };
+		return { pattern: args.slice(start), replacement: '', flags: '', upTo: 'pattern' };
 	}
 	const repStart = i;
 	let replacement = part();
 	let rest = '';
+	const upTo = replacement === undefined ? 'replacement' : 'flags';
 	if (replacement === undefined) {
 		replacement = args.slice(repStart).replace(new RegExp('\\\\' + d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), d);
 	} else {
@@ -646,7 +649,7 @@ export function parseSubstitute(args: string): ParsedSubstitute {
 		pattern = '';
 	}
 	const m = /^\s*(&?[cegiInp#lr]*)\s*(\d*)/.exec(rest);
-	return { pattern, replacement, flags: m ? m[1] : '', count: m && m[2] ? Number(m[2]) : undefined };
+	return { pattern, replacement, flags: m ? m[1] : '', count: m && m[2] ? Number(m[2]) : undefined, upTo };
 }
 
 /** `:g/pat/cmd`: the pattern and the command (default `p`). */

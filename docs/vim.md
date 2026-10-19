@@ -100,11 +100,30 @@ the inline suggestion), `CTRL-A`
 `CTRL-N` / `CTRL-P` / `CTRL-X CTRL-O` (VS Code's suggestions). Counts repeat
 the insert (`3ix<Esc>`, `3oab<Esc>`).
 
-**Search**: Vim regular expressions (`\v \m \M \V`, `\( \| \+ \= \{n,m}
-\< \> \zs \ze \s \d \w \a \u \l \k`, `[[:alpha:]]`, `\c \C`; see
-`common/vimRegex.ts`), case sensitive by default ('noignorecase'; `:set ic
-scs`), 'wrapscan', 'hlsearch' (every match highlighted until `:noh` /
-CTRL-L), 'incsearch' (the match is shown while typing). `/` and `?` type
+**Search**: patterns are **JavaScript regular expressions, exactly as in
+VS Code's find widget** with "Use Regular Expression" on — not Vim's regex
+dialect. `/ ? n N * # gn`, `:s`, `:g` / `:v`, `:sort /pat/` and `/pat/`
+ranges are all VS Code's find (`TextModel.findMatches` / `findNextMatch` /
+`findPreviousMatch`) on the editor's model, so they match what Cmd+F matches:
+
+| Vim | here (JavaScript, VS Code's find) |
+| --- | --- |
+| `\<foo\>` | `\bfoo\b` (ASCII words; `*` / `#` use VS Code's Match Whole Word, which also ends a word where the script changes, 漢字 / かな) |
+| `\(ab\)\+` | `(ab)+` |
+| `a\{2,3}` `a\=` `a\{-}` | `a{2,3}` `a?` `a*?` |
+| `\zs` `\ze` | `(?<=…)` `(?=…)` |
+| `\v` `\V` | (none: write the regex, or escape: `foo\(`) |
+| `\_s` `\n` | `\s` `\n` — a pattern with `\n` matches across lines, as in the find widget |
+| `\c` `\C` | `:set ic` / `scs`, or `:s` flags `i` / `I` |
+| `~` (last replacement) | (none) |
+
+Case: 'ignorecase' / 'smartcase' decide VS Code's Match Case (with
+'smartcase' an uppercase letter in the pattern makes it match case; the
+letters of escapes such as `\W` `\S` `\p{Lu}` do not count), `*` / `#`
+follow 'ignorecase' only. An invalid pattern is an error (`E383`) and changes
+nothing. 'wrapscan', 'hlsearch' (every match highlighted until `:noh` /
+CTRL-L, drawn with VS Code's find colours), 'incsearch' (the match is shown
+while typing). `/` and `?` type
 into the prompt line at the bottom of the window (see [The prompt](#the-prompt)):
 history, `CTRL-U CTRL-W CTRL-R {register}`, and `d/foo<CR>` / `c?bar<CR>`
 keep their operator, count and register.
@@ -228,7 +247,8 @@ abandons it.
 What it starts with is Vim's: `:` in visual mode starts with `'<,'>`,
 `{count}:` with `.,.+{count-1}`; `/` and `?` after an operator (`d/foo<CR>`),
 a count or a register keep them for the search. While a pattern is typed the
-match is shown in the editor ('incsearch'). Enter runs the line as
+match is shown in the editor ('incsearch'), and while a `:s` is typed what it
+would do ('inccommand', below). Enter runs the line as
 `devhubVim.ex` / `devhubVim.search` in the editor it came from (so `:sp`,
 `:w`, `:'<,'>s/a/b/` act there).
 
@@ -759,7 +779,7 @@ editor, Vim on or off:
 | Where | What changes |
 | --- | --- |
 | Vim `w b e ge`, `iw aw`, `cw` | stop at each class change (CJK punctuation and ASCII punctuation are one class, as in Vim); `W B E iW aW` are unchanged (blanks only, the ideographic space included) |
-| Vim `*` `#` `g*` `g#`, `\<` `\>` | the word under the cursor is the run in one script (`*` on 漢字 of 漢字かな searches `\<漢字\>`), and `\<` / `\>` match where the script changes |
+| Vim `*` `#` `g*` `g#` | the word under the cursor is the run in one script (`*` on 漢字 of 漢字かな searches 漢字 with VS Code's Match Whole Word, which ends a word where the script changes) |
 | `Alt+Left` / `Alt+Right` (`cursorWordLeft` / `cursorWordEndRight` …), `Alt+Backspace` / `Alt+Delete` (`deleteWordLeft` / `deleteWordRight`) | move / delete one script run |
 | double-click | selects the script run |
 | the word under the cursor: `Cmd+D` (`editor.action.addSelectionToNextFindMatch`), the word highlight, the find widget's seed, completion's word | the script run at the cursor |
@@ -851,7 +871,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 
 | Command | |
 | --- | --- |
-| `:[range]s[ubstitute]/{pat}/{rep}/[&cegiInp#lr] [count]` | `&` `\0`–`\9` `~` `\u \l \U \L \e \E` `\r` (line break) `\n` (NUL) in `{rep}`; any non-alphanumeric delimiter; empty `{pat}` is the last search; `c` asks `y/n/a/q/l` for every match; `'gdefault'` |
+| `:[range]s[ubstitute]/{pat}/{rep}/[&cegiInp#lr] [count]` | `{pat}` a JavaScript regex (multiline as VS Code's find), only matches that start in the range; `{rep}` the find widget's replace string: `$1`–`$99` `$&` (the match) `$$` `\n` (line break) `\t` `\\`, and `\u \U \l \L` before a `$n` (`\u$1`); `&` and `~` are plain characters. Any non-alphanumeric delimiter (`\/` is the delimiter); empty `{pat}` is the last search; `c` asks `y/n/a/q/l` for every match; `i` / `I` ignore / match case; `n` counts; `e` no error; `'gdefault'`. One undo step |
 | `:s [flags]` `:&[&]` `:~` | repeat the last `:s` (`:&&` keeps the flags; `:~` with the last search pattern) |
 | `:[range]g[lobal][!]/{pat}/{cmd}` `:v[global]` | `{cmd}` any of these (`d`, `s//x/`, `normal …`, `m0`, …); one undo step |
 | `:[range]d[elete] [x] [count]` `:[range]y[ank] [x] [count]` | |
@@ -859,7 +879,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:[range]j[oin][!] [count]` `:[range]> [count]` `:[range]< [count]` | `:>>` shifts twice |
 | `:[line]pu[t][!] [x]` | always linewise |
 | `:[range]norm[al][!] {keys}` | keys go through the default keymap (as `:normal!`), `<Esc>` ends what is left |
-| `:[range]sor[t][!] [i][n][x][u][r] [/{pat}/]` | |
+| `:[range]sor[t][!] [i][n][x][u][r] [/{pat}/]` | `{pat}` a JavaScript regex |
 | `:{n}` `:$` `:'a` `:/pat/` `:+3` | go to the line (keeps the column: 'nostartofline') |
 | `:noh[lsearch]` `:u[ndo]` `:red[o]` `:ma[rk] {a}` `:k{a}` | |
 | `:se[t] {option}` | see [Options](#options) |
@@ -979,6 +999,17 @@ typed value; inside a longer string it is replaced by its text):
 With a range the lines are selected while the steps run (so commands that work
 on the selection get them), then the caret goes to the range's first line.
 
+### 'inccommand'
+
+While `:[range]s/{pat}/{rep}/[flags]` is typed in the prompt, the editor it
+came from shows what it would do, as Neovim's `inccommand=nosplit`: every
+match in the range on the lines on screen (and 50 around them, at most
+1000) struck through, with its replacement after it; `g` decides whether
+every match on a line or only the first; while only `{pat}` is typed the
+matches are highlighted. A pattern still half typed (`(foo`) shows nothing
+and no error. Esc takes it all away; Enter replaces, as one undo step.
+`"devhub.vim.inccommand": ""` turns it off (default `"nosplit"`).
+
 ## Options
 
 `:set` knows these (Neovim's defaults); `devhub.vim.options` in
@@ -1072,9 +1103,12 @@ otherwise.
   and other Vimscript, `:r[ead]`, `:!`, `:make`, the location list
   / tags / argument list, `CTRL-W x r T`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
-* Patterns are matched one line at a time: `\n` and `\_x` in a pattern never
-  match across lines; `\%V`, `\%23l`, `\@<=` and friends are not supported (an
-  error says so). Screen columns count a tab as 'tabstop' cells and every
+* Patterns are JavaScript regular expressions (VS Code's find), not Vim's:
+  `\%V`, `\%23l`, `\v` and the other Vim-only atoms do not exist. A match
+  must lie inside the `:s` / `:g` range (Vim lets it run past the last line),
+  `?` / `N` find a match that ends before the cursor (VS Code's Find
+  Previous), and `/<Up>` after `*` recalls the word without the whole-word
+  condition. Screen columns count a tab as 'tabstop' cells and every
   other character as one (wide CJK characters are one column in blocks).
 * Uppercase marks (`mA`) are kept per editor, not across files. The jump
   list and change list are VS Code's history (see Marks and jumps): `:jumps`,

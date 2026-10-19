@@ -5,82 +5,26 @@
 
 import assert from 'assert';
 import { parseExLine, parseGlobal, parseSubstitute, resolveExAddress, canonicalExName } from '../../common/vimEx.js';
-import { VimRegexError, compileVimRegex, expandReplacement, lineMatches, literalVimPattern, vimRegex } from '../../common/vimRegex.js';
+import { patternMatchCase, regexError } from '../../common/vimEngine.js';
 import { addToNumber, colOfVcol, formatLines, rot13, vcolOf } from '../../common/vimText.js';
 
-const OPTS = { ignorecase: false, smartcase: false };
+suite('DevHub Vim patterns are JavaScript regular expressions', () => {
 
-/** [start, end] of the matches of a Vim pattern in `text`. */
-function matches(pattern: string, text: string, opts: { ignorecase: boolean; smartcase: boolean; lastReplacement?: string } = OPTS): [number, number][] {
-	return lineMatches(compileVimRegex(vimRegex(pattern, opts)), text);
-}
-
-function sub(pattern: string, rep: string, text: string, last = ''): string {
-	const re = new RegExp(vimRegex(pattern, OPTS).source, 'u');
-	const m = re.exec(text)!;
-	return text.slice(0, m.index) + expandReplacement(rep, m, last) + text.slice(m.index + m[0].length);
-}
-
-suite('DevHub Vim regular expressions', () => {
-
-	test('magic: \\( \\| \\+ \\= \\{n,m} \\< \\> and literal + ? ( )', () => {
-		assert.deepStrictEqual(matches('a\\+', 'baaab'), [[1, 4]]);
-		assert.deepStrictEqual(matches('a+', 'a+aa'), [[0, 2]]);
-		assert.deepStrictEqual(matches('colou\\=r', 'color colour'), [[0, 5], [6, 12]]);
-		assert.deepStrictEqual(matches('\\(ab\\)\\{2}', 'ababab'), [[0, 4]]);
-		assert.deepStrictEqual(matches('a\\{-1,}', 'aaa'), [[0, 1], [1, 2], [2, 3]]);
-		assert.deepStrictEqual(matches('\\<is\\>', 'this is'), [[5, 7]]);
-		assert.deepStrictEqual(matches('cat\\|dog', 'dog cat'), [[0, 3], [4, 7]]);
-		assert.deepStrictEqual(matches('f(x)', 'f(x)'), [[0, 4]]);
-		assert.deepStrictEqual(matches('a.c', 'abc a.c'), [[0, 3], [4, 7]]);
-		assert.deepStrictEqual(matches('a\\.c', 'abc a.c'), [[4, 7]]);
-		assert.deepStrictEqual(matches('^\\s*x', '  x x'), [[0, 3]]);
-		assert.deepStrictEqual(matches('x$', 'x x'), [[2, 3]]);
-		assert.deepStrictEqual(matches('a^b', 'a^b'), [[0, 3]]);
-		assert.deepStrictEqual(matches('*a', '*a'), [[0, 2]]);
+	test('an invalid one says why; a valid one does not', () => {
+		assert.strictEqual(regexError('a(b|c)+\\d{2}'), undefined);
+		assert.strictEqual(regexError('\\bfoo\\b'), undefined);
+		assert.ok(regexError('(foo'));
+		assert.ok(regexError('a\\'));
 	});
 
-	test('\\v very magic, \\V very nomagic, \\M nomagic', () => {
-		assert.deepStrictEqual(matches('\\v(a|b)+', 'xabx'), [[1, 3]]);
-		assert.deepStrictEqual(matches('\\v<x>', 'x xx'), [[0, 1]]);
-		assert.deepStrictEqual(matches('\\Va.b*', 'axb a.b*'), [[4, 8]]);
-		assert.deepStrictEqual(matches('\\Va\\.b', 'axb'), [[0, 3]]);
-		assert.deepStrictEqual(matches('\\Ma*', 'aa*'), [[1, 3]]);
-	});
-
-	test('classes, collections, \\zs \\ze, ~, case', () => {
-		assert.deepStrictEqual(matches('\\d\\+', 'a12b3'), [[1, 3], [4, 5]]);
-		assert.deepStrictEqual(matches('\\u\\l', 'aBcD'), [[1, 3]]);
-		assert.deepStrictEqual(matches('[[:digit:]x]\\+', 'a1x2b'), [[1, 4]]);
-		assert.deepStrictEqual(matches('[^a-c]', 'abcd'), [[3, 4]]);
-		assert.deepStrictEqual(matches('[]]', 'a]'), [[1, 2]]);
-		assert.deepStrictEqual(matches('foo\\zsbar', 'foobar bar'), [[3, 6]]);
-		assert.deepStrictEqual(matches('foo\\zebar', 'foobar foo'), [[0, 3]]);
-		assert.deepStrictEqual(matches('x~', 'xab', { ...OPTS, lastReplacement: 'ab' }), [[0, 3]]);
-		assert.deepStrictEqual(matches('foo\\c', 'FOO'), [[0, 3]]);
-		assert.deepStrictEqual(matches('Foo', 'foo Foo', { ignorecase: true, smartcase: true }), [[4, 7]]);
-		assert.deepStrictEqual(matches('foo', 'foo Foo', { ignorecase: true, smartcase: true }), [[0, 3], [4, 7]]);
-		assert.deepStrictEqual(matches('\\Sx', 'ax', { ignorecase: true, smartcase: true }), [[0, 2]]);
-		assert.deepStrictEqual(matches('\\%d65', 'zA'), [[1, 2]]);
-		assert.throws(() => vimRegex('a\\)', OPTS), VimRegexError);
-		assert.throws(() => vimRegex('\\%V', OPTS), VimRegexError);
-	});
-
-	test('literal patterns (* on a word, v_*)', () => {
-		const p = literalVimPattern('a.b/c\\d');
-		assert.deepStrictEqual(matches(p, 'xa.b/c\\dx'), [[1, 8]]);
-	});
-
-	test(':s replacements: & \\0 \\1 ~ \\u \\U \\L \\e \\r \\n', () => {
-		assert.strictEqual(sub('b', '<&>', 'abc'), 'a<b>c');
-		assert.strictEqual(sub('b', '\\&', 'abc'), 'a&c');
-		assert.strictEqual(sub('\\(a\\)\\(b\\)', '\\2\\1\\0', 'ab'), 'baab');
-		assert.strictEqual(sub('b', 'x~y', 'abc', 'Q'), 'axQyc');
-		assert.strictEqual(sub('\\w\\+', '\\u&', 'foo'), 'Foo');
-		assert.strictEqual(sub('\\w\\+', '\\U&\\Ex', 'foo'), 'FOOx');
-		assert.strictEqual(sub('\\w\\+', '\\L\\u&', 'FOO'), 'Foo');
-		assert.strictEqual(sub(',', '\\r', 'a,b'), 'a\nb');
-		assert.strictEqual(sub(',', '\\n', 'a,b'), 'a\0b');
+	test('ignorecase and smartcase decide the case; escapes and group names are no uppercase', () => {
+		assert.strictEqual(patternMatchCase('foo', false, false), true);
+		assert.strictEqual(patternMatchCase('Foo', true, false), false);
+		assert.strictEqual(patternMatchCase('foo', true, true), false);
+		assert.strictEqual(patternMatchCase('Foo', true, true), true);
+		assert.strictEqual(patternMatchCase('\\W\\S\\D\\B', true, true), false);
+		assert.strictEqual(patternMatchCase('\\p{Lu}\\u00C9\\x4A\\cJ(?<Name>x)\\k<Name>', true, true), false);
+		assert.strictEqual(patternMatchCase('\\wÉ', true, true), true);
 	});
 });
 
@@ -109,10 +53,12 @@ suite('DevHub Vim ex parsing', () => {
 	});
 
 	test(':s and :g arguments', () => {
-		assert.deepStrictEqual(parseSubstitute('/a/b/g'), { pattern: 'a', replacement: 'b', flags: 'g', count: undefined });
-		assert.deepStrictEqual(parseSubstitute('#a/b#c#gi 3'), { pattern: 'a/b', replacement: 'c', flags: 'gi', count: 3 });
-		assert.deepStrictEqual(parseSubstitute('/a\\/b/c'), { pattern: 'a/b', replacement: 'c', flags: '', count: undefined });
-		assert.deepStrictEqual(parseSubstitute('/a/b'), { pattern: 'a', replacement: 'b', flags: '', count: undefined });
+		assert.deepStrictEqual(parseSubstitute('/a/b/g'), { pattern: 'a', replacement: 'b', flags: 'g', count: undefined, upTo: 'flags' });
+		assert.deepStrictEqual(parseSubstitute('#a/b#c#gi 3'), { pattern: 'a/b', replacement: 'c', flags: 'gi', count: 3, upTo: 'flags' });
+		assert.deepStrictEqual(parseSubstitute('/a\\/b/c'), { pattern: 'a/b', replacement: 'c', flags: '', count: undefined, upTo: 'replacement' });
+		assert.deepStrictEqual(parseSubstitute('/a/b'), { pattern: 'a', replacement: 'b', flags: '', count: undefined, upTo: 'replacement' });
+		assert.deepStrictEqual(parseSubstitute('/a/'), { pattern: 'a', replacement: '', flags: '', count: undefined, upTo: 'replacement' });
+		assert.deepStrictEqual(parseSubstitute('/a'), { pattern: 'a', replacement: '', flags: '', upTo: 'pattern' });
 		assert.deepStrictEqual(parseSubstitute(' g'), { flags: 'g', count: undefined });
 		assert.deepStrictEqual(parseSubstitute('&'), { flags: '&', count: undefined });
 		assert.deepStrictEqual(parseGlobal('/x/d'), { pattern: 'x', command: 'd' });
