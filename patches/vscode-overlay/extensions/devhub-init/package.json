@@ -1,0 +1,42 @@
+{
+  "name": "devhub-init",
+  "displayName": "DevHub init.ts",
+  "description": "Runs your DevHub init.ts (in DevHub's config directory) in the local extension host: the commands it defines with defineCommand.",
+  "version": "1.0.0",
+  "publisher": "vscode",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "extensionKind": "ui",
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devhubInit.runCommand",
+        "title": "Run init.ts Command...",
+        "category": "DevHub"
+      },
+      {
+        "command": "devhubInit.open",
+        "title": "Open init.ts",
+        "category": "DevHub"
+      },
+      {
+        "command": "devhubInit.reload",
+        "title": "Reload init.ts",
+        "category": "DevHub"
+      }
+    ]
+  }
+}

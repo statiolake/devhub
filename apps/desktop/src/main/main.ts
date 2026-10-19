@@ -102,6 +102,11 @@ if (args['sandbox'] &&
 // paths it has always used; anything else is a second, fully separate DevHub —
 // see model/profile.ts, which derives every one of its locations.
 const devhubProfile = activeProfile();
+// The profile's config directory, for the built-in devhub-init extension
+// (`<configDirectory>/init.ts`) in the extension host, which inherits this
+// process's environment: one derivation, here. Children DevHub spawns itself
+// do not get it (DEVHUB_* is DevHub's runtime: shell/loginEnvironment.ts).
+process.env['DEVHUB_CONFIG_DIR'] = devhubProfile.configDirectory;
 
 // Set userData path before app 'ready' event
 //

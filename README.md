@@ -387,6 +387,26 @@ order = 0                           # its place among the trigger's actions
 The workbench's own settings are VS Code's, on disk under the app's user-data
 directory. Runtime state lives separately under Application Support.
 
+### `init.ts`: your own commands
+
+`init.ts` beside `settings.toml` (`~/.config/devhub/init.ts`; a profile's own
+config directory, `~/.config/devhub-dev/init.ts`, for another profile) is a
+TypeScript file that defines commands, and only commands:
+
+```ts
+import * as vscode from "vscode";
+import { defineCommand } from "devhub";
+
+defineCommand("user.copyFileName", async () => {
+  const doc = vscode.window.activeTextEditor?.document;
+  if (doc) await vscode.env.clipboard.writeText(doc.fileName);
+}, { title: "Copy File Name" });
+```
+
+Keys stay in `keybindings.json`, `:` commands in `devhub.vim.exCommands`, both
+naming the `user.*` id. It runs in the local extension host at startup and
+again when it is saved, without a reload. See [docs/init.md](docs/init.md).
+
 ## Not now
 
 Issue and Pull Request surfaces, task composer, clone/worktree provisioning,
