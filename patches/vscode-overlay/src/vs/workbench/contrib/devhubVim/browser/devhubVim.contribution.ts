@@ -161,7 +161,7 @@ import { overviewRulerFindMatchForeground } from '../../../../platform/theme/com
 import { themeColorFromId } from '../../../../platform/theme/common/themeService.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
-import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimMatch, VimPos, VimRange, VimSearchQuery, VimSharedState, VimSubstitution } from '../common/vimEngine.js';
+import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimIndentOptions, VimMatch, VimPos, VimRange, VimSearchQuery, VimSharedState, VimSubstitution } from '../common/vimEngine.js';
 import { parseReplaceString } from '../../../../editor/contrib/find/browser/replacePattern.js';
 import './media/devhubVim.css';
 import { BUILTIN_EX_SPECS, builtinExNameForms } from '../common/vimEx.js';
@@ -932,6 +932,23 @@ class VimEditor extends Disposable implements IVimHost {
 
 	tabSize(): number {
 		return this.model.getOptions().tabSize;
+	}
+
+	indentOptions(): VimIndentOptions {
+		const o = this.model.getOptions();
+		return { tabSize: o.tabSize, indentSize: o.originalIndentSize === 'tabSize' ? 'tabSize' : o.indentSize, insertSpaces: o.insertSpaces };
+	}
+
+	setIndentOptions(options: Partial<VimIndentOptions>): void {
+		this.model.updateOptions(options);
+	}
+
+	defaultIndentOptions(): VimIndentOptions {
+		const model = this.model;
+		const editor = this.owner.configurationService.getValue<{ tabSize?: unknown; indentSize?: unknown; insertSpaces?: unknown }>('editor', { resource: model.uri, overrideIdentifier: model.getLanguageId() }) ?? {};
+		const tabSize = typeof editor.tabSize === 'number' && editor.tabSize > 0 ? editor.tabSize : 4;
+		const indentSize = typeof editor.indentSize === 'number' && editor.indentSize > 0 ? editor.indentSize : 'tabSize';
+		return { tabSize, indentSize, insertSpaces: typeof editor.insertSpaces === 'boolean' ? editor.insertSpaces : true };
 	}
 
 	/**

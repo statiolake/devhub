@@ -127,6 +127,16 @@ export interface IVimHost {
 	redo(): void;
 	indentUnit(): string;
 	tabSize(): number;
+	/**
+	 * The buffer's 'tabstop' 'shiftwidth' 'expandtab': the model's tab size,
+	 * indent size (`'tabSize'` when it follows the tab size, 'shiftwidth' 0)
+	 * and insert spaces, which VS Code's display and indentation follow.
+	 */
+	indentOptions(): VimIndentOptions;
+	/** `:set ts= sw= et`: the model's options (ITextModel.updateOptions). */
+	setIndentOptions(options: Partial<VimIndentOptions>): void;
+	/** `:set ts&`: what the settings say for this file (editor.tabSize, editor.indentSize, editor.insertSpaces). */
+	defaultIndentOptions(): VimIndentOptions;
 	/** The first and last line on screen (0-based). */
 	visibleLines(): { top: number; bottom: number };
 	/**
@@ -181,6 +191,17 @@ export interface IVimHost {
 	/** Something finished asynchronously (an ex command): show the new state. */
 	refresh(): void;
 }
+
+export interface VimIndentOptions {
+	readonly tabSize: number;
+	readonly indentSize: number | 'tabSize';
+	readonly insertSpaces: boolean;
+}
+
+/** Vim's buffer options that are the model's indentation options, by name and short name. */
+const BUFFER_OPTIONS: Readonly<Record<string, 'tabstop' | 'shiftwidth' | 'expandtab'>> = {
+	tabstop: 'tabstop', ts: 'tabstop', shiftwidth: 'shiftwidth', sw: 'shiftwidth', expandtab: 'expandtab', et: 'expandtab',
+};
 
 export type VimRegisterType = 'char' | 'line' | 'block';
 
@@ -640,7 +661,7 @@ export class VimEngine {
 
 	/** The candidates the engine knows for the prompt's completion (ex commands, options; no open editors). */
 	cmdlineSources(): IVimCmdlineCompletionSources {
-		return { exCommands: () => this.shared.exCommandList(), options: () => this.shared.optionList(), buffers: () => [], registry: () => this.shared.registry };
+		return { exCommands: () => this.shared.exCommandList(), options: () => [...this.shared.optionList(), ...this.bufferOptionList()], buffers: () => [], registry: () => this.shared.registry };
 	}
 
 	/** The prompt's line changed: 'incsearch' shows where the pattern typed so far matches. */
@@ -5598,11 +5619,19 @@ export class VimEngine {
 			let rawName = m[2];
 			let neg = prefix === 'no';
 			let inv = prefix === 'inv';
-			if (!(rawName in OPTION_ALIASES) && !(rawName in DEFAULT_VIM_OPTIONS) && prefix) {
+			if (!(rawName in OPTION_ALIASES) && !(rawName in DEFAULT_VIM_OPTIONS) && !(rawName in BUFFER_OPTIONS) && prefix) {
 				// e.g. "nowrapscan" read as no + wrapscan, but "number" is not no+mber
 				rawName = (prefix ?? '') + rawName;
 				neg = false;
 				inv = false;
+			}
+			if (rawName in BUFFER_OPTIONS) {
+				const error = this.setBufferOption(BUFFER_OPTIONS[rawName], neg, inv, m[3], m[4], item, shown);
+				if (error) {
+					this.message = error;
+					return;
+				}
+				continue;
 			}
 			const name = OPTION_ALIASES[rawName] ?? rawName;
 			if (!(name in DEFAULT_VIM_OPTIONS)) {
@@ -5652,6 +5681,75 @@ export class VimEngine {
 		if (shown.length) {
 			this.message = shown.join('  ');
 		}
+	}
+
+	/** 'tabstop' 'shiftwidth' 'expandtab' as Vim shows them (from the model's options). */
+	private bufferOptions(): { tabstop: number; shiftwidth: number; expandtab: boolean } {
+		const o = this.host.indentOptions();
+		return { tabstop: o.tabSize, shiftwidth: o.indentSize === 'tabSize' ? 0 : o.indentSize, expandtab: o.insertSpaces };
+	}
+
+	/** The buffer options for the prompt's completion. */
+	private bufferOptionList(): VimOptionInfo[] {
+		let o: { tabstop: number; shiftwidth: number; expandtab: boolean };
+		try {
+			o = this.bufferOptions();
+		} catch {
+			return [];
+		}
+		return [
+			{ name: 'expandtab', alias: 'et', boolean: true, detail: o.expandtab ? 'on' : 'off' },
+			{ name: 'shiftwidth', alias: 'sw', boolean: false, detail: `=${o.shiftwidth}` },
+			{ name: 'tabstop', alias: 'ts', boolean: false, detail: `=${o.tabstop}` },
+		];
+	}
+
+	/**
+	 * `:set ts=` `sw=` `et` / `noet` (and `?`, `&`, `+=`, `-=`, `!`, `inv`):
+	 * not options of the engine's but the model's (tab size, indent size,
+	 * insert spaces), so VS Code's rendering of tabs, its indentation and its
+	 * status bar follow, and `>>` `:retab` read them back. `sw=0` is "the tab
+	 * size" (Vim's: 'shiftwidth' follows 'tabstop'). `&` is what the settings
+	 * say for the file.
+	 */
+	private setBufferOption(name: 'tabstop' | 'shiftwidth' | 'expandtab', neg: boolean, inv: boolean, op: string | undefined, value: string | undefined, item: string, shown: string[]): string | undefined {
+		const cur = this.bufferOptions();
+		if (op === '?' || (!op && name !== 'expandtab' && !neg && !inv)) {
+			shown.push(name === 'expandtab' ? (cur.expandtab ? 'expandtab' : 'noexpandtab') : `${name}=${cur[name]}`);
+			return undefined;
+		}
+		if (op === '&') {
+			const d = this.host.defaultIndentOptions();
+			this.host.setIndentOptions(name === 'tabstop' ? { tabSize: d.tabSize } : name === 'shiftwidth' ? { indentSize: d.indentSize } : { insertSpaces: d.insertSpaces });
+			return undefined;
+		}
+		if (name === 'expandtab') {
+			if (op && op !== '!') {
+				return `E474: Invalid argument: ${item}`;
+			}
+			this.host.setIndentOptions({ insertSpaces: op === '!' || inv ? !cur.expandtab : !neg });
+			return undefined;
+		}
+		if (neg || inv || op === '!') {
+			return `E474: Invalid argument: ${item}`;
+		}
+		const v = Number(value);
+		if (value === undefined || value === '' || !Number.isInteger(v)) {
+			return `E521: Number required after =: ${item}`;
+		}
+		const n = op!.startsWith('+') ? cur[name] + v : op!.startsWith('-') ? cur[name] - v : op!.startsWith('^') ? cur[name] * v : v;
+		if (name === 'tabstop') {
+			if (n <= 0) {
+				return `E487: Argument must be positive: ${item}`;
+			}
+			this.host.setIndentOptions({ tabSize: n });
+		} else {
+			if (n < 0) {
+				return `E487: Argument must be positive: ${item}`;
+			}
+			this.host.setIndentOptions({ indentSize: n === 0 ? 'tabSize' : n });
+		}
+		return undefined;
 	}
 
 	// ---- keys (:normal, @ of a register holding text) ------------------------

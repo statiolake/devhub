@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import type { IVimHost, VimEdit, VimMatch, VimPos, VimRange, VimSearchQuery, VimSubstitution } from '../../common/vimEngine.js';
+import type { IVimHost, VimEdit, VimIndentOptions, VimMatch, VimPos, VimRange, VimSearchQuery, VimSubstitution } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 import { vimFindHost } from './vimFindHost.js';
 import { VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
@@ -109,8 +109,12 @@ class TestHost implements IVimHost {
 		const s = this.redoStack.pop();
 		if (s) { this.undoStack.push({ lines: this.lines.slice(), cursor: this.cursor }); this.lines = s.lines; this.cursor = s.cursor; }
 	}
-	indentUnit() { return '\t'; }
-	tabSize() { return 4; }
+	indent: VimIndentOptions = { tabSize: 4, indentSize: 'tabSize', insertSpaces: false };
+	indentUnit() { return this.indent.insertSpaces ? ' '.repeat(this.indent.indentSize === 'tabSize' ? this.indent.tabSize : this.indent.indentSize) : '\t'; }
+	tabSize() { return this.indent.tabSize; }
+	indentOptions() { return this.indent; }
+	setIndentOptions(o: Partial<VimIndentOptions>) { this.indent = { ...this.indent, ...o }; }
+	defaultIndentOptions(): VimIndentOptions { return { tabSize: 4, indentSize: 'tabSize', insertSpaces: false }; }
 	visibleLines() { return { top: this.top, bottom: Math.min(this.lines.length - 1, this.top + this.visible - 1) }; }
 	scrollToLine(line: number, at: 'top' | 'center' | 'bottom', moveCursor?: () => void) {
 		moveCursor?.();
@@ -1509,6 +1513,27 @@ suite('DevHub Vim ex commands', () => {
 		assert.strictEqual(v.host.lines.join('\n'), 'a!y\nb\na!y');
 		v.keys('u');
 		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\na');
+	});
+
+	test(':set ts= sw= et set the buffer\'s indentation (the host\'s model options); >> follows', () => {
+		const v = new Vim('|a');
+		v.keys(':set ts=2 sw=3 et<CR>');
+		assert.deepStrictEqual(v.host.indent, { tabSize: 2, indentSize: 3, insertSpaces: true });
+		v.keys('>>');
+		assert.strictEqual(v.host.lines[0], '   a');
+		v.keys(':set sw=0 noet<CR>');
+		assert.deepStrictEqual(v.host.indent, { tabSize: 2, indentSize: 'tabSize', insertSpaces: false });
+		v.keys(':set sw? ts et?<CR>');
+		assert.ok(v.vim.status().includes('shiftwidth=0  tabstop=2  noexpandtab'), v.vim.status());
+		v.keys(':set et=1<CR>');
+		assert.ok(v.vim.status().includes('E474'), v.vim.status());
+		v.keys(':set ts=x<CR>');
+		assert.ok(v.vim.status().includes('E521'), v.vim.status());
+		v.keys(':set ts& et!<CR>');
+		assert.deepStrictEqual(v.host.indent, { tabSize: 4, indentSize: 'tabSize', insertSpaces: true });
+		// completion lists them with the buffer's values
+		const opts = v.vim.cmdlineSources().options().filter(o => ['tabstop', 'shiftwidth', 'expandtab'].includes(o.name)).map(o => [o.name, o.detail]);
+		assert.deepStrictEqual(opts, [['expandtab', 'on'], ['shiftwidth', '=0'], ['tabstop', '=4']]);
 	});
 
 	test('@: repeats the line typed, not the commands :g ran', () => {

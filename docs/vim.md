@@ -1108,8 +1108,17 @@ opt&` `:set opt=val` `+=` `-=` work, with the short names.
 | `nrformats` `nf` | `bin,hex` | add `alpha` for letters |
 | `report` | 2 | |
 
-Indentation (`>>`, `CTRL-T`, `:retab`) uses the editor's tab size and
-"insert spaces" settings ('shiftwidth', 'tabstop', 'expandtab').
+'tabstop' (`ts`), 'shiftwidth' (`sw`) and 'expandtab' (`et`) are the
+file's own indentation in VS Code — its tab size, indent size and "insert
+spaces" (the status bar's "Spaces: 4" / "Tab Size: 4") — not options of
+Vim's: `:set ts=2 sw=2 et` changes them for that file (`ITextModel.updateOptions`,
+as "Indent Using Spaces" does), so the tabs on screen, VS Code's
+indentation, `>>`, `CTRL-T` and `:retab` all follow, and `:set ts? sw? et?`
+reads them back. `sw=0` follows the tab size (as Vim's 'shiftwidth' 0
+follows 'tabstop'); `:set ts&` is what `editor.tabSize` / `editor.indentSize` /
+`editor.insertSpaces` say for the file; `:setl[ocal]` is the same as `:set`.
+They are not in `devhub.vim.options` (the `editor.*` settings, and VS Code's
+indentation detection, set them for each file).
 
 ## Keyboard layouts
 

@@ -402,7 +402,7 @@ function engine(text: string, shared = new VimSharedState()) {
 				h.lines.splice(e.start.line, e.end.line - e.start.line + 1, ...(head + e.text + tail).split('\n'));
 			}
 		},
-		beginChange: () => { }, endChange: () => { }, undo: () => { }, redo: () => { }, indentUnit: () => '\t', tabSize: () => 4,
+		beginChange: () => { }, endChange: () => { }, undo: () => { }, redo: () => { }, indentUnit: () => '\t', tabSize: () => 4, indentOptions: () => ({ tabSize: 4, indentSize: 'tabSize' as const, insertSpaces: false }), setIndentOptions: () => { }, defaultIndentOptions: () => ({ tabSize: 4, indentSize: 'tabSize' as const, insertSpaces: false }),
 		visibleLines: () => ({ top: 0, bottom: h.lines.length - 1 }), scrollToLine: () => { }, isLineHidden: () => false,
 		displayLineMove: () => undefined, setClipboard: () => { }, getClipboard: () => '', prefetchClipboard: () => { },
 		highlightSearch: () => { }, showIncSearch: (r: VimRange | undefined) => { h.incsearch = r; }, lineComment: () => '//',
