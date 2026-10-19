@@ -11,7 +11,7 @@
 // (ExRegistry): what it runs and what it takes. Vim's built-in names
 // (`:s` is `:substitute`, `:sp` is `:split`) are default entries:
 // * those whose `engine` is set are Vim's editing commands (:s :g :d :m :t
-//   :normal :sort :w :r :! ...), implemented by the engine on the buffer
+//   :normal :sort :w :r :! :js ...), implemented by the engine on the buffer
 //   (vimEngine.ts runEngineEx);
 // * the others run VS Code commands, exactly as a keybinding runs a command:
 //   steps `{ command, args? }`, in order, each awaited.
@@ -111,6 +111,7 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['undo', 'u'], ['redo', 'red'], ['mark', 'ma'], ['k', 'k', 'mark'], ['set', 'se'], ['setlocal', 'setl', 'set'],
 	['registers', 'reg'], ['display', 'di', 'registers'],
 	['marks', 'marks'], ['retab', 'ret'], ['left', 'le'], ['right', 'ri'], ['center', 'ce'], ['read', 'r'],
+	['js', 'js'], ['jsdo', 'jsd'],
 	['&', '&'], ['&&', '&&'], ['~', '~'], ['<', '<'], ['>', '>'], ['@', '@'], ['=', '='], ['!', '!'],
 ];
 
@@ -266,6 +267,9 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	read: vim('read', { range: 'line', bang: true, nargs: '?', complete: 'file', shell: true }),
 	// `:!{cmd}` (a terminal), `:{range}!{cmd}` (a filter): vimEngine.ts exShell
 	'!': vim('!', { nargs: '+', bar: false, complete: 'file', shell: true }),
+	// `:js {code}`, `:js ={expr}`, `:[range]jsdo {body}`: the local extension host (vimEngine.ts exJs; not in an untrusted workspace)
+	js: vim('js', { range: 'none', nargs: '+', bar: false }),
+	jsdo: vim('jsdo', { nargs: '+', bar: false, defaultRange: '%' }),
 };
 
 // ---- the user's commands ----------------------------------------------------------
@@ -743,7 +747,7 @@ function checkArgs(args: string, nargs: ExNargs): string | undefined {
  * colons, the range, the name (looked up in `registry`), `!`, then the
  * argument as the command's spec takes it: to the next unescaped `|` when the
  * command takes `|` (`bar`), or to the end of the line (`:g`, `:normal`,
- * `:!cmd`, `:r !cmd`, `:w !cmd`, a user command with `bar: false`).
+ * `:!cmd`, `:r !cmd`, `:w !cmd`, `:js`, `:jsdo`, a user command with `bar: false`).
  */
 export function parseExCommand(line: string, registry: ExRegistry, from = 0): ParsedExCommand {
 	let i = from;

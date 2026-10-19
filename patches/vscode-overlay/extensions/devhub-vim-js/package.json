@@ -1,0 +1,26 @@
+{
+  "name": "devhub-vim-js",
+  "displayName": "DevHub Vim: :js and :jsdo",
+  "description": "Runs DevHub Vim's :js {code}, :js ={expr} and :[range]jsdo {body} in the local extension host, with the VS Code API.",
+  "version": "1.0.0",
+  "publisher": "vscode",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Runs JavaScript typed at DevHub Vim's : prompt, which only a trusted workspace may."
+    }
+  },
+  "activationEvents": [
+    "onCommand:_devhubVim.js.run"
+  ],
+  "main": "./extension.js"
+}

@@ -1694,6 +1694,84 @@ suite('DevHub Vim ex commands', () => {
 		]);
 	});
 
+	test(':js runs code, :js = shows the value; registers go there and come back', async () => {
+		const v = new Vim('|abc');
+		v.keys('yiw');
+		let seen: Record<string, unknown> | undefined;
+		v.host.answer = (command, args) => {
+			if (command !== '_devhubVim.js') {
+				return undefined;
+			}
+			seen = args as Record<string, unknown>;
+			return seen.kind === 'eval' ? { value: '42', registers: {} } : { registers: { a: { text: 'from js', type: 'line' }, B: { text: 'x', type: 'char' } } };
+		};
+		v.keys(':js await vscode.commands.executeCommand("x") | not a bar<CR>');
+		await flush();
+		assert.deepStrictEqual({ ...seen, registers: undefined }, { kind: 'exec', code: 'await vscode.commands.executeCommand("x") | not a bar', mode: 'normal', registers: undefined });
+		assert.deepStrictEqual((seen!.registers as Record<string, unknown>)['"'], { text: 'abc', type: 'char' });
+		assert.deepStrictEqual(v.shared.registers.get('a'), { text: 'from js', type: 'line' });
+		assert.deepStrictEqual(v.shared.registers.get('b'), { text: 'x', type: 'char' });
+		v.keys(':js =6 * 7<CR>');
+		await flush();
+		assert.deepStrictEqual({ kind: seen!.kind, code: seen!.code }, { kind: 'eval', code: '6 * 7' });
+		assert.ok(v.vim.status().includes('42'), v.vim.status());
+		// an error is the message; no range for :js
+		v.host.answer = command => command === '_devhubVim.js' ? { registers: {}, error: 'E5108: Error executing JS: boom' } : undefined;
+		v.keys(':js throw 1<CR>');
+		await flush();
+		assert.ok(v.vim.status().includes('E5108'), v.vim.status());
+		v.keys(':2js 1<CR>');
+		assert.ok(v.vim.status().includes('E481'), v.vim.status());
+		// untrusted: the workbench says so
+		v.host.answer = command => { if (command === '_devhubVim.js') { throw new Error('E12: Command not allowed in an untrusted workspace (Workspace Trust): :js, :jsdo'); } return undefined; };
+		v.keys(':js 1<CR>');
+		await flush();
+		assert.ok(v.vim.status().includes('E12'), v.vim.status());
+	});
+
+	test(':[range]jsdo gives each line and its number; the strings returned replace them, as one undo step', async () => {
+		const v = new Vim('a\n|b\nc\nd');
+		let seen: Record<string, unknown> | undefined;
+		v.host.answer = (command, args) => {
+			if (command !== '_devhubVim.js') {
+				return undefined;
+			}
+			seen = args as Record<string, unknown>;
+			const lines = seen.lines as string[];
+			const first = seen.firstLine as number;
+			// what devhub-vim-js does for `return linenr % 2 ? line + linenr : undefined`
+			return { lines: lines.map((l, i) => (first + i) % 2 ? l + (first + i) : null), registers: {} };
+		};
+		v.keys(':2,4jsdo return linenr % 2 ? line + linenr : undefined<CR>');
+		await flush();
+		assert.deepStrictEqual({ kind: seen!.kind, lines: seen!.lines, firstLine: seen!.firstLine, code: seen!.code }, { kind: 'do', lines: ['b', 'c', 'd'], firstLine: 2, code: 'return linenr % 2 ? line + linenr : undefined' });
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\nc3\nd');
+		v.keys(':jsdo return line.toUpperCase()<CR>');
+		await flush();
+		assert.deepStrictEqual(seen!.lines, ['a', 'b', 'c3', 'd']);
+		assert.strictEqual(v.host.lines.join('\n'), 'a1\nb\nc33\nd');
+		// each :jsdo is one undo step
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\nc3\nd');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\nc\nd');
+		// an error: the lines before it are changed (Neovim's :luado), the message says which line
+		v.host.answer = command => command === '_devhubVim.js' ? { lines: ['A'], registers: {}, error: 'E5108: Error executing JS: the function returned a number, not a string, undefined or null (line 2)' } : undefined;
+		v.keys(':%jsdo x<CR>');
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'A\nb\nc\nd');
+		assert.ok(v.vim.status().includes('(line 2)'), v.vim.status());
+		// the lines changed meanwhile: nothing is put
+		let release: (r: unknown) => void = () => { };
+		v.host.answer = command => command === '_devhubVim.js' ? new Promise(r => release = r) : undefined;
+		v.keys(':2jsdo return "X"<CR>');
+		v.keys('2Gx');
+		release({ lines: ['X'], registers: {} });
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'A\n\nc\nd');
+		assert.ok(v.vim.status().includes('changed'), v.vim.status());
+	});
+
 	test('@: repeats the line typed, not the commands :g ran', () => {
 		const v = new Vim('|a\nb\na');
 		v.keys(':g/a/s/$/!/<CR>');

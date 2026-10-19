@@ -489,7 +489,7 @@ const EXPANDING_COMMANDS = new Set<string>(['devhubVim.run', 'devhubVim.repeat']
 const INCCOMMAND_LIMIT = 1000;
 const INCCOMMAND_MARGIN = 50;
 /** Ex commands whose argument is passed as typed (blanks at its end are keys, or part of a shell command). */
-const RAW_ARG_COMMANDS: ReadonlySet<string> = new Set(['normal']);
+const RAW_ARG_COMMANDS: ReadonlySet<string> = new Set(['normal', 'js', 'jsdo']);
 /** The most iterations a `devhubVim.repeat` runs. */
 const MAX_REPEAT = 1000;
 /** Not recorded into a macro: what they lead to is (the command an awaited char completes, the ex line, the search). */
@@ -5205,6 +5205,12 @@ export class VimEngine {
 			case '!':
 				this.exShell(range, args, how.fail);
 				return;
+			case 'js':
+				this.exJs(args, undefined, how.fail);
+				return;
+			case 'jsdo':
+				this.exJs(args, range ?? { start: 0, end: this.lastLine() }, how.fail);
+				return;
 		}
 		this.message = `E492: Not an editor command: ${name}`;
 	}
@@ -5378,6 +5384,96 @@ export class VimEngine {
 			this.message = shellMessage(r, n > this.options.report ? `${n} lines filtered` : '');
 		}, () => {
 			forget();
+			failed?.();
+		});
+	}
+
+	/** Vim's registers as `:js` sees them (`vim.registers.get`): the named, numbered and special ones that hold something. */
+	private registerSnapshot(): Record<string, VimRegister> {
+		const out: Record<string, VimRegister> = {};
+		for (const name of ['"', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', ...'abcdefghijklmnopqrstuvwxyz', '+', '*', '%', '/', ':', '.']) {
+			const r = this.readRegister(name === '"' ? undefined : name);
+			if (r) {
+				out[name] = { text: r.text, type: r.type };
+			}
+		}
+		return out;
+	}
+
+	/** What `:js` wrote with `vim.registers.set`: an uppercase name appends, `+` / `*` is the clipboard. */
+	private applyRegisterWrites(written: unknown): void {
+		if (!isRecord(written)) {
+			return;
+		}
+		for (const [name, value] of Object.entries(written)) {
+			if (!isRecord(value) || typeof value.text !== 'string') {
+				continue;
+			}
+			const reg: VimRegister = { text: value.text, type: value.type === 'line' || value.type === 'block' ? value.type : 'char' };
+			if (name === '+' || name === '*') {
+				this.host.setClipboard(reg.type === 'line' ? reg.text + '\n' : reg.text);
+			} else if (/^[A-Z]$/.test(name)) {
+				const lower = name.toLowerCase();
+				const prev = this.shared.registers.get(lower);
+				this.shared.registers.set(lower, prev ? appendRegister(prev, reg) : reg);
+			} else if (/^[a-z0-9"-]$/.test(name)) {
+				this.shared.registers.set(name, reg);
+			}
+		}
+	}
+
+	/**
+	 * `:js {code}` / `:js ={expr}` (no range) and `:[range]jsdo {body}`
+	 * (Neovim's `:lua`, `:lua =`, `:luado`), run by the workbench's `_devhubVim.js`
+	 * (browser/vimJs.ts: the local extension host, Workspace Trust). `:js =`
+	 * shows the value in the status bar (several lines: in the "Vim :js"
+	 * output channel); `:jsdo` puts each line the function returned a string
+	 * for in its place, as one undo step, those before an error included, and
+	 * only when the lines are still what it was given.
+	 */
+	private exJs(code: string, range: { start: number; end: number } | undefined, failed?: () => void): void {
+		const body = code.trim();
+		const evaluate = !range && body.startsWith('=');
+		const args: Record<string, unknown> = { kind: range ? 'do' : evaluate ? 'eval' : 'exec', code: evaluate ? body.slice(1) : body, mode: this._mode, registers: this.registerSnapshot() };
+		let lines: string[] = [];
+		const id = `\u0000j${Date.now()}:${Math.random()}`;
+		if (range) {
+			lines = this.linesText(range.start, range.end).split('\n');
+			args.lines = lines;
+			args.firstLine = range.start + 1;
+			this.marks.set(id, pos(range.start, 0));
+		}
+		this.callHost('_devhubVim.js', args, result => {
+			const start = this.marks.get(id)?.line;
+			this.marks.delete(id);
+			const r = isRecord(result) ? result : {};
+			this.applyRegisterWrites(r.registers);
+			if (range && Array.isArray(r.lines)) {
+				const changed = start === undefined || start + lines.length - 1 > this.lastLine() || lines.some((l, i) => this.host.lineText(start + i) !== l);
+				if (changed) {
+					this.message = 'E5108: Error executing JS: the lines changed while :jsdo ran';
+					failed?.();
+					return;
+				}
+				const edits: VimEdit[] = [];
+				(r.lines as unknown[]).forEach((l, i) => {
+					if (typeof l === 'string' && l !== lines[i]) {
+						edits.push({ start: pos(start + i, 0), end: pos(start + i, lines[i].length), text: l });
+					}
+				});
+				this.edit(edits);
+				this.closeChange();
+			}
+			if (typeof r.error === 'string') {
+				this.message = r.error;
+				failed?.();
+				return;
+			}
+			if (typeof r.value === 'string') {
+				this.message = r.output ? `${r.value.split('\n')[0]} … (the whole value is in the Output panel: Vim :js)` : r.value;
+			}
+		}, () => {
+			this.marks.delete(id);
 			failed?.();
 		});
 	}

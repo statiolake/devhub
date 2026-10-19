@@ -170,10 +170,11 @@ import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
 import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VIM_SHELL_COMMANDS } from './vimShell.js';
+import { VIM_JS_COMMANDS } from './vimJs.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 
 /** The workbench commands an ex command runs that take the file it ran in (`from`). */
-const FROM_COMMANDS = [...VIM_EDIT_COMMANDS, ...VIM_SHELL_COMMANDS];
+const FROM_COMMANDS = [...VIM_EDIT_COMMANDS, ...VIM_SHELL_COMMANDS, ...VIM_JS_COMMANDS];
 
 const SETTING = 'devhub.vim.enabled';
 const EX_SETTING = 'devhub.vim.exCommands';

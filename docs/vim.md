@@ -896,6 +896,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:@{reg}` `:@:` `:=` `:ret[ab]` `:le[ft]` `:ri[ght]` `:ce[nter]` | |
 | `:[range]w[rite][!] {file}` `:w >> [file]` `:sav[eas][!] {file}` `:[line]r[ead] [file]` | see [Writing and reading files](#writing-and-reading-files) |
 | `:!{cmd}` `:{range}!{cmd}` `:r !{cmd}` `:[range]w !{cmd}` | see [Shell commands](#shell-commands) |
+| `:js {code}` `:js ={expr}` `:[range]jsd[o] {body}` | see [JavaScript](#javascript-js-and-jsdo) |
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
@@ -1067,8 +1068,58 @@ runs.
   them meanwhile do not confuse it), and what comes after it in a macro or
   a `:g` waits for it.
 * Shell commands run in an untrusted workspace too, as VS Code's terminal
-  does: they are what you type. Nothing a workspace contains can define a
-  `:` command (see [Your own commands](#your-own-commands)).
+  does: they are what you type (`:js` does not, see below). Nothing a
+  workspace contains can define a `:` command (see [Your own
+  commands](#your-own-commands)).
+
+### JavaScript: `:js` and `:jsdo`
+
+Neovim's `:lua`, `:lua =` and `:luado`, in JavaScript, with VS Code's API:
+
+| Command | |
+| --- | --- |
+| `:js {code}` | runs `{code}` as the body of an `async` function (`await` works); its value is not shown |
+| `:js ={expr}` | shows the value of `{expr}`, pretty-printed (Node's `util.inspect`, strings quoted): in the status bar, or, when it takes several lines, in the "Vim :js" output channel |
+| `:[range]jsdo {body}` | exactly `:luado`: `{body}` is the body of the function `(line, linenr) => { body }`, called for each line of the range (the whole file without one; `linenr` 1-based). `return` a string to put it in the line's place; `undefined` / `null` (no `return`) leaves the line; any other value, or a string with a line break, is an error (`E5108 … (line N)`), and the lines before it stay changed, as in Neovim. There is no expression form: `:jsdo line.trim()` changes nothing, `:jsdo return line.trim()` does. Statements are separated by `;`. One undo step |
+
+In scope, besides JavaScript's globals:
+
+| Name | |
+| --- | --- |
+| `vscode` | the whole extension API (`vscode.window`, `vscode.commands.executeCommand(...)`, `vscode.workspace` …) |
+| `editor` | the `TextEditor` the line was typed in (the one `:` was pressed in) |
+| `doc` | its `TextDocument` |
+| `sel` | its selection |
+| `vim` | `vim.mode`; `vim.registers.get(name)` (the text of `"`, `0`–`9`, `a`–`z`, `-`, `+`, `*`, `%`, `/`, `:`, `.`); `vim.registers.set(name, text, type?)` (`type`: `"char"`, `"line"`, `"block"`; `A`–`Z` append, `+` / `*` the clipboard), written back when the code is done |
+
+```vim
+:js vscode.window.showInformationMessage(doc.fileName)
+:js await vscode.commands.executeCommand('editor.action.formatDocument')
+:js =doc.lineCount
+:js =vscode.workspace.workspaceFolders.map(f => f.uri.toString())
+:js vim.registers.set('a', new Date().toISOString())
+:'<,'>jsdo return line.replace(/\s+$/, '')
+:%jsdo if (linenr % 2) return line.toUpperCase()
+:jsdo return `${linenr}: ${line}`
+```
+
+It runs in the built-in extension `devhub-vim-js` (`extensionKind: ui`), in
+the local extension host — on your Mac in a remote window too (`doc` is the
+remote file as VS Code shows it; `require('fs')` is your Mac's). `|` is part
+of the code. Errors are Neovim's: `E5107: Error loading JS` (syntax),
+`E5108: Error executing JS` (a throw).
+
+**Security.** `:js` and `:jsdo` run arbitrary code with your rights, so:
+
+* They never run in a workspace that is not trusted (Workspace Trust,
+  "Restricted Mode"): `E12: Command not allowed in an untrusted workspace`;
+  the extension itself declares `untrustedWorkspaces: false`, so VS Code
+  does not even start it there.
+* A `:js` line runs only when you type it, or from your own macros,
+  registers and `devhub.vim.exCommands`; a workspace cannot add or change ex
+  commands (the setting is read from your user settings only, see [Your own
+  commands](#your-own-commands)). Running a register (`:@a`, `@a`) whose text
+  came from a file runs what is in it, as in Vim.
 
 ### Your own commands
 
