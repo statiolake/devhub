@@ -24,10 +24,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
 	VOICE_MAX_SECONDS,
@@ -39,7 +39,14 @@ import type { Transcriber } from "./dictationStream.js";
 
 export const WHISPER_BINARY = "devhub-whisper";
 export const WHISPER_SERVER_BINARY = "devhub-whisper-server";
-export const WHISPER_MODEL = "ggml-large-v3-turbo-q5_0.bin";
+/** The model `scripts/build_whisper.py` installs by default. */
+export const WHISPER_MODEL = "ggml-small.bin";
+/** Every model it can install, the default first: what a directory may hold. */
+export const WHISPER_MODELS: readonly string[] = [
+	WHISPER_MODEL,
+	"ggml-large-v3-turbo-q5_0.bin",
+];
+const STATEMENT = "whisper.json";
 
 /**
  * Where a recogniser may be, most specific first: what the environment names
@@ -67,15 +74,49 @@ export interface WhisperInstall {
 	readonly server?: string;
 }
 
-/** The first candidate that holds both the program and the model. */
+/**
+ * The model file a directory's statement (`whisper.json`) names, when it
+ * names a plain file name; `undefined` for no statement or a strange one.
+ */
+export function statedModel(
+	directory: string,
+	read: (path: string) => string = (path) => readFileSync(path, "utf8"),
+): string | undefined {
+	try {
+		const said: unknown = JSON.parse(read(join(directory, STATEMENT)));
+		const model =
+			typeof said === "object" && said !== null && "model" in said
+				? said.model
+				: undefined;
+		return typeof model === "string" &&
+			model.endsWith(".bin") &&
+			basename(model) === model
+			? model
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The first candidate that holds both the program and a model: the one its
+ * statement names (`build_whisper.py --model` picks it), else any it could
+ * have installed, the default first — so a directory built before the
+ * default changed keeps working until it is built again.
+ */
 export function locateWhisper(
 	candidates: readonly string[],
 	exists: (path: string) => boolean = existsSync,
+	stated: (directory: string) => string | undefined = statedModel,
 ): WhisperInstall | undefined {
 	for (const directory of candidates) {
 		const binary = join(directory, WHISPER_BINARY);
-		const model = join(directory, WHISPER_MODEL);
-		if (exists(binary) && exists(model)) {
+		if (!exists(binary)) continue;
+		const named = stated(directory);
+		const model = [...(named ? [named] : []), ...WHISPER_MODELS]
+			.map((name) => join(directory, name))
+			.find(exists);
+		if (model !== undefined) {
 			const server = join(directory, WHISPER_SERVER_BINARY);
 			return exists(server) ? { binary, model, server } : { binary, model };
 		}
@@ -165,10 +206,34 @@ export function whisperArgs(options: {
 
 /**
  * Whisper's markers for what is not speech — `[BLANK_AUDIO]`, `[音楽]`,
- * `(keyboard clicking)`, `*sigh*` — written on a segment of their own. A
- * marker is a whole segment: brackets inside a sentence are words.
+ * `(keyboard clicking)`, `【拍手】`, `*sigh*` — written on a segment of their
+ * own. A marker is a whole segment: brackets inside a sentence are words.
  */
-const NON_SPEECH = /^\s*(\[[^\]]*\]|\([^)]*\)|（[^）]*）|\*[^*]*\*|♪+)\s*$/u;
+const NON_SPEECH =
+	/^\s*(\[[^\]]*\]|\([^)]*\)|（[^）]*）|【[^】]*】|\*[^*]*\*|[♪〜~]+)\s*$/u;
+
+/**
+ * What Whisper says over silence, noise or a breath because so much of what
+ * it learnt from was subtitled video, which ends that way — as a segment of
+ * its own. podcast-maker's sanitizer (`TranscriptSanitizer.swift`) drops
+ * 「ご視聴ありがとうございました」; these are it and its kin. Only a whole
+ * segment is dropped: the same words inside a sentence are words.
+ */
+const HALLUCINATIONS: readonly RegExp[] = [
+	/^(最後まで)?ご(視聴|清聴)(いただき|頂き)?(、)?(本当に|誠に)?ありがとうございま(した|す)[。！!」"]*$/u,
+	/^(ぜひ)?チャンネル登録(を)?(よろしく)?(お願い(いた)?します|お願いしま〜す)[。！!]*$/u,
+	/^(thank you|thanks) (so much )?for watching[.!]*$/iu,
+];
+
+/** Whether one segment of a transcript is not words the person said. */
+export function isNonSpeech(segment: string): boolean {
+	const trimmed = segment.trim();
+	return (
+		trimmed === "" ||
+		NON_SPEECH.test(trimmed) ||
+		HALLUCINATIONS.some((pattern) => pattern.test(trimmed))
+	);
+}
 
 /**
  * The words a transcript file holds, as one paragraph.
@@ -182,7 +247,7 @@ export function cleanTranscript(raw: string): string {
 	const segments = raw
 		.split(/\r?\n/)
 		.map((line) => line.trim())
-		.filter((line) => line !== "" && !NON_SPEECH.test(line));
+		.filter((line) => !isNonSpeech(line));
 	let text = "";
 	for (const segment of segments) {
 		if (text === "") text = segment;
@@ -201,7 +266,7 @@ function tail(text: string): string {
 /**
  * A recording of `seconds` seconds is given this long before it is given up
  * on: a minute for loading the model the first time, and then far more than
- * the fraction of real time large-v3-turbo takes on Apple Silicon.
+ * the fraction of real time Whisper takes on Apple Silicon.
  */
 export function transcriptionDeadlineMs(seconds: number): number {
 	return 60_000 + seconds * 2_000;

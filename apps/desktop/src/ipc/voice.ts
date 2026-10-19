@@ -11,11 +11,12 @@
  * 16 kHz mono signed 16-bit PCM, the format Whisper reads, as raw
  * little-endian bytes, a few times a second — and main sends back what it has
  * heard so far (`VoiceUpdate`). Main keeps the recogniser loaded
- * (`main/voice/whisperServer.ts`) and transcribes the utterance again every
- * fraction of a second (`main/voice/dictationStream.ts`): what lies before a
- * pause is *committed* and never changes again, and what follows the last
- * pause is *tentative* and is rewritten as more is heard. When the recording
- * ends, the tentative tail is transcribed one last time and committed.
+ * (`main/voice/whisperServer.ts`), cuts the recording into utterances at
+ * pauses, and transcribes the utterance being spoken about once a second
+ * (`main/voice/dictationStream.ts`): each utterance that has ended is
+ * *committed* and never changes again, and the one still being spoken is
+ * *tentative* and is rewritten as more is heard. When the recording ends,
+ * the last utterance is transcribed one last time and committed.
  *
  * Every request answers with a result rather than rejecting, as the terminal
  * API does: a recogniser that is not in this build, or a microphone the
@@ -34,14 +35,19 @@ export const VOICE_SAMPLE_RATE = 16_000;
 export const VOICE_MAX_SECONDS = 300;
 
 /**
- * Which language the recogniser listens for. `auto` lets Whisper decide from
- * the first seconds, which is right for Japanese and English alike; naming
- * one is for a speaker whose accent makes it guess wrong, and for a short
- * utterance where there is too little to guess from.
+ * Which language the recogniser listens for. Japanese is the default: the
+ * composer is mostly dictated in Japanese, English words inside it come out
+ * fine in katakana or Latin either way, and naming the language spares the
+ * recogniser a detection pass and the wrong guesses on a short utterance.
+ * `auto` lets Whisper decide from the first seconds, for a person who
+ * dictates whole messages in either; `en` is for English throughout.
  */
 export type VoiceLanguage = "auto" | "ja" | "en";
 
-export const VOICE_LANGUAGES: readonly VoiceLanguage[] = ["auto", "ja", "en"];
+/** In the order the composer's label cycles through them, the default first. */
+export const VOICE_LANGUAGES: readonly VoiceLanguage[] = ["ja", "en", "auto"];
+
+export const DEFAULT_VOICE_LANGUAGE: VoiceLanguage = "ja";
 
 /** Whether dictation can work in this DevHub, and why not when it cannot. */
 export type VoiceStatus =

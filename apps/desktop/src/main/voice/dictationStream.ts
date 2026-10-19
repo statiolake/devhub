@@ -1,34 +1,44 @@
 /**
- * One dictation as it is spoken: the recording so far, what of it is
- * committed, and the tentative words after the last pause.
+ * One dictation as it is spoken: the recording so far, the utterances found
+ * in it, what of it is committed, and the tentative words of the utterance
+ * being spoken.
  *
- * Whisper is not a streaming recogniser — it reads a window of audio and
- * writes its words — so streaming is done around it. The audio since the last
- * commit is the *window*. Whenever enough new audio has come in (and the
- * recogniser is free) the whole window is transcribed again and the result is
- * the tentative text: it gets better as the window grows, and may change
- * completely. When the window holds a pause — a stretch of silence after
- * speech — the audio up to the middle of the pause is transcribed once more,
- * on its own, and that text is committed: it is never transcribed again, the
- * window starts after it, and the page puts it in the composer. So a phrase
- * lands in the composer a moment after the speaker pauses, and the words of
- * the phrase being spoken show as they are recognised.
+ * Whisper is not a streaming recogniser — it reads a stretch of audio and
+ * writes its words — so streaming is done around it, as cheaply as it can be:
  *
- * Cutting at pauses rather than every N seconds keeps words whole: a word cut
- * in two is two wrong words. A window that grows past `maxWindowSeconds`
- * without a pause (a person who does not breathe) is cut at its quietest
- * moment instead, so no one transcription grows past what is quick.
+ * - The recording is cut into *utterances* as it arrives (`Segmenter`): a
+ *   hysteresis energy test per 20 ms frame, the segmentation the author's
+ *   podcast-maker uses. An utterance starts after 200 ms loud enough to be
+ *   speech and ends after 400 ms quiet enough to be silence; it keeps 300 ms
+ *   of audio either side of the speech, so a soft first or last syllable is
+ *   not clipped; one shorter than 0.8 s with that padding (a cough, a click)
+ *   is dropped; and one that runs 10 s without a pause is cut at its
+ *   quietest moment in its second half, so no transcription grows past what
+ *   is quick. Cutting at pauses rather than every N seconds keeps words
+ *   whole: a word cut in two is two wrong words.
+ * - Each finished utterance is transcribed once, on its own, with the
+ *   recogniser's full decoder (temperature fallback included), and that text
+ *   is *committed*: it never changes, and it is never transcribed again.
+ * - While an utterance is still being spoken it is transcribed from its start
+ *   now and then, for the tentative text the page shows dimmed — greedily,
+ *   with no fallback, and only when the recogniser is idle *and* at least a
+ *   second more of it has come in since the last time. On a slow Mac that is
+ *   fewer, not queued, tentative passes; and none run while a finished
+ *   utterance waits for its own.
  *
- * The silence test is energy, per 30 ms frame, against a threshold that
- * follows the noise floor of the recording. It only has to find pauses
- * between phrases in a dictation at a desk, and the browser has already
- * suppressed noise; a model-based VAD would be another model to ship.
+ * The test for speech is energy against a threshold that follows the noise
+ * floor of the last few seconds (three times its 20th percentile), between a
+ * minimum and podcast-maker's fixed thresholds: a quiet room lets a quiet
+ * voice count, a noisy one does not count its fan, and a loud voice always
+ * counts. The browser has already suppressed noise; a model-based VAD would
+ * be another model to ship.
  *
  * Committed text is passed back to Whisper as the prompt for what follows, so
- * the next phrase continues in the same language and style.
+ * the next utterance continues in the same language and style.
  *
  * A recogniser that is not `live` (the per-recording CLI, from a recogniser
- * directory built before the server existed) is only run once, at the end.
+ * directory built before the server existed) is only run once, at the end,
+ * over everything from the first utterance to the last.
  */
 
 import {
@@ -42,6 +52,11 @@ export interface TranscribeOptions {
 	readonly language: VoiceLanguage;
 	/** Text the audio continues, for context. */
 	readonly prompt?: string;
+	/**
+	 * A tentative pass over an utterance still being spoken: the cheapest
+	 * decode will do, since the committed pass follows.
+	 */
+	readonly partial?: boolean;
 }
 
 /** Something that turns 16 kHz mono 16-bit PCM into words. */
@@ -51,33 +66,49 @@ export interface Transcriber {
 	transcribe(pcm: Uint8Array, options: TranscribeOptions): Promise<string>;
 }
 
-export interface StreamTuning {
-	/** Transcribe the window again once this much new audio has come in. */
+export interface VadTuning {
+	/** This many seconds above the start threshold start an utterance. */
+	readonly startSeconds: number;
+	/** This many seconds below the end threshold end one. */
+	readonly endSeconds: number;
+	/** Audio kept before the speech starts and after it ends. */
+	readonly paddingSeconds: number;
+	/** An utterance shorter than this, padding included, is dropped. */
+	readonly minUtteranceSeconds: number;
+	/** An utterance longer than this is cut at its quietest point. */
+	readonly maxUtteranceSeconds: number;
+	/** The start threshold at its highest (RMS of 1.0 full scale): always speech. */
+	readonly startLevel: number;
+	/** The end threshold at its highest: below it, always silence. */
+	readonly endLevel: number;
+	/** The start threshold at its lowest, however quiet the room. */
+	readonly minLevel: number;
+	/** How many seconds of recent audio the noise floor is taken over. */
+	readonly floorSeconds: number;
+}
+
+export interface StreamTuning extends VadTuning {
+	/** A tentative pass needs at least this much new audio since the last one. */
 	readonly partialEverySeconds: number;
-	/** A pause at least this long ends a phrase. */
-	readonly pauseSeconds: number;
-	/** Speech shorter than this in a window is not worth transcribing. */
-	readonly minSpeechSeconds: number;
-	/** A window longer than this is cut at its quietest point. */
-	readonly maxWindowSeconds: number;
-	/** The quietest RMS (of 1.0 full scale) ever counted as speech. */
-	readonly minSpeechLevel: number;
 }
 
 export const DEFAULT_TUNING: StreamTuning = {
-	partialEverySeconds: 0.5,
-	pauseSeconds: 0.6,
-	minSpeechSeconds: 0.25,
-	maxWindowSeconds: 20,
-	minSpeechLevel: 0.01,
+	startSeconds: 0.2,
+	endSeconds: 0.4,
+	paddingSeconds: 0.3,
+	minUtteranceSeconds: 0.8,
+	maxUtteranceSeconds: 10,
+	startLevel: 0.03,
+	endLevel: 0.02,
+	minLevel: 0.01,
+	floorSeconds: 3,
+	partialEverySeconds: 1,
 };
 
-/** A frame this loud (RMS of full scale) is speech whatever the noise floor. */
-const SPEECH_CEILING = 0.03;
+/** 20 ms, in samples. */
+export const FRAME = Math.round(VOICE_SAMPLE_RATE * 0.02);
 
-const FRAME = Math.round(VOICE_SAMPLE_RATE * 0.03);
-
-/** RMS of each 30 ms frame of `samples`, 0 to 1. */
+/** RMS of each whole 20 ms frame of `samples`, 0 to 1. */
 export function frameLevels(samples: Int16Array): Float32Array {
 	const frames = Math.floor(samples.length / FRAME);
 	const out = new Float32Array(frames);
@@ -93,72 +124,151 @@ export function frameLevels(samples: Int16Array): Float32Array {
 }
 
 /**
- * Which frames are speech: louder than the minimum and than three times the
- * window's noise floor (its 20th-percentile frame) — but never a threshold
- * above `SPEECH_CEILING`, so a window that is all speech (whose 20th
- * percentile is speech too) still counts as speech.
+ * The start and end thresholds over a noise floor: three times the floor,
+ * held between `minLevel` and `startLevel`, and the end threshold in the
+ * same proportion to it as podcast-maker's (0.02 to 0.03).
  */
-export function speechFrames(
-	levels: Float32Array,
-	minSpeechLevel: number,
-): boolean[] {
-	if (levels.length === 0) return [];
-	const sorted = Array.from(levels).sort((a, b) => a - b);
-	const floor = sorted[Math.floor(sorted.length * 0.2)]!;
-	const threshold = Math.max(
-		minSpeechLevel,
-		Math.min(floor * 3, SPEECH_CEILING),
+export function thresholds(
+	floor: number,
+	tuning: Pick<VadTuning, "startLevel" | "endLevel" | "minLevel">,
+): { readonly start: number; readonly end: number } {
+	const start = Math.max(
+		tuning.minLevel,
+		Math.min(floor * 3, tuning.startLevel),
 	);
-	return Array.from(levels, (level) => level >= threshold);
+	return { start, end: (start * tuning.endLevel) / tuning.startLevel };
+}
+
+/** A stretch of the recording, in frames: `[start, end)`. */
+export interface Utterance {
+	readonly start: number;
+	readonly end: number;
+	/** Cut because it ran too long, not at a pause. */
+	readonly forced: boolean;
+}
+
+function frames(seconds: number): number {
+	return Math.max(1, Math.round((seconds * VOICE_SAMPLE_RATE) / FRAME));
 }
 
 /**
- * Where to cut `samples` so that what comes before is a finished phrase, in
- * samples, or `undefined` when it holds no pause after speech yet. The cut is
- * the middle of the *last* pause that has speech before it and is at least
- * `pauseSeconds` long — a pause still running at the end of the window counts
- * once it is that long, since a speaker who has stopped has finished the
- * phrase.
+ * The utterances in a recording, frame by frame as it arrives (see the
+ * module comment). `feed` takes the next frame's level and answers the
+ * utterance it finished, if it finished one; `open` is where the one being
+ * spoken started.
  */
-export function findPause(
-	speech: readonly boolean[],
-	tuning: Pick<StreamTuning, "pauseSeconds" | "minSpeechSeconds">,
-): number | undefined {
-	const pauseFrames = Math.ceil(
-		(tuning.pauseSeconds * VOICE_SAMPLE_RATE) / FRAME,
-	);
-	const minSpeech = Math.ceil(
-		(tuning.minSpeechSeconds * VOICE_SAMPLE_RATE) / FRAME,
-	);
-	let cut: number | undefined;
-	let spoken = 0;
-	let silentFrom = -1;
-	const close = (end: number) => {
-		if (
-			silentFrom >= 0 &&
-			spoken >= minSpeech &&
-			end - silentFrom >= pauseFrames
-		)
-			cut = Math.floor((silentFrom + end) / 2);
-	};
-	for (let f = 0; f < speech.length; f++) {
-		if (speech[f]) {
-			close(f);
-			silentFrom = -1;
-			spoken++;
-		} else if (silentFrom < 0) silentFrom = f;
-	}
-	close(speech.length);
-	return cut === undefined ? undefined : cut * FRAME;
-}
+export class Segmenter {
+	private readonly levels: number[] = [];
+	private readonly startFrames: number;
+	private readonly endFrames: number;
+	private readonly paddingFrames: number;
+	private readonly minFrames: number;
+	private readonly maxFrames: number;
+	private readonly floorFrames: number;
+	/** Consecutive frames above the start threshold, while not in speech. */
+	private loud = 0;
+	/** Consecutive frames below the end threshold, while in speech. */
+	private quiet = 0;
+	private speechFrom: number | undefined;
+	private lastVoice = 0;
+	/** Where the last utterance ended: the next one's padding stops there. */
+	private lastEnd = 0;
 
-/** The quietest frame in the second half of a window, in samples: where to cut a phrase with no pause. */
-export function quietestCut(levels: Float32Array): number {
-	const from = Math.floor(levels.length / 2);
-	let best = from;
-	for (let f = from; f < levels.length; f++)
-		if (levels[f]! < levels[best]!) best = f;
-	return best * FRAME + Math.floor(FRAME / 2);
+	constructor(private readonly tuning: VadTuning = DEFAULT_TUNING) {
+		this.startFrames = frames(tuning.startSeconds);
+		this.endFrames = frames(tuning.endSeconds);
+		this.paddingFrames = Math.round(
+			(tuning.paddingSeconds * VOICE_SAMPLE_RATE) / FRAME,
+		);
+		this.minFrames = frames(tuning.minUtteranceSeconds);
+		this.maxFrames = Math.max(
+			this.minFrames,
+			frames(tuning.maxUtteranceSeconds),
+		);
+		this.floorFrames = frames(tuning.floorSeconds);
+	}
+
+	/** Frames fed so far. */
+	get length(): number {
+		return this.levels.length;
+	}
+
+	/** Where the utterance being spoken starts, padding included, or `undefined` between utterances. */
+	get open(): number | undefined {
+		return this.speechFrom;
+	}
+
+	/** The noise floor: the 20th-percentile level of the last `floorSeconds`. */
+	floor(): number {
+		const recent = this.levels.slice(-this.floorFrames).sort((a, b) => a - b);
+		return recent.length === 0 ? 0 : recent[Math.floor(recent.length * 0.2)]!;
+	}
+
+	feed(level: number): Utterance | undefined {
+		const { start, end } = thresholds(this.floor(), this.tuning);
+		const f = this.levels.length;
+		this.levels.push(level);
+		if (this.speechFrom === undefined) {
+			this.loud = level >= start ? this.loud + 1 : 0;
+			if (this.loud >= this.startFrames) {
+				this.speechFrom = Math.max(
+					this.lastEnd,
+					f + 1 - this.loud - this.paddingFrames,
+				);
+				this.lastVoice = f;
+				this.quiet = 0;
+			}
+			return undefined;
+		}
+		if (level >= end) {
+			this.lastVoice = f;
+			this.quiet = 0;
+		} else this.quiet++;
+		if (this.quiet >= this.endFrames)
+			return this.close(
+				Math.min(this.lastVoice + 1 + this.paddingFrames, f + 1),
+			);
+		if (f + 1 - this.speechFrom >= this.maxFrames) return this.split(f + 1);
+		return undefined;
+	}
+
+	/**
+	 * The recording has ended: the utterance being spoken, if any, ends with
+	 * it. It is kept however short — it was speech long enough to start one,
+	 * and the person may have stopped right after a short word.
+	 */
+	flush(): Utterance | undefined {
+		if (this.speechFrom === undefined) return undefined;
+		const utterance = {
+			start: this.speechFrom,
+			end: this.levels.length,
+			forced: false,
+		};
+		this.speechFrom = undefined;
+		this.lastEnd = utterance.end;
+		return utterance;
+	}
+
+	private close(endFrame: number): Utterance | undefined {
+		const start = this.speechFrom!;
+		this.speechFrom = undefined;
+		this.loud = 0;
+		this.lastEnd = endFrame;
+		return endFrame - start >= this.minFrames
+			? { start, end: endFrame, forced: false }
+			: undefined;
+	}
+
+	/** Cut at the quietest frame of the second half; the rest is the next utterance, still in speech. */
+	private split(endFrame: number): Utterance {
+		const start = this.speechFrom!;
+		let cut = start + Math.floor((endFrame - start) / 2);
+		for (let f = cut; f < endFrame; f++)
+			if (this.levels[f]! < this.levels[cut]!) cut = f;
+		this.speechFrom = cut;
+		this.lastEnd = cut;
+		return { start, end: cut, forced: true };
+	}
 }
 
 /** `text` and `more` as one, with a space only where `needsSpace` says so. */
@@ -174,12 +284,22 @@ function bytes(samples: Int16Array): Uint8Array {
 	return new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
 }
 
+/** An utterance in samples. */
+interface Span {
+	readonly start: number;
+	readonly end: number;
+}
+
 export class DictationStream {
 	private samples = new Int16Array(VOICE_SAMPLE_RATE * 10);
 	private length = 0;
-	/** Where the window starts: everything before is committed or thrown away as silence. */
-	private windowStart = 0;
-	/** How far the window had got when it was last transcribed. */
+	private readonly segmenter: Segmenter;
+	/** Finished utterances not transcribed yet, oldest first. */
+	private readonly pending: Span[] = [];
+	/** Every utterance found, for a recogniser that runs only at the end. */
+	private first: number | undefined;
+	private last = 0;
+	/** How far the recording had got at the last tentative pass. */
 	private lastPartialAt = 0;
 	private committed = "";
 	private tentative = "";
@@ -192,7 +312,9 @@ export class DictationStream {
 		private readonly language: VoiceLanguage,
 		private readonly onUpdate: (update: VoiceUpdate) => void,
 		private readonly tuning: StreamTuning = DEFAULT_TUNING,
-	) {}
+	) {
+		this.segmenter = new Segmenter(tuning);
+	}
 
 	/** Seconds recorded so far. */
 	get seconds(): number {
@@ -214,6 +336,14 @@ export class DictationStream {
 		for (let i = 0; i < count; i++)
 			this.samples[this.length + i] = view.getInt16(i * 2, true);
 		this.length += count;
+		const done = this.segmenter.length;
+		const levels = frameLevels(
+			this.samples.subarray(done * FRAME, this.length),
+		);
+		for (const level of levels) {
+			const utterance = this.segmenter.feed(level);
+			if (utterance !== undefined) this.found(utterance);
+		}
 		this.pump();
 	}
 
@@ -225,15 +355,14 @@ export class DictationStream {
 		this.closed = true;
 		while (this.busy !== undefined) await this.busy;
 		if (this.failure !== undefined) throw this.failure;
-		const rest = this.samples.subarray(this.windowStart, this.length);
-		if (this.hasSpeech(rest)) {
-			const words = await this.transcriber.transcribe(
-				bytes(rest),
-				this.options(),
-			);
-			this.committed = joinSpoken(this.committed, words);
+		const rest = this.segmenter.flush();
+		if (rest !== undefined) this.found(rest, this.length);
+		if (this.transcriber.live) {
+			for (let span = this.pending.shift(); span; span = this.pending.shift())
+				await this.final(span);
+		} else if (this.first !== undefined) {
+			await this.final({ start: this.first, end: this.last });
 		}
-		this.windowStart = this.length;
 		this.tentative = "";
 		this.onUpdate({ committed: this.committed, tentative: "" });
 		return this.committed;
@@ -244,20 +373,32 @@ export class DictationStream {
 		this.closed = true;
 	}
 
-	private options() {
+	private found(utterance: Utterance, end = utterance.end * FRAME): void {
+		const span = { start: utterance.start * FRAME, end };
+		this.first ??= span.start;
+		this.last = span.end;
+		if (this.transcriber.live) this.pending.push(span);
+	}
+
+	private options(partial: boolean): TranscribeOptions {
 		return {
 			language: this.language,
 			prompt: this.committed === "" ? undefined : this.committed.slice(-200),
+			partial,
 		};
 	}
 
-	private hasSpeech(window: Int16Array): boolean {
-		const speech = speechFrames(
-			frameLevels(window),
-			this.tuning.minSpeechLevel,
-		);
-		const frames = speech.filter(Boolean).length;
-		return frames * FRAME >= this.tuning.minSpeechSeconds * VOICE_SAMPLE_RATE;
+	private final(span: Span): Promise<void> {
+		const audio = this.samples.slice(span.start, span.end);
+		return this.transcriber
+			.transcribe(bytes(audio), this.options(false))
+			.then((words) => {
+				// Applied even after the recording ended: `finish` transcribes
+				// only what comes after it.
+				this.committed = joinSpoken(this.committed, words);
+				this.tentative = "";
+				if (!this.closed) this.report();
+			});
 	}
 
 	/** Start the next transcription, if one is due and none is running. */
@@ -280,50 +421,22 @@ export class DictationStream {
 
 	private next(): Promise<void> | undefined {
 		if (this.failure !== undefined) return undefined;
-		const window = this.samples.subarray(this.windowStart, this.length);
-		const levels = frameLevels(window);
-		const speech = speechFrames(levels, this.tuning.minSpeechLevel);
-		const spoken = speech.filter(Boolean).length * FRAME;
-		const max = this.tuning.maxWindowSeconds * VOICE_SAMPLE_RATE;
-
-		if (spoken < this.tuning.minSpeechSeconds * VOICE_SAMPLE_RATE) {
-			// Nothing said yet: drop all but the last second of silence, so a
-			// window is never mostly the quiet before the person spoke.
-			const keep = VOICE_SAMPLE_RATE;
-			if (window.length > keep * 2) {
-				this.windowStart = this.length - keep;
-				this.lastPartialAt = this.windowStart;
-			}
+		const span = this.pending.shift();
+		if (span !== undefined) return this.final(span);
+		const open = this.segmenter.open;
+		if (open === undefined) return undefined;
+		const from = Math.max(open * FRAME, this.lastPartialAt);
+		if (
+			this.length - from <
+			this.tuning.partialEverySeconds * VOICE_SAMPLE_RATE
+		)
 			return undefined;
-		}
-
-		let cut = findPause(speech, this.tuning);
-		if (cut === undefined && window.length > max) cut = quietestCut(levels);
-		if (cut !== undefined) {
-			const phrase = window.slice(0, cut);
-			const end = this.windowStart + cut;
-			return this.transcriber
-				.transcribe(bytes(phrase), this.options())
-				.then((words) => {
-					// Applied even after the recording ended: `finish` transcribes
-					// only what comes after it.
-					this.committed = joinSpoken(this.committed, words);
-					this.windowStart = end;
-					this.lastPartialAt = end;
-					this.tentative = "";
-					if (!this.closed) this.report();
-				});
-		}
-
-		const due =
-			this.length - this.lastPartialAt >=
-			this.tuning.partialEverySeconds * VOICE_SAMPLE_RATE;
-		if (!due) return undefined;
 		const at = this.length;
+		this.lastPartialAt = at;
+		const audio = this.samples.slice(open * FRAME, at);
 		return this.transcriber
-			.transcribe(bytes(window.slice()), this.options())
+			.transcribe(bytes(audio), this.options(true))
 			.then((words) => {
-				this.lastPartialAt = at;
 				if (this.closed) return;
 				this.tentative = words;
 				this.report();

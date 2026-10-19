@@ -22,13 +22,16 @@ import {
 } from "./voiceIpc.js";
 import {
 	cleanTranscript,
+	isNonSpeech,
 	locateWhisper,
+	statedModel,
 	recordingRefusal,
 	wavFile,
 	whisperArgs,
 	whisperCandidates,
 	WHISPER_BINARY,
 	WHISPER_MODEL,
+	WHISPER_MODELS,
 	WHISPER_SERVER_BINARY,
 } from "./whisper.js";
 
@@ -66,6 +69,55 @@ describe("where the recogniser is", () => {
 			model: join("/b", WHISPER_MODEL),
 			server: join("/b", WHISPER_SERVER_BINARY),
 		});
+	});
+});
+
+describe("which model it reads", () => {
+	it("is small by default, with large-v3-turbo still one it knows", () => {
+		expect(WHISPER_MODEL).toBe("ggml-small.bin");
+		expect(WHISPER_MODELS).toContain("ggml-large-v3-turbo-q5_0.bin");
+	});
+
+	it("takes the one the statement names, else any it knows, the default first", () => {
+		const turbo = "ggml-large-v3-turbo-q5_0.bin";
+		const present = new Set([
+			join("/d", WHISPER_BINARY),
+			join("/d", WHISPER_MODEL),
+			join("/d", turbo),
+		]);
+		const has = (p: string) => present.has(p);
+		expect(locateWhisper(["/d"], has, () => turbo)?.model).toBe(
+			join("/d", turbo),
+		);
+		expect(locateWhisper(["/d"], has, () => undefined)?.model).toBe(
+			join("/d", WHISPER_MODEL),
+		);
+		// A directory built before the default changed still works.
+		present.delete(join("/d", WHISPER_MODEL));
+		expect(locateWhisper(["/d"], has, () => undefined)?.model).toBe(
+			join("/d", turbo),
+		);
+		// A statement naming a file that is not there is passed over.
+		expect(locateWhisper(["/d"], has, () => "ggml-gone.bin")?.model).toBe(
+			join("/d", turbo),
+		);
+	});
+
+	it("reads only a plain model file name from the statement", () => {
+		const reading = (text: string) => () => text;
+		expect(statedModel("/d", reading('{"model":"ggml-small.bin"}'))).toBe(
+			"ggml-small.bin",
+		);
+		expect(
+			statedModel("/d", reading('{"model":"../../etc/x.bin"}')),
+		).toBeUndefined();
+		expect(statedModel("/d", reading('{"model":3}'))).toBeUndefined();
+		expect(statedModel("/d", reading("not json"))).toBeUndefined();
+		expect(
+			statedModel("/d", () => {
+				throw new Error("ENOENT");
+			}),
+		).toBeUndefined();
 	});
 });
 
@@ -148,6 +200,26 @@ describe("the transcript", () => {
 			),
 		).toBe("Call foo(bar) [twice]");
 		expect(cleanTranscript("[BLANK_AUDIO]\n")).toBe("");
+	});
+
+	it("drops what Whisper says over silence, but only as a segment of its own", () => {
+		for (const said of [
+			"ご視聴ありがとうございました",
+			" ご視聴ありがとうございました。",
+			"最後までご視聴いただきありがとうございました！",
+			"チャンネル登録よろしくお願いします",
+			"Thank you for watching!",
+			"【拍手】",
+			"（笑）",
+		])
+			expect(isNonSpeech(said), said).toBe(true);
+		expect(isNonSpeech("ありがとうございました")).toBe(false);
+		expect(isNonSpeech("Thank you.")).toBe(false);
+		expect(
+			cleanTranscript(
+				"テストを書いて\nご視聴ありがとうございました\n「ご視聴ありがとうございました」と書く\n",
+			),
+		).toBe("テストを書いて「ご視聴ありがとうございました」と書く");
 	});
 });
 

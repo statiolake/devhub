@@ -165,6 +165,7 @@ from darwin_bundle import (  # noqa: E402
 import build_cache  # noqa: E402
 from build_whisper import (  # noqa: E402
 	DEFAULT_OUT_DIR as WHISPER_BUILD_DIR,
+	chosen_model as chosen_whisper_model,
 	ensure as ensure_whisper,
 	install_problems as whisper_install_problems,
 )
@@ -991,7 +992,7 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 	half-copied model is not an error anyone sees here: it is a microphone
 	button that fails the first time someone presses it.
 	"""
-	problems = whisper_install_problems(whisper_dir)
+	problems = whisper_install_problems(whisper_dir, model=chosen_whisper_model())
 	if problems:
 		fail(
 			"the speech recogniser is not ready to bundle:\n  "
@@ -1065,7 +1066,7 @@ def main() -> int:
 
 	if not args.without_whisper:
 		# Also before the long steps, for the same reason: the first build on
-		# a Mac compiles whisper.cpp and downloads its model (~547 MiB), both
+		# a Mac compiles whisper.cpp and downloads its model (~466 MiB for small), both
 		# cached under ~/.cache/devhub/whisper afterwards.
 		step("speech recogniser")
 		if ensure_whisper(Path(args.whisper_dir).resolve()) != 0:

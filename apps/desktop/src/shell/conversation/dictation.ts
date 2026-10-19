@@ -25,16 +25,17 @@
  * person reads it, and ⌘Return sends as it always does.
  *
  * Which language Whisper listens for is the small label beside the button:
- * Auto, 日本語 or English, chosen by clicking it and kept for this Mac
- * (`localStorage`, a per-viewer convenience). Auto is right for both
- * languages almost always; the others are for an utterance too short to
- * tell, or an accent Whisper reads as the other language.
+ * 日本語 (the default), English or Auto, chosen by clicking it and kept for
+ * this Mac (`localStorage`, a per-viewer convenience). Naming the language
+ * spares Whisper guessing it, which a short utterance gets wrong; Auto is for
+ * a person who dictates whole messages in either (`ipc/voice.ts`).
  *
  * This module is the part with no browser in it; `useDictation.ts` is the
  * part with the microphone.
  */
 
 import {
+  DEFAULT_VOICE_LANGUAGE,
   VOICE_LANGUAGES,
   VOICE_SAMPLE_RATE,
   type VoiceLanguage,
@@ -304,7 +305,7 @@ export const LANGUAGE_LABELS: Readonly<Record<VoiceLanguage, string>> = {
 
 const LANGUAGE_KEY = "devhub.dictation.language";
 
-/** The language chosen on this Mac, or `auto`. Storage may be unavailable; that is `auto` too. */
+/** The language chosen on this Mac, or the default (日本語). Storage may be unavailable; that is the default too. */
 export function savedLanguage(
   storage: Pick<Storage, "getItem"> | undefined,
 ): VoiceLanguage {
@@ -312,9 +313,9 @@ export function savedLanguage(
     const saved = storage?.getItem(LANGUAGE_KEY);
     return VOICE_LANGUAGES.includes(saved as VoiceLanguage)
       ? (saved as VoiceLanguage)
-      : "auto";
+      : DEFAULT_VOICE_LANGUAGE;
   } catch {
-    return "auto";
+    return DEFAULT_VOICE_LANGUAGE;
   }
 }
 
@@ -325,6 +326,6 @@ export function saveLanguage(
   try {
     storage?.setItem(LANGUAGE_KEY, language);
   } catch {
-    // A preference that is not kept is the same preference next time: auto.
+    // A preference that is not kept is the default next time.
   }
 }

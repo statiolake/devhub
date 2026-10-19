@@ -2,11 +2,12 @@
  * The recogniser kept loaded: whisper.cpp's `whisper-server`, as
  * `devhub-whisper-server` (`scripts/build_whisper.py`).
  *
- * Streaming dictation transcribes the window being spoken every half second
- * (`dictationStream.ts`). A program per transcription — what `whisper.ts`
- * does with the CLI — pays for a process, the model's ~550 MB into GPU
- * memory and Metal's pipelines every time, a second or more on its own, which
- * is the whole budget. So the server is started once and asked over HTTP.
+ * Streaming dictation transcribes the utterance being spoken about once a
+ * second, and each utterance once more when it ends (`dictationStream.ts`).
+ * A program per transcription — what `whisper.ts` does with the CLI — pays
+ * for a process, the model into GPU memory and Metal's pipelines every time,
+ * a second or more on its own, which is the whole budget. So the server is
+ * started once and asked over HTTP.
  *
  * It listens on 127.0.0.1 only, on a port chosen free just before it starts,
  * and every route it has sits under a random path (`--request-path`), so the
@@ -89,7 +90,21 @@ export const NODE_DEPS: WhisperServerDeps = {
 	},
 };
 
-/** The server's command line. */
+/**
+ * CPU threads for the server: half the cores, as podcast-maker runs Whisper,
+ * between 2 and 4. Metal does the encoder and most of the decoder; the CPU
+ * part is small, and past the performance cores more threads are slower and
+ * take the CPU from everything else on the Mac.
+ */
+export function serverThreads(cores: number): number {
+	return Math.max(2, Math.min(4, Math.floor(cores / 2)));
+}
+
+/**
+ * The server's command line. `-fa` is flash attention, faster on Metal and
+ * whisper.cpp v1.9.4's default; it is said so that a default changing
+ * upstream does not quietly make dictation slower.
+ */
 export function serverArgs(options: {
 	readonly model: string;
 	readonly port: number;
@@ -106,8 +121,36 @@ export function serverArgs(options: {
 		"--request-path",
 		options.path,
 		"-t",
-		String(Math.max(1, Math.min(8, options.threads))),
+		String(serverThreads(options.threads)),
+		"-fa",
 		"-nt",
+	];
+}
+
+/**
+ * The form fields of one transcription, beside the audio.
+ *
+ * Both kinds decode at temperature 0 with no timestamps. A tentative pass
+ * (`partial`) is greedy with one candidate and no temperature fallback: it is
+ * thrown away a second later, and a fallback (decoding again, hotter, when
+ * the first try looks unsure) is several passes for one answer. The
+ * committed pass keeps the fallback — 0.2 a step, best of two, whisper.cpp
+ * server's defaults, named so they do not move under it — because that is
+ * the text that stays.
+ */
+export function inferenceFields(
+	options: TranscribeOptions,
+): readonly (readonly [string, string])[] {
+	return [
+		["response_format", "text"],
+		["no_timestamps", "true"],
+		["temperature", "0"],
+		["temperature_inc", options.partial === true ? "0" : "0.2"],
+		["best_of", options.partial === true ? "1" : "2"],
+		["language", options.language],
+		...(options.prompt === undefined
+			? []
+			: [["prompt", options.prompt] as const]),
 	];
 }
 
@@ -255,11 +298,7 @@ export class WhisperServer implements Transcriber {
 			}),
 			"audio.wav",
 		);
-		form.set("response_format", "text");
-		form.set("no_timestamps", "true");
-		form.set("temperature", "0");
-		form.set("language", options.language);
-		if (options.prompt !== undefined) form.set("prompt", options.prompt);
+		for (const [name, value] of inferenceFields(options)) form.set(name, value);
 		const seconds = pcm.byteLength / 2 / VOICE_SAMPLE_RATE;
 		const deadline = transcriptionDeadlineMs(seconds) - 50_000;
 		let response: Response;

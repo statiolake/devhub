@@ -32,6 +32,7 @@ import type {
 } from "electron";
 
 import {
+	DEFAULT_VOICE_LANGUAGE,
 	VOICE_CHANNELS,
 	VOICE_LANGUAGES,
 	VOICE_MAX_SECONDS,
@@ -143,7 +144,7 @@ export function registerVoiceIpc(options: {
 			language as VoiceLanguage,
 		)
 			? (language as VoiceLanguage)
-			: "auto";
+			: DEFAULT_VOICE_LANGUAGE;
 		const id = nextSession++;
 		void transcriber.warm?.().catch(() => undefined);
 		const stream = new DictationStream(transcriber, spoken, (update) => {

@@ -21,7 +21,19 @@ import build_whisper as bw
 class Pins(unittest.TestCase):
 	def test_pins_a_full_commit_and_a_sha1(self) -> None:
 		self.assertRegex(bw.WHISPER_CPP_COMMIT, r"^[0-9a-f]{40}$")
-		self.assertRegex(bw.MODEL_SHA1, r"^[0-9a-f]{40}$")
+		for model in bw.MODELS.values():
+			self.assertRegex(model.sha1, r"^[0-9a-f]{40}$")
+
+	def test_carries_small_unless_told_otherwise(self) -> None:
+		self.assertEqual(bw.MODEL, "ggml-small.bin")
+		# whisper.cpp's models/README.md at v1.9.4.
+		self.assertEqual(bw.MODELS["ggml-small.bin"].sha1, "55356645c2b361a969dfd0ef2c5a50d530afd8d5")
+		self.assertEqual(bw.chosen_model({}), bw.MODEL)
+		self.assertEqual(
+			bw.chosen_model({bw.MODEL_ENV: "ggml-large-v3-turbo-q5_0.bin"}), "ggml-large-v3-turbo-q5_0.bin"
+		)
+		with self.assertRaises(SystemExit):
+			bw.chosen_model({bw.MODEL_ENV: "ggml-tiny.bin"})
 
 	def test_cannot_fetch_anything_at_runtime(self) -> None:
 		self.assertIn("-DWHISPER_CURL=OFF", bw.CMAKE_FLAGS)
@@ -100,6 +112,13 @@ class InstallProblems(unittest.TestCase):
 	def test_refuses_a_binary_that_cannot_run(self) -> None:
 		(self.dir / bw.BINARY).chmod(0o644)
 		self.assertIn("not executable", bw.install_problems(self.dir)[0])
+
+	def test_refuses_the_model_it_used_to_carry_beside_it(self) -> None:
+		(self.dir / "ggml-large-v3-turbo-q5_0.bin").write_bytes(b"old")
+		self.assertIn("another model", bw.install_problems(self.dir)[0])
+
+	def test_holds_a_directory_to_the_model_asked_for(self) -> None:
+		self.assertIn("carries", bw.install_problems(self.dir, model="ggml-large-v3-turbo-q5_0.bin")[0])
 
 	def test_refuses_a_directory_without_the_server(self) -> None:
 		(self.dir / bw.SERVER_BINARY).unlink()

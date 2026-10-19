@@ -9,7 +9,7 @@ the bundle, put there by this script at build time:
     DevHub.app/Contents/Resources/whisper/
       devhub-whisper                 whisper.cpp's `whisper-cli`, renamed
       devhub-whisper-server          whisper.cpp's `whisper-server`, renamed
-      ggml-large-v3-turbo-q5_0.bin   the model
+      ggml-small.bin                 the model (see below)
       whisper.json                   the statement: which of each, and hashes
       LICENSE-whisper.cpp            MIT, travels with the binary
 
@@ -35,33 +35,41 @@ and well under a second) and dies alone.
 
 Two programs from the one build. `devhub-whisper-server` is what dictation
 uses: it loads the model once and keeps it in GPU memory, so the composer can
-transcribe the recording again every fraction of a second while the person
-speaks and show the words as they come (`main/voice/whisperServer.ts`). It
+transcribe the utterance being spoken about once a second and show the words
+as they come (`main/voice/whisperServer.ts`). It
 listens on 127.0.0.1 only, on a port and under a random path main chooses,
 and is stopped when dictation has been idle a while. `devhub-whisper` (the
 CLI) is the fallback for a directory built before the server was: final text
 only, on stop.
 
-## Why large-v3-turbo, quantised to q5_0
+## Why small, in f16
 
 The composer is for Japanese and English, often mixed in one sentence, and
-full of identifiers. The small models (`base`, `small`) are fine for English
-and noticeably worse at Japanese — dropped particles, wrong kanji for
-homophones, katakana for every English word. `large-v3` is the accurate one
-and is slow: 32 decoder layers. `large-v3-turbo` is `large-v3`'s encoder with
-the decoder pruned to 4 layers and fine-tuned again — near large-v3 accuracy on
-both languages at several times the speed, which is the trade a dictation
-button wants: on an M1 a ten-second utterance comes back in about a second.
+full of identifiers. Dictation streams: the phrase being spoken is
+transcribed again while it is spoken, and each phrase once more when the
+speaker pauses (`main/voice/dictationStream.ts`), so the recogniser runs
+several times a second-of-speech and its cost is the feature's cost. The
+model was `large-v3-turbo` (q5_0, 547 MiB) for its Japanese; it was too heavy
+to run that often beside everything else on the Mac — fans, a busy GPU, and
+words that lag. `small` (244 M parameters, 12 decoder layers, against turbo's
+809 M with a 32-layer encoder) is several times cheaper per pass, and the
+author's podcast-maker, which transcribes Japanese with `small` resident and
+one greedy pass per utterance, showed its quality is decent for this: what
+it gets wrong is mostly homophones the person reads and fixes before sending.
 
-Quantised to q5_0 the model is 547 MiB, against 1.5 GiB in f16 and 834 MiB in
-q8_0. The accuracy difference between q5_0 and f16 for this model is within the
-noise of the published comparisons, and a third of the size is a third of the
-download and of the zip. So the bundle grows by about 0.57 GB uncompressed —
-the binary itself is a few megabytes — and the zip by about 0.5 GB, since a
-quantised model hardly compresses. That is the largest single thing in the
-app, and it is said here so that nobody discovers it by surprise: a smaller
-bundle is `MODEL = "ggml-small-q5_1.bin"`-sized (190 MB) and worse at
-Japanese, and the choice is one constant below.
+f16 (`ggml-small.bin`, 466 MiB) rather than a quantised file: it is the one
+`small` whisper.cpp publishes a hash for (models/README.md lists no hash for
+`ggml-small-q8_0.bin` or `-q5_1`, and this script takes nothing it cannot
+verify against upstream), it is exactly what podcast-maker runs, and on
+Metal a quantised model this size is not clearly faster: its encoder is
+bound by compute rather than by reading weights, and the quantised kernels
+dequantise as they go. q8_0 would save ~200 MiB of download and bundle; that
+is not worth an unverifiable file and a model whose quality was never judged. The bundle is 80 MiB smaller than it was with turbo.
+
+`large-v3-turbo` stays one flag away for a person who wants its accuracy and
+has the GPU for it: `--model ggml-large-v3-turbo-q5_0.bin` (or
+`DEVHUB_WHISPER_MODEL`, which packaging honours too). The directory's
+statement names the model it carries, and DevHub loads whichever that is.
 
 ## Pinned, verified, cached
 
@@ -95,6 +103,7 @@ import sys
 import tempfile
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT_DIR = REPO_ROOT / "dist" / "whisper"
@@ -103,12 +112,37 @@ WHISPER_CPP_REPOSITORY = "https://github.com/ggml-org/whisper.cpp"
 WHISPER_CPP_VERSION = "v1.9.4"
 WHISPER_CPP_COMMIT = "927cfce34f31707e17f2bff35c349632fb9e2c3a"
 
-MODEL = "ggml-large-v3-turbo-q5_0.bin"
-# From whisper.cpp's models/README.md at the pinned tag.
-MODEL_SHA1 = "e050f7970618a659205450ad97eb95a18d69c9ee"
-MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL}"
-# 547 MiB, give or take; anything far off is not this model.
-MODEL_MIN_BYTES = 500_000_000
+
+class Model(NamedTuple):
+	# From whisper.cpp's models/README.md at the pinned tag.
+	sha1: str
+	# The size upstream lists, for what is said while downloading.
+	size: str
+	# Anything far below the listed size is not this model.
+	min_bytes: int
+
+
+MODELS: dict[str, Model] = {
+	"ggml-small.bin": Model("55356645c2b361a969dfd0ef2c5a50d530afd8d5", "466 MiB", 450_000_000),
+	"ggml-large-v3-turbo-q5_0.bin": Model("e050f7970618a659205450ad97eb95a18d69c9ee", "547 MiB", 500_000_000),
+}
+MODEL = "ggml-small.bin"
+MODEL_SHA1 = MODELS[MODEL].sha1
+MODEL_ENV = "DEVHUB_WHISPER_MODEL"
+
+
+def model_url(model: str) -> str:
+	return f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{model}"
+
+
+def chosen_model(env: dict[str, str] | None = None) -> str:
+	"""The model to install: `DEVHUB_WHISPER_MODEL` when it names one of MODELS, else MODEL."""
+	named = (os.environ if env is None else env).get(MODEL_ENV, "")
+	if not named:
+		return MODEL
+	if named not in MODELS:
+		fail(f"{MODEL_ENV}={named} is not one of {', '.join(MODELS)}")
+	return named
 
 BINARY = "devhub-whisper"
 SERVER_BINARY = "devhub-whisper-server"
@@ -152,7 +186,9 @@ def binary_key(commit: str = WHISPER_CPP_COMMIT, flags: tuple[str, ...] = CMAKE_
 	return h.hexdigest()[:16]
 
 
-def statement(binary_sha256: str, model_sha256: str, server_sha256: str = "") -> dict[str, str]:
+def statement(
+	binary_sha256: str, model_sha256: str, server_sha256: str = "", model: str = MODEL
+) -> dict[str, str]:
 	"""What `whisper.json` says, and what `install_problems` holds a directory to."""
 	return {
 		"engine": "whisper.cpp",
@@ -162,8 +198,8 @@ def statement(binary_sha256: str, model_sha256: str, server_sha256: str = "") ->
 		"binarySha256": binary_sha256,
 		"serverBinary": SERVER_BINARY,
 		"serverSha256": server_sha256,
-		"model": MODEL,
-		"modelSha1": MODEL_SHA1,
+		"model": model,
+		"modelSha1": MODELS[model].sha1,
 		"modelSha256": model_sha256,
 	}
 
@@ -176,18 +212,18 @@ def hash_file(path: Path, algorithm: str) -> str:
 	return digest.hexdigest()
 
 
-def model_problem(path: Path) -> str | None:
-	"""Why `path` is not the pinned model, or None when it is."""
+def model_problem(path: Path, model: str = MODEL) -> str | None:
+	"""Why `path` is not the pinned `model`, or None when it is."""
 	if not path.is_file():
 		return f"{path} is missing"
-	if path.stat().st_size < MODEL_MIN_BYTES:
-		return f"{path} is {path.stat().st_size} bytes, too small to be {MODEL}"
-	if hash_file(path, "sha1") != MODEL_SHA1:
-		return f"{path} does not hash to the SHA-1 whisper.cpp publishes for {MODEL}"
+	if path.stat().st_size < MODELS[model].min_bytes:
+		return f"{path} is {path.stat().st_size} bytes, too small to be {model}"
+	if hash_file(path, "sha1") != MODELS[model].sha1:
+		return f"{path} does not hash to the SHA-1 whisper.cpp publishes for {model}"
 	return None
 
 
-def install_problems(directory: Path, *, deep: bool = True) -> list[str]:
+def install_problems(directory: Path, *, deep: bool = True, model: str = MODEL) -> list[str]:
 	"""Why `directory` is not a recogniser to bundle; empty when it is.
 
 	`deep` re-hashes the binary and the model against the statement. Packaging
@@ -200,19 +236,22 @@ def install_problems(directory: Path, *, deep: bool = True) -> list[str]:
 	problems = []
 	if said.get("commit") != WHISPER_CPP_COMMIT:
 		problems.append(f"built from {said.get('commit')}, not {WHISPER_CPP_COMMIT} ({WHISPER_CPP_VERSION})")
-	if said.get("model") != MODEL or said.get("modelSha1") != MODEL_SHA1:
-		problems.append(f"carries {said.get('model')}, not {MODEL}")
-	model = directory / MODEL
+	if said.get("model") != model or said.get("modelSha1") != MODELS[model].sha1:
+		problems.append(f"carries {said.get('model')}, not {model}")
+	for other in MODELS:
+		if other != model and (directory / other).exists():
+			problems.append(f"{directory / other} is another model, which would be bundled for nothing")
+	model_path = directory / model
 	for name, key in ((BINARY, "binarySha256"), (SERVER_BINARY, "serverSha256")):
 		binary = directory / name
 		if not binary.is_file() or not os.access(binary, os.X_OK):
 			problems.append(f"{binary} is missing or not executable")
 		elif deep and hash_file(binary, "sha256") != said.get(key):
 			problems.append(f"{binary} does not hash to its statement")
-	if not model.is_file():
-		problems.append(f"{model} is missing")
-	elif deep and hash_file(model, "sha256") != said.get("modelSha256"):
-		problems.append(f"{model} does not hash to its statement")
+	if not model_path.is_file():
+		problems.append(f"{model_path} is missing")
+	elif deep and hash_file(model_path, "sha256") != said.get("modelSha256"):
+		problems.append(f"{model_path} does not hash to its statement")
 	return problems
 
 
@@ -250,25 +289,33 @@ def fail(message: str) -> "None":
 	raise SystemExit(1)
 
 
-def ensure_model(root: Path, *, use_cache: bool = True) -> Path:
-	"""The pinned model in the cache, downloaded and verified if it is not."""
-	target = root / "models" / MODEL
+def ensure_model(root: Path, *, use_cache: bool = True, model: str = MODEL) -> Path:
+	"""The pinned model in the cache, downloaded and verified if it is not.
+
+	The other models are removed from the cache: CI saves the whole cache, and
+	a model nobody installs any more is half a gigabyte saved for nothing.
+	"""
+	target = root / "models" / model
+	for other in MODELS:
+		if other != model:
+			(root / "models" / other).unlink(missing_ok=True)
 	if use_cache and target.is_file():
-		problem = model_problem(target)
+		problem = model_problem(target, model)
 		if problem is None:
 			return target
 		say(f"cached model unusable ({problem}); downloading again")
 		target.unlink()
 	target.parent.mkdir(parents=True, exist_ok=True)
 	partial = target.with_suffix(".part")
-	say(f"downloading {MODEL} (~547 MiB) from {MODEL_URL}")
+	url = model_url(model)
+	say(f"downloading {model} (~{MODELS[model].size}) from {url}")
 	try:
-		with urllib.request.urlopen(MODEL_URL, timeout=60) as response, partial.open("wb") as out:
+		with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as out:
 			shutil.copyfileobj(response, out, 1 << 20)
 	except OSError as error:
 		partial.unlink(missing_ok=True)
-		fail(f"could not download {MODEL}: {error}")
-	problem = model_problem(partial)
+		fail(f"could not download {model}: {error}")
+	problem = model_problem(partial, model)
 	if problem is not None:
 		partial.unlink(missing_ok=True)
 		fail(problem)
@@ -323,14 +370,21 @@ def ensure_binary(root: Path, *, use_cache: bool = True) -> Path:
 	return cached_dir
 
 
-def install(out_dir: Path, *, use_cache: bool = True) -> None:
-	"""Put the binary, the model and their statement in `out_dir`."""
+def install(out_dir: Path, *, use_cache: bool = True, model: str = MODEL) -> None:
+	"""Put the binary, the model and their statement in `out_dir`.
+
+	Any other model already there (a directory built before the model changed)
+	is removed: packaging copies the whole directory into the app.
+	"""
 	root = cache_root()
 	binaries = ensure_binary(root, use_cache=use_cache)
-	model = ensure_model(root, use_cache=use_cache)
+	model_file = ensure_model(root, use_cache=use_cache, model=model)
 	out_dir.mkdir(parents=True, exist_ok=True)
+	for other in MODELS:
+		if other != model:
+			(out_dir / other).unlink(missing_ok=True)
 	sources = [(binaries / name, name) for _, name in PROGRAMS]
-	for source, name in (*sources, (model, MODEL), (binaries / LICENSE, LICENSE)):
+	for source, name in (*sources, (model_file, model), (binaries / LICENSE, LICENSE)):
 		partial = out_dir / (name + ".part")
 		shutil.copyfile(source, partial)
 		partial.replace(out_dir / name)
@@ -340,8 +394,9 @@ def install(out_dir: Path, *, use_cache: bool = True) -> None:
 		json.dumps(
 			statement(
 				hash_file(out_dir / BINARY, "sha256"),
-				hash_file(out_dir / MODEL, "sha256"),
+				hash_file(out_dir / model, "sha256"),
 				hash_file(out_dir / SERVER_BINARY, "sha256"),
+				model,
 			),
 			indent="\t",
 		)
@@ -349,12 +404,13 @@ def install(out_dir: Path, *, use_cache: bool = True) -> None:
 	)
 
 
-def ensure(out_dir: Path = DEFAULT_OUT_DIR) -> int:
+def ensure(out_dir: Path = DEFAULT_OUT_DIR, model: str | None = None) -> int:
 	"""Install into `out_dir` unless what is there is already right. For package-nightly.py."""
-	if not install_problems(out_dir):
+	model = model or chosen_model()
+	if not install_problems(out_dir, model=model):
 		return 0
-	install(out_dir)
-	problems = install_problems(out_dir)
+	install(out_dir, model=model)
+	problems = install_problems(out_dir, model=model)
 	for problem in problems:
 		print(f"  {problem}", file=sys.stderr)
 	return 1 if problems else 0
@@ -365,16 +421,22 @@ def main(argv: list[str]) -> int:
 	parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
 	parser.add_argument("--no-cache", action="store_true", help="build and download again")
 	parser.add_argument("--check", metavar="DIR", help="only say what is wrong with DIR")
+	parser.add_argument(
+		"--model",
+		choices=tuple(MODELS),
+		help=f"which model to install (default: ${MODEL_ENV}, else {MODEL})",
+	)
 	args = parser.parse_args(argv)
+	model = args.model or chosen_model()
 	if args.check:
-		problems = install_problems(Path(args.check))
+		problems = install_problems(Path(args.check), model=model)
 		for problem in problems:
 			print(problem)
 		return 1 if problems else 0
 	if sys.platform != "darwin" or platform.machine() != "arm64":
 		fail("the recogniser is built for the bundle: macOS on Apple Silicon only")
-	install(Path(args.out_dir).resolve(), use_cache=not args.no_cache)
-	problems = install_problems(Path(args.out_dir).resolve())
+	install(Path(args.out_dir).resolve(), use_cache=not args.no_cache, model=model)
+	problems = install_problems(Path(args.out_dir).resolve(), model=model)
 	if problems:
 		fail("; ".join(problems))
 	say(f"recogniser ready in {args.out_dir}")

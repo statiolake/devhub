@@ -10,7 +10,9 @@ import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+	inferenceFields,
 	serverArgs,
+	serverThreads,
 	WhisperServer,
 	type WhisperServerDeps,
 } from "./whisperServer.js";
@@ -106,9 +108,36 @@ describe("the kept-loaded recogniser", () => {
 			"--request-path",
 			"/abc",
 			"-t",
-			"8",
+			"4",
+			"-fa",
 			"-nt",
 		]);
+	});
+
+	it("takes half the cores for the CPU's part, between 2 and 4", () => {
+		expect(serverThreads(1)).toBe(2);
+		expect(serverThreads(4)).toBe(2);
+		expect(serverThreads(6)).toBe(3);
+		expect(serverThreads(8)).toBe(4);
+		expect(serverThreads(24)).toBe(4);
+	});
+
+	it("decodes a tentative pass greedily with no fallback, and a committed one with it", () => {
+		const partial = new Map(
+			inferenceFields({ language: "ja", prompt: "前", partial: true }),
+		);
+		expect(partial.get("temperature")).toBe("0");
+		expect(partial.get("temperature_inc")).toBe("0");
+		expect(partial.get("best_of")).toBe("1");
+		expect(partial.has("beam_size")).toBe(false);
+		expect(partial.get("language")).toBe("ja");
+		expect(partial.get("prompt")).toBe("前");
+		const final = new Map(inferenceFields({ language: "en" }));
+		expect(final.get("temperature")).toBe("0");
+		expect(final.get("temperature_inc")).toBe("0.2");
+		expect(final.get("best_of")).toBe("2");
+		expect(final.has("prompt")).toBe(false);
+		expect(final.get("no_timestamps")).toBe("true");
 	});
 
 	it("starts once, waits until healthy, and reuses the process", async () => {
@@ -130,6 +159,11 @@ describe("the kept-loaded recogniser", () => {
 		expect(form.get("language")).toBe("ja");
 		expect(form.get("prompt")).toBe("前");
 		expect(form.get("response_format")).toBe("text");
+		expect(form.get("temperature_inc")).toBe("0.2");
+		await server.transcribe(pcm, { language: "ja", partial: true });
+		const partialForm = fetch.mock.calls.at(-1)![1]!.body as FormData;
+		expect(partialForm.get("temperature_inc")).toBe("0");
+		expect(partialForm.get("best_of")).toBe("1");
 		expect((form.get("file") as Blob).size).toBe(44 + pcm.byteLength);
 	});
 

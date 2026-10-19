@@ -151,23 +151,24 @@ describe("the shortcut and the language", () => {
     expect(key({ code: "KeyN" })).toBe(false);
   });
 
-  it("cycles Auto, Japanese, English", () => {
+  it("cycles Japanese, English, Auto", () => {
     expect(nextLanguage("auto")).toBe("ja");
     expect(nextLanguage("ja")).toBe("en");
     expect(nextLanguage("en")).toBe("auto");
   });
 
-  it("reads anything it did not write, or a storage that throws, as auto", () => {
-    expect(savedLanguage({ getItem: () => "ja" })).toBe("ja");
-    expect(savedLanguage({ getItem: () => "fr" })).toBe("auto");
-    expect(savedLanguage(undefined)).toBe("auto");
+  it("reads anything it did not write, or a storage that throws, as 日本語", () => {
+    expect(savedLanguage({ getItem: () => "auto" })).toBe("auto");
+    expect(savedLanguage({ getItem: () => "en" })).toBe("en");
+    expect(savedLanguage({ getItem: () => "fr" })).toBe("ja");
+    expect(savedLanguage(undefined)).toBe("ja");
     expect(
       savedLanguage({
         getItem: () => {
           throw new Error("denied");
         },
       }),
-    ).toBe("auto");
+    ).toBe("ja");
   });
 });
 
@@ -298,7 +299,7 @@ describe("dictating in the composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await screen.findByRole("button", { name: "Stop dictating" });
     expect(voice.warm).toHaveBeenCalled();
-    expect(voice.begin).toHaveBeenCalledWith("auto");
+    expect(voice.begin).toHaveBeenCalledWith("ja");
     // 0.25 s at 16 kHz is sent as soon as it is collected: 12000 at 48 kHz.
     hear(6000);
     expect(voice.audio).not.toHaveBeenCalled();
@@ -410,11 +411,11 @@ describe("dictating in the composer", () => {
     const voice = fakeVoice();
     draw(READY, fakeActions({ voice }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Dictation language: Auto" }),
+      screen.getByRole("button", { name: "Dictation language: 日本語" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
     await screen.findByRole("button", { name: "Stop dictating" });
-    expect(voice.begin).toHaveBeenCalledWith("ja");
+    expect(voice.begin).toHaveBeenCalledWith("en");
   });
 });
 

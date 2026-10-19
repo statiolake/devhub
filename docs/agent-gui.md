@@ -1640,37 +1640,40 @@ not gone in yet and stops (it does not stop a running turn). While it
 records the button is red and its halo follows your voice; while it finishes
 the last phrase it pulses.
 
-The small label beside it is the language Whisper listens for: **Auto**,
-**日本語** or **English**, cycled by clicking and remembered on this Mac. Auto
-is right for Japanese, English and the two mixed almost always; naming one
-helps an utterance too short to tell, or an accent Whisper reads as the other
-language. A Latin word dictated next to Latin text gets a space; next to
+The small label beside it is the language Whisper listens for: **日本語**
+(the default), **English** or **Auto**, cycled by clicking and remembered on
+this Mac. Naming the language spares Whisper guessing it, which it gets wrong
+on a short utterance; English words inside Japanese still come out. Auto is
+for dictating whole messages in either language. A Latin word dictated next to Latin text gets a space; next to
 Japanese it gets none.
 
 **Nothing leaves the Mac.** The recogniser is
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (pinned to v1.9.4,
 built with Metal, no network code compiled in) with the
-`large-v3-turbo` model quantised to q5_0, both inside the app at
+`small` model (f16, `ggml-small.bin`), both inside the app at
 `DevHub.app/Contents/Resources/whisper/`. Nothing is downloaded while DevHub
 runs. The recogniser is loaded when you point at the microphone or start
 dictating (a second or two, once) and stays loaded until dictation has been
-unused for ten minutes. While loaded, words being spoken show about half a
-second to a second after they are said, a phrase goes into the field within
-about half a second of the pause after it, and stopping takes about as long
-as transcribing the last phrase — a few hundred milliseconds on Apple
-Silicon.
+unused for ten minutes. While loaded, the words of what you are saying show,
+dimmed, about once a second; a phrase goes into the field shortly after the
+pause after it (0.4 s of quiet ends it), and stopping takes about as long as
+transcribing the last phrase.
 
 The first time, macOS asks whether DevHub may use the microphone. If you said
 no, the button says so when pressed; allow it in System Settings → Privacy &
 Security → Microphone.
 
-**What it costs.** The model is 547 MiB, which makes the app about 0.57 GB
-bigger and the zip about 0.5 GB bigger (a quantised model hardly
-compresses). `large-v3-turbo` was chosen over the smaller models because
-`base` and `small` are clearly worse at Japanese, and over `large-v3` because
-turbo's 4-layer decoder makes it several times faster for nearly the same
-accuracy. q5_0 rather than q8_0 (834 MiB) or f16 (1.5 GiB) because the
-accuracy difference is within noise and the size is not.
+**What it costs.** The model is 466 MiB, which makes the app about 0.49 GB
+bigger. It was `large-v3-turbo` (q5_0, 547 MiB) for its Japanese, which was
+too heavy to run as often as streaming does; `small` is several times
+cheaper per pass, and its Japanese is decent for dictation — the same model
+the author's podcast-maker transcribes with. f16 rather than a quantised
+`small` because it is the one whisper.cpp publishes a hash for, and a
+quantised model this size is not clearly faster on Metal.
+`scripts/build_whisper.py --model ggml-large-v3-turbo-q5_0.bin` (or
+`DEVHUB_WHISPER_MODEL=ggml-large-v3-turbo-q5_0.bin` for packaging) builds
+with turbo instead; DevHub loads whichever model the directory's
+`whisper.json` names.
 
 **How it is built.** `scripts/build_whisper.py` clones whisper.cpp at the
 pinned tag (refusing it if the tag no longer names the pinned commit),
@@ -1692,15 +1695,22 @@ they come, and streams them to main four times a second (at most five
 minutes). Main keeps `devhub-whisper-server` running with the model loaded,
 listening on 127.0.0.1 only, on a port and under a random path it chooses —
 the path is the key to every route — and built without network code, so it
-can fetch nothing. Each dictation is cut into phrases at pauses (an energy
-test per 30 ms frame against the recording's noise floor; a phrase with no
-pause is cut at its quietest point after 20 seconds). The phrase being spoken
-is transcribed again every half second of new audio, and is the tentative
-text; at a pause, the audio up to the middle of the pause is transcribed on
-its own and committed — it never changes again, and is passed to Whisper as
-the prompt for the next phrase. Whisper's segments are joined into one
-paragraph without its non-speech markers (`[BLANK_AUDIO]`, `(music)`…). One
-transcription runs at a time. See `shell/conversation/dictation.ts`,
+can fetch nothing; it runs with half the cores (2 to 4) and flash attention.
+Each dictation is cut into utterances as it arrives, the way podcast-maker
+does: an energy test per 20 ms frame with hysteresis — 200 ms above a start
+threshold begins one, 400 ms below a lower end threshold ends it — with
+300 ms of audio kept either side, anything shorter than 0.8 s dropped, and
+one that runs 10 s without a pause cut at its quietest point. The thresholds
+follow the noise floor of the last three seconds, capped at podcast-maker's
+fixed ones. While an utterance is spoken it is transcribed from its start
+when the recogniser is idle and at least a second more has come in — greedy,
+no temperature fallback — and that is the tentative text; when it ends it is
+transcribed once more, on its own, with the fallback, and committed — it
+never changes, is never transcribed again, and is passed to Whisper as the
+prompt for the next. Whisper's segments are joined into one paragraph
+without its non-speech markers (`[BLANK_AUDIO]`, `(music)`, `【拍手】`…) or
+what it says over silence (「ご視聴ありがとうございました」 and its kin).
+One transcription runs at a time. See `shell/conversation/dictation.ts`,
 `main/voice/dictationStream.ts`, `main/voice/whisperServer.ts` and
 `ipc/voice.ts`.
 
