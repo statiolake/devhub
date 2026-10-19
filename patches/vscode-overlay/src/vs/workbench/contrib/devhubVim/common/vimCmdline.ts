@@ -28,9 +28,11 @@
 // is open (so `d/foo<CR>` keeps its operator, count and register), its kind
 // and the text it started with (`'<,'>` from visual mode, `.,.+2` after a
 // count), and what to run when it is submitted. Imports nothing but the
-// keymap's helpers and the ex command names.
+// keymap's helpers and the ex parser (vimEx.ts), which the completion reads a
+// line with, as the engine does.
 
-import { canonicalExName, exRangeLength } from './vimEx.js';
+import type { ExRegistry } from './vimEx.js';
+import { BUILTIN_EX_REGISTRY, parseExCommands } from './vimEx.js';
 import type { VimKeybinding } from './vimKeymap.js';
 import { evaluateWhen, jisKeys, keybindingForVimKey } from './vimKeymap.js';
 
@@ -187,7 +189,7 @@ export interface IVimCmdlineUi {
 
 // ---- completion ------------------------------------------------------------------
 
-export type VimCmdlineCompletionKind = 'command' | 'file' | 'option' | 'buffer';
+export type VimCmdlineCompletionKind = 'command' | 'file' | 'option' | 'buffer' | 'custom';
 
 /** What Tab completes at the caret: the kind, where the word starts and what of it is typed. */
 export interface VimCmdlineCompletionContext {
@@ -195,8 +197,10 @@ export interface VimCmdlineCompletionContext {
 	/** Offset of the word being completed; it ends at the caret. */
 	readonly start: number;
 	readonly typed: string;
-	/** The canonical ex command whose argument it is. */
+	/** The ex command whose argument it is (canonical built-in name, or the user's). */
 	readonly command?: string;
+	/** `custom`: the command (`complete: "command:<id>"`) that lists the candidates. */
+	readonly source?: string;
 }
 
 export interface VimCmdlineCompletionItem {
@@ -228,46 +232,49 @@ export interface IVimCmdlineCompletionSources {
 	exCommands(): readonly VimExCommandInfo[];
 	options(): readonly VimOptionInfo[];
 	buffers(): readonly VimBufferInfo[];
+	/** The engine's ex commands, which the line is parsed with (Vim's alone without it). */
+	registry?(): ExRegistry;
 }
 
-/** Commands whose argument is a file name (`:e` `:sp` `:vs` `:new` `:vnew` `:tabnew` `:tabe` `:sav`). */
-const FILE_COMMANDS: ReadonlySet<string> = new Set(['edit', 'split', 'vsplit', 'new', 'vnew', 'tabnew', 'tabedit', 'saveas']);
-
-/** What Tab completes in a `:` line at `caret`, or undefined (`:s/x`, an argument of a command that takes none). */
-export function cmdlineCompletionContext(text: string, caret: number): VimCmdlineCompletionContext | undefined {
+/**
+ * What Tab completes in a `:` line at `caret`, or undefined (`:s/x`, an
+ * argument of a command that completes nothing). The line before the caret is
+ * read with the engine's parser (vimEx.ts parseExCommands), so after a `|` it
+ * is the next command, and the argument is what the command's spec takes:
+ * its `complete` says what it is, the whole argument for nargs `1` / `?`, the
+ * last word for `*` / `+` (and a shell command's).
+ */
+export function cmdlineCompletionContext(text: string, caret: number, registry: ExRegistry = BUILTIN_EX_REGISTRY): VimCmdlineCompletionContext | undefined {
 	const before = text.slice(0, caret);
-	const nameStart = exRangeLength(before);
-	const rest = before.slice(nameStart);
-	const m = /^[A-Za-z][A-Za-z0-9]*/.exec(rest);
-	if (!m) {
-		return rest === '' ? { kind: 'command', start: nameStart, typed: '' } : undefined;
+	const p = parseExCommands(before, registry).pop()!;
+	const nameEnd = p.nameStart + p.name.length;
+	if (before.length === nameEnd && /^[A-Za-z]*$/.test(p.name)) {
+		return { kind: 'command', start: p.nameStart, typed: p.name };
 	}
-	const name = m[0];
-	if (rest.length === name.length) {
-		return { kind: 'command', start: nameStart, typed: name };
-	}
-	let after = rest.slice(name.length);
-	if (after.startsWith('!')) {
-		after = after.slice(1);
-	}
-	const blank = /^\s+/.exec(after);
-	if (!blank) {
+	if (!p.spec || !p.command || p.argStart === nameEnd + (p.bang ? 1 : 0) && p.command !== '!') {
+		// no blank between the name and the caret: nothing to complete yet (`:w!`)
 		return undefined;
 	}
-	const args = after.slice(blank[0].length);
-	const argStart = caret - args.length;
-	const command = canonicalExName(name);
-	if (command !== undefined && FILE_COMMANDS.has(command)) {
-		return { kind: 'file', start: argStart, typed: args, command };
+	const complete = p.spec.complete;
+	if (!complete) {
+		return undefined;
 	}
-	if (command === 'buffer') {
-		return { kind: 'buffer', start: argStart, typed: args, command };
+	const shell = p.spec.shell === true && (p.command === '!' || p.args.startsWith('!'));
+	const args = before.slice(p.argStart);
+	const lastWord = /\S*$/.exec(args)![0];
+	let typed = !shell && (p.spec.nargs === '1' || p.spec.nargs === '?') ? args : lastWord;
+	if (shell && typed.startsWith('!')) {
+		typed = typed.slice(1);
 	}
-	if (command === 'set') {
-		const word = /\S*$/.exec(args)![0];
-		return word.includes('=') ? undefined : { kind: 'option', start: caret - word.length, typed: word, command };
+	const start = caret - typed.length;
+	const command = p.command;
+	if (complete === 'option') {
+		return lastWord.includes('=') ? undefined : { kind: 'option', start: caret - lastWord.length, typed: lastWord, command };
 	}
-	return undefined;
+	if (complete === 'file' || complete === 'buffer' || complete === 'command') {
+		return { kind: complete, start, typed, command };
+	}
+	return { kind: 'custom', start, typed, command, source: complete.slice('command:'.length) };
 }
 
 /**
@@ -310,7 +317,7 @@ export function cmdlineCompletions(ctx: VimCmdlineCompletionContext, sources: IV
 			const t = typed.toLowerCase();
 			return sources.buffers().filter(b => b.name.toLowerCase().includes(t)).map(b => ({ label: b.name, detail: b.detail, kind: 'buffer' }));
 		}
-		case 'file':
+		case 'file': case 'custom':
 			return [];
 	}
 }
@@ -571,7 +578,7 @@ export class VimCmdlineController {
 			return;
 		}
 		if (!this.cycle || this.cycle.shown !== this.line.text) {
-			const ctx = cmdlineCompletionContext(this.line.text, this.line.caret);
+			const ctx = cmdlineCompletionContext(this.line.text, this.line.caret, this.sources?.registry?.());
 			const items = ctx && this.sources ? cmdlineCompletions(ctx, this.sources).map(i => i.label) : [];
 			if (!ctx || !items.length) {
 				return;

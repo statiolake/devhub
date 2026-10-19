@@ -4,7 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { parseExLine, parseGlobal, parseSubstitute, resolveExAddress, canonicalExName } from '../../common/vimEx.js';
+import { BUILTIN_EX_REGISTRY, parseExCommand, parseGlobal, parseSubstitute, resolveExAddress, canonicalExName } from '../../common/vimEx.js';
+
+/** What the parser read: the range, the name as typed, `!`, the argument. */
+function parseExLine(line: string) {
+	const p = parseExCommand(line, BUILTIN_EX_REGISTRY);
+	return { range: p.range, ...(p.semicolon ? { semicolon: true } : {}), name: p.name, bang: p.bang, args: p.args.trim() };
+}
 import { patternMatchCase, regexError } from '../../common/vimEngine.js';
 import { addToNumber, colOfVcol, formatLines, rot13, vcolOf } from '../../common/vimText.js';
 

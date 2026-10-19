@@ -47,8 +47,8 @@
 
 import type { IVimCmdlineCompletionSources, IVimCmdlineTarget, VimCmdlineKind, VimExCommandInfo, VimOptionInfo } from './vimCmdline.js';
 import { VimCmdlineController, VimStringLine } from './vimCmdline.js';
-import type { ExCommandEntry, ExStep, UserExCommands } from './vimEx.js';
-import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNameInfo, builtinExNames, canonicalExName, expandExEntry, parseExLine, parseGlobal, parseSubstitute, resolveExAddress, validateUserExCommands } from './vimEx.js';
+import type { ExAddressContext, ExStep, ParsedExCommand } from './vimEx.js';
+import { ExRegistry, exInvocation, expandExSpec, parseExCommand, parseExCommands, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange } from './vimEx.js';
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
@@ -307,11 +307,12 @@ export class VimSharedState {
 	options: VimOptions = { ...DEFAULT_VIM_OPTIONS };
 	/** `devhub.vim.inccommand`: 'nosplit' previews `:s` in the editor as it is typed, '' does not. */
 	inccommand = 'nosplit';
-	private userEx: UserExCommands = validateUserExCommands(undefined);
+	/** Every ex command: Vim's and `devhub.vim.exCommands` (common/vimEx.ts). */
+	registry: ExRegistry = new ExRegistry();
 
-	/** The `devhub.vim.exCommands` setting. */
+	/** The `devhub.vim.exCommands` setting (the user's and machine's values only: the workbench never passes a workspace's). */
 	setUserExCommands(raw: unknown): void {
-		this.userEx = validateUserExCommands(raw);
+		this.registry = new ExRegistry(raw);
 	}
 
 	/** The `devhub.vim.options` setting: Neovim's defaults, then these. */
@@ -327,51 +328,9 @@ export class VimSharedState {
 		}
 	}
 
-	/** The user's entry for `name` (exact or canonical), the canonical built-in name, or why there is neither. */
-	lookupEx(name: string): { readonly entry: ExCommandEntry; readonly name: string } | { readonly builtin: string } | { readonly error: string } {
-		const error = this.userEx.errors.get(name);
-		const exact = this.userEx.table.get(name);
-		if (exact !== undefined) {
-			return { entry: exact, name };
-		}
-		const canonical = canonicalExName(name);
-		if (canonical !== undefined) {
-			const user = this.userEx.table.get(canonical);
-			if (user !== undefined) {
-				return { entry: user, name: canonical };
-			}
-			if (ENGINE_EX_COMMANDS.has(canonical)) {
-				return { builtin: canonical };
-			}
-			if (Object.prototype.hasOwnProperty.call(BUILTIN_EX_COMMANDS, canonical)) {
-				return { entry: BUILTIN_EX_COMMANDS[canonical], name: canonical };
-			}
-		}
-		return { error: error ?? `E492: Not an editor command: ${name}` };
-	}
-
-	exNames(): string[] {
-		return [...builtinExNames(), ...this.userEx.table.keys()];
-	}
-
 	/** Every ex command name with what it runs, for the prompt's completion: Vim's (`:sp[lit]`) and `devhub.vim.exCommands`. */
 	exCommandList(): VimExCommandInfo[] {
-		const out: VimExCommandInfo[] = [];
-		for (const { name, abbrev, alias } of builtinExNameInfo()) {
-			const canonical = alias ?? name;
-			const user = this.userEx.table.get(canonical);
-			const short = abbrev === name ? name : `${abbrev}[${name.slice(abbrev.length)}]`;
-			const what = user !== undefined ? describeExEntry(user) + ' (devhub.vim.exCommands)'
-				: ENGINE_EX_COMMANDS.has(canonical) ? 'Vim'
-					: Object.prototype.hasOwnProperty.call(BUILTIN_EX_COMMANDS, canonical) ? describeExEntry(BUILTIN_EX_COMMANDS[canonical]) : '';
-			out.push({ name, detail: `:${short}${alias ? ` = :${alias}` : ''}${what ? ` - ${what}` : ''}`, user: user !== undefined });
-		}
-		for (const [name, entry] of this.userEx.table) {
-			if (/^[A-Z]/.test(name)) {
-				out.push({ name, detail: describeExEntry(entry), user: true });
-			}
-		}
-		return out;
+		return this.registry.list();
 	}
 
 	/** The options `:set` knows, with their short names and current values. */
@@ -384,15 +343,6 @@ export class VimSharedState {
 			return { name, ...(alias ? { alias } : {}), boolean, detail: boolean ? (value ? 'on' : 'off') : `=${value}` };
 		});
 	}
-}
-
-/** What an ex table entry runs, in a few words: its description, or its command ids. */
-function describeExEntry(entry: ExCommandEntry): string {
-	if (typeof entry === 'object' && entry !== null && !Array.isArray(entry) && 'run' in entry) {
-		return entry.description ?? describeExEntry(entry.run);
-	}
-	const steps = Array.isArray(entry) ? entry : [entry];
-	return steps.map(s => typeof s === 'string' ? s : (s as ExStep).command).join(', ');
 }
 
 /** Each prompt the engines open gets its own number, so the workbench shows each one once. */
@@ -515,6 +465,8 @@ const EXPANDING_COMMANDS = new Set<string>(['devhubVim.run', 'devhubVim.repeat']
 /** 'inccommand' previews at most this many replacements, on the lines on screen and this many around them. */
 const INCCOMMAND_LIMIT = 1000;
 const INCCOMMAND_MARGIN = 50;
+/** Ex commands whose argument is passed as typed (blanks at its end are keys, or part of a shell command). */
+const RAW_ARG_COMMANDS: ReadonlySet<string> = new Set(['normal']);
 /** The most iterations a `devhubVim.repeat` runs. */
 const MAX_REPEAT = 1000;
 /** Not recorded into a macro: what they lead to is (the command an awaited char completes, the ex line, the search). */
@@ -688,7 +640,7 @@ export class VimEngine {
 
 	/** The candidates the engine knows for the prompt's completion (ex commands, options; no open editors). */
 	cmdlineSources(): IVimCmdlineCompletionSources {
-		return { exCommands: () => this.shared.exCommandList(), options: () => this.shared.optionList(), buffers: () => [] };
+		return { exCommands: () => this.shared.exCommandList(), options: () => this.shared.optionList(), buffers: () => [], registry: () => this.shared.registry };
 	}
 
 	/** The prompt's line changed: 'incsearch' shows where the pattern typed so far matches. */
@@ -2020,9 +1972,8 @@ export class VimEngine {
 					if (!this.shared.lastEx) {
 						this.invalid('E30: No previous command line');
 					}
-					for (let c = 0; c < n; c++) {
-						this.runEx(this.shared.lastEx);
-					}
+					const line = this.shared.lastEx;
+					this.sequence(Array.from({ length: n }, () => () => this.runEx(line)));
 					this.shared.lastMacro = ':';
 					break;
 				}
@@ -2432,19 +2383,24 @@ export class VimEngine {
 		}
 	}
 
-	/** Run `fn` with the cursor on each line from..to (lines added or removed on the way are followed). */
+	/**
+	 * Run `fn` with the cursor on each line from..to (lines added or removed on
+	 * the way are followed), each after what the one before started (sequence);
+	 * one undo step.
+	 */
 	private forLines(from: number, to: number, fn: () => void): void {
 		const startCount = this.host.lineCount();
-		this.changeBatch++;
-		try {
-			for (let l = from; l <= to; l++) {
-				const shift = this.host.lineCount() - startCount;
-				const line = l + shift;
+		const items: (() => boolean | void)[] = [];
+		for (let l = from; l <= to; l++) {
+			items.push(() => {
+				const line = l + this.host.lineCount() - startCount;
 				if (line > this.lastLine() || line < 0) {
-					break;
+					return false;
 				}
 				this.setNormalCursor(pos(line, 0));
 				fn();
+				return true;
+			}, () => {
 				if (this.isInsert()) {
 					this.exitInsert(false);
 				}
@@ -2452,13 +2408,12 @@ export class VimEngine {
 					this.leaveVisual(this.visualHead);
 				}
 				this.resetGrammar();
-			}
-		} finally {
-			this.changeBatch--;
-			this.closeChange();
+			});
 		}
+		this.sequence(items, undefined, true);
 	}
 
+	/** Each step after what the one before started (a VS Code command a key ran, an ex line): see `sequence`. */
 	private playMacro(name: string | undefined, times: number): void {
 		const steps = name ? this.shared.macros.get(name) : undefined;
 		if (!name || (!steps && !this.shared.registers.get(name))) {
@@ -2468,21 +2423,20 @@ export class VimEngine {
 			this.invalid('Macro recursion too deep');
 		}
 		this.shared.lastMacro = name;
-		this.playingMacro++;
-		try {
-			for (let t = 0; t < times; t++) {
-				if (steps) {
-					for (const s of steps) {
-						this.execute(s.command, s.args);
-					}
-				} else {
-					// text in the register (yanked, or written by `:let`): run it as keys
-					this.feedKeys(this.shared.registers.get(name)!.text);
+		const items: (() => void)[] = [];
+		for (let t = 0; t < times; t++) {
+			if (steps) {
+				for (const s of steps) {
+					items.push(() => this.execute(s.command, s.args));
 				}
+			} else {
+				// text in the register (yanked, or written by `:let`): run it as keys
+				const text = this.shared.registers.get(name)!.text;
+				items.push(() => this.feedKeys(text));
 			}
-		} finally {
-			this.playingMacro--;
 		}
+		this.playingMacro++;
+		this.sequence(items, () => this.playingMacro--);
 	}
 
 	// ---- insert mode ----------------------------------------------------------
@@ -3427,7 +3381,7 @@ export class VimEngine {
 
 	/** Steps of run / repeat: engine commands run in the engine, not expanded or recorded again; VS Code commands are awaited in turn. */
 	private runNested(steps: readonly ExStep[], after?: () => void): void {
-		void (async () => {
+		this.wait((async () => {
 			try {
 				for (const s of steps) {
 					let handled: boolean;
@@ -3451,7 +3405,7 @@ export class VimEngine {
 				}
 				this.host.refresh();
 			}
-		})();
+		})());
 	}
 
 	// ---- motions ------------------------------------------------------------
@@ -4781,18 +4735,13 @@ export class VimEngine {
 	// ---- ex commands ------------------------------------------------------------
 
 	/**
-	 * `:[range]name[!] [args]` (common/vimEx.ts). Vim's editing commands run
-	 * here, on the buffer; table commands run their VS Code commands. A bare
-	 * range moves to its last line. With a range, a table command runs with the
-	 * lines selected (so a command that works on the selection, such as
-	 * sorting, gets them), then the caret goes back to the range's first line.
+	 * Where the addresses of an ex line point, for resolveExRange: the cursor,
+	 * the marks, the last visual area, and VS Code's find for `/pat/` (which
+	 * becomes the last search only with `remember`: not while 'inccommand'
+	 * previews the line).
 	 */
-	/** An ex line's range as lines (undefined: a mark or match it names is not there); a `/pat/` in it is the last search only with `remember`. */
-	private exRange(p: ReturnType<typeof parseExLine>, cur: VimPos, remember: boolean): { start: number; end: number } | undefined {
-		if (!p.range) {
-			return undefined;
-		}
-		const ctx = {
+	private exAddressContext(cur: VimPos, remember: boolean): ExAddressContext {
+		return {
 			cursorLine: cur.line,
 			lastLine: this.lastLine(),
 			visual: this.lastVisual ? { start: this.getMark('<')!.line, end: this.getMark('>')!.line } : undefined,
@@ -4812,88 +4761,183 @@ export class VimEngine {
 				return found?.range.start.line;
 			},
 		};
-		const a = resolveExAddress(p.range[0], ctx);
-		const b = p.semicolon && a !== undefined ? resolveExAddress(p.range[1], { ...ctx, cursorLine: a }) : resolveExAddress(p.range[1], ctx);
-		if (a === undefined || b === undefined) {
-			return undefined;
-		}
-		return a <= b ? { start: a, end: b } : { start: b, end: a };
 	}
 
+	/** > 0 while an ex line runs another (:g, :@, a `|`): only the line typed is `@:`'s. */
+	private exDepth = 0;
+
+	/**
+	 * An ex line (common/vimEx.ts parseExCommands): each command in turn, the
+	 * ones after a `|` once the one before has finished (a VS Code command
+	 * included, see `sequence`), and none after one that failed (Vim's
+	 * E... message is shown). The engine's own changes on the line are one undo
+	 * step.
+	 */
 	private runEx(line: string): void {
 		if (!line.trim()) {
 			return;
 		}
-		if (!this.replaying && !this.playingMacro && !/^\s*@:?\s*$/.test(line)) {
+		if (!this.exDepth && !this.replaying && !this.playingMacro && !/^\s*@:?\s*$/.test(line)) {
 			this.shared.lastEx = line;
 		}
-		const parts = splitBar(line);
-		if (parts.length > 1) {
-			for (const p of parts) {
-				this.runEx(p);
+		const cmds = parseExCommands(line, this.shared.registry);
+		const state = { failed: false };
+		this.sequence(cmds.map(p => () => {
+			if (state.failed) {
+				return false;
 			}
-			return;
+			this.exDepth++;
+			try {
+				if (!this.runExCommand(p, state)) {
+					state.failed = true;
+				}
+			} finally {
+				this.exDepth--;
+			}
+			return !state.failed;
+		}), undefined, true);
+	}
+
+	/**
+	 * One command of an ex line. Vim's editing commands run here, on the
+	 * buffer; the others run their steps (VS Code commands, each awaited). A
+	 * bare range moves to its last line. With a typed range a command that
+	 * takes one runs with its lines selected (so a command that works on the
+	 * selection, such as sorting, gets them), then the caret goes back to the
+	 * range's first line. Returns false when it failed (the message says why).
+	 */
+	private runExCommand(p: ParsedExCommand, state: { failed: boolean }): boolean {
+		if (p.error) {
+			this.message = p.error;
+			return false;
 		}
-		const p = parseExLine(line);
 		const cur = this.cursor();
 		let range: { start: number; end: number } | undefined;
 		if (p.range) {
-			range = this.exRange(p, cur, true);
+			range = resolveExRange(p, this.exAddressContext(cur, true));
 			if (!range) {
-				this.message = p.range.some(r => r.startsWith('\'')) ? 'E20: Mark not set' : `E16: Invalid range`;
-				return;
+				this.message = p.range.some(r => r.startsWith('\'')) ? 'E20: Mark not set' : 'E16: Invalid range';
+				return false;
 			}
 		}
-		if (!p.name) {
+		if (!p.spec) {
 			if (range) {
 				// :{n} - with 'nostartofline' the column is kept
 				const target = this.lineTarget(range.end);
 				this.jumpFrom(cur);
 				this.setNormalCursor(target, !this.options.startofline);
-			} else {
-				this.message = `E492: Not an editor command: ${line}`;
 			}
-			return;
+			return true;
 		}
-		let name = p.name;
-		let args = p.args;
-		let found = this.shared.lookupEx(name);
-		if ('error' in found) {
-			// `:d3`, `:ka`: a name with a count or a mark name glued on
-			const glued = /^([a-z]+?)(\d+)$/.exec(name) ?? (/^k([a-zA-Z])$/.test(name) ? ['', 'k', name[1]] : null);
-			if (glued) {
-				const alt = this.shared.lookupEx(glued[1]);
-				if (!('error' in alt)) {
-					name = glued[1];
-					args = glued[2] + (args ? ' ' + args : '');
-					found = alt;
-				}
-			}
+		const spec = p.spec;
+		if (spec.engine) {
+			this.message = '';
+			this.runEngineEx(spec.engine, range, p.bang, RAW_ARG_COMMANDS.has(spec.engine) ? p.args : p.args.trim(), cur);
+			return !/^E\d+:/.test(this.message);
 		}
-		if ('error' in found) {
-			this.message = found.error;
-			return;
+		const inv = exInvocation(spec, p, range, cur.line, this.lastLine());
+		const steps = expandExSpec(spec, inv);
+		const select = range && inv.range ? { start: inv.range.start - 1, end: inv.range.end - 1 } : undefined;
+		if (select) {
+			this.host.setSelection(pos(select.start, 0), pos(select.end, this.len(select.end)), false);
 		}
-		if ('builtin' in found) {
-			this.runEngineEx(found.builtin, range, p.bang, args, cur);
-			return;
-		}
-		const steps = expandExEntry(found.entry, {
-			args,
-			bang: p.bang,
-			range: range && { start: range.start + 1, end: range.end + 1 },
-			cursorLine: cur.line + 1,
-		});
-		const r = range;
-		if (r) {
-			this.host.setSelection(pos(r.start, 0), pos(r.end, this.len(r.end)), false);
-		}
-		this.runSteps(steps, r ? () => {
+		this.runSteps(steps, select ? () => {
 			if (this._mode === 'normal') {
-				const l = Math.min(r.start, this.lastLine());
+				const l = Math.min(select.start, this.lastLine());
 				this.setNormalCursor(pos(l, this.firstNonBlank(l)));
 			}
-		} : undefined);
+		} : undefined, () => state.failed = true);
+		return true;
+	}
+
+	/**
+	 * Engine work that waits for something asynchronous (a VS Code command, a
+	 * filter): what is sequenced after it (the rest of a macro, of a `:g`, of a
+	 * `|` line, of `:normal`'s keys) waits for this. Undefined when nothing
+	 * runs.
+	 */
+	private waiting: Promise<void> | undefined;
+
+	/** `p` runs on its own; what `sequence` puts after it waits for it to settle. */
+	private wait(p: Promise<unknown>): void {
+		const w: Promise<void> = p.then(() => undefined, () => undefined).finally(() => {
+			if (this.waiting === w) {
+				this.waiting = undefined;
+			}
+		});
+		this.waiting = w;
+	}
+
+	/**
+	 * Run `items` in order: at once, one after another, as long as none starts
+	 * something asynchronous (`wait`); after one that does, the rest run once
+	 * it has settled (and the sequence itself is then what a sequence it is part
+	 * of waits for). An item that returns false ends it. `finish` runs after
+	 * the last. With `oneUndo`, the engine's changes in each run of items are
+	 * one undo step (VS Code commands make their own).
+	 */
+	private sequence(items: readonly (() => boolean | void)[], finish?: () => void, oneUndo = false): void {
+		let i = 0;
+		let done: (() => void) | undefined;
+		const segment = (): void => {
+			let suspended = false;
+			if (oneUndo) {
+				this.changeBatch++;
+			}
+			try {
+				while (i < items.length) {
+					const before = this.waiting;
+					let go: boolean | void;
+					try {
+						go = items[i++]();
+					} catch (err) {
+						this.recover(err);
+						go = false;
+					}
+					if (go === false) {
+						i = items.length;
+						break;
+					}
+					const w = this.waiting;
+					if (w && w !== before && i < items.length) {
+						suspended = true;
+						if (!done) {
+							const all = new Promise<void>(r => done = r);
+							void w.then(() => this.resume(segment));
+							this.wait(all);
+						} else {
+							void w.then(() => this.resume(segment));
+						}
+						return;
+					}
+				}
+			} finally {
+				if (oneUndo) {
+					this.changeBatch--;
+					this.closeChange();
+				}
+				if (!suspended) {
+					try {
+						finish?.();
+					} catch (err) {
+						this.recover(err);
+					}
+					done?.();
+				}
+			}
+		};
+		segment();
+	}
+
+	/** The rest of a sequence, after what it waited for. */
+	private resume(segment: () => void): void {
+		try {
+			segment();
+		} catch (err) {
+			this.recover(err);
+		} finally {
+			this.host.refresh();
+		}
 	}
 
 	/** Vim's own ex commands. */
@@ -5028,21 +5072,12 @@ export class VimEngine {
 				if (!args) {
 					return;
 				}
+				// the keys go one after another, each after what the one before started (sequence)
 				if (!range) {
-					this.changeBatch++;
-					try {
-						this.feedKeys(args);
-						this.endFeed();
-					} finally {
-						this.changeBatch--;
-						this.closeChange();
-					}
+					this.feedKeys(args, () => this.endFeed());
 					return;
 				}
-				this.forLines(r.start, r.end, () => {
-					this.feedKeys(args);
-					this.endFeed();
-				});
+				this.forLines(r.start, r.end, () => this.feedKeys(args, () => this.endFeed()));
 				return;
 			}
 			case 'sort':
@@ -5124,9 +5159,7 @@ export class VimEngine {
 				}
 				const value = this.readRegister(reg);
 				if (value) {
-					for (const l of value.text.split('\n')) {
-						this.runEx(l);
-					}
+					this.sequence(value.text.split('\n').map(l => () => this.runEx(l)));
 				}
 				return;
 			}
@@ -5277,9 +5310,9 @@ export class VimEngine {
 	 * its range is not there.
 	 */
 	substitutePreview(line: string): VimSubstitution[] | undefined {
-		const p = parseExLine(line);
-		const name = canonicalExName(p.name);
-		if (name !== 'substitute' || !/^[^A-Za-z0-9\s"|\\&]/.test(p.args)) {
+		const p = parseExCommand(line, this.shared.registry);
+		const name = p.spec?.engine;
+		if (name !== 'substitute' || p.error || !/^[^A-Za-z0-9\s"|\\&]/.test(p.args)) {
 			return undefined;
 		}
 		const a = this.substituteArgs(name, p.args);
@@ -5288,7 +5321,7 @@ export class VimEngine {
 		}
 		let r: { start: number; end: number } | undefined;
 		try {
-			r = p.range ? this.exRange(p, this.cursor(), false) : { start: this.cursor().line, end: this.cursor().line };
+			r = p.range ? resolveExRange(p, this.exAddressContext(this.cursor(), false)) : { start: this.cursor().line, end: this.cursor().line };
 		} catch {
 			r = undefined;
 		}
@@ -5456,28 +5489,28 @@ export class VimEngine {
 			}
 			return;
 		}
-		this.changeBatch++;
-		try {
-			for (const n of marked) {
+		// each line's command after the one before has finished (a VS Code command included); one undo step while nothing waits
+		this.sequence(marked.flatMap(n => [
+			() => {
 				const p = this.marks.get(n);
 				this.marks.delete(n);
-				if (!p) {
-					continue; // the line was deleted by an earlier command
+				if (p) {
+					// (no p: the line was deleted by an earlier command)
+					this.setNormalCursor(pos(p.line, 0));
+					this.runEx(cmd);
 				}
-				this.setNormalCursor(pos(p.line, 0));
-				this.runEx(cmd);
+			},
+			() => {
 				if (this.isInsert()) {
 					this.exitInsert(false);
 				}
-			}
-		} finally {
+			},
+		]), () => {
 			for (const n of marked) {
 				this.marks.delete(n);
 			}
-			this.changeBatch--;
-			this.closeChange();
-		}
-		this.highlight(q);
+			this.highlight(q);
+		}, true);
 	}
 
 	/** :sort [!] [i] [n] [x] [u] [r] [/pat/] */
@@ -5625,36 +5658,38 @@ export class VimEngine {
 
 	/**
 	 * Keys in Vim notation run through the default keymap (as `:normal!`: user
-	 * keybindings are not used). In insert mode characters are typed.
+	 * keybindings are not used). In insert mode characters are typed. Each key
+	 * goes after what the one before started (a VS Code command it is bound
+	 * to: see `sequence`); `then` runs after the last.
 	 */
-	feedKeys(keys: string): void {
+	feedKeys(keys: string, then?: () => void): void {
 		let chord: string[] = [];
-		for (const k of keysOf(keys)) {
+		this.sequence(keysOf(keys).map(k => () => {
 			if (this.cmdline) {
 				this.feedPrompt(k === '<lt>' ? '<' : k);
-				continue;
+				return;
 			}
 			if (this.awaitingChar) {
 				this.awaitKey(k === '<lt>' ? '<' : k);
-				continue;
+				return;
 			}
 			const ch = k === '<lt>' ? '<' : k;
 			const key = keyName(ch);
 			if (this.isInsert() && !chord.length && Array.from(ch).length === 1) {
 				this.typeText(ch === '\r' ? '\n' : ch);
-				continue;
+				return;
 			}
 			if (this.isInsert() && (ch === '<CR>' || ch === '<Tab>')) {
 				this.typeText(ch === '<CR>' ? '\n' + this.indentOf(this.host.getCursor().line) : '\t');
-				continue;
+				return;
 			}
 			if (this.isInsert() && ch === '<BS>') {
 				this.cmdInsert('backspace', undefined);
-				continue;
+				return;
 			}
 			if (!key) {
 				chord = [];
-				continue;
+				return;
 			}
 			const full = [...chord, key].join(' ');
 			const ctx = this.whenContext();
@@ -5669,17 +5704,17 @@ export class VimEngine {
 				if (!this.execute(match.command, match.args)) {
 					this.runSteps([{ command: match.command, args: match.args }]);
 				}
-				continue;
+				return;
 			}
 			if (DEFAULT_KEYBINDINGS.some(b => b.key.startsWith(full + ' ') && evaluateWhen(b.when, ctx))) {
 				chord.push(key);
-				continue;
+				return;
 			}
 			chord = [];
 			if (this.pending) {
 				this.cancelPending();
 			}
-		}
+		}), then);
 	}
 
 	/**
@@ -5722,9 +5757,9 @@ export class VimEngine {
 		};
 	}
 
-	/** Run steps in order, each awaited; engine commands run in the engine (and are recorded). */
-	private runSteps(steps: readonly ExStep[], after?: () => void): void {
-		void (async () => {
+	/** Run steps in order, each awaited; engine commands run in the engine (and are recorded). What is sequenced after them waits for them (`wait`). */
+	private runSteps(steps: readonly ExStep[], after?: () => void, failed?: () => void): void {
+		this.wait((async () => {
 			try {
 				for (const s of steps) {
 					if (!this.execute(s.command, s.args)) {
@@ -5733,6 +5768,7 @@ export class VimEngine {
 				}
 			} catch (err) {
 				this.message = String(err instanceof Error ? err.message : err);
+				failed?.();
 			} finally {
 				try {
 					after?.();
@@ -5741,7 +5777,7 @@ export class VimEngine {
 				}
 				this.host.refresh();
 			}
-		})();
+		})());
 	}
 }
 
@@ -5779,32 +5815,6 @@ function splitSearchOffset(text: string, delimiter: '/' | '?'): { pattern: strin
 		}
 	}
 	return { pattern: text, offset: undefined };
-}
-
-/** An ex line split at `|` (not for :g, :v, :normal, which take it as their argument). */
-function splitBar(line: string): string[] {
-	const p = parseExLine(line);
-	const canonical = canonicalExName(p.name);
-	if (canonical === 'global' || canonical === 'vglobal' || canonical === 'normal' || !line.includes('|')) {
-		return [line];
-	}
-	const out: string[] = [];
-	let cur = '';
-	for (let i = 0; i < line.length; i++) {
-		if (line[i] === '\\' && line[i + 1] === '|') {
-			cur += '|';
-			i++;
-			continue;
-		}
-		if (line[i] === '|') {
-			out.push(cur);
-			cur = '';
-			continue;
-		}
-		cur += line[i];
-	}
-	out.push(cur);
-	return out.filter(s => s.trim());
 }
 
 /** Vim key notation (`x`, `<CR>`, `<C-r>`) to the keymap's notation (`x`, `enter`, `ctrl+r`). */

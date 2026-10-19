@@ -275,14 +275,17 @@ Its keys are default keybindings like every other Vim key (`when`:
 | `CTRL-Y` (menu open) | `acceptSelectedSuggestion` | take the match and keep typing (into a directory: its files show next) |
 | `CTRL-B` / `CTRL-E` | `cursorHome` / `cursorEnd` | caret to the start / end |
 
-Tab completes, by what is at the caret: ex command names after the range
+Tab completes, by what is at the caret (the line read as Enter runs it, so
+after a `|` it is the next command's): ex command names after the range
 (Vim's with their abbreviation and what they run, and your
-`devhub.vim.exCommands`); file names after `:e` `:sp` `:vs` `:new` `:vne`
-`:tabnew` `:tabe` `:sav` (the entries of the directory typed so far, relative
+`devhub.vim.exCommands`); in an argument what the command says it completes
+(`complete`): file names after `:e` `:sp` `:vs` `:new` `:vne`
+`:tabnew` `:tabe` `:sav` `:w` (the entries of the directory typed so far, relative
 to the workspace folder, `/` for absolute paths; a bare name also finds the
 workspace's files that match it); option names after `:set` (with `no` /
-`inv` once typed, and the current value); open editors after `:b`. In `/` and
-`?` Tab is typed.
+`inv` once typed, and the current value); open editors after `:b`; for your
+own commands, what their `complete` names (`command:<id>`: what that command
+returns). In `/` and `?` Tab is typed.
 
 In a `:` line the menu also shows by itself as you type, as IntelliSense does
 in an editor (after a letter, and after a blank or `/`, so `:e ` lists the
@@ -891,7 +894,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:reg[isters]` `:di[splay]` `:marks` | shown in the status bar |
 | `:@{reg}` `:@:` `:=` `:ret[ab]` `:le[ft]` `:ri[ght]` `:ce[nter]` | |
 
-VS Code commands (`common/vimEx.ts` `BUILTIN_EX_COMMANDS`): `:w[rite]`
+VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]`
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
 `:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
@@ -900,10 +903,11 @@ VS Code commands (`common/vimEx.ts` `BUILTIN_EX_COMMANDS`): `:w[rite]`
 `:bd[elete][!]` `:bf[irst]` `:bl[ast]` `:ls` `:buffers` `:b[uffer] {name}`
 `:sav[eas]` `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
-runs both (not after `:g` and `:normal`, which take `|` as an argument).
-`Tab` in the `:` prompt completes command names, file names, `:set` options
-and `:b` buffers, and the menu of them shows as you type (see [The
-prompt](#the-prompt)); `{count}:` starts with
+runs both, the second after the first has finished (not after `:g` and
+`:normal`, which take `|` as an argument; see [How a `:` line
+runs](#how-a--line-runs)). `Tab` in the `:` prompt completes command names,
+file names, `:set` options and `:b` buffers, and the menu of them shows as you
+type (see [The prompt](#the-prompt)); `{count}:` starts with
 `.,.+{count-1}`.
 
 ### File names
@@ -945,10 +949,10 @@ on like this:
 ```jsonc
 "devhub.vim.exCommands": {
   // 'splitbelow' 'splitright'
-  "split": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }],
-  "vsplit": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }],
-  "new": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }],
-  "vnew": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }]
+  "split": { "commands": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }] },
+  "vsplit": { "commands": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true } }] },
+  "new": { "commands": ["workbench.action.splitEditorDown", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }] },
+  "vnew": { "commands": ["workbench.action.splitEditorRight", { "command": "devhubVim.open", "args": { "file": "${args}", "replace": true, "untitled": true } }] }
 }
 ```
 
@@ -956,53 +960,120 @@ on like this:
 drops the name.) `:w {file}` and `:sav {file}` do not take a name: `:w`
 writes the current file, `:sav` asks for one (see [Known gaps](#known-gaps)).
 
+### How a `:` line runs
+
+Every `:` command — Vim's and yours — is one entry in one registry
+(`common/vimEx.ts`), and one parser reads the line, as Vim does: the range,
+the name, `!`, then the argument as that command takes it, and, when the
+command takes `|`, the next command after it. The `:` prompt's completion
+reads the line with the same parser, so it always agrees with what Enter
+runs.
+
+* **Names.** Vim's built-ins answer to Vim's abbreviations (`:s` `:su` …
+  `:substitute`, `:sp[lit]`, `:norm[al]`, `:setl[ocal]`); a built-in's name is
+  letters only, so `:d3` is `:d 3` and `:ka` is `:k a`. Your commands answer
+  to their name or any unique prefix of it (`:Fo` runs `Format` when no
+  other command of yours starts with `Fo`; `E464: Ambiguous use of
+  user-defined command` when several do; a full name wins over the longer
+  names it is a prefix of).
+* **`|`** ends a command and starts the next (`\|` is a `|` in the argument).
+  `:g` `:v` `:normal` (and your commands with `"bar": false`) take the rest
+  of the line, `|` included.
+* **In order, waiting.** A command that runs a VS Code command (`:w`, `:sp`,
+  your own) is awaited before the next command of the line runs, and so is
+  each line's command in `:g`, each step of a macro (`@q`, an ex line or a
+  key bound to a VS Code command in it), each key of `:normal`. A command
+  that fails stops the line (Vim's message, `E…`, in the status bar).
+* **One undo step.** What the engine changes for one `:` line — every command
+  of it, every line of `:g`, every key of `:normal` — is one undo step. A
+  VS Code command makes its own (the editor's undo stops), so an edit after
+  waiting for one is a step of its own.
+* **The editor is fixed when `:` is pressed.** The range, the lines, `%`, the
+  cursor and the current directory are those of the editor the prompt was
+  opened from, even after a command of the line moved the focus (`:sp |
+  s/a/b/` changes the original editor's lines; a VS Code command runs on
+  whatever has the focus, as from a keybinding).
+* **Errors** are Vim's, in the status bar: `E492: Not an editor command`,
+  `E477: No ! allowed`, `E481: No range allowed`, `E488: Trailing
+  characters`, `E471: Argument required`, `E464`, `E16: Invalid range`,
+  `E20: Mark not set`, and those of each command.
+* No command modifiers (`:silent`, `:vertical`, `:keepjumps` …) and no
+  comments (`"`) yet.
+
 ### Your own commands
 
-Your own commands go in `settings.json`; they can run any command with any
-args, like a keybinding. Names must start with an uppercase letter (as Vim's
-`:command`); a lowercase name is accepted only to override a built-in one
-(any abbreviation names it: `w` and `write` are the same).
+`devhub.vim.exCommands` in your user `settings.json` (local, or the remote
+machine's user settings; **a workspace's `.vscode/settings.json` or
+`.code-workspace` is never read**: the setting is machine-scoped and DevHub
+reads only the user values, so opening a folder cannot define or redefine a
+`:` command). Settings Sync does not sync machine-scoped settings; keep it in
+your dotfiles.
+
+A name starts with an uppercase letter (as Vim's `:command`: `E183`
+otherwise) and may have digits; a lowercase name is accepted only to override
+a built-in (any abbreviation names it: `w` and `write` are the same). An
+override keeps the attributes of the built-in it does not set (an override of
+`split` still takes a file and completes file names).
+
+The value is a command id, or a spec (validated as you type by the
+settings' JSON schema, with IntelliSense for every key):
+
+| Key | Value | Vim's | |
+| --- | --- | --- | --- |
+| `command`, `args` | a command id and its args | | one command, as a keybinding runs it |
+| `commands` | `[ "id", { "command", "args"?, "ifBang"? }, … ]` | | several, in order, each awaited; `"ifBang": true` runs a step only for `:Name!`, `false` only without `!` |
+| `nargs` | `"none"` (`"0"`), `"1"`, `"?"`, `"*"`, `"+"` | `-nargs` | how many arguments: `none` errors with E488 when one is given, `1` / `+` with E471 without one; `1` and `?` take the whole argument, blanks included, `*` and `+` split it on blanks (`\ ` is a blank in one). Default: `*` when `args` uses `${args}` or `${argList}`, otherwise `none` |
+| `range` | `"none"`, `"line"`, `"range"`, `"count"` | `-range`, `-count` | what may stand before the name: nothing (E481, the default), one line (`:5Name`), a range (`:'<,'>Name`, `:%Name`; the lines are selected while the commands run, then the caret goes to the first), a count (`:3Name` or `:Name 3`) |
+| `defaultRange` | `"."`, `"%"`, a number | `-range=%`, `-count=N` | without a typed range: the cursor line (default), the whole file; the count (default 0) |
+| `bang` | `true` | `-bang` | it takes `!` (E477 otherwise) |
+| `register` | `true` | `-register` | the first argument may be a register name (`:Name x …`) |
+| `complete` | `"file"`, `"command"`, `"option"`, `"buffer"`, `"command:<id>"` | `-complete` | what Tab completes in the argument; `command:<id>` runs that command with `{ typed, line, caret }` and shows the strings (or `{ label, detail? }`) it returns |
+| `bar` | `false` | `-bar` | `\|` is part of the argument (default `true`: it starts the next command) |
+| `description` | text | | shown in the prompt's completion |
+
+Placeholders in `args` (a string that is exactly one placeholder becomes the
+typed value; inside a longer string it is replaced by its text):
+
+| Placeholder | Value | Vim's |
+| --- | --- | --- |
+| `${args}` | the argument (string) | `<args>` |
+| `${argList}` | the arguments (string[]: split on blanks for `*` / `+`, the whole argument for `1` / `?`) | `<f-args>` |
+| `${bang}` | `true` when `!` was typed (in text: `!` or empty) | `<bang>` |
+| `${range}` | `{ "start": n, "end": m }` 1-based lines as typed, `null` without a typed range (in text: `n,m`) | `<range>` |
+| `${line1}` / `${line2}` | first / last line (1-based) of the typed range, or of `defaultRange` | `<line1>` `<line2>` |
+| `${count}` | the count (range `count`), else `null` | `<count>` |
+| `${register}` | the register named first (`register`), or `""` | `<reg>` |
 
 ```jsonc
 "devhub.vim.exCommands": {
   // :Fmt — one command
   "Fmt": "editor.action.formatDocument",
-  // :'<,'>Sort — the range's lines are selected while it runs
-  "Sort": { "command": "editor.action.sortLinesAscending" },
-  // :Grep foo bar — the argument string
+  // :'<,'>Sort, :%Sort — the range's lines are selected while it runs
+  "Sort": { "command": "editor.action.sortLinesAscending", "range": "range" },
+  // :Grep foo bar, :Grep! foo — the argument string, ! as a flag
   "Grep": { "command": "workbench.action.findInFiles",
-            "args": { "query": "${args}", "triggerSearch": true, "isRegex": "${bang}" } },
+            "args": { "query": "${args}", "triggerSearch": true, "isRegex": "${bang}" },
+            "nargs": "+", "bang": true },
   // :Term npm test — a sequence, each step awaited
-  "Term": [
-    { "command": "workbench.action.terminal.focus" },
+  "Term": { "commands": [
+    "workbench.action.terminal.focus",
     { "command": "workbench.action.terminal.sendSequence", "args": { "text": "${args}\n" } }
-  ],
+  ], "nargs": "+", "bar": false },
   // :Close / :Close! — a different command with !
-  "Close": { "run": "workbench.action.closeActiveEditor",
-             "bang": "workbench.action.revertAndCloseActiveEditor" },
-  // override a built-in name
-  "w": ["editor.action.formatDocument", "workbench.action.files.save"]
+  "Close": { "commands": [
+    { "command": "workbench.action.closeActiveEditor", "ifBang": false },
+    { "command": "workbench.action.revertAndCloseActiveEditor", "ifBang": true }
+  ], "bang": true },
+  // :Down, :5Down, :Down 5 — a count
+  "Down": { "command": "cursorMove", "args": { "to": "down", "value": "${count}" },
+            "range": "count", "defaultRange": 1 },
+  // override a built-in name (the built-in's nargs / complete are kept)
+  "w": { "commands": ["editor.action.formatDocument", "workbench.action.files.save"] }
 }
 ```
 
-Syntax: `:[range]Name[!] [args]`. Ranges: `N`, `.`, `$`, `'x` (any mark,
-`'<` `'>` the last visual area; `:` in visual mode prefills `'<,'>`), `%`,
-`*`, `/pat/`, `?pat?`, `\/` `\?` `\&`, offsets (`.+2`, `$-1`), `a,b` and
-`a;b`.
-
-Placeholders in `args` (a string that is exactly one placeholder becomes the
-typed value; inside a longer string it is replaced by its text):
-
-| Placeholder | Value |
-| --- | --- |
-| `${args}` | the text after the name (string) |
-| `${argList}` | that text split on blanks (string[]) |
-| `${bang}` | `true` when `!` was typed (in text: `!` or empty) |
-| `${range}` | `{ "start": n, "end": m }` 1-based lines, `null` without a range (in text: `n,m`) |
-| `${line1}` / `${line2}` | first / last line of the range, the cursor line without one |
-
-With a range the lines are selected while the steps run (so commands that work
-on the selection get them), then the caret goes to the range's first line.
+The format before (a bare list of steps, `{ "run": …, "bang": … }`) is not
+read any more: such an entry says what it became when you use it.
 
 ### 'inccommand'
 
@@ -1129,9 +1200,10 @@ otherwise.
   and where it ended (with backspacing over the start); moving the caret with
   the mouse in between confuses it.
 * Ex commands and keys that run VS Code commands (`gc`, `=`, `gq` with a
-  formatter, folds, LSP keys) are asynchronous; in a macro the steps after
-  them do not wait for them, and `:g` runs only Vim's own commands
-  synchronously.
+  formatter, folds, LSP keys) are asynchronous. What comes after them in a
+  macro, a `:g`, a `|` line or `:normal` waits for them; keys you type
+  meanwhile do not (Vim would hold them back), and `.` replays without
+  waiting.
 * `gq` uses VS Code's formatter for the whole lines (as Neovim's LSP
   'formatexpr'), so it reformats code rather than wrapping text when the
   language has a range formatter; `gw` always wraps.

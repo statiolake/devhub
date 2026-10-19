@@ -9,7 +9,7 @@ import { CMDLINE_KEYBINDINGS, VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdl
 import type { IVimHost, VimPos, VimRange } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 import { vimFindHost } from './vimFindHost.js';
-import { exRangeLength } from '../../common/vimEx.js';
+import { ExRegistry } from '../../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, VIM_WEIGHTS, evaluateWhen, keysOf } from '../../common/vimKeymap.js';
 
 /** What the controller tells the engine, recorded. */
@@ -38,12 +38,13 @@ function prompt(kind: VimCmdlineKind, text = '', caret = text.length, target = n
 
 const SOURCES: IVimCmdlineCompletionSources = (() => {
 	const shared = new VimSharedState();
-	shared.setUserExCommands({ Fmt: 'editor.action.formatDocument', Grep: { run: { command: 'workbench.action.findInFiles' }, description: 'Search the workspace' }, w: ['editor.action.formatDocument', 'workbench.action.files.save'] });
+	shared.setUserExCommands({ Fmt: 'editor.action.formatDocument', Grep: { command: 'workbench.action.findInFiles', description: 'Search the workspace' }, w: { commands: ['editor.action.formatDocument', 'workbench.action.files.save'] } });
 	shared.setOptions({ ignorecase: true });
 	return {
 		exCommands: () => shared.exCommandList(),
 		options: () => shared.optionList(),
 		buffers: () => [{ name: 'main.ts', detail: 'src' }, { name: 'README.md', detail: '' }, { name: 'vimMain.ts', detail: 'src/vim' }],
+		registry: () => shared.registry,
 	};
 })();
 
@@ -227,10 +228,30 @@ suite('DevHub Vim prompt: completion', () => {
 		// the caret, not the end of the line, decides
 		assert.deepStrictEqual(cmdlineCompletionContext('sp foo', 2), { kind: 'command', start: 0, typed: 'sp' });
 		assert.strictEqual(cmdlineCompletionContext('s/foo/', 6), undefined);
-		assert.strictEqual(cmdlineCompletionContext('w ', 2), undefined);
-		assert.strictEqual(exRangeLength(':  3,5'), 6);
+		assert.strictEqual(cmdlineCompletionContext('noh ', 4), undefined);
+		assert.deepStrictEqual(cmdlineCompletionContext(':  3,5d', 7), { kind: 'command', start: 6, typed: 'd' });
 		assert.deepStrictEqual(splitFileArg('src/vs/ba'), { dir: 'src/vs/', base: 'ba' });
 		assert.deepStrictEqual(splitFileArg('ba'), { dir: '', base: 'ba' });
+	});
+
+	test('the line is read with the engine\'s parser: after a `|`, by what the command\'s spec says it completes', () => {
+		const reg = new ExRegistry({
+			Open: { command: 'x.open', args: '${args}', nargs: '1', complete: 'file' },
+			Tags: { command: 'x.tags', args: '${argList}', complete: 'command:x.listTags' },
+			Run: { command: 'x.run', args: '${args}', bar: false, complete: 'command' },
+		});
+		// the second command of the line
+		assert.deepStrictEqual(cmdlineCompletionContext('noh | e src/m', 13, reg), { kind: 'file', start: 8, typed: 'src/m', command: 'edit' });
+		assert.deepStrictEqual(cmdlineCompletionContext('w | sp', 6, reg), { kind: 'command', start: 4, typed: 'sp' });
+		// nargs 1: the whole argument; * : the last word; a command that lists its own
+		assert.deepStrictEqual(cmdlineCompletionContext('Open a b', 8, reg), { kind: 'file', start: 5, typed: 'a b', command: 'Open' });
+		assert.deepStrictEqual(cmdlineCompletionContext('Tags x y', 8, reg), { kind: 'custom', start: 7, typed: 'y', command: 'Tags', source: 'x.listTags' });
+		// a unique prefix of a user command is that command
+		assert.deepStrictEqual(cmdlineCompletionContext('Op a', 4, reg), { kind: 'file', start: 3, typed: 'a', command: 'Open' });
+		// `|` is its argument for a command without bar: no next command
+		assert.deepStrictEqual(cmdlineCompletionContext('Run a | noh', 11, reg), { kind: 'command', start: 8, typed: 'noh', command: 'Run' });
+		// `:g` takes the rest of the line
+		assert.strictEqual(cmdlineCompletionContext('g/x/ | e ', 9, reg), undefined);
 	});
 
 	test('ex command names: Vim\'s by prefix with their abbreviation and what they run, and the user\'s with a detail', () => {

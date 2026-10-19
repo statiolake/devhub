@@ -28,8 +28,12 @@
 // and devhubVim.mode == 'cmdline'.
 //
 // Completion is VS Code's suggest widget on the line's model (scheme
-// `devhubvim-cmdline`): ex command names, file names after `:e` `:sp` `:vs`
-// `:new` `:tabnew` ..., option names after `:set`, open editors after `:b`.
+// `devhubvim-cmdline`): ex command names, and in an argument what the
+// command's spec says (`complete`, common/vimEx.ts): file names (`:e` `:sp`
+// `:vs` `:new` `:tabnew` `:r` `:w` ...), option names (`:set`), open editors
+// (`:b`), command names, or what a command a user's spec names
+// (`command:<id>`) returns. The line is read with the engine's parser, so
+// after a `|` it is the next command's.
 // In a `:` line it shows by itself as you type, as IntelliSense does
 // (quickSuggestions, and a blank or `/` as trigger characters), unless
 // `devhub.vim.cmdline.autoComplete` is off (then Tab alone shows it). A menu
@@ -63,7 +67,7 @@ import { IModelService } from '../../../../editor/common/services/model.js';
 import { SnippetController2 } from '../../../../editor/contrib/snippet/browser/snippetController2.js';
 import { SuggestController } from '../../../../editor/contrib/suggest/browser/suggestController.js';
 import { localize } from '../../../../nls.js';
-import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileService, IFileStat } from '../../../../platform/files/common/files.js';
@@ -77,7 +81,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
 import type { IVimCmdlineCompletionSources, IVimCmdlineLine, IVimCmdlineTarget, IVimCmdlineUi, VimCmdlineCompletionItem, VimCmdlineKind } from '../common/vimCmdline.js';
-import { resolveExFileArg } from '../common/vimEx.js';
+import { BUILTIN_EX_REGISTRY, resolveExFileArg } from '../common/vimEx.js';
 import { resolveFileBase } from './vimEdit.js';
 import { VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdlineController, cmdlineCompletionContext, cmdlineCompletions, splitFileArg } from '../common/vimCmdline.js';
 import { captureKey } from '../common/vimKeys.js';
@@ -346,6 +350,7 @@ export class VimCmdline extends Disposable {
 		@IPathService private readonly pathService: IPathService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		VimCmdline.current = this;
@@ -432,6 +437,7 @@ export class VimCmdline extends Disposable {
 			exCommands: () => origin.sources.exCommands(),
 			options: () => origin.sources.options(),
 			buffers: () => this.buffers(),
+			registry: () => origin.sources.registry?.() ?? BUILTIN_EX_REGISTRY,
 		};
 		const ui: IVimCmdlineUi = {
 			complete: d => this.complete(d),
@@ -608,11 +614,11 @@ export class VimCmdline extends Disposable {
 			return true;
 		}
 		const line = s.controller.line;
-		const ctx = cmdlineCompletionContext(line.text, line.caret);
+		const ctx = cmdlineCompletionContext(line.text, line.caret, s.sources.registry?.());
 		if (!ctx) {
 			return true;
 		}
-		if (ctx.kind !== 'file') {
+		if (ctx.kind !== 'file' && ctx.kind !== 'custom') {
 			const items = cmdlineCompletions(ctx, s.sources);
 			if (!items.length) {
 				return true;
@@ -632,11 +638,13 @@ export class VimCmdline extends Disposable {
 			return undefined;
 		}
 		const text = model.getLineContent(1);
-		const ctx = cmdlineCompletionContext(text, caret);
+		const ctx = cmdlineCompletionContext(text, caret, s.sources.registry?.());
 		if (!ctx) {
 			return undefined;
 		}
-		const items = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin) : cmdlineCompletions(ctx, s.sources);
+		const items = ctx.kind === 'file' ? await this.fileItems(ctx.typed, s.origin)
+			: ctx.kind === 'custom' ? await this.customItems(ctx.source!, ctx.typed, text, caret)
+				: cmdlineCompletions(ctx, s.sources);
 		if (token.isCancellationRequested) {
 			return undefined;
 		}
@@ -648,7 +656,7 @@ export class VimCmdline extends Disposable {
 		const range = { insert: new Range(1, ctx.start + 1, 1, caret + 1), replace: new Range(1, ctx.start + 1, 1, end + 1) };
 		const kinds: Record<VimCmdlineCompletionItem['kind'], CompletionItemKind> = {
 			command: CompletionItemKind.Function, option: CompletionItemKind.Property, buffer: CompletionItemKind.File,
-			file: CompletionItemKind.File, folder: CompletionItemKind.Folder,
+			file: CompletionItemKind.File, folder: CompletionItemKind.Folder, custom: CompletionItemKind.Value,
 		};
 		// a directory taken (CTRL-Y, Enter on it): on into it, the menu shown as typing shows it (nothing selected) when that is on
 		const into = { id: 'editor.action.triggerSuggest', title: '', ...(s.view.autoComplete ? { arguments: [{ auto: true }] } : {}) };
@@ -663,6 +671,33 @@ export class VimCmdline extends Disposable {
 			...(it.kind === 'folder' ? { command: into } : {}),
 		}));
 		return { suggestions };
+	}
+
+	/**
+	 * `complete: "command:<id>"`: what that command returns for `{ typed, line,
+	 * caret }`, a list of strings or of `{ label, detail? }` (Vim's
+	 * `-complete=custom,{func}`). Its failure is no candidates.
+	 */
+	private async customItems(command: string, typed: string, line: string, caret: number): Promise<VimCmdlineCompletionItem[]> {
+		let result: unknown;
+		try {
+			result = await this.commandService.executeCommand(command, { typed, line, caret });
+		} catch {
+			return [];
+		}
+		if (!Array.isArray(result)) {
+			return [];
+		}
+		const out: VimCmdlineCompletionItem[] = [];
+		for (const r of result) {
+			if (typeof r === 'string') {
+				out.push({ label: r, kind: 'custom' });
+			} else if (typeof r === 'object' && r !== null && typeof (r as { label?: unknown }).label === 'string') {
+				const detail = (r as { detail?: unknown }).detail;
+				out.push({ label: (r as { label: string }).label, kind: 'custom', ...(typeof detail === 'string' ? { detail } : {}) });
+			}
+		}
+		return out;
 	}
 
 	/** A new prompt, or none: the cached listings go. */

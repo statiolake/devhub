@@ -60,10 +60,15 @@
 //   closes it, by `update` like everything else. Its keys are keybindings on
 //   `devhubVim.cmdlineFocus` (common/vimCmdline.ts); it is not a Vim editor
 //   (`vimDrives`).
-// * `:` commands (../common/vimEx.ts): Vim's editing commands (:s :g :d :m :t
-//   :normal :sort ...) run in the engine; the others are a table of VS Code
-//   commands plus `devhub.vim.exCommands`, whose entries run any commands with
-//   args (`${args}`, `${range}`, `${bang}`, ... placeholders).
+// * `:` commands (../common/vimEx.ts): one registry of ExSpecs and one
+//   parser. Vim's editing commands (:s :g :d :m :t :normal :sort ...) run in
+//   the engine; the other built-ins run VS Code commands; `devhub.vim.exCommands`
+//   adds the user's (uppercase names, unique prefixes) or overrides a
+//   built-in, declaratively: the steps with `${args}` `${range}` `${bang}` ...
+//   placeholders and what the command takes (nargs, range, bang, register,
+//   complete, bar), validated by the JSON schema registered here. It is read
+//   from the user's (local and remote) settings only (`exCommandsSetting`):
+//   a workspace cannot define commands.
 // * 'hlsearch' and 'incsearch' are editor decorations drawn here (the find
 //   widget's colours), for the pattern the engine translated to a JavaScript
 //   regular expression.
@@ -144,7 +149,7 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { TextEditorSelectionSource } from '../../../../platform/editor/common/editor.js';
-import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
@@ -159,7 +164,7 @@ import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '
 import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimMatch, VimPos, VimRange, VimSearchQuery, VimSharedState, VimSubstitution } from '../common/vimEngine.js';
 import { parseReplaceString } from '../../../../editor/contrib/find/browser/replacePattern.js';
 import './media/devhubVim.css';
-import { BUILTIN_EX_COMMANDS } from '../common/vimEx.js';
+import { BUILTIN_EX_SPECS, builtinExNameForms } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
@@ -171,20 +176,79 @@ const EX_SETTING = 'devhub.vim.exCommands';
 const OPTIONS_SETTING = 'devhub.vim.options';
 const INCCOMMAND_SETTING = 'devhub.vim.inccommand';
 
+const exArgsDescription = localize('devhubVim.ex.args', "Its arguments (any JSON). Strings may use ${args}, ${argList}, ${bang}, ${range}, ${line1}, ${line2}, ${count} and ${register}: a string that is exactly one becomes the typed value.");
 const exStepSchema: IJSONSchema = {
 	type: 'object',
 	required: ['command'],
+	additionalProperties: false,
 	properties: {
-		command: { type: 'string', description: localize('devhubVim.ex.command', "The command to run.") },
-		args: { description: localize('devhubVim.ex.args', "Its arguments. Strings may use ${args}, ${argList}, ${bang}, ${range}, ${line1} and ${line2}.") },
+		command: { type: 'string', minLength: 1, description: localize('devhubVim.ex.command', "The command to run (any command id, as in keybindings.json).") },
+		args: { description: exArgsDescription },
+		ifBang: { type: 'boolean', description: localize('devhubVim.ex.ifBang', "Run this step only with `!` (true) or only without it (false).") },
 	},
 };
-const exStepsAlternatives: IJSONSchema[] = [
-	{ type: 'string', description: localize('devhubVim.ex.commandId', "A command id, run without arguments.") },
-	exStepSchema,
-	{ type: 'array', items: { anyOf: [{ type: 'string' }, exStepSchema] }, description: localize('devhubVim.ex.sequence', "Commands run in order, each awaited.") },
-];
-const exStepsSchema: IJSONSchema = { anyOf: exStepsAlternatives };
+
+/** The JSON schema of one `devhub.vim.exCommands` entry (common/vimEx.ts ExCommandSpec, validateExCommandSpec). */
+export const EX_COMMAND_SPEC_SCHEMA: IJSONSchema = {
+	type: 'object',
+	additionalProperties: false,
+	oneOf: [{ required: ['command'] }, { required: ['commands'] }],
+	properties: {
+		command: { type: 'string', minLength: 1, description: localize('devhubVim.ex.spec.command', "The command to run (or give `commands`).") },
+		args: { description: exArgsDescription },
+		commands: {
+			type: 'array', minItems: 1,
+			items: { anyOf: [{ type: 'string', minLength: 1 }, exStepSchema] },
+			description: localize('devhubVim.ex.spec.commands', "Several commands, run in order, each awaited: command ids or `{ command, args?, ifBang? }`."),
+		},
+		nargs: {
+			enum: ['none', '0', '1', '?', '*', '+'],
+			enumDescriptions: [
+				localize('devhubVim.ex.nargs.none', "No argument (E488 when one is given). The default unless `args` uses ${args} or ${argList}."),
+				localize('devhubVim.ex.nargs.0', "Same as none (Vim's -nargs=0)."),
+				localize('devhubVim.ex.nargs.1', "Exactly one argument, blanks included (E471 without one)."),
+				localize('devhubVim.ex.nargs.optional', "No argument or one, blanks included."),
+				localize('devhubVim.ex.nargs.any', "Any number, split on blanks. The default when `args` uses ${args} or ${argList}."),
+				localize('devhubVim.ex.nargs.some', "One or more, split on blanks (E471 without one)."),
+			],
+			description: localize('devhubVim.ex.spec.nargs', "How many arguments it takes (Vim's -nargs)."),
+		},
+		range: {
+			enum: ['none', 'line', 'range', 'count'],
+			enumDescriptions: [
+				localize('devhubVim.ex.range.none', "No range (E481 when one is given). The default."),
+				localize('devhubVim.ex.range.line', "One line (`:5Name`, `:'aName`): ${line1} = ${line2}."),
+				localize('devhubVim.ex.range.range', "A range of lines (`:'<,'>Name`, `:%Name`), selected while the commands run: ${range}, ${line1}, ${line2}."),
+				localize('devhubVim.ex.range.count', "A count, before the name or as the first argument (`:3Name`, `:Name 3`): ${count}."),
+			],
+			description: localize('devhubVim.ex.spec.range', "What may come before the name (Vim's -range / -count)."),
+		},
+		defaultRange: {
+			anyOf: [{ enum: ['.', '%'] }, { type: 'integer', minimum: 0 }],
+			description: localize('devhubVim.ex.spec.defaultRange', "Without a typed range: `.` the cursor line (the default), `%` the whole file (range \"range\"), or the count (range \"count\", default 0)."),
+		},
+		bang: { type: 'boolean', description: localize('devhubVim.ex.spec.bang', "It takes `!` (${bang}; E477 otherwise).") },
+		register: { type: 'boolean', description: localize('devhubVim.ex.spec.register', "The first argument may be a register name (${register}), as `:d x`.") },
+		complete: {
+			anyOf: [
+				{ enum: ['file', 'command', 'option', 'buffer'], enumDescriptions: [localize('devhubVim.ex.complete.file', "File names."), localize('devhubVim.ex.complete.command', "Ex command names."), localize('devhubVim.ex.complete.option', "`:set` options."), localize('devhubVim.ex.complete.buffer', "Open editors.")] },
+				{ type: 'string', pattern: '^command:\\S+$', patternErrorMessage: localize('devhubVim.ex.complete.custom', "`command:<id>`: a command that returns the candidates (strings or { label, detail? }) for { typed, line, caret }.") },
+			],
+			description: localize('devhubVim.ex.spec.complete', "What Tab completes in the argument."),
+		},
+		bar: { type: 'boolean', description: localize('devhubVim.ex.spec.bar', "`|` ends the command and starts the next one (the default); false: `|` is part of the argument.") },
+		description: { type: 'string', description: localize('devhubVim.ex.spec.description', "Shown in the `:` prompt's completion.") },
+	},
+	defaultSnippets: [
+		{ label: 'command', body: { command: '$1' } },
+		{ label: 'command with the argument', body: { command: '$1', args: { '$2': '\\${args}' }, nargs: '*' } },
+		{ label: 'commands on a range', body: { commands: ['$1'], range: 'range' } },
+	],
+};
+
+function escapeForPattern(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'devhubVim',
@@ -200,11 +264,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		[EX_SETTING]: {
 			type: 'object',
 			default: {},
-			markdownDescription: localize('devhubVim.exCommands', "Your own `:` commands. A name must start with an uppercase letter (as Vim's `:command`), or be a built-in name to override it ({0}). The value is a command id, `{ \"command\": ..., \"args\": ... }`, a list of those (run in order), or `{ \"run\": ..., \"bang\": ... }` where `bang` runs for `:Name!`. In `args`, strings may use `${args}` (the text after the name), `${argList}` (it split on blanks), `${bang}` (true for `!`), `${range}` (`{ start, end }` 1-based lines, null without a range), `${line1}`, `${line2}`. With a range (`:'<,'>Name`, `:%Name`, `:3,7Name`) the lines are selected while the commands run.", Object.keys(BUILTIN_EX_COMMANDS).map(n => `\`${n}\``).join(', ')),
+			// a workspace cannot define commands (vimEx.ts): local and remote user settings only, and they are read so (exCommandsSetting)
+			scope: ConfigurationScope.MACHINE,
+			markdownDescription: localize('devhubVim.exCommands', "Your own `:` commands (user settings only; a workspace's are ignored). A name starts with an uppercase letter (as Vim's `:command`; a unique prefix runs it), or is a built-in name to override it ({0}; an override keeps the attributes it does not set). The value is a command id, or `{ \"command\": ..., \"args\": ... }` / `{ \"commands\": [...] }` (run in order, each awaited; a step with `\"ifBang\": true` runs only for `:Name!`) with what it takes: `nargs`, `range`, `defaultRange`, `bang`, `register`, `complete`, `bar`. In `args`, strings may use `${args}`, `${argList}`, `${bang}`, `${range}` (`{ start, end }` 1-based, null without a typed range), `${line1}`, `${line2}`, `${count}`, `${register}`.", Object.keys(BUILTIN_EX_SPECS).filter(n => /^[a-z]/.test(n)).map(n => `\`${n}\``).join(', ')),
+			propertyNames: {
+				pattern: `^(?:[A-Z][A-Za-z0-9]*|${builtinExNameForms().map(escapeForPattern).join('|')})$`,
+				patternErrorMessage: localize('devhubVim.exCommands.name', "E183: User defined commands must start with an uppercase letter (or be a built-in name, to override it)."),
+			},
 			additionalProperties: {
 				anyOf: [
-					...exStepsAlternatives,
-					{ type: 'object', required: ['run'], properties: { run: exStepsSchema, bang: exStepsSchema, description: { type: 'string' } } },
+					{ type: 'string', minLength: 1, description: localize('devhubVim.ex.commandId', "A command id, run without arguments.") },
+					EX_COMMAND_SPEC_SCHEMA,
 				],
 			},
 		},
@@ -306,6 +376,24 @@ function toVimMatch(m: FindMatch): VimMatch {
 		range: { start: { line: r.startLineNumber - 1, col: r.startColumn - 1 }, end: { line: r.endLineNumber - 1, col: r.endColumn - 1 } },
 		groups: m.matches ?? [],
 	};
+}
+
+/**
+ * `devhub.vim.exCommands` as the user's settings have it, never a
+ * workspace's: the local user settings, with the remote user settings' entries
+ * on top in a remote window (inspect: userLocalValue / userRemoteValue,
+ * userValue when neither is there). The setting is MACHINE-scoped, so the
+ * configuration service already leaves a workspace's value out; reading it
+ * this way keeps it so whatever the scope (a workspace could otherwise run
+ * any command, :js included, from a `:` line the user types).
+ */
+export function exCommandsSetting(configurationService: Pick<IConfigurationService, 'inspect'>): Record<string, unknown> {
+	const v = configurationService.inspect<Record<string, unknown>>(EX_SETTING);
+	const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+	if (!isRecord(v.userLocalValue) && !isRecord(v.userRemoteValue)) {
+		return isRecord(v.userValue) ? { ...v.userValue } : {};
+	}
+	return { ...(isRecord(v.userLocalValue) ? v.userLocalValue : {}), ...(isRecord(v.userRemoteValue) ? v.userRemoteValue : {}) };
 }
 
 /** `devhub.vim.inccommand`: 'nosplit' unless turned off. */
@@ -1045,7 +1133,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			visual: VIM_VISUAL.bindTo(contextKeyService),
 			insert: VIM_INSERT.bindTo(contextKeyService),
 		};
-		this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
+		this.shared.setUserExCommands(exCommandsSetting(configurationService));
 		this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));
 		this.shared.inccommand = inccommandOf(configurationService.getValue(INCCOMMAND_SETTING));
 		this._register(configurationService.onDidChangeConfiguration(e => {
@@ -1053,7 +1141,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 				this.setEnabled(!!configurationService.getValue<boolean>(SETTING));
 			}
 			if (e.affectsConfiguration(EX_SETTING)) {
-				this.shared.setUserExCommands(configurationService.getValue(EX_SETTING));
+				this.shared.setUserExCommands(exCommandsSetting(configurationService));
 			}
 			if (e.affectsConfiguration(OPTIONS_SETTING)) {
 				this.shared.setOptions(configurationService.getValue(OPTIONS_SETTING));

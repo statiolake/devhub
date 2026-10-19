@@ -8,7 +8,7 @@ import type { IVimHost, VimEdit, VimMatch, VimPos, VimRange, VimSearchQuery, Vim
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 import { vimFindHost } from './vimFindHost.js';
 import { VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
-import { completeExName, parseExLine, substituteExArgs, validateUserExCommands } from '../../common/vimEx.js';
+import { BUILTIN_EX_REGISTRY, ExRegistry, parseExCommands, substituteExArgs, validateExCommandSpec } from '../../common/vimEx.js';
 import type { VimKeybinding } from '../../common/vimKeymap.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VIM_WHEN, evaluateWhen, jisKeys, keyForChar } from '../../common/vimKeymap.js';
 import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
@@ -134,7 +134,7 @@ class TestHost implements IVimHost {
 	lineComment() { return this.comment; }
 	hasRangeFormatter() { return this.formatter; }
 	fileName() { return 'test.txt'; }
-	executeCommand(command: string, args: unknown) {
+	executeCommand(command: string, args: unknown): Promise<unknown> {
 		this.commands.push({ command, args, selection: this.selection });
 		if (command === 'editor.action.commentLine' && this.selection) {
 			// what VS Code's toggle does, simply
@@ -1228,38 +1228,91 @@ suite('DevHub Vim: one Esc leaves insert mode, whatever editor widget shows', ()
 
 suite('DevHub Vim ex commands', () => {
 
-	test('parsing', () => {
-		assert.deepStrictEqual(parseExLine('w'), { range: undefined, name: 'w', bang: false, args: '' });
-		assert.deepStrictEqual(parseExLine(':q!'), { range: undefined, name: 'q', bang: true, args: '' });
-		assert.deepStrictEqual(parseExLine('\'<,\'>Sort! u  x'), { range: ['\'<', '\'>'], name: 'Sort', bang: true, args: 'u  x' });
-		assert.deepStrictEqual(parseExLine('%Fmt'), { range: ['1', '$'], name: 'Fmt', bang: false, args: '' });
-		assert.deepStrictEqual(parseExLine('12'), { range: ['12', '12'], name: '', bang: false, args: '' });
-		assert.deepStrictEqual(parseExLine('.,.+2Grep foo'), { range: ['.', '.+2'], name: 'Grep', bang: false, args: 'foo' });
+	/** What the parser read of each command of a line. */
+	const parse = (line: string, registry = BUILTIN_EX_REGISTRY) => parseExCommands(line, registry).map(p => ({
+		range: p.range, ...(p.semicolon ? { semicolon: true } : {}), name: p.name, ...(p.command !== undefined ? { command: p.command } : {}), bang: p.bang, args: p.args.trim(), ...(p.error ? { error: p.error } : {}),
+	}));
+
+	test('one parser: range, name, !, the argument as the command takes it, and the next command after |', () => {
+		const reg = new ExRegistry({ Sort: { command: 'x', bang: true, range: 'range', nargs: '*' }, Fmt: 'y' });
+		assert.deepStrictEqual(parse('w'), [{ range: undefined, name: 'w', command: 'write', bang: false, args: '' }]);
+		assert.deepStrictEqual(parse(':q!'), [{ range: undefined, name: 'q', command: 'quit', bang: true, args: '' }]);
+		assert.deepStrictEqual(parse('\'<,\'>Sort! u  x', reg), [{ range: ['\'<', '\'>'], name: 'Sort', command: 'Sort', bang: true, args: 'u  x' }]);
+		assert.deepStrictEqual(parse('12'), [{ range: ['12', '12'], name: '', bang: false, args: '' }]);
+		assert.deepStrictEqual(parse('2;+3d'), [{ range: ['2', '+3'], semicolon: true, name: 'd', command: 'delete', bang: false, args: '' }]);
+		// `:d3`: a built-in's name is letters; a user's may have digits
+		assert.deepStrictEqual(parse('d3'), [{ range: undefined, name: 'd', command: 'delete', bang: false, args: '3' }]);
+		assert.deepStrictEqual(parse('ka'), [{ range: undefined, name: 'k', command: 'mark', bang: false, args: 'a' }]);
+		// | between commands; `\|` is a | in the argument
+		assert.deepStrictEqual(parse('s/a\\|b/c/ | noh'), [
+			{ range: undefined, name: 's', command: 'substitute', bang: false, args: '/a|b/c/' },
+			{ range: undefined, name: 'noh', command: 'nohlsearch', bang: false, args: '' },
+		]);
+		assert.deepStrictEqual(parse('3 | Fmt', reg).map(p => p.name), ['', 'Fmt']);
+		// :g and :normal take | as their argument
+		assert.deepStrictEqual(parse('g/x/s/a/b/ | d').map(p => [p.command, p.args]), [['global', '/x/s/a/b/ | d']]);
+		assert.deepStrictEqual(parse('norm! A|x').map(p => [p.command, p.bang, p.args]), [['normal', true, 'A|x']]);
+		// what a command does not take is Vim's error
+		assert.strictEqual(parse('noh!')[0].error, 'E477: No ! allowed');
+		assert.strictEqual(parse('3noh')[0].error, 'E481: No range allowed');
+		assert.strictEqual(parse('noh x')[0].error, 'E488: Trailing characters: x');
+		assert.strictEqual(parse('Fmt x', reg)[0].error, 'E488: Trailing characters: x');
+		assert.strictEqual(parse('frobnicate')[0].error, 'E492: Not an editor command: frobnicate');
 	});
 
-	test('user names must start with an uppercase letter; a built-in name may be overridden', () => {
-		const t = validateUserExCommands({ Sort: 'editor.action.sortLinesAscending', lower: 'x.y', w: { command: 'my.save' }, Bad: 42 });
-		// `w` overrides :write (any abbreviation names the same command)
-		assert.deepStrictEqual([...t.table.keys()], ['Sort', 'write']);
-		assert.deepStrictEqual([...t.errors.keys()], ['lower', 'Bad']);
+	test('names: Vim\'s abbreviations for the built-ins, a unique prefix for the user\'s', () => {
+		const reg = new ExRegistry({ Sort: 'a', Split: 'b', Format: 'c', Fmt: 'd' });
+		const name = (typed: string) => { const r = reg.lookup(typed); return 'error' in r ? r.error : r.name; };
+		assert.strictEqual(name('So'), 'Sort');
+		assert.strictEqual(name('Sp'), 'Split');
+		assert.strictEqual(name('S'), 'E464: Ambiguous use of user-defined command: S');
+		assert.strictEqual(name('Fo'), 'Format');
+		// a full name wins over the longer names it is a prefix of
+		assert.strictEqual(name('Fmt'), 'Fmt');
+		assert.strictEqual(name('X'), 'E492: Not an editor command: X');
+		assert.strictEqual(name('sp'), 'split');
+		assert.strictEqual(name('spl'), 'split');
+		assert.strictEqual(name('s'), 'substitute');
+	});
+
+	test('a spec is checked: names, keys, values; the old forms say what they became', () => {
+		const reg = new ExRegistry({
+			Sort: 'editor.action.sortLinesAscending', lower: 'x.y', w: { command: 'my.save' }, Bad: 42, Old: ['a', 'b'],
+			Older: { run: 'a', bang: 'b' }, Typo: { command: 'a', narg: '*' }, Both: { command: 'a', commands: ['b'] },
+			Count: { command: 'a', range: 'count', defaultRange: '%' }, Fine: { commands: ['a', { command: 'b', args: '${args}', ifBang: true }], nargs: '?', bang: true },
+		});
+		assert.deepStrictEqual([...reg.errors.keys()].sort(), ['Bad', 'Both', 'Count', 'Old', 'Older', 'Typo', 'lower']);
+		assert.ok(reg.errors.get('lower')!.startsWith('E183'));
+		assert.ok(reg.errors.get('Old')!.includes('"commands"'));
+		assert.ok(reg.errors.get('Older')!.includes('ifBang'));
+		assert.ok(reg.errors.get('Typo')!.includes('"narg"'));
+		assert.strictEqual(validateExCommandSpec({ command: 'a', complete: 'command:my.list' }) !== undefined && typeof validateExCommandSpec({ command: 'a', complete: 'command:my.list' }), 'object');
+		assert.strictEqual(typeof validateExCommandSpec({ command: 'a', complete: 'files' }), 'string');
+		// a broken entry says why when it is used
 		const shared = new VimSharedState();
-		shared.setUserExCommands({ Sort: 'editor.action.sortLinesAscending', lower: 'x.y', w: { command: 'my.save' } });
-		let v = new Vim('|a', [], shared).keys(':Sort<CR>');
-		assert.deepStrictEqual(v.host.commands.map(c => c.command), ['editor.action.sortLinesAscending']);
-		v = new Vim('|a', [], shared).keys(':lower<CR>');
-		assert.deepStrictEqual(v.host.commands, []);
-		assert.ok(v.vim.status().includes('uppercase'), v.vim.status());
-		v = new Vim('|a', [], shared).keys(':w<CR>');
-		assert.deepStrictEqual(v.host.commands.map(c => c.command), ['my.save']);
+		shared.setUserExCommands({ lower: 'x.y', Old: ['a'] });
+		for (const line of ['lower', 'Old']) {
+			const v = new Vim('|a', [], shared).keys(`:${line}<CR>`);
+			assert.deepStrictEqual(v.host.commands, []);
+			assert.ok(v.vim.status().includes(line === 'lower' ? 'E183' : 'commands'), v.vim.status());
+		}
+		// an override takes any name the built-in answers to
+		const w = new VimSharedState();
+		w.setUserExCommands({ w: { command: 'my.save' } });
+		assert.deepStrictEqual(new Vim('|a', [], w).keys(':write<CR>').host.commands.map(c => c.command), ['my.save']);
 	});
 
-	test('args, range and bang reach the command', async () => {
+	test('args, range, bang, count and register reach the command', async () => {
 		const shared = new VimSharedState();
 		shared.setUserExCommands({
-			Grep: { command: 'workbench.action.findInFiles', args: { query: '${args}', words: '${argList}', isRegex: '${bang}', range: '${range}', label: 'L${line1}-${line2}${bang}' } },
-			Two: [{ command: 'first' }, { command: 'second', args: ['${args}'] }],
-			Del: { run: { command: 'del', args: { force: false } }, bang: { command: 'del', args: { force: true } } },
+			Grep: { command: 'workbench.action.findInFiles', args: { query: '${args}', words: '${argList}', isRegex: '${bang}', range: '${range}', label: 'L${line1}-${line2}${bang}' }, range: 'range', bang: true },
+			Two: { commands: [{ command: 'first' }, { command: 'second', args: ['${args}'] }] },
+			Del: { commands: [{ command: 'del', args: { force: false }, ifBang: false }, { command: 'del', args: { force: true }, ifBang: true }], bang: true },
 			Line: { command: 'devhubVim.motion', args: { motion: 'fileEnd' } },
+			All: { command: 'all', args: ['${line1}', '${line2}', '${range}'], range: 'range', defaultRange: '%' },
+			Times: { command: 'times', args: '${count}', range: 'count', defaultRange: 1 },
+			Reg: { command: 'reg', args: ['${register}', '${args}'], register: true, nargs: '*' },
+			One: { command: 'one', args: '${argList}', nargs: '1' },
 		});
 		let v = new Vim('|a\nb\nc\nd\ne', [], shared).keys(':3,4Grep! foo bar<CR>');
 		assert.deepStrictEqual(v.host.commands[0].args, { query: 'foo bar', words: ['foo', 'bar'], isRegex: true, range: { start: 3, end: 4 }, label: 'L3-4!' });
@@ -1274,10 +1327,29 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(v.host.commands.map(c => [c.command, c.args]), [['first', undefined], ['second', ['y']]]);
 		v = new Vim('|a', [], shared).keys(':Del<CR>');
 		v.keys(':Del!<CR>');
+		await flush();
 		assert.deepStrictEqual(v.host.commands.map(c => c.args), [{ force: false }, { force: true }]);
-		// an engine command in the table runs in the engine
+		// an engine command in a spec runs in the engine
 		v = new Vim('|a\nb\nc', [], shared).keys(':Line<CR>');
 		assert.strictEqual(v.state(), 'a\nb\n|c');
+		// defaultRange: the whole file without a typed range (and no ${range})
+		v = new Vim('a\n|b\nc', [], shared).keys(':All<CR>:2All<CR>');
+		await flush();
+		assert.deepStrictEqual(v.host.commands.map(c => c.args), [[1, 3, null], [2, 2, { start: 2, end: 2 }]]);
+		// a count before the name or as the first argument, its default without one
+		v = new Vim('|a', [], shared).keys(':Times<CR>:3Times<CR>:Times 7<CR>');
+		await flush();
+		assert.deepStrictEqual(v.host.commands.map(c => c.args), [1, 3, 7]);
+		// a register name first; nargs 1 keeps the blanks
+		v = new Vim('|a', [], shared).keys(':Reg x a b<CR>:Reg 1 2<CR>:One a  b<CR>');
+		await flush();
+		assert.deepStrictEqual(v.host.commands.map(c => c.args), [['x', 'a b'], ['', '1 2'], ['a  b']]);
+		// E471 without the argument nargs 1 needs; E481 for a range a command does not take
+		v = new Vim('|a', [], shared).keys(':One<CR>');
+		assert.ok(v.vim.status().includes('E471'), v.vim.status());
+		v = new Vim('|a', [], shared).keys(':2Two<CR>');
+		assert.ok(v.vim.status().includes('E481'), v.vim.status());
+		assert.deepStrictEqual(v.host.commands, []);
 	});
 
 	test(':e :sp :vs :new :vne :tabe :tabnew pass their file to devhubVim.edit / devhubVim.open, and an override can too', async () => {
@@ -1295,10 +1367,13 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(await run('vne'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true, untitled: true }]]);
 		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.open', { file: '~/notes.md', untitled: true }]]);
 		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.open', { file: '', untitled: true }]]);
-		// 'splitbelow' as an override (the user's settings): the split of their choice, the file passed on with ${args}
+		// 'splitbelow' as an override (the user's settings): the split of their choice, the file passed on with ${args};
+		// the built-in's nargs and completion are kept
 		const shared = new VimSharedState();
-		shared.setUserExCommands({ split: ['workbench.action.splitEditorDown', { command: 'devhubVim.open', args: { file: '${args}', replace: true } }] });
+		shared.setUserExCommands({ split: { commands: ['workbench.action.splitEditorDown', { command: 'devhubVim.open', args: { file: '${args}', replace: true } }] } });
 		assert.deepStrictEqual(await run('sp x', shared), [['workbench.action.splitEditorDown'], ['devhubVim.open', { file: 'x', replace: true }]]);
+		const split = shared.registry.lookup('sp');
+		assert.ok(!('error' in split) && split.spec.complete === 'file' && split.spec.nargs === '?');
 		// what the command answers with (E37 ...) is the message
 		const e = new Vim('|a');
 		e.host.executeCommand = async () => { throw new Error('E37: No write since last change (add ! to override)'); };
@@ -1309,7 +1384,7 @@ suite('DevHub Vim ex commands', () => {
 
 	test(':\'<,\'> from visual mode passes the selected lines', () => {
 		const shared = new VimSharedState();
-		shared.setUserExCommands({ Sort: { command: 'editor.action.sortLinesAscending', args: { range: '${range}' } } });
+		shared.setUserExCommands({ Sort: { command: 'editor.action.sortLinesAscending', args: { range: '${range}' }, range: 'range' } });
 		const v = new Vim('x\n|c\nb\na\ny', [], shared).keys('Vjj:');
 		assert.strictEqual(v.promptText(), '\'<,\'>');
 		v.keys('Sort<CR>');
@@ -1319,12 +1394,11 @@ suite('DevHub Vim ex commands', () => {
 	});
 
 	test('substitution leaves other strings and unknown placeholders alone', () => {
-		const inv = { args: 'a b', bang: false, range: undefined, cursorLine: 7 };
-		assert.deepStrictEqual(substituteExArgs({ n: 1, s: 'x', u: '${nope}', l: ['${line1}', '${bang}x'] }, inv), { n: 1, s: 'x', u: '${nope}', l: [7, 'x'] });
+		const inv = { args: 'a b', argList: ['a', 'b'], bang: false, range: undefined, line1: 7, line2: 7, count: undefined, register: '' };
+		assert.deepStrictEqual(substituteExArgs({ n: 1, s: 'x', u: '${nope}', l: ['${line1}', '${bang}x', '${count}'] }, inv), { n: 1, s: 'x', u: '${nope}', l: [7, 'x', null] });
 	});
 
 	test('Tab completes ex command names in the prompt', () => {
-		assert.deepStrictEqual(completeExName('w', ['w', 'wa', 'wq', 'x', 'Write']), ['w', 'wa', 'wq']);
 		const shared = new VimSharedState();
 		shared.setUserExCommands({ Sort: 'a', Split: 'b' });
 		// without the workbench's completion menu (fed keys, here) Tab puts the matches in the line one after another
@@ -1342,6 +1416,106 @@ suite('DevHub Vim ex commands', () => {
 		}
 		r.press('<Tab>');
 		assert.strictEqual(r.promptText(), '\'<,\'>Sort');
+	});
+
+	/** A host whose `slow.*` commands finish when the test says, and edit the buffer then. */
+	function slowHost(v: Vim): { finish: () => Promise<void>; log: string[] } {
+		const pending: (() => void)[] = [];
+		const log: string[] = [];
+		const run = v.host.executeCommand.bind(v.host);
+		v.host.executeCommand = (command: string, args: unknown) => {
+			if (!command.startsWith('slow.')) {
+				log.push(command);
+				return run(command, args);
+			}
+			log.push(`${command} start`);
+			return new Promise(resolve => pending.push(() => {
+				log.push(`${command} end`);
+				v.host.lines[0] += command.slice(5);
+				resolve(undefined);
+			}));
+		};
+		return {
+			log,
+			finish: async () => {
+				while (pending.length) {
+					pending.shift()!();
+					await flush();
+				}
+			},
+		};
+	}
+
+	test('what comes after a VS Code command waits for it: the next command after |, each line of :g, the rest of a macro, :normal\'s keys', async () => {
+		const shared = new VimSharedState();
+		shared.setUserExCommands({ Slow: 'slow.S', Mark: 'mark' });
+		// `|`: the second command after the first has finished, and none after one that failed
+		let v = new Vim('|x\ny', [], shared);
+		let h = slowHost(v);
+		v.keys(':Slow | %s/y/Y/ | Mark<CR>');
+		assert.deepStrictEqual(h.log, ['slow.S start']);
+		assert.strictEqual(v.state(), '|x\ny');
+		await h.finish();
+		assert.deepStrictEqual(h.log, ['slow.S start', 'slow.S end', 'mark']);
+		assert.strictEqual(v.host.lines.join('\n'), 'xS\nY');
+		v = new Vim('|x', [], shared);
+		h = slowHost(v);
+		v.keys(':s/nope/a/ | Mark<CR>');
+		await flush();
+		assert.deepStrictEqual(h.log, []);
+		assert.ok(v.vim.status().includes('E486'), v.vim.status());
+		// :g: each line's command after the one before has finished
+		v = new Vim('|a1\nb\na2', [], shared);
+		h = slowHost(v);
+		v.keys(':g/a/Slow<CR>');
+		assert.deepStrictEqual(h.log, ['slow.S start']);
+		await h.finish();
+		assert.deepStrictEqual(h.log, ['slow.S start', 'slow.S end', 'slow.S start', 'slow.S end']);
+		assert.strictEqual(v.host.lines[0], 'a1SS');
+		// a macro: the steps after an ex line wait for its command
+		v = new Vim('|ab\ncd', [], shared);
+		h = slowHost(v);
+		v.keys('qq:Slow<CR>jxq');
+		await h.finish();
+		v.keys('gg@q');
+		assert.strictEqual(v.host.lines.join('\n'), 'abS\nd');
+		await h.finish();
+		assert.strictEqual(v.host.lines.join('\n'), 'abSS\n');
+		// :normal: the keys after one bound to a VS Code command wait for it (`gcc` is VS Code's toggle comment)
+		v = new Vim('|a\nb', [], shared);
+		v.host.executeCommand = (() => {
+			const run = v.host.executeCommand.bind(v.host);
+			return (command: string, args: unknown) => new Promise<unknown>(resolve => setTimeout(() => resolve(run(command, args)), 5));
+		})();
+		v.keys(':normal gccjx<CR>');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb');
+		await new Promise(resolve => setTimeout(resolve, 30));
+		assert.strictEqual(v.host.lines.join('\n'), '// a\n');
+	});
+
+	test('one ex line is one undo step: every command of it, every line of :g, :normal\'s keys', () => {
+		let v = new Vim('|a b\nc');
+		v.keys(':s/a/A/ | s/b/B/ | 2d<CR>');
+		assert.strictEqual(v.host.lines.join('\n'), 'A B');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a b\nc');
+		v = new Vim('|a\nb\nc');
+		v.keys(':%normal Ax<CR>');
+		assert.strictEqual(v.host.lines.join('\n'), 'ax\nbx\ncx');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\nc');
+		v = new Vim('|a\nb\na');
+		v.keys(':g/a/s/$/!/ | normal Ay<CR>');
+		assert.strictEqual(v.host.lines.join('\n'), 'a!y\nb\na!y');
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'a\nb\na');
+	});
+
+	test('@: repeats the line typed, not the commands :g ran', () => {
+		const v = new Vim('|a\nb\na');
+		v.keys(':g/a/s/$/!/<CR>');
+		v.keys('@:');
+		assert.strictEqual(v.host.lines.join('\n'), 'a!!\nb\na!!');
 	});
 });
 

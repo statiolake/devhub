@@ -3,40 +3,94 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// DevHub native Vim: the `:` command line - parsing, Vim's name
-// abbreviations (`:s` is `:substitute`, `:sp` is `:split`), ranges, and the
-// table of commands that run VS Code commands. Imports nothing (the tests run
+// DevHub native Vim: the `:` command line - one registry of commands, one
+// parser, and what a command's steps run with. Imports nothing (the tests run
 // it as they run the engine).
 //
-// Two kinds of built-in commands:
-// * ENGINE_EX_COMMANDS are Vim's editing commands (:s :g :d :m :t :normal
-//   :sort ...), implemented by the engine on the buffer (vimEngine.ts).
-// * BUILTIN_EX_COMMANDS are names bound to VS Code commands, exactly as a
-//   keybinding is a key bound to a command: each step is `{ command, args? }`,
-//   run in order (each one awaited).
-// `devhub.vim.exCommands` adds the user's own, whose names must start with an
-// uppercase letter (as Vim's `:command` requires), and may override any
-// built-in name (by its full name or any abbreviation Vim accepts for it).
+// Every ex command, Vim's and the user's, is an ExSpec in one registry
+// (ExRegistry): what it runs and what it takes. Vim's built-in names
+// (`:s` is `:substitute`, `:sp` is `:split`) are default entries:
+// * those whose `engine` is set are Vim's editing commands (:s :g :d :m :t
+//   :normal :sort ...), implemented by the engine on the buffer
+//   (vimEngine.ts runEngineEx);
+// * the others run VS Code commands, exactly as a keybinding runs a command:
+//   steps `{ command, args? }`, in order, each awaited.
+// `devhub.vim.exCommands` (ExCommandSpec, read from user and machine settings
+// only) adds the user's own, whose names start with an uppercase letter (as
+// Vim's `:command` requires), and may override any built-in name (by its full
+// name or any abbreviation Vim accepts for it); an override keeps the
+// built-in's attributes it does not set.
 //
-// A step's args may use placeholders, filled from the command line
-// `:[range]Name[!] [args]`:
-//   "${args}"     the argument string             (string)
-//   "${argList}"  the arguments split on blanks    (string[])
-//   "${bang}"     whether `!` was given            (boolean)
-//   "${range}"    { start, end }, 1-based lines, or null without a range
-//   "${line1}" / "${line2}"  first / last line (1-based; the cursor line without a range)
+// The one parser (parseExCommand) reads a line as Vim does:
+// `[range] name [!] args`, the args as the command's spec takes them, and,
+// when the command takes `|` (`bar`), the next command after it. The engine
+// runs what it returns; the prompt's completion (vimCmdline.ts) reads the line
+// with it too, so both agree on where a name ends and an argument starts.
+//
+// A step's args may use placeholders, filled from the command line:
+//   "${args}"     the argument string                       (string)
+//   "${argList}"  the arguments: split on blanks for nargs * and +, the
+//                 whole argument for 1 and ?                (string[])
+//   "${bang}"     whether `!` was given                     (boolean)
+//   "${range}"    { start, end }, 1-based lines, or null when no range was typed
+//   "${line1}" / "${line2}"  first / last line (1-based) of the range, typed
+//                 or the default one (`defaultRange`)
+//   "${count}"    the count (range "count"), or null
+//   "${register}" the register named first (register: true), or ""
 // A string that is exactly a placeholder becomes the typed value; inside a
 // longer string it is replaced by its text ("!" or "" for bang, "a,b" for range).
 
 export interface ExStep {
 	readonly command: string;
 	readonly args?: unknown;
+	/** Run only with `!` (true) or only without it (false). */
+	readonly ifBang?: boolean;
 }
 
-export type ExSteps = string | ExStep | readonly (string | ExStep)[];
+/** How many arguments (Vim's `-nargs`): none (`0` too), exactly one, at most one, any, at least one. */
+export type ExNargs = 'none' | '0' | '1' | '?' | '*' | '+';
+/** What may stand before the name (Vim's `-range` / `-count`): nothing, one line, a range of lines, a count. */
+export type ExRangeKind = 'none' | 'line' | 'range' | 'count';
+/** Without a typed range: the cursor line, the whole file, or a count's default. */
+export type ExDefaultRange = '.' | '%' | number;
 
-/** A table entry: steps, or `{ run, bang?, description? }` where `bang` runs instead of `run` for `Name!`. */
-export type ExCommandEntry = ExSteps | { readonly run: ExSteps; readonly bang?: ExSteps; readonly description?: string };
+/** One `devhub.vim.exCommands` entry as settings.json has it (a bare string is `{ "command": ... }`). */
+export interface ExCommandSpec {
+	readonly command?: string;
+	readonly args?: unknown;
+	/** Several steps, each awaited, instead of `command` / `args`. */
+	readonly commands?: readonly (string | ExStep)[];
+	readonly nargs?: ExNargs;
+	readonly range?: ExRangeKind;
+	readonly defaultRange?: ExDefaultRange;
+	readonly bang?: boolean;
+	readonly register?: boolean;
+	/** What Tab completes in the argument: file, command, option, buffer, or `command:<id>` (a command that returns the candidates). */
+	readonly complete?: string;
+	/** `|` ends the command and starts the next one (otherwise it is part of the argument). */
+	readonly bar?: boolean;
+	readonly description?: string;
+}
+
+/** A command as the parser and the engine use it: a built-in, or a user's spec with every attribute filled in. */
+export interface ExSpec {
+	/** What it runs (VS Code commands or engine commands); none for an engine built-in. */
+	readonly steps: readonly ExStep[];
+	/** Vim's editing command the engine implements itself (its canonical name). */
+	readonly engine?: string;
+	readonly nargs: ExNargs;
+	readonly range: ExRangeKind;
+	readonly defaultRange: ExDefaultRange;
+	readonly bang: boolean;
+	readonly register: boolean;
+	readonly complete?: string;
+	readonly bar: boolean;
+	/** An argument that starts with `!` is a shell command: it takes the rest of the line, `|` included (`:r !cmd`, `:w !cmd`). */
+	readonly shell?: boolean;
+	readonly description?: string;
+	/** From `devhub.vim.exCommands`. */
+	readonly user?: boolean;
+}
 
 // ---- names ------------------------------------------------------------------
 
@@ -54,7 +108,8 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['terminal', 'ter'], ['grep', 'gr'], ['vimgrep', 'vim', 'grep'],
 	['nohlsearch', 'noh'], ['substitute', 's'], ['global', 'g'], ['vglobal', 'v'], ['delete', 'd'], ['yank', 'y'],
 	['move', 'm'], ['copy', 'co'], ['t', 't', 'copy'], ['join', 'j'], ['put', 'pu'], ['normal', 'norm'], ['sort', 'sor'],
-	['undo', 'u'], ['redo', 'red'], ['mark', 'ma'], ['k', 'k', 'mark'], ['set', 'se'], ['registers', 'reg'], ['display', 'di', 'registers'],
+	['undo', 'u'], ['redo', 'red'], ['mark', 'ma'], ['k', 'k', 'mark'], ['set', 'se'], ['setlocal', 'setl', 'set'],
+	['registers', 'reg'], ['display', 'di', 'registers'],
 	['marks', 'marks'], ['retab', 'ret'], ['left', 'le'], ['right', 'ri'], ['center', 'ce'],
 	['&', '&'], ['&&', '&&'], ['~', '~'], ['<', '<'], ['>', '>'], ['@', '@'], ['=', '='],
 ];
@@ -74,125 +129,350 @@ export function canonicalExName(typed: string): string | undefined {
 	return undefined;
 }
 
-/** Commands the engine implements itself, on the buffer. */
-export const ENGINE_EX_COMMANDS: ReadonlySet<string> = new Set([
-	'nohlsearch', 'substitute', 'global', 'vglobal', 'delete', 'yank', 'move', 'copy', 'join', 'put', 'normal', 'sort',
-	'undo', 'redo', 'mark', 'set', 'registers', 'marks', 'retab', 'left', 'right', 'center', '&', '&&', '~', '<', '>', '@', '=',
-]);
+/** Every name a built-in answers to (`w` `wr` ... `write`), for the settings' JSON schema. */
+export function builtinExNameForms(): string[] {
+	const out: string[] = [];
+	for (const [full, min] of EX_NAMES) {
+		if (/^[A-Za-z]/.test(full)) {
+			for (let n = min.length; n <= full.length; n++) {
+				out.push(full.slice(0, n));
+			}
+		}
+	}
+	return [...new Set(out)];
+}
+
+/** Vim's built-in names with letters, for the prompt's completion: the full name, the shortest abbreviation, the name it is an alias of. */
+export function builtinExNameInfo(): { readonly name: string; readonly abbrev: string; readonly alias?: string }[] {
+	return EX_NAMES.filter(([full]) => /^[A-Za-z]/.test(full)).map(([name, abbrev, alias]) => alias ? { name, abbrev, alias } : { name, abbrev });
+}
+
+// ---- the built-in commands ---------------------------------------------------------
 
 const SAVE = 'workbench.action.files.save';
+const SAVE_ALL = 'workbench.action.files.saveAll';
 const CLOSE = 'workbench.action.closeActiveEditor';
+const CLOSE_ALL = 'workbench.action.closeAllEditors';
 const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
-const QUICK_OPEN = (prefix: string): ExStep => ({ command: 'workbench.action.quickOpen', args: prefix });
+
+type StepsInput = string | ExStep | readonly (string | ExStep)[];
+
+function toSteps(s: StepsInput): ExStep[] {
+	const list: readonly (string | ExStep)[] = typeof s === 'string' || !Array.isArray(s) ? [s as string | ExStep] : s;
+	return list.map(x => typeof x === 'string' ? { command: x } : x);
+}
+
+const DEFAULTS = { nargs: 'none', range: 'none', defaultRange: '.', bang: false, register: false, bar: true } as const;
+
+/** A built-in that runs VS Code commands. */
+function vs(steps: StepsInput, a: Partial<ExSpec> = {}): ExSpec {
+	return { ...DEFAULTS, steps: toSteps(steps), ...a };
+}
+
+/** A built-in the engine implements. */
+function vim(name: string, a: Partial<ExSpec> = {}): ExSpec {
+	return { ...DEFAULTS, steps: [], engine: name, nargs: '*', range: 'range', ...a };
+}
+
+/** `:cmd` and `:cmd!`: different commands. */
+function withBang(plain: StepsInput, bang: StepsInput): ExStep[] {
+	return [...toSteps(plain).map(s => ({ ...s, ifBang: false })), ...toSteps(bang).map(s => ({ ...s, ifBang: true }))];
+}
+
 /**
  * `devhubVim.open` (browser/vimEdit.ts): the file argument (`${args}`) opened
  * in the active group; `replace` takes the place of the editor a split just
  * copied there, `untitled` opens a new untitled file when there is no argument.
  */
 const OPEN = (options: { replace?: true; untitled?: true }): ExStep => ({ command: 'devhubVim.open', args: { file: '${args}', ...options } });
+const FILE = { nargs: '?', complete: 'file' } as const;
 
-/** Built-in ex commands that run VS Code commands, by canonical name. */
-export const BUILTIN_EX_COMMANDS: Readonly<Record<string, ExCommandEntry>> = {
-	write: SAVE,
-	wall: 'workbench.action.files.saveAll',
-	update: SAVE,
-	quit: { run: CLOSE, bang: REVERT_CLOSE },
-	qall: { run: 'workbench.action.closeAllEditors', bang: ['workbench.action.files.revert', 'workbench.action.closeAllEditors'] },
-	wq: [SAVE, CLOSE],
-	xit: [SAVE, CLOSE],
-	xall: ['workbench.action.files.saveAll', 'workbench.action.closeAllEditors'],
+/** Every built-in ex command, by canonical name. */
+export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
+	write: vs(SAVE, { bang: true, nargs: '?', complete: 'file' }),
+	wall: vs(SAVE_ALL, { bang: true }),
+	update: vs(SAVE, { bang: true }),
+	quit: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true }),
+	qall: vs(withBang(CLOSE_ALL, ['workbench.action.files.revert', CLOSE_ALL]), { bang: true }),
+	wq: vs([SAVE, CLOSE], { bang: true }),
+	xit: vs([SAVE, CLOSE], { bang: true }),
+	xall: vs([SAVE_ALL, CLOSE_ALL], { bang: true }),
 	// 'nosplitbelow' / 'nosplitright' (the defaults): the new window is above / left, and gets the focus
 	// `:sp {file}` ...: the split, then the file in the new window (devhubVim.open)
-	split: ['workbench.action.splitEditorUp', OPEN({ replace: true })],
-	vsplit: ['workbench.action.splitEditorLeft', OPEN({ replace: true })],
-	new: ['workbench.action.splitEditorUp', OPEN({ replace: true, untitled: true })],
-	vnew: ['workbench.action.splitEditorLeft', OPEN({ replace: true, untitled: true })],
+	split: vs(['workbench.action.splitEditorUp', OPEN({ replace: true })], FILE),
+	vsplit: vs(['workbench.action.splitEditorLeft', OPEN({ replace: true })], FILE),
+	new: vs(['workbench.action.splitEditorUp', OPEN({ replace: true, untitled: true })], FILE),
+	vnew: vs(['workbench.action.splitEditorLeft', OPEN({ replace: true, untitled: true })], FILE),
 	// `:e {file}` opens it (a new file at that path when it does not exist), `:e` reloads (E37 when modified), `:e!` discards the changes
-	edit: { command: 'devhubVim.edit', args: { file: '${args}', bang: '${bang}' } },
-	enew: 'workbench.action.files.newUntitledFile',
-	tabnew: OPEN({ untitled: true }),
-	tabedit: OPEN({ untitled: true }),
-	tabnext: 'workbench.action.nextEditor',
-	tabprevious: 'workbench.action.previousEditor',
-	tabclose: { run: CLOSE, bang: REVERT_CLOSE },
-	tabonly: 'workbench.action.closeOtherEditors',
-	tabfirst: 'workbench.action.firstEditorInGroup',
-	tablast: 'workbench.action.lastEditorInGroup',
-	bnext: 'workbench.action.nextEditor',
-	bprevious: 'workbench.action.previousEditor',
-	bdelete: { run: CLOSE, bang: REVERT_CLOSE },
-	bfirst: 'workbench.action.firstEditorInGroup',
-	blast: 'workbench.action.lastEditorInGroup',
-	buffers: 'workbench.action.showAllEditors',
-	buffer: QUICK_OPEN('edt ${args}'),
-	saveas: 'workbench.action.files.saveAs',
-	close: 'workbench.action.closeGroup',
-	only: 'workbench.action.closeEditorsInOtherGroups',
-	cnext: 'editor.action.marker.nextInFiles',
-	cprevious: 'editor.action.marker.prevInFiles',
-	copen: 'workbench.actions.view.problems',
-	cclose: 'workbench.action.closePanel',
-	terminal: 'workbench.action.terminal.new',
-	grep: { command: 'workbench.action.findInFiles', args: { query: '${args}', triggerSearch: true } },
+	edit: vs({ command: 'devhubVim.edit', args: { file: '${args}', bang: '${bang}' } }, { ...FILE, bang: true }),
+	enew: vs('workbench.action.files.newUntitledFile', { bang: true }),
+	tabnew: vs(OPEN({ untitled: true }), FILE),
+	tabedit: vs(OPEN({ untitled: true }), FILE),
+	tabnext: vs('workbench.action.nextEditor', { nargs: '?' }),
+	tabprevious: vs('workbench.action.previousEditor', { nargs: '?' }),
+	tabclose: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true, nargs: '?' }),
+	tabonly: vs('workbench.action.closeOtherEditors', { bang: true, nargs: '?' }),
+	tabfirst: vs('workbench.action.firstEditorInGroup'),
+	tablast: vs('workbench.action.lastEditorInGroup'),
+	bnext: vs('workbench.action.nextEditor', { bang: true, nargs: '?' }),
+	bprevious: vs('workbench.action.previousEditor', { bang: true, nargs: '?' }),
+	bdelete: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true, nargs: '*', complete: 'buffer' }),
+	bfirst: vs('workbench.action.firstEditorInGroup', { bang: true }),
+	blast: vs('workbench.action.lastEditorInGroup', { bang: true }),
+	buffers: vs('workbench.action.showAllEditors', { bang: true }),
+	buffer: vs({ command: 'workbench.action.quickOpen', args: 'edt ${args}' }, { bang: true, nargs: '?', complete: 'buffer' }),
+	saveas: vs('workbench.action.files.saveAs', { bang: true, nargs: '?', complete: 'file' }),
+	close: vs('workbench.action.closeGroup', { bang: true }),
+	only: vs('workbench.action.closeEditorsInOtherGroups', { bang: true }),
+	cnext: vs('editor.action.marker.nextInFiles', { bang: true }),
+	cprevious: vs('editor.action.marker.prevInFiles', { bang: true }),
+	copen: vs('workbench.actions.view.problems'),
+	cclose: vs('workbench.action.closePanel'),
+	terminal: vs('workbench.action.terminal.new', { nargs: '*' }),
+	grep: vs({ command: 'workbench.action.findInFiles', args: { query: '${args}', triggerSearch: true } }, { bang: true, nargs: '*' }),
+	// Vim's own, on the buffer
+	nohlsearch: vim('nohlsearch', { range: 'none', nargs: 'none' }),
+	substitute: vim('substitute'),
+	'&': vim('&'),
+	'&&': vim('&&'),
+	'~': vim('~'),
+	global: vim('global', { bang: true, bar: false, defaultRange: '%' }),
+	vglobal: vim('vglobal', { bar: false, defaultRange: '%' }),
+	delete: vim('delete', { register: true }),
+	yank: vim('yank', { register: true }),
+	move: vim('move'),
+	copy: vim('copy'),
+	join: vim('join', { bang: true }),
+	put: vim('put', { range: 'line', bang: true, register: true }),
+	normal: vim('normal', { bang: true, bar: false }),
+	sort: vim('sort', { bang: true, defaultRange: '%' }),
+	undo: vim('undo', { range: 'none', nargs: '?' }),
+	redo: vim('redo', { range: 'none', nargs: 'none' }),
+	mark: vim('mark', { range: 'line' }),
+	set: vim('set', { range: 'none', complete: 'option' }),
+	registers: vim('registers', { range: 'none' }),
+	marks: vim('marks', { range: 'none' }),
+	retab: vim('retab', { bang: true, defaultRange: '%' }),
+	left: vim('left'),
+	right: vim('right'),
+	center: vim('center'),
+	'<': vim('<'),
+	'>': vim('>'),
+	'@': vim('@', { range: 'line' }),
+	'=': vim('=', { range: 'line', nargs: 'none' }),
 };
 
+// ---- the user's commands ----------------------------------------------------------
+
 const USER_NAME = /^[A-Z][A-Za-z0-9]*$/;
+const SPEC_KEYS: ReadonlySet<string> = new Set(['command', 'args', 'commands', 'nargs', 'range', 'defaultRange', 'bang', 'register', 'complete', 'bar', 'description']);
+const NARGS: ReadonlySet<string> = new Set(['none', '0', '1', '?', '*', '+']);
+const RANGES: ReadonlySet<string> = new Set(['none', 'line', 'range', 'count']);
+/** What `complete` may say. */
+export const EX_COMPLETE = /^(file|command|option|buffer|command:\S+)$/;
 
 function isStep(v: unknown): v is ExStep {
-	return typeof v === 'object' && v !== null && !Array.isArray(v) && typeof (v as ExStep).command === 'string' && (v as ExStep).command.length > 0;
-}
-
-function isSteps(v: unknown): v is ExSteps {
-	if (typeof v === 'string') {
-		return v.length > 0;
+	if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+		return false;
 	}
-	if (Array.isArray(v)) {
-		return v.length > 0 && v.every(s => (typeof s === 'string' && s.length > 0) || isStep(s));
+	const s = v as Record<string, unknown>;
+	return typeof s.command === 'string' && s.command.length > 0 && Object.keys(s).every(k => k === 'command' || k === 'args' || k === 'ifBang')
+		&& (s.ifBang === undefined || typeof s.ifBang === 'boolean');
+}
+
+/** Whether a step's args use the argument placeholders (then nargs defaults to `*`). */
+function usesArgs(value: unknown): boolean {
+	if (typeof value === 'string') {
+		return /\$\{(args|argList)\}/.test(value);
 	}
-	return isStep(v);
-}
-
-function isRunEntry(v: unknown): v is { run: ExSteps; bang?: ExSteps; description?: string } {
-	return typeof v === 'object' && v !== null && !Array.isArray(v) && 'run' in v;
-}
-
-export function isExCommandEntry(v: unknown): v is ExCommandEntry {
-	if (isRunEntry(v)) {
-		return isSteps(v.run) && (v.bang === undefined || isSteps(v.bang));
+	if (Array.isArray(value)) {
+		return value.some(usesArgs);
 	}
-	return isSteps(v);
-}
-
-export interface UserExCommands {
-	/** By the user's name (uppercase) or the canonical built-in name it overrides. */
-	readonly table: ReadonlyMap<string, ExCommandEntry>;
-	/** Names that were given but cannot be used, with the reason. */
-	readonly errors: ReadonlyMap<string, string>;
+	if (typeof value === 'object' && value !== null) {
+		return Object.values(value).some(usesArgs);
+	}
+	return false;
 }
 
 /**
- * The user's `devhub.vim.exCommands`. A name must start with an uppercase
- * letter, or name a built-in command (which it then overrides; `w` and
- * `write` are the same name).
+ * One `devhub.vim.exCommands` value checked: the spec it is, or why it is not
+ * one. (The settings' JSON schema says the same to the settings editor.)
  */
-export function validateUserExCommands(raw: unknown): UserExCommands {
-	const table = new Map<string, ExCommandEntry>();
-	const errors = new Map<string, string>();
-	if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-		return { table, errors };
+export function validateExCommandSpec(v: unknown): ExCommandSpec | string {
+	if (typeof v === 'string') {
+		return v ? { command: v } : 'the command id is empty';
 	}
-	for (const [name, entry] of Object.entries(raw)) {
-		const key = USER_NAME.test(name) ? name : canonicalExName(name);
-		if (key === undefined) {
-			errors.set(name, `User-defined ex commands must start with an uppercase letter: ${name}`);
-		} else if (!isExCommandEntry(entry)) {
-			errors.set(name, `Invalid definition for ex command ${name}: expected a command id, { command, args }, a list of them, or { run, bang }`);
-		} else {
-			table.set(key, entry);
+	if (Array.isArray(v)) {
+		return 'a list of commands goes in { "commands": [...] }';
+	}
+	if (typeof v !== 'object' || v === null) {
+		return 'expected a command id or { "command": ... } / { "commands": [...] }';
+	}
+	const o = v as Record<string, unknown>;
+	const unknown = Object.keys(o).filter(k => !SPEC_KEYS.has(k));
+	if (unknown.length) {
+		return unknown.includes('run') ? '{ "run", "bang" } is now { "commands": [...] } with "ifBang" on the steps, and "bang": true'
+			: `unknown ${unknown.length === 1 ? 'key' : 'keys'} ${unknown.map(k => `"${k}"`).join(', ')}`;
+	}
+	if ((o.command === undefined) === (o.commands === undefined)) {
+		return 'give either "command" or "commands"';
+	}
+	if (o.command !== undefined && (typeof o.command !== 'string' || !o.command)) {
+		return '"command" must be a command id';
+	}
+	if (o.commands !== undefined && (!Array.isArray(o.commands) || !o.commands.length || !o.commands.every(s => (typeof s === 'string' && s.length > 0) || isStep(s)))) {
+		return '"commands" must be a list of command ids and { "command", "args"?, "ifBang"? }';
+	}
+	if (o.args !== undefined && o.commands !== undefined) {
+		return '"args" goes with "command"; in "commands" each step has its own';
+	}
+	if (o.nargs !== undefined && !NARGS.has(o.nargs as string)) {
+		return '"nargs" must be "none", "1", "?", "*" or "+"';
+	}
+	if (o.range !== undefined && !RANGES.has(o.range as string)) {
+		return '"range" must be "none", "line", "range" or "count"';
+	}
+	const range = (o.range ?? 'none') as ExRangeKind;
+	if (o.defaultRange !== undefined) {
+		const d = o.defaultRange;
+		const ok = range === 'count' ? typeof d === 'number' && Number.isInteger(d) && d >= 0
+			: range === 'range' ? d === '.' || d === '%'
+				: range === 'line' ? d === '.' : false;
+		if (!ok) {
+			return '"defaultRange" is "." or "%" for "range": "range", "." for "line", a number for "count"';
 		}
 	}
-	return { table, errors };
+	for (const k of ['bang', 'register', 'bar'] as const) {
+		if (o[k] !== undefined && typeof o[k] !== 'boolean') {
+			return `"${k}" must be true or false`;
+		}
+	}
+	if (o.complete !== undefined && (typeof o.complete !== 'string' || !EX_COMPLETE.test(o.complete))) {
+		return '"complete" must be "file", "command", "option", "buffer" or "command:<id>"';
+	}
+	if (o.description !== undefined && typeof o.description !== 'string') {
+		return '"description" must be a string';
+	}
+	return o as ExCommandSpec;
 }
+
+/** A user's spec with the attributes it leaves out: the built-in's it overrides, or Vim's `:command` defaults. */
+function toSpec(u: ExCommandSpec, base: ExSpec | undefined): ExSpec {
+	const steps = u.commands ? toSteps(u.commands) : [u.args === undefined ? { command: u.command! } : { command: u.command!, args: u.args }];
+	const range = u.range ?? base?.range ?? 'none';
+	return {
+		steps,
+		nargs: u.nargs ?? base?.nargs ?? (steps.some(s => usesArgs(s.args)) ? '*' : 'none'),
+		range,
+		defaultRange: u.defaultRange ?? (range === 'count' ? 0 : base && base.range === range ? base.defaultRange : '.'),
+		bang: u.bang ?? base?.bang ?? false,
+		register: u.register ?? base?.register ?? false,
+		bar: u.bar ?? base?.bar ?? true,
+		user: true,
+		...(u.complete ?? base?.complete ? { complete: u.complete ?? base?.complete } : {}),
+		...(u.description !== undefined ? { description: u.description } : {}),
+	};
+}
+
+/**
+ * All the ex commands there are: Vim's built-ins, with the user's
+ * `devhub.vim.exCommands` added (uppercase names) or put in their place
+ * (any name a built-in answers to).
+ */
+export class ExRegistry {
+
+	/** The user's own commands, by name. */
+	private readonly user = new Map<string, ExSpec>();
+	/** The user's specs for built-in names, by canonical name. */
+	private readonly overrides = new Map<string, ExSpec>();
+	/** Entries that cannot be used, with the reason (Vim's E182 / E183 or the spec's problem). */
+	readonly errors: ReadonlyMap<string, string>;
+
+	constructor(raw?: unknown) {
+		const errors = new Map<string, string>();
+		this.errors = errors;
+		if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+			return;
+		}
+		for (const [name, value] of Object.entries(raw)) {
+			const canonical = USER_NAME.test(name) ? undefined : canonicalExName(name);
+			if (!USER_NAME.test(name) && canonical === undefined) {
+				errors.set(name, /^[A-Z]/.test(name) ? `E182: Invalid command name: ${name}` : `E183: User defined commands must start with an uppercase letter: ${name}`);
+				continue;
+			}
+			const spec = validateExCommandSpec(value);
+			if (typeof spec === 'string') {
+				errors.set(canonical ?? name, `devhub.vim.exCommands: ${name}: ${spec}`);
+				continue;
+			}
+			if (canonical !== undefined) {
+				this.overrides.set(canonical, toSpec(spec, BUILTIN_EX_SPECS[canonical]));
+			} else {
+				this.user.set(name, toSpec(spec, undefined));
+			}
+		}
+	}
+
+	/** What a typed name is: a user command (by its name or a unique prefix of it, as Vim matches them), a built-in (by Vim's abbreviations), or Vim's error. */
+	lookup(typed: string): { readonly name: string; readonly spec: ExSpec } | { readonly error: string } {
+		if (/^[A-Z]/.test(typed)) {
+			const exact = this.user.get(typed);
+			if (exact) {
+				return { name: typed, spec: exact };
+			}
+			const broken = this.errors.get(typed);
+			if (broken) {
+				return { error: broken };
+			}
+			const matches = [...this.user.keys()].filter(n => n.startsWith(typed));
+			if (matches.length === 1) {
+				return { name: matches[0], spec: this.user.get(matches[0])! };
+			}
+			return { error: matches.length ? `E464: Ambiguous use of user-defined command: ${typed}` : `E492: Not an editor command: ${typed}` };
+		}
+		const canonical = canonicalExName(typed);
+		if (canonical === undefined) {
+			return { error: this.errors.get(typed) ?? `E492: Not an editor command: ${typed}` };
+		}
+		const broken = this.errors.get(canonical);
+		if (broken) {
+			return { error: broken };
+		}
+		const spec = this.overrides.get(canonical) ?? BUILTIN_EX_SPECS[canonical];
+		return spec ? { name: canonical, spec } : { error: `E492: Not an editor command: ${typed}` };
+	}
+
+	/** Every command for the prompt's completion: Vim's names (`sp[lit]`, what an alias stands for) and the user's. */
+	list(): { readonly name: string; readonly detail: string; readonly user: boolean }[] {
+		const out: { name: string; detail: string; user: boolean }[] = [];
+		for (const { name, abbrev, alias } of builtinExNameInfo()) {
+			const canonical = alias ?? name;
+			const user = this.overrides.get(canonical);
+			const spec = user ?? BUILTIN_EX_SPECS[canonical];
+			const short = abbrev === name ? name : `${abbrev}[${name.slice(abbrev.length)}]`;
+			const what = user ? describeExSpec(user) + ' (devhub.vim.exCommands)' : spec ? describeExSpec(spec) : '';
+			out.push({ name, detail: `:${short}${alias ? ` = :${alias}` : ''}${what ? ` - ${what}` : ''}`, user: !!user });
+		}
+		for (const [name, spec] of this.user) {
+			out.push({ name, detail: describeExSpec(spec), user: true });
+		}
+		return out;
+	}
+}
+
+/** What a command runs, in a few words: its description, Vim for the engine's, or its command ids. */
+export function describeExSpec(spec: ExSpec): string {
+	if (spec.description !== undefined) {
+		return spec.description;
+	}
+	if (spec.engine) {
+		return 'Vim';
+	}
+	return [...new Set(spec.steps.map(s => s.command))].join(', ');
+}
+
+/** The registry of Vim's built-ins alone. */
+export const BUILTIN_EX_REGISTRY = new ExRegistry();
 
 // ---- file arguments ------------------------------------------------------------
 
@@ -236,7 +516,7 @@ export function normalizeExPath(p: string): string {
 }
 
 /** Vim's filename modifiers on a path (`:p` `:h` `:t` `:r` `:e`), in order. */
-function applyFileModifiers(path: string, mods: string): string {
+export function applyFileModifiers(path: string, mods: string): string {
 	let p = path;
 	for (const m of mods.split(':').slice(1)) {
 		switch (m) {
@@ -315,31 +595,42 @@ export function resolveExFileArg(arg: string, ctx: ExFileContext): ExFileArg | u
 
 // ---- parsing ------------------------------------------------------------------
 
-/** `:[range]name[!] args`, before the range is resolved against the buffer. */
-export interface ParsedExLine {
+/** One command of an ex line, as the parser read it (before the range is resolved against the buffer). */
+export interface ParsedExCommand {
+	/** Where it starts and ends in the line (the end is its `|`, or the end of the line). */
+	readonly start: number;
+	readonly end: number;
 	/** Raw addresses, e.g. ["'<", "'>"], ["1", "$"] for `%`, ["5", "5"] for `5`, ["/foo/", "."]. */
 	readonly range: readonly [string, string] | undefined;
 	/** The addresses were separated by `;` (the second is relative to the first). */
-	readonly semicolon?: true;
+	readonly semicolon: boolean;
+	/** Where the name starts, and the name as typed. */
+	readonly nameStart: number;
 	readonly name: string;
+	/** The command the name is (a canonical built-in name or the user's name), and its spec. */
+	readonly command?: string;
+	readonly spec?: ExSpec;
 	readonly bang: boolean;
+	/** Where the argument starts, and the argument (`\|` is `|` for a command that takes `|`). */
+	readonly argStart: number;
 	readonly args: string;
+	/** Vim's error for this command (an unknown name, `!` or a range it does not take, a missing or extra argument). */
+	readonly error?: string;
 }
 
-/** One address at the start of `s`: its text (possibly empty) and the rest. */
-function scanAddress(s: string): [string, string] {
-	let i = 0;
-	const c = s[0];
+/** One address at `s[i]`: where it ends. */
+function scanAddress(s: string, i: number): number {
+	const c = s[i];
 	if (c !== undefined && /[0-9]/.test(c)) {
 		while (i < s.length && /[0-9]/.test(s[i])) {
 			i++;
 		}
 	} else if (c === '.' || c === '$') {
-		i = 1;
-	} else if (c === '\'' && s.length > 1) {
-		i = 2;
+		i++;
+	} else if (c === '\'' && i + 1 < s.length) {
+		i += 2;
 	} else if (c === '/' || c === '?') {
-		i = 1;
+		i++;
 		while (i < s.length && s[i] !== c) {
 			if (s[i] === '\\') {
 				i++;
@@ -349,8 +640,9 @@ function scanAddress(s: string): [string, string] {
 		if (i < s.length) {
 			i++;
 		}
-	} else if (c === '\\' && (s[1] === '/' || s[1] === '?' || s[1] === '&')) {
-		i = 2;
+		i = Math.min(i, s.length);
+	} else if (c === '\\' && (s[i + 1] === '/' || s[i + 1] === '?' || s[i + 1] === '&')) {
+		i += 2;
 	}
 	while (i < s.length && (s[i] === '+' || s[i] === '-')) {
 		i++;
@@ -358,51 +650,193 @@ function scanAddress(s: string): [string, string] {
 			i++;
 		}
 	}
-	return [s.slice(0, i), s.slice(i)];
+	return i;
 }
 
-export function parseExLine(line: string): ParsedExLine {
-	let s = line.replace(/^[\s:]+/, '');
-	let range: [string, string] | undefined;
+/** The `[range]` at `from` (after blanks and colons): the addresses and where they end. */
+function scanRange(line: string, from: number): { range: [string, string] | undefined; semicolon: boolean; end: number } {
+	let i = from;
+	if (line[i] === '%') {
+		return { range: ['1', '$'], semicolon: false, end: i + 1 };
+	}
+	if (line[i] === '*') {
+		return { range: ['\'<', '\'>'], semicolon: false, end: i + 1 };
+	}
+	const addrs: string[] = [];
 	let semicolon = false;
-	if (s.startsWith('%')) {
-		range = ['1', '$'];
-		s = s.slice(1);
-	} else if (s.startsWith('*')) {
-		range = ['\'<', '\'>'];
-		s = s.slice(1);
-	} else {
-		const addrs: string[] = [];
-		let [first, rest] = scanAddress(s);
-		addrs.push(first);
-		s = rest;
-		while (s.startsWith(',') || s.startsWith(';')) {
-			semicolon = s[0] === ';';
-			[first, rest] = scanAddress(s.slice(1));
-			addrs.push(first || '.');
-			s = rest;
-		}
-		if (addrs.length > 1) {
-			range = [addrs[addrs.length - 2] || '.', addrs[addrs.length - 1]];
-		} else if (addrs[0]) {
-			range = [addrs[0], addrs[0]];
-		}
+	let j = scanAddress(line, i);
+	addrs.push(line.slice(i, j));
+	i = j;
+	while (line[i] === ',' || line[i] === ';') {
+		semicolon = line[i] === ';';
+		j = scanAddress(line, i + 1);
+		addrs.push(line.slice(i + 1, j) || '.');
+		i = j;
 	}
-	s = s.replace(/^\s+/, '');
-	let name = '';
-	const special = /^(&&|[&~<>@=])/.exec(s);
+	let range: [string, string] | undefined;
+	if (addrs.length > 1) {
+		range = [addrs[addrs.length - 2] || '.', addrs[addrs.length - 1]];
+	} else if (addrs[0]) {
+		range = [addrs[0], addrs[0]];
+	}
+	return { range, semicolon: semicolon && !!range, end: i };
+}
+
+function skipBlanks(line: string, i: number): number {
+	while (i < line.length && /\s/.test(line[i])) {
+		i++;
+	}
+	return i;
+}
+
+/** The name at `i`: `&&` `&` `~` `<` `>` `@` `=` `!`, a built-in's letters (`d` of `d3`), a user's letters and digits. */
+function scanName(line: string, i: number): number {
+	const special = /^(&&|[&~<>@=!])/.exec(line.slice(i));
 	if (special) {
-		name = special[1];
+		return i + special[1].length;
+	}
+	const word = /^[A-Z]/.test(line[i] ?? '') ? /^[A-Za-z0-9]+/ : /^[A-Za-z]+/;
+	const m = word.exec(line.slice(i));
+	return i + (m ? m[0].length : 0);
+}
+
+/** The argument from `i`: up to an unescaped `|` when the command takes it (`\|` is a `|`), else the rest of the line. */
+function scanArgs(line: string, i: number, bar: boolean): { args: string; end: number } {
+	if (!bar) {
+		return { args: line.slice(i), end: line.length };
+	}
+	let out = '';
+	for (; i < line.length; i++) {
+		if (line[i] === '\\' && line[i + 1] === '|') {
+			out += '|';
+			i++;
+			continue;
+		}
+		if (line[i] === '|') {
+			return { args: out, end: i };
+		}
+		out += line[i];
+	}
+	return { args: out, end: line.length };
+}
+
+/** Whether the argument fits `nargs`; Vim's error otherwise. */
+function checkArgs(args: string, nargs: ExNargs): string | undefined {
+	const blank = !args.trim();
+	if ((nargs === 'none' || nargs === '0') && !blank) {
+		return `E488: Trailing characters: ${args.trim()}`;
+	}
+	if ((nargs === '1' || nargs === '+') && blank) {
+		return 'E471: Argument required';
+	}
+	return undefined;
+}
+
+/**
+ * The command of `line` that starts at `from`, as Vim reads it: blanks and
+ * colons, the range, the name (looked up in `registry`), `!`, then the
+ * argument as the command's spec takes it: to the next unescaped `|` when the
+ * command takes `|` (`bar`), or to the end of the line (`:g`, `:normal`,
+ * a user command with `bar: false`).
+ */
+export function parseExCommand(line: string, registry: ExRegistry, from = 0): ParsedExCommand {
+	let i = from;
+	while (i < line.length && (/\s/.test(line[i]) || line[i] === ':')) {
+		i++;
+	}
+	const r = scanRange(line, i);
+	i = skipBlanks(line, r.end);
+	const nameStart = i;
+	i = scanName(line, i);
+	let name = line.slice(nameStart, i);
+	const base = { start: from, range: r.range, semicolon: r.semicolon, nameStart };
+	if (!name) {
+		// `:{range}` alone; anything else here names no command
+		const rest = scanArgs(line, i, true);
+		const error = rest.args.trim() ? `E492: Not an editor command: ${line.slice(from, rest.end).trim()}` : undefined;
+		return { ...base, end: rest.end, name: '', bang: false, argStart: i, args: '', ...(error ? { error } : {}) };
+	}
+	let found = registry.lookup(name);
+	if ('error' in found && /^k[a-zA-Z]$/.test(name)) {
+		// `:ka`: `:k` with the mark name glued on
+		name = 'k';
+		i = nameStart + 1;
+		found = registry.lookup(name);
+	}
+	if ('error' in found) {
+		return { ...base, end: line.length, name, bang: false, argStart: i, args: line.slice(i), error: found.error };
+	}
+	const spec = found.spec;
+	let bang = false;
+	if (line[i] === '!' && name !== '!') {
+		bang = true;
+		i++;
+	}
+	let argStart = skipBlanks(line, i);
+	let shellArg = spec.shell === true && (found.name === '!' || line[argStart] === '!');
+	if (found.name === 'read' && bang && !spec.user) {
+		// `:r!cmd` is `:r !cmd`
+		bang = false;
+		argStart = i - 1;
+		shellArg = true;
+	}
+	const { args, end } = scanArgs(line, argStart, spec.bar && !shellArg);
+	let error: string | undefined;
+	if (bang && !spec.bang) {
+		error = 'E477: No ! allowed';
+	} else if (r.range && spec.range === 'none') {
+		error = 'E481: No range allowed';
 	} else {
-		const m = /^[A-Za-z][A-Za-z0-9]*/.exec(s);
-		name = m ? m[0] : '';
+		// range "count": a count may be the first argument (`:Name 3`)
+		error = checkArgs(spec.range === 'count' ? args.replace(/^\s*\d+(?:\s+|$)/, '') : args, spec.nargs);
 	}
-	s = s.slice(name.length);
-	const bang = s.startsWith('!') && name !== '';
-	if (bang) {
-		s = s.slice(1);
+	return {
+		...base, end, name, command: found.name, spec, bang, argStart, args,
+		...(error ? { error } : {}),
+	};
+}
+
+/** Every command of an ex line, split at `|` where the commands take it. */
+export function parseExCommands(line: string, registry: ExRegistry): ParsedExCommand[] {
+	const out: ParsedExCommand[] = [];
+	let from = 0;
+	for (; ;) {
+		const p = parseExCommand(line, registry, from);
+		out.push(p);
+		if (p.end >= line.length) {
+			return out;
+		}
+		from = p.end + 1;
 	}
-	return { range, ...(semicolon && range ? { semicolon: true } : {}), name, bang, args: s.trim() };
+}
+
+/** `*` / `+` arguments: split on blanks (`\ ` is a blank in one). */
+export function splitExArgs(args: string): string[] {
+	const out: string[] = [];
+	let cur = '';
+	let any = false;
+	for (let i = 0; i < args.length; i++) {
+		const c = args[i];
+		if (c === '\\' && /\s/.test(args[i + 1] ?? '')) {
+			cur += args[++i];
+			any = true;
+			continue;
+		}
+		if (/\s/.test(c)) {
+			if (any) {
+				out.push(cur);
+			}
+			cur = '';
+			any = false;
+			continue;
+		}
+		cur += c;
+		any = true;
+	}
+	if (any) {
+		out.push(cur);
+	}
+	return out;
 }
 
 export interface ExAddressContext {
@@ -458,8 +892,7 @@ export function resolveExAddress(address: string, ctx: ExAddressContext): number
 }
 
 function scanBase(address: string): [string, string | undefined] {
-	const [all] = scanAddress(address);
-	if (all !== address) {
+	if (scanAddress(address, 0) !== address.length) {
 		return ['', undefined];
 	}
 	const m = /^((?:[+-]\d*)*)$/.exec(address);
@@ -491,23 +924,96 @@ function scanBase(address: string): [string, string | undefined] {
 	return [address.slice(0, i), address.slice(i)];
 }
 
+/**
+ * A parsed range as 0-based lines (`a;b`: b from a), or undefined when a mark
+ * or a pattern it names is not there. The engine resolves every command's
+ * range with this, built-in or the user's.
+ */
+export function resolveExRange(p: Pick<ParsedExCommand, 'range' | 'semicolon'>, ctx: ExAddressContext): { start: number; end: number } | undefined {
+	if (!p.range) {
+		return undefined;
+	}
+	const a = resolveExAddress(p.range[0], ctx);
+	const b = p.semicolon && a !== undefined ? resolveExAddress(p.range[1], { ...ctx, cursorLine: a }) : resolveExAddress(p.range[1], ctx);
+	if (a === undefined || b === undefined) {
+		return undefined;
+	}
+	return a <= b ? { start: a, end: b } : { start: b, end: a };
+}
+
+// ---- what a command's steps run with -----------------------------------------------------
+
 export interface ExInvocation {
 	readonly args: string;
+	readonly argList: readonly string[];
 	readonly bang: boolean;
-	/** 1-based lines, or undefined when no range was typed. */
+	/** 1-based lines as typed, or undefined when no range was typed. */
 	readonly range: { readonly start: number; readonly end: number } | undefined;
-	/** 1-based cursor line, for line1/line2 without a range. */
-	readonly cursorLine: number;
+	/** The lines it runs on (1-based): the range, or the default one. */
+	readonly line1: number;
+	readonly line2: number;
+	readonly count: number | undefined;
+	readonly register: string;
+}
+
+/**
+ * What a user's (or a VS Code built-in's) command runs with, from what was
+ * typed: the argument (a register name first for `register`, a count first
+ * for range `count`, or before the name), the lines (`defaultRange` without a
+ * typed range).
+ * `range` and `cursorLine` / `lastLine` are 0-based.
+ */
+export function exInvocation(spec: ExSpec, p: Pick<ParsedExCommand, 'args' | 'bang' | 'range'>, range: { start: number; end: number } | undefined, cursorLine: number, lastLine: number): ExInvocation {
+	// `:3Name`: the number as typed (an address would be clamped to the buffer)
+	const typedCount = p.range && /^\d+$/.test(p.range[1]) ? Number(p.range[1]) : undefined;
+	let args = p.args.trim();
+	let register = '';
+	if (spec.register) {
+		const m = /^([^\d\s])(?:\s+|$)/.exec(args);
+		if (m) {
+			register = m[1];
+			args = args.slice(m[0].length);
+		}
+	}
+	let count: number | undefined;
+	let lines = range;
+	if (spec.range === 'count') {
+		const m = /^(\d+)(?:\s+|$)/.exec(args);
+		if (m) {
+			count = Number(m[1]);
+			args = args.slice(m[0].length);
+		} else if (typedCount !== undefined) {
+			count = typedCount;
+		} else if (range) {
+			count = range.end + 1;
+		} else {
+			count = typeof spec.defaultRange === 'number' ? spec.defaultRange : 0;
+		}
+		lines = undefined;
+	} else if (spec.range === 'line' && range) {
+		lines = { start: range.end, end: range.end };
+	}
+	const all = !lines && spec.range === 'range' && spec.defaultRange === '%';
+	const line1 = lines ? lines.start + 1 : all ? 1 : cursorLine + 1;
+	const line2 = lines ? lines.end + 1 : all ? lastLine + 1 : cursorLine + 1;
+	const argList = spec.nargs === '1' || spec.nargs === '?' ? (args ? [args] : []) : splitExArgs(args);
+	return {
+		args, argList, bang: p.bang,
+		range: lines && spec.range !== 'count' ? { start: lines.start + 1, end: lines.end + 1 } : undefined,
+		line1, line2, count, register,
+	};
 }
 
 function placeholderValue(name: string, inv: ExInvocation): unknown {
 	switch (name) {
 		case 'args': return inv.args;
-		case 'argList': return inv.args ? inv.args.split(/\s+/) : [];
+		case 'argList': return [...inv.argList];
 		case 'bang': return inv.bang;
 		case 'range': return inv.range ? { start: inv.range.start, end: inv.range.end } : null;
-		case 'line1': return inv.range ? inv.range.start : inv.cursorLine;
-		case 'line2': return inv.range ? inv.range.end : inv.cursorLine;
+		case 'line1': return inv.line1;
+		case 'line2': return inv.line2;
+		case 'count': return inv.count ?? null;
+		case 'register': return inv.register;
 	}
 	return undefined;
 }
@@ -516,7 +1022,8 @@ function placeholderText(name: string, inv: ExInvocation): string | undefined {
 	switch (name) {
 		case 'bang': return inv.bang ? '!' : '';
 		case 'range': return inv.range ? `${inv.range.start},${inv.range.end}` : '';
-		case 'argList': return inv.args;
+		case 'argList': return inv.argList.join(' ');
+		case 'count': return inv.count === undefined ? '' : String(inv.count);
 	}
 	const v = placeholderValue(name, inv);
 	return v === undefined ? undefined : String(v);
@@ -545,53 +1052,11 @@ export function substituteExArgs(value: unknown, inv: ExInvocation): unknown {
 	return value;
 }
 
-/** The steps an entry runs for this invocation, args filled in. */
-export function expandExEntry(entry: ExCommandEntry, inv: ExInvocation): ExStep[] {
-	const steps: ExSteps = isRunEntry(entry) ? (inv.bang && entry.bang !== undefined ? entry.bang : entry.run) : entry as ExSteps;
-	const list: readonly (string | ExStep)[] = typeof steps === 'string' || !Array.isArray(steps) ? [steps as string | ExStep] : steps;
-	return list.map(s => typeof s === 'string'
-		? { command: s }
-		: s.args === undefined ? { command: s.command } : { command: s.command, args: substituteExArgs(s.args, inv) });
-}
-
-/** Names starting with `prefix`, sorted, for Tab in the `:` prompt. */
-export function completeExName(prefix: string, names: Iterable<string>): string[] {
-	const out = new Set<string>();
-	for (const n of names) {
-		if (n.startsWith(prefix)) {
-			out.add(n);
-		}
-	}
-	return [...out].sort();
-}
-
-/** Vim's built-in names with letters, for the prompt's completion: the full name, the shortest abbreviation, the name it is an alias of. */
-export function builtinExNameInfo(): { readonly name: string; readonly abbrev: string; readonly alias?: string }[] {
-	return EX_NAMES.filter(([full]) => /^[A-Za-z]/.test(full)).map(([name, abbrev, alias]) => alias ? { name, abbrev, alias } : { name, abbrev });
-}
-
-/**
- * The `[range]` at the start of an ex line, as parseExLine reads it (with the
- * leading blanks and colons): its length, so the prompt's completion knows
- * where the command name starts.
- */
-export function exRangeLength(line: string): number {
-	let s = line.replace(/^[\s:]+/, '');
-	if (s.startsWith('%') || s.startsWith('*')) {
-		s = s.slice(1);
-	} else {
-		s = scanAddress(s)[1];
-		while (s.startsWith(',') || s.startsWith(';')) {
-			s = scanAddress(s.slice(1))[1];
-		}
-	}
-	s = s.replace(/^\s+/, '');
-	return line.length - s.length;
-}
-
-/** Every name Tab completes: the built-in full names (no aliases' targets twice) and the user's. */
-export function builtinExNames(): string[] {
-	return EX_NAMES.map(([full]) => full).filter(n => /^[A-Za-z]/.test(n));
+/** The steps a command runs for this invocation (`ifBang` decided), args filled in. */
+export function expandExSpec(spec: ExSpec, inv: ExInvocation): ExStep[] {
+	return spec.steps
+		.filter(s => s.ifBang === undefined || s.ifBang === inv.bang)
+		.map(s => s.args === undefined ? { command: s.command } : { command: s.command, args: substituteExArgs(s.args, inv) });
 }
 
 // ---- :substitute ----------------------------------------------------------------
