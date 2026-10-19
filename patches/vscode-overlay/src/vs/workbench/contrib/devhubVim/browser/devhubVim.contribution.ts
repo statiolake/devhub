@@ -93,6 +93,14 @@
 //   when Vim is turned on are attached then (listCodeEditors). There is no
 //   other mechanism: an editor is either driven by an engine or an ordinary
 //   editor, never modal with no engine to leave normal mode.
+// * Undo is VS Code's: `u` / CTRL-R are the `undo` / `redo` commands
+//   (devhubVim.repeat, for a count), so an undo step is the model's own (a
+//   format on save is one). The engine makes Vim's steps by closing the
+//   undo stack element where a change begins and ends (beginChange /
+//   endChange), and while an insert is open the editor's typing does not
+//   close it on its own (ModalCursor.setUndoGroup): one insert, one step.
+//   After any undo or redo outside insert mode the editor is in normal mode
+//   with one collapsed caret (afterUndo).
 // * Esc only ever cancels: pressed any number of times it lands in plain
 //   normal mode and nowhere else.
 // * Moving between parts is Vim's window prefix: `<C-w>` (devhubVim.nav.enter)
@@ -257,9 +265,10 @@ class VimEditor extends Disposable implements IVimHost {
 
 	readonly engine: VimEngine;
 	private readonly modelListener = this._register(new DisposableStore());
-	private checkpoints: number[] = [];
-	private redoTargets: number[] = [];
+	/** Between beginChange and endChange: one Vim change, one undo step. */
+	private changeOpen = false;
 	private undoQueue: Promise<void> = Promise.resolve();
+	private undoSettle = false;
 	private appliedStyle: CursorStyle | undefined;
 	private applyingStyle = false;
 	private insertStyle: VimCursorStyle;
@@ -285,6 +294,8 @@ class VimEditor extends Disposable implements IVimHost {
 		// In a visual mode the caret is drawn on the cursor's character, not after
 		// the selection's last one (modalCursor.ts); the selection stays as it is.
 		this._register(ModalCursor.setVisual(editor.getId(), () => this.engine.visualCursor() ? { primary: this.visualPrimary, block: this.engine.mode === 'visualBlock' } : undefined));
+		// An insert is one undo step: typing does not close it at every word (modalCursor.ts).
+		this._register(ModalCursor.setUndoGroup(editor.getId(), () => this.changeOpen && this.typing()));
 		this.insertStyle = this.readInsertCursorStyle();
 		this.hlDecorations = editor.createDecorationsCollection();
 		this.incDecorations = editor.createDecorationsCollection();
@@ -295,8 +306,7 @@ class VimEditor extends Disposable implements IVimHost {
 		this._register(editor.onDidBlurEditorText(() => owner.update()));
 		this._register(editor.onDidChangeModel(() => {
 			this.engine.reset();
-			this.checkpoints = [];
-			this.redoTargets = [];
+			this.changeOpen = false;
 			this.modelListener.clear();
 			this.insertStyle = this.readInsertCursorStyle();
 			this.incDecorations.clear();
@@ -313,6 +323,11 @@ class VimEditor extends Disposable implements IVimHost {
 				})));
 			} catch (err) {
 				onUnexpectedError(err);
+			}
+			if ((e.isUndoing || e.isRedoing) && !this.undoSettle) {
+				// the cursor is put back after the edit, in this same task
+				this.undoSettle = true;
+				queueMicrotask(() => this.afterUndo());
 			}
 			this.scheduleHighlight();
 		}));
@@ -635,71 +650,68 @@ class VimEditor extends Disposable implements IVimHost {
 		})));
 	}
 
-	// Monaco closes undo stops on its own (word boundaries while typing), so
-	// Vim's "one change, one undo" is kept as alternative version ids: `u`
-	// undoes until the model is back at the id it had when the change began.
+	// Undo is VS Code's: `u` and CTRL-R are the `undo` / `redo` commands (the
+	// model's own undo stack), so an undo step is whatever VS Code made one, a
+	// format on save, a refactoring or a code action included. The engine
+	// makes Vim's steps by closing the stack element where a change begins and
+	// ends; while an insert is open, typing does not close it on its own
+	// (ModalCursor.setUndoGroup), so the whole insert is one step.
 
 	beginChange(): void {
 		this.editor.pushUndoStop();
-		this.checkpoints.push(this.model.getAlternativeVersionId());
-		this.redoTargets = [];
+		this.changeOpen = true;
 	}
 
 	endChange(): void {
+		this.changeOpen = false;
 		this.editor.pushUndoStop();
-		const last = this.checkpoints[this.checkpoints.length - 1];
-		if (last === this.model.getAlternativeVersionId()) {
-			this.checkpoints.pop();
-		}
 	}
 
-	// `u` and Ctrl-R step this model's own undo stack (never the workbench
-	// `undo` command, which picks its target by focus and may undo something
-	// else, such as a file operation) and run one after another, so a held `u`
-	// cannot interleave two walks. Afterwards the caret is a normal-mode caret
-	// again: undo restores the selection the change started from, which after a
-	// visual-mode change is a range.
+	// `:undo` / `:redo` (and `devhubVim.action undo` / `redo`): what the `undo`
+	// and `redo` commands do in a focused editor, one after another so a held
+	// key cannot interleave two.
 
 	undo(): void {
 		const model = this.model;
-		const target = this.checkpoints.pop();
-		if (target !== undefined) {
-			this.redoTargets.push(model.getAlternativeVersionId());
-		}
-		this.enqueueSteps(target, () => model.canUndo(), () => model.undo());
+		this.enqueue(() => model.canUndo() ? model.undo() : undefined);
 	}
 
 	redo(): void {
 		const model = this.model;
-		const target = this.redoTargets.pop();
-		if (target !== undefined) {
-			this.checkpoints.push(model.getAlternativeVersionId());
-		}
-		this.enqueueSteps(target, () => model.canRedo(), () => model.redo());
+		this.enqueue(() => model.canRedo() ? model.redo() : undefined);
 	}
 
-	/** Step until the model is at `target`, or once when there is no target. */
-	private enqueueSteps(target: number | undefined, can: () => boolean, step: () => void | Promise<void>): void {
+	private enqueue(step: () => void | Promise<void>): void {
 		const model = this.model;
 		this.undoQueue = this.undoQueue.then(async () => {
-			try {
-				if (target === undefined) {
-					if (!model.isDisposed() && can()) {
-						await step();
-					}
-					return;
-				}
-				for (let guard = 0; guard < 10000 && !model.isDisposed() && model.getAlternativeVersionId() !== target && can(); guard++) {
-					await step();
-				}
-			} finally {
-				const s = this.editor.getModel() === model ? this.editor.getSelection() : null;
-				if (s && !s.isEmpty() && this.engine.mode === 'normal') {
-					this.editor.setPosition(s.getStartPosition(), 'devhubVim');
-				}
-				this.owner.update();
+			if (!model.isDisposed() && !this.editor.getOption(EditorOption.readOnly)) {
+				await step();
 			}
 		}).catch(onUnexpectedError);
+	}
+
+	/**
+	 * After an undo or redo, by any means (`u`, CTRL-R, `Cmd+Z`, the Edit menu,
+	 * another file's refactoring undone): outside insert mode the editor is in
+	 * normal mode with one caret. VS Code puts back the selection the change
+	 * started from, which after a visual-mode change is the visual area; the
+	 * caret goes to its start, where Vim puts it (the change's start), and the
+	 * caret rule keeps it on a character (modalCursor.ts).
+	 */
+	private afterUndo(): void {
+		this.undoSettle = false;
+		if (!this.editor.getModel() || this.typing()) {
+			return;
+		}
+		if (this.engine.mode !== 'normal' || this.engine.pending) {
+			this.engine.reset();
+		}
+		const selections = this.editor.getSelections();
+		if (selections?.some(s => !s.isEmpty())) {
+			const start = selections.map(s => s.getStartPosition()).reduce((a, b) => b.isBefore(a) ? b : a);
+			this.editor.setPosition(start, 'devhubVim');
+		}
+		this.owner.update();
 	}
 
 	indentUnit(): string {

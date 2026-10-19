@@ -66,8 +66,22 @@
 // then, so the cursor would tell no one; `redraw` has CursorsController
 // (cursor.ts) give them to the view all the same, and only to the view.
 //
-// Kept in this one file plus one line in each of oneCursor.ts, cursor.ts,
-// codeEditorWidget.ts, viewCursors.ts and lineNumbers.ts, so an upstream bump
+// Undo steps: Vim's are its changes (an insert from `i` to Esc is one, each
+// normal-mode change is one), and the owner closes VS Code's undo stack
+// elements (`pushStackElement`) where they begin and end. Undo itself is VS
+// Code's (`undo` / `redo` on the model's stack). Within an insert VS Code
+// would close the element on its own at every word, space, newline, Tab and
+// Backspace while text is typed (a typing operation's
+// `shouldPushStackElementBefore` / `After` in CursorsController, cursor.ts,
+// and the `tab` / `outdent` / `deleteLeft` / `deleteRight` commands,
+// coreCommands.ts); while the owner says a Vim insert is open
+// (`setUndoGroup`) those are left out, so the insert stays one element. Every
+// other undo stop (a cursor move, which in Vim breaks the insert too;
+// completion, snippets, formatting, format on save, code actions, any other
+// `pushUndoStop`) stays where VS Code puts it.
+//
+// Kept in this one file plus a line or two in each of oneCursor.ts, cursor.ts,
+// coreCommands.ts, codeEditorWidget.ts, viewCursors.ts and lineNumbers.ts, so an upstream bump
 // only has to re-place those lines.
 
 import { nextCharLength, prevCharLength } from '../../../base/common/strings.js';
@@ -186,6 +200,29 @@ class ModalCursorImpl {
 			return positions.slice(0, 1); // one caret, the block's per-line selections stay highlighted
 		}
 		return positions;
+	}
+
+	/** Editor id → whether one Vim change (an insert) is open, so typing does not close undo steps. */
+	private readonly _undoGroup = new Map<string, () => boolean>();
+
+	/** While `open()` answers true, typing in that editor does not close the undo stack element. */
+	setUndoGroup(editorId: string, open: () => boolean): IDisposable {
+		this._undoGroup.set(editorId, open);
+		return toDisposable(() => {
+			if (this._undoGroup.get(editorId) === open) {
+				this._undoGroup.delete(editorId);
+			}
+		});
+	}
+
+	/** CursorsController: whether a typing operation's own undo stops are left out (one Vim change is open). */
+	joinsUndo(viewModel: object): boolean {
+		if (this._undoGroup.size === 0) {
+			return false;
+		}
+		const editorId = this._editors.get(viewModel);
+		const open = editorId === undefined ? undefined : this._undoGroup.get(editorId);
+		return !!open && open();
 	}
 
 	/** Whether the caret of that editor must sit on a character now. */

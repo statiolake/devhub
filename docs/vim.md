@@ -68,7 +68,8 @@ Repeating `i(` / `iw` / `ip` in visual mode extends the selection, as in Vim.
 **Changes**: `x X <Del> s S r r<CR> R` (replace mode, `<BS>` puts the old text
 back), `J gJ` (`:help J` spacing rules), `p P gp gP ]p [p ]P [P` (linewise,
 characterwise, blockwise), `~` (`:set tildeop` makes it an operator), `C D Y`
-(`Y` = `y$`), `o O i I a A gi gI`, `u CTRL-R`, `.` (with a count; after a
+(`Y` = `y$`), `o O i I a A gi gI`, `u CTRL-R` (VS Code's undo / redo, see
+[Undo](#undo)), `.` (with a count; after a
 visual change it repeats on the same amount of text; `"1p...` steps through
 the numbered registers), `CTRL-A CTRL-X` (decimal with `-`, `0x` hex, `0b`
 binary, leading zeros kept), `[<Space> ]<Space>` (blank lines), `&` `g&`,
@@ -295,7 +296,7 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.scroll` | `{ "by": "line" \| "halfPage" \| "page", "direction": "up" \| "down" }` or `{ "to": "top" \| "center" \| "bottom", "firstNonBlank"?: bool }` | `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B zt zz zb z<CR> z. z-` |
 | `devhubVim.insert` | `{ "action": name, "char"?: c }` | insert-mode `CTRL-W CTRL-U CTRL-T CTRL-D CTRL-E CTRL-Y CTRL-A CTRL-O CTRL-R`, replace-mode `<BS>` |
 | `devhubVim.run` | `{ "command": id, "args"?: any, "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `K` … |
-| `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
+| `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `u CTRL-R` (of `undo` / `redo`); `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
 | `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` (opens [the prompt](#the-prompt)) |
 | `devhubVim.cmdline.submit` `.cancel` `.historyPrev` `.historyNext` `.insertRegister` `.deleteWord` `.deleteToStart` `.complete` | see [the prompt](#the-prompt) | in the prompt line |
 | `devhubVim.search` | `{ "pattern": p, "backwards"?: bool }` | (what `/` runs) |
@@ -651,6 +652,40 @@ otherwise) are VS Code's. It is a hook in the editor's caret drawing
 In insert mode the caret is VS Code's: `A`, `a` on the last character and a
 click put it after the last character, and `<Esc>` moves it one left, once.
 `CTRL-O` puts it on the last character for its one command and back after it.
+
+## Undo
+
+Undo is VS Code's: `u` is the `undo` command and `CTRL-R` the `redo`
+command (`devhubVim.repeat { "command": "undo", "count": "${count}" }`, so
+`3u` undoes three steps), the same as `Cmd+Z` / `Shift+Cmd+Z` and the Edit
+menu, on the model's own undo stack. So an undo step is whatever VS Code made
+one: the edits format on save made are a step of their own after the change
+you saved, and so are a refactoring, a code action or a rename (across files,
+as VS Code undoes them).
+
+The steps are Vim's where Vim decides them: the engine closes VS Code's undo
+step where a Vim change begins and where it ends, so
+
+* each normal-mode change (`dw`, `x`, `p`, `>>`, `:s`, a visual `c`, `.`) is
+  one step, and `:g` with all it runs is one;
+* an insert, from `i` / `a` / `o` / `c…` / `R` to `<Esc>`, is one step: VS
+  Code would close a step at every word, space, newline, `Tab` and
+  `Backspace` typed, and while a Vim insert is open it does not
+  (`ModalCursor.setUndoGroup`, the typing rules in the editor's `cursor.ts`
+  and `coreCommands.ts`). A count's repeats (`3ix<Esc>`) are in the same step.
+* As in Vim (and Neovim's defaults) the insert is broken by `CTRL-W` / `CTRL-U`
+  (before they delete), `CTRL-O`, and moving the caret (arrows, a click); and
+  VS Code's own steps stay where VS Code makes them inside an insert too:
+  accepting a completion, a snippet or an inline suggestion, format on type,
+  `Alt+Backspace`.
+
+After an undo or redo — from `u`, `CTRL-R`, `:undo`, `Cmd+Z` or the menu — the
+caret is where VS Code puts it back (the selection the change started from),
+and outside insert mode the editor is in normal mode with one collapsed caret:
+a selection put back (after a visual-mode change) collapses to its start,
+where the change began, and a visual mode that was on when you pressed
+`Cmd+Z` ends. The caret rule keeps it on a character. `Cmd+Z` in insert mode
+undoes and stays in insert mode, as in VS Code.
 
 ## Customising keys
 

@@ -273,7 +273,10 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	action('ctrl+a', 'increment', W.normalOrVisual, OVERRIDE), action('ctrl+x', 'decrement', W.normalOrVisual, OVERRIDE),
 	action('g ctrl+a', 'incrementProgressive', W.visual, OVERRIDE), action('g ctrl+x', 'decrementProgressive', W.visual, OVERRIDE),
 	action('[ space', 'blankLineAbove', W.normal), action('] space', 'blankLineBelow', W.normal),
-	action('u', 'undo', W.normal), action('ctrl+r', 'redo', W.normal, OVERRIDE),
+	// u / CTRL-R are VS Code's undo / redo (the model's undo stack, as Cmd+Z):
+	// an undo step is VS Code's, and the engine closes one per Vim change
+	{ key: 'u', command: 'devhubVim.repeat', args: { command: 'undo', count: '${count}' }, when: W.normal },
+	{ key: 'ctrl+r', command: 'devhubVim.repeat', args: { command: 'redo', count: '${count}' }, when: W.normal, weight: OVERRIDE },
 	action('.', 'repeat', W.normal),
 	action('shift+7', 'repeatSubstitute', W.normal), action('g shift+7', 'repeatSubstituteAll', W.normal),
 	{ key: 'shift+;', command: 'devhubVim.cmdline', args: { kind: ':' }, when: W.normalOrVisual },

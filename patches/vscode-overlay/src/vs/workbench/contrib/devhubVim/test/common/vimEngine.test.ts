@@ -145,6 +145,11 @@ class TestHost implements IVimHost {
 			this.applyEdits(edits);
 		} else if (command === 'deleteLeft') {
 			this.backspace();
+		} else if (command === 'undo') {
+			// VS Code's undo: one step of the stack the engine's changes made
+			this.undo();
+		} else if (command === 'redo') {
+			this.redo();
 		}
 		return Promise.resolve(undefined);
 	}
@@ -694,6 +699,38 @@ suite('DevHub Vim modes stay consistent', () => {
 		r.v.press('u');
 		assert.strictEqual(r.host.lines[0], 'ABC DEF');
 		assert.strictEqual(r.vim.mode, 'normal');
+	});
+
+	test('u and CTRL-R are VS Code\'s undo / redo, a count repeats them (3u, 2<C-r>)', async () => {
+		const flush = () => new Promise(r => setTimeout(r, 0));
+		// the keys run the native commands, nothing of the engine's
+		for (const [key, command] of [['u', 'undo'], ['ctrl+r', 'redo']]) {
+			const b = DEFAULT_KEYBINDINGS.filter(k => k.key === key && evaluateWhen(k.when, { textInputFocus: true, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal' }));
+			assert.deepStrictEqual(b.map(k => [k.command, k.args]), [['devhubVim.repeat', { command, count: '${count}' }]]);
+		}
+		const r = run('|a b c d e', 'dwdwdw');
+		assert.strictEqual(r.host.lines[0], 'd e');
+		r.v.keys('3u');
+		await flush();
+		assert.strictEqual(r.host.lines[0], 'a b c d e');
+		assert.deepStrictEqual(r.host.commands.map(c => c.command), ['undo', 'undo', 'undo']);
+		r.v.keys('2<C-r>');
+		await flush();
+		assert.strictEqual(r.host.lines[0], 'c d e');
+		r.v.keys('u');
+		assert.strictEqual(r.host.lines[0], 'b c d e', 'one undo runs at once');
+		assert.strictEqual(r.vim.mode, 'normal');
+		// an insert is one step, whatever was typed in it; i_CTRL-W breaks it (Neovim)
+		const i = run('|x', 'ifoo bar<CR>baz<Esc>');
+		assert.strictEqual(i.host.lines.join('\n'), 'foo bar\nbazx');
+		i.v.keys('u');
+		assert.strictEqual(i.host.lines.join('\n'), 'x');
+		const w = run('|x', 'ifoo bar<C-w>baz<Esc>');
+		assert.strictEqual(w.host.lines[0], 'foo bazx');
+		w.v.keys('u');
+		assert.strictEqual(w.host.lines[0], 'foo barx', 'the break is before the CTRL-W');
+		w.v.keys('u');
+		assert.strictEqual(w.host.lines[0], 'x');
 	});
 
 	test('the caret style is a function of the state', () => {

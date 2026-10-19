@@ -104,9 +104,14 @@ export interface IVimHost {
 	setSelections(ranges: readonly VimRange[], primary: number, cursorAtStart: boolean): void;
 	/** Apply non-overlapping edits (in pre-edit coordinates) synchronously. */
 	applyEdits(edits: readonly VimEdit[]): void;
-	/** Brackets one Vim change so that `u` undoes it as a single step. */
+	/**
+	 * Brackets one Vim change so that `u` (VS Code's undo) undoes it as a
+	 * single step: the undo step is closed at both ends, and typing does not
+	 * close it in between.
+	 */
 	beginChange(): void;
 	endChange(): void;
+	/** VS Code's undo / redo, one step (`:undo`, `devhubVim.action undo`; the `u` key is the `undo` command itself). */
 	undo(): void;
 	redo(): void;
 	indentUnit(): string;
