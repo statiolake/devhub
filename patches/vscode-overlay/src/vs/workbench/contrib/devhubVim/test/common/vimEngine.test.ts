@@ -28,6 +28,10 @@ class TestHost implements IVimHost {
 	comment: string | undefined = '//';
 	formatter = false;
 	highlighted: VimSearchQuery | undefined;
+	/** The editor's find state (FindReplaceState) as the engine last set it, and each time it did. */
+	findState: VimSearchQuery | undefined;
+	findStateWrites: { query: VimSearchQuery; isNew: boolean }[] = [];
+	findWidgetClosed = 0;
 	/** What 'inccommand' shows (computed at once: the test host does not debounce). */
 	preview: readonly VimSubstitution[] | undefined;
 	incsearch: VimRange | undefined;
@@ -129,6 +133,8 @@ class TestHost implements IVimHost {
 	getClipboard() { return this.clipboard; }
 	prefetchClipboard() { }
 	highlightSearch(r: VimSearchQuery | undefined) { this.highlighted = r; }
+	syncFindState(query: VimSearchQuery, isNew: boolean) { this.findState = query; this.findStateWrites.push({ query, isNew }); }
+	closeFindWidgets() { this.findWidgetClosed++; }
 	previewSubstitute(compute: (() => readonly VimSubstitution[] | undefined) | undefined) { this.preview = compute?.(); }
 	private readonly find = vimFindHost(() => this.lines);
 	findMatches(q: VimSearchQuery, within: VimRange, limit: number) { return this.find.findMatches(q, within, limit); }
@@ -2613,6 +2619,105 @@ suite('Neovim search', () => {
 		assert.strictEqual(v.host.highlighted, undefined);
 		const w = new Vim('|a b').keys(':set nohls<CR>/b<CR>');
 		assert.strictEqual(w.host.highlighted, undefined);
+	});
+
+	test('a Vim search is VS Code\'s find state: regex on, Match Case from ignorecase / smartcase, Whole Word for * and #', () => {
+		const q = (pattern: string, matchCase: boolean, wholeWord = false) => ({ pattern, matchCase, wholeWord });
+		const v = new Vim('|foo Foo foo.bar');
+		v.keys('/foo<CR>');
+		assert.deepStrictEqual(v.host.findStateWrites, [{ query: q('foo', true), isNew: true }]);
+		v.keys(':set ic scs<CR>/foo<CR>');
+		assert.deepStrictEqual(v.host.findState, q('foo', false));
+		v.keys('/Foo<CR>');
+		assert.deepStrictEqual(v.host.findState, q('Foo', true));
+		v.keys('?o\\.b<CR>');
+		assert.deepStrictEqual(v.host.findState, q('o\\.b', false));
+		// * and #: Whole Word, the case 'ignorecase' alone gives (no 'smartcase')
+		v.keys('0*');
+		assert.deepStrictEqual(v.host.findState, q('foo', false, true));
+		v.keys('#');
+		assert.deepStrictEqual(v.host.findState, q('Foo', false, true), '# on the Foo * went to');
+		v.keys('g*');
+		assert.deepStrictEqual(v.host.findState, q('foo', false));
+		// :s and :g set the last search pattern, so the find state follows them too
+		v.keys(':s/Fo/Fo/<CR>');
+		assert.deepStrictEqual(v.host.findState, q('Fo', true));
+		v.keys(':g/bar/m0<CR>');
+		assert.deepStrictEqual(v.host.findState, q('bar', false));
+		assert.ok(v.host.findStateWrites.every(w => w.isNew));
+		// n, N and gn search for it again: the state only catches up (not a new search: no history, no find clipboard)
+		v.host.findStateWrites = [];
+		v.keys('nNgn<Esc>');
+		assert.deepStrictEqual(v.host.findStateWrites.map(w => w.isNew), [false, false, false]);
+	});
+
+	test('a search made in the find widget is the last search: n forward, N backward, with the widget\'s Match Case and Whole Word', () => {
+		const v = new Vim('a A |x a A a');
+		v.keys('?x<CR>');
+		v.vim.adoptFindSearch({ pattern: 'a', matchCase: true, wholeWord: false });
+		assert.deepStrictEqual(v.host.highlighted, { pattern: 'a', matchCase: true, wholeWord: false });
+		// the widget's search is forward whatever the last Vim search was
+		v.keys('n');
+		assert.strictEqual(v.state(), 'a A x |a A a');
+		v.keys('n');
+		assert.strictEqual(v.state(), 'a A x a A |a');
+		v.keys('N');
+		assert.strictEqual(v.state(), 'a A x |a A a');
+		// the widget's Match Case wins over 'ignorecase' until the next Vim search
+		v.keys(':set ic<CR>n');
+		assert.strictEqual(v.state(), 'a A x a A |a');
+		assert.deepStrictEqual(v.host.findState, { pattern: 'a', matchCase: true, wholeWord: false });
+		v.keys('//<CR>');
+		assert.strictEqual(v.state(), '|a A x a A a', '`//` keeps the widget\'s Match Case');
+		v.keys('/a<CR>');
+		assert.strictEqual(v.state(), 'a |A x a A a', 'a Vim search: \'ignorecase\' again');
+		// Whole Word
+		const w = new Vim('|ab a ab a');
+		w.vim.adoptFindSearch({ pattern: 'a', matchCase: false, wholeWord: true });
+		w.keys('n');
+		assert.strictEqual(w.state(), 'ab |a ab a');
+		assert.deepStrictEqual(w.keys(':reg /<CR>').host.findState, { pattern: 'a', matchCase: false, wholeWord: true });
+		// the widget's text cleared: no highlight, the last search stays
+		w.vim.adoptFindSearch(undefined);
+		assert.strictEqual(w.host.highlighted, undefined);
+		assert.strictEqual(w.host.findWidgetClosed, 0, 'the widget the user is typing in stays open');
+		w.keys('<Esc>n');
+		assert.strictEqual(w.state(), 'ab a ab |a');
+	});
+
+	test(':noh and CTRL-L clear the highlight and close the find widget; the last search stays for n', () => {
+		const v = new Vim('|a b a b');
+		v.keys('/b<CR>');
+		v.keys(':noh<CR>');
+		assert.strictEqual(v.host.highlighted, undefined);
+		assert.strictEqual(v.host.findWidgetClosed, 1);
+		v.keys('n');
+		assert.ok(v.host.highlighted);
+		v.keys('<C-l>');
+		assert.strictEqual(v.host.highlighted, undefined);
+		assert.strictEqual(v.host.findWidgetClosed, 2);
+		// :set nohls only stops drawing: the widget is the user's
+		v.keys('n:set nohls<CR>');
+		assert.strictEqual(v.host.highlighted, undefined);
+		assert.strictEqual(v.host.findWidgetClosed, 2);
+	});
+
+	test('the last search is global: another editor\'s find state catches up with it at n; one made in its widget is everyone\'s', () => {
+		const shared = new VimSharedState();
+		const a = new Vim('|x foo x foo', [], shared);
+		const b = new Vim('|foo bar bar', [], shared);
+		a.keys('/foo<CR>');
+		assert.strictEqual(b.host.findState, undefined, 'the other editor\'s find state is left as it is');
+		b.keys('n');
+		assert.strictEqual(b.state(), '|foo bar bar');
+		assert.deepStrictEqual(b.host.findStateWrites, [{ query: { pattern: 'foo', matchCase: true, wholeWord: false }, isNew: false }]);
+		b.vim.adoptFindSearch({ pattern: 'bar', matchCase: true, wholeWord: false });
+		a.keys('gg0n');
+		assert.strictEqual(a.state(), '|x foo x foo', 'no bar in a: E486');
+		assert.ok(a.vim.status().includes('E486: Pattern not found: bar'), a.vim.status());
+		assert.deepStrictEqual(a.host.findState, { pattern: 'bar', matchCase: true, wholeWord: false });
+		b.keys('n');
+		assert.strictEqual(b.state(), 'foo |bar bar');
 	});
 
 	test('gn: cgn then . changes the next match', () => {

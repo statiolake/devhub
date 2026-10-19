@@ -429,7 +429,7 @@ function engine(text: string, shared = new VimSharedState()) {
 		beginChange: () => { }, endChange: () => { }, undo: () => { }, redo: () => { }, indentUnit: () => '\t', tabSize: () => 4, indentOptions: () => ({ tabSize: 4, indentSize: 'tabSize' as const, insertSpaces: false }), setIndentOptions: () => { }, defaultIndentOptions: () => ({ tabSize: 4, indentSize: 'tabSize' as const, insertSpaces: false }),
 		visibleLines: () => ({ top: 0, bottom: h.lines.length - 1 }), scrollToLine: () => { }, isLineHidden: () => false,
 		displayLineMove: () => undefined, setClipboard: () => { }, getClipboard: () => '', prefetchClipboard: () => { },
-		highlightSearch: () => { }, showIncSearch: (r: VimRange | undefined) => { h.incsearch = r; }, lineComment: () => '//',
+		highlightSearch: () => { }, syncFindState: () => { }, closeFindWidgets: () => { }, showIncSearch: (r: VimRange | undefined) => { h.incsearch = r; }, lineComment: () => '//',
 		...vimFindHost(() => h.lines), previewSubstitute: () => { },
 		hasRangeFormatter: () => false, fileName: () => 'f.txt',
 		executeCommand: (command: string, args: unknown) => { h.commands.push({ command, args }); return Promise.resolve(undefined); },

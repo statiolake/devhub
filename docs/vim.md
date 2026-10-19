@@ -128,6 +128,54 @@ into the prompt line at the bottom of the window (see [The prompt](#the-prompt))
 history, `CTRL-U CTRL-W CTRL-R {register}`, and `d/foo<CR>` / `c?bar<CR>`
 keep their operator, count and register.
 
+**One search with the find widget**: Vim's last search and VS Code's find
+state (the editor's `FindReplaceState`, which the find widget, F3 / Shift+F3
+and Cmd+G / Shift+Cmd+G use) are the same search, both ways:
+
+* A search made in Vim — `/` `?` `*` `#` `g*` `g#` `gd` `{Visual}*`, and
+  `:s/pat/` `:g/pat/` `:/pat/` (which set the last search pattern, as in
+  Vim) — becomes the editor's find state without opening the widget: the
+  pattern with **Use Regular Expression** on, **Match Case** as
+  'ignorecase' / 'smartcase' decide it (`*` / `#`: 'ignorecase' only),
+  **Match Whole Word** for `*` / `#` / `gd`. F3 then finds what `n` finds
+  (the first F3 selects the match the cursor is on, as VS Code's Find Next
+  does), and Cmd+F opens the widget on it. The search also goes into the
+  widget's history and, on macOS with `editor.find.globalFindClipboard`, the
+  find clipboard. VS Code keeps the widget's toggles per workspace, so after
+  a Vim search Use Regular Expression stays on for the next Cmd+F too.
+* A search made in the widget — typed, seeded by Cmd+F / Cmd+E (the word
+  under the cursor, by `editor.find.seedSearchStringFromSelection`; set it to
+  `"selection"` for Cmd+F to open on Vim's search instead), read from macOS's
+  find clipboard, or a toggle of Use Regular Expression / Match Case / Match
+  Whole Word — becomes Vim's last search: `n` searches **forward** for it
+  and `N` backward, whatever direction the last `/` / `?` had, and `"/` holds
+  it (escaped when the regex toggle is off). Its **Match Case is the
+  widget's**, not 'ignorecase' / 'smartcase', until the next Vim search
+  (`//` keeps it); a Vim search writes Match Case from 'ignorecase' /
+  'smartcase' again. A toggle pressed with the widget closed (Alt+C …)
+  counts when the editor's find state is the last search. Clearing the
+  widget's text turns the highlight off and keeps the last search.
+* The last search is **global**, as Vim's; VS Code's find state is per
+  editor. The search made last in any editor is the one `n` follows
+  everywhere, and an editor's find state catches up with it when `n` / `N`
+  / `gn` run there (so its F3 and widget follow from then on). Until then
+  another editor's F3 and widget keep their own search. A new file in an
+  editor does not change the search (VS Code restores its stored toggles
+  then; Vim's search keeps its case).
+* **Highlights**: 'hlsearch' highlights the last search in every editor with
+  VS Code's find colours. While an editor's find widget is open, the
+  widget's own highlighting (its FindModel: every match, the current one,
+  the overview ruler) shows the same search there and 'hlsearch' does not
+  draw it a second time. Esc closes the widget, as in VS Code (the widget's
+  Esc comes before Vim's); the matches stay highlighted by 'hlsearch' as
+  Vim's do, until `:noh` / CTRL-L (or the Esc of a keybinding running
+  `devhubVim.action noHighlight` with nothing open). `:noh` and CTRL-L clear
+  'hlsearch' in every editor and close any find widget that is open (without
+  moving the focus), keeping the search for `n` and F3. `:set nohls` only
+  stops 'hlsearch'.
+* 'incsearch' and 'inccommand' are Vim's previews of the prompt line; they do
+  not touch the find state until the line runs.
+
 **Scrolling**: `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B <PageDown>
 <PageUp>`, `zt zz zb z<CR> z. z-` (a count is a line number). They follow
 `editor.smoothScrolling` as VS Code's own scroll commands do: animated when it

@@ -69,9 +69,16 @@
 //   complete, bar), validated by the JSON schema registered here. It is read
 //   from the user's (local and remote) settings only (`exCommandsSetting`):
 //   a workspace cannot define commands.
+// * The last search is VS Code's find state. A search made in Vim (`/` `?`
+//   `*` `#` `gd` `:s` `:g`) becomes the editor's FindReplaceState
+//   (CommonFindController's: searchString, isRegex on, matchCase, wholeWord)
+//   without opening the widget, so F3 / Cmd+G and the widget search for it;
+//   a search made in the widget becomes Vim's last search, which `n` / `N`
+//   follow (VimEditor.findStateChanged). The last search is global, as
+//   Vim's; an editor's find state catches up with it when `n` runs there.
 // * 'hlsearch' and 'incsearch' are editor decorations drawn here (the find
-//   widget's colours), for the pattern the engine translated to a JavaScript
-//   regular expression.
+//   widget's colours). While an editor's find widget is open its FindModel
+//   draws the matches of the same search, and 'hlsearch' steps aside there.
 // * Modal "to the bone": outside insert mode an editor is switched to modal
 //   text input in the editor core (editor/browser/controller/editContext/
 //   modalTextInput.ts): typed text, IME composition and drop from any
@@ -163,6 +170,9 @@ import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { DEFAULT_VIM_OPTIONS, IVimHost, VIM_ENGINE_COMMANDS, VimContext, VimEdit, VimEngine, VimIndentOptions, VimMatch, VimPos, VimRange, VimSearchQuery, VimSharedState, VimSubstitution } from '../common/vimEngine.js';
 import { parseReplaceString } from '../../../../editor/contrib/find/browser/replacePattern.js';
+import { CommonFindController } from '../../../../editor/contrib/find/browser/findController.js';
+import { FindReplaceState, FindReplaceStateChangedEvent } from '../../../../editor/contrib/find/browser/findState.js';
+import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import './media/devhubVim.css';
 import { BUILTIN_EX_SPECS, builtinExNameForms } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
@@ -433,6 +443,12 @@ class VimEditor extends Disposable implements IVimHost {
 	private revealSuppressed = 0;
 	/** The primary selection last put for a visual mode, with the character its cursor is on. */
 	private visualPrimary: { selection: Selection; cursor: Position } | undefined;
+	/** VS Code's find controller of this editor (its FindReplaceState is the find widget's, F3's and Cmd+G's), once there is one. */
+	private findCtl: CommonFindController | undefined;
+	/** Inside syncFindState: the find state changes because Vim searched, not the widget. */
+	private writingFind = 0;
+	/** Between onWillChangeModel and onDidChangeModel: the find controller puts its stored toggles back, which nobody searched for. */
+	private modelChanging = false;
 
 	constructor(
 		readonly editor: ICodeEditor,
@@ -456,7 +472,10 @@ class VimEditor extends Disposable implements IVimHost {
 		this._register(editor.onKeyDown(e => this.onKeyDown(e)));
 		this._register(editor.onDidFocusEditorText(() => owner.update()));
 		this._register(editor.onDidBlurEditorText(() => owner.update()));
+		this.findController();
+		this._register(editor.onWillChangeModel(() => this.modelChanging = true));
 		this._register(editor.onDidChangeModel(() => {
+			this.modelChanging = false;
 			this.engine.reset();
 			this.modelListener.clear();
 			this.insertStyle = this.readInsertCursorStyle();
@@ -697,7 +716,8 @@ class VimEditor extends Disposable implements IVimHost {
 	private drawHighlight(): void {
 		const model = this.editor.getModel();
 		const r = this.owner.searchHighlight;
-		if (!model || !r) {
+		// the open find widget's FindModel highlights the same matches (findDecorations.ts): not twice
+		if (!model || !r || this.findController()?.getState().isRevealed) {
 			this.hlDecorations.clear();
 			return;
 		}
@@ -715,6 +735,87 @@ class VimEditor extends Disposable implements IVimHost {
 			// the engine checked the pattern; nothing else can be wrong but the model going away
 		}
 		this.hlDecorations.set(decorations);
+	}
+
+	// ---- the find widget's state ----------------------------------------------
+
+	/** This editor's CommonFindController (none in an editor made without contributions), listened to once it is there. */
+	private findController(): CommonFindController | undefined {
+		if (!this.findCtl) {
+			const c = CommonFindController.get(this.editor) ?? undefined;
+			if (c) {
+				this.findCtl = c;
+				this._register(c.getState().onFindReplaceStateChange(e => this.findStateChanged(c.getState(), e)));
+			}
+		}
+		return this.findCtl;
+	}
+
+	/**
+	 * The find state changed. A search made in the widget (typed, seeded by
+	 * Cmd+F / Cmd+E, read from macOS's find clipboard, or a toggle) is Vim's
+	 * last search; one Vim made (syncFindState) or the toggles the controller
+	 * restores with a new model are not. A toggle (Alt+C ...) while the widget
+	 * is closed counts only when this editor's find state is the last search:
+	 * on an older one nobody sees, it searches for nothing new.
+	 */
+	private findStateChanged(state: FindReplaceState, e: FindReplaceStateChangedEvent): void {
+		if (e.isRevealed) {
+			// 'hlsearch' steps aside while the widget draws, and is back when it closes
+			this.scheduleHighlight();
+		}
+		if (this.writingFind || this.modelChanging || !(e.searchString || e.isRegex || e.matchCase || e.wholeWord)) {
+			return;
+		}
+		if (!e.searchString && !state.isRevealed && !this.findStateIsLastSearch(state)) {
+			return;
+		}
+		try {
+			this.engine.adoptFindSearch(state.searchString ? {
+				pattern: state.isRegex ? state.searchString : escapeRegExpCharacters(state.searchString),
+				matchCase: state.matchCase,
+				wholeWord: state.wholeWord,
+			} : undefined);
+		} catch (err) {
+			onUnexpectedError(err);
+		}
+		this.owner.update();
+	}
+
+	private findStateIsLastSearch(state: FindReplaceState): boolean {
+		const q = this.engine.lastSearchQuery();
+		return !!q && (q.pattern === state.searchString || q.pattern === escapeRegExpCharacters(state.searchString));
+	}
+
+	syncFindState(query: VimSearchQuery, isNew: boolean): void {
+		const c = this.findController();
+		if (!c) {
+			return;
+		}
+		const state = c.getState();
+		// the widget's own search for the same thing (its text with the regex toggle off) is left as the user typed it
+		const hadString = (state.isRegex ? state.searchString : escapeRegExpCharacters(state.searchString)) === query.pattern;
+		if (!hadString || state.matchCase !== query.matchCase || state.wholeWord !== query.wholeWord) {
+			this.writingFind++;
+			try {
+				// moveCursor false: an open widget's FindModel searches again where the cursor is, which Vim already moved
+				state.change({ searchString: query.pattern, isRegex: true, matchCase: query.matchCase, wholeWord: query.wholeWord }, false, isNew);
+			} finally {
+				this.writingFind--;
+			}
+		}
+		if (isNew && hadString) {
+			// a new search for the same pattern still is the find clipboard's (the controller writes it when the string changes)
+			c.setGlobalBufferTerm(state.searchString);
+		}
+	}
+
+	/** :nohlsearch: the find widget, whose matches are highlights too, closes (without taking the focus). */
+	closeFindWidget(): void {
+		const state = this.findCtl?.getState();
+		if (state?.isRevealed) {
+			state.change({ isRevealed: false, searchScope: null }, false);
+		}
 	}
 
 	/** VS Code's Match Whole Word: the editor's word separators (null: any match). */
@@ -1060,6 +1161,10 @@ class VimEditor extends Disposable implements IVimHost {
 		this.owner.setSearchHighlight(query);
 	}
 
+	closeFindWidgets(): void {
+		this.owner.closeFindWidgets();
+	}
+
 	showIncSearch(range: VimRange | undefined, keepView?: boolean): void {
 		if (!range) {
 			this.incDecorations.clear();
@@ -1289,6 +1394,13 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.searchHighlight = query;
 		for (const v of this.editors.values()) {
 			v.scheduleHighlight();
+		}
+	}
+
+	/** :nohlsearch in any editor closes the find widget in every one. */
+	closeFindWidgets(): void {
+		for (const v of this.editors.values()) {
+			v.closeFindWidget();
 		}
 	}
 

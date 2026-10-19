@@ -40,6 +40,10 @@
 // findNextMatch: TextModel's, with "Use Regular Expression" on, multiline
 // as VS Code's find is), and `:s` replacement strings are the find widget's
 // ($1 $& \n \t \u \U \l \L). Vim's regex dialect is not translated.
+// The last search is VS Code's find state too: a search made here becomes
+// the editor's FindReplaceState (syncFindState: F3 / Cmd+G and the find
+// widget search for it), and one made in the find widget becomes the last
+// search (adoptFindSearch: `n` / `N` follow it).
 //
 // Positions are 0-based { line, col } (UTF-16 columns); `col ===
 // lineText(line).length` is the position of the line break. Edit ranges are
@@ -163,8 +167,19 @@ export interface IVimHost {
 	findNextMatch(query: VimSearchQuery, from: VimPos, backwards: boolean): VimMatch | undefined;
 	/** The find widget's replace string for a match (`$1` `$&` `\n` `\t` `\u` `\U` `\l` `\L`: parseReplaceString). */
 	replaceString(replacement: string, match: VimMatch): string;
-	/** 'hlsearch': highlight every match of `query` (undefined: none). */
+	/** 'hlsearch': highlight every match of `query` (undefined: none, in every editor, as `:nohlsearch`). */
 	highlightSearch(query: VimSearchQuery | undefined): void;
+	/**
+	 * VS Code's find state of this editor (FindReplaceState: what F3 / Cmd+G
+	 * and the find widget search for) becomes `query`, a regular expression,
+	 * without opening the widget. `isNew`: a search just made (`/` `?` `*`
+	 * `#` `gd` `:s` `:g`), which also goes into the find widget's history and
+	 * macOS's find clipboard; otherwise (`n` `N` `gn`, in an editor whose
+	 * find state may be older than the last search) only the state.
+	 */
+	syncFindState(query: VimSearchQuery, isNew: boolean): void;
+	/** `:nohlsearch`: VS Code's find widget closes in every editor (its matches are highlights too). */
+	closeFindWidgets(): void;
 	/**
 	 * 'incsearch': show this match while the pattern is typed, revealed as
 	 * VS Code's find widget reveals one (in the center if outside the
@@ -322,14 +337,31 @@ export const OPTION_ALIASES: Readonly<Record<string, keyof VimOptions>> = {
 	js: 'joinspaces', top: 'tildeop', gd: 'gdefault', tw: 'textwidth', nf: 'nrformats',
 };
 
+/** The last search pattern (`:help last-pattern`), with how it searches. */
+export interface VimLastSearch {
+	readonly pattern: string;
+	readonly backwards: boolean;
+	readonly offset?: string;
+	readonly wholeWord?: boolean;
+	readonly exactCase?: boolean;
+	readonly matchCase?: boolean;
+}
+
 /** State Vim keeps per window rather than per buffer: registers, macros, last search, last f/t, options, ex commands. */
 export class VimSharedState {
 	readonly registers = new Map<string, VimRegister>();
 	readonly macros = new Map<string, readonly VimStep[]>();
 	lastMacro: string | undefined;
 	lastRecorded: string | undefined;
-	/** `wholeWord` and `exactCase` (no 'smartcase'): what `*` / `#` / `gd` searched for. */
-	lastSearch: { pattern: string; backwards: boolean; offset?: string; wholeWord?: boolean; exactCase?: boolean } | undefined;
+	/**
+	 * The last search, in every editor (each editor's find state follows it
+	 * when it searches: IVimHost.syncFindState). `wholeWord` and `exactCase`
+	 * (no 'smartcase'): what `*` / `#` / `gd` searched for; `matchCase`: the
+	 * find widget's Match Case, for a search made there (VimEngine.adoptFindSearch).
+	 */
+	lastSearch: VimLastSearch | undefined;
+	/** 'hlsearch' shows the last search (until :nohlsearch). */
+	highlighting = false;
 	lastFind: { key: string; char: string } | undefined;
 	lastSubstitute: { pattern: string; replacement: string; flags: string } | undefined;
 	lastInserted = '';
@@ -612,7 +644,6 @@ export class VimEngine {
 	private readonly marks = new Map<string, VimPos>();
 	/** The next cursor or selection the engine puts is a jump (VS Code's history records it as Go to Definition's). */
 	private jumping = false;
-	private hlActive = false;
 
 	// grammar: what the commands so far have built up
 	private register: string | undefined;
@@ -2040,8 +2071,7 @@ export class VimEngine {
 				break;
 			}
 			case 'noHighlight':
-				this.hlActive = false;
-				this.host.highlightSearch(undefined);
+				this.noHighlight();
 				break;
 			case 'swapVisualEnds': case 'swapVisualCorner':
 				this.invalid();
@@ -2393,8 +2423,7 @@ export class VimEngine {
 				return false;
 			}
 			case 'noHighlight':
-				this.hlActive = false;
-				this.host.highlightSearch(undefined);
+				this.noHighlight();
 				return false;
 			case 'ignore':
 				return false;
@@ -3627,7 +3656,7 @@ export class VimEngine {
 					return undefined;
 				}
 				const back = name === 'searchPrevious' ? !ls.backwards : ls.backwards;
-				const q = this.lastSearchQuery()!;
+				const q = this.useLastSearch(ls);
 				const r = this.searchMotion(q, back, cur, n);
 				if (r) {
 					this.highlight(q);
@@ -3644,9 +3673,8 @@ export class VimEngine {
 				// VS Code's Match Whole Word, as Vim's \< \> (which also end a word where the script changes)
 				const wholeWord = !name.endsWith('Partial') && isKeywordClass(charClassAt(word.text, 0, false));
 				const pattern = escapeRegExpCharacters(word.text);
-				this.shared.lastSearch = { pattern, backwards, wholeWord, exactCase: true };
 				this.pushHistory('/', literalPattern(word.text, backwards ? '?' : '/'));
-				const q = this.lastSearchQuery()!;
+				const q = this.setLastSearch({ pattern, backwards, wholeWord, exactCase: true });
 				// * starts from the start of the word under the cursor, so the next match is the next occurrence
 				const from = backwards ? pos(cur.line, word.start) : cur;
 				const r = this.searchMotion(q, backwards, from, n);
@@ -3751,8 +3779,7 @@ export class VimEngine {
 					}
 					from = l;
 				}
-				this.shared.lastSearch = { pattern: escapeRegExpCharacters(word.text), backwards: false, wholeWord: true, exactCase: true };
-				const q = this.lastSearchQuery()!;
+				const q = this.setLastSearch({ pattern: escapeRegExpCharacters(word.text), backwards: false, wholeWord: true, exactCase: true });
 				const m = this.host.findMatches(q, { start: pos(from, 0), end: pos(cur.line, this.len(cur.line)) }, 1)[0];
 				if (m) {
 					this.highlight(q);
@@ -3769,20 +3796,66 @@ export class VimEngine {
 		return m ? m.index : -1;
 	}
 
-	/** A typed pattern as VS Code's find runs it ('ignorecase' / 'smartcase' decide the case; an invalid one is an error). */
-	private query(pattern: string, opts: { wholeWord?: boolean; exactCase?: boolean; caseFlag?: 'i' | 'I' } = {}): VimSearchQuery {
+	/**
+	 * A typed pattern as VS Code's find runs it ('ignorecase' / 'smartcase'
+	 * decide the case, unless the `i` / `I` flag or the find widget's Match
+	 * Case does; an invalid one is an error).
+	 */
+	private query(pattern: string, opts: { wholeWord?: boolean; exactCase?: boolean; matchCase?: boolean; caseFlag?: 'i' | 'I' } = {}): VimSearchQuery {
 		const err = regexError(pattern);
 		if (err !== undefined) {
 			this.invalid(`E383: Invalid search string: ${pattern} (${err})`);
 		}
-		const matchCase = opts.caseFlag ? opts.caseFlag === 'I' : opts.exactCase ? !this.options.ignorecase : patternMatchCase(pattern, this.options.ignorecase, this.options.smartcase);
+		const matchCase = opts.caseFlag ? opts.caseFlag === 'I' : opts.matchCase ?? (opts.exactCase ? !this.options.ignorecase : patternMatchCase(pattern, this.options.ignorecase, this.options.smartcase));
 		return { pattern, matchCase, wholeWord: opts.wholeWord === true };
 	}
 
-	/** The last search as a query (with the case options as they are now), or undefined. */
-	private lastSearchQuery(): VimSearchQuery | undefined {
+	/** A last search as a query (with the case options as they are now). */
+	private searchQuery(ls: VimLastSearch): VimSearchQuery {
+		return this.query(ls.pattern, { wholeWord: ls.wholeWord, exactCase: ls.exactCase, matchCase: ls.matchCase });
+	}
+
+	/** The last search as a query, or undefined (none, or not a pattern VS Code's find compiles). */
+	lastSearchQuery(): VimSearchQuery | undefined {
 		const ls = this.shared.lastSearch;
-		return ls && this.query(ls.pattern, { wholeWord: ls.wholeWord, exactCase: ls.exactCase });
+		if (!ls || regexError(ls.pattern) !== undefined) {
+			return undefined;
+		}
+		return this.searchQuery(ls);
+	}
+
+	/** A new last search (`/` `?` `*` `#` `gd` `:s` `:g` `:/pat/`): this editor's find state searches for it too. */
+	private setLastSearch(ls: VimLastSearch): VimSearchQuery {
+		this.shared.lastSearch = ls;
+		const q = this.searchQuery(ls);
+		this.host.syncFindState(q, true);
+		return q;
+	}
+
+	/** The last search, used again (`n` `N` `gn`): this editor's find state catches up with it if another editor made it. */
+	private useLastSearch(ls: VimLastSearch): VimSearchQuery {
+		const q = this.searchQuery(ls);
+		this.host.syncFindState(q, false);
+		return q;
+	}
+
+	/**
+	 * A search made in VS Code's find widget (typed, or its Match Case / Whole
+	 * Word / regex toggled) is the last search: forward, with the widget's
+	 * Match Case rather than 'ignorecase' / 'smartcase'. `pattern` is a
+	 * regular expression (the widget's text escaped when its regex toggle is
+	 * off). Undefined: the widget's text was cleared, which turns the
+	 * highlight off and keeps the last search.
+	 */
+	adoptFindSearch(search: { pattern: string; matchCase: boolean; wholeWord: boolean } | undefined): void {
+		if (!search) {
+			this.noHighlight(false);
+			return;
+		}
+		this.shared.lastSearch = { pattern: search.pattern, backwards: false, wholeWord: search.wholeWord, matchCase: search.matchCase };
+		if (regexError(search.pattern) === undefined) {
+			this.highlight(this.searchQuery(this.shared.lastSearch));
+		}
 	}
 
 	private highlight(q: VimSearchQuery | undefined): void {
@@ -3790,7 +3863,16 @@ export class VimEngine {
 			return;
 		}
 		this.host.highlightSearch(q);
-		this.hlActive = true;
+		this.shared.highlighting = true;
+	}
+
+	/** :nohlsearch, CTRL-L: no highlight in any editor until the next search, and no find widget open (`closeFind`). */
+	private noHighlight(closeFind = true): void {
+		this.shared.highlighting = false;
+		this.host.highlightSearch(undefined);
+		if (closeFind) {
+			this.host.closeFindWidgets();
+		}
 	}
 
 	/**
@@ -4256,7 +4338,7 @@ export class VimEngine {
 					this.message = 'E35: No previous regular expression';
 					return undefined;
 				}
-				const q = this.lastSearchQuery()!;
+				const q = this.useLastSearch(ls);
 				// gn: the match under the cursor, or the next one
 				const found = this.matchAtOrNext(q, cur, ch === 'gN');
 				if (!found) {
@@ -4720,10 +4802,9 @@ export class VimEngine {
 			return;
 		}
 		this.pushHistory('/', text || pattern);
-		// `//` searches for the last pattern as it was (a `*` one by whole word)
-		this.shared.lastSearch = typed ? { pattern, backwards, offset } : { ...this.shared.lastSearch!, backwards, offset };
+		// `//` searches for the last pattern as it was (a `*` one by whole word, one from the find widget with its Match Case)
+		const q = this.setLastSearch(typed ? { pattern, backwards, offset } : { ...this.shared.lastSearch!, backwards, offset });
 		const cur = this.cursor();
-		const q = this.lastSearchQuery()!;
 		const found = this.searchMotion(q, backwards, cur, count ?? this.effectiveCount() ?? 1);
 		if (!found) {
 			if (op) {
@@ -4786,10 +4867,7 @@ export class VimEngine {
 					return undefined;
 				}
 				const ls = pattern ? { pattern: pat, backwards } : { ...last!, backwards };
-				if (remember) {
-					this.shared.lastSearch = ls;
-				}
-				const q = this.query(ls.pattern, { wholeWord: ls.wholeWord, exactCase: ls.exactCase });
+				const q = remember ? this.setLastSearch(ls) : this.searchQuery(ls);
 				const found = this.findMatch(q, backwards ? pos(fromLine, 0) : pos(fromLine, this.len(fromLine)), backwards);
 				return found?.range.start.line;
 			},
@@ -4994,8 +5072,7 @@ export class VimEngine {
 		};
 		switch (name) {
 			case 'nohlsearch':
-				this.hlActive = false;
-				this.host.highlightSearch(undefined);
+				this.noHighlight();
 				return;
 			case 'substitute': case '&': case '&&': case '~':
 				this.exSubstitute(name, r, args);
@@ -5623,7 +5700,8 @@ export class VimEngine {
 		const q = this.substituteQuery(pattern, flags);
 		const origin = this.cursor();
 		this.shared.lastSubstitute = { pattern, replacement, flags: flags.replace(/[cn]/g, '') };
-		this.shared.lastSearch = { pattern, backwards: false };
+		// `:s/pat/` sets the last search pattern (`n` and F3 search for it), with the case 'ignorecase' / 'smartcase' give it
+		this.setLastSearch({ pattern, backwards: false });
 		const global = this.substituteGlobal(flags);
 		const countOnly = flags.includes('n');
 		if (flags.includes('c') && !countOnly) {
@@ -5825,8 +5903,7 @@ export class VimEngine {
 			this.message = 'E35: No previous regular expression';
 			return;
 		}
-		this.shared.lastSearch = g.pattern ? { pattern, backwards: false } : { ...this.shared.lastSearch!, backwards: false };
-		const q = this.lastSearchQuery()!;
+		const q = this.setLastSearch(g.pattern ? { pattern, backwards: false } : { ...this.shared.lastSearch!, backwards: false });
 		// the lines a match starts on (VS Code's find over the range)
 		const hit = new Set(this.host.findMatches(q, { start: pos(r.start, 0), end: pos(r.end, this.len(r.end)) }, Number.MAX_SAFE_INTEGER).map(m => m.range.start.line));
 		const tag = `\u0000g${Date.now()}`;
@@ -6024,7 +6101,7 @@ export class VimEngine {
 		}
 		if (!this.options.hlsearch) {
 			this.host.highlightSearch(undefined);
-		} else if (this.hlActive && this.shared.lastSearch) {
+		} else if (this.shared.highlighting) {
 			this.highlight(this.lastSearchQuery());
 		}
 		if (fileOptions.length) {
