@@ -136,7 +136,7 @@ tools/speech-bench/compare.py clips/ --out results/run1.json
 - Clips are any audio files in the folder; `clip.txt` beside `clip.m4a` is its
   reference transcript. Every clip is converted to 16 kHz mono WAV with
   `afconvert` first, and both engines get that same file.
-- `--model` takes `small` (ggml-small-q5_1.bin), `large-v3-turbo`
+- `--model` takes `small` (ggml-small.bin, what DevHub ships), `small-q5_1`, `large-v3-turbo`
   (ggml-large-v3-turbo-q5_0.bin, what DevHub ships), other aliases listed in
   `--help`, a ggml file name or a path. It looks in `dist/whisper`, the DevHub
   whisper cache and `--models-dir`; `--download` fetches what is missing from

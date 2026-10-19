@@ -58,8 +58,8 @@ HF_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 # Names --model accepts, each to the file it means. The quantised files are the
 # ones DevHub ships or considers (scripts/build_whisper.py).
 MODEL_ALIASES = {
-	"small": "ggml-small-q5_1.bin",
-	"small-f16": "ggml-small.bin",
+	"small": "ggml-small.bin",
+	"small-q5_1": "ggml-small-q5_1.bin",
 	"large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
 	"large-v3-turbo-q8": "ggml-large-v3-turbo-q8_0.bin",
 	"large-v3-turbo-f16": "ggml-large-v3-turbo.bin",
