@@ -603,6 +603,157 @@ export function resolveExFileArg(arg: string, ctx: ExFileContext): ExFileArg | u
 	return { path: normalizeExPath(ctx.cwd + '/' + out) };
 }
 
+// ---- file encodings and formats ----------------------------------------------------
+
+/**
+ * The encodings VS Code writes and reads (SUPPORTED_ENCODINGS in
+ * services/textfile/common/encoding.ts: its ids, which "Save with Encoding" and
+ * "Reopen with Encoding" take), each with the names Vim and iconv call it by
+ * (normalized: lower case, no `-` `_` or blank). A test checks that every id is
+ * one VS Code has, so a bump that renames one is found.
+ */
+const VIM_ENCODINGS: readonly (readonly [id: string, label: string, ...names: string[]])[] = [
+	['utf8', 'UTF-8', 'utf8'],
+	['utf8bom', 'UTF-8 with BOM', 'utf8bom'],
+	['utf16le', 'UTF-16 LE', 'utf16le', 'ucs2le'],
+	['utf16be', 'UTF-16 BE', 'utf16be', 'utf16', 'ucs2be', 'ucs2'],
+	['windows1252', 'Western (Windows 1252)', 'cp1252', 'windows1252'],
+	['iso88591', 'Western (ISO 8859-1)', 'latin1', 'iso88591'],
+	['iso88593', 'Western (ISO 8859-3)', 'latin3', 'iso88593'],
+	['iso885915', 'Western (ISO 8859-15)', 'latin9', 'iso885915'],
+	['macroman', 'Western (Mac Roman)', 'macroman', 'mac', 'applemac'],
+	['cp437', 'DOS (CP 437)', 'cp437', 'ibm437'],
+	['windows1256', 'Arabic (Windows 1256)', 'cp1256'],
+	['iso88596', 'Arabic (ISO 8859-6)'],
+	['windows1257', 'Baltic (Windows 1257)', 'cp1257'],
+	['iso88594', 'Baltic (ISO 8859-4)', 'latin4'],
+	['iso885914', 'Celtic (ISO 8859-14)', 'latin8'],
+	['windows1250', 'Central European (Windows 1250)', 'cp1250'],
+	['iso88592', 'Central European (ISO 8859-2)', 'latin2'],
+	['cp852', 'Central European (CP 852)', 'ibm852'],
+	['windows1251', 'Cyrillic (Windows 1251)', 'cp1251'],
+	['cp866', 'Cyrillic (CP 866)', 'ibm866'],
+	['cp1125', 'Cyrillic (CP 1125)', 'ibm1125'],
+	['iso88595', 'Cyrillic (ISO 8859-5)'],
+	['koi8r', 'Cyrillic (KOI8-R)'],
+	['koi8u', 'Cyrillic (KOI8-U)'],
+	['iso885913', 'Estonian (ISO 8859-13)', 'latin7'],
+	['windows1253', 'Greek (Windows 1253)', 'cp1253'],
+	['iso88597', 'Greek (ISO 8859-7)'],
+	['windows1255', 'Hebrew (Windows 1255)', 'cp1255'],
+	['iso88598', 'Hebrew (ISO 8859-8)'],
+	['iso885910', 'Nordic (ISO 8859-10)', 'latin6'],
+	['iso885916', 'Romanian (ISO 8859-16)', 'latin10'],
+	['windows1254', 'Turkish (Windows 1254)', 'cp1254'],
+	['iso88599', 'Turkish (ISO 8859-9)', 'latin5'],
+	['cp857', 'Turkish (CP 857)', 'ibm857'],
+	['windows1258', 'Vietnamese (Windows 1258)', 'cp1258'],
+	['gbk', 'Simplified Chinese (GBK)', 'cp936'],
+	['gb18030', 'Simplified Chinese (GB18030)'],
+	['cp950', 'Traditional Chinese (Big5)', 'big5'],
+	['big5hkscs', 'Traditional Chinese (Big5-HKSCS)'],
+	['shiftjis', 'Japanese (Shift JIS)', 'sjis', 'cp932', 'mskanji', 'windows31j', 'ms932', 'csshiftjis'],
+	['eucjp', 'Japanese (EUC-JP)', 'ujis'],
+	['euckr', 'Korean (EUC-KR)', 'cp949'],
+	['windows874', 'Thai (Windows 874)', 'cp874'],
+	['iso885911', 'Latin/Thai (ISO 8859-11)'],
+	['koi8ru', 'Cyrillic (KOI8-RU)'],
+	['koi8t', 'Tajik (KOI8-T)'],
+	['gb2312', 'Simplified Chinese (GB 2312)', 'euccn'],
+	['cp865', 'Nordic DOS (CP 865)', 'ibm865'],
+	['cp850', 'Western European DOS (CP 850)', 'ibm850'],
+];
+
+function normalizeEncodingName(name: string): string {
+	return name.toLowerCase().replace(/[-_\s]/g, '');
+}
+
+/** Every VS Code encoding id `:set fenc=` takes, in the order of the status bar's "Select Encoding", with its label. */
+export function vimEncodingList(): { readonly id: string; readonly label: string }[] {
+	return VIM_ENCODINGS.map(([id, label]) => ({ id, label }));
+}
+
+/**
+ * VS Code's encoding id for a name as Vim (or iconv) spells it: `utf-8`,
+ * `UTF8`, `cp932` / `sjis` / `shift_jis` (Shift JIS), `euc-jp`, `latin1`,
+ * `iso-8859-15`, `utf-16le`, `windows-1252` / `cp1252`, a VS Code id itself;
+ * undefined when VS Code cannot read or write it.
+ */
+export function vimEncodingId(name: string): string | undefined {
+	const n = normalizeEncodingName(name);
+	if (!n) {
+		return undefined;
+	}
+	for (const [id, , ...names] of VIM_ENCODINGS) {
+		if (id === n || names.includes(n)) {
+			return id;
+		}
+	}
+	return undefined;
+}
+
+/** Completions for `fenc=` and `++enc=`: the ids whose name (or a Vim spelling of it) starts with what is typed. */
+export function vimEncodingCompletions(typed: string): { readonly id: string; readonly label: string }[] {
+	const n = normalizeEncodingName(typed);
+	return VIM_ENCODINGS.filter(([id, , ...names]) => id.startsWith(n) || names.some(x => x.startsWith(n))).map(([id, label]) => ({ id, label }));
+}
+
+/** The encodings that always carry a BOM when written: 'bomb' is on for them and cannot be turned off. */
+export function vimEncodingHasBom(id: string): boolean {
+	return id === 'utf8bom' || id === 'utf16le' || id === 'utf16be';
+}
+
+/** `unix` / `dos` ('fileformat') as VS Code's line endings: `\n` and `\r\n`; `mac` (`\r`) is not one of them. */
+export function vimFileFormat(name: string): 'unix' | 'dos' | undefined {
+	const n = name.toLowerCase();
+	return n === 'unix' || n === 'dos' ? n : undefined;
+}
+
+/** The names `:set ff=` completes. */
+export const VIM_FILE_FORMATS = [{ name: 'unix', detail: 'LF' }, { name: 'dos', detail: 'CRLF' }] as const;
+
+/** The `++opt` words in front of a file argument (`:e ++enc=cp932 {file}`, `:w ++ff=dos {file}`) and what follows them. */
+export interface ExFileOptions {
+	/** `++enc=` / `++encoding=`: VS Code's encoding id. */
+	readonly enc?: string;
+	/** `++ff=` / `++fileformat=`. */
+	readonly ff?: 'unix' | 'dos';
+	/** The argument without them. */
+	readonly rest: string;
+}
+
+/**
+ * The `++enc=` and `++ff=` words an argument starts with (`:help ++opt`), or
+ * Vim's error: an unknown encoding or format, `mac`, and the options VS Code
+ * has no equivalent for (`++bin` `++edit` `++bad=`) are E474.
+ */
+export function parseExFileOptions(args: string): ExFileOptions | { readonly error: string } {
+	let rest = args.trimStart();
+	let enc: string | undefined;
+	let ff: 'unix' | 'dos' | undefined;
+	for (let m = /^\+\+(\S*)\s*/.exec(rest); m; m = /^\+\+(\S*)\s*/.exec(rest)) {
+		const word = m[0].trim();
+		const eq = m[1].indexOf('=');
+		const name = eq < 0 ? m[1] : m[1].slice(0, eq);
+		const value = eq < 0 ? undefined : m[1].slice(eq + 1);
+		if (name === 'enc' || name === 'encoding') {
+			enc = value === undefined ? undefined : vimEncodingId(value);
+			if (enc === undefined) {
+				return { error: `E474: Invalid argument: ${word}` };
+			}
+		} else if (name === 'ff' || name === 'fileformat') {
+			ff = value === undefined ? undefined : vimFileFormat(value);
+			if (ff === undefined) {
+				return { error: value?.toLowerCase() === 'mac' ? `E474: Invalid argument: ${word} (VS Code has no CR line endings)` : `E474: Invalid argument: ${word}` };
+			}
+		} else {
+			return { error: `E474: Invalid argument: ${word}${/^(bin|binary|nobin|nobinary|edit|bad|bad=.*)$/.test(m[1]) ? ' (not supported)' : ''}` };
+		}
+		rest = rest.slice(m[0].length);
+	}
+	return { ...(enc !== undefined ? { enc } : {}), ...(ff !== undefined ? { ff } : {}), rest };
+}
+
 // ---- parsing ------------------------------------------------------------------
 
 /** One command of an ex line, as the parser read it (before the range is resolved against the buffer). */

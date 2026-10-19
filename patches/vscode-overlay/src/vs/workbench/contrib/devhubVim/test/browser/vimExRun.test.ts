@@ -20,6 +20,13 @@ import { IContextKeyService } from '../../../../../platform/contextkey/common/co
 import { ServiceCollection } from '../../../../../platform/instantiation/common/serviceCollection.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IPathService } from '../../../../services/path/common/pathService.js';
+import { EncodingMode, ITextFileEditorModel, ITextFileService } from '../../../../services/textfile/common/textfiles.js';
 import { DevhubVim } from '../../browser/devhubVim.contribution.js';
 
 export interface VimExEnv {
@@ -129,5 +136,85 @@ suite('DevHub Vim: :set ts= sw= et are the model\'s options', () => {
 			const m = env.editor.getModel()!.getOptions();
 			assert.deepStrictEqual([m.tabSize, m.insertSpaces], [8, false]);
 		}, [], { editor: { tabSize: 8, insertSpaces: false } });
+	});
+});
+
+suite('DevHub Vim: :set ff= fenc= bomb are VS Code\'s line endings and encoding', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	/** The services `_devhubVim.fileOptions` reads, on the editor\'s own model and a text file model that records what it is asked. */
+	function fileServices(holder: { editor?: TestCodeEditor }, encoding: { current: string }, calls: [string, EncodingMode][]): [unknown, unknown][] {
+		const file = {
+			isDirty: () => false, isResolved: () => true,
+			getEncoding: () => encoding.current,
+			setEncoding: async (e: string, mode: EncodingMode) => { calls.push([e, mode]); encoding.current = e; },
+		} as unknown as ITextFileEditorModel;
+		return [
+			[IModelService, new class extends mock<IModelService>() { override getModel() { return holder.editor?.getModel() ?? null; } }],
+			[ITextFileService, new class extends mock<ITextFileService>() {
+				override readonly files = { get: () => file } as unknown as ITextFileService['files'];
+				override readonly untitled = { get: () => undefined } as unknown as ITextFileService['untitled'];
+				override getEncoding() { return encoding.current; }
+			}],
+			[IEditorService, new class extends mock<IEditorService>() { }],
+			[IEditorGroupsService, new class extends mock<IEditorGroupsService>() { }],
+			[IFileService, new class extends mock<IFileService>() { }],
+			[IPathService, new class extends mock<IPathService>() { }],
+			[IWorkspaceContextService, new class extends mock<IWorkspaceContextService>() { }],
+		];
+	}
+
+	test(':set ff=dos / unix change the model\'s line endings as one undo step (VS Code\'s "Change End of Line Sequence"); ff? shows it', async () => {
+		const holder: { editor?: TestCodeEditor } = {};
+		await withVimEditor('a\nb\nc', async env => {
+			holder.editor = env.editor;
+			const model = env.editor.getModel()!;
+			assert.strictEqual(model.getEOL(), '\n');
+			await env.ex('set ff?');
+			assert.ok(env.status().includes('fileformat=unix'), env.status());
+			await env.ex('set ff=dos');
+			assert.strictEqual(model.getEOL(), '\r\n');
+			assert.strictEqual(env.text(), 'a\r\nb\r\nc');
+			await env.ex('set fileformat?');
+			assert.ok(env.status().includes('fileformat=dos'), env.status());
+			// undoable, as VS Code\'s own change
+			await env.ex('undo');
+			assert.strictEqual(model.getEOL(), '\n');
+			await env.ex('set ff=dos | set ff=unix');
+			assert.strictEqual(model.getEOL(), '\n');
+			// already in that format: no undo step is added
+			const version = model.getAlternativeVersionId();
+			await env.ex('set ff=unix');
+			assert.strictEqual(model.getAlternativeVersionId(), version);
+			// mac is not one of VS Code\'s
+			await env.ex('set ff=mac');
+			assert.ok(env.status().includes('E474') && env.status().includes('CR'), env.status());
+			assert.strictEqual(model.getEOL(), '\n');
+		}, fileServices(holder, { current: 'utf8' }, []));
+	});
+
+	test(':set fenc= is setEncoding in Encode mode; fenc? and bomb show VS Code\'s encoding; an unknown name is E474', async () => {
+		const holder: { editor?: TestCodeEditor } = {};
+		const calls: [string, EncodingMode][] = [];
+		const encoding = { current: 'utf8' };
+		await withVimEditor('a', async env => {
+			holder.editor = env.editor;
+			await env.ex('set fenc?');
+			assert.ok(env.status().includes('fileencoding=utf8'), env.status());
+			await env.ex('set fenc=cp932');
+			assert.deepStrictEqual(calls, [['shiftjis', EncodingMode.Encode]]);
+			await env.ex('set fenc? bomb?');
+			assert.ok(env.status().includes('fileencoding=shiftjis  nobomb'), env.status());
+			await env.ex('set fenc=utf-8 bomb');
+			assert.deepStrictEqual(calls.slice(1), [['utf8', EncodingMode.Encode], ['utf8bom', EncodingMode.Encode]]);
+			await env.ex('set bomb?');
+			assert.ok(env.status().includes('bomb') && !env.status().includes('nobomb'), env.status());
+			await env.ex('set nobomb');
+			assert.strictEqual(encoding.current, 'utf8');
+			await env.ex('set fenc=klingon');
+			assert.ok(env.status().includes('E474: Invalid argument: fenc=klingon'), env.status());
+			assert.strictEqual(calls.length, 4);
+		}, fileServices(holder, encoding, calls));
 	});
 });

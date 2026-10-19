@@ -894,7 +894,8 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:se[t] {option}` | see [Options](#options) |
 | `:reg[isters]` `:di[splay]` `:marks` | shown in the status bar |
 | `:@{reg}` `:@:` `:=` `:ret[ab]` `:le[ft]` `:ri[ght]` `:ce[nter]` | |
-| `:[range]w[rite][!] {file}` `:w >> [file]` `:sav[eas][!] {file}` `:[line]r[ead] [file]` | see [Writing and reading files](#writing-and-reading-files) |
+| `:[range]w[rite][!] {file}` `:w >> [file]` `:sav[eas][!] {file}` `:[line]r[ead] [file]` | see [Writing and reading files](#writing-and-reading-files) (`++enc=` `++ff=` too) |
+| `:set fenc={enc}` `:set ff={unix\|dos}` `:set bomb` `:e ++enc={enc}` | see [Encodings and line ends](#encodings-and-line-ends) |
 | `:!{cmd}` `:{range}!{cmd}` `:r !{cmd}` `:[range]w !{cmd}` | see [Shell commands](#shell-commands) |
 | `:js {code}` `:js ={expr}` `:[range]jsd[o] {body}` | see [JavaScript](#javascript-js-and-jsdo) |
 
@@ -941,6 +942,17 @@ type (see [The prompt](#the-prompt)); `{count}:` starts with
   'nosplitbelow' 'nosplitright') and open the file in the new group in place
   of the copy the split made; without a name they keep the copy (`:new` /
   `:vne`: a new untitled file).
+* `++enc={enc}` and `++ff={unix|dos}` in front of the name (`:e ++enc=cp932
+  src/a.txt`, `:e! ++enc=euc-jp`, `:tabe ++ff=dos x.txt`) are the file's
+  encoding and line ends, VS Code's own: `:e ++enc={enc}` is "Reopen with
+  Encoding" (`ITextFileEditorModel.setEncoding(…, EncodingMode.Decode)`; the
+  file is read again, `E37` when it has unsaved changes, `:e! ++enc=…` drops
+  them first), and with a file name that file is opened with the encoding
+  (`IEditorService.openEditor` with `encoding`; one that is open already is
+  reopened with it). `++ff=dos` / `++ff=unix` set the line ends after the
+  file is read (VS Code's "Change End of Line Sequence", an undo step, so the
+  file shows as modified when that changes it). Encodings are listed under
+  [Encodings](#encodings-and-line-ends).
 
 They are two commands that an override can use too:
 `devhubVim.edit { "file": "${args}", "bang": "${bang}" }` (`:e`) and
@@ -991,7 +1003,42 @@ remote workspace's own file system), and nothing asks for a name:
   be read is `E484: Can't open file`.
 * What was written is Vim's message: `"name" [New] 3L, 42B written` /
   `appended`. Line ends are the buffer's (LF or CRLF), with one at the end
-  of the file; the encoding is UTF-8.
+  of the file; the encoding is UTF-8, unless `++enc` says another.
+* `++enc={enc}` and `++ff={unix|dos}` go before the name, as in Vim
+  (`:w ++enc=sjis out.txt`, `:w ++enc=cp932 >> log.txt`): `:w ++enc={enc} {file}` writes the lines in that encoding
+  (`ITextFileService.write`, a BOM for UTF-8 with BOM and UTF-16), `++ff` with
+  those line ends; `:sav ++enc={enc} {file}` saves the buffer as that file and
+  then in that encoding; `:r ++enc={enc} {file}` reads the file decoded with
+  it. `:w ++enc={enc}` with no name is "Save with Encoding" for the current
+  file (see below), `:w ++ff={unix|dos}` sets the line ends and saves.
+
+### Encodings and line ends
+
+The file's encoding and line ends are VS Code's own, not state of the Vim
+editor, so the status bar's "UTF-8" and "LF", "Save with Encoding" and "Reopen
+with Encoding" show and change the same thing. They work in remote workspaces
+too (the text file service reads and writes, not the local file system).
+
+| | |
+| --- | --- |
+| `:set fenc={enc}` `:set fileencoding={enc}` | "Save with Encoding": `ITextFileEditorModel.setEncoding(enc, EncodingMode.Encode)`. The file is marked modified and, as when you pick it in VS Code, **saved right away** with it; the encoding is kept for the next saves. An untitled buffer takes it for the first save |
+| `:set fenc?` `:set fenc` | the encoding as VS Code names it: `fileencoding=utf8`, `shiftjis`, `eucjp`, `utf8bom`, `utf16le`, `windows1252` … (the ids in "Select Encoding") |
+| `:set bomb` `nobomb` `invbomb` `bomb!` `bomb?` | UTF-8 with BOM (`utf8bom`) or without (`utf8`); UTF-16 is always written with a BOM, so `nobomb` on it, and `bomb` on any other encoding, is E474 |
+| `:set ff={unix|dos}` `:set fileformat={unix|dos}` | the file's line ends: `unix` is LF and `dos` CRLF, VS Code's "Change End of Line Sequence" (`ITextModel.pushEOL` between two undo stops, so `u` undoes it and the file is modified). `ff=mac` (CR) is E474: VS Code has no CR line ends |
+| `:set ff?` | `fileformat=unix` / `fileformat=dos` |
+| `:e ++enc={enc}` `:e! ++enc={enc}` `:e ++enc={enc} {file}` `:e ++ff={unix|dos}` | see [File names](#file-names) |
+| `:w ++enc={enc}` `:w ++enc={enc} {file}` `:sav ++enc={enc} {file}` `:r ++enc={enc} {file}` | see [Writing and reading files](#writing-and-reading-files) |
+
+`{enc}` is a VS Code encoding id or a name as Vim or iconv spells it, in any
+case and with or without `-` / `_`: `utf-8`, `utf-8-bom`, `utf-16le`,
+`utf-16be`, `cp932` / `sjis` / `shift_jis` (all VS Code's "Japanese (Shift
+JIS)"), `euc-jp`, `euc-kr`, `gbk` / `cp936`, `big5`, `latin1`,
+`iso-8859-15` / `latin9`, `cp1252` / `windows-1252`, `koi8-r`, `cp437` … (every
+encoding of VS Code's "Select Encoding" list). A name that is not one of them is
+`E474: Invalid argument: fenc=…`; Vim's `utf-32`, `ucs-4` and the like are not
+among VS Code's. `:set fenc=` with no value, `nofenc`, `fenc&` and `fenc+=` are
+E474 too. The Tab completion of `:set fenc=`, `:e ++enc=` … lists VS Code's ids with
+their names (`:set fenc=sj<Tab>` is `shiftjis`, `ff=<Tab>` is `unix` / `dos`).
 
 ### How a `:` line runs
 
@@ -1228,6 +1275,9 @@ opt&` `:set opt=val` `+=` `-=` work, with the short names.
 | `textwidth` `tw` | 0 | gq / gw width (79 when 0) |
 | `nrformats` `nf` | `bin,hex` | add `alpha` for letters |
 | `report` | 2 | |
+| `fileencoding` `fenc` | the file's | VS Code's encoding of the file, see [Encodings and line ends](#encodings-and-line-ends) |
+| `fileformat` `ff` | the file's | `unix` (LF) or `dos` (CRLF), not `mac` |
+| `bomb` | the file's | UTF-8 with BOM |
 
 'tabstop' (`ts`), 'shiftwidth' (`sw`) and 'expandtab' (`et`) are the
 file's own indentation in VS Code — its tab size, indent size and "insert
@@ -1239,7 +1289,10 @@ reads them back. `sw=0` follows the tab size (as Vim's 'shiftwidth' 0
 follows 'tabstop'); `:set ts&` is what `editor.tabSize` / `editor.indentSize` /
 `editor.insertSpaces` say for the file; `:setl[ocal]` is the same as `:set`.
 They are not in `devhub.vim.options` (the `editor.*` settings, and VS Code's
-indentation detection, set them for each file).
+indentation detection, set them for each file). 'fileencoding' (`fenc`),
+'fileformat' (`ff`) and 'bomb' are the file's encoding and line ends in the
+same way (VS Code's, so "Save with Encoding" and the status bar agree): see
+[Encodings and line ends](#encodings-and-line-ends).
 
 ## Keyboard layouts
 
@@ -1296,10 +1349,13 @@ otherwise.
   under it. `CTRL-R CTRL-W` / `CTRL-R CTRL-A` (the word under the cursor),
   `CTRL-V` (literal input), `CTRL-K` (digraphs), abbreviations and Tab
   completion in `/` / `?` are not there. In file names `#` (the alternate
-  file), `**` and `` `cmd` `` are not expanded, and `+cmd` / `++opt` are read
-  as part of the name.
-* `:w` and `:r` know no `++opt` / `+cmd`, and `:w {file}` writes UTF-8
-  (not the buffer's encoding).
+  file), `**` and `` `cmd` `` are not expanded, and `+cmd` is read as part of the
+  name.
+* `+cmd` and the `++opt` other than `++enc` and `++ff` (`++bin`, `++edit`,
+  `++bad`) are not supported (`++ff=mac` and the others are E474). `:w {file}`
+  writes UTF-8 unless `++enc` says another encoding. The file's encoding is
+  not detected by Vim's 'fileencodings' (VS Code's `files.encoding` and
+  `files.autoGuessEncoding` apply).
 * Not implemented: `U` (undo line), the `!{motion}` operator and `=` with
   'equalprg' (use `:{range}!{cmd}`), `:sh[ell]`, `:{range}!` without a
   command, `g@` ('operatorfunc'), `gR` (virtual replace),

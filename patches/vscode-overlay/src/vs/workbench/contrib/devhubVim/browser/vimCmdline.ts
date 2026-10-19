@@ -657,6 +657,7 @@ export class VimCmdline extends Disposable {
 		const kinds: Record<VimCmdlineCompletionItem['kind'], CompletionItemKind> = {
 			command: CompletionItemKind.Function, option: CompletionItemKind.Property, buffer: CompletionItemKind.File,
 			file: CompletionItemKind.File, folder: CompletionItemKind.Folder, custom: CompletionItemKind.Value,
+			value: CompletionItemKind.EnumMember,
 		};
 		// a directory taken (CTRL-Y, Enter on it): on into it, the menu shown as typing shows it (nothing selected) when that is on
 		const into = { id: 'editor.action.triggerSuggest', title: '', ...(s.view.autoComplete ? { arguments: [{ auto: true }] } : {}) };

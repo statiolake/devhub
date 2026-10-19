@@ -1548,6 +1548,95 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(opts, [['expandtab', 'on'], ['shiftwidth', '=0'], ['tabstop', '=4']]);
 	});
 
+	test(':set fenc= ff= bomb are VS Code\'s file encoding and line ends: Vim\'s names become its ids, checked here (E474), done by _devhubVim.fileOptions', async () => {
+		const run = async (line: string, answer?: (args: unknown) => unknown) => {
+			const v = new Vim('|a');
+			v.host.answer = (command, args) => command === '_devhubVim.fileOptions' ? (answer ? answer(args) : []) : undefined;
+			v.keys(`:${line}<CR>`);
+			await flush();
+			return { v, options: v.host.commands.filter(c => c.command === '_devhubVim.fileOptions').map(c => (c.args as { options: unknown[] }).options) };
+		};
+		assert.deepStrictEqual((await run('set fenc=cp932')).options, [[{ option: 'fileencoding', value: 'shiftjis' }]]);
+		assert.deepStrictEqual((await run('set fileencoding=UTF-8')).options, [[{ option: 'fileencoding', value: 'utf8' }]]);
+		assert.deepStrictEqual((await run('setlocal fenc=euc-jp ff=dos')).options, [[{ option: 'fileencoding', value: 'eucjp' }, { option: 'fileformat', value: 'dos' }]]);
+		assert.deepStrictEqual((await run('set fileformat=unix')).options, [[{ option: 'fileformat', value: 'unix' }]]);
+		assert.deepStrictEqual((await run('set bomb nobomb invbomb bomb!')).options, [[{ option: 'bomb', value: true }, { option: 'bomb', value: false }, { option: 'bomb', value: 'toggle' }, { option: 'bomb', value: 'toggle' }]]);
+		// shown: what the workbench answers, after the engine's own options
+		const shown = await run('set tw? fenc? ff?', () => ['fileencoding=shiftjis', 'fileformat=dos']);
+		assert.deepStrictEqual(shown.options, [[{ option: 'fileencoding' }, { option: 'fileformat' }]]);
+		assert.ok(shown.v.vim.status().endsWith('textwidth=0  fileencoding=shiftjis  fileformat=dos'), shown.v.vim.status());
+		assert.deepStrictEqual((await run('set fenc')).options, [[{ option: 'fileencoding' }]]);
+		// an option of the engine and these on one line
+		const mixed = await run('set ic fenc=latin1 ts=2');
+		assert.deepStrictEqual(mixed.options, [[{ option: 'fileencoding', value: 'iso88591' }]]);
+		assert.strictEqual(mixed.v.host.indent.tabSize, 2);
+		// what the workbench throws is the message
+		const failed = await run('set bomb', () => { throw new Error('E474: Invalid argument: bomb (only for UTF-8)'); });
+		assert.ok(failed.v.vim.status().includes('E474: Invalid argument: bomb'), failed.v.vim.status());
+	});
+
+	test(':set fenc= ff= errors: an encoding VS Code does not have, ff=mac, other forms are E474 and nothing is done', async () => {
+		for (const [line, error] of [
+			['set fenc=klingon', 'E474: Invalid argument: fenc=klingon'],
+			['set fenc=', 'E474: Invalid argument: fenc='],
+			['set fenc=utf-32', 'E474: Invalid argument: fenc=utf-32'],
+			['set ff=mac', 'E474: Invalid argument: ff=mac (VS Code has no CR line endings)'],
+			['set ff=win', 'E474: Invalid argument: ff=win'],
+			['set ff=', 'E474: Invalid argument: ff='],
+			['set nofenc', 'E474: Invalid argument: nofenc'],
+			['set invff', 'E474: Invalid argument: invff'],
+			['set fenc!', 'E474: Invalid argument: fenc!'],
+			['set fenc&', 'E474: Invalid argument: fenc&'],
+			['set fenc+=sjis', 'E474: Invalid argument: fenc+=sjis'],
+			['set bomb=1', 'E474: Invalid argument: bomb=1'],
+			['set ic fenc=klingon ts=2', 'E474: Invalid argument: fenc=klingon'],
+		] as const) {
+			const v = new Vim('|a').keys(`:${line}<CR>`);
+			await flush();
+			assert.ok(v.vim.status().endsWith(error), `${line}: ${v.vim.status()}`);
+			assert.deepStrictEqual(v.host.commands.filter(c => c.command === '_devhubVim.fileOptions'), [], line);
+		}
+		// the ones before the bad one are done, as for any option
+		const v = new Vim('|a').keys(':set ts=3 fenc=klingon<CR>');
+		assert.strictEqual(v.host.indent.tabSize, 3);
+	});
+
+	test(':set fenc ff bomb are completed by name', () => {
+		const v = new Vim('|a');
+		const options = v.vim.cmdlineSources().options();
+		assert.ok(['bomb', 'fileencoding', 'fileformat'].every(n => options.some(o => o.name === n)));
+		assert.strictEqual(options.find(o => o.name === 'fileencoding')?.alias, 'fenc');
+		assert.strictEqual(options.find(o => o.name === 'fileformat')?.alias, 'ff');
+	});
+
+	test(':w ++enc= ++ff= :sav ++enc= :r ++enc= take the words off the file and pass them on; a bad one is E474 and nothing runs', async () => {
+		const run = async (text: string, line: string) => {
+			const v = new Vim(text);
+			v.host.answer = command => command.startsWith('_devhubVim.') ? '"f" 1L, 2B written' : undefined;
+			v.keys(`:${line}<CR>`);
+			await flush();
+			return { v, commands: v.host.commands.map(c => c.args === undefined ? [c.command] : [c.command, c.args]) };
+		};
+		// no file: not VS Code's plain Save, which has no encoding
+		assert.deepStrictEqual((await run('|a', 'w ++enc=sjis')).commands, [['_devhubVim.writeFile', { file: '', lines: ['a'], append: false, force: false, whole: true, enc: 'shiftjis' }]]);
+		assert.deepStrictEqual((await run('|a', 'w ++ff=dos')).commands, [['_devhubVim.writeFile', { file: '', lines: ['a'], append: false, force: false, whole: true, ff: 'dos' }]]);
+		assert.deepStrictEqual((await run('|a', 'w ++enc=euc-jp ++ff=unix out.txt')).commands, [['_devhubVim.writeFile', { file: 'out.txt', lines: ['a'], append: false, force: false, whole: true, enc: 'eucjp', ff: 'unix' }]]);
+		assert.deepStrictEqual((await run('|a', 'w! ++enc=latin1 >> log.txt')).commands, [['_devhubVim.writeFile', { file: 'log.txt', lines: ['a'], append: true, force: true, whole: true, enc: 'iso88591' }]]);
+		const partial = await run('|a\nb', '1w ++enc=sjis');
+		assert.deepStrictEqual(partial.commands, []);
+		assert.ok(partial.v.vim.status().includes('E140'), partial.v.vim.status());
+		assert.deepStrictEqual((await run('|a', 'sav ++enc=cp932 b.txt')).commands, [['_devhubVim.saveAs', { file: 'b.txt', enc: 'shiftjis', force: false }]]);
+		assert.deepStrictEqual((await run('|a', 'r ++enc=gbk in.txt')).commands, [['_devhubVim.readFile', { file: 'in.txt', enc: 'gbk' }]]);
+		for (const line of ['w ++enc=klingon x', 'sav ++ff=mac x', 'r ++bin x']) {
+			const bad = await run('|a', line);
+			assert.deepStrictEqual(bad.commands, [], line);
+			assert.ok(bad.v.vim.status().includes('E474'), bad.v.vim.status());
+		}
+		// the rest of the line does not run after the error
+		const chained = await run('|a', 'w ++enc=klingon | s/a/b/');
+		assert.strictEqual(chained.v.state(), '|a');
+	});
+
 	test(':w [file], :w >> file, :[range]w! file, :sav file go to the workbench\'s file commands; E140 for a part without !', async () => {
 		const run = async (text: string, line: string) => {
 			const v = new Vim(text);

@@ -49,6 +49,24 @@
 //                                            replaced by the file's, the old
 //                                            file left as it was on disk
 //   _devhubVim.readFile { file }             the file's lines (E484)
+//
+// The encoding and line endings of a file are VS Code's own (no state of
+// the Vim editor's): `++enc={enc}` and `++ff={unix|dos}` in front of the file
+// of `:e` `:sp` `:tabe` (here), `:w` `:sav` `:r` (the engine takes them off the
+// argument and passes `enc` and `ff`), and `:set fenc= ff= bomb`:
+//
+//   _devhubVim.fileOptions { options }       `:set fenc={enc}`: "Save with Encoding"
+//                                            (ITextFileEditorModel.setEncoding, Encode:
+//                                            the file is dirty, VS Code saves it);
+//                                            `:set ff={fmt}`: "Change End of Line
+//                                            Sequence" (ITextModel.pushEOL, one undo
+//                                            step); `:set bomb`: UTF-8 with BOM; the
+//                                            query forms answer with the message
+//
+// `:e ++enc={enc}` is "Reopen with Encoding" (setEncoding, Decode; E37 when the
+// file is modified, `:e!` reverts it first); with a file, that file is opened
+// with the encoding (IEditorService.openEditor, `encoding`). Encodings are
+// VS Code's ids (common/vimEx.ts vimEncodingId turns Vim's names into them).
 
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { Schemas } from '../../../../base/common/network.js';
@@ -56,6 +74,7 @@ import { dirname, isEqual, relativePath } from '../../../../base/common/resource
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { EndOfLineSequence } from '../../../../editor/common/model.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
@@ -65,10 +84,10 @@ import { EditorResourceAccessor, IUntypedEditorInput, SideBySideEditor } from '.
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
-import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
-import { ExFileArg, ExFileContext, resolveExFileArg } from '../common/vimEx.js';
+import { EncodingMode, ITextFileEditorModel, ITextFileService } from '../../../services/textfile/common/textfiles.js';
+import { ExFileArg, ExFileContext, ExFileOptions, parseExFileOptions, resolveExFileArg, vimEncodingHasBom } from '../common/vimEx.js';
 
-export const VIM_EDIT_COMMANDS = ['devhubVim.edit', 'devhubVim.open', '_devhubVim.writeFile', '_devhubVim.saveAs', '_devhubVim.readFile'] as const;
+export const VIM_EDIT_COMMANDS = ['devhubVim.edit', 'devhubVim.open', '_devhubVim.writeFile', '_devhubVim.saveAs', '_devhubVim.readFile', '_devhubVim.fileOptions'] as const;
 
 /** Where a file argument resolves, for one command. */
 export interface VimFileBase {
@@ -154,20 +173,31 @@ export class VimFileCommands {
 	async edit(args: unknown): Promise<void> {
 		const a = record(args);
 		const current = this.current(a.from);
-		const r = await this.resolve(a.file, current);
+		const options = this.options(a.file);
+		const r = await this.resolve(options.rest, current);
 		if (r === undefined) {
-			await this.reload(current, a.bang === true);
+			await this.reload(current, a.bang === true, options);
 		} else if ('glob' in r) {
 			await this.quickOpen(r.glob);
 		} else {
-			await this.openResource(r.resource, r.base, false);
+			await this.openResource(r.resource, r.base, false, options, a.bang === true);
 		}
+	}
+
+	/** The `++enc=` `++ff=` words an argument starts with; Vim's error is thrown. */
+	private options(file: unknown): ExFileOptions {
+		const o = parseExFileOptions(typeof file === 'string' ? file : '');
+		if ('error' in o) {
+			throw new Error(o.error);
+		}
+		return o;
 	}
 
 	/** `:sp [file]` (after the split), `:new`, `:tabe [file]`. */
 	async open(args: unknown): Promise<void> {
 		const a = record(args);
-		const r = await this.resolve(a.file, this.current(a.from));
+		const options = this.options(a.file);
+		const r = await this.resolve(options.rest, this.current(a.from));
 		const replace = a.replace === true;
 		if (r === undefined) {
 			if (a.untitled === true) {
@@ -180,12 +210,12 @@ export class VimFileCommands {
 		} else if ('glob' in r) {
 			await this.quickOpen(r.glob);
 		} else {
-			await this.openResource(r.resource, r.base, replace);
+			await this.openResource(r.resource, r.base, replace, options, false);
 		}
 	}
 
 	/** Vim's `:e` without a name: read the file again; modified, only with `!` (which drops the changes). */
-	private async reload(current: URI | undefined, bang: boolean): Promise<void> {
+	private async reload(current: URI | undefined, bang: boolean, options: ExFileOptions): Promise<void> {
 		if (!current || current.scheme === Schemas.untitled) {
 			throw new Error('E32: No file name');
 		}
@@ -193,13 +223,31 @@ export class VimFileCommands {
 		if (!model) {
 			return; // not a text file of a file system (a diff, an output): nothing to read again
 		}
+		await this.reread(model, bang, options.enc);
+		if (options.ff) {
+			this.setFileFormat(current, options.ff);
+		}
+	}
+
+	/**
+	 * The file read again, as `:e[!]`: E37 when it is modified (`!` reverts it);
+	 * with an encoding, decoded with that one ("Reopen with Encoding").
+	 */
+	private async reread(model: ITextFileEditorModel, bang: boolean, encoding: string | undefined): Promise<void> {
 		if (model.isDirty() && !bang) {
 			throw new Error('E37: No write since last change (add ! to override)');
+		}
+		if (encoding !== undefined && model.getEncoding() !== encoding) {
+			if (model.isDirty()) {
+				await model.revert(); // setEncoding (Decode) does not read a modified file again
+			}
+			await model.setEncoding(encoding, EncodingMode.Decode);
+			return;
 		}
 		await model.revert();
 	}
 
-	private async openResource(resource: URI, base: VimFileBase, replace: boolean): Promise<void> {
+	private async openResource(resource: URI, base: VimFileBase, replace: boolean, options: ExFileOptions, bang: boolean): Promise<void> {
 		let stat: { readonly isDirectory: boolean } | undefined;
 		try {
 			stat = await this.fileService.stat(resource);
@@ -212,11 +260,20 @@ export class VimFileCommands {
 			await this.quickOpen(rel !== undefined ? (rel ? rel + '/' : '') : resource.path + '/');
 			return;
 		}
+		const encoding = options.enc !== undefined ? { encoding: options.enc } : {};
 		const input: IUntypedEditorInput = stat
-			? { resource, options: { pinned: true } }
+			? { resource, ...encoding, options: { pinned: true } }
 			// Vim's new buffer for that name: untitled, and saving writes it there
-			: { resource, forceUntitled: true, options: { pinned: true } };
+			: { resource, forceUntitled: true, ...encoding, options: { pinned: true } };
 		await this.place(input, replace);
+		// a file that is open already keeps its encoding when it is opened: reopen it with this one
+		const open = options.enc !== undefined && stat ? this.textFileService.files.get(resource) : undefined;
+		if (open?.isResolved() && open.getEncoding() !== options.enc) {
+			await this.reread(open, bang, options.enc);
+		}
+		if (options.ff) {
+			this.setFileFormat(resource, options.ff);
+		}
 	}
 
 	/** In the active group; `replace`: in place of its active editor (unless that is the file already). */
@@ -260,6 +317,8 @@ export class VimFileCommands {
 		const append = a.append === true;
 		const force = a.force === true;
 		const whole = a.whole === true;
+		const enc = typeof a.enc === 'string' ? a.enc : undefined;
+		const ff = a.ff === 'dos' || a.ff === 'unix' ? a.ff : undefined;
 		const named = typeof a.file === 'string' && a.file.trim() !== '';
 		if (!named && (!current || current.scheme === Schemas.untitled)) {
 			throw new Error('E32: No file name');
@@ -267,7 +326,14 @@ export class VimFileCommands {
 		const resource = named ? await this.target(a.file, current) : current!;
 		const isCurrent = !!current && isEqual(resource, current);
 		if (isCurrent && whole && !append) {
-			await this.textFileService.save(resource, { force: true });
+			if (ff) {
+				this.setFileFormat(resource, ff);
+			}
+			if (enc !== undefined && this.encodingOf(resource) !== enc) {
+				await this.setEncoding(resource, enc); // "Save with Encoding": saves it
+			} else {
+				await this.textFileService.save(resource, { force: true });
+			}
 			return this.written(resource, lines.length, VSBuffer.fromString(lines.join('\n') + '\n').byteLength, false, 'written');
 		}
 		let stat: { readonly isDirectory: boolean } | undefined;
@@ -287,18 +353,24 @@ export class VimFileCommands {
 			await this.saveAs({ file: a.file, force, from: current.toString() });
 			return this.written(resource, lines.length, VSBuffer.fromString(lines.join('\n') + '\n').byteLength, !stat, 'written');
 		}
-		const eol = (current && this.modelService.getModel(current)?.getEOL()) || '\n';
+		const eol = ff ? (ff === 'dos' ? '\r\n' : '\n') : (current && this.modelService.getModel(current)?.getEOL()) || '\n';
 		let text = lines.join(eol) + eol;
 		if (append && stat) {
-			const before = (await this.fileService.readFile(resource)).value.toString();
+			const before = enc !== undefined ? (await this.textFileService.read(resource, { encoding: enc })).value : (await this.fileService.readFile(resource)).value.toString();
 			text = before + (before && !before.endsWith('\n') ? eol : '') + text;
 		}
+		let bytes = VSBuffer.fromString(lines.join(eol) + eol).byteLength;
 		try {
-			await this.fileService.writeFile(resource, VSBuffer.fromString(text));
+			if (enc !== undefined) {
+				// through the text file service: the encoding (and the BOM of UTF-8 with BOM and UTF-16)
+				bytes = (await this.textFileService.write(resource, text, { encoding: enc })).size;
+			} else {
+				await this.fileService.writeFile(resource, VSBuffer.fromString(text));
+			}
 		} catch (e) {
 			throw new Error(`E212: Can't open file for writing: ${e instanceof Error ? e.message : String(e)}`);
 		}
-		return this.written(resource, lines.length, VSBuffer.fromString(lines.join(eol) + eol).byteLength, !stat, append ? 'appended' : 'written');
+		return this.written(resource, lines.length, bytes, !stat, append ? 'appended' : 'written');
 	}
 
 	/** `:sav[!] {file}`: see the comment at the top. */
@@ -312,9 +384,15 @@ export class VimFileCommands {
 		if (!isEqual(resource, current) && a.force !== true && await this.fileService.exists(resource)) {
 			throw new Error('E13: File exists (add ! to override)');
 		}
+		if (typeof a.ff === 'string') {
+			this.setFileFormat(current, a.ff === 'dos' ? 'dos' : 'unix');
+		}
 		const saved = await this.textFileService.saveAs(current, resource);
 		if (!saved) {
 			throw new Error(`E212: Can't open file for writing: ${this.labelService.getUriLabel(resource, { relative: true })}`);
+		}
+		if (typeof a.enc === 'string' && this.encodingOf(saved) !== a.enc) {
+			await this.setEncoding(saved, a.enc); // the file is written with it (saveAs keeps the buffer's)
 		}
 		// the editors of the old buffer show the new file now (the old one is reverted, as saveAs leaves it)
 		if (!isEqual(saved, current)) {
@@ -324,6 +402,90 @@ export class VimFileCommands {
 		}
 		const model = this.modelService.getModel(saved);
 		return this.written(saved, model?.getLineCount() ?? 0, model ? VSBuffer.fromString(model.getValue()).byteLength : 0, false, 'written');
+	}
+
+	/** The encoding of the file or untitled buffer: VS Code's id. */
+	private encodingOf(resource: URI): string | undefined {
+		return this.textFileService.untitled.get(resource)?.getEncoding() ?? this.textFileService.getEncoding(resource);
+	}
+
+	/** "Save with Encoding": the encoding the file is saved with (VS Code marks it modified and saves it). */
+	private async setEncoding(resource: URI, encoding: string): Promise<void> {
+		const untitled = this.textFileService.untitled.get(resource);
+		if (untitled) {
+			await untitled.setEncoding(encoding);
+			return;
+		}
+		const model = this.textFileService.files.get(resource);
+		if (!model) {
+			throw new Error('E474: Invalid argument: this buffer is not a file');
+		}
+		await model.setEncoding(encoding, EncodingMode.Encode);
+	}
+
+	/** "Change End of Line Sequence": LF for unix, CRLF for dos, one undo step. */
+	private setFileFormat(resource: URI, format: 'unix' | 'dos'): void {
+		const model = this.modelService.getModel(resource);
+		if (!model) {
+			throw new Error('E474: Invalid argument: this buffer is not a file');
+		}
+		const eol = format === 'dos' ? EndOfLineSequence.CRLF : EndOfLineSequence.LF;
+		if (model.getEndOfLineSequence() !== eol) {
+			model.pushStackElement();
+			model.pushEOL(eol);
+			model.pushStackElement();
+		}
+	}
+
+	/**
+	 * `:set fenc= ff= bomb`: `options` are `{ option, value? }` as the engine
+	 * checked them (vimEngine.ts setFileOption), done in order; without a value
+	 * the option is shown (`fileencoding=shiftjis`, `fileformat=dos`, `nobomb`).
+	 * The messages of the ones shown.
+	 */
+	async fileOptions(args: unknown): Promise<string[]> {
+		const a = record(args);
+		const current = this.current(a.from);
+		if (!current) {
+			throw new Error('E32: No file name');
+		}
+		const shown: string[] = [];
+		for (const o of Array.isArray(a.options) ? a.options.map(record) : []) {
+			const encoding = this.encodingOf(current) ?? 'utf8';
+			if (o.option === 'fileencoding') {
+				if (o.value === undefined) {
+					shown.push(`fileencoding=${encoding}`);
+				} else if (typeof o.value === 'string' && o.value !== encoding) {
+					await this.setEncoding(current, o.value);
+				}
+			} else if (o.option === 'fileformat') {
+				const model = this.modelService.getModel(current);
+				if (!model) {
+					throw new Error('E474: Invalid argument: this buffer is not a file');
+				}
+				if (o.value === undefined) {
+					shown.push(`fileformat=${model.getEndOfLineSequence() === EndOfLineSequence.CRLF ? 'dos' : 'unix'}`);
+				} else {
+					this.setFileFormat(current, o.value === 'dos' ? 'dos' : 'unix');
+				}
+			} else if (o.option === 'bomb') {
+				const bom = vimEncodingHasBom(encoding);
+				if (o.value === undefined) {
+					shown.push(bom ? 'bomb' : 'nobomb');
+					continue;
+				}
+				const want = o.value === 'toggle' ? !bom : o.value === true;
+				if (want === bom) {
+					continue;
+				}
+				// UTF-8 is the one encoding with and without a BOM; UTF-16 is always written with one
+				if (encoding !== 'utf8' && encoding !== 'utf8bom') {
+					throw new Error(`E474: Invalid argument: ${want ? '' : 'no'}bomb (only for UTF-8; ${encoding} is ${bom ? 'always written with a BOM' : 'written without one'})`);
+				}
+				await this.setEncoding(current, want ? 'utf8bom' : 'utf8');
+			}
+		}
+		return shown;
 	}
 
 	/** `:r {file}`: the file's lines. */
@@ -336,7 +498,9 @@ export class VimFileCommands {
 		}
 		let text: string;
 		try {
-			text = (await this.fileService.readFile(resource)).value.toString();
+			text = typeof a.enc === 'string'
+				? (await this.textFileService.read(resource, { encoding: a.enc })).value
+				: (await this.fileService.readFile(resource)).value.toString();
 		} catch {
 			throw new Error(`E484: Can't open file ${typeof a.file === 'string' ? a.file.trim() : ''}`);
 		}
@@ -357,7 +521,7 @@ CommandsRegistry.registerCommand({
 	id: 'devhubVim.edit',
 	handler: (accessor, args: unknown) => accessor.get(IInstantiationService).createInstance(VimFileCommands).edit(args),
 	metadata: {
-		description: localize('devhubVim.cmd.edit', "Vim: `:e[!] [file]` { file?, bang? }: open the file (relative to the workspace folder; `~`, `%`, `%:h`; a new file when it does not exist; quick open for `*`); without one read the current file again (E37 when modified unless bang)"),
+		description: localize('devhubVim.cmd.edit', "Vim: `:e[!] [file]` { file?, bang? }: open the file (relative to the workspace folder; `~`, `%`, `%:h`; a new file when it does not exist; quick open for `*`); without one read the current file again (E37 when modified unless bang); `++enc={enc}` reopens or opens it with that encoding, `++ff={unix|dos}` sets its line endings"),
 		args: [{ name: 'args', isOptional: true, schema: { type: 'object' } }],
 	},
 });
@@ -369,6 +533,8 @@ for (const [id, run] of [
 ] as const) {
 	CommandsRegistry.registerCommand(id, (accessor, args: unknown) => run(accessor.get(IInstantiationService).createInstance(VimFileCommands), args));
 }
+
+CommandsRegistry.registerCommand('_devhubVim.fileOptions', (accessor, args: unknown) => accessor.get(IInstantiationService).createInstance(VimFileCommands).fileOptions(args));
 
 CommandsRegistry.registerCommand({
 	id: 'devhubVim.open',

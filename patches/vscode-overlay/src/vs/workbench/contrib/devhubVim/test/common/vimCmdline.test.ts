@@ -281,6 +281,30 @@ suite('DevHub Vim prompt: completion', () => {
 		assert.deepStrictEqual(cmdlineCompletions({ kind: 'option', start: 4, typed: 'notw' }, SOURCES), []);
 	});
 
+	test('the values of fenc= ff= and of ++enc= ++ff=: VS Code\'s encoding ids, unix and dos', () => {
+		assert.deepStrictEqual(cmdlineCompletionContext('set fenc=sj', 11), { kind: 'value', value: 'encoding', start: 9, typed: 'sj', command: 'set' });
+		assert.deepStrictEqual(cmdlineCompletionContext('set ts=2 fileencoding=', 22), { kind: 'value', value: 'encoding', start: 22, typed: '', command: 'set' });
+		assert.deepStrictEqual(cmdlineCompletionContext('setl ff=d', 9), { kind: 'value', value: 'fileformat', start: 8, typed: 'd', command: 'set' });
+		assert.deepStrictEqual(cmdlineCompletionContext('e ++enc=eu', 10), { kind: 'value', value: 'encoding', start: 8, typed: 'eu', command: 'edit' });
+		assert.deepStrictEqual(cmdlineCompletionContext('e! ++encoding=', 14), { kind: 'value', value: 'encoding', start: 14, typed: '', command: 'edit' });
+		assert.deepStrictEqual(cmdlineCompletionContext('w ++ff=u', 8), { kind: 'value', value: 'fileformat', start: 7, typed: 'u', command: 'write' });
+		assert.deepStrictEqual(cmdlineCompletionContext('sav ++enc=cp9', 13), { kind: 'value', value: 'encoding', start: 10, typed: 'cp9', command: 'saveas' });
+		assert.deepStrictEqual(cmdlineCompletionContext('r ++enc=l', 9), { kind: 'value', value: 'encoding', start: 8, typed: 'l', command: 'read' });
+		// after `|` it is the next command
+		assert.deepStrictEqual(cmdlineCompletionContext('set ts=2 | e ++ff=', 18), { kind: 'value', value: 'fileformat', start: 18, typed: '', command: 'edit' });
+		// the file after the ++ words is a file, without them
+		assert.deepStrictEqual(cmdlineCompletionContext('e ++enc=sjis src/ma', 19), { kind: 'file', start: 13, typed: 'src/ma', command: 'edit' });
+		assert.deepStrictEqual(cmdlineCompletionContext('e ++enc=sjis ++ff=dos src/ma', 28), { kind: 'file', start: 22, typed: 'src/ma', command: 'edit' });
+		// other options keep their `=` meaning; a shell command is a shell command
+		assert.strictEqual(cmdlineCompletionContext('set tw=8', 8), undefined);
+		assert.notStrictEqual(cmdlineCompletionContext('!ls ++enc=x', 11)?.kind, 'value');
+		const sources = { ...SOURCES };
+		assert.deepStrictEqual(cmdlineCompletions({ kind: 'value', value: 'encoding', start: 9, typed: 'sj' }, sources), [{ label: 'shiftjis', detail: 'Japanese (Shift JIS)', kind: 'value' }]);
+		assert.deepStrictEqual(cmdlineCompletions({ kind: 'value', value: 'encoding', start: 9, typed: 'utf-1' }, sources).map(i => i.label), ['utf16le', 'utf16be']);
+		assert.deepStrictEqual(cmdlineCompletions({ kind: 'value', value: 'fileformat', start: 8, typed: '' }, sources).map(i => [i.label, i.detail]), [['unix', 'LF'], ['dos', 'CRLF']]);
+		assert.deepStrictEqual(cmdlineCompletions({ kind: 'value', value: 'fileformat', start: 8, typed: 'D' }, sources).map(i => i.label), ['dos']);
+	});
+
 	test(':b open editors by substring, ignoring case', () => {
 		assert.deepStrictEqual(cmdlineCompletions({ kind: 'buffer', start: 2, typed: 'MAIN' }, SOURCES).map(i => [i.label, i.detail]), [['main.ts', 'src'], ['vimMain.ts', 'src/vim']]);
 		assert.deepStrictEqual(cmdlineCompletions({ kind: 'file', start: 2, typed: 'x' }, SOURCES), []);

@@ -48,7 +48,7 @@
 import type { IVimCmdlineCompletionSources, IVimCmdlineTarget, VimCmdlineKind, VimExCommandInfo, VimOptionInfo } from './vimCmdline.js';
 import { VimCmdlineController, VimStringLine } from './vimCmdline.js';
 import type { ExAddressContext, ExStep, ParsedExCommand } from './vimEx.js';
-import { ExRegistry, exInvocation, expandExSpec, expandShellBang, parseExCommand, parseExCommands, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange } from './vimEx.js';
+import { ExRegistry, exInvocation, expandExSpec, expandShellBang, parseExCommand, parseExCommands, parseExFileOptions, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange, vimEncodingId, vimFileFormat } from './vimEx.js';
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
@@ -201,6 +201,16 @@ export interface VimIndentOptions {
 /** Vim's buffer options that are the model's indentation options, by name and short name. */
 const BUFFER_OPTIONS: Readonly<Record<string, 'tabstop' | 'shiftwidth' | 'expandtab'>> = {
 	tabstop: 'tabstop', ts: 'tabstop', shiftwidth: 'shiftwidth', sw: 'shiftwidth', expandtab: 'expandtab', et: 'expandtab',
+};
+
+/**
+ * Vim's options of the file, which are VS Code's own state of it rather than the
+ * engine's: 'fileencoding' (the encoding it is saved with), 'fileformat' (its
+ * line endings), 'bomb' (a BOM when saved as UTF-8). `:set` hands them to the
+ * workbench (`_devhubVim.fileOptions`, browser/vimEdit.ts), by name and short name.
+ */
+const FILE_OPTIONS: Readonly<Record<string, 'fileencoding' | 'fileformat' | 'bomb'>> = {
+	fileencoding: 'fileencoding', fenc: 'fileencoding', fileformat: 'fileformat', ff: 'fileformat', bomb: 'bomb',
 };
 
 export type VimRegisterType = 'char' | 'line' | 'block';
@@ -5196,9 +5206,13 @@ export class VimEngine {
 			case 'write':
 				this.exWrite(range, bang, args, how.fail);
 				return;
-			case 'saveas':
-				this.callHost('_devhubVim.saveAs', { file: args, force: bang }, m => this.message = typeof m === 'string' ? m : '', how.fail);
+			case 'saveas': {
+				const target = this.fileArgs(args, how.fail);
+				if (target) {
+					this.callHost('_devhubVim.saveAs', { file: target.file, ...target.options, force: bang }, m => this.message = typeof m === 'string' ? m : '', how.fail);
+				}
 				return;
+			}
 			case 'read':
 				this.exRead(how.zero ? -1 : range ? range.end : cur.line, args, how.fail);
 				return;
@@ -5252,7 +5266,11 @@ export class VimEngine {
 			}
 			return;
 		}
-		let file = args;
+		const target = this.fileArgs(args, failed);
+		if (!target) {
+			return;
+		}
+		let file = target.file;
 		let append = false;
 		if (file.startsWith('>>')) {
 			append = true;
@@ -5266,7 +5284,8 @@ export class VimEngine {
 				failed?.();
 				return;
 			}
-			if (whole) {
+			// VS Code's Save, unless it is to be written with another encoding or line endings
+			if (whole && !target.enc && !target.ff) {
 				this.runSteps([{ command: 'workbench.action.files.save' }], undefined, failed);
 				return;
 			}
@@ -5275,7 +5294,7 @@ export class VimEngine {
 		for (let l = r.start; l <= r.end; l++) {
 			lines.push(this.host.lineText(l));
 		}
-		this.callHost('_devhubVim.writeFile', { file, lines, append, force: bang, whole }, m => this.message = typeof m === 'string' ? m : '', failed);
+		this.callHost('_devhubVim.writeFile', { file, lines, append, force: bang, whole, ...target.options }, m => this.message = typeof m === 'string' ? m : '', failed);
 	}
 
 	/**
@@ -5293,11 +5312,15 @@ export class VimEngine {
 				return;
 			}
 		}
+		const source = cmd === undefined ? this.fileArgs(file, failed) : undefined;
+		if (cmd === undefined && !source) {
+			return;
+		}
 		const tag = `\u0000r${Date.now()}:${Math.random()}`;
 		if (line >= 0) {
 			this.marks.set(tag, pos(line, 0));
 		}
-		this.callHost(cmd !== undefined ? '_devhubVim.filter' : '_devhubVim.readFile', cmd !== undefined ? { cmd, input: '' } : { file }, result => {
+		this.callHost(cmd !== undefined ? '_devhubVim.filter' : '_devhubVim.readFile', cmd !== undefined ? { cmd, input: '' } : { file: source!.file, ...source!.options }, result => {
 			const at = line < 0 ? -1 : this.marks.get(tag)?.line;
 			this.marks.delete(tag);
 			if (at === undefined) {
@@ -5316,6 +5339,23 @@ export class VimEngine {
 			this.marks.delete(tag);
 			failed?.();
 		});
+	}
+
+	/**
+	 * The `++enc={enc}` `++ff={fmt}` words in front of the file of `:w` `:sav` `:r`
+	 * (parseExFileOptions): the file left, and `options` for the workbench's
+	 * file command (`enc`: VS Code's encoding id, `ff`); undefined after Vim's
+	 * error, which is the message.
+	 */
+	private fileArgs(args: string, failed?: () => void): { file: string; enc?: string; ff?: string; options: { enc?: string; ff?: string } } | undefined {
+		const o = parseExFileOptions(args);
+		if ('error' in o) {
+			this.message = o.error;
+			failed?.();
+			return undefined;
+		}
+		const options = { ...(o.enc !== undefined ? { enc: o.enc } : {}), ...(o.ff !== undefined ? { ff: o.ff } : {}) };
+		return { file: o.rest, ...options, options };
 	}
 
 	/**
@@ -5904,6 +5944,7 @@ export class VimEngine {
 	private exSet(args: string): void {
 		const o = this.shared.options as unknown as Record<string, boolean | number | string>;
 		const shown: string[] = [];
+		const fileOptions: unknown[] = [];
 		if (!args.trim()) {
 			this.message = Object.entries(this.shared.options).filter(([k, v]) => v !== (DEFAULT_VIM_OPTIONS as unknown as Record<string, unknown>)[k])
 				.map(([k, v]) => typeof v === 'boolean' ? (v ? k : 'no' + k) : `${k}=${v}`).join('  ') || '--- Options ---';
@@ -5919,7 +5960,7 @@ export class VimEngine {
 			let rawName = m[2];
 			let neg = prefix === 'no';
 			let inv = prefix === 'inv';
-			if (!(rawName in OPTION_ALIASES) && !(rawName in DEFAULT_VIM_OPTIONS) && !(rawName in BUFFER_OPTIONS) && prefix) {
+			if (!(rawName in OPTION_ALIASES) && !(rawName in DEFAULT_VIM_OPTIONS) && !(rawName in BUFFER_OPTIONS) && !(rawName in FILE_OPTIONS) && prefix) {
 				// e.g. "nowrapscan" read as no + wrapscan, but "number" is not no+mber
 				rawName = (prefix ?? '') + rawName;
 				neg = false;
@@ -5927,6 +5968,14 @@ export class VimEngine {
 			}
 			if (rawName in BUFFER_OPTIONS) {
 				const error = this.setBufferOption(BUFFER_OPTIONS[rawName], neg, inv, m[3], m[4], item, shown);
+				if (error) {
+					this.message = error;
+					return;
+				}
+				continue;
+			}
+			if (rawName in FILE_OPTIONS) {
+				const error = this.setFileOption(FILE_OPTIONS[rawName], neg, inv, m[3], m[4], item, fileOptions);
 				if (error) {
 					this.message = error;
 					return;
@@ -5978,9 +6027,52 @@ export class VimEngine {
 		} else if (this.hlActive && this.shared.lastSearch) {
 			this.highlight(this.lastSearchQuery());
 		}
+		if (fileOptions.length) {
+			this.callHost('_devhubVim.fileOptions', { options: fileOptions }, result => {
+				this.message = [...shown, ...(Array.isArray(result) ? result.map(String) : [])].join('  ');
+			});
+			return;
+		}
 		if (shown.length) {
 			this.message = shown.join('  ');
 		}
+	}
+
+	/**
+	 * `:set fenc=` `ff=` `bomb` (and `?`, `nobomb`, `invbomb`, `bomb!`): checked
+	 * here, with Vim's names turned into VS Code's (`cp932` is `shiftjis`), and
+	 * queued in `out` for the workbench to do (see FILE_OPTIONS). Vim's error,
+	 * or undefined.
+	 */
+	private setFileOption(name: 'fileencoding' | 'fileformat' | 'bomb', neg: boolean, inv: boolean, op: string | undefined, value: string | undefined, item: string, out: unknown[]): string | undefined {
+		if (op === '?' || (!op && name !== 'bomb' && !neg && !inv)) {
+			out.push({ option: name });
+			return undefined;
+		}
+		if (name === 'bomb') {
+			if (op && op !== '!') {
+				return `E474: Invalid argument: ${item}`;
+			}
+			out.push({ option: name, value: op === '!' || inv ? 'toggle' : !neg });
+			return undefined;
+		}
+		if (neg || inv || !op || op[0] !== '=') {
+			return `E474: Invalid argument: ${item}`;
+		}
+		if (name === 'fileencoding') {
+			const id = vimEncodingId(value ?? '');
+			if (id === undefined) {
+				return `E474: Invalid argument: ${item}`;
+			}
+			out.push({ option: name, value: id });
+			return undefined;
+		}
+		const ff = vimFileFormat(value ?? '');
+		if (ff === undefined) {
+			return value?.toLowerCase() === 'mac' ? `E474: Invalid argument: ${item} (VS Code has no CR line endings)` : `E474: Invalid argument: ${item}`;
+		}
+		out.push({ option: name, value: ff });
+		return undefined;
 	}
 
 	/** 'tabstop' 'shiftwidth' 'expandtab' as Vim shows them (from the model's options). */
@@ -5998,7 +6090,10 @@ export class VimEngine {
 			return [];
 		}
 		return [
+			{ name: 'bomb', boolean: true, detail: '' },
 			{ name: 'expandtab', alias: 'et', boolean: true, detail: o.expandtab ? 'on' : 'off' },
+			{ name: 'fileencoding', alias: 'fenc', boolean: false, detail: '' },
+			{ name: 'fileformat', alias: 'ff', boolean: false, detail: '' },
 			{ name: 'shiftwidth', alias: 'sw', boolean: false, detail: `=${o.shiftwidth}` },
 			{ name: 'tabstop', alias: 'ts', boolean: false, detail: `=${o.tabstop}` },
 		];

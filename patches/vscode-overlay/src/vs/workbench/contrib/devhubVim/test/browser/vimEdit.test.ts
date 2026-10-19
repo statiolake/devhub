@@ -13,7 +13,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { VSBuffer, VSBufferReadable, VSBufferReadableStream } from '../../../../../base/common/buffer.js';
-import { ITextModel } from '../../../../../editor/common/model.js';
+import { EndOfLineSequence, ITextModel, ITextSnapshot } from '../../../../../editor/common/model.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileContent, IFileService, IFileStatWithMetadata } from '../../../../../platform/files/common/files.js';
@@ -23,8 +23,10 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService, IUntypedEditorReplacement } from '../../../../services/editor/common/editorService.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
-import { ITextFileEditorModel, ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { EncodingMode, ITextFileContent, ITextFileEditorModel, ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { SUPPORTED_ENCODINGS } from '../../../../services/textfile/common/encoding.js';
 import { VimFileCommands } from '../../browser/vimEdit.js';
+import { vimEncodingId, vimEncodingList } from '../../common/vimEx.js';
 import { IUntypedEditorInput } from '../../../../common/editor.js';
 
 const REMOTE = URI.parse('vscode-remote://ssh-remote+box/home/dev/proj');
@@ -44,10 +46,20 @@ interface Log {
 	written: Map<string, string>;
 	saved: string[];
 	savedAs: [string, string][];
+	/** `setEncoding` on a text file model: [file, encoding, mode]; on an untitled one the mode is 'untitled'. */
+	encoded: [string, string, EncodingMode | 'untitled'][];
+	/** Files written through the text file service: [file, text, encoding]. */
+	writtenWith: [string, string, string | undefined][];
+	/** Files read through the text file service: [file, encoding]. */
+	readWith: [string, string | undefined][];
+	/** `pushEOL` on the model, and the stack elements around it. */
+	eol: (EndOfLineSequence | 'stop')[];
 }
 
-function setup(options: { exists?: string[]; dirs?: string[]; dirty?: string[]; activeEditor?: URI; folders?: URI[]; contents?: Record<string, string> } = {}) {
-	const log: Log = { opened: [], replaced: [], commands: [], reverted: [], written: new Map(), saved: [], savedAs: [] };
+function setup(options: { exists?: string[]; dirs?: string[]; dirty?: string[]; activeEditor?: URI; folders?: URI[]; contents?: Record<string, string>; encodings?: Record<string, string> } = {}) {
+	const log: Log = { opened: [], replaced: [], commands: [], reverted: [], written: new Map(), saved: [], savedAs: [], encoded: [], writtenWith: [], readWith: [], eol: [] };
+	const encodings = new Map(Object.entries(options.encodings ?? {}));
+	let lineEnds = EndOfLineSequence.CRLF;
 	const contents = new Map(Object.entries(options.contents ?? {}));
 	const folders = (options.folders ?? [REMOTE, SECOND]).map(folder);
 	const exists = new Set(options.exists ?? []);
@@ -93,9 +105,37 @@ function setup(options: { exists?: string[]; dirs?: string[]; dirty?: string[]; 
 			override readonly files = {
 				get: (resource: URI) => resource.scheme === 'untitled' ? undefined : {
 					isDirty: () => dirty.has(resource.toString()),
-					revert: async () => { log.reverted.push(resource.toString()); },
+					isResolved: () => true,
+					revert: async () => { log.reverted.push(resource.toString()); dirty.delete(resource.toString()); },
+					getEncoding: () => encodings.get(resource.toString()) ?? 'utf8',
+					setEncoding: async (encoding: string, mode: EncodingMode) => {
+						if (mode === EncodingMode.Decode && dirty.has(resource.toString())) {
+							throw new Error('Cannot re-open a dirty text document with different encoding. Save it first.');
+						}
+						log.encoded.push([resource.toString(), encoding, mode]);
+						encodings.set(resource.toString(), encoding);
+						if (mode === EncodingMode.Encode) {
+							dirty.add(resource.toString());
+						}
+					},
 				} as unknown as ITextFileEditorModel,
 			} as unknown as ITextFileService['files'];
+			override readonly untitled = {
+				get: (resource: URI) => resource.scheme !== 'untitled' ? undefined : {
+					getEncoding: () => encodings.get(resource.toString()) ?? 'utf8',
+					setEncoding: async (encoding: string) => { log.encoded.push([resource.toString(), encoding, 'untitled']); encodings.set(resource.toString(), encoding); },
+				},
+			} as unknown as ITextFileService['untitled'];
+			override getEncoding(resource: URI) { return encodings.get(resource.toString()) ?? 'utf8'; }
+			override async read(resource: URI, options?: { encoding?: string }) {
+				log.readWith.push([resource.toString(), options?.encoding]);
+				return { value: contents.get(resource.toString()) ?? log.written.get(resource.toString()) ?? '' } as unknown as ITextFileContent;
+			}
+			override async write(resource: URI, value: string | ITextSnapshot, options?: { encoding?: string }) {
+				log.writtenWith.push([resource.toString(), value as string, options?.encoding]);
+				log.written.set(resource.toString(), value as string);
+				return { size: (value as string).length } as IFileStatWithMetadata;
+			}
 			override async save(resource: URI) { log.saved.push(resource.toString()); return resource; }
 			override async saveAs(source: URI, target?: URI) { log.savedAs.push([source.toString(), target!.toString()]); return target; }
 		},
@@ -107,7 +147,14 @@ function setup(options: { exists?: string[]; dirs?: string[]; dirty?: string[]; 
 			override async executeCommand(...args: unknown[]) { log.commands.push(args); return undefined; }
 		},
 		new class extends mock<IModelService>() {
-			override getModel(resource: URI) { return resource.toString() === FILE ? { getEOL: () => '\r\n', getLineCount: () => 2, getValue: () => 'a\r\nb' } as unknown as ITextModel : null; }
+			override getModel(resource: URI) {
+				return resource.toString() === FILE ? {
+					getEOL: () => lineEnds === EndOfLineSequence.CRLF ? '\r\n' : '\n', getLineCount: () => 2, getValue: () => 'a\r\nb',
+					getEndOfLineSequence: () => lineEnds,
+					pushStackElement: () => { log.eol.push('stop'); },
+					pushEOL: (eol: EndOfLineSequence) => { log.eol.push(eol); lineEnds = eol; },
+				} as unknown as ITextModel : null;
+			}
 		},
 		new class extends mock<ILabelService>() { override getUriLabel(resource: URI) { return resource.path.split('/').pop()!; } },
 	);
@@ -247,5 +294,173 @@ suite('DevHub Vim: :w {file}, :w >> {file}, :sav {file}, :r {file}', () => {
 		const t = setup({ contents: { [`${REMOTE}/in.txt`]: '\uFEFFone\r\ntwo\n' } });
 		assert.deepStrictEqual(await t.commands.readFile({ file: 'in.txt', from: FILE }), ['one', 'two']);
 		await assert.rejects(t.commands.readFile({ file: 'nope.txt', from: FILE }), /E484: Can't open file nope.txt/);
+	});
+});
+
+suite('DevHub Vim: file encodings and line endings are VS Code\'s', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const KEYS = `${REMOTE}/src/a.ts`;
+
+	test(':e ++enc={enc} is "Reopen with Encoding" (setEncoding, Decode); the same encoding just reads the file again', async () => {
+		const t = setup();
+		await t.commands.edit({ file: '++enc=cp932', from: FILE });
+		assert.deepStrictEqual(t.log.encoded, [[FILE, 'shiftjis', EncodingMode.Decode]]);
+		assert.deepStrictEqual(t.log.reverted, []);
+		await t.commands.edit({ file: '++encoding=sjis', from: FILE });
+		assert.deepStrictEqual([t.log.encoded.length, t.log.reverted], [1, [FILE]]);
+		await t.commands.edit({ file: '++enc=euc-jp', bang: false, from: FILE });
+		assert.deepStrictEqual(t.log.encoded.slice(-1), [[FILE, 'eucjp', EncodingMode.Decode]]);
+	});
+
+	test('a modified file is E37 for :e ++enc=, and :e! ++enc= reverts it first (VS Code cannot decode a modified file)', async () => {
+		const t = setup({ dirty: [FILE] });
+		await assert.rejects(t.commands.edit({ file: '++enc=latin1', from: FILE }), /E37: No write since last change/);
+		assert.deepStrictEqual([t.log.encoded, t.log.reverted], [[], []]);
+		await t.commands.edit({ file: '++enc=latin1', bang: true, from: FILE });
+		assert.deepStrictEqual(t.log.reverted, [FILE]);
+		assert.deepStrictEqual(t.log.encoded, [[FILE, 'iso88591', EncodingMode.Decode]]);
+	});
+
+	test(':e ++enc={enc} {file} opens that file with the encoding (the editor input\'s encoding); one that is open is reopened with it', async () => {
+		const t = setup({ exists: [KEYS] });
+		await t.commands.edit({ file: '++enc=euc-jp src/a.ts', from: FILE });
+		assert.deepStrictEqual(t.log.opened.map(o => [(o.input as { resource: URI }).resource.toString(), (o.input as { encoding?: string }).encoding]), [[KEYS, 'eucjp']]);
+		// open already (with another encoding): the editor service keeps it, so it is decoded again
+		assert.deepStrictEqual(t.log.encoded, [[KEYS, 'eucjp', EncodingMode.Decode]]);
+		// already in that encoding: nothing to decode again
+		const same = setup({ exists: [KEYS], encodings: { [KEYS]: 'eucjp' } });
+		await same.commands.edit({ file: '++enc=eucjp src/a.ts', from: FILE });
+		assert.deepStrictEqual([same.log.encoded, same.log.reverted], [[], []]);
+		// blanks around the ++ words
+		const sp = setup({ exists: [KEYS] });
+		await sp.commands.edit({ file: '  ++enc=sjis   src/a.ts', from: FILE });
+		assert.strictEqual((sp.log.opened[0].input as { encoding?: string }).encoding, 'shiftjis');
+		// a new file: untitled, with the encoding
+		const fresh = setup();
+		await fresh.commands.edit({ file: '++enc=latin1 new.txt', from: FILE });
+		assert.deepStrictEqual(fresh.log.opened.map(o => [(o.input as { forceUntitled?: boolean }).forceUntitled, (o.input as { encoding?: string }).encoding]), [[true, 'iso88591']]);
+		// :sp / :tabe
+		const split = setup({ exists: [KEYS] });
+		await split.commands.open({ file: '++enc=gbk src/a.ts', from: FILE });
+		assert.strictEqual((split.log.opened[0].input as { encoding?: string }).encoding, 'gbk');
+	});
+
+	test(':e ++ff={unix|dos} sets the line endings (one undo step) after the file is read; the file name is what follows', async () => {
+		const t = setup({ exists: [KEYS] });
+		await t.commands.edit({ file: '++ff=unix', from: FILE });
+		assert.deepStrictEqual([t.log.reverted, t.log.eol], [[FILE], ['stop', EndOfLineSequence.LF, 'stop']]);
+		// already in that format: nothing
+		await t.commands.edit({ file: '++fileformat=unix', from: FILE });
+		assert.deepStrictEqual(t.log.eol.length, 3);
+		await t.commands.edit({ file: '++ff=dos', from: FILE });
+		assert.deepStrictEqual(t.log.eol.slice(3), ['stop', EndOfLineSequence.CRLF, 'stop']);
+	});
+
+	test('++opt errors: an encoding VS Code does not know, ++ff=mac, ++bin and a missing value are E474', async () => {
+		const t = setup();
+		await assert.rejects(t.commands.edit({ file: '++enc=klingon', from: FILE }), /E474: Invalid argument: \+\+enc=klingon/);
+		await assert.rejects(t.commands.edit({ file: '++ff=mac x', from: FILE }), /E474: Invalid argument: \+\+ff=mac \(VS Code has no CR line endings\)/);
+		await assert.rejects(t.commands.edit({ file: '++ff=weird', from: FILE }), /E474/);
+		await assert.rejects(t.commands.edit({ file: '++bin x', from: FILE }), /E474: Invalid argument: \+\+bin \(not supported\)/);
+		await assert.rejects(t.commands.edit({ file: '++enc', from: FILE }), /E474/);
+		await assert.rejects(t.commands.open({ file: '++enc=nope x', from: FILE }), /E474/);
+		assert.deepStrictEqual([t.log.encoded, t.log.opened, t.log.reverted], [[], [], []]);
+	});
+
+	test(':set fenc= is "Save with Encoding" (setEncoding, Encode: the file is modified and VS Code saves it); fenc? shows VS Code\'s id', async () => {
+		const t = setup();
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileencoding' }], from: FILE }), ['fileencoding=utf8']);
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileencoding', value: 'shiftjis' }], from: FILE }), []);
+		assert.deepStrictEqual(t.log.encoded, [[FILE, 'shiftjis', EncodingMode.Encode]]);
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileencoding' }], from: FILE }), ['fileencoding=shiftjis']);
+		// the encoding it has already: nothing is saved again
+		await t.commands.fileOptions({ options: [{ option: 'fileencoding', value: 'shiftjis' }], from: FILE });
+		assert.strictEqual(t.log.encoded.length, 1);
+		// an untitled buffer has an encoding too
+		await t.commands.fileOptions({ options: [{ option: 'fileencoding', value: 'utf16le' }], from: 'untitled:Untitled-1' });
+		assert.deepStrictEqual(t.log.encoded.slice(-1), [['untitled:Untitled-1', 'utf16le', 'untitled']]);
+	});
+
+	test(':set bomb / nobomb / invbomb are UTF-8 and UTF-8 with BOM; UTF-16 always has one; others cannot', async () => {
+		const t = setup();
+		const bomb = (value?: boolean | 'toggle') => t.commands.fileOptions({ options: [value === undefined ? { option: 'bomb' } : { option: 'bomb', value }], from: FILE });
+		assert.deepStrictEqual(await bomb(), ['nobomb']);
+		await bomb(true);
+		assert.deepStrictEqual(t.log.encoded, [[FILE, 'utf8bom', EncodingMode.Encode]]);
+		assert.deepStrictEqual(await bomb(), ['bomb']);
+		await bomb(true);
+		assert.strictEqual(t.log.encoded.length, 1);
+		await bomb('toggle');
+		assert.deepStrictEqual(t.log.encoded.slice(-1), [[FILE, 'utf8', EncodingMode.Encode]]);
+		await bomb(false);
+		assert.strictEqual(t.log.encoded.length, 2);
+		const utf16 = setup({ encodings: { [FILE]: 'utf16be' } });
+		assert.deepStrictEqual(await utf16.commands.fileOptions({ options: [{ option: 'bomb' }], from: FILE }), ['bomb']);
+		await assert.rejects(utf16.commands.fileOptions({ options: [{ option: 'bomb', value: false }], from: FILE }), /E474: Invalid argument: nobomb/);
+		const sjis = setup({ encodings: { [FILE]: 'shiftjis' } });
+		await assert.rejects(sjis.commands.fileOptions({ options: [{ option: 'bomb', value: true }], from: FILE }), /E474: Invalid argument: bomb/);
+		assert.deepStrictEqual([utf16.log.encoded, sjis.log.encoded], [[], []]);
+	});
+
+	test(':set ff= is "Change End of Line Sequence" (pushEOL between two undo stops); ff? shows it', async () => {
+		const t = setup();
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileformat' }], from: FILE }), ['fileformat=dos']);
+		await t.commands.fileOptions({ options: [{ option: 'fileformat', value: 'unix' }], from: FILE });
+		assert.deepStrictEqual(t.log.eol, ['stop', EndOfLineSequence.LF, 'stop']);
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileformat' }], from: FILE }), ['fileformat=unix']);
+		await t.commands.fileOptions({ options: [{ option: 'fileformat', value: 'unix' }], from: FILE });
+		assert.strictEqual(t.log.eol.length, 3);
+		// several at once, shown ones in order
+		assert.deepStrictEqual(await t.commands.fileOptions({ options: [{ option: 'fileformat', value: 'dos' }, { option: 'fileformat' }, { option: 'bomb' }], from: FILE }), ['fileformat=dos', 'nobomb']);
+	});
+
+	test(':w ++enc={enc} is a save with that encoding; :w ++enc={enc} {file} and :w >> write it through the text file service', async () => {
+		const t = setup({ contents: { [`${REMOTE}/old.txt`]: 'old' } });
+		await t.commands.writeFile({ file: '', enc: 'shiftjis', lines: ['a'], whole: true, from: FILE });
+		assert.deepStrictEqual(t.log.encoded, [[FILE, 'shiftjis', EncodingMode.Encode]]);
+		assert.deepStrictEqual(t.log.saved, []);
+		// the encoding it has already: a plain save
+		await t.commands.writeFile({ file: '', enc: 'shiftjis', lines: ['a'], whole: true, from: FILE });
+		assert.deepStrictEqual([t.log.encoded.length, t.log.saved], [1, [FILE]]);
+		const m = await t.commands.writeFile({ file: 'out.txt', enc: 'eucjp', lines: ['あ'], whole: true, from: FILE });
+		assert.deepStrictEqual(t.log.writtenWith, [[`${REMOTE}/out.txt`, 'あ\r\n', 'eucjp']]);
+		assert.strictEqual(m, '"out.txt" [New] 1L, 3B written');
+		await t.commands.writeFile({ file: 'old.txt', enc: 'eucjp', append: true, lines: ['x'], from: FILE });
+		assert.deepStrictEqual(t.log.readWith, [[`${REMOTE}/old.txt`, 'eucjp']]);
+		assert.deepStrictEqual(t.log.writtenWith.slice(-1), [[`${REMOTE}/old.txt`, 'old\r\nx\r\n', 'eucjp']]);
+		// without an encoding the file service writes UTF-8 as before
+		await t.commands.writeFile({ file: 'plain.txt', lines: ['a'], whole: true, from: FILE });
+		assert.strictEqual(t.log.writtenWith.length, 2);
+	});
+
+	test(':w ++ff={unix|dos} {file} writes with those line ends; without a file the buffer takes them first', async () => {
+		const t = setup();
+		await t.commands.writeFile({ file: 'u.txt', ff: 'unix', lines: ['a', 'b'], whole: true, from: FILE });
+		assert.strictEqual(t.log.written.get(`${REMOTE}/u.txt`), 'a\nb\n');
+		assert.deepStrictEqual(t.log.eol, []);
+		await t.commands.writeFile({ file: '', ff: 'unix', lines: ['a'], whole: true, from: FILE });
+		assert.deepStrictEqual([t.log.eol, t.log.saved], [['stop', EndOfLineSequence.LF, 'stop'], [FILE]]);
+	});
+
+	test(':sav ++enc={enc} {file} saves as that file, then with the encoding; :r ++enc={enc} {file} decodes it', async () => {
+		const t = setup({ activeEditor: URI.parse(FILE) });
+		await t.commands.saveAs({ file: 'src/vim/copy.ts', enc: 'gbk', from: FILE });
+		assert.deepStrictEqual(t.log.savedAs, [[FILE, `${REMOTE}/src/vim/copy.ts`]]);
+		assert.deepStrictEqual(t.log.encoded, [[`${REMOTE}/src/vim/copy.ts`, 'gbk', EncodingMode.Encode]]);
+		const r = setup({ contents: { [`${REMOTE}/in.txt`]: 'one\ntwo\n' } });
+		assert.deepStrictEqual(await r.commands.readFile({ file: 'in.txt', enc: 'shiftjis', from: FILE }), ['one', 'two']);
+		assert.deepStrictEqual(r.log.readWith, [[`${REMOTE}/in.txt`, 'shiftjis']]);
+	});
+});
+
+suite('DevHub Vim: the encodings are the ones VS Code has', () => {
+
+	test('the list is SUPPORTED_ENCODINGS: the same ids, in order, with its labels; each id is its own name', () => {
+		assert.deepStrictEqual(vimEncodingList(), Object.entries(SUPPORTED_ENCODINGS).map(([id, e]) => ({ id, label: e.labelLong })));
+		for (const id of Object.keys(SUPPORTED_ENCODINGS)) {
+			assert.strictEqual(vimEncodingId(id), id);
+		}
 	});
 });

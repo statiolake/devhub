@@ -32,7 +32,7 @@
 // line with, as the engine does.
 
 import type { ExRegistry } from './vimEx.js';
-import { BUILTIN_EX_REGISTRY, parseExCommands } from './vimEx.js';
+import { BUILTIN_EX_REGISTRY, parseExCommands, VIM_FILE_FORMATS, vimEncodingCompletions } from './vimEx.js';
 import type { VimKeybinding } from './vimKeymap.js';
 import { evaluateWhen, jisKeys, keybindingForVimKey } from './vimKeymap.js';
 
@@ -189,7 +189,7 @@ export interface IVimCmdlineUi {
 
 // ---- completion ------------------------------------------------------------------
 
-export type VimCmdlineCompletionKind = 'command' | 'file' | 'option' | 'buffer' | 'custom';
+export type VimCmdlineCompletionKind = 'command' | 'file' | 'option' | 'buffer' | 'custom' | 'value';
 
 /** What Tab completes at the caret: the kind, where the word starts and what of it is typed. */
 export interface VimCmdlineCompletionContext {
@@ -201,6 +201,8 @@ export interface VimCmdlineCompletionContext {
 	readonly command?: string;
 	/** `custom`: the command (`complete: "command:<id>"`) that lists the candidates. */
 	readonly source?: string;
+	/** `value`: what the value of `fenc=` / `++enc=` (`encoding`) or `ff=` / `++ff=` (`fileformat`) is. */
+	readonly value?: 'encoding' | 'fileformat';
 }
 
 export interface VimCmdlineCompletionItem {
@@ -263,11 +265,20 @@ export function cmdlineCompletionContext(text: string, caret: number, registry: 
 	const args = before.slice(p.argStart);
 	const lastWord = /\S*$/.exec(args)![0];
 	let typed = !shell && (p.spec.nargs === '1' || p.spec.nargs === '?') ? args : lastWord;
+	if (complete === 'file' && !shell) {
+		typed = typed.replace(/^(\s*\+\+\S*\s)+/, ''); // the file follows the `++enc=` words
+	}
 	if (shell && typed.startsWith('!')) {
 		typed = typed.slice(1);
 	}
 	const start = caret - typed.length;
 	const command = p.command;
+	// `:set fenc={enc}` `:set ff={fmt}`, and `++enc={enc}` `++ff={fmt}` in front of a file
+	const valued = complete === 'option' ? /^(?:(fenc|fileencoding)|(ff|fileformat))=(.*)$/.exec(lastWord)
+		: complete === 'file' && !shell ? /^\+\+(?:(enc|encoding)|(ff|fileformat))=(.*)$/.exec(lastWord) : null;
+	if (valued) {
+		return { kind: 'value', value: valued[1] ? 'encoding' : 'fileformat', start: caret - valued[3].length, typed: valued[3], command };
+	}
 	if (complete === 'option') {
 		return lastWord.includes('=') ? undefined : { kind: 'option', start: caret - lastWord.length, typed: lastWord, command };
 	}
@@ -317,6 +328,10 @@ export function cmdlineCompletions(ctx: VimCmdlineCompletionContext, sources: IV
 			const t = typed.toLowerCase();
 			return sources.buffers().filter(b => b.name.toLowerCase().includes(t)).map(b => ({ label: b.name, detail: b.detail, kind: 'buffer' }));
 		}
+		case 'value':
+			return ctx.value === 'fileformat'
+				? VIM_FILE_FORMATS.filter(f => f.name.startsWith(typed.toLowerCase())).map(f => ({ label: f.name, detail: f.detail, kind: 'value' as const }))
+				: vimEncodingCompletions(typed).map(e => ({ label: e.id, detail: e.label, kind: 'value' as const }));
 		case 'file': case 'custom':
 			return [];
 	}
