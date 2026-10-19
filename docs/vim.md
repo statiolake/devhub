@@ -137,8 +137,13 @@ half the window or the count) are worked out first, the cursor is put there
 without a reveal of its own, and the window goes to the target. Pressed again
 (or held) while the last one still animates, a scroll goes on from where that
 one ends, not from the frame on screen. A cursor that leaves the window by a
-motion (`G`, `gg`, `n`, `H` `M` `L`, a search) is revealed with the same
-scroll type, and the 'incsearch' preview scrolls the same way.
+motion is revealed with the same scroll type. A jump (`/` `?` `n` `N` `*` `#`
+`G` `gg` `%` a mark `:{n}` `:s` …) is revealed as VS Code's find widget
+reveals a match — in the center if it is outside the window, not at all if it
+is inside — and so is the 'incsearch' preview: Enter after `/foo` lands on
+the match the preview showed and the view does not move again. Esc in the
+prompt puts the view back exactly where it was before the pattern was typed
+(the cursor never moved). Other motions (`j`, `w`, `}` …) scroll just enough.
 
 **Folds** (VS Code's folding): `zo zO zc zC za zA zv zR zM zj zk [z zf zd zE`.
 `j` / `k` move over a closed fold.
@@ -155,7 +160,7 @@ Go Back / Go Forward in Edit Locations
 (`workbench.action.navigateBackInEditLocations` / `navigateForwardInEditLocations`),
 each with a count (`3<C-o>`), across files and editor groups as
 `workbench.editor.navigationScope` says. Vim's jumps — `G` `gg` `:{n}` `/`
-`?` `n` `N` `*` `#` `%` `(` `)` `{` `}` `[(` `[[` `H` `M` `L` `gd` `gD` and
+`?` `n` `N` `*` `#` `%` `(` `)` `{` `}` `[(` `[[` `H` `M` `L` `gd` `gD` `:s` and
 marks (`` `a `` `'a` `` `` `` `''`) — put the cursor as a jump (`TextEditorSelectionSource.JUMP`,
 what Go to Definition uses), so the history records where each came from and
 where it went even when it is only a few lines away, and they also set the

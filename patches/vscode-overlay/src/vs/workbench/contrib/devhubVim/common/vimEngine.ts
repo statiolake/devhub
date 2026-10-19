@@ -100,7 +100,11 @@ export interface IVimHost {
 	lineCount(): number;
 	lineText(line: number): string;
 	getCursor(): VimPos;
-	/** `jump`: a Vim jump (G, /, %, a mark ...), which VS Code's history records as one (TextEditorSelectionSource.JUMP). */
+	/**
+	 * `jump`: a Vim jump (G, /, n, %, a mark, :s ...), which VS Code's history
+	 * records as one (TextEditorSelectionSource.JUMP) and which is revealed as
+	 * the find widget reveals a match (in the center if outside the viewport).
+	 */
 	setCursor(pos: VimPos, jump?: boolean): void;
 	/** The editor's selection (after a command that changed it). */
 	getSelection(): { anchor: VimPos; active: VimPos };
@@ -151,8 +155,14 @@ export interface IVimHost {
 	replaceString(replacement: string, match: VimMatch): string;
 	/** 'hlsearch': highlight every match of `query` (undefined: none). */
 	highlightSearch(query: VimSearchQuery | undefined): void;
-	/** 'incsearch': show this match while the pattern is typed (undefined: back to where the view was). */
-	showIncSearch(range: VimRange | undefined): void;
+	/**
+	 * 'incsearch': show this match while the pattern is typed, revealed as
+	 * VS Code's find widget reveals one (in the center if outside the
+	 * viewport). Undefined: no match; the view goes back to where it was,
+	 * unless `keepView` (Enter: the search's jump lands where the preview
+	 * showed, with the same reveal rule, so the view does not move again).
+	 */
+	showIncSearch(range: VimRange | undefined, keepView?: boolean): void;
 	/**
 	 * 'inccommand': show what the `:s` being typed would do. The host runs
 	 * `compute` (soon, debounced) and draws what it returns: each match struck
@@ -700,7 +710,7 @@ export class VimEngine {
 		if (!cl) {
 			return;
 		}
-		this.closeCmdline();
+		this.closeCmdline(true);
 		if (cl.kind === ':') {
 			this.pushHistory(':', text.trim());
 			this.execute('devhubVim.ex', { command: text.trim() });
@@ -1357,6 +1367,14 @@ export class VimEngine {
 	private jumpFrom(from: VimPos): void {
 		this.setMark('\'', from);
 		this.jumping = true;
+	}
+
+	/** A jump from `from` to `to` in normal mode (none when it stays). */
+	private jumpTo(to: VimPos, from: VimPos): void {
+		if (cmp(this.clampNormal(to), from) !== 0) {
+			this.jumpFrom(from);
+		}
+		this.setNormalCursor(to);
 	}
 
 	private takeJump(): boolean {
@@ -4651,9 +4669,10 @@ export class VimEngine {
 		this.cmdline = { kind, text: '', origin, id: ++cmdlineSequence };
 	}
 
-	private closeCmdline(): void {
+	/** The prompt is gone; `submitted`: its line runs next, so the view the 'incsearch' preview scrolled to stays. */
+	private closeCmdline(submitted = false): void {
 		if (this.cmdline && this.cmdline.kind !== ':') {
-			this.host.showIncSearch(undefined);
+			this.host.showIncSearch(undefined, submitted);
 		} else if (this.cmdline) {
 			this.host.previewSubstitute(undefined);
 		}
@@ -5208,6 +5227,7 @@ export class VimEngine {
 			r = { start: r.end, end: this.clampLine(r.end + count - 1) };
 		}
 		const q = this.substituteQuery(pattern, flags);
+		const origin = this.cursor();
 		this.shared.lastSubstitute = { pattern, replacement, flags: flags.replace(/[cn]/g, '') };
 		this.shared.lastSearch = { pattern, backwards: false };
 		const global = this.substituteGlobal(flags);
@@ -5242,7 +5262,8 @@ export class VimEngine {
 		this.highlight(q);
 		this.setMark('[', pos(r.start, 0));
 		this.setMark(']', pos(finalLine, 0));
-		this.setNormalCursor(pos(finalLine, this.firstNonBlank(finalLine)));
+		// `:s` is a jump (`:help jump-motions`)
+		this.jumpTo(pos(finalLine, this.firstNonBlank(finalLine)), origin);
 		if (linesChanged > this.options.report) {
 			this.message = `${subs.length} substitution${subs.length === 1 ? '' : 's'} on ${linesChanged} line${linesChanged === 1 ? '' : 's'}`;
 		}
@@ -5390,7 +5411,7 @@ export class VimEngine {
 		this.highlight(c.query);
 		if (c.lastLine >= 0) {
 			const l = this.clampLine(c.lastLine);
-			this.setNormalCursor(pos(l, this.firstNonBlank(l)));
+			this.jumpTo(pos(l, this.firstNonBlank(l)), c.origin);
 		} else {
 			// nothing replaced: the cursor goes back
 			this.setNormalCursor(c.origin);

@@ -27,7 +27,8 @@ import { ILanguageFeaturesService } from '../../../../../editor/common/services/
 import { Context as SuggestContext } from '../../../../../editor/contrib/suggest/browser/suggest.js';
 import { SuggestController } from '../../../../../editor/contrib/suggest/browser/suggestController.js';
 import { createTextModel } from '../../../../../editor/test/common/testTextModel.js';
-import { TestCodeEditor, createCodeEditorServices } from '../../../../../editor/test/browser/testCodeEditor.js';
+import { VerticalRevealType } from '../../../../../editor/common/viewEvents.js';
+import { TestCodeEditor, TestCodeEditorCreationOptions, createCodeEditorServices } from '../../../../../editor/test/browser/testCodeEditor.js';
 import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
@@ -69,7 +70,8 @@ suite('DevHub Vim: the prompt line', () => {
 		visible(): boolean;
 	}
 
-	function withPrompt(fn: (env: Env) => void | Promise<void>): Promise<void> {
+	/** `text` and `lines` (how many fit in the window) for the origin editor. */
+	function withPrompt(fn: (env: Env) => void | Promise<void>, originOpts: { text?: string; lines?: number } = {}): Promise<void> {
 		const disposables = new DisposableStore();
 		const root = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
 		const run = async () => {
@@ -117,8 +119,9 @@ suite('DevHub Vim: the prompt line', () => {
 			));
 			const vim = disposables.add(instantiation.createInstance(DevhubVim));
 			const element = root.appendChild(mainWindow.document.createElement('div'));
-			const origin = disposables.add(instantiation.createInstance(TestCodeEditor, element, {}, { contributions: [] }));
-			origin.setModel(disposables.add(createTextModel('abc abc\nb')));
+			const options: TestCodeEditorCreationOptions = originOpts.lines ? { smoothScrolling: false, envConfig: { outerHeight: originOpts.lines * 19, outerWidth: 600 } } : {};
+			const origin = disposables.add(instantiation.createInstance(TestCodeEditor, element, options, { contributions: [] }));
+			origin.setModel(disposables.add(createTextModel(originOpts.text ?? 'abc abc\nb')));
 			origin.setHasTextFocus(true);
 			EditorContextKeys.editorTextFocus.bindTo(origin.invokeWithinContext(a => a.get(IContextKeyService))).set(true);
 			vim.update();
@@ -183,6 +186,43 @@ suite('DevHub Vim: the prompt line', () => {
 		origin.getModel()!.undo();
 		assert.strictEqual(origin.getModel()!.getValue(), 'abc abc\nb');
 	}));
+
+	test('one reveal rule: Enter lands where the incsearch preview showed without scrolling again; Esc puts the view back exactly', () => withPrompt(async ({ vim, origin, run, type, configuration }) => {
+		await configuration.setUserConfiguration(VIM_CMDLINE_AUTOCOMPLETE_SETTING, false);
+		// a test editor has no view to scroll for a reveal: what it was asked is recorded
+		const vm = origin._getViewModel()!;
+		let reveals: string[] = [];
+		let scrolls: (number | undefined)[] = [];
+		const revealRange = vm.revealRange.bind(vm);
+		vm.revealRange = (...args: Parameters<typeof vm.revealRange>) => { reveals.push(`${args[2].startLineNumber}:${args[3]}`); revealRange(...args); };
+		const setScrollPosition = vm.viewLayout.setScrollPosition.bind(vm.viewLayout);
+		vm.viewLayout.setScrollPosition = (...args: Parameters<typeof vm.viewLayout.setScrollPosition>) => { scrolls.push(args[0].scrollTop); setScrollPosition(...args); };
+		const take = () => { const r = { reveals, scrolls }; reveals = []; scrolls = []; return r; };
+		const CENTER_IF_OUTSIDE = VerticalRevealType.CenterIfOutsideViewport;
+		origin.setPosition({ lineNumber: 1, column: 1 });
+		vim.execute('devhubVim.cmdline', { kind: '/' });
+		take();
+		type('line 60');
+		// each key shows the match so far; the last is line 60
+		assert.strictEqual(take().reveals.at(-1), `60:${CENTER_IF_OUTSIDE}`);
+		run('devhubVim.cmdline.submit');
+		assert.strictEqual(origin.getPosition()!.lineNumber, 60);
+		// the view is not put back first, and the jump is revealed by the preview's rule
+		assert.deepStrictEqual(take(), { reveals: [`60:${CENTER_IF_OUTSIDE}`], scrolls: [] });
+		// n / N / * / # and G: the same rule
+		vim.execute('devhubVim.motion', { motion: 'fileStart' });
+		vim.execute('devhubVim.motion', { motion: 'searchNext' });
+		assert.deepStrictEqual(take().reveals, [`1:${CENTER_IF_OUTSIDE}`, `60:${CENTER_IF_OUTSIDE}`]);
+		vim.execute('devhubVim.motion', { motion: 'fileStart' });
+		// Esc: the view as it was, exactly, and the cursor where it was
+		origin.setScrollTop(57);
+		vim.execute('devhubVim.cmdline', { kind: '/' });
+		type('line 80');
+		take();
+		run('devhubVim.cmdline.cancel');
+		assert.deepStrictEqual(take().scrolls, [57]);
+		assert.strictEqual(`${origin.getPosition()}`, '(1,1)');
+	}, { text: Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n'), lines: 10 }));
 
 	test('typing previews the match in the origin; Enter runs the search there and hides the line', () => withPrompt(({ vim, origin, line, run, type, visible }) => {
 		origin.setPosition({ lineNumber: 1, column: 1 });

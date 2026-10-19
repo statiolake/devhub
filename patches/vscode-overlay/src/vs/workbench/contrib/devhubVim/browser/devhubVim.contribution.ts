@@ -675,7 +675,7 @@ class VimEditor extends Disposable implements IVimHost {
 	setCursor(p: VimPos, jump?: boolean): void {
 		const position = { lineNumber: p.line + 1, column: p.col + 1 };
 		this.editor.setPosition(position, selectionSource(jump));
-		this.reveal(position);
+		this.reveal(position, jump);
 	}
 
 	/**
@@ -687,9 +687,20 @@ class VimEditor extends Disposable implements IVimHost {
 		return this.editor.getOption(EditorOption.smoothScrolling) ? ScrollType.Smooth : ScrollType.Immediate;
 	}
 
-	/** Bring the caret into view (against where the window is going, so an animation in flight is not fought). */
-	private reveal(position: IPosition): void {
-		if (!this.revealSuppressed) {
+	/**
+	 * Bring the caret into view (against where the window is going, so an
+	 * animation in flight is not fought). A jump is revealed as VS Code's find
+	 * widget reveals a match, in the center if it is outside the viewport: the
+	 * rule the 'incsearch' preview uses, so Enter after `/foo` lands where the
+	 * preview showed without moving the view again.
+	 */
+	private reveal(position: IPosition, jump?: boolean): void {
+		if (this.revealSuppressed) {
+			return;
+		}
+		if (jump) {
+			this.editor.revealRangeInCenterIfOutsideViewport(Range.fromPositions(position), this.scrollType());
+		} else {
 			this.editor.revealPosition(position, this.scrollType());
 		}
 	}
@@ -713,7 +724,7 @@ class VimEditor extends Disposable implements IVimHost {
 		const caret = this.noteVisual(sel);
 		this.visualRanges = this.visualPrimary ? [sel] : [];
 		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, selectionSource(jump)));
-		this.reveal(caret);
+		this.reveal(caret, jump);
 	}
 
 	/**
@@ -738,7 +749,7 @@ class VimEditor extends Disposable implements IVimHost {
 		const caret = this.noteVisual(sels[0]);
 		this.visualRanges = this.visualPrimary ? sels : [];
 		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelections(sels, selectionSource(jump)));
-		this.reveal(caret);
+		this.reveal(caret, jump);
 	}
 
 	applyEdits(edits: readonly VimEdit[]): void {
@@ -939,13 +950,14 @@ class VimEditor extends Disposable implements IVimHost {
 		this.owner.setSearchHighlight(query);
 	}
 
-	showIncSearch(range: VimRange | undefined): void {
+	showIncSearch(range: VimRange | undefined, keepView?: boolean): void {
 		if (!range) {
 			this.incDecorations.clear();
-			if (this.incOrigin) {
+			if (this.incOrigin && !keepView) {
+				// back exactly where the view was before the pattern was typed
 				this.editor.setScrollPosition(this.incOrigin, this.scrollType());
-				this.incOrigin = undefined;
 			}
+			this.incOrigin = undefined;
 			return;
 		}
 		if (!this.incOrigin) {
