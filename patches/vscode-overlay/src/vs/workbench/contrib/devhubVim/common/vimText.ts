@@ -5,13 +5,17 @@
 
 // DevHub native Vim: text helpers with no editor state - character classes,
 // screen columns, CTRL-A / CTRL-X on numbers, g? (rot13), gw/gq text
-// formatting. Imports nothing.
+// formatting. Imports only the editor's script classes
+// (editor/common/core/scriptWordBoundaries.ts), which VS Code's own word
+// operations use too.
+
+import { ScriptClass, ScriptWordBoundaries, scriptClassAt } from '../../../../editor/common/core/scriptWordBoundaries.js';
 
 export function isWordChar(ch: string): boolean {
 	return /[\p{L}\p{N}_]/u.test(ch);
 }
 
-/** 0 blank (incl. line break), 1 punctuation, 2 keyword; `big` folds 1 into 2. */
+/** 0 blank (incl. line break), 1 punctuation, 2 keyword; `big` folds 1 into 2. Without the script classes. */
 export function charClass(ch: string, big: boolean): number {
 	if (ch === '' || ch === '\n' || ch === ' ' || ch === '\t') {
 		return 0;
@@ -20,6 +24,37 @@ export function charClass(ch: string, big: boolean): number {
 		return 2;
 	}
 	return isWordChar(ch) ? 2 : 1;
+}
+
+/**
+ * The class of the character at `index` of `text` for `w b e ge iw aw *`,
+ * as Vim's utf_class: 0 blank (past the end too, and the ideographic space),
+ * 1 punctuation (of every script), 2 keyword, 3 emoji, and a class of its own
+ * for kanji, hiragana, katakana, fullwidth letters and digits and hangul, so
+ * a word ends where the script changes (漢字 / ひらがな / カタカナ / ＡＢＣ).
+ * `big` (WORD) folds every non-blank into 2. With
+ * `devhub.editor.wordBoundariesByScript` off, `charClass` of the UTF-16 unit.
+ */
+export function charClassAt(text: string, index: number, big: boolean): number {
+	if (index < 0 || index >= text.length) {
+		return 0;
+	}
+	if (!ScriptWordBoundaries.enabled) {
+		return charClass(text[index], big);
+	}
+	const cls = scriptClassAt(text, index);
+	if (cls === ScriptClass.Blank) {
+		return 0;
+	}
+	if (big) {
+		return 2;
+	}
+	return cls === ScriptClass.CjkPunctuation ? ScriptClass.Punctuation : cls;
+}
+
+/** Whether a `charClassAt` class is a keyword one (the word `*` searches for, what `\<` starts). */
+export function isKeywordClass(cls: number): boolean {
+	return cls === ScriptClass.Word || cls >= ScriptClass.Hiragana;
 }
 
 export function isBlank(ch: string): boolean {

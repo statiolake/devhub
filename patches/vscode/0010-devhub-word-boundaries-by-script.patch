@@ -1,0 +1,89 @@
+diff --git a/src/vs/editor/common/core/wordCharacterClassifier.ts b/src/vs/editor/common/core/wordCharacterClassifier.ts
+index 2ae55681c..9a9e6e004 100644
+--- a/src/vs/editor/common/core/wordCharacterClassifier.ts
++++ b/src/vs/editor/common/core/wordCharacterClassifier.ts
+@@ -8,6 +8,7 @@ import { safeIntl } from '../../../base/common/date.js';
+ import { Lazy } from '../../../base/common/lazy.js';
+ import { LRUCache } from '../../../base/common/map.js';
+ import { CharacterClassifier } from './characterClassifier.js';
++import { ScriptWordBoundaries } from './scriptWordBoundaries.js';
+ 
+ export const enum WordCharacterClass {
+ 	Regular = 0,
+@@ -21,6 +22,7 @@ export class WordCharacterClassifier extends CharacterClassifier<WordCharacterCl
+ 	private readonly _segmenter: Lazy<Intl.Segmenter> | null = null;
+ 	private _cachedLine: string | null = null;
+ 	private _cachedSegments: IntlWordSegmentData[] = [];
++	private _cachedByScript = false;
+ 
+ 	constructor(wordSeparators: string, intlSegmenterLocales: Intl.UnicodeBCP47LocaleIdentifier[]) {
+ 		super(WordCharacterClass.Regular);
+@@ -61,18 +63,21 @@ export class WordCharacterClassifier extends CharacterClassifier<WordCharacterCl
+ 	}
+ 
+ 	private _getIntlSegmenterWordsOnLine(line: string): IntlWordSegmentData[] {
+-		if (!this._segmenter) {
++		const byScript = ScriptWordBoundaries.appliesTo(line); // DevHub: words end where the script changes, see scriptWordBoundaries.ts
++		if (!this._segmenter && !byScript) {
+ 			return [];
+ 		}
+ 
+ 		// Check if the line has changed from the previous call
+-		if (this._cachedLine === line) {
++		if (this._cachedLine === line && this._cachedByScript === byScript) {
+ 			return this._cachedSegments;
+ 		}
+ 
+ 		// Update the cache with the new line
+ 		this._cachedLine = line;
+-		this._cachedSegments = this._filterWordSegments(this._segmenter.value.segment(line));
++		this._cachedByScript = byScript;
++		const segments = this._segmenter ? this._filterWordSegments(this._segmenter.value.segment(line)) : null;
++		this._cachedSegments = byScript ? ScriptWordBoundaries.wordsOnLine(line, c => this.get(c) === WordCharacterClass.Regular, segments) : segments!;
+ 
+ 		return this._cachedSegments;
+ 	}
+diff --git a/src/vs/editor/common/core/wordHelper.ts b/src/vs/editor/common/core/wordHelper.ts
+index 32838f920..ebac37cf0 100644
+--- a/src/vs/editor/common/core/wordHelper.ts
++++ b/src/vs/editor/common/core/wordHelper.ts
+@@ -6,6 +6,7 @@
+ import { Iterable } from '../../../base/common/iterator.js';
+ import { toDisposable } from '../../../base/common/lifecycle.js';
+ import { LinkedList } from '../../../base/common/linkedList.js';
++import { ScriptWordBoundaries } from './scriptWordBoundaries.js';
+ 
+ export const USUAL_WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?';
+ 
+@@ -155,7 +156,7 @@ export function getWordAtText(column: number, wordDefinition: RegExp, text: stri
+ 			endColumn: textOffset + 1 + match.index + match[0].length
+ 		};
+ 		wordDefinition.lastIndex = 0;
+-		return result;
++		return ScriptWordBoundaries.narrowWord(result, column); // DevHub: the word in the script at the cursor, see scriptWordBoundaries.ts
+ 	}
+ 
+ 	return null;
+diff --git a/src/vs/editor/common/model/textModelSearch.ts b/src/vs/editor/common/model/textModelSearch.ts
+index ae259f035..f50c25dc0 100644
+--- a/src/vs/editor/common/model/textModelSearch.ts
++++ b/src/vs/editor/common/model/textModelSearch.ts
+@@ -8,6 +8,7 @@ import * as strings from '../../../base/common/strings.js';
+ import { WordCharacterClass, WordCharacterClassifier, getMapForWordSeparators } from '../core/wordCharacterClassifier.js';
+ import { Position } from '../core/position.js';
+ import { Range } from '../core/range.js';
++import { ScriptWordBoundaries } from '../core/scriptWordBoundaries.js';
+ import { EndOfLinePreference, FindMatch, SearchData } from '../model.js';
+ import { TextModel } from './textModel.js';
+ 
+@@ -486,8 +487,8 @@ function rightIsWordBounday(wordSeparators: WordCharacterClassifier, text: strin
+ 
+ export function isValidMatch(wordSeparators: WordCharacterClassifier, text: string, textLength: number, matchStartIndex: number, matchLength: number): boolean {
+ 	return (
+-		leftIsWordBounday(wordSeparators, text, textLength, matchStartIndex, matchLength)
+-		&& rightIsWordBounday(wordSeparators, text, textLength, matchStartIndex, matchLength)
++		(leftIsWordBounday(wordSeparators, text, textLength, matchStartIndex, matchLength) || ScriptWordBoundaries.isBoundary(text, matchStartIndex)) // DevHub: and where the script changes, see scriptWordBoundaries.ts
++		&& (rightIsWordBounday(wordSeparators, text, textLength, matchStartIndex, matchLength) || ScriptWordBoundaries.isBoundary(text, matchStartIndex + matchLength))
+ 	);
+ }
+ 

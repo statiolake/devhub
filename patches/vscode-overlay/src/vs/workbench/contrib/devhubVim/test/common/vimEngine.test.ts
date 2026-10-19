@@ -13,6 +13,7 @@ import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VI
 import type { VimRegex } from '../../common/vimRegex.js';
 import type { VimKeyEvent, VimNavFocus } from '../../common/vimKeys.js';
 import { VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../../common/vimKeys.js';
+import { ScriptWordBoundaries } from '../../../../../editor/common/core/scriptWordBoundaries.js';
 
 /** A string-array host: the cursor is drawn as `|` in `state()`. */
 class TestHost implements IVimHost {
@@ -615,6 +616,57 @@ suite('DevHub Vim engine', () => {
 	});
 });
 
+suite('DevHub Vim: words end where the script changes (devhub.editor.wordBoundariesByScript)', () => {
+
+	setup(() => ScriptWordBoundaries.setEnabled(true));
+	teardown(() => ScriptWordBoundaries.setEnabled(false));
+
+	test('w b e ge: kanji / hiragana / katakana / fullwidth / ASCII / punctuation / emoji', () => {
+		check('|漢字ひらがなカタカナ', 'w', '漢字|ひらがなカタカナ');
+		check('|漢字ひらがなカタカナ', 'ww', '漢字ひらがな|カタカナ');
+		check('|カタカナ漢字', 'w', 'カタカナ|漢字');
+		check('|全角ＡＢＣ１２３です', 'ww', '全角ＡＢＣ１２３|です');
+		check('|fooバーbaz_qux', 'w', 'foo|バーbaz_qux');
+		check('|fooバーbaz_qux', 'ww', 'fooバー|baz_qux');
+		check('|漢字、。「かな」', 'w', '漢字|、。「かな」');
+		check('|漢字、。「かな」', 'ww', '漢字、。「|かな」');
+		check('|絵文字😀😀だ', 'w', '絵文字|😀😀だ');
+		check('|絵文字😀😀だ', 'ww', '絵文字😀😀|だ');
+		check('|すごーいカナ', 'w', 'すごーい|カナ');
+		check('日本語の文章|を', 'b', '日本語の|文章を');
+		check('|日本語の文章', 'e', '日本|語の文章');
+		check('|日本語の文章', 'ee', '日本語|の文章');
+		check('日本語の文|章', 'ge', '日本語|の文章');
+		check('|漢字　かな', 'w', '漢字　|かな');
+	});
+
+	test('W B E stay whitespace-delimited', () => {
+		check('|漢字ひらがな foo', 'W', '漢字ひらがな |foo');
+		check('漢字ひらがな f|oo', 'B', '漢字ひらがな |foo');
+		check('|漢字ひらがな foo', 'E', '漢字ひらが|な foo');
+	});
+
+	test('iw aw', () => {
+		check('漢字ひ|らがなカタカナ', 'diw', '漢字|カタカナ');
+		check('漢字ひ|らがな カタカナ', 'daw', '漢字|カタカナ');
+		check('全角|ＡＢＣ１２３です', 'ciwX<Esc>', '全角|Xです');
+		check('a😀|b c', 'diw', 'a😀| c');
+		check('a|😀b', 'diw', 'a|b');
+	});
+
+	test('* and \\< \\>: the word under the cursor in one script, matched where scripts change', () => {
+		check('|漢字ひらがな\nfoo 漢字カタカナ\n漢字', '*', '漢字ひらがな\nfoo |漢字カタカナ\n漢字');
+		check('漢字ひ|らがな\nひらがなx', '*', '漢字ひらがな\n|ひらがなx');
+		check('|漢字ひらがな\n漢字x', '/\\<漢字\\><CR>', '漢字ひらがな\n|漢字x');
+	});
+
+	test('off: CJK text is one word, as before', () => {
+		ScriptWordBoundaries.setEnabled(false);
+		check('|漢字ひらがな foo', 'w', '漢字ひらがな |foo');
+		check('漢字ひ|らがな', 'diw', '|');
+	});
+});
+
 suite('DevHub Vim modes stay consistent', () => {
 
 	/** Every way of being "in the middle of something" in normal-side modes. */
@@ -702,7 +754,6 @@ suite('DevHub Vim modes stay consistent', () => {
 	});
 
 	test('u and CTRL-R are VS Code\'s undo / redo, a count repeats them (3u, 2<C-r>)', async () => {
-		const flush = () => new Promise(r => setTimeout(r, 0));
 		// the keys run the native commands, nothing of the engine's
 		for (const [key, command] of [['u', 'undo'], ['ctrl+r', 'redo']]) {
 			const b = DEFAULT_KEYBINDINGS.filter(k => k.key === key && evaluateWhen(k.when, { textInputFocus: true, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal' }));

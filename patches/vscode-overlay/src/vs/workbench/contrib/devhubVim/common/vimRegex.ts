@@ -5,7 +5,6 @@
 
 // DevHub native Vim: Vim regular expressions (`:help pattern`) translated to
 // JavaScript ones, and `:s` replacement strings (`:help sub-replace-special`).
-// Imports nothing.
 //
 // Supported: the four magic levels (\v \m \M \V, default 'magic'), \( \) \%(
 // \| \+ \= \? \{n,m} \{-n,m} \< \> \zs \ze, the character classes \s \S \d \D
@@ -14,6 +13,11 @@
 // substitute string), \c \C, \1..\9, \n \t \e \r. Patterns are matched one
 // line at a time (a pattern that needs \n never matches); \%V, \%23l and the
 // other \% items other than \%( \%d \%x \%u are not supported (an error says so).
+// \< and \> end a word where the script changes too (漢字 / かな / カタカナ), as
+// Vim's do; the classes are the editor's (editor/common/core/scriptWordBoundaries.ts),
+// the one import.
+
+import { KEYWORD_CLASS_SOURCES, ScriptWordBoundaries } from '../../../../editor/common/core/scriptWordBoundaries.js';
 
 export interface VimRegex {
 	/** JavaScript source, compiled with the `u` flag (plus `i` when `ignoreCase`). */
@@ -30,6 +34,8 @@ export interface VimRegexOptions {
 
 const KEYWORD = '[\\p{L}\\p{N}_]';
 const NOT_KEYWORD = '[^\\p{L}\\p{N}_]';
+/** Between two keyword characters of different scripts (`devhub.editor.wordBoundariesByScript`). */
+const SCRIPT_CHANGE = KEYWORD_CLASS_SOURCES.map(c => `(?<=${c})(?!${c})`).join('|');
 
 const CLASSES: Record<string, string> = {
 	s: '[ \\t]', S: '[^ \\t]', d: '[0-9]', D: '[^0-9]', w: '[0-9A-Za-z_]', W: '[^0-9A-Za-z_]',
@@ -171,10 +177,10 @@ export function vimRegex(pattern: string, opts: VimRegexOptions): VimRegex {
 				// \& is "and" in Vim (branch concat); approximate with a lookahead of what follows
 				throw new VimRegexError('\\& is not supported');
 			case '<':
-				out += `(?<!${KEYWORD})(?=${KEYWORD})`;
+				out += ScriptWordBoundaries.enabled ? `(?=${KEYWORD})(?:(?<!${KEYWORD})|${SCRIPT_CHANGE})` : `(?<!${KEYWORD})(?=${KEYWORD})`;
 				continue;
 			case '>':
-				out += `(?<=${KEYWORD})(?!${KEYWORD})`;
+				out += ScriptWordBoundaries.enabled ? `(?<=${KEYWORD})(?:(?!${KEYWORD})|${SCRIPT_CHANGE})` : `(?<=${KEYWORD})(?!${KEYWORD})`;
 				continue;
 			case '~':
 				out += litString(opts.lastReplacement ?? '');

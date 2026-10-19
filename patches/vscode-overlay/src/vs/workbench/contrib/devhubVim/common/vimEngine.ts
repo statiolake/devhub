@@ -46,7 +46,7 @@ import { BUILTIN_EX_COMMANDS, ENGINE_EX_COMMANDS, builtinExNameInfo, builtinExNa
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import type { VimRegex } from './vimRegex.js';
 import { VimRegexError, compileVimRegex, expandReplacement, expandTilde, lineMatches, literalVimPattern, vimRegex } from './vimRegex.js';
-import { addToNumber, charClass, charWidth, colOfVcol, formatLines, isBlank, isWordChar, rot13, toggleCase, vcolOf } from './vimText.js';
+import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
 
 export interface VimPos {
 	readonly line: number;
@@ -1025,6 +1025,11 @@ export class VimEngine {
 		return p.col < text.length ? text[p.col] : '\n';
 	}
 
+	/** The word class of the character at `p` (vimText.ts charClassAt; 0 past the end of the line). */
+	private classAt(p: VimPos, big: boolean): number {
+		return charClassAt(this.host.lineText(p.line), p.col, big);
+	}
+
 	private nextChar(p: VimPos): VimPos | undefined {
 		if (p.col < this.len(p.line)) {
 			return pos(p.line, p.col + 1);
@@ -1429,7 +1434,7 @@ export class VimEngine {
 		let range: Range;
 		// `cw` on a word behaves like `ce` (Vim's documented exception), and
 		// on the last char of a word changes just that char.
-		if (op === 'c' && !this.forced && (name === 'wordForward' || name === 'WORDForward') && charClass(this.charAt(cur), false) !== 0) {
+		if (op === 'c' && !this.forced && (name === 'wordForward' || name === 'WORDForward') && this.classAt(cur, false) !== 0) {
 			const e = this.wordEnd(cur, name === 'WORDForward', count ?? 1, true);
 			range = { start: cur, end: pos(e.line, Math.min(e.col + 1, this.len(e.line))), linewise: false };
 		} else {
@@ -2460,8 +2465,8 @@ export class VimEngine {
 						c--;
 					}
 					if (c > 0) {
-						const cls = charClass(text[c - 1], false);
-						while (c > 0 && charClass(text[c - 1], false) === cls) {
+						const cls = charClassAt(text, c - 1, false);
+						while (c > 0 && charClassAt(text, c - 1, false) === cls) {
 							c--;
 						}
 					}
@@ -3576,7 +3581,7 @@ export class VimEngine {
 					return undefined;
 				}
 				const backwards = name === 'searchWordBackward' || name === 'searchWordBackwardPartial';
-				const whole = !name.endsWith('Partial') && isWordChar(word.text[0]);
+				const whole = !name.endsWith('Partial') && isKeywordClass(charClassAt(word.text, 0, false));
 				const esc = literalVimPattern(word.text, backwards ? '?' : '/').slice(2);
 				const pattern = whole ? `\\<${esc.replace(/^\\V/, '')}\\>` : esc;
 				const vpat = `\\V${pattern}`;
@@ -3671,7 +3676,7 @@ export class VimEngine {
 			}
 			case 'localDeclaration': case 'globalDeclaration': {
 				const word = this.wordUnderCursor(cur);
-				if (!word || !isWordChar(word.text[0])) {
+				if (!word || !isKeywordClass(charClassAt(word.text, 0, false))) {
 					return undefined;
 				}
 				// gD: the first match in the file; gd: from the start of the current "function" ([[, or an empty line above it)
@@ -3787,19 +3792,20 @@ export class VimEngine {
 	private wordUnderCursor(cur: VimPos): { text: string; start: number } | undefined {
 		const text = this.host.lineText(cur.line);
 		let c = cur.col;
-		// the keyword under or after the cursor; else the non-blank run
+		// the keyword under or after the cursor (in one script: 漢字 of 漢字かな); else the non-blank run
 		let k = c;
-		while (k < text.length && !isWordChar(text[k])) {
+		while (k < text.length && !isKeywordClass(charClassAt(text, k, false))) {
 			k++;
 		}
 		if (k < text.length) {
 			c = k;
+			const cls = charClassAt(text, c, false);
 			let s = c;
 			let e = c;
-			while (s > 0 && isWordChar(text[s - 1])) {
+			while (s > 0 && charClassAt(text, s - 1, false) === cls) {
 				s--;
 			}
-			while (e < text.length && isWordChar(text[e])) {
+			while (e < text.length && charClassAt(text, e, false) === cls) {
 				e++;
 			}
 			return { text: text.slice(s, e), start: s };
@@ -3827,7 +3833,7 @@ export class VimEngine {
 
 	private wordForward(start: VimPos, big: boolean): VimPos {
 		let p = start;
-		const cls = charClass(this.charAt(p), big);
+		const cls = this.classAt(p, big);
 		if (cls !== 0) {
 			for (; ;) {
 				const nx = this.nextChar(p);
@@ -3835,13 +3841,13 @@ export class VimEngine {
 					return pos(p.line, this.len(p.line));
 				}
 				p = nx;
-				if (charClass(this.charAt(p), big) !== cls) {
+				if (this.classAt(p, big) !== cls) {
 					break;
 				}
 			}
 		}
 		let moved = cmp(p, start) !== 0;
-		while (charClass(this.charAt(p), big) === 0) {
+		while (this.classAt(p, big) === 0) {
 			if (moved && this.isEmptyLine(p)) {
 				break;
 			}
@@ -3861,7 +3867,7 @@ export class VimEngine {
 			return start;
 		}
 		let p: VimPos = first;
-		while (charClass(this.charAt(p), big) === 0 && !this.isEmptyLine(p)) {
+		while (this.classAt(p, big) === 0 && !this.isEmptyLine(p)) {
 			const pv = this.prevChar(p);
 			if (!pv) {
 				return p;
@@ -3871,13 +3877,13 @@ export class VimEngine {
 		if (this.isEmptyLine(p)) {
 			return p;
 		}
-		const cls = charClass(this.charAt(p), big);
+		const cls = this.classAt(p, big);
 		for (; ;) {
 			if (p.col === 0) {
 				return p;
 			}
 			const pv = this.prevChar(p)!;
-			if (charClass(this.charAt(pv), big) !== cls) {
+			if (this.classAt(pv, big) !== cls) {
 				return p;
 			}
 			p = pv;
@@ -3888,13 +3894,13 @@ export class VimEngine {
 	private wordEnd(start: VimPos, big: boolean, n: number, stayIfAtEnd: boolean): VimPos {
 		let p = start;
 		for (let c = 0; c < n; c++) {
-			if (!(stayIfAtEnd && c === 0 && charClass(this.charAt(p), big) !== 0)) {
+			if (!(stayIfAtEnd && c === 0 && this.classAt(p, big) !== 0)) {
 				const nx = this.nextChar(p);
 				if (!nx) {
 					return p;
 				}
 				p = nx;
-				while (charClass(this.charAt(p), big) === 0) {
+				while (this.classAt(p, big) === 0) {
 					const nn = this.nextChar(p);
 					if (!nn) {
 						return this.clampNormal(p);
@@ -3902,10 +3908,10 @@ export class VimEngine {
 					p = nn;
 				}
 			}
-			const cls = charClass(this.charAt(p), big);
+			const cls = this.classAt(p, big);
 			for (; ;) {
 				const nx = this.nextChar(p);
-				if (!nx || nx.line !== p.line || charClass(this.charAt(nx), big) !== cls) {
+				if (!nx || nx.line !== p.line || this.classAt(nx, big) !== cls) {
 					break;
 				}
 				p = nx;
@@ -3917,16 +3923,16 @@ export class VimEngine {
 	private wordEndBackward(start: VimPos, big: boolean, n: number): VimPos {
 		let p = start;
 		for (let c = 0; c < n; c++) {
-			const cls = charClass(this.charAt(p), big);
+			const cls = this.classAt(p, big);
 			// leave the current word
-			while (charClass(this.charAt(p), big) === cls && cls !== 0) {
+			while (this.classAt(p, big) === cls && cls !== 0) {
 				const pv = this.prevChar(p);
 				if (!pv) {
 					return p;
 				}
 				p = pv;
 			}
-			while (charClass(this.charAt(p), big) === 0 && !this.isEmptyLine(p)) {
+			while (this.classAt(p, big) === 0 && !this.isEmptyLine(p)) {
 				const pv = this.prevChar(p);
 				if (!pv) {
 					return p;
@@ -4267,33 +4273,33 @@ export class VimEngine {
 			return undefined;
 		}
 		const col = Math.min(cur.col, text.length - 1);
-		const cls = charClass(text[col], big);
+		const cls = charClassAt(text, col, big);
 		let s = col;
 		let e = col + 1;
-		while (s > 0 && charClass(text[s - 1], big) === cls) {
+		while (s > 0 && charClassAt(text, s - 1, big) === cls) {
 			s--;
 		}
-		while (e < text.length && charClass(text[e], big) === cls) {
+		while (e < text.length && charClassAt(text, e, big) === cls) {
 			e++;
 		}
 		if (around) {
 			if (cls === 0) {
 				// on blanks: blanks plus the following word
 				if (e < text.length) {
-					const c2 = charClass(text[e], big);
-					while (e < text.length && charClass(text[e], big) === c2) {
+					const c2 = charClassAt(text, e, big);
+					while (e < text.length && charClassAt(text, e, big) === c2) {
 						e++;
 					}
 				}
 			} else {
 				const e0 = e;
-				while (e < text.length && charClass(text[e], big) === 0) {
+				while (e < text.length && charClassAt(text, e, big) === 0) {
 					e++;
 				}
 				if (e === e0) {
 					// no white space after the word: take the white space before it (not the indent)
 					let s2 = s;
-					while (s2 > 0 && charClass(text[s2 - 1], big) === 0) {
+					while (s2 > 0 && charClassAt(text, s2 - 1, big) === 0) {
 						s2--;
 					}
 					if (s2 > 0) {
@@ -4303,17 +4309,17 @@ export class VimEngine {
 			}
 		}
 		const run = (from: number): number => {
-			const c = charClass(text[from], big);
+			const c = charClassAt(text, from, big);
 			let to = from;
-			while (to < text.length && charClass(text[to], big) === c) {
+			while (to < text.length && charClassAt(text, to, big) === c) {
 				to++;
 			}
 			return to;
 		};
 		for (let c = 1; c < count && e < text.length; c++) {
 			e = run(e);
-			if (around && e < text.length && charClass(text[e - 1], big) !== 0) {
-				if (charClass(text[e], big) === 0) {
+			if (around && e < text.length && charClassAt(text, e - 1, big) !== 0) {
+				if (charClassAt(text, e, big) === 0) {
 					e = run(e);
 				}
 			} else if (around && e < text.length) {

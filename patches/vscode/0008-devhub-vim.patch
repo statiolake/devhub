@@ -681,15 +681,18 @@ index 0d95d0bf..5ac0b265 100644
  		const result: IKeybindingItem[] = [];
  		let keybindingsLen = 0;
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
-index 74be4cac..1d18db57 100644
+index 74be4cac..a7cc22aa 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
-@@ -219,6 +219,9 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+@@ -219,6 +219,12 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
  // System-wide (OS global) Keybindings
  import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
  
 +// DevHub: native Vim (patches/vscode/0008-devhub-vim.patch)
 +import './contrib/devhubVim/browser/devhubVim.contribution.js';
++
++// DevHub: word boundaries between scripts (patches/vscode/0010-devhub-word-boundaries-by-script.patch)
++import './contrib/devhubWordBoundaries/browser/devhubWordBoundaries.contribution.js';
 +
  //#endregion
  

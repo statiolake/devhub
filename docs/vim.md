@@ -47,6 +47,9 @@ inside a `"string"` on the line are skipped, as in Vim), `( )` sentences,
 `{ }` paragraphs, `[[ ]] [] ][` sections, `[( [{ ]) ]}` unmatched brackets,
 `/ ? n N` with offsets (`/foo/e+1`, `/foo/+2`), `* # g* g#`, `gd gD`,
 `` `{mark} '{mark} `` (with `` `` `` and `''`), `gj gk` (screen lines), `gn gN`.
+Words end where the script changes, as in Vim (`漢字` / `ひらがな` / `カタカナ`
+/ `ＡＢＣ１２３` / `abc`, see [Words between scripts](#words-between-scripts));
+`W B E` stay whitespace-delimited.
 Inclusive / exclusive / linewise follow `:help exclusive` and
 `:help exclusive-linewise`; `cw` is `ce` on a word; `dw` on the last word of
 a line stops at the line end; `dv` `dV` `d<C-v>` force the motion type.
@@ -686,6 +689,47 @@ a selection put back (after a visual-mode change) collapses to its start,
 where the change began, and a visual mode that was on when you pressed
 `Cmd+Z` ends. The caret rule keeps it on a character. `Cmd+Z` in insert mode
 undoes and stays in insert mode, as in VS Code.
+
+## Words between scripts
+
+Japanese has no spaces between words, so a word of VS Code's is a whole
+run like `日本語の文章をカタカナで`. With `devhub.editor.wordBoundariesByScript`
+(on by default) a word ends where the script changes, as Vim's `utf_class`
+has it: 日本語 / の / 文章 / を / カタカナ / で. The classes are kanji (with 々
+〆), hiragana, katakana (with ー, and ー after hiragana belongs to the
+hiragana: すごーい), fullwidth letters and digits (ＡＢＣ１２３), CJK
+punctuation (、。「」・ and the fullwidth symbols), hangul, emoji (a ZWJ
+sequence or a flag is one), blanks (the ideographic space `　` is one), and
+the rest: letters and digits of other scripts (`abc`, `é`, Greek, ...) and
+ASCII punctuation.
+
+The same rule is used by Vim and by VS Code's own word commands, in every
+editor, Vim on or off:
+
+| Where | What changes |
+| --- | --- |
+| Vim `w b e ge`, `iw aw`, `cw` | stop at each class change (CJK punctuation and ASCII punctuation are one class, as in Vim); `W B E iW aW` are unchanged (blanks only, the ideographic space included) |
+| Vim `*` `#` `g*` `g#`, `\<` `\>` | the word under the cursor is the run in one script (`*` on 漢字 of 漢字かな searches `\<漢字\>`), and `\<` / `\>` match where the script changes |
+| `Alt+Left` / `Alt+Right` (`cursorWordLeft` / `cursorWordEndRight` …), `Alt+Backspace` / `Alt+Delete` (`deleteWordLeft` / `deleteWordRight`) | move / delete one script run |
+| double-click | selects the script run |
+| the word under the cursor: `Cmd+D` (`editor.action.addSelectionToNextFindMatch`), the word highlight, the find widget's seed, completion's word | the script run at the cursor |
+| whole-word matches (`Cmd+D`'s next match, the highlight's occurrences, find with "Match Whole Word") | a match also ends where the script changes |
+
+What it leaves to VS Code: a line of ASCII only is untouched, and so is any
+change between letters / digits and ASCII punctuation (`foo-bar`, `a.b`),
+which stays `editor.wordSeparators`' and the language's word definition's.
+`editor.wordSeparators` still applies (a character in it is a separator in
+Japanese text too). With `editor.wordSegmenterLocales` (`["ja"]`, VS Code's
+dictionary-based Intl.Segmenter words) VS Code's word commands use its words
+split at script changes as well (これ / は / テスト / です rather than
+これは / テスト / です); Vim's motions use the script rule only. Turn the
+setting off to have VS Code's words (and Vim's previous ones, where a
+letter of any script is a keyword character) back.
+
+It is the editor's core (`editor/common/core/scriptWordBoundaries.ts`, with a
+line or two in `wordCharacterClassifier.ts`, `wordHelper.ts` and
+`textModelSearch.ts`:
+[`patches/vscode/0010-devhub-word-boundaries-by-script.patch`](../patches/vscode/0010-devhub-word-boundaries-by-script.patch)).
 
 ## Customising keys
 
