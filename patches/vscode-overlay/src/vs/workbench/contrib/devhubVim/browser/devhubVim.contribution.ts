@@ -169,7 +169,11 @@ import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } fr
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
 import { VIM_EDIT_COMMANDS } from './vimEdit.js';
+import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
+
+/** The workbench commands an ex command runs that take the file it ran in (`from`). */
+const FROM_COMMANDS = [...VIM_EDIT_COMMANDS, ...VIM_SHELL_COMMANDS];
 
 const SETTING = 'devhub.vim.enabled';
 const EX_SETTING = 'devhub.vim.exCommands';
@@ -1087,8 +1091,8 @@ class VimEditor extends Disposable implements IVimHost {
 	}
 
 	executeCommand(command: string, args: unknown): Promise<unknown> {
-		if ((VIM_EDIT_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
-			// `:e {file}` `:sp {file}` ...: `%` and the current directory are this editor's, even after a split moved the focus
+		if ((FROM_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
+			// `:e {file}` `:sp {file}` `:w {file}` `:!cmd` ...: `%` and the current directory are this editor's, even after a split moved the focus
 			args = { ...(args as object | undefined), from: this.model.uri.toString() };
 		}
 		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));

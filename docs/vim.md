@@ -473,6 +473,7 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | `devhubVim.cmdlineKind` | `:`, `/` or `?` in the prompt line, or `''` |
 | `devhubVim.cmdlineEmpty` | the prompt line is empty |
 | `devhubVim.cmdlineAwaitingRegister` | `CTRL-R` in the prompt line waits for a register name |
+| `devhubVim.shellRunning` | a filter (`:{range}!{cmd}`, `:r !{cmd}`) is running: `CTRL-C` (`devhubVim.cancelShell`) cancels it |
 
 The defaults use these `when` clauses (`common/vimKeymap.ts` `VIM_WHEN`); copy
 them for your own bindings. They start with `textInputFocus`, not
@@ -894,6 +895,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:reg[isters]` `:di[splay]` `:marks` | shown in the status bar |
 | `:@{reg}` `:@:` `:=` `:ret[ab]` `:le[ft]` `:ri[ght]` `:ce[nter]` | |
 | `:[range]w[rite][!] {file}` `:w >> [file]` `:sav[eas][!] {file}` `:[line]r[ead] [file]` | see [Writing and reading files](#writing-and-reading-files) |
+| `:!{cmd}` `:{range}!{cmd}` `:r !{cmd}` `:[range]w !{cmd}` | see [Shell commands](#shell-commands) |
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
@@ -1029,6 +1031,44 @@ runs.
   `E20: Mark not set`, and those of each command.
 * No command modifiers (`:silent`, `:vertical`, `:keepjumps` …) and no
   comments (`"`) yet.
+
+### Shell commands
+
+| Command | |
+| --- | --- |
+| `:!{cmd}` | runs `{cmd}` in a terminal tab in the editor area (the active group); when it ends, Vim's `shell returned N` (when it failed) and "Press any key to close the terminal"; the key closes the tab and the focus goes back to the editor |
+| `:{range}!{cmd}` | filters the lines through `{cmd}`: they are its stdin, its stdout takes their place (also when it fails, as in Vim; no output deletes them), its stderr (the first line) and a non-zero exit go to the status bar; one undo step, the cursor on the first line |
+| `:r !{cmd}` `:{n}r !{cmd}` | puts `{cmd}`'s output below the line (`:0r !` above the first) |
+| `:[range]w !{cmd}` | gives the buffer (or the lines) to `{cmd}` as stdin, in a terminal tab as `:!` |
+
+* The command is run by your `$SHELL` with `-c` (`/bin/sh` when `$SHELL` is
+  not set), plain: no terminal profile, no shell integration, nothing typed
+  into an interactive shell. It starts in Vim's current directory: the
+  workspace folder of the file (see [File names](#file-names)).
+* `%` in it is the current file (relative to that directory; `%:p` absolute,
+  `%:h` `%:t` `%:r` `%:e` as in Vim); `!` is the previous command (`:!!`
+  runs it again: `E34` when there is none); `\%` and `\!` are the characters
+  themselves. `|` is part of the command (`:!ls | wc -l`).
+* **Where the workspace is.** In a remote window (SSH, a dev container) all of
+  this runs there, on the files the editor shows: the terminal is opened with
+  the workspace folder's remote URI as its cwd (VS Code's remote terminal
+  backend), and the filters run in the built-in extension `devhub-vim-shell`
+  (`extensionKind: workspace`, so VS Code runs it in the workspace's
+  extension host: the local one for a local folder, the remote server's for
+  a remote one) with Node's `child_process`, stdin / stdout / stderr as
+  pipes. The remote server must be one built from these sources (it ships
+  the extension). A workspace with no file system of a machine (a virtual
+  one) has no shell.
+* **Long filters.** After half a second a notification shows the running
+  command with Cancel; `CTRL-C` (`devhubVim.cancelShell`, while
+  `devhubVim.shellRunning`) cancels too. Cancelling stops the command and
+  everything it started (its process group) and changes nothing
+  ("Interrupted"). The lines are followed while it runs (lines added above
+  them meanwhile do not confuse it), and what comes after it in a macro or
+  a `:g` waits for it.
+* Shell commands run in an untrusted workspace too, as VS Code's terminal
+  does: they are what you type. Nothing a workspace contains can define a
+  `:` command (see [Your own commands](#your-own-commands)).
 
 ### Your own commands
 
@@ -1209,12 +1249,13 @@ otherwise.
   as part of the name.
 * `:w` and `:r` know no `++opt` / `+cmd`, and `:w {file}` writes UTF-8
   (not the buffer's encoding).
-* Not implemented: `U` (undo line), `!` / `=` with 'equalprg' (filter
-  through a program), `g@` ('operatorfunc'), `gR` (virtual replace),
+* Not implemented: `U` (undo line), the `!{motion}` operator and `=` with
+  'equalprg' (use `:{range}!{cmd}`), `:sh[ell]`, `:{range}!` without a
+  command, `g@` ('operatorfunc'), `gR` (virtual replace),
   `CTRL-V {char}` / `CTRL-K` (literal / digraph input), `gm` `g0` `g$` `g^`
   (screen-line column motions), `[m ]m`, `[* ]*` `[/ ]/`, `zh zl zs ze`
   (horizontal scrolling), `zn zN zi zx`, the command-line window (`q:`), `:let`
-  and other Vimscript, `:!`, `:make`, the location list
+  and other Vimscript, `:make`, the location list
   / tags / argument list, `CTRL-W x r T`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
 * Patterns are JavaScript regular expressions (VS Code's find), not Vim's:

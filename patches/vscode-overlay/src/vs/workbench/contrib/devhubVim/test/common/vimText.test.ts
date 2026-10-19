@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { BUILTIN_EX_REGISTRY, parseExCommand, parseGlobal, parseSubstitute, resolveExAddress, canonicalExName } from '../../common/vimEx.js';
+import { BUILTIN_EX_REGISTRY, expandShellBang, expandShellPercent, parseExCommand, parseGlobal, parseSubstitute, resolveExAddress, canonicalExName } from '../../common/vimEx.js';
 
 /** What the parser read: the range, the name as typed, `!`, the argument. */
 function parseExLine(line: string) {
@@ -56,6 +56,17 @@ suite('DevHub Vim ex parsing', () => {
 		assert.strictEqual(resolveExAddress('/foo/+1', ctx), 10);
 		assert.strictEqual(resolveExAddress('+3', ctx), 8);
 		assert.strictEqual(resolveExAddress('$-1', ctx), 19);
+	});
+
+	test(':! commands: ! is the previous command, % the file (relative to the current directory), \! \% themselves', () => {
+		assert.deepStrictEqual(expandShellBang('make && !', 'ls'), { cmd: 'make && ls' });
+		assert.deepStrictEqual(expandShellBang('echo \\! \\%', undefined), { cmd: 'echo ! \\%' });
+		assert.deepStrictEqual(expandShellBang('!', undefined), { error: 'E34: No previous command' });
+		const ctx = { cwd: '/ws', current: '/ws/src/a.test.ts' };
+		assert.deepStrictEqual(expandShellPercent('wc -l % %:h %:t %:r %:e %:p %:p:h \\%', ctx), { cmd: 'wc -l src/a.test.ts src a.test.ts src/a.test ts /ws/src/a.test.ts /ws/src %' });
+		assert.deepStrictEqual(expandShellPercent('cat %', { cwd: '/ws', current: '/etc/hosts' }), { cmd: 'cat /etc/hosts' });
+		assert.deepStrictEqual(expandShellPercent('ls %:h', { cwd: '/ws', current: '/ws/a.ts' }), { cmd: 'ls .' });
+		assert.ok('error' in expandShellPercent('cat %', { cwd: '/ws' }));
 	});
 
 	test(':s and :g arguments', () => {

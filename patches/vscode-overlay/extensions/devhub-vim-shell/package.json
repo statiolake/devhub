@@ -1,0 +1,27 @@
+{
+  "name": "devhub-vim-shell",
+  "displayName": "DevHub Vim: shell commands",
+  "description": "Runs the shell commands of DevHub Vim's :{range}!{cmd} and :r !{cmd} where the workspace is (this machine, or the remote one), with the lines on stdin.",
+  "version": "1.0.0",
+  "publisher": "vscode",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "activationEvents": [
+    "onCommand:_devhubVim.shell.run",
+    "onCommand:_devhubVim.shell.cancel",
+    "onCommand:_devhubVim.shell.tempFile"
+  ],
+  "main": "./extension.js"
+}

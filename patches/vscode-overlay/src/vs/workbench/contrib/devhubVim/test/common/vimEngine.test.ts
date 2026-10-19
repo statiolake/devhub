@@ -1612,6 +1612,88 @@ suite('DevHub Vim ex commands', () => {
 		assert.strictEqual(w.host.lines.join('\n'), 'z\na\nb\nnew');
 	});
 
+	test(':!cmd runs in a terminal; ! is the previous command, \! a !, :!! runs it again', async () => {
+		const v = new Vim('|a');
+		v.keys(':!make test<CR>');
+		v.keys(':!! -j2<CR>');
+		v.keys(':!echo \\! %<CR>');
+		await flush();
+		assert.deepStrictEqual(v.host.commands.map(c => [c.command, c.args]), [
+			['_devhubVim.shell', { cmd: 'make test' }],
+			['_devhubVim.shell', { cmd: 'make test -j2' }],
+			['_devhubVim.shell', { cmd: 'echo ! %' }],
+		]);
+		const fresh = new Vim('|a', [], new VimSharedState()).keys(':!!<CR>');
+		assert.ok(fresh.vim.status().includes('E34'), fresh.vim.status());
+		const empty = new Vim('|a').keys(':!<CR>');
+		assert.ok(empty.vim.status().includes('E471'), empty.vim.status());
+		// | is part of the command
+		const bar = new Vim('|a').keys(':!ls | wc -l<CR>');
+		assert.deepStrictEqual(bar.host.commands.map(c => c.args), [{ cmd: 'ls | wc -l' }]);
+	});
+
+	test(':{range}!cmd filters the lines: stdout in their place (also on failure), stderr and the exit code in the status bar, one undo step', async () => {
+		const filter = (answer: (cmd: string, input: string) => unknown) => {
+			const v = new Vim('x\n|c\nb\na\ny');
+			v.host.answer = (command, args) => command === '_devhubVim.filter' ? answer((args as { cmd: string }).cmd, (args as { input: string }).input) : undefined;
+			return v;
+		};
+		let v = filter((_cmd, input) => ({ stdout: input.split('\n').filter(l => l).sort().join('\n') + '\n', stderr: '', code: 0, cancelled: false }));
+		v.keys(':.,+2!sort<CR>');
+		await flush();
+		assert.strictEqual(v.state(), 'x\n|a\nb\nc\ny');
+		assert.deepStrictEqual(v.host.commands[0].args, { cmd: 'sort', input: 'c\nb\na\n' });
+		assert.ok(v.vim.status().includes('3 lines filtered'), v.vim.status());
+		v.keys('u');
+		assert.strictEqual(v.host.lines.join('\n'), 'x\nc\nb\na\ny');
+		// a failing command: its output replaces the lines all the same, as Vim's
+		v = filter(() => ({ stdout: 'partial\n', stderr: 'sort: bad option\nmore\n', code: 2, cancelled: false }));
+		v.keys(':2,3!sort -Z<CR>');
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'x\npartial\na\ny');
+		assert.ok(v.vim.status().includes('shell returned 2: sort: bad option'), v.vim.status());
+		// no output: the lines go
+		v = filter(() => ({ stdout: '', stderr: '', code: 0, cancelled: false }));
+		v.keys(':2,3!true<CR>');
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'x\na\ny');
+		// cancelled (Cancel, CTRL-C): nothing changes
+		v = filter(() => ({ stdout: 'x\n', stderr: '', code: null, cancelled: true }));
+		v.keys(':%!slow<CR>');
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'x\nc\nb\na\ny');
+		assert.ok(v.vim.status().includes('Interrupted'), v.vim.status());
+		// the lines are followed while the command runs
+		v = new Vim('|a\nb');
+		let release: (r: unknown) => void = () => { };
+		v.host.answer = command => command === '_devhubVim.filter' ? new Promise(r => release = r) : undefined;
+		v.keys(':2!tr a-z A-Z<CR>');
+		v.keys('ggOz<Esc>');
+		release({ stdout: 'B\n', stderr: '', code: 0, cancelled: false });
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), 'z\na\nB');
+	});
+
+	test(':r !cmd puts its output below the line; :w !cmd gives the lines to a command in a terminal', async () => {
+		const v = new Vim('a\n|b');
+		v.host.answer = command => command === '_devhubVim.filter' ? { stdout: 'one\ntwo\n', stderr: 'warn\n', code: 0, cancelled: false } : undefined;
+		v.keys(':r !date<CR>');
+		await flush();
+		assert.strictEqual(v.state(), 'a\nb\n|one\ntwo');
+		assert.deepStrictEqual(v.host.commands[0].args, { cmd: 'date', input: '' });
+		assert.ok(v.vim.status().includes('warn'), v.vim.status());
+		v.keys(':0r!echo top<CR>');
+		await flush();
+		assert.deepStrictEqual(v.host.commands[1].args, { cmd: 'echo top', input: '' });
+		const w = new Vim('a\n|b\nc');
+		w.keys(':w !wc -l<CR>:2,3w !cat | grep x<CR>');
+		await flush();
+		assert.deepStrictEqual(w.host.commands.map(c => [c.command, c.args]), [
+			['_devhubVim.shell', { cmd: 'wc -l', input: ['a', 'b', 'c'] }],
+			['_devhubVim.shell', { cmd: 'cat | grep x', input: ['b', 'c'] }],
+		]);
+	});
+
 	test('@: repeats the line typed, not the commands :g ran', () => {
 		const v = new Vim('|a\nb\na');
 		v.keys(':g/a/s/$/!/<CR>');

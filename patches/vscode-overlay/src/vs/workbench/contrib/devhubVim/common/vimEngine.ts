@@ -48,7 +48,7 @@
 import type { IVimCmdlineCompletionSources, IVimCmdlineTarget, VimCmdlineKind, VimExCommandInfo, VimOptionInfo } from './vimCmdline.js';
 import { VimCmdlineController, VimStringLine } from './vimCmdline.js';
 import type { ExAddressContext, ExStep, ParsedExCommand } from './vimEx.js';
-import { ExRegistry, exInvocation, expandExSpec, parseExCommand, parseExCommands, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange } from './vimEx.js';
+import { ExRegistry, exInvocation, expandExSpec, expandShellBang, parseExCommand, parseExCommands, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange } from './vimEx.js';
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
@@ -324,6 +324,8 @@ export class VimSharedState {
 	lastSubstitute: { pattern: string; replacement: string; flags: string } | undefined;
 	lastInserted = '';
 	lastEx = '';
+	/** The last `:!` command (`!` in the next one, `:!!`). */
+	lastShell: string | undefined;
 	readonly history: { ':': string[]; '/': string[] } = { ':': [], '/': [] };
 	options: VimOptions = { ...DEFAULT_VIM_OPTIONS };
 	/** `devhub.vim.inccommand`: 'nosplit' previews `:s` in the editor as it is typed, '' does not. */
@@ -5200,6 +5202,9 @@ export class VimEngine {
 			case 'read':
 				this.exRead(how.zero ? -1 : range ? range.end : cur.line, args, how.fail);
 				return;
+			case '!':
+				this.exShell(range, args, how.fail);
+				return;
 		}
 		this.message = `E492: Not an editor command: ${name}`;
 	}
@@ -5230,6 +5235,17 @@ export class VimEngine {
 	 * workspace's file system.
 	 */
 	private exWrite(range: { start: number; end: number } | undefined, bang: boolean, args: string, failed?: () => void): void {
+		if (args.startsWith('!')) {
+			// `:[range]w !{cmd}`: the lines on the command's stdin, in a terminal
+			const cmd = this.shellCommand(args.slice(1).trim());
+			const r = range ?? { start: 0, end: this.lastLine() };
+			if (cmd === undefined) {
+				failed?.();
+			} else {
+				this.callHost('_devhubVim.shell', { cmd, input: this.linesText(r.start, r.end).split('\n') }, () => { }, failed);
+			}
+			return;
+		}
 		let file = args;
 		let append = false;
 		if (file.startsWith('>>')) {
@@ -5262,19 +5278,106 @@ export class VimEngine {
 	 * is followed while the file is read (a mark), as any mark follows edits.
 	 */
 	private exRead(line: number, file: string, failed?: () => void): void {
+		let cmd: string | undefined;
+		if (file.startsWith('!')) {
+			// `:r !{cmd}`: its output (VS Code's filter, below)
+			cmd = this.shellCommand(file.slice(1).trim());
+			if (cmd === undefined) {
+				failed?.();
+				return;
+			}
+		}
 		const tag = `\u0000r${Date.now()}:${Math.random()}`;
 		if (line >= 0) {
 			this.marks.set(tag, pos(line, 0));
 		}
-		this.callHost('_devhubVim.readFile', { file }, result => {
+		this.callHost(cmd !== undefined ? '_devhubVim.filter' : '_devhubVim.readFile', cmd !== undefined ? { cmd, input: '' } : { file }, result => {
 			const at = line < 0 ? -1 : this.marks.get(tag)?.line;
 			this.marks.delete(tag);
 			if (at === undefined) {
 				return; // the line went away meanwhile
 			}
-			this.insertLines(at, Array.isArray(result) ? result.map(String) : []);
+			if (cmd === undefined) {
+				this.insertLines(at, Array.isArray(result) ? result.map(String) : []);
+				return;
+			}
+			const r = shellResult(result);
+			if (!r.cancelled) {
+				this.insertLines(at, outputLines(r.stdout));
+			}
+			this.message = shellMessage(r, '');
 		}, () => {
 			this.marks.delete(tag);
+			failed?.();
+		});
+	}
+
+	/**
+	 * A `:!` command with `!` replaced by the previous one (expandShellBang),
+	 * which it then is; undefined after Vim's error (E34, E471).
+	 */
+	private shellCommand(typed: string): string | undefined {
+		if (!typed) {
+			this.message = 'E471: Argument required';
+			return undefined;
+		}
+		const e = expandShellBang(typed, this.shared.lastShell);
+		if ('error' in e) {
+			this.message = e.error;
+			return undefined;
+		}
+		this.shared.lastShell = e.cmd;
+		return e.cmd;
+	}
+
+	/**
+	 * `:!{cmd}`: in a terminal (the workbench's `_devhubVim.shell`).
+	 * `:{range}!{cmd}` (`:help :range!`): the lines through the command, its
+	 * stdout in their place (also when it fails, as in Vim), its stderr and a
+	 * non-zero exit in the status bar; one undo step; the cursor on the first
+	 * line. The lines are followed (marks) while the command runs; a cancelled
+	 * one (Cancel, CTRL-C) changes nothing.
+	 */
+	private exShell(range: { start: number; end: number } | undefined, args: string, failed?: () => void): void {
+		const cmd = this.shellCommand(args.trim());
+		if (cmd === undefined) {
+			failed?.();
+			return;
+		}
+		if (!range) {
+			this.callHost('_devhubVim.shell', { cmd }, () => { }, failed);
+			return;
+		}
+		const id = `\u0000f${Date.now()}:${Math.random()}`;
+		this.marks.set(id + 's', pos(range.start, 0));
+		this.marks.set(id + 'e', pos(range.end, 0));
+		const forget = () => {
+			this.marks.delete(id + 's');
+			this.marks.delete(id + 'e');
+		};
+		this.callHost('_devhubVim.filter', { cmd, input: this.linesText(range.start, range.end) + '\n' }, result => {
+			const s = this.marks.get(id + 's')?.line;
+			const e = this.marks.get(id + 'e')?.line;
+			forget();
+			const r = shellResult(result);
+			if (s === undefined || e === undefined || r.cancelled) {
+				this.message = r.cancelled ? 'Interrupted' : shellMessage(r, '');
+				return;
+			}
+			const out = outputLines(r.stdout);
+			const n = e - s + 1;
+			if (out.length) {
+				this.edit([{ start: pos(s, 0), end: pos(e, this.len(e)), text: out.join('\n') }]);
+				this.closeChange();
+				this.setMark('[', pos(s, 0));
+				this.setMark(']', pos(s + out.length - 1, 0));
+				this.setNormalCursor(pos(s, this.firstNonBlank(s)));
+			} else {
+				this.deleteLines(s, e);
+			}
+			this.message = shellMessage(r, n > this.options.report ? `${n} lines filtered` : '');
+		}, () => {
+			forget();
 			failed?.();
 		});
 	}
@@ -5978,6 +6081,31 @@ export class VimEngine {
 			}
 		})());
 	}
+}
+
+/** What `_devhubVim.filter` answered (browser/vimShell.ts VimShellResult). */
+function shellResult(r: unknown): { stdout: string; stderr: string; code: number | null; cancelled: boolean } {
+	const o = isRecord(r) ? r : {};
+	return { stdout: str(o.stdout), stderr: str(o.stderr), code: typeof o.code === 'number' ? o.code : null, cancelled: o.cancelled === true };
+}
+
+/** A command's output as lines (the line end after the last one is no line). */
+function outputLines(stdout: string): string[] {
+	if (!stdout) {
+		return [];
+	}
+	const lines = stdout.replace(/\r\n/g, '\n').split('\n');
+	if (lines[lines.length - 1] === '') {
+		lines.pop();
+	}
+	return lines;
+}
+
+/** The status bar after a shell command: Vim's "shell returned N" and the first line of its stderr, else `ok`. */
+function shellMessage(r: { stderr: string; code: number | null }, ok: string): string {
+	const err = r.stderr.split(/\r?\n/).find(l => l.trim()) ?? '';
+	const parts = [r.code ? `shell returned ${r.code}` : '', err].filter(x => x);
+	return parts.length ? parts.join(': ') : ok;
 }
 
 function endOfText(at: VimPos, text: string): VimPos {

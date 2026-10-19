@@ -11,7 +11,7 @@
 // (ExRegistry): what it runs and what it takes. Vim's built-in names
 // (`:s` is `:substitute`, `:sp` is `:split`) are default entries:
 // * those whose `engine` is set are Vim's editing commands (:s :g :d :m :t
-//   :normal :sort ...), implemented by the engine on the buffer
+//   :normal :sort :w :r :! ...), implemented by the engine on the buffer
 //   (vimEngine.ts runEngineEx);
 // * the others run VS Code commands, exactly as a keybinding runs a command:
 //   steps `{ command, args? }`, in order, each awaited.
@@ -111,7 +111,7 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['undo', 'u'], ['redo', 'red'], ['mark', 'ma'], ['k', 'k', 'mark'], ['set', 'se'], ['setlocal', 'setl', 'set'],
 	['registers', 'reg'], ['display', 'di', 'registers'],
 	['marks', 'marks'], ['retab', 'ret'], ['left', 'le'], ['right', 'ri'], ['center', 'ce'], ['read', 'r'],
-	['&', '&'], ['&&', '&&'], ['~', '~'], ['<', '<'], ['>', '>'], ['@', '@'], ['=', '='],
+	['&', '&'], ['&&', '&&'], ['~', '~'], ['<', '<'], ['>', '>'], ['@', '@'], ['=', '='], ['!', '!'],
 ];
 
 /** The canonical built-in name `typed` stands for (`s` -> `substitute`), or undefined. */
@@ -189,8 +189,8 @@ const FILE = { nargs: '?', complete: 'file' } as const;
 
 /** Every built-in ex command, by canonical name. */
 export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
-	// `:w` saves; `:[range]w[!] {file}` and `:w >> {file}` write to a file (vimEngine.ts exWrite)
-	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%' }),
+	// `:w` saves; `:[range]w[!] {file}` and `:w >> {file}` write to a file, `:[range]w !{cmd}` to a command (vimEngine.ts exWrite)
+	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%', shell: true }),
 	wall: vs(SAVE_ALL, { bang: true }),
 	update: vs(SAVE, { bang: true }),
 	quit: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true }),
@@ -262,8 +262,10 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	'>': vim('>'),
 	'@': vim('@', { range: 'line' }),
 	'=': vim('=', { range: 'line', nargs: 'none' }),
-	// `:r [file]`: its lines below the line (`:0r` above the first)
-	read: vim('read', { range: 'line', bang: true, nargs: '?', complete: 'file' }),
+	// `:r [file]`, `:r !{cmd}`: its lines below the line (`:0r` above the first)
+	read: vim('read', { range: 'line', bang: true, nargs: '?', complete: 'file', shell: true }),
+	// `:!{cmd}` (a terminal), `:{range}!{cmd}` (a filter): vimEngine.ts exShell
+	'!': vim('!', { nargs: '+', bar: false, complete: 'file', shell: true }),
 };
 
 // ---- the user's commands ----------------------------------------------------------
@@ -741,7 +743,7 @@ function checkArgs(args: string, nargs: ExNargs): string | undefined {
  * colons, the range, the name (looked up in `registry`), `!`, then the
  * argument as the command's spec takes it: to the next unescaped `|` when the
  * command takes `|` (`bar`), or to the end of the line (`:g`, `:normal`,
- * a user command with `bar: false`).
+ * `:!cmd`, `:r !cmd`, `:w !cmd`, a user command with `bar: false`).
  */
 export function parseExCommand(line: string, registry: ExRegistry, from = 0): ParsedExCommand {
 	let i = from;
@@ -1061,6 +1063,72 @@ export function expandExSpec(spec: ExSpec, inv: ExInvocation): ExStep[] {
 	return spec.steps
 		.filter(s => s.ifBang === undefined || s.ifBang === inv.bang)
 		.map(s => s.args === undefined ? { command: s.command } : { command: s.command, args: substituteExArgs(s.args, inv) });
+}
+
+// ---- shell commands ----------------------------------------------------------------
+
+/**
+ * A `:!` command as Vim reads it, first step (the engine's): `!` is the
+ * previous command (`:!!` runs it again; E34 without one), `\!` a `!`.
+ * `%` and `\%` are left for expandShellPercent.
+ */
+export function expandShellBang(cmd: string, previous: string | undefined): { readonly cmd: string } | { readonly error: string } {
+	let out = '';
+	for (let i = 0; i < cmd.length; i++) {
+		const c = cmd[i];
+		if (c === '\\' && cmd[i + 1] === '!') {
+			out += '!';
+			i++;
+			continue;
+		}
+		if (c === '\\' && cmd[i + 1] === '%') {
+			out += '\\%';
+			i++;
+			continue;
+		}
+		if (c === '!') {
+			if (previous === undefined) {
+				return { error: 'E34: No previous command' };
+			}
+			out += previous;
+			continue;
+		}
+		out += c;
+	}
+	return { cmd: out };
+}
+
+/**
+ * The second step (the workbench's, which knows the file): `%` is the current
+ * file, relative to the current directory when it is in it, with Vim's `:p`
+ * `:h` `:t` `:r` `:e`; `\%` a `%`. E499 when there is no file name.
+ */
+export function expandShellPercent(cmd: string, ctx: ExFileContext): { readonly cmd: string } | { readonly error: string } {
+	let out = '';
+	for (let i = 0; i < cmd.length; i++) {
+		const c = cmd[i];
+		if (c === '\\' && cmd[i + 1] === '%') {
+			out += '%';
+			i++;
+			continue;
+		}
+		if (c === '%') {
+			const mods = /^(:[phtre])*/.exec(cmd.slice(i + 1))![0];
+			if (ctx.current === undefined) {
+				return { error: 'E499: Empty file name for \'%\' or \'#\', only works with ":p:h"' };
+			}
+			let path = applyFileModifiers(ctx.current, mods.replace(/:p/g, ''));
+			const cwd = ctx.cwd.replace(/\/+$/, '');
+			if (!mods.includes(':p') && path.startsWith('/')) {
+				path = path === cwd ? '.' : path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path;
+			}
+			out += path;
+			i += mods.length;
+			continue;
+		}
+		out += c;
+	}
+	return { cmd: out };
 }
 
 // ---- :substitute ----------------------------------------------------------------
