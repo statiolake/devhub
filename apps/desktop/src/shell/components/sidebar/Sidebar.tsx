@@ -50,6 +50,7 @@ import {
   issueLabel,
   issueMark,
   issueProjectLine,
+  issueRepositoryName,
   checksBadge,
   hasUnresolvedConversations,
   markLines,
@@ -346,17 +347,21 @@ function WorkspaceRow({
             </span>
           </button>
           {/* When the Issue is known it takes the branch's place after the
-              name: its icon and its title, as a quiet note. The branch is what
-              the Issue was read *from*, so once the Issue is known the Issue is
-              the better answer to "what is this" — and the branch is still a
-              line in this mark's tooltip and in the row's. A button and not
-              part of the select button, because a button cannot go inside a
-              button; it is raised above the select button's hit area like every
-              other mark. It runs under the pull request's mark and fades out
-              there — see `.row-issue-title`. */}
+              name — as its icon, and only its icon. The title used to follow
+              it as a quiet note, and a title is a sentence: on a line about
+              twenty characters wide it pushed the name and the marks around
+              and was faded out half-read anyway. So the words live where there
+              is room for all of them, in this mark's tooltip (number, title,
+              repository, branch) and in its accessible name; the row says
+              *that* it has an Issue and in which state. The branch is what the
+              Issue was read *from*, so once the Issue is known the Issue is
+              still the better answer to "what is this". A button and not part
+              of the select button, because a button cannot go inside a button;
+              it is raised above the select button's hit area like every other
+              mark — see `.row-issue-title`. */}
           {collapsed || !issue ? null : (
             <button
-              className={`row-issue-title is-issue-${issue.state}${repository?.pullRequest ? " has-pr" : ""}`}
+              className={`row-issue-title is-issue-${issue.state}`}
               type="button"
               aria-label={issueLabel(issue)}
               data-tooltip-lines={JSON.stringify([
@@ -364,6 +369,14 @@ function WorkspaceRow({
                   icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
                   text: issueMark(issue),
                 },
+                ...(issueRepositoryName(repository, issue) === undefined
+                  ? []
+                  : [
+                      {
+                        icon: "repository",
+                        text: issueRepositoryName(repository, issue) as string,
+                      },
+                    ]),
                 ...(issueProjectLine(issue) === undefined
                   ? []
                   : [{ text: issueProjectLine(issue) as string }]),
@@ -382,7 +395,6 @@ function WorkspaceRow({
                 issue={issue}
                 repository={repository?.issueRepository?.repository}
               />
-              <span className="row-note row-issue-note">{issue.title}</span>
             </button>
           )}
           {/* The trailing group: what this row is, as marks, each one its own

@@ -1,6 +1,6 @@
 /*
- * The Workspace row's line: the Issue title fades out before the pull request's
- * mark, and a narrow row drops whole marks instead of clipping the folder.
+ * The Workspace row's line: the Issue is its icon alone, right after the name,
+ * and a narrow row drops whole marks instead of clipping the folder.
  */
 
 import { readFileSync } from "node:fs";
@@ -18,8 +18,10 @@ describe("Workspace row layout", () => {
     expect(css).not.toMatch(/margin-right:\s*-\d+px/);
   });
 
-  it("fades the title with a mask inside its own box", () => {
-    expect(css).toMatch(/\.row-issue-title\s*\{[^}]*mask-image/);
+  it("keeps the Issue mark whole: an icon, never a fading title", () => {
+    expect(css).toMatch(/\.row-issue-title\s*\{[^}]*flex:\s*none/);
+    expect(css).not.toMatch(/\.row-issue-title\s*\{[^}]*mask-image/);
+    expect(css).not.toMatch(/\.row-issue-note/);
   });
 
   it("lets the name's button, not the folder, give way", () => {
@@ -29,7 +31,7 @@ describe("Workspace row layout", () => {
     expect(css).toMatch(/\.row-glyph\s*\{[^}]*flex:\s*0 0 var/);
   });
 
-  it("drops the Issue title and editor mark whole in a narrow row", () => {
+  it("drops the Issue mark and editor mark whole in a narrow row", () => {
     expect(css).toMatch(
       /\.workspace-row\s*\{[^}]*container-type:\s*inline-size/,
     );

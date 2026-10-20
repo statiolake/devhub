@@ -137,39 +137,71 @@ const WORKING_ON: RepositoryStatusWire = {
 };
 
 describe("a workspace row", () => {
-  it("says its name and the Issue, in the branch's place, when the Issue is known", () => {
-    // `{name} {icon} {title}` and then the pull request's mark. The branch is
-    // not drawn in words: the Issue is the better answer, and the branch is a
-    // line in the Issue's tooltip.
+  it("says its name and the Issue's icon, in the branch's place, when the Issue is known", () => {
+    // `{name} {icon}` and then the pull request's mark. Neither the branch nor
+    // the Issue's title is drawn in words: the icon says there is an Issue and
+    // in which state, and everything else is in its tooltip.
     mount(WORKING_ON);
     const row = document.querySelector(".workspace-row:not(.is-scratch)");
     expect(row?.querySelector(".row-text")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-branch")).toBeNull();
-    const title = row?.querySelector(".row-issue-title");
-    expect(title?.textContent).toBe("Tidy the picker");
-    expect(title?.querySelector("svg")?.getAttribute("data-glyph")).toBe(
+    const mark = row?.querySelector(".row-issue-title");
+    expect(mark?.querySelector("svg")?.getAttribute("data-glyph")).toBe(
       "issueOpen",
     );
-    // The title fades under the pull request's mark rather than stopping short.
-    expect(title).toHaveClass("has-pr");
-    expect(title?.querySelector(".row-issue-note")).not.toBeNull();
+    // No title text anywhere on the row: not in the mark, not after it.
+    expect(mark?.textContent).toBe("");
+    expect(row?.textContent).not.toContain("Tidy the picker");
     // The pull request is the trailing group's last mark; the Issue is not in
     // that group any more.
     const marks = row?.querySelector(".row-marks");
     expect(marks?.querySelector(".is-issue-open")).toBeNull();
     expect(marks?.lastElementChild).toHaveClass("is-pr-draft");
-    // Everything the title no longer says in words is in its hover.
+    // Everything the row no longer says in words is in the mark's hover: the
+    // number and the whole title, the repository it is in, the branch.
     expect(
-      JSON.parse(title?.getAttribute("data-tooltip-lines") ?? "[]"),
+      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
     ).toEqual([
       { icon: "issueOpen", text: "#128 Tidy the picker" },
+      { icon: "repository", text: "example/widget" },
       { icon: "branch", text: "feature/128-tidy" },
     ]);
-    expect(title).toHaveAttribute(
+    // And in its accessible name, for whoever cannot hover.
+    expect(mark).toHaveAttribute(
       "aria-label",
       "Issue #128, open: Tidy the picker",
     );
+  });
+
+  it("names the repository the workspace numbers its Issues in, over the URL's", () => {
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          ...WORKING_ON.workspaces[0],
+          issueRepository: { owner: "upstream-org", repository: "widget" },
+          issue: {
+            url: "https://example.invalid/128",
+            number: 128,
+            title:
+              "A title long enough that it would never have fitted on the row at all",
+            state: "open",
+          },
+        },
+      ],
+    });
+    const mark = document.querySelector(".row-issue-title");
+    expect(mark?.textContent).toBe("");
+    expect(
+      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]").slice(0, 2),
+    ).toEqual([
+      {
+        icon: "issueOpen",
+        text: "#128 A title long enough that it would never have fitted on the row at all",
+      },
+      { icon: "repository", text: "upstream-org/widget" },
+    ]);
   });
 
   it("says its name and the branch, with the marks trailing, when the Issue is not known", () => {
@@ -198,11 +230,11 @@ describe("a workspace row", () => {
     expect(row?.querySelector(".row-marks .is-pr-open")).not.toBeNull();
   });
 
-  it("opens the Issue from its title and from its icon", () => {
+  it("opens the Issue from its mark and from its icon", () => {
     const { openExternalUrl } = mount(WORKING_ON);
-    const title = document.querySelector(".row-issue-title") as HTMLElement;
-    fireEvent.click(title.querySelector(".row-issue-note") as HTMLElement);
-    fireEvent.click(title.querySelector("svg") as unknown as HTMLElement);
+    const mark = document.querySelector(".row-issue-title") as HTMLElement;
+    fireEvent.click(mark);
+    fireEvent.click(mark.querySelector("svg") as unknown as HTMLElement);
     expect(openExternalUrl).toHaveBeenCalledTimes(2);
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget/issues/128",

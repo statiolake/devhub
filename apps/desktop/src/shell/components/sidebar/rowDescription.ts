@@ -212,6 +212,25 @@ export function issueLabel(
 }
 
 /**
+ * Which repository the Issue is in, as `owner/name`, for its tooltip.
+ *
+ * The repository the workspace numbers its Issues in (`issueRepository`) when
+ * main said, and otherwise what the Issue's own GitHub URL names. Undefined
+ * when neither says — a number with a guessed repository is a wrong link.
+ */
+export function issueRepositoryName(
+  repository: WorkspaceRepositoryWire | undefined,
+  issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
+): string | undefined {
+  const named = repository?.issueRepository;
+  if (named !== undefined) return `${named.owner}/${named.repository}`;
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\//u.exec(
+    issue.url,
+  );
+  return match === null ? undefined : `${match[1]}/${match[2]}`;
+}
+
+/**
  * The Issue's Projects line for a tooltip: boards and lanes, or the one hint
  * that the token cannot read them. Undefined when there is nothing to say.
  */

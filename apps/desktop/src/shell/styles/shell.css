@@ -2040,43 +2040,31 @@ body.is-resizing-split {
 /*
  * The Issue, in the branch's place, when the row knows which Issue it is on.
  *
- * `{name} {icon} {title}` then the trailing marks. The select button stops
- * growing (`.has-issue-title`) and this takes the rest of the line instead, so
- * the title is the one thing that gives way. Its end is faded by a mask, as
- * `.row-text`'s is, and not ellipsised.
- *
- * The title's box ends where the trailing group begins, so its fade is
- * finished before it reaches the pull request's mark: the words never run
- * underneath a button.
+ * `{name} {icon}` then the trailing marks. Only the icon (and the Projects
+ * lane's letter): the title is in the mark's tooltip and accessible name, not
+ * on the line. The select button stops growing (`.has-issue-title`) so the
+ * icon sits right after the name, and the icon's own trailing margin is what
+ * pushes the marks to the row's end — the same place they are on a row with
+ * no Issue. The name is still the one thing that gives way on a narrow row.
  */
 .sidebar-context-button.has-issue-title {
-  /* Yields before anything else on the line: the folder, the title's own
-     column and the marks are never what a narrow row clips. */
   flex: 0 1 auto;
-  max-width: 60%;
 }
 
 .row-issue-title {
   position: relative;
   z-index: 1;
   display: flex;
-  overflow: hidden;
-  min-width: 0;
   height: 100%;
-  flex: 1 1 0;
+  flex: none;
   align-items: center;
-  padding: 0 0 0 var(--space-1);
+  margin-inline-end: auto;
+  padding: 0 var(--space-1);
   border: 0;
   background: transparent;
   color: var(--row-glyph-ink);
   gap: var(--space-1);
-  text-align: left;
   white-space: nowrap;
-  mask-image: linear-gradient(
-    to right,
-    #000 calc(100% - 24px),
-    transparent 100%
-  );
 }
 
 .row-issue-title svg {
@@ -2104,10 +2092,6 @@ body.is-resizing-split {
   opacity: 0.85;
 }
 
-.row-issue-title .row-issue-note {
-  flex: none;
-}
-
 .sidebar-row:hover .row-issue-title,
 .sidebar-row:focus-visible .row-issue-title,
 .sidebar-row:has(:focus-visible) .row-issue-title {
@@ -2123,7 +2107,7 @@ body.is-resizing-split {
  *
  * Priority, highest first: the folder (never clipped: it is `flex: none` and
  * the name's button is what gives way), the pull request's mark with its
- * badges, the name, then the Issue's icon and title and the editor's mark. The
+ * badges, the name, then the Issue's icon and the editor's mark. The
  * last two are dropped whole under 190px, rather than left to be cut in half;
  * the Issue is still on the row's tooltip and one hover away on the name.
  */
@@ -2140,7 +2124,6 @@ body.is-resizing-split {
 
   .sidebar-context-button.has-issue-title {
     flex: 1 1 auto;
-    max-width: none;
   }
 }
 
