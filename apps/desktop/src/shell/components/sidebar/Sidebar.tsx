@@ -223,6 +223,9 @@ function WorkspaceRow({
   const issue = repository?.issue;
   const description = describe(facts);
   const collapsed = snapshot.sidebar.collapsed;
+  // What the Workspace's own terminals are doing — absent when idle and read,
+  // which is drawn as nothing (there is no "finished" check for a terminal).
+  const terminals = workspace.terminals;
 
   return (
     <li
@@ -241,7 +244,7 @@ function WorkspaceRow({
       aria-expanded={workspace.agents.length > 0 ? true : undefined}
     >
       <div
-        className={`sidebar-row workspace-row${identity.fixed ? " is-scratch" : ""}${selected ? " is-selected" : ""}`}
+        className={`sidebar-row workspace-row${identity.fixed ? " is-scratch" : ""}${selected ? " is-selected" : ""}${terminals !== undefined && unreadShows(terminals.status, terminals.unread) ? " is-unread" : ""}`}
         data-state={workspace.state.kind}
         // The same facts, drawn. The expanded row shows two of them and the
         // rail shows none, and this is where all of them are — which is why it
@@ -404,6 +407,19 @@ function WorkspaceRow({
               rail's rule is that the whole entry is the select control, and a
               link that is merely invisible is still a link the pointer can
               find. */}
+          {/* The Workspace's terminals, in the mark an Agent's row leads with:
+              working while a command in one of its tmux panes is printing,
+              unread once one finished (or went quiet) unseen. Before the
+              trailing group, so the pull request stays the last column. */}
+          {collapsed || terminals === undefined ? null : (
+            <span className="row-terminal-activity">
+              <StatusMark
+                status={terminals.status}
+                unread={terminals.unread}
+                subject="Terminal"
+              />
+            </span>
+          )}
           {collapsed ? null : (
             <WorkspaceMarks repository={repository} editor={workspace.editor} />
           )}

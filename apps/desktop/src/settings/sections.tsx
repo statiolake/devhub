@@ -181,6 +181,30 @@ export function GeneralSection({
       </Group>
 
       <Group
+        heading="Terminals"
+        note="A Workspace's row shows the working mark while a command in one of its terminals is printing, and the unread mark when it finishes or goes quiet while you are looking elsewhere."
+      >
+        <Row
+          label="Quiet after (seconds)"
+          help="A command that prints nothing for this long counts as finished. 0 counts a command as working until it exits. Default 5."
+        >
+          <NumberField
+            label="Quiet after (seconds)"
+            value={config.general.terminalIdleSeconds}
+            min={0}
+            max={86_400}
+            unit="s"
+            onCommit={(terminalIdleSeconds) => {
+              update({
+                ...config,
+                general: { ...config.general, terminalIdleSeconds },
+              });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
         heading="Appearance"
         note="Light and Dark tell the system DevHub is in that appearance, rather than painting it: an editor follows with the theme it has chosen for light or dark, and DevHub's own chrome follows that editor. An editor that has turned off `window.autoDetectColorScheme` keeps the theme it was told to use, and only the window frames and dialogs change."
       >

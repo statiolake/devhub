@@ -1101,6 +1101,19 @@ export interface WorkspaceWire {
 	 * What `Cmd+Q Cmd+J` comes back to. See `AppModel.lastAgentIn`.
 	 */
 	readonly lastAgentId?: string;
+	/**
+	 * What the Workspace's own terminals are doing, in an Agent's terms:
+	 * `working` while a command runs in any of its tmux panes, and `unread`
+	 * (always `idle`) while one finished unseen. Absent when there is nothing
+	 * to say — idle and read — which the row draws as nothing at all.
+	 */
+	readonly terminals?: TerminalActivityWire;
+}
+
+/** See `WorkspaceWire.terminals` and `model/terminalActivity.ts`. */
+export interface TerminalActivityWire {
+	readonly status: AgentStatusWire;
+	readonly unread?: AgentStatusWire;
 }
 
 export type SnapshotReadiness = AppReadiness;

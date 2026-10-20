@@ -63,6 +63,10 @@ import {
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
 import type { PromptCache } from "./conversation.js";
+import type {
+  TerminalActivity,
+  WorkspaceTerminalObservation,
+} from "./terminalActivity.js";
 import { tabOrder, tabPosition } from "../ipc/appShell.js";
 import {
   NavigationHistory,
@@ -205,6 +209,8 @@ export interface WorkspaceSnapshot {
   readonly canCreateAgent: boolean;
   /** The Agent last selected here, if it is still running. */
   readonly lastAgentId: AgentId | undefined;
+  /** What its own terminals are doing. See `terminalActivity.ts`. */
+  readonly terminals: TerminalActivity;
 }
 
 /**
@@ -1074,6 +1080,7 @@ export class AppModel {
     }
     this.windowFocusedValue = focused;
     this.readVisibleAgent();
+    this.readVisibleTerminals();
     this.bumpRevision();
   }
 
@@ -1094,6 +1101,63 @@ export class AppModel {
       visible !== undefined &&
       this.agent(visible)?.setUnread(undefined) === true
     );
+  }
+
+  /**
+   * Whether the person can see this Workspace's workbench right now — the
+   * model's half of "this terminal has been seen" (`terminalActivity.ts`).
+   *
+   * The same two halves as `isAgentVisible`: the content area is drawing this
+   * Workspace's workbench, on its own or beside an Agent, and the window is in
+   * front.
+   */
+  isWorkspaceVisible(id: WorkspaceId): boolean {
+    if (!this.windowFocusedValue) return false;
+    const layout = this.resolveLayout(this.selectionValue);
+    if (layout.kind !== "workbench" && layout.kind !== "split") return false;
+    return (
+      layout.editor.kind === "workspace-editor" &&
+      layout.editor.workspaceId === id
+    );
+  }
+
+  /**
+   * One round's reading of the terminals on one machine.
+   *
+   * Every Workspace on that machine is in `observations`, an empty pane list
+   * included — that is how a closed session's state goes away. A Workspace the
+   * model no longer has is skipped: it closed while the round was out.
+   */
+  observeTerminalActivity(
+    observations: readonly WorkspaceTerminalObservation[],
+  ): void {
+    let changed = false;
+    for (const observation of observations) {
+      const workspace = this.workspaceList.find(
+        (candidate) => candidate.id === observation.workspaceId,
+      );
+      if (workspace === undefined) continue;
+      if (
+        workspace.terminals.observe(
+          observation.panes,
+          this.isWorkspaceVisible(workspace.id),
+        )
+      ) {
+        changed = true;
+      }
+    }
+    if (changed) this.bumpRevision();
+  }
+
+  /** Clear the unread mark on the terminals being looked at. See `readVisibleAgent`. */
+  private readVisibleTerminals(): boolean {
+    let changed = false;
+    for (const workspace of this.workspaceList) {
+      if (this.isWorkspaceVisible(workspace.id) && workspace.terminals.read()) {
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   /** What the Agent says it is doing, as of the round that read its pane. */
@@ -1232,8 +1296,11 @@ export class AppModel {
     // made while DevHub is behind another app reads nothing. Re-selecting what
     // is already selected still reads it: an Agent marked unread by hand while
     // it was on screen is read again by clicking it.
-    const read = this.readVisibleAgent();
-    if (moved || read) {
+    // A Workspace's terminals are read by the same two events (see
+    // `terminalActivity.ts`).
+    const readAgent = this.readVisibleAgent();
+    const readTerminals = this.readVisibleTerminals();
+    if (moved || readAgent || readTerminals) {
       this.bumpRevision();
     }
   }
@@ -1695,6 +1762,7 @@ export class AppModel {
       close: workspace.close,
       canCreateAgent: workspace.canCreateAgent,
       lastAgentId: this.lastAgentIn(workspace.id),
+      terminals: workspace.terminals.activity,
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
         workspaceId: agent.workspaceId,

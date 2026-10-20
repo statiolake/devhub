@@ -169,6 +169,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			importLoginEnvironment: config.general.import_login_environment,
 			notifyOnIdle: config.general.notify_on_idle,
 			notifySound: config.general.notify_sound,
+			terminalIdleSeconds: config.general.terminal_idle_seconds,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -306,6 +307,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			import_login_environment: wire.general.importLoginEnvironment,
 			notify_on_idle: wire.general.notifyOnIdle,
 			notify_sound: wire.general.notifySound,
+			terminal_idle_seconds: wire.general.terminalIdleSeconds,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

@@ -497,6 +497,17 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
+    ...(workspace.terminals.status === "idle" &&
+    workspace.terminals.unread === undefined
+      ? {}
+      : {
+          terminals: {
+            status: workspace.terminals.status,
+            ...(workspace.terminals.unread === undefined
+              ? {}
+              : { unread: workspace.terminals.unread }),
+          },
+        }),
   }));
   const wire: AppSnapshotWire = {
     schemaVersion: APP_SHELL_SCHEMA_VERSION,

@@ -89,6 +89,7 @@ import {
 	type ListedAgentSession,
 } from "./ports.js";
 import { requiredTerminalSet } from "./ports.js";
+import type { PaneSample } from "./paneActivity.js";
 import { failureText } from "../../model/wire.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
@@ -687,6 +688,96 @@ export function sessionMatches(
 		session.root === identity.root &&
 		session.agentId === identity.agentId
 	);
+}
+
+/** What `terminalPanes` asks each pane, in the order it is read back. */
+const PANE_ACTIVITY_RECORD = "pane-activity";
+const PANE_ACTIVITY_FIELDS = [
+	PANE_ACTIVITY_RECORD,
+	"#{session_name}",
+	`#{${CONTEXT_OPTION}}`,
+	`#{${WORKSPACE_ID_OPTION}}`,
+	`#{${AGENT_ID_OPTION}}`,
+	"#{window_id}",
+	"#{pane_id}",
+	"#{window_active}",
+	"#{session_attached}",
+	"#{window_activity}",
+	"#{pane_dead}",
+	"#{history_size}:#{cursor_x}:#{cursor_y}",
+	"#{pane_current_command}",
+	// Last, as in `SESSION_FIELDS`: the one value that may hold a newline.
+	`#{${ROOT_OPTION}}`,
+];
+const PANE_ACTIVITY_FORMAT =
+	PANE_ACTIVITY_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+const PANE_MARKER_FORMAT =
+	[MARKER_RECORD, `#{${PROTOCOL_OPTION}}`].join(FIELD_SEPARATOR) +
+	RECORD_SEPARATOR;
+
+/**
+ * Read what `terminalPanes` answered: the marker, then one record per pane on
+ * the server.
+ *
+ * Only panes of sessions DevHub marked as a Workspace terminal are returned
+ * (Scratch is a Workspace like any other, with a session of its own). An
+ * Agent's session is an Agent, read by the Agent reconciler; the `scratch`
+ * session is the server's anchor, not a terminal anybody looks at; and a
+ * session DevHub did not mark is not DevHub's to report on. `marker` is
+ * `wrong` for a server DevHub does not own, in which case there are no panes.
+ */
+export function parsePaneActivity(
+	stdout: Buffer,
+	contextHome: string,
+): { readonly marker: MarkerState; readonly panes: PaneSample[] } {
+	const records = splitRecords(stdout);
+	const first = records[0]?.split(FIELD_SEPARATOR);
+	if (first === undefined || first[0] !== MARKER_RECORD) {
+		throw shapeFailure("no marker where the marker record should be");
+	}
+	if (first[1] !== PROTOCOL_VALUE) return { marker: "wrong", panes: [] };
+	if (records.length - 1 > MAX_PANES) {
+		throw shapeFailure("more windows or panes than DevHub will read");
+	}
+	const panes: PaneSample[] = [];
+	for (const record of records.slice(1)) {
+		const fields = record.split(FIELD_SEPARATOR);
+		if (
+			fields.length !== PANE_ACTIVITY_FIELDS.length ||
+			fields[0] !== PANE_ACTIVITY_RECORD
+		) {
+			throw shapeFailure("a record of the wrong width");
+		}
+		const at = (index: number): string => fields[index] ?? "";
+		const marking: SessionMarking = {
+			name: at(1),
+			context: markerValue(at(2)),
+			workspaceId: markerValue(at(3)),
+			agentId: agentIdMarker(markerValue(at(4))),
+			root: markerValue(at(13)),
+		};
+		if (!isMarked(marking, contextHome)) continue;
+		if (
+			marking.context !== WORKSPACE_CONTEXT ||
+			marking.workspaceId === undefined
+		) {
+			continue;
+		}
+		const activity = at(9);
+		panes.push({
+			workspaceId: marking.workspaceId,
+			window: at(5),
+			pane: at(6),
+			inView: at(7) === "1" && parseNumericPrefix(at(8)) > 0,
+			windowActivity: /^\d+$/u.test(activity)
+				? Number.parseInt(activity, 10)
+				: undefined,
+			dead: at(10) === "1",
+			screen: at(11),
+			command: at(12),
+		});
+	}
+	return { marker: "owned", panes };
 }
 
 /**
@@ -1745,6 +1836,57 @@ export class TmuxTerminalRuntime {
 			screens.set(asked, { oscTitle: header[2] ?? "", screen });
 		}
 		return { marker: "owned", agents, screens };
+	}
+
+	/**
+	 * Every pane of every Workspace terminal session on this server, with its
+	 * foreground command, its output signals and whether it is on screen — one
+	 * tmux invocation (`list-panes -a`), whatever the number of sessions,
+	 * windows and panes. See `paneActivity.ts` for the rule and
+	 * `model/terminalActivity.ts` for what is made of it.
+	 *
+	 * No server is no terminals, not a failure. A server DevHub does not own is
+	 * the usual fail-closed conflict.
+	 */
+	async terminalPanes(
+		cancel = new CancellationToken(),
+	): Promise<readonly PaneSample[]> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			const output = await this.runTmux(
+				socket,
+				[
+					"display-message",
+					"-p",
+					PANE_MARKER_FORMAT,
+					";",
+					"list-panes",
+					"-a",
+					"-F",
+					PANE_ACTIVITY_FORMAT,
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) {
+				// The server went away (or was never there): nothing is on it.
+				if (output.noServer) return [];
+				if (output.stdout.byteLength === 0) throw portFailure("conflict");
+				throw output.refusal();
+			}
+			const { marker, panes } = parsePaneActivity(
+				output.stdout,
+				this.contextHome,
+			);
+			if (marker === "wrong") throw portFailure("conflict");
+			return panes;
+		} finally {
+			release();
+		}
 	}
 
 	/**
@@ -2837,6 +2979,11 @@ export class TmuxTerminalRuntime {
 			throw shapeFailure("a record from a listing DevHub did not ask for");
 		}
 		return { windows, panes };
+	}
+
+	/** The configured shell's name on this machine, when DevHub knows it. */
+	get configuredShell(): string | undefined {
+		return this.shellName;
 	}
 
 	private isConfiguredShellCommand(command: string): boolean {

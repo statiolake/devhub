@@ -371,6 +371,12 @@ export interface GeneralConfig {
   readonly notify_on_idle: boolean;
   /** Play a sound with that notification. */
   readonly notify_sound: boolean;
+  /**
+   * How long a command in a Workspace terminal may print nothing before the
+   * Sidebar counts it as finished, in seconds. `0` never counts a quiet
+   * command as finished. See `main/terminal/paneActivity.ts`.
+   */
+  readonly terminal_idle_seconds: number;
 }
 
 export interface RuntimeConfig {
@@ -723,6 +729,9 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
   });
 }
 
+/** See `GeneralConfig.terminal_idle_seconds`. */
+export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
+
 export function defaultConfig(): Config {
   return {
     version: CONFIG_SCHEMA_VERSION,
@@ -730,6 +739,7 @@ export function defaultConfig(): Config {
       import_login_environment: true,
       notify_on_idle: true,
       notify_sound: true,
+      terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -980,6 +990,20 @@ function positiveNumber(
   const value = optionalNumber(table, key, "agents", fallback);
   if (!Number.isFinite(value) || value < 0 || (!zeroAllowed && value === 0))
     fail("invalid_type", `agents.${key}`);
+  return value;
+}
+
+/** `general.terminal_idle_seconds`: a finite number of seconds, zero allowed. */
+function idleSeconds(table: Record<string, unknown>): number {
+  const value = optionalNumber(
+    table,
+    "terminal_idle_seconds",
+    "general",
+    DEFAULT_TERMINAL_IDLE_SECONDS,
+  );
+  if (!Number.isFinite(value) || value < 0) {
+    fail("invalid_type", "general.terminal_idle_seconds");
+  }
   return value;
 }
 
@@ -1930,7 +1954,12 @@ export function interpretConfig(document: unknown): Config {
   }
   checkKeys(
     generalTable,
-    ["import_login_environment", "notify_on_idle", "notify_sound"],
+    [
+      "import_login_environment",
+      "notify_on_idle",
+      "notify_sound",
+      "terminal_idle_seconds",
+    ],
     "general",
   );
   const agentsTable = requireTable(table["agents"] ?? {}, "agents");
@@ -2018,6 +2047,7 @@ export function interpretConfig(document: unknown): Config {
         "general",
         true,
       ),
+      terminal_idle_seconds: idleSeconds(generalTable),
     },
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
@@ -2213,6 +2243,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       import_login_environment: config.general.import_login_environment,
       notify_on_idle: config.general.notify_on_idle,
       notify_sound: config.general.notify_sound,
+      terminal_idle_seconds: config.general.terminal_idle_seconds,
     },
     runtimes: {
       shell: config.runtimes.shell,

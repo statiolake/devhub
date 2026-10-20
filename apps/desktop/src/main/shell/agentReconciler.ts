@@ -44,6 +44,12 @@ export interface AgentReconcilerOptions {
 	readonly reconcile: () => Promise<void>;
 	/** Where a round's failure goes. There is no other reader for it. */
 	readonly onFailure: (error: unknown) => void;
+	/**
+	 * What a round is counted as in `devhub --metrics`. The Agent rounds by
+	 * default; the terminal-activity loop (`terminalActivityLoop.ts`) runs on
+	 * this same loop and counts its own.
+	 */
+	readonly record?: () => void;
 }
 
 export class AgentReconciler {
@@ -97,8 +103,12 @@ export class AgentReconciler {
 		while (!this.#stopped) {
 			if (this.#options.hasAgents()) {
 				try {
-					activityCounters.record(COUNTER.agentReconcileRound);
-					reconcileRounds.record(this.#options.host.id);
+					if (this.#options.record === undefined) {
+						activityCounters.record(COUNTER.agentReconcileRound);
+						reconcileRounds.record(this.#options.host.id);
+					} else {
+						this.#options.record();
+					}
 					await this.#options.reconcile();
 				} catch (error) {
 					// A round that failed is a fact about the provider, and it goes
@@ -146,15 +156,19 @@ export class AgentReconcilers {
 	readonly #loops = new Map<RuntimeId, AgentReconciler>();
 	readonly #reconcile: (host: ReconcileHost) => Promise<void>;
 	readonly #onFailure: (error: unknown) => void;
+	readonly #record: (() => void) | undefined;
 	#stopped = false;
 
 	constructor(options: {
 		/** One round against one machine. */
 		readonly reconcile: (host: ReconcileHost) => Promise<void>;
 		readonly onFailure: (error: unknown) => void;
+		/** See `AgentReconcilerOptions.record`. */
+		readonly record?: () => void;
 	}) {
 		this.#reconcile = options.reconcile;
 		this.#onFailure = options.onFailure;
+		this.#record = options.record;
 	}
 
 	/**
@@ -184,6 +198,7 @@ export class AgentReconcilers {
 				hasAgents: (): boolean => this.#loops.get(id) === loop,
 				reconcile: () => this.#reconcile(host),
 				onFailure: this.#onFailure,
+				...(this.#record === undefined ? {} : { record: this.#record }),
 			});
 			this.#loops.set(id, loop);
 			loop.start();

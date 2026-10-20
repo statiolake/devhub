@@ -1,4 +1,5 @@
 import type { PromptCache } from "./conversation.js";
+import { TerminalPanes } from "./terminalActivity.js";
 
 /**
  * Pure DevHub domain values and lifecycle rules.
@@ -1739,6 +1740,8 @@ function sameWorkspaceState(
  */
 export class Workspace {
   private readonly agentList: Agent[] = [];
+  /** Its own terminals' panes. In memory only — see `terminalActivity.ts`. */
+  private terminalPanes = new TerminalPanes();
 
   constructor(
     readonly id: WorkspaceId,
@@ -1763,6 +1766,7 @@ export class Workspace {
     );
     copy.closeValue = this.closeValue;
     copy.startedContainerValue = this.startedContainerValue;
+    copy.terminalPanes = this.terminalPanes.clone();
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
     }
@@ -1771,6 +1775,11 @@ export class Workspace {
 
   get location(): WorkspaceLocation {
     return this.locationValue;
+  }
+
+  /** What its own terminals are doing. See `terminalActivity.ts`. */
+  get terminals(): TerminalPanes {
+    return this.terminalPanes;
   }
 
   /**

@@ -13,7 +13,11 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot, WorkspaceCloseWire } from "../../../ipc/appShell";
+import type {
+  AppSnapshot,
+  TerminalActivityWire,
+  WorkspaceCloseWire,
+} from "../../../ipc/appShell";
 import type { RepositoryStatusWire } from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
@@ -76,6 +80,8 @@ function mount(
   repositoryStatus: RepositoryStatusWire,
   /** The workspace's own state, for the one test that is about a failed close. */
   workspaceClose: WorkspaceCloseWire = { kind: "idle" },
+  /** What the workspace's own terminals are doing (`WorkspaceWire.terminals`). */
+  terminals?: TerminalActivityWire,
 ) {
   const openExternalUrl = vi.fn();
   const answerWorktreeClose = vi.fn(() => Promise.resolve({}));
@@ -97,6 +103,9 @@ function mount(
     workspaces: SNAPSHOT.workspaces.map((workspace) => ({
       ...workspace,
       close: workspaceClose,
+      ...(terminals === undefined || workspace.id !== "w-1"
+        ? {}
+        : { terminals }),
     })),
   } as unknown as AppSnapshot;
   render(
@@ -135,6 +144,41 @@ const WORKING_ON: RepositoryStatusWire = {
     },
   ],
 };
+
+describe("a workspace row's terminals", () => {
+  const row = () =>
+    document.querySelector(".workspace-row:not(.is-scratch)") as HTMLElement;
+
+  it("draws nothing while its terminals are idle and read — no check mark", () => {
+    mount(WORKING_ON);
+    expect(row().querySelector(".row-terminal-activity")).toBeNull();
+    expect(row().querySelector(".status-mark")).toBeNull();
+  });
+
+  it("draws the Agents' working mark while a command runs", () => {
+    mount(WORKING_ON, { kind: "idle" }, { status: "working" });
+    const mark = row().querySelector(".row-terminal-activity .status-mark");
+    expect(mark).toHaveAttribute("data-status", "working");
+    expect(mark).toHaveAttribute("aria-label", "Terminal: Working");
+    expect(row()).not.toHaveClass("is-unread");
+    expect(
+      row()
+        .querySelector(".sidebar-context-button")
+        ?.getAttribute("aria-label"),
+    ).toContain("terminal working");
+  });
+
+  it("draws the Agents' unread mark when a command finished unseen", () => {
+    mount(WORKING_ON, { kind: "idle" }, { status: "idle", unread: "idle" });
+    const mark = row().querySelector(".row-terminal-activity .status-mark");
+    expect(mark).toHaveAttribute("data-unread", "true");
+    expect(mark?.querySelector("svg")?.getAttribute("data-glyph")).toBe(
+      "statusUnread",
+    );
+    expect(mark).toHaveAttribute("aria-label", "Terminal: Idle, unread");
+    expect(row()).toHaveClass("is-unread");
+  });
+});
 
 describe("a workspace row", () => {
   it("says its name and the Issue's icon, in the branch's place, when the Issue is known", () => {

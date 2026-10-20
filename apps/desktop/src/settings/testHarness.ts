@@ -43,6 +43,7 @@ export function testConfig(
       importLoginEnvironment: true,
       notifyOnIdle: true,
       notifySound: true,
+      terminalIdleSeconds: 5,
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },

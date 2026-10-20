@@ -282,6 +282,14 @@ older `config.toml` is renamed into place the same way.
 ```toml
 version = 3
 
+[general]
+terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark while a
+                            # command (not the shell) in one of its tmux panes is
+                            # printing, and their unread mark once it exits or prints
+                            # nothing for this long while you are elsewhere — until
+                            # you look at that pane. 0: only exiting counts. No ✓.
+                            # Settings > General. See src/main/terminal/paneActivity.ts.
+
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
 

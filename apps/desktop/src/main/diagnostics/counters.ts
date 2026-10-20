@@ -48,6 +48,8 @@ export const COUNTER = {
 	process: (program: string): string => `process.${program}`,
 	/** One completed round of the Agent reconciler. */
 	agentReconcileRound: "agent.reconcile.round",
+	/** One round of the Workspace terminals' activity loop: one `list-panes -a`. */
+	terminalActivityRound: "terminal.activity.round",
 	/** One `capture-pane` of one Agent's screen. */
 	agentScreenCapture: "agent.screen.capture",
 	/** One `list-sessions` on the Agent socket. */

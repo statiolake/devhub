@@ -44,6 +44,7 @@ import type { AppErrorWire } from "../ipc/appShell.js";
 import type { AppSnapshot } from "./appModel.js";
 import type { SmartButtonsSpot } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
+import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
 export type AppReadiness = "starting" | "ready" | "unavailable";
@@ -506,6 +507,15 @@ export type UserIntent =
    * that the selection cannot answer.
    */
   | { readonly type: "window_focus_changed"; readonly focused: boolean }
+  /**
+   * One round's reading of the Workspace terminals on one machine
+   * (`terminalActivity.ts`). Raised by main's terminal-activity loop and by
+   * nothing else; every Workspace on that machine is in `workspaces`.
+   */
+  | {
+      readonly type: "terminal_activity_observed";
+      readonly workspaces: readonly WorkspaceTerminalObservation[];
+    }
   | { readonly type: "window_closed" }
   | { readonly type: "quit" };
 

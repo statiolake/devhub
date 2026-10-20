@@ -55,7 +55,13 @@ const REH_COMMIT = rehCommit({
 });
 /** And the directory it is installed under over there, `<commit>-<identity>`. */
 const REH_INSTALL_KEY = rehInstallKey(REH_COMMIT, devhubProduct.serverIdentity);
-import { activityCounters } from "../diagnostics/counters.js";
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import { PaneActivityTracker } from "../terminal/paneActivity.js";
+import {
+	FailureOnce,
+	terminalActivityHost,
+	terminalObservations,
+} from "./terminalActivityLoop.js";
 import {
 	metricsReport,
 	type TerminalLauncherStatus,
@@ -200,6 +206,7 @@ import {
 import { seedProfileSettings } from "../profileSeed.js";
 import {
 	ConfigStore,
+	DEFAULT_TERMINAL_IDLE_SECONDS,
 	defaultConfigPaths,
 	profilePresentation,
 	withProfileRuntimes,
@@ -892,6 +899,22 @@ export class AppController {
 			console.error(error instanceof Error ? error.stack : error);
 		},
 	});
+	/**
+	 * One loop per machine with a Workspace on it, reading its terminals' panes
+	 * at most once a second. See `terminalActivityLoop.ts`.
+	 */
+	private readonly terminalActivity = new AgentReconcilers({
+		reconcile: (host) => this.observeTerminalsOn(host.id),
+		onFailure: (error) => {
+			console.error(error instanceof Error ? error.stack : error);
+		},
+		record: () => {
+			activityCounters.record(COUNTER.terminalActivityRound);
+		},
+	});
+	/** Each machine's output clock, round to round (`PaneActivityTracker`). */
+	private readonly paneTrackers = new Map<RuntimeId, PaneActivityTracker>();
+	private readonly terminalActivityFailures = new FailureOnce();
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
@@ -1273,6 +1296,7 @@ export class AppController {
 		});
 		await this.sessionSweeper.sweepAll();
 		this.agentReconcilers.follow(this.agentHosts());
+		this.terminalActivity.follow(this.terminalHosts());
 		this.repositoryStatus.start();
 		this.watchForWake();
 		this.scratch.start();
@@ -2413,6 +2437,78 @@ export class AppController {
 		return [...hosts.values()];
 	}
 
+	/**
+	 * Every machine with a Workspace on it — the machines whose terminals the
+	 * Sidebar reports on — each at no more than one round a second.
+	 */
+	private terminalHosts(): readonly ReconcileHost[] {
+		const hosts = new Map<RuntimeId, ReconcileHost>();
+		for (const workspace of this.coordinator.model.workspaces) {
+			const runtime = runtimeFor(workspace.location);
+			if (!hosts.has(runtime.id)) {
+				hosts.set(runtime.id, terminalActivityHost(runtime));
+			}
+		}
+		for (const id of this.paneTrackers.keys()) {
+			if (!hosts.has(id)) this.paneTrackers.delete(id);
+		}
+		return [...hosts.values()];
+	}
+
+	/**
+	 * One round of the terminal-activity loop, about one machine: one
+	 * `list-panes -a`, made into a reading for every Workspace on it.
+	 *
+	 * A machine that cannot be asked is skipped — the rows keep what they last
+	 * showed — and said once per reason in the log, not raised as a notice:
+	 * see `terminalActivityLoop.ts`.
+	 */
+	private async observeTerminalsOn(machine: RuntimeId): Promise<void> {
+		const wiring = this.terminalsWiring;
+		if (wiring === undefined) return;
+		let runtime: Awaited<ReturnType<typeof wiring.runtimes.for>>;
+		let samples: Awaited<ReturnType<typeof runtime.terminalPanes>>;
+		try {
+			runtime = await wiring.runtimes.for(runtimeById(machine));
+			if (!runtime.adapterAvailable) return;
+			samples = await runtime.terminalPanes();
+		} catch (error) {
+			if (this.terminalActivityFailures.failed(machine, failureText(error))) {
+				console.error(
+					`[devhub] terminal activity on ${machine}: ${failureText(error)}`,
+				);
+			}
+			return;
+		}
+		this.terminalActivityFailures.succeeded(machine);
+		let tracker = this.paneTrackers.get(machine);
+		if (tracker === undefined) {
+			tracker = new PaneActivityTracker();
+			this.paneTrackers.set(machine, tracker);
+		}
+		const verdicts = tracker.observe(
+			samples,
+			Date.now(),
+			this.config?.general.terminal_idle_seconds ??
+				DEFAULT_TERMINAL_IDLE_SECONDS,
+			runtime.configuredShell,
+		);
+		// Read the model after the round, as the Agent round does: a Workspace
+		// that closed while tmux was being asked is not one to report on.
+		const workspaces = this.coordinator.model.workspaces
+			.filter((workspace) => this.machineOf(workspace.id) === machine)
+			.map((workspace) => workspace.id);
+		this.coordinator.dispatchUser({
+			intentId: parseIntentId(randomUUID()),
+			operationId: this.freshOperationId(),
+			intent: {
+				type: "terminal_activity_observed",
+				workspaces: terminalObservations(verdicts, workspaces),
+			},
+		});
+		this.drain();
+	}
+
 	markReady(): void {
 		const services = this.handedOverServices;
 		if (!services) {
@@ -2445,6 +2541,7 @@ export class AppController {
 		markCleanShutdown(this.state);
 		await this.saveState();
 		this.agentReconcilers.stop();
+		this.terminalActivity.stop();
 		this.stopWatchingWake?.();
 		this.scratch.stop();
 		this.repositoryStatus.stop();
@@ -2684,6 +2781,7 @@ export class AppController {
 		// that has lost its last needs its loop stopped. `follow` is idempotent
 		// and compares before it acts, so this is a nudge like the line above it.
 		this.agentReconcilers.follow(this.agentHosts());
+		this.terminalActivity.follow(this.terminalHosts());
 		this.releaseIdleMachines();
 		// A draft lives as long as its Agent: one that has just gone takes its
 		// draft with it. `prune` compares before it writes.

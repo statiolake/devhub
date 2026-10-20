@@ -798,6 +798,19 @@ export class AppCoordinator {
       case "window_focus_changed":
         this.model.setWindowFocused(intent.focused);
         return this.transitionOutcome(beforeRevision, id);
+      case "terminal_activity_observed": {
+        this.model.observeTerminalActivity(intent.workspaces);
+        // Not persisted: the reading is live tmux state, rebuilt by the first
+        // round after a launch (`terminalActivity.ts`), so a change to it is
+        // a snapshot and never a save.
+        const snapshot = this.snapshot();
+        if (snapshot.revision === beforeRevision) {
+          this.emit({ kind: "noop" });
+          return { kind: "noop", snapshot };
+        }
+        this.emit({ kind: "snapshot", snapshot });
+        return { kind: "updated", snapshot };
+      }
       case "window_closed":
         return this.detach("window_closed");
       case "quit":

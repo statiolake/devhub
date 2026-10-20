@@ -463,6 +463,24 @@ export function workspaceRowFacts(
           style: "danger",
         }
       : undefined,
+    // What its own terminals are doing, when there is anything to say. The
+    // mark on the row is the Agents' (`StatusMark`); this is the same fact for
+    // a reader and for the rail, where the mark is not drawn.
+    workspace.terminals === undefined
+      ? undefined
+      : workspace.terminals.status === "working"
+        ? {
+            icon: "statusWorking",
+            text: "A command is running in a terminal",
+            spoken: "terminal working",
+            tone: "working",
+          }
+        : {
+            icon: "statusUnread",
+            text: "A terminal command finished",
+            spoken: "terminal finished, unread",
+            tone: "idle",
+          },
     // What it is a checkout of, and where that page is.
     repository?.repositoryUrl === undefined
       ? undefined

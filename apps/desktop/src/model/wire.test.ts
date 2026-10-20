@@ -92,6 +92,7 @@ function workspace(
     agents,
     canCreateAgent: true,
     lastAgentId: undefined,
+    terminals: { status: "idle", unread: undefined },
   } as unknown as WorkspaceSnapshot;
 }
 

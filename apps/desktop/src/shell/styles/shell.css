@@ -1694,8 +1694,20 @@ body.is-resizing-split {
   background: transparent;
 }
 
-.agent-row.is-unread .row-label {
+.agent-row.is-unread .row-label,
+.workspace-row.is-unread .row-label {
   font-weight: 600;
+}
+
+/* A Workspace's terminal activity: the Agents' status mark, raised above the
+   select button's stretched hit area so its own tooltip is the one found, and
+   never the part of the line that gives way. */
+.row-terminal-activity {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
 }
 
 /*

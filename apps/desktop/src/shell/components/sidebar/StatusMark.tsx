@@ -61,6 +61,12 @@ export interface StatusMarkProps {
    * It is drawn by this mark and by nothing else. See `unreadShows`.
    */
   readonly unread?: AgentStatus | undefined;
+  /**
+   * Whose status this is, when it is not an Agent's own row: a Workspace's
+   * terminals wear the same mark (`model/terminalActivity.ts`) and say so in
+   * its label — "Terminal: Working".
+   */
+  readonly subject?: string;
 }
 
 /**
@@ -91,11 +97,12 @@ export function unreadShows(
   return status === "idle" && unread !== undefined;
 }
 
-export function StatusMark({ status, unread }: StatusMarkProps) {
+export function StatusMark({ status, unread, subject }: StatusMarkProps) {
   const showsUnread = unreadShows(status, unread);
-  const label = showsUnread
+  const said = showsUnread
     ? `${statusLabel(status)}, unread`
     : statusLabel(status);
+  const label = subject === undefined ? said : `${subject}: ${said}`;
   return (
     <span
       className={`status-mark status-mark-${status}${showsUnread ? " is-unread" : ""}`}
