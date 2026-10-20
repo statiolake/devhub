@@ -68,7 +68,7 @@
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
- * | (palette only)              | `navigate_back` / `navigate_forward` |
+ * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
  *
  * # The decisions behind that table
  *
@@ -119,6 +119,12 @@
  * keys may name one command; the bracket pair is worth reaching with the hand
  * already on Command after the prefix, and a stroke with Command held is a
  * different stroke from the bare one, so nothing is taken away.
+ *
+ * **`Cmd+Q H` and `Cmd+Q L` are Back and Forward.** Vim's left and right, the
+ * way Vimium's `H` / `L` walk the history. `Cmd+[` and `Cmd+]` still work
+ * unprefixed on DevHub's own pages (`main/shell/historyKeys.ts`), but over a
+ * workbench the brackets belong to VS Code, so the chords are what reach
+ * history from there; being letters after the prefix they take nothing from it.
  *
  * **`Cmd+Q G` is the same list as a picker.** Stepping is for the neighbour;
  * the picker is for the one you can name. It is the ordinary picker component,
@@ -268,8 +274,9 @@
  * Code's `Command-Shift-P` is. It is drawn from this registry, so a command
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
- * else (`navigate_back`, which is `Cmd+[` on DevHub's own pages) and a chord
- * for it would take a key some other command wants. `:` is matched as the
+ * else and a chord for it would take a key some other command wants. (Back and
+ * Forward were once such commands; they are `Cmd+Q H` / `L` now, see below.)
+ * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
  * a JIS one, and both are the same stroke here.
  *
@@ -690,21 +697,22 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [":"],
   },
   {
-    // Palette only: on DevHub's own pages Back is already `Cmd+[`
-    // (`main/shell/historyKeys.ts`), and over a workbench the brackets are
-    // VS Code's, so a chord for it would take a key for nothing.
+    // `H` / `L` are Vim's left and right, the way Vimium's H / L walk the
+    // history. On DevHub's own pages Back is also `Cmd+[` unprefixed
+    // (`main/shell/historyKeys.ts`), but over a workbench the brackets are
+    // VS Code's, so the chord is the way to reach it from there.
     id: "navigate_back",
     label: "Go Back",
     needs: "nothing",
     category: "Navigate",
-    defaultKeys: [],
+    defaultKeys: ["h"],
   },
   {
     id: "navigate_forward",
     label: "Go Forward",
     needs: "nothing",
     category: "Navigate",
-    defaultKeys: [],
+    defaultKeys: ["l"],
   },
 ];
 

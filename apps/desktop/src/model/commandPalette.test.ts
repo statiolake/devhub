@@ -50,7 +50,7 @@ describe("the command palette's rows", () => {
     expect(row?.title).toBe("Workspace: Add Workspace…");
     expect(row?.chords).toEqual(["Cmd+q f"]);
     const back = rows().find((one) => one.commandId === "navigate_back");
-    expect(back?.chords).toEqual([]);
+    expect(back?.chords).toEqual(["Cmd+q h"]);
   });
 
   it("hides what would do nothing now", () => {

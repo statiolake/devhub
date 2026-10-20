@@ -922,6 +922,11 @@ describe("the default table", () => {
 		expect(press("[", "BracketLeft")).toBe("previous_agent");
 	});
 
+	it("puts Back and Forward on Vim's H and L", () => {
+		expect(press("h", "KeyH")).toBe("navigate_back");
+		expect(press("l", "KeyL")).toBe("navigate_forward");
+	});
+
 	it("matches the character, so a JIS keyboard reaches the same commands", () => {
 		// The same two characters, from the keys a JIS keyboard makes them with.
 		expect(press("{", "BracketRight", { shift: true })).toBe(

@@ -421,9 +421,11 @@ picker. Every command there has an id, a label, a category (`Navigate`, `View`,
 `Workspace`, `Agent`, `DevHub`) and what it `needs`; the palette lists each as
 `Category: Label` with the chords actually in effect at its right end, so a
 rebound key reads as the person's own. A command may be palette only — no
-default key — when it already has a gesture elsewhere: `navigate_back` and
-`navigate_forward` are `Cmd+[` / `Cmd+]` on DevHub's own pages, and the chord
-brackets already belong to the Agent cycle.
+default key — when it already has a gesture elsewhere; none is today.
+`navigate_back` and `navigate_forward` are `Cmd+Q H` / `Cmd+Q L` (Vim's left and
+right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, but over a
+workbench the brackets belong to VS Code, and as chords they already belong to
+the Agent cycle.
 
 The stroke is the character `:`, not a physical key, so it is Shift+; on a US
 layout and the unshifted key beside L on a JIS one (`chordKeys.ts`).
