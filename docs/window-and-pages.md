@@ -94,15 +94,16 @@ says so, because the next page is the one that will not know.
 
 Eight entries, eight preloads, eight bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
-file main loaded.** (A terminal pane's page is loaded once per terminal; the
-fragment, `pane.html#<id>`, names which terminal — an instance, not a role.)
+file main loaded.** (An Agent terminal's page is loaded once per terminal;
+the fragment, `pane.html#<id>`, names which terminal — an instance, not a
+role.)
 
 | Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
 | --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
 | the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip`                                                 |
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
-| a terminal pane       | `pane.html`     | one terminal opened beside a Workspace's panes: a header naming its tmux session, and a terminal surface on it  | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`, `closePaneTerminal` (its own only), `dropPaneHeader` (its own only)                                                                                                                               |
+| an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a header naming its tmux session, and a terminal surface                 | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`, `closePaneTerminal` (its own only)                                                                                                                                                                |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen                                                     | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`                                                                                                                                        |
 | the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links              | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                               |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
@@ -304,7 +305,8 @@ over**: somebody clicked a row — expanded or on the rail — and what they wan
 next is the thing they clicked, so the Sidebar asks for the surface and
 `keyboardChild` answers with the editor or with the Agent's terminal. **A
 keyboard selection stays**: somebody is standing in the Sidebar after
-`focus_sidebar` (the command palette; it was `Cmd+Q S`), and Return there
+`focus_sidebar` (the command palette; it was `Cmd+Q S`, which is unbound now),
+and Return there
 chooses a row without leaving the list, because the
 next ↓ has to still be a ↓. It is read off the activation — a click raised by a
 pointer carries a `detail` of at least one, and a focused button activated from
@@ -418,67 +420,82 @@ six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
 
-## Terminal panes: one tiling, DevHub's own
+## An Agent's terminal, on the right
 
-`Cmd+Q V` opens a terminal to the right of the pane with the keyboard and
-`Cmd+Q S` one below it; `devhub --tell terminal open` does the same for an
-Agent, beside the Agent's own pane. Each is a **tmux session of its own**
-(`tm-<id>`, marker context `terminal`) on the Workspace's machine — the same
-server, socket and config as every other DevHub session — started in the
-Workspace's folder. It is not tmux's own split: the tiling is DevHub's, so the
-workbench and the Agent are panes in it too.
+Every Agent has **one terminal of its own** (`model/agentTerminal.ts`): a tmux
+session (`tm-<agent id>`, marker context `terminal`) on the Workspace's machine
+— the same server, socket and config as every other DevHub session — started
+in the Workspace's folder, which is the Agent's worktree when the Workspace is
+one. DevHub draws it as one pane to the right of whatever the selection shows,
+and never tiles terminals: it is a whole tmux, so a person who wants a second
+shell splits inside it with tmux's own keys.
 
-**One tree per Workspace** (`model/paneLayout.ts`). Its leaves are the
-selection's own pane — `content`, exactly one — and the terminals; its inner
-nodes are splits with an axis and a ratio. The content leaf draws what the
-selection has always drawn (the workbench, an Agent, or the two side by side),
-so Back and Forward, `Cmd+Q Z`, `Cmd+Q Cmd+J` and every rule about which half
-is in front stay about the selection, and nothing about them learned of
-terminals. `windowLayout.ts` lays the tree into the content area
-(`paneRects`), lays the workbench and the Agents inside the content leaf
-(`contentRect`) as it used to lay them into the whole area, and adds one child
-per terminal (`terminal`), stacked above the Agents and below every layer.
-The tree is persisted with its Workspace (`pane_layout`, `pane_terminals`;
-no schema bump — absent is the content alone) and is the same whichever of
-the Workspace's rows is selected.
+**Whose terminal is on screen.** The view's Agent's: the selected Agent, or —
+with a Workspace's row selected, the workbench full or beside an Agent — the
+Agent that Workspace pairs with (`pairedAgentId`, the one `Cmd+Q Cmd+J` goes
+to). Switching Agents shows each one's own terminal, if it has one open; the
+one left behind keeps running, detached and hidden, and its view (with its
+scrollback) stays. A Workspace with no Agents has no terminal.
 
-**One view per terminal**, each the `pane` page. Views are siblings like every
-other child (nested views do not paint), so the seams between panes are the
-strips no view covers, drawn on the window's own page from `seams` on the
-workbench area main pushes, exactly as the workbench/Agent seam always was;
-dragging one previews (`previewLayout({ pane })`) and commits `resize_pane`. A
-pane's header is dragged to move it: let go over another pane, main puts it on
-the side of that pane nearest the point (`dropPaneHeader`). A view lives as
-long as its terminal, whichever Workspace is on screen, so its scrollback
-survives switching away and back.
+**`Cmd+Q V`** (`toggle_terminal`) starts the view's Agent's terminal the
+first time, with the keyboard in it, and after that hides and shows the pane
+without touching the session. On a Workspace with no Agent it says so (a
+`terminal_needs_agent` notice) rather than doing nothing. `Cmd+Q S` and the
+bare arrows after the prefix are unbound (they were the pane tree's split
+below and directional focus); `focus_sidebar` stays palette only.
 
-**The keyboard.** `LayoutState.keyboard` can name a terminal; `keyboardChild`
-gives it the keys only while that terminal is drawn. The model keeps which
-terminal has the keyboard (`AppModel.paneFocus`): a chord moves it, a click
-into a view reports it (`ShellWindow.onContentFocused`), and any selection
-takes it back to the content. `Cmd+Q O` walks every pane on screen in reading
-order — the editor and the Agent of a split are two stops — and the arrows
-after the prefix go to the pane on that side. `Cmd+Q X` with a terminal in
-front closes it (and its session).
+**What the model keeps** (`AppModel`): per Agent, the terminal while its
+session is up — its id and whether it is `open` — and, apart from it, the
+pane's share of the content width, so a terminal closed and opened again
+comes back at its width. Both are persisted on the Agent's record
+(`terminal`, `terminal_share`; no schema bump — absent is no terminal and the
+default width). A file written by 3de5ad4, which kept a tree of panes per
+Workspace (`pane_layout`, `pane_terminals`), is read without refusal: the
+first terminal it names goes to the Workspace's last Agent (or its only one),
+shown, at the width it had if it sat right of the content; the rest are
+dropped and their sessions swept.
+
+**Layout.** `windowLayout.ts` takes the terminal's share of the content area
+on the right (`terminalPlacement`), lays the workbench and the Agents inside
+what is left (`contentRect`) exactly as it used to lay them into the whole
+area, and adds one child per Agent terminal (`terminal`), stacked above the
+Agents and below every layer — the one on screen at its rectangle, every
+other hidden. The divider between them is the strip no view covers, drawn on
+the window's own page from `terminalSeam` on the workbench area main pushes,
+exactly as the workbench/Agent seam is; dragging it previews
+(`previewLayout({ terminalShare })`) and commits `resize_agent_terminal`.
+
+**The keyboard.** `LayoutState.keyboard` can name the terminal;
+`keyboardChild` gives it the keys only while it is drawn. The model keeps
+whether the terminal has the keyboard (`AppModel.paneFocus`): a chord moves
+it, a click into a view reports it (`ShellWindow.onContentFocused`), and any
+selection takes it back to the content. `Cmd+Q O` walks the panes on screen
+left to right — the editor and the Agent of a split are two stops, the
+terminal one more — and wraps. `Cmd+Q X` with the terminal in front closes it
+(and its session); so does the pane's ×.
 
 **Ending.** A terminal's pane goes when its session does: the shell exited, or
 the session was killed. The terminal-activity round that already lists every
 pane on the machine once a second says which `tm-` sessions are there
 (`parsePaneActivity`'s `terminals`), and a terminal it did not see goes —
-unless the model learned of it after the round began. Closing a Workspace
-closes its terminals' sessions with it, and a busy one (not at its shell's
-prompt) is counted in the close sheet's processes. The startup sweep accounts
-for a `tm-` session by its Workspace's list.
+unless the model learned of it after the round began. The same round closes a
+`tm-` session whose Agent has gone (stopped, or ended by itself). Closing a
+Workspace closes its Agents' terminals with it, and a busy one (not at its
+shell's prompt) is counted in the close sheet's processes. The startup sweep
+accounts for a `tm-` session by its Agent's terminal.
 
-**For an Agent** (`devhub --tell terminal …`): only the asker's own Workspace,
-named by its pane's `DEVHUB_ORIGIN`, never by a flag. `terminal open` prints
-the handle — the tmux executable, the server's socket, the session and the
-pane (`%N`) — so the Agent drives it with plain `tmux -S <socket> send-keys -t
-%N -l …` and reads it with `capture-pane -p`. `terminal list` says where each
-terminal is relative to the Agent's pane (`right`, `below`, `right, top` …,
-computed on the tree's proportions by `relativePositions`), and `terminal
-resolve <side>` answers "the terminal on the right" or refuses with the
-candidates when it is ambiguous. The bundled `/devhub` skill says when and how.
+**For an Agent** (`devhub --tell terminal …`): always the asker's own
+terminal, named by its pane's `DEVHUB_ORIGIN`, never by a flag. `terminal open
+[--command C] [--focus]` starts it or shows it (idempotent; `--command` is
+typed only when this call starts it) and prints the handle — the tmux
+executable, the server's socket, the session and the active pane (`%N`) — so
+the Agent drives it with plain `tmux -S <socket> send-keys -t %N -l …` and
+reads it with `capture-pane -p`. `terminal status` (or `show`) says whether it
+is open, visible and focused and lists every tmux pane in the session with
+where it is in its window (`top-left`, `bottom-right`, … from
+`#{pane_left}`/`#{pane_top}`), so "the bottom-right pane" of a terminal the
+person split is a lookup. `terminal close` closes it. The bundled `/devhub`
+skill says when and how.
 
 ## Every command, by name: `Cmd+Q :`
 

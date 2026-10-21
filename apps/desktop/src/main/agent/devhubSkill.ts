@@ -81,7 +81,7 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 	return [
 		"DevHub skill: when the user's message starts with /devhub or $devhub, or asks you to drive DevHub",
 		"(open a workspace, start or hand work to another agent, check on or answer other agents),",
-		'or asks you to prepare, open, use or close a terminal next to you ("open a terminal", "the terminal on the right"),',
+		'or asks you to prepare, open, use or close your terminal ("open a terminal", "the terminal on the right", "右のターミナル"),',
 		`read ${skill.skillFile} and follow it. It explains the \`${skill.cli} --tell\` command.`,
 	].join(" ");
 }
@@ -89,7 +89,7 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 export function devhubSkillText(cli: string): string {
 	return `---
 name: devhub
-description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open terminals next to yourself and drive them with tmux. Use when the user says /devhub, asks to delegate work to another agent in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル").
+description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open your own terminal (on the right of your pane) and drive it with tmux. Use when the user says /devhub, asks to delegate work to another agent in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル").
 ---
 
 # /devhub - drive DevHub from here
@@ -183,26 +183,39 @@ person's decision - tell the person, never try to get around it. When unsure
 what the person would want, ask the person instead of answering. Your answer
 is recorded in that agent's transcript as answered via devhub CLI by you.
 
-## Terminals next to you
+## Your terminal
+
+You have one terminal of your own: a tmux session on your workspace's machine,
+in your workspace's folder, drawn on the right of your pane in DevHub's window.
+It is yours alone and the same one every time — it stays when the person
+switches to another agent (hidden, still running) and goes when you are closed.
+**"The terminal on the right", "右のターミナル", "the terminal", "your
+terminal", "隣の" all mean this one** — including when the person opened it
+themselves with Cmd+Q V.
 
 When the person asks you to "prepare a terminal" / "open a terminal" (to run a
-server, tests, a REPL...), open one beside your own pane in DevHub's window
-rather than running a long-lived process in your own shell:
+server, tests, a REPL...), use it rather than running a long-lived process in
+your own shell:
 
-    devhub --tell --json terminal open [--split right|below|left|above] [--cwd PATH] [--command CMD] [--name NAME]
+    devhub --tell --json terminal open [--command CMD] [--focus]
+    devhub --tell --json terminal status      # the same answer, without opening it
 
-It is a tmux session of its own in your workspace's folder (or \`--cwd\`), on
-the machine your workspace is on, shown as a pane next to yours (default: to
-the right). \`--command\` is typed into its shell, so the terminal stays open
-when the command ends. It does not take the person's keyboard unless you pass
-\`--focus\`. The answer is the handle (\`terminal\` in JSON):
+\`open\` starts it, or shows it if it is already running (idempotent: the same
+handle every time). \`--command\` is typed into its shell only when this call
+starts it — into a running terminal, use \`send-keys\` yourself. It does not
+take the person's keyboard unless you pass \`--focus\`. The answer
+(\`terminal\` in JSON) says whether it \`exists\`, is \`open\` / \`visible\` /
+\`focused\`, and gives the handle:
 
     "tmux": { "tmux": "/path/to/tmux", "socket": "/private/tmp/tmux-501/devhub",
               "session": "tm-<id>", "target": "%7", "fullTarget": "tm-<id>:0.0",
-              "prefix": ["/path/to/tmux", "-S", "/private/tmp/tmux-501/devhub"] }
+              "prefix": ["/path/to/tmux", "-S", "/private/tmp/tmux-501/devhub"] },
+    "panes": [ { "target": "%7", "where": "whole", "left": 0, "top": 0,
+                 "width": 160, "height": 48, "command": "zsh", "active": true, ... } ]
 
-**Tell the person which one it is**: its name and session (\`tm-...\`); the
-pane's header in DevHub shows the same session name.
+\`target\` is the active pane (the one the person sees typed into). Tell the
+person which session it is (\`tm-...\`); the pane's header in DevHub shows the
+same name.
 
 Drive it with plain tmux, always through the handle's own \`prefix\` (that
 tmux and \`-S\` socket — not your default tmux) and \`-t <target>\`:
@@ -219,28 +232,25 @@ tmux and \`-S\` socket — not your default tmux) and \`-t <target>\`:
   there, and give up after a sensible timeout. Do not spam keys or poll in a
   tight loop; never type into a pane that is waiting for a password.
 - Do not kill the session or send \`exit\` unless asked; close it with
-  \`devhub --tell terminal close <id>\` when the person is done with it.
+  \`devhub --tell terminal close\` when the person is done with it.
 
-**When the person refers to a terminal by where it is** — "the terminal on
-the right", "右のターミナル", "the one below", "下の", "隣の", "the one I just
-opened", "さっき開いた" — including one they opened themselves with Cmd+Q V
-(right) or Cmd+Q S (below), look it up rather than guessing:
+**When the person split it.** It is a whole tmux session, so the person may
+have split it (or opened windows) with tmux's own keys, and then say "the
+bottom-right pane", "右下のペーン", "the left one", "上の". Do not guess and do
+not type into the active pane by default: list the panes and pick by position.
+\`terminal status\` lists them in \`panes\`, each with \`where\` (\`top-left\`,
+\`top-right\`, \`bottom-right\`, \`left\`, \`bottom\`, \`middle\`, \`whole\`...),
+its cells (\`left\`, \`top\`, \`width\`, \`height\`), \`windowIndex\`, \`active\`
+and \`command\`. The same straight from tmux:
 
-    devhub --tell --json terminal list               # every terminal of your workspace
-    devhub --tell --json terminal resolve right      # the one terminal to the right of your pane
-    devhub --tell --json terminal resolve below      # ... below it ("left", "above" too)
-    devhub --tell --json terminal resolve right top  # one of two stacked on the right
-    devhub --tell --json terminal resolve latest     # the most recently opened
+    "$T" -S "$S" list-panes -s -t tm-<id> -F '#{pane_id} #{window_index} #{window_active} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_active} #{pane_current_command}'
 
-\`list\` gives each terminal's \`position\` relative to your own pane (\`right\`,
-\`below\`, \`right, top\`, \`right, bottom\`, \`left\`, \`above\`, or two sides for a
-corner), whether it is \`adjacent\`, \`focused\` (has the person's keyboard) and
-\`visible\`, its \`cwd\`, the \`command\` in its foreground, and the same \`tmux\`
-handle. \`resolve\` fails with the candidates when there is none or more than
-one; then ask the person which they mean instead of picking one. "隣の" with
-one terminal open means that one; with several, ask. Only your own
-workspace's terminals are visible to you.
+Pick by \`#{pane_left}\`,\`#{pane_top}\` within the window on screen
+(\`window_active\` 1): "right" is the largest \`pane_left\`, "bottom" the
+largest \`pane_top\`, "右下" both. Then use that pane's id (\`%N\`) as \`-t\`.
+When two panes fit what the person said, ask which one instead of picking.
 
+## Other
 ## Other
 
     devhub --tell commands            # DevHub's command palette, by id

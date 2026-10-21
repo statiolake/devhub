@@ -56,17 +56,28 @@ describe("the /devhub skill", () => {
 		expect(text).toContain("answer in DevHub");
 	});
 
-	it("says how to open, drive, find and close a terminal beside the agent", () => {
+	it("says how to open, drive and close the agent's own terminal, and find a pane the person split", () => {
 		const text = devhubSkillText(skill.cli);
-		expect(text).toContain("## Terminals next to you");
-		expect(text).toContain("terminal open [--split right|below|left|above]");
+		expect(text).toContain("## Your terminal");
+		expect(text).toContain("terminal open [--command CMD] [--focus]");
+		expect(text).toContain("terminal status");
+		expect(text).toContain("terminal close");
 		expect(text).toContain('send-keys -t "$P" -l --');
 		expect(text).toContain("capture-pane -p");
-		expect(text).toContain("terminal resolve right");
-		expect(text).toContain("terminal list");
-		expect(text).toContain("terminal close");
+		// "The terminal on the right" is the agent's own, whoever opened it.
 		expect(text).toContain("右のターミナル");
-		expect(text).toContain("ask the person");
+		expect(text).toContain("Cmd+Q V");
+		// A pane the person split inside it is found by position.
+		expect(text).toContain("list-panes -s -t");
+		expect(text).toContain("#{pane_left}");
+		expect(text).toContain("右下のペーン");
+		expect(text).toContain("bottom-right");
+		expect(text).toContain("ask which one");
+		// Nothing of the pane tree is left.
+		expect(text).not.toContain("terminal resolve");
+		expect(text).not.toContain("terminal list");
+		expect(text).not.toContain("--split");
+		expect(text).not.toContain("Cmd+Q S");
 		// The template literal kept its own quoting: no stray backslash.
 		expect(text).not.toContain("\\`");
 		expect(codexDevhubInstructions(skill)).toContain("terminal");
