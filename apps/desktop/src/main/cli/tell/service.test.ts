@@ -16,8 +16,15 @@ import {
 	type TellAgent,
 	type TellConversation,
 	type TellPorts,
+	type TellTerminal,
 	type TellWorkspace,
 } from "./service.js";
+import {
+	CONTENT_PANE,
+	splitPane,
+	terminalPane,
+	type PaneNode,
+} from "../../../model/paneLayout.js";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 	return {
@@ -237,6 +244,72 @@ class FakePorts implements TellPorts {
 	notify(text: string) {
 		this.calls.push(`notify ${text}`);
 	}
+	/** One Workspace's tiling and terminals, by Workspace id. */
+	layouts = new Map<string, { tree: PaneNode; terminals: TellTerminal[] }>();
+	terminalLayout(workspaceId: string) {
+		return Promise.resolve(
+			this.layouts.get(workspaceId) ?? { tree: CONTENT_PANE, terminals: [] },
+		);
+	}
+	openTerminal(
+		workspaceId: string,
+		request: Parameters<TellPorts["openTerminal"]>[1],
+	) {
+		this.calls.push(`open-terminal ${workspaceId} ${JSON.stringify(request)}`);
+		const id = `tttt${String(this.layouts.get(workspaceId)?.terminals.length ?? 0)}-new`;
+		const layout = this.layouts.get(workspaceId) ?? {
+			tree: CONTENT_PANE,
+			terminals: [],
+		};
+		const at =
+			request.beside === undefined
+				? CONTENT_PANE
+				: terminalPane(request.beside);
+		this.layouts.set(workspaceId, {
+			tree: splitPane(layout.tree, at, request.side, terminalPane(id)),
+			terminals: [
+				...layout.terminals,
+				terminal(id, request.name ?? "Terminal", workspaceId, 99),
+			],
+		});
+		return Promise.resolve(id);
+	}
+	closeTerminal(workspaceId: string, terminalId: string) {
+		this.calls.push(`close-terminal ${workspaceId} ${terminalId}`);
+		return Promise.resolve();
+	}
+}
+
+function terminal(
+	id: string,
+	name: string,
+	workspaceId = "w1",
+	openedAt = 1,
+): TellTerminal {
+	return {
+		id,
+		name,
+		workspaceId,
+		session: `tm-${id}`,
+		openedWith: undefined,
+		openedAt,
+		focused: false,
+		visible: true,
+		live: {
+			cwd: "/src/app",
+			command: "zsh",
+			title: "host",
+			handle: {
+				tmux: "/opt/homebrew/bin/tmux",
+				socket: "/private/tmp/tmux-501/devhub",
+				session: `tm-${id}`,
+				window: "@1",
+				windowIndex: 0,
+				pane: `%${String(id.length)}${name.length}`,
+				paneIndex: 0,
+			},
+		},
+	};
 }
 
 const coordinator = callerFromOrigin("local\tscratch\tbbbb2222-0000");
@@ -674,5 +747,149 @@ describe("an answer from option numbers", () => {
 		expect(answeredBy(undefined, [])).toBe(
 			"answered via devhub CLI by a terminal outside any agent",
 		);
+	});
+});
+
+describe("terminals beside the asking agent", () => {
+	/** The w1 Agent, asking from its own pane. */
+	const fromAgent = callerFromOrigin("local\tw1\taaaa1111-0000");
+
+	function withTwoOnTheRight() {
+		const env = setup();
+		// content | top
+		//         | bottom
+		const tree = splitPane(
+			splitPane(CONTENT_PANE, CONTENT_PANE, "right", terminalPane("top-1111")),
+			terminalPane("top-1111"),
+			"below",
+			terminalPane("bot-2222"),
+		);
+		env.ports.layouts.set("w1", {
+			tree,
+			terminals: [
+				terminal("top-1111", "Tests", "w1", 1),
+				terminal("bot-2222", "Server", "w1", 2),
+			],
+		});
+		return env;
+	}
+
+	it("opens one beside the agent's own pane and hands back the tmux handle", async () => {
+		const { ports, service } = setup();
+		const answer = await service.run(
+			{
+				verb: "terminal-open",
+				split: "below",
+				focus: false,
+				cwd: "/src/app/api",
+				command: "npm test",
+				name: "Tests",
+			},
+			fromAgent,
+		);
+		expect(ports.calls).toEqual([
+			`open-terminal w1 ${JSON.stringify({
+				side: "below",
+				cwd: "/src/app/api",
+				command: "npm test",
+				name: "Tests",
+				focus: false,
+			})}`,
+		]);
+		const data = answer.data as { terminal: Record<string, unknown> };
+		expect(data.terminal).toMatchObject({
+			id: "tttt0-new",
+			name: "Tests",
+			position: "below",
+			tmux: {
+				socket: "/private/tmp/tmux-501/devhub",
+				session: "tm-tttt0-new",
+				target: expect.stringMatching(/^%/),
+				fullTarget: "tm-tttt0-new:0.0",
+				prefix: [
+					"/opt/homebrew/bin/tmux",
+					"-S",
+					"/private/tmp/tmux-501/devhub",
+				],
+			},
+		});
+		expect(answer.message).toContain("send-keys");
+		expect(answer.message).toContain("capture-pane -p");
+	});
+
+	it("lists every terminal with where it is from the agent's pane", async () => {
+		const { service } = withTwoOnTheRight();
+		const answer = await service.run({ verb: "terminal-list" }, fromAgent);
+		const data = answer.data as {
+			terminals: { name: string; position: string; adjacent: boolean }[];
+		};
+		expect(
+			data.terminals.map((one) => [one.name, one.position, one.adjacent]),
+		).toEqual([
+			["Tests", "right, top", true],
+			["Server", "right, bottom", true],
+		]);
+		expect(answer.message).toContain("Tests [right, top]");
+	});
+
+	it("resolves a side, refuses an ambiguous one with the candidates, and knows the newest", async () => {
+		const { service } = withTwoOnTheRight();
+		await expect(
+			service.run({ verb: "terminal-resolve", query: "right" }, fromAgent),
+		).rejects.toThrow(/more than one terminal.*Tests.*Server/s);
+		const bottom = await service.run(
+			{ verb: "terminal-resolve", query: "right bottom" },
+			fromAgent,
+		);
+		expect((bottom.data as { terminal: { name: string } }).terminal.name).toBe(
+			"Server",
+		);
+		const newest = await service.run(
+			{ verb: "terminal-resolve", query: "latest" },
+			fromAgent,
+		);
+		expect((newest.data as { terminal: { name: string } }).terminal.name).toBe(
+			"Server",
+		);
+		await expect(
+			service.run({ verb: "terminal-resolve", query: "left" }, fromAgent),
+		).rejects.toThrow(/no terminal is "left".*Tests/s);
+	});
+
+	it("closes one by name, by session or by pane, within its own workspace", async () => {
+		const { ports, service } = withTwoOnTheRight();
+		await service.run(
+			{ verb: "terminal-close", terminal: "Server" },
+			fromAgent,
+		);
+		await service.run(
+			{ verb: "terminal-close", terminal: "tm-top-1111" },
+			fromAgent,
+		);
+		expect(ports.calls).toEqual([
+			"close-terminal w1 bot-2222",
+			"close-terminal w1 top-1111",
+		]);
+	});
+
+	it("reaches no other workspace's terminals", async () => {
+		const { ports, service } = withTwoOnTheRight();
+		// The Scratch agent asks about "Tests", which is w1's.
+		await expect(
+			service.run({ verb: "terminal-close", terminal: "Tests" }, coordinator),
+		).rejects.toThrow(/no terminal of this workspace/);
+		const listed = await service.run({ verb: "terminal-list" }, coordinator);
+		expect((listed.data as { terminals: unknown[] }).terminals).toEqual([]);
+		expect(ports.calls).toEqual([]);
+	});
+
+	it("refuses a devhub that is not in a DevHub pane", async () => {
+		const { service } = setup();
+		await expect(
+			service.run({ verb: "terminal-list" }, tellCaller(undefined, "local")),
+		).rejects.toThrow(/only from inside a DevHub agent or terminal/);
+		await expect(
+			service.run({ verb: "terminal-list" }, undefined),
+		).rejects.toThrow(/only from inside/);
 	});
 });

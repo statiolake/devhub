@@ -260,6 +260,7 @@ import {
 	CONTENT_PANE,
 	clampPaneRatio,
 	isPanePath,
+	paneTerminalSessionName,
 	resizePane,
 	type PaneLeaf,
 	type PaneSide,
@@ -6983,6 +6984,104 @@ export class AppController {
 				notification.on("close", done);
 				notification.on("failed", done);
 				notification.show();
+			},
+			terminalLayout: async (workspaceId) => {
+				const model = this.coordinator.model;
+				const id = this.workspaceIdOf(workspaceId);
+				const workspace = model.workspace(id);
+				if (!workspace) throw new Error(`there is no Workspace ${workspaceId}`);
+				const terminals = model.paneTerminalsIn(id);
+				// The live half — where each pane's shell is now, what it is
+				// running, and the handle — is tmux's, on the Workspace's machine.
+				// A machine that cannot be asked still has the layout to say.
+				let live: readonly PaneTerminalPane[] = [];
+				let tmux = "tmux";
+				const wiring = this.terminalsWiring;
+				if (wiring && terminals.length > 0) {
+					try {
+						const runtime = await wiring.runtimes.for(
+							runtimeById(runtimeIdFor(workspace.location)),
+						);
+						if (runtime.adapterAvailable) {
+							live = await runtime.paneTerminals();
+							tmux = runtime.tmuxPath();
+						}
+					} catch {
+						live = [];
+					}
+				}
+				const onScreen = model.selectedWorkspaceId() === id;
+				return {
+					tree: model.paneTree(id),
+					terminals: terminals.map((terminal) => {
+						const panes = live.filter(
+							(pane) =>
+								pane.terminalId === terminal.id && pane.workspaceId === id,
+						);
+						const pane = panes.find((one) => one.active) ?? panes[0];
+						return {
+							id: terminal.id,
+							name: terminal.name,
+							workspaceId: id,
+							session: paneTerminalSessionName(terminal.id),
+							openedWith: terminal.command,
+							openedAt: terminal.openedAt,
+							focused: onScreen && model.paneFocus === terminal.id,
+							visible: onScreen,
+							live:
+								pane === undefined
+									? undefined
+									: {
+											cwd: pane.cwd,
+											command: pane.command,
+											title: pane.title,
+											handle: {
+												tmux,
+												socket: pane.socketPath,
+												session: pane.sessionName,
+												window: pane.windowId,
+												windowIndex: pane.windowIndex,
+												pane: pane.paneId,
+												paneIndex: pane.paneIndex,
+											},
+										},
+						};
+					}),
+				};
+			},
+			openTerminal: async (workspaceId, request) => {
+				const opened = await this.openPaneTerminal(
+					this.workspaceIdOf(workspaceId),
+					{
+						side: request.side,
+						focus: request.focus,
+						...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+						...(request.command === undefined
+							? {}
+							: { command: request.command }),
+						...(request.name === undefined ? {} : { name: request.name }),
+						// Beside the asking Agent's own pane, unless it named one of
+						// its terminals to split instead.
+						beside:
+							request.beside === undefined
+								? CONTENT_PANE
+								: { kind: "terminal", terminalId: request.beside },
+					},
+				);
+				return opened.terminal.id;
+			},
+			closeTerminal: async (workspaceId, terminalId) => {
+				const terminal = this.coordinator.model.paneTerminal(terminalId);
+				// Only the asker's own Workspace's: the service resolved the name
+				// within it, and this holds it to that.
+				if (
+					!terminal ||
+					terminal.workspaceId !== this.workspaceIdOf(workspaceId)
+				)
+					throw new Error(
+						`there is no terminal ${terminalId} in this workspace`,
+					);
+				await this.closePaneTerminal(terminalId);
 			},
 		};
 	}

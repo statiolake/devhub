@@ -589,6 +589,14 @@ describe("devhub --tell on the command line", () => {
 				"/home/d",
 			),
 		).toMatchObject({ command: { repo: "/work/app" } });
+		// A terminal's --cwd is a folder where the command was typed, too.
+		expect(
+			requestFor(
+				parseArguments(["--tell", "terminal", "open", "--cwd", "../api/"]),
+				"/work/app",
+				"/home/d",
+			),
+		).toMatchObject({ command: { verb: "terminal-open", cwd: "/work/api" } });
 	});
 
 	it("says which machine a host's devhub is on, so its paths are read there", () => {
