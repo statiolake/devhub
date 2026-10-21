@@ -1057,6 +1057,25 @@ describe("messages waiting to be sent", () => {
     );
   });
 
+  it("sends the oldest now on ⌘Return in an empty composer, and leaves a typed message to be queued", () => {
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    expect(actions.sendPendingNow).toHaveBeenCalledTimes(1);
+    expect(actions.sendPendingNow).toHaveBeenCalledWith(pendingId("held:1"));
+    expect(actions.send).not.toHaveBeenCalled();
+    type("one more");
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    expect(actions.sendPendingNow).toHaveBeenCalledTimes(1);
+    expect(actions.send).toHaveBeenCalledWith("one more", []);
+  });
+
+  it("does nothing on ⌘Return in an empty composer with nothing waiting", () => {
+    const { actions } = draw(withSession([RUNNING]));
+    fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
+    expect(actions.sendPendingNow).not.toHaveBeenCalled();
+    expect(actions.send).not.toHaveBeenCalled();
+  });
+
   it("draws each as a user bubble with a queued label and its place", () => {
     draw(withSession([RUNNING, HELD]));
     const first = item("look at the tests");

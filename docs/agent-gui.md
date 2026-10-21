@@ -908,6 +908,10 @@ so each one can be:
 - **removed**, so it is never sent;
 - **sent now**, into the running turn, instead of waiting for it to end.
 
+⌘Return in an empty composer (no words, no images) while messages wait is Send now
+for the oldest of them that is not open for change; press it again for the
+next. With words typed it sends them, as always.
+
 When a turn ends, the oldest waiting message is sent and starts the next
 turn, and the rest keep waiting for their turn. If writing one fails, it stays
 in the list with the reason, and is sent when you press Send now.

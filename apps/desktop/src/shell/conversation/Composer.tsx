@@ -584,6 +584,7 @@ export function Composer({
 }) {
   const {
     send,
+    sendPendingNow,
     interrupt,
     reportFailure,
     openResume,
@@ -735,8 +736,16 @@ export function Composer({
       return;
     }
     const images = attachments;
-    if ((line.trim() === "" && images.length === 0) || refusal !== undefined)
+    if ((line.trim() === "" && images.length === 0) || refusal !== undefined) {
+      // ⌘Return on an empty field, with messages waiting, is Send now for the
+      // oldest of them that is not open for change.
+      const held =
+        line.trim() === "" && images.length === 0 && canSendNow
+          ? transcript.pending.find((message) => !edits.has(message.id))
+          : undefined;
+      if (held !== undefined) void sendPendingNow(held.id).catch(reportFailure);
       return;
+    }
     void send(line, images).then(() => {
       // Only what was sent is cleared: anything typed or attached since stays.
       // Main is told at once, so a restart right after cannot bring it back.
