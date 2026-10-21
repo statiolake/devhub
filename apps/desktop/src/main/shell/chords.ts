@@ -152,6 +152,27 @@ export type ChordEffect =
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
 	/**
+	 * The next pane on screen: the halves of a split and every terminal
+	 * around them, in reading order (`model/paneLayout.ts`).
+	 */
+	| { readonly kind: "cycle-pane-focus" }
+	/** The pane on one side of the one with the keyboard. */
+	| {
+			readonly kind: "focus-pane-towards";
+			readonly side: "left" | "right" | "above" | "below";
+	  }
+	/**
+	 * A terminal beside the pane with the keyboard, in the selected
+	 * Workspace's folder, as a pane of DevHub's own.
+	 */
+	| {
+			readonly kind: "split-terminal";
+			readonly workspaceId: string;
+			readonly side: "right" | "below";
+	  }
+	/** Close the terminal pane with the keyboard, and its session with it. */
+	| { readonly kind: "close-terminal"; readonly terminalId: string }
+	/**
 	 * Put the keyboard on the Sidebar's selected row.
 	 *
 	 * The one effect that moves focus into DevHub's own chrome rather than
@@ -260,6 +281,18 @@ function selectedWorkspace(
 			? workspace.id === context.workspaceId
 			: workspace.agents.some((agent) => agent.id === context.agentId),
 	);
+}
+
+/** The terminal pane with the keyboard, when it is one of this Workspace's. */
+function focusedTerminal(
+	snapshot: AppSnapshotWire,
+	workspace: WorkspaceWire | undefined,
+): string | undefined {
+	const id = snapshot.paneFocus;
+	if (id === undefined || workspace === undefined) return undefined;
+	return workspace.paneTerminals?.some((terminal) => terminal.id === id)
+		? id
+		: undefined;
 }
 
 /** The Agent the selection is on, or nothing when it is on a row. */
@@ -390,6 +423,13 @@ export function resolveChord(
 		case "close_selection":
 			// The small thing if you are standing on one, the big thing if you are
 			// not. `close_workspace` is the same second half, under its own key.
+			// A terminal pane with the keyboard is the smallest thing there is.
+			if (focusedTerminal(snapshot, workspace) !== undefined) {
+				return {
+					kind: "close-terminal",
+					terminalId: focusedTerminal(snapshot, workspace)!,
+				};
+			}
 			return agent
 				? { kind: "close-agent", agentId: agent.id }
 				: closeWorkspace(snapshot, workspace);
@@ -451,9 +491,50 @@ export function resolveChord(
 					: scratchContext(snapshot),
 			};
 
-		case "swap_split_focus":
-			// `needs: "split"` has already answered "is there another pane".
-			return { kind: "swap-split-focus" };
+		case "swap_split_focus": {
+			// Every pane on screen: the selection's own — one, or two side by
+			// side — and every terminal around it. With only the split, this
+			// is the swap it always was.
+			const terminals = workspace?.paneTerminals?.length ?? 0;
+			const beside = snapshot.selection.presentation === "beside";
+			if (terminals === 0) {
+				return beside ? { kind: "swap-split-focus" } : undefined;
+			}
+			return { kind: "cycle-pane-focus" };
+		}
+
+		case "focus_pane_left":
+		case "focus_pane_right":
+		case "focus_pane_up":
+		case "focus_pane_down": {
+			const side =
+				commandId === "focus_pane_left"
+					? "left"
+					: commandId === "focus_pane_right"
+						? "right"
+						: commandId === "focus_pane_up"
+							? "above"
+							: "below";
+			// Only where there is somewhere to go: a terminal beside the
+			// content, or the two halves of a split across it.
+			const terminals = workspace?.paneTerminals?.length ?? 0;
+			const across =
+				snapshot.selection.presentation === "beside" &&
+				(side === "left" || side === "right");
+			if (terminals === 0 && !across) return undefined;
+			return { kind: "focus-pane-towards", side };
+		}
+
+		case "split_terminal_right":
+		case "split_terminal_below":
+			// A Workspace that is closing, or whose folder is gone, has no
+			// folder to start a shell in — the same rule as a new Agent.
+			if (!workspace?.canCreateAgent) return undefined;
+			return {
+				kind: "split-terminal",
+				workspaceId: workspace.id,
+				side: commandId === "split_terminal_right" ? "right" : "below",
+			};
 
 		case "toggle_scratch":
 			// Both directions, unconditionally: the model holds the memory this

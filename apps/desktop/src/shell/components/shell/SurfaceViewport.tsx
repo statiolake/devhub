@@ -34,7 +34,107 @@ import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
-import type { WorkbenchAreaWire } from "../../../ipc/contract";
+import type { PaneSeamWire, WorkbenchAreaWire } from "../../../ipc/contract";
+
+/** A pane's share of its split, as far as a drag may take it. */
+const PANE_MIN_RATIO = 0.1;
+const PANE_MAX_RATIO = 0.9;
+
+function clampPaneRatio(ratio: number): number {
+  return Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, ratio));
+}
+
+/**
+ * One seam between two panes of the selected Workspace's tiling — the
+ * terminals opened beside its content (`model/paneLayout.ts`).
+ *
+ * The same kind of element as the workbench/Agent seam, for the same reason:
+ * it is the strip no native view covers, so it is the one place a pointer
+ * meets the divider the eye sees. Its ratio is a ratio of the split it
+ * divides (`extent`), which main says rather than this page measuring.
+ */
+function PaneSeam({
+  seam,
+  onPreview,
+  onCommit,
+}: {
+  readonly seam: PaneSeamWire;
+  readonly onPreview: (path: string, ratio: number) => void;
+  readonly onCommit: (path: string, ratio: number) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const preview = useRef(seam.ratio);
+  const row = seam.axis === "row";
+  const ratioAt = (clientX: number, clientY: number): number | undefined => {
+    const extent = seam.extent;
+    const along = row ? extent.width : extent.height;
+    if (along <= 0) return undefined;
+    const offset = row ? clientX - extent.x : clientY - extent.y;
+    return clampPaneRatio(offset / along);
+  };
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const name = row ? "is-resizing-split" : "is-resizing-split-rows";
+    document.body.classList.add(name);
+    return () => document.body.classList.remove(name);
+  }, [dragging, row]);
+  const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (dragging) onCommit(seam.path, preview.current);
+    setDragging(false);
+  };
+  const step = (delta: number) =>
+    onCommit(seam.path, clampPaneRatio(seam.ratio + delta));
+  return (
+    <div
+      className={`split-seam pane-seam${row ? "" : " is-horizontal"}`}
+      style={{
+        left: `${String(seam.x)}px`,
+        top: `${String(seam.y)}px`,
+        width: `${String(seam.width)}px`,
+        height: `${String(seam.height)}px`,
+      }}
+    >
+      <div
+        className={`split-divider${dragging ? " is-dragging" : ""}`}
+        role="separator"
+        aria-label="Resize the terminal pane"
+        aria-orientation={row ? "vertical" : "horizontal"}
+        aria-valuemin={PANE_MIN_RATIO * 100}
+        aria-valuemax={PANE_MAX_RATIO * 100}
+        aria-valuenow={Math.round(seam.ratio * 100)}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          preview.current = seam.ratio;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDragging(true);
+        }}
+        onPointerMove={(event) => {
+          if (!dragging) return;
+          const next = ratioAt(event.clientX, event.clientY);
+          if (next === undefined) return;
+          preview.current = next;
+          onPreview(seam.path, next);
+        }}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+        onKeyDown={(event) => {
+          const back = row ? "ArrowLeft" : "ArrowUp";
+          const forward = row ? "ArrowRight" : "ArrowDown";
+          if (event.key === back) {
+            event.preventDefault();
+            step(-0.02);
+          } else if (event.key === forward) {
+            event.preventDefault();
+            step(0.02);
+          }
+        }}
+      />
+    </div>
+  );
+}
 
 /**
  * The rectangle main laid the workbench into, as it says so.
@@ -250,6 +350,27 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     void devhub().previewLayout({ splitRatio: next });
   }, []);
 
+  // The terminal panes' seams: the pointer moves them, and the model learns
+  // where they stopped — the same split of labour as the seam above.
+  const workspaceId = workspace?.id;
+  const previewPane = useCallback((path: string, next: number) => {
+    void devhub().previewLayout({ pane: { path, ratio: next } });
+  }, []);
+  const commitPane = useCallback(
+    (path: string, next: number) => {
+      if (workspaceId === undefined) return;
+      void dispatch({
+        type: "resize_pane",
+        workspaceId,
+        path,
+        ratio: next,
+      }).finally(() => {
+        void devhub().previewLayout({ pane: null });
+      });
+    },
+    [dispatch, workspaceId],
+  );
+
   const unavailableActions =
     workspace?.state.kind === "unavailable"
       ? ([
@@ -357,6 +478,14 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
       >
         {body}
       </section>
+      {(area.seams ?? []).map((seam) => (
+        <PaneSeam
+          key={seam.path}
+          seam={seam}
+          onPreview={previewPane}
+          onCommit={commitPane}
+        />
+      ))}
       {split ? (
         <div
           className="split-seam"

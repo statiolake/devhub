@@ -262,9 +262,10 @@ describe("the child list", () => {
 				editor: 2,
 				attached: 3,
 				agents: 4,
-				toasts: 5,
-				picker: 6,
-				tooltip: 7,
+				terminal: 5,
+				toasts: 6,
+				picker: 7,
+				tooltip: 8,
 			} as const;
 			expect(order[0]).toBe("shell");
 			for (let index = 1; index < order.length; index += 1) {
@@ -869,5 +870,89 @@ describe("the title bar and the traffic lights", () => {
 		expect(sidebarRect(WINDOW, state()).y).toBe(bar + 1);
 		expect(sidebarRect(WINDOW, state({ titleBar: "hidden" })).y).toBe(bar);
 		expect(surfaceRect(WINDOW, state({ titleBar: "hidden" })).y).toBe(0);
+	});
+});
+
+describe("terminal panes beside the content", () => {
+	const T1 = "11111111-1111-4111-8111-111111111111";
+	const T2 = "22222222-2222-4222-8222-222222222222";
+	const content = { kind: "content" } as const;
+	const right = {
+		kind: "split",
+		axis: "row",
+		ratio: 0.5,
+		first: content,
+		second: { kind: "terminal", terminalId: T1 },
+	} as const;
+
+	it("lays the workbench and the Agent inside the content pane, and the terminal beside it", () => {
+		const split = state({
+			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+			panes: right,
+		});
+		const area = surfaceRect(WINDOW, split);
+		// 1192 wide, less one seam, halved.
+		const contentWidth = Math.round((area.width - 6) * 0.5);
+		const editor = workbenchRect(WINDOW, split);
+		const agents = agentsRect(WINDOW, split);
+		expect(editor.x).toBe(area.x);
+		expect(agents.x + agents.width).toBe(area.x + contentWidth);
+		const children = windowLayout(input({ state: split, terminals: [T1, T2] }));
+		const terminal = children.find(
+			(child) =>
+				child.identity.kind === "terminal" && child.identity.terminalId === T1,
+		);
+		expect(terminal).toMatchObject({
+			visible: true,
+			rect: {
+				x: area.x + contentWidth + 6,
+				y: area.y,
+				width: area.width - contentWidth - 6,
+				height: area.height,
+			},
+		});
+		// A terminal of another Workspace is sized and hidden.
+		expect(
+			children.find(
+				(child) =>
+					child.identity.kind === "terminal" &&
+					child.identity.terminalId === T2,
+			)?.visible,
+		).toBe(false);
+	});
+
+	it("is the whole area for the content when there are no terminals", () => {
+		expect(workbenchRect(WINDOW, state({ panes: content }))).toEqual(
+			workbenchRect(WINDOW, state()),
+		);
+	});
+
+	it("gives the keyboard to a terminal on screen, and to the content otherwise", () => {
+		const withTerminal = state({ panes: right, keyboard: { terminal: T1 } });
+		expect(
+			keyboardChild(input({ state: withTerminal, terminals: [T1] })),
+		).toEqual({ kind: "terminal", terminalId: T1 });
+		// Not drawn — its view does not exist yet — so the editor keeps it.
+		expect(keyboardChild(input({ state: withTerminal }))).toEqual({
+			kind: "editor",
+			editorKey: "/a",
+		});
+		// Nothing in the content area at all: the tiling is not drawn.
+		expect(
+			keyboardChild(
+				input({
+					state: { ...withTerminal, surface: { kind: "none" } },
+					terminals: [T1],
+				}),
+			),
+		).toEqual({ kind: "shell" });
+	});
+
+	it("stacks the terminals over the content's views and under every layer", () => {
+		const order = kinds(
+			windowLayout(input({ state: state({ panes: right }), terminals: [T1] })),
+		);
+		expect(order.indexOf("terminal")).toBeGreaterThan(order.indexOf("agents"));
+		expect(order.indexOf("terminal")).toBeLessThan(order.indexOf("toasts"));
 	});
 });

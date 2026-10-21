@@ -16,10 +16,13 @@
 
 import {
 	agentTarget,
+	paneTerminalTarget,
 	socketName,
 	workspaceTarget,
 	type TerminalTarget,
 } from "../terminal/ports.js";
+import { isShellCommand } from "../terminal/paneActivity.js";
+import { PANE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import {
 	registerTerminalService,
@@ -115,6 +118,23 @@ export function createSurfaceResolver(
 				workspace.root,
 			);
 		}
+		if (surfaceKey.startsWith(PANE_TERMINAL_SURFACE_PREFIX)) {
+			// A pane terminal is the model's, by id, like an Agent: the
+			// Workspace it belongs to — and so the machine and the root its
+			// session carries — is the model's answer, not the key's.
+			const id = surfaceKey.slice(PANE_TERMINAL_SURFACE_PREFIX.length);
+			const terminal = model().paneTerminal(id);
+			if (!terminal) return undefined;
+			const workspace = model().workspace(terminal.workspaceId);
+			if (!workspace) return undefined;
+			refuseIfClosing(workspace);
+			return paneTerminalTarget(
+				machineOf(workspace),
+				terminal.id,
+				workspace.id,
+				workspace.root,
+			);
+		}
 		const prefix = "workspace-terminal:";
 		if (!surfaceKey.startsWith(prefix)) return undefined;
 		const raw = surfaceKey.slice(prefix.length);
@@ -185,8 +205,24 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		async closeWorkspaceTerminals(id) {
 			const workspace = options.model().workspace(id);
 			if (!workspace) return;
+			const machine = machineOf(workspace);
+			// The terminals opened as panes go with the Workspace too: they are
+			// sessions of their own, so closing the Workspace's session would
+			// leave them running with no pane left to reach them.
+			const runtime = await runtimeFromId(machine);
+			if (runtime.adapterAvailable) {
+				for (const pane of await runtime.paneTerminals()) {
+					if (pane.workspaceId !== workspace.id) continue;
+					await service.surfaces.closePaneTerminal({
+						machine,
+						terminalId: pane.terminalId,
+						workspaceId: workspace.id,
+						root: workspace.root,
+					});
+				}
+			}
 			await service.surfaces.closeWorkspace({
-				machine: machineOf(workspace),
+				machine,
 				workspaceId: workspace.id,
 				root: workspace.root,
 			});
@@ -225,8 +261,34 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 			const inspection = await runtime.inspect(
 				workspaceTarget(machine, workspace.id, workspace.root),
 			);
+			// A pane terminal running something other than its shell is work
+			// the close would end, the same as a busy pane of the Workspace's
+			// own session, and it is counted with those.
+			let paneTerminalsBusy = 0;
+			try {
+				paneTerminalsBusy = (await runtime.paneTerminals()).filter(
+					(pane) =>
+						pane.workspaceId === workspace.id &&
+						!pane.dead &&
+						!isShellCommand(pane.command, runtime.configuredShell),
+				).length;
+			} catch {
+				// Unreadable is the same unknown the session's own reading
+				// already reports, and it does not need saying twice.
+			}
+			const processes =
+				paneTerminalsBusy === 0 || inspection.process.kind === "unknown"
+					? inspection.process
+					: {
+							kind: "busy" as const,
+							count:
+								paneTerminalsBusy +
+								(inspection.process.kind === "busy"
+									? inspection.process.count
+									: 0),
+						};
 			return {
-				processes: inspection.process,
+				processes,
 				panes: inspection.extraPanes,
 				windows: inspection.extraWindows,
 			};

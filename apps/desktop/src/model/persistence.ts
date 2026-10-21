@@ -72,6 +72,13 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isTerminalZoomOffset } from "./terminalZoom.js";
+import {
+  PaneRecordError,
+  paneFromRecord,
+  paneRecord,
+  paneTerminals,
+  type PaneNodeRecord,
+} from "./paneLayout.js";
 import { isSmartButtonsSpot, type SmartButtonsSpot } from "./smartButtons.js";
 
 /**
@@ -524,6 +531,26 @@ export interface WorkspaceStateRecord {
   last_agent_id?: string;
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
+  /**
+   * How the content area is tiled, when a terminal has been opened beside it
+   * (`model/paneLayout.ts`), and the terminals it names.
+   *
+   * No version bump, for the reason `sidebar.collapsed` had none: absent is
+   * the content pane on its own, which is what every file written before this
+   * means. An older DevHub drops both keys on its next save, and the
+   * terminals' sessions are then swept as sessions nothing accounts for — a
+   * layout, not work, is what it loses.
+   */
+  pane_layout?: PaneNodeRecord;
+  pane_terminals?: PaneTerminalRecord[];
+}
+
+/** One terminal opened beside a Workspace's panes. */
+export interface PaneTerminalRecord {
+  terminal_id: string;
+  name: string;
+  cwd?: string;
+  command?: string;
 }
 
 export interface NavigationState {
@@ -955,6 +982,62 @@ function validateWorkspaceRecord(
     }
     ids.add(agent.agent_id);
   }
+  validatePaneLayout(where, record);
+}
+
+/**
+ * A Workspace's tiling and its terminals agree: the tree is one this build
+ * could have written, every terminal it names is listed exactly once, and
+ * every listed terminal is in it.
+ */
+function validatePaneLayout(where: string, record: WorkspaceStateRecord): void {
+  const terminals = record.pane_terminals ?? [];
+  if (record.pane_layout === undefined) {
+    if (terminals.length > 0) {
+      refuse(`${where}.pane_layout`, "a layout for its terminals", undefined);
+    }
+    return;
+  }
+  let named: readonly string[];
+  try {
+    named = paneTerminals(
+      paneFromRecord(record.pane_layout, `${where}.pane_layout`),
+    );
+  } catch (error) {
+    if (error instanceof PaneRecordError) {
+      refuse(error.where, "a pane layout DevHub wrote", record.pane_layout);
+    }
+    throw error;
+  }
+  const listed = new Set<string>();
+  for (const [index, terminal] of terminals.entries()) {
+    const at = `${where}.pane_terminals[${index}]`;
+    validateUuid(`${at}.terminal_id`, terminal.terminal_id);
+    if (listed.has(terminal.terminal_id)) {
+      refuse(
+        `${at}.terminal_id`,
+        "a terminal listed once",
+        terminal.terminal_id,
+      );
+    }
+    listed.add(terminal.terminal_id);
+    if (terminal.name.length === 0 || terminal.name.length > 200) {
+      refuse(`${at}.name`, "a name of 1 to 200 characters", terminal.name);
+    }
+    if (terminal.cwd !== undefined) {
+      validateAbsolutePath(`${at}.cwd`, terminal.cwd);
+    }
+  }
+  if (
+    named.length !== listed.size ||
+    named.some((terminalId) => !listed.has(terminalId))
+  ) {
+    refuse(
+      `${where}.pane_terminals`,
+      "exactly the terminals its pane layout names",
+      terminals.map((terminal) => terminal.terminal_id),
+    );
+  }
 }
 
 function isValidSocketName(value: string): boolean {
@@ -1363,6 +1446,26 @@ export function hydrateModel(
         model.restoreLastAgent(id, parseAgentId(lastAgentId));
       });
     }
+
+    if (record.pane_layout !== undefined) {
+      const layout = record.pane_layout;
+      refuseRecord(`${where}'s panes`, () => {
+        model.restorePaneLayout(
+          id,
+          paneFromRecord(layout),
+          (record.pane_terminals ?? []).map((terminal) => ({
+            id: terminal.terminal_id,
+            workspaceId: id,
+            name: terminal.name,
+            cwd: terminal.cwd,
+            command: terminal.command,
+            // Restored, not opened: the first reading of its machine says
+            // whether its session survived.
+            openedAt: 0,
+          })),
+        );
+      });
+    }
   }
 
   refuseRecord("the sidebar and the split", () => {
@@ -1485,6 +1588,19 @@ export function stateFromSnapshot(
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
+      ...(workspace.paneTerminals.length === 0
+        ? {}
+        : {
+            pane_layout: paneRecord(workspace.paneTree),
+            pane_terminals: workspace.paneTerminals.map((terminal) => ({
+              terminal_id: terminal.id,
+              name: terminal.name,
+              ...(terminal.cwd === undefined ? {} : { cwd: terminal.cwd }),
+              ...(terminal.command === undefined
+                ? {}
+                : { command: terminal.command }),
+            })),
+          }),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,
         workspace_id: agent.workspaceId,
@@ -2008,6 +2124,48 @@ function decodeWorkspaceRecord(
     agents: decodeArray(at("agents"), object["agents"]).map((entry, index) =>
       decodeAgentRecord(`${at("agents")}[${index}]`, entry),
     ),
+    ...(object["pane_layout"] === undefined
+      ? {}
+      : {
+          // Its shape is checked whole by `validatePaneLayout`, against the
+          // terminals beside it.
+          pane_layout: decodeObject(
+            at("pane_layout"),
+            object["pane_layout"],
+          ) as unknown as PaneNodeRecord,
+        }),
+    ...(object["pane_terminals"] === undefined
+      ? {}
+      : {
+          pane_terminals: decodeArray(
+            at("pane_terminals"),
+            object["pane_terminals"],
+          ).map((entry, index) =>
+            decodePaneTerminalRecord(
+              `${at("pane_terminals")}[${index}]`,
+              entry,
+            ),
+          ),
+        }),
+  };
+}
+
+function decodePaneTerminalRecord(
+  where: string,
+  value: unknown,
+): PaneTerminalRecord {
+  const object = decodeObject(where, value);
+  const cwd = decodeOptional(object["cwd"], (entry) =>
+    decodeString(`${where}.cwd`, entry),
+  );
+  const command = decodeOptional(object["command"], (entry) =>
+    decodeString(`${where}.command`, entry),
+  );
+  return {
+    terminal_id: decodeString(`${where}.terminal_id`, object["terminal_id"]),
+    name: decodeString(`${where}.name`, object["name"]),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(command === undefined ? {} : { command }),
   };
 }
 

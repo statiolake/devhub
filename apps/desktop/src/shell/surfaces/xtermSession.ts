@@ -20,7 +20,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "./xtermSession.css";
-import { devhub } from "../agents/client";
+import { surfaceBridge } from "../terminal/surfaceBridge";
 import { editingSequence } from "./keys";
 import {
   terminalFontStack,
@@ -149,7 +149,7 @@ function attachRenderer(
  */
 const linkHandler = {
   activate(_event: MouseEvent, uri: string): void {
-    void devhub().openExternalUrl(uri);
+    void surfaceBridge().openExternalUrl(uri);
   },
 };
 
@@ -204,7 +204,7 @@ const clipboardProvider = {
    */
   writeText(selection: string, text: string): Promise<void> {
     if (selection === "p") return Promise.resolve();
-    return devhub().writeClipboard(text);
+    return surfaceBridge().writeClipboard(text);
   },
 };
 

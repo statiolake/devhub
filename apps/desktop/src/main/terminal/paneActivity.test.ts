@@ -7,7 +7,10 @@ import {
 } from "./paneActivity.js";
 import {
 	agentSessionName,
+	isMarked,
 	parsePaneActivity,
+	parsePaneTerminals,
+	terminalSessionName,
 	workspaceDigest,
 } from "./tmux.js";
 import { TerminalPanes } from "../../model/terminalActivity.js";
@@ -134,7 +137,7 @@ describe("reading tmux's pane listing", () => {
 	it("reports a server DevHub does not own as wrong, with no panes", () => {
 		expect(
 			parsePaneActivity(output(`marker${FS}`, paneRecord({})), "/Users/me"),
-		).toEqual({ marker: "wrong", panes: [] });
+		).toEqual({ marker: "wrong", panes: [], terminals: [] });
 	});
 
 	it("refuses a record of the wrong width", () => {
@@ -342,3 +345,92 @@ describe("from tmux to the row", () => {
 function sessionFor(root: string): string {
 	return `ws-${workspaceDigest(root).slice(0, 20)}`;
 }
+
+describe("the terminals opened as panes", () => {
+	const TERMINAL = "11111111-1111-4111-8111-111111111111";
+
+	it("are named by their own session in the activity reading, and not counted as the Workspace's", () => {
+		const { panes, terminals } = parsePaneActivity(
+			output(
+				MARKER,
+				paneRecord({ session: sessionFor(ROOT), pane: "%1" }),
+				paneRecord({
+					session: terminalSessionName(TERMINAL),
+					context: "terminal",
+					pane: "%9",
+					command: "make",
+				}),
+				// Not DevHub's: a name that looks right with no marker.
+				paneRecord({
+					session: terminalSessionName(TERMINAL).replace("1111", "2222"),
+					context: "",
+				}),
+			),
+			"/Users/me",
+		);
+		expect(panes.map((pane) => pane.pane)).toEqual(["%1"]);
+		expect(terminals).toEqual([TERMINAL]);
+	});
+
+	it("is marked only with its whole tuple and a name that is its id", () => {
+		const marking = {
+			name: terminalSessionName(TERMINAL),
+			context: "terminal",
+			workspaceId: WS,
+			agentId: "none",
+			root: ROOT,
+		};
+		expect(isMarked(marking, "/Users/me")).toBe(true);
+		expect(isMarked({ ...marking, name: "tm-nope" }, "/Users/me")).toBe(false);
+		expect(isMarked({ ...marking, agentId: AGENT }, "/Users/me")).toBe(false);
+		expect(isMarked({ ...marking, workspaceId: "w" }, "/Users/me")).toBe(false);
+	});
+
+	it("reads each pane's handle: socket, window, pane, cwd and command", () => {
+		const record = [
+			"terminal-pane",
+			terminalSessionName(TERMINAL),
+			"terminal",
+			WS,
+			"none",
+			"@4",
+			"0",
+			"%9",
+			"0",
+			"1",
+			"1",
+			"npm",
+			"host.local",
+			"0",
+			"/private/tmp/tmux-501/devhub",
+			"/Users/me/projects/widget/api",
+			ROOT,
+		].join(FS);
+		const { marker, panes } = parsePaneTerminals(
+			output(MARKER, record),
+			"/Users/me",
+		);
+		expect(marker).toBe("owned");
+		expect(panes).toEqual([
+			{
+				terminalId: TERMINAL,
+				workspaceId: WS,
+				sessionName: terminalSessionName(TERMINAL),
+				windowId: "@4",
+				windowIndex: 0,
+				paneId: "%9",
+				paneIndex: 0,
+				active: true,
+				command: "npm",
+				title: "host.local",
+				cwd: "/Users/me/projects/widget/api",
+				dead: false,
+				socketPath: "/private/tmp/tmux-501/devhub",
+			},
+		]);
+		// A server that is not DevHub's says nothing about anybody's panes.
+		expect(
+			parsePaneTerminals(output(`marker${FS}`, record), "/Users/me").panes,
+		).toEqual([]);
+	});
+});

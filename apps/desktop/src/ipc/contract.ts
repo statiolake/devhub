@@ -535,6 +535,41 @@ export interface RepositoryStatusWire {
 export interface LayoutPreviewWire {
 	readonly sidebarWidth?: number | null;
 	readonly splitRatio?: number | null;
+	/** A seam of the selected Workspace's tiling (`PaneSeamWire.path`). */
+	readonly pane?: { readonly path: string; readonly ratio: number } | null;
+}
+
+/**
+ * One seam between two panes of the selected Workspace's tiling, as main laid
+ * it out — the strip the window's own page draws a divider in, because it is
+ * the one place no child view covers. `extent` is the whole split it divides,
+ * which is what a drag's ratio is a ratio *of*. See `model/paneLayout.ts`.
+ */
+export interface PaneSeamWire {
+	readonly path: string;
+	readonly axis: "row" | "column";
+	readonly ratio: number;
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+	readonly extent: {
+		readonly x: number;
+		readonly y: number;
+		readonly width: number;
+		readonly height: number;
+	};
+}
+
+/**
+ * A terminal pane's header let go of somewhere: the point, in that pane's own
+ * page coordinates. Main knows where the page is in the window and which pane
+ * is under the point, so it decides the rest (`AppController.dropPaneHeader`).
+ */
+export interface PaneDropWire {
+	readonly terminalId: string;
+	readonly x: number;
+	readonly y: number;
 }
 
 /**
@@ -562,6 +597,11 @@ export interface WorkbenchAreaWire {
 	 * width the window used to be.
 	 */
 	readonly contentWidth: number;
+	/**
+	 * The seams between the selected Workspace's panes, when terminals are
+	 * open beside its content. Absent, or empty, is the content alone.
+	 */
+	readonly seams?: readonly PaneSeamWire[];
 }
 
 /**
@@ -1241,6 +1281,41 @@ export interface AgentsBridge
 	readonly voice: VoiceApi;
 }
 
+/**
+ * What a terminal surface needs from whatever page it is mounted on: the
+ * transport, and the two things a PTY can ask of the Mac — a link opened, a
+ * copy put on the clipboard. Both the Agents and every terminal pane draw
+ * terminals, so this is the fragment the surface reads (`shell/terminal`),
+ * and neither page's own bridge has to be reachable from the other's.
+ */
+export interface TerminalSurfaceBridge {
+	openExternalUrl(url: string): Promise<void>;
+	writeClipboard(text: string): Promise<void>;
+	readonly terminal: DevhubTerminalApi;
+}
+
+/**
+ * One terminal pane — `pane.html`, one view per terminal opened beside a
+ * Workspace's panes, the terminal named by the page's fragment
+ * (`pane.html#<id>`).
+ *
+ * Its header says which tmux session it is, so a person told "the Agent is
+ * driving tm-…" can see which pane that is; its body is a terminal surface on
+ * that session. It reads the projection for its name and the appearance for
+ * its font, like the Agents page, and may ask exactly two things of its own:
+ * to be closed, and to be put somewhere else.
+ */
+export interface PaneBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AppearanceBridge,
+		TerminalSurfaceBridge {
+	/** Close this terminal, and its session with it — the header's ×. */
+	closePaneTerminal(terminalId: string): Promise<void>;
+	/** The header was dragged and let go of; main moves the pane. */
+	dropPaneHeader(drop: PaneDropWire): Promise<void>;
+}
+
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */
 export interface ToastsBridge extends PageBridge {
 	/** Failures that happen between requests, such as a startup mount. */
@@ -1572,6 +1647,8 @@ export const CHANNELS = {
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
 	previewLayout: "devhub:preview-layout",
+	closePaneTerminal: "devhub:close-pane-terminal",
+	dropPaneHeader: "devhub:drop-pane-header",
 	focusSurface: "devhub:focus-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",

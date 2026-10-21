@@ -381,6 +381,17 @@ export const WORKSPACE_TERMINAL_SURFACE_PREFIX = "workspace-terminal:";
  */
 export const AGENT_SURFACE_PREFIX = "agent:";
 
+/**
+ * A pane terminal's surface: a terminal opened beside a Workspace's panes
+ * (`Cmd+Q V` / `S`, `devhub --tell terminal open`), by its own id.
+ */
+export const PANE_TERMINAL_SURFACE_PREFIX = "terminal:";
+
+/** The surface key for a pane terminal, from its id. */
+export function paneTerminalSurfaceKey(terminalId: string): string {
+	return `${PANE_TERMINAL_SURFACE_PREFIX}${terminalId}`;
+}
+
 /** The surface key for a workspace's terminal, from its workspace id. */
 export function workspaceTerminalSurfaceKey(workspaceId: string): string {
 	return `${WORKSPACE_TERMINAL_SURFACE_PREFIX}${workspaceId}`;
@@ -406,7 +417,9 @@ export function validateSurfaceKey(value: unknown): string {
 				value.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),
 			)) ||
 		(value.startsWith(AGENT_SURFACE_PREFIX) &&
-			UUID_PATTERN.test(value.slice(AGENT_SURFACE_PREFIX.length)));
+			UUID_PATTERN.test(value.slice(AGENT_SURFACE_PREFIX.length))) ||
+		(value.startsWith(PANE_TERMINAL_SURFACE_PREFIX) &&
+			UUID_PATTERN.test(value.slice(PANE_TERMINAL_SURFACE_PREFIX.length)));
 	if (!valid) throw new TerminalFailure("invalid_surface");
 	return value;
 }

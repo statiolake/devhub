@@ -643,6 +643,17 @@ export type AppIntentWire =
 	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
 	/**
+	 * A seam of one Workspace's tiling, dragged to `ratio` — the share of its
+	 * split that the pane before it takes. `path` names the split (see
+	 * `model/paneLayout.ts`).
+	 */
+	| {
+			readonly type: "resize_pane";
+			readonly workspaceId: string;
+			readonly path: string;
+			readonly ratio: number;
+	  }
+	/**
 	 * Where one presentation's Smart Buttons were dragged to: anchored to an
 	 * edge of the composer (or corner), or free in whole pixels from the
 	 * pane's right and bottom edges; absent puts them back in their default
@@ -768,6 +779,11 @@ export interface AppSnapshotWire {
 	readonly sidebar: SidebarWire;
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
+	/**
+	 * The terminal pane that has the keyboard, when one has it rather than the
+	 * selection's own pane. One of the selected Workspace's `paneTerminals`.
+	 */
+	readonly paneFocus?: string;
 	/**
 	 * Where each presentation's Smart Buttons were dragged to; a presentation
 	 * that is absent has them in their default spot.
@@ -1108,9 +1124,39 @@ export interface WorkspaceWire {
 	 * to say — idle and read — which the row draws as nothing at all.
 	 */
 	readonly terminals?: TerminalActivityWire;
+	/** How its content area is tiled; absent is the content pane alone. */
+	readonly paneTree?: PaneNodeWire;
+	/** The terminals in `paneTree`, in the order they were opened. */
+	readonly paneTerminals?: readonly PaneTerminalWire[];
 }
 
 /** See `WorkspaceWire.terminals` and `model/terminalActivity.ts`. */
+/**
+ * A Workspace's content area, tiled: the selection's own pane (`content`)
+ * and the terminals around it. See `model/paneLayout.ts`.
+ */
+export type PaneNodeWire =
+	| { readonly kind: "content" }
+	| { readonly kind: "terminal"; readonly terminalId: string }
+	| {
+			readonly kind: "split";
+			readonly axis: "row" | "column";
+			readonly ratio: number;
+			readonly first: PaneNodeWire;
+			readonly second: PaneNodeWire;
+	  };
+
+/** One terminal opened beside a Workspace's panes. */
+export interface PaneTerminalWire {
+	readonly id: string;
+	/** What its header says. */
+	readonly name: string;
+	/** Its tmux session, which is what an Agent or a person drives it by. */
+	readonly session: string;
+	readonly cwd?: string;
+	readonly command?: string;
+}
+
 export interface TerminalActivityWire {
 	readonly status: AgentStatusWire;
 	readonly unread?: AgentStatusWire;

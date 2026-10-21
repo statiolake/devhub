@@ -98,9 +98,10 @@ function setTreeTabStop(
  * type goes to the arrow-key walk.
  *
  * **A keyboard selection means "and stay here."** Somebody is standing in the
- * Sidebar after `Cmd+Q S` and walking it with the arrows; Return there chooses
- * a row without leaving the list, and the next ↓ has to still be a ↓. Escape
- * is the way out, and it is the same request this makes.
+ * Sidebar after `focus_sidebar` (from the command palette) and walking it
+ * with the arrows; Return there chooses a row without leaving the list, and
+ * the next ↓ has to still be a ↓. Escape is the way out, and it is the same
+ * request this makes.
  *
  * Which one it was is on the event and nowhere else: a click raised by a
  * pointer carries a `detail` of at least one, and a click raised by activating
@@ -1093,7 +1094,8 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const treeFocusId = useRef<string | undefined>(undefined);
 
   /**
-   * `Cmd+Q S`: put the keyboard on the row that is selected.
+   * `focus_sidebar`: put the keyboard on the row that is selected. (Palette
+   * only since `Cmd+Q S` became the terminal split below.)
    *
    * The tree's roving tab stop is already the selected row — the layout effect
    * above keeps it there — so this focuses whatever that is and the tree's own
@@ -1109,7 +1111,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
   /**
    * Escape: give the keyboard back.
    *
-   * The way out of the chrome, and the counterpart of `Cmd+Q S`. It is a
+   * The way out of the chrome, and the counterpart of `focus_sidebar`. It is a
    * request to main and not a `blur()` here, because the thing that should get
    * the keyboard is usually a native workbench view this document cannot
    * focus — `ShellWindow.focusSurface` is the one answer to where it goes, and
@@ -1168,7 +1170,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
         // File ▸ Add Workspace… is the same command as the sidebar's +, so it
         // opens the same picker rather than a second way of adding a workspace.
         if (command === "open_workspace_picker") openPicker();
-        // Main's half of `Cmd+Q S` has already put the keyboard in this view;
+        // Main's half of `focus_sidebar` has already put the keyboard in this view;
         // this is the half only this page can do, which is saying which row it
         // lands on. The other end of that chord — the Agent's pane — needs no
         // message at all any more: the Agents are a view of their own, so main

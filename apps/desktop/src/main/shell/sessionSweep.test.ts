@@ -42,8 +42,13 @@ const SCRATCH: OwnedSessionRecord = {
 function accounting(
 	workspaces: readonly string[],
 	agents: readonly string[],
+	terminals: readonly string[] = [],
 ): SweepAccounting {
-	return { workspaces: new Set(workspaces), agents: new Set(agents) };
+	return {
+		workspaces: new Set(workspaces),
+		agents: new Set(agents),
+		terminals: new Set(terminals),
+	};
 }
 
 /**
@@ -160,6 +165,26 @@ describe("which owned sessions nothing accounts for", () => {
 			"devhub-scratch",
 			`ws-${WORKSPACE_TWO.slice(0, 20)}`,
 			`ag-${AGENT_TWO}`,
+		]);
+	});
+
+	it("keeps a pane terminal its Workspace lists, and reaps one nothing lists", () => {
+		const terminal = (terminalId: string): OwnedSessionRecord => ({
+			kind: "terminal",
+			terminalId,
+			workspaceId: WORKSPACE_ONE,
+			sessionName: `tm-${terminalId}`,
+		});
+		const stray = unaccountedSessions(
+			[
+				workspaceSession(WORKSPACE_ONE),
+				terminal(AGENT_ONE),
+				terminal(AGENT_TWO),
+			],
+			accounting([WORKSPACE_ONE], [], [AGENT_ONE]),
+		);
+		expect(stray.map((session) => session.sessionName)).toEqual([
+			`tm-${AGENT_TWO}`,
 		]);
 	});
 });

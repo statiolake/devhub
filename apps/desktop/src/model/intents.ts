@@ -41,7 +41,8 @@ import {
   sshHost,
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
-import type { AppSnapshot } from "./appModel.js";
+import type { AppSnapshot, PaneFocusTarget, PaneTerminal } from "./appModel.js";
+import type { PaneLeaf, PanePath, PaneSide } from "./paneLayout.js";
 import type { SmartButtonsSpot } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
 import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
@@ -515,6 +516,55 @@ export type UserIntent =
   | {
       readonly type: "terminal_activity_observed";
       readonly workspaces: readonly WorkspaceTerminalObservation[];
+    }
+  /**
+   * A terminal's session is up; give it a pane (`model/paneLayout.ts`).
+   *
+   * Raised in main once the session exists — the id is main's, generated
+   * before the session was made, so it is a result and not something a page
+   * can ask for. A page asks with `Cmd+Q V`/`S` or the CLI, both of which
+   * come to main first.
+   */
+  | {
+      readonly type: "pane_terminal_opened";
+      readonly terminal: PaneTerminal;
+      readonly side: PaneSide;
+      /** The pane it is split from; the one with the keyboard when absent. */
+      readonly beside?: PaneLeaf;
+      readonly focus: boolean;
+    }
+  /** A terminal's pane goes: it was closed, and its session with it. */
+  | { readonly type: "pane_terminal_closed"; readonly terminalId: string }
+  /** A seam of one Workspace's tiling, dragged to `ratio`. */
+  | {
+      readonly type: "resize_pane";
+      readonly workspaceId: WorkspaceId;
+      readonly path: PanePath;
+      readonly ratio: number;
+    }
+  /** A terminal's header dropped on `side` of another pane. */
+  | {
+      readonly type: "move_pane_terminal";
+      readonly terminalId: string;
+      readonly onto: PaneLeaf;
+      readonly side: PaneSide;
+    }
+  /** The keyboard into one pane on screen — a click into it, or a chord. */
+  | { readonly type: "focus_pane"; readonly target: PaneFocusTarget }
+  /** `Cmd+Q O`: the next pane on screen. */
+  | { readonly type: "cycle_pane_focus"; readonly direction: 1 | -1 }
+  /** `Cmd+Q ←/→/↑/↓`: the pane on that side. */
+  | { readonly type: "focus_pane_towards"; readonly side: PaneSide }
+  /**
+   * One machine's reading of which pane terminals still have a session.
+   * Every Workspace on that machine is in `workspaces`; `since` is when the
+   * reading began, in main's clock (see `AppModel.observePaneTerminals`).
+   */
+  | {
+      readonly type: "pane_terminals_observed";
+      readonly workspaces: readonly WorkspaceId[];
+      readonly alive: readonly string[];
+      readonly since: number;
     }
   | { readonly type: "window_closed" }
   | { readonly type: "quit" };

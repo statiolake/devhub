@@ -20,6 +20,7 @@ const PAGES = [
   "shell",
   "sidebar",
   "agents",
+  "pane",
   "toasts",
   "tooltip",
   "picker",

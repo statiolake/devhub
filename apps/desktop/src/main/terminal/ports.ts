@@ -248,6 +248,23 @@ export interface AgentTerminalTarget extends TerminalMachine {
 }
 
 /**
+ * A terminal DevHub opened beside the panes of one Workspace (`Cmd+Q V`/`S`,
+ * `devhub --tell terminal open`), named by its own id.
+ *
+ * An Agent's lifetime with a person's shell in it: a session of its own on the
+ * Workspace's machine, created once with whatever it runs — the login shell,
+ * or the command it was opened with — and gone when that ends, which is what
+ * closes its pane. Unlike the Workspace's own session it is never recreated
+ * on demand; a terminal that ended is not a place to go back to.
+ */
+export interface PaneTerminalTarget extends TerminalMachine {
+	readonly terminalId: string;
+	readonly workspaceId: string;
+	/** Absolute, canonical: the root of the Workspace it belongs to. */
+	readonly root: string;
+}
+
+/**
  * Which terminal a request is about.
  *
  * `scratch` is the tmux server's anchor: the session the bootstrap creates in
@@ -261,7 +278,8 @@ export interface AgentTerminalTarget extends TerminalMachine {
 export type TerminalTarget =
 	| ({ readonly kind: "scratch" } & TerminalMachine)
 	| ({ readonly kind: "workspace" } & WorkspaceTerminalTarget)
-	| ({ readonly kind: "agent" } & AgentTerminalTarget);
+	| ({ readonly kind: "agent" } & AgentTerminalTarget)
+	| ({ readonly kind: "terminal" } & PaneTerminalTarget);
 
 /** The anchor session, on one machine. */
 export function scratchTarget(machine: RuntimeId): TerminalTarget {
@@ -288,6 +306,15 @@ export function agentTarget(
 	return { kind: "agent", machine, agentId, workspaceId, root };
 }
 
+export function paneTerminalTarget(
+	machine: RuntimeId,
+	terminalId: string,
+	workspaceId: string,
+	root: string,
+): TerminalTarget {
+	return { kind: "terminal", machine, terminalId, workspaceId, root };
+}
+
 export function sameTarget(
 	left: TerminalTarget,
 	right: TerminalTarget,
@@ -299,6 +326,9 @@ export function sameTarget(
 		// The Agent id is the whole identity: a workspace can be reopened at a
 		// different root, and the Agent running in it is still that Agent.
 		return right.kind === "agent" && left.agentId === right.agentId;
+	}
+	if (left.kind === "terminal") {
+		return right.kind === "terminal" && left.terminalId === right.terminalId;
 	}
 	return (
 		right.kind === "workspace" &&
@@ -341,6 +371,12 @@ export type OwnedSessionRecord =
 			readonly agentId: string;
 			readonly workspaceId: string;
 			readonly sessionName: string;
+	  }
+	| {
+			readonly kind: "terminal";
+			readonly terminalId: string;
+			readonly workspaceId: string;
+			readonly sessionName: string;
 	  };
 
 /**
@@ -377,6 +413,13 @@ export function sameOwnedSession(
 		return (
 			right.kind === "agent" &&
 			left.agentId === right.agentId &&
+			left.workspaceId === right.workspaceId
+		);
+	}
+	if (left.kind === "terminal") {
+		return (
+			right.kind === "terminal" &&
+			left.terminalId === right.terminalId &&
 			left.workspaceId === right.workspaceId
 		);
 	}

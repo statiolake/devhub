@@ -51,8 +51,15 @@ import type { KeyStroke } from "./chords.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 import type { TerminalZoomDirection } from "../../model/terminalZoom.js";
 
-/** The one page these keys mean anything on. */
-const AGENTS_PAGE = `${SHELL_ORIGIN}/agents.html`;
+/**
+ * The pages these keys mean anything on: the Agents, and every terminal pane
+ * (`pane.html#<id>`) — the two pages whose text is a terminal's, drawn at the
+ * one terminal size the zoom moves.
+ */
+const TERMINAL_PAGES = [
+	`${SHELL_ORIGIN}/agents.html`,
+	`${SHELL_ORIGIN}/pane.html`,
+];
 
 /**
  * What this keystroke means to the Agent panes, or nothing.
@@ -66,7 +73,9 @@ export function terminalZoomFor(
 	surfaceUrl: string,
 	stroke: KeyStroke,
 ): TerminalZoomDirection | undefined {
-	if (!surfaceUrl.startsWith(AGENTS_PAGE)) return undefined;
+	if (!TERMINAL_PAGES.some((page) => surfaceUrl.startsWith(page))) {
+		return undefined;
+	}
 	if (!stroke.command || stroke.option || stroke.control) return undefined;
 	if (stroke.code === "Minus") return stroke.shift ? "in" : "out";
 	if (stroke.code === "Digit0" && stroke.shift) return "reset";

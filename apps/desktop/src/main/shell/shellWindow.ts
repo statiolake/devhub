@@ -22,6 +22,7 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
 	onScreenEditor,
+	paneSeams,
 	sidebarRect,
 	surfaceRect,
 	trafficLightPosition,
@@ -34,7 +35,11 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type { SidebarAreaWire, WorkbenchAreaWire } from "../../ipc/contract.js";
+import type {
+	PaneSeamWire,
+	SidebarAreaWire,
+	WorkbenchAreaWire,
+} from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
@@ -128,6 +133,12 @@ export interface AttachedChild {
 	/** The view's own `setVisible`. */
 	readonly draw: (visible: boolean) => void;
 }
+
+/** Which of the content area's views took the keyboard by itself. */
+export type ContentFocus =
+	| { readonly kind: "editor" }
+	| { readonly kind: "agents" }
+	| { readonly kind: "terminal"; readonly terminalId: string };
 
 /** One attached view, and which workbench opened it. */
 interface AttachedEntry {
@@ -237,6 +248,22 @@ export class ShellWindow {
 	 * holds, and this is how it leaves.
 	 */
 	private windowFocusChanged: (focused: boolean) => void = () => undefined;
+	/**
+	 * Told when one of the content area's views took the keyboard by itself —
+	 * a click into a terminal pane, into the workbench, into the Agent — so the
+	 * model can know which pane `Cmd+Q X` and `Cmd+Q O` start from. See
+	 * `AppController.paneFocused`.
+	 */
+	private contentFocused: (pane: ContentFocus) => void = () => undefined;
+	/**
+	 * One view per terminal pane, by terminal id — every Workspace's, so that
+	 * coming back to a Workspace finds its terminals where they were, with
+	 * their scrollback. Made and ended by `syncTerminalViews`.
+	 */
+	private readonly terminalViews = new Map<string, ChromeView>();
+	/** Where the pages are served from, for the terminal panes made later. */
+	private readonly pageBase: string;
+	private readonly panePreload: string;
 
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
@@ -282,6 +309,8 @@ export class ShellWindow {
 		// `?window=` role for either: which page a view is showing is decided
 		// by which page main loads into it.
 		const pageBase = pageUrl.slice(0, pageUrl.lastIndexOf("/"));
+		this.pageBase = pageBase;
+		this.panePreload = preloadFor("pane");
 
 		// DevHub names this window, and only DevHub. Electron hands a page's
 		// `document.title` to its window by default, which would let the
@@ -305,6 +334,9 @@ export class ShellWindow {
 			`${pageBase}/agents.html`,
 		);
 		this.agents.adopt(this.window);
+		this.agents.contents()?.on("focus", () => {
+			this.contentFocused({ kind: "agents" });
+		});
 		this.toasts = new ToastsView(
 			preloadFor("toasts"),
 			`${pageBase}/toasts.html`,
@@ -433,6 +465,7 @@ export class ShellWindow {
 		this.toasts.openPage();
 		this.tooltip.openPage();
 		this.picker.openPage();
+		for (const view of this.terminalViews.values()) view.openPage();
 		// A sheet is modal: any other contents of this window taking the
 		// keyboard while one stands — a renderer focusing itself, which no
 		// gate in main sees — gives it straight back. See
@@ -510,6 +543,7 @@ export class ShellWindow {
 			this.picker.reclaimFrom(view.webContents);
 			this.publishFocus();
 			view.focusConfirmed();
+			this.contentFocused({ kind: "editor" });
 		});
 		view.webContents.on("blur", () => {
 			this.publishFocus();
@@ -554,6 +588,84 @@ export class ShellWindow {
 
 	getViews(): readonly WorkbenchView[] {
 		return this.views;
+	}
+
+	//#endregion
+
+	//#region the terminal panes
+
+	/**
+	 * Make a view for every terminal pane there is, and end the ones whose
+	 * terminal has gone.
+	 *
+	 * Called with the model's whole list on every projection. A view is made
+	 * the first time its terminal appears and kept until it disappears — in
+	 * whichever Workspace — so a terminal is attached once and its scrollback
+	 * survives switching away and back, the way the Agents' pool does.
+	 */
+	syncTerminalViews(terminalIds: readonly string[]): void {
+		if (this.window.isDestroyed()) return;
+		const wanted = new Set(terminalIds);
+		let changed = false;
+		for (const [id, view] of [...this.terminalViews]) {
+			if (wanted.has(id)) continue;
+			this.terminalViews.delete(id);
+			view.dispose(this.window);
+			changed = true;
+		}
+		for (const id of terminalIds) {
+			if (this.terminalViews.has(id)) continue;
+			// Which terminal the page shows is its fragment: one page, one
+			// entry, one preload, and an instance named the way a URL names
+			// a place in a document.
+			const view = new ChromeView(
+				this.panePreload,
+				`${this.pageBase}/pane.html#${encodeURIComponent(id)}`,
+			);
+			view.adopt(this.window);
+			const contents = view.contents();
+			contents?.on("focus", () => {
+				this.picker.reclaimFrom(contents);
+				this.contentFocused({ kind: "terminal", terminalId: id });
+			});
+			this.terminalViews.set(id, view);
+			if (this.pageOpened) view.openPage();
+			changed = true;
+		}
+		if (changed) this.layout();
+	}
+
+	/** Every terminal pane's page, for the audiences that tell pages things. */
+	paneTerminalContents(): readonly Electron.WebContents[] {
+		const all: Electron.WebContents[] = [];
+		for (const view of this.terminalViews.values()) {
+			const contents = view.contents();
+			if (contents) all.push(contents);
+		}
+		return all;
+	}
+
+	/** The terminal a pane page belongs to, from its contents. */
+	terminalOfContents(contents: Electron.WebContents): string | undefined {
+		for (const [id, view] of this.terminalViews) {
+			if (view.contents() === contents) return id;
+		}
+		return undefined;
+	}
+
+	/** Where a terminal pane is in the window, if it is on screen. */
+	terminalRect(terminalId: string): LayoutRect | undefined {
+		const child = windowLayout(this.layoutInput()).find(
+			(candidate) =>
+				candidate.identity.kind === "terminal" &&
+				candidate.identity.terminalId === terminalId,
+		);
+		return child?.visible === true ? child.rect : undefined;
+	}
+
+	/** Register the one reader of "a pane took the keyboard by itself". */
+	onContentFocused(changed: (pane: ContentFocus) => void): void {
+		this.contentFocused = changed;
 	}
 
 	//#endregion
@@ -971,6 +1083,11 @@ export class ShellWindow {
 				return this.sidebar.contents() ?? this.window.webContents;
 			case "agents":
 				return this.agents.contents() ?? this.window.webContents;
+			case "terminal":
+				return (
+					this.terminalViews.get(identity.terminalId)?.contents() ??
+					this.window.webContents
+				);
 			case "toasts":
 				return this.toasts.contents() ?? this.window.webContents;
 			case "picker":
@@ -1153,9 +1270,19 @@ export class ShellWindow {
 	}
 
 	workbenchArea(): WorkbenchAreaWire {
+		const seams: PaneSeamWire[] = paneSeams(this.windowSize(), this.state).map(
+			(seam) => ({
+				path: seam.path,
+				axis: seam.axis,
+				ratio: seam.ratio,
+				...seam.rect,
+				extent: seam.extent,
+			}),
+		);
 		return {
 			...this.workbenchRect(),
 			contentWidth: surfaceRect(this.windowSize(), this.state).width,
+			...(seams.length === 0 ? {} : { seams }),
 		};
 	}
 
@@ -1177,6 +1304,11 @@ export class ShellWindow {
 		return scrimColor(base, theme.prefersReducedTransparency);
 	}
 
+	/** The window's content size, for a caller laying the tiling out itself. */
+	windowSizeForLayout(): { width: number; height: number } {
+		return this.windowSize();
+	}
+
 	private windowSize(): { width: number; height: number } {
 		if (this.window.isDestroyed()) return { width: 0, height: 0 };
 		const [width, height] = this.window.getContentSize();
@@ -1194,6 +1326,7 @@ export class ShellWindow {
 			picker: this.picker.scope(),
 			tooltip: this.tooltip.placement(),
 			attached: this.attachedPlacements(),
+			terminals: [...this.terminalViews.keys()],
 		};
 	}
 
@@ -1267,6 +1400,12 @@ export class ShellWindow {
 				if (!child.visible) entry.child.draw(false);
 				continue;
 			}
+			if (child.identity.kind === "terminal" && !child.visible) {
+				this.terminalViews
+					.get(child.identity.terminalId)
+					?.place(this.window, child.rect, false);
+				continue;
+			}
 			if (child.identity.kind !== "editor") continue;
 			const view = this.viewForEditorKey(child.identity.editorKey);
 			if (!view) continue;
@@ -1314,6 +1453,12 @@ export class ShellWindow {
 					break;
 				case "agents":
 					this.agents.place(this.window, child.rect, child.visible);
+					break;
+				case "terminal":
+					if (!child.visible) break;
+					this.terminalViews
+						.get(child.identity.terminalId)
+						?.place(this.window, child.rect, true);
 					break;
 				case "toasts":
 					this.toasts.place(child.rect, child.visible);

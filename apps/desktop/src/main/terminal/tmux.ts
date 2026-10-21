@@ -87,10 +87,12 @@ import {
 	type TerminalTarget,
 	type WorkspaceTerminalTarget,
 	type ListedAgentSession,
+	type PaneTerminalTarget,
 } from "./ports.js";
 import { requiredTerminalSet } from "./ports.js";
 import type { PaneSample } from "./paneActivity.js";
 import { failureText } from "../../model/wire.js";
+import { paneTerminalSessionName } from "../../model/paneLayout.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -116,6 +118,14 @@ const AGENT_ID_OPTION = "@devhub-agent-id";
 const GLOBAL_CONTEXT = "global";
 const WORKSPACE_CONTEXT = "workspace";
 const AGENT_CONTEXT = "agent";
+/**
+ * A terminal DevHub opened as a pane beside a Workspace's other panes
+ * (`PaneTerminalTarget`). Its own context rather than an Agent's or the
+ * Workspace's, because it is neither: the sweep accounts for it by the
+ * Workspace's list of terminals, nothing reads its screen as an Agent, and it
+ * is never recreated as the Workspace's session is.
+ */
+const TERMINAL_CONTEXT = "terminal";
 const GLOBAL_ID = "global";
 /** The marker value a session that is not an Agent carries. */
 const NO_AGENT = "none";
@@ -472,6 +482,11 @@ interface SessionSpec {
 	readonly workspaceId: string;
 	readonly agentId: string;
 	/**
+	 * Where the first pane starts, when it is not `root` — a terminal opened
+	 * in a subfolder. Checked to be a directory before anything is created.
+	 */
+	readonly cwd?: string;
+	/**
 	 * The session's own command, when the session *is* a command.
 	 *
 	 * Absent means tmux starts the login shell, which is what a workspace or
@@ -537,6 +552,9 @@ function sessionOptions(
 export function agentSessionName(agentId: string): string {
 	return `ag-${agentId}`;
 }
+
+/** A pane terminal's session is named by its id, like an Agent's. */
+export const terminalSessionName = paneTerminalSessionName;
 
 export function workspaceDigest(root: string): string {
 	return createHash("sha256").update(root, "utf8").digest("hex");
@@ -666,7 +684,22 @@ export function isMarked(
 			session.name === agentSessionName(agentId)
 		);
 	}
+	if (context === TERMINAL_CONTEXT) {
+		return (
+			agentId === NO_AGENT &&
+			isUuid(workspaceId) &&
+			isRootMetadata(root) &&
+			terminalIdOfSession(session.name) !== undefined
+		);
+	}
 	return false;
+}
+
+/** The terminal id a `tm-` session name carries, if it is one. */
+export function terminalIdOfSession(name: string): string | undefined {
+	if (!name.startsWith("tm-")) return undefined;
+	const id = name.slice(3);
+	return isUuid(id) ? id : undefined;
 }
 
 /**
@@ -729,17 +762,31 @@ const PANE_MARKER_FORMAT =
 export function parsePaneActivity(
 	stdout: Buffer,
 	contextHome: string,
-): { readonly marker: MarkerState; readonly panes: PaneSample[] } {
+): {
+	readonly marker: MarkerState;
+	readonly panes: PaneSample[];
+	/**
+	 * Every pane terminal (`tm-` session) on the server, by id — what a
+	 * terminal's pane is closed by when its session has ended. The panes in
+	 * them are not in `panes`: they are drawn by DevHub's own views, not by a
+	 * workbench's terminal tab, and the Sidebar's terminal mark is about the
+	 * Workspace's own session.
+	 */
+	readonly terminals: string[];
+} {
 	const records = splitRecords(stdout);
 	const first = records[0]?.split(FIELD_SEPARATOR);
 	if (first === undefined || first[0] !== MARKER_RECORD) {
 		throw shapeFailure("no marker where the marker record should be");
 	}
-	if (first[1] !== PROTOCOL_VALUE) return { marker: "wrong", panes: [] };
+	if (first[1] !== PROTOCOL_VALUE) {
+		return { marker: "wrong", panes: [], terminals: [] };
+	}
 	if (records.length - 1 > MAX_PANES) {
 		throw shapeFailure("more windows or panes than DevHub will read");
 	}
 	const panes: PaneSample[] = [];
+	const terminals = new Set<string>();
 	for (const record of records.slice(1)) {
 		const fields = record.split(FIELD_SEPARATOR);
 		if (
@@ -757,6 +804,11 @@ export function parsePaneActivity(
 			root: markerValue(at(13)),
 		};
 		if (!isMarked(marking, contextHome)) continue;
+		if (marking.context === TERMINAL_CONTEXT) {
+			const id = terminalIdOfSession(marking.name);
+			if (id !== undefined) terminals.add(id);
+			continue;
+		}
 		if (
 			marking.context !== WORKSPACE_CONTEXT ||
 			marking.workspaceId === undefined
@@ -775,6 +827,108 @@ export function parsePaneActivity(
 			dead: at(10) === "1",
 			screen: at(11),
 			command: at(12),
+		});
+	}
+	return { marker: "owned", panes, terminals: [...terminals] };
+}
+
+/** One pane of a pane terminal, as `devhub --tell terminal list` reports it. */
+export interface PaneTerminalPane {
+	readonly terminalId: string;
+	readonly workspaceId: string;
+	readonly sessionName: string;
+	/** tmux's `@3`. */
+	readonly windowId: string;
+	readonly windowIndex: number;
+	/** tmux's `%12`: unique on its server, the most exact target there is. */
+	readonly paneId: string;
+	readonly paneIndex: number;
+	/** The pane is its window's active one, and the window its session's. */
+	readonly active: boolean;
+	/** The foreground process, as tmux names it. */
+	readonly command: string;
+	readonly title: string;
+	readonly cwd: string;
+	readonly dead: boolean;
+	/** The server's socket, absolute: what `tmux -S` takes. */
+	readonly socketPath: string;
+}
+
+const TERMINAL_PANE_RECORD = "terminal-pane";
+const TERMINAL_PANE_FIELDS = [
+	TERMINAL_PANE_RECORD,
+	"#{session_name}",
+	`#{${CONTEXT_OPTION}}`,
+	`#{${WORKSPACE_ID_OPTION}}`,
+	`#{${AGENT_ID_OPTION}}`,
+	"#{window_id}",
+	"#{window_index}",
+	"#{pane_id}",
+	"#{pane_index}",
+	"#{pane_active}",
+	"#{window_active}",
+	"#{pane_current_command}",
+	"#{pane_title}",
+	"#{pane_dead}",
+	"#{socket_path}",
+	"#{pane_current_path}",
+	// Last, as everywhere else: the one value that may hold a newline.
+	`#{${ROOT_OPTION}}`,
+];
+const TERMINAL_PANE_FORMAT =
+	TERMINAL_PANE_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+
+/** Read what `paneTerminals` answered: the marker, then one record per pane. */
+export function parsePaneTerminals(
+	stdout: Buffer,
+	contextHome: string,
+): { readonly marker: MarkerState; readonly panes: PaneTerminalPane[] } {
+	const records = splitRecords(stdout);
+	const first = records[0]?.split(FIELD_SEPARATOR);
+	if (first === undefined || first[0] !== MARKER_RECORD) {
+		throw shapeFailure("no marker where the marker record should be");
+	}
+	if (first[1] !== PROTOCOL_VALUE) return { marker: "wrong", panes: [] };
+	if (records.length - 1 > MAX_PANES) {
+		throw shapeFailure("more windows or panes than DevHub will read");
+	}
+	const panes: PaneTerminalPane[] = [];
+	for (const record of records.slice(1)) {
+		const fields = record.split(FIELD_SEPARATOR);
+		if (
+			fields.length !== TERMINAL_PANE_FIELDS.length ||
+			fields[0] !== TERMINAL_PANE_RECORD
+		) {
+			throw shapeFailure("a record of the wrong width");
+		}
+		const at = (index: number): string => fields[index] ?? "";
+		const marking: SessionMarking = {
+			name: at(1),
+			context: markerValue(at(2)),
+			workspaceId: markerValue(at(3)),
+			agentId: agentIdMarker(markerValue(at(4))),
+			root: markerValue(at(16)),
+		};
+		if (!isMarked(marking, contextHome)) continue;
+		if (marking.context !== TERMINAL_CONTEXT) continue;
+		const terminalId = terminalIdOfSession(marking.name);
+		if (terminalId === undefined || marking.workspaceId === undefined) {
+			continue;
+		}
+		panes.push({
+			terminalId,
+			workspaceId: marking.workspaceId,
+			sessionName: marking.name,
+			windowId: at(5),
+			windowIndex: parseNumericPrefix(at(6)),
+			paneId: at(7),
+			paneIndex: parseNumericPrefix(at(8)),
+			active: at(9) === "1" && at(10) === "1",
+			command: at(11),
+			title: at(12),
+			dead: at(13) === "1",
+			socketPath: at(14),
+			cwd: at(15),
 		});
 	}
 	return { marker: "owned", panes };
@@ -1564,7 +1718,11 @@ export class TmuxTerminalRuntime {
 			await this.applySessionOptions(socket, identity, cancel, deadline);
 			return;
 		}
-		if (target.kind === "agent") throw portFailure("conflict");
+		// A process, not a place: an Agent or a pane terminal that is not there
+		// has ended, and recreating it would be an empty shell wearing its name.
+		if (target.kind === "agent" || target.kind === "terminal") {
+			throw portFailure("conflict");
+		}
 		await this.createSession(
 			socket,
 			{
@@ -1627,6 +1785,184 @@ export class TmuxTerminalRuntime {
 		} finally {
 			release();
 		}
+	}
+
+	// --- Pane terminals ----------------------------------------------------
+
+	/**
+	 * Start one pane terminal: a marked session running the login shell, or
+	 * `command` when there is one, in `cwd` (the Workspace's root when absent).
+	 *
+	 * The create is the claim, as it is for an Agent: a session with this
+	 * terminal's name already there is a conflict, never adopted. Answers the
+	 * pane it made, read back with its whole marker tuple.
+	 */
+	async launchTerminal(
+		target: PaneTerminalTarget,
+		options: {
+			readonly cwd?: string;
+			readonly command?: AgentSessionCommand;
+		} = {},
+		cancel = new CancellationToken(),
+	): Promise<PaneTerminalPane> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			await this.ensureServer(socket, cancel, deadline);
+			const identity = this.targetIdentity({ kind: "terminal", ...target }, []);
+			await this.createSession(
+				socket,
+				{
+					name: identity.sessionName,
+					root: identity.root,
+					context: identity.context,
+					workspaceId: identity.workspaceId,
+					agentId: identity.agentId,
+					...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+					...(options.command === undefined
+						? {}
+						: { command: options.command }),
+				},
+				cancel,
+				deadline,
+			);
+			const panes = await this.paneTerminalsOn(socket, cancel, deadline);
+			const created =
+				panes.find(
+					(pane) => pane.terminalId === target.terminalId && pane.active,
+				) ?? panes.find((pane) => pane.terminalId === target.terminalId);
+			// A command that exited at once takes its session with it, and that
+			// is a terminal that did not open rather than one to hand out.
+			if (!created || created.workspaceId !== target.workspaceId) {
+				throw portFailure("conflict");
+			}
+			return created;
+		} finally {
+			release();
+		}
+	}
+
+	/** Every pane of every pane terminal on this machine's effective socket. */
+	async paneTerminals(
+		cancel = new CancellationToken(),
+	): Promise<readonly PaneTerminalPane[]> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			return await this.paneTerminalsOn(socket, cancel, deadline);
+		} finally {
+			release();
+		}
+	}
+
+	private async paneTerminalsOn(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<PaneTerminalPane[]> {
+		const output = await this.runTmux(
+			socket,
+			[
+				"display-message",
+				"-p",
+				PANE_MARKER_FORMAT,
+				";",
+				"list-panes",
+				"-a",
+				"-F",
+				TERMINAL_PANE_FORMAT,
+			],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success) {
+			if (output.noServer) return [];
+			if (output.stdout.byteLength === 0) throw portFailure("conflict");
+			throw output.refusal();
+		}
+		const { marker, panes } = parsePaneTerminals(
+			output.stdout,
+			this.contextHome,
+		);
+		if (marker === "wrong") throw portFailure("conflict");
+		return panes;
+	}
+
+	/**
+	 * Type a line into a pane terminal's shell and press Return — what
+	 * `terminal open --command` means: the command runs *in* the shell, so
+	 * the terminal is still there, with its output, when the command ends.
+	 *
+	 * The pane is read back first, in the same held permit, and must be this
+	 * terminal's: a keystroke typed into the wrong pane cannot be taken back.
+	 * `-l` sends the text as literal characters, never as key names.
+	 */
+	async typeIntoTerminal(
+		target: PaneTerminalTarget,
+		text: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		// A lone `;` is tmux's command separator when it is a whole argument,
+		// and a line with a NUL cannot be typed at all.
+		if (text === ";" || text.includes("\0")) throw portFailure("failed");
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const panes = await this.paneTerminalsOn(socket, cancel, deadline);
+			const pane =
+				panes.find(
+					(candidate) =>
+						candidate.terminalId === target.terminalId && candidate.active,
+				) ??
+				panes.find((candidate) => candidate.terminalId === target.terminalId);
+			if (!pane || pane.workspaceId !== target.workspaceId) {
+				throw portFailure("conflict");
+			}
+			const output = await this.runTmux(
+				socket,
+				[
+					"send-keys",
+					"-t",
+					pane.paneId,
+					"-l",
+					"--",
+					text,
+					";",
+					"send-keys",
+					"-t",
+					pane.paneId,
+					"Enter",
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
+	/** Kill one pane terminal's session, by the exact-record rule. */
+	async closeTerminal(
+		target: PaneTerminalTarget,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.closeMarkedSession(
+			{
+				kind: "terminal",
+				terminalId: target.terminalId,
+				workspaceId: target.workspaceId,
+				sessionName: terminalSessionName(target.terminalId),
+			},
+			cancel,
+		);
 	}
 
 	/**
@@ -1848,9 +2184,10 @@ export class TmuxTerminalRuntime {
 	 * No server is no terminals, not a failure. A server DevHub does not own is
 	 * the usual fail-closed conflict.
 	 */
-	async terminalPanes(
-		cancel = new CancellationToken(),
-	): Promise<readonly PaneSample[]> {
+	async terminalPanes(cancel = new CancellationToken()): Promise<{
+		readonly panes: readonly PaneSample[];
+		readonly terminals: readonly string[];
+	}> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
@@ -1874,16 +2211,16 @@ export class TmuxTerminalRuntime {
 			);
 			if (!output.success) {
 				// The server went away (or was never there): nothing is on it.
-				if (output.noServer) return [];
+				if (output.noServer) return { panes: [], terminals: [] };
 				if (output.stdout.byteLength === 0) throw portFailure("conflict");
 				throw output.refusal();
 			}
-			const { marker, panes } = parsePaneActivity(
+			const { marker, panes, terminals } = parsePaneActivity(
 				output.stdout,
 				this.contextHome,
 			);
 			if (marker === "wrong") throw portFailure("conflict");
-			return panes;
+			return { panes, terminals };
 		} finally {
 			release();
 		}
@@ -2113,6 +2450,20 @@ export class TmuxTerminalRuntime {
 				sessionName: session.name,
 			};
 		}
+		const terminalId = terminalIdOfSession(session.name);
+		if (
+			session.context === TERMINAL_CONTEXT &&
+			session.workspaceId !== undefined &&
+			isUuid(session.workspaceId) &&
+			terminalId !== undefined
+		) {
+			return {
+				kind: "terminal",
+				terminalId,
+				workspaceId: session.workspaceId,
+				sessionName: session.name,
+			};
+		}
 		throw portFailure("conflict");
 	}
 
@@ -2202,6 +2553,14 @@ export class TmuxTerminalRuntime {
 				session.workspaceId === expected.workspaceId &&
 				session.agentId === expected.agentId &&
 				expected.sessionName === agentSessionName(expected.agentId)
+			);
+		}
+		if (expected.kind === "terminal") {
+			return (
+				session.context === TERMINAL_CONTEXT &&
+				session.workspaceId === expected.workspaceId &&
+				session.agentId === NO_AGENT &&
+				expected.sessionName === terminalSessionName(expected.terminalId)
 			);
 		}
 		return (
@@ -2505,6 +2864,24 @@ export class TmuxTerminalRuntime {
 				agentId: target.agentId,
 			};
 		}
+		if (target.kind === "terminal") {
+			// Named by its id, with no fallback, for the Agent's reason: a
+			// collision is a second session claiming to be this terminal.
+			if (
+				!isUuid(target.terminalId) ||
+				!isUuid(target.workspaceId) ||
+				!isAbsolute(target.root)
+			) {
+				throw portFailure("failed");
+			}
+			return {
+				sessionName: terminalSessionName(target.terminalId),
+				root: target.root,
+				workspaceId: target.workspaceId,
+				context: TERMINAL_CONTEXT,
+				agentId: NO_AGENT,
+			};
+		}
 		return this.workspaceIdentity(target, sessions);
 	}
 
@@ -2634,6 +3011,13 @@ export class TmuxTerminalRuntime {
 		if ((await this.host.stat(spec.root)) !== "directory") {
 			throw portFailure("root_missing");
 		}
+		if (
+			spec.cwd !== undefined &&
+			(!isAbsolute(spec.cwd) ||
+				(await this.host.stat(spec.cwd)) !== "directory")
+		) {
+			throw portFailure("root_missing");
+		}
 		if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
 			throw portFailure("conflict");
 		}
@@ -2657,7 +3041,7 @@ export class TmuxTerminalRuntime {
 			"-s",
 			spec.name,
 			"-c",
-			spec.root,
+			spec.cwd ?? spec.root,
 			...envArguments({
 				// The session environment is applied whether or not there is a
 				// command, because it is about the *session* — what a pane in it

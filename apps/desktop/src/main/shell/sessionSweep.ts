@@ -76,6 +76,8 @@ export interface AgentHostFiles {
 export interface SweepAccounting {
 	readonly workspaces: ReadonlySet<string>;
 	readonly agents: ReadonlySet<string>;
+	/** The pane terminals the Workspaces list (`model/paneLayout.ts`). */
+	readonly terminals: ReadonlySet<string>;
 }
 
 export interface SessionSweepWorld {
@@ -123,6 +125,8 @@ export function unaccountedSessions(
 				return !accounted.workspaces.has(session.workspaceId);
 			case "agent":
 				return !accounted.agents.has(session.agentId);
+			case "terminal":
+				return !accounted.terminals.has(session.terminalId);
 		}
 	});
 }

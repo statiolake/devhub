@@ -85,6 +85,16 @@ export class ChromeView {
 			: this.view.webContents;
 	}
 
+	/**
+	 * Take it out of the window and end its page — a terminal pane whose
+	 * terminal has gone. The two chrome columns are never disposed; they last
+	 * as long as the window.
+	 */
+	dispose(window: Electron.BrowserWindow): void {
+		if (!window.isDestroyed()) window.contentView.removeChildView(this.view);
+		if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
+	}
+
 	/** Whether this view is drawn right now — read back by a test. */
 	isVisible(): boolean {
 		return !this.view.webContents.isDestroyed() && this.view.getVisible();

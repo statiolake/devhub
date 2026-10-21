@@ -34,6 +34,12 @@
  */
 
 import type { TitleBarMode } from "../../model/config.js";
+import {
+	CONTENT_PANE,
+	layoutRects,
+	type PaneNode,
+	type PlacedSeam,
+} from "../../model/paneLayout.js";
 
 /**
  * `--titlebar-height`: the band the traffic lights sit in, either chrome.
@@ -150,7 +156,12 @@ export type SurfaceArrangement =
  * the whole of what `focusHome.ts` was. Both are children of the window now,
  * so the answer names one of them.
  */
-export type KeyboardHalf = "editor" | "agents" | "sidebar";
+export type KeyboardHalf =
+	| "editor"
+	| "agents"
+	| "sidebar"
+	/** A terminal pane of the selected Workspace's tiling. */
+	| { readonly terminal: string };
 
 /** Everything about the arrangement that is not the window's own size. */
 export interface LayoutState {
@@ -159,6 +170,12 @@ export interface LayoutState {
 	readonly sidebar: { readonly width: number; readonly collapsed: boolean };
 	readonly surface: SurfaceArrangement;
 	readonly keyboard: KeyboardHalf;
+	/**
+	 * How the selected Workspace's content area is tiled: the selection's own
+	 * pane — which `surface` says the inside of — and the terminals around it.
+	 * Absent is that pane alone, the whole area. See `model/paneLayout.ts`.
+	 */
+	readonly panes?: PaneNode;
 }
 
 /** Whether the questions layer covers the window or one workbench. */
@@ -178,6 +195,12 @@ export interface LayoutInput {
 	readonly tooltip: TooltipPlacement | undefined;
 	/** Every view VS Code has attached to a workbench. See below. */
 	readonly attached: readonly AttachedPlacement[];
+	/**
+	 * Every terminal pane that has a view, by id, whichever Workspace it is
+	 * in. Optional so that every caller from before terminal panes still
+	 * reads; absent is none.
+	 */
+	readonly terminals?: readonly string[];
 }
 
 /**
@@ -240,6 +263,8 @@ export type ChildIdentity =
 			readonly editorKey: string;
 			readonly id: number;
 	  }
+	/** A terminal opened beside the content — see `model/paneLayout.ts`. */
+	| { readonly kind: "terminal"; readonly terminalId: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
 	| { readonly kind: "tooltip" };
@@ -362,6 +387,62 @@ export function sidebarRect(
 }
 
 /**
+ * Every pane and seam of the selected Workspace's tiling, in the window.
+ *
+ * The tiling divides the content area (`surfaceRect`) with seams as wide as
+ * the workbench/Agent split's own, for the same reason: a seam is the strip
+ * no view covers, which is the only place the window's own page can draw a
+ * divider the pointer can grab.
+ */
+export function paneRects(windowSize: LayoutSize, state: LayoutState) {
+	// With nothing in the content area — starting, a workbench being rebuilt,
+	// a folder that is gone — the page's own state fills the whole of it, and
+	// the terminals wait hidden rather than framing an empty room.
+	return layoutRects(
+		panesDrawn(state) ? (state.panes ?? CONTENT_PANE) : CONTENT_PANE,
+		surfaceRect(windowSize, state),
+		SPLIT_DIVIDER,
+	);
+}
+
+/**
+ * The selection's own pane: the content area, less whatever the terminals
+ * around it take. Everything the selection draws — the workbench, the Agent,
+ * the two side by side — is laid inside this, exactly as it used to be laid
+ * inside the whole area.
+ */
+export function contentRect(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
+	if (
+		!panesDrawn(state) ||
+		state.panes === undefined ||
+		state.panes.kind === "content"
+	) {
+		return surfaceRect(windowSize, state);
+	}
+	const content = paneRects(windowSize, state).panes.find(
+		(pane) => pane.leaf.kind === "content",
+	);
+	return content?.rect ?? surfaceRect(windowSize, state);
+}
+
+/** The seams between the panes, for the window's own page to draw. */
+export function paneSeams(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): readonly PlacedSeam[] {
+	if (state.panes === undefined || state.panes.kind === "content") return [];
+	return paneRects(windowSize, state).seams;
+}
+
+/** Whether the tiling is drawn: whenever the content area has anything in it. */
+function panesDrawn(state: LayoutState): boolean {
+	return state.surface.kind !== "none";
+}
+
+/**
  * The rectangle the Agents' view is laid into.
  *
  * The whole content area when an Agent covers it, and the trailing share of it
@@ -379,7 +460,7 @@ export function agentsRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
-	const surface = surfaceRect(windowSize, state);
+	const surface = contentRect(windowSize, state);
 	if (state.surface.kind !== "split") return surface;
 	const workbench = workbenchRect(windowSize, state);
 	const x = workbench.x + workbench.width + SPLIT_DIVIDER;
@@ -402,7 +483,7 @@ export function workbenchRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
-	const surface = surfaceRect(windowSize, state);
+	const surface = contentRect(windowSize, state);
 	if (state.surface.kind !== "split") return surface;
 	const available = Math.max(0, surface.width - SPLIT_DIVIDER);
 	return {
@@ -571,6 +652,26 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 		return { kind: "editor", editorKey: input.asking };
 	}
 	if (input.state.keyboard === "sidebar") return { kind: "sidebar" };
+	const keyboard = input.state.keyboard;
+	if (typeof keyboard === "object") {
+		// Only a terminal that is on screen: one whose view exists, in the
+		// tiling that is drawn. Anything else falls to what the selection
+		// would have had, rather than to a view nobody can see.
+		const placed =
+			panesDrawn(input.state) &&
+			(input.terminals ?? []).includes(keyboard.terminal) &&
+			paneRects(input.windowSize, input.state).panes.some(
+				(pane) =>
+					pane.leaf.kind === "terminal" &&
+					pane.leaf.terminalId === keyboard.terminal,
+			);
+		if (placed) return { kind: "terminal", terminalId: keyboard.terminal };
+		const editorKey = onScreenEditor(input);
+		if (editorKey !== undefined && input.state.surface.kind !== "agent") {
+			return { kind: "editor", editorKey };
+		}
+		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
+	}
 	if (input.state.keyboard === "agents") {
 		// Only where there is one to type into. An Agent's view is drawn for an
 		// `agent` or a `split` arrangement and for nothing else, and handing
@@ -741,6 +842,28 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		rect: agentsRect(windowSize, state),
 		visible: agentsVisible(state),
 	});
+	// Every terminal pane that has a view: the selected Workspace's at its
+	// leaf, and every other one hidden at the content area's size, so that
+	// coming back to its Workspace is a move rather than a reflow. They are
+	// tiles beside the workbench and the Agent, never over them, so where
+	// they sit among those two in the stack is never seen; above both and
+	// below every layer is the one place that is right whatever they are.
+	const placed = new Map<string, LayoutRect>();
+	if (panesDrawn(state)) {
+		for (const pane of paneRects(windowSize, state).panes) {
+			if (pane.leaf.kind === "terminal") {
+				placed.set(pane.leaf.terminalId, pane.rect);
+			}
+		}
+	}
+	for (const terminalId of input.terminals ?? []) {
+		const rect = placed.get(terminalId);
+		children.push({
+			identity: { kind: "terminal", terminalId },
+			rect: rect ?? surfaceRect(windowSize, state),
+			visible: rect !== undefined,
+		});
+	}
 	children.push(
 		layer(
 			{ kind: "toasts" },
@@ -803,6 +926,9 @@ export function sameIdentity(
 	}
 	if (left.kind === "attached" && right.kind === "attached") {
 		return left.id === right.id;
+	}
+	if (left.kind === "terminal" && right.kind === "terminal") {
+		return left.terminalId === right.terminalId;
 	}
 	return true;
 }

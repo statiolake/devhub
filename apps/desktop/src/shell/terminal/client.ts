@@ -11,7 +11,7 @@
  * `invoke` are the Electron preload's channel id and `ipcRenderer.invoke`.
  */
 
-import { devhub } from "../agents/client";
+import { surfaceBridge } from "./surfaceBridge";
 import {
   MAX_INPUT_BYTES,
   TerminalFailure,
@@ -57,7 +57,7 @@ export interface TerminalClient {
  * without its preload, which is not a state a terminal can work around.
  */
 export function devhubTerminal(): TerminalTransport {
-  return devhub().terminal;
+  return surfaceBridge().terminal;
 }
 
 function unwrap<T>(result: TerminalResult<T>): T {

@@ -47,6 +47,16 @@ export interface Pages<Contents> {
 	readonly picker: { contents(): Contents | undefined };
 	readonly toasts: { contents(): Contents | undefined };
 	readonly tooltip: { contents(): Contents | undefined };
+	/**
+	 * Every terminal pane's page — one per terminal opened beside a
+	 * Workspace's panes. Optional, so a window from before terminal panes (and
+	 * every test fake of one) is a window with none.
+	 */
+	paneTerminalContents?(): readonly Contents[];
+}
+
+function panesOf<Contents>(pages: Pages<Contents>): readonly Contents[] {
+	return pages.paneTerminalContents?.() ?? [];
 }
 
 /**
@@ -81,6 +91,7 @@ export function chromeAudience<Contents>(
 		pages.picker.contents(),
 		pages.toasts.contents(),
 		pages.tooltip.contents(),
+		...panesOf(pages),
 	].filter((contents): contents is Contents => contents !== undefined);
 }
 
@@ -98,6 +109,8 @@ export function projectionAudience<Contents>(
 		pages.sidebar.contents(),
 		pages.agents.contents(),
 		pages.picker.contents(),
+		// A terminal pane draws its name and its session from the model.
+		...panesOf(pages),
 	].filter((contents): contents is Contents => contents !== undefined);
 }
 
@@ -132,6 +145,7 @@ function ownedBy<Contents>(
 		contents === pages.agents.contents() ||
 		contents === pages.picker.contents() ||
 		contents === pages.toasts.contents() ||
-		contents === pages.tooltip.contents()
+		contents === pages.tooltip.contents() ||
+		panesOf(pages).includes(contents)
 	);
 }

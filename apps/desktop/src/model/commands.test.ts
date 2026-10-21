@@ -9,6 +9,7 @@ import {
   isCommandId,
   isSelectEntryCommand,
   keysForCommand,
+  PALETTE_ONLY_COMMANDS,
   resolveBindings,
   type CommandId,
   type KeyBinding,
@@ -34,9 +35,14 @@ describe("the registry itself", () => {
     // The whole reason the defaults are strings: they go through the same
     // parser the file does, so DevHub cannot ship a key a person could not
     // have written.
-    // Every command ships at least one key.
+    // Every command ships at least one key, except the ones named palette
+    // only — and those ship none.
     for (const command of COMMANDS) {
-      expect(command.defaultKeys.length, command.id).toBeGreaterThan(0);
+      if (PALETTE_ONLY_COMMANDS.has(command.id)) {
+        expect(command.defaultKeys, command.id).toEqual([]);
+      } else {
+        expect(command.defaultKeys.length, command.id).toBeGreaterThan(0);
+      }
       for (const text of command.defaultKeys) {
         expect(
           () => parseChordKey(text),
@@ -101,6 +107,28 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "p")).toBe("previous_tab");
     expect(commandFor(bindings, "N")).toBe("next_workspace");
     expect(commandFor(bindings, "P")).toBe("previous_workspace");
+  });
+
+  it("puts the terminal splits on V and S, and leaves the Sidebar to the palette", () => {
+    const bindings = defaultBindings();
+    expect(commandFor(bindings, "v")).toBe("split_terminal_right");
+    expect(commandFor(bindings, "s")).toBe("split_terminal_below");
+    // `Shift+S` is not given to anything: `focus_sidebar` is palette only.
+    expect(commandFor(bindings, "S")).toBeUndefined();
+    expect(commandById("focus_sidebar")?.defaultKeys).toEqual([]);
+    expect([...PALETTE_ONLY_COMMANDS]).toEqual(["focus_sidebar"]);
+    expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
+  });
+
+  it("moves between panes with O and the arrows", () => {
+    const bindings = defaultBindings();
+    expect(commandFor(bindings, "o")).toBe("swap_split_focus");
+    expect(commandFor(bindings, "arrowleft")).toBe("focus_pane_left");
+    expect(commandFor(bindings, "arrowright")).toBe("focus_pane_right");
+    expect(commandFor(bindings, "arrowup")).toBe("focus_pane_up");
+    expect(commandFor(bindings, "arrowdown")).toBe("focus_pane_down");
+    // The modified arrows stay the row moves.
+    expect(commandFor(bindings, "Alt+arrowup")).toBe("move_entry_up");
   });
 
   it("knows its own ids and nobody else's", () => {

@@ -46,6 +46,12 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import {
+  PANE_MAX_RATIO,
+  PANE_MIN_RATIO,
+  isPanePath,
+  paneTerminalSessionName as terminalSessionName,
+} from "./paneLayout.js";
 import { copySpot, isSmartButtonsSpot } from "./smartButtons.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
@@ -497,6 +503,20 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
+    ...(workspace.paneTerminals.length === 0
+      ? {}
+      : {
+          paneTree: workspace.paneTree,
+          paneTerminals: workspace.paneTerminals.map((terminal) => ({
+            id: terminal.id,
+            name: terminal.name,
+            session: terminalSessionName(terminal.id),
+            ...(terminal.cwd === undefined ? {} : { cwd: terminal.cwd }),
+            ...(terminal.command === undefined
+              ? {}
+              : { command: terminal.command }),
+          })),
+        }),
     ...(workspace.terminals.status === "idle" &&
     workspace.terminals.unread === undefined
       ? {}
@@ -526,6 +546,9 @@ export function snapshotWire(
       collapsed: snapshot.sidebar.collapsed,
     },
     splitRatio: snapshot.splitRatio,
+    ...(snapshot.paneFocus === undefined
+      ? {}
+      : { paneFocus: snapshot.paneFocus }),
     smartButtons: snapshot.smartButtons,
     history: {
       canGoBack: snapshot.history.canGoBack,
@@ -1089,6 +1112,23 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         ...(spot === undefined ? {} : { spot: copySpot(spot) }),
       };
     }
+    case "resize_pane":
+      if (
+        typeof wire.path !== "string" ||
+        !isPanePath(wire.path) ||
+        typeof wire.ratio !== "number" ||
+        !Number.isFinite(wire.ratio) ||
+        wire.ratio < PANE_MIN_RATIO ||
+        wire.ratio > PANE_MAX_RATIO
+      ) {
+        invalid();
+      }
+      return {
+        type: "resize_pane",
+        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
+        path: wire.path,
+        ratio: wire.ratio,
+      };
     case "resize_sidebar":
       if (
         !Number.isInteger(wire.width) ||

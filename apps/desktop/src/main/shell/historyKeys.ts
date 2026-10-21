@@ -51,9 +51,12 @@ import type { NavigationDirection } from "../../model/navigationHistory.js";
  * Every page DevHub draws in the main window except the modals' and the
  * passive layers (notices, the tooltip), which never hold the keyboard.
  */
-const APP_HISTORY_PAGES = ["index.html", "sidebar.html", "agents.html"].map(
-	(page) => `${SHELL_ORIGIN}/${page}`,
-);
+const APP_HISTORY_PAGES = [
+	"index.html",
+	"sidebar.html",
+	"agents.html",
+	"pane.html",
+].map((page) => `${SHELL_ORIGIN}/${page}`);
 
 /** Whether this web contents is one of DevHub's own pages that walk app history. */
 export function isAppHistorySurface(surfaceUrl: string): boolean {

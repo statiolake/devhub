@@ -27,6 +27,7 @@ import {
 import {
 	CancellationToken,
 	PortFailure,
+	type PaneTerminalTarget,
 	type TerminalTarget,
 	type WorkspaceTerminalTarget,
 } from "./ports.js";
@@ -282,5 +283,15 @@ export class TerminalSurfaces {
 		this.attachments.detachTarget({ kind: "workspace", ...target });
 		const runtime = await this.runtimeFor(target.machine);
 		await runtime.closeWorkspace(target, cancel);
+	}
+
+	/** Close one pane terminal for good: its clients, then its session. */
+	async closePaneTerminal(
+		target: PaneTerminalTarget,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		this.attachments.detachTarget({ kind: "terminal", ...target });
+		const runtime = await this.runtimeFor(target.machine);
+		await runtime.closeTerminal(target, cancel);
 	}
 }

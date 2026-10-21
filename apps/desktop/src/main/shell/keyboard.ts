@@ -94,6 +94,17 @@ export interface ChordHost {
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
+	/** The next pane on screen, terminals included (`Cmd+Q O`). */
+	cyclePaneFocus(): void;
+	/** The pane on one side of the one with the keyboard (`Cmd+Q ←/→/↑/↓`). */
+	focusPaneTowards(side: "left" | "right" | "above" | "below"): void;
+	/**
+	 * Open a terminal beside the pane with the keyboard (`Cmd+Q V` / `S`): a
+	 * tmux session of its own in the Workspace's folder, in a pane of its own.
+	 */
+	splitTerminal(workspaceId: string, side: "right" | "below"): void;
+	/** Close one terminal pane, and its session with it. */
+	closeTerminal(terminalId: string): void;
 	/** Put the keyboard on the Sidebar's selected row — the way into the tree. */
 	focusSidebar(): void;
 	/** Show the Sidebar as its icon rail, or give it its width back. */
@@ -212,6 +223,18 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();
+			return;
+		case "cycle-pane-focus":
+			host.cyclePaneFocus();
+			return;
+		case "focus-pane-towards":
+			host.focusPaneTowards(effect.side);
+			return;
+		case "split-terminal":
+			host.splitTerminal(effect.workspaceId, effect.side);
+			return;
+		case "close-terminal":
+			host.closeTerminal(effect.terminalId);
 			return;
 		case "focus-sidebar":
 			host.focusSidebar();

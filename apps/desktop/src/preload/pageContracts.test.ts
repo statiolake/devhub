@@ -26,6 +26,7 @@ const PAGES = [
 	"shell",
 	"sidebar",
 	"agents",
+	"pane",
 	"toasts",
 	"tooltip",
 	"picker",
@@ -148,11 +149,29 @@ describe("the pages, and what each of them may say", () => {
 		expect(read("./bridge.ts")).not.toContain(member);
 	});
 
+	/**
+	 * A terminal pane may close and move its own terminal, and nothing else
+	 * may close one from a page: main checks the asking contents is that
+	 * terminal's pane, and no other preload can even spell the ask.
+	 */
+	it("gives closing and moving a terminal pane to the pane page and to no other", () => {
+		for (const member of ["closePaneTerminal", "dropPaneHeader"]) {
+			for (const page of PAGES) {
+				expect(
+					read(`./${page}.ts`).includes(member),
+					`${page}: ${member}`,
+				).toBe(page === "pane");
+			}
+			expect(read("./bridge.ts")).not.toContain(member);
+		}
+	});
+
 	it("reaches each page's bridge from that page's entry and from no other", () => {
 		const entries = {
 			shell: "main.tsx",
 			sidebar: "sidebar/main.tsx",
 			agents: "agents/main.tsx",
+			pane: "pane/main.tsx",
 			toasts: "toasts/main.tsx",
 			tooltip: "tooltip/main.tsx",
 			picker: "picker/main.tsx",
@@ -160,6 +179,7 @@ describe("the pages, and what each of them may say", () => {
 		const bridges = {
 			sidebar: "sidebar/client.tsx",
 			agents: "agents/client.tsx",
+			pane: "pane/client.tsx",
 			toasts: "toasts/client.tsx",
 			tooltip: "tooltip/client.tsx",
 			picker: "picker/client.tsx",

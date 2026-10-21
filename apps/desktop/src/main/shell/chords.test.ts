@@ -875,7 +875,11 @@ describe("the default table", () => {
 	});
 
 	it("gives the three new commands the free unshifted letters", () => {
-		expect(press("s", "KeyS")).toBe("focus_sidebar");
+		// `S` was `focus_sidebar`'s; it is the terminal split below now, and
+		// the Sidebar is reached from the palette.
+		expect(press("s", "KeyS")).toBe("split_terminal_below");
+		expect(press("v", "KeyV")).toBe("split_terminal_right");
+		expect(press("S", "KeyS", { shift: true })).toBeUndefined();
 		expect(press("b", "KeyB")).toBe("toggle_sidebar");
 		expect(press("u", "KeyU")).toBe("mark_agent_unread");
 		expect(press("d", "KeyD")).toBe("dismiss_alert");
@@ -1148,5 +1152,104 @@ describe("moving the row that is selected", () => {
 			})?.commandId;
 		expect(press("ArrowUp")).toBe("move_entry_up");
 		expect(press("ArrowDown")).toBe("move_entry_down");
+	});
+});
+
+describe("terminal panes", () => {
+	const T1 = "11111111-1111-4111-8111-111111111111";
+	const withTerminal = (focused: boolean, presentation = "full") => {
+		const base = workspace("one", ["a1"]);
+		const ws: WorkspaceWire = {
+			...base,
+			paneTree: {
+				kind: "split",
+				axis: "row",
+				ratio: 0.5,
+				first: { kind: "content" },
+				second: { kind: "terminal", terminalId: T1 },
+			},
+			paneTerminals: [{ id: T1, name: "Terminal 1", session: `tm-${T1}` }],
+		};
+		return {
+			...snapshotOf({
+				workspaces: [ws],
+				context: { kind: "agent", agentId: "a1" },
+				presentation: presentation as SurfacePresentationWire,
+			}),
+			...(focused ? { paneFocus: T1 } : {}),
+		};
+	};
+
+	it("opens a terminal right or below in the selected workspace", () => {
+		const snapshot = snapshotOf({
+			workspaces: [one],
+			context: { kind: "agent", agentId: "a1" },
+		});
+		expect(run("split_terminal_right", snapshot)).toEqual({
+			kind: "split-terminal",
+			workspaceId: "one",
+			side: "right",
+		});
+		expect(run("split_terminal_below", snapshot)).toEqual({
+			kind: "split-terminal",
+			workspaceId: "one",
+			side: "below",
+		});
+	});
+
+	it("cycles every pane once there is a terminal, and swaps a bare split as before", () => {
+		expect(run("swap_split_focus", withTerminal(false))).toEqual({
+			kind: "cycle-pane-focus",
+		});
+		expect(
+			run(
+				"swap_split_focus",
+				snapshotOf({
+					workspaces: [one],
+					context: { kind: "agent", agentId: "a1" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({ kind: "swap-split-focus" });
+		expect(run("swap_split_focus", snapshotOf())).toBeUndefined();
+	});
+
+	it("moves by direction only where there is another pane", () => {
+		expect(run("focus_pane_right", withTerminal(false))).toEqual({
+			kind: "focus-pane-towards",
+			side: "right",
+		});
+		expect(run("focus_pane_up", withTerminal(false))).toEqual({
+			kind: "focus-pane-towards",
+			side: "above",
+		});
+		expect(run("focus_pane_left", snapshotOf())).toBeUndefined();
+		expect(
+			run(
+				"focus_pane_left",
+				snapshotOf({
+					workspaces: [one],
+					context: { kind: "agent", agentId: "a1" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({ kind: "focus-pane-towards", side: "left" });
+	});
+
+	it("closes the focused terminal with X, and the Agent otherwise", () => {
+		expect(run("close_selection", withTerminal(true))).toEqual({
+			kind: "close-terminal",
+			terminalId: T1,
+		});
+		expect(run("close_selection", withTerminal(false))).toEqual({
+			kind: "close-agent",
+			agentId: "a1",
+		});
+	});
+
+	it("still focuses the sidebar from the palette", () => {
+		expect(run("focus_sidebar", snapshotOf())).toEqual({
+			kind: "focus-sidebar",
+		});
 	});
 });

@@ -81,6 +81,7 @@ import {
 	type AppConditionWire,
 	type ChordHelpRowWire,
 	type LayoutPreviewWire,
+	type PaneDropWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
 	type IssueFolderRequest,
@@ -247,12 +248,24 @@ import {
 	isQuitting,
 	shellWindow,
 	shellWindowIfCreated,
+	type ContentFocus,
 } from "./shellWindow.js";
 import {
+	paneRects,
 	reconcileEditors,
 	type KeyboardHalf,
 	type SurfaceArrangement,
 } from "./windowLayout.js";
+import {
+	CONTENT_PANE,
+	clampPaneRatio,
+	isPanePath,
+	resizePane,
+	type PaneLeaf,
+	type PaneSide,
+} from "../../model/paneLayout.js";
+import type { PaneTerminal } from "../../model/appModel.js";
+import type { PaneTerminalPane } from "../terminal/tmux.js";
 import {
 	chromeAudience,
 	displayAudience,
@@ -964,6 +977,11 @@ export class AppController {
 		shellWindow().onTitleChanged(() => {
 			this.refreshWindowTitle();
 		});
+		// A click into one of the content area's views is the person choosing
+		// that pane; the model is told, so the chords start from it.
+		shellWindow().onContentFocused((pane) => {
+			this.paneFocused(pane);
+		});
 		// Loaded before any page exists, so a file that would not read is said
 		// with the other startup failures. Pruned to the Agents the model has:
 		// a draft goes when its Agent does.
@@ -1276,7 +1294,17 @@ export class AppController {
 				for (const agent of this.coordinator.launchingAgents()) {
 					agents.add(agent);
 				}
-				return { workspaces, agents };
+				// A terminal is accounted for by its Workspace's list, and one
+				// being opened has its session before it is in that list.
+				const terminals = new Set<string>(this.launchingTerminals);
+				for (const workspace of this.coordinator.model.workspaces) {
+					for (const terminal of this.coordinator.model.paneTerminalsIn(
+						workspace.id,
+					)) {
+						terminals.add(terminal.id);
+					}
+				}
+				return { workspaces, agents, terminals };
 			},
 			workspaceMachines: () => this.workspaceMachines(),
 			remembered: () => this.state.session_machines,
@@ -1487,6 +1515,21 @@ export class AppController {
 			swapSplitFocus: () => {
 				this.swapSplitFocus();
 			},
+			cyclePaneFocus: () => {
+				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
+			},
+			focusPaneTowards: (side) => {
+				this.arrive({ type: "focus_pane_towards", side }, undefined);
+			},
+			splitTerminal: (workspaceId, side) => {
+				void this.openPaneTerminal(parseWorkspaceId(workspaceId), {
+					side,
+					focus: true,
+				}).catch(report);
+			},
+			closeTerminal: (terminalId) => {
+				void this.closePaneTerminal(terminalId).catch(report);
+			},
 			toggleScratch: (focus) => {
 				// A selection change like any other, to a place only the model
 				// remembers — so it arrives exactly the way `selectContext` does.
@@ -1655,7 +1698,7 @@ export class AppController {
 	private installHistoryGestures(): void {
 		const shell = shellWindowIfCreated();
 		if (!shell) return;
-		const ownButtons = ["/agents.html", "/sidebar.html"];
+		const ownButtons = ["/agents.html", "/sidebar.html", "/pane.html"];
 		shell.window.on("app-command", (_event, command) => {
 			const direction = appCommandDirection(command);
 			if (direction === undefined) return;
@@ -1735,6 +1778,218 @@ export class AppController {
 	private swapSplitFocus(): void {
 		this.arrive({ type: "swap_split_focus" }, undefined);
 	}
+
+	//#region terminal panes
+
+	/**
+	 * Open a terminal beside the panes of one Workspace: `Cmd+Q V` / `S`, and
+	 * `devhub --tell terminal open`.
+	 *
+	 * The terminal is a tmux session of its own on the Workspace's machine —
+	 * the same server, socket and config as the Workspace's own terminals —
+	 * started in `cwd` (the Workspace's folder when absent). Only once the
+	 * session exists is the model told, so a pane is never drawn for a session
+	 * that failed to start; and a model that then refuses it (the tiling is as
+	 * deep as it goes) takes the session back down.
+	 *
+	 * `command` is typed into the shell, not run instead of it: the terminal
+	 * outlives the command, which is what somebody driving it wants.
+	 */
+	async openPaneTerminal(
+		workspaceId: WorkspaceId,
+		options: {
+			readonly side: PaneSide;
+			readonly cwd?: string;
+			readonly command?: string;
+			readonly name?: string;
+			readonly beside?: PaneLeaf;
+			readonly focus: boolean;
+		},
+	): Promise<{
+		readonly terminal: PaneTerminal;
+		readonly pane: PaneTerminalPane;
+		readonly machine: RuntimeId;
+		readonly tmux: string;
+	}> {
+		const wiring = this.terminalsWiring;
+		if (!wiring) throw new Error("the terminal runtime is not running");
+		const model = this.coordinator.model;
+		const workspace = model.workspace(workspaceId);
+		if (!workspace) throw new Error(`there is no Workspace ${workspaceId}`);
+		if (!workspace.canCreateAgent) {
+			throw new Error(
+				`${workspace.root} is closing or unavailable, so there is no folder to open a terminal in.`,
+			);
+		}
+		const machine = runtimeIdFor(workspace.location);
+		const runtime = await wiring.runtimes.for(runtimeById(machine));
+		if (!runtime.adapterAvailable) {
+			throw new Error(
+				runtime.unavailableReason ?? `there is no tmux on ${machine}`,
+			);
+		}
+		const id = randomUUID();
+		const target = {
+			machine,
+			terminalId: id,
+			workspaceId: workspace.id,
+			root: workspace.root,
+		};
+		this.launchingTerminals.add(id);
+		try {
+			const pane = await runtime.launchTerminal(target, {
+				...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+			});
+			if (options.command !== undefined && options.command.length > 0) {
+				await runtime.typeIntoTerminal(target, options.command);
+			}
+			const terminal: PaneTerminal = {
+				id,
+				workspaceId: workspace.id,
+				name:
+					options.name !== undefined && options.name.trim().length > 0
+						? options.name.trim().slice(0, 200)
+						: model.nextPaneTerminalName(workspace.id),
+				cwd:
+					options.cwd === undefined || options.cwd === workspace.root
+						? undefined
+						: options.cwd,
+				command: options.command,
+				openedAt: Date.now(),
+			};
+			try {
+				this.coordinator.dispatchUser({
+					intentId: parseIntentId(randomUUID()),
+					operationId: this.freshOperationId(),
+					intent: {
+						type: "pane_terminal_opened",
+						terminal,
+						side: options.side,
+						...(options.beside === undefined ? {} : { beside: options.beside }),
+						focus: options.focus,
+					},
+				});
+			} catch (error) {
+				await runtime.closeTerminal(target).catch(() => undefined);
+				throw error;
+			} finally {
+				this.drain();
+			}
+			if (options.focus) this.placeKeyboardOnSurface();
+			return { terminal, pane, machine, tmux: runtime.tmuxPath() };
+		} finally {
+			this.launchingTerminals.delete(id);
+		}
+	}
+
+	/**
+	 * Close one terminal pane: its clients, its session, then its pane.
+	 *
+	 * The session goes first, so the pane is never gone while the shell is
+	 * still running unseen; a session already gone (the shell exited) is the
+	 * same as one closed here.
+	 */
+	async closePaneTerminal(terminalId: string): Promise<void> {
+		const wiring = this.terminalsWiring;
+		const model = this.coordinator.model;
+		const terminal = model.paneTerminal(terminalId);
+		if (!terminal) return;
+		const workspace = model.workspace(terminal.workspaceId);
+		if (wiring && workspace) {
+			await wiring.service.surfaces.closePaneTerminal({
+				machine: runtimeIdFor(workspace.location),
+				terminalId,
+				workspaceId: workspace.id,
+				root: workspace.root,
+			});
+		}
+		const focused = model.paneFocus === terminalId;
+		this.dispatchOwn({ type: "pane_terminal_closed", terminalId });
+		// The keyboard was in the pane that went; it goes where the model
+		// moved the focus to, rather than staying on a view that is gone.
+		if (focused) this.placeKeyboardOnSurface();
+	}
+
+	/**
+	 * A terminal pane's header let go of at a point: move the pane to the side
+	 * of whatever pane is under it that the point is nearest.
+	 *
+	 * Over its own pane, or outside the content area, nothing moves. The
+	 * middle of the pane under the point counts as its nearest edge as well:
+	 * there is no "drop to swap", because a drop that did two different things
+	 * depending on a few pixels is one nobody could aim.
+	 */
+	private dropPaneHeader(drop: PaneDropWire): void {
+		const shell = shellWindow();
+		const own = shell.terminalRect(drop.terminalId);
+		const model = this.coordinator.model;
+		const workspaceId = model.selectedWorkspaceId();
+		if (own === undefined || workspaceId === undefined) return;
+		const point = { x: own.x + drop.x, y: own.y + drop.y };
+		const state = shell.layoutState();
+		const panes = paneRects(shell.windowSizeForLayout(), state).panes;
+		const under = panes.find(
+			(pane) =>
+				point.x >= pane.rect.x &&
+				point.x < pane.rect.x + pane.rect.width &&
+				point.y >= pane.rect.y &&
+				point.y < pane.rect.y + pane.rect.height,
+		);
+		if (under === undefined) return;
+		if (
+			under.leaf.kind === "terminal" &&
+			under.leaf.terminalId === drop.terminalId
+		) {
+			return;
+		}
+		const fromLeft = (point.x - under.rect.x) / Math.max(1, under.rect.width);
+		const fromTop = (point.y - under.rect.y) / Math.max(1, under.rect.height);
+		const distances: readonly (readonly [PaneSide, number])[] = [
+			["left", fromLeft],
+			["right", 1 - fromLeft],
+			["above", fromTop],
+			["below", 1 - fromTop],
+		];
+		const side = [...distances].sort((a, b) => a[1] - b[1])[0]![0];
+		this.dispatchOwn({
+			type: "move_pane_terminal",
+			terminalId: drop.terminalId,
+			onto: under.leaf,
+			side,
+		});
+	}
+
+	/**
+	 * One of the content area's views took the keyboard by itself — a click.
+	 *
+	 * The model is told which pane, so `Cmd+Q X` closes the terminal the
+	 * person is typing into and `Cmd+Q O` steps from there; and a click into
+	 * the other half of the workbench/Agent split moves the selection's half,
+	 * because the keyboard being in the editor while the selection says the
+	 * Agent is the two-answers problem `SurfacePresentation` exists to end.
+	 * A focus main placed itself arrives here too, and changes nothing.
+	 */
+	private paneFocused(pane: ContentFocus): void {
+		const model = this.coordinator.model;
+		if (pane.kind === "terminal") {
+			if (model.paneFocus === pane.terminalId) return;
+			this.dispatchOwn({
+				type: "focus_pane",
+				target: { kind: "terminal", terminalId: pane.terminalId },
+			});
+			return;
+		}
+		if (model.paneFocus === undefined) return;
+		this.dispatchOwn({ type: "focus_pane", target: { kind: "content" } });
+		const selection = model.selection;
+		if (selection.presentation !== "beside") return;
+		const agentHalf = selection.context.kind === "agent";
+		if (agentHalf !== (pane.kind === "agents")) {
+			this.dispatchOwn({ type: "swap_split_focus" });
+		}
+	}
+
+	//#endregion
 
 	/**
 	 * A move made from the keyboard: make it, and take the keyboard there.
@@ -2467,11 +2722,14 @@ export class AppController {
 		const wiring = this.terminalsWiring;
 		if (wiring === undefined) return;
 		let runtime: Awaited<ReturnType<typeof wiring.runtimes.for>>;
-		let samples: Awaited<ReturnType<typeof runtime.terminalPanes>>;
+		let reading: Awaited<ReturnType<typeof runtime.terminalPanes>>;
+		// When the reading began: a pane terminal the model learned of after
+		// this cannot have been seen by it (`AppModel.observePaneTerminals`).
+		const since = Date.now();
 		try {
 			runtime = await wiring.runtimes.for(runtimeById(machine));
 			if (!runtime.adapterAvailable) return;
-			samples = await runtime.terminalPanes();
+			reading = await runtime.terminalPanes();
 		} catch (error) {
 			if (this.terminalActivityFailures.failed(machine, failureText(error))) {
 				console.error(
@@ -2487,7 +2745,7 @@ export class AppController {
 			this.paneTrackers.set(machine, tracker);
 		}
 		const verdicts = tracker.observe(
-			samples,
+			reading.panes,
 			Date.now(),
 			this.config?.general.terminal_idle_seconds ??
 				DEFAULT_TERMINAL_IDLE_SECONDS,
@@ -2506,6 +2764,23 @@ export class AppController {
 				workspaces: terminalObservations(verdicts, workspaces),
 			},
 		});
+		// The same reading says which terminal panes still have a session: a
+		// shell that exited took its session with it, and its pane goes.
+		const panes = workspaces.filter(
+			(id) => this.coordinator.model.paneTerminalsIn(id).length > 0,
+		);
+		if (panes.length > 0) {
+			this.coordinator.dispatchUser({
+				intentId: parseIntentId(randomUUID()),
+				operationId: this.freshOperationId(),
+				intent: {
+					type: "pane_terminals_observed",
+					workspaces: panes,
+					alive: reading.terminals,
+					since,
+				},
+			});
+		}
 		this.drain();
 	}
 
@@ -2873,13 +3148,36 @@ export class AppController {
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
+		// The selected Workspace's tiling, with the seam being dragged where the
+		// pointer is: a terminal opened beside its content is laid out around
+		// whatever the selection draws (`model/paneLayout.ts`).
+		const model = this.coordinator.model;
+		const selectedWorkspace = model.selectedWorkspaceId();
+		const tree =
+			selectedWorkspace === undefined
+				? CONTENT_PANE
+				: model.paneTree(selectedWorkspace);
+		const panes =
+			this.panePreview === undefined
+				? tree
+				: resizePane(tree, this.panePreview.path, this.panePreview.ratio);
+		// Every terminal there is has a view, whichever Workspace it is in, so
+		// coming back to one finds its scrollback where it was.
+		shell.syncTerminalViews(
+			model.workspaces.flatMap((workspace) =>
+				model.paneTerminalsIn(workspace.id).map((terminal) => terminal.id),
+			),
+		);
+		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
-			: surface.kind === "editor" ||
-				  (surface.kind === "split" &&
-						snapshot.selection.context.kind !== "agent")
-				? "editor"
-				: "agents";
+			: paneFocus !== undefined
+				? { terminal: paneFocus }
+				: surface.kind === "editor" ||
+					  (surface.kind === "split" &&
+							snapshot.selection.context.kind !== "agent")
+					? "editor"
+					: "agents";
 		shell.setLayoutState({
 			// The window was built with one of the two chromes and the setting
 			// can have moved since; the setting wins, because it is what the
@@ -2899,6 +3197,7 @@ export class AppController {
 					? { ...surface, ratio: this.splitRatioPreview }
 					: surface,
 			keyboard,
+			...(panes.kind === "content" ? {} : { panes }),
 		});
 		// The page draws its own states in the same rectangle the workbench is
 		// laid into, and the split's seam is where that rectangle ends. It is
@@ -2928,6 +3227,13 @@ export class AppController {
 	 */
 	private sidebarWidthPreview: number | undefined;
 	private splitRatioPreview: number | undefined;
+	/** A seam of the selected Workspace's tiling, being dragged. */
+	private panePreview: { path: string; ratio: number } | undefined;
+	/**
+	 * Terminals whose session is being made and that the model has not been
+	 * told of yet — what the sweep must not reap in the meantime.
+	 */
+	private readonly launchingTerminals = new Set<string>();
 
 	/** Folders whose workbench is being rebuilt, as the page is told. */
 	private readonly restartingEditors = new Set<string>();
@@ -7798,7 +8104,48 @@ export class AppController {
 			if (preview.splitRatio !== undefined) {
 				this.splitRatioPreview = preview.splitRatio ?? undefined;
 			}
+			if (preview.pane !== undefined) {
+				const pane = preview.pane;
+				this.panePreview =
+					pane === null ||
+					typeof pane.path !== "string" ||
+					!isPanePath(pane.path) ||
+					typeof pane.ratio !== "number" ||
+					!Number.isFinite(pane.ratio)
+						? undefined
+						: { path: pane.path, ratio: clampPaneRatio(pane.ratio) };
+			}
 			this.publishLayoutState();
+		});
+		// A terminal pane's ×, from that pane's own page. Only the page of the
+		// terminal it names may ask: a page closing another pane's terminal is
+		// a page reaching past its own view.
+		handle(CHANNELS.closePaneTerminal, async (event, terminalId: unknown) => {
+			if (
+				typeof terminalId !== "string" ||
+				shellWindow().terminalOfContents(event.sender) !== terminalId
+			) {
+				throw new Error("a terminal pane may close only its own terminal");
+			}
+			await this.closePaneTerminal(terminalId);
+		});
+		// A terminal pane's header, dragged and let go of. The point is in the
+		// page's own coordinates; where that is in the window, and which pane
+		// is under it, are main's to say.
+		handle(CHANNELS.dropPaneHeader, (event, drop: PaneDropWire) => {
+			if (
+				typeof drop !== "object" ||
+				drop === null ||
+				typeof drop.terminalId !== "string" ||
+				shellWindow().terminalOfContents(event.sender) !== drop.terminalId ||
+				typeof drop.x !== "number" ||
+				typeof drop.y !== "number" ||
+				!Number.isFinite(drop.x) ||
+				!Number.isFinite(drop.y)
+			) {
+				throw new Error("a pane drop names its own terminal and a point");
+			}
+			this.dropPaneHeader(drop);
 		});
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's

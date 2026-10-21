@@ -158,3 +158,26 @@ describe("the palette", () => {
 		expect(chromeAudience(pages({ tooltip: false }))).not.toContain(TOOLTIP);
 	});
 });
+
+describe("the terminal panes", () => {
+	const withPanes = () => ({
+		...pages(),
+		paneTerminalContents: () => ["pane one", "pane two"],
+	});
+
+	it("hear the projection and the palette, because they draw from both", () => {
+		expect(projectionAudience(withPanes())).toEqual([
+			SHELL,
+			SIDEBAR,
+			AGENTS,
+			PICKER,
+			"pane one",
+			"pane two",
+		]);
+		expect(chromeAudience(withPanes())).toContain("pane two");
+	});
+
+	it("are DevHub's own pages, so a failure that began on one is drawn on the notices", () => {
+		expect(displayAudience(withPanes(), "pane one")).toEqual([TOASTS]);
+	});
+});

@@ -93,6 +93,8 @@ function workspace(
     canCreateAgent: true,
     lastAgentId: undefined,
     terminals: { status: "idle", unread: undefined },
+    paneTree: { kind: "content" },
+    paneTerminals: [],
   } as unknown as WorkspaceSnapshot;
 }
 
@@ -643,5 +645,80 @@ describe("a file that is not there to open", () => {
     });
     // Converted again on its way across IPC, it is still itself.
     expect(errorWire(namedFailure(failure)).code).toBe("file_not_found");
+  });
+});
+
+describe("terminal panes, across the wire", () => {
+  const T1 = "11111111-1111-4111-8111-111111111111";
+
+  it("projects a Workspace's tiling and terminals, with each one's session", () => {
+    const tree = {
+      kind: "split",
+      axis: "row",
+      ratio: 0.5,
+      first: { kind: "content" },
+      second: { kind: "terminal", terminalId: T1 },
+    } as const;
+    const wire = snapshotWire(
+      {
+        ...snapshotOf([
+          {
+            ...workspace({ kind: "available" }),
+            paneTree: tree,
+            paneTerminals: [
+              {
+                id: T1,
+                workspaceId: "22222222-2222-4222-8222-222222222222",
+                name: "Server",
+                cwd: undefined,
+                command: "npm run dev",
+                openedAt: 1,
+              },
+            ],
+          } as unknown as WorkspaceSnapshot,
+        ]),
+        paneFocus: T1,
+      } as unknown as AppSnapshot,
+      "ready",
+      () => undefined,
+      () => undefined,
+    );
+    expect(wire.paneFocus).toBe(T1);
+    expect(wire.workspaces[0]).toMatchObject({
+      paneTree: tree,
+      paneTerminals: [
+        { id: T1, name: "Server", session: `tm-${T1}`, command: "npm run dev" },
+      ],
+    });
+  });
+
+  it("says nothing about a Workspace with no terminals", () => {
+    const wire = snapshotWire(
+      snapshotOf([workspace({ kind: "available" })]),
+      "ready",
+      () => undefined,
+      () => undefined,
+    );
+    expect(wire.workspaces[0]?.paneTree).toBeUndefined();
+    expect(wire.paneFocus).toBeUndefined();
+  });
+
+  it("takes a seam's resize, and refuses a path or a ratio it could not be", () => {
+    const resize = (path: unknown, ratio: unknown) =>
+      intentFromWire({
+        type: "resize_pane",
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        path,
+        ratio,
+      } as AppIntentWire);
+    expect(resize("10", 0.3)).toEqual({
+      type: "resize_pane",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      path: "10",
+      ratio: 0.3,
+    });
+    expect(() => resize("2", 0.3)).toThrow(InvalidIntent);
+    expect(() => resize("", 0.95)).toThrow(InvalidIntent);
+    expect(() => resize("", "0.5")).toThrow(InvalidIntent);
   });
 });

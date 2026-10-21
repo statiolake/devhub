@@ -811,6 +811,45 @@ export class AppCoordinator {
         this.emit({ kind: "snapshot", snapshot });
         return { kind: "updated", snapshot };
       }
+      case "pane_terminal_opened":
+        this.model.openPaneTerminal(intent.terminal, intent.side, {
+          ...(intent.beside === undefined ? {} : { beside: intent.beside }),
+          focus: intent.focus,
+        });
+        return this.transitionOutcome(beforeRevision, id);
+      case "pane_terminal_closed":
+        this.model.closePaneTerminal(intent.terminalId);
+        return this.transitionOutcome(beforeRevision, id);
+      case "resize_pane":
+        this.model.resizePaneSplit(
+          intent.workspaceId,
+          intent.path,
+          intent.ratio,
+        );
+        return this.transitionOutcome(beforeRevision, id);
+      case "move_pane_terminal":
+        this.model.movePaneTerminal(
+          intent.terminalId,
+          intent.onto,
+          intent.side,
+        );
+        return this.transitionOutcome(beforeRevision, id);
+      case "focus_pane":
+        this.model.focusPane(intent.target);
+        return this.transitionOutcome(beforeRevision, id);
+      case "cycle_pane_focus":
+        this.model.cyclePaneFocus(intent.direction);
+        return this.transitionOutcome(beforeRevision, id);
+      case "focus_pane_towards":
+        this.model.focusPaneTowards(intent.side);
+        return this.transitionOutcome(beforeRevision, id);
+      case "pane_terminals_observed":
+        this.model.observePaneTerminals(
+          intent.workspaces,
+          new Set(intent.alive),
+          intent.since,
+        );
+        return this.transitionOutcome(beforeRevision, id);
       case "window_closed":
         return this.detach("window_closed");
       case "quit":
