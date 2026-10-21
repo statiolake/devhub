@@ -56,6 +56,22 @@ describe("the /devhub skill", () => {
 		expect(text).toContain("answer in DevHub");
 	});
 
+	it("says how to open, drive, find and close a terminal beside the agent", () => {
+		const text = devhubSkillText(skill.cli);
+		expect(text).toContain("## Terminals next to you");
+		expect(text).toContain("terminal open [--split right|below|left|above]");
+		expect(text).toContain('send-keys -t "$P" -l --');
+		expect(text).toContain("capture-pane -p");
+		expect(text).toContain("terminal resolve right");
+		expect(text).toContain("terminal list");
+		expect(text).toContain("terminal close");
+		expect(text).toContain("右のターミナル");
+		expect(text).toContain("ask the person");
+		// The template literal kept its own quoting: no stray backslash.
+		expect(text).not.toContain("\\`");
+		expect(codexDevhubInstructions(skill)).toContain("terminal");
+	});
+
 	it("points Codex at the same file", () => {
 		expect(codexDevhubInstructions(skill)).toContain(skill.skillFile);
 		expect(codexDevhubInstructions(skill)).toContain("/devhub");

@@ -81,6 +81,7 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 	return [
 		"DevHub skill: when the user's message starts with /devhub or $devhub, or asks you to drive DevHub",
 		"(open a workspace, start or hand work to another agent, check on or answer other agents),",
+		'or asks you to prepare, open, use or close a terminal next to you ("open a terminal", "the terminal on the right"),',
 		`read ${skill.skillFile} and follow it. It explains the \`${skill.cli} --tell\` command.`,
 	].join(" ");
 }
@@ -88,7 +89,7 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 export function devhubSkillText(cli: string): string {
 	return `---
 name: devhub
-description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, and monitor, message and answer other agents. Use when the user says /devhub or asks to delegate work to another agent in DevHub.
+description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open terminals next to yourself and drive them with tmux. Use when the user says /devhub, asks to delegate work to another agent in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル").
 ---
 
 # /devhub - drive DevHub from here
@@ -181,6 +182,64 @@ prompts (may a tool run) are listed as "answer in DevHub": they are the
 person's decision - tell the person, never try to get around it. When unsure
 what the person would want, ask the person instead of answering. Your answer
 is recorded in that agent's transcript as answered via devhub CLI by you.
+
+## Terminals next to you
+
+When the person asks you to "prepare a terminal" / "open a terminal" (to run a
+server, tests, a REPL...), open one beside your own pane in DevHub's window
+rather than running a long-lived process in your own shell:
+
+    devhub --tell --json terminal open [--split right|below|left|above] [--cwd PATH] [--command CMD] [--name NAME]
+
+It is a tmux session of its own in your workspace's folder (or \`--cwd\`), on
+the machine your workspace is on, shown as a pane next to yours (default: to
+the right). \`--command\` is typed into its shell, so the terminal stays open
+when the command ends. It does not take the person's keyboard unless you pass
+\`--focus\`. The answer is the handle (\`terminal\` in JSON):
+
+    "tmux": { "tmux": "/path/to/tmux", "socket": "/private/tmp/tmux-501/devhub",
+              "session": "tm-<id>", "target": "%7", "fullTarget": "tm-<id>:0.0",
+              "prefix": ["/path/to/tmux", "-S", "/private/tmp/tmux-501/devhub"] }
+
+**Tell the person which one it is**: its name and session (\`tm-...\`); the
+pane's header in DevHub shows the same session name.
+
+Drive it with plain tmux, always through the handle's own \`prefix\` (that
+tmux and \`-S\` socket — not your default tmux) and \`-t <target>\`:
+
+    T="/path/to/tmux"; S="/private/tmp/tmux-501/devhub"; P="%7"
+    "$T" -S "$S" send-keys -t "$P" -l -- 'npm test'   # the text, literally
+    "$T" -S "$S" send-keys -t "$P" Enter              # then Return, separately
+    "$T" -S "$S" capture-pane -p -J -t "$P" -S -200   # read the last ~200 lines
+
+- Always \`send-keys -l\` for text (without \`-l\`, words like \`Enter\` or \`C-c\`
+  are keys), and send \`Enter\` as its own call. \`C-c\` without \`-l\` interrupts.
+- Then wait and read: poll \`capture-pane\` every few seconds (\`sleep 2\`
+  between reads), stop when the prompt is back or the output you need is
+  there, and give up after a sensible timeout. Do not spam keys or poll in a
+  tight loop; never type into a pane that is waiting for a password.
+- Do not kill the session or send \`exit\` unless asked; close it with
+  \`devhub --tell terminal close <id>\` when the person is done with it.
+
+**When the person refers to a terminal by where it is** — "the terminal on
+the right", "右のターミナル", "the one below", "下の", "隣の", "the one I just
+opened", "さっき開いた" — including one they opened themselves with Cmd+Q V
+(right) or Cmd+Q S (below), look it up rather than guessing:
+
+    devhub --tell --json terminal list               # every terminal of your workspace
+    devhub --tell --json terminal resolve right      # the one terminal to the right of your pane
+    devhub --tell --json terminal resolve below      # ... below it ("left", "above" too)
+    devhub --tell --json terminal resolve right top  # one of two stacked on the right
+    devhub --tell --json terminal resolve latest     # the most recently opened
+
+\`list\` gives each terminal's \`position\` relative to your own pane (\`right\`,
+\`below\`, \`right, top\`, \`right, bottom\`, \`left\`, \`above\`, or two sides for a
+corner), whether it is \`adjacent\`, \`focused\` (has the person's keyboard) and
+\`visible\`, its \`cwd\`, the \`command\` in its foreground, and the same \`tmux\`
+handle. \`resolve\` fails with the candidates when there is none or more than
+one; then ask the person which they mean instead of picking one. "隣の" with
+one terminal open means that one; with several, ask. Only your own
+workspace's terminals are visible to you.
 
 ## Other
 

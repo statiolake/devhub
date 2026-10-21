@@ -15,7 +15,8 @@ position in the list. **The list's order is the z-order**, lowest first:
 
     the window's own page → the Sidebar → every workbench (the one on screen
     last among them) → whatever those workbenches attached to themselves →
-    the Agents → the notices → the questions → the tooltip
+    the Agents → every terminal pane → the notices → the questions → the
+    tooltip
 
 The tooltip is on top of everything, the questions included. Not because it
 may stand over a modal — it may not: a question coming up takes the tooltip
@@ -91,15 +92,17 @@ says so, because the next page is the one that will not know.
 
 ## The pages, and what each of them may say
 
-Seven entries, seven preloads, seven bridges. There is no `?window=` role and
+Eight entries, eight preloads, eight bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
-file main loaded.**
+file main loaded.** (A terminal pane's page is loaded once per terminal; the
+fragment, `pane.html#<id>`, names which terminal — an instance, not a role.)
 
 | Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
 | --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
 | the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip`                                                 |
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
+| a terminal pane       | `pane.html`     | one terminal opened beside a Workspace's panes: a header naming its tmux session, and a terminal surface on it  | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`, `closePaneTerminal` (its own only), `dropPaneHeader` (its own only)                                                                                                                               |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen                                                     | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`                                                                                                                                        |
 | the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links              | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                               |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
@@ -244,7 +247,7 @@ There are three kinds of thing main says, not two. A _projection_ describes the
 model and goes to every page that draws from it. A _failure_ is an event and
 goes to the one page that draws failures. A _palette_ is neither: it is how
 everything in the window is painted, and it goes to every page DevHub draws
-chrome on — which is all seven.
+chrome on — which is all eight (every terminal pane among them).
 
 That last one used to go out on the projection audience, which coincided with
 "every page that draws chrome" until the `toasts` page arrived: it has `onTheme`
@@ -301,7 +304,8 @@ over**: somebody clicked a row — expanded or on the rail — and what they wan
 next is the thing they clicked, so the Sidebar asks for the surface and
 `keyboardChild` answers with the editor or with the Agent's terminal. **A
 keyboard selection stays**: somebody is standing in the Sidebar after
-`Cmd+Q S`, and Return there chooses a row without leaving the list, because the
+`focus_sidebar` (the command palette; it was `Cmd+Q S`), and Return there
+chooses a row without leaving the list, because the
 next ↓ has to still be a ↓. It is read off the activation — a click raised by a
 pointer carries a `detail` of at least one, and a focused button activated from
 the keyboard carries zero — rather than kept as a flag one handler sets and
@@ -413,6 +417,68 @@ six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 `dismiss_alert` used to be routed _to the page_ because what they acted on was
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
+
+## Terminal panes: one tiling, DevHub's own
+
+`Cmd+Q V` opens a terminal to the right of the pane with the keyboard and
+`Cmd+Q S` one below it; `devhub --tell terminal open` does the same for an
+Agent, beside the Agent's own pane. Each is a **tmux session of its own**
+(`tm-<id>`, marker context `terminal`) on the Workspace's machine — the same
+server, socket and config as every other DevHub session — started in the
+Workspace's folder. It is not tmux's own split: the tiling is DevHub's, so the
+workbench and the Agent are panes in it too.
+
+**One tree per Workspace** (`model/paneLayout.ts`). Its leaves are the
+selection's own pane — `content`, exactly one — and the terminals; its inner
+nodes are splits with an axis and a ratio. The content leaf draws what the
+selection has always drawn (the workbench, an Agent, or the two side by side),
+so Back and Forward, `Cmd+Q Z`, `Cmd+Q Cmd+J` and every rule about which half
+is in front stay about the selection, and nothing about them learned of
+terminals. `windowLayout.ts` lays the tree into the content area
+(`paneRects`), lays the workbench and the Agents inside the content leaf
+(`contentRect`) as it used to lay them into the whole area, and adds one child
+per terminal (`terminal`), stacked above the Agents and below every layer.
+The tree is persisted with its Workspace (`pane_layout`, `pane_terminals`;
+no schema bump — absent is the content alone) and is the same whichever of
+the Workspace's rows is selected.
+
+**One view per terminal**, each the `pane` page. Views are siblings like every
+other child (nested views do not paint), so the seams between panes are the
+strips no view covers, drawn on the window's own page from `seams` on the
+workbench area main pushes, exactly as the workbench/Agent seam always was;
+dragging one previews (`previewLayout({ pane })`) and commits `resize_pane`. A
+pane's header is dragged to move it: let go over another pane, main puts it on
+the side of that pane nearest the point (`dropPaneHeader`). A view lives as
+long as its terminal, whichever Workspace is on screen, so its scrollback
+survives switching away and back.
+
+**The keyboard.** `LayoutState.keyboard` can name a terminal; `keyboardChild`
+gives it the keys only while that terminal is drawn. The model keeps which
+terminal has the keyboard (`AppModel.paneFocus`): a chord moves it, a click
+into a view reports it (`ShellWindow.onContentFocused`), and any selection
+takes it back to the content. `Cmd+Q O` walks every pane on screen in reading
+order — the editor and the Agent of a split are two stops — and the arrows
+after the prefix go to the pane on that side. `Cmd+Q X` with a terminal in
+front closes it (and its session).
+
+**Ending.** A terminal's pane goes when its session does: the shell exited, or
+the session was killed. The terminal-activity round that already lists every
+pane on the machine once a second says which `tm-` sessions are there
+(`parsePaneActivity`'s `terminals`), and a terminal it did not see goes —
+unless the model learned of it after the round began. Closing a Workspace
+closes its terminals' sessions with it, and a busy one (not at its shell's
+prompt) is counted in the close sheet's processes. The startup sweep accounts
+for a `tm-` session by its Workspace's list.
+
+**For an Agent** (`devhub --tell terminal …`): only the asker's own Workspace,
+named by its pane's `DEVHUB_ORIGIN`, never by a flag. `terminal open` prints
+the handle — the tmux executable, the server's socket, the session and the
+pane (`%N`) — so the Agent drives it with plain `tmux -S <socket> send-keys -t
+%N -l …` and reads it with `capture-pane -p`. `terminal list` says where each
+terminal is relative to the Agent's pane (`right`, `below`, `right, top` …,
+computed on the tree's proportions by `relativePositions`), and `terminal
+resolve <side>` answers "the terminal on the right" or refuses with the
+candidates when it is ambiguous. The bundled `/devhub` skill says when and how.
 
 ## Every command, by name: `Cmd+Q :`
 
@@ -615,8 +681,8 @@ screen changes nothing here; macOS hides the lights and the bar stays drawn.
 
 ## What it costs
 
-One main process, one renderer per page (seven, of which Settings exists only
-while it is open), and one per workbench — though several workbench views can
+One main process, one renderer per page (eight, of which Settings exists only
+while it is open, and the terminal pane once per terminal), and one per workbench — though several workbench views can
 share a renderer, which Chromium's same-site grouping decides.
 
 Time to the first editor, measured on an isolated instance from the process's
