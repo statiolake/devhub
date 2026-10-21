@@ -81,7 +81,6 @@ import {
 	type AppConditionWire,
 	type ChordHelpRowWire,
 	type LayoutPreviewWire,
-	type PaneDropWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
 	type IssueFolderRequest,
@@ -251,21 +250,14 @@ import {
 	type ContentFocus,
 } from "./shellWindow.js";
 import {
-	paneRects,
 	reconcileEditors,
 	type KeyboardHalf,
 	type SurfaceArrangement,
 } from "./windowLayout.js";
 import {
-	CONTENT_PANE,
-	clampPaneRatio,
-	isPanePath,
-	paneTerminalSessionName,
-	resizePane,
-	type PaneLeaf,
-	type PaneSide,
-} from "../../model/paneLayout.js";
-import type { PaneTerminal } from "../../model/appModel.js";
+	agentTerminalSessionName,
+	clampTerminalShare,
+} from "../../model/agentTerminal.js";
 import type { PaneTerminalPane } from "../terminal/tmux.js";
 import {
 	chromeAudience,
@@ -1295,15 +1287,11 @@ export class AppController {
 				for (const agent of this.coordinator.launchingAgents()) {
 					agents.add(agent);
 				}
-				// A terminal is accounted for by its Workspace's list, and one
-				// being opened has its session before it is in that list.
+				// A terminal is accounted for by its Agent, and one being opened
+				// has its session before the model knows of it.
 				const terminals = new Set<string>(this.launchingTerminals);
-				for (const workspace of this.coordinator.model.workspaces) {
-					for (const terminal of this.coordinator.model.paneTerminalsIn(
-						workspace.id,
-					)) {
-						terminals.add(terminal.id);
-					}
+				for (const terminal of this.coordinator.model.agentTerminals()) {
+					terminals.add(terminal.terminalId);
 				}
 				return { workspaces, agents, terminals };
 			},
@@ -1519,14 +1507,11 @@ export class AppController {
 			cyclePaneFocus: () => {
 				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
 			},
-			focusPaneTowards: (side) => {
-				this.arrive({ type: "focus_pane_towards", side }, undefined);
+			toggleTerminal: (agentId) => {
+				void this.toggleAgentTerminal(parseAgentId(agentId)).catch(report);
 			},
-			splitTerminal: (workspaceId, side) => {
-				void this.openPaneTerminal(parseWorkspaceId(workspaceId), {
-					side,
-					focus: true,
-				}).catch(report);
+			terminalNeedsAgent: () => {
+				this.publishError(errorWireAt("terminal_needs_agent"));
 			},
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
@@ -1780,48 +1765,58 @@ export class AppController {
 		this.arrive({ type: "swap_split_focus" }, undefined);
 	}
 
-	//#region terminal panes
+	//#region the Agents' terminals
 
 	/**
-	 * Open a terminal beside the panes of one Workspace: `Cmd+Q V` / `S`, and
-	 * `devhub --tell terminal open`.
+	 * `Cmd+Q V`: show or hide an Agent's own terminal on the right, starting it
+	 * the first time (`model/agentTerminal.ts`). Hiding leaves its session
+	 * running; the keyboard, if it was in it, goes back to the content.
+	 */
+	async toggleAgentTerminal(agentId: AgentId): Promise<void> {
+		const model = this.coordinator.model;
+		const terminal = model.agentTerminal(agentId);
+		if (terminal?.open === true && model.terminalAgentId() === agentId) {
+			const focused = model.paneFocus !== undefined;
+			this.dispatchOwn({
+				type: "agent_terminal_shown",
+				agentId,
+				open: false,
+				focus: false,
+			});
+			if (focused) this.placeKeyboardOnSurface();
+			return;
+		}
+		await this.openAgentTerminal(agentId, { focus: true });
+	}
+
+	/**
+	 * Open an Agent's own terminal, or show the one it has: `Cmd+Q V`, and
+	 * `devhub --tell terminal open`. Idempotent — an Agent has one terminal,
+	 * and asking again shows the same one.
 	 *
 	 * The terminal is a tmux session of its own on the Workspace's machine —
 	 * the same server, socket and config as the Workspace's own terminals —
-	 * started in `cwd` (the Workspace's folder when absent). Only once the
-	 * session exists is the model told, so a pane is never drawn for a session
-	 * that failed to start; and a model that then refuses it (the tiling is as
-	 * deep as it goes) takes the session back down.
+	 * named `tm-<agent id>` and started in the Workspace's folder (the Agent's
+	 * worktree, when the Workspace is one). Whether a session is there is
+	 * tmux's answer, read first: a terminal the model remembers whose shell
+	 * has exited is started again, and a session that outlived what the model
+	 * remembered is taken back rather than shadowed. Only once the session
+	 * exists is the model told, so a pane is never drawn for a session that
+	 * failed to start.
 	 *
-	 * `command` is typed into the shell, not run instead of it: the terminal
-	 * outlives the command, which is what somebody driving it wants.
+	 * `command` is typed into the shell, not run instead of it — and only into
+	 * a terminal this call started: typing into one that is already running
+	 * something would be typing into whatever that is.
 	 */
-	async openPaneTerminal(
-		workspaceId: WorkspaceId,
-		options: {
-			readonly side: PaneSide;
-			readonly cwd?: string;
-			readonly command?: string;
-			readonly name?: string;
-			readonly beside?: PaneLeaf;
-			readonly focus: boolean;
-		},
-	): Promise<{
-		readonly terminal: PaneTerminal;
-		readonly pane: PaneTerminalPane;
-		readonly machine: RuntimeId;
-		readonly tmux: string;
-	}> {
+	async openAgentTerminal(
+		agentId: AgentId,
+		options: { readonly command?: string; readonly focus: boolean },
+	): Promise<{ readonly terminalId: string; readonly created: boolean }> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
 		const model = this.coordinator.model;
-		const workspace = model.workspace(workspaceId);
-		if (!workspace) throw new Error(`there is no Workspace ${workspaceId}`);
-		if (!workspace.canCreateAgent) {
-			throw new Error(
-				`${workspace.root} is closing or unavailable, so there is no folder to open a terminal in.`,
-			);
-		}
+		const workspace = model.workspaceForAgent(agentId);
+		if (!workspace) throw new Error(`there is no Agent ${agentId}`);
 		const machine = runtimeIdFor(workspace.location);
 		const runtime = await wiring.runtimes.for(runtimeById(machine));
 		if (!runtime.adapterAvailable) {
@@ -1829,44 +1824,62 @@ export class AppController {
 				runtime.unavailableReason ?? `there is no tmux on ${machine}`,
 			);
 		}
-		const id = randomUUID();
+		const live = await runtime.paneTerminals();
+		const alive = (terminalId: string): boolean =>
+			live.some(
+				(pane) =>
+					pane.terminalId === terminalId && pane.workspaceId === workspace.id,
+			);
+		const reveal = (terminalId: string, known: boolean) => {
+			this.dispatchOwn(
+				known
+					? {
+							type: "agent_terminal_shown",
+							agentId,
+							open: true,
+							focus: options.focus,
+						}
+					: {
+							type: "agent_terminal_opened",
+							agentId,
+							terminalId,
+							focus: options.focus,
+						},
+			);
+			if (options.focus) this.placeKeyboardOnSurface();
+			return { terminalId, created: false };
+		};
+		const existing = model.agentTerminal(agentId);
+		if (existing && alive(existing.terminalId)) {
+			return reveal(existing.terminalId, true);
+		}
+		const terminalId: string = agentId;
+		if (alive(terminalId)) return reveal(terminalId, false);
+		if (!workspace.canCreateAgent) {
+			throw new Error(
+				`${workspace.root} is closing or unavailable, so there is no folder to open a terminal in.`,
+			);
+		}
 		const target = {
 			machine,
-			terminalId: id,
+			terminalId,
 			workspaceId: workspace.id,
 			root: workspace.root,
 		};
-		this.launchingTerminals.add(id);
+		this.launchingTerminals.add(terminalId);
 		try {
-			const pane = await runtime.launchTerminal(target, {
-				...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-			});
+			await runtime.launchTerminal(target);
 			if (options.command !== undefined && options.command.length > 0) {
 				await runtime.typeIntoTerminal(target, options.command);
 			}
-			const terminal: PaneTerminal = {
-				id,
-				workspaceId: workspace.id,
-				name:
-					options.name !== undefined && options.name.trim().length > 0
-						? options.name.trim().slice(0, 200)
-						: model.nextPaneTerminalName(workspace.id),
-				cwd:
-					options.cwd === undefined || options.cwd === workspace.root
-						? undefined
-						: options.cwd,
-				command: options.command,
-				openedAt: Date.now(),
-			};
 			try {
 				this.coordinator.dispatchUser({
 					intentId: parseIntentId(randomUUID()),
 					operationId: this.freshOperationId(),
 					intent: {
-						type: "pane_terminal_opened",
-						terminal,
-						side: options.side,
-						...(options.beside === undefined ? {} : { beside: options.beside }),
+						type: "agent_terminal_opened",
+						agentId,
+						terminalId,
 						focus: options.focus,
 					},
 				});
@@ -1877,87 +1890,46 @@ export class AppController {
 				this.drain();
 			}
 			if (options.focus) this.placeKeyboardOnSurface();
-			return { terminal, pane, machine, tmux: runtime.tmuxPath() };
+			return { terminalId, created: true };
 		} finally {
-			this.launchingTerminals.delete(id);
+			this.launchingTerminals.delete(terminalId);
 		}
 	}
 
 	/**
-	 * Close one terminal pane: its clients, its session, then its pane.
+	 * Close an Agent's terminal: its clients, its session, then its pane.
+	 * Answers whether it had one.
 	 *
 	 * The session goes first, so the pane is never gone while the shell is
 	 * still running unseen; a session already gone (the shell exited) is the
 	 * same as one closed here.
 	 */
-	async closePaneTerminal(terminalId: string): Promise<void> {
+	async closeAgentTerminal(agentId: AgentId): Promise<boolean> {
 		const wiring = this.terminalsWiring;
 		const model = this.coordinator.model;
-		const terminal = model.paneTerminal(terminalId);
-		if (!terminal) return;
-		const workspace = model.workspace(terminal.workspaceId);
+		const terminal = model.agentTerminal(agentId);
+		if (!terminal) return false;
+		const workspace = model.workspaceForAgent(agentId);
 		if (wiring && workspace) {
 			await wiring.service.surfaces.closePaneTerminal({
 				machine: runtimeIdFor(workspace.location),
-				terminalId,
+				terminalId: terminal.terminalId,
 				workspaceId: workspace.id,
 				root: workspace.root,
 			});
 		}
-		const focused = model.paneFocus === terminalId;
-		this.dispatchOwn({ type: "pane_terminal_closed", terminalId });
-		// The keyboard was in the pane that went; it goes where the model
-		// moved the focus to, rather than staying on a view that is gone.
+		const focused = model.paneFocus === terminal.terminalId;
+		this.dispatchOwn({ type: "agent_terminal_closed", agentId });
+		// The keyboard was in the pane that went; it goes back to the content
+		// rather than staying on a view that is gone.
 		if (focused) this.placeKeyboardOnSurface();
+		return true;
 	}
 
-	/**
-	 * A terminal pane's header let go of at a point: move the pane to the side
-	 * of whatever pane is under it that the point is nearest.
-	 *
-	 * Over its own pane, or outside the content area, nothing moves. The
-	 * middle of the pane under the point counts as its nearest edge as well:
-	 * there is no "drop to swap", because a drop that did two different things
-	 * depending on a few pixels is one nobody could aim.
-	 */
-	private dropPaneHeader(drop: PaneDropWire): void {
-		const shell = shellWindow();
-		const own = shell.terminalRect(drop.terminalId);
-		const model = this.coordinator.model;
-		const workspaceId = model.selectedWorkspaceId();
-		if (own === undefined || workspaceId === undefined) return;
-		const point = { x: own.x + drop.x, y: own.y + drop.y };
-		const state = shell.layoutState();
-		const panes = paneRects(shell.windowSizeForLayout(), state).panes;
-		const under = panes.find(
-			(pane) =>
-				point.x >= pane.rect.x &&
-				point.x < pane.rect.x + pane.rect.width &&
-				point.y >= pane.rect.y &&
-				point.y < pane.rect.y + pane.rect.height,
-		);
-		if (under === undefined) return;
-		if (
-			under.leaf.kind === "terminal" &&
-			under.leaf.terminalId === drop.terminalId
-		) {
-			return;
-		}
-		const fromLeft = (point.x - under.rect.x) / Math.max(1, under.rect.width);
-		const fromTop = (point.y - under.rect.y) / Math.max(1, under.rect.height);
-		const distances: readonly (readonly [PaneSide, number])[] = [
-			["left", fromLeft],
-			["right", 1 - fromLeft],
-			["above", fromTop],
-			["below", 1 - fromTop],
-		];
-		const side = [...distances].sort((a, b) => a[1] - b[1])[0]![0];
-		this.dispatchOwn({
-			type: "move_pane_terminal",
-			terminalId: drop.terminalId,
-			onto: under.leaf,
-			side,
-		});
+	/** `Cmd+Q X` in the terminal, and the pane's ×: by the terminal's id. */
+	private async closePaneTerminal(terminalId: string): Promise<void> {
+		const terminal = this.coordinator.model.agentTerminalById(terminalId);
+		if (terminal) await this.closeAgentTerminal(terminal.agentId);
 	}
 
 	/**
@@ -2765,24 +2737,58 @@ export class AppController {
 				workspaces: terminalObservations(verdicts, workspaces),
 			},
 		});
-		// The same reading says which terminal panes still have a session: a
+		// The same reading says which Agent terminals still have a session: a
 		// shell that exited took its session with it, and its pane goes.
-		const panes = workspaces.filter(
-			(id) => this.coordinator.model.paneTerminalsIn(id).length > 0,
-		);
-		if (panes.length > 0) {
+		const model = this.coordinator.model;
+		const here = new Set<string>(workspaces);
+		if (
+			model
+				.agentTerminals()
+				.some((terminal) =>
+					here.has(model.workspaceForAgent(terminal.agentId)?.id ?? ""),
+				)
+		) {
 			this.coordinator.dispatchUser({
 				intentId: parseIntentId(randomUUID()),
 				operationId: this.freshOperationId(),
 				intent: {
 					type: "pane_terminals_observed",
-					workspaces: panes,
-					alive: reading.terminals,
+					workspaces,
+					alive: reading.terminals.map((terminal) => terminal.terminalId),
 					since,
 				},
 			});
 		}
 		this.drain();
+		// And which ones nothing owns any more: an Agent that was stopped or
+		// ended takes its terminal with it. Only on a Workspace still open here
+		// (a closed one's go with its close), and never one being opened.
+		const owned = new Set(
+			model.agentTerminals().map((terminal) => terminal.terminalId),
+		);
+		for (const stray of reading.terminals) {
+			if (
+				owned.has(stray.terminalId) ||
+				this.launchingTerminals.has(stray.terminalId) ||
+				!here.has(stray.workspaceId)
+			) {
+				continue;
+			}
+			const workspace = model.workspace(parseWorkspaceId(stray.workspaceId));
+			if (!workspace) continue;
+			await wiring.service.surfaces
+				.closePaneTerminal({
+					machine,
+					terminalId: stray.terminalId,
+					workspaceId: workspace.id,
+					root: workspace.root,
+				})
+				.catch((error: unknown) => {
+					console.error(
+						`[devhub] closing the terminal of a gone Agent on ${machine}: ${failureText(error)}`,
+					);
+				});
+		}
 	}
 
 	markReady(): void {
@@ -3149,25 +3155,23 @@ export class AppController {
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
-		// The selected Workspace's tiling, with the seam being dragged where the
-		// pointer is: a terminal opened beside its content is laid out around
-		// whatever the selection draws (`model/paneLayout.ts`).
+		// The view's Agent's terminal, when it is open, with the divider being
+		// dragged where the pointer is: it is laid out right of whatever the
+		// selection draws (`model/agentTerminal.ts`).
 		const model = this.coordinator.model;
-		const selectedWorkspace = model.selectedWorkspaceId();
-		const tree =
-			selectedWorkspace === undefined
-				? CONTENT_PANE
-				: model.paneTree(selectedWorkspace);
-		const panes =
-			this.panePreview === undefined
-				? tree
-				: resizePane(tree, this.panePreview.path, this.panePreview.ratio);
-		// Every terminal there is has a view, whichever Workspace it is in, so
-		// coming back to one finds its scrollback where it was.
+		const visible = model.visibleTerminal();
+		const terminal =
+			visible === undefined
+				? undefined
+				: {
+						terminalId: visible.terminalId,
+						share:
+							this.terminalSharePreview ?? model.terminalShare(visible.agentId),
+					};
+		// Every Agent terminal there is has a view, shown or hidden, so coming
+		// back to its Agent finds its scrollback where it was.
 		shell.syncTerminalViews(
-			model.workspaces.flatMap((workspace) =>
-				model.paneTerminalsIn(workspace.id).map((terminal) => terminal.id),
-			),
+			model.agentTerminals().map((one) => one.terminalId),
 		);
 		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
@@ -3198,7 +3202,7 @@ export class AppController {
 					? { ...surface, ratio: this.splitRatioPreview }
 					: surface,
 			keyboard,
-			...(panes.kind === "content" ? {} : { panes }),
+			...(terminal === undefined ? {} : { terminal }),
 		});
 		// The page draws its own states in the same rectangle the workbench is
 		// laid into, and the split's seam is where that rectangle ends. It is
@@ -3228,8 +3232,8 @@ export class AppController {
 	 */
 	private sidebarWidthPreview: number | undefined;
 	private splitRatioPreview: number | undefined;
-	/** A seam of the selected Workspace's tiling, being dragged. */
-	private panePreview: { path: string; ratio: number } | undefined;
+	/** The divider left of the Agent's terminal, being dragged. */
+	private terminalSharePreview: number | undefined;
 	/**
 	 * Terminals whose session is being made and that the model has not been
 	 * told of yet — what the sweep must not reap in the meantime.
@@ -6985,104 +6989,75 @@ export class AppController {
 				notification.on("failed", done);
 				notification.show();
 			},
-			terminalLayout: async (workspaceId) => {
+			agentTerminal: async (agentId) => {
 				const model = this.coordinator.model;
-				const id = this.workspaceIdOf(workspaceId);
-				const workspace = model.workspace(id);
-				if (!workspace) throw new Error(`there is no Workspace ${workspaceId}`);
-				const terminals = model.paneTerminalsIn(id);
-				// The live half — where each pane's shell is now, what it is
-				// running, and the handle — is tmux's, on the Workspace's machine.
-				// A machine that cannot be asked still has the layout to say.
-				let live: readonly PaneTerminalPane[] = [];
-				let tmux = "tmux";
+				const id = parseAgentId(agentId);
+				const workspace = model.workspaceForAgent(id);
+				if (!workspace) throw new Error(`there is no agent ${agentId}`);
+				const terminal = model.agentTerminal(id);
+				if (!terminal) {
+					return { agentId, workspaceId: workspace.id, session: undefined };
+				}
+				// The live half — every tmux pane in it, where each is, what it
+				// is running, and the handle — is tmux's, on the Workspace's
+				// machine. A machine that cannot be asked still has the rest.
+				let tmux:
+					| {
+							tmux: string;
+							socket: string;
+							panes: ReturnType<typeof tellTerminalPane>[];
+					  }
+					| undefined;
 				const wiring = this.terminalsWiring;
-				if (wiring && terminals.length > 0) {
+				if (wiring) {
 					try {
 						const runtime = await wiring.runtimes.for(
 							runtimeById(runtimeIdFor(workspace.location)),
 						);
 						if (runtime.adapterAvailable) {
-							live = await runtime.paneTerminals();
-							tmux = runtime.tmuxPath();
+							const panes = (await runtime.paneTerminals()).filter(
+								(pane) =>
+									pane.terminalId === terminal.terminalId &&
+									pane.workspaceId === workspace.id,
+							);
+							const socket = panes[0]?.socketPath;
+							if (socket !== undefined) {
+								tmux = {
+									tmux: runtime.tmuxPath(),
+									socket,
+									panes: panes.map(tellTerminalPane),
+								};
+							}
 						}
 					} catch {
-						live = [];
+						tmux = undefined;
 					}
 				}
-				const onScreen = model.selectedWorkspaceId() === id;
+				const visible = model.visibleTerminal()?.agentId === id;
 				return {
-					tree: model.paneTree(id),
-					terminals: terminals.map((terminal) => {
-						const panes = live.filter(
-							(pane) =>
-								pane.terminalId === terminal.id && pane.workspaceId === id,
-						);
-						const pane = panes.find((one) => one.active) ?? panes[0];
-						return {
-							id: terminal.id,
-							name: terminal.name,
-							workspaceId: id,
-							session: paneTerminalSessionName(terminal.id),
-							openedWith: terminal.command,
-							openedAt: terminal.openedAt,
-							focused: onScreen && model.paneFocus === terminal.id,
-							visible: onScreen,
-							live:
-								pane === undefined
-									? undefined
-									: {
-											cwd: pane.cwd,
-											command: pane.command,
-											title: pane.title,
-											handle: {
-												tmux,
-												socket: pane.socketPath,
-												session: pane.sessionName,
-												window: pane.windowId,
-												windowIndex: pane.windowIndex,
-												pane: pane.paneId,
-												paneIndex: pane.paneIndex,
-											},
-										},
-						};
-					}),
+					agentId,
+					workspaceId: workspace.id,
+					session: {
+						id: terminal.terminalId,
+						name: agentTerminalSessionName(terminal.terminalId),
+						open: terminal.open,
+						visible,
+						focused: visible && model.paneFocus === terminal.terminalId,
+						tmux,
+					},
 				};
 			},
-			openTerminal: async (workspaceId, request) => {
-				const opened = await this.openPaneTerminal(
-					this.workspaceIdOf(workspaceId),
-					{
-						side: request.side,
-						focus: request.focus,
-						...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-						...(request.command === undefined
-							? {}
-							: { command: request.command }),
-						...(request.name === undefined ? {} : { name: request.name }),
-						// Beside the asking Agent's own pane, unless it named one of
-						// its terminals to split instead.
-						beside:
-							request.beside === undefined
-								? CONTENT_PANE
-								: { kind: "terminal", terminalId: request.beside },
-					},
-				);
-				return opened.terminal.id;
+			openAgentTerminal: async (agentId, request) => {
+				const opened = await this.openAgentTerminal(parseAgentId(agentId), {
+					focus: request.focus,
+					...(request.command === undefined
+						? {}
+						: { command: request.command }),
+				});
+				return { created: opened.created };
 			},
-			closeTerminal: async (workspaceId, terminalId) => {
-				const terminal = this.coordinator.model.paneTerminal(terminalId);
-				// Only the asker's own Workspace's: the service resolved the name
-				// within it, and this holds it to that.
-				if (
-					!terminal ||
-					terminal.workspaceId !== this.workspaceIdOf(workspaceId)
-				)
-					throw new Error(
-						`there is no terminal ${terminalId} in this workspace`,
-					);
-				await this.closePaneTerminal(terminalId);
-			},
+			closeAgentTerminal: (agentId) =>
+				this.closeAgentTerminal(parseAgentId(agentId)),
 		};
 	}
 
@@ -8203,16 +8178,12 @@ export class AppController {
 			if (preview.splitRatio !== undefined) {
 				this.splitRatioPreview = preview.splitRatio ?? undefined;
 			}
-			if (preview.pane !== undefined) {
-				const pane = preview.pane;
-				this.panePreview =
-					pane === null ||
-					typeof pane.path !== "string" ||
-					!isPanePath(pane.path) ||
-					typeof pane.ratio !== "number" ||
-					!Number.isFinite(pane.ratio)
+			if (preview.terminalShare !== undefined) {
+				const share = preview.terminalShare;
+				this.terminalSharePreview =
+					share === null || typeof share !== "number" || !Number.isFinite(share)
 						? undefined
-						: { path: pane.path, ratio: clampPaneRatio(pane.ratio) };
+						: clampTerminalShare(share);
 			}
 			this.publishLayoutState();
 		});
@@ -8227,24 +8198,6 @@ export class AppController {
 				throw new Error("a terminal pane may close only its own terminal");
 			}
 			await this.closePaneTerminal(terminalId);
-		});
-		// A terminal pane's header, dragged and let go of. The point is in the
-		// page's own coordinates; where that is in the window, and which pane
-		// is under it, are main's to say.
-		handle(CHANNELS.dropPaneHeader, (event, drop: PaneDropWire) => {
-			if (
-				typeof drop !== "object" ||
-				drop === null ||
-				typeof drop.terminalId !== "string" ||
-				shellWindow().terminalOfContents(event.sender) !== drop.terminalId ||
-				typeof drop.x !== "number" ||
-				typeof drop.y !== "number" ||
-				!Number.isFinite(drop.x) ||
-				!Number.isFinite(drop.y)
-			) {
-				throw new Error("a pane drop names its own terminal and a point");
-			}
-			this.dropPaneHeader(drop);
 		});
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's
@@ -8601,4 +8554,25 @@ export function appControllerIfCreated(): AppController | undefined {
 function containerLabel(editor: EditorAttachmentWire): string | undefined {
 	if (editor.kind === "host") return undefined;
 	return ("label" in editor ? editor.label : undefined) ?? "default";
+}
+
+/** One tmux pane of an Agent terminal, as `devhub --tell terminal` says it. */
+function tellTerminalPane(pane: PaneTerminalPane) {
+	return {
+		window: pane.windowId,
+		windowIndex: pane.windowIndex,
+		windowName: pane.windowName,
+		windowActive: pane.windowActive,
+		pane: pane.paneId,
+		paneIndex: pane.paneIndex,
+		active: pane.active,
+		left: pane.left,
+		top: pane.top,
+		width: pane.width,
+		height: pane.height,
+		cwd: pane.cwd,
+		command: pane.command,
+		title: pane.title,
+		dead: pane.dead,
+	};
 }

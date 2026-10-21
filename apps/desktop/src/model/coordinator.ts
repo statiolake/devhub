@@ -811,37 +811,27 @@ export class AppCoordinator {
         this.emit({ kind: "snapshot", snapshot });
         return { kind: "updated", snapshot };
       }
-      case "pane_terminal_opened":
-        this.model.openPaneTerminal(intent.terminal, intent.side, {
-          ...(intent.beside === undefined ? {} : { beside: intent.beside }),
+      case "agent_terminal_opened":
+        this.model.agentTerminalOpened(intent.agentId, intent.terminalId, {
           focus: intent.focus,
         });
         return this.transitionOutcome(beforeRevision, id);
-      case "pane_terminal_closed":
-        this.model.closePaneTerminal(intent.terminalId);
+      case "agent_terminal_shown":
+        this.model.showAgentTerminal(intent.agentId, intent.open, {
+          focus: intent.focus,
+        });
         return this.transitionOutcome(beforeRevision, id);
-      case "resize_pane":
-        this.model.resizePaneSplit(
-          intent.workspaceId,
-          intent.path,
-          intent.ratio,
-        );
+      case "agent_terminal_closed":
+        this.model.agentTerminalClosed(intent.agentId);
         return this.transitionOutcome(beforeRevision, id);
-      case "move_pane_terminal":
-        this.model.movePaneTerminal(
-          intent.terminalId,
-          intent.onto,
-          intent.side,
-        );
+      case "resize_agent_terminal":
+        this.model.resizeAgentTerminal(intent.agentId, intent.share);
         return this.transitionOutcome(beforeRevision, id);
       case "focus_pane":
         this.model.focusPane(intent.target);
         return this.transitionOutcome(beforeRevision, id);
       case "cycle_pane_focus":
         this.model.cyclePaneFocus(intent.direction);
-        return this.transitionOutcome(beforeRevision, id);
-      case "focus_pane_towards":
-        this.model.focusPaneTowards(intent.side);
         return this.transitionOutcome(beforeRevision, id);
       case "pane_terminals_observed":
         this.model.observePaneTerminals(

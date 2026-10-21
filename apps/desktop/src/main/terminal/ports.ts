@@ -248,8 +248,9 @@ export interface AgentTerminalTarget extends TerminalMachine {
 }
 
 /**
- * A terminal DevHub opened beside the panes of one Workspace (`Cmd+Q V`/`S`,
- * `devhub --tell terminal open`), named by its own id.
+ * An Agent's own terminal (`Cmd+Q V`, `devhub --tell terminal open`), named by
+ * its own id — the Agent's id for every one DevHub opens now — and marked
+ * with its Agent's Workspace.
  *
  * An Agent's lifetime with a person's shell in it: a session of its own on the
  * Workspace's machine, created once with whatever it runs — the login shell,

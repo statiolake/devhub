@@ -51,9 +51,7 @@
  * | `Cmd+Q Z`                   | `toggle_split`            |
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
- * | `Cmd+Q ←` `→` `↑` `↓`       | `focus_pane_left` / `_right` / `_up` / `_down` |
- * | `Cmd+Q V`                   | `split_terminal_right`    |
- * | `Cmd+Q S`                   | `split_terminal_below`    |
+ * | `Cmd+Q V`                   | `toggle_terminal`         |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | (palette only)              | `focus_sidebar`           |
  * | `Cmd+Q B`                   | `toggle_sidebar`          |
@@ -158,24 +156,24 @@
  * `SurfacePresentation`). So leaving is `presentation: "full"` on whatever is
  * selected, with nothing else remembered anywhere.
  *
- * **`Cmd+Q O` is the multiplexer's `prefix o`: the next pane.** The content
- * area is a tree of panes (`model/paneLayout.ts`): the selection's own leaf —
- * the workbench, the Agent, or the two side by side — and every terminal
- * opened around it. `O` walks every pane on screen in reading order, the
- * editor and the Agent of a split included, and wraps; with only the
- * workbench/Agent split on screen it is exactly what `Cmd+J` does there, and
- * with one pane on screen there is nowhere to go and it is a no-op. The
- * arrows after the prefix are tmux's `prefix ←/→/↑/↓`: the pane on that side,
- * no wrapping.
+ * **`Cmd+Q O` is the multiplexer's `prefix o`: the next pane.** What is on
+ * screen is the selection's own pane — the workbench, the Agent, or the two
+ * side by side — and, when it is open, the Agent's terminal on the right.
+ * `O` walks those left to right and wraps; with only the workbench/Agent
+ * split on screen it is exactly what `Cmd+J` does there, and with one pane on
+ * screen there is nowhere to go and it is a no-op.
  *
- * **`Cmd+Q V` and `Cmd+Q S` open a terminal beside the pane you are in.**
- * `V` to its right, `S` below it — Vim's `:vsplit` and `:split` read as where
- * the new pane goes. The terminal is a tmux session of its own on the
- * Workspace's machine, in the Workspace's folder, with DevHub's tmux config;
- * the layout is DevHub's, not tmux's, so it can hold the workbench and the
- * Agent as panes too. Splitting inside a terminal nests. `Cmd+Q X` with a
- * terminal's pane in front closes that terminal, and a terminal whose shell
- * exits closes its pane.
+ * **`Cmd+Q V` shows or hides the Agent's own terminal, on the right.** Every
+ * Agent has one terminal (`model/agentTerminal.ts`): a tmux session of its own
+ * on the Workspace's machine, in the Workspace's folder, with DevHub's tmux
+ * config. The first `V` starts it; after that `V` hides and shows the pane
+ * while the session runs on, and switching Agents shows each one's own. It is
+ * one pane because it is a whole tmux — a person who wants a second shell
+ * splits inside it, with tmux's own keys. With a Workspace's row selected it
+ * is the Agent that Workspace pairs with (the one `Cmd+Q Cmd+J` goes to); a
+ * Workspace with no Agent has no terminal, and `V` says so. `Cmd+Q X` with
+ * the terminal in front closes it, session and all, and a terminal whose
+ * shell exits closes its pane.
  *
  * **`Cmd+Q Z` is the multiplexer's `zoom`, moved to the noun DevHub has.** A
  * DevHub context is not tiled panes, so there is nothing to zoom in the tmux
@@ -248,10 +246,11 @@
  * that puts the keyboard on the selected row, and from there the tree's own
  * keyboard is live. Escape hands the keyboard back to whatever is on screen,
  * which is the same one answer `ShellWindow.focusSurface` gives everybody
- * else. It was `Cmd+Q S`; `S` is the terminal split below now, and the command
- * is *palette only* (`Cmd+Q :`, "Focus the sidebar") — a click on a row reaches
- * the Sidebar as well, and a person who wants a key for it can bind one in
- * `[keybindings]`.
+ * else. It was `Cmd+Q S`; the command is *palette only* now (`Cmd+Q :`,
+ * "Focus the sidebar") — a click on a row reaches the Sidebar as well, and a
+ * person who wants a key for it can bind one in `[keybindings]`. `S` itself
+ * is unbound: it was a terminal split below for a while, which went when
+ * DevHub stopped tiling terminals.
  *
  * **`Cmd+Q U` marks the selected Agent unread.** Reading an Agent is automatic
  * — opening it is reading it — so un-reading it has to be something you can
@@ -281,14 +280,15 @@
  * making a session and finding a project were two commands; DevHub's picker is
  * both, and one key for one command is the rule everywhere else.
  *
- * **Not applicable, deliberately absent.** `swap_pane_*`, `detach`,
+ * **Not applicable, deliberately absent.** Splits (`split_vertical`,
+ * `split_horizontal`), `focus_pane_*`, `swap_pane_*`, `detach`,
  * `reload_config` and the popup runners have no DevHub concept behind them:
- * a pane is moved by dragging its header, there is no session to detach from
- * a client, and the config file is re-read when it changes rather than on
- * request. They are left unbound rather than given invented meanings — an
- * unbound chord key cancels, so nothing surprising happens if one is typed out
- * of habit. Splits and `focus_pane_*` are not in this list any more: the
- * content area is tiled now (see `V`, `S` and `O` above).
+ * DevHub does not tile — the one terminal on the right is a whole tmux, split
+ * inside with tmux's own keys — there is no session to detach from a client,
+ * and the config file is re-read when it changes rather than on request.
+ * They are left unbound rather than given invented meanings — an unbound
+ * chord key cancels, so nothing surprising happens if one is typed out of
+ * habit.
  *
  * **`Cmd+Q :` is every command, by name.** The help overlay is a list you
  * read; the command palette is the same list you choose from, the way VS
@@ -297,8 +297,8 @@
  * *palette only* — no default key — when it already has a gesture somewhere
  * else and a chord for it would take a key some other command wants. Exactly
  * one is today, and `PALETTE_ONLY_COMMANDS` names it so that a command cannot
- * lose its key by accident: `focus_sidebar`, whose `S` went to the terminal
- * split below (a click on a row is its other gesture). (Back and Forward were
+ * lose its key by accident: `focus_sidebar`, whose `S` was taken for a while
+ * and is left unbound now (a click on a row is its other gesture). (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -382,12 +382,7 @@ export type CommandId =
   | "open_issue_picker"
   | "send_agent_action"
   | "swap_split_focus"
-  | "focus_pane_left"
-  | "focus_pane_right"
-  | "focus_pane_up"
-  | "focus_pane_down"
-  | "split_terminal_right"
-  | "split_terminal_below"
+  | "toggle_terminal"
   | "refresh_repositories"
   | "dismiss_alert"
   | "open_settings"
@@ -584,8 +579,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: ["J"],
   },
   {
-    // Every pane on screen, in reading order: the editor and the Agent of a
-    // split, and every terminal around them. See `model/paneLayout.ts`.
+    // Every pane on screen, left to right: the editor and the Agent of a
+    // split, and the Agent's terminal when it is open.
     id: "swap_split_focus",
     label: "Focus the next pane",
     needs: "nothing",
@@ -593,51 +588,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: ["o"],
   },
   {
-    // tmux's `prefix ←/→/↑/↓`: the pane on that side, without wrapping.
-    id: "focus_pane_left",
-    label: "Focus the pane to the left",
-    needs: "nothing",
-    category: "View",
-    defaultKeys: ["arrowleft"],
-  },
-  {
-    id: "focus_pane_right",
-    label: "Focus the pane to the right",
-    needs: "nothing",
-    category: "View",
-    defaultKeys: ["arrowright"],
-  },
-  {
-    id: "focus_pane_up",
-    label: "Focus the pane above",
-    needs: "nothing",
-    category: "View",
-    defaultKeys: ["arrowup"],
-  },
-  {
-    id: "focus_pane_down",
-    label: "Focus the pane below",
-    needs: "nothing",
-    category: "View",
-    defaultKeys: ["arrowdown"],
-  },
-  {
-    // Vim's `:vsplit`, read as where the new pane goes: a terminal to the
-    // right of the pane with the keyboard, in the Workspace's folder.
-    id: "split_terminal_right",
-    label: "Open a terminal to the right",
+    // Vim's `:vsplit`, read as where the pane goes: the Agent's own terminal,
+    // on the right. See `model/agentTerminal.ts`.
+    id: "toggle_terminal",
+    label: "Show or hide the Agent's terminal",
     needs: "workspace",
     category: "Terminal",
     defaultKeys: ["v"],
-  },
-  {
-    // Vim's `:split`: a terminal below the pane with the keyboard. It took
-    // `S` from `focus_sidebar`, which is palette only now.
-    id: "split_terminal_below",
-    label: "Open a terminal below",
-    needs: "workspace",
-    category: "Terminal",
-    defaultKeys: ["s"],
   },
   {
     id: "focus_editor",
@@ -650,8 +607,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     // The one command that hands the keyboard to DevHub's own chrome. Every
     // other chord acts on the model and leaves focus where the surface is.
-    // Palette only: its `S` is the terminal split below. See
-    // `PALETTE_ONLY_COMMANDS`.
+    // Palette only: see `PALETTE_ONLY_COMMANDS`. `S` is left unbound.
     id: "focus_sidebar",
     label: "Focus the sidebar",
     needs: "nothing",

@@ -346,7 +346,7 @@ function sessionFor(root: string): string {
 	return `ws-${workspaceDigest(root).slice(0, 20)}`;
 }
 
-describe("the terminals opened as panes", () => {
+describe("the Agents' terminals", () => {
 	const TERMINAL = "11111111-1111-4111-8111-111111111111";
 
 	it("are named by their own session in the activity reading, and not counted as the Workspace's", () => {
@@ -369,7 +369,7 @@ describe("the terminals opened as panes", () => {
 			"/Users/me",
 		);
 		expect(panes.map((pane) => pane.pane)).toEqual(["%1"]);
-		expect(terminals).toEqual([TERMINAL]);
+		expect(terminals).toEqual([{ terminalId: TERMINAL, workspaceId: WS }]);
 	});
 
 	it("is marked only with its whole tuple and a name that is its id", () => {
@@ -386,7 +386,7 @@ describe("the terminals opened as panes", () => {
 		expect(isMarked({ ...marking, workspaceId: "w" }, "/Users/me")).toBe(false);
 	});
 
-	it("reads each pane's handle: socket, window, pane, cwd and command", () => {
+	it("reads each pane's handle: socket, window, pane, cwd, command and where it is", () => {
 		const record = [
 			"terminal-pane",
 			terminalSessionName(TERMINAL),
@@ -404,6 +404,11 @@ describe("the terminals opened as panes", () => {
 			"0",
 			"/private/tmp/tmux-501/devhub",
 			"/Users/me/projects/widget/api",
+			"81",
+			"25",
+			"80",
+			"24",
+			"zsh",
 			ROOT,
 		].join(FS);
 		const { marker, panes } = parsePaneTerminals(
@@ -421,11 +426,17 @@ describe("the terminals opened as panes", () => {
 				paneId: "%9",
 				paneIndex: 0,
 				active: true,
+				windowActive: true,
+				windowName: "zsh",
 				command: "npm",
 				title: "host.local",
 				cwd: "/Users/me/projects/widget/api",
 				dead: false,
 				socketPath: "/private/tmp/tmux-501/devhub",
+				left: 81,
+				top: 25,
+				width: 80,
+				height: 24,
 			},
 		]);
 		// A server that is not DevHub's says nothing about anybody's panes.

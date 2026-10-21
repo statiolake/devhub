@@ -92,7 +92,7 @@ import {
 import { requiredTerminalSet } from "./ports.js";
 import type { PaneSample } from "./paneActivity.js";
 import { failureText } from "../../model/wire.js";
-import { paneTerminalSessionName } from "../../model/paneLayout.js";
+import { agentTerminalSessionName } from "../../model/agentTerminal.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -119,11 +119,11 @@ const GLOBAL_CONTEXT = "global";
 const WORKSPACE_CONTEXT = "workspace";
 const AGENT_CONTEXT = "agent";
 /**
- * A terminal DevHub opened as a pane beside a Workspace's other panes
- * (`PaneTerminalTarget`). Its own context rather than an Agent's or the
- * Workspace's, because it is neither: the sweep accounts for it by the
- * Workspace's list of terminals, nothing reads its screen as an Agent, and it
- * is never recreated as the Workspace's session is.
+ * An Agent's own terminal, drawn right of the content (`PaneTerminalTarget`,
+ * `model/agentTerminal.ts`). Its own context rather than an Agent's or the
+ * Workspace's, because it is neither: the sweep accounts for it by its
+ * Agent's terminal, nothing reads its screen as an Agent, and it is never
+ * recreated on demand as the Workspace's session is.
  */
 const TERMINAL_CONTEXT = "terminal";
 const GLOBAL_ID = "global";
@@ -553,8 +553,8 @@ export function agentSessionName(agentId: string): string {
 	return `ag-${agentId}`;
 }
 
-/** A pane terminal's session is named by its id, like an Agent's. */
-export const terminalSessionName = paneTerminalSessionName;
+/** An Agent terminal's session is named by its id, like an Agent's. */
+export const terminalSessionName = agentTerminalSessionName;
 
 export function workspaceDigest(root: string): string {
 	return createHash("sha256").update(root, "utf8").digest("hex");
@@ -766,13 +766,14 @@ export function parsePaneActivity(
 	readonly marker: MarkerState;
 	readonly panes: PaneSample[];
 	/**
-	 * Every pane terminal (`tm-` session) on the server, by id — what a
-	 * terminal's pane is closed by when its session has ended. The panes in
-	 * them are not in `panes`: they are drawn by DevHub's own views, not by a
-	 * workbench's terminal tab, and the Sidebar's terminal mark is about the
-	 * Workspace's own session.
+	 * Every Agent terminal (`tm-` session) on the server, by id and the
+	 * Workspace its marker names — what a terminal's pane is closed by when
+	 * its session has ended, and what finds one whose Agent has gone. The
+	 * panes in them are not in `panes`: they are drawn by DevHub's own views,
+	 * not by a workbench's terminal tab, and the Sidebar's terminal mark is
+	 * about the Workspace's own session.
 	 */
-	readonly terminals: string[];
+	readonly terminals: TerminalSessionSample[];
 } {
 	const records = splitRecords(stdout);
 	const first = records[0]?.split(FIELD_SEPARATOR);
@@ -786,7 +787,7 @@ export function parsePaneActivity(
 		throw shapeFailure("more windows or panes than DevHub will read");
 	}
 	const panes: PaneSample[] = [];
-	const terminals = new Set<string>();
+	const terminals = new Map<string, TerminalSessionSample>();
 	for (const record of records.slice(1)) {
 		const fields = record.split(FIELD_SEPARATOR);
 		if (
@@ -806,7 +807,12 @@ export function parsePaneActivity(
 		if (!isMarked(marking, contextHome)) continue;
 		if (marking.context === TERMINAL_CONTEXT) {
 			const id = terminalIdOfSession(marking.name);
-			if (id !== undefined) terminals.add(id);
+			if (id !== undefined && marking.workspaceId !== undefined) {
+				terminals.set(id, {
+					terminalId: id,
+					workspaceId: marking.workspaceId,
+				});
+			}
 			continue;
 		}
 		if (
@@ -829,10 +835,19 @@ export function parsePaneActivity(
 			command: at(12),
 		});
 	}
-	return { marker: "owned", panes, terminals: [...terminals] };
+	return { marker: "owned", panes, terminals: [...terminals.values()] };
 }
 
-/** One pane of a pane terminal, as `devhub --tell terminal list` reports it. */
+/** One Agent terminal's session, as the once-a-second reading names it. */
+export interface TerminalSessionSample {
+	readonly terminalId: string;
+	readonly workspaceId: string;
+}
+
+/**
+ * One tmux pane of an Agent terminal — the session may hold several, split
+ * by the person — as `devhub --tell terminal status` reports it.
+ */
 export interface PaneTerminalPane {
 	readonly terminalId: string;
 	readonly workspaceId: string;
@@ -845,6 +860,9 @@ export interface PaneTerminalPane {
 	readonly paneIndex: number;
 	/** The pane is its window's active one, and the window its session's. */
 	readonly active: boolean;
+	/** The window is the session's current one: the one on screen. */
+	readonly windowActive: boolean;
+	readonly windowName: string;
 	/** The foreground process, as tmux names it. */
 	readonly command: string;
 	readonly title: string;
@@ -852,6 +870,14 @@ export interface PaneTerminalPane {
 	readonly dead: boolean;
 	/** The server's socket, absolute: what `tmux -S` takes. */
 	readonly socketPath: string;
+	/**
+	 * Where the pane is in its window, in cells from the top left: what "the
+	 * bottom-right pane" is answered by when the person split it.
+	 */
+	readonly left: number;
+	readonly top: number;
+	readonly width: number;
+	readonly height: number;
 }
 
 const TERMINAL_PANE_RECORD = "terminal-pane";
@@ -872,6 +898,11 @@ const TERMINAL_PANE_FIELDS = [
 	"#{pane_dead}",
 	"#{socket_path}",
 	"#{pane_current_path}",
+	"#{pane_left}",
+	"#{pane_top}",
+	"#{pane_width}",
+	"#{pane_height}",
+	"#{window_name}",
 	// Last, as everywhere else: the one value that may hold a newline.
 	`#{${ROOT_OPTION}}`,
 ];
@@ -907,7 +938,7 @@ export function parsePaneTerminals(
 			context: markerValue(at(2)),
 			workspaceId: markerValue(at(3)),
 			agentId: agentIdMarker(markerValue(at(4))),
-			root: markerValue(at(16)),
+			root: markerValue(at(21)),
 		};
 		if (!isMarked(marking, contextHome)) continue;
 		if (marking.context !== TERMINAL_CONTEXT) continue;
@@ -924,11 +955,17 @@ export function parsePaneTerminals(
 			paneId: at(7),
 			paneIndex: parseNumericPrefix(at(8)),
 			active: at(9) === "1" && at(10) === "1",
+			windowActive: at(10) === "1",
+			windowName: at(20),
 			command: at(11),
 			title: at(12),
 			dead: at(13) === "1",
 			socketPath: at(14),
 			cwd: at(15),
+			left: parseNumericPrefix(at(16)),
+			top: parseNumericPrefix(at(17)),
+			width: parseNumericPrefix(at(18)),
+			height: parseNumericPrefix(at(19)),
 		});
 	}
 	return { marker: "owned", panes };
@@ -2186,7 +2223,7 @@ export class TmuxTerminalRuntime {
 	 */
 	async terminalPanes(cancel = new CancellationToken()): Promise<{
 		readonly panes: readonly PaneSample[];
-		readonly terminals: readonly string[];
+		readonly terminals: readonly TerminalSessionSample[];
 	}> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {

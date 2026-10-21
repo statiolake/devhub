@@ -34,62 +34,62 @@ import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
-import type { PaneSeamWire, WorkbenchAreaWire } from "../../../ipc/contract";
-
-/** A pane's share of its split, as far as a drag may take it. */
-const PANE_MIN_RATIO = 0.1;
-const PANE_MAX_RATIO = 0.9;
-
-function clampPaneRatio(ratio: number): number {
-  return Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, ratio));
-}
+import {
+  TERMINAL_MAX_SHARE,
+  TERMINAL_MIN_SHARE,
+  clampTerminalShare,
+} from "../../../model/agentTerminal";
+import type {
+  TerminalSeamWire,
+  WorkbenchAreaWire,
+} from "../../../ipc/contract";
 
 /**
- * One seam between two panes of the selected Workspace's tiling — the
- * terminals opened beside its content (`model/paneLayout.ts`).
+ * The divider left of the Agent's terminal (`model/agentTerminal.ts`).
  *
  * The same kind of element as the workbench/Agent seam, for the same reason:
  * it is the strip no native view covers, so it is the one place a pointer
- * meets the divider the eye sees. Its ratio is a ratio of the split it
- * divides (`extent`), which main says rather than this page measuring.
+ * meets the divider the eye sees. What it moves is the terminal's share of
+ * the content area (`extent`), which main says rather than this page
+ * measuring.
  */
-function PaneSeam({
+function TerminalSeam({
   seam,
   onPreview,
   onCommit,
 }: {
-  readonly seam: PaneSeamWire;
-  readonly onPreview: (path: string, ratio: number) => void;
-  readonly onCommit: (path: string, ratio: number) => void;
+  readonly seam: TerminalSeamWire;
+  readonly onPreview: (share: number) => void;
+  readonly onCommit: (share: number) => void;
 }) {
   const [dragging, setDragging] = useState(false);
-  const preview = useRef(seam.ratio);
-  const row = seam.axis === "row";
-  const ratioAt = (clientX: number, clientY: number): number | undefined => {
+  const preview = useRef(seam.share);
+  const shareAt = (clientX: number): number | undefined => {
     const extent = seam.extent;
-    const along = row ? extent.width : extent.height;
-    if (along <= 0) return undefined;
-    const offset = row ? clientX - extent.x : clientY - extent.y;
-    return clampPaneRatio(offset / along);
+    const available = extent.width - seam.width;
+    if (available <= 0) return undefined;
+    // The terminal is right of the pointer: its share is what is left of the
+    // area past the divider's middle.
+    const right = extent.x + extent.width - (clientX + seam.width / 2);
+    return clampTerminalShare(right / available);
   };
   useEffect(() => {
     if (!dragging) return undefined;
-    const name = row ? "is-resizing-split" : "is-resizing-split-rows";
-    document.body.classList.add(name);
-    return () => document.body.classList.remove(name);
-  }, [dragging, row]);
+    document.body.classList.add("is-resizing-split");
+    return () => document.body.classList.remove("is-resizing-split");
+  }, [dragging]);
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (dragging) onCommit(seam.path, preview.current);
+    if (dragging) onCommit(preview.current);
     setDragging(false);
   };
   const step = (delta: number) =>
-    onCommit(seam.path, clampPaneRatio(seam.ratio + delta));
+    onCommit(clampTerminalShare(seam.share + delta));
   return (
     <div
-      className={`split-seam pane-seam${row ? "" : " is-horizontal"}`}
+      className="split-seam terminal-seam"
       style={{
         left: `${String(seam.x)}px`,
         top: `${String(seam.y)}px`,
@@ -100,35 +100,34 @@ function PaneSeam({
       <div
         className={`split-divider${dragging ? " is-dragging" : ""}`}
         role="separator"
-        aria-label="Resize the terminal pane"
-        aria-orientation={row ? "vertical" : "horizontal"}
-        aria-valuemin={PANE_MIN_RATIO * 100}
-        aria-valuemax={PANE_MAX_RATIO * 100}
-        aria-valuenow={Math.round(seam.ratio * 100)}
+        aria-label="Resize the terminal"
+        aria-orientation="vertical"
+        aria-valuemin={TERMINAL_MIN_SHARE * 100}
+        aria-valuemax={TERMINAL_MAX_SHARE * 100}
+        aria-valuenow={Math.round(seam.share * 100)}
         tabIndex={0}
         onPointerDown={(event) => {
-          preview.current = seam.ratio;
+          preview.current = seam.share;
           event.currentTarget.setPointerCapture(event.pointerId);
           setDragging(true);
         }}
         onPointerMove={(event) => {
           if (!dragging) return;
-          const next = ratioAt(event.clientX, event.clientY);
+          const next = shareAt(event.clientX);
           if (next === undefined) return;
           preview.current = next;
-          onPreview(seam.path, next);
+          onPreview(next);
         }}
         onPointerUp={finish}
         onPointerCancel={finish}
         onKeyDown={(event) => {
-          const back = row ? "ArrowLeft" : "ArrowUp";
-          const forward = row ? "ArrowRight" : "ArrowDown";
-          if (event.key === back) {
-            event.preventDefault();
-            step(-0.02);
-          } else if (event.key === forward) {
+          // Left widens the terminal, the way the divider moves.
+          if (event.key === "ArrowLeft") {
             event.preventDefault();
             step(0.02);
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            step(-0.02);
           }
         }}
       />
@@ -350,25 +349,31 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     void devhub().previewLayout({ splitRatio: next });
   }, []);
 
-  // The terminal panes' seams: the pointer moves them, and the model learns
-  // where they stopped — the same split of labour as the seam above.
-  const workspaceId = workspace?.id;
-  const previewPane = useCallback((path: string, next: number) => {
-    void devhub().previewLayout({ pane: { path, ratio: next } });
+  // The terminal's divider: the pointer moves it, and the model learns where
+  // it stopped — the same split of labour as the seam above. The share is
+  // the Agent's whose terminal it is.
+  const terminalSeam = area?.terminalSeam;
+  const terminalAgent =
+    terminalSeam === undefined
+      ? undefined
+      : snapshot.workspaces
+          .flatMap((one) => one.agents)
+          .find((one) => one.terminal?.id === terminalSeam.terminalId)?.id;
+  const previewTerminal = useCallback((next: number) => {
+    void devhub().previewLayout({ terminalShare: next });
   }, []);
-  const commitPane = useCallback(
-    (path: string, next: number) => {
-      if (workspaceId === undefined) return;
+  const commitTerminal = useCallback(
+    (next: number) => {
+      if (terminalAgent === undefined) return;
       void dispatch({
-        type: "resize_pane",
-        workspaceId,
-        path,
-        ratio: next,
+        type: "resize_agent_terminal",
+        agentId: terminalAgent,
+        share: next,
       }).finally(() => {
-        void devhub().previewLayout({ pane: null });
+        void devhub().previewLayout({ terminalShare: null });
       });
     },
-    [dispatch, workspaceId],
+    [dispatch, terminalAgent],
   );
 
   const unavailableActions =
@@ -478,14 +483,13 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
       >
         {body}
       </section>
-      {(area.seams ?? []).map((seam) => (
-        <PaneSeam
-          key={seam.path}
-          seam={seam}
-          onPreview={previewPane}
-          onCommit={commitPane}
+      {terminalSeam === undefined ? null : (
+        <TerminalSeam
+          seam={terminalSeam}
+          onPreview={previewTerminal}
+          onCommit={commitTerminal}
         />
-      ))}
+      )}
       {split ? (
         <div
           className="split-seam"

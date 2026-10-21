@@ -76,7 +76,7 @@ export interface AgentHostFiles {
 export interface SweepAccounting {
 	readonly workspaces: ReadonlySet<string>;
 	readonly agents: ReadonlySet<string>;
-	/** The pane terminals the Workspaces list (`model/paneLayout.ts`). */
+	/** The Agents' terminals, by id (`model/agentTerminal.ts`). */
 	readonly terminals: ReadonlySet<string>;
 }
 

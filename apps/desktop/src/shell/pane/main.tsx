@@ -1,6 +1,6 @@
 /**
- * A terminal pane's entry point — one view per terminal opened beside a
- * Workspace's panes (`Cmd+Q V` / `S`, `devhub --tell terminal open`).
+ * An Agent terminal pane's entry point — one view per Agent terminal
+ * (`Cmd+Q V`, `devhub --tell terminal open`).
  *
  * Its own entry, because it is its own page in its own view, installing what
  * every DevHub page installs: the palette it was served wearing, the

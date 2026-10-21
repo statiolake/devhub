@@ -150,12 +150,16 @@ describe("the pages, and what each of them may say", () => {
 	});
 
 	/**
-	 * A terminal pane may close and move its own terminal, and nothing else
-	 * may close one from a page: main checks the asking contents is that
-	 * terminal's pane, and no other preload can even spell the ask.
+	 * A terminal pane may close its own terminal, and nothing else may close
+	 * one from a page: main checks the asking contents is that terminal's
+	 * pane, and no other preload can even spell the ask. Moving a pane is
+	 * gone with the pane tree: there is one terminal, on the right.
 	 */
-	it("gives closing and moving a terminal pane to the pane page and to no other", () => {
-		for (const member of ["closePaneTerminal", "dropPaneHeader"]) {
+	it("gives closing a terminal pane to the pane page and to no other", () => {
+		for (const page of PAGES) {
+			expect(read(`./${page}.ts`), page).not.toContain("dropPaneHeader");
+		}
+		for (const member of ["closePaneTerminal"]) {
 			for (const page of PAGES) {
 				expect(
 					read(`./${page}.ts`).includes(member),

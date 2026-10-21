@@ -119,18 +119,18 @@ export function createSurfaceResolver(
 			);
 		}
 		if (surfaceKey.startsWith(PANE_TERMINAL_SURFACE_PREFIX)) {
-			// A pane terminal is the model's, by id, like an Agent: the
-			// Workspace it belongs to — and so the machine and the root its
+			// An Agent's terminal is the model's, by id, like an Agent: the
+			// Workspace its Agent is in — and so the machine and the root its
 			// session carries — is the model's answer, not the key's.
 			const id = surfaceKey.slice(PANE_TERMINAL_SURFACE_PREFIX.length);
-			const terminal = model().paneTerminal(id);
+			const terminal = model().agentTerminalById(id);
 			if (!terminal) return undefined;
-			const workspace = model().workspace(terminal.workspaceId);
+			const workspace = model().workspaceForAgent(terminal.agentId);
 			if (!workspace) return undefined;
 			refuseIfClosing(workspace);
 			return paneTerminalTarget(
 				machineOf(workspace),
-				terminal.id,
+				terminal.terminalId,
 				workspace.id,
 				workspace.root,
 			);
@@ -206,7 +206,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 			const workspace = options.model().workspace(id);
 			if (!workspace) return;
 			const machine = machineOf(workspace);
-			// The terminals opened as panes go with the Workspace too: they are
+			// Its Agents' terminals go with the Workspace too: they are
 			// sessions of their own, so closing the Workspace's session would
 			// leave them running with no pane left to reach them.
 			const runtime = await runtimeFromId(machine);
@@ -261,7 +261,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 			const inspection = await runtime.inspect(
 				workspaceTarget(machine, workspace.id, workspace.root),
 			);
-			// A pane terminal running something other than its shell is work
+			// An Agent terminal running something other than its shell is work
 			// the close would end, the same as a busy pane of the Workspace's
 			// own session, and it is counted with those.
 			let paneTerminalsBusy = 0;

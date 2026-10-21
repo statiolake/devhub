@@ -1095,7 +1095,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
 
   /**
    * `focus_sidebar`: put the keyboard on the row that is selected. (Palette
-   * only since `Cmd+Q S` became the terminal split below.)
+   * only since `Cmd+Q S` was taken from it; `S` is unbound now.)
    *
    * The tree's roving tab stop is already the selected row — the layout effect
    * above keeps it there — so this focuses whatever that is and the tree's own

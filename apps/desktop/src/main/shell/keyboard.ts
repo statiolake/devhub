@@ -94,15 +94,15 @@ export interface ChordHost {
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
-	/** The next pane on screen, terminals included (`Cmd+Q O`). */
+	/** The next pane on screen, the terminal included (`Cmd+Q O`). */
 	cyclePaneFocus(): void;
-	/** The pane on one side of the one with the keyboard (`Cmd+Q ←/→/↑/↓`). */
-	focusPaneTowards(side: "left" | "right" | "above" | "below"): void;
 	/**
-	 * Open a terminal beside the pane with the keyboard (`Cmd+Q V` / `S`): a
-	 * tmux session of its own in the Workspace's folder, in a pane of its own.
+	 * Show or hide an Agent's own terminal on the right (`Cmd+Q V`), starting
+	 * its tmux session the first time.
 	 */
-	splitTerminal(workspaceId: string, side: "right" | "below"): void;
+	toggleTerminal(agentId: string): void;
+	/** `Cmd+Q V` with no Agent in the Workspace: say why nothing opened. */
+	terminalNeedsAgent(workspaceId: string): void;
 	/** Close one terminal pane, and its session with it. */
 	closeTerminal(terminalId: string): void;
 	/** Put the keyboard on the Sidebar's selected row — the way into the tree. */
@@ -227,11 +227,11 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 		case "cycle-pane-focus":
 			host.cyclePaneFocus();
 			return;
-		case "focus-pane-towards":
-			host.focusPaneTowards(effect.side);
+		case "toggle-terminal":
+			host.toggleTerminal(effect.agentId);
 			return;
-		case "split-terminal":
-			host.splitTerminal(effect.workspaceId, effect.side);
+		case "terminal-needs-agent":
+			host.terminalNeedsAgent(effect.workspaceId);
 			return;
 		case "close-terminal":
 			host.closeTerminal(effect.terminalId);

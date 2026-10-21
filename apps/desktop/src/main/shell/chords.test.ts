@@ -875,11 +875,14 @@ describe("the default table", () => {
 	});
 
 	it("gives the three new commands the free unshifted letters", () => {
-		// `S` was `focus_sidebar`'s; it is the terminal split below now, and
-		// the Sidebar is reached from the palette.
-		expect(press("s", "KeyS")).toBe("split_terminal_below");
-		expect(press("v", "KeyV")).toBe("split_terminal_right");
+		// `S` was `focus_sidebar`'s; it is unbound now (the Sidebar is reached
+		// from the palette), and `V` is the Agent's terminal.
+		expect(press("s", "KeyS")).toBeUndefined();
+		expect(press("v", "KeyV")).toBe("toggle_terminal");
 		expect(press("S", "KeyS", { shift: true })).toBeUndefined();
+		// The bare arrows after the prefix mean nothing; Alt+arrows move rows.
+		expect(press("ArrowLeft", "ArrowLeft")).toBeUndefined();
+		expect(press("ArrowUp", "ArrowUp")).toBeUndefined();
 		expect(press("b", "KeyB")).toBe("toggle_sidebar");
 		expect(press("u", "KeyU")).toBe("mark_agent_unread");
 		expect(press("d", "KeyD")).toBe("dismiss_alert");
@@ -1155,49 +1158,68 @@ describe("moving the row that is selected", () => {
 	});
 });
 
-describe("terminal panes", () => {
+describe("the Agent's terminal", () => {
 	const T1 = "11111111-1111-4111-8111-111111111111";
-	const withTerminal = (focused: boolean, presentation = "full") => {
-		const base = workspace("one", ["a1"]);
-		const ws: WorkspaceWire = {
-			...base,
-			paneTree: {
-				kind: "split",
-				axis: "row",
-				ratio: 0.5,
-				first: { kind: "content" },
-				second: { kind: "terminal", terminalId: T1 },
-			},
-			paneTerminals: [{ id: T1, name: "Terminal 1", session: `tm-${T1}` }],
-		};
-		return {
-			...snapshotOf({
-				workspaces: [ws],
-				context: { kind: "agent", agentId: "a1" },
-				presentation: presentation as SurfacePresentationWire,
-			}),
-			...(focused ? { paneFocus: T1 } : {}),
-		};
-	};
+	const withTerminal = (
+		focused: boolean,
+		presentation: SurfacePresentationWire = "full",
+	): AppSnapshotWire => ({
+		...snapshotOf({
+			workspaces: [one],
+			context: { kind: "agent", agentId: "a1" },
+			presentation,
+		}),
+		visibleTerminal: T1,
+		...(focused ? { paneFocus: T1 } : {}),
+	});
 
-	it("opens a terminal right or below in the selected workspace", () => {
+	it("toggles the selected Agent's terminal", () => {
 		const snapshot = snapshotOf({
 			workspaces: [one],
 			context: { kind: "agent", agentId: "a1" },
 		});
-		expect(run("split_terminal_right", snapshot)).toEqual({
-			kind: "split-terminal",
-			workspaceId: "one",
-			side: "right",
-		});
-		expect(run("split_terminal_below", snapshot)).toEqual({
-			kind: "split-terminal",
-			workspaceId: "one",
-			side: "below",
+		expect(run("toggle_terminal", snapshot)).toEqual({
+			kind: "toggle-terminal",
+			agentId: "a1",
 		});
 	});
 
-	it("cycles every pane once there is a terminal, and swaps a bare split as before", () => {
+	it("on a Workspace's row, toggles the Agent it pairs with", () => {
+		const onRow = snapshotOf({
+			workspaces: [two],
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+		expect(run("toggle_terminal", onRow)).toEqual({
+			kind: "toggle-terminal",
+			agentId: "b1",
+		});
+		const remembered = snapshotOf({
+			workspaces: [{ ...two, lastAgentId: "b2" }],
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+		expect(run("toggle_terminal", remembered)).toEqual({
+			kind: "toggle-terminal",
+			agentId: "b2",
+		});
+	});
+
+	it("says so on a Workspace with no Agent, rather than doing nothing", () => {
+		expect(
+			run(
+				"toggle_terminal",
+				snapshotOf({
+					workspaces: [empty],
+					context: { kind: "workspace", workspaceId: "empty" },
+				}),
+			),
+		).toEqual({ kind: "terminal-needs-agent", workspaceId: "empty" });
+		expect(run("toggle_terminal", snapshotOf())).toEqual({
+			kind: "terminal-needs-agent",
+			workspaceId: SCRATCH_ID,
+		});
+	});
+
+	it("cycles to the terminal once one is shown, and swaps a bare split as before", () => {
 		expect(run("swap_split_focus", withTerminal(false))).toEqual({
 			kind: "cycle-pane-focus",
 		});
@@ -1212,28 +1234,6 @@ describe("terminal panes", () => {
 			),
 		).toEqual({ kind: "swap-split-focus" });
 		expect(run("swap_split_focus", snapshotOf())).toBeUndefined();
-	});
-
-	it("moves by direction only where there is another pane", () => {
-		expect(run("focus_pane_right", withTerminal(false))).toEqual({
-			kind: "focus-pane-towards",
-			side: "right",
-		});
-		expect(run("focus_pane_up", withTerminal(false))).toEqual({
-			kind: "focus-pane-towards",
-			side: "above",
-		});
-		expect(run("focus_pane_left", snapshotOf())).toBeUndefined();
-		expect(
-			run(
-				"focus_pane_left",
-				snapshotOf({
-					workspaces: [one],
-					context: { kind: "agent", agentId: "a1" },
-					presentation: "beside",
-				}),
-			),
-		).toEqual({ kind: "focus-pane-towards", side: "left" });
 	});
 
 	it("closes the focused terminal with X, and the Agent otherwise", () => {

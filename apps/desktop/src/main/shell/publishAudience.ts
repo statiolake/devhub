@@ -48,9 +48,9 @@ export interface Pages<Contents> {
 	readonly toasts: { contents(): Contents | undefined };
 	readonly tooltip: { contents(): Contents | undefined };
 	/**
-	 * Every terminal pane's page — one per terminal opened beside a
-	 * Workspace's panes. Optional, so a window from before terminal panes (and
-	 * every test fake of one) is a window with none.
+	 * Every Agent terminal's page — one per Agent terminal, shown or hidden.
+	 * Optional, so a window from before terminal panes (and every test fake
+	 * of one) is a window with none.
 	 */
 	paneTerminalContents?(): readonly Contents[];
 }

@@ -73,23 +73,10 @@ import {
   type NavigationDirection,
 } from "./navigationHistory.js";
 import {
-  CONTENT_PANE,
-  hasLeaf,
-  keepTerminals,
-  movePane,
-  neighbourPane,
-  paneLeaves,
-  paneTerminals,
-  removePane,
-  resizePane,
-  samePaneTree,
-  splitPane,
-  terminalPane,
-  type PaneLeaf,
-  type PaneNode,
-  type PanePath,
-  type PaneSide,
-} from "./paneLayout.js";
+  TERMINAL_DEFAULT_SHARE,
+  clampTerminalShare,
+  type AgentTerminal,
+} from "./agentTerminal.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -129,22 +116,7 @@ export interface NavigationSelection {
 }
 
 /** One place the keyboard can be in the content area. See `focusStops`. */
-type FocusStop =
-  | { readonly kind: "content" }
-  | { readonly kind: "editor" }
-  | { readonly kind: "agent" }
-  | { readonly kind: "terminal"; readonly terminalId: string };
-
-function sameStop(left: FocusStop, right: FocusStop): boolean {
-  if (left.kind === "terminal" || right.kind === "terminal") {
-    return (
-      left.kind === "terminal" &&
-      right.kind === "terminal" &&
-      left.terminalId === right.terminalId
-    );
-  }
-  return left.kind === right.kind;
-}
+type FocusStop = "content" | "editor" | "agent" | "terminal";
 
 export function sameSelection(
   left: NavigationSelection,
@@ -221,29 +193,13 @@ export interface AgentSnapshot {
   readonly automaticActions: readonly string[];
   /** The refusal this Agent's pane is still showing, or nothing. */
   readonly failure: AgentFailure | undefined;
-}
-
-/**
- * A terminal opened as a pane beside a Workspace's other panes (`Cmd+Q V` /
- * `S`, `devhub --tell terminal open`). Its session is a tmux session of its
- * own on the Workspace's machine; this is what the model keeps about it.
- */
-export interface PaneTerminal {
-  /** A UUID, which is also its session's name (`tm-<id>`). */
-  readonly id: string;
-  readonly workspaceId: WorkspaceId;
-  /** What its pane's header calls it: `Terminal 2`, or the name it was opened with. */
-  readonly name: string;
-  /** The folder it was opened in, when that is not the Workspace's root. */
-  readonly cwd: string | undefined;
-  /** What it was opened to run, typed into its shell, if anything. */
-  readonly command: string | undefined;
   /**
-   * When the model learned of it, in main's clock. A tmux round that began
-   * before this cannot have seen its session, so it cannot close it.
-   * `0` for one restored from the state file.
+   * Its own terminal, while its session is up — shown or hidden. See
+   * `model/agentTerminal.ts`.
    */
-  readonly openedAt: number;
+  readonly terminal: AgentTerminal<AgentId> | undefined;
+  /** The terminal pane's share of the content area's width, when shown. */
+  readonly terminalShare: number;
 }
 
 /** Which pane has the keyboard, when it is not the selection's own. */
@@ -275,13 +231,6 @@ export interface WorkspaceSnapshot {
   readonly lastAgentId: AgentId | undefined;
   /** What its own terminals are doing. See `terminalActivity.ts`. */
   readonly terminals: TerminalActivity;
-  /**
-   * How its content area is tiled: the selection's own pane and every
-   * terminal around it. See `model/paneLayout.ts`.
-   */
-  readonly paneTree: PaneNode;
-  /** The terminals in `paneTree`, in the order they were opened. */
-  readonly paneTerminals: readonly PaneTerminal[];
 }
 
 /**
@@ -331,8 +280,13 @@ export interface AppSnapshot {
   /** Where the divider sits when the layout is a split. */
   readonly splitRatio: number;
   /**
-   * The terminal pane with the keyboard, when one has it rather than the
-   * selection's own pane. Always one of the selected Workspace's terminals.
+   * The Agent terminal drawn right of the content, if one is: the view's
+   * Agent's, open. See `AppModel.visibleTerminal`.
+   */
+  readonly visibleTerminal: AgentTerminal<AgentId> | undefined;
+  /**
+   * The terminal pane's id when it has the keyboard rather than the
+   * selection's own pane. Always `visibleTerminal`'s.
    */
   readonly paneFocus: string | undefined;
   /**
@@ -506,22 +460,28 @@ export class AppModel {
    */
   private scratchReturn: NavigationSelection | undefined;
   /**
-   * Each Workspace's tiling and its terminals. Absent is the content pane on
-   * its own, which is every Workspace nobody has opened a terminal beside.
+   * Each Agent's own terminal, while its session is up. See
+   * `model/agentTerminal.ts`.
    */
-  private readonly paneLayouts = new Map<
-    WorkspaceId,
-    { readonly tree: PaneNode; readonly terminals: readonly PaneTerminal[] }
+  private readonly agentTerminalsValue = new Map<
+    AgentId,
+    AgentTerminal<AgentId>
   >();
   /**
-   * The terminal pane with the keyboard, if one has it.
+   * How wide each Agent's terminal pane is drawn, when it is not the
+   * default. Kept apart from the terminal itself so that a terminal closed
+   * and opened again comes back at the width it was dragged to.
+   */
+  private readonly terminalShares = new Map<AgentId, number>();
+  /**
+   * The keyboard is in the terminal pane on screen.
    *
    * The selection is still the whole of *what* is shown; this only says the
-   * keyboard is in one of the terminals around it rather than in the
-   * selection's own pane. Any selection takes it back to that pane
-   * (`selectContext`), because choosing something is choosing to be in it.
+   * keyboard is in the terminal beside it rather than in the selection's own
+   * pane. Any selection takes it back to that pane (`selectContext`), because
+   * choosing something is choosing to be in it.
    */
-  private paneFocusValue: string | undefined;
+  private terminalFocusValue = false;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private terminalZoomOffsetValue = 0;
   private smartButtonsValue: SmartButtonsPlacement = {};
@@ -595,6 +555,7 @@ export class AppModel {
       },
       workspaceOrder: this.workspaceOrderValue,
       splitRatio: this.splitRatioValue,
+      visibleTerminal: this.visibleTerminal(),
       paneFocus: this.paneFocus,
       terminalZoomOffset: this.terminalZoomOffsetValue,
       smartButtons: this.smartButtonsValue,
@@ -1385,8 +1346,8 @@ export class AppModel {
     const moved = !sameSelection(this.selectionValue, next);
     this.selectionValue = next;
     // Choosing something puts the keyboard in it, out of any terminal pane.
-    const leftTerminal = this.paneFocusValue !== undefined;
-    this.paneFocusValue = undefined;
+    const leftTerminal = this.terminalFocusValue;
+    this.terminalFocusValue = false;
     // Selecting an Agent is reading it, because selecting it is what makes it
     // the thing being looked at — asked of the new selection, and answered by
     // the same predicate the window's focus is answered by, so a selection
@@ -1482,7 +1443,7 @@ export class AppModel {
     this.selectContext({ kind: "agent", agentId: agent }, "beside");
   }
 
-  //#region terminal panes
+  //#region the Agents' terminals
 
   /** The Workspace the selection is in, whether its row or one of its Agents. */
   selectedWorkspaceId(): WorkspaceId | undefined {
@@ -1491,376 +1452,282 @@ export class AppModel {
     return this.agent(context.agentId)?.workspaceId;
   }
 
-  /** How a Workspace's content area is tiled. See `model/paneLayout.ts`. */
-  paneTree(workspaceId: WorkspaceId): PaneNode {
-    return this.paneLayouts.get(workspaceId)?.tree ?? CONTENT_PANE;
+  /**
+   * The Agent whose terminal the view shows, and whose terminal `Cmd+Q V`
+   * opens: the selected Agent, or — with the Workspace's row selected, the
+   * workbench full or beside an Agent — the Agent the Workspace pairs with
+   * (`pairedAgentIn`, the same one `Cmd+Q Cmd+J` goes to). Nothing for a
+   * Workspace with no Agents.
+   */
+  terminalAgentId(): AgentId | undefined {
+    const context = this.selectionValue.context;
+    if (context.kind === "agent") {
+      return this.agent(context.agentId) ? context.agentId : undefined;
+    }
+    return this.pairedAgentIn(context.workspaceId);
   }
 
-  paneTerminalsIn(workspaceId: WorkspaceId): readonly PaneTerminal[] {
-    return this.paneLayouts.get(workspaceId)?.terminals ?? [];
+  /** An Agent's own terminal, while its session is up. */
+  agentTerminal(agentId: AgentId): AgentTerminal<AgentId> | undefined {
+    return this.agentTerminalsValue.get(agentId);
   }
 
-  /** A terminal pane by id, in whichever Workspace it is. */
-  paneTerminal(id: string): PaneTerminal | undefined {
-    for (const layout of this.paneLayouts.values()) {
-      const found = layout.terminals.find((terminal) => terminal.id === id);
-      if (found) return found;
+  /** Every Agent terminal there is, shown or hidden. */
+  agentTerminals(): readonly AgentTerminal<AgentId>[] {
+    return [...this.agentTerminalsValue.values()];
+  }
+
+  /** The Agent terminal a session id names, whichever Agent's it is. */
+  agentTerminalById(terminalId: string): AgentTerminal<AgentId> | undefined {
+    for (const terminal of this.agentTerminalsValue.values()) {
+      if (terminal.terminalId === terminalId) return terminal;
     }
     return undefined;
   }
 
-  /**
-   * The terminal pane with the keyboard — only ever one of the selected
-   * Workspace's, so a focus left behind by a Workspace that closed under it
-   * reads as no terminal at all.
-   */
+  /** How much of the content area's width an Agent's terminal pane takes. */
+  terminalShare(agentId: AgentId): number {
+    return this.terminalShares.get(agentId) ?? TERMINAL_DEFAULT_SHARE;
+  }
+
+  /** The terminal drawn right of the content: the view's Agent's, if open. */
+  visibleTerminal(): AgentTerminal<AgentId> | undefined {
+    const agentId = this.terminalAgentId();
+    if (agentId === undefined) return undefined;
+    const terminal = this.agentTerminalsValue.get(agentId);
+    return terminal?.open === true ? terminal : undefined;
+  }
+
+  /** The terminal pane's id, when it has the keyboard. */
   get paneFocus(): string | undefined {
-    const id = this.paneFocusValue;
-    if (id === undefined) return undefined;
-    const workspace = this.selectedWorkspaceId();
-    if (workspace === undefined) return undefined;
-    return hasLeaf(this.paneTree(workspace), terminalPane(id)) ? id : undefined;
+    if (!this.terminalFocusValue) return undefined;
+    return this.visibleTerminal()?.terminalId;
   }
 
-  /** The pane a new terminal is split from: the one with the keyboard. */
-  private focusedLeaf(): PaneLeaf {
-    const focus = this.paneFocus;
-    return focus === undefined ? CONTENT_PANE : terminalPane(focus);
-  }
-
-  private setPaneLayout(
-    workspaceId: WorkspaceId,
-    tree: PaneNode,
-    terminals: readonly PaneTerminal[],
-  ): void {
-    if (terminals.length === 0 && tree.kind === "content") {
-      this.paneLayouts.delete(workspaceId);
-      return;
-    }
-    this.paneLayouts.set(workspaceId, { tree, terminals });
-  }
-
-  /** The name a new terminal gets in a Workspace: `Terminal n`, n unused. */
-  nextPaneTerminalName(workspaceId: WorkspaceId): string {
-    const taken = new Set(
-      this.paneTerminalsIn(workspaceId).map((terminal) => terminal.name),
-    );
-    for (let ordinal = 1; ; ordinal += 1) {
-      const name = `Terminal ${String(ordinal)}`;
-      if (!taken.has(name)) return name;
-    }
+  private terminalOnScreen(agentId: AgentId): boolean {
+    return this.terminalAgentId() === agentId;
   }
 
   /**
-   * A terminal's session is up: give it a pane.
-   *
-   * It goes on `side` of `beside` — the pane with the keyboard when that is
-   * left out, which is what `Cmd+Q V` and `S` mean — in the Workspace the
-   * terminal belongs to. When that Workspace is the one on screen and `focus`
-   * is set, the keyboard goes into it, as it does into anything a person just
-   * opened.
+   * An Agent's terminal session is up: it is that Agent's terminal now,
+   * shown. When it is the view's Agent and `focus` is set, the keyboard goes
+   * into it, as it does into anything a person just opened.
    */
-  openPaneTerminal(
-    terminal: PaneTerminal,
-    side: PaneSide,
-    options: { readonly beside?: PaneLeaf; readonly focus?: boolean } = {},
+  agentTerminalOpened(
+    agentId: AgentId,
+    terminalId: string,
+    options: { readonly focus?: boolean; readonly openedAt?: number } = {},
   ): void {
-    this.requireWorkspace(terminal.workspaceId);
-    if (this.paneTerminal(terminal.id)) {
-      fail(DomainErrorCode.InvalidId);
-    }
-    const onScreen = this.selectedWorkspaceId() === terminal.workspaceId;
-    const tree = this.paneTree(terminal.workspaceId);
-    const requested = options.beside;
-    const beside =
-      requested !== undefined && hasLeaf(tree, requested)
-        ? requested
-        : onScreen
-          ? this.focusedLeaf()
-          : CONTENT_PANE;
-    const next = splitPane(tree, beside, side, terminalPane(terminal.id));
-    // A tree too deep to split again has no room for it: refused rather than
-    // given a pane nobody could see.
-    if (next === tree) fail(DomainErrorCode.InvalidId);
-    this.setPaneLayout(terminal.workspaceId, next, [
-      ...this.paneTerminalsIn(terminal.workspaceId),
-      terminal,
-    ]);
-    if (onScreen && options.focus === true) {
-      this.paneFocusValue = terminal.id;
+    if (!this.agent(agentId)) fail(DomainErrorCode.InvalidId);
+    this.agentTerminalsValue.set(agentId, {
+      agentId,
+      terminalId,
+      open: true,
+      openedAt: options.openedAt ?? Date.now(),
+    });
+    if (options.focus === true && this.terminalOnScreen(agentId)) {
+      this.terminalFocusValue = true;
     }
     this.bumpRevision();
   }
 
   /**
-   * A terminal's pane is gone — closed, or its session ended.
-   *
-   * The keyboard, if it was in it, goes to the pane that takes its place in
-   * the tree: the neighbour it was split from, which is where the eye already
-   * is. Returns whether there was such a terminal.
+   * Show or hide an Agent's terminal pane; its session runs on either way.
+   * Hiding the one with the keyboard gives the keyboard back to the content.
+   * Answers whether anything changed.
    */
-  closePaneTerminal(id: string): boolean {
-    const terminal = this.paneTerminal(id);
-    if (!terminal) return false;
-    const workspaceId = terminal.workspaceId;
-    const tree = this.paneTree(workspaceId);
-    const leaves = paneLeaves(tree);
-    const index = leaves.findIndex(
-      (leaf) => leaf.kind === "terminal" && leaf.terminalId === id,
-    );
-    const next = removePane(tree, terminalPane(id));
-    const remaining = this.paneTerminalsIn(workspaceId).filter(
-      (one) => one.id !== id,
-    );
-    this.setPaneLayout(workspaceId, next, remaining);
-    if (this.paneFocusValue === id) {
-      // Its neighbour in reading order, the one before it first: a pane split
-      // off to the right or below came from the one before it.
-      const neighbour = leaves[index - 1] ?? leaves[index + 1];
-      this.paneFocusValue =
-        neighbour?.kind === "terminal" ? neighbour.terminalId : undefined;
-    }
-    this.bumpRevision();
-    return true;
-  }
-
-  /** Move a seam of a Workspace's tiling. */
-  resizePaneSplit(
-    workspaceId: WorkspaceId,
-    path: PanePath,
-    ratio: number,
+  showAgentTerminal(
+    agentId: AgentId,
+    open: boolean,
+    options: { readonly focus?: boolean } = {},
   ): boolean {
-    this.requireWorkspace(workspaceId);
-    const tree = this.paneTree(workspaceId);
-    const next = resizePane(tree, path, ratio);
-    if (samePaneTree(tree, next)) return false;
-    this.setPaneLayout(workspaceId, next, this.paneTerminalsIn(workspaceId));
-    this.bumpRevision();
-    return true;
-  }
-
-  /** Put a terminal on `side` of another pane — its header dragged there. */
-  movePaneTerminal(id: string, onto: PaneLeaf, side: PaneSide): boolean {
-    const terminal = this.paneTerminal(id);
+    const terminal = this.agentTerminalsValue.get(agentId);
     if (!terminal) return false;
-    const tree = this.paneTree(terminal.workspaceId);
-    const next = movePane(tree, terminalPane(id), onto, side);
-    if (samePaneTree(tree, next)) return false;
-    this.setPaneLayout(
-      terminal.workspaceId,
-      next,
-      this.paneTerminalsIn(terminal.workspaceId),
-    );
+    const onScreen = this.terminalOnScreen(agentId);
+    const focus = open && options.focus === true && onScreen;
+    const unfocus = !open && onScreen && this.terminalFocusValue;
+    if (terminal.open === open && !focus && !unfocus) return false;
+    this.agentTerminalsValue.set(agentId, { ...terminal, open });
+    if (focus) this.terminalFocusValue = true;
+    if (unfocus) this.terminalFocusValue = false;
     this.bumpRevision();
     return true;
   }
 
   /**
-   * Put the keyboard in one pane of what is on screen.
-   *
-   * A terminal of the selected Workspace, or back in the selection's own
-   * pane. Clicking into a pane arrives here too, so the model always knows
-   * which pane `Cmd+Q X` and `Cmd+Q O` start from.
+   * An Agent's terminal is gone — closed, its shell exited, or its Agent
+   * went. Returns whether it had one.
+   */
+  agentTerminalClosed(agentId: AgentId): boolean {
+    if (!this.agentTerminalsValue.has(agentId)) return false;
+    if (this.terminalOnScreen(agentId)) this.terminalFocusValue = false;
+    this.agentTerminalsValue.delete(agentId);
+    this.bumpRevision();
+    return true;
+  }
+
+  /** The divider between the content and an Agent's terminal, moved. */
+  resizeAgentTerminal(agentId: AgentId, share: number): boolean {
+    if (!this.agent(agentId)) fail(DomainErrorCode.InvalidId);
+    const next = clampTerminalShare(share);
+    if (this.terminalShare(agentId) === next) return false;
+    if (next === TERMINAL_DEFAULT_SHARE) this.terminalShares.delete(agentId);
+    else this.terminalShares.set(agentId, next);
+    this.bumpRevision();
+    return true;
+  }
+
+  /**
+   * Put the keyboard in one pane of what is on screen: the terminal on the
+   * right, or back in the selection's own pane. Clicking into a pane arrives
+   * here too, so the model always knows which pane `Cmd+Q X` and `Cmd+Q O`
+   * start from.
    */
   focusPane(target: PaneFocusTarget): boolean {
     if (target.kind === "content") {
-      if (this.paneFocusValue === undefined) return false;
-      this.paneFocusValue = undefined;
+      if (!this.terminalFocusValue) return false;
+      this.terminalFocusValue = false;
       this.bumpRevision();
       return true;
     }
-    const workspace = this.selectedWorkspaceId();
-    if (
-      workspace === undefined ||
-      !hasLeaf(this.paneTree(workspace), terminalPane(target.terminalId))
-    ) {
-      return false;
-    }
-    if (this.paneFocusValue === target.terminalId) return false;
-    this.paneFocusValue = target.terminalId;
+    if (this.visibleTerminal()?.terminalId !== target.terminalId) return false;
+    if (this.terminalFocusValue) return false;
+    this.terminalFocusValue = true;
     this.bumpRevision();
     return true;
   }
 
   /**
-   * Every pane on screen that can hold the keyboard, in reading order: the
+   * Every pane on screen that can hold the keyboard, left to right: the
    * selection's own pane is one stop, or two — the editor and the Agent —
-   * when it is the two side by side.
+   * when it is the two side by side; then the terminal, when one is shown.
    */
   private focusStops(): readonly FocusStop[] {
-    const workspace = this.selectedWorkspaceId();
-    if (workspace === undefined) return [];
-    const layout = this.resolveLayout(this.selectionValue);
-    const stops: FocusStop[] = [];
-    for (const leaf of paneLeaves(this.paneTree(workspace))) {
-      if (leaf.kind === "terminal") {
-        stops.push({ kind: "terminal", terminalId: leaf.terminalId });
-      } else if (layout.kind === "split") {
-        stops.push({ kind: "editor" }, { kind: "agent" });
-      } else {
-        stops.push({ kind: "content" });
-      }
-    }
+    if (this.selectedWorkspaceId() === undefined) return [];
+    const stops: FocusStop[] =
+      this.resolveLayout(this.selectionValue).kind === "split"
+        ? ["editor", "agent"]
+        : ["content"];
+    if (this.visibleTerminal() !== undefined) stops.push("terminal");
     return stops;
   }
 
   /** Where the keyboard is, as one of `focusStops`. */
   private currentStop(): FocusStop {
-    const focus = this.paneFocus;
-    if (focus !== undefined) return { kind: "terminal", terminalId: focus };
+    if (this.paneFocus !== undefined) return "terminal";
     if (this.resolveLayout(this.selectionValue).kind !== "split") {
-      return { kind: "content" };
+      return "content";
     }
-    return this.selectionValue.context.kind === "agent"
-      ? { kind: "agent" }
-      : { kind: "editor" };
+    return this.selectionValue.context.kind === "agent" ? "agent" : "editor";
   }
 
   private arriveAt(stop: FocusStop): void {
-    switch (stop.kind) {
-      case "terminal":
-        this.focusPane(stop);
-        return;
-      case "content":
+    const terminal = this.visibleTerminal();
+    if (stop === "terminal") {
+      if (terminal)
+        this.focusPane({ kind: "terminal", terminalId: terminal.terminalId });
+      return;
+    }
+    if (stop === "content") {
+      this.focusPane({ kind: "content" });
+      return;
+    }
+    const current = this.currentStop();
+    // The two halves of the split are the selection; moving between them is
+    // `swapSplitFocus`'s own move. Arriving from the terminal, the half asked
+    // for may already be the selection's, and only the keyboard moves.
+    if (current === "terminal") {
+      const inFront =
+        this.selectionValue.context.kind === "agent" ? "agent" : "editor";
+      if (inFront === stop) {
         this.focusPane({ kind: "content" });
-        return;
-      case "editor":
-      case "agent": {
-        const workspace = this.selectedWorkspaceId();
-        if (workspace === undefined) return;
-        const current = this.currentStop();
-        // The two halves of the split are the selection; moving between them
-        // is `swapSplitFocus`'s own move, and arriving from a terminal is a
-        // selection of the half asked for.
-        if (current.kind === "editor" || current.kind === "agent") {
-          if (current.kind !== stop.kind) this.swapSplitFocus();
-          return;
-        }
-        const agent =
-          this.selectionValue.context.kind === "agent"
-            ? this.selectionValue.context.agentId
-            : this.pairedAgentIn(workspace);
-        if (stop.kind === "agent" && agent !== undefined) {
-          this.selectContext({ kind: "agent", agentId: agent }, "beside");
-        } else {
-          this.selectContext(
-            { kind: "workspace", workspaceId: workspace },
-            "beside",
-          );
-        }
         return;
       }
     }
+    this.swapSplitFocus();
   }
 
   /**
-   * `Cmd+Q O`: the next pane on screen, wrapping. With one pane there is
-   * nowhere to go; with the workbench and an Agent side by side and nothing
-   * else, it is exactly the swap it always was.
+   * `Cmd+Q O`: the next pane on screen, wrapping — the content (or the two
+   * halves of a split) and the terminal on the right. With one pane there is
+   * nowhere to go; with the workbench and an Agent side by side and no
+   * terminal, it is exactly the swap it always was.
    */
   cyclePaneFocus(direction: 1 | -1 = 1): boolean {
     const stops = this.focusStops();
     if (stops.length < 2) return false;
     const current = this.currentStop();
-    const index = stops.findIndex((stop) => sameStop(stop, current));
+    const index = stops.indexOf(current);
     const next =
       stops[
         (((index + direction) % stops.length) + stops.length) % stops.length
       ];
-    if (next === undefined || sameStop(next, current)) return false;
+    if (next === undefined || next === current) return false;
     this.arriveAt(next);
     return true;
   }
 
   /**
-   * `Cmd+Q ←/→/↑/↓`: the pane on that side of the one with the keyboard, or
-   * nothing at the edge. The workbench and the Agent of a split are side by
-   * side inside the content pane, so left and right step between them before
-   * leaving it.
-   */
-  focusPaneTowards(side: PaneSide): boolean {
-    const workspace = this.selectedWorkspaceId();
-    if (workspace === undefined) return false;
-    const current = this.currentStop();
-    if (current.kind === "editor" && side === "right") {
-      this.arriveAt({ kind: "agent" });
-      return true;
-    }
-    if (current.kind === "agent" && side === "left") {
-      this.arriveAt({ kind: "editor" });
-      return true;
-    }
-    const from: PaneLeaf =
-      current.kind === "terminal"
-        ? terminalPane(current.terminalId)
-        : CONTENT_PANE;
-    const target = neighbourPane(this.paneTree(workspace), from, side);
-    if (target === undefined) return false;
-    if (target.kind === "terminal") {
-      return this.focusPane(target);
-    }
-    if (this.resolveLayout(this.selectionValue).kind === "split") {
-      // Into the half that faces the pane being left.
-      this.arriveAt(
-        side === "left"
-          ? { kind: "agent" }
-          : side === "right"
-            ? { kind: "editor" }
-            : this.selectionValue.context.kind === "agent"
-              ? { kind: "agent" }
-              : { kind: "editor" },
-      );
-      return true;
-    }
-    return this.focusPane({ kind: "content" });
-  }
-
-  /**
-   * One machine's reading of which pane terminals are still running.
+   * One machine's reading of which terminal sessions are still running.
    *
-   * Every terminal of `workspaces` that is not in `alive` has ended — its
-   * shell exited, or somebody killed its session — and its pane goes. Except
-   * one the model learned of after `since`, the moment the reading began: its
-   * session may not have existed yet when tmux was asked, so the reading says
-   * nothing about it. Returns whether any pane went.
+   * Every Agent terminal of `workspaces` whose session is not in `alive` has
+   * ended — its shell exited, or somebody killed its session — and its pane
+   * goes. Except one the model learned of after `since`, the moment the
+   * reading began: its session may not have existed yet when tmux was asked,
+   * so the reading says nothing about it. Returns whether any went.
    */
   observePaneTerminals(
     workspaces: readonly WorkspaceId[],
     alive: ReadonlySet<string>,
     since: number,
   ): boolean {
+    const on = new Set(workspaces);
     let changed = false;
-    for (const workspaceId of workspaces) {
-      for (const terminal of this.paneTerminalsIn(workspaceId)) {
-        if (alive.has(terminal.id) || terminal.openedAt >= since) continue;
-        if (this.closePaneTerminal(terminal.id)) changed = true;
-      }
+    for (const [agentId, terminal] of [...this.agentTerminalsValue]) {
+      const workspace = this.agent(agentId)?.workspaceId;
+      if (workspace === undefined || !on.has(workspace)) continue;
+      if (alive.has(terminal.terminalId) || terminal.openedAt >= since)
+        continue;
+      if (this.agentTerminalClosed(agentId)) changed = true;
     }
     return changed;
   }
 
   /**
-   * Put a Workspace's tiling back from the state file. Terminals the tree
-   * names and the list does not, or the other way round, are dropped: each
-   * half is only a claim about the other.
+   * Put an Agent's terminal back from the state file. Restored, not opened:
+   * the first reading of its machine says whether its session survived.
    */
-  restorePaneLayout(
-    workspaceId: WorkspaceId,
-    tree: PaneNode,
-    terminals: readonly PaneTerminal[],
+  restoreAgentTerminal(
+    agentId: AgentId,
+    terminal:
+      | { readonly terminalId: string; readonly open: boolean }
+      | undefined,
+    share: number | undefined,
   ): void {
-    this.requireWorkspace(workspaceId);
-    const listed = new Set(terminals.map((terminal) => terminal.id));
-    const kept = keepTerminals(tree, (id) => listed.has(id));
-    const inTree = new Set(paneTerminals(kept));
-    this.setPaneLayout(
-      workspaceId,
-      kept,
-      terminals.filter(
-        (terminal) =>
-          inTree.has(terminal.id) && terminal.workspaceId === workspaceId,
-      ),
-    );
+    if (!this.agent(agentId)) fail(DomainErrorCode.InvalidId);
+    if (terminal !== undefined) {
+      this.agentTerminalsValue.set(agentId, {
+        agentId,
+        terminalId: terminal.terminalId,
+        open: terminal.open,
+        openedAt: 0,
+      });
+    }
+    if (share !== undefined && share !== TERMINAL_DEFAULT_SHARE) {
+      this.terminalShares.set(agentId, clampTerminalShare(share));
+    }
+  }
+
+  /** An Agent went: so does what the model kept about its terminal. */
+  private forgetAgentTerminal(agentId: AgentId): void {
+    if (
+      this.agentTerminalsValue.has(agentId) &&
+      this.terminalOnScreen(agentId)
+    ) {
+      this.terminalFocusValue = false;
+    }
+    this.agentTerminalsValue.delete(agentId);
+    this.terminalShares.delete(agentId);
   }
 
   //#endregion
@@ -1924,6 +1791,7 @@ export class AppModel {
     const position = this.findAgentPosition(id);
     const workspace = this.workspaceList[position.workspaceIndex];
     const before = tabOrder([workspace]);
+    this.forgetAgentTerminal(id);
     workspace.removeAgent(id);
     this.repairSelection(before);
     this.bumpRevision();
@@ -2022,8 +1890,6 @@ export class AppModel {
     }
     const before = this.tabs(drawn);
     this.workspaceList.splice(index, 1);
-    // Its terminals were closed with it (`closeWorkspaceTerminals`).
-    this.paneLayouts.delete(id);
     this.repairSelection(before);
     this.bumpRevision();
   }
@@ -2245,8 +2111,6 @@ export class AppModel {
       canCreateAgent: workspace.canCreateAgent,
       lastAgentId: this.lastAgentIn(workspace.id),
       terminals: workspace.terminals.activity,
-      paneTree: this.paneTree(workspace.id),
-      paneTerminals: this.paneTerminalsIn(workspace.id),
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
         workspaceId: agent.workspaceId,
@@ -2266,6 +2130,8 @@ export class AppModel {
         injection: agent.injection,
         automaticActions: agent.automaticActions,
         failure: agent.failure,
+        terminal: this.agentTerminalsValue.get(agent.id),
+        terminalShare: this.terminalShare(agent.id),
       })),
     }));
   }

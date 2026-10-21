@@ -152,24 +152,17 @@ export type ChordEffect =
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
 	/**
-	 * The next pane on screen: the halves of a split and every terminal
-	 * around them, in reading order (`model/paneLayout.ts`).
+	 * The next pane on screen: the halves of a split, and the Agent's
+	 * terminal on the right (`model/agentTerminal.ts`).
 	 */
 	| { readonly kind: "cycle-pane-focus" }
-	/** The pane on one side of the one with the keyboard. */
-	| {
-			readonly kind: "focus-pane-towards";
-			readonly side: "left" | "right" | "above" | "below";
-	  }
 	/**
-	 * A terminal beside the pane with the keyboard, in the selected
-	 * Workspace's folder, as a pane of DevHub's own.
+	 * Show or hide this Agent's own terminal on the right — started the first
+	 * time, in its Workspace's folder.
 	 */
-	| {
-			readonly kind: "split-terminal";
-			readonly workspaceId: string;
-			readonly side: "right" | "below";
-	  }
+	| { readonly kind: "toggle-terminal"; readonly agentId: string }
+	/** `Cmd+Q V` where there is no Agent to own a terminal: said, not done. */
+	| { readonly kind: "terminal-needs-agent"; readonly workspaceId: string }
 	/** Close the terminal pane with the keyboard, and its session with it. */
 	| { readonly kind: "close-terminal"; readonly terminalId: string }
 	/**
@@ -283,16 +276,10 @@ function selectedWorkspace(
 	);
 }
 
-/** The terminal pane with the keyboard, when it is one of this Workspace's. */
-function focusedTerminal(
-	snapshot: AppSnapshotWire,
-	workspace: WorkspaceWire | undefined,
-): string | undefined {
+/** The terminal pane with the keyboard, when it is the one on screen. */
+function focusedTerminal(snapshot: AppSnapshotWire): string | undefined {
 	const id = snapshot.paneFocus;
-	if (id === undefined || workspace === undefined) return undefined;
-	return workspace.paneTerminals?.some((terminal) => terminal.id === id)
-		? id
-		: undefined;
+	return id !== undefined && id === snapshot.visibleTerminal ? id : undefined;
 }
 
 /** The Agent the selection is on, or nothing when it is on a row. */
@@ -420,19 +407,18 @@ export function resolveChord(
 				? { kind: "mark-agent-unread", agentId: agent.id }
 				: undefined;
 
-		case "close_selection":
+		case "close_selection": {
 			// The small thing if you are standing on one, the big thing if you are
 			// not. `close_workspace` is the same second half, under its own key.
-			// A terminal pane with the keyboard is the smallest thing there is.
-			if (focusedTerminal(snapshot, workspace) !== undefined) {
-				return {
-					kind: "close-terminal",
-					terminalId: focusedTerminal(snapshot, workspace)!,
-				};
+			// The terminal with the keyboard is the smallest thing there is.
+			const terminal = focusedTerminal(snapshot);
+			if (terminal !== undefined) {
+				return { kind: "close-terminal", terminalId: terminal };
 			}
 			return agent
 				? { kind: "close-agent", agentId: agent.id }
 				: closeWorkspace(snapshot, workspace);
+		}
 
 		case "restart_agent":
 			return agent ? { kind: "restart-agent", agentId: agent.id } : undefined;
@@ -493,48 +479,26 @@ export function resolveChord(
 
 		case "swap_split_focus": {
 			// Every pane on screen: the selection's own — one, or two side by
-			// side — and every terminal around it. With only the split, this
+			// side — and the terminal on the right. With only the split, this
 			// is the swap it always was.
-			const terminals = workspace?.paneTerminals?.length ?? 0;
 			const beside = snapshot.selection.presentation === "beside";
-			if (terminals === 0) {
+			if (snapshot.visibleTerminal === undefined) {
 				return beside ? { kind: "swap-split-focus" } : undefined;
 			}
 			return { kind: "cycle-pane-focus" };
 		}
 
-		case "focus_pane_left":
-		case "focus_pane_right":
-		case "focus_pane_up":
-		case "focus_pane_down": {
-			const side =
-				commandId === "focus_pane_left"
-					? "left"
-					: commandId === "focus_pane_right"
-						? "right"
-						: commandId === "focus_pane_up"
-							? "above"
-							: "below";
-			// Only where there is somewhere to go: a terminal beside the
-			// content, or the two halves of a split across it.
-			const terminals = workspace?.paneTerminals?.length ?? 0;
-			const across =
-				snapshot.selection.presentation === "beside" &&
-				(side === "left" || side === "right");
-			if (terminals === 0 && !across) return undefined;
-			return { kind: "focus-pane-towards", side };
+		case "toggle_terminal": {
+			// The view's Agent: the selected one, or — on a Workspace's row,
+			// the workbench full or beside — the one the Workspace pairs with,
+			// which is where `Cmd+Q Cmd+J` goes. No Agent, no terminal: the
+			// chord says so rather than doing nothing.
+			if (!workspace) return undefined;
+			const owner = agent?.id ?? pairedAgentId(workspace);
+			return owner === undefined
+				? { kind: "terminal-needs-agent", workspaceId: workspace.id }
+				: { kind: "toggle-terminal", agentId: owner };
 		}
-
-		case "split_terminal_right":
-		case "split_terminal_below":
-			// A Workspace that is closing, or whose folder is gone, has no
-			// folder to start a shell in — the same rule as a new Agent.
-			if (!workspace?.canCreateAgent) return undefined;
-			return {
-				kind: "split-terminal",
-				workspaceId: workspace.id,
-				side: commandId === "split_terminal_right" ? "right" : "below",
-			};
 
 		case "toggle_scratch":
 			// Both directions, unconditionally: the model holds the memory this

@@ -83,36 +83,21 @@ export type TellCommand =
 			readonly timeoutSeconds: number;
 	  }
 	| {
+			/** The asking Agent's own terminal, opened or shown. */
 			readonly verb: "terminal-open";
-			/** Which side of the asking Agent's pane. Default: right. */
-			readonly split: TerminalSplit;
-			/** An absolute path, expanded on the CLI's side against its cwd. */
-			readonly cwd?: string;
-			/** Typed into the new shell once it is up. */
+			/** Typed into its shell when this starts it (not when it was running). */
 			readonly command?: string;
-			readonly name?: string;
-			/** Split this terminal instead of the Agent's pane. */
-			readonly beside?: string;
 			/** Put the person's keyboard in it. Default: leave it where it is. */
 			readonly focus: boolean;
 	  }
-	| { readonly verb: "terminal-list" }
-	| { readonly verb: "terminal-resolve"; readonly query: string }
-	| { readonly verb: "terminal-close"; readonly terminal: string }
+	| { readonly verb: "terminal-status" }
+	| { readonly verb: "terminal-close" }
 	| { readonly verb: "commands" }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
 	| { readonly verb: "notify"; readonly text: string };
 
 export type TellVerb = TellCommand["verb"];
-
-export type TerminalSplit = "right" | "below" | "left" | "above";
-export const TERMINAL_SPLITS: readonly TerminalSplit[] = [
-	"right",
-	"below",
-	"left",
-	"above",
-];
 
 /** The longest `agent wait` there is: a request stays open no longer. */
 export const MAX_WAIT_SECONDS = 600;
@@ -166,21 +151,19 @@ issues
                                    <branch> (default: the Issue's own
                                    feature/<n>-wip)
 
-terminals
-  terminal open [--split right|below|left|above] [--cwd <path>]
-                [--command <cmd>] [--name <n>] [--beside <t>] [--focus]
-                                   open a terminal next to your own pane in
-                                   DevHub (a tmux session of its own, in your
-                                   workspace, on its machine); prints the tmux
-                                   handle to drive it with
-  terminal list                    your workspace's terminals: where each is
-                                   relative to your pane (right, below, ...),
-                                   name, cwd, command, focus, tmux handle
-  terminal resolve <side> [top|bottom|left|right|middle] | latest
-                                   the one terminal on that side of your pane
-                                   (or the newest); fails listing candidates
-                                   when it is ambiguous or there is none
-  terminal close <t>               close one, and its session
+terminal (your own: one per agent, on the right of your pane)
+  terminal open [--command <cmd>] [--focus]
+                                   open your terminal, or show it if it is
+                                   already open (the same one every time: a
+                                   tmux session of its own, in your workspace,
+                                   on its machine); prints the tmux handle.
+                                   --command is typed into it only when this
+                                   starts it
+  terminal status                  your terminal: open/visible/focused, and the
+                                   tmux handle with every pane in it (the
+                                   person may have split it), each with where
+                                   it is (top-left, bottom-right, ...)
+  terminal close                   close it, and its session
 
 app
   commands                         list the command palette's commands
@@ -192,9 +175,7 @@ app
 
 <w> is a workspace id, its folder, its name, or "scratch". A folder is a
 folder on the machine devhub runs on: on an SSH host, the host's.
-<a> is an agent id (or a unique prefix of one) or its name.
-<t> is a terminal id (or a unique prefix), its name, its tmux session
-(tm-...) or pane (%N). Terminals are your own workspace's only.`;
+<a> is an agent id (or a unique prefix of one) or its name.`;
 
 export type TellParse =
 	| {
@@ -385,9 +366,6 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "terminal":
 			return parseTerminal(sub, rest);
-		case "terminals":
-			positionals(readFlags(args.slice(1), NO_FLAGS), []);
-			return { verb: "terminal-list" };
 		case "commands":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "commands" };
@@ -523,54 +501,29 @@ function parseTerminal(
 	rest: readonly string[],
 ): TellCommand {
 	switch (sub) {
-		case "open":
-		case "new": {
+		case "open": {
 			const flags = readFlags(rest, {
-				values: ["--split", "--cwd", "--command", "--name", "--beside"],
-				switches: ["--focus", "--right", "--below"],
+				values: ["--command"],
+				switches: ["--focus"],
 			});
 			positionals(flags, []);
-			const shorthand = flags.switches.has("--right")
-				? "right"
-				: flags.switches.has("--below")
-					? "below"
-					: undefined;
-			const given = one(flags, "--split");
-			if (given !== undefined && shorthand !== undefined && given !== shorthand)
-				throw new Refusal(`--split ${given} and --${shorthand} disagree.`);
-			const split = given ?? shorthand ?? "right";
-			if (!(TERMINAL_SPLITS as readonly string[]).includes(split))
-				throw new Refusal("--split takes right, below, left or above.");
 			return {
 				verb: "terminal-open",
-				split: split as TerminalSplit,
 				focus: flags.switches.has("--focus"),
-				...defined({
-					cwd: one(flags, "--cwd"),
-					command: one(flags, "--command"),
-					name: one(flags, "--name"),
-					beside: one(flags, "--beside"),
-				}),
+				...defined({ command: one(flags, "--command") }),
 			};
 		}
-		case "list":
-		case "ls":
+		case "status":
+		case "show":
 			positionals(readFlags(rest, NO_FLAGS), []);
-			return { verb: "terminal-list" };
-		case "resolve": {
-			const words = rest.filter((word) => word.length > 0);
-			if (words.length === 0)
-				throw new Refusal(
-					"missing <side>: right, below, left, above (or latest).",
-				);
-			return { verb: "terminal-resolve", query: words.join(" ") };
-		}
-		case "close": {
-			const [terminal] = positionals(readFlags(rest, NO_FLAGS), ["<terminal>"]);
-			return { verb: "terminal-close", terminal: terminal! };
-		}
+			return { verb: "terminal-status" };
+		case "close":
+			positionals(readFlags(rest, NO_FLAGS), []);
+			return { verb: "terminal-close" };
 		default:
-			throw new Refusal("terminal takes: open, list, resolve, close.");
+			throw new Refusal(
+				"terminal takes: open, status (or show), close. It is always your own terminal, on the right of your pane.",
+			);
 	}
 }
 
@@ -735,34 +688,18 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			};
 		}
 		case "terminal-open": {
-			const split = record["split"];
-			if (
-				typeof split !== "string" ||
-				!(TERMINAL_SPLITS as readonly string[]).includes(split)
-			)
-				throw new Error(
-					"a tell command's split must be right, below, left or above",
-				);
 			if (typeof record["focus"] !== "boolean")
 				throw new Error("a tell command's focus must be a boolean");
 			return {
 				verb: "terminal-open",
-				split: split as TerminalSplit,
 				focus: record["focus"],
-				...(record["cwd"] === undefined
-					? {}
-					: { cwd: absolute(record, "cwd") }),
 				...optionalText(record, "command"),
-				...optionalText(record, "name"),
-				...optionalText(record, "beside"),
 			};
 		}
-		case "terminal-list":
-			return { verb: "terminal-list" };
-		case "terminal-resolve":
-			return { verb: "terminal-resolve", query: text(record, "query") };
+		case "terminal-status":
+			return { verb: "terminal-status" };
 		case "terminal-close":
-			return { verb: "terminal-close", terminal: text(record, "terminal") };
+			return { verb: "terminal-close" };
 		case "run":
 			return { verb: "run", command: text(record, "command") };
 		case "focus":

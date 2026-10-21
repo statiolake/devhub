@@ -491,15 +491,6 @@ function expandTellPaths(
 			return command.repo === undefined
 				? command
 				: { ...command, repo: expandPath(command.repo, cwd, home) };
-		case "terminal-open":
-			return command.cwd === undefined
-				? command
-				: {
-						...command,
-						cwd: posix
-							.normalize(expandPath(command.cwd, cwd, home))
-							.replace(/(.)\/+$/u, "$1"),
-					};
 		case "agents":
 		case "agent-new":
 			return command.workspace === undefined

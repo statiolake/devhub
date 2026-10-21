@@ -22,7 +22,7 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
 	onScreenEditor,
-	paneSeams,
+	terminalSeam,
 	sidebarRect,
 	surfaceRect,
 	trafficLightPosition,
@@ -35,11 +35,7 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type {
-	PaneSeamWire,
-	SidebarAreaWire,
-	WorkbenchAreaWire,
-} from "../../ipc/contract.js";
+import type { SidebarAreaWire, WorkbenchAreaWire } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
@@ -256,9 +252,9 @@ export class ShellWindow {
 	 */
 	private contentFocused: (pane: ContentFocus) => void = () => undefined;
 	/**
-	 * One view per terminal pane, by terminal id — every Workspace's, so that
-	 * coming back to a Workspace finds its terminals where they were, with
-	 * their scrollback. Made and ended by `syncTerminalViews`.
+	 * One view per Agent terminal, by terminal id — every Agent's, shown or
+	 * hidden, so that coming back to an Agent finds its terminal where it was,
+	 * with its scrollback. Made and ended by `syncTerminalViews`.
 	 */
 	private readonly terminalViews = new Map<string, ChromeView>();
 	/** Where the pages are served from, for the terminal panes made later. */
@@ -599,8 +595,8 @@ export class ShellWindow {
 	 * terminal has gone.
 	 *
 	 * Called with the model's whole list on every projection. A view is made
-	 * the first time its terminal appears and kept until it disappears — in
-	 * whichever Workspace — so a terminal is attached once and its scrollback
+	 * the first time its terminal appears and kept until it disappears — for
+	 * whichever Agent — so a terminal is attached once and its scrollback
 	 * survives switching away and back, the way the Agents' pool does.
 	 */
 	syncTerminalViews(terminalIds: readonly string[]): void {
@@ -651,16 +647,6 @@ export class ShellWindow {
 			if (view.contents() === contents) return id;
 		}
 		return undefined;
-	}
-
-	/** Where a terminal pane is in the window, if it is on screen. */
-	terminalRect(terminalId: string): LayoutRect | undefined {
-		const child = windowLayout(this.layoutInput()).find(
-			(candidate) =>
-				candidate.identity.kind === "terminal" &&
-				candidate.identity.terminalId === terminalId,
-		);
-		return child?.visible === true ? child.rect : undefined;
 	}
 
 	/** Register the one reader of "a pane took the keyboard by itself". */
@@ -1270,19 +1256,22 @@ export class ShellWindow {
 	}
 
 	workbenchArea(): WorkbenchAreaWire {
-		const seams: PaneSeamWire[] = paneSeams(this.windowSize(), this.state).map(
-			(seam) => ({
-				path: seam.path,
-				axis: seam.axis,
-				ratio: seam.ratio,
-				...seam.rect,
-				extent: seam.extent,
-			}),
-		);
+		const size = this.windowSize();
+		const seam = terminalSeam(size, this.state);
+		const terminal = this.state.terminal;
 		return {
 			...this.workbenchRect(),
-			contentWidth: surfaceRect(this.windowSize(), this.state).width,
-			...(seams.length === 0 ? {} : { seams }),
+			contentWidth: surfaceRect(size, this.state).width,
+			...(seam === undefined || terminal === undefined
+				? {}
+				: {
+						terminalSeam: {
+							...seam,
+							terminalId: terminal.terminalId,
+							share: terminal.share,
+							extent: surfaceRect(size, this.state),
+						},
+					}),
 		};
 	}
 
@@ -1302,11 +1291,6 @@ export class ShellWindow {
 			shellTheme().palette()?.base ??
 			(theme.shouldUseDarkColors ? "dark" : "light");
 		return scrimColor(base, theme.prefersReducedTransparency);
-	}
-
-	/** The window's content size, for a caller laying the tiling out itself. */
-	windowSizeForLayout(): { width: number; height: number } {
-		return this.windowSize();
 	}
 
 	private windowSize(): { width: number; height: number } {

@@ -47,11 +47,10 @@ import {
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
-  PANE_MAX_RATIO,
-  PANE_MIN_RATIO,
-  isPanePath,
-  paneTerminalSessionName as terminalSessionName,
-} from "./paneLayout.js";
+  TERMINAL_DEFAULT_SHARE,
+  agentTerminalSessionName,
+  isTerminalShare,
+} from "./agentTerminal.js";
 import { copySpot, isSmartButtonsSpot } from "./smartButtons.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
@@ -398,6 +397,18 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     injection: agent.injection,
     automaticActions: agent.automaticActions,
     ...(agent.failure === undefined ? {} : { failure: agent.failure }),
+    ...(agent.terminal === undefined
+      ? {}
+      : {
+          terminal: {
+            id: agent.terminal.terminalId,
+            session: agentTerminalSessionName(agent.terminal.terminalId),
+            open: agent.terminal.open,
+          },
+        }),
+    ...(agent.terminalShare === TERMINAL_DEFAULT_SHARE
+      ? {}
+      : { terminalShare: agent.terminalShare }),
   };
 }
 
@@ -503,20 +514,6 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
-    ...(workspace.paneTerminals.length === 0
-      ? {}
-      : {
-          paneTree: workspace.paneTree,
-          paneTerminals: workspace.paneTerminals.map((terminal) => ({
-            id: terminal.id,
-            name: terminal.name,
-            session: terminalSessionName(terminal.id),
-            ...(terminal.cwd === undefined ? {} : { cwd: terminal.cwd }),
-            ...(terminal.command === undefined
-              ? {}
-              : { command: terminal.command }),
-          })),
-        }),
     ...(workspace.terminals.status === "idle" &&
     workspace.terminals.unread === undefined
       ? {}
@@ -546,6 +543,9 @@ export function snapshotWire(
       collapsed: snapshot.sidebar.collapsed,
     },
     splitRatio: snapshot.splitRatio,
+    ...(snapshot.visibleTerminal === undefined
+      ? {}
+      : { visibleTerminal: snapshot.visibleTerminal.terminalId }),
     ...(snapshot.paneFocus === undefined
       ? {}
       : { paneFocus: snapshot.paneFocus }),
@@ -766,6 +766,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
       return "agent";
     case "terminal_colors_unreadable":
     case "terminal_launcher_unavailable":
+    case "terminal_needs_agent":
     case "workspace_sessions_left_running":
     case "tmux_command_failed":
     case "tmux_command_timed_out":
@@ -802,6 +803,7 @@ export function errorWireAt(
     code === "state_migrated" ||
     code === "input_source_unavailable" ||
     code === "usage_unreadable" ||
+    code === "terminal_needs_agent" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []
@@ -1112,22 +1114,12 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         ...(spot === undefined ? {} : { spot: copySpot(spot) }),
       };
     }
-    case "resize_pane":
-      if (
-        typeof wire.path !== "string" ||
-        !isPanePath(wire.path) ||
-        typeof wire.ratio !== "number" ||
-        !Number.isFinite(wire.ratio) ||
-        wire.ratio < PANE_MIN_RATIO ||
-        wire.ratio > PANE_MAX_RATIO
-      ) {
-        invalid();
-      }
+    case "resize_agent_terminal":
+      if (!isTerminalShare(wire.share)) invalid();
       return {
-        type: "resize_pane",
-        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
-        path: wire.path,
-        ratio: wire.ratio,
+        type: "resize_agent_terminal",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+        share: wire.share,
       };
     case "resize_sidebar":
       if (

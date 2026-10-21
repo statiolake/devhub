@@ -15,14 +15,7 @@ import type {
 	RequestAnswer,
 	TranscriptEntry,
 } from "../../../model/conversation.js";
-import { TELL_USAGE, type TellCommand, type TerminalSplit } from "./command.js";
-import {
-	CONTENT_PANE,
-	relativePositions,
-	resolvePane,
-	type PaneNode,
-	type RelativePosition,
-} from "../../../model/paneLayout.js";
+import { TELL_USAGE, type TellCommand } from "./command.js";
 
 export interface TellAgent {
 	readonly id: string;
@@ -80,45 +73,61 @@ export interface IssueAssignRequest {
 }
 
 /**
- * A terminal pane's tmux, as an Agent drives it: the executable, the server's
- * socket, and the exact pane. Everything is on the Workspace's machine — the
- * machine the asking Agent runs on — so the paths are paths there.
+ * One tmux pane inside an Agent's terminal, read live. The session starts
+ * with one; the person may have split it, or opened windows, with tmux's own
+ * keys. Everything is on the Workspace's machine — the machine the asking
+ * Agent runs on — so the paths are paths there.
  */
-export interface TellTerminalHandle {
-	/** The tmux DevHub runs there, which may not be the one on PATH. */
-	readonly tmux: string;
-	/** The server's socket, absolute: what `tmux -S` takes. */
-	readonly socket: string;
-	readonly session: string;
-	/** tmux's window id (`@3`) and index. */
+export interface TellTerminalPane {
+	/** tmux's window id (`@3`), index and name. */
 	readonly window: string;
 	readonly windowIndex: number;
+	readonly windowName: string;
+	/** The window is the one the session shows. */
+	readonly windowActive: boolean;
 	/** tmux's pane id (`%7`): unique on the server, the target to use. */
 	readonly pane: string;
 	readonly paneIndex: number;
+	/** Its window's active pane, in the session's active window. */
+	readonly active: boolean;
+	/** Where it is in its window, in cells from the top left. */
+	readonly left: number;
+	readonly top: number;
+	readonly width: number;
+	readonly height: number;
+	readonly cwd: string;
+	/** The foreground process, as tmux names it: the shell at a prompt. */
+	readonly command: string;
+	readonly title: string;
+	readonly dead: boolean;
 }
 
-/** One terminal opened beside the panes of a Workspace. */
+/** The asking Agent's own terminal, as the app knows it now. */
 export interface TellTerminal {
-	readonly id: string;
-	readonly name: string;
+	readonly agentId: string;
 	readonly workspaceId: string;
-	readonly session: string;
-	/** What it was opened to run, if anything. */
-	readonly openedWith: string | undefined;
-	/** When DevHub opened it, for "the one I just opened". 0 when restored. */
-	readonly openedAt: number;
-	/** It has the person's keyboard. */
-	readonly focused: boolean;
-	/** Its Workspace is the one on screen, so its pane is drawn. */
-	readonly visible: boolean;
-	/** The live pane, read from tmux; absent when tmux could not be asked. */
-	readonly live:
+	/** Its session is up. Absent: it has none yet, or it was closed. */
+	readonly session:
 		| {
-				readonly cwd: string;
-				readonly command: string;
-				readonly title: string;
-				readonly handle: TellTerminalHandle;
+				readonly id: string;
+				/** `tm-<id>`. */
+				readonly name: string;
+				/** Its pane is shown when its Agent is the view's. */
+				readonly open: boolean;
+				/** It is on screen now. */
+				readonly visible: boolean;
+				/** It has the person's keyboard. */
+				readonly focused: boolean;
+				/** The live half, from tmux; absent when tmux could not be asked. */
+				readonly tmux:
+					| {
+							/** The tmux DevHub runs there, which may not be the one on PATH. */
+							readonly tmux: string;
+							/** The server's socket, absolute: what `tmux -S` takes. */
+							readonly socket: string;
+							readonly panes: readonly TellTerminalPane[];
+					  }
+					| undefined;
 		  }
 		| undefined;
 }
@@ -161,25 +170,18 @@ export interface TellPorts {
 	focusWorkspace(workspaceId: string): Promise<void>;
 	focusAgent(agentId: string): Promise<void>;
 	notify(text: string): void;
-	/** A Workspace's tiling and its terminals, read live. */
-	terminalLayout(workspaceId: string): Promise<{
-		readonly tree: PaneNode;
-		readonly terminals: readonly TellTerminal[];
-	}>;
-	/** Open a terminal beside the Workspace's panes; answers its id. */
-	openTerminal(
-		workspaceId: string,
-		request: {
-			readonly side: TerminalSplit;
-			readonly cwd: string | undefined;
-			readonly command: string | undefined;
-			readonly name: string | undefined;
-			/** A terminal of the same Workspace to split, instead of the content. */
-			readonly beside: string | undefined;
-			readonly focus: boolean;
-		},
-	): Promise<string>;
-	closeTerminal(workspaceId: string, terminalId: string): Promise<void>;
+	/** An Agent's own terminal, read live. */
+	agentTerminal(agentId: string): Promise<TellTerminal>;
+	/**
+	 * Open an Agent's terminal, or show the one it has (idempotent). Answers
+	 * whether this call started its session; `command` is typed only then.
+	 */
+	openAgentTerminal(
+		agentId: string,
+		request: { readonly command: string | undefined; readonly focus: boolean },
+	): Promise<{ readonly created: boolean }>;
+	/** Close an Agent's terminal and its session; whether it had one. */
+	closeAgentTerminal(agentId: string): Promise<boolean>;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -301,179 +303,99 @@ export class TellService {
 				return { message: "Shown in DevHub.", data: { ok: true } };
 			case "terminal-open":
 				return this.openTerminal(command);
-			case "terminal-list":
-				return this.listTerminals();
-			case "terminal-resolve":
-				return this.resolveTerminal(command.query);
+			case "terminal-status":
+				return this.terminalStatus();
 			case "terminal-close":
-				return this.closeTerminal(command.terminal);
+				return this.closeTerminal();
 		}
 	}
 
 	// --- terminals --------------------------------------------------------
 
 	/**
-	 * The Workspace a terminal command is about: the asker's own, and no
-	 * other. There is no `--workspace` for these on purpose — an Agent drives
-	 * the terminals beside itself, and reaching into another Workspace's shells
-	 * is not something one Agent may do to another's.
+	 * The Agent a terminal command is about: the asker itself, and no other.
+	 * There is no `--agent` for these on purpose — the terminal on the right
+	 * is the asking Agent's own, and reaching into another Agent's shell is not
+	 * something one Agent may do to another.
 	 */
-	private callerWorkspace(): TellWorkspace {
+	private callerAgent(): TellAgent {
 		const caller = this.caller;
 		if (caller === undefined || caller.paneless === true)
 			throw new Error(
-				"terminal commands work only from inside a DevHub agent or terminal: they are about the terminals beside the one asking, and this devhub is not running in one.",
+				"terminal commands work only from inside a DevHub agent: they are about the asking agent's own terminal, and this devhub is not running in one.",
 			);
-		if (caller.agentId !== undefined) {
-			const owner = this.ports
-				.workspaces()
-				.find((workspace) =>
-					workspace.agents.some((agent) => agent.id === caller.agentId),
-				);
-			if (owner) return owner;
-		}
-		return this.workspace(caller.workspaceId ?? "scratch");
-	}
-
-	private async layoutOf(workspace: TellWorkspace) {
-		const layout = await this.ports.terminalLayout(workspace.id);
-		const positions = new Map(
-			relativePositions(layout.tree, CONTENT_PANE).map((position) => [
-				position.terminalId,
-				position,
-			]),
-		);
-		return { ...layout, positions };
-	}
-
-	/** `<t>`: an id or a unique prefix, a name, a session, or a pane id. */
-	private terminalIn(
-		terminals: readonly TellTerminal[],
-		name: string,
-	): TellTerminal {
-		const exact = terminals.filter(
-			(terminal) =>
-				terminal.id === name ||
-				terminal.name === name ||
-				terminal.session === name ||
-				terminal.live?.handle.pane === name,
-		);
-		if (exact.length === 1) return exact[0]!;
-		if (exact.length > 1)
+		if (caller.agentId === undefined)
 			throw new Error(
-				`${JSON.stringify(name)} names ${String(exact.length)} terminals; use an id: ${exact.map((terminal) => terminal.id).join(", ")}.`,
+				"terminal commands are an agent's: run them from the agent's own pane. (This is a terminal, not an agent.)",
 			);
-		const prefixed = terminals.filter(
-			(terminal) => name.length >= 4 && terminal.id.startsWith(name),
-		);
-		if (prefixed.length === 1) return prefixed[0]!;
+		for (const workspace of this.ports.workspaces()) {
+			const agent = workspace.agents.find((one) => one.id === caller.agentId);
+			if (agent) return agent;
+		}
 		throw new Error(
-			`no terminal of this workspace is called ${JSON.stringify(name)}. Run 'devhub --tell terminal list' to see them.`,
+			`the agent asking (${caller.agentId}) is not one DevHub has open any more.`,
 		);
 	}
 
 	private async openTerminal(
 		command: Extract<TellCommand, { verb: "terminal-open" }>,
 	): Promise<TellAnswer> {
-		const workspace = this.callerWorkspace();
-		const before = await this.ports.terminalLayout(workspace.id);
-		const beside =
-			command.beside === undefined
-				? undefined
-				: this.terminalIn(before.terminals, command.beside).id;
-		const id = await this.ports.openTerminal(workspace.id, {
-			side: command.split,
-			cwd: command.cwd,
+		const agent = this.callerAgent();
+		const { created } = await this.ports.openAgentTerminal(agent.id, {
 			command: command.command,
-			name: command.name,
-			beside,
 			focus: command.focus,
 		});
-		const { terminals, positions } = await this.layoutOf(workspace);
-		const opened = terminals.find((terminal) => terminal.id === id);
-		if (!opened)
+		const terminal = await this.ports.agentTerminal(agent.id);
+		if (terminal.session === undefined)
 			throw new Error(
-				`terminal ${id} opened and was gone again at once: its shell exited. Check --cwd and --command.`,
+				"the terminal opened and was gone again at once: its shell exited. Check --command.",
 			);
-		const described = describeTerminal(opened, positions.get(id));
+		const described = describeTerminal(terminal);
+		const notTyped =
+			!created && command.command !== undefined
+				? [
+						"It was already running, so --command was not typed into it: send it with send-keys (below) if you still want it.",
+					]
+				: [];
 		return {
 			message: [
-				`Opened ${terminalLine(described)}.`,
+				`${created ? "Opened" : "Showing"} your terminal: ${terminalLine(described)}.`,
+				...notTyped,
+				...driveHints(described),
+			].join("\n"),
+			data: { terminal: described, created },
+		};
+	}
+
+	private async terminalStatus(): Promise<TellAnswer> {
+		const agent = this.callerAgent();
+		const terminal = await this.ports.agentTerminal(agent.id);
+		const described = describeTerminal(terminal);
+		if (terminal.session === undefined)
+			return {
+				message:
+					"You have no terminal open. 'devhub --tell terminal open' opens one, on the right of your pane.",
+				data: { terminal: described },
+			};
+		return {
+			message: [
+				terminalLine(described),
+				...paneLines(described),
 				...driveHints(described),
 			].join("\n"),
 			data: { terminal: described },
 		};
 	}
 
-	private async listTerminals(): Promise<TellAnswer> {
-		const workspace = this.callerWorkspace();
-		const { terminals, positions } = await this.layoutOf(workspace);
-		const described = terminals.map((terminal) =>
-			describeTerminal(terminal, positions.get(terminal.id)),
-		);
+	private async closeTerminal(): Promise<TellAnswer> {
+		const agent = this.callerAgent();
+		const before = await this.ports.agentTerminal(agent.id);
+		const closed = await this.ports.closeAgentTerminal(agent.id);
 		return {
-			message:
-				described.length === 0
-					? "No terminals are open beside this workspace's panes. 'devhub --tell terminal open' opens one."
-					: [
-							"Relative to your pane:",
-							...described.map((terminal) => `  ${terminalLine(terminal)}`),
-						].join("\n"),
-			data: { workspaceId: workspace.id, terminals: described },
-		};
-	}
-
-	private async resolveTerminal(query: string): Promise<TellAnswer> {
-		const workspace = this.callerWorkspace();
-		const { tree, terminals, positions } = await this.layoutOf(workspace);
-		const describe = (terminal: TellTerminal) =>
-			describeTerminal(terminal, positions.get(terminal.id));
-		const candidates = (list: readonly TellTerminal[]) =>
-			list.map((terminal) => terminalLine(describe(terminal))).join("; ");
-		const words = query.trim().toLowerCase();
-		if (["latest", "last", "newest", "recent"].includes(words)) {
-			const newest = [...terminals].sort((a, b) => b.openedAt - a.openedAt)[0];
-			if (!newest) throw new Error("no terminals are open beside your pane.");
-			const described = describe(newest);
-			return {
-				message: terminalLine(described),
-				data: { terminal: described },
-			};
-		}
-		const answer = resolvePane(tree, words, CONTENT_PANE);
-		if (answer.kind === "found") {
-			const found = terminals.find(
-				(terminal) => terminal.id === answer.terminalId,
-			);
-			if (found) {
-				const described = describe(found);
-				return {
-					message: terminalLine(described),
-					data: { terminal: described },
-				};
-			}
-		}
-		if (answer.kind === "ambiguous") {
-			const ids = new Set(answer.candidates.map((one) => one.terminalId));
-			throw new Error(
-				`more than one terminal is ${JSON.stringify(query)} of your pane: ${candidates(terminals.filter((terminal) => ids.has(terminal.id)))}. Name one (by id, name or a qualifier like '${query} top'), or ask the person which.`,
-			);
-		}
-		throw new Error(
-			terminals.length === 0
-				? "no terminals are open beside your pane."
-				: `no terminal is ${JSON.stringify(query)} of your pane. The ones there are: ${candidates(terminals)}.`,
-		);
-	}
-
-	private async closeTerminal(name: string): Promise<TellAnswer> {
-		const workspace = this.callerWorkspace();
-		const { terminals } = await this.ports.terminalLayout(workspace.id);
-		const terminal = this.terminalIn(terminals, name);
-		await this.ports.closeTerminal(workspace.id, terminal.id);
-		return {
-			message: `Closed ${terminal.name} (${terminal.session}).`,
-			data: { terminalId: terminal.id, session: terminal.session },
+			message: closed
+				? `Closed your terminal (${before.session?.name ?? "its session"}).`
+				: "You had no terminal open.",
+			data: { closed, session: before.session?.name },
 		};
 	}
 
@@ -920,61 +842,148 @@ export class TellService {
 
 // --- words ------------------------------------------------------------------
 
-/** One terminal as `--json` writes it: the handle an Agent drives it by. */
+/**
+ * One tmux pane of the terminal as `--json` writes it, with what a person
+ * calls it: `where` is its place in its window — `top-left`, `bottom-right`,
+ * `right`, `whole` — so "the bottom-right pane" is a lookup, not a sum.
+ */
+export interface DescribedTerminalPane extends TellTerminalPane {
+	readonly where: string;
+	/** `-t` this. */
+	readonly target: string;
+	/** The same pane as `session:window.pane`. */
+	readonly fullTarget: string;
+}
+
+/** The asking Agent's terminal as `--json` writes it: the handle to drive it by. */
 export interface DescribedTerminal {
-	readonly id: string;
-	readonly name: string;
+	readonly agentId: string;
 	readonly workspaceId: string;
-	/** `right`, `below`, `right, top`, ...: where it is, from the asker's pane. */
-	readonly position: string | undefined;
-	readonly sides: readonly string[];
-	readonly adjacent: boolean;
-	readonly focused: boolean;
+	/** It has a session. The rest is absent when it does not. */
+	readonly exists: boolean;
+	readonly id: string | undefined;
+	readonly session: string | undefined;
+	readonly open: boolean;
 	readonly visible: boolean;
-	readonly openedWith: string | undefined;
-	readonly cwd: string | undefined;
-	/** The foreground process, as tmux names it: the shell at a prompt. */
-	readonly command: string | undefined;
-	readonly title: string | undefined;
+	readonly focused: boolean;
+	/**
+	 * The tmux handle, with the active pane as its target. Absent when there
+	 * is no session or tmux could not be asked.
+	 */
 	readonly tmux:
-		| (TellTerminalHandle & {
+		| {
+				readonly tmux: string;
+				readonly socket: string;
+				readonly session: string;
+				/** The active pane of the active window: the one the person sees typed into. */
+				readonly window: string;
+				readonly windowIndex: number;
+				readonly pane: string;
+				readonly paneIndex: number;
 				/** `-t` this: the pane id, which nothing else on the server has. */
 				readonly target: string;
 				/** The same pane as `session:window.pane`. */
 				readonly fullTarget: string;
 				/** Every command starts with these: `tmux -S <socket>`. */
 				readonly prefix: readonly string[];
-		  })
+				readonly cwd: string;
+				readonly command: string;
+				readonly title: string;
+		  }
 		| undefined;
+	/** Every tmux pane in the session, every window's, in tmux's order. */
+	readonly panes: readonly DescribedTerminalPane[];
 }
 
-export function describeTerminal(
-	terminal: TellTerminal,
-	position: RelativePosition | undefined,
-): DescribedTerminal {
-	const live = terminal.live;
+/** `top-left`, `bottom`, `right`, `whole`: where a pane is in its window. */
+export function paneWhere(
+	pane: TellTerminalPane,
+	window: readonly TellTerminalPane[],
+): string {
+	const right = Math.max(...window.map((one) => one.left + one.width));
+	const bottom = Math.max(...window.map((one) => one.top + one.height));
+	const minLeft = Math.min(...window.map((one) => one.left));
+	const minTop = Math.min(...window.map((one) => one.top));
+	const across = (start: number, size: number, min: number, end: number) => {
+		const first = start <= min;
+		const last = start + size >= end;
+		if (first && last) return undefined;
+		return first ? "first" : last ? "last" : "middle";
+	};
+	const column = across(pane.left, pane.width, minLeft, right);
+	const row = across(pane.top, pane.height, minTop, bottom);
+	const vertical =
+		row === undefined
+			? undefined
+			: row === "first"
+				? "top"
+				: row === "last"
+					? "bottom"
+					: "middle";
+	const horizontal =
+		column === undefined
+			? undefined
+			: column === "first"
+				? "left"
+				: column === "last"
+					? "right"
+					: "middle";
+	const words = [vertical, horizontal].filter(
+		(word): word is string => word !== undefined,
+	);
+	if (words.length === 0) return "whole";
+	if (words.length === 2 && words[0] === "middle" && words[1] === "middle")
+		return "middle";
+	return words.join("-");
+}
+
+export function describeTerminal(terminal: TellTerminal): DescribedTerminal {
+	const session = terminal.session;
+	const live = session?.tmux;
+	const panes: DescribedTerminalPane[] =
+		live === undefined || session === undefined
+			? []
+			: live.panes.map((pane) => ({
+					...pane,
+					where: paneWhere(
+						pane,
+						live.panes.filter((one) => one.window === pane.window),
+					),
+					target: pane.pane,
+					fullTarget: `${session.name}:${String(pane.windowIndex)}.${String(pane.paneIndex)}`,
+				}));
+	const front =
+		panes.find((pane) => pane.active) ??
+		panes.find((pane) => pane.windowActive) ??
+		panes[0];
 	return {
-		id: terminal.id,
-		name: terminal.name,
+		agentId: terminal.agentId,
 		workspaceId: terminal.workspaceId,
-		position: position?.description,
-		sides: position?.sides ?? [],
-		adjacent: position?.adjacent ?? false,
-		focused: terminal.focused,
-		visible: terminal.visible,
-		openedWith: terminal.openedWith,
-		cwd: live?.cwd,
-		command: live?.command,
-		title: live?.title,
+		exists: session !== undefined,
+		id: session?.id,
+		session: session?.name,
+		open: session?.open ?? false,
+		visible: session?.visible ?? false,
+		focused: session?.focused ?? false,
 		tmux:
-			live === undefined
+			live === undefined || session === undefined || front === undefined
 				? undefined
 				: {
-						...live.handle,
-						target: live.handle.pane,
-						fullTarget: `${live.handle.session}:${String(live.handle.windowIndex)}.${String(live.handle.paneIndex)}`,
-						prefix: [live.handle.tmux, "-S", live.handle.socket],
+						tmux: live.tmux,
+						socket: live.socket,
+						session: session.name,
+						window: front.window,
+						windowIndex: front.windowIndex,
+						pane: front.pane,
+						paneIndex: front.paneIndex,
+						target: front.target,
+						fullTarget: front.fullTarget,
+						prefix: [live.tmux, "-S", live.socket],
+						cwd: front.cwd,
+						command: front.command,
+						title: front.title,
 					},
+		panes,
 	};
 }
 
@@ -988,17 +997,36 @@ export function shellWord(word: string): string {
 function terminalLine(terminal: DescribedTerminal): string {
 	const tmux = terminal.tmux;
 	return [
-		`${terminal.name} [${terminal.position ?? "not on screen"}]`,
-		terminal.id,
+		terminal.session ?? "no session",
+		terminal.visible
+			? "on screen, right of your pane"
+			: terminal.open
+				? "open, not on screen (another view is in front)"
+				: "hidden (Cmd+Q V shows it)",
 		tmux === undefined
 			? "tmux could not be asked about it"
-			: `${shellWord(tmux.tmux)} -S ${shellWord(tmux.socket)} … -t ${tmux.target} (${tmux.session})`,
-		terminal.cwd === undefined ? undefined : `cwd ${terminal.cwd}`,
-		terminal.command === undefined ? undefined : `running ${terminal.command}`,
+			: `${shellWord(tmux.tmux)} -S ${shellWord(tmux.socket)} … -t ${tmux.target}`,
+		tmux === undefined ? undefined : `cwd ${tmux.cwd}`,
+		tmux === undefined ? undefined : `running ${tmux.command}`,
+		terminal.panes.length > 1
+			? `${String(terminal.panes.length)} tmux panes`
+			: undefined,
 		terminal.focused ? "has the keyboard" : undefined,
 	]
 		.filter((part) => part !== undefined)
 		.join("  ");
+}
+
+/** One line per tmux pane, when the person has split it. */
+function paneLines(terminal: DescribedTerminal): readonly string[] {
+	if (terminal.panes.length < 2) return [];
+	return [
+		"panes:",
+		...terminal.panes.map(
+			(pane) =>
+				`  ${pane.target}  window ${String(pane.windowIndex)} (${pane.windowName})  ${pane.where}  ${String(pane.width)}x${String(pane.height)} at ${String(pane.left)},${String(pane.top)}  running ${pane.command}${pane.active ? "  active" : ""}`,
+		),
+	];
 }
 
 /** How to type into it and read it back, with this terminal's own handle. */
@@ -1009,7 +1037,8 @@ function driveHints(terminal: DescribedTerminal): readonly string[] {
 	return [
 		`send:  ${base} send-keys -t ${tmux.target} -l -- 'make test' && ${base} send-keys -t ${tmux.target} Enter`,
 		`read:  ${base} capture-pane -p -J -t ${tmux.target} -S -200`,
-		`close: devhub --tell terminal close ${terminal.id}`,
+		`panes: ${base} list-panes -s -t ${shellWord(tmux.session)} -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'`,
+		"close: devhub --tell terminal close",
 	];
 }
 

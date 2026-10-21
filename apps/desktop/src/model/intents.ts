@@ -41,8 +41,7 @@ import {
   sshHost,
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
-import type { AppSnapshot, PaneFocusTarget, PaneTerminal } from "./appModel.js";
-import type { PaneLeaf, PanePath, PaneSide } from "./paneLayout.js";
+import type { AppSnapshot, PaneFocusTarget } from "./appModel.js";
 import type { SmartButtonsSpot } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
 import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
@@ -518,45 +517,39 @@ export type UserIntent =
       readonly workspaces: readonly WorkspaceTerminalObservation[];
     }
   /**
-   * A terminal's session is up; give it a pane (`model/paneLayout.ts`).
+   * An Agent's terminal session is up; it is shown (`model/agentTerminal.ts`).
    *
-   * Raised in main once the session exists — the id is main's, generated
-   * before the session was made, so it is a result and not something a page
-   * can ask for. A page asks with `Cmd+Q V`/`S` or the CLI, both of which
-   * come to main first.
+   * Raised in main once the session exists — the id names a session main
+   * made or found, so it is a result and not something a page can ask for. A
+   * page asks with `Cmd+Q V` or the CLI, both of which come to main first.
    */
   | {
-      readonly type: "pane_terminal_opened";
-      readonly terminal: PaneTerminal;
-      readonly side: PaneSide;
-      /** The pane it is split from; the one with the keyboard when absent. */
-      readonly beside?: PaneLeaf;
+      readonly type: "agent_terminal_opened";
+      readonly agentId: AgentId;
+      readonly terminalId: string;
       readonly focus: boolean;
     }
-  /** A terminal's pane goes: it was closed, and its session with it. */
-  | { readonly type: "pane_terminal_closed"; readonly terminalId: string }
-  /** A seam of one Workspace's tiling, dragged to `ratio`. */
+  /** An Agent's terminal pane shown or hidden; its session runs on. */
   | {
-      readonly type: "resize_pane";
-      readonly workspaceId: WorkspaceId;
-      readonly path: PanePath;
-      readonly ratio: number;
+      readonly type: "agent_terminal_shown";
+      readonly agentId: AgentId;
+      readonly open: boolean;
+      readonly focus: boolean;
     }
-  /** A terminal's header dropped on `side` of another pane. */
+  /** An Agent's terminal is gone: it was closed, and its session with it. */
+  | { readonly type: "agent_terminal_closed"; readonly agentId: AgentId }
+  /** The divider left of an Agent's terminal, dragged to `share`. */
   | {
-      readonly type: "move_pane_terminal";
-      readonly terminalId: string;
-      readonly onto: PaneLeaf;
-      readonly side: PaneSide;
+      readonly type: "resize_agent_terminal";
+      readonly agentId: AgentId;
+      readonly share: number;
     }
   /** The keyboard into one pane on screen — a click into it, or a chord. */
   | { readonly type: "focus_pane"; readonly target: PaneFocusTarget }
   /** `Cmd+Q O`: the next pane on screen. */
   | { readonly type: "cycle_pane_focus"; readonly direction: 1 | -1 }
-  /** `Cmd+Q ←/→/↑/↓`: the pane on that side. */
-  | { readonly type: "focus_pane_towards"; readonly side: PaneSide }
   /**
-   * One machine's reading of which pane terminals still have a session.
+   * One machine's reading of which Agent terminals still have a session.
    * Every Workspace on that machine is in `workspaces`; `since` is when the
    * reading began, in main's clock (see `AppModel.observePaneTerminals`).
    */

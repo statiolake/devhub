@@ -109,26 +109,39 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "P")).toBe("previous_workspace");
   });
 
-  it("puts the terminal splits on V and S, and leaves the Sidebar to the palette", () => {
+  it("puts the Agent's terminal on V, and leaves S and the Sidebar to the palette", () => {
     const bindings = defaultBindings();
-    expect(commandFor(bindings, "v")).toBe("split_terminal_right");
-    expect(commandFor(bindings, "s")).toBe("split_terminal_below");
-    // `Shift+S` is not given to anything: `focus_sidebar` is palette only.
+    expect(commandFor(bindings, "v")).toBe("toggle_terminal");
+    // `S` is unbound: the terminal split below went with the pane tree, and
+    // `focus_sidebar` stays palette only.
+    expect(commandFor(bindings, "s")).toBeUndefined();
     expect(commandFor(bindings, "S")).toBeUndefined();
     expect(commandById("focus_sidebar")?.defaultKeys).toEqual([]);
     expect([...PALETTE_ONLY_COMMANDS]).toEqual(["focus_sidebar"]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });
 
-  it("moves between panes with O and the arrows", () => {
+  it("moves between panes with O, and gives the bare arrows nothing", () => {
     const bindings = defaultBindings();
     expect(commandFor(bindings, "o")).toBe("swap_split_focus");
-    expect(commandFor(bindings, "arrowleft")).toBe("focus_pane_left");
-    expect(commandFor(bindings, "arrowright")).toBe("focus_pane_right");
-    expect(commandFor(bindings, "arrowup")).toBe("focus_pane_up");
-    expect(commandFor(bindings, "arrowdown")).toBe("focus_pane_down");
+    for (const arrow of ["arrowleft", "arrowright", "arrowup", "arrowdown"]) {
+      expect(commandFor(bindings, arrow), arrow).toBeUndefined();
+    }
     // The modified arrows stay the row moves.
     expect(commandFor(bindings, "Alt+arrowup")).toBe("move_entry_up");
+    expect(isCommandId("split_terminal_below")).toBe(false);
+    expect(isCommandId("focus_pane_left")).toBe(false);
+  });
+
+  it("binds no key to two commands", () => {
+    const seen = new Map<string, string>();
+    for (const command of COMMANDS) {
+      for (const key of command.defaultKeys) {
+        const id = chordKeyId(parseChordKey(key));
+        expect(seen.get(id), `${key}: ${command.id}`).toBeUndefined();
+        seen.set(id, command.id);
+      }
+    }
   });
 
   it("knows its own ids and nobody else's", () => {

@@ -1354,26 +1354,10 @@ body.is-resizing-sidebar {
   outline: none;
 }
 
-/* A seam of the terminal panes' tiling: the same strip, sized by the owner
-   (it is as long as the split it divides), and lying down when the split is
-   stacked. */
-.pane-seam {
+/* The divider left of the Agent's terminal: the same strip, sized by the
+   owner. */
+.terminal-seam {
   width: auto;
-}
-
-.pane-seam.is-horizontal {
-  flex-direction: column;
-}
-
-.pane-seam.is-horizontal > .split-divider {
-  cursor: row-resize;
-}
-
-.pane-seam.is-horizontal > .split-divider::after {
-  width: 100%;
-  height: 1px;
-  margin-block: auto;
-  margin-inline: 0;
 }
 
 /* The Agent's pane. It carries the terminal's own ground, set from the same
@@ -1512,11 +1496,6 @@ body.is-resizing-sidebar {
 
 body.is-resizing-split {
   cursor: col-resize;
-  user-select: none;
-}
-
-body.is-resizing-split-rows {
-  cursor: row-resize;
   user-select: none;
 }
 

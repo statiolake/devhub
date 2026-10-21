@@ -286,94 +286,58 @@ describe("a tell command off the socket", () => {
 });
 
 describe("devhub --tell terminal", () => {
-	it("opens to the right by default, and takes every option", () => {
+	it("opens your own terminal, with a command and the keyboard if asked", () => {
 		expect(told("terminal", "open")).toEqual({
 			verb: "terminal-open",
-			split: "right",
 			focus: false,
 		});
 		expect(
-			told(
-				"terminal",
-				"open",
-				"--split",
-				"below",
-				"--cwd",
-				"api",
-				"--command",
-				"npm run dev",
-				"--name",
-				"Server",
-				"--beside",
-				"Tests",
-				"--focus",
-			),
+			told("terminal", "open", "--command", "npm run dev", "--focus"),
 		).toEqual({
 			verb: "terminal-open",
-			split: "below",
-			cwd: "api",
 			command: "npm run dev",
-			name: "Server",
-			beside: "Tests",
 			focus: true,
 		});
-		expect(told("terminal", "open", "--below")).toMatchObject({
-			split: "below",
-		});
 	});
 
-	it("refuses a side it does not know, and two that disagree", () => {
-		expect(refusal("terminal", "open", "--split", "diagonal")).toMatch(
-			/right, below, left or above/,
+	it("has no positions, names or folders any more: it is always yours", () => {
+		for (const flag of ["--split", "--cwd", "--name", "--beside"]) {
+			expect(refusal("terminal", "open", flag, "x"), flag).toBeDefined();
+		}
+		expect(refusal("terminal", "open", "--below")).toBeDefined();
+		expect(refusal("terminal", "resolve", "right")).toMatch(
+			/open, status \(or show\), close/,
 		);
-		expect(refusal("terminal", "open", "--split", "left", "--right")).toMatch(
-			/disagree/,
-		);
-		expect(refusal("terminal", "spawn")).toMatch(/open, list, resolve, close/);
+		expect(refusal("terminal", "list")).toMatch(/open, status/);
+		expect(refusal("terminal", "close", "Tests")).toBeDefined();
 	});
 
-	it("reads list, resolve and close", () => {
-		expect(told("terminal", "list")).toEqual({ verb: "terminal-list" });
-		expect(told("terminals")).toEqual({ verb: "terminal-list" });
-		expect(told("terminal", "resolve", "right", "top")).toEqual({
-			verb: "terminal-resolve",
-			query: "right top",
-		});
-		expect(refusal("terminal", "resolve")).toMatch(/missing <side>/);
-		expect(told("terminal", "close", "Tests")).toEqual({
-			verb: "terminal-close",
-			terminal: "Tests",
-		});
+	it("reads status (and show) and close", () => {
+		expect(told("terminal", "status")).toEqual({ verb: "terminal-status" });
+		expect(told("terminal", "show")).toEqual({ verb: "terminal-status" });
+		expect(told("terminal", "close")).toEqual({ verb: "terminal-close" });
 	});
 
 	it("takes back off the socket exactly what it parses", () => {
 		for (const command of [
-			told("terminal", "open", "--split", "above", "--name", "x"),
-			told("terminal", "list"),
-			told("terminal", "resolve", "below"),
-			told("terminal", "close", "%3"),
+			told("terminal", "open", "--command", "make", "--focus"),
+			told("terminal", "open"),
+			told("terminal", "status"),
+			told("terminal", "close"),
 		]) {
 			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
 				command,
 			);
 		}
 		expect(() =>
-			tellCommandFrom({
-				verb: "terminal-open",
-				split: "right",
-				focus: false,
-				cwd: "relative",
-			}),
-		).toThrow(/absolute/);
-		expect(() =>
-			tellCommandFrom({ verb: "terminal-open", split: "up", focus: false }),
-		).toThrow(/split/);
+			tellCommandFrom({ verb: "terminal-open", focus: "yes" }),
+		).toThrow(/focus/);
 	});
 
 	it("is in the help", () => {
-		expect(TELL_USAGE).toContain(
-			"terminal open [--split right|below|left|above]",
-		);
-		expect(TELL_USAGE).toContain("terminal resolve <side>");
+		expect(TELL_USAGE).toContain("terminal open [--command <cmd>] [--focus]");
+		expect(TELL_USAGE).toContain("terminal status");
+		expect(TELL_USAGE).not.toContain("terminal resolve");
+		expect(TELL_USAGE).not.toContain("--split");
 	});
 });

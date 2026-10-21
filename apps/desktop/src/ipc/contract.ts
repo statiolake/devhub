@@ -535,41 +535,31 @@ export interface RepositoryStatusWire {
 export interface LayoutPreviewWire {
 	readonly sidebarWidth?: number | null;
 	readonly splitRatio?: number | null;
-	/** A seam of the selected Workspace's tiling (`PaneSeamWire.path`). */
-	readonly pane?: { readonly path: string; readonly ratio: number } | null;
+	/** The divider left of the Agent's terminal, as a share of the width. */
+	readonly terminalShare?: number | null;
 }
 
 /**
- * One seam between two panes of the selected Workspace's tiling, as main laid
- * it out — the strip the window's own page draws a divider in, because it is
- * the one place no child view covers. `extent` is the whole split it divides,
- * which is what a drag's ratio is a ratio *of*. See `model/paneLayout.ts`.
+ * The divider between the content and the Agent's terminal, as main laid it
+ * out — the strip the window's own page draws it in, because it is the one
+ * place no child view covers. `extent` is the whole content area, which is
+ * what a drag's share is a share *of*. See `model/agentTerminal.ts`.
  */
-export interface PaneSeamWire {
-	readonly path: string;
-	readonly axis: "row" | "column";
-	readonly ratio: number;
+export interface TerminalSeamWire {
 	readonly x: number;
 	readonly y: number;
 	readonly width: number;
 	readonly height: number;
+	/** The terminal on the other side of it. */
+	readonly terminalId: string;
+	/** The terminal's share of the content width now. */
+	readonly share: number;
 	readonly extent: {
 		readonly x: number;
 		readonly y: number;
 		readonly width: number;
 		readonly height: number;
 	};
-}
-
-/**
- * A terminal pane's header let go of somewhere: the point, in that pane's own
- * page coordinates. Main knows where the page is in the window and which pane
- * is under the point, so it decides the rest (`AppController.dropPaneHeader`).
- */
-export interface PaneDropWire {
-	readonly terminalId: string;
-	readonly x: number;
-	readonly y: number;
 }
 
 /**
@@ -598,10 +588,10 @@ export interface WorkbenchAreaWire {
 	 */
 	readonly contentWidth: number;
 	/**
-	 * The seams between the selected Workspace's panes, when terminals are
-	 * open beside its content. Absent, or empty, is the content alone.
+	 * The divider left of the Agent's terminal, when one is shown. Absent is
+	 * the content alone.
 	 */
-	readonly seams?: readonly PaneSeamWire[];
+	readonly terminalSeam?: TerminalSeamWire;
 }
 
 /**
@@ -1295,15 +1285,14 @@ export interface TerminalSurfaceBridge {
 }
 
 /**
- * One terminal pane — `pane.html`, one view per terminal opened beside a
- * Workspace's panes, the terminal named by the page's fragment
- * (`pane.html#<id>`).
+ * One Agent's terminal pane — `pane.html`, one view per Agent terminal, the
+ * terminal named by the page's fragment (`pane.html#<id>`).
  *
- * Its header says which tmux session it is, so a person told "the Agent is
- * driving tm-…" can see which pane that is; its body is a terminal surface on
- * that session. It reads the projection for its name and the appearance for
- * its font, like the Agents page, and may ask exactly two things of its own:
- * to be closed, and to be put somewhere else.
+ * Its header says whose terminal it is and which tmux session, so a person
+ * told "I am running the tests in tm-…" can see which pane that is; its body
+ * is a terminal surface on that session. It reads the projection for its
+ * Agent's name and the appearance for its font, like the Agents page, and may
+ * ask exactly one thing of its own: to be closed.
  */
 export interface PaneBridge
 	extends PageBridge,
@@ -1312,8 +1301,6 @@ export interface PaneBridge
 		TerminalSurfaceBridge {
 	/** Close this terminal, and its session with it — the header's ×. */
 	closePaneTerminal(terminalId: string): Promise<void>;
-	/** The header was dragged and let go of; main moves the pane. */
-	dropPaneHeader(drop: PaneDropWire): Promise<void>;
 }
 
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */
@@ -1648,7 +1635,6 @@ export const CHANNELS = {
 	writeClipboard: "devhub:write-clipboard",
 	previewLayout: "devhub:preview-layout",
 	closePaneTerminal: "devhub:close-pane-terminal",
-	dropPaneHeader: "devhub:drop-pane-header",
 	focusSurface: "devhub:focus-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",

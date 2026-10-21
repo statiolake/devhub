@@ -35,11 +35,9 @@
 
 import type { TitleBarMode } from "../../model/config.js";
 import {
-	CONTENT_PANE,
-	layoutRects,
-	type PaneNode,
-	type PlacedSeam,
-} from "../../model/paneLayout.js";
+	placeTerminal,
+	type TerminalPlacement,
+} from "../../model/agentTerminal.js";
 
 /**
  * `--titlebar-height`: the band the traffic lights sit in, either chrome.
@@ -160,7 +158,7 @@ export type KeyboardHalf =
 	| "editor"
 	| "agents"
 	| "sidebar"
-	/** A terminal pane of the selected Workspace's tiling. */
+	/** The Agent's terminal on the right (`model/agentTerminal.ts`). */
 	| { readonly terminal: string };
 
 /** Everything about the arrangement that is not the window's own size. */
@@ -171,11 +169,12 @@ export interface LayoutState {
 	readonly surface: SurfaceArrangement;
 	readonly keyboard: KeyboardHalf;
 	/**
-	 * How the selected Workspace's content area is tiled: the selection's own
-	 * pane — which `surface` says the inside of — and the terminals around it.
-	 * Absent is that pane alone, the whole area. See `model/paneLayout.ts`.
+	 * The Agent terminal drawn right of the selection's own pane — which
+	 * `surface` says the inside of — and the share of the content width it
+	 * takes. Absent is that pane alone, the whole area. See
+	 * `model/agentTerminal.ts`.
 	 */
-	readonly panes?: PaneNode;
+	readonly terminal?: { readonly terminalId: string; readonly share: number };
 }
 
 /** Whether the questions layer covers the window or one workbench. */
@@ -196,9 +195,9 @@ export interface LayoutInput {
 	/** Every view VS Code has attached to a workbench. See below. */
 	readonly attached: readonly AttachedPlacement[];
 	/**
-	 * Every terminal pane that has a view, by id, whichever Workspace it is
-	 * in. Optional so that every caller from before terminal panes still
-	 * reads; absent is none.
+	 * Every Agent terminal that has a view, by id, whichever Agent it is.
+	 * Optional so that every caller from before terminal panes still reads;
+	 * absent is none.
 	 */
 	readonly terminals?: readonly string[];
 }
@@ -263,7 +262,7 @@ export type ChildIdentity =
 			readonly editorKey: string;
 			readonly id: number;
 	  }
-	/** A terminal opened beside the content — see `model/paneLayout.ts`. */
+	/** An Agent's terminal, right of the content — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
@@ -387,54 +386,51 @@ export function sidebarRect(
 }
 
 /**
- * Every pane and seam of the selected Workspace's tiling, in the window.
+ * Where the content and the Agent's terminal go in the window, when one is
+ * shown.
  *
- * The tiling divides the content area (`surfaceRect`) with seams as wide as
- * the workbench/Agent split's own, for the same reason: a seam is the strip
- * no view covers, which is the only place the window's own page can draw a
- * divider the pointer can grab.
+ * The terminal takes its share of the content area (`surfaceRect`) on the
+ * right, with a seam as wide as the workbench/Agent split's own, for the same
+ * reason: a seam is the strip no view covers, which is the only place the
+ * window's own page can draw a divider the pointer can grab. With nothing in
+ * the content area — starting, a workbench being rebuilt, a folder that is
+ * gone — the page's own state fills the whole of it, and the terminal waits
+ * hidden rather than framing an empty room.
  */
-export function paneRects(windowSize: LayoutSize, state: LayoutState) {
-	// With nothing in the content area — starting, a workbench being rebuilt,
-	// a folder that is gone — the page's own state fills the whole of it, and
-	// the terminals wait hidden rather than framing an empty room.
-	return layoutRects(
-		panesDrawn(state) ? (state.panes ?? CONTENT_PANE) : CONTENT_PANE,
+export function terminalPlacement(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): TerminalPlacement | undefined {
+	if (!panesDrawn(state) || state.terminal === undefined) return undefined;
+	return placeTerminal(
 		surfaceRect(windowSize, state),
+		state.terminal.share,
 		SPLIT_DIVIDER,
 	);
 }
 
 /**
- * The selection's own pane: the content area, less whatever the terminals
- * around it take. Everything the selection draws — the workbench, the Agent,
- * the two side by side — is laid inside this, exactly as it used to be laid
- * inside the whole area.
+ * The selection's own pane: the content area, less whatever the terminal
+ * takes. Everything the selection draws — the workbench, the Agent, the two
+ * side by side — is laid inside this, exactly as it used to be laid inside
+ * the whole area.
  */
 export function contentRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
-	if (
-		!panesDrawn(state) ||
-		state.panes === undefined ||
-		state.panes.kind === "content"
-	) {
-		return surfaceRect(windowSize, state);
-	}
-	const content = paneRects(windowSize, state).panes.find(
-		(pane) => pane.leaf.kind === "content",
+	return (
+		terminalPlacement(windowSize, state)?.content ??
+		surfaceRect(windowSize, state)
 	);
-	return content?.rect ?? surfaceRect(windowSize, state);
 }
 
-/** The seams between the panes, for the window's own page to draw. */
-export function paneSeams(
+/** The seam left of the terminal, for the window's own page to draw. */
+export function terminalSeam(
 	windowSize: LayoutSize,
 	state: LayoutState,
-): readonly PlacedSeam[] {
-	if (state.panes === undefined || state.panes.kind === "content") return [];
-	return paneRects(windowSize, state).seams;
+): LayoutRect | undefined {
+	return terminalPlacement(windowSize, state)?.seam;
 }
 
 /** Whether the tiling is drawn: whenever the content area has anything in it. */
@@ -658,13 +654,9 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 		// tiling that is drawn. Anything else falls to what the selection
 		// would have had, rather than to a view nobody can see.
 		const placed =
-			panesDrawn(input.state) &&
 			(input.terminals ?? []).includes(keyboard.terminal) &&
-			paneRects(input.windowSize, input.state).panes.some(
-				(pane) =>
-					pane.leaf.kind === "terminal" &&
-					pane.leaf.terminalId === keyboard.terminal,
-			);
+			input.state.terminal?.terminalId === keyboard.terminal &&
+			terminalPlacement(input.windowSize, input.state) !== undefined;
 		if (placed) return { kind: "terminal", terminalId: keyboard.terminal };
 		const editorKey = onScreenEditor(input);
 		if (editorKey !== undefined && input.state.surface.kind !== "agent") {
@@ -842,26 +834,20 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		rect: agentsRect(windowSize, state),
 		visible: agentsVisible(state),
 	});
-	// Every terminal pane that has a view: the selected Workspace's at its
-	// leaf, and every other one hidden at the content area's size, so that
-	// coming back to its Workspace is a move rather than a reflow. They are
-	// tiles beside the workbench and the Agent, never over them, so where
-	// they sit among those two in the stack is never seen; above both and
-	// below every layer is the one place that is right whatever they are.
-	const placed = new Map<string, LayoutRect>();
-	if (panesDrawn(state)) {
-		for (const pane of paneRects(windowSize, state).panes) {
-			if (pane.leaf.kind === "terminal") {
-				placed.set(pane.leaf.terminalId, pane.rect);
-			}
-		}
-	}
+	// Every Agent terminal that has a view: the one on screen at the right,
+	// and every other one hidden at the content area's size, so that coming
+	// back to its Agent is a move rather than a reflow. It is a tile beside
+	// the workbench and the Agent, never over them, so where it sits among
+	// those two in the stack is never seen; above both and below every layer
+	// is the one place that is right whatever they are.
+	const placement = terminalPlacement(windowSize, state);
 	for (const terminalId of input.terminals ?? []) {
-		const rect = placed.get(terminalId);
+		const shown =
+			placement !== undefined && state.terminal?.terminalId === terminalId;
 		children.push({
 			identity: { kind: "terminal", terminalId },
-			rect: rect ?? surfaceRect(windowSize, state),
-			visible: rect !== undefined,
+			rect: shown ? placement.terminal : surfaceRect(windowSize, state),
+			visible: shown,
 		});
 	}
 	children.push(

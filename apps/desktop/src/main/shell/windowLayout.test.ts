@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	keyboardChild,
+	contentRect,
+	terminalSeam,
 	reconcileEditors,
 	agentsRect,
 	chromeVariables,
@@ -873,30 +875,29 @@ describe("the title bar and the traffic lights", () => {
 	});
 });
 
-describe("terminal panes beside the content", () => {
+describe("the Agent's terminal right of the content", () => {
 	const T1 = "11111111-1111-4111-8111-111111111111";
 	const T2 = "22222222-2222-4222-8222-222222222222";
-	const content = { kind: "content" } as const;
-	const right = {
-		kind: "split",
-		axis: "row",
-		ratio: 0.5,
-		first: content,
-		second: { kind: "terminal", terminalId: T1 },
-	} as const;
+	const right = { terminalId: T1, share: 0.4 } as const;
 
-	it("lays the workbench and the Agent inside the content pane, and the terminal beside it", () => {
+	it("lays the workbench and the Agent inside the content, and the terminal right of it", () => {
 		const split = state({
 			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-			panes: right,
+			terminal: right,
 		});
 		const area = surfaceRect(WINDOW, split);
-		// 1192 wide, less one seam, halved.
-		const contentWidth = Math.round((area.width - 6) * 0.5);
+		// Less one seam, the terminal taking 40% of what is left.
+		const terminalWidth = Math.round((area.width - 6) * 0.4);
+		const contentWidth = area.width - 6 - terminalWidth;
 		const editor = workbenchRect(WINDOW, split);
 		const agents = agentsRect(WINDOW, split);
 		expect(editor.x).toBe(area.x);
 		expect(agents.x + agents.width).toBe(area.x + contentWidth);
+		expect(terminalSeam(WINDOW, split)).toEqual({
+			...area,
+			x: area.x + contentWidth,
+			width: 6,
+		});
 		const children = windowLayout(input({ state: split, terminals: [T1, T2] }));
 		const terminal = children.find(
 			(child) =>
@@ -907,11 +908,11 @@ describe("terminal panes beside the content", () => {
 			rect: {
 				x: area.x + contentWidth + 6,
 				y: area.y,
-				width: area.width - contentWidth - 6,
+				width: terminalWidth,
 				height: area.height,
 			},
 		});
-		// A terminal of another Workspace is sized and hidden.
+		// Another Agent's terminal is sized and hidden, its session running.
 		expect(
 			children.find(
 				(child) =>
@@ -921,14 +922,13 @@ describe("terminal panes beside the content", () => {
 		).toBe(false);
 	});
 
-	it("is the whole area for the content when there are no terminals", () => {
-		expect(workbenchRect(WINDOW, state({ panes: content }))).toEqual(
-			workbenchRect(WINDOW, state()),
-		);
+	it("is the whole area for the content when no terminal is shown", () => {
+		expect(terminalSeam(WINDOW, state())).toBeUndefined();
+		expect(contentRect(WINDOW, state())).toEqual(surfaceRect(WINDOW, state()));
 	});
 
-	it("gives the keyboard to a terminal on screen, and to the content otherwise", () => {
-		const withTerminal = state({ panes: right, keyboard: { terminal: T1 } });
+	it("gives the keyboard to the terminal on screen, and to the content otherwise", () => {
+		const withTerminal = state({ terminal: right, keyboard: { terminal: T1 } });
 		expect(
 			keyboardChild(input({ state: withTerminal, terminals: [T1] })),
 		).toEqual({ kind: "terminal", terminalId: T1 });
@@ -937,7 +937,7 @@ describe("terminal panes beside the content", () => {
 			kind: "editor",
 			editorKey: "/a",
 		});
-		// Nothing in the content area at all: the tiling is not drawn.
+		// Nothing in the content area at all: the terminal is not drawn.
 		expect(
 			keyboardChild(
 				input({
@@ -948,9 +948,11 @@ describe("terminal panes beside the content", () => {
 		).toEqual({ kind: "shell" });
 	});
 
-	it("stacks the terminals over the content's views and under every layer", () => {
+	it("stacks the terminal over the content's views and under every layer", () => {
 		const order = kinds(
-			windowLayout(input({ state: state({ panes: right }), terminals: [T1] })),
+			windowLayout(
+				input({ state: state({ terminal: right }), terminals: [T1] }),
+			),
 		);
 		expect(order.indexOf("terminal")).toBeGreaterThan(order.indexOf("agents"));
 		expect(order.indexOf("terminal")).toBeLessThan(order.indexOf("toasts"));

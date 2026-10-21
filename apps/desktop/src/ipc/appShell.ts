@@ -192,6 +192,23 @@ export interface AgentWire {
 	 */
 	readonly automaticActions: readonly string[];
 	readonly workspaceId: string;
+	/**
+	 * Its own terminal, while its session is up — drawn right of the content
+	 * when it is the view's Agent and `open`. See `model/agentTerminal.ts`.
+	 */
+	readonly terminal?: AgentTerminalWire;
+	/** The terminal pane's share of the content width, when not the default. */
+	readonly terminalShare?: number;
+}
+
+/** One Agent's own terminal. */
+export interface AgentTerminalWire {
+	/** What its session is named by (`tm-<id>`): the Agent's id, as a rule. */
+	readonly id: string;
+	/** Its tmux session, which is what an Agent or a person drives it by. */
+	readonly session: string;
+	/** Shown when its Agent is the view's; hidden is still running. */
+	readonly open: boolean;
 }
 /**
  * No colour scheme here: the shell chrome takes its colours from the active
@@ -442,7 +459,13 @@ export type AppErrorCodeWire =
 	 * GUI Agents report. Said once; DevHub does not ask again until it is
 	 * started again.
 	 */
-	| "usage_unreadable";
+	| "usage_unreadable"
+	/**
+	 * `Cmd+Q V` on a Workspace with no Agent: a terminal is an Agent's own
+	 * (`model/agentTerminal.ts`), so there is none to show. Said, so the chord
+	 * is not a key that silently did nothing.
+	 */
+	| "terminal_needs_agent";
 
 /**
  * The sentence each failure is shown as.
@@ -521,6 +544,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
 	usage_unreadable:
 		"DevHub could not read a CLI's usage limits, and will not try again until it is restarted.",
+	terminal_needs_agent:
+		"There is no Agent here to open a terminal for: a terminal belongs to an Agent. Start one with Cmd+Q C, then Cmd+Q V.",
 };
 export type AppErrorModuleWire =
 	| "app"
@@ -642,16 +667,11 @@ export type AppIntentWire =
 			readonly order: readonly string[];
 	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
-	/**
-	 * A seam of one Workspace's tiling, dragged to `ratio` — the share of its
-	 * split that the pane before it takes. `path` names the split (see
-	 * `model/paneLayout.ts`).
-	 */
+	/** The divider left of an Agent's terminal, dragged to `share`. */
 	| {
-			readonly type: "resize_pane";
-			readonly workspaceId: string;
-			readonly path: string;
-			readonly ratio: number;
+			readonly type: "resize_agent_terminal";
+			readonly agentId: string;
+			readonly share: number;
 	  }
 	/**
 	 * Where one presentation's Smart Buttons were dragged to: anchored to an
@@ -780,8 +800,13 @@ export interface AppSnapshotWire {
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
 	/**
-	 * The terminal pane that has the keyboard, when one has it rather than the
-	 * selection's own pane. One of the selected Workspace's `paneTerminals`.
+	 * The Agent terminal drawn right of the content, by its id: the view's
+	 * Agent's, when it is open. See `model/agentTerminal.ts`.
+	 */
+	readonly visibleTerminal?: string;
+	/**
+	 * The terminal pane's id when it has the keyboard rather than the
+	 * selection's own pane. Always `visibleTerminal`.
 	 */
 	readonly paneFocus?: string;
 	/**
@@ -1124,39 +1149,9 @@ export interface WorkspaceWire {
 	 * to say — idle and read — which the row draws as nothing at all.
 	 */
 	readonly terminals?: TerminalActivityWire;
-	/** How its content area is tiled; absent is the content pane alone. */
-	readonly paneTree?: PaneNodeWire;
-	/** The terminals in `paneTree`, in the order they were opened. */
-	readonly paneTerminals?: readonly PaneTerminalWire[];
 }
 
 /** See `WorkspaceWire.terminals` and `model/terminalActivity.ts`. */
-/**
- * A Workspace's content area, tiled: the selection's own pane (`content`)
- * and the terminals around it. See `model/paneLayout.ts`.
- */
-export type PaneNodeWire =
-	| { readonly kind: "content" }
-	| { readonly kind: "terminal"; readonly terminalId: string }
-	| {
-			readonly kind: "split";
-			readonly axis: "row" | "column";
-			readonly ratio: number;
-			readonly first: PaneNodeWire;
-			readonly second: PaneNodeWire;
-	  };
-
-/** One terminal opened beside a Workspace's panes. */
-export interface PaneTerminalWire {
-	readonly id: string;
-	/** What its header says. */
-	readonly name: string;
-	/** Its tmux session, which is what an Agent or a person drives it by. */
-	readonly session: string;
-	readonly cwd?: string;
-	readonly command?: string;
-}
-
 export interface TerminalActivityWire {
 	readonly status: AgentStatusWire;
 	readonly unread?: AgentStatusWire;
