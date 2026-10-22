@@ -149,25 +149,12 @@ describe("the pages, and what each of them may say", () => {
 		expect(read("./bridge.ts")).not.toContain(member);
 	});
 
-	/**
-	 * A terminal pane may close its own terminal, and nothing else may close
-	 * one from a page: main checks the asking contents is that terminal's
-	 * pane, and no other preload can even spell the ask. Moving a pane is
-	 * gone with the pane tree: there is one terminal, on the right.
-	 */
-	it("gives closing a terminal pane to the pane page and to no other", () => {
+	/** No page closes a terminal: that is main's (`Cmd+Q X`, the CLI, exit). */
+	it("gives no page a way to close a terminal pane", () => {
 		for (const page of PAGES) {
-			expect(read(`./${page}.ts`), page).not.toContain("dropPaneHeader");
+			expect(read(`./${page}.ts`), page).not.toContain("closePaneTerminal");
 		}
-		for (const member of ["closePaneTerminal"]) {
-			for (const page of PAGES) {
-				expect(
-					read(`./${page}.ts`).includes(member),
-					`${page}: ${member}`,
-				).toBe(page === "pane");
-			}
-			expect(read("./bridge.ts")).not.toContain(member);
-		}
+		expect(read("./bridge.ts")).not.toContain("closePaneTerminal");
 	});
 
 	it("reaches each page's bridge from that page's entry and from no other", () => {

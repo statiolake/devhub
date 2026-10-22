@@ -643,14 +643,6 @@ export class ShellWindow {
 		return all;
 	}
 
-	/** The terminal a pane page belongs to, from its contents. */
-	terminalOfContents(contents: Electron.WebContents): string | undefined {
-		for (const [id, view] of this.terminalViews) {
-			if (view.contents() === contents) return id;
-		}
-		return undefined;
-	}
-
 	/** Register the one reader of "a pane took the keyboard by itself". */
 	onContentFocused(changed: (pane: ContentFocus) => void): void {
 		this.contentFocused = changed;

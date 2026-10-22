@@ -1,6 +1,6 @@
 /**
- * One Agent's terminal pane: a header that says whose terminal this is and
- * which tmux session, and a terminal surface on that session.
+ * One Agent's terminal pane: a terminal surface on that terminal's tmux
+ * session, filling the view. No header, no close button, no focus mark.
  *
  * # Where this view is
  *
@@ -12,17 +12,15 @@
  *
  * # Its contract with main
  *
- * - **reads**: the snapshot (its Agent's name, this terminal's session, and
- *   whether it has the keyboard), the appearance (the terminal's font and
- *   theme), the palette.
+ * - **reads**: the snapshot (its Agent's name, and that its terminal still
+ *   exists), the appearance (the terminal's font and theme), the palette.
  * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`.
- * - **asks**: the terminal channels, and `closePaneTerminal` (the ×).
+ * - **asks**: the terminal channels only. Closing is main's: `Cmd+Q X`, the
+ *   shell exiting, `devhub --tell terminal close`.
  * - **draws no failure it raised**: what goes wrong here is handed to main.
  *
- * The header names the session the way tmux does — `tm-<id>` — because that
- * is what an Agent driving it reports to the person ("I am running the tests
- * in tm-…"), and what `tmux -S … -t` takes. A person who wants a second shell
- * splits inside it with tmux's own keys; DevHub draws one terminal pane.
+ * A person who wants a second shell splits inside it with tmux's own keys;
+ * DevHub draws one terminal pane.
  */
 
 import { useMemo } from "react";
@@ -54,27 +52,7 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   if (!found) return null;
   const name = `${found.agent.displayName}'s terminal`;
   return (
-    <div
-      className="app-shell pane-page"
-      data-focused={state.snapshot.paneFocus === terminalId ? "" : undefined}
-    >
-      <div
-        className="pane-header"
-        title={`tmux session ${found.terminal.session}. Split it with tmux's own keys.`}
-      >
-        <span className="pane-name">{name}</span>
-        <span className="pane-session">{found.terminal.session}</span>
-        <button
-          type="button"
-          className="pane-close"
-          aria-label={`Close ${name}`}
-          onClick={() => {
-            void bridge.closePaneTerminal(terminalId).catch(reportFailure);
-          }}
-        >
-          ×
-        </button>
-      </div>
+    <div className="app-shell pane-page">
       <div className="pane-body">
         <TerminalSurface
           surfaceKey={paneTerminalSurfaceKey(terminalId)}

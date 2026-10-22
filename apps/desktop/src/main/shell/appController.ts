@@ -1929,7 +1929,7 @@ export class AppController {
 		return true;
 	}
 
-	/** `Cmd+Q X` in the terminal, and the pane's ×: by the terminal's id. */
+	/** `Cmd+Q X` in the terminal: by the terminal's id. */
 	private async closePaneTerminal(terminalId: string): Promise<void> {
 		const terminal = this.coordinator.model.agentTerminalById(terminalId);
 		if (terminal) await this.closeAgentTerminal(terminal.agentId);
@@ -8195,18 +8195,6 @@ export class AppController {
 						: clampTerminalShare(share);
 			}
 			this.publishLayoutState();
-		});
-		// A terminal pane's ×, from that pane's own page. Only the page of the
-		// terminal it names may ask: a page closing another pane's terminal is
-		// a page reaching past its own view.
-		handle(CHANNELS.closePaneTerminal, async (event, terminalId: unknown) => {
-			if (
-				typeof terminalId !== "string" ||
-				shellWindow().terminalOfContents(event.sender) !== terminalId
-			) {
-				throw new Error("a terminal pane may close only its own terminal");
-			}
-			await this.closePaneTerminal(terminalId);
 		});
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's

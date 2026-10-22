@@ -25,8 +25,8 @@
  *   position — the width beside a full Agent, the height under a split's —
  *   is remembered for the next time it is shown that way.
  *
- * The pane ends when its session does — `Cmd+Q X` with the keyboard in it, the
- * pane's ×, `devhub --tell terminal close`, its shell exiting, or its Agent
+ * The pane ends when its session does — `Cmd+Q X` with the keyboard in it,
+ * `devhub --tell terminal close`, its shell exiting, or its Agent
  * being stopped.
  *
  * Everything here is pure: what the model keeps, the rectangles the window
@@ -65,8 +65,8 @@ export interface AgentTerminal<AgentKey extends string = string> {
 
 /**
  * The tmux session an Agent's terminal is, by its terminal id: `tm-<id>`, the
- * way an Agent's own is `ag-<id>`. Said here because the pane's header names
- * it and the tmux runtime creates it.
+ * way an Agent's own is `ag-<id>`. Said here because the tmux runtime creates
+ * it and an Agent reports it to the person.
  */
 export function agentTerminalSessionName(terminalId: string): string {
   return `tm-${terminalId}`;

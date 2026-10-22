@@ -1295,20 +1295,16 @@ export interface TerminalSurfaceBridge {
  * One Agent's terminal pane — `pane.html`, one view per Agent terminal, the
  * terminal named by the page's fragment (`pane.html#<id>`).
  *
- * Its header says whose terminal it is and which tmux session, so a person
- * told "I am running the tests in tm-…" can see which pane that is; its body
- * is a terminal surface on that session. It reads the projection for its
- * Agent's name and the appearance for its font, like the Agents page, and may
- * ask exactly one thing of its own: to be closed.
+ * The page is a terminal surface on that session and nothing else: no header,
+ * no buttons. It reads the projection for its Agent's name and the appearance
+ * for its font, like the Agents page, and asks nothing of its own; closing is
+ * main's (`Cmd+Q X`, the shell exiting, `--tell terminal close`).
  */
 export interface PaneBridge
 	extends PageBridge,
 		ProjectionBridge,
 		AppearanceBridge,
-		TerminalSurfaceBridge {
-	/** Close this terminal, and its session with it — the header's ×. */
-	closePaneTerminal(terminalId: string): Promise<void>;
-}
+		TerminalSurfaceBridge {}
 
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */
 export interface ToastsBridge extends PageBridge {
@@ -1641,7 +1637,6 @@ export const CHANNELS = {
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
 	previewLayout: "devhub:preview-layout",
-	closePaneTerminal: "devhub:close-pane-terminal",
 	focusSurface: "devhub:focus-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",

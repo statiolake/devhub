@@ -218,8 +218,8 @@ handle:
                  "width": 160, "height": 48, "command": "zsh", "active": true, ... } ]
 
 \`target\` is the active pane (the one the person sees typed into). Tell the
-person which session it is (\`tm-...\`); the pane's header in DevHub shows the
-same name.
+person which session it is (\`tm-...\`); the pane itself shows no title, so
+that name is how they find it (\`terminal show\`).
 
 Drive it with plain tmux, always through the handle's own \`prefix\` (that
 tmux and \`-S\` socket — not your default tmux) and \`-t <target>\`:
