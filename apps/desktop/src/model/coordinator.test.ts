@@ -1512,10 +1512,36 @@ describe("restarting an Agent's session", () => {
     ]);
   });
 
-  it("is refused for a terminal Agent, before anything is asked", () => {
+  // A terminal Agent's CLI is started again in its own pane, on the session
+  // it is in: the same act, so the same effect and the same question.
+  it("restarts an idle terminal Agent at once, as it does a GUI one", () => {
+    const { driver, asked } = restarting("tui", "idle");
+    expect(asked()).toMatchObject({ kind: "deferred" });
+    const effects = driver.drainEffects();
+    expect(effects).toMatchObject([{ kind: "restart_agent", agentId: AG_A }]);
+    const restart = effects[0]!;
+    if (restart.kind !== "restart_agent") throw new Error("unexpected");
+    driver.accept({
+      type: "agent_restart_completed",
+      token: restart.token,
+      agentId: AG_A,
+    });
+    expect(driver.coordinator.model.agent(AG_A)?.presentation).toBe("tui");
+    expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
+      "running",
+    );
+  });
+
+  it("asks first when a terminal Agent is working, exactly as for a GUI one", () => {
     const { driver, asked } = restarting("tui", "working");
-    expect(errorCode(asked)).toBe("invalid_intent");
-    expect(driver.drainEffects()).toEqual([]);
+    asked();
+    const effects = driver.drainEffects();
+    expect(effects).toMatchObject([
+      {
+        kind: "generate_confirmation_id",
+        purpose: { kind: "restart_agent", agentId: AG_A },
+      },
+    ]);
   });
 
   // The owner's case: the CLI said it was signed out, the person signed in

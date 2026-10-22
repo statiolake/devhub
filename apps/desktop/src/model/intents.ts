@@ -427,15 +427,16 @@ export type UserIntent =
       readonly confirmationId: ConfirmationId;
     }
   /**
-   * Stop a GUI Agent's CLI and start it again on the same session (Restart
+   * Stop an Agent's CLI and start it again on the same session (Restart
    * session): the same Agent, pane and conversation, with a CLI that has
    * connected afresh to its MCP servers, read its configuration and plugins
-   * again, and is whatever version is installed now.
+   * again, and is whatever version is installed now. A terminal Agent's CLI
+   * is started again in the same tmux pane (`respawn-pane -k`), resuming the
+   * session it was in — Claude's `--resume <id>`, Codex's `resume <id>`.
    *
    * Asked about first when the Agent is not idle, exactly as a stop is: the
    * CLI is stopped where it stands, and whatever it is in the middle of stops
-   * with it (`confirm_restart_agent`). A terminal Agent has no restart: its
-   * CLI is the terminal's own process, not one DevHub starts.
+   * with it (`confirm_restart_agent`). Who can be restarted is `agentRestart`.
    */
   | { readonly type: "restart_agent"; readonly agentId: AgentId }
   | {

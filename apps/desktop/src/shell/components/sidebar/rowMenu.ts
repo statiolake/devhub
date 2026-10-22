@@ -109,9 +109,10 @@ export function agentMenuItems(
     });
   }
   // Offered where the coordinator would take it (`agentRestart`): a GUI
-  // Agent's CLI is DevHub's to start again, a terminal Agent's is the
-  // terminal's own process, and a conversation DevHub cannot follow could
-  // not follow a CLI started again either.
+  // Agent's CLI is started again under its host, a terminal Claude's or
+  // Codex's in its own tmux pane on the session it is in; a CLI with no
+  // sessions to resume has nothing to restart, and a conversation DevHub
+  // cannot follow could not follow a CLI started again either.
   if (
     agent.controlState.kind === "running" &&
     agentRestart(agent).kind === "available"

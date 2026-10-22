@@ -21,6 +21,8 @@
  *   id the model has and the list does not is an Agent that ended. That is the
  *   only signal, so there is no second answer to disagree with it.
  * - **Terminate** kills that exact session by the runtime's exact-record rule.
+ * - **Respawn** runs the Agent's command again in that session's own pane, so
+ *   a terminal Agent's CLI is restarted without its session ever ending.
  *
  * What was dropped with Herdr, deliberately: the provider's own status
  * detection (restored in `detect/`, ported from herdr under Apache-2.0), the
@@ -104,6 +106,34 @@ export class AgentSessions {
 		try {
 			const runtime = await this.#runtimeFor(spec.machine);
 			await runtime.launchAgent(
+				{
+					machine: spec.machine,
+					agentId: spec.agentId,
+					workspaceId: spec.workspaceId,
+					root: spec.root,
+				},
+				spec.command,
+				cancel,
+			);
+		} finally {
+			this.#launching.delete(spec.agentId);
+		}
+	}
+
+	/**
+	 * Start an Agent's command again in the pane it runs in — a terminal
+	 * Agent's Restart Session. The session is kept (`respawnAgent`), so the
+	 * Agent stays listed throughout; it counts as launching meanwhile all the
+	 * same, so a round that reads the socket mid-way cannot call it ended.
+	 */
+	async respawn(
+		spec: AgentLaunchSpec,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		this.#launching.add(spec.agentId);
+		try {
+			const runtime = await this.#runtimeFor(spec.machine);
+			await runtime.respawnAgent(
 				{
 					machine: spec.machine,
 					agentId: spec.agentId,

@@ -1363,22 +1363,23 @@ with; the conversation's session is the one Continue in terminal resumes.
 
 ## Restarting the session
 
-**Restart Session** stops a GUI Agent's CLI and starts it again on the same
+**Restart Session** stops an Agent's CLI and starts it again on the same
 session, in the same Agent: the pane, the transcript and the Agent's name
 stay. It is for when the CLI has to start afresh to see a change — a
 configuration or plugin that changed, a CLI that was updated. (One MCP server
 is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
 
 - It is in the Agent row's menu in the Sidebar, under `Cmd+Q Shift+R`
-  (`restart_agent`), and typed as `/restart` in the composer, which is
-  DevHub's own command like `/resume`, offered for Claude and Codex alike.
-- It goes the way a rewind and `/resume` do: the host stops the CLI and starts
-  it again, with a mark between the two in the journal
+  (`restart_agent`), and — for a GUI Agent — typed as `/restart` in the
+  composer, which is DevHub's own command like `/resume`, offered for Claude
+  and Codex alike.
+- For a GUI Agent it goes the way a rewind and `/resume` do: the host stops
+  the CLI and starts it again, with a mark between the two in the journal
   (`{"type":"devhub_restart"}`), so a replay draws the same. Claude is started
   with `--resume <session id>` (a CLI that has named no session yet starts a
   new one); Codex's app-server is started again and resumes the same thread in
   its handshake (`thread/resume`), which draws nothing a second time.
-- The transcript says _Session restarted_ where it happened, as one quiet
+- A GUI Agent's transcript says _Session restarted_ where it happened, as one quiet
   information line. Nothing the stopped CLI had going goes on: a call still
   running is marked interrupted, a question it asked closes, and its subagents
   and background tasks end with it (_Unknown_). A message written to it and
@@ -1388,6 +1389,21 @@ is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
   to start: after signing in, **Try again** on the pane's failure sheet (or
   Restart Session) starts the CLI again, and the new CLI's start lifts the
   stop. The same session goes on.
+- A **terminal Agent** (Claude or Codex in its tmux pane) is restarted too,
+  by the same command, the same row menu item and the same chord. Its pane's
+  process is replaced in place (`tmux respawn-pane -k` on its `ag-<id>`
+  session), so the Agent's row, its session, its pane and the view attached to
+  it stay, and the round never sees the Agent end. The new CLI is the
+  profile's command, arguments and variables as a launch runs them, resuming
+  the session the CLI is in now — read from the pane's own processes, as
+  Continue in GUI reads it: Claude with `--resume <session id>`, Codex with
+  `resume <thread id>`, in place of any session the profile's arguments or its
+  first launch picked. A CLI DevHub cannot tell the session of (Codex before
+  its first turn, a Claude too old to keep its record, a pane with no CLI left
+  in it) is not restarted: the restart is refused with that reason, and
+  nothing is killed — it never starts a new conversation in its place. The
+  Agent's own terminal (`tm-<id>`, the pane beside it) is a separate session
+  and is untouched.
 - When the Agent is not idle it asks first, on the same sheet and by the same
   rule as Stop and Continue (`interruptsNothing`); an idle Agent, and one
   whose CLI stopped itself, is restarted at once.
@@ -1396,9 +1412,8 @@ is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
   answered a second time (main takes a confirmation once).
 - Where it cannot be taken it is not offered, and asked for anyway (the
   chord, `/restart`) it is refused with why — one rule, `agentRestart`:
-  - A terminal Agent: its CLI is the terminal's own process, which DevHub's
-    host does not start. Continue it in the GUI to restart it there, or stop
-    it and resume its session in a new one.
+  - A terminal Agent whose CLI has no sessions DevHub can resume (a Cursor
+    or custom profile): there is no session to start it again on.
   - The host lost: the host is what starts the CLI again. DevHub attaches
     again every round.
   - A protocol mismatch, or DevHub failing on what it read: DevHub stopped

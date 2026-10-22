@@ -57,6 +57,7 @@ function agent(overrides: Partial<AgentSnapshot> = {}): AgentSnapshot {
     ordinal: 0,
     displayName: "Codex",
     profileId: "p",
+    profileKind: "codex",
     presentation: "gui",
     status: "idle",
     runtimeHealth: "healthy",
@@ -154,9 +155,29 @@ describe("what a right-click on an Agent offers", () => {
     ).not.toContain("Mark as Unread");
   });
 
+  it("offers Restart Session on a terminal Claude or Codex Agent too", () => {
+    for (const profileKind of ["claude", "codex"] as const) {
+      expect(
+        labels(
+          agentMenuItems(
+            agent({ presentation: "tui", profileKind }),
+            none,
+            none,
+          ),
+        ),
+      ).toContain("Restart Session");
+    }
+  });
+
   it("leaves out Restart Session where the coordinator would refuse it", () => {
     expect(
-      labels(agentMenuItems(agent({ presentation: "tui" }), none, none)),
+      labels(
+        agentMenuItems(
+          agent({ presentation: "tui", profileKind: "custom" }),
+          none,
+          none,
+        ),
+      ),
     ).not.toContain("Restart Session");
   });
 

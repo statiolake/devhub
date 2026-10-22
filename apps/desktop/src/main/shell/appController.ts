@@ -4447,6 +4447,10 @@ export class AppController {
 				"a restart was dispatched before the Agent adapter was wired",
 			);
 		}
+		if (this.coordinator.model.agent(agentId)?.presentation === "tui") {
+			await this.restartTerminalAgent(token, agentId, wiring);
+			return;
+		}
 		try {
 			await (await wiring.conversations.of(agentId)).restart();
 		} catch (error: unknown) {
@@ -4461,6 +4465,39 @@ export class AppController {
 			if (failure === undefined) throw error;
 			this.publishError(failure);
 			this.accept({ type: "operation_failed", token, failure });
+			return;
+		}
+		this.accept({ type: "agent_restart_completed", token, agentId });
+	}
+
+	/**
+	 * Start a terminal Agent's CLI again in its own pane, on the session it is
+	 * in (`AgentWiring.restartTerminal`): done once tmux has respawned the
+	 * pane. A session that cannot be told is the conversation's own refusal,
+	 * said as it is; a pane tmux would not respawn is the port's, said the way
+	 * a launch's is.
+	 */
+	private async restartTerminalAgent(
+		token: OperationToken,
+		agentId: ReturnType<typeof parseAgentId>,
+		wiring: AgentWiring,
+	): Promise<void> {
+		try {
+			await wiring.restartTerminal(agentId);
+		} catch (error: unknown) {
+			if (error instanceof NamedFailure) {
+				this.publishError(error.wire);
+				this.accept({ type: "operation_failed", token, failure: error.wire });
+				return;
+			}
+			const refusal = portRefusal(error);
+			const detail =
+				refusal.detail ??
+				`DevHub could not start the CLI again: ${failureText(error)}`;
+			this.failOperation(
+				token,
+				agentSubject(agentId, { code: refusal.code, detail }),
+			);
 			return;
 		}
 		this.accept({ type: "agent_restart_completed", token, agentId });

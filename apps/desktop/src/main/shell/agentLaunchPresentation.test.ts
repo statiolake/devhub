@@ -30,6 +30,15 @@ import {
 	RESUME_OFF,
 } from "../agent/conversation/limitResumeTestKit.js";
 import { wireAgents } from "./agentWiring.js";
+import { SessionNotResumable } from "../agent/conversation/failures.js";
+import { terminalSession } from "../agent/conversation/resume.js";
+
+// Which session a terminal Agent is in is read from its pane's processes
+// (`resume.test.ts` covers that); a restart only asks.
+vi.mock(import("../agent/conversation/resume.js"), async (original) => ({
+	...(await original()),
+	terminalSession: vi.fn(),
+}));
 
 const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
 const AGENT = agentId("550e8400-e29b-41d4-a716-4466554400d0");
@@ -44,10 +53,16 @@ function wired() {
 		),
 	);
 	const launchAgent = vi.fn(() => Promise.resolve());
+	const respawnAgent = vi.fn(() => Promise.resolve());
+	const agentPanePid = vi.fn(() => Promise.resolve(4242));
 	const makeDirectory = vi.fn(() => Promise.resolve());
-	wireAgents({
+	const wiring = wireAgents({
 		runtimeFor: () =>
-			Promise.resolve({ launchAgent } as unknown as TmuxTerminalRuntime),
+			Promise.resolve({
+				launchAgent,
+				respawnAgent,
+				agentPanePid,
+			} as unknown as TmuxTerminalRuntime),
 		model: () => model,
 		machineOf: () => "local",
 		machineRuntime: () =>
@@ -66,7 +81,7 @@ function wired() {
 	});
 	const adapter = agents();
 	if (!adapter) throw new Error("the Agent adapter was not registered");
-	return { adapter, launchAgent, makeDirectory };
+	return { adapter, wiring, model, launchAgent, respawnAgent, makeDirectory };
 }
 
 function profile(kind: AgentProfileKind): AgentProfile {
@@ -183,4 +198,80 @@ describe("launching a terminal Agent", () => {
 			expect(makeDirectory).not.toHaveBeenCalled();
 		},
 	);
+});
+
+describe("restarting a terminal Agent", () => {
+	function terminalAgent(kind: "claude" | "codex", args: readonly string[]) {
+		const setup = wired();
+		setup.model.addAgent(
+			WORKSPACE,
+			AGENT,
+			AgentProfile.create(
+				agentProfileId(kind),
+				kind === "claude" ? "Claude" : "Codex",
+				kind,
+				`/opt/bin/${kind}`,
+				args,
+				new Map([["EXAMPLE", "1"]]),
+			),
+			"tui",
+		);
+		return setup;
+	}
+
+	// The pane is respawned with what a launch of the profile runs, on the
+	// session the CLI is in now — whichever session it was launched on, or
+	// a profile's own `--continue`, gives way to it.
+	it.each([
+		[
+			"claude",
+			["--model", "opus", "--resume", "first"],
+			"S-now",
+			["--model", "opus", "--resume", "S-now"],
+		],
+		[
+			"codex",
+			["--model", "o3", "resume", "first"],
+			"T-now",
+			["--model", "o3", "resume", "T-now"],
+		],
+		["claude", ["--continue"], "S-now", ["--resume", "S-now"]],
+	] as const)(
+		"starts a terminal %s again in its own pane, resuming its session",
+		async (kind, args, session, expected) => {
+			vi.mocked(terminalSession).mockResolvedValueOnce(session);
+			const { wiring, respawnAgent, launchAgent } = terminalAgent(kind, args);
+
+			await wiring.restartTerminal(AGENT);
+
+			expect(vi.mocked(terminalSession)).toHaveBeenLastCalledWith(
+				expect.anything(),
+				expect.objectContaining({ kind }),
+				4242,
+			);
+			expect(respawnAgent).toHaveBeenCalledWith(
+				{
+					machine: "local",
+					agentId: AGENT,
+					workspaceId: WORKSPACE,
+					root: "/srv/api",
+				},
+				{ file: `/opt/bin/${kind}`, args: expected, env: { EXAMPLE: "1" } },
+				expect.anything(),
+			);
+			expect(launchAgent).not.toHaveBeenCalled();
+		},
+	);
+
+	it("is refused, and nothing is killed, when the session cannot be told", async () => {
+		vi.mocked(terminalSession).mockRejectedValueOnce(
+			new SessionNotResumable("no record of it"),
+		);
+		const { wiring, respawnAgent } = terminalAgent("codex", []);
+
+		await expect(wiring.restartTerminal(AGENT)).rejects.toBeInstanceOf(
+			SessionNotResumable,
+		);
+		expect(respawnAgent).not.toHaveBeenCalled();
+	});
 });

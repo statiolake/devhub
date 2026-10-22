@@ -2391,6 +2391,81 @@ export class TmuxTerminalRuntime {
 		}
 	}
 
+	/**
+	 * Start an Agent's command again in its own pane: tmux kills the process
+	 * the pane runs and runs `command` there instead (`respawn-pane -k`), in
+	 * the Agent's folder — what Restart Session is for a terminal Agent.
+	 *
+	 * The session, its window and its pane stay, so every client attached to
+	 * it (the Agent's view) goes on drawing the same pane, the marker tuple is
+	 * untouched, and a reconcile round never sees the Agent gone: the session
+	 * outlives the kill because the pane is never empty. The session must be
+	 * this Agent's, whole marker tuple and all, before anything is killed —
+	 * the same exact-record rule a close uses — and the pane's title is
+	 * blanked again for the reason `createSession` blanks it.
+	 */
+	async respawnAgent(
+		target: AgentTerminalTarget,
+		command: AgentSessionCommand,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			const identity = this.targetIdentity({ kind: "agent", ...target }, []);
+			if ((await this.host.stat(identity.root)) !== "directory") {
+				throw portFailure("root_missing");
+			}
+			if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
+				throw portFailure("conflict");
+			}
+			const listed = (await this.listSessions(socket, cancel, deadline)).find(
+				(session) => session.name === identity.sessionName,
+			);
+			if (!listed || !sessionMatches(listed, identity)) {
+				throw portFailure("conflict");
+			}
+			const output = await this.runTmux(
+				socket,
+				[
+					"respawn-pane",
+					"-k",
+					"-t",
+					identity.sessionName,
+					"-c",
+					identity.root,
+					...envArguments({
+						...this.sessionEnvironment({
+							name: identity.sessionName,
+							root: identity.root,
+							context: identity.context,
+							workspaceId: identity.workspaceId,
+							agentId: identity.agentId,
+						}),
+						...command.env,
+					}),
+					"--",
+					command.file,
+					...command.args,
+					";",
+					"select-pane",
+					"-t",
+					identity.sessionName,
+					"-T",
+					"",
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
 	/** Kill one Agent's session, by the same exact-record rule as any other. */
 	async closeAgent(
 		record: OwnedSessionRecord,

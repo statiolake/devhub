@@ -532,6 +532,7 @@ describe("what Restart Session is for an Agent", () => {
   const gui = (code?: AgentFailureCode) => ({
     displayName: "Claude 1",
     presentation: "gui" as const,
+    profileKind: "claude" as const,
     ...(code === undefined ? {} : { failure: { code } }),
   });
 
@@ -557,14 +558,29 @@ describe("what Restart Session is for an Agent", () => {
     }
   });
 
-  it("is refused for a terminal Agent, whose CLI is the terminal's own", () => {
-    const restart = agentRestart({
-      displayName: "Codex 2",
-      presentation: "tui",
-    });
-    expect(restart).toMatchObject({ kind: "refused" });
-    if (restart.kind === "refused")
-      expect(restart.why).toMatch(/terminal Agent/);
+  it("is available for a terminal Claude or Codex Agent, which resumes its session in its pane", () => {
+    for (const profileKind of ["claude", "codex"] as const) {
+      expect(
+        agentRestart({
+          displayName: "Codex 2",
+          presentation: "tui",
+          profileKind,
+        }),
+      ).toEqual({ kind: "available" });
+    }
+  });
+
+  it("is refused for a terminal Agent whose CLI has no session to resume", () => {
+    for (const profileKind of ["cursor", "custom"] as const) {
+      const restart = agentRestart({
+        displayName: "Shell 1",
+        presentation: "tui",
+        profileKind,
+      });
+      expect(restart).toMatchObject({ kind: "refused" });
+      if (restart.kind === "refused")
+        expect(restart.why).toMatch(/no session DevHub can resume/);
+    }
   });
 });
 

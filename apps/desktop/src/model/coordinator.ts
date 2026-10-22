@@ -164,7 +164,10 @@ export type Effect =
       readonly token: OperationToken;
       readonly agentId: AgentId;
     }
-  /** Start a GUI Agent's CLI again on its session (`restart_agent`). */
+  /**
+   * Start an Agent's CLI again on its session (`restart_agent`): a GUI
+   * Agent's under its host, a terminal Agent's in its own tmux pane.
+   */
   | {
       readonly kind: "restart_agent";
       readonly token: OperationToken;
@@ -1216,7 +1219,12 @@ export class AppCoordinator {
     if (!agent || !this.model.workspaceForAgent(agentId)) {
       throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
-    const restart = agentRestart(agent);
+    const restart = agentRestart({
+      displayName: agent.displayName,
+      presentation: agent.presentation,
+      profileKind: agent.profile.kind,
+      failure: agent.failure,
+    });
     if (restart.kind === "refused") {
       throw domainRefusal(
         DomainErrorCode.InvalidAgentControlTransition,

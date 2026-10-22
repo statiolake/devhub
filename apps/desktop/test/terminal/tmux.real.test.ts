@@ -254,6 +254,28 @@ function published(value: string, path: string): string {
   return `printf '%s' ${value} > "${path}.part" && mv "${path}.part" "${path}"`;
 }
 
+/** The id of a session's pane, as tmux names it (`%3`). */
+function paneId(socket: string, session: string): string {
+  return execFileSync(
+    TMUX as string,
+    [
+      "-f",
+      "/dev/null",
+      "-L",
+      socket,
+      "display-message",
+      "-p",
+      "-t",
+      session,
+      "#{pane_id}",
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+    },
+  ).trim();
+}
+
 function tmuxOutside(socket: string, args: readonly string[]): void {
   execFileSync(TMUX as string, ["-f", "/dev/null", "-L", socket, ...args], {
     stdio: "ignore",
@@ -1029,6 +1051,63 @@ describe.skipIf(TMUX === undefined)(
           agentId: "00000000-0000-4000-8000-0000000000b5",
         }),
       ).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    /**
+     * Restart Session for a terminal Agent: the pane's process is replaced by
+     * the command given, in the same session and pane, with the profile's
+     * variables — and only for the session that is this Agent's.
+     */
+    it("respawns an Agent's command in its own pane, keeping the session", async () => {
+      const test = fixture("agent-respawn");
+      const workspaceId = "00000000-0000-4000-8000-0000000000a6";
+      const agentId = "00000000-0000-4000-8000-0000000000b6";
+      const pidFile = join(test.home, "pid");
+      const root = realpathSync(test.home);
+      const target = { machine: "local" as const, agentId, workspaceId, root };
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(target, {
+        file: "/bin/sh",
+        args: ["-c", "exec sleep 30"],
+        env: {},
+      });
+      const record = {
+        kind: "agent" as const,
+        agentId,
+        workspaceId,
+        sessionName: agentSessionName(agentId),
+      };
+      const before = await test.runtime.agentPanePid(record);
+      const paneBefore = paneId(test.socket, record.sessionName);
+
+      await test.runtime.respawnAgent(target, {
+        file: "/bin/sh",
+        args: [
+          "-c",
+          `echo "$$ $AGENT_OWN_VARIABLE" >'${pidFile}'; exec sleep 30`,
+        ],
+        env: { AGENT_OWN_VARIABLE: "again" },
+      });
+
+      const after = await test.runtime.agentPanePid(record);
+      expect(after).not.toBe(before);
+      await expect
+        .poll(() => readFileSync(pidFile, "utf8").trim())
+        .toBe(`${String(after)} again`);
+      expect(paneId(test.socket, record.sessionName)).toBe(paneBefore);
+      expect(
+        (await test.runtime.listAgents()).filter(
+          (one) =>
+            one.record.kind === "agent" && one.record.agentId === agentId,
+        ),
+      ).toHaveLength(1);
+      await expect(
+        test.runtime.respawnAgent(
+          { ...target, workspaceId: "00000000-0000-4000-8000-0000000000a7" },
+          { file: "/bin/sh", args: ["-c", "exec sleep 30"], env: {} },
+        ),
+      ).rejects.toMatchObject({ code: "conflict" });
+      expect(await test.runtime.agentPanePid(record)).toBe(after);
     });
 
     /** An Agent profile's own variables sit beside the origin, never over it. */

@@ -22,9 +22,9 @@ import { devhub } from "./client";
  * It says what failed (the title), the code's own sentence and the detail the
  * raising site carried — the CLI's words and the fix — and offers:
  *
- * - **Try again**, where Restart Session can be taken (`agentRestart`, the one
- *   rule the coordinator refuses by): the same `restart_agent` as the
- *   Sidebar's menu. A CLI that stopped itself has nothing running, so nothing
+ * - **Try again**, for a GUI Agent where Restart Session can be taken
+ *   (`agentRestart`, the one rule the coordinator refuses by): the same
+ *   `restart_agent` as the Sidebar's menu. A CLI that stopped itself has nothing running, so nothing
  *   is asked first (`interruptsNothing`).
  * - The way out the failure has (a terminal to sign in in, or the
  *   conversation carried on in a terminal).
@@ -49,7 +49,10 @@ export function AgentFailure({
   const [dismissed, setDismissed] = useState(false);
   const [trying, setTrying] = useState(false);
 
+  // A terminal Agent's failures are DevHub's with its tmux pane, not its
+  // CLI's: starting the CLI again in the pane is no answer to them.
   const tryAgain =
+    agent.presentation === "gui" &&
     agent.controlState.kind === "running" &&
     agentRestart(agent).kind === "available"
       ? () => {

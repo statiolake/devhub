@@ -59,8 +59,10 @@ import {
 	codexStructuredArgs,
 	listPastSessions,
 	previewPastSession,
+	resumeArgs,
 	resumedSession,
 	terminalSession,
+	withSession,
 	type PastSession,
 	type PreviewLine,
 	type SessionScope,
@@ -132,6 +134,14 @@ export interface AgentWiring {
 	 * saying why, when it cannot be told.
 	 */
 	terminalSession(agentId: AgentId): Promise<string>;
+	/**
+	 * Restart Session for a terminal Claude or Codex Agent: its CLI started
+	 * again in its own tmux pane, on the session it is in now (found as
+	 * `terminalSession` finds it), with the command, arguments and variables
+	 * a launch of its profile runs. Refused, saying why, when the session
+	 * cannot be told — never started on a new conversation instead.
+	 */
+	restartTerminal(agentId: AgentId): Promise<void>;
 }
 
 export interface GuiConversations {
@@ -500,11 +510,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					profile,
 					await options.devhubSkill?.(machine),
 				);
-				const cli: AgentSessionCommand = {
-					file: profile.command,
-					args: [...skilled.args],
-					env: Object.fromEntries(profile.env),
-				};
+				const cli = terminalCommand(profile, skilled.args);
 				// The one place the two presentations differ at launch: a GUI
 				// Agent's session runs its CLI under the host, in structured mode.
 				// Everything else about the session — its markers, its tmux, its
@@ -815,7 +821,58 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		}
 	};
 
-	return { sessions, conversations, terminalSession: terminalSessionOf };
+	const restartTerminal = async (agentId: AgentId): Promise<void> => {
+		const { agent, workspace, machine } = placeOf(agentId);
+		if (agent.presentation !== "tui") {
+			throw new Error(`${agent.displayName} is not a terminal Agent`);
+		}
+		const session = await terminalSessionOf(agentId);
+		const profile = agent.profile;
+		// The launch's own argv with the session it is in now put where a
+		// resumed launch puts one (`withSession`), so a profile's own
+		// `--continue`, or the session it was first launched on, is never a
+		// second session for the CLI to choose between.
+		const skilled = withDevhubSkill(
+			{
+				kind: profile.kind,
+				args: withSession(
+					profile.kind,
+					profile.args,
+					resumeArgs(profile.kind, session),
+				),
+			},
+			await options.devhubSkill?.(machine),
+		);
+		await sessions.respawn({
+			machine,
+			agentId,
+			workspaceId: workspace.id,
+			root: workspace.root,
+			command: terminalCommand(profile, skilled.args),
+		});
+	};
+
+	return {
+		sessions,
+		conversations,
+		terminalSession: terminalSessionOf,
+		restartTerminal,
+	};
+}
+
+/**
+ * What a terminal Agent's pane runs: the profile's program, `args`, and its
+ * own variables — one shape for a launch and a terminal Agent's restart.
+ */
+function terminalCommand(
+	profile: Pick<AgentProfile, "command" | "env">,
+	args: readonly string[],
+): AgentSessionCommand {
+	return {
+		file: profile.command,
+		args: [...args],
+		env: Object.fromEntries(profile.env),
+	};
 }
 
 function adapterFor(

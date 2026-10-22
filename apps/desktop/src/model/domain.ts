@@ -1057,13 +1057,19 @@ export function cliStoppedItself(
  * the Agent pane and the Sidebar offer Try again and Restart Session by it,
  * so what is offered is what would be taken.
  *
- * A restart is the host stopping the CLI and starting it again, with DevHub
- * following the same journal across the two. So it is refused where there is
- * no host of DevHub's (a terminal Agent), where DevHub cannot reach the host
- * now, and where DevHub has stopped reading the journal — it would stop at the
- * same line again, since a replay reads the journal from the start. Every
- * other Agent can be restarted, and a CLI that stopped itself
- * (`cliStoppedItself`) is the case it is most for.
+ * A GUI Agent's restart is the host stopping the CLI and starting it again,
+ * with DevHub following the same journal across the two. A terminal Agent's
+ * is its tmux pane's process replaced (`respawn-pane -k`) by the same CLI
+ * resuming the session it is in — the pane, its session and the Agent's row
+ * stay. So it is refused for a terminal Agent whose CLI has no sessions DevHub
+ * can resume (anything but Claude and Codex), where DevHub cannot reach the
+ * host now, and where DevHub has stopped reading the journal — it would stop
+ * at the same line again, since a replay reads the journal from the start.
+ * Every other Agent can be restarted, and a CLI that stopped itself
+ * (`cliStoppedItself`) is the case it is most for. Which session a terminal
+ * Agent is in is read when it is restarted, from its own processes, and a
+ * restart that cannot tell is refused then, saying why — never started on a
+ * new conversation instead.
  */
 export type AgentRestart =
   | { readonly kind: "available" }
@@ -1072,12 +1078,17 @@ export type AgentRestart =
 export function agentRestart(agent: {
   readonly displayName: string;
   readonly presentation: AgentPresentation;
+  readonly profileKind: AgentProfileKind;
   readonly failure?: { readonly code: AgentFailureCode } | undefined;
 }): AgentRestart {
-  if (agent.presentation !== "gui") {
+  if (
+    agent.presentation !== "gui" &&
+    agent.profileKind !== "claude" &&
+    agent.profileKind !== "codex"
+  ) {
     return {
       kind: "refused",
-      why: `“${agent.displayName}” is a terminal Agent, so it has no session to restart: its CLI runs in the terminal itself. Continue it in the GUI to restart it there.`,
+      why: `“${agent.displayName}” runs a ${agent.profileKind} CLI, which has no session DevHub can resume, so there is no session to restart.`,
     };
   }
   switch (agent.failure?.code) {
