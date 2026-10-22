@@ -8,6 +8,12 @@
 #
 # Idempotent: each step is skipped when its output already exists.
 #   --force       redo every step regardless.
+#   --discard-vscode-changes
+#                 throw away edits in vscode/ that were never exported to
+#                 patches/vscode or patches/vscode-overlay (a copy is kept on
+#                 refs/devhub/vscode-before-reset in vscode/). Without it such
+#                 edits stop the run, naming the files; whatever an earlier
+#                 apply left there is taken off and redone without asking.
 #   --for WHAT    which VS Code build outputs to produce (default: all):
 #                   dev    vscode/out — what `pnpm dev` runs on
 #                   app    vscode/out-vscode-min (+ out-build) — what
@@ -22,10 +28,11 @@ set -euo pipefail
 
 FORCE=0
 OUTPUTS=all
-usage() { echo "usage: $(basename "$0") [--force] [--for dev|app|all|deps]" >&2; exit 2; }
+usage() { echo "usage: $(basename "$0") [--force] [--for dev|app|all|deps] [--discard-vscode-changes]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--force) FORCE=1 ;;
+		--discard-vscode-changes) export DEVHUB_DISCARD_VSCODE_CHANGES=1 ;;
 		--for)
 			[ $# -ge 2 ] || usage
 			OUTPUTS="$2"
@@ -72,6 +79,18 @@ step() { printf '\n==> %s\n' "$1"; }
 # all it takes for those steps to redo exactly what the bump invalidated.
 step "VS Code submodule"
 "$REPO_ROOT/scripts/vscode-submodule.sh" sync
+
+# --- 1b. the patches DevHub cannot avoid ------------------------------------
+# Applied first, before anything slow, so that the one thing that can stop a
+# rebuild — edits in vscode/ nobody exported — stops it within seconds rather
+# than after npm ci. Whatever an earlier run, a pull of new patches or a bump
+# left in vscode/ is taken off and redone without asking; a tree that already
+# is the pinned commit + these patches + this overlay is left untouched.
+# Applying them is scripts/apply-vscode-patches.sh, because the VS Code bump
+# workflow needs the same step on its own to find out whether the patches still
+# apply to a newer tag.
+step "patches/vscode and patches/vscode-overlay"
+"$REPO_ROOT/scripts/apply-vscode-patches.sh"
 
 # --- 2. the Node the VS Code build requires --------------------------------
 # The machine default is whatever the developer runs; VS Code's build refuses
@@ -193,12 +212,9 @@ fi
 # not.
 printf '%s' "$INSTALL_STATE" > "$INSTALL_STAMP"
 
-# --- 3b. the patches DevHub cannot avoid ------------------------------------
-# Applying them is scripts/apply-vscode-patches.sh, because the VS Code bump
-# workflow needs the same step on its own to find out whether the patches still
-# apply to a newer tag. What belongs here and not there is the stamp: it is the
+# --- 3b. what the trees below are built from --------------------------------
+# What belongs here and not in apply-vscode-patches.sh is the stamp: it is the
 # compile below that has to know what its source was.
-step "patches/vscode and patches/vscode-overlay"
 # What the trees below were built from: the submodule commit *and* the patches
 # and the overlay on top of it (`scripts/vscode-submodule.sh source-state`, the
 # one definition dev.sh and package-nightly.py compare against too). All of it
@@ -207,7 +223,6 @@ step "patches/vscode and patches/vscode-overlay"
 # current and skip the compile, leaving DevHub running yesterday's VS Code
 # against today's source.
 SOURCE_STATE="$("$REPO_ROOT/scripts/vscode-submodule.sh" source-state)"
-"$REPO_ROOT/scripts/apply-vscode-patches.sh"
 
 # --- 4. compile ------------------------------------------------------------
 # Two trees can come out of this step, each under its own stamp, because the

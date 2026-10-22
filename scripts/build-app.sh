@@ -89,11 +89,20 @@ ZIP_NAME="DevHub-darwin-arm64-${DATE}-${SHA}.zip"
 printf '\n==> workspace dependencies\n'
 pnpm install --frozen-lockfile
 
+# vscode/ is brought to the pinned commit + patches + overlay by provisioning
+# itself, whatever the previous build or a `git pull` left it at; only edits
+# made in vscode/ and never exported stop it. `--discard-vscode-changes` (ours,
+# passed on to provisioning) throws those away instead.
+#
 # Only the bundled tree the app ships (`--for app`): the packaged app never
 # loads vscode/out, so `npm run compile` is `pnpm dev`'s cost, not ours. Locally
 # the bundle is the fast one (DEVHUB_FAST_VSCODE_BUNDLE, step 4b of
 # provision-vscode.sh); with CI set it is `core-ci`, as the nightly ships.
-scripts/provision-vscode.sh --for app
+PROVISION_ARGS=(--for app)
+for arg in "$@"; do
+	[ "$arg" = "--discard-vscode-changes" ] && PROVISION_ARGS+=("$arg")
+done
+scripts/provision-vscode.sh "${PROVISION_ARGS[@]}"
 
 printf '\n==> DevHub packages\n'
 pnpm run build:packages
@@ -106,6 +115,8 @@ PASS=()
 for arg in "$@"; do
 	if [ "$arg" = "--no-zip" ]; then
 		ZIP_ARGS=()
+	elif [ "$arg" = "--discard-vscode-changes" ]; then
+		: # provisioning's, above
 	else
 		PASS+=("$arg")
 	fi

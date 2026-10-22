@@ -161,9 +161,11 @@ kinds of thing, and each has a rule:
   files upstream has; whole files DevHub adds to the tree (the Vim engine, the
   status bar hover) live as plain files under
   [`patches/vscode-overlay/`](patches/vscode-overlay), at the path they take in
-  `vscode/`. `scripts/apply-vscode-patches.sh` puts both on the submodule;
-  after editing either in `vscode/`, `scripts/vscode-submodule.sh export`
-  writes the change back to the half it belongs to.
+  `vscode/`. `scripts/apply-vscode-patches.sh` puts both on the submodule
+  (resetting what an earlier apply left, and doing nothing when the tree is
+  already current); after editing either in `vscode/`,
+  `scripts/vscode-submodule.sh export` writes the change back to the half it
+  belongs to.
 
 DevHub's own integration ships as a built-in extension,
 [`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench
@@ -467,6 +469,22 @@ what `pnpm dev` runs on), `--for app` bundles `vscode/out-vscode-min` (what the
 packaged app ships), `--for all` (the default, `pnpm run provision`) does both.
 `pnpm build` asks for `app` only; `pnpm dev` warns when `vscode/out` is behind
 the patches and names `scripts/provision-vscode.sh --for dev`.
+
+`vscode/` never needs resetting by hand. Every provision (and so every `pnpm
+build`) brings it to the pinned commit plus the current `patches/vscode/` and
+`patches/vscode-overlay/` itself, from whatever the previous build, a `git
+pull` of new patches or a submodule bump left there: a tree that already is
+that is left untouched (nothing rewritten, so no recompile), anything an earlier
+apply put there is taken off and redone, and ignored build output
+(`node_modules`, `out*`, `.build`) is never touched. The one thing that stops it
+is an edit made in `vscode/` and not exported yet — any file whose contents no
+DevHub apply ever produced. The run then names exactly those files and touches
+nothing: `scripts/vscode-submodule.sh export` writes them back into the patches
+and the overlay, or `pnpm build -- --discard-vscode-changes`
+(`scripts/provision-vscode.sh --discard-vscode-changes`,
+`DEVHUB_DISCARD_VSCODE_CHANGES=1`) throws them away. Every reset keeps the tree
+it replaced as a commit in `vscode/` (`git -C vscode log -g
+refs/devhub/vscode-before-reset`), so even a discard can be undone.
 
 Locally the bundle is the fast one (`DEVHUB_FAST_VSCODE_BUNDLE=1`, the default
 unless `CI` is set): the desktop bundle alone, without `--mangle-privates`, and

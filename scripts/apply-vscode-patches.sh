@@ -28,9 +28,9 @@
 # so a bump learns every patch it broke in one run, not one per run. The run
 # still fails, naming each.
 #
-# The working tree is reset first, so running this twice is the same as running
-# it once. That reset is also why .gitmodules marks the submodule `ignore =
-# dirty`: the checkout is expected to differ from the pinned commit.
+# Running this twice is the same as running it once, and the second run is a
+# no-op (see the end of this file). The checkout is expected to differ from the
+# pinned commit, which is why .gitmodules marks the submodule `ignore = dirty`.
 #
 # It lives in its own script because three callers need exactly this and
 # nothing else around it: scripts/provision-vscode.sh on the way to a compile,
@@ -41,6 +41,10 @@
 # commit of its own inside a container.
 #
 #   apply-vscode-patches.sh               onto the submodule, vscode/
+#   apply-vscode-patches.sh --discard-vscode-changes
+#                                         the same, throwing away edits in
+#                                         vscode/ that were never exported
+#                                         (a copy is kept; see the end)
 #   apply-vscode-patches.sh --into DIR    onto DIR, a git repository holding a
 #                                         pristine copy of the pinned commit
 #                                         whose working tree the caller has
@@ -51,13 +55,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 PATCHES_DIR="$REPO_ROOT/patches/vscode"
 OVERLAY_DIR="$REPO_ROOT/patches/vscode-overlay"
-usage() { echo "usage: $(basename "$0") [--into DIR]" >&2; exit 2; }
+usage() { echo "usage: $(basename "$0") [--into DIR | --discard-vscode-changes]" >&2; exit 2; }
 
 INTO=""
-if [ $# -gt 0 ]; then
-	[ "$1" = "--into" ] && [ $# -eq 2 ] || usage
-	INTO="$2"
-fi
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--into)
+			[ $# -ge 2 ] || usage
+			INTO="$2"
+			shift
+			;;
+		--discard-vscode-changes) export DEVHUB_DISCARD_VSCODE_CHANGES=1 ;;
+		*) usage ;;
+	esac
+	shift
+done
 TREE="${INTO:-$VSCODE_DIR}"
 
 # The overlay's files, relative to it, one per line, in byte order.
@@ -78,21 +90,28 @@ patched_paths() {
 # The two halves must not overlap, and the overlay must add only: checked
 # against the pinned commit before anything is touched.
 check_layout() {
-	local problems="" f patched
-	patched="$(patched_paths)"
+	local problems="" f files both upstream
+	files="$(overlay_files)"
+	[ -n "$files" ] || return 0
+	# Two lookups for the whole overlay, not two per file: this runs on every
+	# build, including the ones with nothing to do.
+	both="$(LC_ALL=C comm -12 <(printf '%s\n' "$files") <(patched_paths))"
+	upstream="$(printf '%s\n' "$files" | tr '\n' '\0' \
+		| xargs -0 git -C "$TREE" ls-tree -r --name-only HEAD -- 2>/dev/null | LC_ALL=C sort -u)"
 	while IFS= read -r f; do
 		[ -n "$f" ] || continue
-		if printf '%s\n' "$patched" | grep -qxF -- "$f"; then
-			problems="$problems
+		problems="$problems
   $f: in patches/vscode-overlay/ and changed by a patch in patches/vscode/"
-		fi
-		if git -C "$TREE" cat-file -e "HEAD:$f" 2>/dev/null; then
-			problems="$problems
+	done <<EOF
+$both
+EOF
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		problems="$problems
   $f: in patches/vscode-overlay/, but upstream has this file too; a change to it
     belongs in a patch, a file of DevHub's own needs a name upstream does not use"
-		fi
 	done <<EOF
-$(overlay_files)
+$upstream
 EOF
 	if [ -n "$problems" ]; then
 		echo "apply-vscode-patches.sh: the overlay and the patches disagree:$problems" >&2
@@ -149,10 +168,31 @@ if [ -n "$INTO" ]; then
 	exit 0
 fi
 
-# The reset refuses, naming the files, when the tree holds edits that are not
-# the changes a previous run made (scripts/vscode-submodule.sh). After the
-# overlay and after each patch the tree is recorded as DevHub's own, so a run
-# that stops halfway still leaves a tree the next run may reset.
-"$REPO_ROOT/scripts/vscode-submodule.sh" reset
-after_each() { "$REPO_ROOT/scripts/vscode-submodule.sh" record; }
+# Onto the submodule, the run brings vscode/ to "the pinned commit + these
+# patches + this overlay" from whatever a previous run, a `git pull` of new
+# patches or a VS Code bump left it at, by itself:
+#
+#   1. `sync` checks the pinned commit out if vscode/ is on another one;
+#   2. `is-applied`: when the tree already is exactly what this run would make,
+#      nothing is touched (no file is rewritten, so no mtime moves) and the
+#      run ends here;
+#   3. `reset` takes the tree back to the commit — but only when every file it
+#      would revert holds what some DevHub apply put there (any earlier version
+#      of the patches, a run cut short). An edit of the developer's own stops
+#      the run, naming the files, before anything is touched: export it
+#      (scripts/vscode-submodule.sh export) or discard it with
+#      --discard-vscode-changes. Ignored files (node_modules, out*, .build)
+#      are never touched;
+#   4. the overlay and the patches go on, and the tree is recorded as DevHub's
+#      own when the run ends, however it ends (a patch that did not apply, a
+#      Ctrl-C), so the next run may reset it.
+SUBMODULE="$REPO_ROOT/scripts/vscode-submodule.sh"
+"$SUBMODULE" sync
+check_layout
+if "$SUBMODULE" is-applied; then
+	echo "vscode/ already has patches/vscode and patches/vscode-overlay on the pinned commit; nothing to apply"
+	exit 0
+fi
+"$SUBMODULE" reset
+trap '"$SUBMODULE" record' EXIT
 apply_all

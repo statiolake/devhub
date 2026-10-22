@@ -59,7 +59,7 @@ class SubmoduleTest(unittest.TestCase):
 
 		self.root = root = self.tmp / "super"
 		(root / "scripts").mkdir(parents=True)
-		for name in ("vscode-submodule.sh", "apply-vscode-patches.sh", "vscode_export.py"):
+		for name in ("vscode-submodule.sh", "apply-vscode-patches.sh", "vscode_export.py", "vscode_state.py"):
 			shutil.copy(SCRIPTS / name, root / "scripts" / name)
 		git(root, "init", "-q", "-b", "main")
 		git(root, "submodule", "add", "-q", f"file://{up}", "vscode")
@@ -181,7 +181,123 @@ class SubmoduleTest(unittest.TestCase):
 		self.apply()
 		self.assertEqual((self.root / "vscode/src/devhub/b.ts").read_text(), "export const b = 1;\n")
 		r = self.apply()
-		self.assertIn("copied patches/vscode-overlay/ (1 files)", r.stdout)
+		self.assertIn("nothing to apply", r.stdout)
+		self.assertIn("'devhub'", (self.root / "vscode/src/a.ts").read_text())
+
+	# --- the build brings vscode/ up to date by itself ---------------------
+
+	def mtimes(self) -> dict[str, int]:
+		vscode = self.root / "vscode"
+		return {p: (vscode / p).stat().st_mtime_ns for p in ("src/a.ts", "src/devhub/b.ts")}
+
+	def test_an_up_to_date_tree_is_not_touched(self):
+		self.apply()
+		before = self.mtimes()
+		r = self.apply()
+		self.assertIn("nothing to apply", r.stdout)
+		self.assertNotIn("applying", r.stdout)
+		self.assertEqual(self.mtimes(), before)
+
+	def test_a_pulled_patch_change_is_reapplied_without_asking(self):
+		self.apply()
+		(self.root / "patches/vscode/0001.patch").write_text(
+			PATCH.format(old="1").replace("'devhub'", "'devhub v2'")
+		)
+		self.write_overlay("src/devhub/b.ts", "export const b = 2;\n")
+		self.write_overlay("src/devhub/new.ts", "export const n = 1;\n")
+		r = self.apply()
+		self.assertIn("copied patches/vscode-overlay/ (2 files)", r.stdout)
+		vscode = self.root / "vscode"
+		self.assertIn("'devhub v2'", (vscode / "src/a.ts").read_text())
+		self.assertEqual((vscode / "src/devhub/b.ts").read_text(), "export const b = 2;\n")
+		# A file the newer overlay drops goes with the reset.
+		(self.overlay / "src/devhub/new.ts").unlink()
+		self.apply()
+		self.assertFalse((vscode / "src/devhub/new.ts").exists())
+
+	def test_ignored_build_output_survives_the_reset(self):
+		vscode = self.root / "vscode"
+		(vscode / ".gitignore").write_text("node_modules\nout/\n")
+		git(vscode, "add", ".gitignore")
+		git(vscode, "commit", "-qm", "ignore")
+		git(self.root, "add", "vscode")
+		self.apply()
+		(vscode / "node_modules/x").mkdir(parents=True)
+		(vscode / "node_modules/x/index.js").write_text("cache\n")
+		(vscode / "out").mkdir()
+		(vscode / "out/main.js").write_text("compiled\n")
+		self.write_patch("1")
+		(self.root / "patches/vscode/0001.patch").write_text(
+			PATCH.format(old="1").replace("'devhub'", "'devhub v2'")
+		)
+		self.apply()
+		self.assertEqual((vscode / "node_modules/x/index.js").read_text(), "cache\n")
+		self.assertEqual((vscode / "out/main.js").read_text(), "compiled\n")
+
+	def test_a_run_cut_short_or_a_partly_reverted_tree_resets(self):
+		self.apply()
+		# Back to the commit for one file by hand; the other still DevHub's.
+		git(self.root / "vscode", "checkout", "--", "src/a.ts")
+		self.write_overlay("src/devhub/b.ts", "export const b = 2;\n")
+		self.apply()
+		self.assertIn("'devhub'", (self.root / "vscode/src/a.ts").read_text())
+
+	def test_a_tree_applied_by_hand_from_committed_patches_resets(self):
+		# No record at all (scripts that kept none, or `git apply` by hand),
+		# but the tree is what the committed patches make of the commit.
+		git(self.root, "add", "patches")
+		git(self.root, "commit", "-qm", "patches 1")
+		vscode = self.root / "vscode"
+		git(vscode, "apply", str(self.root / "patches/vscode/0001.patch"))
+		(vscode / "src/devhub").mkdir()
+		(vscode / "src/devhub/b.ts").write_text("export const b = 1;\n")
+		(self.root / "patches/vscode/0001.patch").write_text(
+			PATCH.format(old="1").replace("'devhub'", "'devhub v2'")
+		)
+		r = self.apply()
+		self.assertIn("'devhub v2'", (vscode / "src/a.ts").read_text())
+
+	def test_an_unexported_edit_stops_and_is_named_alone(self):
+		self.apply()
+		vscode = self.root / "vscode"
+		(vscode / "src/devhub/b.ts").write_text("export const b = 'mine';\n")
+		(vscode / "src/devhub/scratch.ts").write_text("x\n")
+		self.write_overlay("src/devhub/c.ts", "export const c = 3;\n")  # a pulled change
+		r = self.run_script("apply-vscode-patches.sh")
+		self.assertNotEqual(r.returncode, 0)
+		self.assertIn("A src/devhub/b.ts", r.stderr)  # status against the commit
+		self.assertIn("A src/devhub/scratch.ts", r.stderr)
+		self.assertNotIn("src/a.ts", r.stderr)  # DevHub's, not the developer's
+		self.assertIn("vscode-submodule.sh export", r.stderr)
+		self.assertIn("--discard-vscode-changes", r.stderr)
+		self.assertIn("mine", (vscode / "src/devhub/b.ts").read_text())
+		self.assertTrue((vscode / "src/devhub/scratch.ts").exists())
+		self.assertFalse((vscode / "src/devhub/c.ts").exists())
+
+	def test_discarding_keeps_a_copy(self):
+		self.apply()
+		vscode = self.root / "vscode"
+		(vscode / "src/devhub/b.ts").write_text("export const b = 'mine';\n")
+		r = self.run_script("apply-vscode-patches.sh", "--discard-vscode-changes")
+		self.assertEqual(r.returncode, 0, r.stderr)
+		self.assertEqual((vscode / "src/devhub/b.ts").read_text(), "export const b = 1;\n")
+		kept = git(vscode, "show", "refs/devhub/vscode-before-reset:src/devhub/b.ts")
+		self.assertIn("mine", kept)
+
+	def test_a_bump_with_an_unexported_edit_stops_before_moving(self):
+		self.apply()
+		(self.root / "vscode/src/devhub/b.ts").write_text("mine\n")
+		self.bump()
+		r = self.run_script("apply-vscode-patches.sh")
+		self.assertNotEqual(r.returncode, 0)
+		self.assertEqual(self.head(), self.commits[0])
+		self.assertEqual((self.root / "vscode/src/devhub/b.ts").read_text(), "mine\n")
+
+	def test_a_bump_on_a_patched_tree_is_followed_by_apply_alone(self):
+		self.apply()
+		self.bump()
+		r = self.apply()
+		self.assertEqual(self.head(), self.commits[1])
 		self.assertIn("'devhub'", (self.root / "vscode/src/a.ts").read_text())
 
 	def test_an_overlay_file_upstream_has_too_is_refused(self):
