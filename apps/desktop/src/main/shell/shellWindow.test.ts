@@ -7,7 +7,8 @@
  * code makes visible anywhere.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WORKBENCH_RETURNED_COMMAND } from "./workbenchAbsence.js";
 
 class FakeView {
 	visible = false;
@@ -697,6 +698,74 @@ describe("the shell window's workbench views", () => {
 		 * to. There is nothing kept between the asking and the landing, because
 		 * the move and its placement are one call.
 		 */
+		/**
+		 * A workbench coming back on screen is told how long it was away
+		 * (`workbenchAbsence.ts`), and only DevHub's own layout decides that:
+		 * a split keeps the editor on screen, and the window losing focus is
+		 * not the workbench going anywhere.
+		 */
+		describe("and how long it was away", () => {
+			const returns = (view: WorkbenchView): unknown[] =>
+				(
+					view.webContents as unknown as {
+						sent: { channel: string; payload: unknown }[];
+					}
+				).sent
+					.filter((one) => one.channel === "vscode:runAction")
+					.map((one) => one.payload)
+					.filter(
+						(payload) =>
+							(payload as { id?: unknown }).id === WORKBENCH_RETURNED_COMMAND,
+					);
+			let now = 0;
+			beforeEach(() => {
+				now = 1_000_000;
+				vi.spyOn(Date, "now").mockImplementation(() => now);
+			});
+			afterEach(() => {
+				vi.restoreAllMocks();
+			});
+
+			it("is told on coming back after an Agent was shown", () => {
+				show(shell, a);
+				showPage(shell);
+				now += 15 * 60_000;
+				show(shell, a);
+				expect(returns(a)).toEqual([
+					{
+						id: WORKBENCH_RETURNED_COMMAND,
+						args: [{ awayMs: 15 * 60_000 }],
+						from: "menu",
+					},
+				]);
+			});
+
+			it("is told on coming back from another Workspace, and only it", () => {
+				show(shell, a);
+				show(shell, b);
+				now += 60_000;
+				show(shell, a);
+				expect(returns(a)).toHaveLength(1);
+				expect(returns(b)).toEqual([]);
+			});
+
+			it("is not away while it is half of a split", () => {
+				show(shell, a);
+				showSplit(shell, a);
+				now += 60 * 60_000;
+				show(shell, a);
+				expect(returns(a)).toEqual([]);
+			});
+
+			it("is not away while DevHub is in the background", () => {
+				show(shell, a);
+				theWindow().emit("blur");
+				now += 60 * 60_000;
+				theWindow().emit("focus");
+				expect(returns(a)).toEqual([]);
+			});
+		});
+
 		describe("and the editor a move lands in", () => {
 			const runActions = (view: WorkbenchView): unknown[] =>
 				(
@@ -705,7 +774,11 @@ describe("the shell window's workbench views", () => {
 					}
 				).sent
 					.filter((one) => one.channel === "vscode:runAction")
-					.map((one) => one.payload);
+					.map((one) => one.payload)
+					.filter(
+						(payload) =>
+							(payload as { id?: unknown }).id !== WORKBENCH_RETURNED_COMMAND,
+					);
 			const EDITOR_GROUP = {
 				id: "workbench.action.focusActiveEditorGroup",
 				from: "menu",

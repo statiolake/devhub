@@ -377,6 +377,27 @@ step from its `Cmd+J` partner (`pairedAgentId`) instead, which skipped the
 Workspace's own first Agents whenever the partner was further down; before
 that it stepped from nowhere, which is Scratch's first Agent.
 
+**A workbench back from being away opens tidy.** When a workbench comes back
+on screen after `devhub.workbench.tidyAfterAwayMinutes` (default 10; `0` is
+off) — another Workspace or an Agent was shown in its place — it hides its
+panel (the terminal with it), primary side bar and secondary side bar
+(`devhub.workbench.tidyParts`, all three by default) and puts the keyboard in
+its active editor group, so it opens as a big, clean editor; with no editor
+open the parts are hidden all the same. **DevHub: Tidy Editor Layout** in the
+command palette is the same tidy at any time.
+
+"Away" is DevHub's own answer, so main measures it, from the layout:
+`workbenchAbsence.ts` notes when each workbench left the screen (stopped
+being `onScreenEditor`) and, on the `layout()` pass that brings it back,
+sends it `_devhub.workbench.returned` with `{ awayMs }` over
+`vscode:runAction`; the overlay's `devhubTidy.contribution.ts` compares that
+with the setting. It is not the renderer's `document.visibilityState` nor its
+window focus, because those answer a different question: DevHub in the
+background, minimized or behind another app is not the workbench being away,
+and neither is the Agent of a split holding the keyboard — the editor stayed
+in front of the person the whole time, and is never tidied for it, however
+long. A workbench's first showing is not a return.
+
 ## Chords are answered in main
 
 `keyboard.ts` installs `before-input-event` on every WebContents DevHub owns,
