@@ -41,10 +41,6 @@
 # commit of its own inside a container.
 #
 #   apply-vscode-patches.sh               onto the submodule, vscode/
-#   apply-vscode-patches.sh --discard-vscode-changes
-#                                         the same, throwing away edits in
-#                                         vscode/ that were never exported
-#                                         (a copy is kept; see the end)
 #   apply-vscode-patches.sh --into DIR    onto DIR, a git repository holding a
 #                                         pristine copy of the pinned commit
 #                                         whose working tree the caller has
@@ -55,7 +51,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 PATCHES_DIR="$REPO_ROOT/patches/vscode"
 OVERLAY_DIR="$REPO_ROOT/patches/vscode-overlay"
-usage() { echo "usage: $(basename "$0") [--into DIR | --discard-vscode-changes]" >&2; exit 2; }
+usage() { echo "usage: $(basename "$0") [--into DIR]" >&2; exit 2; }
 
 INTO=""
 while [ $# -gt 0 ]; do
@@ -65,7 +61,6 @@ while [ $# -gt 0 ]; do
 			INTO="$2"
 			shift
 			;;
-		--discard-vscode-changes) export DEVHUB_DISCARD_VSCODE_CHANGES=1 ;;
 		*) usage ;;
 	esac
 	shift
@@ -176,16 +171,13 @@ fi
 #   2. `is-applied`: when the tree already is exactly what this run would make,
 #      nothing is touched (no file is rewritten, so no mtime moves) and the
 #      run ends here;
-#   3. `reset` takes the tree back to the commit — but only when every file it
-#      would revert holds what some DevHub apply put there (any earlier version
-#      of the patches, a run cut short). An edit of the developer's own stops
-#      the run, naming the files, before anything is touched: export it
-#      (scripts/vscode-submodule.sh export) or discard it with
-#      --discard-vscode-changes. Ignored files (node_modules, out*, .build)
-#      are never touched;
-#   4. the overlay and the patches go on, and the tree is recorded as DevHub's
-#      own when the run ends, however it ends (a patch that did not apply, a
-#      Ctrl-C), so the next run may reset it.
+#   3. `reset` takes the tree back to the commit, whatever it holds: vscode/ is
+#      not edited by hand, so every build resets it to pinned + patches +
+#      overlay. What it replaces is kept as a commit on
+#      refs/devhub/vscode-before-reset in vscode/; edits worth keeping must be
+#      exported first (scripts/vscode-submodule.sh export). Ignored files
+#      (node_modules, out*, .build) are never touched;
+#   4. the overlay and the patches go on.
 SUBMODULE="$REPO_ROOT/scripts/vscode-submodule.sh"
 "$SUBMODULE" sync
 check_layout
@@ -194,5 +186,4 @@ if "$SUBMODULE" is-applied; then
 	exit 0
 fi
 "$SUBMODULE" reset
-trap '"$SUBMODULE" record' EXIT
 apply_all

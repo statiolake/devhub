@@ -1,39 +1,28 @@
 #!/usr/bin/env python3
-"""Tell DevHub's own changes in vscode/ from a developer's, by content.
+"""What state is vscode/ in: the one DevHub's build would make, or something else?
 
     scripts/vscode-submodule.sh calls this; it is not meant to be run by hand.
 
     vscode_state.py --root R [--exclude PATH]... classify
-    vscode_state.py --root R [--exclude PATH]... record KIND
     vscode_state.py --root R [--exclude PATH]... backup REASON
 
-The submodule's working tree is expected to differ from its commit: DevHub's
-overlay and patches are applied onto it. Whether the build may reset it comes
-down to one question — would a reset lose anything that exists nowhere else?
-— and this answers it from the tree's contents, not from a single fingerprint
-of the last run:
+vscode/ is not edited by hand: every build resets it to the pinned commit plus
+patches/vscode plus patches/vscode-overlay. All that is left to ask of its
+working tree is whether that reset would change anything:
 
 * the tree is snapshotted as a git tree object (a throwaway index seeded from
   the real one, so only changed files are hashed: a fraction of a second on
   VS Code's 20k files). Ignored files (node_modules, out*, .build) are not part
   of it, and nothing here ever touches them;
-* the snapshot is compared with what the *current* patches/vscode and overlay
-  make of the checked-out commit (applied to another throwaway index, `git
-  apply --cached`). Equal means `current`: there is nothing to do, and the
-  build leaves the tree, and its files' mtimes, alone;
-* otherwise every file that differs from the commit must hold content that a
-  DevHub tree held at that path: one this script recorded after an apply step
-  (any earlier version of the patches, a run interrupted halfway, a tree some
-  files of which were later reverted by hand), what the current patches make,
-  or what the patches of a recent superproject commit make (a tree applied by
-  hand, or by scripts that kept no record). Then the tree is `devhub`: every
-  byte a reset throws away can be made again from DevHub's own history;
-* anything else is `unknown`, and the files that make it so are listed: they
-  are edits nobody has exported yet.
+* the snapshot is compared with what the *current* patches and overlay make of
+  the checked-out commit (applied to another throwaway index, `git apply
+  --cached`). Equal means `current`: there is nothing to do, and the build
+  leaves the tree, and its files' mtimes, alone. Equal to the commit itself
+  means `clean`. Anything else is `dirty`, followed by the changed files.
 
 `backup` keeps the tree about to be reset as a commit on
-refs/devhub/vscode-before-reset (with a reflog), so even a reset that was
-allowed can be looked at again: `git -C vscode log -g refs/devhub/vscode-before-reset`.
+refs/devhub/vscode-before-reset (with a reflog), so a reset can always be looked
+at again: `git -C vscode log -g refs/devhub/vscode-before-reset`.
 """
 
 from __future__ import annotations
@@ -41,20 +30,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
-import re
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
-LOG_NAME = "devhub-applied-trees"
-LOG_KEEP = 300
 BACKUP_REF = "refs/devhub/vscode-before-reset"
-# How many superproject commits that changed the patches are tried when the
-# record cannot vouch for a file.
-HISTORY_DEPTH = 30
-PATCH_PATH = re.compile(rb"^(?:\+\+\+ b/|--- a/)(.+?)\s*$", re.M)
 
 
 class GitError(RuntimeError):
@@ -203,86 +184,8 @@ class State:
 		overlay.sort(key=lambda e: e[0].encode())
 		return patches, overlay
 
-	def history_sources(self):
-		"""(commit, patches, overlay) for recent superproject commits that changed
-		either half, newest first, each distinct state once."""
-		try:
-			commits = self.out("log", f"-n{HISTORY_DEPTH}", "--format=%H", "HEAD", "--",
-				"patches/vscode", "patches/vscode-overlay", cwd=self.root).split()
-		except GitError:
-			return
-		seen = set()
-		for commit in commits:
-			raw = self.git("ls-tree", "-r", "-z", commit, "--", "patches/vscode/",
-				"patches/vscode-overlay/", cwd=self.root, check=False)
-			patches, overlay = [], []
-			for entry in raw.split(b"\0"):
-				if not entry:
-					continue
-				meta, path = entry.split(b"\t", 1)
-				mode, kind, oid = meta.decode().split()
-				p = path.decode()
-				if kind != "blob" or mode == "120000":
-					continue
-				if p.startswith("patches/vscode/") and p.endswith(".patch") \
-						and "/" not in p[len("patches/vscode/"):]:
-					patches.append((p, oid))
-				elif p.startswith("patches/vscode-overlay/"):
-					overlay.append((p[len("patches/vscode-overlay/"):], oid, mode == "100755"))
-			key = (tuple(patches), tuple(overlay))
-			if key in seen:
-				continue
-			seen.add(key)
-			yield commit, patches, overlay
-
-	def blobs(self, oids: list[str]) -> dict[str, bytes]:
-		"""Superproject blobs by id, read in one `cat-file --batch`."""
-		if not oids:
-			return {}
-		raw = self.git("cat-file", "--batch", cwd=self.root,
-			data="".join(o + "\n" for o in oids).encode())
-		result, pos = {}, 0
-		while pos < len(raw):
-			nl = raw.index(b"\n", pos)
-			header = raw[pos:nl].decode().split()
-			pos = nl + 1
-			if len(header) < 3 or header[1] == "missing":
-				continue
-			size = int(header[2])
-			result[header[0]] = raw[pos:pos + size]
-			pos += size + 1
-		return result
-
-	# --- the record ------------------------------------------------------
-
-	def log_path(self) -> Path:
-		return self.git_path(LOG_NAME)
-
-	def recorded(self) -> list[str]:
-		try:
-			lines = self.log_path().read_text().splitlines()
-		except FileNotFoundError:
-			return []
-		trees, seen = [], set()
-		for line in reversed(lines):
-			tree = line.split(" ", 1)[0]
-			if re.fullmatch(r"[0-9a-f]{40,64}", tree) and tree not in seen:
-				seen.add(tree)
-				trees.append(tree)
-		return trees
-
-	def record(self, kind: str) -> str:
-		tree = self.snapshot()
-		path = self.log_path()
-		try:
-			lines = path.read_text().splitlines()
-		except FileNotFoundError:
-			lines = []
-		lines.append(f"{tree} {kind} {int(time.time())}")
-		path.write_text("\n".join(lines[-LOG_KEEP:]) + "\n")
-		return tree
-
 	def backup(self, reason: str) -> str:
+		"""Keep the working tree as a commit on BACKUP_REF; "" when it is the commit itself."""
 		tree = self.snapshot()
 		if tree == self.out("rev-parse", "HEAD^{tree}"):
 			return ""
@@ -308,87 +211,24 @@ class State:
 			result[path] = (status, nm, no)
 		return result
 
-	def entries(self, tree: str, paths: list[str]) -> dict[str, tuple[str, str]] | None:
-		"""path -> (mode, oid) in `tree` for those of `paths` it has; None if the
-		tree object is gone (pruned)."""
-		if not self._ok("cat-file", "-e", tree):
-			return None
-		found = {}
-		for i in range(0, len(paths), 500):
-			raw = self.git("ls-tree", "-r", "-z", "--full-tree", tree, "--", *paths[i:i + 500],
-				check=False)
-			for entry in raw.split(b"\0"):
-				if entry:
-					meta, path = entry.split(b"\t", 1)
-					mode, _kind, oid = meta.decode().split()
-					found[path.decode()] = (mode, oid)
-		return found
-
 	def classify(self) -> tuple[str, list[str]]:
 		head = self.head()
-		head_tree = self.out("rev-parse", "HEAD^{tree}")
 		work = self.snapshot()
 		patches, overlay = self.current_sources()
-		current = self.expected(head, patches, overlay)
-		if work == current:
+		if work == self.expected(head, patches, overlay):
 			return "current", []
+		head_tree = self.out("rev-parse", "HEAD^{tree}")
 		if work == head_tree:
 			return "clean", []
 		changed = self.changed(head_tree, work)
-		unvouched = dict(changed)
-
-		def vouch(tree: str | None) -> bool:
-			if tree is None or not unvouched:
-				return not unvouched
-			if tree == work:
-				unvouched.clear()
-				return True
-			have = self.entries(tree, sorted(unvouched))
-			if have is None:
-				return False
-			for path, (status, mode, oid) in list(unvouched.items()):
-				if status == "D":
-					if path not in have:
-						del unvouched[path]
-				elif have.get(path) == (mode, oid):
-					del unvouched[path]
-			return not unvouched
-
-		for tree in [current, *self.recorded()]:
-			if vouch(tree):
-				return "devhub", []
-
-		# Not on record: try what the patches of recent commits make of it,
-		# but only states that touch every path still in question.
-		for commit, hpatches, hoverlay in self.history_sources():
-			# An overlay file is stored as it is, so the same bytes are the
-			# same blob id in either repository: no tree needs building.
-			for path, oid, executable in hoverlay:
-				if unvouched.get(path) == ("A", "100755" if executable else "100644", oid):
-					del unvouched[path]
-			if not unvouched:
-				return "devhub", []
-			contents = self.blobs([o for _p, o in hpatches])
-			texts = [contents.get(o, b"") for _p, o in hpatches]
-			names = set()
-			for t in texts:
-				names.update(m.decode(errors="replace") for m in PATCH_PATH.findall(t))
-			if not set(unvouched) & names:
-				continue
-			ocontents = self.blobs([o for _p, o, _x in hoverlay])
-			tree = self.expected(head, texts,
-				[(p, ocontents.get(o, b""), x) for p, o, x in hoverlay])
-			if vouch(tree):
-				return "devhub", []
-
-		return "unknown", [f"{unvouched[p][0]} {p}" for p in sorted(unvouched)]
+		return "dirty", [f"{status} {path}" for path, (status, _m, _o) in sorted(changed.items())]
 
 
 def main(argv: list[str]) -> int:
 	ap = argparse.ArgumentParser()
 	ap.add_argument("--root", required=True, type=Path)
 	ap.add_argument("--exclude", action="append", default=[])
-	ap.add_argument("command", choices=["classify", "record", "backup", "snapshot"])
+	ap.add_argument("command", choices=["classify", "backup", "snapshot"])
 	ap.add_argument("arg", nargs="?", default="")
 	a = ap.parse_args(argv)
 	state = State(a.root.resolve(), a.exclude)
@@ -398,8 +238,6 @@ def main(argv: list[str]) -> int:
 			print(verdict)
 			for f in files:
 				print(f)
-		elif a.command == "record":
-			state.record(a.arg or "apply")
 		elif a.command == "backup":
 			print(state.backup(a.arg or "reset"))
 		elif a.command == "snapshot":

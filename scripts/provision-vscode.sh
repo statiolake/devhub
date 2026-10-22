@@ -3,17 +3,13 @@
 # it: check out the submodule, put the Node version VS Code's build requires in a
 # gitignored toolchain dir, install VS Code's own npm dependencies and compile.
 #
-# VS Code is consumed, never edited. Everything this script produces lives inside
+# VS Code is consumed, never edited: every run resets vscode/ to the pinned
+# commit + patches + overlay (a backup ref of what it replaced is kept).
+# Everything this script produces lives inside
 # vscode/ (npm-managed, gitignored by the submodule itself) or vscode-toolchain/.
 #
 # Idempotent: each step is skipped when its output already exists.
 #   --force       redo every step regardless.
-#   --discard-vscode-changes
-#                 throw away edits in vscode/ that were never exported to
-#                 patches/vscode or patches/vscode-overlay (a copy is kept on
-#                 refs/devhub/vscode-before-reset in vscode/). Without it such
-#                 edits stop the run, naming the files; whatever an earlier
-#                 apply left there is taken off and redone without asking.
 #   --for WHAT    which VS Code build outputs to produce (default: all):
 #                   dev    vscode/out — what `pnpm dev` runs on
 #                   app    vscode/out-vscode-min (+ out-build) — what
@@ -28,11 +24,10 @@ set -euo pipefail
 
 FORCE=0
 OUTPUTS=all
-usage() { echo "usage: $(basename "$0") [--force] [--for dev|app|all|deps] [--discard-vscode-changes]" >&2; exit 2; }
+usage() { echo "usage: $(basename "$0") [--force] [--for dev|app|all|deps]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--force) FORCE=1 ;;
-		--discard-vscode-changes) export DEVHUB_DISCARD_VSCODE_CHANGES=1 ;;
 		--for)
 			[ $# -ge 2 ] || usage
 			OUTPUTS="$2"
@@ -72,9 +67,9 @@ step() { printf '\n==> %s\n' "$1"; }
 # The pinned commit is the one the *parent repo* records (its index, so a
 # staged bump counts), not whatever the submodule's working tree happens to sit
 # on. When they differ — a `git pull` that brought a bump moves the gitlink but
-# not the checkout — scripts/vscode-submodule.sh takes the DevHub patches off
-# and checks the pinned commit out, refusing if vscode/ holds edits of the
-# developer's own. Everything below is keyed on the submodule commit (the npm
+# not the checkout — scripts/vscode-submodule.sh resets vscode/ and
+# checks the pinned commit out. Everything below is keyed on the submodule
+# commit (the npm
 # stamp, the compile and bundle stamps, the Electron target), so moving it is
 # all it takes for those steps to redo exactly what the bump invalidated.
 step "VS Code submodule"

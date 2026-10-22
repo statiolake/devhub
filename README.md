@@ -162,8 +162,7 @@ kinds of thing, and each has a rule:
   status bar hover) live as plain files under
   [`patches/vscode-overlay/`](patches/vscode-overlay), at the path they take in
   `vscode/`. `scripts/apply-vscode-patches.sh` puts both on the submodule
-  (resetting what an earlier apply left, and doing nothing when the tree is
-  already current); after editing either in `vscode/`,
+  (resetting vscode/ first, and doing nothing when the tree is already current); after editing either in `vscode/`,
   `scripts/vscode-submodule.sh export` writes the change back to the half it
   belongs to.
 
@@ -470,21 +469,19 @@ packaged app ships), `--for all` (the default, `pnpm run provision`) does both.
 `pnpm build` asks for `app` only; `pnpm dev` warns when `vscode/out` is behind
 the patches and names `scripts/provision-vscode.sh --for dev`.
 
-`vscode/` never needs resetting by hand. Every provision (and so every `pnpm
-build`) brings it to the pinned commit plus the current `patches/vscode/` and
-`patches/vscode-overlay/` itself, from whatever the previous build, a `git
-pull` of new patches or a submodule bump left there: a tree that already is
-that is left untouched (nothing rewritten, so no recompile), anything an earlier
-apply put there is taken off and redone, and ignored build output
-(`node_modules`, `out*`, `.build`) is never touched. The one thing that stops it
-is an edit made in `vscode/` and not exported yet — any file whose contents no
-DevHub apply ever produced. The run then names exactly those files and touches
-nothing: `scripts/vscode-submodule.sh export` writes them back into the patches
-and the overlay, or `pnpm build -- --discard-vscode-changes`
-(`scripts/provision-vscode.sh --discard-vscode-changes`,
-`DEVHUB_DISCARD_VSCODE_CHANGES=1`) throws them away. Every reset keeps the tree
-it replaced as a commit in `vscode/` (`git -C vscode log -g
-refs/devhub/vscode-before-reset`), so even a discard can be undone.
+`vscode/` is not edited by hand and never needs resetting by hand. Every
+provision (and so every `pnpm build`) resets it to the pinned commit plus the
+current `patches/vscode/` and `patches/vscode-overlay/`, from whatever the
+previous build, a `git pull` of new patches or a submodule bump left there: a
+tree that already is that is left untouched (nothing rewritten, so no
+recompile), anything else (an earlier apply, a file a build copied in) is taken
+off and redone without asking, and ignored build output (`node_modules`,
+`out*`, `.build`) is never touched. Every reset keeps the tree it replaced as a
+commit in `vscode/` (`git -C vscode log -g refs/devhub/vscode-before-reset`),
+so it can be looked at or restored. If you do edit `vscode/` to try a change,
+run `scripts/vscode-submodule.sh export` (writes it into the patches and the
+overlay) before the next build: a build discards whatever was not exported,
+leaving only that backup.
 
 Locally the bundle is the fast one (`DEVHUB_FAST_VSCODE_BUNDLE=1`, the default
 unless `CI` is set): the desktop bundle alone, without `--mangle-privates`, and

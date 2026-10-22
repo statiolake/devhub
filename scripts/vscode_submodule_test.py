@@ -22,7 +22,6 @@ ENV = {
 	"GIT_COMMITTER_NAME": "t",
 	"GIT_COMMITTER_EMAIL": "t@t",
 }
-ENV.pop("DEVHUB_DISCARD_VSCODE_CHANGES", None)
 
 PATCH = """\
 --- a/src/a.ts
@@ -115,26 +114,17 @@ class SubmoduleTest(unittest.TestCase):
 		self.assertEqual(r.returncode, 0, r.stderr)
 		self.assertIn("'devhub'", (self.root / "vscode/src/a.ts").read_text())
 
-	def test_tree_patched_before_the_marker_existed(self):
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertEqual(r.returncode, 0, r.stderr)
-		marker = git(self.root / "vscode", "rev-parse", "--git-path", "devhub-patched-tree.v2")
-		Path(self.root / "vscode", marker).unlink()
-		self.bump()
-		r = self.run_script("vscode-submodule.sh", "sync")
-		self.assertEqual(r.returncode, 0, r.stderr)
-		self.assertEqual(self.head(), self.commits[1])
 
-	def test_developer_edit_stops_the_sync(self):
+
+	def test_edit_does_not_stop_the_sync_and_is_backed_up(self):
 		r = self.run_script("apply-vscode-patches.sh")
 		self.assertEqual(r.returncode, 0, r.stderr)
 		(self.root / "vscode/package.json").write_text('{ "version": "mine" }\n')
 		self.bump()
 		r = self.run_script("vscode-submodule.sh", "sync")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertIn("package.json", r.stderr)
-		self.assertEqual(self.head(), self.commits[0])
-		self.assertIn("mine", (self.root / "vscode/package.json").read_text())
+		self.assertEqual(r.returncode, 0, r.stderr)
+		self.assertEqual(self.head(), self.commits[1])
+		self.assertIn("mine", git(self.root / "vscode", "show", "refs/devhub/vscode-before-reset:package.json"))
 
 	def build_writes_copilot_package_json(self):
 		# What `gulp compile-copilot-extension-build` does with CI set.
@@ -157,20 +147,19 @@ class SubmoduleTest(unittest.TestCase):
 		self.assertEqual(r.returncode, 0, r.stderr)
 		self.assertEqual(self.head(), self.commits[1])
 
-	def test_build_written_file_plus_developer_edit_stops(self):
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertEqual(r.returncode, 0, r.stderr)
+	def test_build_written_file_plus_edit_resets(self):
+		self.apply()
 		self.build_writes_copilot_package_json()
 		(self.root / "vscode/package.json").write_text('{ "version": "mine" }\n')
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertIn("mine", (self.root / "vscode/package.json").read_text())
+		self.apply()
+		self.assertIn("1.0.0", (self.root / "vscode/package.json").read_text())
+		self.assertNotIn("isPreRelease", (self.root / "vscode/extensions/copilot/package.json").read_text())
 
-	def test_untracked_file_stops_the_reset(self):
+	def test_untracked_file_is_removed_and_backed_up(self):
 		(self.root / "vscode/src/mine.ts").write_text("x\n")
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertTrue((self.root / "vscode/src/mine.ts").exists())
+		self.apply()
+		self.assertFalse((self.root / "vscode/src/mine.ts").exists())
+		self.assertEqual(git(self.root / "vscode", "show", "refs/devhub/vscode-before-reset:src/mine.ts"), "x")
 
 	def apply(self) -> subprocess.CompletedProcess:
 		r = self.run_script("apply-vscode-patches.sh")
@@ -257,41 +246,31 @@ class SubmoduleTest(unittest.TestCase):
 		r = self.apply()
 		self.assertIn("'devhub v2'", (vscode / "src/a.ts").read_text())
 
-	def test_an_unexported_edit_stops_and_is_named_alone(self):
+	def test_an_unexported_edit_is_reset_and_backed_up(self):
 		self.apply()
 		vscode = self.root / "vscode"
 		(vscode / "src/devhub/b.ts").write_text("export const b = 'mine';\n")
 		(vscode / "src/devhub/scratch.ts").write_text("x\n")
 		self.write_overlay("src/devhub/c.ts", "export const c = 3;\n")  # a pulled change
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertIn("A src/devhub/b.ts", r.stderr)  # status against the commit
-		self.assertIn("A src/devhub/scratch.ts", r.stderr)
-		self.assertNotIn("src/a.ts", r.stderr)  # DevHub's, not the developer's
-		self.assertIn("vscode-submodule.sh export", r.stderr)
-		self.assertIn("--discard-vscode-changes", r.stderr)
-		self.assertIn("mine", (vscode / "src/devhub/b.ts").read_text())
-		self.assertTrue((vscode / "src/devhub/scratch.ts").exists())
-		self.assertFalse((vscode / "src/devhub/c.ts").exists())
-
-	def test_discarding_keeps_a_copy(self):
-		self.apply()
-		vscode = self.root / "vscode"
-		(vscode / "src/devhub/b.ts").write_text("export const b = 'mine';\n")
-		r = self.run_script("apply-vscode-patches.sh", "--discard-vscode-changes")
-		self.assertEqual(r.returncode, 0, r.stderr)
+		r = self.apply()
+		self.assertIn("resetting", r.stdout)
+		self.assertIn("backup", r.stdout)
 		self.assertEqual((vscode / "src/devhub/b.ts").read_text(), "export const b = 1;\n")
-		kept = git(vscode, "show", "refs/devhub/vscode-before-reset:src/devhub/b.ts")
-		self.assertIn("mine", kept)
+		self.assertFalse((vscode / "src/devhub/scratch.ts").exists())
+		self.assertTrue((vscode / "src/devhub/c.ts").exists())
+		self.assertIn("mine", git(vscode, "show", "refs/devhub/vscode-before-reset:src/devhub/b.ts"))
+		self.assertEqual(git(vscode, "show", "refs/devhub/vscode-before-reset:src/devhub/scratch.ts"), "x")
 
-	def test_a_bump_with_an_unexported_edit_stops_before_moving(self):
+
+
+	def test_a_bump_with_an_unexported_edit_backs_it_up_and_moves(self):
 		self.apply()
 		(self.root / "vscode/src/devhub/b.ts").write_text("mine\n")
 		self.bump()
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertEqual(self.head(), self.commits[0])
-		self.assertEqual((self.root / "vscode/src/devhub/b.ts").read_text(), "mine\n")
+		self.apply()
+		self.assertEqual(self.head(), self.commits[1])
+		self.assertEqual((self.root / "vscode/src/devhub/b.ts").read_text(), "export const b = 1;\n")
+		self.assertEqual(git(self.root / "vscode", "show", "refs/devhub/vscode-before-reset:src/devhub/b.ts"), "mine")
 
 	def test_a_bump_on_a_patched_tree_is_followed_by_apply_alone(self):
 		self.apply()
@@ -331,42 +310,21 @@ class SubmoduleTest(unittest.TestCase):
 		(self.root / "patches/vscode/0003.patch").unlink()
 		self.apply()
 
-	def test_an_edit_to_an_overlay_file_in_the_tree_stops_the_reset(self):
-		self.apply()
-		(self.root / "vscode/src/devhub/b.ts").write_text("export const b = 'mine';\n")
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
-		self.assertIn("src/devhub/b.ts", r.stderr)
-		self.assertIn("mine", (self.root / "vscode/src/devhub/b.ts").read_text())
+
 
 	def marker(self, name: str) -> Path:
 		return Path(self.root / "vscode", git(self.root / "vscode", "rev-parse", "--git-path", name))
 
-	def test_a_tree_recorded_in_the_first_format_resets(self):
-		# What the scripts before the overlay recorded: the tree's diff plus
-		# the untracked files' names, without their contents.
-		self.apply()
-		self.marker("devhub-patched-tree.v2").unlink()
-		vscode = self.root / "vscode"
-		changes = git(vscode, "diff", "--binary", "HEAD", "--", ".", ":(exclude)extensions/copilot/package.json")
-		changes += "\n" + git(vscode, "ls-files", "--others", "--exclude-standard")
-		legacy = subprocess.run(
-			["git", "hash-object", "--stdin"], input=changes, cwd=vscode, env=ENV,
-			capture_output=True, text=True, check=True,
-		).stdout.strip()
-		self.marker("devhub-patched-tree").write_text(legacy + "\n")
-		self.apply()
-		self.assertFalse(self.marker("devhub-patched-tree").exists())
-		self.assertTrue(self.marker("devhub-patched-tree.v2").exists())
 
-	def test_an_unrecorded_tree_of_patches_and_overlay_resets(self):
+
+	def test_a_build_output_file_is_reset_without_asking(self):
+		# e.g. extensions/devhub-init/types/vscode.d.ts, copied in by a build
 		self.apply()
-		self.marker("devhub-patched-tree.v2").unlink()
-		self.apply()
-		self.marker("devhub-patched-tree.v2").unlink()
-		(self.root / "vscode/src/devhub/b.ts").write_text("changed\n")
-		r = self.run_script("apply-vscode-patches.sh")
-		self.assertNotEqual(r.returncode, 0)
+		vscode = self.root / "vscode"
+		(vscode / "src/devhub/out.d.ts").write_text("declare const x: 1;\n")
+		r = self.apply()
+		self.assertFalse((vscode / "src/devhub/out.d.ts").exists())
+		self.assertIn("'devhub'", (vscode / "src/a.ts").read_text())
 
 	def test_source_state_follows_the_overlay(self):
 		state = lambda: self.run_script("vscode-submodule.sh", "source-state").stdout.strip()
@@ -431,14 +389,10 @@ class SubmoduleTest(unittest.TestCase):
 		self.assertNotEqual(r.returncode, 0)
 		self.assertIn("0001.patch: none of its changes", r.stderr)
 
-	def test_discard_override(self):
-		(self.root / "vscode/package.json").write_text('{ "version": "mine" }\n')
-		self.bump()
-		r = self.run_script(
-			"vscode-submodule.sh", "sync", env={"DEVHUB_DISCARD_VSCODE_CHANGES": "1"}
-		)
-		self.assertEqual(r.returncode, 0, r.stderr)
-		self.assertEqual(self.head(), self.commits[1])
+	def test_the_discard_flag_is_gone(self):
+		r = self.run_script("apply-vscode-patches.sh", "--discard-vscode-changes")
+		self.assertEqual(r.returncode, 2)
+
 
 
 if __name__ == "__main__":
