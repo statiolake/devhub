@@ -798,12 +798,21 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			throw new Error(`${agent.displayName} is not a terminal Agent`);
 		}
 		// Found from the Agent's own processes, so another terminal of the same
-		// CLI in the Workspace is never taken for it.
-		return terminalSession(
-			runtime,
-			agent.profile,
-			await sessions.panePid(machine, agentId, workspace.id),
-		);
+		// CLI in the Workspace is never taken for it. Looked for again on every
+		// ask; a refusal says what was in the pane, and is logged too, so a
+		// "Continue in GUI" that once could not tell says why afterwards.
+		try {
+			return await terminalSession(
+				runtime,
+				agent.profile,
+				await sessions.panePid(machine, agentId, workspace.id),
+			);
+		} catch (failure: unknown) {
+			console.warn(
+				`[devhub] the session of terminal Agent ${agentId} (${agent.profile.kind}) could not be told: ${failureText(failure)}`,
+			);
+			throw failure;
+		}
 	};
 
 	return { sessions, conversations, terminalSession: terminalSessionOf };

@@ -21,6 +21,7 @@ import {
 	rm,
 	writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,8 @@ import {
 	parseCodexListing,
 	previewPastSession,
 	terminalSession,
+	codexPaneThread,
+	parsePaneRecords,
 	resumeArgs,
 	resumedSession,
 	withSession,
@@ -709,6 +712,42 @@ describe("the session of a terminal Agent", () => {
 		}
 	}
 
+	/** Until a process under `pid` has exited and is not reaped. */
+	async function zombieUnder(pid: number): Promise<void> {
+		for (let tries = 0; tries < 200; tries += 1) {
+			const table = await new Promise<string>((resolve) =>
+				execFile(
+					"ps",
+					["-A", "-o", "pid=", "-o", "ppid=", "-o", "stat="],
+					(_, out) => resolve(String(out)),
+				),
+			);
+			const rows = table
+				.split("\n")
+				.map((row) => row.trim().split(/\s+/))
+				.filter((row) => row.length === 3)
+				.map(([each, parent, stat]) => ({
+					pid: Number(each),
+					ppid: Number(parent),
+					stat: stat!,
+				}));
+			const under = new Set([pid]);
+			for (let grew = true; grew; ) {
+				grew = false;
+				for (const row of rows) {
+					if (under.has(row.ppid) && !under.has(row.pid)) {
+						under.add(row.pid);
+						grew = true;
+					}
+				}
+			}
+			if (rows.some((row) => under.has(row.pid) && row.stat.startsWith("Z")))
+				return;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		throw new Error(`no process under ${String(pid)} became a zombie`);
+	}
+
 	/**
 	 * A fake `claude` that keeps Claude's record of its process the way
 	 * 2.1.282 does: `<config>/sessions/<its pid>.json`, naming its session.
@@ -730,20 +769,37 @@ exec sleep 30
 
 	/**
 	 * A fake `codex` that holds its rollouts open as the TUI does while it
-	 * writes a thread: one of its terminal mode's (`source: cli`) and, when
-	 * asked, a subagent's beside it.
+	 * writes a thread: one of the thread it is in — begun by its terminal
+	 * mode (`source: cli`) unless `source` says otherwise, its first line
+	 * `firstLine` when that is given (one Codex is writing this moment) — and,
+	 * when asked, a subagent's beside it. `zombie` leaves a child under it
+	 * that has exited and nobody reaps, as a command Codex ran can be for a
+	 * moment.
 	 */
-	async function fakeCodex(thread: string, subagent?: string): Promise<string> {
+	async function fakeCodex(
+		thread: string,
+		subagent?: string,
+		options: {
+			readonly source?: unknown;
+			readonly firstLine?: string;
+			readonly zombie?: boolean;
+		} = {},
+	): Promise<string> {
 		const day = join(dir, ".codex", "sessions", "2026", "09", "26");
 		await mkdir(day, { recursive: true });
-		const rollout = (id: string, source: unknown) => {
+		const rollout = (id: string, source: unknown, line?: string) => {
 			const path = join(day, `rollout-2026-09-26T10-00-00-${id}.jsonl`);
 			return writeFile(
 				path,
-				`${JSON.stringify({ type: "session_meta", payload: { id, source, cwd: "/w" } })}\n`,
+				line ??
+					`${JSON.stringify({ type: "session_meta", payload: { id, source, cwd: "/w" } })}\n`,
 			).then(() => path);
 		};
-		const main = await rollout(thread, "cli");
+		const main = await rollout(
+			thread,
+			options.source ?? "cli",
+			options.firstLine,
+		);
 		const side =
 			subagent === undefined
 				? undefined
@@ -755,7 +811,7 @@ exec sleep 30
 exec 3<'${main}'
 ${side === undefined ? "" : `exec 4<'${side}'`}
 : >"$READY"
-exec sleep 30
+${options.zombie === true ? `exec perl -e 'fork or exit 0; sleep 30'` : "exec sleep 30"}
 `,
 		);
 		await chmod(script, 0o755);
@@ -851,6 +907,131 @@ exec sleep 30
 		await expect(
 			terminalSession(fakeRuntime(dir), CODEX, quiet),
 		).rejects.toThrow(/has no thread open yet/);
+	});
+
+	const HAS_LSOF = (() => {
+		try {
+			return existsSync("/usr/bin/lsof") || existsSync("/usr/sbin/lsof");
+		} catch {
+			return false;
+		}
+	})();
+
+	// macOS has no /proc: the files Codex holds open are lsof's word, asked
+	// once for every process of the pane.
+	it.skipIf(!HAS_LSOF)(
+		"is the thread the Agent's Codex holds open as lsof lists it, as on macOS",
+		async () => {
+			const first = await pane(await fakeCodex("t-first", "t-helper"));
+			const second = await pane(await fakeCodex("t-second"));
+			expect(
+				await terminalSession(fakeRuntime(dir), CODEX, first, "lsof"),
+			).toBe("t-first");
+			expect(
+				await terminalSession(fakeRuntime(dir), CODEX, second, "lsof"),
+			).toBe("t-second");
+		},
+	);
+
+	// It used to be that lsof failing on any one process still there — a
+	// command Codex ran that had exited and was not yet reaped — failed the
+	// whole ask, though Codex's own process held the thread open.
+	it.skipIf(!HAS_LSOF)(
+		"is found past a process under the pane that has exited and is not reaped",
+		async () => {
+			const running = await pane(
+				await fakeCodex("t-past-zombie", undefined, { zombie: true }),
+			);
+			await zombieUnder(running);
+			expect(
+				await terminalSession(fakeRuntime(dir), CODEX, running, "lsof"),
+			).toBe("t-past-zombie");
+			expect(await terminalSession(fakeRuntime(dir), CODEX, running)).toBe(
+				"t-past-zombie",
+			);
+		},
+	);
+
+	// The thread a GUI Agent began, carried on in a terminal Agent: its
+	// rollout's session_meta still says app-server started it.
+	it("is a thread begun elsewhere and resumed in the TUI, not only one its terminal mode began", async () => {
+		const resumed = await pane(
+			await fakeCodex("t-from-gui", undefined, { source: "vscode" }),
+		);
+		expect(await terminalSession(fakeRuntime(dir), CODEX, resumed)).toBe(
+			"t-from-gui",
+		);
+	});
+
+	it("is the thread a rollout's name says while Codex is still writing its first line", async () => {
+		const writing = await pane(
+			await fakeCodex("t-writing", undefined, {
+				firstLine: '{"type":"session_meta","payload":{"id":"t-wr',
+			}),
+		);
+		expect(await terminalSession(fakeRuntime(dir), CODEX, writing)).toBe(
+			"t-writing",
+		);
+	});
+
+	it("says what was in the pane when it has no thread", async () => {
+		const quiet = await pane(': >"$READY"; exec sleep 30');
+		const refusal = await drawnAs(
+			terminalSession(fakeRuntime(dir), CODEX, quiet),
+		);
+		expect(refusal).toMatchObject({
+			code: "conversation_not_resumable",
+			detail: expect.stringMatching(
+				/No process in the pane is Codex.*Processes looked at: .*sleep \(\d+\)/,
+			) as string,
+		});
+	});
+});
+
+describe("the thread a pane's Codex holds open", () => {
+	const record = (
+		pid: number,
+		path: string,
+		mtime: number,
+		meta: unknown,
+	): string =>
+		`codex\t${String(pid)}\t${String(mtime)}\t${path}\n${typeof meta === "string" ? meta : JSON.stringify(meta)}\n`;
+	const meta = (id: string, source: unknown) => ({
+		type: "session_meta",
+		payload: { id, source },
+	});
+	const at = (id: string) =>
+		`/u/.codex/sessions/2026/10/22/rollout-2026-10-22T09-00-00-${id}.jsonl`;
+
+	it("is the one written last, never a subagent's however it is spelled", () => {
+		const records = parsePaneRecords(
+			"proc\t10\t\tcodex\n\n" +
+				record(10, at("a"), 100, meta("a", "cli")) +
+				record(10, at("b"), 300, meta("b", { subAgent: "review" })) +
+				record(10, at("c"), 250, meta("c", "subagent_compact")) +
+				record(10, at("d"), 200, meta("d", "appServer")),
+		);
+		expect(codexPaneThread(records, "pane pid 9")).toBe("d");
+	});
+
+	it("takes a readable rollout over one only its name says", () => {
+		const records = parsePaneRecords(
+			record(10, at("old"), 100, meta("old", "cli")) +
+				record(10, at("new"), 200, ""),
+		);
+		expect(codexPaneThread(records, "pane pid 9")).toBe("old");
+	});
+
+	it("says which processes it looked at, what it passed over and why lsof could not say", () => {
+		const records = parsePaneRecords(
+			"proc\t9\t\tzsh\n\n" +
+				"proc\t10\t\t/opt/homebrew/bin/codex\n\n" +
+				record(10, at("h"), 100, meta("h", { subagent: {} })) +
+				"note\t\t\tlsof exited 1 listing the files of processes 9,10\n\n",
+		);
+		expect(() => codexPaneThread(records, "pane pid 9")).toThrow(
+			/has no thread open yet.*Processes looked at: zsh \(9\), \/opt\/homebrew\/bin\/codex \(10\)\. Rollouts open but not taken: .*rollout-2026-10-22T09-00-00-h\.jsonl \(a subagent's\)\. lsof exited 1/,
+		);
 	});
 });
 

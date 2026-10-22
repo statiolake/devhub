@@ -383,18 +383,29 @@ async function codexHome(
  *   the process is in and follows `/clear` and `/resume` inside it;
  * - `codex`: each Codex rollout (`rollout-*.jsonl`) the process holds open —
  *   the threads it is writing — with its modification time and first line
- *   (`session_meta`: the thread's id and what started it).
+ *   (`session_meta`: the thread's id and what started it). Every process
+ *   looked at is a `proc` record too (its command), and what could not be
+ *   looked at a `note`, so that a pane with no thread says what was there.
  *
- * Each record is a header line — kind, pid, modification time, path, by tabs
- * — and the file's first line. The process tree is `ps` where there is one
- * and `/proc` where not (a slim container); open files are `/proc/<pid>/fd`
- * or else `lsof`.
+ * Each record is a header line — kind, pid, modification time, path (a
+ * `proc`'s command, a `note`'s text), by tabs — and the file's first line
+ * (empty for a `proc` or a `note`). The process tree is `ps` where there is
+ * one and `/proc` where not (a slim container); open files are
+ * `/proc/<pid>/fd` or else `lsof` (macOS; `$4` = `lsof` takes that way where
+ * there is `/proc` too, for its tests).
+ *
+ * `lsof` is asked once for every process of the pane: one call is a fraction
+ * of a second where one per process — Codex runs MCP servers and commands
+ * under it — could take long enough on a busy Mac to run past the deadline.
+ * It exits non-zero when one of them has gone (or is a zombie) by the time it
+ * looks, which is a `note`, not a failure: the rest it listed still stand. A
+ * descriptor or a process that goes away while it is read is gone, too.
  */
-const PANE_PROCESSES_SCRIPT = `pane=$1 kind=$2 dir=$3
+const PANE_PROCESSES_SCRIPT = `pane=$1 kind=$2 dir=$3 files=\${4:-}
 if command -v ps >/dev/null 2>&1; then
-	table=$(ps -A -o pid= -o ppid=) || exit 70
+	table=$(ps -A -o pid= -o ppid= -o comm=) || exit 70
 elif [ -d /proc/self ]; then
-	table=$(for s in /proc/[0-9]*/stat; do sed -n 's/^\\([0-9]*\\) (.*) [A-Za-z] \\([0-9]*\\) .*/\\1 \\2/p' "$s" 2>/dev/null; done)
+	table=$(for s in /proc/[0-9]*/stat; do sed -n 's/^\\([0-9]*\\) (\\(.*\\)) [A-Za-z] \\([0-9]*\\) .*/\\1 \\3 \\2/p' "$s" 2>/dev/null; done)
 else
 	echo "there is neither ps nor /proc to find the processes under pane $pane" >&2
 	exit 69
@@ -404,48 +415,51 @@ if [ "$kind" = codex ] && [ ! -d /proc/self/fd ] && ! command -v lsof >/dev/null
 	exit 69
 fi
 mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
-printf '%s\\n' "$table" | awk -v root="$pane" '
-{ kids[$2] = kids[$2] " " $1 }
-END { q[1] = root; n = 1; for (i = 1; i <= n; i++) { print q[i]; m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) q[++n] = c[j] } }
-' | while read -r pid; do
-	if [ "$kind" = claude ]; then
+tree=$(printf '%s\\n' "$table" | awk -v root="$pane" '
+{ cmd = $0; sub(/^[ \\t]*[0-9]+[ \\t]+[0-9]+[ \\t]*/, "", cmd); name[$1] = cmd; kids[$2] = kids[$2] " " $1 }
+END { q[1] = root; n = 1; for (i = 1; i <= n; i++) { print q[i] " " name[q[i]]; m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) q[++n] = c[j] } }
+')
+if [ "$kind" = claude ]; then
+	printf '%s\\n' "$tree" | while read -r pid comm; do
 		f="$dir/$pid.json"
 		[ -f "$f" ] || continue
 		printf 'claude\\t%s\\t\\t%s\\n' "$pid" "$f"
 		tr -d '\\n' <"$f"
 		echo
-	else
-		# A descriptor or a process that goes away while it is read is gone,
-		# not a failure; lsof failing on a process that is still there is.
-		if [ -d "/proc/$pid/fd" ]; then
-			open=$(for fd in /proc/"$pid"/fd/*; do readlink "$fd" 2>/dev/null; done)
-		elif listed=$(lsof -n -P -Fn -p "$pid"); then
-			open=$(printf '%s\\n' "$listed" | sed -n 's/^n//p')
-		else
-			kill -0 "$pid" 2>/dev/null || continue
-			echo "lsof could not list the files process $pid holds open" >&2
-			exit 71
-		fi
-		printf '%s\\n' "$open" | sort -u | while IFS= read -r f; do
-			case $f in
-			*/rollout-*.jsonl) ;;
-			*) continue ;;
-			esac
-			[ -f "$f" ] || continue
-			printf 'codex\\t%s\\t%s\\t%s\\n' "$pid" "$(mtime "$f")" "$f"
-			head -n 1 "$f" | head -c 1048576 | tr -d '\\n'
-			echo
-		done
-	fi
+	done
+	exit 0
+fi
+printf '%s\\n' "$tree" | while read -r pid comm; do
+	printf 'proc\\t%s\\t\\t%s\\n\\n' "$pid" "$comm"
+done
+rollouts() { awk -v p="$1" '/\\/rollout-[^\\/]*\\.jsonl$/ { print p "\\t" $0 }'; }
+if [ -d /proc/self/fd ] && [ "$files" != lsof ]; then
+	open=$(printf '%s\\n' "$tree" | while read -r pid comm; do
+		for fd in /proc/"$pid"/fd/*; do readlink "$fd" 2>/dev/null; done | rollouts "$pid"
+	done)
+else
+	pids=$(printf '%s\\n' "$tree" | awk '{ printf "%s%s", (NR > 1 ? "," : ""), $1 }')
+	listed=$(lsof -n -P -Fn -p "$pids" 2>/dev/null)
+	status=$?
+	open=$(printf '%s\\n' "$listed" | awk '/^p/ { p = substr($0, 2); next } /^n/ && p != "" { f = substr($0, 2); if (f ~ /\\/rollout-[^\\/]*\\.jsonl$/) print p "\\t" f }')
+	[ "$status" -eq 0 ] || printf 'note\\t\\t\\tlsof exited %s listing the files of processes %s\\n\\n' "$status" "$pids"
+fi
+printf '%s\\n' "$open" | sort -u | while IFS='\t' read -r pid f; do
+	[ -n "$f" ] && [ -f "$f" ] || continue
+	printf 'codex\\t%s\\t%s\\t%s\\n' "$pid" "$(mtime "$f")" "$f"
+	head -n 1 "$f" | head -c 1048576 | tr -d '\\n'
+	echo
 done
 `;
 
 /** One record `PANE_PROCESSES_SCRIPT` printed. */
 interface PaneRecord {
-	readonly kind: "claude" | "codex";
-	readonly pid: number;
+	readonly kind: "claude" | "codex" | "proc" | "note";
+	/** Absent for a `note` about no one process. */
+	readonly pid: number | undefined;
 	/** Seconds since the epoch; a Codex rollout's only. */
 	readonly mtime: number | undefined;
+	/** The file; a `proc`'s command, a `note`'s text. */
 	readonly path: string;
 	readonly line: string;
 }
@@ -462,14 +476,20 @@ export function parsePaneRecords(text: string): readonly PaneRecord[] {
 	const records: PaneRecord[] = [];
 	for (let i = 0; i < lines.length; i += 2) {
 		const [kind, pid, mtime, ...path] = lines[i]!.split("\t");
-		if ((kind !== "claude" && kind !== "codex") || !/^\d+$/.test(pid ?? "")) {
+		if (
+			(kind !== "claude" &&
+				kind !== "codex" &&
+				kind !== "proc" &&
+				kind !== "note") ||
+			!(/^\d+$/.test(pid ?? "") || (kind === "note" && pid === ""))
+		) {
 			throw new Error(
 				`the listing of a pane's processes has a record DevHub did not ask for: ${JSON.stringify(lines[i])}`,
 			);
 		}
 		records.push({
 			kind,
-			pid: Number(pid),
+			pid: pid === "" ? undefined : Number(pid),
 			mtime: mtime === undefined || mtime === "" ? undefined : Number(mtime),
 			path: path.join("\t"),
 			line: lines[i + 1]!,
@@ -496,6 +516,7 @@ async function paneRecords(
 	kind: ResumableKind,
 	panePid: number,
 	directory: string,
+	files: "auto" | "lsof" = "auto",
 ): Promise<readonly PaneRecord[]> {
 	const answer = await askMachine(
 		runtime,
@@ -509,6 +530,7 @@ async function paneRecords(
 			String(panePid),
 			kind,
 			directory,
+			files === "lsof" ? "lsof" : "",
 		],
 		env: await runtime.environment(),
 		deadline: OperationDeadline.in(15_000),
@@ -548,15 +570,22 @@ async function paneRecords(
  * or a Claude too old to keep the record — is refused, saying where DevHub
  * looked.
  *
- * Codex: the thread whose rollout the Agent's Codex holds open and which its
- * terminal mode started (`session_meta.source` is `cli`; a subagent's is
- * not) — the one written last when the TUI holds several (a thread switched
- * to with `/new` or `/resume` counts from its first turn).
+ * Codex: the thread whose rollout the Agent's Codex holds open (its file
+ * descriptor: Codex's own word, not a guess from times or directories) —
+ * `codexPaneThread` says which when it holds several. Refused, saying what
+ * was in the pane, when it holds none: it writes a thread from its first turn.
+ *
+ * Nothing of it is kept: each ask looks again, so a thread that was not open
+ * yet a moment ago is found the next time.
+ *
+ * `files` = `lsof` reads open files with `lsof` (as on macOS) where there is
+ * `/proc` too; for its tests.
  */
 export async function terminalSession(
 	runtime: Runtime,
 	profile: SessionProfile,
 	panePid: number,
+	files: "auto" | "lsof" = "auto",
 ): Promise<string> {
 	if (resumableKind(profile.kind) === "claude") {
 		const sessions = `${await claudeConfigDirectory(runtime, profile)}/sessions`;
@@ -568,34 +597,118 @@ export async function terminalSession(
 		}
 		return claudeProcessSession(outermost, runtime);
 	}
-	const threads = (await paneRecords(runtime, "codex", panePid, "")).flatMap(
-		(record) => {
-			const meta = jsonObject(record, runtime);
-			const payload = meta["payload"] as Record<string, unknown> | undefined;
-			if (
-				meta["type"] !== "session_meta" ||
-				typeof payload?.["id"] !== "string"
-			) {
-				throw new SessionsUnreadable(
-					`${record.path}${runtime.where} does not begin with a session_meta naming its thread`,
-				);
-			}
-			return payload["source"] === "cli"
-				? [{ id: payload["id"], mtime: record.mtime ?? 0 }]
-				: [];
-		},
+	return codexPaneThread(
+		await paneRecords(runtime, "codex", panePid, "", files),
+		`pane pid ${String(panePid)}${runtime.where}`,
 	);
-	const newest = threads.reduce<(typeof threads)[number] | undefined>(
-		(best, thread) =>
-			best === undefined || thread.mtime > best.mtime ? thread : best,
-		undefined,
+}
+
+/** `rollout-<time>-<thread id>.jsonl`: the thread's id, from the file's name. */
+const ROLLOUT_NAME =
+	/(?:^|\/)rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([^/]+)\.jsonl$/;
+
+/**
+ * Whether a `session_meta.source` is a subagent's — a thread Codex spawned
+ * under the one the person is in (`thread_spawn`, a review, a compaction, a
+ * memory consolidation). Spelled `subagent` in the rollouts Codex writes and
+ * `subAgent` on the wire; either, as a key or a kind's name.
+ */
+function isSubagentSource(source: unknown): boolean {
+	const subagent = (name: string) =>
+		name.replace(/[_-]/g, "").toLowerCase().startsWith("subagent");
+	if (typeof source === "string") return subagent(source);
+	return (
+		typeof source === "object" &&
+		source !== null &&
+		Object.keys(source).some(subagent)
 	);
-	if (newest === undefined) {
-		throw new SessionNotResumable(
-			`The Codex of this terminal Agent (pane pid ${String(panePid)}${runtime.where}) has no thread open yet: Codex writes a thread from its first turn.`,
-		);
+}
+
+/**
+ * The thread the Codex of a pane is in, from what its processes hold open
+ * (`PANE_PROCESSES_SCRIPT`'s `codex` records); `where` names the pane in what
+ * is said when there is none. Exported for its tests.
+ *
+ * Any thread but a subagent's: its rollout's `session_meta.source` is the
+ * one that started it, so a thread begun in a GUI Agent (`vscode`,
+ * `appServer`), in the Codex app or by `codex exec` and resumed in the TUI is
+ * the TUI's as much as one it began itself (`cli`). Of several, the one
+ * written last (a thread switched to with `/new` or `/resume` counts from its
+ * first turn). A rollout whose first line cannot be read — Codex is writing
+ * it this moment, or it is longer than DevHub reads — is still the thread its
+ * file's name says, taken only when no other is readable.
+ */
+export function codexPaneThread(
+	records: readonly PaneRecord[],
+	where: string,
+): string {
+	const readable: { id: string; mtime: number }[] = [];
+	const unread: { id: string; mtime: number }[] = [];
+	const passed: string[] = [];
+	for (const record of records) {
+		if (record.kind !== "codex") continue;
+		const named = ROLLOUT_NAME.exec(record.path)?.[1];
+		const mtime = record.mtime ?? 0;
+		const payload = sessionMeta(record.line);
+		if (payload === undefined) {
+			if (named !== undefined) unread.push({ id: named, mtime });
+			passed.push(`${record.path} (its first line is not a session_meta)`);
+			continue;
+		}
+		if (isSubagentSource(payload.source)) {
+			passed.push(`${record.path} (a subagent's)`);
+			continue;
+		}
+		readable.push({ id: payload.id, mtime });
 	}
-	return newest.id;
+	const newest = (threads: readonly { id: string; mtime: number }[]) =>
+		threads.reduce<(typeof threads)[number] | undefined>(
+			(best, thread) =>
+				best === undefined || thread.mtime > best.mtime ? thread : best,
+			undefined,
+		);
+	const found = newest(readable) ?? newest(unread);
+	if (found !== undefined) return found.id;
+	const processes = records
+		.filter((record) => record.kind === "proc")
+		.map((record) => `${record.path || "?"} (${String(record.pid)})`);
+	const notes = records
+		.filter((record) => record.kind === "note")
+		.map((record) => record.path);
+	const codexRuns = processes.some((each) => /codex/i.test(each));
+	throw new SessionNotResumable(
+		[
+			`The Codex of this terminal Agent (${where}) has no thread open yet: Codex writes a thread from its first turn.`,
+			codexRuns
+				? ""
+				: "No process in the pane is Codex: it may have exited, or not have started yet.",
+			`Processes looked at: ${processes.join(", ") || "none"}.`,
+			passed.length > 0
+				? `Rollouts open but not taken: ${passed.join("; ")}.`
+				: "",
+			notes.length > 0 ? `${notes.join("; ")}.` : "",
+		]
+			.filter((part) => part !== "")
+			.join(" "),
+	);
+}
+
+/** A rollout's first line's thread and source, when it is a `session_meta` naming one. */
+function sessionMeta(
+	line: string,
+): { readonly id: string; readonly source: unknown } | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	const meta = value as Record<string, unknown>;
+	const payload = meta["payload"] as Record<string, unknown> | undefined;
+	if (meta["type"] !== "session_meta" || typeof payload?.["id"] !== "string")
+		return undefined;
+	return { id: payload["id"], source: payload["source"] };
 }
 
 /** The `sessionId` of Claude's record of one of its processes. */
