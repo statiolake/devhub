@@ -1960,13 +1960,17 @@ const CLAUDE_USAGE_WINDOWS = ["five_hour", "seven_day"] as const;
 export function decodeUsage(
 	payload: JsonObject | undefined,
 	version: string | undefined,
-): UsageReading {
+): UsageReading | undefined {
 	const f = new Fields(version);
 	const at = "control_response(get_usage).response.response";
 	const body = f.object(payload, at);
 	if (!f.boolean(body.rate_limits_available, `${at}.rate_limits_available`)) {
 		return { kind: "no_plan_limits" };
 	}
+	// The plan has limits but the CLI could not fetch them this time (the
+	// usage endpoint rate-limited it, or was unreachable): `rate_limits` is
+	// null. That is no reading, not a mismatch — the next request may have one.
+	if (body.rate_limits === null) return undefined;
 	const limits = f.object(body.rate_limits, `${at}.rate_limits`);
 	return {
 		kind: "windows",

@@ -33,11 +33,25 @@
  * # Failures
  *
  * A process that will not start or stops, a request the CLI refuses, a
- * response in a shape DevHub does not read: the reader stops, its process is
- * killed, and the failure is said once as `usage_unreadable` at the root. It
- * is not retried — a retry loop would say the same failure again and again —
- * and restarting DevHub asks again. Readings already taken stay in the
- * readout, which goes on with what GUI Agents report.
+ * response in a shape DevHub does not read, a request not answered within
+ * 30 s (`REQUEST_TIMEOUT_MS`): the reader stops and its process is killed, and
+ * a new process (with a new handshake) is started after a backoff of 30 s,
+ * then 1 min, 2 min, 4 min, 8 min, and 10 min from then on
+ * (`RETRY_BACKOFF_MS`). A successful reading ends the streak: the normal
+ * cadence resumes and the next failure starts again at 30 s.
+ *
+ * The failure is said once as `usage_unreadable` at the root — on the first
+ * failure of a streak, not on each retry (the root surface has no way to take a
+ * notice back, so a recovery says nothing). Readings already taken stay in the
+ * readout meanwhile, which goes on with what GUI Agents report.
+ *
+ * Not a failure: Claude answering that the plan has limits but it could not
+ * fetch them just now (`rate_limits: null`, e.g. its usage endpoint answered
+ * 429). Nothing is delivered and the usual cadence goes on.
+ *
+ * Not retried: a command that is not on this Mac (the readout says so; a
+ * settings change is picked up at the next start of DevHub) and a sign-in with
+ * no plan limits, which is an answer and is asked again at the usual cadence.
  */
 
 import { spawn } from "node:child_process";
@@ -148,7 +162,8 @@ export function spawnLineProcess(
 export interface UsageSource {
 	/** The handshake. */
 	open(): Promise<void>;
-	read(): Promise<UsageReading>;
+	/** `undefined`: the CLI had no reading this time (not a failure). */
+	read(): Promise<UsageReading | undefined>;
 	/**
 	 * Aborted once the source can answer nothing more — its process ended, or
 	 * said something DevHub cannot read — with the reason.
@@ -241,18 +256,23 @@ export class ClaudeUsageSource implements UsageSource {
 		await this.#request("initialize");
 	}
 
-	async read(): Promise<UsageReading> {
+	async read(): Promise<UsageReading | undefined> {
 		return decodeUsage(await this.#request("get_usage"), undefined);
 	}
 
 	async #request(subtype: "initialize" | "get_usage") {
+		// `skip_behaviors`: get_usage otherwise also scans the session history
+		// for its "behaviors" recommendations, which a readout never shows.
 		this.#next += 1;
 		const id = `devhub-usage-${String(this.#next)}`;
 		const answer = this.#pending.wait(id);
 		this.child.send({
 			type: "control_request",
 			request_id: id,
-			request: { subtype },
+			request:
+				subtype === "get_usage"
+					? { subtype, skip_behaviors: true }
+					: { subtype },
 		});
 		const outcome = await answer;
 		if (!outcome.ok) {
@@ -329,7 +349,7 @@ export class CodexUsageSource implements UsageSource {
 		this.child.send({ method: "initialized" });
 	}
 
-	async read(): Promise<UsageReading> {
+	async read(): Promise<UsageReading | undefined> {
 		const account = accountResponse(
 			this.#reader,
 			await this.#call("account/read", {} satisfies GetAccountParams),
@@ -451,6 +471,35 @@ export function waitFor(ms: number, signal: AbortSignal): Promise<void> {
 	});
 }
 
+/** How long a request to the CLI may go unanswered before it is a failure. */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** The wait before the n-th retry of a failure streak; the last repeats. */
+export const RETRY_BACKOFF_MS: readonly number[] = [
+	30_000, 60_000, 120_000, 240_000, 480_000, 600_000,
+];
+
+/** `promise`, failing if it is not settled within `ms`. */
+function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			reject(
+				new Error(`${what} was not answered within ${String(ms / 1000)} s`),
+			);
+		}, ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(failure: unknown) => {
+				clearTimeout(timer);
+				reject(failure as Error);
+			},
+		);
+	});
+}
+
 export function usageUnreadable(
 	cli: LimitedCli,
 	profile: string,
@@ -488,12 +537,22 @@ export class UsageReader {
 	async run(): Promise<void> {
 		const stopOrEnd = AbortSignal.any([this.#stop.signal, this.source.ended]);
 		try {
-			await this.source.open();
+			await within(this.source.open(), REQUEST_TIMEOUT_MS, "the handshake");
 			while (!stopOrEnd.aborted) {
-				const reading = await this.source.read();
+				const reading = await within(
+					this.source.read(),
+					REQUEST_TIMEOUT_MS,
+					"the usage request",
+				);
 				if (this.#stop.signal.aborted) return;
-				this.deliver(reading);
-				await this.wait(pollInterval(this.cli, reading), stopOrEnd);
+				// No reading this time: the usual cadence, nothing delivered.
+				if (reading !== undefined) this.deliver(reading);
+				await this.wait(
+					reading === undefined
+						? USUAL_INTERVAL_MS
+						: pollInterval(this.cli, reading),
+					stopOrEnd,
+				);
 			}
 			if (!this.#stop.signal.aborted) throw this.source.ended.reason;
 		} catch (failure) {
@@ -549,12 +608,16 @@ function usageCommand(
  * starting it, reading — happens after this returns.
  */
 export function startUsageReaders(deps: UsageReadersDeps): { stop(): void } {
-	const readers: UsageReader[] = [];
-	let stopped = false;
+	const readers = new Set<UsageReader>();
+	const stopped = new AbortController();
+	const wait = deps.wait ?? waitFor;
 	for (const cli of LIMITED_CLIS) {
 		const profile = deps.profiles.find((one) => one.kind === cli);
 		if (profile === undefined) continue;
-		const start = async (): Promise<void> => {
+		// The streak of failures in a row: how many, and whether it was said.
+		let failures = 0;
+		let said = false;
+		const once = async (): Promise<void> => {
 			const resolved = await deps.runtime.resolveProgram(
 				profile.command,
 				deps.searchPath,
@@ -565,7 +628,7 @@ export function startUsageReaders(deps: UsageReadersDeps): { stop(): void } {
 			}
 			const env = { ...(await deps.runtime.environment()), ...profile.env };
 			const home = await deps.runtime.home();
-			if (stopped) return;
+			if (stopped.signal.aborted) return;
 			const child = deps.spawn(usageCommand(cli, resolved.value, env), home);
 			const reader = new UsageReader(
 				cli,
@@ -574,25 +637,49 @@ export function startUsageReaders(deps: UsageReadersDeps): { stop(): void } {
 					? new ClaudeUsageSource(child)
 					: new CodexUsageSource(child, deps.clientVersion),
 				(reading) => {
+					// A reading ends the streak: the next failure is news again.
+					failures = 0;
+					said = false;
 					deps.deliver(cli, reading);
 				},
 				deps.wait,
 			);
-			readers.push(reader);
-			await reader.run();
+			readers.add(reader);
+			try {
+				await reader.run();
+			} finally {
+				readers.delete(reader);
+			}
 		};
-		void start().catch((failure: unknown) => {
-			deps.report(
-				failure instanceof NamedFailure &&
-					failure.wire.code === "usage_unreadable"
-					? failure
-					: usageUnreadable(cli, profile.display_name, failure),
-			);
-		});
+		const supervise = async (): Promise<void> => {
+			while (!stopped.signal.aborted) {
+				try {
+					// Returns when stopped or when there is no command to run.
+					await once();
+					return;
+				} catch (failure) {
+					if (stopped.signal.aborted) return;
+					if (!said) {
+						said = true;
+						deps.report(
+							failure instanceof NamedFailure &&
+								failure.wire.code === "usage_unreadable"
+								? failure
+								: usageUnreadable(cli, profile.display_name, failure),
+						);
+					}
+					const backoff =
+						RETRY_BACKOFF_MS[Math.min(failures, RETRY_BACKOFF_MS.length - 1)];
+					failures += 1;
+					await wait(backoff ?? 600_000, stopped.signal);
+				}
+			}
+		};
+		void supervise();
 	}
 	return {
 		stop() {
-			stopped = true;
+			stopped.abort();
 			for (const reader of readers) reader.stop();
 		},
 	};
