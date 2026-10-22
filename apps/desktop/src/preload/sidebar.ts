@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
+	type ContextMenuRequestWire,
 	type MenuCommand,
 	type SidebarAreaWire,
 	type SidebarBridge,
@@ -54,6 +55,10 @@ const api: SidebarBridge = {
 	// pointer is resting, not a request waiting on an answer, and a tooltip
 	// that had to await a round trip would arrive after the pointer moved on.
 	onChordArmed: (listener) => on<boolean>(CHANNELS.chordArmedChanged, listener),
+	showContextMenu: (request: ContextMenuRequestWire) =>
+		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
+			string | undefined
+		>,
 	showTooltip: (request: TooltipRequestWire) => {
 		ipcRenderer.send(CHANNELS.showTooltip, request);
 	},

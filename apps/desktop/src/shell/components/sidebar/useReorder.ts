@@ -2,9 +2,8 @@
  * The Sidebar's half of dragging a row: what one row has to be told, and what
  * the pane has to be told, while a drag is in progress.
  *
- * One hook for the whole tree rather than one per row, for the same reason the
- * row menu is one piece of state: only one row can be being dragged, and saying
- * so in one place is what makes that true instead of hoping every row lets go
+ * One hook for the whole tree rather than one per row: only one row can be
+ * being dragged, and saying so in one place is what makes that true instead of hoping every row lets go
  * when another starts.
  *
  * The rule about where a row may go is not here and not in `reorder.ts` either

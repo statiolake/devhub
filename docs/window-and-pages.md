@@ -38,6 +38,16 @@ page's own report of where its pointer is decides. Everything that is not
 about the pointer — a scroll, a resize, the window losing focus, a modal
 opening — still takes it down at once.
 
+A context menu is not in the list at all. A row's right-click menu is a
+**native** menu (`main/shell/contextMenu.ts`): the Sidebar sends the items' ids
+and labels and the click's point in its own coordinates (`showContextMenu`),
+main adds where it laid the Sidebar and pops a `Menu` up over the window, and
+the page runs whichever item's id comes back, the way its own buttons do. It
+used to be a DOM box in the Sidebar's page, clipped by the Sidebar's view —
+to nothing on a collapsed rail. A native menu is above every view, is drawn and
+keyed the way every Mac menu is, and is what the workbench's context menus
+already are; so the window has one kind of context menu.
+
 `ShellWindow.layout()` is the only thing that reads it, and it is the only
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
 DevHub has an opinion about where a view is.
@@ -101,7 +111,7 @@ role.)
 | Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
 | --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
-| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip`, `releaseTooltip`                                                 |
+| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen                                                     | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`                                                                                                                                        |

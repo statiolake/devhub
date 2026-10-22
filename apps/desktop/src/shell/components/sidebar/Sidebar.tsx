@@ -20,7 +20,6 @@ import {
 } from "../../../ipc/appShell";
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
-import { agentRestart } from "../../../model/domain";
 import { closingDeletesWorktree } from "../../../model/worktrees";
 import {
   useChordArmed,
@@ -32,7 +31,7 @@ import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
 import { RowTooltip } from "./RowTooltip";
-import { RowMenu, type RowMenuItem } from "./RowMenu";
+import { agentMenuItems, openRowMenu, workspaceMenuItems } from "./rowMenu";
 import { StatusMark, unreadShows } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import {
@@ -1199,46 +1198,31 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
+  const { reopenEditorLocally, reopenEditorInContainer } = useSidebar();
+
   /**
-   * The row's context menu.
-   *
-   * One piece of state for the whole tree rather than one per row: only one
-   * menu can be open, and saying so here is what makes that true instead of
-   * hoping every row closes itself when another opens.
+   * The row's context menu: a native menu over the window (`rowMenu.ts`), so
+   * nothing about it is state here — macOS keeps exactly one up.
    */
-  const [agentMenu, setAgentMenu] = useState<
-    | {
-        readonly agent: AgentSnapshot;
-        readonly at: { x: number; y: number };
-      }
-    | undefined
-  >(undefined);
   const openAgentMenu = useCallback(
     (agent: AgentSnapshot, at: { x: number; y: number }) => {
-      setAgentMenu({ agent, at });
+      openRowMenu(agentMenuItems(agent, dispatchIntent, openRename), at);
     },
-    [],
+    [dispatchIntent, openRename],
   );
-  const closeAgentMenu = useCallback(() => {
-    setAgentMenu(undefined);
-  }, []);
-  const [workspaceMenu, setWorkspaceMenu] = useState<
-    | {
-        readonly workspace: WorkspaceSnapshot;
-        readonly at: { x: number; y: number };
-      }
-    | undefined
-  >(undefined);
   const openWorkspaceMenu = useCallback(
     (workspace: WorkspaceSnapshot, at: { x: number; y: number }) => {
-      setWorkspaceMenu({ workspace, at });
+      openRowMenu(
+        workspaceMenuItems(
+          workspace,
+          reopenEditorInContainer,
+          reopenEditorLocally,
+        ),
+        at,
+      );
     },
-    [],
+    [reopenEditorInContainer, reopenEditorLocally],
   );
-  const closeWorkspaceMenu = useCallback(() => {
-    setWorkspaceMenu(undefined);
-  }, []);
-  const { reopenEditorLocally, reopenEditorInContainer } = useSidebar();
 
   const resize = useCallback(
     (width: number) => {
@@ -1265,9 +1249,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
   /**
    * Rearranging the list by hand.
    *
-   * One piece of state for the whole tree, like the row menu above it: only one
-   * row can be in the air. Where it may land is `model/workspaceOrder.ts`'s
-   * answer and not this component's — the same answer `Alt+↑` gets.
+   * One piece of state for the whole tree: only one row can be in the air.
+   * Where it may land is `model/workspaceOrder.ts`'s answer and not this
+   * component's — the same answer `Alt+↑` gets.
    */
   const reorder = useReorder(snapshot);
 
@@ -1287,9 +1271,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
       // Escape leaves the Sidebar, from anywhere in it: a row, the tree, the
       // resize handle. One handler on the pane rather than one per control,
-      // because "the way out" is a fact about the pane. Anything inside that
-      // has its own Escape — the row menu — stops the event, so the key means
-      // one thing at a time.
+      // because "the way out" is a fact about the pane. The row menu is a
+      // native menu (`rowMenu.ts`) and answers its own Escape before this
+      // page ever sees the key, so the key means one thing at a time.
       onKeyDown={(event) => {
         if (isImeComposing(event.nativeEvent)) return;
         if (event.key !== "Escape") return;
@@ -1512,107 +1496,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
           the exact failure `title` was replaced to avoid. Where it goes is the
           owner's and takes no argument from here: beside the row, always. */}
       <RowTooltip />
-      {agentMenu ? (
-        <RowMenu
-          at={agentMenu.at}
-          label={`${agentMenu.agent.displayName} actions`}
-          items={agentMenuItems(agentMenu.agent, dispatchIntent, openRename)}
-          onDismiss={closeAgentMenu}
-        />
-      ) : null}
-      {workspaceMenu ? (
-        <RowMenu
-          at={workspaceMenu.at}
-          label={`${workspaceMenu.workspace.label} actions`}
-          items={[
-            {
-              // The way back in when the editor could not open because its
-              // container was never built, or was removed: build it, then
-              // open the editor in it — what Retry, which only starts a
-              // container, cannot do.
-              id: "reopen-in-container",
-              label: "Reopen Editor in Container",
-              run: () => {
-                reopenEditorInContainer(workspaceMenu.workspace.id);
-              },
-            },
-            {
-              // The way out when an editor in a dev container cannot open —
-              // a container never built, a Docker that is not running — and
-              // the same act as the editor's own Reopen Folder Locally.
-              id: "reopen-locally",
-              label: "Reopen Editor Locally",
-              run: () => {
-                reopenEditorLocally(workspaceMenu.workspace.id);
-              },
-            },
-          ]}
-          onDismiss={closeWorkspaceMenu}
-        />
-      ) : null}
     </aside>
   );
-}
-
-/**
- * What a right-click on an Agent offers.
- *
- * Mark as Unread is the only one that is not already a control on the row, and
- * it is here because it is the counterpart to opening one: reading is
- * automatic, and un-reading has to be something you can say.
- */
-function agentMenuItems(
-  agent: AgentSnapshot,
-  dispatch: (intent: AppIntent) => void,
-  onRename: (agent: AgentSnapshot) => void,
-): RowMenuItem[] {
-  const items: RowMenuItem[] = [
-    {
-      id: "rename",
-      label: "Rename…",
-      run: () => {
-        onRename(agent);
-      },
-    },
-  ];
-  if (!agent.unread) {
-    items.push({
-      id: "unread",
-      label: "Mark as Unread",
-      run: () => {
-        dispatch({ type: "mark_agent_unread", agentId: agent.id });
-      },
-    });
-  }
-  // Offered where the coordinator would take it (`agentRestart`): a GUI
-  // Agent's CLI is DevHub's to start again, a terminal Agent's is the
-  // terminal's own process, and a conversation DevHub cannot follow could
-  // not follow a CLI started again either.
-  if (
-    agent.controlState.kind === "running" &&
-    agentRestart(agent).kind === "available"
-  ) {
-    items.push({
-      id: "restart",
-      label: "Restart Session",
-      run: () => {
-        dispatch({ type: "restart_agent", agentId: agent.id });
-      },
-    });
-  }
-  if (agent.controlState.kind !== "stopping") {
-    items.push({
-      id: "stop",
-      label:
-        agent.controlState.kind === "stop-failed" ? "Retry Stop" : "Stop Agent",
-      run: () => {
-        dispatch(
-          agent.controlState.kind === "stop-failed"
-            ? { type: "retry_stop_agent", agentId: agent.id }
-            : { type: "stop_agent", agentId: agent.id },
-        );
-      },
-    });
-  }
-  return items;
 }

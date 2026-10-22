@@ -87,6 +87,7 @@ import {
 	type WorkspacePlaceWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
+	type ContextMenuRequestWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
@@ -465,6 +466,7 @@ import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { terminalColors } from "./terminalColors.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
+import { popupContextMenu } from "./contextMenu.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
 	devhubSkillPaths,
@@ -8245,6 +8247,18 @@ export class AppController {
 		// arrives in window coordinates — see `SidebarAreaWire` for how the
 		// page knows its own origin, which is main's number and not a
 		// measurement.
+		// A row's context menu, as a native menu over the window, so no view's
+		// bounds can clip it. The page's point plus the place main laid the
+		// Sidebar is where the click was. The tooltip goes first: it was about
+		// the row the pointer rested on, and the menu is what is being read now.
+		handle(
+			CHANNELS.showContextMenu,
+			(_event, request: ContextMenuRequestWire) => {
+				const window = shellWindow();
+				window.tooltip.hide();
+				return popupContextMenu(window.window, request, window.sidebarArea());
+			},
+		);
 		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {
 			shellWindow().tooltip.show(request);
 		});

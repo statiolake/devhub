@@ -624,6 +624,27 @@ export interface SidebarAreaWire {
 }
 
 /**
+ * One item of a context menu a page asks main to put up.
+ *
+ * Only what the menu draws: the act stays with the page, which runs the item
+ * whose id comes back (`main/shell/contextMenu.ts`).
+ */
+export interface ContextMenuItemWire {
+	readonly id: string;
+	readonly label: string;
+}
+
+/**
+ * A context menu, and where the click that opened it was — in the **page's**
+ * own coordinates. Main adds where it laid the page; the page is never asked
+ * for a number main already has.
+ */
+export interface ContextMenuRequestWire {
+	readonly items: readonly ContextMenuItemWire[];
+	readonly at: { readonly x: number; readonly y: number };
+}
+
+/**
  * A tooltip the Sidebar is asking for, in the window's own coordinates.
  *
  * The Sidebar composes the sentence and knows which row the pointer is
@@ -1197,6 +1218,15 @@ export interface SidebarBridge
 	 */
 	onChordArmed(listener: (armed: boolean) => void): () => void;
 	/**
+	 * Put a row's context menu up over the window, as a native menu.
+	 *
+	 * The Sidebar used to draw its own, and a box in this document is clipped
+	 * by this view — on a collapsed rail, to nothing. Resolves to the id of
+	 * the item chosen, or `undefined` when the menu was dismissed; the page
+	 * runs the item itself, the way its own buttons would.
+	 */
+	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
+	/**
 	 * Raise a tooltip over the window, about a row in this column.
 	 *
 	 * The Sidebar used to draw its own, which is why the rail had none: a box
@@ -1676,6 +1706,8 @@ export const CHANNELS = {
 	sidebarAreaChanged: "devhub:sidebar-area-changed",
 	/** The chord prefix was armed or disarmed: the Sidebar numbers its rows. */
 	chordArmedChanged: "devhub:chord-armed-changed",
+	/** A row's context menu, put up by main as a native menu. */
+	showContextMenu: "devhub:show-context-menu",
 	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
 	showTooltip: "devhub:show-tooltip",
 	/** The Sidebar taking it down again, at once. */
