@@ -58,3 +58,50 @@ export function useFreshEntries(
     }
   }, [content, revision]);
 }
+
+/**
+ * Coming back to a pane does not play its arrivals again.
+ *
+ * A parked pane is `hidden` — `display: none` — and an element that leaves
+ * `display: none` starts its CSS animations over and takes its
+ * `@starting-style` again: every entry marked fresh rose in once more, and the
+ * activity line, a queued message, a request card, each time somebody
+ * switched back to the Agent (or back from a maximized subagent). What
+ * arrived was seen arriving, or arrived while nobody was looking; neither is
+ * news when the pane is shown.
+ *
+ * So on being shown, before the frame is painted, every finite animation and
+ * transition in the pane is run to its end. The ones that repeat (the
+ * activity dots, a spinner) are what the pane is doing now, and are left to
+ * run. `view` is what else, while shown, hides one part of the pane and shows
+ * another (the subagent maximized), so that changing does the same.
+ */
+export function useNoReplayOnShow(
+  root: RefObject<HTMLElement | null>,
+  hidden: boolean,
+  view: unknown,
+): void {
+  const previous = useRef<{ hidden: boolean; view: unknown } | undefined>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    const before = previous.current;
+    previous.current = { hidden, view };
+    if (before === undefined || hidden) return;
+    if (!before.hidden && before.view === view) return;
+    const element = root.current;
+    if (element) settleAnimations(element);
+  }, [root, hidden, view]);
+}
+
+/** Every finite animation and transition under `root`, at its end. */
+export function settleAnimations(root: Element): void {
+  // Not in jsdom; and asking computes styles, which is what starts the
+  // animations an element leaving `display: none` gets.
+  if (typeof root.getAnimations !== "function") return;
+  for (const animation of root.getAnimations({ subtree: true })) {
+    const end = animation.effect?.getComputedTiming().endTime;
+    if (typeof end !== "number" || !Number.isFinite(end)) continue;
+    animation.finish();
+  }
+}

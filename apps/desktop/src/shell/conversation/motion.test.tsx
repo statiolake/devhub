@@ -9,7 +9,7 @@
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
 import { cleanup, screen } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../model/conversation";
 import { FRESH_LIMIT } from "./freshEntries";
 import { draw, entry, installResizeObserver } from "./surfaceTestKit";
@@ -74,6 +74,50 @@ describe("entries rising in", () => {
     );
     view.redraw(transcriptOf([...HISTORY, ...many]));
     expect(entry("m0")).not.toHaveAttribute("data-fresh");
+  });
+});
+
+describe("coming back to a parked pane", () => {
+  // jsdom runs no animations; these stand in for what Chromium starts again
+  // on an element that leaves `display: none`.
+  function stubAnimations() {
+    const rise = { finish: vi.fn(), effect: timing(400) };
+    const dots = { finish: vi.fn(), effect: timing(Infinity) };
+    const getAnimations = vi.fn(() => [rise, dots]);
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value: getAnimations,
+    });
+    return { rise, dots, getAnimations };
+  }
+  function timing(endTime: number) {
+    return { getComputedTiming: () => ({ endTime }) };
+  }
+  afterEach(() => {
+    delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+  });
+
+  it("keeps the same entries, and runs what would rise in again to its end", () => {
+    const view = draw(transcriptOf(HISTORY));
+    view.redraw(transcriptOf([...HISTORY, put(assistant("a2", "new"))]));
+    const fresh = entry("a2");
+    expect(fresh).toHaveAttribute("data-fresh");
+    const { rise, dots } = stubAnimations();
+    view.redraw(transcriptOf([...HISTORY, put(assistant("a2", "new"))]), true);
+    expect(rise.finish).not.toHaveBeenCalled();
+    view.redraw(transcriptOf([...HISTORY, put(assistant("a2", "new"))]));
+    // Not drawn again: the same element, shown.
+    expect(entry("a2")).toBe(fresh);
+    expect(rise.finish).toHaveBeenCalledTimes(1);
+    // What repeats is what the pane is doing now, and keeps going.
+    expect(dots.finish).not.toHaveBeenCalled();
+  });
+
+  it("leaves what arrives while it is shown alone", () => {
+    const view = draw(transcriptOf(HISTORY));
+    const { getAnimations } = stubAnimations();
+    view.redraw(transcriptOf([...HISTORY, put(assistant("a2", "new"))]));
+    expect(getAnimations).not.toHaveBeenCalled();
   });
 });
 

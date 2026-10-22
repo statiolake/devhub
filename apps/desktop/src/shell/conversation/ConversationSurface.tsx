@@ -67,7 +67,7 @@ import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { useFollowScroll } from "./followScroll";
 import { ActivityLine } from "./ActivityLine";
-import { useFreshEntries } from "./freshEntries";
+import { useFreshEntries, useNoReplayOnShow } from "./freshEntries";
 import { IssueRepositoryProvider, type IssueRepository } from "./issueLinks";
 import { PathLinks, PathLinksProvider } from "./pathLinks";
 import { ArrowDownIcon } from "./icons";
@@ -192,6 +192,7 @@ export function ConversationSurface({
     revision: transcript,
   });
   useFreshEntries(content, transcript);
+  useNoReplayOnShow(surface, hidden, maximized?.id);
 
   const composer = useRef<HTMLTextAreaElement>(null);
   const model = useRef<SettingPickerHandle>(null);
