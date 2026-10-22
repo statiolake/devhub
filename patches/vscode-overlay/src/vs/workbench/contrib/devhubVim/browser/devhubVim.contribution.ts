@@ -142,6 +142,7 @@ import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
 import { ModalCursor } from '../../../../editor/common/cursor/modalCursor.js';
+import { CursorChangeReason } from '../../../../editor/common/cursorEvents.js';
 import { IPosition, Position } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
@@ -441,6 +442,8 @@ class VimEditor extends Disposable implements IVimHost {
 	private incOrigin: { scrollTop: number; scrollLeft: number } | undefined;
 	/** Inside scrollToLine's cursor move: the cursor is not revealed, the scroll says where the window goes. */
 	private revealSuppressed = 0;
+	/** Inside the engine's handling of a selection the mouse made. */
+	private mouseSelecting = 0;
 	/** The primary selection last put for a visual mode, with the character its cursor is on. */
 	private visualPrimary: { selection: Selection; cursor: Position } | undefined;
 	/** VS Code's find controller of this editor (its FindReplaceState is the find widget's, F3's and Cmd+G's), once there is one. */
@@ -520,9 +523,14 @@ class VimEditor extends Disposable implements IVimHost {
 				return;
 			}
 			const s = e.selection;
-			this.engine.selectionChanged(
-				{ line: s.selectionStartLineNumber - 1, col: s.selectionStartColumn - 1 },
-				{ line: s.positionLineNumber - 1, col: s.positionColumn - 1 });
+			this.mouseSelecting++;
+			try {
+				this.engine.selectionChanged(
+					{ line: s.selectionStartLineNumber - 1, col: s.selectionStartColumn - 1 },
+					{ line: s.positionLineNumber - 1, col: s.positionColumn - 1 });
+			} finally {
+				this.mouseSelecting--;
+			}
 			owner.update();
 		}));
 		this._register(editor.onDidChangeConfiguration(e => {
@@ -915,9 +923,22 @@ class VimEditor extends Disposable implements IVimHost {
 		const sel = cursorAtStart
 			? new Selection(end.line + 1, end.col + 1, start.line + 1, start.col + 1)
 			: new Selection(start.line + 1, start.col + 1, end.line + 1, end.col + 1);
-		const caret = this.noteVisual(sel);
-		this.visualRanges = this.visualPrimary ? [sel] : [];
-		ModalCursor.redraw(this.editor.getId(), () => this.editor.setSelection(sel, selectionSource(jump)));
+		// The visual mode the mouse just made covers the mouse's selection: the
+		// editor's cursor state stays as it is, only the caret is drawn anew.
+		// Putting the selection would make a new cursor state, and the mouse's
+		// drag goes on from that state's start (a word or line drag from its
+		// whole first word or line, which a put selection forgets) and keeps
+		// its direction, which a one-character selection does not say.
+		const vm = this.mouseSelecting ? this.editor._getViewModel() : undefined;
+		const states = vm?.getCursorStates();
+		const current = this.editor.getSelection();
+		const keep = vm && states?.length === 1 && current?.equalsRange(sel) ? states : undefined;
+		const put = keep ? current! : sel;
+		const caret = this.noteVisual(put);
+		this.visualRanges = this.visualPrimary ? [put] : [];
+		ModalCursor.redraw(this.editor.getId(), () => keep
+			? vm!.setCursorStates(selectionSource(jump), CursorChangeReason.NotSet, keep)
+			: this.editor.setSelection(sel, selectionSource(jump)));
 		this.reveal(caret, jump);
 	}
 

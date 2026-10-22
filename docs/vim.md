@@ -738,6 +738,10 @@ the cursor's character instead, and leaves the selection as it is:
   wrapped line has it on the screen line the character is on.
 - A mouse drag and `gv` have it on the cursor's character as well, the same
   one `o` and the next motion start from.
+- A mouse drag (in either direction, and a double- or triple-click drag by
+  words or lines) selects exactly what VS Code highlights for it: Vim takes
+  that selection as it is and leaves the editor's drag alone, so the end it
+  began at stays put however long the drag goes on.
 
 The window scrolls to that character, and the active (and relative) line
 numbers are its line's (in block mode, the one caret's). Where the caret is

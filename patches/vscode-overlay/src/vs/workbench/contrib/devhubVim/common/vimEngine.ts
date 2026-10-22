@@ -1066,10 +1066,21 @@ export class VimEngine {
 		}
 		this.resetGrammar();
 		this._mode = 'visual';
-		this.visualAnchor = anchor;
 		this.visualToEol = false;
-		// The editor's selection end is exclusive; Vim's head is the last char.
-		this.visualHead = cmp(active, anchor) > 0 ? this.prevChar(active) ?? active : active;
+		// The visual area is exactly the editor's selection, whose end is
+		// exclusive: Vim's ends are its first and last characters. On a backward
+		// drag the end is the anchor, so the anchor is the character before it.
+		// Taking `anchor` itself would select one more character than the mouse
+		// did, and as the editor's drag goes on from the selection's start (the
+		// one renderVisual put, a character further), every mouse move would add
+		// one more. Being the same selection, renderVisual only redraws the caret.
+		if (cmp(active, anchor) > 0) {
+			this.visualAnchor = anchor;
+			this.visualHead = this.prevChar(active) ?? active;
+		} else {
+			this.visualAnchor = this.prevChar(anchor) ?? anchor;
+			this.visualHead = active;
+		}
 		this.renderVisual();
 	}
 

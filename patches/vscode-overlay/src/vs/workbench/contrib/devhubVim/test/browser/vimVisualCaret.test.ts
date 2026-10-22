@@ -283,7 +283,65 @@ suite('DevHub Vim: a visual mode\'s caret is drawn on the cursor character', () 
 		assert.strictEqual(env.caret(), '(1,4)');
 	}));
 
-	test('normal mode, and Vim off: the caret is where VS Code puts it', () => withVim('abcdef', env => {
+	const mouseAt = (lineNumber: number, column: number) => { const position = new Position(lineNumber, column); return { source: 'mouse', position, viewPosition: position }; };
+
+	test('a drag from bottom to top: the selection is what the mouse covers at every move, its end stays put', () => withVim('abcdefgh\nijklmnop', env => {
+		const vm = env.editor._getViewModel()!;
+		CoreNavigationCommands.MoveTo.runCoreEditorCommand(vm, mouseAt(2, 7));
+		const seen: string[] = [];
+		for (const [l, c] of [[2, 5], [2, 3], [1, 7], [1, 4], [1, 2], [1, 2]]) {
+			CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(l, c));
+			seen.push(`${env.sel()} ${env.caret()}`);
+		}
+		assert.deepStrictEqual(seen, [
+			'[(2,7) -> (2,5)] (2,5)',
+			'[(2,7) -> (2,3)] (2,3)',
+			'[(2,7) -> (1,7)] (1,7)',
+			'[(2,7) -> (1,4)] (1,4)',
+			'[(2,7) -> (1,2)] (1,2)',
+			'[(2,7) -> (1,2)] (1,2)',
+		]);
+		assert.strictEqual(env.mode(), 'visual');
+		env.run('devhubVim.action', { action: 'swapVisualEnds' });
+		assert.strictEqual(env.caret(), '(2,6)', '`o`: the last character the mouse covered');
+		assert.strictEqual(env.sel(), '[(1,2) -> (2,7)]');
+	}));
+
+	test('a drag back over one character and on: the selection keeps its direction', () => withVim('abcdef', env => {
+		const vm = env.editor._getViewModel()!;
+		CoreNavigationCommands.MoveTo.runCoreEditorCommand(vm, mouseAt(1, 5));
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 4));
+		assert.strictEqual(env.sel(), '[(1,5) -> (1,4)]');
+		assert.strictEqual(env.caret(), '(1,4)');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 2));
+		assert.strictEqual(env.sel(), '[(1,5) -> (1,2)]');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 6));
+		assert.strictEqual(env.sel(), '[(1,5) -> (1,6)]', 'and past where it began');
+		assert.strictEqual(env.caret(), '(1,5)');
+	}));
+
+	test('a double-click drag goes on by words, a triple-click drag by lines, either way', () => withVim('foo bar baz\nqux quux\nend', env => {
+		const vm = env.editor._getViewModel()!;
+		CoreNavigationCommands.WordSelect.runCoreEditorCommand(vm, mouseAt(1, 6));
+		assert.strictEqual(env.sel(), '[(1,5) -> (1,8)]');
+		assert.strictEqual(env.mode(), 'visual');
+		assert.strictEqual(env.caret(), '(1,7)');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 10));
+		assert.strictEqual(env.sel(), '[(1,5) -> (1,12)]', 'forwards: to the end of the word');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 2));
+		assert.strictEqual(env.sel(), '[(1,8) -> (1,1)]', 'backwards: from the end of the first word, to the start of this one');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 2));
+		assert.strictEqual(env.sel(), '[(1,8) -> (1,1)]');
+		env.run('devhubVim.escape');
+		CoreNavigationCommands.LineSelect.runCoreEditorCommand(vm, mouseAt(2, 3));
+		assert.strictEqual(env.sel(), '[(2,1) -> (3,1)]');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 3));
+		assert.strictEqual(env.sel(), '[(3,1) -> (1,1)]', 'up: the whole line the drag began on stays in');
+		CoreNavigationCommands.MoveToSelect.runCoreEditorCommand(vm, mouseAt(1, 2));
+		assert.strictEqual(env.sel(), '[(3,1) -> (1,1)]');
+	}));
+
+	test('normal mode, and Vim off: the caret is where VS Code puts it',() => withVim('abcdef', env => {
 		env.editor.setPosition({ lineNumber: 1, column: 3 });
 		assert.strictEqual(env.caret(), '(1,3)');
 		env.editor.setSelection(new Selection(1, 2, 1, 4));

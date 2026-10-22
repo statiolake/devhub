@@ -645,6 +645,47 @@ suite('DevHub Vim engine', () => {
 		v.keys('G');
 		assert.strictEqual(v.host.cursor.line, 199998);
 	});
+
+	test('a mouse drag selects what the mouse covers, either way, however many moves it takes', () => {
+		// The editor goes on with a drag from the start (the anchor) of the
+		// selection it has, which is the one the engine put last.
+		const pos = (line: number, col: number): VimPos => ({ line, col });
+		const drag = (text: string, from: VimPos, moves: VimPos[]) => {
+			const v = new Vim(text);
+			let anchor = from;
+			const seen: string[] = [];
+			for (const to of moves) {
+				v.vim.selectionChanged(anchor, to);
+				const s = v.host.selection!;
+				const backwards = v.host.cursor.line === s.start.line && v.host.cursor.col === s.start.col;
+				anchor = backwards ? s.end : s.start;
+				seen.push(`${s.start.line}:${s.start.col}-${s.end.line}:${s.end.col}${backwards ? '<' : '>'}`);
+			}
+			return { v, seen };
+		};
+		const up = drag('abcdefgh\nijklmnop', pos(1, 6), [pos(1, 4), pos(1, 2), pos(0, 6), pos(0, 3), pos(0, 1)]);
+		assert.deepStrictEqual(up.seen, ['1:4-1:6<', '1:2-1:6<', '0:6-1:6<', '0:3-1:6<', '0:1-1:6<'], 'bottom to top: the end stays where the drag began');
+		assert.strictEqual(up.v.vim.mode, 'visual');
+		up.v.keys('d');
+		assert.strictEqual(up.v.state(), 'a|op', 'd deletes what was highlighted');
+
+		const down = drag('abcdefgh\nijklmnop', pos(0, 1), [pos(0, 3), pos(1, 2), pos(1, 6)]);
+		assert.deepStrictEqual(down.seen, ['0:1-0:3>', '0:1-1:2>', '0:1-1:6>'], 'top to bottom');
+		down.v.keys('d');
+		assert.strictEqual(down.v.state(), 'a|op');
+
+		const back = drag('abcdef', pos(0, 5), [pos(0, 1)]);
+		back.v.keys('o');
+		assert.deepStrictEqual(back.v.vim.visualCursor(), pos(0, 4), 'o: the other end is the last character the mouse covered');
+		back.v.keys('o');
+		assert.deepStrictEqual(back.v.host.selection, { start: pos(0, 1), end: pos(0, 5) }, 'and back: the same characters');
+
+		const one = drag('abcdef', pos(0, 4), [pos(0, 3)]);
+		assert.deepStrictEqual(one.v.host.selection, { start: pos(0, 3), end: pos(0, 4) }, 'one character backwards');
+
+		const eol = drag('ab\ncd', pos(1, 0), [pos(0, 1)]);
+		assert.deepStrictEqual(eol.seen, ['0:1-1:0<'], 'backwards from the start of a line: the newline above is the end');
+	});
 });
 
 suite('DevHub Vim: words end where the script changes (devhub.editor.wordBoundariesByScript)', () => {
