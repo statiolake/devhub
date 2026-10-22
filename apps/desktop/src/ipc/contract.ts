@@ -535,15 +535,20 @@ export interface RepositoryStatusWire {
 export interface LayoutPreviewWire {
 	readonly sidebarWidth?: number | null;
 	readonly splitRatio?: number | null;
-	/** The divider left of the Agent's terminal, as a share of the width. */
+	/**
+	 * The divider between the Agent and its terminal, as the terminal's share
+	 * of the seam's `extent` — whichever way it runs (`TerminalSeamWire`).
+	 */
 	readonly terminalShare?: number | null;
 }
 
 /**
- * The divider between the content and the Agent's terminal, as main laid it
- * out — the strip the window's own page draws it in, because it is the one
- * place no child view covers. `extent` is the whole content area, which is
- * what a drag's share is a share *of*. See `model/agentTerminal.ts`.
+ * The divider between the Agent and its terminal, as main laid it out — the
+ * strip the window's own page draws it in, because it is the one place no
+ * child view covers. `extent` is what a drag's share is a share *of*: the
+ * whole content area for the upright divider left of a full Agent's terminal,
+ * or the split's right half for the level one under its Agent (`stacked`).
+ * See `model/agentTerminal.ts`.
  */
 export interface TerminalSeamWire {
 	readonly x: number;
@@ -552,8 +557,10 @@ export interface TerminalSeamWire {
 	readonly height: number;
 	/** The terminal on the other side of it. */
 	readonly terminalId: string;
-	/** The terminal's share of the content width now. */
+	/** The terminal's share of `extent` now: its width, or its height. */
 	readonly share: number;
+	/** Under the Agent — a split's right half — rather than right of it. */
+	readonly stacked: boolean;
 	readonly extent: {
 		readonly x: number;
 		readonly y: number;

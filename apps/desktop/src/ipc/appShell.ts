@@ -199,6 +199,11 @@ export interface AgentWire {
 	readonly terminal?: AgentTerminalWire;
 	/** The terminal pane's share of the content width, when not the default. */
 	readonly terminalShare?: number;
+	/**
+	 * Its share of a split's right half's height, under the Agent, when not
+	 * the default.
+	 */
+	readonly terminalStackedShare?: number;
 }
 
 /** One Agent's own terminal. */
@@ -465,7 +470,13 @@ export type AppErrorCodeWire =
 	 * (`model/agentTerminal.ts`), so there is none to show. Said, so the chord
 	 * is not a key that silently did nothing.
 	 */
-	| "terminal_needs_agent";
+	| "terminal_needs_agent"
+	/**
+	 * `Cmd+Q V` on the workbench alone: the terminal is only on screen with
+	 * its Agent, and no Agent is. Said for the same reason; the terminal, if
+	 * there is one, is left exactly as it was.
+	 */
+	| "terminal_needs_agent_view";
 
 /**
  * The sentence each failure is shown as.
@@ -546,6 +557,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"DevHub could not read a CLI's usage limits, and will not try again until it is restarted.",
 	terminal_needs_agent:
 		"There is no Agent here to open a terminal for: a terminal belongs to an Agent. Start one with Cmd+Q C, then Cmd+Q V.",
+	terminal_needs_agent_view:
+		"The terminal is shown with its Agent. Switch to the Agent (Cmd+Q Cmd+J) or split (Cmd+Q Z), then Cmd+Q V.",
 };
 export type AppErrorModuleWire =
 	| "app"
@@ -667,11 +680,15 @@ export type AppIntentWire =
 			readonly order: readonly string[];
 	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
-	/** The divider left of an Agent's terminal, dragged to `share`. */
+	/**
+	 * The divider between an Agent and its terminal, dragged to `share`: left
+	 * of it beside a full Agent, or — `stacked` — above it under a split's.
+	 */
 	| {
 			readonly type: "resize_agent_terminal";
 			readonly agentId: string;
 			readonly share: number;
+			readonly stacked?: boolean;
 	  }
 	/**
 	 * Where one presentation's Smart Buttons were dragged to: anchored to an

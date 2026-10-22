@@ -186,9 +186,12 @@ is recorded in that agent's transcript as answered via devhub CLI by you.
 ## Your terminal
 
 You have one terminal of your own: a tmux session on your workspace's machine,
-in your workspace's folder, drawn on the right of your pane in DevHub's window.
-It is yours alone and the same one every time — it stays when the person
-switches to another agent (hidden, still running) and goes when you are closed.
+in your workspace's folder, drawn with your pane in DevHub's window: on its
+right when your pane fills the view, under it when your pane is beside the
+editor. It is only on screen while your pane is — with the editor alone it is
+hidden. It is yours alone and the same one every time — it stays when the
+person switches to another agent or to the editor (hidden, still running) and
+goes when you are closed.
 **"The terminal on the right", "右のターミナル", "the terminal", "your
 terminal", "隣の" all mean this one** — including when the person opened it
 themselves with Cmd+Q V.
@@ -205,7 +208,8 @@ handle every time). \`--command\` is typed into its shell only when this call
 starts it — into a running terminal, use \`send-keys\` yourself. It does not
 take the person's keyboard unless you pass \`--focus\`. The answer
 (\`terminal\` in JSON) says whether it \`exists\`, is \`open\` / \`visible\` /
-\`focused\`, and gives the handle:
+\`focused\` (\`visible\` is \`open\` and your pane on screen), and gives the
+handle:
 
     "tmux": { "tmux": "/path/to/tmux", "socket": "/private/tmp/tmux-501/devhub",
               "session": "tm-<id>", "target": "%7", "fullTarget": "tm-<id>:0.0",

@@ -153,16 +153,22 @@ export type ChordEffect =
 	| { readonly kind: "swap-split-focus" }
 	/**
 	 * The next pane on screen: the halves of a split, and the Agent's
-	 * terminal on the right (`model/agentTerminal.ts`).
+	 * terminal with its Agent (`model/agentTerminal.ts`).
 	 */
 	| { readonly kind: "cycle-pane-focus" }
 	/**
-	 * Show or hide this Agent's own terminal on the right — started the first
+	 * Show or hide this Agent's own terminal beside it — started the first
 	 * time, in its Workspace's folder.
 	 */
 	| { readonly kind: "toggle-terminal"; readonly agentId: string }
 	/** `Cmd+Q V` where there is no Agent to own a terminal: said, not done. */
 	| { readonly kind: "terminal-needs-agent"; readonly workspaceId: string }
+	/**
+	 * `Cmd+Q V` on the workbench alone: the Workspace has an Agent, but it is
+	 * not on screen, and a terminal is only shown with its Agent. Said, not
+	 * done — nothing about the terminal changes.
+	 */
+	| { readonly kind: "terminal-needs-agent-view"; readonly workspaceId: string }
 	/** Close the terminal pane with the keyboard, and its session with it. */
 	| { readonly kind: "close-terminal"; readonly terminalId: string }
 	/**
@@ -489,15 +495,20 @@ export function resolveChord(
 		}
 
 		case "toggle_terminal": {
-			// The view's Agent: the selected one, or — on a Workspace's row,
-			// the workbench full or beside — the one the Workspace pairs with,
-			// which is where `Cmd+Q Cmd+J` goes. No Agent, no terminal: the
-			// chord says so rather than doing nothing.
+			// The view's Agent: the selected one, or — on a Workspace's row
+			// beside an Agent — the one the Workspace pairs with, which is
+			// where `Cmd+Q Cmd+J` goes. No Agent, no terminal; the workbench
+			// alone shows no Agent, so no terminal either. Both are said
+			// rather than doing nothing.
 			if (!workspace) return undefined;
 			const owner = agent?.id ?? pairedAgentId(workspace);
-			return owner === undefined
-				? { kind: "terminal-needs-agent", workspaceId: workspace.id }
-				: { kind: "toggle-terminal", agentId: owner };
+			if (owner === undefined) {
+				return { kind: "terminal-needs-agent", workspaceId: workspace.id };
+			}
+			if (!agent && snapshot.selection.presentation !== "beside") {
+				return { kind: "terminal-needs-agent-view", workspaceId: workspace.id };
+			}
+			return { kind: "toggle-terminal", agentId: owner };
 		}
 
 		case "toggle_scratch":

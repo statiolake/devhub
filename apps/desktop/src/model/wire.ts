@@ -409,6 +409,9 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     ...(agent.terminalShare === TERMINAL_DEFAULT_SHARE
       ? {}
       : { terminalShare: agent.terminalShare }),
+    ...(agent.terminalStackedShare === TERMINAL_DEFAULT_SHARE
+      ? {}
+      : { terminalStackedShare: agent.terminalStackedShare }),
   };
 }
 
@@ -767,6 +770,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "terminal_colors_unreadable":
     case "terminal_launcher_unavailable":
     case "terminal_needs_agent":
+    case "terminal_needs_agent_view":
     case "workspace_sessions_left_running":
     case "tmux_command_failed":
     case "tmux_command_timed_out":
@@ -804,6 +808,7 @@ export function errorWireAt(
     code === "input_source_unavailable" ||
     code === "usage_unreadable" ||
     code === "terminal_needs_agent" ||
+    code === "terminal_needs_agent_view" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []
@@ -1116,10 +1121,14 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
     }
     case "resize_agent_terminal":
       if (!isTerminalShare(wire.share)) invalid();
+      if (wire.stacked !== undefined && typeof wire.stacked !== "boolean") {
+        invalid();
+      }
       return {
         type: "resize_agent_terminal",
         agentId: tryParse(() => parseAgentId(wire.agentId)),
         share: wire.share,
+        ...(wire.stacked === true ? { stacked: true } : {}),
       };
     case "resize_sidebar":
       if (

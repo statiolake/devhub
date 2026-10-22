@@ -200,6 +200,8 @@ export interface AgentSnapshot {
   readonly terminal: AgentTerminal<AgentId> | undefined;
   /** The terminal pane's share of the content area's width, when shown. */
   readonly terminalShare: number;
+  /** Its share of the split's right half's height, when shown under it. */
+  readonly terminalStackedShare: number;
 }
 
 /** Which pane has the keyboard, when it is not the selection's own. */
@@ -280,8 +282,8 @@ export interface AppSnapshot {
   /** Where the divider sits when the layout is a split. */
   readonly splitRatio: number;
   /**
-   * The Agent terminal drawn right of the content, if one is: the view's
-   * Agent's, open. See `AppModel.visibleTerminal`.
+   * The Agent terminal on screen, if one is: the view's Agent's, open — right
+   * of a full Agent, under a split's. See `AppModel.visibleTerminal`.
    */
   readonly visibleTerminal: AgentTerminal<AgentId> | undefined;
   /**
@@ -473,6 +475,7 @@ export class AppModel {
    * and opened again comes back at the width it was dragged to.
    */
   private readonly terminalShares = new Map<AgentId, number>();
+  private readonly terminalStackedShares = new Map<AgentId, number>();
   /**
    * The keyboard is in the terminal pane on screen.
    *
@@ -1454,16 +1457,18 @@ export class AppModel {
 
   /**
    * The Agent whose terminal the view shows, and whose terminal `Cmd+Q V`
-   * opens: the selected Agent, or — with the Workspace's row selected, the
-   * workbench full or beside an Agent — the Agent the Workspace pairs with
-   * (`pairedAgentIn`, the same one `Cmd+Q Cmd+J` goes to). Nothing for a
-   * Workspace with no Agents.
+   * opens: the Agent on screen. The selected Agent, or — with the Workspace's
+   * row selected beside an Agent — the Agent the Workspace pairs with
+   * (`pairedAgentIn`, the same one `Cmd+Q Cmd+J` goes to). Nothing for the
+   * workbench alone: a terminal is only on screen with its Agent, so there
+   * the paired Agent's runs on hidden, its `open` kept for when it is back.
    */
   terminalAgentId(): AgentId | undefined {
     const context = this.selectionValue.context;
     if (context.kind === "agent") {
       return this.agent(context.agentId) ? context.agentId : undefined;
     }
+    if (this.selectionValue.presentation !== "beside") return undefined;
     return this.pairedAgentIn(context.workspaceId);
   }
 
@@ -1490,7 +1495,15 @@ export class AppModel {
     return this.terminalShares.get(agentId) ?? TERMINAL_DEFAULT_SHARE;
   }
 
-  /** The terminal drawn right of the content: the view's Agent's, if open. */
+  /**
+   * How much of the split's right half's height it takes, under its Agent —
+   * kept apart from the width, so that sizing one never moves the other.
+   */
+  terminalStackedShare(agentId: AgentId): number {
+    return this.terminalStackedShares.get(agentId) ?? TERMINAL_DEFAULT_SHARE;
+  }
+
+  /** The terminal on screen with its Agent: the view's Agent's, if open. */
   visibleTerminal(): AgentTerminal<AgentId> | undefined {
     const agentId = this.terminalAgentId();
     if (agentId === undefined) return undefined;
@@ -1566,20 +1579,28 @@ export class AppModel {
     return true;
   }
 
-  /** The divider between the content and an Agent's terminal, moved. */
-  resizeAgentTerminal(agentId: AgentId, share: number): boolean {
+  /**
+   * The divider between an Agent and its terminal, moved: the one right of a
+   * full Agent, or — `stacked` — the one under a split's.
+   */
+  resizeAgentTerminal(
+    agentId: AgentId,
+    share: number,
+    stacked = false,
+  ): boolean {
     if (!this.agent(agentId)) fail(DomainErrorCode.InvalidId);
     const next = clampTerminalShare(share);
-    if (this.terminalShare(agentId) === next) return false;
-    if (next === TERMINAL_DEFAULT_SHARE) this.terminalShares.delete(agentId);
-    else this.terminalShares.set(agentId, next);
+    const shares = stacked ? this.terminalStackedShares : this.terminalShares;
+    if ((shares.get(agentId) ?? TERMINAL_DEFAULT_SHARE) === next) return false;
+    if (next === TERMINAL_DEFAULT_SHARE) shares.delete(agentId);
+    else shares.set(agentId, next);
     this.bumpRevision();
     return true;
   }
 
   /**
-   * Put the keyboard in one pane of what is on screen: the terminal on the
-   * right, or back in the selection's own pane. Clicking into a pane arrives
+   * Put the keyboard in one pane of what is on screen: the Agent's terminal,
+   * or back in the selection's own pane. Clicking into a pane arrives
    * here too, so the model always knows which pane `Cmd+Q X` and `Cmd+Q O`
    * start from.
    */
@@ -1649,7 +1670,9 @@ export class AppModel {
 
   /**
    * `Cmd+Q O`: the next pane on screen, wrapping — the content (or the two
-   * halves of a split) and the terminal on the right. With one pane there is
+   * halves of a split) and the Agent's terminal: Agent → terminal full,
+   * editor → Agent → terminal in a split, nothing more for the workbench
+   * alone, which shows no terminal. With one pane there is
    * nowhere to go; with the workbench and an Agent side by side and no
    * terminal, it is exactly the swap it always was.
    */
@@ -1703,6 +1726,7 @@ export class AppModel {
       | { readonly terminalId: string; readonly open: boolean }
       | undefined,
     share: number | undefined,
+    stackedShare?: number,
   ): void {
     if (!this.agent(agentId)) fail(DomainErrorCode.InvalidId);
     if (terminal !== undefined) {
@@ -1716,6 +1740,9 @@ export class AppModel {
     if (share !== undefined && share !== TERMINAL_DEFAULT_SHARE) {
       this.terminalShares.set(agentId, clampTerminalShare(share));
     }
+    if (stackedShare !== undefined && stackedShare !== TERMINAL_DEFAULT_SHARE) {
+      this.terminalStackedShares.set(agentId, clampTerminalShare(stackedShare));
+    }
   }
 
   /** An Agent went: so does what the model kept about its terminal. */
@@ -1728,6 +1755,7 @@ export class AppModel {
     }
     this.agentTerminalsValue.delete(agentId);
     this.terminalShares.delete(agentId);
+    this.terminalStackedShares.delete(agentId);
   }
 
   //#endregion
@@ -2132,6 +2160,7 @@ export class AppModel {
         failure: agent.failure,
         terminal: this.agentTerminalsValue.get(agent.id),
         terminalShare: this.terminalShare(agent.id),
+        terminalStackedShare: this.terminalStackedShare(agent.id),
       })),
     }));
   }

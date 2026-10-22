@@ -737,4 +737,26 @@ describe("an Agent's terminal, across the wire", () => {
       } as AppIntentWire),
     ).toThrow(InvalidIntent);
   });
+
+  it("takes the split's level divider as its own, and refuses a flag that is not one", () => {
+    const resize = (stacked: unknown) =>
+      intentFromWire({
+        type: "resize_agent_terminal",
+        agentId: AG,
+        share: 0.3,
+        stacked,
+      } as AppIntentWire);
+    expect(resize(true)).toEqual({
+      type: "resize_agent_terminal",
+      agentId: AG,
+      share: 0.3,
+      stacked: true,
+    });
+    expect(resize(false)).toEqual({
+      type: "resize_agent_terminal",
+      agentId: AG,
+      share: 0.3,
+    });
+    expect(() => resize("yes")).toThrow(InvalidIntent);
+  });
 });

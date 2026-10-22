@@ -477,6 +477,11 @@ export interface AgentStateRecord {
   terminal?: AgentTerminalRecord;
   /** The terminal pane's share of the content width, when not the default. */
   terminal_share?: number;
+  /**
+   * Its share of a split's right half's height, under the Agent, when not
+   * the default. Absent in every file written before the split stacked it.
+   */
+  terminal_stacked_share?: number;
 }
 
 /** See `AgentStateRecord.terminal`. */
@@ -842,6 +847,16 @@ function validateAgentRecord(where: string, record: AgentStateRecord): void {
       `${where}.terminal_share`,
       "a share between 0.15 and 0.85",
       record.terminal_share,
+    );
+  }
+  if (
+    record.terminal_stacked_share !== undefined &&
+    !isTerminalShare(record.terminal_stacked_share)
+  ) {
+    refuse(
+      `${where}.terminal_stacked_share`,
+      "a share between 0.15 and 0.85",
+      record.terminal_stacked_share,
     );
   }
   validateUuid(`${where}.agent_id`, record.agent_id);
@@ -1419,7 +1434,8 @@ export function hydrateModel(
     for (const agentRecord of record.agents) {
       if (
         agentRecord.terminal === undefined &&
-        agentRecord.terminal_share === undefined
+        agentRecord.terminal_share === undefined &&
+        agentRecord.terminal_stacked_share === undefined
       ) {
         continue;
       }
@@ -1431,6 +1447,7 @@ export function hydrateModel(
             ? undefined
             : { terminalId: terminal.terminal_id, open: terminal.open },
           agentRecord.terminal_share,
+          agentRecord.terminal_stacked_share,
         );
       });
     }
@@ -1585,6 +1602,9 @@ export function stateFromSnapshot(
         ...(agent.terminalShare === TERMINAL_DEFAULT_SHARE
           ? {}
           : { terminal_share: agent.terminalShare }),
+        ...(agent.terminalStackedShare === TERMINAL_DEFAULT_SHARE
+          ? {}
+          : { terminal_stacked_share: agent.terminalStackedShare }),
       })),
     })),
     navigation: navigationRecord(snapshot),
@@ -2043,6 +2063,14 @@ function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
           terminal_share: decodeNumber(
             at("terminal_share"),
             object["terminal_share"],
+          ),
+        }),
+    ...(object["terminal_stacked_share"] === undefined
+      ? {}
+      : {
+          terminal_stacked_share: decodeNumber(
+            at("terminal_stacked_share"),
+            object["terminal_stacked_share"],
           ),
         }),
   };

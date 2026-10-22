@@ -538,11 +538,15 @@ export type UserIntent =
     }
   /** An Agent's terminal is gone: it was closed, and its session with it. */
   | { readonly type: "agent_terminal_closed"; readonly agentId: AgentId }
-  /** The divider left of an Agent's terminal, dragged to `share`. */
+  /**
+   * The divider between an Agent and its terminal, dragged to `share`: left
+   * of it beside a full Agent, or — `stacked` — above it under a split's.
+   */
   | {
       readonly type: "resize_agent_terminal";
       readonly agentId: AgentId;
       readonly share: number;
+      readonly stacked?: boolean;
     }
   /** The keyboard into one pane on screen — a click into it, or a chord. */
   | { readonly type: "focus_pane"; readonly target: PaneFocusTarget }

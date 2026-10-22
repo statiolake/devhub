@@ -151,7 +151,7 @@ issues
                                    <branch> (default: the Issue's own
                                    feature/<n>-wip)
 
-terminal (your own: one per agent, on the right of your pane)
+terminal (your own: one per agent, beside your pane; hidden with the editor alone)
   terminal open [--command <cmd>] [--focus]
                                    open your terminal, or show it if it is
                                    already open (the same one every time: a
@@ -522,7 +522,7 @@ function parseTerminal(
 			return { verb: "terminal-close" };
 		default:
 			throw new Refusal(
-				"terminal takes: open, status (or show), close. It is always your own terminal, on the right of your pane.",
+				"terminal takes: open, status (or show), close. It is always your own terminal, shown with your pane.",
 			);
 	}
 }

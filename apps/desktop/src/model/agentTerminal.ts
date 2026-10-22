@@ -1,6 +1,7 @@
 /**
- * An Agent's own terminal: one tmux session per Agent, drawn as one pane to
- * the right of whatever the selection shows.
+ * An Agent's own terminal: one tmux session per Agent, drawn as one pane
+ * beside its Agent — to the right of it, or under it when the Agent is the
+ * right half of a split with its workbench.
  *
  * A person who wants more than one shell splits *inside* it — it is a whole
  * tmux session — so DevHub draws exactly one terminal pane and never tiles
@@ -11,13 +12,18 @@
  *   (the Agent's worktree, when the Workspace is one). Switching to another
  *   Agent shows *that* Agent's terminal, if it has one open; the one left
  *   behind keeps running, detached and hidden, until its Agent goes.
- * - **What is on screen is the view's Agent's.** The selected Agent's, or —
- *   with the Workspace's row selected, the workbench full or beside an Agent —
- *   the Agent that Workspace pairs with (`pairedAgentId`, the Agent `Cmd+Q
- *   Cmd+J` goes to). A Workspace without Agents has no terminal to show.
- * - **Open and width are per Agent**, and persisted with it: `Cmd+Q V` hides
- *   and shows the pane without touching the session, and the divider's
- *   position is remembered for the next time it is shown.
+ * - **The terminal and its Agent are a set: one is on screen only with the
+ *   other.** The selected Agent's, full (the terminal on its right) or beside
+ *   its workbench (the editor on the left, the Agent over the terminal on the
+ *   right); with the Workspace's row selected beside an Agent, the Agent that
+ *   Workspace pairs with (`pairedAgentId`, the Agent `Cmd+Q Cmd+J` goes to).
+ *   The workbench alone shows no Agent, so it shows no terminal either — the
+ *   one it would have runs on hidden, its `open` untouched for when its Agent
+ *   is back on screen.
+ * - **Open and size are per Agent**, and persisted with it: `Cmd+Q V` hides
+ *   and shows the pane without touching the session, and each divider's
+ *   position — the width beside a full Agent, the height under a split's —
+ *   is remembered for the next time it is shown that way.
  *
  * The pane ends when its session does — `Cmd+Q X` with the keyboard in it, the
  * pane's ×, `devhub --tell terminal close`, its shell exiting, or its Agent
@@ -29,8 +35,9 @@
  */
 
 /**
- * The terminal's share of the content area's width, as far as the divider may
- * take it, and where it starts.
+ * The terminal's share of the area it divides with its Agent — the width
+ * beside a full Agent, the height under a split's — as far as the divider may
+ * take it, and where it starts. One range for both, each kept apart.
  */
 export const TERMINAL_MIN_SHARE = 0.15;
 export const TERMINAL_MAX_SHARE = 0.85;
@@ -89,10 +96,13 @@ export interface TerminalRect {
 }
 
 export interface TerminalPlacement {
-  /** What the selection draws into: the area less the terminal and the seam. */
+  /**
+   * What the Agent draws into: the area less the terminal and the seam — the
+   * whole selection's pane right of it, or the split's right half above it.
+   */
   readonly content: TerminalRect;
   readonly terminal: TerminalRect;
-  /** The strip between them, `gap` wide — what the divider is drawn in. */
+  /** The strip between them, `gap` across — what the divider is drawn in. */
   readonly seam: TerminalRect;
 }
 
@@ -122,6 +132,37 @@ export function placeTerminal(
       ...area,
       x: area.x + contentWidth + gap,
       width: Math.max(0, area.width - contentWidth - gap),
+    },
+  };
+}
+
+/**
+ * The same, stacked: the terminal taking `share` of `area`'s height at the
+ * bottom, under the content. What a split's right half — its Agent — is
+ * divided into. Whole pixels, tiling `area` exactly.
+ */
+export function placeTerminalBelow(
+  area: TerminalRect,
+  share: number,
+  gap: number,
+): TerminalPlacement {
+  const available = Math.max(0, area.height - gap);
+  const terminalHeight = Math.max(
+    0,
+    Math.round(available * clampTerminalShare(share)),
+  );
+  const contentHeight = Math.max(0, area.height - gap - terminalHeight);
+  return {
+    content: { ...area, height: contentHeight },
+    seam: {
+      ...area,
+      y: area.y + contentHeight,
+      height: Math.min(gap, area.height),
+    },
+    terminal: {
+      ...area,
+      y: area.y + contentHeight + gap,
+      height: Math.max(0, area.height - contentHeight - gap),
     },
   };
 }

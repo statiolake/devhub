@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
 	keyboardChild,
 	contentRect,
+	terminalExtent,
 	terminalSeam,
+	terminalStacked,
 	reconcileEditors,
 	agentsRect,
 	chromeVariables,
@@ -875,35 +877,35 @@ describe("the title bar and the traffic lights", () => {
 	});
 });
 
-describe("the Agent's terminal right of the content", () => {
+describe("the Agent's terminal, with its Agent", () => {
 	const T1 = "11111111-1111-4111-8111-111111111111";
 	const T2 = "22222222-2222-4222-8222-222222222222";
 	const right = { terminalId: T1, share: 0.4 } as const;
+	const split = state({
+		surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+		terminal: right,
+	});
+	const terminalChild = (layoutState: LayoutState, id = T1) =>
+		windowLayout(input({ state: layoutState, terminals: [T1, T2] })).find(
+			(child) =>
+				child.identity.kind === "terminal" && child.identity.terminalId === id,
+		);
 
-	it("lays the workbench and the Agent inside the content, and the terminal right of it", () => {
-		const split = state({
-			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-			terminal: right,
-		});
-		const area = surfaceRect(WINDOW, split);
+	it("lays a full Agent inside the content, and the terminal right of it", () => {
+		const full = state({ surface: { kind: "agent" }, terminal: right });
+		const area = surfaceRect(WINDOW, full);
 		// Less one seam, the terminal taking 40% of what is left.
 		const terminalWidth = Math.round((area.width - 6) * 0.4);
 		const contentWidth = area.width - 6 - terminalWidth;
-		const editor = workbenchRect(WINDOW, split);
-		const agents = agentsRect(WINDOW, split);
-		expect(editor.x).toBe(area.x);
-		expect(agents.x + agents.width).toBe(area.x + contentWidth);
-		expect(terminalSeam(WINDOW, split)).toEqual({
+		expect(agentsRect(WINDOW, full)).toEqual({ ...area, width: contentWidth });
+		expect(terminalStacked(full)).toBe(false);
+		expect(terminalExtent(WINDOW, full)).toEqual(area);
+		expect(terminalSeam(WINDOW, full)).toEqual({
 			...area,
 			x: area.x + contentWidth,
 			width: 6,
 		});
-		const children = windowLayout(input({ state: split, terminals: [T1, T2] }));
-		const terminal = children.find(
-			(child) =>
-				child.identity.kind === "terminal" && child.identity.terminalId === T1,
-		);
-		expect(terminal).toMatchObject({
+		expect(terminalChild(full)).toMatchObject({
 			visible: true,
 			rect: {
 				x: area.x + contentWidth + 6,
@@ -913,13 +915,49 @@ describe("the Agent's terminal right of the content", () => {
 			},
 		});
 		// Another Agent's terminal is sized and hidden, its session running.
-		expect(
-			children.find(
-				(child) =>
-					child.identity.kind === "terminal" &&
-					child.identity.terminalId === T2,
-			)?.visible,
-		).toBe(false);
+		expect(terminalChild(full, T2)?.visible).toBe(false);
+	});
+
+	it("in a split, keeps the editor the whole left half and puts the terminal under the Agent", () => {
+		const area = surfaceRect(WINDOW, split);
+		const editor = workbenchRect(WINDOW, split);
+		const agents = agentsRect(WINDOW, split);
+		// The editor half is what it is without a terminal: full height, the
+		// split's own share of the whole width.
+		expect(editor).toEqual(
+			workbenchRect(WINDOW, { ...split, terminal: undefined }),
+		);
+		expect(editor.height).toBe(area.height);
+		const half = {
+			...area,
+			x: editor.x + editor.width + 6,
+			width: area.x + area.width - (editor.x + editor.width + 6),
+		};
+		expect(terminalStacked(split)).toBe(true);
+		expect(terminalExtent(WINDOW, split)).toEqual(half);
+		// Less one level seam, the terminal taking 40% of the half's height.
+		const terminalHeight = Math.round((area.height - 6) * 0.4);
+		const agentHeight = area.height - 6 - terminalHeight;
+		expect(agents).toEqual({ ...half, height: agentHeight });
+		expect(terminalSeam(WINDOW, split)).toEqual({
+			...half,
+			y: area.y + agentHeight,
+			height: 6,
+		});
+		expect(terminalChild(split)).toMatchObject({
+			visible: true,
+			rect: { ...half, y: area.y + agentHeight + 6, height: terminalHeight },
+		});
+	});
+
+	it("is never drawn with the workbench alone", () => {
+		const editorOnly = state({ terminal: right });
+		expect(terminalSeam(WINDOW, editorOnly)).toBeUndefined();
+		expect(terminalExtent(WINDOW, editorOnly)).toBeUndefined();
+		expect(workbenchRect(WINDOW, editorOnly)).toEqual(
+			surfaceRect(WINDOW, editorOnly),
+		);
+		expect(terminalChild(editorOnly)?.visible).toBe(false);
 	});
 
 	it("is the whole area for the content when no terminal is shown", () => {
@@ -928,7 +966,7 @@ describe("the Agent's terminal right of the content", () => {
 	});
 
 	it("gives the keyboard to the terminal on screen, and to the content otherwise", () => {
-		const withTerminal = state({ terminal: right, keyboard: { terminal: T1 } });
+		const withTerminal = { ...split, keyboard: { terminal: T1 } } as const;
 		expect(
 			keyboardChild(input({ state: withTerminal, terminals: [T1] })),
 		).toEqual({ kind: "terminal", terminalId: T1 });
@@ -949,11 +987,7 @@ describe("the Agent's terminal right of the content", () => {
 	});
 
 	it("stacks the terminal over the content's views and under every layer", () => {
-		const order = kinds(
-			windowLayout(
-				input({ state: state({ terminal: right }), terminals: [T1] }),
-			),
-		);
+		const order = kinds(windowLayout(input({ state: split, terminals: [T1] })));
 		expect(order.indexOf("terminal")).toBeGreaterThan(order.indexOf("agents"));
 		expect(order.indexOf("terminal")).toBeLessThan(order.indexOf("toasts"));
 	});

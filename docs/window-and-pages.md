@@ -420,58 +420,71 @@ six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 drawn there; two of them are now plain "focus that view" calls in main, and
 `dismiss_alert` is delivered to the page that has the notices.
 
-## An Agent's terminal, on the right
+## An Agent's terminal, with its Agent
 
 Every Agent has **one terminal of its own** (`model/agentTerminal.ts`): a tmux
 session (`tm-<agent id>`, marker context `terminal`) on the Workspace's machine
 — the same server, socket and config as every other DevHub session — started
 in the Workspace's folder, which is the Agent's worktree when the Workspace is
-one. DevHub draws it as one pane to the right of whatever the selection shows,
-and never tiles terminals: it is a whole tmux, so a person who wants a second
+one. DevHub draws it as one pane beside its Agent — right of a full Agent,
+under the Agent of a split — and never tiles terminals: it is a whole tmux, so a person who wants a second
 shell splits inside it with tmux's own keys.
 
-**Whose terminal is on screen.** The view's Agent's: the selected Agent, or —
-with a Workspace's row selected, the workbench full or beside an Agent — the
-Agent that Workspace pairs with (`pairedAgentId`, the one `Cmd+Q Cmd+J` goes
-to). Switching Agents shows each one's own terminal, if it has one open; the
-one left behind keeps running, detached and hidden, and its view (with its
-scrollback) stays. A Workspace with no Agents has no terminal.
+**Whose terminal is on screen.** The terminal and its Agent are a set: a
+terminal is on screen only while its Agent is. The view's Agent's: the
+selected Agent (full or beside its workbench), or — with a Workspace's row
+selected beside an Agent — the Agent that Workspace pairs with
+(`pairedAgentId`, the one `Cmd+Q Cmd+J` goes to). The workbench alone shows no
+Agent, so it shows no terminal: the paired Agent's keeps running hidden, its
+`open` untouched, and is back when that Agent is. Switching Agents shows each
+one's own terminal, if it has one open; the one left behind keeps running,
+detached and hidden, and its view (with its scrollback) stays. A Workspace
+with no Agents has no terminal.
 
 **`Cmd+Q V`** (`toggle_terminal`) starts the view's Agent's terminal the
 first time, with the keyboard in it, and after that hides and shows the pane
 without touching the session. On a Workspace with no Agent it says so (a
-`terminal_needs_agent` notice) rather than doing nothing. `Cmd+Q S` and the
+`terminal_needs_agent` notice) rather than doing nothing; on the workbench
+alone it says to switch to the Agent (`Cmd+Q Cmd+J`) or split (`Cmd+Q Z`)
+(`terminal_needs_agent_view`) and changes nothing. `Cmd+Q S` and the
 bare arrows after the prefix are unbound (they were the pane tree's split
 below and directional focus); `focus_sidebar` stays palette only.
 
 **What the model keeps** (`AppModel`): per Agent, the terminal while its
-session is up — its id and whether it is `open` — and, apart from it, the
-pane's share of the content width, so a terminal closed and opened again
-comes back at its width. Both are persisted on the Agent's record
-(`terminal`, `terminal_share`; no schema bump — absent is no terminal and the
-default width). A file written by 3de5ad4, which kept a tree of panes per
+session is up — its id and whether it is `open` — and, apart from it, two
+shares: of the content width beside a full Agent, and of the split's right
+half's height under its Agent, kept apart so sizing one never moves the
+other, and so a terminal closed and opened again comes back at its size. All
+are persisted on the Agent's record (`terminal`, `terminal_share`,
+`terminal_stacked_share`; no schema bump — absent is no terminal and the
+default share). A file written by 3de5ad4, which kept a tree of panes per
 Workspace (`pane_layout`, `pane_terminals`), is read without refusal: the
 first terminal it names goes to the Workspace's last Agent (or its only one),
 shown, at the width it had if it sat right of the content; the rest are
 dropped and their sessions swept.
 
-**Layout.** `windowLayout.ts` takes the terminal's share of the content area
-on the right (`terminalPlacement`), lays the workbench and the Agents inside
-what is left (`contentRect`) exactly as it used to lay them into the whole
-area, and adds one child per Agent terminal (`terminal`), stacked above the
-Agents and below every layer — the one on screen at its rectangle, every
-other hidden. The divider between them is the strip no view covers, drawn on
-the window's own page from `terminalSeam` on the workbench area main pushes,
-exactly as the workbench/Agent seam is; dragging it previews
-(`previewLayout({ terminalShare })`) and commits `resize_agent_terminal`.
+**Layout.** `windowLayout.ts` places the terminal where its Agent is
+(`terminalPlacement`, over `terminalExtent`). With a full Agent it takes its
+share of the content area on the right and the Agent gets what is left
+(`contentRect`). In a split the editor keeps the whole left half, exactly as
+without a terminal, and the right half is a column: the Agent on top, the
+terminal at the bottom taking its share of the height (`placeTerminalBelow`,
+`terminalStacked`). With the workbench alone there is no terminal. One child
+per Agent terminal (`terminal`) is stacked above the Agents and below every
+layer — the one on screen at its rectangle, every other hidden. The divider
+between Agent and terminal is the strip no view covers, drawn on the window's
+own page from `terminalSeam` on the workbench area main pushes (upright, or
+level when `stacked`), exactly as the workbench/Agent seam is; dragging it
+previews (`previewLayout({ terminalShare })`) and commits
+`resize_agent_terminal` (with `stacked: true` for the split's).
 
 **The keyboard.** `LayoutState.keyboard` can name the terminal;
 `keyboardChild` gives it the keys only while it is drawn. The model keeps
 whether the terminal has the keyboard (`AppModel.paneFocus`): a chord moves
 it, a click into a view reports it (`ShellWindow.onContentFocused`), and any
-selection takes it back to the content. `Cmd+Q O` walks the panes on screen
-left to right — the editor and the Agent of a split are two stops, the
-terminal one more — and wraps. `Cmd+Q X` with the terminal in front closes it
+selection takes it back to the content. `Cmd+Q O` walks the panes on screen —
+Agent → terminal with a full Agent, editor → Agent → terminal in a split,
+nothing to walk with the workbench alone — and wraps. `Cmd+Q X` with the terminal in front closes it
 (and its session); so does the pane's ×.
 
 **Ending.** A terminal's pane goes when its session does: the shell exited, or
@@ -491,7 +504,8 @@ typed only when this call starts it) and prints the handle — the tmux
 executable, the server's socket, the session and the active pane (`%N`) — so
 the Agent drives it with plain `tmux -S <socket> send-keys -t %N -l …` and
 reads it with `capture-pane -p`. `terminal status` (or `show`) says whether it
-is open, visible and focused and lists every tmux pane in the session with
+is open, visible (open, and its Agent on screen — never with the workbench
+alone) and focused and lists every tmux pane in the session with
 where it is in its window (`top-left`, `bottom-right`, … from
 `#{pane_left}`/`#{pane_top}`), so "the bottom-right pane" of a terminal the
 person split is a lookup. `terminal close` closes it. The bundled `/devhub`

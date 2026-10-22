@@ -158,20 +158,25 @@
  *
  * **`Cmd+Q O` is the multiplexer's `prefix o`: the next pane.** What is on
  * screen is the selection's own pane — the workbench, the Agent, or the two
- * side by side — and, when it is open, the Agent's terminal on the right.
- * `O` walks those left to right and wraps; with only the workbench/Agent
+ * side by side — and, when it is open, the Agent's terminal with it: right of
+ * a full Agent, under the Agent of a split, never with the workbench alone.
+ * `O` walks those (editor → Agent → terminal) and wraps; with only the workbench/Agent
  * split on screen it is exactly what `Cmd+J` does there, and with one pane on
  * screen there is nowhere to go and it is a no-op.
  *
- * **`Cmd+Q V` shows or hides the Agent's own terminal, on the right.** Every
+ * **`Cmd+Q V` shows or hides the Agent's own terminal, beside it.** Every
  * Agent has one terminal (`model/agentTerminal.ts`): a tmux session of its own
  * on the Workspace's machine, in the Workspace's folder, with DevHub's tmux
  * config. The first `V` starts it; after that `V` hides and shows the pane
  * while the session runs on, and switching Agents shows each one's own. It is
  * one pane because it is a whole tmux — a person who wants a second shell
- * splits inside it, with tmux's own keys. With a Workspace's row selected it
- * is the Agent that Workspace pairs with (the one `Cmd+Q Cmd+J` goes to); a
- * Workspace with no Agent has no terminal, and `V` says so. `Cmd+Q X` with
+ * splits inside it, with tmux's own keys. A terminal is on screen
+ * only with its Agent: right of a full one, under a split's (the editor
+ * keeping the left half). With a Workspace's row selected beside an Agent it
+ * is the Agent that Workspace pairs with (the one `Cmd+Q Cmd+J` goes to); the
+ * workbench alone shows no Agent and so no terminal, and `V` there says to
+ * switch to the Agent or split, changing nothing; a Workspace with no Agent
+ * has no terminal, and `V` says so. `Cmd+Q X` with
  * the terminal in front closes it, session and all, and a terminal whose
  * shell exits closes its pane.
  *
@@ -283,7 +288,7 @@
  * **Not applicable, deliberately absent.** Splits (`split_vertical`,
  * `split_horizontal`), `focus_pane_*`, `swap_pane_*`, `detach`,
  * `reload_config` and the popup runners have no DevHub concept behind them:
- * DevHub does not tile — the one terminal on the right is a whole tmux, split
+ * DevHub does not tile — the Agent's one terminal is a whole tmux, split
  * inside with tmux's own keys — there is no session to detach from a client,
  * and the config file is re-read when it changes rather than on request.
  * They are left unbound rather than given invented meanings — an unbound
@@ -589,7 +594,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     // Vim's `:vsplit`, read as where the pane goes: the Agent's own terminal,
-    // on the right. See `model/agentTerminal.ts`.
+    // beside it. See `model/agentTerminal.ts`.
     id: "toggle_terminal",
     label: "Show or hide the Agent's terminal",
     needs: "workspace",

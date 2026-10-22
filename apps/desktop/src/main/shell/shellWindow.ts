@@ -22,7 +22,9 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
 	onScreenEditor,
+	terminalExtent,
 	terminalSeam,
+	terminalStacked,
 	sidebarRect,
 	surfaceRect,
 	trafficLightPosition,
@@ -1258,18 +1260,20 @@ export class ShellWindow {
 	workbenchArea(): WorkbenchAreaWire {
 		const size = this.windowSize();
 		const seam = terminalSeam(size, this.state);
+		const extent = terminalExtent(size, this.state);
 		const terminal = this.state.terminal;
 		return {
 			...this.workbenchRect(),
 			contentWidth: surfaceRect(size, this.state).width,
-			...(seam === undefined || terminal === undefined
+			...(seam === undefined || extent === undefined || terminal === undefined
 				? {}
 				: {
 						terminalSeam: {
 							...seam,
 							terminalId: terminal.terminalId,
 							share: terminal.share,
-							extent: surfaceRect(size, this.state),
+							stacked: terminalStacked(this.state),
+							extent,
 						},
 					}),
 		};

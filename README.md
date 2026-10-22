@@ -237,7 +237,7 @@ devhub --tell agent answer A REQUEST --option N... | --text T
 devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
-devhub --tell terminal open [--command C] [--focus]  # your own terminal, on the right (Cmd+Q v)
+devhub --tell terminal open [--command C] [--focus]  # your own terminal, beside your pane (Cmd+Q v)
 devhub --tell terminal status | show                 # open/visible/focused, tmux handle, every tmux pane and where
 devhub --tell terminal close
 ```
@@ -245,8 +245,9 @@ devhub --tell terminal close
 `W` is a workspace's id, folder, name or `scratch`; `A` is an agent's id, a
 unique prefix of it, or its name. The `terminal` commands are about the
 asking agent's own terminal only — one per agent, a tmux session of its own
-on the workspace's machine, drawn on the right of its pane — and print the
-handle (`tmux` binary, `-S` socket, session, pane) an agent drives it with
+on the workspace's machine, drawn with its pane (right of it, or under it
+beside the editor; never with the editor alone, and `visible` says so) — and
+print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it with
 (`send-keys -l`, `capture-pane -p`). See `docs/window-and-pages.md`. `issue assign` does what the Assign Issue
 sheet does — the first clone DevHub finds (or `--repo`), a worktree of the
 branch (or `--root`), the first Issue action — except that the branch is the

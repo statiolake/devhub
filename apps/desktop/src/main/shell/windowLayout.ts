@@ -36,6 +36,7 @@
 import type { TitleBarMode } from "../../model/config.js";
 import {
 	placeTerminal,
+	placeTerminalBelow,
 	type TerminalPlacement,
 } from "../../model/agentTerminal.js";
 
@@ -158,7 +159,7 @@ export type KeyboardHalf =
 	| "editor"
 	| "agents"
 	| "sidebar"
-	/** The Agent's terminal on the right (`model/agentTerminal.ts`). */
+	/** The Agent's terminal, beside it (`model/agentTerminal.ts`). */
 	| { readonly terminal: string };
 
 /** Everything about the arrangement that is not the window's own size. */
@@ -169,9 +170,10 @@ export interface LayoutState {
 	readonly surface: SurfaceArrangement;
 	readonly keyboard: KeyboardHalf;
 	/**
-	 * The Agent terminal drawn right of the selection's own pane — which
-	 * `surface` says the inside of — and the share of the content width it
-	 * takes. Absent is that pane alone, the whole area. See
+	 * The Agent terminal drawn with the Agent `surface` shows, and the share
+	 * it takes: of the content width right of a full Agent, or of the split's
+	 * right half's height under its Agent. Absent is no terminal; the
+	 * workbench alone shows no Agent and so never one. See
 	 * `model/agentTerminal.ts`.
 	 */
 	readonly terminal?: { readonly terminalId: string; readonly share: number };
@@ -262,7 +264,7 @@ export type ChildIdentity =
 			readonly editorKey: string;
 			readonly id: number;
 	  }
-	/** An Agent's terminal, right of the content — see `model/agentTerminal.ts`. */
+	/** An Agent's terminal, with its Agent — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
@@ -386,46 +388,71 @@ export function sidebarRect(
 }
 
 /**
- * Where the content and the Agent's terminal go in the window, when one is
- * shown.
+ * Where the Agent and its terminal go in the window, when one is shown.
  *
- * The terminal takes its share of the content area (`surfaceRect`) on the
- * right, with a seam as wide as the workbench/Agent split's own, for the same
- * reason: a seam is the strip no view covers, which is the only place the
- * window's own page can draw a divider the pointer can grab. With nothing in
- * the content area — starting, a workbench being rebuilt, a folder that is
- * gone — the page's own state fills the whole of it, and the terminal waits
- * hidden rather than framing an empty room.
+ * The terminal is only ever on screen with its Agent, so where it goes is
+ * where the Agent is. A full Agent gives it its share of the content area
+ * (`surfaceRect`) on the right; a split's Agent — the right half — gives it
+ * its share of that half's height at the bottom, the editor keeping the whole
+ * left half. Either way the seam is as wide as the workbench/Agent split's
+ * own, for the same reason: a seam is the strip no view covers, which is the
+ * only place the window's own page can draw a divider the pointer can grab.
+ * The workbench alone has no Agent and so no terminal. With nothing in the
+ * content area — starting, a workbench being rebuilt, a folder that is gone —
+ * the page's own state fills the whole of it, and the terminal waits hidden
+ * rather than framing an empty room.
  */
 export function terminalPlacement(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): TerminalPlacement | undefined {
-	if (!panesDrawn(state) || state.terminal === undefined) return undefined;
-	return placeTerminal(
-		surfaceRect(windowSize, state),
+	const extent = terminalExtent(windowSize, state);
+	if (extent === undefined || state.terminal === undefined) return undefined;
+	return (terminalStacked(state) ? placeTerminalBelow : placeTerminal)(
+		extent,
 		state.terminal.share,
 		SPLIT_DIVIDER,
 	);
 }
 
 /**
- * The selection's own pane: the content area, less whatever the terminal
- * takes. Everything the selection draws — the workbench, the Agent, the two
- * side by side — is laid inside this, exactly as it used to be laid inside
- * the whole area.
+ * What the terminal shares with its Agent — the rectangle its divider's share
+ * is a share of: the whole content area beside a full Agent, a split's right
+ * half under its Agent. Nothing when no terminal is on screen.
+ */
+export function terminalExtent(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect | undefined {
+	if (state.terminal === undefined) return undefined;
+	if (state.surface.kind === "agent") return surfaceRect(windowSize, state);
+	if (state.surface.kind === "split") return splitAgentHalf(windowSize, state);
+	return undefined;
+}
+
+/** Whether the terminal on screen is under its Agent rather than right of it. */
+export function terminalStacked(state: LayoutState): boolean {
+	return state.surface.kind === "split";
+}
+
+/**
+ * The selection's own pane: the content area, less the terminal right of a
+ * full Agent. Everything the selection draws — the workbench, the Agent, the
+ * two side by side — is laid inside this; a split's terminal is inside the
+ * Agent's half instead (`agentsRect`).
  */
 export function contentRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
-	return (
-		terminalPlacement(windowSize, state)?.content ??
-		surfaceRect(windowSize, state)
-	);
+	const placement =
+		state.surface.kind === "agent"
+			? terminalPlacement(windowSize, state)
+			: undefined;
+	return placement?.content ?? surfaceRect(windowSize, state);
 }
 
-/** The seam left of the terminal, for the window's own page to draw. */
+/** The seam between the Agent and its terminal, for the window's own page. */
 export function terminalSeam(
 	windowSize: LayoutSize,
 	state: LayoutState,
@@ -433,17 +460,13 @@ export function terminalSeam(
 	return terminalPlacement(windowSize, state)?.seam;
 }
 
-/** Whether the tiling is drawn: whenever the content area has anything in it. */
-function panesDrawn(state: LayoutState): boolean {
-	return state.surface.kind !== "none";
-}
-
 /**
  * The rectangle the Agents' view is laid into.
  *
- * The whole content area when an Agent covers it, and the trailing share of it
- * when one is open beside its editor — the workbench's rectangle, the seam,
- * and then this. The seam itself belongs to neither: it is a real element on
+ * The whole content area when an Agent covers it (less its terminal on the
+ * right), and the trailing share of it when one is open beside its editor —
+ * the workbench's rectangle, the seam, and then this, less its terminal at
+ * the bottom. The seam itself belongs to neither: it is a real element on
  * the window's own page, in the one strip no child covers, which is what keeps
  * the pixels the pointer meets and the pixels the eye sees the same pixels.
  *
@@ -456,8 +479,19 @@ export function agentsRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
+	if (state.surface.kind !== "split") return contentRect(windowSize, state);
+	return (
+		terminalPlacement(windowSize, state)?.content ??
+		splitAgentHalf(windowSize, state)
+	);
+}
+
+/** A split's whole right half: the Agent, and its terminal under it if any. */
+function splitAgentHalf(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
 	const surface = contentRect(windowSize, state);
-	if (state.surface.kind !== "split") return surface;
 	const workbench = workbenchRect(windowSize, state);
 	const x = workbench.x + workbench.width + SPLIT_DIVIDER;
 	return {

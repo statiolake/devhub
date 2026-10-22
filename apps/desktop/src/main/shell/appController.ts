@@ -1513,6 +1513,9 @@ export class AppController {
 			terminalNeedsAgent: () => {
 				this.publishError(errorWireAt("terminal_needs_agent"));
 			},
+			terminalNeedsAgentView: () => {
+				this.publishError(errorWireAt("terminal_needs_agent_view"));
+			},
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
 			},
@@ -3156,17 +3159,23 @@ export class AppController {
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
 		// The view's Agent's terminal, when it is open, with the divider being
-		// dragged where the pointer is: it is laid out right of whatever the
-		// selection draws (`model/agentTerminal.ts`).
+		// dragged where the pointer is: it is laid out with its Agent — right
+		// of a full one, under a split's — and never with the workbench alone,
+		// which shows no Agent (`model/agentTerminal.ts`). Each way keeps its
+		// own share.
 		const model = this.coordinator.model;
 		const visible = model.visibleTerminal();
 		const terminal =
-			visible === undefined
+			visible === undefined ||
+			(surface.kind !== "agent" && surface.kind !== "split")
 				? undefined
 				: {
 						terminalId: visible.terminalId,
 						share:
-							this.terminalSharePreview ?? model.terminalShare(visible.agentId),
+							this.terminalSharePreview ??
+							(surface.kind === "split"
+								? model.terminalStackedShare(visible.agentId)
+								: model.terminalShare(visible.agentId)),
 					};
 		// Every Agent terminal there is has a view, shown or hidden, so coming
 		// back to its Agent finds its scrollback where it was.
@@ -3232,7 +3241,7 @@ export class AppController {
 	 */
 	private sidebarWidthPreview: number | undefined;
 	private splitRatioPreview: number | undefined;
-	/** The divider left of the Agent's terminal, being dragged. */
+	/** The divider between the Agent and its terminal, being dragged. */
 	private terminalSharePreview: number | undefined;
 	/**
 	 * Terminals whose session is being made and that the model has not been

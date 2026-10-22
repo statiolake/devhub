@@ -103,6 +103,8 @@ export interface ChordHost {
 	toggleTerminal(agentId: string): void;
 	/** `Cmd+Q V` with no Agent in the Workspace: say why nothing opened. */
 	terminalNeedsAgent(workspaceId: string): void;
+	/** `Cmd+Q V` on the workbench alone: say the terminal is the Agent's. */
+	terminalNeedsAgentView(workspaceId: string): void;
 	/** Close one terminal pane, and its session with it. */
 	closeTerminal(terminalId: string): void;
 	/** Put the keyboard on the Sidebar's selected row — the way into the tree. */
@@ -232,6 +234,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "terminal-needs-agent":
 			host.terminalNeedsAgent(effect.workspaceId);
+			return;
+		case "terminal-needs-agent-view":
+			host.terminalNeedsAgentView(effect.workspaceId);
 			return;
 		case "close-terminal":
 			host.closeTerminal(effect.terminalId);

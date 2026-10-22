@@ -64,20 +64,29 @@ function TerminalSeam({
 }) {
   const [dragging, setDragging] = useState(false);
   const preview = useRef(seam.share);
-  const shareAt = (clientX: number): number | undefined => {
+  const stacked = seam.stacked;
+  const shareAt = (clientX: number, clientY: number): number | undefined => {
     const extent = seam.extent;
+    // The terminal is past the pointer — right of it, or under it when it is
+    // stacked under a split's Agent: its share is what is left of the area
+    // past the divider's middle.
+    if (stacked) {
+      const available = extent.height - seam.height;
+      if (available <= 0) return undefined;
+      const below = extent.y + extent.height - (clientY + seam.height / 2);
+      return clampTerminalShare(below / available);
+    }
     const available = extent.width - seam.width;
     if (available <= 0) return undefined;
-    // The terminal is right of the pointer: its share is what is left of the
-    // area past the divider's middle.
     const right = extent.x + extent.width - (clientX + seam.width / 2);
     return clampTerminalShare(right / available);
   };
   useEffect(() => {
     if (!dragging) return undefined;
-    document.body.classList.add("is-resizing-split");
-    return () => document.body.classList.remove("is-resizing-split");
-  }, [dragging]);
+    const resizing = stacked ? "is-resizing-rows" : "is-resizing-split";
+    document.body.classList.add(resizing);
+    return () => document.body.classList.remove(resizing);
+  }, [dragging, stacked]);
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -89,7 +98,7 @@ function TerminalSeam({
     onCommit(clampTerminalShare(seam.share + delta));
   return (
     <div
-      className="split-seam terminal-seam"
+      className={`split-seam terminal-seam${stacked ? " is-stacked" : ""}`}
       style={{
         left: `${String(seam.x)}px`,
         top: `${String(seam.y)}px`,
@@ -101,7 +110,7 @@ function TerminalSeam({
         className={`split-divider${dragging ? " is-dragging" : ""}`}
         role="separator"
         aria-label="Resize the terminal"
-        aria-orientation="vertical"
+        aria-orientation={stacked ? "horizontal" : "vertical"}
         aria-valuemin={TERMINAL_MIN_SHARE * 100}
         aria-valuemax={TERMINAL_MAX_SHARE * 100}
         aria-valuenow={Math.round(seam.share * 100)}
@@ -113,7 +122,7 @@ function TerminalSeam({
         }}
         onPointerMove={(event) => {
           if (!dragging) return;
-          const next = shareAt(event.clientX);
+          const next = shareAt(event.clientX, event.clientY);
           if (next === undefined) return;
           preview.current = next;
           onPreview(next);
@@ -121,11 +130,11 @@ function TerminalSeam({
         onPointerUp={finish}
         onPointerCancel={finish}
         onKeyDown={(event) => {
-          // Left widens the terminal, the way the divider moves.
-          if (event.key === "ArrowLeft") {
+          // Left (up, stacked) grows the terminal, the way the divider moves.
+          if (event.key === (stacked ? "ArrowUp" : "ArrowLeft")) {
             event.preventDefault();
             step(0.02);
-          } else if (event.key === "ArrowRight") {
+          } else if (event.key === (stacked ? "ArrowDown" : "ArrowRight")) {
             event.preventDefault();
             step(-0.02);
           }
@@ -351,7 +360,8 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
 
   // The terminal's divider: the pointer moves it, and the model learns where
   // it stopped — the same split of labour as the seam above. The share is
-  // the Agent's whose terminal it is.
+  // the Agent's whose terminal it is, the width beside a full Agent or the
+  // height under a split's, each kept apart.
   const terminalSeam = area?.terminalSeam;
   const terminalAgent =
     terminalSeam === undefined
@@ -369,11 +379,12 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
         type: "resize_agent_terminal",
         agentId: terminalAgent,
         share: next,
+        ...(terminalSeam?.stacked === true ? { stacked: true } : {}),
       }).finally(() => {
         void devhub().previewLayout({ terminalShare: null });
       });
     },
-    [dispatch, terminalAgent],
+    [dispatch, terminalAgent, terminalSeam?.stacked],
   );
 
   const unavailableActions =

@@ -114,7 +114,11 @@ export interface TellTerminal {
 				readonly name: string;
 				/** Its pane is shown when its Agent is the view's. */
 				readonly open: boolean;
-				/** It is on screen now. */
+				/**
+				 * It is on screen now: open, and its Agent is on screen with it —
+				 * full (the terminal right of it) or beside its workbench (under
+				 * it). Never with the workbench alone.
+				 */
 				readonly visible: boolean;
 				/** It has the person's keyboard. */
 				readonly focused: boolean;
@@ -314,7 +318,7 @@ export class TellService {
 
 	/**
 	 * The Agent a terminal command is about: the asker itself, and no other.
-	 * There is no `--agent` for these on purpose — the terminal on the right
+	 * There is no `--agent` for these on purpose — the terminal beside its pane
 	 * is the asking Agent's own, and reaching into another Agent's shell is not
 	 * something one Agent may do to another.
 	 */
@@ -374,7 +378,7 @@ export class TellService {
 		if (terminal.session === undefined)
 			return {
 				message:
-					"You have no terminal open. 'devhub --tell terminal open' opens one, on the right of your pane.",
+					"You have no terminal open. 'devhub --tell terminal open' opens one, beside your pane.",
 				data: { terminal: described },
 			};
 		return {
@@ -999,9 +1003,9 @@ function terminalLine(terminal: DescribedTerminal): string {
 	return [
 		terminal.session ?? "no session",
 		terminal.visible
-			? "on screen, right of your pane"
+			? "on screen, with your pane (right of it, or under it beside the editor)"
 			: terminal.open
-				? "open, not on screen (another view is in front)"
+				? "open, not on screen (your pane is not: another Agent or the editor alone is in front)"
 				: "hidden (Cmd+Q V shows it)",
 		tmux === undefined
 			? "tmux could not be asked about it"

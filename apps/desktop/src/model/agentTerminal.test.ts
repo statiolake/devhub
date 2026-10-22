@@ -1,8 +1,8 @@
 /**
- * An Agent's own terminal, as the model keeps it: one per Agent, shown right
- * of whatever the view is when that Agent is the view's, hidden and shown
- * again without its session going, its width remembered, and carried across
- * a restart — including from the files written when terminals were a
+ * An Agent's own terminal, as the model keeps it: one per Agent, shown with
+ * its Agent whenever that Agent is on screen (never with the workbench
+ * alone), hidden and shown again without its session going, its sizes
+ * remembered, and carried across a restart — including from the files written when terminals were a
  * Workspace's tree of panes.
  */
 
@@ -25,6 +25,7 @@ import {
   clampTerminalShare,
   legacyAgentTerminal,
   placeTerminal,
+  placeTerminalBelow,
 } from "./agentTerminal.js";
 import {
   hydrateModel,
@@ -114,20 +115,39 @@ describe("one terminal per Agent", () => {
     expect(m.showAgentTerminal(AG_B, true)).toBe(false);
   });
 
-  it("on a Workspace's row, is the Agent it pairs with — last selected, else first", () => {
+  it("on a Workspace's row beside an Agent, is the Agent it pairs with — last selected, else first", () => {
     const m = model();
     m.agentTerminalOpened(AG_B, AG_B);
-    m.selectContext({ kind: "workspace", workspaceId: WS_A });
+    m.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
     // A was the last selected, and it has no terminal.
     expect(m.terminalAgentId()).toBe(AG_A);
     expect(m.visibleTerminal()).toBeUndefined();
     m.selectContext({ kind: "agent", agentId: AG_B });
-    m.selectContext({ kind: "workspace", workspaceId: WS_A });
+    m.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
     expect(m.terminalAgentId()).toBe(AG_B);
     expect(m.visibleTerminal()?.agentId).toBe(AG_B);
     // Scratch has no Agent, so no terminal.
     m.selectContext({ kind: "workspace", workspaceId: m.scratchWorkspaceId });
     expect(m.terminalAgentId()).toBeUndefined();
+  });
+
+  it("is not shown with the workbench alone, and is back as it was with its Agent", () => {
+    const m = model();
+    m.agentTerminalOpened(AG_A, AG_A, { focus: true });
+    m.selectContext({ kind: "workspace", workspaceId: WS_A });
+    // No Agent on screen, so no terminal — still running, still open.
+    expect(m.terminalAgentId()).toBeUndefined();
+    expect(m.visibleTerminal()).toBeUndefined();
+    expect(m.paneFocus).toBeUndefined();
+    expect(m.agentTerminal(AG_A)).toMatchObject({ open: true });
+    expect(m.snapshot().visibleTerminal).toBeUndefined();
+    // And nothing to cycle to: the editor is the one pane.
+    expect(m.cyclePaneFocus()).toBe(false);
+    m.selectContext({ kind: "agent", agentId: AG_A });
+    expect(m.visibleTerminal()?.agentId).toBe(AG_A);
+    // Beside its workbench, it is on screen again, under the Agent.
+    m.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
+    expect(m.visibleTerminal()?.agentId).toBe(AG_A);
   });
 
   it("goes when it is closed, or when its Agent does", () => {
@@ -153,6 +173,17 @@ describe("one terminal per Agent", () => {
     expect(m.terminalShare(AG_A)).toBe(0.7);
     m.resizeAgentTerminal(AG_A, 5);
     expect(m.terminalShare(AG_A)).toBe(clampTerminalShare(5));
+  });
+
+  it("keeps the height under a split apart from the width beside a full Agent", () => {
+    const m = model();
+    expect(m.resizeAgentTerminal(AG_A, 0.3, true)).toBe(true);
+    expect(m.resizeAgentTerminal(AG_A, 0.3, true)).toBe(false);
+    expect(m.terminalStackedShare(AG_A)).toBe(0.3);
+    expect(m.terminalShare(AG_A)).toBe(TERMINAL_DEFAULT_SHARE);
+    m.resizeAgentTerminal(AG_A, 0.7);
+    expect(m.terminalStackedShare(AG_A)).toBe(0.3);
+    expect(m.terminalShare(AG_A)).toBe(0.7);
   });
 });
 
@@ -250,6 +281,7 @@ describe("across a restart", () => {
     m.agentTerminalOpened(AG_B, AG_B);
     m.showAgentTerminal(AG_B, false);
     m.resizeAgentTerminal(AG_B, 0.25);
+    m.resizeAgentTerminal(AG_B, 0.55, true);
     m.resizeAgentTerminal(AG_C, 0.6);
     const state = stateFromSnapshot(m.snapshot());
     expect(() => validateState(state)).not.toThrow();
@@ -257,9 +289,11 @@ describe("across a restart", () => {
     const record = (id: string) => agents.find((one) => one.agent_id === id);
     expect(record(AG_A)?.terminal).toEqual({ terminal_id: AG_A, open: true });
     expect(record(AG_A)?.terminal_share).toBeUndefined();
+    expect(record(AG_A)?.terminal_stacked_share).toBeUndefined();
     expect(record(AG_B)).toMatchObject({
       terminal: { terminal_id: AG_B, open: false },
       terminal_share: 0.25,
+      terminal_stacked_share: 0.55,
     });
     expect(record(AG_C)?.terminal).toBeUndefined();
     expect(record(AG_C)?.terminal_share).toBe(0.6);
@@ -277,7 +311,9 @@ describe("across a restart", () => {
     });
     expect(restored.agentTerminal(AG_B)?.open).toBe(false);
     expect(restored.terminalShare(AG_B)).toBe(0.25);
+    expect(restored.terminalStackedShare(AG_B)).toBe(0.55);
     expect(restored.terminalShare(AG_C)).toBe(0.6);
+    expect(restored.terminalStackedShare(AG_C)).toBe(TERMINAL_DEFAULT_SHARE);
   });
 
   it("refuses a terminal record that is not one", () => {
@@ -290,6 +326,9 @@ describe("across a restart", () => {
     record.terminal_share = 2;
     expect(() => validateState(state)).toThrow();
     record.terminal_share = undefined;
+    record.terminal_stacked_share = 0.05;
+    expect(() => validateState(state)).toThrow();
+    record.terminal_stacked_share = undefined;
     record.terminal = { terminal_id: "nope", open: true };
     expect(() => validateState(state)).toThrow();
   });
@@ -398,6 +437,17 @@ describe("where the terminal goes", () => {
     expect(placed.terminal).toEqual({ x: 616, y: 20, width: 400, height: 500 });
     expect(placed.seam).toEqual({ x: 610, y: 20, width: 6, height: 500 });
     expect(placed.content).toEqual({ x: 10, y: 20, width: 600, height: 500 });
+  });
+
+  it("under its Agent, takes its share of the height at the bottom, past a seam", () => {
+    const placed = placeTerminalBelow(
+      { x: 10, y: 20, width: 500, height: 806 },
+      0.4,
+      6,
+    );
+    expect(placed.content).toEqual({ x: 10, y: 20, width: 500, height: 480 });
+    expect(placed.seam).toEqual({ x: 10, y: 500, width: 500, height: 6 });
+    expect(placed.terminal).toEqual({ x: 10, y: 506, width: 500, height: 320 });
   });
 
   it("clamps a share it is asked for", () => {

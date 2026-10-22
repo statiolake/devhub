@@ -119,7 +119,7 @@ const GLOBAL_CONTEXT = "global";
 const WORKSPACE_CONTEXT = "workspace";
 const AGENT_CONTEXT = "agent";
 /**
- * An Agent's own terminal, drawn right of the content (`PaneTerminalTarget`,
+ * An Agent's own terminal, drawn with its Agent (`PaneTerminalTarget`,
  * `model/agentTerminal.ts`). Its own context rather than an Agent's or the
  * Workspace's, because it is neither: the sweep accounts for it by its
  * Agent's terminal, nothing reads its screen as an Agent, and it is never

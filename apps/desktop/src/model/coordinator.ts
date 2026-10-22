@@ -825,7 +825,11 @@ export class AppCoordinator {
         this.model.agentTerminalClosed(intent.agentId);
         return this.transitionOutcome(beforeRevision, id);
       case "resize_agent_terminal":
-        this.model.resizeAgentTerminal(intent.agentId, intent.share);
+        this.model.resizeAgentTerminal(
+          intent.agentId,
+          intent.share,
+          intent.stacked === true,
+        );
         return this.transitionOutcome(beforeRevision, id);
       case "focus_pane":
         this.model.focusPane(intent.target);

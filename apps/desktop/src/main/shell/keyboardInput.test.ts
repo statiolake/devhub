@@ -118,6 +118,7 @@ function host(zoomActs = true) {
 		cyclePaneFocus: record("cyclePaneFocus"),
 		toggleTerminal: record("toggleTerminal"),
 		terminalNeedsAgent: record("terminalNeedsAgent"),
+		terminalNeedsAgentView: record("terminalNeedsAgentView"),
 		closeTerminal: record("closeTerminal"),
 		focusSidebar: record("focusSidebar"),
 		toggleSidebar: record("toggleSidebar"),

@@ -1184,10 +1184,11 @@ describe("the Agent's terminal", () => {
 		});
 	});
 
-	it("on a Workspace's row, toggles the Agent it pairs with", () => {
+	it("on a Workspace's row beside an Agent, toggles the Agent it pairs with", () => {
 		const onRow = snapshotOf({
 			workspaces: [two],
 			context: { kind: "workspace", workspaceId: "two" },
+			presentation: "beside",
 		});
 		expect(run("toggle_terminal", onRow)).toEqual({
 			kind: "toggle-terminal",
@@ -1196,11 +1197,24 @@ describe("the Agent's terminal", () => {
 		const remembered = snapshotOf({
 			workspaces: [{ ...two, lastAgentId: "b2" }],
 			context: { kind: "workspace", workspaceId: "two" },
+			presentation: "beside",
 		});
 		expect(run("toggle_terminal", remembered)).toEqual({
 			kind: "toggle-terminal",
 			agentId: "b2",
 		});
+	});
+
+	it("on the workbench alone, says the terminal is shown with its Agent", () => {
+		expect(
+			run(
+				"toggle_terminal",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual({ kind: "terminal-needs-agent-view", workspaceId: "two" });
 	});
 
 	it("says so on a Workspace with no Agent, rather than doing nothing", () => {
