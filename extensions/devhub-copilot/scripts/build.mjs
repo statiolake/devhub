@@ -1,6 +1,7 @@
 /**
- * Builds the extension: `dist/extension.js`, and the Copilot language server
- * staged beside it in `server/`.
+ * Builds the extension: `dist/extension.js`, `dist/controller.js`, which it
+ * requires only when Copilot is turned on (src/extension.ts), and the Copilot
+ * language server staged beside them in `server/`.
  *
  * The server is `@github/copilot-language-server`'s JavaScript distribution,
  * the `dist/` of the pinned npm package, run by the extension host's own
@@ -34,12 +35,26 @@ await mkdir(out, { recursive: true });
 
 await build({
   absWorkingDir: root,
-  entryPoints: ["src/extension.ts"],
+  entryPoints: ["src/extension.ts", "src/controller.ts"],
   bundle: true,
   platform: "node",
   format: "cjs",
   target: "node22",
   external: ["vscode"],
+  plugins: [
+    {
+      // The entry point's require of the controller stays a require of
+      // dist/controller.js, not a copy of it.
+      name: "lazy-controller",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/controller$/ }, (args) =>
+          args.importer.endsWith(`${sep}extension.ts`)
+            ? { path: "./controller.js", external: true }
+            : undefined,
+        );
+      },
+    },
+  ],
   outdir: "dist",
   sourcemap: false,
   legalComments: "none",

@@ -4,8 +4,27 @@ DevHub's built-in GitHub Copilot: code completions and Next Edit Suggestions
 (NES), drawn by the editor's own inline suggestion UI, from
 [`@github/copilot-language-server`](https://www.npmjs.com/package/@github/copilot-language-server).
 There is no chat. DevHub pins `chat.disableAIFeatures: true` and leaves the
-`copilot` extension out of its built-in set; this extension takes the place of
-only the completion half of that extension.
+`copilot` extension out of its built-in set (the packaged app by VS Code's own
+build, a source run by `scripts/stage-builtin-extensions.sh`); this extension
+takes the place of only the completion half of that extension.
+
+## Off until turned on
+
+Copilot is off in every window, and is turned on for one window at a time:
+**Copilot: Enable in This Window**, or a click on the status item
+(`$(copilot-unavailable)` while off). **Copilot: Disable in This Window**, or
+Turn Off in the dashboard, turns it off again. Sign In, Sign Out, Restart and
+Show Status turn it on first.
+
+Off, the extension is `src/extension.ts` alone: the status item and the
+commands. No language server process (about 1 GB, one per window's extension
+host), no providers, no timers; `src/controller.ts`, everything else, is built
+to its own `dist/controller.js` and not even loaded until Copilot is turned on.
+Turning it off disposes of the controller, which shuts the server down (killed
+if it has not exited within 2 s) and unregisters the providers.
+
+Whether it is on is held in the extension host's memory only. A reload, a
+restart or a workbench put to sleep comes back off.
 
 It grew out of
 [statiolake/vscode-copilot-lsp](https://github.com/statiolake/vscode-copilot-lsp),
@@ -61,7 +80,6 @@ server on this machine share.
 
 | Setting                                                      | Default |
 | ------------------------------------------------------------ | ------- |
-| `devhub.copilot.enable`                                      | `true`  |
 | `devhub.copilot.completions.enabled`                         | `true`  |
 | `devhub.copilot.nextEditSuggestions.enabled`                 | `true`  |
 | `devhub.copilot.nextEditSuggestions.extendedRange`           | `true`  |
@@ -76,10 +94,11 @@ dashboard's "for <language>" checkboxes write exactly that.
 ## The status bar dashboard
 
 DevHub pins `chat.disableAIFeatures`, which hides the official Copilot status
-item and its dashboard. This extension's item has a dashboard of its own,
-drawn by the workbench with the same widgets and stylesheet as the official
-one: hover over the item, or click it to pin it open with keyboard focus
-inside (Tab between the controls, Space to toggle, Escape to close).
+item and its dashboard. While Copilot is on, this extension's item has a
+dashboard of its own, drawn by the workbench with the same widgets and
+stylesheet as the official one: hover over the item, or click it to pin it
+open with keyboard focus inside (Tab between the controls, Space to toggle,
+Escape to close). While it is off the item has only a tooltip.
 
 - the header: the GitHub account and plan, and Show Output, Restart Language
   Server and Settings;
@@ -90,7 +109,7 @@ inside (Tab between the controls, Space to toggle, Escape to close).
 - Suggestions: Code completions and Next edit suggestions, everywhere and for
   the active editor's language (a three-state box: on, off, or as everywhere);
 - Snooze 5 min (then +5 min or Resume) hides suggestions in this window;
-- Sign In to GitHub or Sign Out, and Turn Off Copilot.
+- Sign In to GitHub or Sign Out, and Turn Off in This Window.
 
 The icon is the official one for the same state: `copilot`, `copilot-snooze`,
 `copilot-unavailable` (off, or both kinds off for this language),

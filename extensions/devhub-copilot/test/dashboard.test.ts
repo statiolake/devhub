@@ -31,7 +31,6 @@ const quota = parseCopilotQuota({
 });
 
 const ready: DashboardState = {
-  enabled: true,
   server: "running",
   busy: false,
   signingIn: false,
@@ -67,7 +66,6 @@ test("the status bar icon follows the official Copilot icons", () => {
   const text = (patch: Partial<DashboardState>) =>
     statusBarAppearance({ ...ready, ...patch }).text;
   assert.equal(text({}), "$(copilot)");
-  assert.equal(text({ enabled: false }), "$(copilot-unavailable)");
   assert.equal(text({ server: "starting" }), "$(loading~spin)");
   assert.equal(text({ busy: true }), "$(loading~spin)");
   assert.equal(text({ signingIn: true }), "$(loading~spin)");
@@ -187,7 +185,7 @@ test("sign in or sign out, whichever applies", () => {
   assert.equal(account.buttons[0].enabled, false, "not before the server runs");
 });
 
-test("an error offers a restart; off offers only turning on", () => {
+test("an error offers a restart, and the dashboard turns Copilot off", () => {
   assert.ok(
     buttonLabels({ ...ready, server: "error", message: "boom" }).includes(
       "$(debug-restart) Restart",
@@ -195,11 +193,8 @@ test("an error offers a restart; off offers only turning on", () => {
   );
   const [text] = find({ ...ready, server: "error", message: "boom" }, "text");
   assert.equal(text.text, "$(error) boom");
-  const off = buildHover({ ...ready, enabled: false }, icon).items;
-  assert.deepEqual(
-    off.map((item) => item.kind),
-    ["header", "text", "buttons"],
-  );
+  const [account] = find(ready, "buttons", "account");
+  assert.equal(account.buttons[1].command.command, "devhub.copilot.disable");
 });
 
 test("checkStatus answers map to an account", () => {

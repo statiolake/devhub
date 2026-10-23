@@ -112,5 +112,4 @@ exec "$ELECTRON" "$APP_DIR" \
 	--user-data-dir "$DEVHUB_USER_DATA_DIR" \
 	--extensions-dir "$DEVHUB_EXTENSIONS_DIR" \
 	--builtin-extensions-dir "$REPO_ROOT/vscode/.build/devhub-builtin-extensions" \
-	--disable-extension=vscode.vscode-api-tests \
 	"$@"

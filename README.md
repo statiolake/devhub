@@ -176,7 +176,9 @@ GitHub Copilot is built in too, but only completions and Next Edit Suggestions.
 Chat stays off. [`extensions/devhub-copilot`](extensions/devhub-copilot) runs
 the Copilot language server and hands its suggestions to the editor's own
 inline suggestion UI, so NES looks the way it does with the official extension.
-Its README explains what that takes.
+It is off in every window until turned on there (**Copilot: Enable in This
+Window** or its status item), and off means no language server at all; nothing
+remembers it across a reload. Its README explains what that takes.
 
 ## Lifecycle
 

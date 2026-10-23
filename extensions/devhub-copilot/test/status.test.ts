@@ -2,21 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { statusOf } from "../src/status";
 
-const ready = { enabled: true, signingIn: false, ready: true };
+const ready = { signingIn: false, ready: true };
 
 test("a running, signed-in server is ready", () => {
   assert.equal(statusOf(ready).kind, "ready");
-});
-
-test("turned off wins over everything the server says", () => {
-  assert.equal(
-    statusOf({
-      ...ready,
-      enabled: false,
-      server: { busy: true, kind: "Error", message: "x" },
-    }).kind,
-    "off",
-  );
 });
 
 test("an error about signing in is told apart from any other", () => {

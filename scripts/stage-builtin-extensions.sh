@@ -89,12 +89,22 @@ else
 	echo "the Copilot extension is not built, so this window has no Copilot — run 'pnpm --filter devhub-copilot build'" >&2
 fi
 
+# What VS Code's own product build leaves out of the built-in set
+# (`excludedExtensions` in vscode/build/lib/extensions.ts), so a source run has
+# the packaged app's set. `copilot` is Copilot Chat: it activates on startup
+# whatever `chat.disableAIFeatures` says and loads its whole bundle into every
+# window's extension host; DevHub's Copilot is extensions/devhub-copilot. The
+# rest are upstream's integration tests.
+EXCLUDED=" copilot vscode-api-tests vscode-colorize-tests vscode-colorize-perf-tests vscode-test-resolver "
+
 # The names to link, in a fixed order so the hash below names the *set* and not
 # the order the filesystem happened to hand them over in.
 names=()
 for entry in "$VSCODE_EXTENSIONS"/*/; do
 	[ -f "$entry/package.json" ] || continue
-	names+=("$(basename "${entry%/}")")
+	name="$(basename "${entry%/}")"
+	case "$EXCLUDED" in *" $name "*) continue ;; esac
+	names+=("$name")
 done
 # The downloaded half of VS Code's own set. The names come from product.json
 # rather than from whatever happens to be on disk, so a download that did not

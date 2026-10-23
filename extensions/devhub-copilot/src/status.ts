@@ -1,14 +1,12 @@
 import type { CopilotClientStatus } from "./copilotClient";
 
 export interface CopilotState {
-  enabled: boolean;
   signingIn: boolean;
   ready: boolean;
   server?: CopilotClientStatus;
 }
 
 export type CopilotStatusKind =
-  | "off"
   | "signingIn"
   | "busy"
   | "signedOut"
@@ -30,9 +28,6 @@ export interface CopilotStatus {
  * is told apart by the words.
  */
 export function statusOf(state: CopilotState): CopilotStatus {
-  if (!state.enabled) {
-    return { kind: "off", icon: "$(circle-slash)", summary: "Off" };
-  }
   if (state.signingIn) {
     return { kind: "signingIn", icon: "$(sync~spin)", summary: "Signing in" };
   }

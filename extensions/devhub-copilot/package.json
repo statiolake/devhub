@@ -1,7 +1,7 @@
 {
   "name": "devhub-copilot",
   "displayName": "DevHub Copilot",
-  "description": "GitHub Copilot code completions and Next Edit Suggestions, drawn by the editor's own inline suggestion UI, from the Copilot language server. No chat.",
+  "description": "GitHub Copilot code completions and Next Edit Suggestions, drawn by the editor's own inline suggestion UI, from the Copilot language server. Off until turned on in a window. No chat.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -30,6 +30,16 @@
   "contributes": {
     "commands": [
       {
+        "command": "devhub.copilot.enable",
+        "title": "Enable in This Window",
+        "category": "Copilot"
+      },
+      {
+        "command": "devhub.copilot.disable",
+        "title": "Disable in This Window",
+        "category": "Copilot"
+      },
+      {
         "command": "devhub.copilot.signIn",
         "title": "Sign In",
         "category": "Copilot"
@@ -42,11 +52,6 @@
       {
         "command": "devhub.copilot.restart",
         "title": "Restart Language Server",
-        "category": "Copilot"
-      },
-      {
-        "command": "devhub.copilot.toggle",
-        "title": "Toggle Completions",
         "category": "Copilot"
       },
       {
@@ -73,11 +78,6 @@
     "configuration": {
       "title": "Copilot",
       "properties": {
-        "devhub.copilot.enable": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run the Copilot language server and offer its suggestions."
-        },
         "devhub.copilot.completions.enabled": {
           "type": "boolean",
           "default": true,

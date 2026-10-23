@@ -7,8 +7,6 @@ import type { CopilotQuota } from "./quota";
  * so what is drawn is a function of it and nothing else.
  */
 export interface DashboardState {
-  /** `devhub.copilot.enable`. */
-  enabled: boolean;
   server: "stopped" | "starting" | "running" | "error";
   /** The server reported work in flight (`didChangeStatus` busy). */
   busy: boolean;
@@ -98,9 +96,6 @@ export function statusBarAppearance(
     summary,
     warning: false,
   });
-  if (!state.enabled) {
-    return ready("Copilot is turned off", "$(copilot-unavailable)");
-  }
   if (state.server === "starting") {
     return ready("Copilot is starting", "$(loading~spin)");
   }
@@ -172,25 +167,6 @@ export function buildHover(
   icon: (id: string) => vscode.ThemeIcon,
 ): vscode.StatusBarHover {
   const items: Item[] = [header(state, icon)];
-
-  if (!state.enabled) {
-    items.push(
-      {
-        kind: "text",
-        text: "Copilot is turned off. No language server runs and no suggestions are offered.",
-        muted: true,
-      },
-      {
-        kind: "buttons",
-        id: "power",
-        buttons: [
-          { label: "Turn On Copilot", command: cmd("devhub.copilot.toggle") },
-        ],
-      },
-    );
-    return { items };
-  }
-
   items.push(...serverItems(state));
   items.push(...quotaItems(state));
   items.push(suggestionsSection(state));
@@ -222,7 +198,6 @@ function header(
       description = "Not signed in";
       break;
     case "unknown":
-      description = state.enabled ? undefined : "Turned off";
       break;
   }
   return {
@@ -464,8 +439,11 @@ function accountButtons(state: DashboardState): Item {
             enabled: running && !state.signingIn,
           },
       {
-        label: "Turn Off Copilot",
-        command: cmd("devhub.copilot.toggle"),
+        label: "Turn Off in This Window",
+        command: cmd(
+          "devhub.copilot.disable",
+          "Stop the language server and turn Copilot off in this window",
+        ),
         secondary: true,
       },
     ],

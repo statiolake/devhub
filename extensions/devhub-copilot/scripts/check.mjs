@@ -16,9 +16,23 @@ const manifest = JSON.parse(
 );
 const read = (path) => readFile(resolve(root, path), "utf8");
 const extension = await read("src/extension.ts");
+const controller = await read("src/controller.ts");
 const nextEdits = await read("src/nextEditProvider.ts");
 const completions = await read("src/completionProvider.ts");
-const sources = `${extension}${nextEdits}${completions}`;
+const sources = `${extension}${controller}${nextEdits}${completions}`;
+
+// Copilot is off until it is turned on in a window, and off costs only the
+// entry point: everything else is ./controller, required when it is turned
+// on. A value import there would load it all in every window.
+for (const [, specifier] of extension.matchAll(
+  /^import (?!type )[^;]*?from "([^"]+)";/gmu,
+)) {
+  if (specifier !== "vscode") {
+    throw new Error(
+      `src/extension.ts runs in every window; import ${specifier} from src/controller.ts, or as a type`,
+    );
+  }
+}
 
 // An inline edit is an item with `isInlineEdit`. Without it the editor treats
 // a next edit as ghost text and drops it unless it continues at the cursor.
