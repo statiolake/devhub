@@ -1093,7 +1093,7 @@ export class AppController {
 		this.userDataPath = userDataPath;
 		setInterval(() => {
 			this.hibernateAwayWorkbenches();
-		}, HIBERNATE_CHECK_MS).unref();
+		}, HIBERNATE_CHECK_MS);
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
 		// effective one: there are no sessions to migrate, so adopting it is the
