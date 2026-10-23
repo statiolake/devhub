@@ -300,6 +300,11 @@ terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark whi
                             # nothing for this long while you are elsewhere — until
                             # you look at that pane. 0: only exiting counts. No ✓.
                             # Settings > General. See src/main/terminal/paneActivity.ts.
+workbench_hibernate_minutes = 30  # close a Workspace's editor (renderer, extension
+                            # host, language servers) after this long off screen;
+                            # it reopens where it was when shown. Agents and tmux
+                            # stay. Not while it has unsaved editors, a busy
+                            # terminal or a debug session; never Scratch. 0: off.
 
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens

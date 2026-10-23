@@ -26,6 +26,16 @@ describe("how long a workbench was off screen", () => {
 		expect(absence.observe([a, b], (v) => v === a, 99_000)).toEqual([]);
 	});
 
+	it("answers how long a workbench has been away, never-shown ones included", () => {
+		const absence = new WorkbenchAbsence<object>();
+		absence.observe([a, b], (v) => v === a, 0);
+		expect(absence.awayMs(a, 5_000)).toBeUndefined();
+		expect(absence.awayMs(b, 5_000)).toBe(5_000);
+		absence.observe([a, b], (v) => v === b, 10_000);
+		expect(absence.awayMs(a, 70_000)).toBe(60_000);
+		expect(absence.awayMs(b, 70_000)).toBeUndefined();
+	});
+
 	it("forgets a workbench that is gone", () => {
 		const absence = new WorkbenchAbsence<object>();
 		absence.observe([a], () => true, 0);

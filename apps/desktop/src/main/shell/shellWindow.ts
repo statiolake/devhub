@@ -797,6 +797,12 @@ export class ShellWindow {
 		return undefined;
 	}
 
+	/** How long a folder's workbench has been off screen, as of the last layout. */
+	editorAwayMs(editorKey: string, now: number): number | undefined {
+		const view = this.viewForEditorKey(editorKey);
+		return view === undefined ? undefined : this.absence.awayMs(view, now);
+	}
+
 	/** Every folder that has a workbench, in the order they were built. */
 	editorKeys(): readonly string[] {
 		return this.views

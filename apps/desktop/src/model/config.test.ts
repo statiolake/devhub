@@ -58,6 +58,19 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
+  it("closes an away editor after 30 minutes unless told otherwise, 0 being off", () => {
+    expect(parseConfig(MINIMAL).general.workbench_hibernate_minutes).toBe(30);
+    const off = "version = 1\n[general]\nworkbench_hibernate_minutes = 0\n";
+    expect(parseConfig(off).general.workbench_hibernate_minutes).toBe(0);
+    expect(
+      pathOf(() =>
+        parseConfig(
+          "version = 1\n[general]\nworkbench_hibernate_minutes = -1\n",
+        ),
+      ),
+    ).toBe("general.workbench_hibernate_minutes");
+  });
+
   it("leaves a row at the font's own line box, because the multiplier lands above the text and not around it", () => {
     // Measured in Electron at 12px, dpr 2, SauceCodePro Nerd Font Mono: at 1.2
     // the cell was 36 device px with 13 of clearance above the capitals and 1

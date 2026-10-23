@@ -353,6 +353,7 @@ describe("reconciling the workbenches against the projection", () => {
 		gaveUp: [],
 		parked: [],
 		waiting: [],
+		asleep: [],
 	} as const;
 
 	it("opens a workbench for a Workspace that appeared, selected one first", () => {
@@ -405,6 +406,14 @@ describe("reconciling the workbenches against the projection", () => {
 			selected: undefined,
 		});
 		expect(plan.create).toEqual(["/scratch"]);
+	});
+
+	it("opens an asleep workbench only once it is selected again", () => {
+		const asleep = { ...base, existing: ["/scratch"], asleep: ["/a"] };
+		const away = reconcileEditors({ ...asleep, selected: "/scratch" });
+		expect(away.create).toEqual(["/scratch"]);
+		expect(away.dispose).toEqual([]);
+		expect(reconcileEditors(asleep).create).toEqual(["/a", "/scratch"]);
 	});
 });
 

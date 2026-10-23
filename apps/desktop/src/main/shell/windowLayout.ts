@@ -980,6 +980,8 @@ export interface EditorReconcileInput {
 	readonly parked: readonly string[];
 	/** Folders waiting out a restart backoff. */
 	readonly waiting: readonly string[];
+	/** Folders whose workbench was closed for being away; opened only when selected. */
+	readonly asleep: readonly string[];
 }
 
 export interface EditorReconcilePlan {
@@ -1023,7 +1025,9 @@ export function reconcileEditors(
 	// again, so it is not one of those.
 	const openable = input.wanted.filter(
 		(folder) =>
-			!waiting.has(folder) && (!gaveUp.has(folder) || forget.includes(folder)),
+			!waiting.has(folder) &&
+			(!gaveUp.has(folder) || forget.includes(folder)) &&
+			(folder === input.selected || !input.asleep.includes(folder)),
 	);
 	const create =
 		input.selected === undefined || !openable.includes(input.selected)

@@ -112,6 +112,23 @@ export async function readUnsavedEditors(
 }
 
 /**
+ * Why a workbench must stay up although it is away: its unsaved editors, its
+ * busy terminals, its debug session, as `devhubHibernate.contribution.ts` in
+ * the overlay answers. Empty when it may be closed.
+ */
+export async function readKeepAwake(
+	contents: WorkbenchContents,
+	timeoutMs: number = UNSAVED_READ_TIMEOUT_MS,
+): Promise<readonly string[]> {
+	const reply = await askWorkbench(
+		contents,
+		"vscode:devhubKeepAwake",
+		timeoutMs,
+	);
+	return namesOf(reply, "reasons");
+}
+
+/**
  * Throw away every unsaved change the workbench holds.
  *
  * Only after the person has chosen to close — this is the carrying out of

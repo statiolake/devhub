@@ -205,6 +205,30 @@ export function GeneralSection({
       </Group>
 
       <Group
+        heading="Editors"
+        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it. Its Agents and terminal sessions keep running. An editor with unsaved changes, a running terminal command or a debug session stays open."
+      >
+        <Row
+          label="Close after (minutes)"
+          help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 30."
+        >
+          <NumberField
+            label="Close after (minutes)"
+            value={config.general.workbenchHibernateMinutes}
+            min={0}
+            max={10_080}
+            unit="min"
+            onCommit={(workbenchHibernateMinutes) => {
+              update({
+                ...config,
+                general: { ...config.general, workbenchHibernateMinutes },
+              });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
         heading="Appearance"
         note="Light and Dark tell the system DevHub is in that appearance, rather than painting it: an editor follows with the theme it has chosen for light or dark, and DevHub's own chrome follows that editor. An editor that has turned off `window.autoDetectColorScheme` keeps the theme it was told to use, and only the window frames and dialogs change."
       >

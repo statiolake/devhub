@@ -44,6 +44,7 @@ export function testConfig(
       notifyOnIdle: true,
       notifySound: true,
       terminalIdleSeconds: 5,
+      workbenchHibernateMinutes: 30,
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },

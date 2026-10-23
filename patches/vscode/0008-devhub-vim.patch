@@ -592,7 +592,7 @@ diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workb
 index 74be4cac..a7cc22aa 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
-@@ -219,6 +219,15 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+@@ -219,6 +219,18 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
  // System-wide (OS global) Keybindings
  import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
  
@@ -604,6 +604,9 @@ index 74be4cac..a7cc22aa 100644
 +
 +// DevHub: a tidy editor after being away (overlay only, docs/window-and-pages.md)
 +import './contrib/devhubTidy/browser/devhubTidy.contribution.js';
++
++// DevHub: what closing an away workbench would lose (overlay only, docs/window-and-pages.md)
++import './contrib/devhubHibernate/electron-browser/devhubHibernate.contribution.js';
 +
  //#endregion
  

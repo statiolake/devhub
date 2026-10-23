@@ -377,6 +377,12 @@ export interface GeneralConfig {
    * command as finished. See `main/terminal/paneActivity.ts`.
    */
   readonly terminal_idle_seconds: number;
+  /**
+   * Close a Workspace's workbench after its editor has been off screen this
+   * many minutes; it opens again when shown. `0` keeps every workbench up.
+   * See `main/shell/workbenchHibernation.ts`.
+   */
+  readonly workbench_hibernate_minutes: number;
 }
 
 export interface RuntimeConfig {
@@ -731,6 +737,8 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
 
 /** See `GeneralConfig.terminal_idle_seconds`. */
 export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
+/** See `GeneralConfig.workbench_hibernate_minutes`. */
+export const DEFAULT_WORKBENCH_HIBERNATE_MINUTES = 30;
 
 export function defaultConfig(): Config {
   return {
@@ -740,6 +748,7 @@ export function defaultConfig(): Config {
       notify_on_idle: true,
       notify_sound: true,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
+      workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -993,16 +1002,15 @@ function positiveNumber(
   return value;
 }
 
-/** `general.terminal_idle_seconds`: a finite number of seconds, zero allowed. */
-function idleSeconds(table: Record<string, unknown>): number {
-  const value = optionalNumber(
-    table,
-    "terminal_idle_seconds",
-    "general",
-    DEFAULT_TERMINAL_IDLE_SECONDS,
-  );
+/** A `general` number that is finite, zero allowed. */
+function generalDuration(
+  table: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
+  const value = optionalNumber(table, key, "general", fallback);
   if (!Number.isFinite(value) || value < 0) {
-    fail("invalid_type", "general.terminal_idle_seconds");
+    fail("invalid_type", `general.${key}`);
   }
   return value;
 }
@@ -1959,6 +1967,7 @@ export function interpretConfig(document: unknown): Config {
       "notify_on_idle",
       "notify_sound",
       "terminal_idle_seconds",
+      "workbench_hibernate_minutes",
     ],
     "general",
   );
@@ -2047,7 +2056,16 @@ export function interpretConfig(document: unknown): Config {
         "general",
         true,
       ),
-      terminal_idle_seconds: idleSeconds(generalTable),
+      terminal_idle_seconds: generalDuration(
+        generalTable,
+        "terminal_idle_seconds",
+        DEFAULT_TERMINAL_IDLE_SECONDS,
+      ),
+      workbench_hibernate_minutes: generalDuration(
+        generalTable,
+        "workbench_hibernate_minutes",
+        DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
+      ),
     },
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
@@ -2244,6 +2262,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       notify_on_idle: config.general.notify_on_idle,
       notify_sound: config.general.notify_sound,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
+      workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
     },
     runtimes: {
       shell: config.runtimes.shell,

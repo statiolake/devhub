@@ -12,14 +12,18 @@
  *
  * The workbench decides what to do with the number (`devhubTidy` in the
  * overlay hides its panel and side bars after `devhub.workbench.
- * tidyAfterAwayMinutes`); main only measures.
+ * tidyAfterAwayMinutes`), and main closes a workbench away for longer than
+ * `general.workbench_hibernate_minutes` (`workbenchHibernation.ts`).
  *
- * A workbench that has never been on screen has nothing to come back from,
- * so its first showing is not reported.
+ * A workbench that has never been on screen is away from when it was first
+ * seen, but has nothing to come back from: its first showing is not reported.
  */
 export class WorkbenchAbsence<View extends object> {
-	/** `"shown"`, or when it went off screen. Views never shown are absent. */
-	private readonly state = new Map<View, "shown" | number>();
+	/** `"shown"`, or since when it has been off screen and whether it was ever shown. */
+	private readonly state = new Map<
+		View,
+		"shown" | { readonly since: number; readonly returns: boolean }
+	>();
 
 	/**
 	 * Note which of `views` are on screen now, and answer the ones that have
@@ -37,18 +41,24 @@ export class WorkbenchAbsence<View extends object> {
 			seen.add(view);
 			const was = this.state.get(view);
 			if (isShown(view)) {
-				if (typeof was === "number") {
-					returned.push({ view, awayMs: Math.max(0, now - was) });
+				if (typeof was === "object" && was.returns) {
+					returned.push({ view, awayMs: Math.max(0, now - was.since) });
 				}
 				this.state.set(view, "shown");
-			} else if (was === "shown") {
-				this.state.set(view, now);
+			} else if (was === undefined || was === "shown") {
+				this.state.set(view, { since: now, returns: was === "shown" });
 			}
 		}
 		for (const view of [...this.state.keys()]) {
 			if (!seen.has(view)) this.state.delete(view);
 		}
 		return returned;
+	}
+
+	/** How long `view` has been off screen, or nothing while it is on screen or unknown. */
+	awayMs(view: View, now: number): number | undefined {
+		const was = this.state.get(view);
+		return typeof was === "object" ? Math.max(0, now - was.since) : undefined;
 	}
 }
 

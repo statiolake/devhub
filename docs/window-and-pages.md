@@ -747,6 +747,27 @@ One main process, one renderer per page (eight, of which Settings exists only
 while it is open, and the terminal pane once per terminal), and one per workbench — though several workbench views can
 share a renderer, which Chromium's same-site grouping decides.
 
+A workbench is a renderer, an extension host and its language servers and
+watchers, so one per Workspace adds up. **A workbench away longer than
+`general.workbench_hibernate_minutes` (default 30; `0` is off) is closed**,
+measured by the same `workbenchAbsence.ts` as the tidy above (a split is on
+screen; a workbench never shown is away from launch). Each minute
+`hibernateAwayWorkbenches` asks it what closing would lose
+(`vscode:devhubKeepAwake`, answered by the overlay's
+`devhubHibernate.contribution.ts`): unsaved editors, a process in one of its
+own terminals (a task, or a shell with children; DevHub's terminal is tmux and
+never counts), a debug session. Any answer, or none, keeps it up — the rule is
+"skip when dirty", not hot exit. Otherwise it is unloaded as VS Code closes a
+window (`UnloadReason.CLOSE`: storage written, extensions deactivated) and
+its view destroyed, and the folder is _asleep_: `reconcileEditors` opens it
+again only when it is selected, through the ordinary open path, with
+"Restarting the editor…" until it loads, and VS Code restores its editors and
+layout from workspace storage. Nothing else is touched: the row, its Agents,
+their tmux sessions, GUI conversations and repository status. An SSH or dev
+container workbench reconnects as any open does (the container is left
+running). Scratch never sleeps: the Agent panes take their colours from it.
+A woken workbench is a new view, so it is not tidied on its return.
+
 Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before
 stage 0 and after stage 4:

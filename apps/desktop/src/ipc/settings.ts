@@ -104,6 +104,8 @@ export interface SettingsGeneralWire {
 	readonly notifySound: boolean;
 	/** `general.terminal_idle_seconds`. */
 	readonly terminalIdleSeconds: number;
+	/** `general.workbench_hibernate_minutes`. */
+	readonly workbenchHibernateMinutes: number;
 }
 
 export interface SettingsRuntimeConfigWire {

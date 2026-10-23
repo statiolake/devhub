@@ -208,6 +208,7 @@ import { seedProfileSettings } from "../profileSeed.js";
 import {
 	ConfigStore,
 	DEFAULT_TERMINAL_IDLE_SECONDS,
+	DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
 	defaultConfigPaths,
 	profilePresentation,
 	withProfileRuntimes,
@@ -287,6 +288,7 @@ import {
 } from "./editorSupervisor.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
+import { HIBERNATE_CHECK_MS, hibernate } from "./workbenchHibernation.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
@@ -297,6 +299,7 @@ import {
 } from "./editorInspection.js";
 import {
 	discardUnsavedEditors,
+	readKeepAwake,
 	readUnsavedEditors,
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
@@ -746,6 +749,10 @@ export class AppController {
 		string,
 		Promise<WorkbenchView | undefined>
 	>();
+	/** Folders whose workbench was closed for being away (`workbenchHibernation.ts`). */
+	private readonly asleep = new Set<string>();
+	/** Folders being asked whether they may sleep. */
+	private readonly hibernating = new Set<string>();
 
 	/**
 	 * The one place anything waits for VS Code's main process to be usable.
@@ -1084,6 +1091,9 @@ export class AppController {
 	 */
 	async startRuntimes(userDataPath: string): Promise<void> {
 		this.userDataPath = userDataPath;
+		setInterval(() => {
+			this.hibernateAwayWorkbenches();
+		}, HIBERNATE_CHECK_MS).unref();
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
 		// effective one: there are no sessions to migrate, so adopting it is the
@@ -5503,7 +5513,8 @@ export class AppController {
 	 * Make the set of workbench views match the set of workspaces.
 	 *
 	 * One rule, in one place: every workspace DevHub knows about has a
-	 * workbench — Scratch is one of them — and nothing else does. Creating them at
+	 * workbench — Scratch is one of them — and nothing else does, except one
+	 * asleep for being away (`workbenchHibernation.ts`). Creating them at
 	 * launch rather than on first selection is why nobody waits for a workbench
 	 * at the moment they ask to see it; destroying one only when its workspace
 	 * leaves the model is why a close that fails or is refused still has its
@@ -5547,6 +5558,10 @@ export class AppController {
 			selectedKey === undefined
 				? undefined
 				: this.editorKeyForSurfaceKey(selectedKey);
+		// An asleep workbench opens again when its editor is shown.
+		if (selected !== undefined && this.asleep.delete(selected)) {
+			this.announceRestarting(selected, true);
+		}
 
 		// Not every workspace wants a workbench: one whose folder is gone
 		// (`unavailable`) has nothing to open a workbench *in*, and asking is
@@ -5561,6 +5576,9 @@ export class AppController {
 		const wanted = this.coordinator.model.workspaces
 			.filter((workspace) => workspace.state.kind !== "unavailable")
 			.map((workspace) => workspace.key);
+		for (const folder of this.asleep) {
+			if (!wanted.includes(folder)) this.asleep.delete(folder);
+		}
 		const gaveUp = this.editorSupervisor.gaveUpKeys();
 		const plan = reconcileEditors({
 			wanted,
@@ -5571,6 +5589,7 @@ export class AppController {
 			gaveUp,
 			parked: gaveUp.filter((folder) => this.editorSupervisor.parked(folder)),
 			waiting: [...this.editorRestartTimers.keys()],
+			asleep: [...this.asleep],
 		});
 
 		for (const folder of plan.dispose) {
@@ -5624,6 +5643,71 @@ export class AppController {
 					this.editorFailed(folder, describeFailure(error));
 				},
 			);
+		}
+	}
+
+	/**
+	 * Close every workbench away longer than `general.workbench_hibernate_minutes`
+	 * that may be closed (`workbenchHibernation.ts`). Scratch stays: the Agent
+	 * panes take their colours from it, and an empty window is it.
+	 */
+	private hibernateAwayWorkbenches(): void {
+		const shell = shellWindowIfCreated();
+		const minutes =
+			this.config?.general.workbench_hibernate_minutes ??
+			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
+		if (!shell || isQuitting() || !(minutes > 0)) return;
+		const scratchId = this.coordinator.model.scratchWorkspaceId;
+		for (const workspace of this.coordinator.model.workspaces) {
+			const folder = workspace.key;
+			const away = () =>
+				(shell.editorAwayMs(folder, Date.now()) ?? 0) >= minutes * 60_000;
+			if (
+				workspace.id === scratchId ||
+				this.hibernating.has(folder) ||
+				this.restartingEditors.has(folder) ||
+				!away()
+			) {
+				continue;
+			}
+			this.hibernating.add(folder);
+			void (async () => {
+				const services = await this.services();
+				const codeWindow = await this.editorWindowFor(folder);
+				if (editorRuntimeState(codeWindow) !== "running") return;
+				await hibernate({
+					away,
+					keepAwake: () => readKeepAwake(workbenchContentsOf(codeWindow)),
+					unload: () =>
+						withDeadline<boolean>(
+							services
+								.lifecycle()
+								.unload(workbenchOf(codeWindow), UnloadReason.CLOSE),
+							CLOSE_STEP_TIMEOUT_MS,
+							"the workbench did not unload",
+						).finally(() => {
+							// A question raised by the unload is nobody's to answer.
+							this.withdrawWorkbenchQuestions(workspace.id);
+						}),
+					sleep: () => {
+						console.log(
+							`[devhub] workbench '${folder}' asleep after being away`,
+						);
+						this.asleep.add(folder);
+						this.disposeEditorView(workspace.id);
+						this.syncEditorViews();
+						this.syncEditorViewInBackground();
+					},
+				});
+			})()
+				.catch((error: unknown) => {
+					console.error(
+						`[devhub] workbench '${folder}' could not sleep: ${describeFailure(error)}`,
+					);
+				})
+				.finally(() => {
+					this.hibernating.delete(folder);
+				});
 		}
 	}
 

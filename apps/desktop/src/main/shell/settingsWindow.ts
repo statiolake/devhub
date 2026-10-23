@@ -170,6 +170,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			notifyOnIdle: config.general.notify_on_idle,
 			notifySound: config.general.notify_sound,
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
+			workbenchHibernateMinutes: config.general.workbench_hibernate_minutes,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -308,6 +309,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			notify_on_idle: wire.general.notifyOnIdle,
 			notify_sound: wire.general.notifySound,
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
+			workbench_hibernate_minutes: wire.general.workbenchHibernateMinutes,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

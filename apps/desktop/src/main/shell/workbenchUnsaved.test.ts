@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	discardUnsavedEditors,
+	readKeepAwake,
 	readUnsavedEditors,
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
@@ -46,6 +47,18 @@ function contents(answer?: (channel: string) => unknown) {
 
 afterEach(() => {
 	vi.useRealTimers();
+});
+
+describe("asking a workbench why it must stay up", () => {
+	it("answers with the reasons on its own channel", async () => {
+		const workbench = contents((channel) =>
+			channel === "vscode:devhubKeepAwake"
+				? { reasons: ["main.ts", "terminal zsh"] }
+				: undefined,
+		);
+		expect(await readKeepAwake(workbench)).toEqual(["main.ts", "terminal zsh"]);
+		expect(workbench.ipcListeners()).toBe(0);
+	});
 });
 
 describe("reading a workbench's unsaved editors", () => {

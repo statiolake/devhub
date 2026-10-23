@@ -757,6 +757,17 @@ describe("the shell window's workbench views", () => {
 				expect(returns(a)).toEqual([]);
 			});
 
+			it("answers how long a folder's workbench has been away, for hibernation", () => {
+				show(shell, a);
+				showPage(shell);
+				now += 40 * 60_000;
+				expect(shell.editorAwayMs(keyOf(a), now)).toBe(40 * 60_000);
+				// b was never shown: away all the same.
+				expect(shell.editorAwayMs(keyOf(b), now)).toBeDefined();
+				showSplit(shell, a);
+				expect(shell.editorAwayMs(keyOf(a), now)).toBeUndefined();
+			});
+
 			it("is not away while DevHub is in the background", () => {
 				show(shell, a);
 				theWindow().emit("blur");
