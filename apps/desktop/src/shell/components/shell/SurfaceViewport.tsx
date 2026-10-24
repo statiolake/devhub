@@ -32,7 +32,7 @@ import {
 import { useShellPage } from "../../ShellPageContext";
 import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
-import { Failure, Waiting } from "./SurfaceState";
+import { Asleep, Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import {
   TERMINAL_MAX_SHARE,
@@ -452,12 +452,22 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
   } else if (restartingEditors.has(layout.editorKey)) {
-    // The workbench is being rebuilt in this same slot. The selection has not
-    // moved and must not: what changed is that there is nothing to show yet,
-    // which is a state of this area rather than a reason to leave it.
-    surfaceState = "editor-restarting";
+    // The workbench is being rebuilt in this same slot, or is asleep. The
+    // selection has not moved and must not: what changed is that there is
+    // nothing to show yet, which is a state of this area rather than a reason
+    // to leave it. One that slept shows the frame it left.
+    const { restarting, frame } = restartingEditors.get(layout.editorKey) ?? {};
+    surfaceState = restarting === true ? "editor-restarting" : "editor-asleep";
     editorKey = layout.editorKey;
-    body = <Waiting label="Restarting the editor…" />;
+    body =
+      frame === undefined ? (
+        <Waiting label="Restarting the editor…" />
+      ) : (
+        <Asleep
+          frame={frame}
+          label={restarting === true ? "起動中…" : "休止中"}
+        />
+      );
   } else {
     surfaceState = layout.kind;
     editorKey = layout.editorKey;

@@ -1890,6 +1890,11 @@ export interface OpenModal {
 export interface EditorRestartingWire {
 	readonly surfaceKey: string;
 	readonly restarting: boolean;
+	/**
+	 * Gone to sleep (`main/shell/workbenchHibernation.ts`): its last frame as a
+	 * data URL, kept until a `restarting: false` without one says it is up.
+	 */
+	readonly frame?: string;
 }
 
 /**

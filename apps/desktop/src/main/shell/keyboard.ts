@@ -45,7 +45,7 @@
  */
 
 import { electron } from "../electron.js";
-import { strokeKey } from "../../model/chordKeys.js";
+import { isModifierKey, strokeKey } from "../../model/chordKeys.js";
 import { ChordInputSource, type InputSourcePort } from "./chordInputSource.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
@@ -91,7 +91,10 @@ export interface ChordHost {
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
 		focus?: Landing,
+		passing?: true,
 	): void;
+	/** A key the chords did not want, a modifier alone aside: someone is typing. */
+	typed(): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
 	/** The next pane on screen, the terminal included (`Cmd+Q O`). */
@@ -221,7 +224,12 @@ function strokeOf(input: Electron.Input): KeyStroke {
 function perform(host: ChordHost, effect: ChordEffect): void {
 	switch (effect.kind) {
 		case "select-context":
-			host.selectContext(effect.context, effect.presentation, effect.focus);
+			host.selectContext(
+				effect.context,
+				effect.presentation,
+				effect.focus,
+				effect.passing,
+			);
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();
@@ -345,6 +353,7 @@ export function handleInput(
 	// because they mean different things to a reader.
 	if (decision.kind === "forward") return;
 	if (decision.kind === "pass") {
+		if (!isModifierKey(stroke.code)) host.typed();
 		// The chord layer wants nothing from this key. It may still be one of
 		// the Mac's editing keys landing on a surface that has no way to
 		// answer it — DevHub's own chrome — in which case this layer answers

@@ -749,24 +749,34 @@ share a renderer, which Chromium's same-site grouping decides.
 
 A workbench is a renderer, an extension host and its language servers and
 watchers, so one per Workspace adds up. **A workbench away longer than
-`general.workbench_hibernate_minutes` (default 30; `0` is off) is closed**,
+`general.workbench_hibernate_minutes` (default 10; `0` is off) is closed**,
 measured by the same `workbenchAbsence.ts` as the tidy above (a split is on
-screen; a workbench never shown is away from launch). Each minute
-`hibernateAwayWorkbenches` asks it what closing would lose
-(`vscode:devhubKeepAwake`, answered by the overlay's
-`devhubHibernate.contribution.ts`): unsaved editors, a process in one of its
-own terminals (a task, or a shell with children; DevHub's terminal is tmux and
-never counts), a debug session. Any answer, or none, keeps it up — the rule is
-"skip when dirty", not hot exit. Otherwise it is unloaded as VS Code closes a
-window (`UnloadReason.CLOSE`: storage written, extensions deactivated) and
-its view destroyed, and the folder is _asleep_: `reconcileEditors` opens it
-again only when it is selected, through the ordinary open path, with
-"Restarting the editor…" until it loads, and VS Code restores its editors and
-layout from workspace storage. Nothing else is touched: the row, its Agents,
-their tmux sessions, GUI conversations and repository status. An SSH or dev
-container workbench reconnects as any open does (the container is left
-running). Scratch never sleeps: the Agent panes take their colours from it.
-A woken workbench is a new view, so it is not tidied on its return.
+screen; a workbench never shown is away from launch), and so is the least
+recently shown one once more than `general.workbench_awake_max` (default 3;
+`0` is no cap) are up — checked when one opens and each minute
+(`hibernateAwayWorkbenches`, `capAwakeWorkbenches`). Scratch, SSH and dev
+container workbenches are neither closed nor counted. Before closing, main
+asks the workbench what that would lose (`vscode:devhubKeepAwake`, answered by
+the overlay's `devhubHibernate.contribution.ts`): a process in one of its own
+terminals (a task, or a shell with children; DevHub's terminal is tmux and
+never counts), a debug session, and unsaved editors only with `files.hotExit`
+off. Any answer, or none, keeps it up; past the cap the next one is tried, and
+with none left the cap is exceeded. Otherwise its frame is captured
+(`capturePage`) and it is unloaded as VS Code unloads every window on Cmd+Q
+(`UnloadReason.QUIT`: the backup tracker backs up unsaved editors instead of
+asking, storage is written, extensions deactivate), and its view destroyed.
+The folder is then _asleep_: `reconcileEditors` does not open it, and
+selecting it wakes it through the ordinary open path, whose
+`registerFolderBackup` hands it the same backup folder, so VS Code restores
+its editors, layout and unsaved changes. `Cmd+Q N`/`P` landing on it waits
+`WAKE_DELAY_MS` (1 s) first, in case it is only passed through; leaving
+cancels, and any key but a modifier wakes it at once. Until the woken view
+has loaded (it is `hidden` in the arrangement, a split keeping its Agent),
+the page draws the captured frame grey and dim in the hole, with "休止中"
+while asleep and "起動中…" while it starts; the frame lives in memory only.
+Nothing else is touched: the row, its Agents, their tmux sessions, GUI
+conversations and repository status. A woken workbench is a new view, so it
+is not tidied on its return.
 
 Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before

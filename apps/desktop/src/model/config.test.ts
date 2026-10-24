@@ -58,8 +58,9 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
-  it("closes an away editor after 30 minutes unless told otherwise, 0 being off", () => {
-    expect(parseConfig(MINIMAL).general.workbench_hibernate_minutes).toBe(30);
+  it("closes an away editor after 10 minutes and keeps at most 3 up unless told otherwise, 0 being off", () => {
+    expect(parseConfig(MINIMAL).general.workbench_hibernate_minutes).toBe(10);
+    expect(parseConfig(MINIMAL).general.workbench_awake_max).toBe(3);
     const off = "version = 1\n[general]\nworkbench_hibernate_minutes = 0\n";
     expect(parseConfig(off).general.workbench_hibernate_minutes).toBe(0);
     expect(

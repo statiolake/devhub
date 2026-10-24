@@ -206,11 +206,11 @@ export function GeneralSection({
 
       <Group
         heading="Editors"
-        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it. Its Agents and terminal sessions keep running. An editor with unsaved changes, a running terminal command or a debug session stays open."
+        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do Scratch, SSH and dev container editors."
       >
         <Row
           label="Close after (minutes)"
-          help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 30."
+          help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 10."
         >
           <NumberField
             label="Close after (minutes)"
@@ -222,6 +222,24 @@ export function GeneralSection({
               update({
                 ...config,
                 general: { ...config.general, workbenchHibernateMinutes },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Open at most"
+          help="Opening one more editor closes the one shown least recently. 0 is no limit. Default 3."
+        >
+          <NumberField
+            label="Open at most"
+            value={config.general.workbenchAwakeMax}
+            min={0}
+            max={100}
+            unit="editors"
+            onCommit={(workbenchAwakeMax) => {
+              update({
+                ...config,
+                general: { ...config.general, workbenchAwakeMax },
               });
             }}
           />

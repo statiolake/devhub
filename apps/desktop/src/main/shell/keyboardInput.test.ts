@@ -114,6 +114,7 @@ function host(zoomActs = true) {
 	const chordHost: ChordHost = {
 		snapshot: () => SNAPSHOT,
 		selectContext: record("selectContext"),
+		typed: () => undefined,
 		swapSplitFocus: record("swapSplitFocus"),
 		cyclePaneFocus: record("cyclePaneFocus"),
 		toggleTerminal: record("toggleTerminal"),
@@ -191,7 +192,7 @@ function named(commandId: string): string {
 			return "openChordHelp";
 		default:
 			// previous_agent, next_agent, next_workspace: all selections.
-			return "selectContext [object Object] undefined undefined";
+			return "selectContext [object Object] undefined undefined undefined";
 	}
 }
 
@@ -297,7 +298,7 @@ describe("a chord, as Electron delivers it", () => {
 		expect(taken).toEqual([true, false, true]);
 		// `Shift+P` from Scratch steps back to the last workspace.
 		expect(calls).toEqual([
-			"selectContext [object Object] undefined undefined",
+			"selectContext [object Object] undefined undefined undefined",
 		]);
 	});
 

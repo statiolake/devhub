@@ -106,6 +106,8 @@ export interface SettingsGeneralWire {
 	readonly terminalIdleSeconds: number;
 	/** `general.workbench_hibernate_minutes`. */
 	readonly workbenchHibernateMinutes: number;
+	/** `general.workbench_awake_max`. */
+	readonly workbenchAwakeMax: number;
 }
 
 export interface SettingsRuntimeConfigWire {

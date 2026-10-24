@@ -383,6 +383,11 @@ export interface GeneralConfig {
    * See `main/shell/workbenchHibernation.ts`.
    */
   readonly workbench_hibernate_minutes: number;
+  /**
+   * At most this many workbenches stay up, Scratch and remote ones not
+   * counted: opening one more closes the least recently shown. `0` is no cap.
+   */
+  readonly workbench_awake_max: number;
 }
 
 export interface RuntimeConfig {
@@ -738,7 +743,9 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
 /** See `GeneralConfig.terminal_idle_seconds`. */
 export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
 /** See `GeneralConfig.workbench_hibernate_minutes`. */
-export const DEFAULT_WORKBENCH_HIBERNATE_MINUTES = 30;
+export const DEFAULT_WORKBENCH_HIBERNATE_MINUTES = 10;
+/** See `GeneralConfig.workbench_awake_max`. */
+export const DEFAULT_WORKBENCH_AWAKE_MAX = 3;
 
 export function defaultConfig(): Config {
   return {
@@ -749,6 +756,7 @@ export function defaultConfig(): Config {
       notify_sound: true,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
+      workbench_awake_max: DEFAULT_WORKBENCH_AWAKE_MAX,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -1968,6 +1976,7 @@ export function interpretConfig(document: unknown): Config {
       "notify_sound",
       "terminal_idle_seconds",
       "workbench_hibernate_minutes",
+      "workbench_awake_max",
     ],
     "general",
   );
@@ -2065,6 +2074,11 @@ export function interpretConfig(document: unknown): Config {
         generalTable,
         "workbench_hibernate_minutes",
         DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
+      ),
+      workbench_awake_max: generalDuration(
+        generalTable,
+        "workbench_awake_max",
+        DEFAULT_WORKBENCH_AWAKE_MAX,
       ),
     },
     runtimes: {
@@ -2263,6 +2277,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       notify_sound: config.general.notify_sound,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
+      workbench_awake_max: config.general.workbench_awake_max,
     },
     runtimes: {
       shell: config.runtimes.shell,

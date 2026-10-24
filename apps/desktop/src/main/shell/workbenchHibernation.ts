@@ -1,21 +1,28 @@
 /**
- * Closing a workbench that has been away a long time, to give its memory back.
+ * Closing a workbench that has been away, to give its memory back.
  *
  * A workbench off screen (`workbenchAbsence.ts`) for longer than
- * `general.workbench_hibernate_minutes` is unloaded the way VS Code closes a
- * window — its storage written, its extensions shut down — and its view
- * destroyed, which ends its renderer, extension host and language servers.
- * Nothing else about the Workspace changes: its Agents, its tmux sessions and
- * its row stay. Showing its editor again opens it through the ordinary open
- * path, and VS Code restores its editors and layout from workspace storage.
+ * `general.workbench_hibernate_minutes`, or the least recently shown one past
+ * `general.workbench_awake_max`, is unloaded the way VS Code unloads a window
+ * on quit — storage written, extensions shut down, unsaved editors backed up
+ * by hot exit — and its view destroyed, which ends its renderer, extension
+ * host and language servers. Nothing else about the Workspace changes: its
+ * Agents, its tmux sessions and its row stay. Showing its editor again opens
+ * it through the ordinary open path, and VS Code restores its editors, layout
+ * and backups for that folder. Scratch, SSH and dev container workbenches
+ * never sleep.
  *
- * A workbench that would lose something stays up: unsaved editors, a process
- * running in one of its own terminals (DevHub's terminal is tmux and survives),
- * a debug session. It says so itself (`readKeepAwake`); no answer is a reason.
+ * A workbench that would lose something stays up: a process running in one
+ * of its own terminals (DevHub's terminal is tmux and survives), a debug
+ * session, unsaved editors with hot exit off. It says so itself
+ * (`readKeepAwake`); no answer is a reason.
  */
 
 /** Checked this often; a workbench sleeps within a minute of its threshold. */
 export const HIBERNATE_CHECK_MS = 60_000;
+
+/** `Cmd+Q N/P` landing on an asleep editor wakes it after this, if still there. */
+export const WAKE_DELAY_MS = 1_000;
 
 /** One away workbench, as the hibernation step needs it. */
 export interface Hibernating {

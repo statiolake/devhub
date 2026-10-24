@@ -171,6 +171,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			notifySound: config.general.notify_sound,
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
 			workbenchHibernateMinutes: config.general.workbench_hibernate_minutes,
+			workbenchAwakeMax: config.general.workbench_awake_max,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -310,6 +311,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			notify_sound: wire.general.notifySound,
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
 			workbench_hibernate_minutes: wire.general.workbenchHibernateMinutes,
+			workbench_awake_max: wire.general.workbenchAwakeMax,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

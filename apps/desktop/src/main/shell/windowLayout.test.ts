@@ -296,6 +296,19 @@ describe("where the keyboard goes", () => {
 		expect(keyboardChild(input())).toEqual({ kind: "editor", editorKey: "/a" });
 	});
 
+	it("goes to the page, not to a workbench being rebuilt, and keeps its split", () => {
+		const split = state({
+			surface: { kind: "split", editorKey: "/a", ratio: 0.5, hidden: true },
+		});
+		expect(keyboardChild(input({ state: split }))).toEqual({ kind: "shell" });
+		expect(agentsRect(WINDOW, split)).toEqual(
+			agentsRect(WINDOW, {
+				...split,
+				surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+			}),
+		);
+	});
+
 	it("goes to the Agent beside a workbench, not to the workbench", () => {
 		expect(
 			keyboardChild(
@@ -408,12 +421,12 @@ describe("reconciling the workbenches against the projection", () => {
 		expect(plan.create).toEqual(["/scratch"]);
 	});
 
-	it("opens an asleep workbench only once it is selected again", () => {
+	it("does not open an asleep workbench, selected or not", () => {
 		const asleep = { ...base, existing: ["/scratch"], asleep: ["/a"] };
 		const away = reconcileEditors({ ...asleep, selected: "/scratch" });
 		expect(away.create).toEqual(["/scratch"]);
 		expect(away.dispose).toEqual([]);
-		expect(reconcileEditors(asleep).create).toEqual(["/a", "/scratch"]);
+		expect(reconcileEditors(asleep).create).toEqual(["/scratch"]);
 	});
 });
 

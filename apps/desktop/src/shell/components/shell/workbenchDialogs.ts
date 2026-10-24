@@ -10,30 +10,44 @@
 import { useEffect, useState } from "react";
 import { devhub } from "../../client";
 
+/** A workbench being rebuilt, or asleep with the last frame it showed. */
+export interface EditorComeback {
+  readonly restarting: boolean;
+  /** Its frame from before it slept, a data URL; empty if none was taken. */
+  readonly frame?: string;
+}
+
 /**
- * The editor surfaces whose workbench is being rebuilt right now.
+ * The editor surfaces whose workbench is being rebuilt right now, or is asleep.
  *
  * A workbench that ends for a reason DevHub did not choose does not move the
  * selection: the Editor activity stays selected and the workbench comes back
  * in the same slot. This is what lets the viewport say so while that happens,
- * instead of showing an empty rectangle.
+ * instead of showing an empty rectangle. One that slept (`workbenchHibernation.ts`
+ * in main) keeps its frame until it is up again.
  */
-export function useRestartingEditors(): ReadonlySet<string> {
-  const [restarting, setRestarting] = useState<ReadonlySet<string>>(new Set());
+export function useRestartingEditors(): ReadonlyMap<string, EditorComeback> {
+  const [editors, setEditors] = useState<ReadonlyMap<string, EditorComeback>>(
+    new Map(),
+  );
 
   useEffect(
     () =>
-      devhub().onEditorRestarting(({ surfaceKey, restarting: active }) => {
-        setRestarting((current) => {
-          if (current.has(surfaceKey) === active) return current;
-          const next = new Set(current);
-          if (active) next.add(surfaceKey);
-          else next.delete(surfaceKey);
+      devhub().onEditorRestarting(({ surfaceKey, restarting, frame }) => {
+        setEditors((current) => {
+          const next = new Map(current);
+          if (restarting) {
+            next.set(surfaceKey, { ...current.get(surfaceKey), restarting });
+          } else if (frame !== undefined) {
+            next.set(surfaceKey, { restarting, frame });
+          } else {
+            next.delete(surfaceKey);
+          }
           return next;
         });
       }),
     [],
   );
 
-  return restarting;
+  return editors;
 }

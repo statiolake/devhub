@@ -1516,6 +1516,34 @@ body.is-resizing-rows {
   user-select: none;
 }
 
+/* An asleep workbench: its last frame, top-left as it was laid, grey and dim,
+   so coming back reads as the same editor rather than an empty pane. */
+.surface-asleep {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.surface-asleep img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left top;
+  filter: grayscale(1) brightness(0.6);
+}
+
+.surface-asleep-label {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  margin: 0;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--secondary);
+  font-size: 11px;
+}
+
 /* Surface states follow the shape of a macOS alert: a short declarative
    message, the informative text under it, then the actions. Centring uses
    auto margins rather than justify-content, because centred flex content that

@@ -84,6 +84,26 @@ describe("the in-place restarting state", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("editor-restarting");
   });
 
+  it("keeps an asleep workbench's frame through its restart, until it is up", () => {
+    function Frame() {
+      const editor = useRestartingEditors().get(SURFACE);
+      return (
+        <div data-testid="state">
+          {editor === undefined
+            ? "editor"
+            : `${String(editor.restarting)} ${editor.frame ?? ""}`}
+        </div>
+      );
+    }
+    render(<Frame />);
+    announce({ surfaceKey: SURFACE, restarting: false, frame: "data:x" });
+    expect(screen.getByTestId("state")).toHaveTextContent("false data:x");
+    announce({ surfaceKey: SURFACE, restarting: true });
+    expect(screen.getByTestId("state")).toHaveTextContent("true data:x");
+    announce({ surfaceKey: SURFACE, restarting: false });
+    expect(screen.getByTestId("state")).toHaveTextContent("editor");
+  });
+
   it("is about one workbench, not all of them", () => {
     render(<Probe surfaceKey={SURFACE} />);
     announce({ surfaceKey: "global-editor", restarting: true });

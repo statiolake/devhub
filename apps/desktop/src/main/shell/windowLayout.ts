@@ -128,16 +128,22 @@ export interface LayoutRect {
  */
 export type SurfaceArrangement =
 	/** One workbench, the whole content area. */
-	| { readonly kind: "editor"; readonly editorKey: string }
+	| {
+			readonly kind: "editor";
+			readonly editorKey: string;
+			readonly hidden?: true;
+	  }
 	/** A workbench and an Agent's pane, split at `ratio` of the area. */
 	| {
 			readonly kind: "split";
 			readonly editorKey: string;
 			readonly ratio: number;
+			/** Being rebuilt: its rectangle is the page's until it has loaded. */
+			readonly hidden?: true;
 	  }
 	/** An Agent over the whole area: the workbenches stay built, none shown. */
 	| { readonly kind: "agent" }
-	/** Nothing to show — starting, restarting, or a folder that is gone. */
+	/** Nothing to show — starting, or a folder that is gone. */
 	| { readonly kind: "none" };
 
 /**
@@ -663,7 +669,7 @@ export function onScreenEditor(input: LayoutInput): string | undefined {
 	}
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
-	return input.editors.includes(surface.editorKey)
+	return surface.hidden !== true && input.editors.includes(surface.editorKey)
 		? surface.editorKey
 		: undefined;
 }
@@ -980,7 +986,7 @@ export interface EditorReconcileInput {
 	readonly parked: readonly string[];
 	/** Folders waiting out a restart backoff. */
 	readonly waiting: readonly string[];
-	/** Folders whose workbench was closed for being away; opened only when selected. */
+	/** Folders whose workbench was closed for being away; waking takes one out. */
 	readonly asleep: readonly string[];
 }
 
@@ -1027,7 +1033,7 @@ export function reconcileEditors(
 		(folder) =>
 			!waiting.has(folder) &&
 			(!gaveUp.has(folder) || forget.includes(folder)) &&
-			(folder === input.selected || !input.asleep.includes(folder)),
+			!input.asleep.includes(folder),
 	);
 	const create =
 		input.selected === undefined || !openable.includes(input.selected)

@@ -118,6 +118,22 @@ export function Waiting({ label }: { readonly label: string }) {
   );
 }
 
+/** An asleep workbench: the frame it left, grey and dim, and what it is doing. */
+export function Asleep({
+  frame,
+  label,
+}: {
+  readonly frame: string;
+  readonly label: string;
+}) {
+  return (
+    <div className="surface-asleep" role="status">
+      {frame === "" ? null : <img src={frame} alt="" />}
+      <p className="surface-asleep-label">{label}</p>
+    </div>
+  );
+}
+
 /**
  * Something went wrong, in the Surface it went wrong in.
  *

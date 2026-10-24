@@ -146,6 +146,11 @@ function selects(context: NavigationContext) {
 	return { kind: "select-context", context };
 }
 
+/** `Cmd+Q N/P`: a selection that may only be passing through. */
+function passes(context: NavigationContext) {
+	return { ...selects(context), passing: true };
+}
+
 describe("the workspace cycle", () => {
 	const snapshot = snapshotOf({ workspaces: [one, two] });
 
@@ -379,7 +384,7 @@ describe("the tab cycle", () => {
 	it("walks every row in order without minding which kind it is", () => {
 		// global, one, a1, two, b1, b2.
 		expect(run("next_tab", snapshot)).toEqual(
-			selects({ kind: "workspace", workspaceId: "one" }),
+			passes({ kind: "workspace", workspaceId: "one" }),
 		);
 		expect(
 			run(
@@ -389,7 +394,7 @@ describe("the tab cycle", () => {
 					context: { kind: "workspace", workspaceId: "one" },
 				}),
 			),
-		).toEqual(selects({ kind: "agent", agentId: "a1" }));
+		).toEqual(passes({ kind: "agent", agentId: "a1" }));
 		expect(
 			run(
 				"next_tab",
@@ -398,7 +403,7 @@ describe("the tab cycle", () => {
 					context: { kind: "agent", agentId: "a1" },
 				}),
 			),
-		).toEqual(selects({ kind: "workspace", workspaceId: "two" }));
+		).toEqual(passes({ kind: "workspace", workspaceId: "two" }));
 	});
 
 	it("wraps from the last row back to Scratch", () => {
@@ -410,9 +415,9 @@ describe("the tab cycle", () => {
 					context: { kind: "agent", agentId: "b2" },
 				}),
 			),
-		).toEqual(selects(SCRATCH));
+		).toEqual(passes(SCRATCH));
 		expect(run("previous_tab", snapshot)).toEqual(
-			selects({ kind: "agent", agentId: "b2" }),
+			passes({ kind: "agent", agentId: "b2" }),
 		);
 	});
 
