@@ -770,8 +770,9 @@ watchers, so one per Workspace adds up. **A workbench away longer than
 `general.workbench_hibernate_minutes` (default 10; `0` is off) is closed**,
 measured by the same `workbenchAbsence.ts` as the tidy above (a split is on
 screen; a workbench never shown is away from launch), and so is the least
-recently shown one once more than `general.workbench_awake_max` (default 3;
-`0` is no cap) are up — checked when one opens and each minute
+recently shown one off screen at least a minute (`CAP_MIN_AWAY_MS`, so ones
+just passed through stay) once more than `general.workbench_awake_max`
+(default 3; `0` is no cap) are up — checked when one opens and each minute
 (`hibernateAwayWorkbenches`, `capAwakeWorkbenches`). Scratch, SSH and dev
 container workbenches are neither closed nor counted. Before closing, main
 asks the workbench what that would lose (`vscode:devhubKeepAwake`, answered by
@@ -794,7 +795,11 @@ the page draws the captured frame grey and dim in the hole, with "休止中"
 while asleep and "起動中…" while it starts; the frame lives in memory only.
 Nothing else is touched: the row, its Agents, their tmux sessions, GUI
 conversations and repository status. A woken workbench is a new view, so it
-is not tidied on its return.
+is not tidied on its return. Each folder is in one state at a time
+(`WorkbenchSleep`: awake → hibernating → asleep → waking → awake), only the
+selection wakes an asleep one (`ensureEditorView` refuses it), and nothing
+hibernating, waking, opening or shown is closed; every transition is logged
+as `[devhub] workbench '<folder>' …`.
 
 Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before

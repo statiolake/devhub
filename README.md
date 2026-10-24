@@ -307,7 +307,8 @@ workbench_hibernate_minutes = 10  # close a Workspace's editor (renderer, extens
                             # busy terminal or a debug session; never Scratch, SSH
                             # or dev container editors. 0: off.
 workbench_awake_max = 3     # at most this many such editors open; one more closes
-                            # the one shown least recently. 0: no cap.
+                            # the one shown least recently (off screen ≥ 1 min).
+                            # 0: no cap.
 
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens

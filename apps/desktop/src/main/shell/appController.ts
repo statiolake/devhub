@@ -291,8 +291,8 @@ import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import {
 	HIBERNATE_CHECK_MS,
-	WAKE_DELAY_MS,
-	hibernate,
+	WorkbenchSleep,
+	capCandidates,
 } from "./workbenchHibernation.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -754,16 +754,12 @@ export class AppController {
 		string,
 		Promise<WorkbenchView | undefined>
 	>();
-	/** Folders whose workbench was closed for being away (`workbenchHibernation.ts`). */
-	private readonly asleep = new Set<string>();
-	/** Folders being asked whether they may sleep. */
-	private readonly hibernating = new Set<string>();
+	/** Each folder's hibernation and wake (`workbenchHibernation.ts`). */
+	private readonly workbenchSleep = new WorkbenchSleep(() => {
+		this.syncEditorViews();
+	});
 	/** Set while `capAwakeWorkbenches` is closing workbenches. */
 	private capping = false;
-	/** An asleep folder `Cmd+Q N/P` landed on, not woken for `WAKE_DELAY_MS`. */
-	private wakeHold:
-		| { readonly folder: string; readonly timer: ReturnType<typeof setTimeout> }
-		| undefined;
 
 	/**
 	 * The one place anything waits for VS Code's main process to be usable.
@@ -1516,8 +1512,14 @@ export class AppController {
 		const chordHost: ChordHost = {
 			snapshot: () => this.snapshot(),
 			selectContext: (context, presentation, focus, passing) => {
-				if (passing && context.kind === "workspace") {
-					this.holdWake(context.workspaceId);
+				if (passing) {
+					const model = this.coordinator.model;
+					this.workbenchSleep.pass(
+						(context.kind === "workspace"
+							? model.workspace(context.workspaceId as WorkspaceId)
+							: model.workspaceForAgent(parseAgentId(context.agentId))
+						)?.key,
+					);
 				}
 				this.arrive(
 					intentFromWire({
@@ -1532,7 +1534,7 @@ export class AppController {
 				this.swapSplitFocus();
 			},
 			typed: () => {
-				this.releaseWake();
+				this.workbenchSleep.release();
 			},
 			cyclePaneFocus: () => {
 				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
@@ -5057,6 +5059,8 @@ export class AppController {
 		// reads it and can act on the answer.
 		if (existing && isLiveWorkbench(existing)) return Promise.resolve(existing);
 		if (existing) shellWindow().unbindEditorKey(folder);
+		// Asleep opens only through `syncEditorViews` waking it.
+		if (!this.workbenchSleep.mayOpen(folder)) return Promise.resolve(undefined);
 
 		const inFlight = this.editorOpens.get(folder);
 		if (inFlight) return inFlight;
@@ -5405,7 +5409,10 @@ export class AppController {
 	 */
 	private announceRestarting(folder: string, restarting: boolean): void {
 		if (restarting) this.restartingEditors.add(folder);
-		else this.restartingEditors.delete(folder);
+		else {
+			this.restartingEditors.delete(folder);
+			this.workbenchSleep.awake(folder);
+		}
 		this.sendEditorRestarting(folder, restarting);
 		// A workbench that is away is not the thing in the content area, and
 		// the one that is back is; both move the arrangement.
@@ -5674,15 +5681,8 @@ export class AppController {
 				: this.editorKeyForSurfaceKey(selectedKey);
 		// An asleep workbench opens again when its editor is shown, unless
 		// `Cmd+Q N/P` is maybe only passing through it.
-		if (this.wakeHold !== undefined && this.wakeHold.folder !== selected) {
-			clearTimeout(this.wakeHold.timer);
-			this.wakeHold = undefined;
-		}
-		if (
-			selected !== undefined &&
-			this.wakeHold === undefined &&
-			this.asleep.delete(selected)
-		) {
+		const waking = this.workbenchSleep.shown(selected);
+		if (waking && selected !== undefined) {
 			this.announceRestarting(selected, true);
 		}
 
@@ -5699,9 +5699,9 @@ export class AppController {
 		const wanted = this.coordinator.model.workspaces
 			.filter((workspace) => workspace.state.kind !== "unavailable")
 			.map((workspace) => workspace.key);
-		for (const folder of this.asleep) {
+		for (const folder of this.workbenchSleep.asleep()) {
 			if (wanted.includes(folder)) continue;
-			this.asleep.delete(folder);
+			this.workbenchSleep.forget(folder);
 			this.sendEditorRestarting(folder, false);
 		}
 		const gaveUp = this.editorSupervisor.gaveUpKeys();
@@ -5714,7 +5714,7 @@ export class AppController {
 			gaveUp,
 			parked: gaveUp.filter((folder) => this.editorSupervisor.parked(folder)),
 			waiting: [...this.editorRestartTimers.keys()],
-			asleep: [...this.asleep],
+			asleep: this.workbenchSleep.asleep(),
 		});
 
 		for (const folder of plan.dispose) {
@@ -5818,18 +5818,18 @@ export class AppController {
 		const awake = this.sleepableWorkspaces().filter(
 			(workspace) =>
 				shell.editorKeys().includes(workspace.key) &&
-				!this.hibernating.has(workspace.key),
+				!this.workbenchSleep.hibernating(workspace.key),
 		);
-		const away = (workspace: (typeof awake)[number]) =>
-			shell.editorAwayMs(workspace.key, now);
-		const candidates = awake
-			.filter((workspace) => away(workspace) !== undefined)
-			.sort((a, b) => (away(b) ?? 0) - (away(a) ?? 0));
-		let excess = awake.length - max;
+		const cap = capCandidates(
+			awake,
+			(workspace) => shell.editorAwayMs(workspace.key, now),
+			max,
+		);
+		let excess = cap.excess;
 		if (excess <= 0) return;
 		this.capping = true;
 		void (async () => {
-			for (const workspace of candidates) {
+			for (const workspace of cap.candidates) {
 				if (excess <= 0) break;
 				const slept = await this.hibernateWorkbench(
 					workspace,
@@ -5853,19 +5853,18 @@ export class AppController {
 		const folder = workspace.key;
 		if (
 			isQuitting() ||
-			this.hibernating.has(folder) ||
 			this.restartingEditors.has(folder) ||
+			this.editorOpens.has(folder) ||
 			!away()
 		) {
 			return false;
 		}
-		this.hibernating.add(folder);
 		try {
 			const services = await this.services();
 			const codeWindow = await this.editorWindowFor(folder);
 			if (editorRuntimeState(codeWindow) !== "running") return false;
 			let frame = "";
-			return await hibernate({
+			return await this.workbenchSleep.hibernate(folder, {
 				away,
 				keepAwake: () => readKeepAwake(workbenchContentsOf(codeWindow)),
 				unload: async () => {
@@ -5884,8 +5883,6 @@ export class AppController {
 					});
 				},
 				sleep: () => {
-					console.log(`[devhub] workbench '${folder}' asleep`);
-					this.asleep.add(folder);
 					this.sendEditorRestarting(folder, false, frame);
 					this.disposeEditorView(workspace.id);
 					this.syncEditorViews();
@@ -5897,8 +5894,6 @@ export class AppController {
 				`[devhub] workbench '${folder}' could not sleep: ${describeFailure(error)}`,
 			);
 			return false;
-		} finally {
-			this.hibernating.delete(folder);
 		}
 	}
 
@@ -5917,31 +5912,6 @@ export class AppController {
 		return image === undefined || image.isEmpty()
 			? ""
 			: `data:image/jpeg;base64,${image.toJPEG(80).toString("base64")}`;
-	}
-
-	/** `Cmd+Q N/P` landed on an asleep editor: wake it in a moment, if still there. */
-	private holdWake(workspaceId: string): void {
-		const folder = this.coordinator.model.workspace(
-			workspaceId as WorkspaceId,
-		)?.key;
-		if (this.wakeHold) clearTimeout(this.wakeHold.timer);
-		this.wakeHold =
-			folder === undefined || !this.asleep.has(folder)
-				? undefined
-				: {
-						folder,
-						timer: setTimeout(() => {
-							this.releaseWake();
-						}, WAKE_DELAY_MS),
-					};
-	}
-
-	/** Stop holding: the held editor wakes if it is still the one shown. */
-	private releaseWake(): void {
-		if (!this.wakeHold) return;
-		clearTimeout(this.wakeHold.timer);
-		this.wakeHold = undefined;
-		this.syncEditorViews();
 	}
 
 	private editorKeyForSurfaceKey(surfaceKey: string): string | undefined {
