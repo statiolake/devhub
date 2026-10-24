@@ -2,7 +2,8 @@
  * The background usage readers, against scripted CLIs: what each one is sent
  * (control requests and account reads only — never anything that starts a
  * turn), how its answers are decoded, how often it asks, how its readings
- * merge with a GUI Agent's, and that a failure is said once and ends it.
+ * merge with a GUI Agent's, that each reading is its own process, killed
+ * after, and that a failure is said once per streak and retried at the next tick.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -19,8 +20,7 @@ import { UsageLimits, usageReadingListener } from "./usageLimits.js";
 import {
 	type LineProcess,
 	pollInterval,
-	REQUEST_TIMEOUT_MS,
-	RETRY_BACKOFF_MS,
+	READ_TIMEOUT_MS,
 	startUsageReaders,
 } from "./usageReaders.js";
 
@@ -211,6 +211,8 @@ function harness(options: {
 	const readings: UsageReading[] = [];
 	const notes: UsageNoteWire[] = [];
 	const ticks: (() => void)[] = [];
+	/** How many processes were alive when each one was started. */
+	const aliveAtSpawn: number[] = [];
 	const readers = startUsageReaders({
 		profiles: options.profiles,
 		runtime: {
@@ -234,6 +236,7 @@ function harness(options: {
 			const name = command.file.split("/").at(-1) as "claude" | "codex";
 			const answer = options.answers[name];
 			if (answer === undefined) throw new Error(`no script for ${name}`);
+			aliveAtSpawn.push(processes.filter((one) => !one.killed).length);
 			const process = new ScriptedProcess(command, answer);
 			processes.push(process);
 			return process;
@@ -260,6 +263,7 @@ function harness(options: {
 		limits,
 		published,
 		processes,
+		aliveAtSpawn,
 		intervals,
 		reports,
 		readings,
@@ -473,26 +477,25 @@ describe("the background usage readers", () => {
 			],
 			env: { PATH: "/usr/bin", HOME: "/home/testuser", PROFILE_VAR: "1" },
 		});
-		expect(process!.sent).toEqual([
-			{
-				type: "control_request",
-				request_id: "devhub-usage-1",
-				request: { subtype: "initialize" },
-			},
-			{
-				type: "control_request",
-				request_id: "devhub-usage-2",
-				request: { subtype: "get_usage", skip_behaviors: true },
-			},
-			{
-				type: "control_request",
-				request_id: "devhub-usage-3",
-				request: { subtype: "get_usage", skip_behaviors: true },
-			},
-		]);
+		// One process per reading, each with its own handshake.
+		expect(h.processes).toHaveLength(2);
+		for (const one of h.processes) {
+			expect(one.sent).toEqual([
+				{
+					type: "control_request",
+					request_id: "devhub-usage-1",
+					request: { subtype: "initialize" },
+				},
+				{
+					type: "control_request",
+					request_id: "devhub-usage-2",
+					request: { subtype: "get_usage", skip_behaviors: true },
+				},
+			]);
+			expect(one.killed).toBe(true);
+		}
 		// 91% of the five-hour window: 15 s.
 		expect(h.intervals).toEqual([15_000, 15_000]);
-		expect(process!.killed).toBe(true);
 		expect(h.reports).toEqual([]);
 	});
 
@@ -507,29 +510,27 @@ describe("the background usage readers", () => {
 		h.readers.stop();
 		const [process] = h.processes;
 		expect(process!.command.args).toEqual(["app-server"]);
-		expect(process!.sent).toEqual([
-			{
-				id: 0,
-				method: "initialize",
-				params: {
-					clientInfo: { name: "devhub", title: "DevHub", version: "0.1.0" },
-					capabilities: { experimentalApi: false, requestAttestation: false },
+		expect(h.processes).toHaveLength(2);
+		for (const one of h.processes) {
+			expect(one.sent).toEqual([
+				{
+					id: 0,
+					method: "initialize",
+					params: {
+						clientInfo: { name: "devhub", title: "DevHub", version: "0.1.0" },
+						capabilities: { experimentalApi: false, requestAttestation: false },
+					},
 				},
-			},
-			{ method: "initialized" },
-			{ id: 1, method: "account/read", params: {} },
-			{
-				id: 2,
-				method: "account/rateLimits/read",
-				params: { excludeResetCreditDetails: true },
-			},
-			{ id: 3, method: "account/read", params: {} },
-			{
-				id: 4,
-				method: "account/rateLimits/read",
-				params: { excludeResetCreditDetails: true },
-			},
-		]);
+				{ method: "initialized" },
+				{ id: 1, method: "account/read", params: {} },
+				{
+					id: 2,
+					method: "account/rateLimits/read",
+					params: { excludeResetCreditDetails: true },
+				},
+			]);
+			expect(one.killed).toBe(true);
+		}
 		// 76% of the five-hour window: 30 s.
 		expect(h.intervals).toEqual([30_000, 30_000]);
 		expect(h.limits.wire().clis[1]).toEqual({
@@ -667,29 +668,29 @@ describe("the background usage readers", () => {
 		expect(h.reports).toEqual([]);
 	});
 
-	it("say a process that stops once, and start it again after a backoff", async () => {
+	it("say a process that stops once, and read again with a new process at the next tick", async () => {
+		let healthy = false;
 		const h = harness({
 			profiles: [profile("claude")],
-			answers: { claude: claude(() => CLAUDE_USAGE) },
+			answers: {
+				claude: (m) => (healthy ? claude(() => CLAUDE_USAGE)(m) : "end"),
+			},
 		});
-		await vi.waitFor(() => expect(h.intervals).toHaveLength(1));
-		// Between reads: the wait is cut short by the end.
-		h.processes[0]!.end("claude stopped (exit code 1): boom");
 		await vi.waitFor(() => expect(h.reports).toHaveLength(1));
 		const [failure] = h.reports;
 		expect(failure).toBeInstanceOf(NamedFailure);
 		expect(failure!.wire.code).toBe("usage_unreadable");
 		expect(failure!.wire.actions).toEqual([]);
 		expect(failure!.wire.detail).toBe(
-			"Claude, read with the profile “Claude”: claude stopped (exit code 1): boom",
+			"Claude, read with the profile “Claude”: exit code 1",
 		);
-		// The backoff is waited on, then a new process is started and read.
-		await vi.waitFor(() => expect(h.intervals).toEqual([15_000, 30_000]));
+		await vi.waitFor(() => expect(h.intervals).toHaveLength(1));
 		expect(h.processes).toHaveLength(1);
-		h.next();
-		await vi.waitFor(() => expect(h.processes).toHaveLength(2));
-		await vi.waitFor(() => expect(h.intervals).toHaveLength(3));
 		expect(h.processes[0]!.killed).toBe(true);
+		healthy = true;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
+		expect(h.processes).toHaveLength(2);
 		expect(h.processes[1]!.sent[0]).toMatchObject({
 			request: { subtype: "initialize" },
 		});
@@ -697,36 +698,35 @@ describe("the background usage readers", () => {
 		h.readers.stop();
 	});
 
-	it("back off longer on each failure in a row, say it once, and begin again after a reading", async () => {
-		let healthy = false;
+	it("retry a failure at every tick at the cadence of the latest reading, never backing off, saying it once per streak", async () => {
+		let healthy = true;
 		const h = harness({
 			profiles: [profile("codex")],
 			answers: { codex: (m) => (healthy ? codex("chatgpt")(m) : "end") },
 		});
-		const backoffs = () =>
-			h.intervals.filter((ms) => RETRY_BACKOFF_MS.includes(ms));
-		for (let n = 1; n <= RETRY_BACKOFF_MS.length + 1; n += 1) {
-			await vi.waitFor(() => expect(h.intervals).toHaveLength(n));
-			h.next();
-		}
-		expect(h.intervals).toEqual([...RETRY_BACKOFF_MS, RETRY_BACKOFF_MS.at(-1)]);
-		expect(RETRY_BACKOFF_MS.at(-1)).toBe(600_000);
-		expect(h.reports).toHaveLength(1);
-		// It comes back: a reading is delivered, the cadence is the usual one.
-		healthy = true;
 		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
-		await vi.waitFor(() => expect(h.intervals).toHaveLength(8));
-		expect(h.intervals.at(-1)).toBe(30_000);
-		// The next failure is news again, and starts at the first backoff.
+		await vi.waitFor(() => expect(h.intervals).toHaveLength(1));
 		healthy = false;
-		h.processes.at(-1)!.end("codex stopped (exit code 1)");
+		for (let n = 2; n <= 12; n += 1) {
+			h.next();
+			await vi.waitFor(() => expect(h.intervals).toHaveLength(n));
+		}
+		// 76% of the five-hour window: 30 s, after the reading and every failure.
+		expect(h.intervals).toEqual(Array<number>(12).fill(30_000));
+		expect(h.processes).toHaveLength(12);
+		expect(h.reports).toHaveLength(1);
+		// It comes back: a reading ends the streak, so the next failure is news.
+		healthy = true;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(2));
+		await vi.waitFor(() => expect(h.intervals).toHaveLength(13));
+		healthy = false;
+		h.next();
 		await vi.waitFor(() => expect(h.reports).toHaveLength(2));
-		await vi.waitFor(() => expect(h.intervals).toHaveLength(9));
-		expect(backoffs().at(-1)).toBe(RETRY_BACKOFF_MS[0]);
 		h.readers.stop();
 	});
 
-	it("take a request nobody answers as a failure, and start the reader again", async () => {
+	it("kill a read that is not finished in time and read again at the next tick, never two at once", async () => {
 		vi.useFakeTimers();
 		try {
 			let hang = true;
@@ -740,24 +740,30 @@ describe("the background usage readers", () => {
 							: claude(() => CLAUDE_USAGE)(message),
 				},
 			});
-			await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+			await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
+			expect(h.processes).toHaveLength(1);
+			expect(h.processes[0]!.killed).toBe(false);
+			expect(h.reports).toHaveLength(0);
+			await vi.advanceTimersByTimeAsync(1);
 			expect(h.reports).toHaveLength(1);
 			expect(h.reports[0]!.wire.detail).toContain("not answered within 30 s");
 			expect(h.processes[0]!.killed).toBe(true);
+			// Nothing read yet: the usual 60 s, not a backoff.
+			expect(h.intervals).toEqual([60_000]);
 			hang = false;
-			await vi.advanceTimersByTimeAsync(0);
 			h.next();
 			await vi.advanceTimersByTimeAsync(0);
 			expect(h.processes).toHaveLength(2);
 			expect(h.readings).toHaveLength(1);
 			expect(h.reports).toHaveLength(1);
+			expect(h.aliveAtSpawn).toEqual([0, 0]);
 			h.readers.stop();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("say an answer in an unexpected shape once, and stop the reader and its process", async () => {
+	it("say an answer in an unexpected shape once, and kill its process", async () => {
 		const h = harness({
 			profiles: [profile("claude")],
 			answers: {
@@ -773,8 +779,8 @@ describe("the background usage readers", () => {
 		);
 		expect(h.processes[0]!.killed).toBe(true);
 		expect(h.readings).toEqual([]);
-		// Only the backoff before the retry was waited on, no poll.
-		expect(h.intervals).toEqual([RETRY_BACKOFF_MS[0]]);
+		// Nothing read yet: the usual cadence before the retry.
+		expect(h.intervals).toEqual([60_000]);
 		h.readers.stop();
 	});
 
@@ -798,7 +804,7 @@ describe("the background usage readers", () => {
 		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
 		h.readers.stop();
 		expect(h.reports).toEqual([]);
-		expect(h.processes).toHaveLength(1);
+		expect(h.processes).toHaveLength(2);
 	});
 
 	it("say a refused request and a Codex that is not signed in as failures", async () => {

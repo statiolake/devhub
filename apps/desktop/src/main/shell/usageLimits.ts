@@ -2,8 +2,8 @@
  * How much of Claude's and Codex's rate limits is used, app-wide.
  *
  * Two kinds of reading arrive here, through the one entry `observe`. DevHub
- * asks each CLI's account itself, in the background (`usageReaders.ts`: one
- * long-lived process per CLI, polled), so the readout is there without a GUI
+ * asks each CLI's account itself, in the background (`usageReaders.ts`: a
+ * short-lived process per reading, polled), so the readout is there without a GUI
  * Agent having run a turn. And the running GUI Agents report the same limits
  * on their own (`usage.rateLimits` on a conversation's `usage` event —
  * Claude's `rate_limit_event`, Codex's `account/rateLimits/updated`). A limit

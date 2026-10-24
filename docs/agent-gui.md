@@ -1556,10 +1556,10 @@ since_).
 
 The numbers come from two places, merged per window in main. **DevHub asks
 the accounts itself**, in the background (`main/shell/usageReaders.ts`): one
-long-lived process per CLI, started on this Mac a moment after the window is
-up with the _first_ profile of that kind in Settings' order — its command and
-environment, not its arguments, which are for a conversation — and stopped on
-quit. With several profiles of a kind, only the first is read. Claude's is
+short-lived process per reading and CLI — started on this Mac with the _first_
+profile of that kind in Settings' order (its command and environment, not its
+arguments, which are for a conversation), killed as soon as the reading is
+done, so nothing stays resident between readings. With several profiles of a kind, only the first is read. Claude's is
 `claude -p` in stream-json with `--no-session-persistence` and hooks off
 (`disableAllHooks`), sent the control requests `initialize` and then
 `get_usage` (the SDK's `SDKControlGetUsageRequest`, which it marks
@@ -1568,7 +1568,7 @@ experimental); its `rate_limits.five_hour` and `seven_day` are read, already
 `initialize`/`initialized` and per reading `account/read` and, for a ChatGPT
 sign-in, `account/rateLimits/read` (the request Codex's own TUI polls) — the
 same `RateLimitSnapshot` as the notification. Neither is ever sent a message
-or a thread, so no turn and no model call happens. They are asked at start and
+or a thread, so no turn and no model call happens. They are read at start and
 then on Codex's TUI rule, by the most used window of the last reading: every
 60 s, 30 s from 75%, 15 s from 90%, 5 s from 99%; Claude's experimental
 endpoint stays at 60 s until a window reaches 90% (then 15 s, and 5 s from
@@ -1583,14 +1583,13 @@ A sign-in with no plan limits — Claude's `rate_limits_available: false`, a
 Codex API key or Bedrock — is a state, not a failure: with no window read, the
 row says _No plan limits_ in place of a bar (nothing on the rail), and the
 tooltip says why. A profile whose command is not on this Mac starts no reader,
-and the tooltip says that instead. A reader that fails — its process will not
+and the tooltip says that instead. A reading that fails — its process will not
 start or stops, the CLI refuses the request, answers in a shape DevHub does
 not read (checked strictly, because `get_usage` is experimental), or does not
-answer within 30 s — says so once as a notice (_DevHub could not read a CLI's
-usage limits_, with the reason), and is started again: a new process and
-handshake after 30 s, then 1, 2, 4, 8 and (from then on) 10 min between
-attempts, until a reading succeeds; the next failure after that is said again.
-Retries are silent. Claude answering that it could not fetch the limits just
+finish within 30 s (the process is killed) — says so once as a notice (_DevHub
+could not read a CLI's usage limits_, with the reason) and is simply tried again
+at the next tick of the usual cadence, with no backoff and no end, until a
+reading succeeds; the next failure after that is said again. Retries are silent. Claude answering that it could not fetch the limits just
 now (`rate_limits: null`) is no reading and no failure. Claude's request is
 sent with `skip_behaviors`, so the CLI does not scan session history for
 recommendations the readout never shows. The readout goes on with what GUI Agents report meanwhile. A CLI nothing has read says so in the tooltip (_Not read
