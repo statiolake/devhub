@@ -39,9 +39,11 @@ import {
 } from "./limitResume.js";
 import {
 	AgentConversation,
+	SLEEP_MARK,
 	openedLater,
 	type ConversationHost,
 } from "./conversation.js";
+import type { CacheKeepSettings } from "./cacheKeeper.js";
 import {
 	HostLinkFailure,
 	type JournalLine,
@@ -151,6 +153,15 @@ class FakeHost implements ConversationHost {
 		this.restarts.push({ args, mark });
 		for (const line of mark) this.print(line);
 		this.onRestart(args);
+	}
+
+	/** The marks of each time the CLI was put to sleep. */
+	readonly sleeps: (readonly string[])[] = [];
+
+	async sleep(mark: readonly string[]): Promise<void> {
+		await Promise.resolve();
+		this.sleeps.push(mark);
+		for (const line of mark) this.print(line);
 	}
 
 	async sentLog(): Promise<readonly SentRecord[]> {
@@ -651,8 +662,11 @@ describe("a reply the protocol demands", () => {
  * A Claude new enough to resume at a message, answering each message with
  * one line of its own; `hold` keeps it from ending the turn.
  */
-function answeringCli(host: FakeHost, version = "2.1.282"): { hold: boolean } {
-	const cli = { hold: false };
+function answeringCli(
+	host: FakeHost,
+	version = "2.1.282",
+): { hold: boolean; usage?: unknown } {
+	const cli: { hold: boolean; usage?: unknown } = { hold: false };
 	let said = 0;
 	let started = false;
 	const print = (value: unknown) => host.print(JSON.stringify(value));
@@ -705,6 +719,7 @@ function answeringCli(host: FakeHost, version = "2.1.282"): { hold: boolean } {
 				id: `msg_${said}`,
 				role: "assistant",
 				content: [{ type: "text", text: `answer ${said}` }],
+				...(cli.usage === undefined ? {} : { usage: cli.usage }),
 			},
 			parent_tool_use_id: null,
 			session_id: "s-1",
@@ -1538,6 +1553,128 @@ describe("a turn a usage limit stopped", () => {
 		expect(written(host)).toEqual(["person go"]);
 		await conversation.cancelLimitResume();
 		expect(resume(conversation)).toBeUndefined();
+		await conversation.stop();
+	});
+});
+
+describe("asleep after the compaction before the cache expires", () => {
+	const KEEP: CacheKeepSettings = {
+		enabled: true,
+		leadSeconds: 60,
+		minTokens: 20_000,
+	};
+	/** A response that wrote 30,000 tokens to the 5-minute cache. */
+	const WARM = {
+		input_tokens: 10,
+		cache_creation_input_tokens: 30_000,
+		cache_read_input_tokens: 0,
+		output_tokens: 10,
+		cache_creation: {
+			ephemeral_5m_input_tokens: 30_000,
+			ephemeral_1h_input_tokens: 0,
+		},
+	};
+
+	/** One DevHub's conversation on `host`, keeping the cache on `clock`. */
+	async function following(host: FakeHost, clock: HandClock) {
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot"),
+			() => undefined,
+			resumeOff(),
+			{ settings: () => KEEP, clock },
+		);
+		conversation.start();
+		await settle();
+		return conversation;
+	}
+
+	/** A conversation of one turn whose cache is warm, the clock up to its compaction. */
+	async function warm() {
+		const host = new FakeHost();
+		const cli = answeringCli(host);
+		cli.usage = WARM;
+		const clock = new HandClock(Date.now());
+		const conversation = await following(host, clock);
+		await conversation.submit("first", []);
+		await settle();
+		const compact = async () => {
+			clock.advance(241_000);
+			await settle();
+		};
+		return { host, cli, conversation, compact };
+	}
+
+	const said = (host: FakeHost) =>
+		host.inLog.flatMap(({ line }) => {
+			const sent = JSON.parse(line) as {
+				type: string;
+				message?: { content: string };
+			};
+			return sent.type === "user" ? [sent.message!.content] : [];
+		});
+
+	it("stops the CLI once the compaction ends, and starts it again on the same session for the next message", async () => {
+		const { host, conversation, compact } = await warm();
+		await compact();
+		expect(said(host)).toEqual(["first", "/compact"]);
+		expect(host.sleeps).toEqual([[SLEEP_MARK]]);
+		expect(host.restarts).toEqual([]);
+		await conversation.submit("again", []);
+		await settle();
+		expect(host.restarts).toEqual([
+			{ args: ["--resume", "s-1"], mark: [RESTART_MARK] },
+		]);
+		expect(said(host)).toEqual(["first", "/compact", "again"]);
+		const { transcript } = conversation.reading();
+		expect(transcript.session.sessionId).toBe("s-1");
+		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
+		await conversation.stop();
+	});
+
+	it("is asleep for a DevHub that attaches again, which starts it again for a command", async () => {
+		const { host, conversation, compact } = await warm();
+		await compact();
+		await conversation.stop();
+		const again = await following(host, new HandClock(Date.now()));
+		expect(host.restarts).toEqual([]);
+		await again.command({
+			kind: "send",
+			text: "later",
+			images: [],
+			origin: "person",
+		});
+		await settle();
+		expect(host.restarts).toHaveLength(1);
+		expect(said(host)).toEqual(["first", "/compact", "later"]);
+		await again.stop();
+	});
+
+	it("keeps the CLI up when a message came in during the compaction", async () => {
+		const { host, cli, conversation, compact } = await warm();
+		cli.hold = true;
+		await compact();
+		await conversation.submit("meanwhile", []);
+		cli.hold = false;
+		endTurn(host);
+		await settle();
+		expect(said(host)).toEqual(["first", "/compact", "meanwhile"]);
+		expect(host.sleeps).toEqual([]);
+		await conversation.stop();
+	});
+
+	it("keeps the CLI up while an MCP sign-in runs", async () => {
+		const { host, conversation, compact } = await warm();
+		await conversation.showSignIn({
+			server: "docs",
+			phase: "running",
+			output: "",
+			callback: undefined,
+			failure: undefined,
+		});
+		await compact();
+		expect(said(host)).toEqual(["first", "/compact"]);
+		expect(host.sleeps).toEqual([]);
 		await conversation.stop();
 	});
 });

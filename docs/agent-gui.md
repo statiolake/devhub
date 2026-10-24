@@ -1420,6 +1420,23 @@ is reconnected from the [MCP panel](#mcp-servers-mcp) without a restart.)
     reading the journal there, and would stop at the same line again. Continue
     it in a terminal.
 
+### Asleep after the compaction before the cache expires
+
+A Claude GUI Agent left idle is compacted by DevHub just before its prompt
+cache goes cold (`[agents] auto_compact_before_cache_expiry`, on by default:
+`auto_compact_lead_seconds` before the last response's time plus the TTL of
+its last cache write, for a context of at least `auto_compact_min_tokens`). When that `/compact` turn ends and nothing
+is going on — no turn, question, held or unsent message, background task or
+shell, subagent or teammate, MCP sign-in or usage-limit resume — the host
+stops the CLI to free its memory and runs `sleep` in its place, with
+`{"type":"devhub_sleep"}` in the journal. The row, transcript and session
+stay. Whatever needs the CLI next (a message, a command, Restart Session)
+starts it again on the session as Restart Session does, and a message waits
+until it is ready. Little cache is lost: the compacted conversation was never
+cached, and a new CLI rebuilds its system prompt (today's date, the git status
+snapshot) anyway. Codex reports no cache expiry, so it is never compacted or
+put to sleep this way; terminal Agents are untouched.
+
 ## MCP servers (`/mcp`)
 
 `/mcp` in a GUI Agent opens DevHub's MCP panel, a sheet drawn like the other

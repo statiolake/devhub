@@ -78,6 +78,18 @@
  * conversation's `LimitResumer` (`limitResume.ts`) watches every event, and
  * when the message it times is due the conversation writes it here, in the
  * turnstile, as the person's (`after-limit`) — or says why it could not.
+ *
+ * # Asleep
+ *
+ * Once DevHub's own compaction before the cache expires (`CacheKeeper`) has
+ * ended and nothing at all is going on, the CLI is stopped to free its
+ * memory: the host runs `sleep` in its place (`ConversationHost.sleep`),
+ * with `SLEEP_MARK` in the journal, which is how a replay knows. The
+ * conversation, its session and its row stay. Whatever needs the CLI next
+ * starts it again on its session as Restart session does (`#wake`); the
+ * person's message is held until it is ready. Little cache is lost: the
+ * compacted conversation was never cached, and a new CLI rebuilds its
+ * system prompt (date, git status) anyway.
  */
 
 import {
@@ -86,6 +98,7 @@ import {
 	applyEvent,
 	pendingId,
 	rewindTargets,
+	withProcessEnded,
 	type ConversationEvent,
 	type EntryId,
 	type ImageRef,
@@ -124,6 +137,8 @@ import {
 	type SettingName,
 } from "./protocolAdapter.js";
 
+const NO_STEP: AdapterStep = { events: [], replies: [] };
+
 /** What a conversation needs of its host. `HostLink` is the real one. */
 export interface ConversationHost {
 	lines(
@@ -137,8 +152,16 @@ export interface ConversationHost {
 	 * journal between the two.
 	 */
 	restart(session: readonly string[], mark: readonly string[]): Promise<void>;
+	/** Have the host stop the CLI and wait in its place, `mark` in the journal. */
+	sleep(mark: readonly string[]): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
 }
+
+/** The line the host puts in the journal where it stopped the CLI to sleep. */
+export const SLEEP_MARK = JSON.stringify({ type: "devhub_sleep" });
+
+/** What the host runs while the CLI sleeps: reads nothing, waits to be stopped. */
+const SLEEPER: RestartedCli = { file: "sleep", args: ["2147483647"] };
 
 /** What a conversation's host is made of: `HostLink`, whose restart takes the CLI whole. */
 export interface HostOnLink {
@@ -164,6 +187,7 @@ export function hostOn(
 		lines: (fromOffset, cancel) => link.lines(fromOffset, cancel),
 		write: (line, afterOffset) => link.write(line, afterOffset),
 		restart: (session, mark) => link.restart(cliOn(session), mark),
+		sleep: (mark) => link.restart(SLEEPER, mark),
 		sentLog: () => link.sentLog(),
 	};
 }
@@ -186,6 +210,7 @@ export function openedLater(
 		},
 		write: async (line, afterOffset) => (await host()).write(line, afterOffset),
 		restart: async (args, mark) => (await host()).restart(args, mark),
+		sleep: async (mark) => (await host()).sleep(mark),
 		sentLog: async () => (await host()).sentLog(),
 	};
 }
@@ -243,6 +268,16 @@ export class AgentConversation {
 	/** Whether the Agent was idle after the last event: becoming idle writes a held message. */
 	#idle = false;
 	#heldCount = 0;
+	/** The CLI is being stopped to sleep (`falling`), or is (see the module's doc). */
+	#sleep: "falling" | "asleep" | undefined;
+	/** Settles once the sleep mark is read, or following ends. */
+	#fell:
+		| { readonly promise: Promise<void>; readonly resolve: () => void }
+		| undefined;
+	/** The sleeping CLI is being started again: settles once it is ready. */
+	#waking: Promise<void> | undefined;
+	/** DevHub's compaction was written, or its turn has ended: then the CLI may sleep. */
+	#compacted: "written" | "ended" | undefined;
 	readonly #limits: LimitResumer;
 	readonly #cacheKeeper: CacheKeeper;
 
@@ -307,7 +342,8 @@ export class AgentConversation {
 	 * Carry out one command: its lines written to the host, then taken back as
 	 * sent. Rejects if it could not be — a write that failed leaves no trace.
 	 */
-	command(command: ConversationCommand): Promise<void> {
+	async command(command: ConversationCommand): Promise<void> {
+		await this.#wake();
 		return this.#serial(async () => {
 			this.#refuseIfBusy();
 			await this.#write(this.#adapter.encode(command));
@@ -322,6 +358,7 @@ export class AgentConversation {
 	 * could not be carried out or the conversation stopped first.
 	 */
 	async rewind(message: EntryId): Promise<RewindOutcome> {
+		await this.#wake();
 		const rewound = await this.#serial(async () => {
 			this.#refuseIfBusy();
 			this.#refuseRewind(message);
@@ -343,6 +380,7 @@ export class AgentConversation {
 	submit(text: string, images: readonly ImageRef[]): Promise<void> {
 		return this.#serial(async () => {
 			this.#refuseIfBroken();
+			await this.#wakeNow();
 			if (this.#idleNow() && this.#transcript.pending.length === 0) {
 				await this.#write(
 					this.#adapter.encode({
@@ -491,6 +529,7 @@ export class AgentConversation {
 	#compactBeforeCacheExpires(): void {
 		void this.#serial(async () => {
 			if (this.#cancel.isCancelled || this.#rewind !== undefined) return;
+			if (this.#sleep !== undefined) return;
 			if (!this.#cacheKeeper.take(this.#transcript)) return;
 			try {
 				await this.#write(
@@ -501,10 +540,77 @@ export class AgentConversation {
 						origin: "auto-compact",
 					}),
 				);
+				this.#compacted = "written";
 			} catch (error: unknown) {
 				if (!(error instanceof HostLinkFailure)) throw error;
 			}
 		}).catch((error: unknown) => this.#crash(error));
+	}
+
+	/**
+	 * DevHub's compaction ended: the CLI is put to sleep if nothing at all is
+	 * going on — no turn, request, message held or on its way, background
+	 * task, subagent, MCP sign-in or usage-limit resume. Else it stays up.
+	 */
+	#sleepIfRestful(): void {
+		if (this.#compacted !== "ended") return;
+		this.#compacted = undefined;
+		void this.#serial(async () => {
+			const t = this.#transcript;
+			if (
+				!this.#idleNow() ||
+				this.#cancel.isCancelled ||
+				this.#lost !== undefined ||
+				t.pending.length > 0 ||
+				t.sending.length > 0 ||
+				t.backgroundTasks.length > 0 ||
+				t.compacting ||
+				t.limitResume !== undefined ||
+				t.mcpSignIn?.phase === "running" ||
+				!t.entries.every((entry) => withProcessEnded(entry) === entry)
+			)
+				return;
+			this.#sleep = "falling";
+			let resolve = () => {};
+			const promise = new Promise<void>((done) => (resolve = done));
+			this.#fell = { promise, resolve };
+			try {
+				await this.#host.sleep([SLEEP_MARK]);
+			} catch (error: unknown) {
+				this.#sleep = undefined;
+				this.#fell.resolve();
+				if (!(error instanceof HostLinkFailure)) throw error;
+			}
+		}).catch((error: unknown) => this.#crash(error));
+	}
+
+	/** A sleeping CLI is started again, and is ready, before anything else is written to it. */
+	async #wake(): Promise<void> {
+		if (this.#sleep === undefined && this.#waking === undefined) return;
+		// The host takes a restart only once the sleeper is in the CLI's place.
+		await this.#fell?.promise;
+		const { over } = await this.#serial(async () =>
+			this.#cancel.isCancelled ? { over: undefined } : this.#wakeNow(),
+		);
+		await over;
+	}
+
+	/**
+	 * Inside the turnstile only: start the sleeping CLI again on its session,
+	 * once; `over` settles when it is ready. A held message waits for it.
+	 */
+	async #wakeNow(): Promise<{ readonly over: Promise<void> }> {
+		if (this.#sleep === "asleep" && this.#waking === undefined) {
+			const { over } = await this.#carryOut(
+				this.#adapter.restart(),
+				"the CLI had started again",
+			);
+			this.#waking = over.finally(() => {
+				this.#waking = undefined;
+			});
+			this.#waking.catch(() => undefined);
+		}
+		return { over: this.#waking ?? Promise.resolve() };
 	}
 
 	/** Take a held message back: it is never written. */
@@ -522,7 +628,8 @@ export class AgentConversation {
 	 * running turn takes it in as it goes (the adapter's `send`). Refused
 	 * while the CLI cannot take a message at all.
 	 */
-	sendPendingNow(id: PendingId): Promise<void> {
+	async sendPendingNow(id: PendingId): Promise<void> {
+		await this.#wake();
 		return this.#serial(async () => {
 			this.#refuseIfBusy();
 			if (this.#held(id).editing) {
@@ -589,7 +696,8 @@ export class AgentConversation {
 			state.phase === "ready" &&
 			state.turn === "none" &&
 			requests.length === 0 &&
-			this.#rewind === undefined
+			this.#rewind === undefined &&
+			this.#sleep === undefined
 		);
 	}
 
@@ -627,6 +735,7 @@ export class AgentConversation {
 		session: string,
 		history: readonly string[],
 	): Promise<void> {
+		await this.#wake();
 		const resumed = await this.#serial(async () => {
 			this.#refuseIfBusy();
 			const { state, requests } = this.#transcript;
@@ -661,6 +770,7 @@ export class AgentConversation {
 	 * refused — nothing would read what the new CLI said.
 	 */
 	async restart(): Promise<void> {
+		await this.#fell?.promise;
 		const restarted = await this.#serial(async () => {
 			if (this.#crashed !== undefined) throw this.#crashed;
 			if (this.#cancel.isCancelled) {
@@ -671,6 +781,8 @@ export class AgentConversation {
 						: "DevHub stopped following this conversation, so it cannot follow a CLI started again.",
 				);
 			}
+			if (this.#sleep === "asleep" || this.#waking !== undefined)
+				return this.#wakeNow();
 			this.#refuseIfRewinding();
 			return this.#carryOut(
 				this.#adapter.restart(),
@@ -744,6 +856,11 @@ export class AgentConversation {
 	#refuseIfBusy(): void {
 		this.#refuseIfBroken();
 		this.#refuseIfRewinding();
+		if (this.#sleep !== undefined) {
+			throw new ConversationRefused(
+				"The Agent's CLI was stopped while it sat idle. Try again in a moment.",
+			);
+		}
 	}
 
 	#refuseIfRewinding(): void {
@@ -769,7 +886,8 @@ export class AgentConversation {
 	 * and taken back as sent, like a command's; a protocol that carries it on
 	 * the next turn instead has already said so in the step's events.
 	 */
-	configure(which: SettingName, id: string): Promise<void> {
+	async configure(which: SettingName, id: string): Promise<void> {
+		await this.#wake();
 		return this.#serial(async () => {
 			this.#refuseIfBusy();
 			const step = this.#adapter.configure(which, id);
@@ -795,6 +913,7 @@ export class AgentConversation {
 			const rewind = this.#rewind;
 			this.#rewind = undefined;
 			rewind?.stopped(undefined);
+			this.#fell?.resolve();
 		}
 	}
 
@@ -823,15 +942,26 @@ export class AgentConversation {
 				this.#cancel,
 			)) {
 				const replies = await this.#serial(async () => {
-					const step = this.#adapter.received(line);
+					// The sleep mark is DevHub's, not the CLI's: the adapter never sees it.
+					const asleep = line === SLEEP_MARK;
+					if (asleep || this.#sleep === "asleep")
+						this.#sleep = asleep ? "asleep" : undefined;
+					const step = asleep ? NO_STEP : this.#adapter.received(line);
 					this.#take(step);
 					this.#offset = offset;
 					this.#feedSentUpTo(offset);
+					if (asleep) {
+						this.#fell?.resolve();
+						// A message held while it fell asleep.
+						if (this.#transcript.pending.length > 0) await this.#wakeNow();
+					}
 					// A line an earlier DevHub read had its replies written then;
 					// they are in `in.log`, and fed back above as sent.
 					return offset <= this.#answeredUpTo ? [] : step.replies;
 				});
 				if (replies.length > 0) await this.#serial(() => this.#write(replies));
+				// After the replies, which the sleeper would leave in its pipe.
+				this.#sleepIfRestful();
 			}
 		} catch (error: unknown) {
 			if (error instanceof HostLinkFailure) {
@@ -893,7 +1023,10 @@ export class AgentConversation {
 		this.#publish(this.#revision, event);
 		this.#watchRewind();
 		const idle = this.#idleNow();
-		if (idle && !this.#idle) this.#writeNextHeld();
+		if (idle && !this.#idle) {
+			this.#writeNextHeld();
+			if (this.#compacted === "written") this.#compacted = "ended";
+		}
 		this.#idle = idle;
 		// What DevHub will do about a usage limit follows from the rest of
 		// the conversation, never the other way round.
