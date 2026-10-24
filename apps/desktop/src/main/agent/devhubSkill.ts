@@ -254,7 +254,24 @@ Pick by \`#{pane_left}\`,\`#{pane_top}\` within the window on screen
 largest \`pane_top\`, "右下" both. Then use that pane's id (\`%N\`) as \`-t\`.
 When two panes fit what the person said, ask which one instead of picking.
 
-## Other
+**Bringing the editor's terminal here.** The person may have been working in
+the editor's own terminal (a DevHub terminal tab, the "main session" /
+"メインセッション") and ask you to take it over: "bring the ssh terminal to the
+right", 「メインセッションの ssh してる端末を右に持ってきて」. Move that pane
+into your terminal; its process (the ssh, the server, ...) keeps running:
+
+    devhub --tell --json terminal panes           # your workspace's editor terminals' panes
+    devhub --tell --json terminal bring %N [--focus]
+
+\`panes\` gives each pane's \`pane\` (\`%N\`), \`session\`, \`windowIndex\` /
+\`windowName\`, \`command\`, \`argv\` (what runs in front, e.g. \`ssh prod\`),
+\`cwd\`, \`title\` and \`active\`. Pick by what the person said (the command or
+host, the folder, the title); when more than one fits, ask which. \`bring\`
+opens your terminal with that pane in it, or adds it as a split when your
+terminal is already open, and answers your terminal's handle; drive the pane
+by its id as above. A tab left with no pane closes in the editor. Only your
+workspace's editor terminals can be brought — never an agent's pane.
+
 ## Other
 
     devhub --tell commands            # DevHub's command palette, by id

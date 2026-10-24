@@ -102,6 +102,16 @@ export interface TellTerminalPane {
 	readonly dead: boolean;
 }
 
+/**
+ * One pane of the asking Agent's Workspace's editor terminals: the tmux
+ * session the editor's DevHub terminal tabs attach to, on the same server.
+ */
+export interface TellEditorPane extends TellTerminalPane {
+	readonly session: string;
+	/** What its terminal runs in front, as a command line (`ssh prod`), when known. */
+	readonly argv: string | undefined;
+}
+
 /** The asking Agent's own terminal, as the app knows it now. */
 export interface TellTerminal {
 	readonly agentId: string;
@@ -186,6 +196,18 @@ export interface TellPorts {
 	): Promise<{ readonly created: boolean }>;
 	/** Close an Agent's terminal and its session; whether it had one. */
 	closeAgentTerminal(agentId: string): Promise<boolean>;
+	/** The panes of an Agent's Workspace's editor terminals, read live. */
+	editorPanes(agentId: string): Promise<readonly TellEditorPane[]>;
+	/**
+	 * Move one of them (by tmux id) into the Agent's terminal, still running:
+	 * the terminal opened with it in place of the fresh shell, or the pane
+	 * added as a split of the open one. Shows it; the keyboard only on `focus`.
+	 */
+	bringPane(
+		agentId: string,
+		pane: string,
+		focus: boolean,
+	): Promise<{ readonly created: boolean }>;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -311,6 +333,10 @@ export class TellService {
 				return this.terminalStatus();
 			case "terminal-close":
 				return this.closeTerminal();
+			case "terminal-panes":
+				return this.editorPanes();
+			case "terminal-bring":
+				return this.bring(command.pane, command.focus);
 		}
 	}
 
@@ -400,6 +426,49 @@ export class TellService {
 				? `Closed your terminal (${before.session?.name ?? "its session"}).`
 				: "You had no terminal open.",
 			data: { closed, session: before.session?.name },
+		};
+	}
+
+	private async editorPanes(): Promise<TellAnswer> {
+		const agent = this.callerAgent();
+		const panes = await this.ports.editorPanes(agent.id);
+		return {
+			message:
+				panes.length === 0
+					? "Your workspace's editor has no DevHub terminal open."
+					: [
+							"Your workspace's editor terminals ('devhub --tell terminal bring <pane>' moves one into your terminal):",
+							...panes.map(editorPaneLine),
+						].join("\n"),
+			data: { panes },
+		};
+	}
+
+	private async bring(paneId: string, focus: boolean): Promise<TellAnswer> {
+		const agent = this.callerAgent();
+		const panes = await this.ports.editorPanes(agent.id);
+		const pane = panes.find((one) => one.pane === paneId);
+		if (pane === undefined)
+			throw new Error(
+				`${paneId} is not a pane of your workspace's editor terminals (see 'devhub --tell terminal panes'). Agents' own panes and terminals are never moved.`,
+			);
+		const { created } = await this.ports.bringPane(agent.id, paneId, focus);
+		const described = describeTerminal(
+			await this.ports.agentTerminal(agent.id),
+		);
+		const left = panes.filter((one) => one.window === pane.window).length === 1;
+		return {
+			message: [
+				`Brought ${paneId} (${pane.argv ?? pane.command}) ${created ? "into your new terminal" : "into your terminal, as a split"}: ${terminalLine(described)}.`,
+				...(left
+					? [
+							"It was the only pane of its editor terminal window, so that window closed (and the editor's tab with it, if it was the last).",
+						]
+					: []),
+				...paneLines(described),
+				...driveHints(described),
+			].join("\n"),
+			data: { terminal: described, created, pane: paneId },
 		};
 	}
 
@@ -1031,6 +1100,22 @@ function paneLines(terminal: DescribedTerminal): readonly string[] {
 				`  ${pane.target}  window ${String(pane.windowIndex)} (${pane.windowName})  ${pane.where}  ${String(pane.width)}x${String(pane.height)} at ${String(pane.left)},${String(pane.top)}  running ${pane.command}${pane.active ? "  active" : ""}`,
 		),
 	];
+}
+
+/** One editor-terminal pane, as `terminal panes` lists it. */
+function editorPaneLine(pane: TellEditorPane): string {
+	return [
+		`  ${pane.pane}`,
+		`${pane.session}:${String(pane.windowIndex)}.${String(pane.paneIndex)}`,
+		`window ${String(pane.windowIndex)} (${pane.windowName})`,
+		`running ${pane.argv ?? pane.command}`,
+		`cwd ${pane.cwd}`,
+		pane.title.length > 0 ? `title ${JSON.stringify(pane.title)}` : undefined,
+		pane.active ? "active" : undefined,
+		pane.dead ? "dead" : undefined,
+	]
+		.filter((part) => part !== undefined)
+		.join("  ");
 }
 
 /** How to type into it and read it back, with this terminal's own handle. */

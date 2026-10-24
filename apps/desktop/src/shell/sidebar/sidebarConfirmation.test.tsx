@@ -121,7 +121,7 @@ const PROFILES = {
 const CONFIRMATION_REQUIRED = {
   kind: "confirmation_required",
   confirmationId: CONFIRMATION_ID,
-  purpose: { kind: "agent_stop", agentId: AGENT_ID },
+  purpose: { kind: "agent_stop", agentId: AGENT_ID, terminal: false },
   snapshot: SNAPSHOT,
 } as unknown as AppOutcome;
 
@@ -182,7 +182,7 @@ describe("a row's Stop button, on an Agent that is doing something", () => {
       expect(openModal).toHaveBeenCalledWith({
         kind: "close-confirmation",
         confirmationId: CONFIRMATION_ID,
-        purpose: { kind: "agent_stop", agentId: AGENT_ID },
+        purpose: { kind: "agent_stop", agentId: AGENT_ID, terminal: false },
       });
     });
   });

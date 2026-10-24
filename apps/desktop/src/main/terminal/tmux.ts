@@ -89,7 +89,7 @@ import {
 	type ListedAgentSession,
 	type PaneTerminalTarget,
 } from "./ports.js";
-import { requiredTerminalSet } from "./ports.js";
+import { requiredTerminalSet, workspaceTarget } from "./ports.js";
 import type { PaneSample } from "./paneActivity.js";
 import { failureText } from "../../model/wire.js";
 import { agentTerminalSessionName } from "../../model/agentTerminal.js";
@@ -845,11 +845,11 @@ export interface TerminalSessionSample {
 }
 
 /**
- * One tmux pane of an Agent terminal — the session may hold several, split
- * by the person — as `devhub --tell terminal status` reports it.
+ * One tmux pane of a marked session: an Agent terminal's (the session may
+ * hold several, split by the person) or a Workspace's editor terminal's, as
+ * `devhub --tell terminal status` / `panes` report it.
  */
-export interface PaneTerminalPane {
-	readonly terminalId: string;
+export interface MarkedPane {
 	readonly workspaceId: string;
 	readonly sessionName: string;
 	/** tmux's `@3`. */
@@ -878,6 +878,18 @@ export interface PaneTerminalPane {
 	readonly top: number;
 	readonly width: number;
 	readonly height: number;
+	/** The pane's own process (its shell), on the session's machine. */
+	readonly pid: number;
+}
+
+export interface PaneTerminalPane extends MarkedPane {
+	readonly terminalId: string;
+}
+
+/** A Workspace's editor-terminal pane, with what its terminal runs in front. */
+export interface WorkspacePane extends MarkedPane {
+	/** The foreground command line (`ssh prod`), when `ps` said. */
+	readonly argv: string | undefined;
 }
 
 const TERMINAL_PANE_RECORD = "terminal-pane";
@@ -903,6 +915,7 @@ const TERMINAL_PANE_FIELDS = [
 	"#{pane_width}",
 	"#{pane_height}",
 	"#{window_name}",
+	"#{pane_pid}",
 	// Last, as everywhere else: the one value that may hold a newline.
 	`#{${ROOT_OPTION}}`,
 ];
@@ -914,6 +927,33 @@ export function parsePaneTerminals(
 	stdout: Buffer,
 	contextHome: string,
 ): { readonly marker: MarkerState; readonly panes: PaneTerminalPane[] } {
+	const { marker, panes } = parseMarkedPanes(
+		stdout,
+		contextHome,
+		TERMINAL_CONTEXT,
+	);
+	return {
+		marker,
+		panes: panes.flatMap((pane) => {
+			const terminalId = terminalIdOfSession(pane.sessionName);
+			return terminalId === undefined ? [] : [{ ...pane, terminalId }];
+		}),
+	};
+}
+
+/** The same reading, for the Workspaces' own (`ws-`) sessions' panes. */
+export function parseWorkspacePanes(
+	stdout: Buffer,
+	contextHome: string,
+): { readonly marker: MarkerState; readonly panes: MarkedPane[] } {
+	return parseMarkedPanes(stdout, contextHome, WORKSPACE_CONTEXT);
+}
+
+function parseMarkedPanes(
+	stdout: Buffer,
+	contextHome: string,
+	context: string,
+): { readonly marker: MarkerState; readonly panes: MarkedPane[] } {
 	const records = splitRecords(stdout);
 	const first = records[0]?.split(FIELD_SEPARATOR);
 	if (first === undefined || first[0] !== MARKER_RECORD) {
@@ -923,7 +963,7 @@ export function parsePaneTerminals(
 	if (records.length - 1 > MAX_PANES) {
 		throw shapeFailure("more windows or panes than DevHub will read");
 	}
-	const panes: PaneTerminalPane[] = [];
+	const panes: MarkedPane[] = [];
 	for (const record of records.slice(1)) {
 		const fields = record.split(FIELD_SEPARATOR);
 		if (
@@ -938,16 +978,13 @@ export function parsePaneTerminals(
 			context: markerValue(at(2)),
 			workspaceId: markerValue(at(3)),
 			agentId: agentIdMarker(markerValue(at(4))),
-			root: markerValue(at(21)),
+			root: markerValue(at(22)),
 		};
 		if (!isMarked(marking, contextHome)) continue;
-		if (marking.context !== TERMINAL_CONTEXT) continue;
-		const terminalId = terminalIdOfSession(marking.name);
-		if (terminalId === undefined || marking.workspaceId === undefined) {
+		if (marking.context !== context || marking.workspaceId === undefined) {
 			continue;
 		}
 		panes.push({
-			terminalId,
 			workspaceId: marking.workspaceId,
 			sessionName: marking.name,
 			windowId: at(5),
@@ -966,6 +1003,7 @@ export function parsePaneTerminals(
 			top: parseNumericPrefix(at(17)),
 			width: parseNumericPrefix(at(18)),
 			height: parseNumericPrefix(at(19)),
+			pid: parseNumericPrefix(at(21)),
 		});
 	}
 	return { marker: "owned", panes };
@@ -1901,6 +1939,205 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<PaneTerminalPane[]> {
+		return this.markedPanesOn(socket, cancel, deadline, parsePaneTerminals);
+	}
+
+	/**
+	 * Every pane of the Workspaces' editor terminals (their `ws-` sessions)
+	 * on this machine's effective socket, each with the command line its
+	 * terminal runs in front (`argv`) when `ps` says.
+	 */
+	async workspacePanes(
+		cancel = new CancellationToken(),
+	): Promise<readonly WorkspacePane[]> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			const panes = await this.markedPanesOn(
+				socket,
+				cancel,
+				deadline,
+				parseWorkspacePanes,
+			);
+			const argv = await this.foregroundArgs(
+				panes.map((pane) => pane.pid),
+				cancel,
+				deadline,
+			);
+			return panes.map((pane) => ({ ...pane, argv: argv.get(pane.pid) }));
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Move one pane of a Workspace's editor terminal into that Workspace's
+	 * Agent terminal (`join-pane`), its process running on: a split of the
+	 * terminal's active pane, or — `replace`, for the fresh shell
+	 * `launchTerminal` just started — in its place, the shell killed. A
+	 * window the pane leaves empty closes, and a `ws-` session with it.
+	 */
+	async joinIntoTerminal(
+		target: PaneTerminalTarget,
+		paneId: string,
+		replace: boolean,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const source = (
+				await this.markedPanesOn(socket, cancel, deadline, parseWorkspacePanes)
+			).find((pane) => pane.paneId === paneId);
+			const into = (await this.paneTerminalsOn(socket, cancel, deadline))
+				.filter((pane) => pane.terminalId === target.terminalId)
+				.sort((a, b) => Number(b.active) - Number(a.active));
+			if (
+				source?.workspaceId !== target.workspaceId ||
+				into[0]?.workspaceId !== target.workspaceId
+			) {
+				throw portFailure("conflict");
+			}
+			const front = into[0].paneId;
+			const output = await this.runTmux(
+				socket,
+				[
+					"join-pane",
+					"-s",
+					paneId,
+					"-t",
+					front,
+					...(replace && into.length === 1
+						? [";", "kill-pane", "-t", front]
+						: []),
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Hand an Agent terminal's windows to its Workspace's editor terminal:
+	 * `move-window` into the `ws-` session (made first when it is not there,
+	 * as the editor would on attach), every process running on. The `tm-`
+	 * session ends with its last window.
+	 */
+	async moveTerminalToWorkspace(
+		target: PaneTerminalTarget,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const workspace = workspaceTarget(
+				target.machine,
+				target.workspaceId,
+				target.root,
+			);
+			await this.ensureSyncOnSocket(socket, workspace, cancel);
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const sessions = await this.listSessions(socket, cancel, deadline);
+			const into = this.targetIdentity(workspace, sessions).sessionName;
+			const windows = new Set(
+				(await this.paneTerminalsOn(socket, cancel, deadline))
+					.filter(
+						(pane) =>
+							pane.terminalId === target.terminalId &&
+							pane.workspaceId === target.workspaceId,
+					)
+					.map((pane) => pane.windowId),
+			);
+			if (windows.size === 0) return;
+			const output = await this.runTmux(
+				socket,
+				[...windows].flatMap((window, index) => [
+					...(index === 0 ? [] : [";"]),
+					"move-window",
+					"-s",
+					window,
+					"-t",
+					`${into}:`,
+				]),
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * What each pane's terminal runs in front, by the pane's pid: the leader
+	 * of its foreground process group (`ssh prod`, not the shell under it).
+	 * Best effort: a `ps` that does not answer says nothing.
+	 */
+	private async foregroundArgs(
+		pids: readonly number[],
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<Map<number, string>> {
+		const found = new Map<number, string>();
+		const ps = async (
+			fields: string,
+			of: readonly number[],
+		): Promise<Map<number, string>> => {
+			if (of.length === 0) return new Map();
+			const answer = await this.host.exec({
+				argv: ["ps", "-ww", "-o", fields, "-p", of.join(",")],
+				cwd: this.contextHome,
+				env: this.tmuxEnvironment(),
+				deadline,
+				cancel,
+				limits: TMUX_LIMITS,
+			});
+			// A pid that has gone makes `ps` exit 1; the rest still holds.
+			return new Map(
+				answer.stdout
+					.toString("utf8")
+					.split("\n")
+					.flatMap((line) => {
+						const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+						return match ? [[Number(match[1]), match[2].trim()] as const] : [];
+					}),
+			);
+		};
+		try {
+			const groups = await ps(
+				"pid=,tpgid=",
+				pids.filter((pid) => pid > 0),
+			);
+			const leaders = await ps("pid=,args=", [
+				...new Set([...groups.values()].map(Number)),
+			]);
+			for (const [pid, group] of groups) {
+				const argv = leaders.get(Number(group));
+				if (argv !== undefined) found.set(pid, argv);
+			}
+		} catch {
+			// Best effort, as above.
+		}
+		return found;
+	}
+
+	private async markedPanesOn<Pane>(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+		parse: (
+			stdout: Buffer,
+			contextHome: string,
+		) => { readonly marker: MarkerState; readonly panes: Pane[] },
+	): Promise<Pane[]> {
 		const output = await this.runTmux(
 			socket,
 			[
@@ -1922,10 +2159,7 @@ export class TmuxTerminalRuntime {
 			if (output.stdout.byteLength === 0) throw portFailure("conflict");
 			throw output.refusal();
 		}
-		const { marker, panes } = parsePaneTerminals(
-			output.stdout,
-			this.contextHome,
-		);
+		const { marker, panes } = parse(output.stdout, this.contextHome);
 		if (marker === "wrong") throw portFailure("conflict");
 		return panes;
 	}

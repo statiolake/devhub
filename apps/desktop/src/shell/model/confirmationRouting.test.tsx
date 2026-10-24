@@ -56,7 +56,7 @@ const SNAPSHOT = {
 const CONFIRMATION_REQUIRED = {
   kind: "confirmation_required",
   confirmationId: CONFIRMATION_ID,
-  purpose: { kind: "agent_stop", agentId: AGENT_ID },
+  purpose: { kind: "agent_stop", agentId: AGENT_ID, terminal: false },
   snapshot: SNAPSHOT,
 } as unknown as AppOutcome;
 
@@ -193,7 +193,7 @@ describe("a question a dispatch came back with", () => {
         expect(openModal).toHaveBeenCalledWith({
           kind: "close-confirmation",
           confirmationId: CONFIRMATION_ID,
-          purpose: { kind: "agent_stop", agentId: AGENT_ID },
+          purpose: { kind: "agent_stop", agentId: AGENT_ID, terminal: false },
         });
       });
     });

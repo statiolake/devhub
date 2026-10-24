@@ -1743,6 +1743,39 @@ describe("stopping an agent", () => {
     expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);
   });
 
+  it("asks about an idle Agent with its terminal open, and can keep the terminal", () => {
+    const driver = withAgent("idle");
+    driver.dispatch({
+      type: "agent_terminal_opened",
+      agentId: AG_A,
+      terminalId: AG_A,
+      focus: false,
+    });
+    driver.drainEffects();
+    driver.dispatch({ type: "stop_agent", agentId: AG_A });
+    const generate = driver.drainEffects()[0];
+    if (generate.kind !== "generate_confirmation_id") {
+      throw new Error("the coordinator did not ask for a confirmation");
+    }
+    const required = driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    expect(required).toMatchObject({
+      kind: "confirmation_required",
+      purpose: { kind: "agent_stop", agentId: AG_A, terminal: true },
+    });
+    driver.dispatch({
+      type: "confirm_stop_agent",
+      confirmationId: CONFIRM,
+      moveTerminal: true,
+    });
+    expect(
+      driver.drainEffects().find((effect) => effect.kind === "stop_agent"),
+    ).toMatchObject({ agentId: AG_A, moveTerminal: true });
+  });
+
   it("asks before stopping an Agent that is working", () => {
     const driver = withAgent("working");
     driver.dispatch({ type: "stop_agent", agentId: AG_A });

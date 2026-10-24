@@ -306,7 +306,7 @@ describe("devhub --tell terminal", () => {
 		}
 		expect(refusal("terminal", "open", "--below")).toBeDefined();
 		expect(refusal("terminal", "resolve", "right")).toMatch(
-			/open, status \(or show\), close/,
+			/open, status \(or show\), close, panes, bring/,
 		);
 		expect(refusal("terminal", "list")).toMatch(/open, status/);
 		expect(refusal("terminal", "close", "Tests")).toBeDefined();
@@ -318,12 +318,28 @@ describe("devhub --tell terminal", () => {
 		expect(told("terminal", "close")).toEqual({ verb: "terminal-close" });
 	});
 
+	it("lists the editor's panes and brings one by its tmux id", () => {
+		expect(told("terminal", "panes")).toEqual({ verb: "terminal-panes" });
+		expect(told("terminal", "bring", "%7")).toEqual({
+			verb: "terminal-bring",
+			pane: "%7",
+			focus: false,
+		});
+		expect(told("terminal", "bring", "%7", "--focus")).toMatchObject({
+			focus: true,
+		});
+		expect(refusal("terminal", "bring")).toMatch(/<pane>/);
+		expect(refusal("terminal", "bring", "ws-1:0.1")).toMatch(/%7/);
+	});
+
 	it("takes back off the socket exactly what it parses", () => {
 		for (const command of [
 			told("terminal", "open", "--command", "make", "--focus"),
 			told("terminal", "open"),
 			told("terminal", "status"),
 			told("terminal", "close"),
+			told("terminal", "panes"),
+			told("terminal", "bring", "%3", "--focus"),
 		]) {
 			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
 				command,
@@ -337,6 +353,7 @@ describe("devhub --tell terminal", () => {
 	it("is in the help", () => {
 		expect(TELL_USAGE).toContain("terminal open [--command <cmd>] [--focus]");
 		expect(TELL_USAGE).toContain("terminal status");
+		expect(TELL_USAGE).toContain("terminal bring <pane> [--focus]");
 		expect(TELL_USAGE).not.toContain("terminal resolve");
 		expect(TELL_USAGE).not.toContain("--split");
 	});

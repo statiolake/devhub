@@ -528,6 +528,15 @@ Workspace closes its Agents' terminals with it, and a busy one (not at its
 shell's prompt) is counted in the close sheet's processes. The startup sweep
 accounts for a `tm-` session by its Agent's terminal.
 
+**Stopping an Agent with its terminal open** always asks (even an idle one):
+_Move the terminal to the editor_ or _Stop, and close the terminal_. Moving
+`move-window`s every window of the `tm-` session into the Workspace's own
+`ws-` session — the one every editor DevHub terminal tab attaches to, made
+first if it is not there, so a hibernated or closed editor finds them when it
+next attaches — with every process running on; the emptied `tm-` session
+ends, then the Agent stops (`confirm_stop_agent` with `moveTerminal`, the
+`stop_agent` effect's `moveTerminal`). A move that fails stops nothing.
+
 **For an Agent** (`devhub --tell terminal …`): always the asker's own
 terminal, named by its pane's `DEVHUB_ORIGIN`, never by a flag. `terminal open
 [--command C] [--focus]` starts it or shows it (idempotent; `--command` is
@@ -539,8 +548,17 @@ is open, visible (open, and its Agent on screen — never with the workbench
 alone) and focused and lists every tmux pane in the session with
 where it is in its window (`top-left`, `bottom-right`, … from
 `#{pane_left}`/`#{pane_top}`), so "the bottom-right pane" of a terminal the
-person split is a lookup. `terminal close` closes it. The bundled `/devhub`
-skill says when and how.
+person split is a lookup. `terminal close` closes it. `terminal panes` lists
+the panes of the asker's Workspace's editor terminals (its `ws-` session:
+session, window, `%N`, command, the foreground command line from `ps` — `ssh
+prod` —, cwd, title, active), and `terminal bring %N [--focus]` `join-pane`s
+one into the asker's terminal, still running: into a fresh terminal in place
+of its new shell, or as a split of the open one. Only that Workspace's `ws-`
+panes can be brought (never an `ag-` or another Agent's `tm-` pane); a
+window it leaves empty closes, and with its last window the `ws-` session —
+whose tmux clients exit 0, so the editor's tab just closes, and the next tab
+opened makes the session again. The bundled `/devhub` skill says when and
+how.
 
 ## Every command, by name: `Cmd+Q :`
 

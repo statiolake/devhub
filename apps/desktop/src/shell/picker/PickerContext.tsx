@@ -202,7 +202,8 @@ export interface PickerValue {
    * went wrong goes to the page's root like every other failure; asking
    * again is doing the thing again, which asks afresh.
    */
-  readonly confirmPending: () => Promise<void>;
+  /** `moveTerminal`: an Agent's stop keeps its terminal, in the editor. */
+  readonly confirmPending: (moveTerminal?: boolean) => Promise<void>;
   readonly dismissCloseConfirmation: () => void;
   /** Take on a confirmation main raised, as if it had been raised here. */
   readonly adoptConfirmation: (confirmation: PendingConfirmation) => void;
@@ -261,27 +262,34 @@ export function PickerProvider({ children }: { children: ReactNode }) {
     [applySnapshot, picker],
   );
 
-  const confirmPending = useCallback(async (): Promise<void> => {
-    if (!pendingConfirmation || confirmationBusyRef.current) return;
-    confirmationBusyRef.current = true;
-    const confirmationId = pendingConfirmation.confirmationId;
-    try {
-      // One answer per purpose, and every purpose has one. There used to be a
-      // guard above this that cleared the confirmation and reported *success*
-      // when an `agent_stop` had no Agent id — so main's one-shot confirmation
-      // was stranded, the Agent was not stopped, and the sheet closed as
-      // though it had been. The purpose carries its subject now, and there is
-      // no such state left to guard.
-      await dispatch(
-        confirmIntent(pendingConfirmation.purpose.kind, confirmationId),
-      );
-    } finally {
-      confirmationBusyRef.current = false;
-      setPendingConfirmation((current) =>
-        current?.confirmationId === confirmationId ? null : current,
-      );
-    }
-  }, [dispatch, pendingConfirmation]);
+  const confirmPending = useCallback(
+    async (moveTerminal = false): Promise<void> => {
+      if (!pendingConfirmation || confirmationBusyRef.current) return;
+      confirmationBusyRef.current = true;
+      const confirmationId = pendingConfirmation.confirmationId;
+      try {
+        // One answer per purpose, and every purpose has one. There used to be a
+        // guard above this that cleared the confirmation and reported *success*
+        // when an `agent_stop` had no Agent id — so main's one-shot confirmation
+        // was stranded, the Agent was not stopped, and the sheet closed as
+        // though it had been. The purpose carries its subject now, and there is
+        // no such state left to guard.
+        await dispatch(
+          confirmIntent(
+            pendingConfirmation.purpose.kind,
+            confirmationId,
+            moveTerminal,
+          ),
+        );
+      } finally {
+        confirmationBusyRef.current = false;
+        setPendingConfirmation((current) =>
+          current?.confirmationId === confirmationId ? null : current,
+        );
+      }
+    },
+    [dispatch, pendingConfirmation],
+  );
 
   const adoptConfirmation = useCallback((confirmation: PendingConfirmation) => {
     setPendingConfirmation((current) =>
@@ -547,10 +555,13 @@ function useWorkspacePickerRun(
 function confirmIntent(
   purpose: PendingConfirmation["purpose"]["kind"],
   confirmationId: string,
+  moveTerminal: boolean,
 ): AppIntent {
   switch (purpose) {
     case "agent_stop":
-      return { type: "confirm_stop_agent", confirmationId };
+      return moveTerminal
+        ? { type: "confirm_stop_agent", confirmationId, moveTerminal }
+        : { type: "confirm_stop_agent", confirmationId };
     case "agent_continue":
       return { type: "confirm_continue_agent", confirmationId };
     case "agent_restart":

@@ -261,7 +261,7 @@ import {
 	agentTerminalSessionName,
 	clampTerminalShare,
 } from "../../model/agentTerminal.js";
-import type { PaneTerminalPane } from "../terminal/tmux.js";
+import type { MarkedPane } from "../terminal/tmux.js";
 import {
 	chromeAudience,
 	displayAudience,
@@ -1957,6 +1957,59 @@ export class AppController {
 		// rather than staying on a view that is gone.
 		if (focused) this.placeKeyboardOnSurface();
 		return true;
+	}
+
+	/** An Agent's terminal's target, with the tmux of its Workspace's machine. */
+	private async terminalOf(agentId: AgentId, terminalId?: string) {
+		const wiring = this.terminalsWiring;
+		if (!wiring) throw new Error("the terminal runtime is not running");
+		const model = this.coordinator.model;
+		const workspace = model.workspaceForAgent(agentId);
+		if (!workspace) throw new Error(`there is no Agent ${agentId}`);
+		const machine = runtimeIdFor(workspace.location);
+		return {
+			runtime: await wiring.runtimes.for(runtimeById(machine)),
+			workspaceId: workspace.id,
+			target: {
+				machine,
+				terminalId:
+					terminalId ?? model.agentTerminal(agentId)?.terminalId ?? agentId,
+				workspaceId: workspace.id,
+				root: workspace.root,
+			},
+		};
+	}
+
+	/**
+	 * `devhub --tell terminal bring`: one pane of the Workspace's editor
+	 * terminal into the Agent's, its process running on — the terminal
+	 * opened with it in place of the fresh shell, or the pane added as a
+	 * split of the one open.
+	 */
+	private async bringPane(
+		agentId: AgentId,
+		paneId: string,
+		focus: boolean,
+	): Promise<{ readonly created: boolean }> {
+		const { created, terminalId } = await this.openAgentTerminal(agentId, {
+			focus,
+		});
+		const { runtime, target } = await this.terminalOf(agentId, terminalId);
+		await runtime.joinIntoTerminal(target, paneId, created);
+		return { created };
+	}
+
+	/**
+	 * The stop sheet's "Move the terminal to the editor": the terminal's
+	 * windows go to the Workspace's editor terminal (`ws-` session, which
+	 * the editor attaches to whenever it is up), still running, and the
+	 * Agent's pane closes on its emptied session.
+	 */
+	private async moveAgentTerminalToEditor(agentId: AgentId): Promise<void> {
+		if (!this.coordinator.model.agentTerminal(agentId)) return;
+		const { runtime, target } = await this.terminalOf(agentId);
+		await runtime.moveTerminalToWorkspace(target);
+		await this.closeAgentTerminal(agentId);
 	}
 
 	/** `Cmd+Q X` in the terminal: by the terminal's id. */
@@ -3855,7 +3908,12 @@ export class AppController {
 				return;
 			case "stop_agent":
 			case "terminate_agent":
-				await this.stopAgent(effect.token, effect.agentId, effect.kind);
+				await this.stopAgent(
+					effect.token,
+					effect.agentId,
+					effect.kind,
+					effect.kind === "stop_agent" && effect.moveTerminal === true,
+				);
 				return;
 			case "restart_agent":
 				await this.restartAgent(effect.token, effect.agentId);
@@ -4443,6 +4501,7 @@ export class AppController {
 		token: OperationToken,
 		agentId: ReturnType<typeof parseAgentId>,
 		kind: "stop_agent" | "terminate_agent",
+		moveTerminal: boolean,
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
@@ -4453,6 +4512,24 @@ export class AppController {
 				detail: "The Agent runtime is not running, so no Agent can be stopped.",
 			});
 			return;
+		}
+		if (moveTerminal) {
+			try {
+				await this.moveAgentTerminalToEditor(agentId);
+			} catch (error: unknown) {
+				// Not stopped: stopping would end what the person chose to keep.
+				this.accept({
+					type: "agent_stop_completed",
+					token,
+					agentId,
+					result: {
+						kind: "failed",
+						code: "tmux_command_failed",
+						detail: `DevHub could not move the terminal to the editor, so the Agent was not stopped: ${failureText(error)}`,
+					},
+				});
+				return;
+			}
 		}
 		const result =
 			kind === "stop_agent"
@@ -7346,6 +7423,20 @@ export class AppController {
 			},
 			closeAgentTerminal: (agentId) =>
 				this.closeAgentTerminal(parseAgentId(agentId)),
+			editorPanes: async (agentId) => {
+				const { runtime, workspaceId } = await this.terminalOf(
+					parseAgentId(agentId),
+				);
+				return (await runtime.workspacePanes())
+					.filter((pane) => pane.workspaceId === workspaceId)
+					.map((pane) => ({
+						...tellTerminalPane(pane),
+						session: pane.sessionName,
+						argv: pane.argv,
+					}));
+			},
+			bringPane: (agentId, pane, focus) =>
+				this.bringPane(parseAgentId(agentId), pane, focus),
 		};
 	}
 
@@ -8845,7 +8936,7 @@ function containerLabel(editor: EditorAttachmentWire): string | undefined {
 }
 
 /** One tmux pane of an Agent terminal, as `devhub --tell terminal` says it. */
-function tellTerminalPane(pane: PaneTerminalPane) {
+function tellTerminalPane(pane: MarkedPane) {
 	return {
 		window: pane.windowId,
 		windowIndex: pane.windowIndex,

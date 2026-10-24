@@ -742,7 +742,12 @@ export type AppIntentWire =
 			readonly type: "set_automatic_action";
 	  }
 	| { readonly agentId: string; readonly type: "stop_agent" }
-	| { readonly confirmationId: string; readonly type: "confirm_stop_agent" }
+	| {
+			readonly confirmationId: string;
+			readonly type: "confirm_stop_agent";
+			/** Move its terminal to the Workspace's editor terminal, not close it. */
+			readonly moveTerminal?: boolean;
+	  }
 	| {
 			readonly confirmationId: string;
 			readonly type: "confirm_continue_agent";
@@ -946,7 +951,12 @@ export type ConfirmationPurposeWire =
 	 * question that cannot say what it is about is a question that can be
 	 * answered about the wrong thing.
 	 */
-	| { readonly kind: "agent_stop"; readonly agentId: string }
+	| {
+			readonly agentId: string;
+			readonly kind: "agent_stop";
+			/** It has a terminal open: the sheet offers to move it to the editor. */
+			readonly terminal: boolean;
+	  }
 	/**
 	 * Carrying this Agent on in `presentation`, which stops it once the new
 	 * one runs: asked when it is not idle, as a stop is.

@@ -158,6 +158,8 @@ export type Effect =
       readonly kind: "stop_agent";
       readonly token: OperationToken;
       readonly agentId: AgentId;
+      /** Hand its terminal to the Workspace's editor terminal first. */
+      readonly moveTerminal?: true;
     }
   | {
       readonly kind: "terminate_agent";
@@ -274,7 +276,8 @@ interface CachedDispatch {
  * one rule, `interruptsNothing`.
  */
 type AgentAct =
-  | { readonly kind: "stop" }
+  /** `terminal`: it has one open, which the question offers to keep. */
+  | { readonly kind: "stop"; readonly terminal: boolean }
   | {
       readonly kind: "continue";
       readonly presentation: AgentPresentation;
@@ -301,7 +304,7 @@ function confirmationOf(
 ): ConfirmationOutcomePurpose {
   switch (act.kind) {
     case "stop":
-      return { kind: "agent_stop", agentId };
+      return { kind: "agent_stop", agentId, terminal: act.terminal };
     case "continue":
       return {
         kind: "agent_continue",
@@ -776,9 +779,21 @@ export class AppCoordinator {
         );
         return this.transitionOutcome(beforeRevision, id);
       case "stop_agent":
-        return this.askAbout(intent.agentId, { kind: "stop" }, id);
+        return this.askAbout(
+          intent.agentId,
+          {
+            kind: "stop",
+            terminal: this.model.agentTerminal(intent.agentId) !== undefined,
+          },
+          id,
+        );
       case "confirm_stop_agent":
-        return this.confirmAgentAct(intent.confirmationId, "stop", id);
+        return this.confirmAgentAct(
+          intent.confirmationId,
+          "stop",
+          id,
+          intent.moveTerminal === true,
+        );
       case "retry_stop_agent":
         return this.retryStop(intent.agentId, id);
       case "restart_agent":
@@ -1085,7 +1100,7 @@ export class AppCoordinator {
     if (replaced === undefined) return undefined;
     this.stopAfterPersist.delete(id);
     if (!this.model.agent(replaced)) return undefined;
-    return this.startAgentStop(replaced, id);
+    return this.startAgentStop(replaced, id, false);
   }
 
   /**
@@ -1157,7 +1172,10 @@ export class AppCoordinator {
     if (!found || !this.model.workspaceForAgent(agent)) {
       throw domainRefusal(DomainErrorCode.UnknownAgent);
     }
-    if (interruptsNothing(found)) return this.doAgentAct(agent, act, id);
+    // An open terminal is asked about too: whether to keep it in the editor.
+    if (interruptsNothing(found) && !(act.kind === "stop" && act.terminal)) {
+      return this.doAgentAct(agent, act, id);
+    }
     const token = this.startOperation(
       "generate_confirmation_id",
       { kind: "agent", agentId: agent },
@@ -1177,6 +1195,7 @@ export class AppCoordinator {
     confirmation: ConfirmationId,
     act: AgentAct["kind"],
     id: OperationId,
+    moveTerminal = false,
   ): IntentOutcome {
     const index = this.confirmations.findIndex(
       (pending) =>
@@ -1191,17 +1210,18 @@ export class AppCoordinator {
     if (state.kind !== "agent") {
       throw namedFailureAt("invalid_intent");
     }
-    return this.doAgentAct(state.agentId, state.act, id);
+    return this.doAgentAct(state.agentId, state.act, id, moveTerminal);
   }
 
   private doAgentAct(
     agent: AgentId,
     act: AgentAct,
     id: OperationId,
+    moveTerminal = false,
   ): IntentOutcome {
     switch (act.kind) {
       case "stop":
-        return this.startAgentStop(agent, id);
+        return this.startAgentStop(agent, id, moveTerminal && act.terminal);
       case "continue":
         return this.beginContinue(agent, act.presentation, act.session, id);
       case "restart":
@@ -1247,14 +1267,23 @@ export class AppCoordinator {
   /**
    * Actually stop it. The one second half, whether or not anything was asked.
    */
-  private startAgentStop(agent: AgentId, id: OperationId): IntentOutcome {
+  private startAgentStop(
+    agent: AgentId,
+    id: OperationId,
+    moveTerminal: boolean,
+  ): IntentOutcome {
     this.model.requestAgentStop(agent);
     const token = this.startOperation(
       "stop_agent",
       { kind: "agent", agentId: agent },
       id,
     );
-    this.emitEffect({ kind: "stop_agent", token, agentId: agent });
+    this.emitEffect({
+      kind: "stop_agent",
+      token,
+      agentId: agent,
+      ...(moveTerminal ? { moveTerminal: true } : {}),
+    });
     this.emit({ kind: "snapshot", snapshot: this.snapshot() });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }

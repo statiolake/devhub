@@ -18,6 +18,7 @@ import {
 	type TellConversation,
 	type TellPorts,
 	type TellTerminal,
+	type TellEditorPane,
 	type TellTerminalPane,
 	type TellWorkspace,
 } from "./service.js";
@@ -277,6 +278,20 @@ class FakePorts implements TellPorts {
 		this.calls.push(`close-terminal ${agentId}`);
 		return Promise.resolve(this.terminals.delete(agentId));
 	}
+	/** The editor's terminal panes, by Workspace: only ever ws- sessions. */
+	editor: TellEditorPane[] = [];
+	editorPanes(agentId: string) {
+		this.calls.push(`editor-panes ${agentId}`);
+		return Promise.resolve(this.editor);
+	}
+	bringPane(agentId: string, paneId: string, focus: boolean) {
+		this.calls.push(`bring ${agentId} ${paneId} ${String(focus)}`);
+		const moved = this.editor.find((one) => one.pane === paneId)!;
+		this.editor = this.editor.filter((one) => one !== moved);
+		const panes = this.terminals.get(agentId);
+		this.terminals.set(agentId, [...(panes ?? []), moved]);
+		return Promise.resolve({ created: panes === undefined });
+	}
 }
 
 function pane(
@@ -303,6 +318,19 @@ function pane(
 		command: "zsh",
 		title: "host",
 		dead: false,
+	};
+}
+
+function editorPane(
+	id: string,
+	window: string,
+	argv: string | undefined,
+): TellEditorPane {
+	return {
+		...pane(id, 0, 0, 80, 24),
+		window,
+		session: "ws-0123456789abcdef0123",
+		argv,
 	};
 }
 
@@ -844,6 +872,74 @@ describe("the asking agent's own terminal", () => {
 		// The Scratch agent's terminal is its own, not w1's agent's.
 		await service.run({ verb: "terminal-close" }, coordinator);
 		expect(ports.calls).toEqual(["close-terminal bbbb2222-0000"]);
+	});
+});
+
+describe("bringing an editor terminal's pane to the agent's terminal", () => {
+	const fromAgent = callerFromOrigin("local\tw1\taaaa1111-0000");
+	const AGENT = "aaaa1111-0000";
+
+	it("lists the panes with what runs in front", async () => {
+		const { ports, service } = setup();
+		const none = await service.run({ verb: "terminal-panes" }, fromAgent);
+		expect(none.message).toMatch(/no DevHub terminal open/);
+		ports.editor = [
+			editorPane("%2", "@1", "ssh prod"),
+			editorPane("%3", "@1", undefined),
+		];
+		const listed = await service.run({ verb: "terminal-panes" }, fromAgent);
+		expect(listed.message).toContain("%2  ws-0123456789abcdef0123:0.2");
+		expect(listed.message).toContain("running ssh prod");
+		expect(listed.message).toContain("running zsh");
+		expect(listed.data).toEqual({ panes: ports.editor });
+		expect(ports.calls).toEqual([
+			`editor-panes ${AGENT}`,
+			`editor-panes ${AGENT}`,
+		]);
+	});
+
+	it("opens the terminal with it, or adds it to the open one", async () => {
+		const { ports, service } = setup();
+		ports.editor = [
+			editorPane("%2", "@1", "ssh prod"),
+			editorPane("%3", "@1", undefined),
+			editorPane("%4", "@2", undefined),
+		];
+		const first = await service.run(
+			{ verb: "terminal-bring", pane: "%2", focus: false },
+			fromAgent,
+		);
+		expect(first.data).toMatchObject({ created: true, pane: "%2" });
+		expect(first.message).toMatch(/Brought %2 \(ssh prod\) into your new/);
+		expect(first.message).not.toMatch(/window closed/);
+		const second = await service.run(
+			{ verb: "terminal-bring", pane: "%4", focus: true },
+			fromAgent,
+		);
+		expect(second.data).toMatchObject({ created: false });
+		expect(second.message).toMatch(/as a split/);
+		// %4 was its window's only pane: that editor window is gone.
+		expect(second.message).toMatch(/only pane of its editor terminal window/);
+		expect(ports.calls).toContain(`bring ${AGENT} %2 false`);
+		expect(ports.calls).toContain(`bring ${AGENT} %4 true`);
+	});
+
+	it("refuses a pane that is not the editor's, and from outside an agent", async () => {
+		const { ports, service } = setup();
+		ports.editor = [editorPane("%2", "@1", undefined)];
+		await expect(
+			service.run(
+				{ verb: "terminal-bring", pane: "%9", focus: false },
+				fromAgent,
+			),
+		).rejects.toThrow(/not a pane of your workspace's editor terminals/);
+		await expect(
+			service.run(
+				{ verb: "terminal-bring", pane: "%2", focus: false },
+				callerFromOrigin("local\tw1\tnone"),
+			),
+		).rejects.toThrow(/an agent's/);
+		expect(ports.calls.filter((call) => call.startsWith("bring"))).toEqual([]);
 	});
 });
 

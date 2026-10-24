@@ -161,6 +161,7 @@ Element.prototype.scrollIntoView = vi.fn();
 const STOP_AGENT: ConfirmationPurposeWire = {
   kind: "agent_stop",
   agentId: AGENT_ID,
+  terminal: false,
 };
 
 /** A workspace with something open in it, which is the only case that asks. */
@@ -314,6 +315,43 @@ describe("stopping an Agent, asked on the modal layer", () => {
     await waitFor(() => {
       expect(onDismiss).toHaveBeenCalled();
     });
+  });
+
+  it("with a terminal open, offers to move it to the editor or close it", async () => {
+    for (const [row, expected] of [
+      [
+        "Move the terminal to the editor",
+        {
+          type: "confirm_stop_agent",
+          confirmationId: CONFIRMATION_ID,
+          moveTerminal: true,
+        },
+      ],
+      [
+        "Stop, and close the terminal",
+        { type: "confirm_stop_agent", confirmationId: CONFIRMATION_ID },
+      ],
+    ] as const) {
+      const dispatch = mount(snapshotWith(true), vi.fn(), {
+        ...STOP_AGENT,
+        terminal: true,
+      });
+      await waitFor(() => {
+        expect(rows()).toEqual([
+          "Cancel",
+          "Move the terminal to the editor",
+          "Stop, and close the terminal",
+        ]);
+      });
+      expect(
+        screen.getByText(/Its terminal is still open/),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByText(row));
+      await waitFor(() => {
+        expect(dispatch).toHaveBeenCalledWith(expected);
+      });
+      cleanup();
+    }
   });
 
   /**
@@ -611,6 +649,7 @@ describe("what a confirmation knows about itself", () => {
     mount(snapshotWith(true), vi.fn(), {
       kind: "agent_stop",
       agentId: AGENT_ID,
+      terminal: false,
     });
     await waitFor(() => {
       expect(screen.getByText("Stop “claude 1”?")).toBeInTheDocument();
@@ -620,7 +659,11 @@ describe("what a confirmation knows about itself", () => {
   it("answers each purpose with that purpose's own intent", async () => {
     for (const [purpose, expected] of [
       [
-        { kind: "agent_stop", agentId: AGENT_ID } as ConfirmationPurposeWire,
+        {
+          kind: "agent_stop",
+          agentId: AGENT_ID,
+          terminal: false,
+        } as ConfirmationPurposeWire,
         { type: "confirm_stop_agent", confirmationId: CONFIRMATION_ID },
       ],
       [

@@ -177,6 +177,8 @@ function collapsed(
 
 /** The row that does the thing being asked about. */
 const CONFIRM = "devhub:confirm";
+/** An Agent's stop that keeps its terminal, in the editor. */
+const MOVE_TERMINAL = "devhub:move-terminal";
 
 export interface CloseConfirmationSheetProps {
   readonly request: CloseConfirmationRequest;
@@ -281,6 +283,7 @@ export function CloseConfirmationSheet({
   ];
 
   const words = questionWords(purpose, agent?.displayName, unsaved);
+  const terminal = purpose.kind === "agent_stop" && purpose.terminal;
 
   return (
     <Picker
@@ -288,7 +291,23 @@ export function CloseConfirmationSheet({
       question={words.question}
       cancelRow={{ detail: words.cancel }}
       items={[
-        { id: CONFIRM, label: words.confirm, detail: words.confirmDetail },
+        ...(terminal
+          ? [
+              {
+                id: MOVE_TERMINAL,
+                label: "Move the terminal to the editor",
+                detail:
+                  "Its windows become windows of the workspace's editor terminal, still running; then the Agent stops.",
+              },
+            ]
+          : []),
+        {
+          id: CONFIRM,
+          label: terminal ? "Stop, and close the terminal" : words.confirm,
+          detail: terminal
+            ? "The Agent stops, and its terminal closes with what runs in it."
+            : words.confirmDetail,
+        },
       ]}
       note={
         diagnostics.length === 0 ? undefined : (
@@ -305,7 +324,7 @@ export function CloseConfirmationSheet({
       // Answered is over, done or failed: the effect above takes the modal
       // off screen once the confirmation is gone, and a failure is the
       // page's root's to say (`confirmPending`).
-      onChoose={() => void confirmPending()}
+      onChoose={(choice) => void confirmPending(choice.id === MOVE_TERMINAL)}
       onCancel={dismissCloseConfirmation}
     />
   );
@@ -345,8 +364,9 @@ function questionWords(
       return {
         title:
           agentName === undefined ? "Stop this Agent?" : `Stop “${agentName}”?`,
-        question:
-          "This stops the Agent runtime. You can retry if cleanup fails.",
+        question: purpose.terminal
+          ? "Its terminal is still open. Move it to the editor, or close it with the Agent?"
+          : "This stops the Agent runtime. You can retry if cleanup fails.",
         cancel: "Leave the Agent running.",
         confirm: "Stop the Agent",
         confirmDetail: "The runtime stops. You can retry if cleanup fails.",

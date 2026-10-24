@@ -459,6 +459,8 @@ export type UserIntent =
   | {
       readonly type: "confirm_stop_agent";
       readonly confirmationId: ConfirmationId;
+      /** Move its terminal to the Workspace's editor terminal, not close it. */
+      readonly moveTerminal?: boolean;
     }
   | { readonly type: "retry_stop_agent"; readonly agentId: AgentId }
   /**
@@ -809,7 +811,12 @@ export type ConfirmationOutcomePurpose =
       /** What Confirm does to the worktree folder, so the sheet can say it. */
       readonly worktree: WorktreeDisposition;
     }
-  | { readonly kind: "agent_stop"; readonly agentId: AgentId }
+  | {
+      readonly kind: "agent_stop";
+      readonly agentId: AgentId;
+      /** It has a terminal open: the sheet offers to move it to the editor. */
+      readonly terminal: boolean;
+    }
   | {
       readonly kind: "agent_continue";
       readonly agentId: AgentId;

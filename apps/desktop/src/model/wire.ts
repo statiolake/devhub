@@ -628,7 +628,11 @@ function confirmationPurposeWire(
         worktree: purpose.worktree,
       };
     case "agent_stop":
-      return { kind: "agent_stop", agentId: purpose.agentId };
+      return {
+        kind: "agent_stop",
+        agentId: purpose.agentId,
+        terminal: purpose.terminal,
+      };
     case "agent_continue":
       return {
         kind: "agent_continue",
@@ -1245,6 +1249,7 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         confirmationId: tryParse(() =>
           parseConfirmationId(wire.confirmationId),
         ),
+        moveTerminal: wire.moveTerminal === true,
       };
     case "confirm_continue_agent":
       return {

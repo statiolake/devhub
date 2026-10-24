@@ -92,6 +92,15 @@ export type TellCommand =
 	  }
 	| { readonly verb: "terminal-status" }
 	| { readonly verb: "terminal-close" }
+	/** The panes of your Workspace's editor terminals, to `bring` by id. */
+	| { readonly verb: "terminal-panes" }
+	| {
+			/** Move one of those panes into your terminal, still running. */
+			readonly verb: "terminal-bring";
+			/** tmux's pane id: `%7`. */
+			readonly pane: string;
+			readonly focus: boolean;
+	  }
 	| { readonly verb: "commands" }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
@@ -164,6 +173,14 @@ terminal (your own: one per agent, beside your pane; hidden with the editor alon
                                    person may have split it), each with where
                                    it is (top-left, bottom-right, ...)
   terminal close                   close it, and its session
+  terminal panes                   the panes of your workspace's editor
+                                   terminals: id, window, what runs in front
+                                   (its command line, e.g. ssh host), cwd,
+                                   title
+  terminal bring <pane> [--focus]  move one of them (by id, %N) into your
+                                   terminal, still running: it opens your
+                                   terminal with it, or adds it as a split.
+                                   An editor terminal left with no pane ends
 
 app
   commands                         list the command palette's commands
@@ -520,9 +537,25 @@ function parseTerminal(
 		case "close":
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: "terminal-close" };
+		case "panes":
+			positionals(readFlags(rest, NO_FLAGS), []);
+			return { verb: "terminal-panes" };
+		case "bring": {
+			const flags = readFlags(rest, { values: [], switches: ["--focus"] });
+			const [pane] = positionals(flags, ["<pane>"]);
+			if (!/^%\d+$/u.test(pane!))
+				throw new Refusal(
+					"bring takes a tmux pane id, like %7: see 'devhub --tell terminal panes'.",
+				);
+			return {
+				verb: "terminal-bring",
+				pane: pane!,
+				focus: flags.switches.has("--focus"),
+			};
+		}
 		default:
 			throw new Refusal(
-				"terminal takes: open, status (or show), close. It is always your own terminal, shown with your pane.",
+				"terminal takes: open, status (or show), close, panes, bring. It is always your own terminal, shown with your pane.",
 			);
 	}
 }
@@ -700,6 +733,17 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			return { verb: "terminal-status" };
 		case "terminal-close":
 			return { verb: "terminal-close" };
+		case "terminal-panes":
+			return { verb: "terminal-panes" };
+		case "terminal-bring": {
+			if (typeof record["focus"] !== "boolean")
+				throw new Error("a tell command's focus must be a boolean");
+			return {
+				verb: "terminal-bring",
+				pane: text(record, "pane"),
+				focus: record["focus"],
+			};
+		}
 		case "run":
 			return { verb: "run", command: text(record, "command") };
 		case "focus":

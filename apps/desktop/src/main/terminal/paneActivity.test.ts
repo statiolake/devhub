@@ -10,6 +10,7 @@ import {
 	isMarked,
 	parsePaneActivity,
 	parsePaneTerminals,
+	parseWorkspacePanes,
 	terminalSessionName,
 	workspaceDigest,
 } from "./tmux.js";
@@ -409,6 +410,7 @@ describe("the Agents' terminals", () => {
 			"80",
 			"24",
 			"zsh",
+			"4242",
 			ROOT,
 		].join(FS);
 		const { marker, panes } = parsePaneTerminals(
@@ -437,11 +439,59 @@ describe("the Agents' terminals", () => {
 				top: 25,
 				width: 80,
 				height: 24,
+				pid: 4242,
 			},
 		]);
 		// A server that is not DevHub's says nothing about anybody's panes.
 		expect(
 			parsePaneTerminals(output(`marker${FS}`, record), "/Users/me").panes,
+		).toEqual([]);
+	});
+
+	it("reads a Workspace's editor-terminal panes apart from its Agents' terminals", () => {
+		const record = (session: string, context: string, pane: string) =>
+			[
+				"terminal-pane",
+				session,
+				context,
+				WS,
+				"none",
+				"@1",
+				"2",
+				pane,
+				"0",
+				"1",
+				"1",
+				"ssh",
+				"prod",
+				"0",
+				"/tmp/tmux-501/devhub",
+				ROOT,
+				"0",
+				"0",
+				"80",
+				"24",
+				"ssh",
+				"77",
+				ROOT,
+			].join(FS);
+		const ws = `ws-${workspaceDigest(ROOT).slice(0, 20)}`;
+		const { panes } = parseWorkspacePanes(
+			output(
+				MARKER,
+				record(ws, "workspace", "%3"),
+				record(terminalSessionName(TERMINAL), "terminal", "%4"),
+			),
+			"/Users/me",
+		);
+		expect(
+			panes.map((pane) => [pane.sessionName, pane.paneId, pane.pid]),
+		).toEqual([[ws, "%3", 77]]);
+		expect(
+			parsePaneTerminals(
+				output(MARKER, record(ws, "workspace", "%3")),
+				"/Users/me",
+			).panes,
 		).toEqual([]);
 	});
 });

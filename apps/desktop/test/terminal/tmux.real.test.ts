@@ -2453,3 +2453,112 @@ describe.skipIf(TMUX === undefined)(
     });
   },
 );
+
+describe.skipIf(TMUX === undefined)(
+  "an editor terminal's pane and an Agent's terminal",
+  { timeout: 30_000 },
+  () => {
+    const WS = "550e8400-e29b-41d4-a716-446655440000";
+    const TERMINAL = "11111111-1111-4111-8111-111111111111";
+
+    function tmux(socket: string, args: readonly string[]): string {
+      return execFileSync(
+        TMUX as string,
+        ["-f", "/dev/null", "-L", socket, ...args],
+        {
+          encoding: "utf8",
+          env: { ...process.env, TMUX: undefined } as never,
+        },
+      ).trim();
+    }
+
+    async function editorWithTwoWindows(label: string) {
+      const test = fixture(label);
+      const root = test.home;
+      await test.runtime.ensure(workspaceTarget("local", WS, root));
+      const ws = `ws-${workspaceDigest(root).slice(0, 20)}`;
+      tmuxOutside(test.socket, ["split-window", "-t", ws]);
+      tmuxOutside(test.socket, ["new-window", "-t", ws]);
+      const panes = tmux(test.socket, [
+        "list-panes",
+        "-s",
+        "-t",
+        ws,
+        "-F",
+        "#{pane_id}",
+      ]).split("\n");
+      const target = {
+        machine: "local" as const,
+        terminalId: TERMINAL,
+        workspaceId: WS,
+        root,
+      };
+      return { test, ws, panes, target };
+    }
+
+    it("lists the editor's panes with what runs in front, and brings them", async () => {
+      const { test, ws, panes, target } = await editorWithTwoWindows("bring");
+      const [first, second, third] = panes as [string, string, string];
+      tmuxOutside(test.socket, ["send-keys", "-t", first, "exec sleep 600", "Enter"]);
+      let listed = await test.runtime.workspacePanes();
+      for (let round = 0; round < 50; round += 1) {
+        if (listed.find((pane) => pane.paneId === first)?.argv === "sleep 600")
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        listed = await test.runtime.workspacePanes();
+      }
+      expect(listed.map((pane) => [pane.sessionName, pane.paneId])).toEqual(
+        panes.map((pane) => [ws, pane]),
+      );
+      expect(listed.find((pane) => pane.paneId === first)?.argv).toBe(
+        "sleep 600",
+      );
+
+      // A fresh terminal: the pane takes the place of its new shell.
+      await test.runtime.launchTerminal(target);
+      await test.runtime.joinIntoTerminal(target, first, true);
+      expect(
+        (await test.runtime.paneTerminals()).map((pane) => [
+          pane.paneId,
+          pane.command,
+        ]),
+      ).toEqual([[first, "sleep"]]);
+      // An open one: the pane is added, and the window it leaves goes.
+      await test.runtime.joinIntoTerminal(target, third, false);
+      expect(
+        (await test.runtime.paneTerminals()).map((pane) => pane.paneId).sort(),
+      ).toEqual([first, third].sort());
+      expect(
+        (await test.runtime.workspacePanes()).map((pane) => pane.paneId),
+      ).toEqual([second]);
+      // Only an editor's pane is brought: not one of the terminal's own.
+      await expect(
+        test.runtime.joinIntoTerminal(target, first, false),
+      ).rejects.toBeDefined();
+    });
+
+    it("moves the terminal's windows to the editor's session, running", async () => {
+      const { test, ws, panes, target } = await editorWithTwoWindows("move");
+      await test.runtime.launchTerminal(target);
+      await test.runtime.joinIntoTerminal(target, panes[0]!, true);
+      tmuxOutside(test.socket, ["new-window", "-t", `tm-${TERMINAL}`]);
+      await test.runtime.moveTerminalToWorkspace(target);
+      expect(await test.runtime.paneTerminals()).toEqual([]);
+      expect(
+        tmux(test.socket, ["list-panes", "-s", "-t", ws, "-F", "#{pane_id}"])
+          .split("\n")
+          .includes(panes[0]!),
+      ).toBe(true);
+      // With no editor session left, the move makes one to move into.
+      tmuxOutside(test.socket, ["kill-session", "-t", ws]);
+      await test.runtime.launchTerminal(target);
+      await test.runtime.moveTerminalToWorkspace(target);
+      expect(await test.runtime.paneTerminals()).toEqual([]);
+      expect(
+        tmux(test.socket, ["list-windows", "-t", ws, "-F", "#{window_id}"]).split(
+          "\n",
+        ),
+      ).toHaveLength(2);
+    });
+  },
+);
