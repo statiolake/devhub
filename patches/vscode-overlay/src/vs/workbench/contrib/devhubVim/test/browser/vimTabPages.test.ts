@@ -11,14 +11,16 @@
 import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
-import { InMemoryStorageService, StorageScope } from '../../../../../platform/storage/common/storage.js';
+import { InMemoryStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup, IEditorGroupsService, IEditorPart, IEditorWorkingSet } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
 import { TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
 
 interface FakeEditor { name: string; dirty: boolean }
@@ -36,6 +38,8 @@ class FakeWorkbench {
 	barHeight = 0;
 	opened: string[] = [];
 	private nextId = 1;
+	/** Where VS Code's EditorParts keeps the working sets ('editor.workingSets'), as JSON. */
+	storage: InMemoryStorageService | undefined;
 	readonly disposables = new DisposableStore();
 	readonly onChange = this.disposables.add(new Emitter<void>());
 
@@ -52,6 +56,18 @@ class FakeWorkbench {
 		this.layout.groups.push({ id: 100 + this.layout.groups.length, editors: [], active: 0 });
 		this.layout.active = this.layout.groups.length - 1;
 		this.onChange.fire();
+	}
+
+	storeSets(): void {
+		this.storage?.store('editor.workingSets', JSON.stringify([...this.sets].map(([id, l]) => ({ id, editors: l.groups.flatMap(g => g.editors.map(e => JSON.stringify({ resourceJSON: { path: e.name } }))) }))), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+	}
+
+	/** As the untitled text editor service: an untitled editor exists while some group has it open (closed and not modified, it is disposed). */
+	untitledService(): IUntitledTextEditorService {
+		const wb = this;
+		return new class extends mock<IUntitledTextEditorService>() {
+			override get(resource: URI) { return wb.layout.groups.some(g => g.editors.some(e => e.name === `${resource.scheme}:${resource.path}`)) ? {} as never : undefined; }
+		};
 	}
 
 	shown(): string[][] {
@@ -127,10 +143,11 @@ class FakeWorkbench {
 				const id = `ws${wb.nextId++}`;
 				wb.saves++;
 				wb.sets.set(id, clone(wb.layout));
+				wb.storeSets();
 				return { id, name };
 			}
 			override getWorkingSets() { return [...wb.sets.keys()].map(id => ({ id, name: 'devhubVim.tabpage' })); }
-			override deleteWorkingSet(ws: IEditorWorkingSet) { wb.sets.delete(ws.id); }
+			override deleteWorkingSet(ws: IEditorWorkingSet) { wb.sets.delete(ws.id); wb.storeSets(); }
 			override async applyWorkingSet(ws: IEditorWorkingSet | 'empty') {
 				wb.applies.push(ws === 'empty' ? 'empty' : ws.id);
 				if (ws === 'empty') {
@@ -152,20 +169,24 @@ class FakeWorkbench {
 		return new class extends mock<IEditorService>() {
 			override onDidActiveEditorChange = wb.onChange.event as never;
 			override onDidVisibleEditorsChange = wb.onChange.event as never;
-			override openEditor = (async (editor: { label?: string }) => {
-				wb.opened.push(editor.label ?? '');
+			override openEditor = (async (editor: { label?: string; resource?: URI }) => {
+				const name = editor.label ?? (editor.resource ? `${editor.resource.scheme}:${editor.resource.path}` : '');
+				wb.opened.push(name);
 				const g = wb.layout.groups[wb.layout.active];
-				const i = g.editors.findIndex(e => e.name === editor.label);
+				const i = g.editors.findIndex(e => e.name === name);
 				if (i >= 0) {
 					g.active = i;
 				} else {
-					wb.open(editor.label ?? '');
+					wb.open(name);
 				}
 				return undefined;
 			}) as never;
 		};
 	}
 }
+
+/** `:tabe {file}`: the file is opened by the step after devhubVim.tabpage.new (the tests open it with wb.open). */
+const FILE = 'file';
 
 suite('DevHub Vim tab pages: switching on working sets', () => {
 
@@ -180,12 +201,13 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 		new class extends mock<IQuickInputService>() {
 			override async pick<T extends IQuickPickItem>(items: T[]) { return (picked === undefined ? undefined : items[picked]) as never; }
-		}));
+		}, wb.untitledService()));
 
 	setup(() => {
 		wb = new FakeWorkbench();
 		disposables.add(wb.disposables);
 		storage = disposables.add(new InMemoryStorageService());
+		wb.storage = storage;
 		picked = undefined;
 		logs = [];
 		log = console.log;
@@ -201,7 +223,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		wb.open('a.ts');
 		wb.split();
 		wb.open('b.ts');
-		await pages.newPage();
+		await pages.newPage(FILE);
 		assert.deepStrictEqual(wb.shown(), [[]]);
 		wb.open('c.ts');
 		assert.deepStrictEqual(pages.pages().map(p => p.windows), [['a.ts', 'b.ts'], ['c.ts']]);
@@ -227,7 +249,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		const pages = create();
 		wb.open('a.ts');
 		const dirty = wb.open('notes.md', true);
-		await pages.newPage();
+		await pages.newPage(FILE);
 		assert.deepStrictEqual(wb.shown(), [['notes.md+']], 'carried into the new page');
 		wb.open('c.ts');
 		await pages.previous(null);
@@ -249,8 +271,8 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	test(':tabc closes the current page (to the next one, the previous from the last), :tabc N another; E784 on the last one', async () => {
 		const pages = create();
 		wb.open('1');
-		await pages.newPage(); wb.open('2');
-		await pages.newPage(); wb.open('3');
+		await pages.newPage(FILE); wb.open('2');
+		await pages.newPage(FILE); wb.open('3');
 		await pages.first();
 		await pages.close();
 		assert.deepStrictEqual(wb.shown(), [['2']]);
@@ -259,7 +281,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(pages.pages().map(p => p.windows[0]), ['2']);
 		assert.strictEqual(wb.sets.size, 0);
 		await assert.rejects(() => pages.close(), /E784/);
-		await pages.newPage(); wb.open('4');
+		await pages.newPage(FILE); wb.open('4');
 		await pages.close(1);
 		assert.deepStrictEqual(wb.shown(), [['4']]);
 		assert.strictEqual(pages.state.pages.length, 1);
@@ -268,8 +290,8 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	test(':tabo, :tabm, :tabs', async () => {
 		const pages = create();
 		wb.open('1');
-		await pages.newPage(); wb.open('2');
-		await pages.newPage(); wb.open('3');
+		await pages.newPage(FILE); wb.open('2');
+		await pages.newPage(FILE); wb.open('3');
 		await pages.move('0');
 		assert.deepStrictEqual(pages.pages().map(p => p.windows[0]), ['3', '1', '2']);
 		assert.strictEqual(pages.state.current, 0);
@@ -301,7 +323,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	test(':q on the last window of a page closes the page, not the last page', async () => {
 		const pages = create();
 		wb.open('a.ts');
-		await pages.newPage();
+		await pages.newPage(FILE);
 		wb.open('b.ts');
 		await pages.closeIfEmpty();
 		assert.strictEqual(pages.state.pages.length, 2);
@@ -317,7 +339,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	test(':close / CTRL-W c closes the window; the last window of a page closes the page; the last of the last page stays', async () => {
 		const pages = create();
 		wb.open('a.ts');
-		await pages.newPage();
+		await pages.newPage(FILE);
 		wb.open('b.ts');
 		wb.split();
 		wb.open('c.ts');
@@ -331,12 +353,52 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
 	});
 
+	test(':tabnew without a file: the new page has an empty untitled editor (Vim\'s new empty buffer); it is not modified, so switching and closing never ask', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await pages.newPage();
+		assert.deepStrictEqual(wb.shown(), [['untitled:Untitled-1']]);
+		assert.deepStrictEqual(pages.pages().map(p => p.windows), [['a.ts'], ['untitled:Untitled-1']]);
+		// palette / no args, and only ++opts: also an empty buffer; a file: none (devhubVim.open opens it)
+		await pages.newPage('  ++enc=latin1 ');
+		assert.deepStrictEqual(wb.shown(), [['untitled:Untitled-2']]);
+		await pages.newPage('b.ts');
+		assert.deepStrictEqual(wb.shown(), [[]]);
+		wb.open('b.ts');
+		// back to page 3: its untitled editor comes back with the layout (VS Code re-creates an untitled editor of a working set, empty)
+		await pages.goto(2);
+		assert.deepStrictEqual(wb.shown(), [['untitled:Untitled-2']]);
+		// nothing modified was carried along
+		await pages.goto(0);
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+		// :tabc of the page that has it: it is closed with the layout, no editor stays behind
+		await pages.goto(2);
+		await pages.close();
+		assert.deepStrictEqual(pages.pages().map(p => p.windows), [['a.ts'], ['untitled:Untitled-1'], ['b.ts']]);
+		assert.ok(!wb.shown().flat().includes('untitled:Untitled-2'));
+	});
+
+	test(':tabnew does not reuse the number of an untitled editor another page\'s layout has', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await pages.newPage();
+		await pages.goto(0);
+		// Untitled-1 is closed (no longer live) but page 2's working set names it
+		await pages.newPage();
+		assert.deepStrictEqual(wb.shown(), [['untitled:Untitled-2']]);
+		await pages.close();
+		await pages.close();
+		// nothing names Untitled-1 / -2 any more: the lowest number again
+		await pages.newPage();
+		assert.deepStrictEqual(wb.shown(), [['untitled:Untitled-1']]);
+	});
+
 	test('the list is in workspace storage: a workbench opened again (hibernation) has its tab pages', async () => {
 		let pages = create();
 		wb.open('a.ts');
-		await pages.newPage();
+		await pages.newPage(FILE);
 		wb.open('b.ts');
-		await pages.newPage();
+		await pages.newPage(FILE);
 		wb.open('c.ts');
 		await pages.goto(1);
 		assert.ok(storage.get(TAB_PAGES_STORAGE_KEY, StorageScope.WORKSPACE));
@@ -360,7 +422,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		const pages = create();
 		wb.open('a.ts');
 		assert.strictEqual(wb.bar, undefined);
-		await pages.newPage();
+		await pages.newPage(FILE);
 		wb.open('b.ts');
 		assert.ok(wb.bar);
 		assert.strictEqual(wb.barHeight, 22);

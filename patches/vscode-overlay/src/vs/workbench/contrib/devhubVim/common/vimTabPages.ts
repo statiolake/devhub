@@ -187,3 +187,30 @@ export function movePage(state: TabPagesState, from: number, to: number): TabPag
 	pages.splice(to, 0, page);
 	return { pages, current: pages.indexOf(state.pages[state.current]) };
 }
+
+/**
+ * `:tabnew` / `:tabe` with no file (only `++opt`s, or nothing): the new page
+ * gets a new empty buffer, as in Vim (VimTabPages.newPage).
+ */
+export function wantsEmptyBuffer(file: unknown): boolean {
+	return typeof file !== 'string' || !file.replace(/(^|\s)\+\+\S*/g, ' ').trim();
+}
+
+/**
+ * The number for the untitled editor (`Untitled-N`) a new page's empty
+ * buffer is: the lowest one no live untitled editor (`taken`) has and no
+ * saved layout (`savedState`, the working sets' stored JSON) names. A number
+ * used by another page's layout is not reused, so two pages never restore
+ * the same untitled editor as theirs.
+ */
+export function freeUntitledNumber(savedState: string | undefined, taken: (n: number) => boolean): number {
+	const saved = new Set<number>();
+	for (const m of (savedState ?? '').matchAll(/Untitled-(\d+)/g)) {
+		saved.add(Number(m[1]));
+	}
+	let n = 1;
+	while (saved.has(n) || taken(n)) {
+		n++;
+	}
+	return n;
+}

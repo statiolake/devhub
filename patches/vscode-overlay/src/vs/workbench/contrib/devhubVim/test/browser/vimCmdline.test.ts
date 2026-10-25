@@ -509,4 +509,21 @@ suite('DevHub Vim: the prompt line', () => {
 		const nav = defaults.filter(k => k.command === 'devhubVim.nav.enter');
 		assert.ok(nav.length > 0 && nav.every(k => k.when?.serialize().includes('!devhubVim.cmdlineFocus')));
 	});
+
+	test('where there is no text editor (an empty editor group, the side bar): CTRL-W enters nav, its keys run, and gt / gT are registered for the empty group', () => {
+		const defaults = KeybindingsRegistry.getDefaultKeybindings();
+		const applies = (command: string, ctx: Record<string, unknown>) => defaults.filter(k => k.command === command).some(k => !k.when || k.when.evaluate({ getValue: <T>(key: string) => ctx[key] as T }));
+		const on = { 'config.devhub.vim.enabled': true };
+		const emptyGroup = { ...on, editorAreaFocus: true, activeEditorGroupEmpty: true, 'devhubVim.mode': '' };
+		const sideBar = { ...on, sideBarFocus: true, 'devhubVim.mode': '' };
+		for (const ctx of [emptyGroup, sideBar]) {
+			assert.ok(applies('devhubVim.nav.enter', ctx), JSON.stringify(ctx));
+			for (const id of ['devhubVim.nav.left', 'devhubVim.nav.close', 'devhubVim.nav.quit', 'devhubVim.nav.moveToNewTabPage']) {
+				assert.ok(applies(id, { ...ctx, 'devhubVim.mode': 'nav' }), id);
+			}
+		}
+		assert.ok(!applies('devhubVim.nav.enter', { ...on, terminalFocus: true }));
+		assert.ok(applies('devhubVim.tabpage.next', emptyGroup) && applies('devhubVim.tabpage.previous', emptyGroup));
+		assert.ok(!applies('devhubVim.tabpage.next', sideBar));
+	});
 });

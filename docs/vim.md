@@ -239,6 +239,18 @@ other command can follow `CTRL-W` too: whatever the key is bound to while
 the prefix. Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
 edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mode-keys)).
 
+`CTRL-W` is `devhubVim.nav.enter` (no arguments), `when`
+`config.devhub.vim.enabled && devhubVim.mode != 'nav' && !devhubVim.cmdlineFocus
+&& (!devhubVim.active || !devhubVim.insert) && !terminalFocus && !inQuickInput`:
+it enters nav wherever the focus is but a Vim editor's insert mode (or with Vim
+keys pending), the terminal, the prompt line and quick input: a Vim editor, an
+[empty editor group](#tab-pages), the side bar, the panel, a list, an input.
+The keys after it are `devhubVim.nav.*` with `when` `config.devhub.vim.enabled
+&& devhubVim.mode == 'nav'`, wherever the focus is. To make another key the
+prefix too, bind it to the same command with the same `when` (`cmd+w`, say);
+with `{ "terminal": true }` it also enters nav from the terminal (then leave
+`!terminalFocus` out of its `when`), for a key the shell does not take.
+
 ## Tab pages
 
 A Vim tab page is a layout of windows of its own: within a tab page VS
@@ -252,7 +264,7 @@ copy).
 
 | Keys | Ex command | Does |
 |---|---|---|
-| | `:tabnew [file]` `:tabe[dit] [file]` | a new tab page after the current one, with the file or a new untitled one ([file names](#file-names) as `:e`; `%` is the file you were in) |
+| | `:tabnew [file]` `:tabe[dit] [file]` | a new tab page after the current one, with the file ([file names](#file-names) as `:e`; `%` is the file you were in) or, without one, a new empty buffer: an empty untitled editor, so the page has a Vim editor with the focus at once |
 | `gt` | `:tabn[ext]` | the next tab page (from the last to the first) |
 | `{N}gt` | `:tabn {N}` `:{N}tabn` | tab page N (nothing when there is none) |
 | `gT` `{N}gT` | `:tabp[revious] [N]` `:tabN[ext] [N]` | N tab pages back (round to the last) |
@@ -265,13 +277,41 @@ copy).
 | `CTRL-W T` | | move the current editor (window) to a new tab page (not when it is the only editor of the page) |
 | `:q` `:close` `ZZ` `ZQ` `CTRL-W q` `CTRL-W c` | | closing the last window of a tab page also closes the tab page (when there is another one) |
 
-The commands are `devhubVim.tabpage.new` `.next { count, arg }` `.previous
+The commands are `devhubVim.tabpage.new { file? }` (without a file: with an empty untitled editor) `.next { count, arg }` `.previous
 { count }` `.first` `.last` `.goto { index }` (1 is the first) `.close
 { count, arg }` `.only` `.move { arg }` `.moveEditorToNew` `.closeIfEmpty`
 `.list`; `gt` / `gT` are `devhubVim.run` of `.next` / `.previous` with
 `"count": "${rawCount}"` / `"${count}"`, keybindings like every other key, and
 the ones without arguments are in the Command Palette (`Vim: Next Tab Page`
 …), which also works where no Vim editor has the focus (an empty tab page).
+
+**The empty buffer of `:tabnew`** is an untitled editor (`Untitled-N`, with an
+N no other tab page's layout has, so two pages never share one). Empty, it is
+not modified: leaving the page, `:q`, `:tabc` close it without asking, and it
+goes away with the page. A page's working set keeps it as VS Code keeps any
+untitled editor, so going back to the page, a reload and hibernation open it
+again, empty (with `files.hotExit` off it is not kept, and the page comes back
+with no editor). Once it has text it is a modified editor like any other
+(below).
+
+**A tab page with no editor** (all its editors closed with `Cmd+W`, or restored
+without one): there is no Vim editor to take keys, but the focus is in the
+empty editor group (VS Code focuses it when its last editor closes and when a
+layout is applied), and these keys are bound there too, with `when`
+`editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus
+&& devhubVim.mode != 'nav'` (`VIM_WHEN.emptyGroup`):
+
+| Keys | Command |
+|---|---|
+| `gt` / `gT` | `devhubVim.tabpage.next` / `.previous` |
+| `{N}gt` / `{N}gT` (N 1-9) | the same with `{ "count": N }`: three-key chords (`3 g t`), as there is no Vim count there; `{N}` of two digits is not available, use `:tabn {N}` in a Vim editor, or `:tabs` |
+
+`CTRL-W` is workbench-wide anyway (see Windows above): in an empty group
+`CTRL-W c` / `CTRL-W q` close the tab page (its last window), `CTRL-W h j k l`
+move, `CTRL-W s v` split. If the group is not focused (after a click in the
+side bar, say), click into it or use `CTRL-W h j k l`. `:` does not open the
+prompt there (it needs a Vim editor): use the Command Palette (`Vim: New Tab
+Page` …).
 
 **The tab line**: with two tab pages or more (Vim's `'showtabline'` 1) a thin
 bar above the editor groups lists them: the number and the active window's

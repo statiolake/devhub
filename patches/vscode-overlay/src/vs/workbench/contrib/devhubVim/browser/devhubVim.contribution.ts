@@ -140,6 +140,7 @@ import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { KeybindingParser } from '../../../../base/common/keybindingParser.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { URI } from '../../../../base/common/uri.js';
 import { ModalTextInput } from '../../../../editor/browser/controller/editContext/modalTextInput.js';
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
@@ -456,6 +457,13 @@ class VimEditor extends Disposable implements IVimHost {
 	private writingFind = 0;
 	/** Between onWillChangeModel and onDidChangeModel: the find controller puts its stored toggles back, which nobody searched for. */
 	private modelChanging = false;
+	/**
+	 * The file this editor showed before its model changed: the steps of an ex
+	 * line go on after one of them took the editor's model away (`:tabnew`
+	 * applies an empty layout, which closes this editor's file before
+	 * `devhubVim.open` runs), and `%` is still the file the line ran in.
+	 */
+	private lastUri: URI | undefined;
 
 	constructor(
 		readonly editor: ICodeEditor,
@@ -480,7 +488,10 @@ class VimEditor extends Disposable implements IVimHost {
 		this._register(editor.onDidFocusEditorText(() => owner.update()));
 		this._register(editor.onDidBlurEditorText(() => owner.update()));
 		this.findController();
-		this._register(editor.onWillChangeModel(() => this.modelChanging = true));
+		this._register(editor.onWillChangeModel(() => {
+			this.modelChanging = true;
+			this.lastUri = editor.getModel()?.uri ?? this.lastUri;
+		}));
 		this._register(editor.onDidChangeModel(() => {
 			this.modelChanging = false;
 			this.engine.reset();
@@ -1224,7 +1235,10 @@ class VimEditor extends Disposable implements IVimHost {
 	executeCommand(command: string, args: unknown): Promise<unknown> {
 		if ((FROM_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
 			// `:e {file}` `:sp {file}` `:w {file}` `:!cmd` ...: `%` and the current directory are this editor's, even after a split moved the focus
-			args = { ...(args as object | undefined), from: this.model.uri.toString() };
+			const from = this.editor.getModel()?.uri ?? this.lastUri;
+			if (from) {
+				args = { ...(args as object | undefined), from: from.toString() };
+			}
 		}
 		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
 	}
@@ -1542,11 +1556,12 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		return active && isEditableElement(active) ? 'input' : 'other';
 	}
 
-	/** `<C-w>`: wait for one nav key. */
-	enterNav(): void {
+	/** `<C-w>`: wait for one nav key. `terminal`: also from the terminal (VimNavPrefix.enter). */
+	enterNav(args?: unknown): void {
 		const v = this.focused();
 		const focus = this.navFocus(v);
-		if (!this.nav.enter(focus) && focus === 'pending') {
+		const terminal = typeof args === 'object' && args !== null && (args as { terminal?: unknown }).terminal === true;
+		if (!this.nav.enter(focus, { terminal }) && focus === 'pending') {
 			// As in Vim, `<C-w>` is not a motion: it aborts the operator / count.
 			v?.execute('devhubVim.escape', undefined);
 		}
@@ -1685,13 +1700,13 @@ function ctrl(key: KeyCode): number[] {
 	return [KeyMod.CtrlCmd | key, KeyMod.WinCtrl | key];
 }
 
-function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim) => void): void {
+function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, weight: number, run: (vim: DevhubVim, args: unknown) => void): void {
 	KeybindingsRegistry.registerCommandAndKeybindingRule({
 		id, ...keys, when, weight,
-		handler: () => {
+		handler: (_accessor, args: unknown) => {
 			const vim = DevhubVim.instance;
 			if (vim) {
-				run(vim);
+				run(vim, args);
 			}
 		},
 	});
@@ -1701,12 +1716,16 @@ function rule(id: string, keys: Keys, when: ContextKeyExpression | undefined, we
 // there, vimKeymap.ts), not in the terminal (the shell's Ctrl-W), not in quick
 // input. While Vim is on it outranks Ctrl-W's defaults: Switch Window on macOS
 // (Cmd-W, close editor, is another key and untouched), close editor elsewhere.
+// Anywhere else it enters nav: a Vim editor in normal / visual mode, an empty
+// editor group, the side bar, the panel, a list or an input. A user's binding
+// of another key (`cmd+w`) can pass `{ "terminal": true }` to enter it from
+// the terminal too (its when without `!terminalFocus`).
 const [ctrlW, macCtrlW] = ctrl(KeyCode.KeyW);
 rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
 	ContextKeyExpr.and(ENABLED, VIM_MODE.notEqualsTo('nav'), VIM_CMDLINE_FOCUS.negate(),
 		ContextKeyExpr.or(VIM_ACTIVE.negate(), VIM_INSERT.negate()),
 		ContextKeyExpr.has('terminalFocus').negate(), ContextKeyExpr.has('inQuickInput').negate()),
-	KeybindingWeight.WorkbenchContrib + 50, vim => vim.enterNav());
+	KeybindingWeight.WorkbenchContrib + 50, (vim, args) => vim.enterNav(args));
 rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav([]));
 
 /** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs]. */

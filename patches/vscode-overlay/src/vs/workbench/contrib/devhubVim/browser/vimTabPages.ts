@@ -12,7 +12,8 @@
 // (../common/vimTabPages.ts keeps the list). Switching saves the live layout
 // as the current page's working set and applies the target's (then deletes
 // it: the live layout is the only copy of the current page); a new page
-// applies the `'empty'` working set.
+// applies the `'empty'` working set and, as Vim's new tab page has an empty
+// buffer, opens an empty untitled editor in it (newPage).
 //
 // Unsaved editors: applying a working set (EditorPart.applyState) first
 // closes the editors of the live layout with `excludeConfirming`, which skips
@@ -43,6 +44,8 @@
 import { $, addDisposableListener, clearNode, EventType } from '../../../../base/browser/dom.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
@@ -53,11 +56,14 @@ import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 
 import { GroupsOrder, IEditorGroupsService, IEditorPart } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
-import { afterClosing, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
+import { IUntitledTextEditorService } from '../../../services/untitled/common/untitledTextEditorService.js';
+import { afterClosing, freeUntitledNumber, wantsEmptyBuffer, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
 import './media/vimTabline.css';
 
 /** Workspace storage: the list of tab pages (common/vimTabPages.ts serializeTabPages). */
 export const TAB_PAGES_STORAGE_KEY = 'devhubVim.tabPages';
+/** Where VS Code keeps the working sets (EditorParts.EDITOR_WORKING_SETS_STORAGE_KEY, private there). */
+const EDITOR_WORKING_SETS_STORAGE_KEY = 'editor.workingSets';
 /** The tab line's height, in pixels. */
 export const TABLINE_HEIGHT = 22;
 
@@ -102,6 +108,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IUntitledTextEditorService private readonly untitledService: IUntitledTextEditorService,
 	) {
 		super();
 		const { state, stale, orphans } = restoreTabPages(storageService.get(TAB_PAGES_STORAGE_KEY, StorageScope.WORKSPACE), groups.getWorkingSets());
@@ -240,14 +247,41 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		return this.gotoBy((_, length) => length - 1);
 	}
 
-	/** `:tabnew`: an empty page after the current one (the file, if any, is opened by the next step, devhubVim.open). */
-	newPage(): Promise<void> {
+	/**
+	 * `:tabnew` / `:tabe [file]`: a new page after the current one. Without a
+	 * file (`file` empty, or only `++opt`s) it shows a new empty buffer, as in
+	 * Vim: an untitled editor, so the page has a Vim editor with the focus
+	 * from the start (`gt`, `:`, `CTRL-W` work at once). With one, the file is
+	 * opened by the next step (devhubVim.open, as `:e`).
+	 *
+	 * The empty untitled editor is not modified (an untitled one is only once
+	 * it has text), so leaving or closing the page closes it without asking
+	 * and disposes it; the page's working set keeps it as VS Code keeps any
+	 * untitled editor (UntitledTextEditorInputSerializer), so coming back, and
+	 * a reload or hibernation, opens it again, empty. When hot exit is off it
+	 * is not kept, and the page comes back with no editor (an empty group:
+	 * `gt` `gT` `CTRL-W` still work there, vimKeymap.ts VIM_WHEN.emptyGroup).
+	 * It is `Untitled-N` with an N no other page's layout names
+	 * (freeUntitledNumber): VS Code would hand out the number of an untitled
+	 * editor that is only closed (in another page's working set) again.
+	 */
+	newPage(file?: unknown): Promise<void> {
 		return this.run(async () => {
+			const editorFocused = this.layoutService.hasFocus(Parts.EDITOR_PART);
 			const pages = [...this._state.pages];
 			const at = this._state.current + 1;
 			pages.splice(at, 0, { ws: null, windows: [], active: 0 });
 			await this.switchTo(pages, at);
+			if (wantsEmptyBuffer(file)) {
+				await this.editorService.openEditor({ resource: this.newUntitledResource(), options: { pinned: true, preserveFocus: !editorFocused } });
+			}
 		});
+	}
+
+	private newUntitledResource(): URI {
+		const uri = (n: number) => URI.from({ scheme: Schemas.untitled, path: `Untitled-${n}` });
+		const n = freeUntitledNumber(this.storageService.get(EDITOR_WORKING_SETS_STORAGE_KEY, StorageScope.WORKSPACE), n => !!this.untitledService.get(uri(n)));
+		return uri(n);
 	}
 
 	/** `:tabc[lose] [N]`: the current page or page N; the last page cannot be closed (E784). */
@@ -424,7 +458,7 @@ registerWorkbenchContribution2(VimTabPages.ID, VimTabPages, WorkbenchPhase.Block
 
 // ---- commands (the ex commands and keys run them; the argument-less ones are in the Command Palette) ----
 
-type TabPageArgs = { count?: unknown; arg?: unknown; index?: unknown };
+type TabPageArgs = { count?: unknown; arg?: unknown; index?: unknown; file?: unknown };
 
 function tabPageCommand(id: string, title: ILocalizedString, f1: boolean, run: (pages: VimTabPages, args: TabPageArgs) => Promise<void>): void {
 	registerAction2(class extends Action2 {
@@ -440,7 +474,7 @@ function tabPageCommand(id: string, title: ILocalizedString, f1: boolean, run: (
 	});
 }
 
-tabPageCommand('devhubVim.tabpage.new', localize2('devhubVim.tabpage.new', "New Tab Page"), true, p => p.newPage());
+tabPageCommand('devhubVim.tabpage.new', localize2('devhubVim.tabpage.new', "New Tab Page"), true, (p, a) => p.newPage(a.file));
 tabPageCommand('devhubVim.tabpage.next', localize2('devhubVim.tabpage.next', "Next Tab Page"), true, (p, a) => p.next(a.count, a.arg));
 tabPageCommand('devhubVim.tabpage.previous', localize2('devhubVim.tabpage.previous', "Previous Tab Page"), true, (p, a) => p.previous(a.count));
 tabPageCommand('devhubVim.tabpage.first', localize2('devhubVim.tabpage.first', "First Tab Page"), true, p => p.first());

@@ -213,9 +213,11 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	edit: vs({ command: 'devhubVim.edit', args: { file: '${args}', bang: '${bang}' } }, { ...FILE, bang: true }),
 	enew: vs('workbench.action.files.newUntitledFile', { bang: true }),
 	// tab pages, each a layout of windows (editor groups): browser/vimTabPages.ts
-	// `:tabnew [file]`: a new tab page after this one, then the file (or a new untitled one) in it
-	tabnew: vs([TAB + 'new', OPEN({ untitled: true })], FILE),
-	tabedit: vs([TAB + 'new', OPEN({ untitled: true })], FILE),
+	// `:tabnew [file]`: a new tab page after this one; without a file it has a new empty
+	// buffer (an untitled editor, opened by devhubVim.tabpage.new itself), with one the
+	// file is opened in it (devhubVim.open, `%` is the file the line ran in)
+	tabnew: vs([{ command: TAB + 'new', args: { file: '${args}' } }, OPEN({})], FILE),
+	tabedit: vs([{ command: TAB + 'new', args: { file: '${args}' } }, OPEN({})], FILE),
 	// `:tabn` `:tabn {N}` `:{N}tabn` `:tabn $` `:tabn +{N}`; `:tabp [N]`; `:tabc [N | $ | +N | -N]`; `:tabm [N | +N | -N | $]`
 	tabnext: vs({ command: TAB + 'next', args: { count: '${count}', arg: '${args}' } }, { nargs: '?', range: 'count', defaultRange: 0 }),
 	tabprevious: vs({ command: TAB + 'previous', args: { count: '${count}' } }, { range: 'count', defaultRange: 0 }),

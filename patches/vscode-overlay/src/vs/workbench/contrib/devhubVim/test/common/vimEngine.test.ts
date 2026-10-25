@@ -901,6 +901,11 @@ suite('DevHub Vim keymap is keybindings', () => {
 		const ids = new Set(['devhubVim.motion', 'devhubVim.operator', 'devhubVim.textObjectPrefix', 'devhubVim.textObject', 'devhubVim.forceMotion', 'devhubVim.count', 'devhubVim.register', 'devhubVim.awaitChar', 'devhubVim.mode', 'devhubVim.action', 'devhubVim.mark', 'devhubVim.scroll', 'devhubVim.insert', 'devhubVim.run', 'devhubVim.repeat', 'devhubVim.cmdline', 'devhubVim.ex', 'devhubVim.escape']);
 		const plainInInsert = new Set(['hideSuggestWidget', 'editor.action.inlineSuggest.hide', 'deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
 		for (const b of DEFAULT_KEYBINDINGS) {
+			if (b.when === VIM_WHEN.emptyGroup) {
+				// where no Vim editor is (an empty editor group): tab page commands only
+				assert.ok(b.command.startsWith('devhubVim.tabpage.'), b.command);
+				continue;
+			}
 			assert.ok(ids.has(b.command) || (plainInInsert.has(b.command) && b.when.includes('devhubVim.insert')), b.command);
 			assert.ok(b.when.includes('devhubVim.active'), b.key);
 			assert.ok(b.key.split(' ').length <= 3, b.key);
@@ -1434,8 +1439,9 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(await run('vs'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true }]]);
 		assert.deepStrictEqual(await run('new n.txt'), [['workbench.action.splitEditorUp'], ['devhubVim.open', { file: 'n.txt', replace: true, untitled: true }]]);
 		assert.deepStrictEqual(await run('vne'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true, untitled: true }]]);
-		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '~/notes.md', untitled: true }]]);
-		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '', untitled: true }]]);
+		// :tabnew / :tabe: the new page opens its empty buffer itself when there is no file; devhubVim.open the file
+		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.tabpage.new', { file: '~/notes.md' }], ['devhubVim.open', { file: '~/notes.md' }]]);
+		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.tabpage.new', { file: '' }], ['devhubVim.open', { file: '' }]]);
 		// 'splitbelow' as an override (the user's settings): the split of their choice, the file passed on with ${args};
 		// the built-in's nargs and completion are kept
 		const shared = new VimSharedState();
@@ -2008,6 +2014,10 @@ suite('DevHub Vim <C-w> nav prefix', () => {
 		for (const focus of ['normal', 'input', 'other'] as VimNavFocus[]) {
 			assert.strictEqual(new VimNavPrefix().enter(focus), true, focus);
 		}
+		// a binding on a key the shell does not take (cmd+w, { terminal: true }): also from the terminal; never from insert mode or with keys pending
+		assert.strictEqual(new VimNavPrefix().enter('terminal', { terminal: true }), true);
+		assert.strictEqual(new VimNavPrefix().enter('insert', { terminal: true }), false);
+		assert.strictEqual(new VimNavPrefix().enter('pending', { terminal: true }), false);
 	});
 
 	test('whatever the key is bound to while nav waits runs once after <C-w>, then the prefix is over', () => {
@@ -3549,6 +3559,30 @@ suite('DevHub Vim: tab pages are keys and ex commands (browser/vimTabPages.ts do
 		assert.deepStrictEqual(keys, ['g shift+t', 'g t']);
 	});
 
+	test('in an empty editor group (no Vim editor): gt gT, {N}gt {N}gT for N 1-9 as three-key chords; not in a Vim editor, nav or an input', () => {
+		// a focused empty group: the editor part's editorAreaFocus, activeEditorGroupEmpty, no text input, no Vim editor
+		const empty = { editorAreaFocus: true, activeEditorGroupEmpty: true, 'devhubVim.mode': '' };
+		const at = (key: string, ctx: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(b.when, ctx)).map(b => b.args === undefined ? [b.command] : [b.command, b.args]);
+		assert.deepStrictEqual(at('g t', empty), [['devhubVim.tabpage.next']]);
+		assert.deepStrictEqual(at('g shift+t', empty), [['devhubVim.tabpage.previous']]);
+		assert.deepStrictEqual(at('3 g t', empty), [['devhubVim.tabpage.next', { count: 3 }]]);
+		assert.deepStrictEqual(at('9 g shift+t', empty), [['devhubVim.tabpage.previous', { count: 9 }]]);
+		assert.deepStrictEqual(at('0 g t', empty), []);
+		// each key resolves to one binding: the empty group's never apply where a Vim editor has the focus, and the editor's never here
+		const normal = { textInputFocus: true, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal', editorAreaFocus: true };
+		assert.deepStrictEqual(at('g t', normal), [['devhubVim.run', { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }]]);
+		assert.deepStrictEqual(at('3 g t', normal), []);
+		for (const ctx of [
+			{ ...empty, 'devhubVim.mode': 'nav' }, // after CTRL-W, g is that prefix's key
+			{ ...empty, inputFocus: true }, // an input in the editor area
+			{ ...empty, editorAreaFocus: false }, // the side bar, the panel
+			{ ...empty, activeEditorGroupEmpty: false }, // a group with an editor that is no text editor (settings, an image)
+		]) {
+			assert.deepStrictEqual(at('g t', ctx), [], JSON.stringify(ctx));
+		}
+		assert.deepStrictEqual(VIM_WHEN.emptyGroup, `editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus && devhubVim.mode != 'nav'`);
+	});
+
 	test(':tab* commands and their counts and arguments', async () => {
 		const next = (count: number, arg = '') => [['devhubVim.tabpage.next', { count, arg }]];
 		assert.deepStrictEqual(await calls(':tabn<CR>'), next(0));
@@ -3569,7 +3603,7 @@ suite('DevHub Vim: tab pages are keys and ex commands (browser/vimTabPages.ts do
 		assert.deepStrictEqual(await calls(':tabmove +1<CR>'), [['devhubVim.tabpage.move', { arg: '+1' }]]);
 		assert.deepStrictEqual(await calls(':tabm 0<CR>'), [['devhubVim.tabpage.move', { arg: '0' }]]);
 		assert.deepStrictEqual(await calls(':tabs<CR>'), [['devhubVim.tabpage.list']]);
-		assert.deepStrictEqual(await calls(':tabnew<CR>'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '', untitled: true }]]);
+		assert.deepStrictEqual(await calls(':tabnew<CR>'), [['devhubVim.tabpage.new', { file: '' }], ['devhubVim.open', { file: '' }]]);
 		assert.deepStrictEqual(await calls(':q<CR>'), [['workbench.action.closeActiveEditor'], ['devhubVim.tabpage.closeIfEmpty']]);
 		assert.deepStrictEqual(await calls(':clo<CR>'), [['devhubVim.tabpage.closeWindow']]);
 		// Vim's errors for what these do not take

@@ -89,6 +89,19 @@ export const VIM_WHEN = {
 	 * editor's own ones do not apply (EditorContextKeys.devhubVimAllowsTyping)
 	 */
 	notTyping: `${BASE} && !devhubVim.insert && devhubVim.mode != 'nav'`,
+	/**
+	 * the keyboard focus is in an editor group with no editor (a tab page
+	 * whose editors were all closed, one restored without any): no Vim editor
+	 * is there to take keys, so the few Vim commands that make sense without a
+	 * buffer (`gt` `gT`) are bound here. `editorAreaFocus` is the editor
+	 * part's scoped key, true while the focus is anywhere in the editor area;
+	 * an empty group's element is focusable (EditorGroupView: tabIndex 0) and
+	 * gets the focus when its last editor closes and when a working set is
+	 * applied (applyWorkingSet focuses the active group). `activeEditorGroupEmpty`
+	 * says the active (= focused) group has no editor; `!textInputFocus` /
+	 * `!inputFocus`: not a widget's input in the editor area.
+	 */
+	emptyGroup: `editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus && devhubVim.mode != 'nav'`,
 } as const;
 
 const W = VIM_WHEN;
@@ -373,6 +386,14 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	// gt {count}gt gT {count}gT: tab pages (browser/vimTabPages.ts)
 	{ key: 'g t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }, when: W.normal },
 	{ key: 'g shift+t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.previous', args: { count: '${count}' } }, when: W.normal },
+	// ... and in an empty editor group, where there is no Vim editor (and so no count
+	// state): `gt` `gT`, and `{N}gt` / `{N}gT` for a one-digit N as chords of three keys
+	{ key: 'g t', command: 'devhubVim.tabpage.next', when: W.emptyGroup },
+	{ key: 'g shift+t', command: 'devhubVim.tabpage.previous', when: W.emptyGroup },
+	...['1', '2', '3', '4', '5', '6', '7', '8', '9'].flatMap((d): VimKeybinding[] => [
+		{ key: `${d} g t`, command: 'devhubVim.tabpage.next', args: { count: Number(d) }, when: W.emptyGroup },
+		{ key: `${d} g shift+t`, command: 'devhubVim.tabpage.previous', args: { count: Number(d) }, when: W.emptyGroup },
+	]),
 	// CTRL-^: the alternate file
 	run('ctrl+6', 'workbench.action.openPreviousRecentlyUsedEditorInGroup', W.normal, { count: 'ignore' }),
 

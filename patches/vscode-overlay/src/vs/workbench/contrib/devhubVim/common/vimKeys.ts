@@ -126,10 +126,12 @@ export class VimNavPrefix {
 	 * `<C-w>` means something else: in a Vim editor's insert mode (delete the
 	 * word before the caret, as in Vim), with Vim keys pending (Vim's `<C-w>`
 	 * aborts an operator; the caller cancels them) and in the terminal (the
-	 * shell's delete-word).
+	 * shell's delete-word). `terminal`: also from the terminal, for a binding
+	 * on a key the shell does not take (`cmd+w` → `devhubVim.nav.enter`
+	 * `{ "terminal": true }`).
 	 */
-	enter(focus: VimNavFocus): boolean {
-		if (focus === 'insert' || focus === 'pending' || focus === 'terminal') {
+	enter(focus: VimNavFocus, options: { readonly terminal?: boolean } = {}): boolean {
+		if (focus === 'insert' || focus === 'pending' || (focus === 'terminal' && !options.terminal)) {
 			return false;
 		}
 		this._active = true;
