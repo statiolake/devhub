@@ -370,8 +370,9 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	run('] q', 'editor.action.marker.nextInFiles'), run('[ q', 'editor.action.marker.prevInFiles'),
 	run('] b', 'workbench.action.nextEditor'), run('[ b', 'workbench.action.previousEditor'),
 	run('] shift+b', 'workbench.action.lastEditorInGroup', W.normal, { count: 'ignore' }), run('[ shift+b', 'workbench.action.firstEditorInGroup', W.normal, { count: 'ignore' }),
-	// gt gT: tab pages are editors here
-	run('g t', 'workbench.action.nextEditor'), run('g shift+t', 'workbench.action.previousEditor'),
+	// gt {count}gt gT {count}gT: tab pages (browser/vimTabPages.ts)
+	{ key: 'g t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }, when: W.normal },
+	{ key: 'g shift+t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.previous', args: { count: '${count}' } }, when: W.normal },
 	// CTRL-^: the alternate file
 	run('ctrl+6', 'workbench.action.openPreviousRecentlyUsedEditorInGroup', W.normal, { count: 'ignore' }),
 

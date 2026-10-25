@@ -124,6 +124,9 @@
 //   `devhubVim.mode == 'nav'`). It is one-shot (common/vimKeys.ts
 //   VimNavPrefix). In a Vim editor's insert
 //   mode Ctrl-W is Vim's delete-word-before-the-caret.
+// * Tab pages (`gt` `:tabnew` `CTRL-W T` ...) are layouts of editor groups
+//   kept as VS Code editor working sets, with a tab line above the groups:
+//   vimTabPages.ts.
 //
 // User documentation: docs/vim.md in the DevHub repository.
 
@@ -182,6 +185,7 @@ import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS,
 import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
+import './vimTabPages.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 
 /** The workbench commands an ex command runs that take the file it ran in (`from`). */
@@ -1724,8 +1728,10 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
 	['splitShift', 'shift+s', false, ['workbench.action.splitEditorUp']],
 	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
 	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
-	['close', 'c', false, ['workbench.action.closeGroup']],
-	['quit', 'q', true, ['workbench.action.closeActiveEditor']],
+	// the last window of a tab page closes the tab page (vimTabPages.ts)
+	['close', 'c', false, ['devhubVim.tabpage.closeWindow']],
+	['quit', 'q', true, ['workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']],
+	['moveToNewTabPage', 'shift+t', false, ['devhubVim.tabpage.moveEditorToNew']],
 	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
 	['equalize', '=', false, ['workbench.action.evenEditorWidths']],
 	['maximizeHeight', 'shift+-', false, ['workbench.action.toggleMaximizeEditorGroup']],

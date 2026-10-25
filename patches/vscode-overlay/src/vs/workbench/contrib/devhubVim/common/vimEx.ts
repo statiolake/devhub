@@ -100,7 +100,8 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['wq', 'wq'], ['wqall', 'wqa', 'xall'], ['xit', 'x'], ['xall', 'xa'], ['exit', 'exi', 'xit'],
 	['split', 'sp'], ['vsplit', 'vs'], ['new', 'new'], ['vnew', 'vne'], ['edit', 'e'], ['enew', 'ene'],
 	['tabnew', 'tabnew'], ['tabedit', 'tabe'], ['tabnext', 'tabn'], ['tabprevious', 'tabp'], ['tabNext', 'tabN', 'tabprevious'],
-	['tabclose', 'tabc'], ['tabonly', 'tabo'], ['tabfirst', 'tabfir'], ['tablast', 'tabl'],
+	['tabclose', 'tabc'], ['tabonly', 'tabo'], ['tabfirst', 'tabfir'], ['tabrewind', 'tabr', 'tabfirst'], ['tablast', 'tabl'],
+	['tabmove', 'tabm'], ['tabs', 'tabs'],
 	['bnext', 'bn'], ['bprevious', 'bp'], ['bNext', 'bN', 'bprevious'], ['bdelete', 'bd'], ['bwipeout', 'bw', 'bdelete'],
 	['bfirst', 'bf'], ['brewind', 'br', 'bfirst'], ['blast', 'bl'], ['buffers', 'buffers'], ['files', 'files', 'buffers'], ['ls', 'ls', 'buffers'],
 	['buffer', 'b'], ['saveas', 'sav'], ['close', 'clo'], ['only', 'on'],
@@ -155,6 +156,9 @@ const SAVE_ALL = 'workbench.action.files.saveAll';
 const CLOSE = 'workbench.action.closeActiveEditor';
 const CLOSE_ALL = 'workbench.action.closeAllEditors';
 const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
+/** Vim: closing the last window of a tab page closes the tab page (browser/vimTabPages.ts). */
+const CLOSE_EMPTY_TAB = 'devhubVim.tabpage.closeIfEmpty';
+const TAB = 'devhubVim.tabpage.';
 
 type StepsInput = string | ExStep | readonly (string | ExStep)[];
 
@@ -194,10 +198,10 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%', shell: true }),
 	wall: vs(SAVE_ALL, { bang: true }),
 	update: vs(SAVE, { bang: true }),
-	quit: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true }),
+	quit: vs([...withBang(CLOSE, REVERT_CLOSE), { command: CLOSE_EMPTY_TAB }], { bang: true }),
 	qall: vs(withBang(CLOSE_ALL, ['workbench.action.files.revert', CLOSE_ALL]), { bang: true }),
-	wq: vs([SAVE, CLOSE], { bang: true }),
-	xit: vs([SAVE, CLOSE], { bang: true }),
+	wq: vs([SAVE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
+	xit: vs([SAVE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
 	xall: vs([SAVE_ALL, CLOSE_ALL], { bang: true }),
 	// 'nosplitbelow' / 'nosplitright' (the defaults): the new window is above / left, and gets the focus
 	// `:sp {file}` ...: the split, then the file in the new window (devhubVim.open)
@@ -208,14 +212,19 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	// `:e {file}` opens it (a new file at that path when it does not exist), `:e` reloads (E37 when modified), `:e!` discards the changes
 	edit: vs({ command: 'devhubVim.edit', args: { file: '${args}', bang: '${bang}' } }, { ...FILE, bang: true }),
 	enew: vs('workbench.action.files.newUntitledFile', { bang: true }),
-	tabnew: vs(OPEN({ untitled: true }), FILE),
-	tabedit: vs(OPEN({ untitled: true }), FILE),
-	tabnext: vs('workbench.action.nextEditor', { nargs: '?' }),
-	tabprevious: vs('workbench.action.previousEditor', { nargs: '?' }),
-	tabclose: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true, nargs: '?' }),
-	tabonly: vs('workbench.action.closeOtherEditors', { bang: true, nargs: '?' }),
-	tabfirst: vs('workbench.action.firstEditorInGroup'),
-	tablast: vs('workbench.action.lastEditorInGroup'),
+	// tab pages, each a layout of windows (editor groups): browser/vimTabPages.ts
+	// `:tabnew [file]`: a new tab page after this one, then the file (or a new untitled one) in it
+	tabnew: vs([TAB + 'new', OPEN({ untitled: true })], FILE),
+	tabedit: vs([TAB + 'new', OPEN({ untitled: true })], FILE),
+	// `:tabn` `:tabn {N}` `:{N}tabn` `:tabn $` `:tabn +{N}`; `:tabp [N]`; `:tabc [N | $ | +N | -N]`; `:tabm [N | +N | -N | $]`
+	tabnext: vs({ command: TAB + 'next', args: { count: '${count}', arg: '${args}' } }, { nargs: '?', range: 'count', defaultRange: 0 }),
+	tabprevious: vs({ command: TAB + 'previous', args: { count: '${count}' } }, { range: 'count', defaultRange: 0 }),
+	tabclose: vs({ command: TAB + 'close', args: { count: '${count}', arg: '${args}' } }, { bang: true, nargs: '?', range: 'count', defaultRange: 0 }),
+	tabonly: vs(TAB + 'only', { bang: true }),
+	tabfirst: vs(TAB + 'first'),
+	tablast: vs(TAB + 'last'),
+	tabmove: vs({ command: TAB + 'move', args: { arg: '${args}' } }, { nargs: '?' }),
+	tabs: vs(TAB + 'list'),
 	bnext: vs('workbench.action.nextEditor', { bang: true, nargs: '?' }),
 	bprevious: vs('workbench.action.previousEditor', { bang: true, nargs: '?' }),
 	bdelete: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true, nargs: '*', complete: 'buffer' }),
@@ -225,7 +234,8 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	buffer: vs({ command: 'workbench.action.quickOpen', args: 'edt ${args}' }, { bang: true, nargs: '?', complete: 'buffer' }),
 	// `:sav[!] {file}`: written there (E13 when it exists, without !), and the editor is that file's (vimEngine.ts exSaveAs)
 	saveas: vim('saveas', { range: 'none', bang: true, nargs: '1', complete: 'file' }),
-	close: vs('workbench.action.closeGroup', { bang: true }),
+	// the window; the last one of a tab page closes the tab page (browser/vimTabPages.ts)
+	close: vs(TAB + 'closeWindow', { bang: true }),
 	only: vs('workbench.action.closeEditorsInOtherGroups', { bang: true }),
 	cnext: vs('editor.action.marker.nextInFiles', { bang: true }),
 	cprevious: vs('editor.action.marker.prevInFiles', { bang: true }),

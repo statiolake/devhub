@@ -229,7 +229,8 @@ every selected line, Neovim `v_@-default`).
 (move between parts), `w W p t b` (editor groups), `s v n` (split above /
 left, as 'nosplitbelow' 'nosplitright'; `n` with a new file), `c` (close the
 group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
-(maximise), `+ - < >` (resize), `H J K L` (move the group), `d` (the
+(maximise), `+ - < >` (resize), `H J K L` (move the group), `T` (move the
+editor to a new [tab page](#tab-pages)), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
 a split / peek). In insert mode `CTRL-W` deletes a word, as in Vim. Any
 other command can follow `CTRL-W` too: whatever the key is bound to while
@@ -237,6 +238,84 @@ other command can follow `CTRL-W` too: whatever the key is bound to while
 (see [Customising keys](#customising-keys)); a key bound to nothing only ends
 the prefix. Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
 edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mode-keys)).
+
+## Tab pages
+
+A Vim tab page is a layout of windows of its own: within a tab page VS
+Code's editor groups are the windows (`CTRL-W s v h j k l …`), and each tab
+page has its own groups, their sizes and their editors. A tab page is a VS
+Code editor *working set* (the mechanism SCM's per-branch working sets use):
+the current tab page is the live layout, every other one is a saved working
+set. Switching saves the live layout as the current page's working set and
+applies the other page's (which is then deleted: the live layout is its only
+copy).
+
+| Keys | Ex command | Does |
+|---|---|---|
+| | `:tabnew [file]` `:tabe[dit] [file]` | a new tab page after the current one, with the file or a new untitled one ([file names](#file-names) as `:e`; `%` is the file you were in) |
+| `gt` | `:tabn[ext]` | the next tab page (from the last to the first) |
+| `{N}gt` | `:tabn {N}` `:{N}tabn` | tab page N (nothing when there is none) |
+| `gT` `{N}gT` | `:tabp[revious] [N]` `:tabN[ext] [N]` | N tab pages back (round to the last) |
+| | `:tabfir[st]` `:tabr[ewind]` `:tabl[ast]` | the first / last tab page |
+| | `:tabn $` `:tabn +N` `:tabn -N` | the last / N after / N before |
+| | `:tabc[lose][!] [N \| $ \| +N \| -N]` | close the current (or that) tab page; the next one becomes current (the previous from the last); `E784` for the last one |
+| | `:tabo[nly][!]` | close every other tab page |
+| | `:tabm[ove] [N \| +N \| -N \| $]` | move the current tab page after page N (`0`: first; none or `$`: last), or N places right / left |
+| | `:tabs` | the tab pages and their windows, in a quick pick; picking one goes there |
+| `CTRL-W T` | | move the current editor (window) to a new tab page (not when it is the only editor of the page) |
+| `:q` `:close` `ZZ` `ZQ` `CTRL-W q` `CTRL-W c` | | closing the last window of a tab page also closes the tab page (when there is another one) |
+
+The commands are `devhubVim.tabpage.new` `.next { count, arg }` `.previous
+{ count }` `.first` `.last` `.goto { index }` (1 is the first) `.close
+{ count, arg }` `.only` `.move { arg }` `.moveEditorToNew` `.closeIfEmpty`
+`.list`; `gt` / `gT` are `devhubVim.run` of `.next` / `.previous` with
+`"count": "${rawCount}"` / `"${count}"`, keybindings like every other key, and
+the ones without arguments are in the Command Palette (`Vim: Next Tab Page`
+…), which also works where no Vim editor has the focus (an empty tab page).
+
+**The tab line**: with two tab pages or more (Vim's `'showtabline'` 1) a thin
+bar above the editor groups lists them: the number and the active window's
+editor, the number of windows when there are several, the current page in the
+active tab colours (`tab.activeBackground`, `tab.activeForeground`,
+`tab.activeBorderTop`; the others in `tab.inactive*`, the bar in
+`editorGroupHeader.tabsBackground`). A click goes to that page. Each group
+keeps its own editor tabs as `workbench.editor.showTabs` says;
+`"workbench.editor.showTabs": "single"` (one title per window, as Vim's
+status lines) gives the Vim feel, `"none"` hides them. DevHub does not change
+the setting.
+
+**Unsaved editors are never asked about or lost by a tab page switch.**
+Applying a working set (VS Code's `EditorPart.applyState`) closes the editors
+of the live layout with `excludeConfirming`, which skips every editor whose
+close would ask (a modified one, or one with a close handler that asks), and
+opens the ones it skipped again, pinned and inactive, in the active group of
+the layout it applied (unless that layout already has them). So a modified
+editor goes along into the page you switch to, as one more editor of its
+active group, until it is saved (Vim's hidden modified buffer, but listed);
+the same when you close its page. A modified editor is therefore always in the
+live layout, and closing another page (`:tabc N`, `:tabo`) never drops one.
+
+**Persistence**: the working sets are in workspace storage (VS Code's
+`editor.workingSets`), and so is the list (`devhubVim.tabPages`: the order,
+the current page, what each page shows); the current page's layout is the
+editor part's own restored state. A workbench that DevHub closes for
+hibernation and opens again comes back with its tab pages, as after a reload.
+
+**How long a switch takes**: every switch writes one line to the console
+(Help: Toggle Developer Tools, Console):
+`[devhubVim] tabpage switch 38 ms (save 1 ms, apply 37 ms; tab page 1 -> 2;
+3 editors in 2 groups)`. The save is the live layout serialized; the apply
+is VS Code closing the layout's editors and building the other one (its
+groups, and each group's active editor opened, its text read again when its
+model was let go).
+
+Not like Vim: a modified editor follows you (above) rather than staying hidden;
+`CTRL-W T` on a modified editor leaves it in the old page's layout too (closing
+it there would ask); `:tabnew` and `:tabc` take no `[N]` position (`:0tabnew`,
+`:.tabnew`), `:tab {cmd}`, `:tabdo`, `:tabf[ind]`, `CTRL-W gt` / `gT`,
+`'showtabline'` other than 1 and `'tabline'` do not exist; `:qa` closes the
+editors of the current tab page only; a tab page's working set does not hold
+the panel or the side bars.
 
 ## vim-surround
 
@@ -355,7 +434,7 @@ does too; the other cursors are left as they are.
 | `[<Space>` `]<Space>` | blank line above / below | `devhubVim.action blankLineAbove` / `blankLineBelow` |
 | `{Visual}an` `{Visual}in` | outer / inner syntax node (0.12) | `editor.action.smartSelect.expand` / `.shrink` |
 | `gx` | open the link | `editor.action.openLink` |
-| `gt` `gT` | next / previous tab page | `workbench.action.nextEditor` / `previousEditor` |
+| `gt` `gT` | next / previous tab page | `devhubVim.tabpage.next` / `previous` (a count is a page number / how many back, see [Tab pages](#tab-pages)) |
 | `CTRL-^` | alternate file | `workbench.action.openPreviousRecentlyUsedEditorInGroup` |
 
 Neovim's `[l ]l [t ]t [a ]a [Q ]Q` (location list, tags, argument list,
@@ -481,7 +560,7 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.scroll` | `{ "by": "line" \| "halfPage" \| "page", "direction": "up" \| "down" }` or `{ "to": "top" \| "center" \| "bottom", "firstNonBlank"?: bool }` | `CTRL-E CTRL-Y CTRL-D CTRL-U CTRL-F CTRL-B zt zz zb z<CR> z. z-` |
 | `devhubVim.insert` | `{ "action": name, "char"?: c }` | insert-mode `CTRL-W CTRL-U CTRL-T CTRL-D CTRL-E CTRL-Y CTRL-A CTRL-O CTRL-R`, replace-mode `<BS>` |
 | `devhubVim.run` | `{ "command": id, "args"?: any, "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `K` … |
-| `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `u CTRL-R` (of `undo` / `redo`); `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
+| `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `u CTRL-R` (of `undo` / `redo`); `]d [d ]q [q ]b [b zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
 | `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` (opens [the prompt](#the-prompt); vim-surround's tag prompt `<` opens by itself) |
 | `devhubVim.cmdline.submit` `.cancel` `.historyPrev` `.historyNext` `.insertRegister` `.deleteWord` `.deleteToStart` `.complete` | see [the prompt](#the-prompt) | in the prompt line |
 | `devhubVim.search` | `{ "pattern": p, "backwards"?: bool }` | (what `/` runs) |
@@ -490,7 +569,7 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.substituteConfirm` | `{ "char": "y" \| "n" \| "a" \| "q" \| "l" }` | (the `:s///c` question) |
 | `devhubVim.escape` | `{ "interrupt"?: bool }` | `<Esc> CTRL-[ CTRL-C` |
 | `devhubVim.nav.enter` | — | `CTRL-W` |
-| `devhubVim.nav.<name>` | — | after `CTRL-W`: `left down up right` (`h j k l`, also with CTRL), `leftArrow downArrow upArrow rightArrow`, `next` (`w`), `previous` (`W`), `lastAccessed` (`p`), `top` (`t`), `bottom` (`b`), `split` / `splitShift` (`s S`), `vsplit` (`v`), `new` (`n`), `close` (`c`), `quit` (`q`), `only` (`o`), `equalize` (`=`), `maximizeHeight` (`_`), `maximizeWidth` (`\|`), `increaseHeight` (`+`), `decreaseHeight` (`-`), `decreaseWidth` (`<`), `increaseWidth` (`>`), `moveFarLeft/Down/Up/Right` (`H J K L`), `diagnostic` (`d`), `definitionSplit` (`]`), `definitionPreview` (`}`), `escape` |
+| `devhubVim.nav.<name>` | — | after `CTRL-W`: `left down up right` (`h j k l`, also with CTRL), `leftArrow downArrow upArrow rightArrow`, `next` (`w`), `previous` (`W`), `lastAccessed` (`p`), `top` (`t`), `bottom` (`b`), `split` / `splitShift` (`s S`), `vsplit` (`v`), `new` (`n`), `close` (`c`), `quit` (`q`), `only` (`o`), `equalize` (`=`), `maximizeHeight` (`_`), `maximizeWidth` (`\|`), `increaseHeight` (`+`), `decreaseHeight` (`-`), `decreaseWidth` (`<`), `increaseWidth` (`>`), `moveFarLeft/Down/Up/Right` (`H J K L`), `moveToNewTabPage` (`T`), `diagnostic` (`d`), `definitionSplit` (`]`), `definitionPreview` (`}`), `escape` |
 
 ### Counts, `devhubVim.run` and `devhubVim.repeat`
 
@@ -533,8 +612,8 @@ The defaults that a count repeats (`3]d`) are `devhubVim.repeat` of
 plain `devhubVim.run`. Examples:
 
 ```jsonc
-// Vim's {count}gt: go to editor {count}
-{ "key": "g t", "command": "devhubVim.run",
+// {count}gb: go to editor {count} of the group
+{ "key": "g b", "command": "devhubVim.run",
   "args": { "command": "workbench.action.openEditorAtIndex", "args": "${count}" },
   "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
 // 3<C-n>: the third next problem
@@ -1044,7 +1123,8 @@ VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
 `:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
 [File names](#file-names)) `:tabn[ext]` `:tabp[revious]`
-`:tabc[lose]` `:tabo[nly]` `:tabfir[st]` `:tabl[ast]` `:bn[ext]` `:bp[revious]`
+`:tabc[lose]` `:tabo[nly]` `:tabfir[st]` `:tabl[ast]` `:tabm[ove]` `:tabs`
+(see [Tab pages](#tab-pages)) `:bn[ext]` `:bp[revious]`
 `:bd[elete][!]` `:bf[irst]` `:bl[ast]` `:ls` `:buffers` `:b[uffer] {name}`
 `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
@@ -1503,7 +1583,7 @@ otherwise.
   (screen-line column motions), `[m ]m`, `[* ]*` `[/ ]/`, `zh zl zs ze`
   (horizontal scrolling), `zn zN zi zx`, the command-line window (`q:`), `:let`
   and other Vimscript, `:make`, the location list
-  / tags / argument list, `CTRL-W x r T`, `'scrolloff'` (VS Code's
+  / tags / argument list, `CTRL-W x r`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
 * Patterns are JavaScript regular expressions (VS Code's find), not Vim's:
   `\%V`, `\%23l`, `\v` and the other Vim-only atoms do not exist. A match

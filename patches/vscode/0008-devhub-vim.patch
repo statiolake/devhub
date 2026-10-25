@@ -588,6 +588,56 @@ index 0d95d0bf..5ac0b265 100644
  	public setExtensionKeybindings(rules: IExtensionKeybindingRule[]): void {
  		const result: IKeybindingItem[] = [];
  		let keybindingsLen = 0;
+diff --git a/src/vs/workbench/browser/parts/editor/editorPart.ts b/src/vs/workbench/browser/parts/editor/editorPart.ts
+index afa694239..29646028d 100644
+--- a/src/vs/workbench/browser/parts/editor/editorPart.ts
++++ b/src/vs/workbench/browser/parts/editor/editorPart.ts
+@@ -1427,6 +1427,7 @@ export class EditorPart extends Part<IEditorPartMemento> implements IEditorPart,
+ 	}
+ 
+ 	override layout(width: number, height: number, top: number, left: number): void {
++		this.devhubLastLayout = [width, height, top, left];
+ 		this.top = top;
+ 		this.left = left;
+ 
+@@ -1465,11 +1466,35 @@ export class EditorPart extends Part<IEditorPartMemento> implements IEditorPart,
+ 			this.element.classList.remove('floating-editor-outer-left', 'floating-editor-outer-right', 'floating-editor-outer-top', 'floating-editor-outer-bottom');
+ 		}
+ 
++		// DevHub: the bar above the groups (setDevhubTopBar) takes its height off the top
++		const devhubBar = Math.min(height, this.devhubTopBar?.height ?? 0);
++
+ 		// Layout contents
+-		const contentAreaSize = super.layoutContents(width, height).contentSize;
++		const contentAreaSize = super.layoutContents(width, height - devhubBar).contentSize;
+ 
+ 		// Layout editor container
+-		this.doLayout(Dimension.lift(contentAreaSize), top, left);
++		this.doLayout(Dimension.lift(contentAreaSize), top + devhubBar, left);
++	}
++
++	private devhubTopBar: { readonly element: HTMLElement; readonly height: number } | undefined;
++	private devhubLastLayout: [number, number, number, number] | undefined;
++
++	/**
++	 * DevHub: `element` shown above the editor groups, `height` pixels of the
++	 * part (the groups get the rest), or no bar (`undefined`). devhubVim's tab
++	 * line (contrib/devhubVim/browser/vimTabPages.ts) is one.
++	 */
++	setDevhubTopBar(element: HTMLElement | undefined, height = 0): void {
++		if (this.devhubTopBar?.element !== element) {
++			this.devhubTopBar?.element.remove();
++			if (element) {
++				this.element.insertBefore(element, this.container);
++			}
++		}
++		this.devhubTopBar = element ? { element, height } : undefined;
++		if (this.devhubLastLayout) {
++			this.layout(...this.devhubLastLayout);
++		}
+ 	}
+ 
+ 	private doLayout(dimension: Dimension, top = this.top, left = this.left): void {
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
 index 74be4cac..a7cc22aa 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts

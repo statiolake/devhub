@@ -612,7 +612,8 @@ suite('DevHub Vim engine', () => {
 		assert.ok(r.vim.status().includes('Not an editor command'));
 		const wq = run('|a', ':wq<CR>');
 		await flush();
-		assert.deepStrictEqual(wq.host.commands.map(c => c.command), ['workbench.action.files.save', 'workbench.action.closeActiveEditor']);
+		// the last window of a tab page closes the tab page (devhubVim.tabpage.closeIfEmpty)
+		assert.deepStrictEqual(wq.host.commands.map(c => c.command), ['workbench.action.files.save', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
 		assert.deepStrictEqual(run('|a', ':q<CR>').host.commands.map(c => c.command), ['workbench.action.closeActiveEditor']);
 		assert.deepStrictEqual(run('|a', ':q!<CR>').host.commands.map(c => c.command), ['workbench.action.revertAndCloseActiveEditor']);
 		assert.deepStrictEqual(run('|a', ':noh<CR>').host.commands, []);
@@ -1433,8 +1434,8 @@ suite('DevHub Vim ex commands', () => {
 		assert.deepStrictEqual(await run('vs'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true }]]);
 		assert.deepStrictEqual(await run('new n.txt'), [['workbench.action.splitEditorUp'], ['devhubVim.open', { file: 'n.txt', replace: true, untitled: true }]]);
 		assert.deepStrictEqual(await run('vne'), [['workbench.action.splitEditorLeft'], ['devhubVim.open', { file: '', replace: true, untitled: true }]]);
-		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.open', { file: '~/notes.md', untitled: true }]]);
-		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.open', { file: '', untitled: true }]]);
+		assert.deepStrictEqual(await run('tabe ~/notes.md'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '~/notes.md', untitled: true }]]);
+		assert.deepStrictEqual(await run('tabnew'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '', untitled: true }]]);
 		// 'splitbelow' as an override (the user's settings): the split of their choice, the file passed on with ${args};
 		// the built-in's nargs and completion are kept
 		const shared = new VimSharedState();
@@ -2844,8 +2845,8 @@ suite('Neovim scrolling and folds', () => {
 		assert.deepStrictEqual(await cmds(']D'), ['editor.action.marker.prev']);
 		assert.deepStrictEqual(await cmds(']q'), ['editor.action.marker.nextInFiles']);
 		assert.deepStrictEqual(await cmds('[b'), ['workbench.action.previousEditor']);
-		assert.deepStrictEqual(await cmds('ZZ'), ['workbench.action.files.save', 'workbench.action.closeActiveEditor']);
-		assert.deepStrictEqual(await cmds('ZQ'), ['workbench.action.revertAndCloseActiveEditor']);
+		assert.deepStrictEqual(await cmds('ZZ'), ['workbench.action.files.save', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
+		assert.deepStrictEqual(await cmds('ZQ'), ['workbench.action.revertAndCloseActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
 		// in visual mode gra acts on the selection, then visual mode ends
 		const v = new Vim('|abc').keys('vlgra');
 		await flush();
@@ -3527,5 +3528,71 @@ suite('vim-surround (tpope/vim-surround)', () => {
 		// without the default, `s` after `d` is no key: the pending `d` is cancelled and `(` is the motion
 		v = new Vim('(a |b)', [{ key: 's', command: '-devhubVim.awaitChar' }]).keys('ds(');
 		assert.strictEqual(v.state(), '|(a b)');
+	});
+});
+
+suite('DevHub Vim: tab pages are keys and ex commands (browser/vimTabPages.ts does the switching)', () => {
+
+	const calls = async (keys: string) => {
+		const v = new Vim('|abc').keys(keys);
+		await flush();
+		return v.host.commands.map(c => c.args === undefined ? [c.command] : [c.command, c.args]);
+	};
+
+	test('gt {count}gt gT {count}gT', async () => {
+		assert.deepStrictEqual(await calls('gt'), [['devhubVim.tabpage.next', { count: null }]]);
+		assert.deepStrictEqual(await calls('3gt'), [['devhubVim.tabpage.next', { count: 3 }]]);
+		assert.deepStrictEqual(await calls('gT'), [['devhubVim.tabpage.previous', { count: 1 }]]);
+		assert.deepStrictEqual(await calls('2gT'), [['devhubVim.tabpage.previous', { count: 2 }]]);
+		// keybindings like every other key, on the letter keys (no JIS remapping)
+		const keys = DEFAULT_KEYBINDINGS.filter(b => b.command === 'devhubVim.run' && String((b.args as { command?: string }).command).startsWith('devhubVim.tabpage.')).map(b => b.key).sort();
+		assert.deepStrictEqual(keys, ['g shift+t', 'g t']);
+	});
+
+	test(':tab* commands and their counts and arguments', async () => {
+		const next = (count: number, arg = '') => [['devhubVim.tabpage.next', { count, arg }]];
+		assert.deepStrictEqual(await calls(':tabn<CR>'), next(0));
+		assert.deepStrictEqual(await calls(':tabnext 3<CR>'), next(3));
+		assert.deepStrictEqual(await calls(':3tabn<CR>'), next(3));
+		assert.deepStrictEqual(await calls(':tabne $<CR>'), next(0, '$'));
+		assert.deepStrictEqual(await calls(':tabn +2<CR>'), next(0, '+2'));
+		assert.deepStrictEqual(await calls(':tabp<CR>'), [['devhubVim.tabpage.previous', { count: 0 }]]);
+		assert.deepStrictEqual(await calls(':tabN 2<CR>'), [['devhubVim.tabpage.previous', { count: 2 }]]);
+		assert.deepStrictEqual(await calls(':tabc<CR>'), [['devhubVim.tabpage.close', { count: 0, arg: '' }]]);
+		assert.deepStrictEqual(await calls(':tabclose 2<CR>'), [['devhubVim.tabpage.close', { count: 2, arg: '' }]]);
+		assert.deepStrictEqual(await calls(':tabc! $<CR>'), [['devhubVim.tabpage.close', { count: 0, arg: '$' }]]);
+		assert.deepStrictEqual(await calls(':tabo<CR>'), [['devhubVim.tabpage.only']]);
+		assert.deepStrictEqual(await calls(':tabfir<CR>'), [['devhubVim.tabpage.first']]);
+		assert.deepStrictEqual(await calls(':tabr<CR>'), [['devhubVim.tabpage.first']]);
+		assert.deepStrictEqual(await calls(':tabl<CR>'), [['devhubVim.tabpage.last']]);
+		assert.deepStrictEqual(await calls(':tabm<CR>'), [['devhubVim.tabpage.move', { arg: '' }]]);
+		assert.deepStrictEqual(await calls(':tabmove +1<CR>'), [['devhubVim.tabpage.move', { arg: '+1' }]]);
+		assert.deepStrictEqual(await calls(':tabm 0<CR>'), [['devhubVim.tabpage.move', { arg: '0' }]]);
+		assert.deepStrictEqual(await calls(':tabs<CR>'), [['devhubVim.tabpage.list']]);
+		assert.deepStrictEqual(await calls(':tabnew<CR>'), [['devhubVim.tabpage.new'], ['devhubVim.open', { file: '', untitled: true }]]);
+		assert.deepStrictEqual(await calls(':q<CR>'), [['workbench.action.closeActiveEditor'], ['devhubVim.tabpage.closeIfEmpty']]);
+		assert.deepStrictEqual(await calls(':clo<CR>'), [['devhubVim.tabpage.closeWindow']]);
+		// Vim's errors for what these do not take
+		const v = new Vim('|abc').keys(':tabs 2<CR>');
+		assert.ok(v.vim.status().includes('E488'), v.vim.status());
+	});
+
+	test('names and abbreviations: no clash with the other tab* names', () => {
+		const name = (typed: string) => { const r = BUILTIN_EX_REGISTRY.lookup(typed); return 'error' in r ? r.error : r.name; };
+		assert.strictEqual(name('tabm'), 'tabmove');
+		assert.strictEqual(name('tabmo'), 'tabmove');
+		assert.strictEqual(name('tabs'), 'tabs');
+		assert.strictEqual(name('tabn'), 'tabnext');
+		assert.strictEqual(name('tabne'), 'tabnext');
+		assert.strictEqual(name('tabnew'), 'tabnew');
+		assert.strictEqual(name('tabe'), 'tabedit');
+		assert.strictEqual(name('tabr'), 'tabfirst');
+		assert.strictEqual(name('tabfir'), 'tabfirst');
+		assert.strictEqual(name('tabl'), 'tablast');
+		assert.strictEqual(name('tabc'), 'tabclose');
+		assert.strictEqual(name('tabo'), 'tabonly');
+		assert.strictEqual(name('tabp'), 'tabprevious');
+		assert.ok(name('tab').startsWith('E492'));
+		assert.ok(name('tabf').startsWith('E492'));
 	});
 });
