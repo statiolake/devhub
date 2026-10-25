@@ -272,10 +272,12 @@ every page with `onTheme` is in it.
 
 An Agent pane's colours are not the palette. The splash that recolours the
 chrome carries nothing about a terminal, so with `[appearance] terminal_theme =
-"vscode"` — the default — main reads the theme's terminal colours out of
-Scratch's workbench (its `--vscode-terminal-*` custom properties, which already
-hold the registry's defaults) each time Scratch reports a splash, keeps the last
-answer in `terminal-colors.json` beside `state.json`, and sends it on the
+"vscode"` — the default — main reads the theme's terminal colours out of a
+workbench (its `--vscode-terminal-*` custom properties, which already hold the
+registry's defaults) each time it reports a splash: the one on screen, or any
+when none is (the chrome's rule), keeps the last answer in
+`terminal-colors.json` beside `state.json` — so panes keep their colours while
+every workbench is asleep, and from a cold start — and sends it on the
 appearance projection like an edited setting (`main/shell/terminalColors.ts`).
 Palettes named under `[appearance.terminal_theme.light]` / `.dark` win outright.
 
@@ -784,8 +786,9 @@ an open already in flight and asks the arrangement again.
 (default 10; `0` is off) is closed** on the minute check, measured by the
 same `workbenchAbsence.ts` as the tidy above (a split is on screen; a
 workbench never shown is away from launch). **Past
-`general.workbench_awake_max`** (default 3; `0` is no cap) — awake or opening,
-Scratch, SSH and dev container ones never counted or closed — the least
+`general.workbench_awake_max`** (default 2; `0` is no cap) — awake or opening,
+Scratch counted like any local one, SSH and dev container ones never counted
+or closed — the least
 recently shown awake ones are closed at once, on the switch that went over:
 never the shown one, one opening or waking, one closing, or one that has just
 refused (asked again on the minute check); a folder that would start past the
@@ -803,6 +806,9 @@ tracker backs up unsaved editors instead of asking, storage is written,
 extensions deactivate), and its view destroyed. Asleep, selecting it wakes it
 through the ordinary open path, whose `registerFolderBackup` hands it the same
 backup folder, so VS Code restores its editors, layout and unsaved changes.
+A request that lands in a workbench — an empty or new window, or a file no
+Workspace contains, both Scratch's — selects it, which wakes it, and waits for
+that open (a passing hold on it released).
 `Cmd+Q N`/`P` landing on it holds it `WAKE_DELAY_MS` (1 s) first, in case it is
 only passed through; leaving cancels, and any key but a modifier wakes it at
 once. Nothing else is touched: the row, its Agents, their tmux sessions, GUI

@@ -206,7 +206,7 @@ export function GeneralSection({
 
       <Group
         heading="Editors"
-        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do Scratch, SSH and dev container editors."
+        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors."
       >
         <Row
           label="Close after (minutes)"
@@ -228,7 +228,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Open at most"
-          help="Opening one more editor closes the one shown least recently. 0 is no limit. Default 3."
+          help="Opening one more editor closes the one shown least recently. 0 is no limit. Default 2."
         >
           <NumberField
             label="Open at most"

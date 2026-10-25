@@ -310,9 +310,9 @@ workbench_hibernate_minutes = 10  # close a Workspace's editor (renderer, extens
                             # host, language servers) after this long off screen;
                             # it reopens where it was when shown, unsaved editors
                             # included (hot exit). Agents and tmux stay. Not with a
-                            # busy terminal or a debug session; never Scratch, SSH
-                            # or dev container editors. 0: off.
-workbench_awake_max = 3     # at most this many such editors open; past it, the
+                            # busy terminal or a debug session; never SSH or dev
+                            # container editors. 0: off.
+workbench_awake_max = 2     # at most this many such editors open; past it, the
                             # ones shown least recently close at once, on the
                             # switch. Cmd+Q N/P passing through never wakes one.
                             # 0: no cap.

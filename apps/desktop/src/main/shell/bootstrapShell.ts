@@ -188,7 +188,7 @@ export async function bootstrapShell(
 
 	// The Agent panes' colours, for the same reason and from the same moment:
 	// the theme's terminal colours as they were at the last quit, so a pane
-	// that comes up before Scratch's workbench does is already in them.
+	// that comes up before any workbench does is already in them.
 	const terminalColorsPath = join(
 		userDataPath,
 		"devhub",
@@ -249,9 +249,10 @@ export async function bootstrapShell(
 		);
 	}
 	// Bound before any workbench exists: the controller opens them, and the
-	// first splash Scratch's reports is the first read.
+	// first splash one reports is the first read. Followed as the shell's
+	// palette is: the workbench on screen, or any when none is.
 	terminalColors().bind({
-		followed: () => controller.scratchEditorViewId(),
+		followed: () => shellWindowIfCreated()?.revealedView()?.id,
 		read: (windowId) =>
 			readThemeVariables(
 				shellWindowIfCreated()?.getViewById(windowId)?.webContents,

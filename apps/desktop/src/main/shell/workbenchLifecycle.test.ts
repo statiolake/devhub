@@ -99,11 +99,11 @@ function harness(
 		get now() {
 			return now;
 		},
-		/** Workspaces, all sleepable unless named otherwise. */
+		/** Workspaces, all sleepable but `ssh…` ones (SSH, dev containers). */
 		add(...folders: string[]) {
 			for (const folder of folders) {
 				workspaces.set(folder, {
-					sleepable: !folder.startsWith("scratch"),
+					sleepable: !folder.startsWith("ssh"),
 					closing: false,
 					wanted: true,
 				});
@@ -262,10 +262,15 @@ describe("opening workbenches", () => {
 	it("starts past the cap asleep rather than opening one to close it", () => {
 		const app = harness({ awakeMax: 2 });
 		app.select("d");
-		const effects = app.add("scratch", "a", "b", "c", "d");
-		// d is selected and opens; Scratch never counts; a fills the cap.
-		expect(opens(effects)).toEqual(["d start", "scratch start", "a start"]);
-		expect(app.kinds()).toMatchObject({ b: "asleep", c: "asleep" });
+		const effects = app.add("ssh", "scratch", "a", "b", "c", "d");
+		// d is selected and opens; SSH never counts; Scratch fills the cap like
+		// any local one, and starts first only because it is first in the list.
+		expect(opens(effects)).toEqual(["d start", "ssh start", "scratch start"]);
+		expect(app.kinds()).toMatchObject({
+			a: "asleep",
+			b: "asleep",
+			c: "asleep",
+		});
 		expect(app.placeholders.get("b")).toEqual({ kind: "asleep", frame: "" });
 		// Shown, it wakes like any asleep one.
 		expect(opens(app.select("b"))).toEqual(["b wake"]);
@@ -335,6 +340,17 @@ describe("waking", () => {
 		expect(app.life.typed(app.now)).toBe(false);
 	});
 
+	it("wakes a held one at once when a request needs it (an empty window, a file for Scratch)", () => {
+		const app = oneAsleep();
+		app.select("a", true);
+		expect(app.kind("a")).toBe("held");
+		// Needing another folder releases nothing.
+		app.life.needed("b", app.now);
+		expect(opens(app.plan())).toEqual([]);
+		app.life.needed("a", app.now);
+		expect(opens(app.plan())).toEqual(["a wake"]);
+	});
+
 	it("does not wake one that was only passed through", () => {
 		const app = oneAsleep();
 		app.select("a", true);
@@ -385,8 +401,8 @@ describe("the cap on awake workbenches", () => {
 
 	it("never the shown one, an opening one, a closing one or one that never sleeps", () => {
 		const app = harness({ awakeMax: 10 });
-		app.add("scratch", "a", "b", "c");
-		for (const folder of ["scratch", "a", "b"]) app.load(folder);
+		app.add("ssh", "a", "b", "c");
+		for (const folder of ["ssh", "a", "b"]) app.load(folder);
 		app.select("a");
 		app.set("b", { closing: true });
 		// a, b up and c opening: three over a cap of one, and not one may go.
@@ -423,6 +439,28 @@ describe("the cap on awake workbenches", () => {
 		expect(hibernations(app.tick())).toEqual(["d cap"]);
 	});
 
+	it("counts Scratch like any local Workspace, and puts it to sleep", () => {
+		const app = harness({ awakeMax: 2 });
+		app.select("scratch");
+		app.add("scratch", "a", "ssh");
+		app.loadAll();
+		app.advance(1_000);
+		// Scratch, a and SSH up: two counted, at the cap.
+		expect(hibernations(app.select("a"))).toEqual([]);
+		app.add("b");
+		app.advance(1_000);
+		// b woken by being shown: three counted, and Scratch, shown least
+		// recently, is the one that goes.
+		const effects = app.select("b");
+		expect(opens(effects)).toEqual(["b wake"]);
+		expect(hibernations(effects)).toEqual(["scratch cap"]);
+		app.sleep("scratch");
+		expect(app.kind("scratch")).toBe("asleep");
+		expect(app.kind("ssh")).toBe("awake");
+		// Selected again — an empty window asked for — it wakes.
+		expect(opens(app.select("scratch"))).toEqual(["scratch wake"]);
+	});
+
 	it("has no cap at 0", () => {
 		const app = fourAwake();
 		expect(hibernations(harnessCap(app, 0))).toEqual([]);
@@ -456,13 +494,14 @@ describe("the cap on awake workbenches", () => {
 describe("time-based sleep", () => {
 	it("is the minute check's, for one away the configured time", () => {
 		const app = harness({ awakeMax: 0, hibernateAfterMs: 10 * 60_000 });
-		app.add("a", "b", "scratch");
+		app.add("a", "b", "scratch", "ssh");
 		app.loadAll();
 		app.select("b");
 		app.advance(10 * 60_000);
 		// A switch is not the check.
 		expect(hibernations(app.select("b"))).toEqual([]);
-		expect(hibernations(app.tick())).toEqual(["a away"]);
+		// Scratch sleeps like any local Workspace; SSH does not.
+		expect(hibernations(app.tick())).toEqual(["a away", "scratch away"]);
 	});
 
 	it("is off at 0", () => {

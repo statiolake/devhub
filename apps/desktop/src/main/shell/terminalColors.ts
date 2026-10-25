@@ -10,9 +10,13 @@
  * root, which already hold every colour the registry resolved, defaults
  * included (`colorThemeCss.ts`).
  *
- * One workbench is read, and it is Scratch's: it is open in every run, and it
- * is the workbench with no folder settings of its own to pick a different
- * theme. Its splash is the signal to read. VS Code saves the splash on every
+ * Which workbench is read is the shell's own rule (`shellTheme.ts`): the one
+ * on screen, since a folder can pick its own theme and the one in front is
+ * the only defensible answer. With none on screen — the Agents page in
+ * front, say — any workbench that reports is read: they share one profile,
+ * and the newest theme any of them wore is the best guess. No workbench is
+ * assumed to be up; each may be asleep. A splash is the signal to read. VS
+ * Code saves the splash on every
  * theme change — a theme picked, a theme edited, the OS switching light and
  * dark under `window.autoDetectColorScheme` — after the theme service has
  * already rewritten the variables, so there is nothing to poll and nothing to
@@ -20,8 +24,8 @@
  * report that re-reads the terminal colours.
  *
  * The last colours read are kept on disk beside `state.json`, so a pane that
- * starts before Scratch's workbench is up starts in the theme it had at the
- * last quit. A profile that has never read any wears the built-in palettes
+ * starts before any workbench is up — or while every one is asleep — starts
+ * in the theme it had at the last quit. A profile that has never read any wears the built-in palettes
  * (`terminalThemeWire`) until the first read lands.
  */
 
@@ -174,7 +178,7 @@ export function terminalColorsFailure(detail: string): NamedFailure {
 
 /** What the reader is told once there is a controller to tell it. */
 export interface TerminalColorsBinding {
-	/** The view id of Scratch's workbench, when it has one. */
+	/** The view id of the workbench on screen; nothing when none is. */
 	readonly followed: () => number | undefined;
 	/** The variables of the workbench with that view id. */
 	readonly read: (windowId: number) => Promise<ThemeVariables>;
@@ -219,8 +223,8 @@ export class TerminalColors {
 	}
 
 	/**
-	 * A workbench saved its splash. Scratch's is read again; any other
-	 * workbench's is not the one followed.
+	 * A workbench saved its splash. It is read again if it is the one on
+	 * screen, or if none is; a workbench behind the one shown is not followed.
 	 */
 	splashReported(windowId: number | undefined): void {
 		const binding = this.binding;
@@ -231,7 +235,9 @@ export class TerminalColors {
 				"a workbench reported a splash before the terminal colours were bound",
 			);
 		}
-		if (windowId === undefined || windowId !== binding.followed()) return;
+		if (windowId === undefined) return;
+		const followed = binding.followed();
+		if (followed !== undefined && windowId !== followed) return;
 		const request = ++this.requested;
 		void binding
 			.read(windowId)
@@ -280,7 +286,7 @@ export async function readThemeVariables(
 ): Promise<ThemeVariables> {
 	if (!contents || contents.isDestroyed()) {
 		throw terminalColorsFailure(
-			"Scratch's editor went away before it could be read.",
+			"The editor went away before it could be read.",
 		);
 	}
 	let result: unknown;
@@ -290,7 +296,7 @@ export async function readThemeVariables(
 		// Recovered by the caller: the panes keep their colours, and this is
 		// said once.
 		throw terminalColorsFailure(
-			`Scratch's editor could not be read: ${error instanceof Error ? error.message : String(error)}`,
+			`The editor could not be read: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 	if (
@@ -299,7 +305,7 @@ export async function readThemeVariables(
 		!Object.values(result).every((value) => typeof value === "string")
 	) {
 		throw terminalColorsFailure(
-			"Scratch's editor has no workbench to read the theme from.",
+			"The editor has no workbench to read the theme from.",
 		);
 	}
 	return result as ThemeVariables;

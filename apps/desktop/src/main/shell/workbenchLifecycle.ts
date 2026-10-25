@@ -63,7 +63,8 @@
  *   the phase (`placeholderOf`) and re-sent whenever it changes, so it cannot
  *   outlive the state it describes.
  *
- * Scratch, SSH and dev container workbenches never sleep: their input says
+ * Scratch is a Workspace like any other here: it sleeps and counts toward the
+ * cap. SSH and dev container workbenches never sleep: their input says
  * `sleepable: false` and nothing here hibernates or counts them.
  *
  * Every transition and every skipped hibernation or wake is one log line,
@@ -148,7 +149,7 @@ export interface WantedWorkbench {
 	readonly folder: string;
 	/** The page's name for its editor slot (`workspace-editor:<id>`). */
 	readonly surfaceKey: string;
-	/** Not Scratch, SSH or a dev container. */
+	/** Not SSH or a dev container. */
 	readonly sleepable: boolean;
 	/** Its close is running: its view goes at the close's view step. */
 	readonly closing: boolean;
@@ -267,6 +268,20 @@ export class WorkbenchLifecycle {
 		this.dropHold("passed on");
 		if (folder === undefined) return;
 		this.hold = { folder, until: now + WAKE_DELAY_MS };
+	}
+
+	/**
+	 * Something needs this folder's workbench now — a request routed to it
+	 * (an empty window, a file opened in Scratch): a wake held for a passing
+	 * `Cmd+Q N/P` on it starts at the next `plan` instead of after the delay.
+	 */
+	needed(folder: string, now: number): void {
+		if (this.hold?.folder === folder && this.hold.until > now) {
+			this.hold.until = now;
+			if (this.phase(folder).kind === "held") {
+				this.say(folder, "hold released: needed now");
+			}
+		}
 	}
 
 	/** A key was typed: a held wake starts now. True when one was held. */

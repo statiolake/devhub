@@ -384,8 +384,8 @@ export interface GeneralConfig {
    */
   readonly workbench_hibernate_minutes: number;
   /**
-   * At most this many workbenches stay up, Scratch and remote ones not
-   * counted. Checked on every Workspace switch: past it, the least recently
+   * At most this many workbenches stay up, Scratch counted, remote ones
+   * not. Checked on every Workspace switch: past it, the least recently
    * shown ones sleep at once. `0` is no cap.
    */
   readonly workbench_awake_max: number;
@@ -746,7 +746,7 @@ export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
 /** See `GeneralConfig.workbench_hibernate_minutes`. */
 export const DEFAULT_WORKBENCH_HIBERNATE_MINUTES = 10;
 /** See `GeneralConfig.workbench_awake_max`. */
-export const DEFAULT_WORKBENCH_AWAKE_MAX = 3;
+export const DEFAULT_WORKBENCH_AWAKE_MAX = 2;
 
 export function defaultConfig(): Config {
   return {

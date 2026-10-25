@@ -286,7 +286,7 @@ export type AppErrorCodeWire =
 	/** It kept dying, so DevHub stopped building it again. */
 	| "editor_restart_exhausted"
 	/**
-	 * The VS Code theme's terminal colours could not be read from Scratch's
+	 * The VS Code theme's terminal colours could not be read from a
 	 * workbench (`main/shell/terminalColors.ts`), or were not colours.
 	 *
 	 * Its own code because the consequence is a missing reading and not a

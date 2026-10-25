@@ -3072,11 +3072,6 @@ export class AppController {
 		this.publishAppearance();
 	}
 
-	/** The view id of Scratch's workbench, whose theme the panes follow. */
-	scratchEditorViewId(): number | undefined {
-		return this.editorViewId(this.scratchWorkspace().key);
-	}
-
 	agentProfiles(): AgentProfiles {
 		this.profileSequence += 1;
 		const config = this.config;
@@ -5637,11 +5632,9 @@ export class AppController {
 				.map((workspace) => ({
 					folder: workspace.key,
 					surfaceKey: `workspace-editor:${workspace.id}`,
-					// Not Scratch (the Agent panes take their colours from it, and
-					// an empty window is it), not SSH or a dev container (their
-					// weight is on the far machine, and reconnecting costs).
+					// Not SSH or a dev container: their weight is on the far
+					// machine, and reconnecting costs.
 					sleepable:
-						workspace.id !== model.scratchWorkspaceId &&
 						workspace.location.kind === "local" &&
 						workspace.editor.kind === "host",
 					closing: workspace.close.kind === "running",
@@ -6476,19 +6469,31 @@ export class AppController {
 	}
 
 	/**
-	 * Scratch's workbench, built if it is not there, revealed, and selected.
+	 * Scratch's workbench, woken or built if it is not there, revealed, and
+	 * selected.
 	 *
 	 * This is where every "new window with no folder" ends up: DevHub has one
 	 * window, and a request for an empty one is a request for somewhere to
 	 * scribble, which is what Scratch is. Selecting it is the same intent the
 	 * menu's New Window raises, so the sidebar and the view agree afterwards
-	 * however it was asked.
+	 * however it was asked — and selecting is what wakes it, since Scratch
+	 * sleeps like any other Workspace (`selectedWorkbench`).
 	 */
 	async scratchWorkbench(): Promise<ICodeWindow> {
 		await this.dispatchAwaiting({ type: "new_window" });
-		const key = this.scratchWorkspace().key;
+		return await this.selectedWorkbench(this.scratchWorkspace().key);
+	}
+
+	/**
+	 * The workbench of the folder just selected, for a request that goes on to
+	 * use it: asleep, the lifecycle's plan wakes it (a hold for a passing
+	 * `Cmd+Q N/P` released, since this is not passing), and this waits for
+	 * that open. Never an open of its own — the plan is the one executor.
+	 */
+	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
+		this.workbenches.needed(folder, Date.now());
 		await this.syncEditorView();
-		return await this.workbenchWindow(key);
+		return await this.workbenchWindow(folder);
 	}
 
 	/**
@@ -6778,14 +6783,13 @@ export class AppController {
 			context: { kind: "workspace", workspaceId: workspace.id },
 			presentation: besideAgent ? "beside" : "full",
 		});
-		await this.syncEditorView();
 		openFileInWorkbench(
 			// The view is filed under the Workspace's key, not its root. For a
 			// local folder those are the same string; for one on a host the key
 			// carries the machine, and asking for the bare path finds nothing —
 			// which reached the person as "the workbench for <path> is not
 			// running" about a window that was on screen.
-			await this.workbenchWindow(workspace.key),
+			await this.selectedWorkbench(workspace.key),
 			machine,
 			target,
 			position,

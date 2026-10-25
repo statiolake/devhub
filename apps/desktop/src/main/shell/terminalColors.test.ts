@@ -179,8 +179,14 @@ describe("reading a workbench", () => {
 	});
 });
 
-/** A reader with a Scratch at view 7, and a record of what it was told. */
-function harness(initial: TerminalPaletteWire | undefined) {
+/**
+ * A reader with the workbench at view 7 on screen (or none), and a record of
+ * what it was told.
+ */
+function harness(
+	initial: TerminalPaletteWire | undefined,
+	shown: () => number | undefined = () => 7,
+) {
 	const saved: TerminalPaletteWire[] = [];
 	const failures: NamedFailure[] = [];
 	let changes = 0;
@@ -189,7 +195,7 @@ function harness(initial: TerminalPaletteWire | undefined) {
 	const reads: number[] = [];
 	const colors = new TerminalColors(initial, (palette) => saved.push(palette));
 	const binding: TerminalColorsBinding = {
-		followed: () => 7,
+		followed: shown,
 		read: (windowId) => {
 			reads.push(windowId);
 			return answer();
@@ -214,7 +220,7 @@ function harness(initial: TerminalPaletteWire | undefined) {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe("following Scratch's theme", () => {
+describe("following the theme of the workbench on screen", () => {
 	it("starts in the colours kept at the last quit, and the built-ins before any", () => {
 		const kept = terminalPaletteOf(darkModern());
 		expect(harness(kept).colors.palette()).toEqual(kept);
@@ -236,7 +242,7 @@ describe("following Scratch's theme", () => {
 		);
 	});
 
-	it("reads Scratch again when it reports a splash, and tells every pane once", async () => {
+	it("reads the shown one again when it reports a splash, and tells every pane once", async () => {
 		const h = harness(undefined);
 		h.colors.splashReported(7);
 		await settle();
@@ -264,13 +270,35 @@ describe("following Scratch's theme", () => {
 		expect(h.saved).toHaveLength(2);
 	});
 
-	it("does not read a workbench that is not Scratch's", async () => {
+	it("does not read a workbench behind the one shown", async () => {
 		const h = harness(undefined);
 		h.colors.splashReported(8);
 		h.colors.splashReported(undefined);
 		await settle();
 		expect(h.reads).toEqual([]);
 		expect(h.changes()).toBe(0);
+	});
+
+	it("reads whichever workbench reports when none is shown — no Scratch needed", async () => {
+		const screen: { shown?: number } = {};
+		const kept = terminalPaletteOf(darkModern());
+		const h = harness(kept, () => screen.shown);
+		// Every workbench asleep, nothing reporting: the kept colours stand.
+		expect(h.colors.palette()).toEqual(kept);
+		const light = darkModern({
+			[TERMINAL_COLOR_VARIABLES.background]: "#ffffff",
+		});
+		h.answer(() => Promise.resolve(light));
+		h.colors.splashReported(12);
+		await settle();
+		expect(h.reads).toEqual([12]);
+		expect(h.colors.palette()?.background).toBe("#ffffff");
+		expect(h.changes()).toBe(1);
+		// Once one is on screen, only it is followed.
+		screen.shown = 13;
+		h.colors.splashReported(12);
+		await settle();
+		expect(h.reads).toEqual([12]);
 	});
 
 	it("keeps the newest read when two cross", async () => {
