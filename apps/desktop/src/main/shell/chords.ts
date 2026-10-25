@@ -223,6 +223,8 @@ export type ChordEffect =
 	| { readonly kind: "refresh-repositories" }
 	| { readonly kind: "open-chord-help" }
 	| { readonly kind: "open-settings" }
+	/** Main's log file (`diagnostics/mainLog.ts`), in the Mac's viewer. */
+	| { readonly kind: "open-log" }
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
@@ -451,6 +453,9 @@ export function resolveChord(
 
 		case "open_settings":
 			return { kind: "open-settings" };
+
+		case "open_log":
+			return { kind: "open-log" };
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };

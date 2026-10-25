@@ -25,6 +25,8 @@
  *    7. `registerListeners`' `open-file` handler is DevHub's
  *       (`shell/openFromFinder.ts`), because upstream's parks the paths for an
  *       `openFirstWindow` DevHub has replaced.
+ *    8. Right after that, main's console is teed into
+ *       `<userData>/logs/devhub-main.log` (`diagnostics/mainLog.ts`).
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -55,6 +57,7 @@ import { INLSConfiguration } from 'code-oss-dev/out/vs/nls.js';
 import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
 import { createRequire } from 'node:module';
 import { migrateUserDataDirectory } from './userDataMigration.js';
+import { installMainLog, mainLogPath } from './diagnostics/mainLog.js';
 import { watchForFinderOpens } from './shell/openFromFinder.js';
 import { activeProfile } from '../model/profile.js';
 
@@ -119,6 +122,9 @@ const userDataPath = devhubProfile.isDefault || args['user-data-dir']
 	? getUserDataPath(args, product.nameShort ?? 'code-oss-dev')
 	: devhubProfile.userDataDirectory;
 migrateUserDataDirectory(userDataPath);
+// DevHub: main's console goes to <userData>/logs/devhub-main.log as well, from
+// here on — a packaged app's stdout is nobody's (diagnostics/mainLog.ts).
+installMainLog(mainLogPath(userDataPath));
 if (process.platform === 'win32') {
 	const userDataUNCHost = getUNCHost(userDataPath);
 	if (userDataUNCHost) {

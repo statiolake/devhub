@@ -816,6 +816,7 @@ describe("the commands that need nothing at all", () => {
 			kind: "refresh-repositories",
 		});
 		expect(run("open_settings", nothing)).toEqual({ kind: "open-settings" });
+		expect(run("open_log", nothing)).toEqual({ kind: "open-log" });
 		expect(run("focus_sidebar", nothing)).toEqual({ kind: "focus-sidebar" });
 		// Both directions, unconditionally: the model holds which way round it
 		// is, so there is nothing here to decide and nothing to gate on.

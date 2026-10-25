@@ -117,7 +117,7 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "s")).toBeUndefined();
     expect(commandFor(bindings, "S")).toBeUndefined();
     expect(commandById("focus_sidebar")?.defaultKeys).toEqual([]);
-    expect([...PALETTE_ONLY_COMMANDS]).toEqual(["focus_sidebar"]);
+    expect([...PALETTE_ONLY_COMMANDS]).toEqual(["focus_sidebar", "open_log"]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });
 

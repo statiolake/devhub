@@ -17,7 +17,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { electron } from "../electron.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import {
@@ -43,6 +42,9 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
+
+/** Where the log folder button opens, given the app's user-data directory. */
+export { logDirectoryFor } from "../diagnostics/mainLog.js";
 
 interface SettingsHost {
 	readonly store: ConfigStore;
@@ -586,9 +588,4 @@ function registerIpc(): void {
 	handle(SETTINGS_CHANNELS.close, () => {
 		window?.close();
 	});
-}
-
-/** Where the log folder button opens, given the app's user-data directory. */
-export function logDirectoryFor(userDataPath: string): string {
-	return join(userDataPath, "logs");
 }

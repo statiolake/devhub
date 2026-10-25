@@ -190,6 +190,12 @@ immediately.
 `Command+Q` is the only key DevHub takes from the workbench, as a prefix:
 press it twice to quit. Everything else is forwarded to VS Code.
 
+Main's console — every `[devhub] …` line, including each workbench lifecycle
+transition and why a hibernation or wake was skipped — is also appended to
+`<userData>/logs/devhub-main.log` (timestamped; past 5 MB it becomes
+`devhub-main.log.1`, one kept). `DevHub: Open Log` in the command palette
+(`Cmd+Q :`) opens it in the app macOS uses for `.log` files (Console).
+
 ## The `devhub` command
 
 `DevHub: Install 'devhub' command in PATH` writes a launcher that talks to the

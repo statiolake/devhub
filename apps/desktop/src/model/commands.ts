@@ -67,6 +67,7 @@
  * | `Cmd+Q U`                   | `mark_agent_unread`       |
  * | `Cmd+Q D`                   | `dismiss_alert`           |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
+ * | (palette only)              | `open_log`                |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
@@ -300,10 +301,12 @@
  * Code's `Command-Shift-P` is. It is drawn from this registry, so a command
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
- * else and a chord for it would take a key some other command wants. Exactly
- * one is today, and `PALETTE_ONLY_COMMANDS` names it so that a command cannot
- * lose its key by accident: `focus_sidebar`, whose `S` was taken for a while
- * and is left unbound now (a click on a row is its other gesture). (Back and Forward were
+ * else and a chord for it would take a key some other command wants — or is
+ * rare enough not to be worth a key. Two are today, and
+ * `PALETTE_ONLY_COMMANDS` names them so that a command cannot lose its key by
+ * accident: `focus_sidebar`, whose `S` was taken for a while and is left
+ * unbound now (a click on a row is its other gesture), and `open_log`, which
+ * is for the moment something went wrong. (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -391,6 +394,7 @@ export type CommandId =
   | "refresh_repositories"
   | "dismiss_alert"
   | "open_settings"
+  | "open_log"
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
@@ -723,6 +727,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: ["<"],
   },
   {
+    // `devhub-main.log`, main's console (`main/diagnostics/mainLog.ts`), in
+    // the Mac's own viewer for it. Palette only: see `PALETTE_ONLY_COMMANDS`.
+    id: "open_log",
+    label: "Open Log",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: [],
+  },
+  {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
@@ -770,6 +783,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
  */
 export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "focus_sidebar",
+  "open_log",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

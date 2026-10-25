@@ -288,6 +288,7 @@ import {
 	EditorSupervisor,
 } from "./editorSupervisor.js";
 import { appearanceMode } from "./appearanceMode.js";
+import { mainLogPath } from "../diagnostics/mainLog.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import {
 	HIBERNATE_CHECK_MS,
@@ -1473,6 +1474,36 @@ export class AppController {
 	}
 
 	/**
+	 * `DevHub: Open Log`: main's log (`diagnostics/mainLog.ts`), in whatever
+	 * the Mac opens a `.log` file with — Console, unless the person chose
+	 * another app.
+	 *
+	 * Not in a workbench: the log is most wanted when a workbench is the thing
+	 * misbehaving (or asleep, and opening one would wake it and write more of
+	 * the log being read), a five-megabyte file is not a thing to put in an
+	 * editor's history, and Console follows the file as it grows. Settings'
+	 * log folder button opens the folder it is in.
+	 */
+	private async openLog(): Promise<void> {
+		const userDataPath = this.userDataPath;
+		if (userDataPath === undefined) return;
+		const file = mainLogPath(userDataPath);
+		// Said before it is opened, so the file exists and ends with this.
+		console.log(`[devhub] log: opening ${file}`);
+		const failure = await electron.shell.openPath(file);
+		if (failure.length === 0) return;
+		this.publishError(
+			withDetail(
+				withSummary(
+					errorWireAt("file_not_found"),
+					"The log could not be opened.",
+				),
+				`${file}: ${failure}`,
+			),
+		);
+	}
+
+	/**
 	 * Open the Web Inspector on whatever the keyboard is in.
 	 *
 	 * One DevHub window holds several web contents over one rectangle — the App
@@ -1674,6 +1705,9 @@ export class AppController {
 			},
 			openSettings: () => {
 				openSettingsWindow();
+			},
+			openLog: () => {
+				void this.openLog().catch(report);
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {

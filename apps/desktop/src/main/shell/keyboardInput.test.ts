@@ -147,6 +147,7 @@ function host(zoomActs = true) {
 		refreshRepositories: record("refreshRepositories"),
 		openChordHelp: record("openChordHelp"),
 		openSettings: record("openSettings"),
+		openLog: record("openLog"),
 		openCommandPalette: record("openCommandPalette"),
 	};
 	return { calls, chordHost };

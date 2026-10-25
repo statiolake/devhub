@@ -170,6 +170,8 @@ export interface ChordHost {
 	/** The list of chords, drawn from the registry they are run from. */
 	openChordHelp(): void;
 	openSettings(): void;
+	/** Main's log file, `DevHub: Open Log`. */
+	openLog(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -302,6 +304,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "open-settings":
 			host.openSettings();
+			return;
+		case "open-log":
+			host.openLog();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();
