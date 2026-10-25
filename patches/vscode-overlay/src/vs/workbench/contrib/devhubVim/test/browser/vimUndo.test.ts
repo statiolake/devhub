@@ -187,6 +187,38 @@ suite('DevHub Vim: undo is VS Code\'s, normal-mode changes are steps', () => {
 		assert.strictEqual(text(), 'b c d');
 	}));
 
+	test('a vim-surround change is one step: ys, cs to a tag, ds, and visual-block S on several lines', () => withVim('a b\nc d', async ({ vim, text, undo, redo, mode }) => {
+		vim.execute('devhubVim.operator', { operator: 'yank' });
+		vim.execute('devhubVim.operator', { operator: 'surround' });
+		vim.execute('devhubVim.textObject', { object: 'word', kind: 'inner' });
+		vim.execute('devhubVim.surround', { action: 'wrap', char: '(' });
+		assert.strictEqual(text(), '( a ) b\nc d');
+		vim.execute('devhubVim.operator', { operator: 'change' });
+		vim.execute('devhubVim.surround', { action: 'change', char: '(' });
+		// the tag as the prompt hands it over
+		vim.execute('devhubVim.surround', { action: 'change', target: '(', replacement: 't', tag: 'em' });
+		assert.strictEqual(text(), '<em>a</em> b\nc d');
+		vim.execute('devhubVim.operator', { operator: 'delete' });
+		vim.execute('devhubVim.surround', { action: 'delete', char: 't' });
+		assert.strictEqual(text(), 'a b\nc d');
+		vim.execute('devhubVim.mode', { to: 'visualBlock' });
+		vim.execute('devhubVim.motion', { motion: 'down' });
+		vim.execute('devhubVim.operator', { operator: 'surround' });
+		vim.execute('devhubVim.surround', { action: 'wrap', char: '"' });
+		assert.strictEqual(text(), '"a" b\n"c" d');
+		assert.strictEqual(mode(), 'normal');
+		await undo();
+		assert.strictEqual(text(), 'a b\nc d');
+		await undo();
+		assert.strictEqual(text(), '<em>a</em> b\nc d');
+		await undo();
+		assert.strictEqual(text(), '( a ) b\nc d');
+		await undo();
+		assert.strictEqual(text(), 'a b\nc d');
+		await redo();
+		assert.strictEqual(text(), '( a ) b\nc d');
+	}));
+
 	test('`u` is the native command with a count, as the keymap runs it (devhubVim.repeat)', () => withVim('a b c d', async ({ vim, text, mode }) => {
 		for (let i = 0; i < 3; i++) {
 			vim.execute('devhubVim.action', { action: 'deleteChar' });

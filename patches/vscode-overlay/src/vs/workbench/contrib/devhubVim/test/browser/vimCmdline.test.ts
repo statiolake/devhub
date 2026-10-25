@@ -224,6 +224,26 @@ suite('DevHub Vim: the prompt line', () => {
 		assert.strictEqual(`${origin.getPosition()}`, '(1,1)');
 	}, { text: Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n'), lines: 10 }));
 
+	test('vim-surround\'s tag: the line opens with `<`, previews nothing, and `>` ends it as the character it types', () => withPrompt(({ vim, origin, line, run, type, visible }) => {
+		origin.setPosition({ lineNumber: 1, column: 1 });
+		vim.execute('devhubVim.operator', { operator: 'yank' });
+		vim.execute('devhubVim.operator', { operator: 'surround' });
+		vim.execute('devhubVim.textObject', { object: 'word', kind: 'inner' });
+		vim.execute('devhubVim.surround', { action: 'wrap', char: 't' });
+		assert.strictEqual(visible(), true);
+		const editor = line();
+		const prefix = editor.getContainerDomNode().closest(`.${VIM_CMDLINE_CLASS}`)!.querySelector('.devhub-vim-cmdline-prefix');
+		assert.strictEqual(prefix?.textContent, '<');
+		assert.strictEqual(editor.invokeWithinContext(a => a.get(IContextKeyService)).getContextKeyValue('devhubVim.cmdlineKind'), '<');
+		type('abc');
+		assert.strictEqual(origin.getModel()!.getAllDecorations().filter(d => d.options.description === 'devhub-vim-incsearch').length, 0);
+		type(' class="x"');
+		// the `>` key: shift+[Period] on devhubVim.cmdlineKind == '<' (CMDLINE_KEYBINDINGS)
+		run('devhubVim.cmdline.submit', { insert: '>' });
+		assert.strictEqual(visible(), false);
+		assert.strictEqual(origin.getModel()!.getValue(), '<abc class="x">abc</abc> abc\nb');
+	}));
+
 	test('typing previews the match in the origin; Enter runs the search there and hides the line', () => withPrompt(({ vim, origin, line, run, type, visible }) => {
 		origin.setPosition({ lineNumber: 1, column: 1 });
 		vim.execute('devhubVim.cmdline', { kind: '/' });

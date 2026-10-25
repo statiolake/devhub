@@ -88,8 +88,10 @@ default keymap.
 **Visual mode**: `v V CTRL-V`, `{count}v`, `o O` (other end / other corner),
 `gv`, `I A` (block: on every line; short lines are skipped by `I` and padded
 by `A`; `$A` appends to every line end; in characterwise/linewise mode they
-insert at the start / end of the lines), `c C s S R d x D X y Y r J gJ u U ~ >
-< = gq gw gc g? gu gU g~ p P CTRL-A CTRL-X g_CTRL-A g_CTRL-X : * # @`.
+insert at the start / end of the lines), `c C s R d x D X y Y r J gJ u U ~ >
+< = gq gw gc g? gu gU g~ p P CTRL-A CTRL-X g_CTRL-A g_CTRL-X : * # @`; `S` and
+`gS` are [vim-surround](#vim-surround)'s (`R` substitutes the lines, as `S`
+does in Vim).
 
 **Insert mode**: `<Esc> CTRL-[ CTRL-C`, `CTRL-W` / `CTRL-U` (with Neovim's
 undo break first), `CTRL-H`, `CTRL-R {register}`, `CTRL-O {command}`, `CTRL-T` /
@@ -236,6 +238,88 @@ other command can follow `CTRL-W` too: whatever the key is bound to while
 the prefix. Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
 edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mode-keys)).
 
+## vim-surround
+
+[tpope/vim-surround](https://github.com/tpope/vim-surround) is built in, with
+its default keys, as keybindings like every other Vim key:
+
+| Keys | What it does |
+| --- | --- |
+| `ds{target}` | delete the pair around the cursor: `ds(` on `( foo )` → `foo`, `ds)` → ` foo ` |
+| `cs{target}{replacement}` | change it: `cs"'`, `cs([` (`[ foo ]`), `cs(]` (`[foo]`), `cst<div>` |
+| `cS{target}{replacement}` | the same, with the new pair on lines of its own and the text indented |
+| `ys{motion}{replacement}` | surround a motion or text object: `ysiw)`, `ys$"`, `ysip{`, `2ysw]`, `ys/foo<CR>)` |
+| `yss{replacement}` | the line, from its first non-blank (blanks at its end stay outside); `3yss)` three lines |
+| `yS{motion}{replacement}` `ySS` `ySs` | on lines of their own, the text indented by a 'shiftwidth' |
+| `{Visual}S{replacement}` | the selection: characterwise around it, linewise on lines of their own (indented), blockwise on each line |
+| `{Visual}gS{replacement}` | the other way round: characterwise on lines of their own, linewise not indented |
+
+**Targets** (`ds`, `cs`): `( ) b`, `{ } B`, `[ ] r`, `< > a`, `t` (a tag),
+`" ' ``, `/` (a C comment `/* */`), any other punctuation (`ds*` `ds_` `ds|`:
+the nearest ones on the line either side), and `w W s p` (`csw(` is `ysiw(`:
+the word, sentence or paragraph is surrounded; `dsw` does nothing). An
+opening `( { [ <` also takes the blanks inside away (`ds(` on `( foo )` is
+`foo`); a blank first does too (`ds )`). A count is the n-th pair out:
+`2ds(`, `ds2(`, `2cs([`, and `d2s(` (vim-surround has no such key). They are
+the text objects of `di(` `dit` `di"` `diw` …: a pair Vim's `i(` finds is
+the one `ds(` removes, and one with nothing in it (`()`) is left alone.
+
+**Replacements** (`cs`, `ys`, `S`): `( { [` put a blank inside (`( foo )`),
+`) } ] b B r > a` do not (`(foo)`); `t` or `<` ask for a tag at the prompt
+(`<` is shown, as vim-surround's `input("<")`); `>` or Enter ends it:
+`ysiw<em>`, `cst<div class="x"<CR>` keeps the old tag's attributes after
+the typed ones, `cst<div class="x">` (ending in `>`) does not; `<br/>` makes
+a self-closing tag; `T` offers the tag `ds` / `cs` removed last. `p` puts
+blank lines around, `s` a blank before, `:` a colon before; any other
+character that is not a letter goes on both sides (`ysiw*`, `ysiw"`); a
+letter puts nothing. A blank first adds one more blank inside on each side
+(`ysiw (` is `(  foo  )`, `ysiw )` is `( foo )`). The indent `yS` `ySS` `cS`
+`gS` and a linewise `S` add is the buffer's (VS Code's tab size, indent size
+and insert spaces).
+
+**Keybindings.** In the Keyboard Shortcuts editor `ds` / `cs` / `cS` are `s`
+/ `S` (`shift+s`) running `devhubVim.awaitChar` → `devhubVim.surround {
+"action": "delete" | "change" }` when `devhubVim.pendingOperator` is
+`'delete'` / `'change'`; `ys` / `yS` are `s` / `S` running `devhubVim.operator
+{ "operator": "surround" | "surroundLines" }` when it is `'yank'` (the
+pending yank becomes vim-surround's operator, so any motion, text object and
+count follows), and again when it is `'surround'` / `'surroundLines'` (`yss`
+`ySS` `ySs`); visual `S` / `gS` (`shift+s` / `g shift+s`) are the same
+operators while `devhubVim.visual`. The character after them is read as
+`f`'s is (`devhubVim.surround` waits for it itself, so a key of your own
+can run `devhubVim.surround { "action": "delete" }` directly). In the tag
+prompt `>` is `shift+[Period]`: `devhubVim.cmdline.submit { "insert": ">" }`
+when `devhubVim.cmdlineKind == '<'`.
+
+**Undo and `.`**: each `ds` `cs` `ys` … is one undo step. `.` repeats it
+(as with repeat.vim), the replacement and the tag included — the prompt is
+not opened again — with its count, or the one typed before `.`; after a
+visual `S` it surrounds as much text from the cursor, as other visual
+changes do. Macros record them the same way. Registers are not touched.
+
+**Multiple cursors**: the engine works on the primary cursor, so a surround
+does too; the other cursors are left as they are.
+
+**Differences from vim-surround**:
+
+* Over several lines, `ds` takes the pair's lines away when the pair was
+  alone on them (`<div>` / `</div>`, a `{` ending a line and a `}` starting
+  one) and keeps the lines in between as they are; vim-surround joins the
+  first of them to the opening line and leaves empty lines. `cs` there
+  replaces the pair in place (`cs{(` keeps the lines). DevHub does not
+  reindent afterwards (vim-surround runs `=` when 'indentexpr' is set):
+  `yS` `ySS` `cS` `gS` and a linewise `S` indent the text by one
+  'shiftwidth' (vim-surround's `\t`), `ys` over lines leaves it as it is,
+  and `=` reindents.
+* `.` repeats a visual `S` (vim-surround with repeat.vim does not); `d2s(`
+  works as `2ds(`; `ds|` and `ds\` work (vim-surround's `:normal` reads the
+  `|` as a command separator).
+* Not there: the insert-mode `CTRL-S` / `CTRL-G s` / `CTRL-G S`, the `l` `\`
+  (LaTeX), `f` `F` `CTRL-F` (function call) and `CTRL-T` replacements,
+  `b:surround_{char}` / `g:surround_{char}` custom pairs, and the
+  `g:surround_indent` / `g:surround_no_mappings` options (remove or rebind
+  the keys in Keyboard Shortcuts instead).
+
 ## Neovim defaults and VS Code
 
 | Keys | Neovim | DevHub runs |
@@ -303,7 +387,10 @@ a count or a register keep them for the search. While a pattern is typed the
 match is shown in the editor ('incsearch'), and while a `:s` is typed what it
 would do ('inccommand', below). Enter runs the line as
 `devhubVim.ex` / `devhubVim.search` in the editor it came from (so `:sp`,
-`:w`, `:'<,'>s/a/b/` act there).
+`:w`, `:'<,'>s/a/b/` act there). [vim-surround](#vim-surround)'s tag is
+asked for on the same line, shown as `<` (`devhubVim.cmdlineKind == '<'`):
+`>` or Enter ends it, Esc abandons the surround; it has a history of its own
+(Vim's input history), and no preview.
 
 Its keys are default keybindings like every other Vim key (`when`:
 `devhubVim.cmdlineFocus`, Keyboard Shortcuts editor: search for
@@ -380,7 +467,8 @@ These are the names keybindings use; they and their arguments are stable.
 | Command | Args | Default keys |
 | --- | --- | --- |
 | `devhubVim.motion` | `{ "motion": name, "char"?: c }` | the motions above |
-| `devhubVim.operator` | `{ "operator": name }` | `d c y > < = gu gU g~ g? gq gw gc zf` (twice for lines) |
+| `devhubVim.operator` | `{ "operator": name }` | `d c y > < = gu gU g~ g? gq gw gc zf` (twice for lines); `ys yS`, visual `S gS` |
+| `devhubVim.surround` | `{ "action": "delete" \| "change" \| "wrap", "char"?: c, "lines"?: bool }` | `ds cs cS` (via `awaitChar`); the character after `ys yS yss ySS S gS` (see [vim-surround](#vim-surround)) |
 | `devhubVim.textObjectPrefix` | `{ "kind": "inner" \| "around" }` | `i a` after an operator / in visual mode |
 | `devhubVim.textObject` | `{ "object": name, "kind"?: "inner" \| "around" }` | `w W s p " ' `` ` `` ( ) b { } B [ ] < > t n` after `i`/`a`; `gc` `gn` `gN` |
 | `devhubVim.forceMotion` | `{ "type": "char" \| "line" \| "block" }` | `v V CTRL-V` after an operator |
@@ -394,7 +482,7 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.insert` | `{ "action": name, "char"?: c }` | insert-mode `CTRL-W CTRL-U CTRL-T CTRL-D CTRL-E CTRL-Y CTRL-A CTRL-O CTRL-R`, replace-mode `<BS>` |
 | `devhubVim.run` | `{ "command": id, "args"?: any, "visual"?: "exit" \| "keep" }` or `{ "commands": [{ "command", "args"? }, …] }` | folds, LSP keys, `K` … |
 | `devhubVim.repeat` | `{ "command": id, "args"?: any, "count": number \| "${count}" }` | `u CTRL-R` (of `undo` / `redo`); `]d [d ]q [q ]b [b gt gT zo zc …` (as `devhubVim.repeat` of `devhubVim.run`) |
-| `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` (opens [the prompt](#the-prompt)) |
+| `devhubVim.cmdline` | `{ "kind": ":" \| "/" \| "?" }` | `: / ?` (opens [the prompt](#the-prompt); vim-surround's tag prompt `<` opens by itself) |
 | `devhubVim.cmdline.submit` `.cancel` `.historyPrev` `.historyNext` `.insertRegister` `.deleteWord` `.deleteToStart` `.complete` | see [the prompt](#the-prompt) | in the prompt line |
 | `devhubVim.search` | `{ "pattern": p, "backwards"?: bool }` | (what `/` runs) |
 | `devhubVim.ex` | `{ "command": "w" }` | `ZZ ZQ`; run any ex line from a binding |
@@ -478,7 +566,7 @@ searchWordBackwardPartial localDeclaration globalDeclaration`, and with
 (`halfPageDown` / `halfPageUp` still work and scroll like CTRL-D / CTRL-U.)
 
 Operators: `delete change yank indent outdent reindent lowercase uppercase
-toggleCase rot13 format formatKeep comment fold`.
+toggleCase rot13 format formatKeep comment fold surround surroundLines`.
 
 Text objects: `word WORD sentence paragraph doubleQuote singleQuote backtick
 paren brace bracket angle tag comment searchMatch searchMatchBackward

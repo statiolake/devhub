@@ -253,6 +253,18 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	{ key: 'g n', command: 'devhubVim.textObject', args: { object: 'searchMatch', kind: 'inner' }, when: W.motion },
 	{ key: 'g shift+n', command: 'devhubVim.textObject', args: { object: 'searchMatchBackward', kind: 'inner' }, when: W.motion },
 
+	// ---- vim-surround (tpope/vim-surround): ds cs cS ys yS yss ySS, visual S gS ----
+	// `s` / `S` after `d` / `c` wait for the target (and `cs` then for the replacement);
+	// after `y` they make the pending yank vim-surround's operator, which takes a motion
+	// or text object (or `s` / `S` again: the line) and then waits for the character
+	awaitChar('s', 'devhubVim.surround', { action: 'delete' }, pendingOp('delete')),
+	awaitChar('s', 'devhubVim.surround', { action: 'change' }, pendingOp('change')),
+	awaitChar('shift+s', 'devhubVim.surround', { action: 'change', lines: true }, pendingOp('change')),
+	operator('s', 'surround', pendingOp('yank')), operator('shift+s', 'surroundLines', pendingOp('yank')),
+	operator('s', 'surround', pendingOp('surround')),
+	operator('s', 'surroundLines', pendingOp('surroundLines')), operator('shift+s', 'surroundLines', pendingOp('surroundLines')),
+	operator('shift+s', 'surround', W.visual), operator('g shift+s', 'surroundLines', W.visual),
+
 	// ---- insert, replace and visual mode ----
 	mode('i', 'insert', 'before', W.normal), mode('a', 'insert', 'after', W.normal),
 	mode('shift+i', 'insert', 'firstNonBlank', W.normal), mode('shift+a', 'insert', 'lineEnd', W.normal),
@@ -265,7 +277,8 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	// ---- changes (in visual mode the same keys act on the selection) ----
 	action('x', 'deleteChar', W.normalOrVisual), action('delete', 'deleteChar', W.normalOrVisual), action('shift+x', 'deleteCharBefore', W.normalOrVisual),
 	action('shift+d', 'deleteToLineEnd', W.normalOrVisual), action('shift+c', 'changeToLineEnd', W.normalOrVisual),
-	action('s', 'substituteChar', W.normalOrVisual), action('shift+s', 'substituteLine', W.normalOrVisual),
+	// visual `S` is vim-surround's (below); `R` substitutes the lines there
+	action('s', 'substituteChar', W.normalOrVisual), action('shift+s', 'substituteLine', W.normal),
 	// Neovim: Y is y$ (Y-default); in visual mode Y yanks the lines
 	action('shift+y', 'yankToLineEnd', W.normal), action('shift+y', 'yankLine', W.visual),
 	action('p', 'put', W.normalOrVisual), action('shift+p', 'putBefore', W.normalOrVisual),

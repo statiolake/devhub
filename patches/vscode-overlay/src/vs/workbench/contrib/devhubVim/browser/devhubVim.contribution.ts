@@ -1610,7 +1610,7 @@ registerWorkbenchContribution2(DevhubVim.ID, DevhubVim, WorkbenchPhase.BlockStar
 
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
 	'devhubVim.motion': localize('devhubVim.cmd.motion', "Vim: motion { motion, char? } (moves, extends the visual selection, or completes a pending operator)"),
-	'devhubVim.operator': localize('devhubVim.cmd.operator', "Vim: operator { operator: delete | change | yank | indent | outdent | reindent | lowercase | uppercase | toggleCase | rot13 | format | formatKeep | comment | fold }"),
+	'devhubVim.operator': localize('devhubVim.cmd.operator', "Vim: operator { operator: delete | change | yank | indent | outdent | reindent | lowercase | uppercase | toggleCase | rot13 | format | formatKeep | comment | fold | surround | surroundLines }"),
 	'devhubVim.textObjectPrefix': localize('devhubVim.cmd.textObjectPrefix', "Vim: start a text object { kind: inner | around } (i / a)"),
 	'devhubVim.textObject': localize('devhubVim.cmd.textObject', "Vim: text object { object, kind? }"),
 	'devhubVim.forceMotion': localize('devhubVim.cmd.forceMotion', "Vim: force the next motion { type: char | line | block } (o_v, o_V, o_CTRL-V)"),
@@ -1630,6 +1630,7 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 	'devhubVim.insertText': localize('devhubVim.cmd.insertText', "Vim: insert text in insert mode { text } (macro replay)"),
 	'devhubVim.escape': localize('devhubVim.cmd.escape', "Vim: Esc (cancel one thing; always ends in normal mode)"),
 	'devhubVim.substituteConfirm': localize('devhubVim.cmd.substituteConfirm', "Vim: answer the :s///c question { char: y | n | a | q | l }"),
+	'devhubVim.surround': localize('devhubVim.cmd.surround', "Vim: vim-surround { action: delete | change | wrap, char?, lines? } (ds cs cS, and the character ys yS yss ySS and visual S gS wait for)"),
 };
 
 for (const id of VIM_ENGINE_COMMANDS) {

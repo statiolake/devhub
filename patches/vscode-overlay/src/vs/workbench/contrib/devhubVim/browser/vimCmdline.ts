@@ -471,7 +471,8 @@ export class VimCmdline extends Disposable {
 		view.editor.updateOptions({
 			ariaLabel: kind === ':' ? localize('devhubVim.cmdline.ariaEx', "Vim command line, an ex command")
 				: kind === '/' ? localize('devhubVim.cmdline.ariaSearch', "Vim command line, search forward")
-					: localize('devhubVim.cmdline.ariaSearchBack', "Vim command line, search backward"),
+					: kind === '<' ? localize('devhubVim.cmdline.ariaTag', "Vim prompt, a tag to surround with (> or Enter ends it)")
+						: localize('devhubVim.cmdline.ariaSearchBack', "Vim command line, search backward"),
 		});
 		view.container.classList.remove('hidden');
 		this.layout();

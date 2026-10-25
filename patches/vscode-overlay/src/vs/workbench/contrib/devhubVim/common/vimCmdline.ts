@@ -36,10 +36,11 @@ import { BUILTIN_EX_REGISTRY, parseExCommands, VIM_FILE_FORMATS, vimEncodingComp
 import type { VimKeybinding } from './vimKeymap.js';
 import { evaluateWhen, jisKeys, keybindingForVimKey } from './vimKeymap.js';
 
-export type VimCmdlineKind = ':' | '/' | '?';
+/** `:` an ex command, `/` `?` a search, `<` a tag (vim-surround's input("<"): `>` ends it). */
+export type VimCmdlineKind = ':' | '/' | '?' | '<';
 
 export function isVimCmdlineKind(v: unknown): v is VimCmdlineKind {
-	return v === ':' || v === '/' || v === '?';
+	return v === ':' || v === '/' || v === '?' || v === '<';
 }
 
 // ---- commands and keys ----------------------------------------------------------
@@ -100,6 +101,8 @@ const KEYS_BY_CHARACTER: readonly VimKeybinding[] = [
 	key('enter', 'devhubVim.cmdline.submit', PICKED, { accept: true }),
 	key('ctrl+m', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
 	key('ctrl+j', 'devhubVim.cmdline.submit', FOCUS, { accept: true }),
+	// vim-surround's tag prompt: `>` ends the tag (`cst<em>`), as its `cnoremap > ><CR>`
+	key('shift+.', 'devhubVim.cmdline.submit', `${FOCUS} && ${C.kind} == '<'`, { insert: '>' }),
 	key('escape', 'devhubVim.cmdline.cancel', FOCUS),
 	key('ctrl+c', 'devhubVim.cmdline.cancel', FOCUS),
 	key('ctrl+[', 'devhubVim.cmdline.cancel', FOCUS),
@@ -426,6 +429,9 @@ export class VimCmdlineController {
 			case 'devhubVim.cmdline.submit':
 				if (a.accept === true) {
 					this.ui?.acceptCompletion();
+				}
+				if (typeof a.insert === 'string') {
+					this.insertText(a.insert);
 				}
 				this.submit();
 				return true;

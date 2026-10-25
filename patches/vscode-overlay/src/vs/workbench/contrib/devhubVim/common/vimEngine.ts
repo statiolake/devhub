@@ -55,6 +55,7 @@ import type { ExAddressContext, ExStep, ParsedExCommand } from './vimEx.js';
 import { ExRegistry, exInvocation, expandExSpec, expandShellBang, parseExCommand, parseExCommands, parseExFileOptions, parseGlobal, parseSubstitute, resolveExAddress, resolveExRange, vimEncodingId, vimFileFormat } from './vimEx.js';
 import { DEFAULT_KEYBINDINGS, evaluateWhen, keybindingForVimKey, keysOf } from './vimKeymap.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
+import { surroundAsksTag, surroundDefaultTag, surroundDelimiters, surroundWrap } from './vimSurround.js';
 import { addToNumber, charClassAt, charWidth, colOfVcol, formatLines, isBlank, isKeywordClass, rot13, toggleCase, vcolOf } from './vimText.js';
 
 export interface VimPos {
@@ -368,7 +369,8 @@ export class VimSharedState {
 	lastEx = '';
 	/** The last `:!` command (`!` in the next one, `:!!`). */
 	lastShell: string | undefined;
-	readonly history: { ':': string[]; '/': string[] } = { ':': [], '/': [] };
+	/** `:` lines, search patterns, and what was typed at an input prompt (`@`: vim-surround's tag). */
+	readonly history: { ':': string[]; '/': string[]; '@': string[] } = { ':': [], '/': [], '@': [] };
 	options: VimOptions = { ...DEFAULT_VIM_OPTIONS };
 	/** `devhub.vim.inccommand`: 'nosplit' previews `:s` in the editor as it is typed, '' does not. */
 	inccommand = 'nosplit';
@@ -437,6 +439,8 @@ export const VIM_ENGINE_COMMANDS = [
 	'devhubVim.escape',
 	/** The answer to `:s///c` (y n a q l); the engine waits for it itself. */
 	'devhubVim.substituteConfirm',
+	/** vim-surround: `ds` `cs` `cS`, and the character `ys` `yS` `yss` `ySS` and visual `S` `gS` wait for. */
+	'devhubVim.surround',
 ] as const;
 
 export type VimEngineCommand = typeof VIM_ENGINE_COMMANDS[number];
@@ -474,6 +478,18 @@ interface VisualDims {
 	toEol: boolean;
 }
 
+/** What `ys` / `yS` / visual `S` / `gS` surround once their character comes (vim-surround's register type and options). */
+interface SurroundPending {
+	type: 'char' | 'line' | 'block';
+	range: Range;
+	/** `yS` `ySS` `cS` `gS`, and `S` on a linewise selection: the pair on lines of its own, the text indented. */
+	special: boolean;
+	/** `ys` over a motion: the blanks the text ends with stay after the pair. */
+	trimTrailing: boolean;
+	/** From visual mode: the area's size, for `.`. */
+	visual?: VisualDims;
+}
+
 interface LastChange {
 	register: string | undefined;
 	count: number | undefined;
@@ -503,6 +519,8 @@ type Args = Readonly<Record<string, unknown>>;
 const OPERATORS: Record<string, string> = {
 	delete: 'd', change: 'c', yank: 'y', indent: '>', outdent: '<', lowercase: 'gu', uppercase: 'gU', toggleCase: 'g~',
 	rot13: 'g?', reindent: '=', format: 'gq', formatKeep: 'gw', comment: 'gc', fold: 'zf',
+	// vim-surround's `ys` and `yS` (visual `S` and `gS`): they wait for the character to surround with
+	surround: 'ys', surroundLines: 'yS',
 };
 const OPERATOR_NAMES: Record<string, string> = Object.fromEntries(Object.entries(OPERATORS).map(([k, v]) => [v, k]));
 
@@ -626,7 +644,7 @@ export class VimEngine {
 	private visualToEol = false;
 	private lastVisual: { mode: 'visual' | 'visualLine' | 'visualBlock'; anchor: VimPos; head: VimPos; toEol: boolean } | undefined;
 	/** The open prompt: its kind, its text (what it starts with; then what the line holds, for 'incsearch'), where the search starts. */
-	private cmdline: { kind: VimCmdlineKind; text: string; origin: VimPos; id: number } | undefined;
+	private cmdline: { kind: VimCmdlineKind; text: string; origin: VimPos; id: number; then?: VimStep } | undefined;
 	/** The prompt fed keys type into (`:normal :s/a/b<CR>`, `@a`); the workbench's line otherwise. */
 	private fedPrompt: VimCmdlineController | undefined;
 	private lastCursor: VimPos | undefined;
@@ -655,6 +673,12 @@ export class VimEngine {
 	private awaiting: { command: string; args: Args } | undefined;
 	/** The commands of the command being built, for `.`. */
 	private steps: VimStep[] = [];
+	/** `ys{motion}` (...) is waiting for its character. */
+	private surroundPending: SurroundPending | undefined;
+	/** What `ds` / `cs` removed last (`T` offers its tag). */
+	private lastSurroundRemoved = '';
+	/** The command just run waits for more (a character, the tag): the call that completes it is what macros record. */
+	private unrecorded = false;
 
 	private recordingMacro: { name: string; steps: VimStep[] } | undefined;
 	private playingMacro = 0;
@@ -693,7 +717,7 @@ export class VimEngine {
 	/** What the prompt line talks to (VimCmdlineController). */
 	cmdlineTarget(): IVimCmdlineTarget {
 		return {
-			history: kind => this.shared.history[kind === ':' ? ':' : '/'],
+			history: kind => this.shared.history[kind === ':' ? ':' : kind === '<' ? '@' : '/'],
 			changed: text => this.cmdlineChanged(text),
 			submit: text => this.cmdlineSubmit(text),
 			cancel: () => this.cmdlineCancel(),
@@ -730,6 +754,10 @@ export class VimEngine {
 		if (cl.kind === ':') {
 			this.pushHistory(':', text.trim());
 			this.execute('devhubVim.ex', { command: text.trim() });
+		} else if (cl.kind === '<' && cl.then) {
+			// vim-surround's tag (input("<")): the command that asked for it, with it
+			this.pushHistory('@', text);
+			this.execute(cl.then.command, { ...cl.then.args, tag: text });
 		} else {
 			this.execute('devhubVim.search', { pattern: text, backwards: cl.kind === '?' });
 		}
@@ -827,7 +855,11 @@ export class VimEngine {
 		if (this.textObjectKind) {
 			s += this.textObjectKind === 'inner' ? 'i' : 'a';
 		}
-		if (this.awaiting) {
+		if (this.awaiting?.command === 'devhubVim.surround') {
+			// `ds` `cs(` `ysiw`: vim-surround's keys so far
+			const a = this.awaiting.args;
+			s += a.action === 'wrap' ? str(a.replacement) : 's' + str(a.target) + str(a.replacement);
+		} else if (this.awaiting) {
 			const a = this.awaiting;
 			s += AWAIT_LABELS[str(a.args.motion)] ?? AWAIT_LABELS[str(a.args.action)] ?? AWAIT_LABELS[a.command] ?? '…';
 		}
@@ -860,8 +892,9 @@ export class VimEngine {
 		try {
 			this.message = '';
 			this.steps.push({ command, args: a });
+			this.unrecorded = false;
 			handler(a);
-			if (!nested && this.recordingMacro && !this.playingMacro && !this.replaying && !NOT_IN_MACROS.has(command) && !(command === 'devhubVim.action' && MACRO_CONTROL.has(str(a.action)))) {
+			if (!nested && this.recordingMacro && !this.playingMacro && !this.replaying && !NOT_IN_MACROS.has(command) && !this.unrecorded && !(command === 'devhubVim.action' && MACRO_CONTROL.has(str(a.action)))) {
 				this.recordingMacro.steps.push({ command, args: a });
 			}
 		} catch (err) {
@@ -1112,6 +1145,7 @@ export class VimEngine {
 		this.textObjectKind = undefined;
 		this.forced = undefined;
 		this.awaiting = undefined;
+		this.surroundPending = undefined;
 		this.steps = [];
 	}
 
@@ -1504,6 +1538,7 @@ export class VimEngine {
 		'devhubVim.insertText': a => this.cmdInsertText(str(a.text)),
 		'devhubVim.escape': a => this.doEscape(a.interrupt === true),
 		'devhubVim.substituteConfirm': a => this.cmdSubstituteConfirm(charArg(a.char)),
+		'devhubVim.surround': a => this.cmdSurround(a),
 	};
 
 	private cmdMotion(name: string, ch: string | undefined): void {
@@ -1597,6 +1632,10 @@ export class VimEngine {
 
 	/** After an operator: record it for `.` unless it is a yank or a change still typing. */
 	private completeOperator(op: string, change: LastChange | undefined): void {
+		if (this.surroundPending && (op === 'ys' || op === 'yS')) {
+			// vim-surround: the character to surround with comes next (cmdSurround)
+			return;
+		}
 		this.complete(op === 'c' || op === 'y' ? undefined : change);
 	}
 
@@ -1604,6 +1643,10 @@ export class VimEngine {
 		const op = OPERATORS[name];
 		if (!op || this.textObjectKind) {
 			this.invalid(op ? '' : `Unknown operator: ${name}`);
+		}
+		if (op === 'ys' || op === 'yS') {
+			this.cmdSurroundOperator(op);
+			return;
 		}
 		if (this.isVisual()) {
 			const change = op === 'y' ? undefined : this.visualSnapshot();
@@ -2855,6 +2898,14 @@ export class VimEngine {
 
 	private applyOperator(op: string, register: string | undefined, range: Range, cur: VimPos, change: LastChange | undefined): void {
 		const { start, end, linewise } = range;
+		if (op === 'ys' || op === 'yS') {
+			// vim-surround's g@: the text is known, the character comes next
+			this.textObjectKind = undefined;
+			this.forced = undefined;
+			this.surroundPending = { type: range.block ? 'block' : linewise ? 'line' : 'char', range, special: op === 'yS', trimTrailing: true };
+			this.awaitSurround();
+			return;
+		}
 		this.setMark('[', start);
 		this.setMark(']', linewise ? pos(end.line, Math.max(0, this.len(end.line) - 1)) : (this.prevChar(end) ?? end));
 		if (range.block) {
@@ -4720,6 +4771,357 @@ export class VimEngine {
 		return { start: pos(cur.line, s), end: pos(cur.line, e), linewise: false };
 	}
 
+	// ---- vim-surround (tpope/vim-surround) -----------------------------------
+	//
+	// `ys` `yS` are operators (`y` then `s` / `S` turns the pending yank into
+	// one), so they take any motion or text object and a count; `yss` `ySS`
+	// are them doubled, visual `S` `gS` them on the selection. Each waits for
+	// the character to surround with. `ds` / `cs` / `cS` are `s` / `S` after
+	// `d` / `c`: a target the operator's count applies to, found with the
+	// text objects above (`i(` `it` `i"` `iw` ...). What goes where is
+	// vimSurround.ts, vim-surround's s:wrap. One change: one undo step, and
+	// what `.` repeats (repeat.vim's), the tag included.
+
+	/** `ys` / `yS`, and visual `S` / `gS`: what to surround; the character comes next. */
+	private cmdSurroundOperator(op: 'ys' | 'yS'): void {
+		if (this.isVisual()) {
+			const range = this.visualRange();
+			const visual = this.visualDims();
+			const linewise = this._mode === 'visualLine';
+			this.leaveVisual(this.visualHead);
+			this.operator = op;
+			// vim-surround's VSurround / VgSurround: `S` puts a linewise selection on lines of its own, `gS` a characterwise one
+			this.surroundPending = { type: range.block ? 'block' : linewise ? 'line' : 'char', range, special: op === 'ys' ? linewise : !linewise, trimTrailing: false, visual };
+			this.awaitSurround();
+			return;
+		}
+		if (this.operator === undefined) {
+			this.operator = op;
+			this.opCount = this.count;
+			this.count = undefined;
+			return;
+		}
+		if (this.operator === 'y' && this.count === undefined && !this.forced) {
+			// `ys` / `yS`: the yank waiting for its motion is vim-surround's operator (`2ysw`)
+			this.operator = op;
+			return;
+		}
+		if (this.operator !== op || this.forced) {
+			this.invalid();
+		}
+		// yss: `^` to `{count}g_`, characterwise; ySS / ySs: `{count}_`, linewise
+		const cur = this.cursor();
+		const last = this.clampLine(cur.line + (this.effectiveCount() ?? 1) - 1);
+		const start = pos(cur.line, this.firstNonBlank(cur.line));
+		const blank = this.lastNonBlankCol(cur.line) < 0;
+		const range: Range = op === 'yS' ? { start: pos(cur.line, 0), end: pos(last, this.len(last)), linewise: true }
+			// on a blank line `^` and `g_` take its blanks, which go after the pair
+			: blank && last === cur.line ? { start: pos(cur.line, 0), end: pos(cur.line, this.len(cur.line)), linewise: false }
+				: { start, end: pos(last, Math.max(last === cur.line ? start.col : 0, this.lastNonBlankCol(last) + 1)), linewise: false };
+		this.surroundPending = { type: op === 'ys' ? 'char' : 'line', range, special: op === 'yS', trimTrailing: true };
+		this.awaitSurround();
+	}
+
+	private awaitSurround(): void {
+		this.awaiting = { command: 'devhubVim.surround', args: { action: 'wrap' } };
+	}
+
+	/**
+	 * `devhubVim.surround { action: delete | change | wrap }`: `ds{target}`,
+	 * `cs{target}{replacement}` (`lines`: `cS`), and the replacement the
+	 * `ys` family waits for. The characters come one call at a time as
+	 * `char` (from the key's `devhubVim.awaitChar`, or the engine waiting for
+	 * the next one itself); what came so far is in `target` / `replacement`
+	 * (a count `d2s(` / `ds2(`, a blank first `ds (` / `ysiw (`), the tag
+	 * typed at the `<` prompt in `tag`. Only the call that completes the
+	 * command is kept, with all of them, so `.` and macros never wait or ask.
+	 */
+	private cmdSurround(a: Args): void {
+		const action = str(a.action);
+		if ((action !== 'delete' && action !== 'change' && action !== 'wrap') || this.textObjectKind || this.isVisual()) {
+			this.invalid();
+		}
+		const operator = action === 'delete' ? 'd' : action === 'change' ? 'c' : undefined;
+		if (operator ? this.operator !== undefined && this.operator !== operator : !this.surroundPending) {
+			this.invalid();
+		}
+		let target = str(a.target);
+		let replacement = str(a.replacement);
+		const ch = charArg(a.char);
+		const needsTarget = action !== 'wrap';
+		if (ch !== undefined) {
+			if (needsTarget && !surroundTargetDone(target)) {
+				target += ch;
+			} else {
+				replacement += ch;
+			}
+		}
+		const so = { action, ...(a.lines === true ? { lines: true } : {}), ...(needsTarget ? { target } : {}) };
+		const wait = (args: Args) => {
+			this.steps.pop();
+			this.unrecorded = true;
+			this.awaiting = { command: 'devhubVim.surround', args };
+		};
+		if (needsTarget && !surroundTargetDone(target)) {
+			wait(so);
+			return;
+		}
+		if (action === 'delete') {
+			this.surroundDelete(target);
+			return;
+		}
+		if (replacement === '' || replacement === ' ') {
+			wait({ ...so, replacement });
+			return;
+		}
+		if (surroundAsksTag(replacement) && typeof a.tag !== 'string') {
+			// vim-surround's input("<"): the tag (and attributes) at the prompt; `T` offers the last removed one
+			this.steps.pop();
+			this.unrecorded = true;
+			const text = replacement.endsWith('T') ? surroundDefaultTag(this.lastSurroundRemoved) : '';
+			this.cmdline = { kind: '<', text, origin: this.host.getCursor(), id: ++cmdlineSequence, then: { command: 'devhubVim.surround', args: { ...so, replacement } } };
+			return;
+		}
+		const tag = typeof a.tag === 'string' ? a.tag : undefined;
+		if (action === 'change') {
+			this.surroundChange(target, replacement, tag, a.lines === true);
+		} else {
+			this.surroundApply(replacement, tag);
+		}
+	}
+
+	/** `ys` `yS` `yss` `ySS` `S` `gS` (and `cs` on `w` `W` `s` `p`): the pending text with the pair around it. */
+	private surroundApply(replacement: string, tag: string | undefined, removed = ''): void {
+		const p = this.surroundPending;
+		const d = p && surroundDelimiters(replacement, tag, removed);
+		if (!p || !d) {
+			this.invalid();
+		}
+		const indent = this.bufferOptions();
+		const r = p.range;
+		const edits: VimEdit[] = [];
+		let at = r.start;
+		if (p.type === 'block') {
+			for (let l = r.start.line; l <= r.end.line; l++) {
+				const span = this.blockSpan(l, r.block!);
+				const text = this.host.lineText(l).slice(span.start, span.end);
+				edits.push({ start: pos(l, span.start), end: pos(l, span.end), text: ' '.repeat(span.padLeft) + surroundWrap(text, d, 'block', false, '', indent) });
+			}
+			at = edits[0].start;
+		} else if (p.type === 'line') {
+			const text = this.linesText(r.start.line, r.end.line);
+			edits.push({ start: pos(r.start.line, 0), end: pos(r.end.line, this.len(r.end.line)), text: surroundWrap(text, d, 'line', p.special, /^[ \t]*/.exec(text)![0], indent) });
+			at = pos(r.start.line, 0);
+		} else {
+			let text = this.getText(r.start, r.end);
+			let append = '';
+			if (p.trimTrailing) {
+				// opfunc: the blanks at the end (after something else) go after the pair (`ysw)`)
+				const m = /(?<![ \t\n])[ \t]*$/.exec(text);
+				if (m) {
+					append = m[0];
+					text = text.slice(0, m.index);
+				}
+			}
+			edits.push({ start: r.start, end: r.end, text: surroundWrap(text, d, 'char', p.special, this.indentOf(r.start.line), indent) + append });
+		}
+		this.edit(edits);
+		this.closeChange();
+		this.setMark('[', at);
+		this.setNormalCursor(at);
+		this.complete({ ...this.snapshot(), ...(p.visual ? { visual: p.visual } : {}) });
+	}
+
+	/** `ds{target}`: the pair goes, what it surrounded stays (blanks inside go too after an opening `( [ { <`). */
+	private surroundDelete(target: string): void {
+		const f = this.surroundFind(target);
+		if (!f) {
+			this.complete(undefined);
+			return;
+		}
+		if ('object' in f) {
+			// `dsw` `dss` `dsp`: vim-surround deletes the text object and puts it back
+			this.setNormalCursor(f.object.start);
+			this.complete(undefined);
+			return;
+		}
+		this.lastSurroundRemoved = f.removed;
+		let { start, end } = f;
+		let text = f.keeper;
+		if (text.includes('\n')) {
+			// the pair on lines of its own (`{` at the end of one, `}` alone on one): those lines go too
+			const head = this.host.lineText(start.line).slice(0, start.col);
+			const tail = this.host.lineText(end.line).slice(end.col);
+			if (text.startsWith('\n')) {
+				if (!head.trim()) {
+					start = pos(start.line, 0);
+					text = text.slice(1);
+				} else {
+					start = pos(start.line, head.replace(/[ \t]+$/, '').length);
+				}
+			}
+			if (/\n[ \t]*$/.test(text) && !tail.trim()) {
+				text = text.replace(/\n[ \t]*$/, '');
+				end = pos(end.line, this.len(end.line));
+			}
+		}
+		this.edit([{ start, end, text }]);
+		this.closeChange();
+		this.setMark('[', start);
+		// what was inside starts on the next line: the caret goes there
+		this.setNormalCursor(text.startsWith('\n') ? pos(start.line + 1, this.firstNonBlank(start.line + 1)) : start);
+		this.complete(this.snapshot());
+	}
+
+	/** `cs{target}{replacement}` / `cS`: the pair is replaced; on a tag the new one keeps the attributes unless typed ending in `>`. */
+	private surroundChange(target: string, replacement: string, tag: string | undefined, special: boolean): void {
+		const f = this.surroundFind(target);
+		if (!f) {
+			this.complete(undefined);
+			return;
+		}
+		if ('object' in f) {
+			// `csw(` is `ysiw(` (vim-surround removes nothing, then surrounds the text object)
+			this.surroundPending = { type: f.object.linewise ? 'line' : 'char', range: f.object, special, trimTrailing: false };
+			this.surroundApply(replacement, tag);
+			return;
+		}
+		const d = surroundDelimiters(replacement, tag, f.removed);
+		if (!d) {
+			this.invalid();
+		}
+		this.lastSurroundRemoved = f.removed;
+		const k = f.keeper;
+		// several lines: no blank next to a line break (`cs{(` keeps the lines as they are)
+		const multi = k.includes('\n') && !special;
+		const lead = multi && k.startsWith('\n');
+		const trail = multi && /\n[ \t]*$/.test(k);
+		const dd = multi ? { before: lead ? d.before.replace(/ +$/, '') : d.before, after: trail ? d.after.replace(/^ +/, '') : d.after, extraspace: '' } : d;
+		const text = surroundWrap(k, dd, 'char', special, this.indentOf(f.start.line), this.bufferOptions());
+		this.edit([{ start: f.start, end: f.end, text }]);
+		this.closeChange();
+		this.setMark('[', f.start);
+		this.setNormalCursor(f.start);
+		this.complete(this.snapshot());
+	}
+
+	/**
+	 * vim-surround's targets: `b ( )` `B { }` `r [ ]` `a < >` (the operator's
+	 * count: the n-th pair out), `t` (a tag), `" ' \``, `/` (a C comment),
+	 * other punctuation (the nearest ones on the line either side), and `w W
+	 * s p` (the text object itself: `object`). The pair is [start, end),
+	 * `keeper` what it encloses (without the blanks next to it after an opening
+	 * bracket or a blank first), `removed` the pair's text. Undefined: no such
+	 * pair here, or nothing in it (vim-surround leaves `()` alone).
+	 */
+	private surroundFind(target: string): { start: VimPos; end: VimPos; keeper: string; removed: string } | { object: Range } | undefined {
+		let n = this.effectiveCount() ?? 1;
+		let t = target;
+		const digits = /^\d+/.exec(t);
+		if (digits) {
+			n *= Number(digits[0]);
+			t = t.slice(digits[0].length);
+		}
+		const spc = t.startsWith(' ');
+		if (spc) {
+			t = t.slice(1);
+		}
+		t = t === 'a' ? '>' : t === 'r' ? ']' : t;
+		const cur = this.cursor();
+		if (t === 'w' || t === 'W' || t === 's' || t === 'p') {
+			const object = this.textObject(t, false, n, cur);
+			return object && { object };
+		}
+		let outer: { start: VimPos; end: VimPos } | undefined;
+		let inner: { start: VimPos; end: VimPos } | undefined;
+		let keeper: string | undefined;
+		if (t === '/') {
+			const c = this.commentAround(cur);
+			if (c) {
+				outer = c;
+				inner = { start: pos(c.start.line, c.start.col + 2), end: pos(c.end.line, c.end.col - 2) };
+				keeper = this.getText(inner.start, inner.end).replace(/^[ \t]/, '').replace(/[ \t]$/, '');
+			}
+		} else if (/^[!-/:-@[-`{-~]$/.test(t) && !'[](){}<>"\'`'.includes(t)) {
+			// T{char} (one further when on one), dt{char}: between the nearest ones either side
+			const text = this.host.lineText(cur.line);
+			const left = cur.col > 0 ? text.lastIndexOf(t, cur.col - 1) : -1;
+			let s = left >= 0 ? left + 1 : cur.col;
+			if (text[s] === t) {
+				s++;
+			}
+			const open = s > 0 ? text.lastIndexOf(t, s - 1) : -1;
+			const close = text.indexOf(t, s + 1);
+			if (open >= 0 && close > s) {
+				outer = { start: pos(cur.line, open), end: pos(cur.line, close + 1) };
+				inner = { start: pos(cur.line, s), end: pos(cur.line, close) };
+			}
+		} else if (QUOTES.has(t)) {
+			const i = this.quoteObject(false, t, cur);
+			if (i) {
+				inner = i;
+				outer = { start: pos(i.start.line, i.start.col - 1), end: pos(i.end.line, i.end.col + 1) };
+			}
+		} else if (t === 't') {
+			const o = this.tagObject(true, n, cur);
+			const i = this.tagObject(false, n, cur);
+			if (o && i) {
+				outer = o;
+				inner = i;
+			}
+		} else if (BRACKETS[t]) {
+			const o = this.textObject(t, true, n, cur);
+			const i = this.textObject(t, false, n, cur);
+			// Vim's i( is empty for `()` and for `{` + line break + `}`: vim-surround leaves those alone
+			if (o && i && (i.linewise || cmp(i.start, i.end) !== 0)) {
+				outer = o;
+				inner = { start: pos(o.start.line, o.start.col + 1), end: pos(o.end.line, o.end.col - 1) };
+			}
+		}
+		if (!outer || !inner) {
+			return undefined;
+		}
+		keeper ??= this.getText(inner.start, inner.end);
+		if (!keeper) {
+			return undefined;
+		}
+		if (spc || '[({<T'.includes(t)) {
+			keeper = keeper.replace(/^[ \t]+/, '').replace(/[ \t]+$/, '');
+		}
+		const removed = t === '/' ? '/**/' : this.getText(outer.start, inner.start) + this.getText(inner.end, outer.end);
+		return { start: outer.start, end: outer.end, keeper, removed };
+	}
+
+	/** The C comment (`/* ... *\/`) the cursor is in or on, as `[/` and `]/` find it (within 1000 lines). */
+	private commentAround(cur: VimPos): { start: VimPos; end: VimPos } | undefined {
+		let start: VimPos | undefined;
+		for (let l = cur.line; l >= Math.max(0, cur.line - 1000) && !start; l--) {
+			const text = this.host.lineText(l);
+			const from = l === cur.line ? Math.min(cur.col, text.length - 1) : text.length - 1;
+			for (let c = from; c >= 0; c--) {
+				if (text.startsWith('/*', c)) {
+					start = pos(l, c);
+					break;
+				}
+				if (c > 0 && text.startsWith('*/', c - 1) && (l !== cur.line || c - 1 < cur.col - 1)) {
+					return undefined;
+				}
+			}
+		}
+		if (!start) {
+			return undefined;
+		}
+		for (let l = start.line; l <= Math.min(this.lastLine(), start.line + 1000); l++) {
+			const text = this.host.lineText(l);
+			const e = text.indexOf('*/', l === start.line ? start.col + 2 : 0);
+			if (e >= 0) {
+				const end = pos(l, e + 2);
+				return cmp(end, cur) > 0 ? { start, end } : undefined;
+			}
+		}
+		return undefined;
+	}
+
 	// ---- the `:` / `/` prompt ----------------------------------------------
 
 	private cmdCmdline(kind: string): void {
@@ -4751,7 +5153,7 @@ export class VimEngine {
 
 	/** The prompt is gone; `submitted`: its line runs next, so the view the 'incsearch' preview scrolled to stays. */
 	private closeCmdline(submitted = false): void {
-		if (this.cmdline && this.cmdline.kind !== ':') {
+		if (this.cmdline && (this.cmdline.kind === '/' || this.cmdline.kind === '?')) {
 			this.host.showIncSearch(undefined, submitted);
 		} else if (this.cmdline) {
 			this.host.previewSubstitute(undefined);
@@ -4760,7 +5162,7 @@ export class VimEngine {
 		this.fedPrompt = undefined;
 	}
 
-	private pushHistory(kind: ':' | '/', text: string): void {
+	private pushHistory(kind: ':' | '/' | '@', text: string): void {
 		if (!text) {
 			return;
 		}
@@ -4784,7 +5186,7 @@ export class VimEngine {
 			}
 			return;
 		}
-		if (!cl || !this.options.incsearch) {
+		if (!cl || cl.kind === '<' || !this.options.incsearch) {
 			return;
 		}
 		if (!cl.text) {
@@ -6385,6 +6787,11 @@ function shellMessage(r: { stderr: string; code: number | null }, ok: string): s
 	const err = r.stderr.split(/\r?\n/).find(l => l.trim()) ?? '';
 	const parts = [r.code ? `shell returned ${r.code}` : '', err].filter(x => x);
 	return parts.length ? parts.join(': ') : ok;
+}
+
+/** A `ds` / `cs` target is typed: a character, after a count (`ds2(`) or a blank (`ds (`). */
+function surroundTargetDone(target: string): boolean {
+	return target !== '' && target !== ' ' && !/^\d+$/.test(target);
 }
 
 function endOfText(at: VimPos, text: string): VimPos {

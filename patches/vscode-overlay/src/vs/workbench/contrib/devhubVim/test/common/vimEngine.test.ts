@@ -7,7 +7,7 @@ import assert from 'assert';
 import type { IVimHost, VimEdit, VimIndentOptions, VimMatch, VimPos, VimRange, VimSearchQuery, VimSubstitution } from '../../common/vimEngine.js';
 import { VimEngine, VimSharedState } from '../../common/vimEngine.js';
 import { vimFindHost } from './vimFindHost.js';
-import { VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
+import { CMDLINE_KEYBINDINGS, VimCmdlineController, VimStringLine } from '../../common/vimCmdline.js';
 import { BUILTIN_EX_REGISTRY, ExRegistry, parseExCommands, substituteExArgs, validateExCommandSpec } from '../../common/vimEx.js';
 import type { VimKeybinding } from '../../common/vimKeymap.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, JIS_KEYS, VIM_WEIGHTS, VIM_WHEN, evaluateWhen, jisKeys, keyForChar } from '../../common/vimKeymap.js';
@@ -379,6 +379,11 @@ class Vim {
 function keysOf(s: string): string[] {
 	const out: string[] = [];
 	for (let i = 0; i < s.length; i++) {
+		if (s.startsWith('<lt>', i)) {
+			out.push('<');
+			i += 3;
+			continue;
+		}
 		if (s[i] === '<') {
 			const j = s.indexOf('>', i);
 			if (j > i + 1 && /^<[A-Za-z][-\w[\]]*>$/.test(s.slice(i, j + 1))) { out.push(s.slice(i, j + 1)); i = j; continue; }
@@ -3185,5 +3190,342 @@ suite('Neovim keymap details', () => {
 		assert.strictEqual(v.state(), 'xa\n|xb');
 		// <Esc> typed into the prompt ends it, as in Vim
 		check('|a\nb', ':norm! ix<Esc>', '|a\nb');
+	});
+});
+
+// The expected results of the single-line cases (and of the multi-line ones
+// where DevHub does what vim-surround does) are what Vim 9.1 with
+// tpope/vim-surround and vim-repeat produce from the same text and keys
+// (`vim -Nu NONE`: no 'indentexpr', so no s:reindent; 'noexpandtab', as the
+// test host).
+suite('vim-surround (tpope/vim-surround)', () => {
+
+	test('ds: brackets (opening ones take the blanks inside), quotes, tags, punctuation, a C comment; a count is the n-th pair out', () => {
+		check('foo( |bar ) baz', 'ds(', 'foo|bar baz');
+		check('foo( |bar ) baz', 'ds)', 'foo| bar  baz');
+		check('foo( |bar ) baz', 'dsb', 'foo| bar  baz');
+		check('x = { |a: 1 };', 'ds{', 'x = |a: 1;');
+		check('x = { |a: 1 };', 'ds}', 'x = | a: 1 ;');
+		check('x = { |a: 1 };', 'dsB', 'x = | a: 1 ;');
+		check('a[ |1 ]', 'ds[', 'a|1');
+		check('a[ |1 ]', 'ds]', 'a| 1 ');
+		check('a[ |1 ]', 'dsr', 'a| 1 ');
+		check('List< |T >', 'ds<', 'List|T');
+		check('List< |T >', 'ds>', 'List| T ');
+		check('List< |T >', 'dsa', 'List| T ');
+		check('say "hel|lo" now', 'ds"', 'say |hello now');
+		check('say \'hel|lo\' now', 'ds\'', 'say |hello now');
+		check('say `hel|lo` now', 'ds`', 'say |hello now');
+		check('|say "hello" now', 'ds"', 'say |hello now');
+		check('f(a, (b|c))', 'ds(', 'f(a, |bc)');
+		check('f(a, (b|c))', '2ds(', 'f|a, (bc)');
+		check('f(a, (b|c))', 'ds2(', 'f|a, (bc)');
+		// d2s( too (the count of `d`, as `2ds(`; vim-surround has no such key)
+		check('f(a, (b|c))', 'd2s(', 'f|a, (bc)');
+		check('<div><p>t|ext</p></div>', 'dst', '<div>|text</div>');
+		check('<div><p>t|ext</p></div>', '2dst', '|<p>text</p>');
+		check('<a href="x">li|nk</a>', 'dst', '|link');
+		check('a *b|old* c', 'ds*', 'a |bold c');
+		check('a *|bold* c', 'ds*', 'a |bold c');
+		check('a |*bold* c', 'ds*', 'a |bold c');
+		check('a _x|_ c', 'ds_', 'a |x c');
+		check('a +|x+ c', 'ds+', 'a |x c');
+		// (the first `|` is the cursor; vim-surround's `:normal` takes this one as a command separator)
+		check('a ||x| c', 'ds|', 'a |x c');
+		check('a \\|x\\ c', 'ds\\', 'a |x c');
+		check('x /* com|ment */ y', 'ds/', 'x |comment y');
+		check('( |a )', 'ds )', '|a');
+	});
+
+	test('ds that finds nothing to remove does nothing (and is not what . repeats)', () => {
+		check('(|)', 'ds(', '(|)');
+		check('f(|)', 'ds(', 'f(|)');
+		check('foo(|bar)', 'dsx', 'foo(|bar)');
+		check('foo b|ar baz', 'dsw', 'foo |bar baz');
+		check('a |b c', 'ds(', 'a |b c');
+		check('(a) |b (c)', 'ds(', '(a) |b (c)');
+		check('(|a) b (c)', 'ds(Wds(W.', 'a b |c');
+	});
+
+	test('cs: the old pair for a new one; a tag replacement asks for the tag and keeps the old attributes unless it ends in >', () => {
+		check('call( |x )', 'cs([', 'call|[ x ]');
+		check('call( |x )', 'cs(]', 'call|[x]');
+		check('call( |x )', 'cs){', 'call|{  x  }');
+		check('call( |x )', 'cs(}', 'call|{x}');
+		check('call( |x )', 'cs(b', 'call|(x)');
+		check('call( |x )', 'cs(B', 'call|{x}');
+		check('call( |x )', 'cs(r', 'call|[x]');
+		check('call( |x )', 'cs(a', 'call|<x>');
+		check('call( |x )', 'cs(>', 'call|<x>');
+		check('call( |x )', 'cs("', 'call|"x"');
+		check('say "h|i" now', 'cs"\'', 'say |\'hi\' now');
+		check('say \'h|i\' now', 'cs\'`', 'say |`hi` now');
+		check('say "h|i" now', 'cs"(', 'say |( hi ) now');
+		check('say "h|i" now', 'cs")', 'say |(hi) now');
+		check('call( |x )', 'cs(*', 'call|*x*');
+		check('call( |x )', 'cs(1', 'call|1x1');
+		check('call( |x )', 'cs(x', 'call|x');
+		check('call( |x )', 'cs(s', 'call| x');
+		check('call( |x )', 'cs(:', 'call|:x');
+		check('call( |x )', 'cs(p', 'cal|l\nx\n\n');
+		check('call( |x )', 'cs( (', 'call|(  x  )');
+		check('say "h|i" now', 'cs"t<lt>em>', 'say |<<em>hi</<em> now');
+		check('say "h|i" now', 'cs"tem>', 'say |<em>hi</em> now');
+		check('say "h|i" now', 'cs"tem<CR>', 'say |<em>hi</em> now');
+		check('say "h|i" now', 'cs"<lt>em>', 'say |<em>hi</em> now');
+		check('<p id="a">h|i</p>', 'csttdiv>', '|<div>hi</div>');
+		check('<p id="a">h|i</p>', 'csttdiv class="x"<CR>', '|<div class="x" id="a">hi</div>');
+		check('<p id="a">h|i</p>', 'csttdiv class="x">', '|<div class="x">hi</div>');
+		check('<p id="a">h|i</p>', 'cst"', '|"hi"');
+		check('<p id="a">h|i</p>', 'csttbr/>', '|<br />hi');
+		check('(h|i)', 'cs(tbr/>', '|<br />hi');
+		check('f(a, (b|c))', '2cs([', 'f|[ a, (bc) ]');
+		check('f(a, (b|c))', 'cs2([', 'f|[ a, (bc) ]');
+	});
+
+	test('cs w / W / s / p surround the text object (csw( is ysiw(); cS puts the pair on lines of its own', () => {
+		check('foo b|ar baz', 'csw(', 'foo |( bar ) baz');
+		check('foo b|ar baz', 'csW"', 'foo |"bar" baz');
+		check('foo b|ar baz', 'csw (', 'foo |(  bar  ) baz');
+		check('foo b|ar baz', 'csw  ', 'foo | bar  baz');
+		check('call( |x )', 'cS([', 'call|[\n\tx\n]');
+		check('  call(|x)', 'cS({', '  call|{\n\t  x\n  }');
+	});
+
+	test('ys{motion} / ys{text object}: an opening bracket puts blanks inside, a closing one does not; counts on ys and on the motion', () => {
+		check('foo |bar baz', 'ysiw(', 'foo |( bar ) baz');
+		check('foo |bar baz', 'ysiw)', 'foo |(bar) baz');
+		check('foo |bar baz', 'ysiwb', 'foo |(bar) baz');
+		check('foo |bar baz', 'ysiw{', 'foo |{ bar } baz');
+		check('foo |bar baz', 'ysiw}', 'foo |{bar} baz');
+		check('foo |bar baz', 'ysiwB', 'foo |{bar} baz');
+		check('foo |bar baz', 'ysiw[', 'foo |[ bar ] baz');
+		check('foo |bar baz', 'ysiw]', 'foo |[bar] baz');
+		check('foo |bar baz', 'ysiwr', 'foo |[bar] baz');
+		check('foo |bar baz', 'ysiw>', 'foo |<bar> baz');
+		check('foo |bar baz', 'ysiwa', 'foo |<bar> baz');
+		check('foo |bar baz', 'ysiw"', 'foo |"bar" baz');
+		check('foo |bar baz', 'ysiw\'', 'foo |\'bar\' baz');
+		check('foo |bar baz', 'ysiw`', 'foo |`bar` baz');
+		check('foo |bar baz', 'ysiw*', 'foo |*bar* baz');
+		check('foo |bar baz', 'ysiw_', 'foo |_bar_ baz');
+		check('foo |bar baz', 'ysiw-', 'foo |-bar- baz');
+		check('foo |bar baz', 'ysiw1', 'foo |1bar1 baz');
+		check('foo |bar baz', 'ysiwx', 'foo |bar baz');
+		check('foo |bar baz', 'ysiws', 'foo | bar baz');
+		check('foo |bar baz', 'ysiw:', 'foo |:bar baz');
+		check('foo |bar baz', 'ysiw (', 'foo |(  bar  ) baz');
+		check('foo |bar baz', 'ysiw )', 'foo |( bar ) baz');
+		check('foo |bar baz', 'ysiw  ', 'foo | bar  baz');
+		check('foo |bar baz', 'ysw)', 'foo |(bar) baz');
+		check('foo |bar baz', 'ys2w)', 'foo |(bar baz)');
+		check('foo |bar baz', '2ysw)', 'foo |(bar baz)');
+		check('foo |bar baz', 'ys$"', 'foo |"bar baz"');
+		check('foo |bar baz', 'ys3l"', 'foo |"bar" baz');
+		check('foo |bar baz', 'ysfa*', 'foo |*ba*r baz');
+		check('foo |bar baz', 'ysta*', 'foo |*b*ar baz');
+		check('foo |bar   baz', 'ysw)', 'foo |(bar)   baz');
+		check('foo |bar baz', 'ysaw)', 'foo |(bar) baz');
+		check('foo b|ar baz', 'ysiW]', 'foo |[bar] baz');
+		check('f(|a, b)', 'ysi("', 'f(|"a, b")');
+		check('f(|a, b)', 'ysa("', 'f|"(a, b)"');
+		check('|foo bar', 'ys/b<CR>)', '|(foo) bar');
+	});
+
+	test('ys with a tag: t or < asks for it, > or Enter ends it, a trailing / makes it self-closing, an empty one surrounds with nothing', () => {
+		check('foo |bar baz', 'ysiwtdiv>', 'foo |<div>bar</div> baz');
+		check('foo |bar baz', 'ysiw<lt>div class="x">', 'foo |<div class="x">bar</div> baz');
+		check('foo |bar baz', 'ysiw<lt>div class="x"<CR>', 'foo |<div class="x">bar</div> baz');
+		check('foo |bar baz', 'ysiwtbr/>', 'foo |<br />bar baz');
+		check('foo |bar baz', 'ysiwt<CR>', 'foo |bar baz');
+		// T offers the tag ds / cs removed last
+		const v = new Vim('<p id="a">|x</p> y').keys('dstWysiwT');
+		assert.strictEqual(v.promptText(), 'p id="a"');
+		v.keys('<CR>');
+		assert.strictEqual(v.state(), 'x |<p id="a">y</p>');
+		// the prompt's history is Vim's input history, not the search's
+		assert.deepStrictEqual(v.shared.history['@'], ['p id="a"']);
+		assert.deepStrictEqual(v.shared.history['/'], []);
+	});
+
+	test('yss / ySS: the line from its first non-blank (blanks at its end stay out), with a count that many lines; yS / ySS on lines of their own, indented', () => {
+		check('  foo |bar  ', 'yss)', '  |(foo bar)  ');
+		check('  foo |bar  ', 'yss(', '  |( foo bar )  ');
+		check('  foo |bar', 'yss"', '  |"foo bar"');
+		check('a|b\ncd\nef', '2yss)', '|(ab\ncd)\nef');
+		check('|', 'yss)', '|()');
+		check('  |  ', 'yss)', '|()    ');
+		check('  foo |bar', 'ySS{', '|  {\n\t  foo bar\n  }');
+		check('  foo |bar', 'ySs{', '|  {\n\t  foo bar\n  }');
+		check('  foo |bar', 'yS$(', '  foo |(\n\t  bar\n  )');
+		check('  foo |bar', 'ySiwtp>', '  foo |<p>\n\t  bar\n  </p>');
+		// the indent is the buffer's: a 'shiftwidth' of spaces with 'expandtab'
+		const v = new Vim('  foo |bar');
+		v.host.indent = { tabSize: 4, indentSize: 2, insertSpaces: true };
+		v.keys('ySS{');
+		assert.strictEqual(v.state(), '|  {\n    foo bar\n  }');
+	});
+
+	test('a linewise motion or text object: the pair on lines of its own at the indent of the first line', () => {
+		check('  |foo\n  bar\n\nbaz', 'ysip{', '|  {\n  foo\n  bar\n  }\n\nbaz');
+		check('  |foo\n  bar\n\nbaz', 'ySip{', '|  {\n\t  foo\n\t  bar\n  }\n\nbaz');
+		check('  |foo\n  bar', 'ysj(', '|  (\n  foo\n  bar\n  )');
+		check('  |foo\n  bar', 'yS2j{', '|  {\n\t  foo\n\t  bar\n  }');
+		check('|foo\nbar', 'ysj"', '|"\nfoo\nbar\n"');
+		check('|foo\nbar', 'ysjtdiv>', '|<div>\nfoo\nbar\n</div>');
+		check('  |foo\n  bar', 'ysjp', '|  \n  foo\n  bar\n  \n  ');
+		check('|foo\nbar', 'ysj (', '|(\nfoo\nbar\n)');
+	});
+
+	test('visual S: characterwise around the selection, linewise on lines of their own (indented), blockwise on each line; gS the other way round', () => {
+		check('foo |bar baz', 'veS)', 'foo |(bar) baz');
+		check('foo |bar baz', 'veS(', 'foo |( bar ) baz');
+		check('foo |bar baz', 'veS"', 'foo |"bar" baz');
+		check('foo |bar baz', 'vegS{', 'foo |{\n\tbar\n} baz');
+		check('foo |bar baz', 'veStem>', 'foo |<em>bar</em> baz');
+		check('foo |bar  baz', 'vlllS)', 'foo |(bar ) baz');
+		check('  |foo\n  bar', 'VjS{', '|  {\n\t  foo\n\t  bar\n  }');
+		check('  |foo\n  bar', 'VjgS{', '|  {\n  foo\n  bar\n  }');
+		check('  |foo\n  bar', 'VS"', '|  "\n\t  foo\n  "\n  bar');
+		check('  |foo\n  bar', 'VjStdiv>', '|  <div>\n\t  foo\n\t  bar\n  </div>');
+		check('|abc\ndef\nghi', '<C-v>jlS)', '|(ab)c\n(de)f\nghi');
+		check('|abc\ndef\nghi', '<C-v>jlS(', '|( ab )c\n( de )f\nghi');
+		check('x|abc\nydef', '<C-v>jlS"', 'x|"ab"c\ny"de"f');
+		check('|ab\nabcd', '<C-v>j$S]', '|[ab]\n[abcd]');
+		// S is no longer substitute-line in visual mode; R still is, and S in normal mode
+		check('|ab\ncd', 'VRx<Esc>', '|x\ncd');
+		check('|ab\ncd', 'Sx<Esc>', '|x\ncd');
+	});
+
+	test('several lines: ds takes away the lines the pair was alone on, cs keeps the lines as they are', () => {
+		// (vim-surround joins the first line inside to the line of the opening bracket and leaves blank lines)
+		check('foo(() => {\n  |bar();\n});', 'ds{', 'foo(() =>\n  |bar();\n);');
+		check('<div>\n  |x\n</div>', 'dst', '|  x');
+		check('<div>\n  |a\n  b\n</div>', 'dst', '|  a\n  b');
+		check('foo(\n  |a,\n  b\n)', 'ds(', 'foo\n  |a,\n  b');
+		check('{\n  |b\n}', 'ds{', '|  b');
+		check('foo(() => {\n  |bar();\n});', 'cs{(', 'foo(() => |(\n  bar();\n));');
+		check('if (a) {\n  |b\n}', 'cs{[', 'if (a) |[\n  b\n]');
+		check('<div>\n  |x\n</div>', 'csttsection>', '|<section>\n  x\n</section>');
+		check('(a,\n |b)', 'ds(', '|a,\n b');
+	});
+
+	test('one undo step each', () => {
+		const undo = (text: string, keys: string, changed: string) => {
+			const v = new Vim(text).keys(keys);
+			assert.strictEqual(v.state(), changed, keys);
+			v.keys('u');
+			assert.strictEqual(v.host.lines.join('\n'), text.replace('|', ''), `${keys} u`);
+			v.keys('<C-r>');
+			assert.strictEqual(v.host.lines.join('\n'), changed.replace('|', ''), `${keys} u <C-r>`);
+		};
+		undo('a (|b) c', 'ds(', 'a |b c');
+		undo('a (|b) c', 'cs([', 'a |[ b ] c');
+		undo('a <p>|b</p> c', 'csttdiv class="x">', 'a |<div class="x">b</div> c');
+		undo('a |b c', 'ysiw)', 'a |(b) c');
+		undo('  a |b', 'ySS{', '|  {\n\t  a b\n  }');
+		undo('|ab\ncd', '<C-v>jS"', '|"a"b\n"c"d');
+		undo('{\n  |b\n}', 'ds{', '|  b');
+	});
+
+	test('. repeats ds, cs and ys (with the tag, without asking again), with their count; visual S on as much text from the cursor', () => {
+		check('(|a) (b)', 'ds(w.', 'a |b');
+		check('(|a) (b)', 'cs([f(.', '[ a ] |[ b ]');
+		check('|a b', 'ysiw)W.', '(a) |(b)');
+		check('|a\nb', 'yss)j.', '(a)\n|(b)');
+		check('|a b c', 'ysiw"W.W.', '"a" "b" |"c"');
+		check('((|a)) ((b))', '2ds(fb.', '(a) |(b)');
+		check('|a\nb\nc\nd', '2yss)jj.', '(a\nb)\n|(c\nd)');
+		check('<p>|a</p> <p>b</p>', 'csttem>fb.', '<em>a</em> |<em>b</em>');
+		check('|a b', 'ysiwtx>W.', '<x>a</x> |<x>b</x>');
+		check('|a b', 'ysiw (fb.', '(  a  ) |(  b  )');
+		check('|ab cd', 'vlS)W.', '(ab) |(cd)');
+		check('|ab\ncd', 'VS"3j.', '"\n\tab\n"\n|"\n\tcd\n"');
+		// a count with . replaces the one recorded
+		check('|a b c d', 'ysw)W3.', '(a) |(b c d)');
+		// the prompt was not opened again
+		const v = new Vim('|a b').keys('ysiwtx>W');
+		v.keys('.');
+		assert.strictEqual(v.vim.cmdlineOpen, false);
+	});
+
+	test('macros record the completed surround commands, the tag included', () => {
+		let v = new Vim('|a b c').keys('qqysiwtem>Wq');
+		v.keys('@q');
+		assert.strictEqual(v.state(), '<em>a</em> <em>b</em> |c');
+		v = new Vim('|(a) (b) (c)').keys('qqcs(]Wq2@q');
+		assert.strictEqual(v.state(), '[a] [b] [c|]');
+		v = new Vim('|"a" "b"').keys('qqds"Wq@q');
+		assert.strictEqual(v.state(), 'a |b');
+	});
+
+	test(':normal and a register run as keys type the tag into the prompt too', async () => {
+		let v = new Vim('|a\nb').keys(':%norm ysiwtem><CR>');
+		await flush();
+		assert.strictEqual(v.host.lines.join('\n'), '<em>a</em>\n<em>b</em>');
+		v = new Vim('ysiwtp>\n|x y').keys('k"ay$j@a');
+		assert.strictEqual(v.state(), 'ysiwtp>\n|<p>x</p> y');
+	});
+
+	test('Esc, or a key that is no character, cancels at every step, and nothing changes', () => {
+		for (const keys of ['ys<Esc>', 'ysiw<Esc>', 'yss<Esc>', 'ds<Esc>', 'cs<Esc>', 'cs(<Esc>', 'ysiw <Esc>', 'ysiwt<Esc>', 'ysiwtdiv<Esc>', 'cs(t<Esc>', 'veS<Esc>', 'ysiw<Left>']) {
+			const v = new Vim('(a |b c)').keys(keys);
+			assert.strictEqual(v.host.lines.join('\n'), '(a b c)', keys);
+			assert.strictEqual(v.vim.pending, false, keys);
+			assert.strictEqual(v.vim.mode, 'normal', keys);
+			assert.strictEqual(v.vim.cmdlineOpen, false, keys);
+		}
+		// and . still repeats what came before
+		check('(|a) (b) (c)', 'ds(Wcs(<Esc>.', 'a |b (c)');
+	});
+
+	test('the grammar as context keys and showcmd: ys is an operator, its character and ds / cs\'s are awaited', () => {
+		const v = new Vim('a |b c').keys('y');
+		v.keys('s');
+		assert.strictEqual(v.vim.context().pendingOperator, 'surround');
+		assert.strictEqual(v.vim.context().mode, 'operatorPending');
+		assert.ok(v.vim.status().endsWith('ys'), v.vim.status());
+		v.keys('iw');
+		assert.strictEqual(v.vim.context().awaitingChar, true);
+		v.keys(')');
+		assert.strictEqual(v.state(), 'a |(b) c');
+		v.keys('yS');
+		assert.strictEqual(v.vim.context().pendingOperator, 'surroundLines');
+		v.keys('<Esc>cs');
+		assert.strictEqual(v.vim.context().awaitingChar, true);
+		v.keys('(');
+		assert.ok(v.vim.status().endsWith('cs('), v.vim.status());
+		assert.strictEqual(v.vim.context().awaitingChar, true);
+		v.keys('<Esc>');
+		assert.strictEqual(v.vim.pending, false);
+	});
+
+	test('the keys are native keybindings: s / S after d c y, s / S after ys / yS, S and gS in visual mode, > in the tag prompt', () => {
+		const find = (key: string, ctx: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(b.when, { textInputFocus: true, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, ...ctx })).map(b => [b.command, b.args]);
+		const op = (name: string) => ({ 'devhubVim.mode': 'operatorPending', 'devhubVim.pendingOperator': name });
+		assert.deepStrictEqual(find('s', op('delete')), [['devhubVim.awaitChar', { then: { command: 'devhubVim.surround', args: { action: 'delete' } } }]]);
+		assert.deepStrictEqual(find('s', op('change')), [['devhubVim.awaitChar', { then: { command: 'devhubVim.surround', args: { action: 'change' } } }]]);
+		assert.deepStrictEqual(find('shift+s', op('change')), [['devhubVim.awaitChar', { then: { command: 'devhubVim.surround', args: { action: 'change', lines: true } } }]]);
+		assert.deepStrictEqual(find('s', op('yank')), [['devhubVim.operator', { operator: 'surround' }]]);
+		assert.deepStrictEqual(find('shift+s', op('yank')), [['devhubVim.operator', { operator: 'surroundLines' }]]);
+		assert.deepStrictEqual(find('s', op('surround')), [['devhubVim.operator', { operator: 'surround' }]]);
+		assert.deepStrictEqual(find('s', op('surroundLines')), [['devhubVim.operator', { operator: 'surroundLines' }]]);
+		assert.deepStrictEqual(find('shift+s', op('surroundLines')), [['devhubVim.operator', { operator: 'surroundLines' }]]);
+		assert.deepStrictEqual(find('shift+s', { 'devhubVim.mode': 'visual', 'devhubVim.visual': true }), [['devhubVim.operator', { operator: 'surround' }]]);
+		assert.deepStrictEqual(find('g shift+s', { 'devhubVim.mode': 'visualLine', 'devhubVim.visual': true }), [['devhubVim.operator', { operator: 'surroundLines' }]]);
+		assert.deepStrictEqual(find('shift+s', { 'devhubVim.mode': 'normal' }), [['devhubVim.action', { action: 'substituteLine' }]]);
+		assert.deepStrictEqual(find('s', op('format')), []);
+		const prompt = CMDLINE_KEYBINDINGS.filter(b => b.key === 'shift+[Period]');
+		assert.deepStrictEqual(prompt.map(b => [b.command, b.args, b.when]), [['devhubVim.cmdline.submit', { insert: '>' }, 'devhubVim.cmdlineFocus && devhubVim.cmdlineKind == \'<\'']]);
+	});
+
+	test('a key of one\'s own: devhubVim.surround waits for its characters by itself; the defaults can be removed', () => {
+		let v = new Vim('(a |b)', [{ key: 'ctrl+k', command: 'devhubVim.surround', args: { action: 'delete' } }]).keys('<C-k>(');
+		assert.strictEqual(v.state(), '|a b');
+		v = new Vim('a |b', [{ key: 'ctrl+k', command: 'devhubVim.run', args: { commands: [{ command: 'devhubVim.operator', args: { operator: 'surround' } }, { command: 'devhubVim.textObject', args: { object: 'word', kind: 'inner' } }] } }]).keys('<C-k>]');
+		assert.strictEqual(v.state(), 'a |[b]');
+		// without the default, `s` after `d` is no key: the pending `d` is cancelled and `(` is the motion
+		v = new Vim('(a |b)', [{ key: 's', command: '-devhubVim.awaitChar' }]).keys('ds(');
+		assert.strictEqual(v.state(), '|(a b)');
 	});
 });
