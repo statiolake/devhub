@@ -33,7 +33,7 @@ import { useShellPage } from "../../ShellPageContext";
 import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Asleep, Failure, Waiting } from "./SurfaceState";
-import { useRestartingEditors } from "./workbenchDialogs";
+import { useEditorPlaceholders } from "./workbenchDialogs";
 import {
   TERMINAL_MAX_SHARE,
   TERMINAL_MIN_SHARE,
@@ -329,7 +329,7 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
   const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useShellPage();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
-  const restartingEditors = useRestartingEditors();
+  const placeholders = useEditorPlaceholders();
   const area = useWorkbenchArea();
 
   // The divider moves under the pointer; the model learns where it stopped.
@@ -451,21 +451,22 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // draw under it. The workbenches stay built and running behind both: this
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
-  } else if (restartingEditors.has(layout.editorKey)) {
-    // The workbench is being rebuilt in this same slot, or is asleep. The
-    // selection has not moved and must not: what changed is that there is
-    // nothing to show yet, which is a state of this area rather than a reason
-    // to leave it. One that slept shows the frame it left.
-    const { restarting, frame } = restartingEditors.get(layout.editorKey) ?? {};
-    surfaceState = restarting === true ? "editor-restarting" : "editor-asleep";
+  } else if (placeholders.has(layout.editorKey)) {
+    // The workbench is being rebuilt in this same slot, asleep, or waking.
+    // The selection has not moved and must not: what changed is that there
+    // is nothing to show yet, which is a state of this area rather than a
+    // reason to leave it. One that slept shows the frame it left.
+    const placeholder = placeholders.get(layout.editorKey);
+    surfaceState =
+      placeholder?.kind === "asleep" ? "editor-asleep" : "editor-restarting";
     editorKey = layout.editorKey;
     body =
-      frame === undefined ? (
+      placeholder === undefined || placeholder.kind === "restarting" ? (
         <Waiting label="Restarting the editor…" />
       ) : (
         <Asleep
-          frame={frame}
-          label={restarting === true ? "起動中…" : "休止中"}
+          frame={placeholder.frame}
+          label={placeholder.kind === "waking" ? "起動中…" : "休止中"}
         />
       );
   } else {

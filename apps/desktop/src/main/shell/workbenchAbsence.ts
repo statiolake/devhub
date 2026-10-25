@@ -13,7 +13,7 @@
  * The workbench decides what to do with the number (`devhubTidy` in the
  * overlay hides its panel and side bars after `devhub.workbench.
  * tidyAfterAwayMinutes`), and main closes a workbench away for longer than
- * `general.workbench_hibernate_minutes` (`workbenchHibernation.ts`).
+ * `general.workbench_hibernate_minutes` (`workbenchLifecycle.ts`).
  *
  * A workbench that has never been on screen is away from when it was first
  * seen, but has nothing to come back from: its first showing is not reported.

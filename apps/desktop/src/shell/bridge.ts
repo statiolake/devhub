@@ -14,7 +14,7 @@
  * It described nothing the bridge did not, and it described it *badly* — five
  * members reached `window.devhub` around it, so the one artefact that claimed
  * to be a page's contract silently omitted `onMenuCommand`, `onTheme`,
- * `onEditorRestarting`, `onModals` and `writeClipboard`. The contract is the
+ * `onEditorPlaceholder`, `onModals` and `writeClipboard`. The contract is the
  * preload now, and a test stubs `window.devhub` the way the preload fills it.
  */
 

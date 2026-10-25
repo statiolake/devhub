@@ -252,11 +252,7 @@ import {
 	shellWindowIfCreated,
 	type ContentFocus,
 } from "./shellWindow.js";
-import {
-	reconcileEditors,
-	type KeyboardHalf,
-	type SurfaceArrangement,
-} from "./windowLayout.js";
+import type { KeyboardHalf, SurfaceArrangement } from "./windowLayout.js";
 import {
 	agentTerminalSessionName,
 	clampTerminalShare,
@@ -282,19 +278,16 @@ import { crash, isInvariantViolation } from "./invariant.js";
 import { InvariantViolation } from "../../model/invariant.js";
 import { HostLinkFailure } from "../agent/conversation/hostLink.js";
 import { ConversationStopped } from "../agent/conversation/failures.js";
-import {
-	deadEditorKeys,
-	editorGaveUpFailure,
-	EditorSupervisor,
-} from "./editorSupervisor.js";
+import { deadEditorKeys, editorGaveUpFailure } from "./editorSupervisor.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { mainLogPath } from "../diagnostics/mainLog.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import {
 	HIBERNATE_CHECK_MS,
-	WorkbenchSleep,
-	capCandidates,
-} from "./workbenchHibernation.js";
+	WorkbenchLifecycle,
+	type EditorPlaceholder,
+	type LifecycleEffect,
+} from "./workbenchLifecycle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
@@ -584,7 +577,7 @@ function describeFailure(error: unknown): string {
  * How long an open may take before it counts as having failed.
  *
  * Because an open that never settles is the one failure with no symptom at
- * all: the promise stays in `editorOpens`, every later caller joins it, and
+ * all: the folder stays `opening`, every later caller joins the open, and
  * the folder has no workbench, no restart and nothing on screen for ever. It
  * is reachable — VS Code's window service, asked to open a folder whose window
  * is a renderer that has just been killed, can route the request into that
@@ -743,24 +736,28 @@ export class AppController {
 	}
 
 	/**
-	 * The one budget for "this folder has no workbench and the last try failed".
-	 *
-	 * Every way that can happen — a renderer the OS killed, an open that
-	 * rejected, a view that never arrived — is counted here, against one
-	 * ceiling, with one backoff. See `editorSupervisor.ts`.
+	 * Where every folder's workbench is in its life — opening, awake, asleep,
+	 * restarting, given up on — and what to do about it: the one owner
+	 * (`workbenchLifecycle.ts`). Everything below that touches a workbench's
+	 * existence reports to it and carries out its plan
+	 * (`reconcileWorkbenches`); nothing else keeps any part of that state.
 	 */
-	private readonly editorSupervisor = new EditorSupervisor();
-	/** One in-flight workbench open per folder, shared by concurrent callers. */
-	private readonly editorOpens = new Map<
+	private readonly workbenches = new WorkbenchLifecycle();
+	/**
+	 * The open each `open` effect started, for whoever needs its view to join.
+	 * Not state: the folder's phase says it is opening; this is the promise.
+	 */
+	private readonly workbenchOpens = new Map<
 		string,
 		Promise<WorkbenchView | undefined>
 	>();
-	/** Each folder's hibernation and wake (`workbenchHibernation.ts`). */
-	private readonly workbenchSleep = new WorkbenchSleep(() => {
-		this.syncEditorViews();
-	});
-	/** Set while `capAwakeWorkbenches` is closing workbenches. */
-	private capping = false;
+	/** The one timer for the lifecycle's next deadline (a hold, a backoff). */
+	private workbenchDeadline:
+		| { readonly at: number; readonly timer: ReturnType<typeof setTimeout> }
+		| undefined;
+	/** A plan is being carried out; one asked for meanwhile runs right after. */
+	private reconciling = false;
+	private reconcileAgain = false;
 
 	/**
 	 * The one place anything waits for VS Code's main process to be usable.
@@ -1100,8 +1097,7 @@ export class AppController {
 	async startRuntimes(userDataPath: string): Promise<void> {
 		this.userDataPath = userDataPath;
 		setInterval(() => {
-			this.hibernateAwayWorkbenches();
-			this.capAwakeWorkbenches();
+			this.reconcileWorkbenches({ tick: true });
 		}, HIBERNATE_CHECK_MS);
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
@@ -1545,11 +1541,12 @@ export class AppController {
 			selectContext: (context, presentation, focus, passing) => {
 				if (passing) {
 					const model = this.coordinator.model;
-					this.workbenchSleep.pass(
+					this.workbenches.pass(
 						(context.kind === "workspace"
 							? model.workspace(context.workspaceId as WorkspaceId)
 							: model.workspaceForAgent(parseAgentId(context.agentId))
 						)?.key,
+						Date.now(),
 					);
 				}
 				this.arrive(
@@ -1565,7 +1562,7 @@ export class AppController {
 				this.swapSplitFocus();
 			},
 			typed: () => {
-				this.workbenchSleep.release();
+				if (this.workbenches.typed(Date.now())) this.reconcileWorkbenches();
 			},
 			cyclePaneFocus: () => {
 				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
@@ -2615,7 +2612,7 @@ export class AppController {
 	 * Told to the model as an intent, the way a focus change is: the model
 	 * decides what an absent folder means for the workspace (`unavailable`,
 	 * with `root_missing` as the reason), and the projection change that
-	 * follows is what takes the workspace out of `syncEditorViews`'s list.
+	 * follows is what takes the workspace out of the workbenches wanted.
 	 * A folder no workspace owns is nobody's to mark.
 	 */
 	private noteFolderUnreadable(
@@ -3194,7 +3191,10 @@ export class AppController {
 		// An Agent gone idle, or a box ticked, is when an automatic action may
 		// be due.
 		this.runAutomaticActions();
-		this.syncEditorViews();
+		// Which workbenches exist follows the projection and the selection —
+		// a Workspace added or gone, one shown that is asleep, the cap — so
+		// every change is a plan. See `workbenchLifecycle.ts`.
+		this.reconcileWorkbenches();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
 		this.syncEditorViewInBackground();
@@ -3258,8 +3258,11 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
+		// Its phase, as the page draws it: anything standing in for the
+		// workbench means the workbench itself is not what is in the area.
 		const restarting =
-			editorKey !== undefined && this.restartingEditors.has(editorKey);
+			editorKey !== undefined &&
+			this.workbenches.placeholder(editorKey) !== undefined;
 		// Nothing is drawn in the content area until the model is ready, and a
 		// workbench being rebuilt is a state of the area rather than a reason
 		// to leave it — in both cases the page has the rectangle and no
@@ -3373,9 +3376,6 @@ export class AppController {
 	 * told of yet — what the sweep must not reap in the meantime.
 	 */
 	private readonly launchingTerminals = new Set<string>();
-
-	/** Folders whose workbench is being rebuilt, as the page is told. */
-	private readonly restartingEditors = new Set<string>();
 
 	private publishAppearance(): void {
 		if (!this.config) return;
@@ -4967,8 +4967,10 @@ export class AppController {
 		if (key === undefined) return;
 		const viewId = this.editorViewId(key);
 		shellWindow().unbindEditorKey(key);
-		if (viewId === undefined) return;
-		shellWindow().getViewById(viewId)?.destroy();
+		if (viewId !== undefined) shellWindow().getViewById(viewId)?.destroy();
+		// Taken down on purpose: the lifecycle's `absent`, opened again only
+		// if it is still wanted and not closing (a reattach opens the new one).
+		this.workbenches.disposed(key);
 	}
 
 	/**
@@ -5046,74 +5048,29 @@ export class AppController {
 	//#region workbench views
 
 	/**
-	 * Show the workbench view the selection resolves to, creating it the first
-	 * time and keeping it afterwards.
+	 * The live workbench for a folder, once the open the lifecycle has in
+	 * flight for it (if any) has settled — or nothing.
 	 *
-	 * The folder is the key. A workspace and its view are two different objects
-	 * with two different lifetimes, and the folder is the only thing both agree
-	 * about — which is what lets "open folder" from inside a workbench and a
-	 * click in the sidebar land on the same view without an ordering rule.
+	 * Never an open of its own: whether a folder gets a workbench is the
+	 * lifecycle's plan (`reconcileWorkbenches`), which runs first so that a
+	 * Workspace just added or selected has had its open started. A folder
+	 * that is asleep and selected is woken by that plan, not by this; one that
+	 * is held for a passing `Cmd+Q N/P`, or asleep and not selected, has none.
 	 */
-	private async revealEditorFor(surfaceKey: string): Promise<void> {
-		const folder = this.editorKeyForSurfaceKey(surfaceKey);
-		if (folder === undefined) return;
-		const view = await this.ensureEditorView(folder);
-		if (!view) return;
-		// Nothing is revealed here, because nothing reveals anything any more:
-		// what is on screen is the layout owner's answer to the selection, and
-		// the only thing this open changed is that the child it names now
-		// exists. So the arrangement is asked again — see
-		// `ShellWindow.assertArrangement`.
-		shellWindow().assertArrangement();
+	private async workbenchReady(
+		folder: string,
+	): Promise<WorkbenchView | undefined> {
+		this.reconcileWorkbenches();
+		await this.workbenchOpens.get(folder)?.catch(() => undefined);
+		return this.liveWorkbench(folder);
 	}
 
-	/**
-	 * The workbench for a folder, made if it is not there yet.
-	 *
-	 * The one way a workbench comes into existence, called both when a folder
-	 * is first known and when it is selected — so selecting is only ever a
-	 * reveal, and never the moment a person pays for a whole workbench start.
-	 *
-	 * Concurrent callers share one attempt: startup asks for every folder at
-	 * once, and a selection landing in the middle of that must join the open
-	 * already in flight rather than start a second workbench for the same
-	 * folder.
-	 */
-	private ensureEditorView(folder: string): Promise<WorkbenchView | undefined> {
-		const existingId = this.editorViewId(folder);
-		const existing =
-			existingId === undefined
-				? undefined
-				: shellWindow().getViewById(existingId);
-		// Present is not the same as alive. A renderer the OS killed while the
-		// Mac slept leaves the view where it was, with contents nothing can be
-		// asked of; handing that back said "there is a workbench here" to every
-		// caller and nothing ever built the replacement. The table is corrected
-		// here rather than anywhere else, because this is the one place that
-		// reads it and can act on the answer.
-		if (existing && isLiveWorkbench(existing)) return Promise.resolve(existing);
-		if (existing) shellWindow().unbindEditorKey(folder);
-		// Asleep opens only through `syncEditorViews` waking it.
-		if (!this.workbenchSleep.mayOpen(folder)) return Promise.resolve(undefined);
-
-		const inFlight = this.editorOpens.get(folder);
-		if (inFlight) return inFlight;
-
-		// Registered before the first `await` inside, so an open asked for twice
-		// in the same tick is still one open. An open that has to wait for VS
-		// Code's services is in flight from the moment it is asked for, which is
-		// what stops startup from queuing one attempt per projection change.
-		const attempt = withDeadline(
-			this.openEditorView(folder),
-			EDITOR_OPEN_TIMEOUT_MS,
-			`the workbench for this folder did not open within ${String(
-				EDITOR_OPEN_TIMEOUT_MS / 1_000,
-			)} seconds`,
-		).finally(() => {
-			this.editorOpens.delete(folder);
-		});
-		this.editorOpens.set(folder, attempt);
-		return attempt;
+	/** The folder's view if it is built and its renderer alive. */
+	private liveWorkbench(folder: string): WorkbenchView | undefined {
+		const viewId = this.editorViewId(folder);
+		const view =
+			viewId === undefined ? undefined : shellWindow().getViewById(viewId);
+		return view && isLiveWorkbench(view) ? view : undefined;
 	}
 
 	/**
@@ -5283,7 +5240,7 @@ export class AppController {
 		// nothing here had looked first. The folder's absence is a fact about the
 		// workspace, so it goes into the model as one: the workspace becomes
 		// unavailable, which the content area draws with Retry, Locate… and
-		// Close, and `syncEditorViews` stops asking for a workbench in it.
+		// Close, and the lifecycle stops asking for a workbench in it.
 		//
 		// An ssh folder is not looked at, because there is nothing here that
 		// could look: the machine that knows is the one the workbench is about to
@@ -5393,84 +5350,47 @@ export class AppController {
 		if (opened && view) shellWindow().bindEditorKey(opened.id, editorKey);
 		if (view) {
 			this.superviseEditorView(editorKey, view);
-			// A workbench that is up again is no longer restarting. Waiting for
-			// `did-finish-load` is not enough on its own: a fast workbench can
-			// have finished loading before this promise resolved, and a `once` on
-			// an event that already happened never fires — which would leave the
-			// page saying "restarting" for ever about a workbench that is right
+			// A workbench that has loaded is awake. Waiting for `did-finish-load`
+			// is not enough on its own: a fast workbench can have finished
+			// loading before this promise resolved, and a `once` on an event
+			// that already happened never fires — which would leave it opening,
+			// and its slot saying so, for ever about a workbench that is right
 			// there.
-			const settled = () => {
-				this.editorSupervisor.loaded(editorKey, Date.now());
-				this.announceRestarting(editorKey, false);
-			};
-			if (view.webContents.isLoading()) {
-				view.webContents.once("did-finish-load", settled);
-			} else {
-				settled();
-			}
+			if (!view.webContents.isLoading()) this.workbenchLoaded(editorKey);
 		}
-		// A view no longer puts itself on screen when it is created, so the
-		// arrival of one is a moment to ask the selection again what belongs
-		// there — otherwise the workbench being waited for opens and nothing
-		// reveals it.
-		this.syncEditorViewInBackground();
 		return view;
 	}
 
 	/**
-	 * Watch a workbench, and stand it back up if it falls over.
+	 * Tell the page what stands in a folder's editor slot now — its phase as
+	 * `placeholderOf` reads it, nothing when the workbench is itself.
+	 *
+	 * The page needs this for two reasons that are really one: it must show
+	 * *what is true* in the editor area while the workbench is away, and it
+	 * must stop telling main the native surface is on screen — because it is
+	 * not, and main now refuses to be told otherwise.
+	 */
+	private sendEditorPlaceholder(
+		surfaceKey: string,
+		placeholder: EditorPlaceholder | undefined,
+	): void {
+		this.send(CHANNELS.editorPlaceholder, {
+			surfaceKey,
+			...(placeholder === undefined ? {} : { placeholder }),
+		});
+	}
+
+	/**
+	 * Watch a workbench, and report it if it falls over.
 	 *
 	 * DevHub owns the editor's lifecycle. VS Code is one element inside
 	 * DevHub's page, and an element that vanishes because its renderer was
 	 * killed — or because VS Code decided to close itself — is not a decision
 	 * DevHub made and must not be one the person has to notice. So a death
-	 * DevHub did not ask for is answered by building the workbench again, in
-	 * the same slot, for the same folder.
-	 *
-	 * With a delay that grows, because the interesting failure is the one that
-	 * repeats: a workbench that cannot start would otherwise be rebuilt as fast
-	 * as it dies, and a spinning main process is worse than a missing editor.
-	 * After enough tries it stops and says so, with the count, rather than
-	 * pretending nothing happened.
+	 * DevHub did not ask for is a failure the lifecycle answers by building
+	 * the workbench again, in the same slot, after a backoff that grows, and
+	 * after enough tries by stopping and saying so.
 	 */
-	/**
-	 * Say that a folder's workbench is away, or back.
-	 *
-	 * The page needs this for two reasons that are really one: it must show
-	 * *what is true* in the editor area while the workbench is being rebuilt,
-	 * and it must stop telling main the native surface is on screen — because
-	 * it is not, and main now refuses to be told otherwise.
-	 */
-	private announceRestarting(folder: string, restarting: boolean): void {
-		if (restarting) this.restartingEditors.add(folder);
-		else {
-			this.restartingEditors.delete(folder);
-			this.workbenchSleep.awake(folder);
-		}
-		this.sendEditorRestarting(folder, restarting);
-		// A workbench that is away is not the thing in the content area, and
-		// the one that is back is; both move the arrangement.
-		this.publishLayoutState();
-	}
-
-	/** `frame`: asleep, with the frame it left (`EditorRestartingWire`). */
-	private sendEditorRestarting(
-		folder: string,
-		restarting: boolean,
-		frame?: string,
-	): void {
-		const surfaceKey = this.coordinator.model.workspaces
-			.filter((workspace) => workspace.root === folder)
-			.map((workspace) => `workspace-editor:${workspace.id}`)
-			.at(0);
-		if (surfaceKey === undefined) return;
-		this.send(CHANNELS.editorRestarting, {
-			surfaceKey,
-			restarting,
-			...(frame === undefined ? {} : { frame }),
-		});
-	}
-
 	private superviseEditorView(folder: string, view: WorkbenchView): void {
 		const died = (reason: string) => {
 			// Nor is a view that ended because DevHub is quitting. Every
@@ -5483,7 +5403,7 @@ export class AppController {
 			// no longer in the table, because that is what destroying it means.
 			if (this.editorViewId(folder) !== view.id) return;
 			shellWindow().unbindEditorKey(folder);
-			this.editorFailed(folder, reason);
+			this.workbenchFailed(folder, reason);
 		};
 		view.webContents.once("destroyed", () => {
 			died("The workbench process ended.");
@@ -5498,62 +5418,38 @@ export class AppController {
 			);
 		});
 		view.webContents.once("did-finish-load", () => {
-			// Loading is news for the page and not for the supervisor: the page
-			// has a workbench to draw again, and the supervisor has a workbench
-			// that has not yet proved anything. See `EDITOR_HEALTHY_MS`.
-			this.editorSupervisor.loaded(folder, Date.now());
-			this.announceRestarting(folder, false);
+			// Loading makes it awake, which is news for the page; for the
+			// failure count it only starts the clock. See `EDITOR_HEALTHY_MS`.
+			this.workbenchLoaded(folder);
 		});
+	}
+
+	/** A folder's view finished loading. */
+	private workbenchLoaded(folder: string): void {
+		this.workbenches.loaded(folder, Date.now());
+		this.reconcileWorkbenches();
 	}
 
 	/**
 	 * There is no workbench for this folder and the last attempt did not make
-	 * one. The only place that decides what happens next.
+	 * one.
 	 *
 	 * Every caller funnels here — the death watcher, a rejected open, an open
 	 * that returned no view — because they are one condition with several
-	 * causes, and a budget per cause is no budget. What comes out is either a
-	 * bounded restart, at a delay that doubles, or a terminal state on the
-	 * thing the failure is *about*.
+	 * causes, and a budget per cause is no budget. The lifecycle decides what
+	 * comes of it: a bounded restart at a delay that doubles, or giving up,
+	 * which is reported on the thing the failure is *about*.
 	 *
 	 * Nothing here publishes app-wide for a folder that has a Workspace. The
 	 * failure of one workspace's workbench is that workspace's news: it goes on
 	 * its row and its surface, where the person can retry it, and every other
-	 * row keeps its editor. `native_unavailable` — what a bare
-	 * `catch (e) => publishError(errorWire(e))` said here — was a sentence
-	 * about the whole application, published once per folder per projection
-	 * tick, which after a wake is several times a second.
+	 * row keeps its editor.
 	 */
-	private editorFailed(folder: string, reason: string): void {
+	private workbenchFailed(folder: string, reason: string): void {
 		if (isQuitting()) return;
-		this.announceRestarting(folder, true);
 		console.error(`[devhub] workbench '${folder}' failed: ${reason}`);
-		const verdict = this.editorSupervisor.failed(folder, Date.now());
-		if (verdict.kind === "gave-up") {
-			this.reportEditorGaveUp(folder, reason, verdict.attempt);
-			return;
-		}
-		// One timer per folder. `syncEditorViews` also skips a folder with one
-		// pending, so a projection tick landing inside the wait cannot turn the
-		// backoff back into a restart per tick — which is the whole point of
-		// having a backoff.
-		if (this.editorRestartTimers.has(folder)) return;
-		const timer = setTimeout(() => {
-			this.editorRestartTimers.delete(folder);
-			if (this.editorSupervisor.gaveUp(folder)) return;
-			void this.ensureEditorView(folder).then(
-				(view) => {
-					if (!view && this.wantsWorkbench(folder)) {
-						this.editorFailed(folder, "No workbench view was created.");
-					}
-				},
-				(error: unknown) => {
-					this.editorFailed(folder, describeFailure(error));
-				},
-			);
-		}, verdict.delayMs);
-		(timer as unknown as { unref?: () => void }).unref?.();
-		this.editorRestartTimers.set(folder, timer);
+		this.workbenches.failed(folder, reason, Date.now());
+		this.reconcileWorkbenches();
 	}
 
 	/**
@@ -5582,18 +5478,12 @@ export class AppController {
 		);
 		for (const folder of dead) {
 			shell.unbindEditorKey(folder);
-			this.editorFailed(
+			this.workbenchFailed(
 				folder,
 				"The workbench did not survive the computer going to sleep.",
 			);
 		}
 	}
-
-	/** A restart waiting out its backoff, by folder. */
-	private readonly editorRestartTimers = new Map<
-		string,
-		ReturnType<typeof setTimeout>
-	>();
 
 	/**
 	 * DevHub has stopped building this folder's workbench. Say so where it is
@@ -5603,8 +5493,8 @@ export class AppController {
 	 * is the state the content area already draws with Retry, Locate… and
 	 * Close — so the terminal state is visible, is on the right row, and has
 	 * the person's way out attached to it. It also takes the workspace out of
-	 * `syncEditorViews`'s list, which is the second half of "never retried by
-	 * a projection tick".
+	 * the wanted set, where the lifecycle parks the verdict — the second half
+	 * of "never retried by a projection tick".
 	 *
 	 * A folder no Workspace owns any more has no row, so its giving up is said
 	 * app-wide — once, because the supervisor never reaches this verdict twice.
@@ -5642,7 +5532,7 @@ export class AppController {
 		);
 	}
 
-	/** Whether this folder is one `syncEditorViews` would keep a workbench for. */
+	/** Whether this folder is one the lifecycle would keep a workbench for. */
 	private wantsWorkbench(folder: string): boolean {
 		const workspace = this.coordinator.model.workspaces.find(
 			(candidate) => candidate.key === folder,
@@ -5650,39 +5540,6 @@ export class AppController {
 		return workspace !== undefined && workspace.state.kind !== "unavailable";
 	}
 
-	/**
-	 * Start every workbench now, rather than when it is first looked at.
-	 *
-	 * A workbench takes seconds to come up, and doing it on first selection
-	 * spends those seconds in front of someone who has just asked to see it.
-	 * They are started together instead, while the shell is painting: the one
-	 * that is selected first, because that is the one being waited for, and the
-	 * rest in parallel behind it.
-	 *
-	 * Nothing here is awaited by the caller — a workbench that is slow must not
-	 * hold up the window — and nothing is swallowed: a workbench that cannot
-	 * start says so on the page's one error surface, and the failure is shown
-	 * again in place when that surface is selected.
-	 */
-	/**
-	 * Make the set of workbench views match the set of workspaces.
-	 *
-	 * One rule, in one place: every workspace DevHub knows about has a
-	 * workbench — Scratch is one of them — and nothing else does, except one
-	 * asleep for being away (`workbenchHibernation.ts`). Creating them at
-	 * launch rather than on first selection is why nobody waits for a workbench
-	 * at the moment they ask to see it; destroying one only when its workspace
-	 * leaves the model is why a close that fails or is refused still has its
-	 * workbench standing afterwards.
-	 *
-	 * A workspace that is closing keeps its view for the same reason. It leaves
-	 * the model only once the close has actually finished, and that is the
-	 * moment — the last one — at which the view goes.
-	 *
-	 * Nothing here is awaited by the caller: a workbench that is slow to start
-	 * must not hold up the window. Nothing is swallowed either — a workbench
-	 * that cannot start says so on the page's one error surface.
-	 */
 	/**
 	 * The workbench the selection wants on screen, as a folder key.
 	 *
@@ -5693,9 +5550,8 @@ export class AppController {
 	 *
 	 * Nothing, for the two layouts with no workbench in them: a Workspace that
 	 * cannot be shown, and an Agent filling the content area on its own. In
-	 * neither case is a workbench closed or forgotten — the view stays built and
-	 * running, and `syncEditorViews` still keeps one per workspace — it is only
-	 * that no workbench is the thing on screen, so there is none to reveal.
+	 * neither case is a workbench closed or forgotten — it is only that no
+	 * workbench is the thing on screen, so there is none to reveal.
 	 */
 	private selectedEditorSurfaceKey(): string | undefined {
 		const layout = this.coordinator.snapshot().layout;
@@ -5704,230 +5560,274 @@ export class AppController {
 			: surfaceKeyName(layout.editor);
 	}
 
-	syncEditorViews(): void {
-		// No readiness check here, and none anywhere else either: an open that
-		// starts before VS Code's services exist waits inside `ensureEditorView`
-		// for exactly as long as it has to. See `mainServices.ts`.
-		const selectedKey = this.selectedEditorSurfaceKey();
-		const selected =
-			selectedKey === undefined
-				? undefined
-				: this.editorKeyForSurfaceKey(selectedKey);
-		// An asleep workbench opens again when its editor is shown, unless
-		// `Cmd+Q N/P` is maybe only passing through it.
-		const waking = this.workbenchSleep.shown(selected);
-		if (waking && selected !== undefined) {
-			this.announceRestarting(selected, true);
-		}
-
-		// Not every workspace wants a workbench: one whose folder is gone
-		// (`unavailable`) has nothing to open a workbench *in*, and asking is
-		// what used to put VS Code's "path does not exist" box on screen. It is
-		// asked for again the moment it is relocated or retried back to
-		// available, because that is a projection change and this runs on it.
-		//
-		// The decision itself is `reconcileEditors`, which is pure: what comes
-		// in is the projection and the answers the supervisor and the restart
-		// timers already hold, and what comes out is what to do. What is left
-		// here is the doing.
-		const wanted = this.coordinator.model.workspaces
-			.filter((workspace) => workspace.state.kind !== "unavailable")
-			.map((workspace) => workspace.key);
-		for (const folder of this.workbenchSleep.asleep()) {
-			if (wanted.includes(folder)) continue;
-			this.workbenchSleep.forget(folder);
-			this.sendEditorRestarting(folder, false);
-		}
-		const gaveUp = this.editorSupervisor.gaveUpKeys();
-		const plan = reconcileEditors({
-			wanted,
-			existing: shellWindow()
-				.editorBindings()
-				.map(([folder]) => folder),
-			selected,
-			gaveUp,
-			parked: gaveUp.filter((folder) => this.editorSupervisor.parked(folder)),
-			waiting: [...this.editorRestartTimers.keys()],
-			asleep: this.workbenchSleep.asleep(),
-		});
-
-		for (const folder of plan.dispose) {
-			const viewId = this.editorViewId(folder);
-			shellWindow().unbindEditorKey(folder);
-			if (viewId !== undefined) {
-				shellWindow().getViewById(viewId)?.destroy();
-			}
-		}
-		// The one way out of the supervisor's verdict, and it is a person's.
-		//
-		// Giving up on a Workspace's workbench makes that Workspace
-		// `unavailable`, which takes it out of `wanted`; it comes back only
-		// when somebody presses Retry or Locate…. So "was out, and is back" is
-		// exactly "a person asked again", read off the model rather than hooked
-		// onto the retry intent — the model is where availability is decided,
-		// and a second copy of that decision is a second thing to disagree with
-		// it.
-		for (const folder of plan.park) this.editorSupervisor.park(folder);
-		for (const folder of plan.forget) this.editorSupervisor.forget(folder);
-
-		for (const folder of plan.create) {
-			void this.ensureEditorView(folder).then(
-				(view) => {
-					if (view) this.capAwakeWorkbenches();
-					// No view and still wanted is a failure that said nothing:
-					// the next tick would simply open another window for the same
-					// folder. A folder whose workspace went `unavailable` during
-					// the open — the root is not readable — is not one of these:
-					// it has its own state and is no longer wanted.
-					if (!view && this.wantsWorkbench(folder)) {
-						this.editorFailed(folder, "No workbench view was created.");
-					}
-				},
-				(error: unknown) => {
-					// A child reconciled away before its open finished is not an
-					// app failure. Startup asks for every folder at once and the
-					// projection moves underneath those opens — a workspace is
-					// relocated, a folder turns out to be unreadable, a close
-					// lands — and VS Code answers an open it no longer has a
-					// window for by cancelling it. Ten of those arrived at
-					// launch as ten "the native app shell is unavailable"
-					// notices about nothing (measured, stage 0). The folder
-					// being out of `wanted` *is* the answer; it is said in the
-					// log, where somebody looking for it can find it.
-					if (!this.wantsWorkbench(folder)) {
-						console.log(
-							`[devhub] open: '${folder}' was reconciled away while it was opening — ${describeFailure(error)}`,
-						);
-						return;
-					}
-					this.editorFailed(folder, describeFailure(error));
-				},
-			);
-		}
-	}
-
 	/**
-	 * The workbenches that may sleep: not Scratch (the Agent panes take their
-	 * colours from it, and an empty window is it), not SSH or a dev container
-	 * (their weight is on the far machine, and reconnecting costs).
+	 * Carry out the workbench lifecycle's plan: the one executor.
+	 *
+	 * Every workspace DevHub knows about wants a workbench — Scratch is one of
+	 * them — unless its folder is gone (`unavailable`: asking is what used to
+	 * put VS Code's "path does not exist" box on screen). Which of them have
+	 * one, which are asleep, restarting or given up on, is the lifecycle's
+	 * (`workbenchLifecycle.ts`): this reads the projection, the selection and
+	 * the window, asks it for a plan, and does what the plan says — open,
+	 * dispose, hibernate, report, and tell the page what stands in each slot.
+	 *
+	 * Run on every projection change (a Workspace added or gone, a selection
+	 * moved, which is when the awake cap is checked), on every lifecycle event
+	 * (an open settled, a view loaded or died, an unload finished), at the
+	 * lifecycle's own deadlines (a wake hold ending, a backoff over) and on the
+	 * minute check (`tick`, for time-based sleep). Asking twice is harmless:
+	 * the plan has already moved each phase, so it asks for nothing twice.
+	 *
+	 * Nothing here is awaited: a workbench that is slow to start must not hold
+	 * up the window. No readiness check either — an open that starts before VS
+	 * Code's services exist waits inside `openEditorView` for exactly as long
+	 * as it has to. See `mainServices.ts`.
 	 */
-	private sleepableWorkspaces() {
-		const scratchId = this.coordinator.model.scratchWorkspaceId;
-		return this.coordinator.model.workspaces.filter(
-			(workspace) =>
-				workspace.id !== scratchId &&
-				workspace.location.kind === "local" &&
-				workspace.editor.kind === "host",
-		);
-	}
-
-	/** Close every workbench away longer than `general.workbench_hibernate_minutes`. */
-	private hibernateAwayWorkbenches(): void {
+	private reconcileWorkbenches(
+		options: { readonly tick?: boolean } = {},
+	): void {
+		if (isQuitting()) return;
 		const shell = shellWindowIfCreated();
-		const minutes =
-			this.config?.general.workbench_hibernate_minutes ??
-			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
-		if (!shell || !(minutes > 0)) return;
-		for (const workspace of this.sleepableWorkspaces()) {
-			void this.hibernateWorkbench(
-				workspace,
-				() =>
-					(shell.editorAwayMs(workspace.key, Date.now()) ?? 0) >=
-					minutes * 60_000,
-			);
+		if (!shell) return;
+		// The lifecycle's own events can arrive while a plan is being carried
+		// out (a gave-up report moves the projection); they are answered by
+		// one more plan right after, never by one inside this one.
+		if (this.reconciling) {
+			this.reconcileAgain = true;
+			return;
 		}
+		this.reconciling = true;
+		try {
+			let tick = options.tick === true;
+			do {
+				this.reconcileAgain = false;
+				this.carryOut(this.planWorkbenches(shell, tick));
+				tick = false;
+			} while (this.reconcileAgain);
+		} finally {
+			this.reconciling = false;
+		}
+		this.scheduleWorkbenchDeadline();
 	}
 
-	/**
-	 * Keep at most `general.workbench_awake_max` sleepable workbenches up,
-	 * closing the least recently shown first; one that may not sleep is
-	 * passed over, and none left lets the count stand.
-	 */
-	private capAwakeWorkbenches(): void {
-		const shell = shellWindowIfCreated();
-		const max =
-			this.config?.general.workbench_awake_max ?? DEFAULT_WORKBENCH_AWAKE_MAX;
-		if (!shell || !(max > 0) || this.capping) return;
+	private planWorkbenches(
+		shell: NonNullable<ReturnType<typeof shellWindowIfCreated>>,
+		tick: boolean,
+	): LifecycleEffect[] {
 		const now = Date.now();
-		const awake = this.sleepableWorkspaces().filter(
-			(workspace) =>
-				shell.editorKeys().includes(workspace.key) &&
-				!this.workbenchSleep.hibernating(workspace.key),
-		);
-		const cap = capCandidates(
-			awake,
-			(workspace) => shell.editorAwayMs(workspace.key, now),
-			max,
-		);
-		let excess = cap.excess;
-		if (excess <= 0) return;
-		this.capping = true;
-		void (async () => {
-			for (const workspace of cap.candidates) {
-				if (excess <= 0) break;
-				const slept = await this.hibernateWorkbench(
-					workspace,
-					() => shell.editorAwayMs(workspace.key, Date.now()) !== undefined,
-				);
-				if (slept) excess -= 1;
-			}
-		})().finally(() => {
-			this.capping = false;
+		// A view the table names whose renderer is gone without an event having
+		// said so — the Mac slept — is a failure, counted once.
+		for (const [folder, viewId] of shell.editorBindings()) {
+			const view = shell.getViewById(viewId);
+			if (view && isLiveWorkbench(view)) continue;
+			shell.unbindEditorKey(folder);
+			console.error(`[devhub] workbench '${folder}' failed: its view is gone`);
+			this.workbenches.failed(folder, "The workbench process ended.", now);
+		}
+		const model = this.coordinator.model;
+		const selectedKey = this.selectedEditorSurfaceKey();
+		const general = this.config?.general;
+		const minutes =
+			general?.workbench_hibernate_minutes ??
+			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
+		return this.workbenches.plan({
+			now,
+			wanted: model.workspaces
+				.filter((workspace) => workspace.state.kind !== "unavailable")
+				.map((workspace) => ({
+					folder: workspace.key,
+					surfaceKey: `workspace-editor:${workspace.id}`,
+					// Not Scratch (the Agent panes take their colours from it, and
+					// an empty window is it), not SSH or a dev container (their
+					// weight is on the far machine, and reconnecting costs).
+					sleepable:
+						workspace.id !== model.scratchWorkspaceId &&
+						workspace.location.kind === "local" &&
+						workspace.editor.kind === "host",
+					closing: workspace.close.kind === "running",
+					awayMs: shell.editorAwayMs(workspace.key, now),
+				})),
+			selected:
+				selectedKey === undefined
+					? undefined
+					: this.editorKeyForSurfaceKey(selectedKey),
+			views: shell.editorBindings().map(([folder]) => folder),
+			awakeMax: general?.workbench_awake_max ?? DEFAULT_WORKBENCH_AWAKE_MAX,
+			hibernateAfterMs: minutes > 0 ? minutes * 60_000 : 0,
+			tick,
 		});
 	}
 
+	private carryOut(effects: readonly LifecycleEffect[]): void {
+		let placeholders = false;
+		for (const effect of effects) {
+			switch (effect.kind) {
+				case "placeholder":
+					this.sendEditorPlaceholder(effect.surfaceKey, effect.placeholder);
+					placeholders = true;
+					break;
+				case "dispose": {
+					const shell = shellWindow();
+					const viewId = this.editorViewId(effect.folder);
+					shell.unbindEditorKey(effect.folder);
+					if (viewId !== undefined) shell.getViewById(viewId)?.destroy();
+					break;
+				}
+				case "report-gave-up":
+					this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
+					break;
+				case "open":
+					this.openWorkbench(effect.folder);
+					break;
+				case "hibernate":
+					void this.hibernateWorkbench(effect.folder);
+					break;
+			}
+		}
+		// A slot that is standing in for its workbench is not one the
+		// workbench is drawn in, and the one that is back is; both move the
+		// arrangement.
+		if (placeholders) this.publishLayoutState();
+	}
+
+	/** One timer, at the lifecycle's next deadline, for one more plan. */
+	private scheduleWorkbenchDeadline(): void {
+		const at = this.workbenches.nextDeadline();
+		if (this.workbenchDeadline?.at === at) return;
+		if (this.workbenchDeadline) clearTimeout(this.workbenchDeadline.timer);
+		this.workbenchDeadline = undefined;
+		if (at === undefined) return;
+		const timer = setTimeout(
+			() => {
+				this.workbenchDeadline = undefined;
+				this.reconcileWorkbenches();
+			},
+			Math.max(0, at - Date.now()),
+		);
+		(timer as unknown as { unref?: () => void }).unref?.();
+		this.workbenchDeadline = { at, timer };
+	}
+
 	/**
-	 * Close one workbench if it may be (`workbenchHibernation.ts`), keeping the
-	 * frame it shows for the page to stand in for it.
+	 * The `open` effect: VS Code's own open, with a deadline, its outcome
+	 * reported back.
+	 *
+	 * The promise is kept for whoever needs this folder's view
+	 * (`workbenchReady`); the phase is what says the open is in flight, so a
+	 * second plan never starts a second one.
 	 */
-	private async hibernateWorkbench(
-		workspace: { readonly id: WorkspaceId; readonly key: string },
-		away: () => boolean,
-	): Promise<boolean> {
-		const folder = workspace.key;
-		if (
-			isQuitting() ||
-			this.restartingEditors.has(folder) ||
-			this.editorOpens.has(folder) ||
-			!away()
-		) {
-			return false;
+	private openWorkbench(folder: string): void {
+		const attempt = withDeadline(
+			this.openEditorView(folder),
+			EDITOR_OPEN_TIMEOUT_MS,
+			`the workbench for this folder did not open within ${String(
+				EDITOR_OPEN_TIMEOUT_MS / 1_000,
+			)} seconds`,
+		);
+		this.workbenchOpens.set(folder, attempt);
+		const settle = (failure: string | undefined) => {
+			if (this.workbenchOpens.get(folder) === attempt) {
+				this.workbenchOpens.delete(folder);
+			}
+			if (failure === undefined) {
+				this.reconcileWorkbenches();
+				// A view no longer puts itself on screen when it is created, so
+				// its arrival is a moment to ask the arrangement again.
+				shellWindowIfCreated()?.assertArrangement();
+				return;
+			}
+			// A folder reconciled away while it was opening is not a failure:
+			// startup asks for every folder at once and the projection moves
+			// underneath those opens — a workspace is relocated, a folder turns
+			// out to be unreadable, a close lands — and VS Code answers an open
+			// it no longer has a window for by cancelling it. The folder being
+			// out of the wanted set *is* the answer; it is said in the log.
+			if (!this.wantsWorkbench(folder)) {
+				console.log(
+					`[devhub] open: '${folder}' was reconciled away while it was opening — ${failure}`,
+				);
+				this.workbenches.abandoned(folder);
+				this.reconcileWorkbenches();
+				return;
+			}
+			this.workbenchFailed(folder, failure);
+		};
+		attempt.then(
+			(view) => {
+				settle(view ? undefined : "No workbench view was created.");
+			},
+			(error: unknown) => {
+				settle(describeFailure(error));
+			},
+		);
+	}
+
+	/**
+	 * The `hibernate` effect: close one workbench if it may be, keeping the
+	 * frame it shows for the page to stand in for it.
+	 *
+	 * Each way it may not is one log line and an answer to the lifecycle,
+	 * which keeps it awake (and out of the cap's way until the minute check):
+	 * DevHub is quitting, the editor is not running, it was shown again, it
+	 * says it would lose something (`readKeepAwake`: a process in one of its
+	 * own terminals, a debug session, unsaved editors with hot exit off — no
+	 * answer is a reason too), or the unload was vetoed.
+	 */
+	private async hibernateWorkbench(folder: string): Promise<void> {
+		const skip = (reason: string) => {
+			this.workbenches.hibernateSkipped(folder, reason, Date.now());
+			this.reconcileWorkbenches();
+		};
+		const workspace = this.workspaceForEditorKey(folder);
+		if (isQuitting() || workspace === undefined) {
+			skip(isQuitting() ? "DevHub is quitting" : "no Workspace");
+			return;
 		}
 		try {
 			const services = await this.services();
 			const codeWindow = await this.editorWindowFor(folder);
-			if (editorRuntimeState(codeWindow) !== "running") return false;
-			let frame = "";
-			return await this.workbenchSleep.hibernate(folder, {
-				away,
-				keepAwake: () => readKeepAwake(workbenchContentsOf(codeWindow)),
-				unload: async () => {
-					frame = await this.captureFrame(folder);
-					// QUIT, as on Cmd+Q in VS Code: unsaved editors are backed up
-					// (hot exit) and come back on reopening, rather than asked about.
-					return withDeadline<boolean>(
-						services
-							.lifecycle()
-							.unload(workbenchOf(codeWindow), UnloadReason.QUIT),
-						CLOSE_STEP_TIMEOUT_MS,
-						"the workbench did not unload",
-					).finally(() => {
-						// A question raised by the unload is nobody's to answer.
-						this.withdrawWorkbenchQuestions(workspace.id);
-					});
-				},
-				sleep: () => {
-					this.sendEditorRestarting(folder, false, frame);
-					this.disposeEditorView(workspace.id);
-					this.syncEditorViews();
-					this.syncEditorViewInBackground();
-				},
+			const running = editorRuntimeState(codeWindow);
+			if (running !== "running") {
+				skip(`its editor is ${running}`);
+				return;
+			}
+			// Asking takes a moment, in which the person may have come back.
+			if (!this.workbenches.mayHibernate(folder)) {
+				skip("shown again");
+				return;
+			}
+			const reasons = await readKeepAwake(
+				workbenchContentsOf(codeWindow),
+			).catch((): readonly string[] => ["no answer"]);
+			if (reasons.length > 0) {
+				skip(reasons.join(", "));
+				return;
+			}
+			if (!this.workbenches.mayHibernate(folder)) {
+				skip("shown again");
+				return;
+			}
+			const frame = await this.captureFrame(folder);
+			// QUIT, as on Cmd+Q in VS Code: unsaved editors are backed up (hot
+			// exit) and come back on reopening, rather than asked about.
+			const vetoed = await withDeadline<boolean>(
+				services.lifecycle().unload(workbenchOf(codeWindow), UnloadReason.QUIT),
+				CLOSE_STEP_TIMEOUT_MS,
+				"the workbench did not unload",
+			).finally(() => {
+				// A question raised by the unload is nobody's to answer.
+				this.withdrawWorkbenchQuestions(workspace.id);
 			});
+			if (vetoed) {
+				skip("its unload was vetoed");
+				return;
+			}
+			// Unloaded is gone, even if it was shown again meanwhile: that
+			// showing opens it anew. The plan disposes the view.
+			this.workbenches.hibernated(folder, frame);
+			this.reconcileWorkbenches();
 		} catch (error: unknown) {
-			console.error(
-				`[devhub] workbench '${folder}' could not sleep: ${describeFailure(error)}`,
-			);
-			return false;
+			skip(`could not sleep: ${describeFailure(error)}`);
 		}
 	}
 
@@ -6034,12 +5934,15 @@ export class AppController {
 	 * that already exists rather than making a second.
 	 */
 	noteLocation(location: WorkspaceLocation): void {
-		// A workbench DevHub is building itself — `syncEditorViews` making one
-		// for every Workspace, today's Scratch at midnight among them — is not a
-		// request to open anything: the Workspace is already in the model, and
-		// "opening" it again would select it, moving the person off whatever
-		// they were in. Only a place VS Code asked for on its own is news.
-		if (this.editorOpens.has(locationKey(location))) return;
+		// A workbench DevHub is building itself — the lifecycle opening one for
+		// every Workspace, today's Scratch at midnight among them, or waking
+		// one — is not a request to open anything: the Workspace is already in
+		// the model, and "opening" it again would select it, moving the person
+		// off whatever they were in. Only a place VS Code asked for on its own
+		// is news.
+		if (this.workbenches.phase(locationKey(location)).kind === "opening") {
+			return;
+		}
 		this.dispatchOwn({
 			type: "open_folder",
 			location: requestedLocation(
@@ -6226,7 +6129,7 @@ export class AppController {
 				workspaceId,
 				containerId: up.containerId,
 			});
-			const view = await this.ensureEditorView(workspace.key);
+			const view = await this.workbenchReady(workspace.key);
 			if (view) shellWindow().assertArrangement();
 			return;
 		}
@@ -6249,7 +6152,7 @@ export class AppController {
 					containerId: up.containerId,
 				});
 			}
-			const view = await this.ensureEditorView(workspace.key);
+			const view = await this.workbenchReady(workspace.key);
 			if (view) shellWindow().assertArrangement();
 			return;
 		}
@@ -6287,7 +6190,7 @@ export class AppController {
 				containerId: up.containerId,
 			});
 		}
-		const view = await this.ensureEditorView(workspace.key);
+		const view = await this.workbenchReady(workspace.key);
 		if (view) shellWindow().assertArrangement();
 		// The editor has left the container it was in: that container goes the
 		// way its definition says, if DevHub was the one that started it.
@@ -6584,7 +6487,6 @@ export class AppController {
 	async scratchWorkbench(): Promise<ICodeWindow> {
 		await this.dispatchAwaiting({ type: "new_window" });
 		const key = this.scratchWorkspace().key;
-		await this.ensureEditorView(key);
 		await this.syncEditorView();
 		return await this.workbenchWindow(key);
 	}
@@ -7809,12 +7711,27 @@ export class AppController {
 		void this.syncEditorView();
 	}
 
+	/**
+	 * Put what the selection resolves to on screen — which is only ever a
+	 * reveal.
+	 *
+	 * Nothing is opened here. Whether the selected folder has a workbench is
+	 * the lifecycle's plan (`reconcileWorkbenches`, which `workbenchReady`
+	 * runs): a new Workspace's open is started there, an asleep one is woken
+	 * there unless a passing `Cmd+Q N/P` holds it. What is left is waiting for
+	 * an open already in flight, for the callers that go on to use the
+	 * workbench, and asking the arrangement again — see
+	 * `ShellWindow.assertArrangement`.
+	 */
 	private async syncEditorView(): Promise<void> {
 		const surfaceKey = this.selectedEditorSurfaceKey();
 		// A Workspace that cannot be shown has no workbench to reveal; the page
 		// draws the reason from the Workspace's own state.
 		if (surfaceKey === undefined) return;
-		await this.revealEditorFor(surfaceKey);
+		const folder = this.editorKeyForSurfaceKey(surfaceKey);
+		if (folder === undefined) return;
+		const view = await this.workbenchReady(folder);
+		if (view) shellWindow().assertArrangement();
 	}
 
 	private async pickFolder(): Promise<string | undefined> {

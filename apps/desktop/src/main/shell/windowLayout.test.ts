@@ -5,7 +5,6 @@ import {
 	terminalExtent,
 	terminalSeam,
 	terminalStacked,
-	reconcileEditors,
 	agentsRect,
 	chromeVariables,
 	sidebarColumnWidth,
@@ -355,78 +354,6 @@ describe("where the keyboard goes", () => {
 				input({ asking: "/b", state: state({ surface: { kind: "agent" } }) }),
 			),
 		).toEqual({ kind: "editor", editorKey: "/b" });
-	});
-});
-
-describe("reconciling the workbenches against the projection", () => {
-	const base = {
-		wanted: ["/scratch", "/a"],
-		existing: ["/scratch", "/a"],
-		selected: "/a",
-		gaveUp: [],
-		parked: [],
-		waiting: [],
-		asleep: [],
-	} as const;
-
-	it("opens a workbench for a Workspace that appeared, selected one first", () => {
-		const plan = reconcileEditors({
-			...base,
-			wanted: ["/scratch", "/a", "/b"],
-			selected: "/b",
-		});
-		expect(plan.create).toEqual(["/b", "/scratch", "/a"]);
-		expect(plan.dispose).toEqual([]);
-	});
-
-	it("destroys the workbench of a Workspace that left", () => {
-		const plan = reconcileEditors({ ...base, wanted: ["/scratch"] });
-		expect(plan.dispose).toEqual(["/a"]);
-	});
-
-	it("leaves an exhausted folder without a view, and parks its verdict", () => {
-		// The supervisor gave up, which made the Workspace unavailable, which
-		// takes it out of `wanted`: the folder is a child the page draws, not a
-		// view.
-		const plan = reconcileEditors({
-			...base,
-			wanted: ["/scratch"],
-			gaveUp: ["/a"],
-			selected: undefined,
-		});
-		expect(plan.create).toEqual(["/scratch"]);
-		expect(plan.dispose).toEqual(["/a"]);
-		expect(plan.park).toEqual(["/a"]);
-	});
-
-	it("forgets a parked verdict when a person brings the folder back", () => {
-		const plan = reconcileEditors({
-			...base,
-			existing: ["/scratch"],
-			gaveUp: ["/a"],
-			parked: ["/a"],
-		});
-		expect(plan.forget).toEqual(["/a"]);
-		expect(plan.create).toContain("/a");
-	});
-
-	it("asks again for nothing the supervisor has already answered", () => {
-		const plan = reconcileEditors({
-			...base,
-			wanted: ["/scratch", "/a", "/b"],
-			gaveUp: ["/a"],
-			waiting: ["/b"],
-			selected: undefined,
-		});
-		expect(plan.create).toEqual(["/scratch"]);
-	});
-
-	it("does not open an asleep workbench, selected or not", () => {
-		const asleep = { ...base, existing: ["/scratch"], asleep: ["/a"] };
-		const away = reconcileEditors({ ...asleep, selected: "/scratch" });
-		expect(away.create).toEqual(["/scratch"]);
-		expect(away.dispose).toEqual([]);
-		expect(reconcileEditors(asleep).create).toEqual(["/scratch"]);
 	});
 });
 

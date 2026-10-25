@@ -8,41 +8,35 @@
  */
 
 import { useEffect, useState } from "react";
+import type { EditorPlaceholderWire } from "../../../ipc/contract";
 import { devhub } from "../../client";
 
-/** A workbench being rebuilt, or asleep with the last frame it showed. */
-export interface EditorComeback {
-  readonly restarting: boolean;
-  /** Its frame from before it slept, a data URL; empty if none was taken. */
-  readonly frame?: string;
-}
-
 /**
- * The editor surfaces whose workbench is being rebuilt right now, or is asleep.
+ * What stands in each editor surface whose workbench is not there right now:
+ * being rebuilt, asleep with the last frame it showed, or waking.
  *
- * A workbench that ends for a reason DevHub did not choose does not move the
- * selection: the Editor activity stays selected and the workbench comes back
- * in the same slot. This is what lets the viewport say so while that happens,
- * instead of showing an empty rectangle. One that slept (`workbenchHibernation.ts`
- * in main) keeps its frame until it is up again.
+ * A workbench that ends, sleeps or wakes does not move the selection: the
+ * Editor activity stays selected and the workbench comes back in the same
+ * slot. Main derives this from the workbench's lifecycle phase
+ * (`main/shell/workbenchLifecycle.ts`) and says it again whenever it changes,
+ * so the page keeps what it was last told and nothing else — no merging, no
+ * event that must arrive to take it down.
  */
-export function useRestartingEditors(): ReadonlyMap<string, EditorComeback> {
-  const [editors, setEditors] = useState<ReadonlyMap<string, EditorComeback>>(
-    new Map(),
-  );
+export function useEditorPlaceholders(): ReadonlyMap<
+  string,
+  EditorPlaceholderWire
+> {
+  const [editors, setEditors] = useState<
+    ReadonlyMap<string, EditorPlaceholderWire>
+  >(new Map());
 
   useEffect(
     () =>
-      devhub().onEditorRestarting(({ surfaceKey, restarting, frame }) => {
+      devhub().onEditorPlaceholder(({ surfaceKey, placeholder }) => {
         setEditors((current) => {
           const next = new Map(current);
-          if (restarting) {
-            next.set(surfaceKey, { ...current.get(surfaceKey), restarting });
-          } else if (frame !== undefined) {
-            next.set(surfaceKey, { restarting, frame });
-          } else {
-            next.delete(surfaceKey);
-          }
+          if (placeholder === undefined) next.delete(surfaceKey);
+          else next.set(surfaceKey, placeholder);
           return next;
         });
       }),

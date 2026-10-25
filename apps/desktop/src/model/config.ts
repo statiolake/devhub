@@ -380,12 +380,13 @@ export interface GeneralConfig {
   /**
    * Close a Workspace's workbench after its editor has been off screen this
    * many minutes; it opens again when shown. `0` keeps every workbench up.
-   * See `main/shell/workbenchHibernation.ts`.
+   * See `main/shell/workbenchLifecycle.ts`.
    */
   readonly workbench_hibernate_minutes: number;
   /**
    * At most this many workbenches stay up, Scratch and remote ones not
-   * counted: opening one more closes the least recently shown. `0` is no cap.
+   * counted. Checked on every Workspace switch: past it, the least recently
+   * shown ones sleep at once. `0` is no cap.
    */
   readonly workbench_awake_max: number;
 }

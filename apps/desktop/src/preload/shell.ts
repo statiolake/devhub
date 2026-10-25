@@ -9,7 +9,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
-	type EditorRestartingWire,
+	type EditorPlaceholderEvent,
 	type ShellPageBridge,
 	type WorkbenchAreaWire,
 } from "../ipc/contract.js";
@@ -35,8 +35,8 @@ const api: ShellPageBridge = {
 		on<string>(CHANNELS.windowTitleChanged, listener),
 	onWorkbenchArea: (listener) =>
 		on<WorkbenchAreaWire>(CHANNELS.workbenchAreaChanged, listener),
-	onEditorRestarting: (listener) =>
-		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
+	onEditorPlaceholder: (listener) =>
+		on<EditorPlaceholderEvent>(CHANNELS.editorPlaceholder, listener),
 
 	openModal,
 	closeWorkspace,

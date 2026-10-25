@@ -87,9 +87,6 @@ interface EditorRecord {
 	failures: number;
 	/** When this workbench last said it had finished loading. */
 	loadedAtMs: number | undefined;
-	gaveUp: boolean;
-	/** Whether the terminal state has been seen; see `park`. */
-	parked: boolean;
 }
 
 /**
@@ -102,9 +99,11 @@ interface EditorRecord {
  * counter and one ceiling. Counting them separately is how a folder gets two
  * budgets and neither of them runs out.
  *
- * It holds no timers and reads no clock of its own: the caller passes `now`.
- * A supervisor that scheduled its own restarts would be a second place that
- * decides when a workbench is built, and the first one is `ensureEditorView`.
+ * It holds no timers, reads no clock of its own and keeps no verdict: the
+ * caller passes `now`, and what a folder's workbench is doing — waiting out a
+ * backoff, given up on, parked — is its phase in `workbenchLifecycle.ts`,
+ * which owns this counter and is the one place that decides when a workbench
+ * is built.
  */
 export class EditorSupervisor {
 	private readonly records = new Map<string, EditorRecord>();
@@ -126,9 +125,6 @@ export class EditorSupervisor {
 	 */
 	failed(key: string, nowMs: number): EditorSupervision {
 		const record = this.record(key);
-		if (record.gaveUp) {
-			return { kind: "gave-up", attempt: record.failures };
-		}
 		if (
 			record.loadedAtMs !== undefined &&
 			nowMs - record.loadedAtMs >= this.healthyMs
@@ -138,7 +134,6 @@ export class EditorSupervisor {
 		record.loadedAtMs = undefined;
 		record.failures += 1;
 		if (record.failures > this.maxRestarts) {
-			record.gaveUp = true;
 			return { kind: "gave-up", attempt: record.failures };
 		}
 		return {
@@ -155,39 +150,7 @@ export class EditorSupervisor {
 	 * else. See `EDITOR_HEALTHY_MS`.
 	 */
 	loaded(key: string, nowMs: number): void {
-		const record = this.record(key);
-		if (record.gaveUp) return;
-		record.loadedAtMs = nowMs;
-	}
-
-	/** Whether DevHub has stopped building this folder's workbench. */
-	gaveUp(key: string): boolean {
-		return this.records.get(key)?.gaveUp === true;
-	}
-
-	/** Every folder DevHub has stopped building a workbench for. */
-	gaveUpKeys(): readonly string[] {
-		return [...this.records]
-			.filter(([, record]) => record.gaveUp)
-			.map(([key]) => key);
-	}
-
-	/**
-	 * Note that this folder's terminal state has been seen by whoever keeps
-	 * the workbenches.
-	 *
-	 * The mark exists so that "wanted again" can mean "a person asked again".
-	 * Without it, the tick between giving up and the model catching up reads as
-	 * a fresh request and lets the loop straight back out — the counter reset
-	 * by a race, which is the bug one step further along.
-	 */
-	park(key: string): void {
-		const record = this.records.get(key);
-		if (record) record.parked = true;
-	}
-
-	parked(key: string): boolean {
-		return this.records.get(key)?.parked === true;
+		this.record(key).loadedAtMs = nowMs;
 	}
 
 	/** How many failures stand against this folder right now. */
@@ -198,9 +161,9 @@ export class EditorSupervisor {
 	/**
 	 * Forget this folder entirely.
 	 *
-	 * The one way out of `gave-up`, and it is reached only by a person: the
-	 * workspace is retried, relocated, or closed. A supervisor that let itself
-	 * out would be the restart loop again with a longer period.
+	 * The one way out of giving up, and it is reached only by a person: the
+	 * workspace is retried, relocated, or closed. A counter that reset itself
+	 * would be the restart loop again with a longer period.
 	 */
 	forget(key: string): void {
 		this.records.delete(key);
@@ -209,12 +172,7 @@ export class EditorSupervisor {
 	private record(key: string): EditorRecord {
 		const existing = this.records.get(key);
 		if (existing) return existing;
-		const fresh: EditorRecord = {
-			failures: 0,
-			loadedAtMs: undefined,
-			gaveUp: false,
-			parked: false,
-		};
+		const fresh: EditorRecord = { failures: 0, loadedAtMs: undefined };
 		this.records.set(key, fresh);
 		return fresh;
 	}

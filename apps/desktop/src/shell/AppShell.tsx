@@ -17,7 +17,7 @@
  *   palette it was served wearing.
  * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`,
  *   `windowTitleChanged`, `workbenchAreaChanged` (where main laid the
- *   workbench, so this page leaves that hole), `editorRestarting`.
+ *   workbench, so this page leaves that hole), `editorPlaceholder`.
  * - **asks**: `dispatch`, `openModal` (a confirmation, which is drawn on the
  *   `picker` view), `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`,
  *   `previewLayout` (the split ratio under the pointer, while a drag lasts).

@@ -1134,8 +1134,8 @@ export interface ShellPageBridge
 	onWindowTitle(listener: (title: string) => void): () => void;
 	/** Where main has laid the workbench, so the page leaves that hole. */
 	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
-	onEditorRestarting(
-		listener: (event: EditorRestartingWire) => void,
+	onEditorPlaceholder(
+		listener: (event: EditorPlaceholderEvent) => void,
 	): () => void;
 	/**
 	 * Put a modal on screen. Resolves to the id that closes it again.
@@ -1736,7 +1736,7 @@ export const CHANNELS = {
 	/** The set of open modals, pushed to the `picker` page whenever it moves. */
 	modalsChanged: "devhub:modals-changed",
 	/** A workbench died unasked and is being built again in the same slot. */
-	editorRestarting: "devhub:editor-restarting",
+	editorPlaceholder: "devhub:editor-placeholder",
 	/** The branch, Issue and pull request each workspace is working on. */
 	repositoryStatusChanged: "devhub:repository-status-changed",
 	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
@@ -1880,22 +1880,31 @@ export interface OpenModal {
 }
 
 /**
- * A workbench that is coming back.
+ * What stands in an editor's slot while its workbench is not there.
  *
- * The selection does not move when a workbench dies — the Editor activity
- * stays selected and the workbench is rebuilt in its own slot — so the page
- * has to be able to say *that*, rather than showing an empty pane or claiming
- * a view is on screen that no longer exists.
+ * The selection does not move when a workbench dies, sleeps or wakes — the
+ * Editor activity stays selected and the workbench comes back in its own
+ * slot — so the page has to be able to say *that*, rather than showing an
+ * empty pane or claiming a view is on screen that no longer exists.
+ *
+ * It is the workbench's lifecycle phase as the page needs it
+ * (`main/shell/workbenchLifecycle.ts`, `placeholderOf`), re-sent whenever it
+ * changes; no `placeholder` means the workbench is itself again.
  */
-export interface EditorRestartingWire {
+export interface EditorPlaceholderEvent {
 	readonly surfaceKey: string;
-	readonly restarting: boolean;
-	/**
-	 * Gone to sleep (`main/shell/workbenchHibernation.ts`): its last frame as a
-	 * data URL, kept until a `restarting: false` without one says it is up.
-	 */
-	readonly frame?: string;
+	readonly placeholder?: EditorPlaceholderWire;
 }
+
+/**
+ * `restarting`: being rebuilt after a failure. `asleep`: hibernated, with the
+ * frame it left as a data URL ("" when none could be taken). `waking`: asleep
+ * and opening again, the frame still up.
+ */
+export type EditorPlaceholderWire =
+	| { readonly kind: "restarting" }
+	| { readonly kind: "asleep"; readonly frame: string }
+	| { readonly kind: "waking"; readonly frame: string };
 
 /**
  * A question a workbench asked, for the page to draw.

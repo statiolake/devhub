@@ -766,40 +766,60 @@ while it is open, and the terminal pane once per terminal), and one per workbenc
 share a renderer, which Chromium's same-site grouping decides.
 
 A workbench is a renderer, an extension host and its language servers and
-watchers, so one per Workspace adds up. **A workbench away longer than
-`general.workbench_hibernate_minutes` (default 10; `0` is off) is closed**,
-measured by the same `workbenchAbsence.ts` as the tidy above (a split is on
-screen; a workbench never shown is away from launch), and so is the least
-recently shown one off screen at least a minute (`CAP_MIN_AWAY_MS`, so ones
-just passed through stay) once more than `general.workbench_awake_max`
-(default 3; `0` is no cap) are up — checked when one opens and each minute
-(`hibernateAwayWorkbenches`, `capAwakeWorkbenches`). Scratch, SSH and dev
-container workbenches are neither closed nor counted. Before closing, main
-asks the workbench what that would lose (`vscode:devhubKeepAwake`, answered by
-the overlay's `devhubHibernate.contribution.ts`): a process in one of its own
-terminals (a task, or a shell with children; DevHub's terminal is tmux and
-never counts), a debug session, and unsaved editors only with `files.hotExit`
-off. Any answer, or none, keeps it up; past the cap the next one is tried, and
-with none left the cap is exceeded. Otherwise its frame is captured
-(`capturePage`) and it is unloaded as VS Code unloads every window on Cmd+Q
-(`UnloadReason.QUIT`: the backup tracker backs up unsaved editors instead of
-asking, storage is written, extensions deactivate), and its view destroyed.
-The folder is then _asleep_: `reconcileEditors` does not open it, and
-selecting it wakes it through the ordinary open path, whose
-`registerFolderBackup` hands it the same backup folder, so VS Code restores
-its editors, layout and unsaved changes. `Cmd+Q N`/`P` landing on it waits
-`WAKE_DELAY_MS` (1 s) first, in case it is only passed through; leaving
-cancels, and any key but a modifier wakes it at once. Until the woken view
-has loaded (it is `hidden` in the arrangement, a split keeping its Agent),
-the page draws the captured frame grey and dim in the hole, with "休止中"
-while asleep and "起動中…" while it starts; the frame lives in memory only.
-Nothing else is touched: the row, its Agents, their tmux sessions, GUI
+watchers, so one per Workspace adds up. Each folder's workbench is in one
+lifecycle phase at a time, owned by `workbenchLifecycle.ts` and nothing else:
+_absent_, _opening_ (an open in flight or a view not yet loaded; cause start,
+restart or wake), _awake_, _hibernating_, _asleep_, _held_ (asleep, selected
+by a passing `Cmd+Q N`/`P`), _restart-waiting_ (failed, backing off), _gave-up_
+and _parked_ (given up on and unavailable until Retry or Locate…). Events —
+an open settled, a view loaded or died, an unload finished, a pass, a key —
+move the phase; `AppController.reconcileWorkbenches`, the one executor, asks
+its `plan` (phases + projection + selection + window) on every projection
+change, every event, the lifecycle's own deadlines and the minute check, and
+carries out the effects: open, dispose, hibernate, report giving up, and the
+placeholder for each slot. Revealing never opens: `syncEditorView` waits for
+an open already in flight and asks the arrangement again.
+
+**A workbench away longer than `general.workbench_hibernate_minutes`
+(default 10; `0` is off) is closed** on the minute check, measured by the
+same `workbenchAbsence.ts` as the tidy above (a split is on screen; a
+workbench never shown is away from launch). **Past
+`general.workbench_awake_max`** (default 3; `0` is no cap) — awake or opening,
+Scratch, SSH and dev container ones never counted or closed — the least
+recently shown awake ones are closed at once, on the switch that went over:
+never the shown one, one opening or waking, one closing, or one that has just
+refused (asked again on the minute check); a folder that would start past the
+cap, not selected, starts asleep. Passing through never wakes, so stepping
+through any number of Workspaces moves nothing; only a wake (1 s on it, or a
+key) raises the count, and each puts at most one other to sleep. Before
+closing, main asks the workbench what that would lose (`vscode:devhubKeepAwake`,
+answered by the overlay's `devhubHibernate.contribution.ts`): a process in one
+of its own terminals (a task, or a shell with children; DevHub's terminal is
+tmux and never counts), a debug session, and unsaved editors only with
+`files.hotExit` off. Any answer, or none, keeps it up, and the cap tries the
+next one. Otherwise its frame is captured (`capturePage`) and it is unloaded
+as VS Code unloads every window on Cmd+Q (`UnloadReason.QUIT`: the backup
+tracker backs up unsaved editors instead of asking, storage is written,
+extensions deactivate), and its view destroyed. Asleep, selecting it wakes it
+through the ordinary open path, whose `registerFolderBackup` hands it the same
+backup folder, so VS Code restores its editors, layout and unsaved changes.
+`Cmd+Q N`/`P` landing on it holds it `WAKE_DELAY_MS` (1 s) first, in case it is
+only passed through; leaving cancels, and any key but a modifier wakes it at
+once. Nothing else is touched: the row, its Agents, their tmux sessions, GUI
 conversations and repository status. A woken workbench is a new view, so it
-is not tidied on its return. Each folder is in one state at a time
-(`WorkbenchSleep`: awake → hibernating → asleep → waking → awake), only the
-selection wakes an asleep one (`ensureEditorView` refuses it), and nothing
-hibernating, waking, opening or shown is closed; every transition is logged
-as `[devhub] workbench '<folder>' …`.
+is not tidied on its return.
+
+What the slot shows is the phase (`placeholderOf`), sent to the page whenever
+it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
+the editor…" while restart-waiting or reopening after a failure, the captured
+frame grey and dim with "休止中" while asleep or held and "起動中…" while
+waking (the view `hidden` in the arrangement, a split keeping its Agent); the
+frame lives in memory only. A workbench that dies unasked is opened again
+after a backoff that doubles from 250 ms (`editorSupervisor.ts`), and after
+five failures in a row it is given up on and its Workspace made unavailable;
+one that dies while hibernating is simply asleep. Every transition and every
+skipped hibernation or wake is a line `[devhub] workbench '<folder>' …` in
+main's log (`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).
 
 Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before

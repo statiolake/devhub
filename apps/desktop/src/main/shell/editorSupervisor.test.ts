@@ -11,7 +11,7 @@ import {
 const FOLDER = "/dev/api";
 
 /**
- * Every way `ensureEditorView` can fail to produce a workbench.
+ * Every way an open can fail to produce a workbench.
  *
  * They are listed here as one table because that is the claim being tested:
  * there is no cause with a budget of its own, and none that reaches a person
@@ -92,75 +92,6 @@ describe("the editor supervisor's budget", () => {
 			attempt: 1,
 			delayMs: RESTART_BACKOFF_MS,
 		});
-	});
-
-	it("stays given up however many times it is asked", () => {
-		const supervisor = new EditorSupervisor();
-		for (let attempt = 0; attempt <= MAX_EDITOR_RESTARTS; attempt += 1) {
-			supervisor.failed(FOLDER, 0);
-		}
-
-		expect(supervisor.gaveUp(FOLDER)).toBe(true);
-		expect(supervisor.failed(FOLDER, 0).kind).toBe("gave-up");
-		supervisor.loaded(FOLDER, 0);
-		expect(supervisor.gaveUp(FOLDER)).toBe(true);
-	});
-});
-
-/**
- * What `syncEditorViews` does with the supervisor, on each projection.
- *
- * The loop is reproduced rather than imported because `AppController` is an
- * Electron main process; what is under test is the rule it applies, and the
- * rule is entirely the supervisor's.
- */
-function projection(
-	supervisor: EditorSupervisor,
-	wanted: readonly string[],
-): readonly string[] {
-	for (const folder of supervisor.gaveUpKeys()) {
-		if (!wanted.includes(folder)) {
-			supervisor.park(folder);
-		} else if (supervisor.parked(folder)) {
-			supervisor.forget(folder);
-		}
-	}
-	return wanted.filter((folder) => !supervisor.gaveUp(folder));
-}
-
-describe("what a projection tick may attempt", () => {
-	it("never attempts a folder the supervisor has given up on", () => {
-		const supervisor = new EditorSupervisor();
-		for (let attempt = 0; attempt <= MAX_EDITOR_RESTARTS; attempt += 1) {
-			supervisor.failed(FOLDER, 0);
-		}
-
-		// The wake cadence: a tick every 300 ms, for ten seconds. Not one of
-		// them is an attempt, and not one of them is a notice.
-		const attempts = Array.from({ length: 33 }, () =>
-			projection(supervisor, [FOLDER, "/dev/other"]),
-		);
-
-		expect(attempts.every((attempted) => !attempted.includes(FOLDER))).toBe(
-			true,
-		);
-		expect(attempts.at(-1)).toEqual(["/dev/other"]);
-	});
-
-	it("attempts it again once a person has asked for it again", () => {
-		const supervisor = new EditorSupervisor();
-		for (let attempt = 0; attempt <= MAX_EDITOR_RESTARTS; attempt += 1) {
-			supervisor.failed(FOLDER, 0);
-		}
-
-		// Giving up made the Workspace unavailable, so it leaves the wanted
-		// set; Retry puts it back. Only that round trip clears the verdict —
-		// the tick between giving up and the model catching up must not.
-		expect(projection(supervisor, [FOLDER])).toEqual([]);
-		expect(supervisor.gaveUp(FOLDER)).toBe(true);
-		projection(supervisor, []);
-		expect(projection(supervisor, [FOLDER])).toEqual([FOLDER]);
-		expect(supervisor.gaveUp(FOLDER)).toBe(false);
 	});
 });
 
