@@ -170,7 +170,7 @@ private func offered(_ field: FormField, _ options: [FormOption], _ value: Strin
 
 /// `String.prototype.trim`: whitespace and line terminators off both ends.
 func jsTrim(_ text: String) -> String {
-    text.trimmingCharacters(in: .whitespacesAndNewlines)
+    JSString.trim(text)
 }
 
 /// `Number(text)` for a trimmed, non-empty text: decimal, hex (`0x`), binary

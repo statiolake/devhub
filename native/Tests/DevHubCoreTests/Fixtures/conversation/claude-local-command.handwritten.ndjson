@@ -1,0 +1,29 @@
+# HAND-WRITTEN, NOT A CAPTURE. Reproduces the shape claude 2.1.273, 2.1.281
+# and 2.1.283 were each observed to print (2026-09-28) for a local slash
+# command sent over stream-json with --replay-user-messages: no echo of the
+# message, no system/local_command, but the turn's init, one assistant message
+# of the model "<synthetic>" carrying the command it ran (`local_command_run`)
+# and what it printed in the session file's own tags (`local_command_source`),
+# and a result with num_turns 0. The words it printed are made up.
+#
+# "> " is a line DevHub wrote to the CLI's stdin (in.log), "< " a line the CLI
+# printed (out). Interleaved in the order they happened.
+#
+# `/mcp reconnect` (the CLI says it cannot here), a prompt answered by the
+# model, then `/mcp` as a template sent it, with its trailing newline.
+> {"type":"control_request","request_id":"boot-l:1","request":{"subtype":"initialize"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"boot-l:1","response":{"commands":[{"name":"mcp","description":"Manage MCP servers","argumentHint":""},{"name":"model","description":"Set the AI model","argumentHint":""}],"models":[{"value":"default","displayName":"Default","description":"Recommended"}]}}}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000003","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":["mcp","model"],"claude_code_version":"2.1.281","tools":["Bash"],"uuid":"00000000-0000-4000-8000-0000000000c0"}
+> {"type":"user","message":{"role":"user","content":"/mcp reconnect"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000003","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":["mcp","model"],"claude_code_version":"2.1.281","tools":["Bash"],"uuid":"00000000-0000-4000-8000-0000000000c1"}
+< {"type":"assistant","message":{"id":"00000000-0000-4000-8000-0000000000d1","type":"message","role":"assistant","model":"<synthetic>","stop_reason":"end_turn","content":[{"type":"text","text":"Reconnecting is not available here."}],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000003","uuid":"00000000-0000-4000-8000-0000000000c2","timestamp":"2026-09-28T06:00:00.000Z","local_command_run":{"command":"mcp","args":"reconnect"},"local_command_source":"<local-command-stdout>Reconnecting is not available here.</local-command-stdout>"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":21,"duration_api_ms":0,"num_turns":0,"result":"Reconnecting is not available here.","stop_reason":null,"session_id":"00000000-0000-4000-8000-000000000003","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0},"modelUsage":{},"permission_denials":[],"local_command":"mcp","uuid":"00000000-0000-4000-8000-0000000000c3"}
+> {"type":"user","message":{"role":"user","content":"What changed?"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000003","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":["mcp","model"],"claude_code_version":"2.1.281","tools":["Bash"],"uuid":"00000000-0000-4000-8000-0000000000c4"}
+< {"type":"user","message":{"role":"user","content":"What changed?"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000003","uuid":"00000000-0000-4000-8000-0000000000c5","isReplay":true}
+< {"type":"assistant","message":{"id":"msg_l1","type":"message","role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Nothing yet."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000003","uuid":"00000000-0000-4000-8000-0000000000c6"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":900,"num_turns":1,"result":"Nothing yet.","stop_reason":"end_turn","terminal_reason":"completed","session_id":"00000000-0000-4000-8000-000000000003","total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":0},"modelUsage":{"claude-sonnet-5":{"contextWindow":200000}},"uuid":"00000000-0000-4000-8000-0000000000c7"}
+> {"type":"user","message":{"role":"user","content":"/mcp\n"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"injection"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000003","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":["mcp","model"],"claude_code_version":"2.1.281","tools":["Bash"],"uuid":"00000000-0000-4000-8000-0000000000c8"}
+< {"type":"assistant","message":{"id":"00000000-0000-4000-8000-0000000000d2","type":"message","role":"assistant","model":"<synthetic>","stop_reason":"end_turn","content":[{"type":"text","text":"2 MCP servers."}],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000003","uuid":"00000000-0000-4000-8000-0000000000c9","timestamp":"2026-09-28T06:00:05.000Z","local_command_run":{"command":"mcp","args":""},"local_command_source":"<local-command-stdout>2 MCP servers.</local-command-stdout>"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":30,"duration_api_ms":0,"num_turns":0,"result":"2 MCP servers.","stop_reason":null,"session_id":"00000000-0000-4000-8000-000000000003","total_cost_usd":0.01,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0},"modelUsage":{},"permission_denials":[],"local_command":"mcp","uuid":"00000000-0000-4000-8000-0000000000ca"}
