@@ -124,6 +124,17 @@ export interface RemoteServerHost {
 	remoteServer(delivery: RehDelivery): Promise<RemoteServerEndpoint>;
 
 	/**
+	 * Install the server if it is not there, and start nothing.
+	 *
+	 * What terminal mode needs of it on a host (`docs/terminal-mode.md`):
+	 * there is no workbench to connect, but the `devhub` command DevHub writes
+	 * on the host is run by the server's own Node, so a pane or an Agent there
+	 * can open a file only once the server's files are on disk. The same
+	 * idempotent install `remoteServer` begins with.
+	 */
+	installServerFiles(delivery: RehDelivery): Promise<void>;
+
+	/**
 	 * A window is opening on this machine — bring up whatever that needs.
 	 *
 	 * Optional, because most machines have nothing to bring up: an ssh host is

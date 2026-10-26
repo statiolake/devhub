@@ -866,6 +866,11 @@ export abstract class RemoteShellRuntime {
 		return paths;
 	}
 
+	/** `RemoteServerHost.installServerFiles`: the install, and nothing after it. */
+	async installServerFiles(delivery: RehDelivery): Promise<void> {
+		await this.installRemoteServer(delivery);
+	}
+
 	/** Which C library this (Linux) machine runs against, asked once. */
 	#libcAnswer: Promise<Libc> | undefined;
 	#libc(): Promise<Libc> {

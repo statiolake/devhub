@@ -11,12 +11,15 @@ export interface TerminalModePlace {
 
 /**
  * Whether terminal mode can draw this Workspace's editor area and open its
- * files: a folder on this Mac whose editor is not attached to a dev
- * container. The other two are phases 2 and 3 of `docs/terminal-mode.md`.
+ * files: a folder on this Mac (phase 1) or on an SSH host (phase 2), whose
+ * editor is not attached to a dev container — that is phase 3 of
+ * `docs/terminal-mode.md`.
  */
 export function terminalModeSupports(workspace: TerminalModePlace): boolean {
   return (
-    workspace.location.kind === "local" && workspace.editor.kind === "host"
+    (workspace.location.kind === "local" ||
+      workspace.location.kind === "ssh") &&
+    workspace.editor.kind === "host"
   );
 }
 
@@ -24,8 +27,6 @@ export function terminalModeSupports(workspace: TerminalModePlace): boolean {
  * What terminal mode says about a Workspace it cannot serve yet — the editor
  * area's state and a refused file jump use the same sentence.
  */
-export function terminalModeUnsupported(workspace: TerminalModePlace): string {
-  return workspace.location.kind === "local"
-    ? "Terminal mode does not support Workspaces whose editor is in a dev container yet."
-    : "Terminal mode does not support Workspaces on SSH hosts yet.";
+export function terminalModeUnsupported(_workspace: TerminalModePlace): string {
+  return "Terminal mode does not support Workspaces whose editor is in a dev container yet.";
 }
