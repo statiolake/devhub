@@ -54,5 +54,5 @@ struct TextPattern: @unchecked Sendable {
 
 extension String {
     /// JavaScript's `trim()`: whitespace and line terminators off both ends.
-    var jsTrimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    var jsTrimmed: String { JSString.trim(self) }
 }

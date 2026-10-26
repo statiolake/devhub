@@ -141,16 +141,13 @@ public enum Projects {
     /// `settings.toml`; the home directory when there is none. It is a starting
     /// value in an editable field, never a decision taken on the person's
     /// behalf.
-    ///
-    /// - Parameters:
-    ///   - configuredDirectory: `config.projects.directory`.
-    ///   - firstFilesystemSource: the `path` of the first `[[workspace_sources]]`
-    ///     whose `type` is `filesystem`.
-    public static func defaultProjectDirectory(configuredDirectory: String?, firstFilesystemSource: String?, home: String) -> String {
-        if let configuredDirectory {
-            return normalizedAbsolute(expandHome(configuredDirectory, home: home), home: home)
+    public static func defaultProjectDirectory(_ config: Config?, home: String) -> String {
+        if let configured = config?.projects.directory {
+            return normalizedAbsolute(expandHome(configured, home: home), home: home)
         }
-        if let firstFilesystemSource { return expandHome(firstFilesystemSource, home: home) }
+        for source in config?.workspaceSources ?? [] {
+            if case .filesystem(let filesystem) = source { return expandHome(filesystem.path, home: home) }
+        }
         return home
     }
 
@@ -158,10 +155,11 @@ public enum Projects {
     ///
     /// A set `[projects] directory` is the new-project default and leads the
     /// list, with the derived parents after it and never twice. Unset, the list
-    /// is the derived parents alone. Either way it is never empty.
-    public static func cloneParentChoices(configuredDirectory: String?, firstFilesystemSource: String?, derived: [String], home: String) -> [String] {
-        let fallback = defaultProjectDirectory(configuredDirectory: configuredDirectory, firstFilesystemSource: firstFilesystemSource, home: home)
-        let named = configuredDirectory == nil ? [] : [fallback]
+    /// is the derived parents alone. Either way it is never empty: with nothing
+    /// else to offer it is the new-project default.
+    public static func cloneParentChoices(_ config: Config?, derived: [String], home: String) -> [String] {
+        let fallback = defaultProjectDirectory(config, home: home)
+        let named = config?.projects.directory == nil ? [] : [fallback]
         var seen = Set<String>()
         let choices = (named + derived).filter { seen.insert($0).inserted }
         return choices.isEmpty ? [fallback] : choices
