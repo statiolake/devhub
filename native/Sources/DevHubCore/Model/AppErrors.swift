@@ -352,6 +352,8 @@ public func errorWire(_ error: Error) -> AppError {
     // WP4's git and GitHub failures are the TypeScript app's `NamedFailure`s
     // under another name: their code is an app error code and their words
     // are the ones to show.
+    // WP1's refusal of an agent action that comes to nothing, under its title.
+    if let empty = error as? AgentActionEmpty { return AppError.at(.agentActionEmpty).withDetail(empty.reason) }
     if let coded = error as? CodedFailure {
         var wire = AppError.at(AppErrorCode(rawValue: coded.code) ?? .nativeUnavailable)
         wire.summary = coded.summary

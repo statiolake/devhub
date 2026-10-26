@@ -398,3 +398,88 @@ final class AutomaticActionsTests: XCTestCase {
         XCTAssertEqual(fired(&automatic, agent(pr(2), on)), ["address_review_comments"])
     }
 }
+
+// MARK: - The rest of agentActions.test.ts
+
+final class AgentActionsShippedTests: XCTestCase {
+    func testUsesEveryVariableItsOwnTriggerIsOffered() {
+        for action in AgentActions.builtIn {
+            for name in action.trigger.variables {
+                XCTAssertTrue(action.template.contains("{{\(name)}}"), "\(action.id): \(name)")
+            }
+        }
+    }
+
+    func testKeepsTheIdsItHasAlwaysShipped() {
+        XCTAssertEqual(AgentActions.builtIn.map(\.id), [
+            "issue_assignment", "commit_changes", "push_commits", "open_pull_request", "ready_draft_pull_request",
+            "address_review_comments", "fix_ci", "send_ok",
+        ])
+    }
+
+    func testSaysWhatFiresEachOfThemAndCallsAnythingElseAnIssueAction() {
+        XCTAssertEqual(AgentActions.triggerOf("issue_assignment"), .issue)
+        XCTAssertEqual(AgentActions.triggerOf("commit_changes"), .commit)
+        XCTAssertEqual(AgentActions.triggerOf("push_commits"), .push)
+        XCTAssertEqual(AgentActions.triggerOf("open_pull_request"), .pullRequest)
+        XCTAssertEqual(AgentActions.triggerOf("review_it_instead"), .issue)
+    }
+
+    func testShipsExactlyOneActionPerTrigger() {
+        for trigger in AgentActionTrigger.allCases {
+            XCTAssertEqual(AgentActions.builtIn.filter { $0.trigger == trigger }.count, 1, trigger.rawValue)
+        }
+    }
+
+    func testSendsEverySmartButtonWithoutAReviewSheetAndReviewsTheIssueFlows() {
+        for action in AgentActions.builtIn {
+            XCTAssertEqual(action.confirmBeforeSend, !action.trigger.isSmartButton, action.id)
+        }
+    }
+
+    func testShipsAnOkButtonOnTheAlwaysTriggerSayingOk() {
+        let ok = AgentActions.builtIn.first { $0.id == "send_ok" }
+        XCTAssertEqual(ok?.displayName, "OK")
+        XCTAssertEqual(ok?.template, "OK")
+        XCTAssertEqual(ok?.trigger, .always)
+        XCTAssertEqual(ok?.confirmBeforeSend, false)
+        XCTAssertTrue(AgentActionTrigger.always.isSmartButton)
+        XCTAssertEqual(AgentActionTrigger.always.variables, [])
+    }
+
+    func testReplacesEveryOccurrenceOfAName() {
+        XCTAssertEqual(AgentActions.fillVariables("{{A}} and {{B}}, then {{A}}", values: ["A": "one", "B": "two"]), "one and two, then one")
+    }
+
+    func testLeavesANameItWasGivenNoValueForExactlyAsWritten() {
+        XCTAssertEqual(AgentActions.fillVariables("issue {{ISSUE_NO}}", values: [:]), "issue {{ISSUE_NO}}")
+    }
+
+    func testTheSkillNotationIsClaudeCodesSlashForClaudeAndLeftAsWrittenOtherwise() {
+        XCTAssertEqual(AgentActions.applySkillNotation("$solve-task https://x/1", kind: .claude), "/solve-task https://x/1")
+        XCTAssertEqual(AgentActions.applySkillNotation("$solve-task https://x/1", kind: .codex), "$solve-task https://x/1")
+        XCTAssertEqual(AgentActions.applySkillNotation("$solve-task", kind: .custom), "$solve-task")
+        XCTAssertEqual(AgentActions.applySkillNotation("$solve-task", kind: .cursor), "$solve-task")
+    }
+
+    func testOnlyTranslatesAtTheStartOfALine() {
+        XCTAssertEqual(
+            AgentActions.applySkillNotation("read $HOME first\n$go now\ncosts $5", kind: .claude), "read $HOME first\n/go now\ncosts $5")
+    }
+
+    func testIsRefusedNamingTheActionWhenItsWordingIsEmpty() {
+        XCTAssertThrowsError(try AgentActions.render(id: "nudge", displayName: "Nudge", template: "  \n", values: [:], kind: .claude)) { error in
+            let wire = errorWire(error)
+            XCTAssertEqual(wire.code, .agentActionEmpty)
+            XCTAssertTrue(wire.detail?.contains("“Nudge” (nudge)") == true)
+        }
+    }
+
+    func testIsTheWordingFilledInInThatAgentsDialect() throws {
+        XCTAssertEqual(
+            try AgentActions.render(
+                id: "solve", displayName: "Solve", template: "$solve-task {{ISSUE_URL}}\nbranch feature/{{ISSUE_NO}}-wip",
+                values: ["ISSUE_URL": "https://github.com/example/widget/issues/128", "ISSUE_NO": "128"], kind: .claude),
+            "/solve-task https://github.com/example/widget/issues/128\nbranch feature/128-wip")
+    }
+}
