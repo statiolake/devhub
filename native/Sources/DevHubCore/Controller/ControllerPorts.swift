@@ -78,6 +78,13 @@ public protocol TerminalPort: Sendable {
     func moveTerminalToWorkspace(_ target: PaneTerminalTarget) async throws
     /// The command line a terminal attaches to a target with.
     func profile(_ target: TerminalTarget) async throws -> TerminalProfileAnswer
+    /// One `list-panes -a` on the machine: every Workspace pane, and which
+    /// Agent terminals still have a session (`terminalPanes`).
+    func terminalPanes(_ machine: RuntimeId) async throws -> (panes: [PaneSample], terminals: [TerminalSessionSample])
+    /// The shell the person configured there, which an idle pane is running.
+    func configuredShell(_ machine: RuntimeId) async throws -> String?
+    /// Let go of a machine no Workspace is on any more; its sessions stay.
+    func forget(_ machine: RuntimeId)
 }
 
 /// The worktree disposal a close may end with (WP4's `WorktreeFolders.dispose`

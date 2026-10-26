@@ -138,6 +138,12 @@ public actor AppController {
     /// The model as WP3's rounds read it (`TerminalAgentModel`).
     public nonisolated let mirror = ControllerModelMirror()
     let machineConditions: MachineConditions
+    /// Each machine's pane activity, across rounds.
+    var paneTrackers: [String: PaneActivityTracker] = [:]
+    /// A terminal round's failure, said once per reason.
+    var terminalActivityFailures = FailureOnce()
+    /// The machines last seen with a Workspace, for `releaseIdleMachines`.
+    var knownMachines: Set<String> = ["local"]
     /// Which automatic actions have fired, and for what.
     var automaticActions = AutomaticActions()
     /// Each machine's home, learned as it answers; this Mac's is known.
@@ -295,7 +301,7 @@ public actor AppController {
         do {
             state = try StatePersistence.apply(coordinator.snapshot(), to: state)
             state.markCleanShutdown()
-            try await stateStore.saveState(state)
+            try await saveState()
         } catch {
             log("[devhub] the state could not be saved at shutdown: \(persistenceReason(error))")
         }
@@ -582,6 +588,26 @@ public actor AppController {
         }
     }
 
+    /// `saveState`: the state file, with the machines DevHub owns sessions on
+    /// brought up to date. The list only grows here; the sweep is the one
+    /// thing that shortens it.
+    func saveState() async throws {
+        var remembered = state.sessionMachines
+        for machine in workspaceMachines() where !remembered.contains(machine) { remembered.append(machine) }
+        state.sessionMachines = remembered
+        try await stateStore.saveState(state)
+    }
+
+    /// `workspaceMachines`: every machine a Workspace is open on, this one
+    /// always among them.
+    func workspaceMachines() -> [String] {
+        var machines = ["local"]
+        for workspace in coordinator.model.workspaces where !machines.contains(workspace.location.runtimeId) {
+            machines.append(workspace.location.runtimeId)
+        }
+        return machines
+    }
+
     /// `persistenceReason`: what to tell the person about a save that did
     /// not happen.
     func persistenceReason(_ error: Error) -> String {
@@ -632,7 +658,7 @@ public actor AppController {
     private func persist(_ token: OperationToken) async {
         do {
             state = try StatePersistence.apply(coordinator.snapshot(), to: state)
-            try await stateStore.saveState(state)
+            try await saveState()
         } catch {
             // Reported as degraded, with the reason, so the model can roll back
             // a close that depended on it. Not also published here: the

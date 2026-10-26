@@ -120,6 +120,13 @@ final class FakeTerminals: TerminalPort, @unchecked Sendable {
     func closeTerminal(_ target: PaneTerminalTarget) async throws { try await closePaneTerminal(target) }
     func joinIntoTerminal(_ target: PaneTerminalTarget, paneId: String, replace: Bool) async throws {}
     func moveTerminalToWorkspace(_ target: PaneTerminalTarget) async throws {}
+    var panes: [PaneSample] = []
+    func terminalPanes(_ machine: RuntimeId) async throws -> (panes: [PaneSample], terminals: [TerminalSessionSample]) {
+        (panes, lock.withLock { live.map { TerminalSessionSample(terminalId: $0.terminalId, workspaceId: $0.pane.workspaceId) } })
+    }
+    func configuredShell(_ machine: RuntimeId) async throws -> String? { "zsh" }
+    let forgotten = Recorder<RuntimeId>()
+    func forget(_ machine: RuntimeId) { forgotten.add(machine) }
     func profile(_ target: TerminalTarget) async throws -> TerminalProfileAnswer {
         profiles.add(target)
         return TerminalProfileAnswer(file: "/usr/local/bin/tmux", args: ["attach"], env: [:])
@@ -577,6 +584,55 @@ final class AppControllerTests: XCTestCase {
         guard case let .injectionReview(agentId, _, _, text)? = rig.shell.modals.all.last else { return XCTFail() }
         XCTAssertEqual(agentId, agent)
         XCTAssertEqual(text, said)
+    }
+
+    // MARK: the rounds
+
+    func testATerminalRoundCarriesWhatTheWorkspacesPanesAreDoingOntoItsRow() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        rig.terminals.panes = [PaneSample(
+            workspaceId: workspace.rawValue, pane: "%1", window: "@1", inView: false, command: "make", dead: false,
+            windowActivity: nil, screen: "1:0:0")]
+        await rig.controller.observeTerminals(on: "local")
+        // Its screen moved since the round before: it is writing.
+        rig.terminals.panes[0].screen = "2:0:0"
+        await rig.controller.observeTerminals(on: "local")
+        let model = await rig.controller.model
+        XCTAssertEqual(model.snapshot().workspaces.first { $0.id == workspace }?.terminals.status, .working)
+    }
+
+    func testATerminalRoundTakesDownAnAgentTerminalWhoseShellEnded() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        let agent = try await rig.createAgent(workspace)
+        _ = try await rig.controller.openAgentTerminal(agent, command: nil, focus: false)
+        // The shell exited: its session is gone from the server.
+        let target = try await rig.controller.terminalTarget(agent).target
+        try await rig.terminals.closePaneTerminal(target)
+        try await Task.sleep(nanoseconds: 5_000_000)
+        await rig.controller.observeTerminals(on: "local")
+        let model = await rig.controller.model
+        XCTAssertNil(model.agentTerminal(agent))
+    }
+
+    func testWritesDownEveryMachineAWorkspaceIsOpenOn() async throws {
+        let rig = ControllerRig()
+        _ = try await rig.open("/work/api")
+        await rig.settled()
+        XCTAssertEqual(rig.savedText().contains("\"session_machines\": [\n    \"local\"\n  ]"), true, rig.savedText())
+    }
+
+    func testReportsTheMachinesWithAgentsAndWithWorkspaces() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        let none = await rig.controller.agentMachines()
+        XCTAssertEqual(none, [])
+        _ = try await rig.createAgent(workspace)
+        let some = await rig.controller.agentMachines()
+        XCTAssertEqual(some, ["local"])
+        let terminals = await rig.controller.terminalMachines()
+        XCTAssertEqual(terminals, ["local"])
     }
 
     // MARK: startup

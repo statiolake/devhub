@@ -147,11 +147,29 @@ public struct TerminalAgentPort: AgentPort {
 public struct TmuxTerminalPort: TerminalPort {
     public let surfaces: TerminalSurfaces
     private let runtimeFor: @Sendable (RuntimeId) async throws -> TmuxTerminalRuntime
+    private let forgetMachine: @Sendable (RuntimeId) -> Void
 
-    public init(surfaces: TerminalSurfaces, runtimeFor: @escaping @Sendable (RuntimeId) async throws -> TmuxTerminalRuntime) {
+    public init(
+        surfaces: TerminalSurfaces, runtimeFor: @escaping @Sendable (RuntimeId) async throws -> TmuxTerminalRuntime,
+        forget: @escaping @Sendable (RuntimeId) -> Void = { _ in }
+    ) {
         self.surfaces = surfaces
         self.runtimeFor = runtimeFor
+        forgetMachine = forget
     }
+
+    /// On WP3's `TerminalRuntimes`, each machine's adapter built on first use.
+    public init(surfaces: TerminalSurfaces, runtimes: TerminalRuntimes, machine: @escaping @Sendable (RuntimeId) throws -> any MachineRuntime = { try MachineRuntimes.runtime(for: $0) }) {
+        self.init(surfaces: surfaces, runtimeFor: { try await runtimes.adapter(for: try machine($0)) }, forget: { runtimes.forget($0) })
+    }
+
+    public func terminalPanes(_ machine: RuntimeId) async throws -> (panes: [PaneSample], terminals: [TerminalSessionSample]) {
+        try await runtimeFor(machine).terminalPanes()
+    }
+
+    public func configuredShell(_ machine: RuntimeId) async throws -> String? { try await runtimeFor(machine).configuredShell }
+
+    public func forget(_ machine: RuntimeId) { forgetMachine(machine) }
 
     public func inspect(_ place: TerminalWorkspacePlace) async -> TerminalInspection {
         do {
