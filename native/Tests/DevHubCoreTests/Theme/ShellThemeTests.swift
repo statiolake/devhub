@@ -208,3 +208,35 @@ final class AppearanceModeTests: XCTestCase {
         XCTAssertEqual(AppearanceMode.modes, ["auto", "light", "dark"])
     }
 }
+
+final class AppearanceSettingsTests: XCTestCase {
+    func testTheDefaultSettingsWearVSCodesDefaults() {
+        let appearance = AppearanceConfig()
+        XCTAssertEqual(ColorThemeNames(appearance: appearance), .defaults)
+        XCTAssertEqual(DevHubTheme.TitleBar(setting: appearance.titleBar), .shown)
+        XCTAssertEqual(DevHubTheme.TitleBar(setting: "hidden"), .hidden)
+        XCTAssertEqual(DevHubTheme.Density(setting: appearance.sidebarDensity), .compact)
+        let terminal = TerminalAppearance(appearance: appearance, fromVSCode: nil)
+        XCTAssertTrue(terminal.isValid)
+        XCTAssertEqual(terminal.theme, .defaults)
+        XCTAssertEqual(terminal.fontSize, 13)
+    }
+
+    func testFollowingTheThemeGivesTheWornThemesTerminal() {
+        var dark = true
+        let theme = ShellTheme(
+            roots: { ExtensionRoots(builtin: ColorThemeCatalog.builtinRoot, user: [String]()) },
+            prefersDark: { dark }
+        )
+        var appearance = AppearanceConfig()
+        appearance.themeDark = "Monokai"
+        theme.configure(appearance: appearance)
+        XCTAssertEqual(theme.takeProblems(), [])
+        let terminal = TerminalAppearance(appearance: appearance, fromVSCode: theme.terminalPalette())
+        XCTAssertEqual(terminal.theme.dark.background, "#272822")
+        XCTAssertEqual(terminal.theme.light, terminal.theme.dark)
+        dark = false
+        theme.appearanceChanged()
+        XCTAssertEqual(theme.wornThemes().current, "Light 2026")
+    }
+}
