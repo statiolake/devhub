@@ -1,0 +1,22 @@
+{
+  "CODEX_IDLE": {
+    "oscTitle": "example-project",
+    "screen": "╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮\n│ ✨ Update available! 0.151.0 -> 0.152.0                                                             │\n│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │\n│                                                                                                     │\n│ See full release notes:                                                                             │\n│ https://github.com/openai/codex/releases/latest                                                     │\n╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯\n\n╭────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.151.0)                     │\n│                                                │\n│ model:     gpt-5.6-luna max   /model to change │\n│ directory: ~/example/work │\n╰────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ MCP startup incomplete (failed: example)\n \n \n› Ask Codex to do anything\n \n  gpt-5.6-luna max · ~/example/work"
+  },
+  "CODEX_STARTUP": {
+    "oscTitle": "example-host",
+    "screen": "╭────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.151.0)                     │\n│                                                │\n│ model:     loading   /model to change          │\n│ directory: ~/example/work │\n╰────────────────────────────────────────────────╯\n \n \n› Ask Codex to do anything\n \n  ? for shortcuts"
+  },
+  "CODEX_TRUST_PROMPT": {
+    "oscTitle": "example-host",
+    "screen": "> You are in ~/example/untrusted\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\n  injection. Trusting the directory allows project-local config, hooks, and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue"
+  },
+  "CODEX_UPDATE_PROMPT": {
+    "oscTitle": "example-host",
+    "screen": "\n  ✨ Update available! 0.151.0 -> 0.152.0\n\n  Release notes: https://github.com/openai/codex/releases/latest\n\n› 1. Update now (runs `sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue"
+  },
+  "CODEX_WORKING": {
+    "oscTitle": "⠋ example-project",
+    "screen": "╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮\n│ ✨ Update available! 0.151.0 -> 0.152.0                                                             │\n│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │\n│                                                                                                     │\n│ See full release notes:                                                                             │\n│ https://github.com/openai/codex/releases/latest                                                     │\n╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯\n\n╭────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.151.0)                     │\n│                                                │\n│ model:     gpt-5.6-luna max   /model to change │\n│ directory: ~/example/work │\n╰────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ The example MCP server requires OAuth reauthentication. Run `codex mcp login example`.\n\n⚠ MCP startup incomplete (failed: example)\n\n\n› Reply with exactly the word BANANA and nothing else.\n\n \n• Working (0s • esc to interrupt)\n \n \n› Ask Codex to do anything\n \n  gpt-5.6-luna max · ~/example/work"
+  }
+}

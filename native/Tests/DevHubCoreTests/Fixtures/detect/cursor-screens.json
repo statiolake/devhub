@@ -1,0 +1,30 @@
+{
+  "CURSOR_COMMAND_APPROVAL": {
+    "oscTitle": "example-host",
+    "screen": "  I'll check the test suite first.\n\n  Run this command?\n\n    pnpm run test\n\n  → Run (once) (y)\n    Run and don't ask again (a)\n    Skip (esc or n)"
+  },
+  "CURSOR_LOGIN_SPLASH": {
+    "oscTitle": "example-host",
+    "screen": "\n\n\n\n                                     Cursor Agent\n                                     v2026.08.25-3e8eec8\n                                     Press any key to log in...\n\n\n"
+  },
+  "CURSOR_LOOKS_FREE": {
+    "oscTitle": "example-host",
+    "screen": "  Done. The tests pass.\n\n  >\n  ? for shortcuts"
+  },
+  "CURSOR_WORKING_BACKGROUND": {
+    "oscTitle": "example-host",
+    "screen": "  Started the dev server.\n\n  2 background tasks"
+  },
+  "CURSOR_WORKING_SPINNER": {
+    "oscTitle": "example-host",
+    "screen": "  Reading the workspace.\n\n  ⬢ Thinking"
+  },
+  "CURSOR_WORKING_STOP_HINT": {
+    "oscTitle": "example-host",
+    "screen": "  Editing src/example.ts\n\n  ctrl+c to stop"
+  },
+  "CURSOR_WRITE_APPROVAL": {
+    "oscTitle": "example-host",
+    "screen": "  Write to this file?\n\n    src/example.ts\n\n    Proceed (y)\n    Reject & propose changes (esc or n or p)"
+  }
+}
