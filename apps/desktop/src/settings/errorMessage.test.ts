@@ -35,6 +35,7 @@ const CODES: readonly SettingsDiagnosticCodeWire[] = [
   "invalid_socket_name",
   "forbidden_tmux_argument",
   "invalid_appearance",
+  "invalid_workbench",
   "invalid_font_family",
   "invalid_workspace_path",
   "invalid_workspace_depth",

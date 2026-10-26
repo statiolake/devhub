@@ -109,6 +109,11 @@ export interface SettingsGeneralWire {
 	readonly workbenchHibernateMinutes: number;
 	/** `general.workbench_awake_max`. */
 	readonly workbenchAwakeMax: number;
+	/**
+	 * `general.workbench`: `vscode` or `terminal` — see `model/config.ts`.
+	 * Takes a relaunch.
+	 */
+	readonly workbench: string;
 }
 
 export interface SettingsRuntimeConfigWire {
@@ -370,6 +375,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_socket_name"
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
+	| "invalid_workbench"
 	| "invalid_keybinding"
 	| "unknown_command"
 	| "invalid_font_family"

@@ -21,6 +21,7 @@ import {
   appearanceModeIn,
   DEFAULT_THEME_DARK,
   DEFAULT_THEME_LIGHT,
+  workbenchModeIn,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
@@ -677,6 +678,45 @@ describe("parsing", () => {
       // same text is what reports the problem; see `titleBarModeIn`.
       expect(titleBarModeIn("this is not toml = = =")).toBe("shown");
       expect(titleBarModeIn("[appearance]\ntitle_bar = 7\n")).toBe("shown");
+    });
+  });
+
+  describe("general.workbench", () => {
+    it("is a VS Code workbench unless the file says otherwise", () => {
+      expect(defaultConfig().general.workbench).toBe("vscode");
+      expect(parseConfig(MINIMAL).general.workbench).toBe("vscode");
+    });
+
+    it("is read, kept and written back", () => {
+      const config = parseConfig(
+        'version = 1\n[general]\nworkbench = "terminal"\n',
+      );
+      expect(config.general.workbench).toBe("terminal");
+      expect(configToToml(config)).toContain('workbench = "terminal"');
+    });
+
+    it("refuses anything but the two modes, naming the key", () => {
+      const text = 'version = 1\n[general]\nworkbench = "neovim"\n';
+      expect(codeOf(() => parseConfig(text))).toBe("invalid_workbench");
+      expect(pathOf(() => parseConfig(text))).toBe("general.workbench");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[general]\nworkbench = 1\n")),
+      ).toBe("invalid_type");
+    });
+
+    it("is readable on its own, before the rest of the settings are", () => {
+      // Whether workbenches exist is decided before the config is loaded, so
+      // it has its own reader, like the title bar. It has to agree with the
+      // loader, and a file it cannot read is the default.
+      expect(workbenchModeIn(undefined)).toBe("vscode");
+      expect(workbenchModeIn(MINIMAL)).toBe("vscode");
+      expect(
+        workbenchModeIn('version = 1\n[general]\nworkbench = "terminal"\n'),
+      ).toBe("terminal");
+      expect(workbenchModeIn("this is not toml = = =")).toBe("vscode");
+      expect(workbenchModeIn('[general]\nworkbench = "emacs"\n')).toBe(
+        "vscode",
+      );
     });
   });
 

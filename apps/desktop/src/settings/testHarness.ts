@@ -47,6 +47,7 @@ export function testConfig(
       terminalIdleSeconds: 5,
       workbenchHibernateMinutes: 10,
       workbenchAwakeMax: 2,
+      workbench: "vscode",
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },

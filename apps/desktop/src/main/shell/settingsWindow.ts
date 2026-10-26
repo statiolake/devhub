@@ -175,6 +175,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
 			workbenchHibernateMinutes: config.general.workbench_hibernate_minutes,
 			workbenchAwakeMax: config.general.workbench_awake_max,
+			workbench: config.general.workbench,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -318,6 +319,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
 			workbench_hibernate_minutes: wire.general.workbenchHibernateMinutes,
 			workbench_awake_max: wire.general.workbenchAwakeMax,
+			workbench: wire.general.workbench,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,
