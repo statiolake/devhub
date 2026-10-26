@@ -1,0 +1,216 @@
+// `DevHub --self-test`: what CI runs on macOS against the bundle. It draws the
+// real window from a fixture projection, with every terminal surface on the
+// loopback transport (no tmux, no settings file, nothing under the person's
+// home), and checks what WP9 is for:
+//
+//   - the window is on screen, in both arrangements a chord leads to
+//   - every child is where `WindowLayout.compute` says, in its order
+//   - the Sidebar draws Scratch, one Workspace and its Agent
+//   - the editor area's terminal attaches, draws, types and resizes over the
+//     frame contract (`started`, `output`, acknowledgements)
+//   - `Cmd+Q Z` and `Cmd+Q V` route through the chord dispatcher
+//   - after a split (`Cmd+Q Z`) with the terminal open (`Cmd+Q V`), the
+//     editor, the Agent and its terminal are all attached and shown
+//   - the built-in colour themes are in the bundle
+//
+// Exit 0 with "self-test ok", else 1 with every failure.
+
+import AppKit
+import DevHubCore
+
+@MainActor
+final class SelfTest {
+    private var shell: ShellController?
+    private let transport = LoopbackTransport()
+    private var failures: [String] = []
+
+    private func check(_ ok: Bool, _ what: @autoclosure () -> String) {
+        if !ok { failures.append(what()) }
+    }
+
+    private func pause(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// Wait for `condition`, up to `seconds`.
+    private func until(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            await pause(0.05)
+        }
+        return condition()
+    }
+
+    func start() {
+        Task { @MainActor in
+            await run()
+            if failures.isEmpty {
+                print("self-test ok: \(DevHubVersion.description)")
+                exit(0)
+            }
+            FileHandle.standardError.write(Data("self-test failed: \(failures.joined(separator: "; "))\n".utf8))
+            exit(1)
+        }
+    }
+
+    /// Whether every child the layout names is where it says.
+    private func layoutApplied(_ window: MainWindowController, _ what: String) {
+        guard let input = window.layoutInput() else { return check(false, "\(what): there is no layout") }
+        let expected = WindowLayout.compute(input)
+        check(!expected.isEmpty, "\(what): the layout has no children")
+        for child in expected {
+            let view: NSView?
+            switch child.identity {
+            case .shell: view = window.backdrop
+            case .sidebar: view = window.sidebar
+            case .agents: view = window.agents
+            case let .terminal(id): view = window.agentTerminals[id]
+            case let .editorTerminal(key): view = window.editorTerminals[key]
+            case .tooltip: view = window.tooltip.view
+            default: view = nil
+            }
+            guard let view else {
+                check(child.identity == .toasts || child.identity == .picker, "\(what): no view for \(child.identity)")
+                continue
+            }
+            check(view.frame == child.rect.cgRect, "\(what): \(child.identity) is at \(view.frame), not \(child.rect)")
+            check(view.isHidden == !child.visible, "\(what): \(child.identity) shown is \(!view.isHidden), not \(child.visible)")
+        }
+        // In the stack's order, lowest first.
+        let order = expected.compactMap { child -> NSView? in
+            switch child.identity {
+            case .shell: return window.backdrop
+            case .sidebar: return window.sidebar
+            case .agents: return window.agents
+            case let .terminal(id): return window.agentTerminals[id]
+            case let .editorTerminal(key): return window.editorTerminals[key]
+            case .tooltip: return window.tooltip.view
+            default: return nil
+            }
+        }
+        let stacked = window.root.subviews.filter { view in order.contains { $0 === view } }
+        check(stacked.elementsEqual(order, by: ===), "\(what): the children are not stacked in the layout's order")
+    }
+
+    private func key(_ window: NSWindow, _ characters: String, code: UInt16, command: Bool) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: command ? [.command] : [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+            isARepeat: false, keyCode: code)
+    }
+
+    private func run() async {
+        // WP8: the vendored built-in colour themes are in the bundle.
+        let roots = ExtensionRoots(builtin: ColorThemeCatalog.builtinRoot, user: [String]())
+        let themes = ColorThemeCatalog.list(roots)
+        check(ColorThemeCatalog.find(themes, "Dark 2026") != nil && ColorThemeCatalog.find(themes, "Light 2026") != nil,
+              "the built-in colour themes are missing")
+        check(TerminalSurfaceProbe.links(), "the terminal surface did not link")
+
+        let appearance = AppearanceController(roots: roots)
+        let shell = ShellController(titleBar: .shown, appearance: appearance, transport: transport)
+        self.shell = shell
+        let window = shell.window
+        window.showWindow(nil)
+        window.window?.setContentSize(NSSize(width: 1200, height: 780))
+        NSApp.activate()
+        shell.installKeyboard()
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("devhub-self-test")
+
+        // 1. A Workspace's editor area.
+        shell.apply(WindowFixtures.selfTestWorkspace(root: root))
+        await pause(0.5)
+        check(window.window?.isVisible == true, "the main window is not visible")
+        layoutApplied(window, "the editor area")
+        let rows = window.sidebar.list.treeIds
+        check(rows == [
+            "workspace:\(WindowFixtures.scratchId)", "workspace:\(WindowFixtures.workspaceId)", "agent:\(WindowFixtures.agentId)",
+        ], "the Sidebar draws \(rows), not Scratch, the Workspace and its Agent")
+
+        let editorKey = TerminalSurfaceKeys.workspace(WindowFixtures.workspaceId)
+        let editor = window.editorTerminals.values.first { $0.surfaceKey == editorKey }
+        check(editor != nil, "the editor area has no terminal view")
+        if let editor {
+            let attached = await until(5) { editor.isAttached }
+            check(attached, "the editor terminal did not attach (\(editor.connection))")
+            let drawn = await until(3) { editor.screenText().contains("DevHub loopback") }
+            check(drawn, "the editor terminal did not draw its output")
+            if let attachment = transport.live(editorKey) {
+                check(attachment.viewLabel == "editor", "the editor terminal attached as \(attachment.viewLabel)")
+                let acked = await until(3) { self.transport.acknowledgedUpTo(attachment.attachmentId) >= 1 }
+                check(acked, "the editor terminal did not acknowledge what it drew")
+                editor.type("echo self-test\r")
+                let typed = await until(3) {
+                    String(decoding: self.transport.typed(attachment.attachmentId), as: UTF8.self).contains("echo self-test")
+                }
+                check(typed, "what was typed did not reach the session")
+                let echoed = await until(3) { editor.screenText().contains("echo self-test") }
+                check(echoed, "the session's echo was not drawn")
+                // A different size reaches the session as a resize.
+                let before = transport.resizes.filter { $0.attachmentId == attachment.attachmentId }.last?.size
+                window.window?.setContentSize(NSSize(width: 1000, height: 700))
+                let resized = await until(3) {
+                    let last = self.transport.resizes.filter { $0.attachmentId == attachment.attachmentId }.last?.size
+                    return last != nil && last != before
+                }
+                check(resized, "a new window size did not reach the session")
+                layoutApplied(window, "the resized window")
+            } else {
+                check(false, "the editor terminal is not attached on \(editorKey)")
+            }
+        }
+
+        // 2. The chords: `Cmd+Q Z` and `Cmd+Q V` reach their commands.
+        if let nsWindow = window.window, let dispatcher = shell.chordDispatcher {
+            for (character, code, command) in [("z", UInt16(6), CommandId.toggleSplit), ("v", UInt16(9), CommandId.toggleTerminal)] {
+                guard let prefix = key(nsWindow, "q", code: 12, command: true), let second = key(nsWindow, character, code: code, command: false) else {
+                    check(false, "the key events could not be made")
+                    continue
+                }
+                check(dispatcher.handleKey(prefix) == nil, "Cmd+Q was not taken as the prefix")
+                check(dispatcher.isArmed, "Cmd+Q did not arm the prefix")
+                check(dispatcher.handleKey(second) == nil, "Cmd+Q \(character.uppercased()) reached the surface")
+                check(shell.lastCommand == command, "Cmd+Q \(character.uppercased()) ran \(String(describing: shell.lastCommand))")
+            }
+        } else {
+            check(false, "the chord dispatcher is not installed")
+        }
+
+        // 3. What `Cmd+Q Z` then `Cmd+Q V` leave on screen: the split, with
+        // the Agent's terminal under it.
+        shell.apply(WindowFixtures.selfTest(root: root, presentation: .beside, terminal: true, revision: 2))
+        await pause(0.5)
+        layoutApplied(window, "the split")
+        let agentKey = TerminalSurfaceKeys.agent(WindowFixtures.agentId)
+        let terminalKey = TerminalSurfaceKeys.paneTerminal(WindowFixtures.terminalId)
+        for (label, surfaceKey) in [("the Agent", agentKey), ("the Agent's terminal", terminalKey), ("the editor", editorKey)] {
+            let attached = await until(5) { self.transport.live(surfaceKey) != nil }
+            check(attached, "\(label) did not attach on \(surfaceKey)")
+        }
+        if let pane = window.agentTerminals[WindowFixtures.terminalId] {
+            check(!pane.isHidden, "the Agent's terminal is not shown in the split")
+            let drawn = await until(3) { pane.screenText().contains("DevHub loopback") }
+            check(drawn, "the Agent's terminal did not draw")
+        } else {
+            check(false, "the Agent's terminal has no view")
+        }
+        check(!window.agents.isHidden, "the Agents' view is not shown in the split")
+        check(editor.map { !$0.isHidden } ?? false, "the editor is not shown in the split")
+        if let state = shell.arrangement?.state, case let .split(_, ratio, _) = state.surface {
+            check(abs(ratio - 0.55) < 0.001, "the split is at \(ratio)")
+        } else {
+            check(false, "the arrangement is not a split")
+        }
+
+        // 4. The Agent alone keeps the editor attached and hidden.
+        shell.apply(WindowFixtures.selfTest(root: root, presentation: .full, terminal: false, revision: 3))
+        await pause(0.3)
+        layoutApplied(window, "the Agent alone")
+        check(editor.map(\.isHidden) ?? false, "the editor is still shown with the Agent alone")
+        check(editor?.isAttached ?? false, "the hidden editor let go of its attachment")
+        check(transport.live(editorKey) != nil, "the hidden editor's attachment was let go of")
+
+        window.disposeAll()
+    }
+}

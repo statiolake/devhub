@@ -1,10 +1,11 @@
 import AppKit
 
-// DevHub, native. Phase 0: one empty window with the sidebar column and the
-// content area the real layout (docs/PLAN.md, WP9) will fill.
+// DevHub, native: the application's entry point (docs/PLAN.md, WP9).
 //
-// `DevHubApp --self-test` opens the window, checks it is on screen and that
-// the terminal surface links, then exits 0 — what CI runs on macOS.
+// `DevHub --self-test` draws the real window from a fixture projection on the
+// loopback terminal transport and checks the layout, the Sidebar, the
+// terminal surfaces and the chords, then exits 0 — what CI runs on macOS
+// (`SelfTest`).
 
 @main
 enum DevHubApplication {
