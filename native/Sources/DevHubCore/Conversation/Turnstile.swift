@@ -74,3 +74,56 @@ public final class CancellationFlag: Sendable {
         return { [state] in _ = state.with { $0.handlers.removeValue(forKey: id) } }
     }
 }
+
+/// Settled once, with a value or a failure; awaited by any number of tasks,
+/// before or after it settles (the TS app's promise, where one is passed
+/// around as a value).
+public final class OneShot<Value: Sendable>: Sendable {
+    private struct State {
+        var result: Result<Value, Error>?
+        var waiters: [CheckedContinuation<Value, Error>] = []
+    }
+
+    private let state = Guarded(State())
+
+    public init() {}
+
+    /// One already settled with `value`.
+    public static func settled(_ value: Value) -> OneShot<Value> {
+        let shot = OneShot<Value>()
+        shot.resolve(value)
+        return shot
+    }
+
+    public var isSettled: Bool { state.with { $0.result != nil } }
+
+    public func resolve(_ value: Value) { settle(.success(value)) }
+
+    public func reject(_ error: Error) { settle(.failure(error)) }
+
+    private func settle(_ result: Result<Value, Error>) {
+        let waiters = state.with { state -> [CheckedContinuation<Value, Error>] in
+            guard state.result == nil else { return [] }
+            state.result = result
+            defer { state.waiters = [] }
+            return state.waiters
+        }
+        for waiter in waiters { waiter.resume(with: result) }
+    }
+
+    /// Its value once it has one; throws its failure.
+    public func value() async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            let settled = state.with { state -> Result<Value, Error>? in
+                if let result = state.result { return result }
+                state.waiters.append(continuation)
+                return nil
+            }
+            if let settled { continuation.resume(with: settled) }
+        }
+    }
+}
+
+extension OneShot where Value == Void {
+    public func resolve() { resolve(()) }
+}

@@ -153,7 +153,7 @@ private struct Standing {
 /// Not Sendable: one belongs to one conversation, which calls it from its own isolation.
 public final class LimitResumer {
     private let options: LimitResumeOptions
-    private let show: (LimitResume?) -> Void
+    private let show: (LimitResume?) throws -> Void
     private let due: @Sendable () -> Void
     private var standing: Standing?
     private var armed: (at: Double, disarm: @Sendable () -> Void)?
@@ -165,7 +165,7 @@ public final class LimitResumer {
     ///   - show: put what DevHub will do in the transcript (`limit-resume`).
     ///   - due: the message is due: the conversation takes it (`take`) in its turn.
     public init(
-        _ options: LimitResumeOptions, show: @escaping (LimitResume?) -> Void, due: @escaping @Sendable () -> Void
+        _ options: LimitResumeOptions, show: @escaping (LimitResume?) throws -> Void, due: @escaping @Sendable () -> Void
     ) {
         self.options = options
         self.show = show
@@ -174,34 +174,34 @@ public final class LimitResumer {
 
     /// The conversation after an event (any but a `limit-resume`, which this
     /// made), and the journal offset it had read then.
-    public func observe(_ transcript: Transcript, offset: Int) {
+    public func observe(_ transcript: Transcript, offset: Int) throws {
         let stop = limitStop(transcript)
         if let stop, stop.entry == standing?.entry {
             standing?.resetsAt = stop.resetsAt
         } else {
             // The stop that stood is over, and so is anything about it.
             if armed != nil { over() }
-            display(nil)
+            try display(nil)
             standing = stop.map { Standing(entry: $0.entry, resetsAt: $0.resetsAt, since: Double(offset)) }
         }
-        decide()
+        try decide()
     }
 
     /// The person pressed Cancel (or Dismiss): nothing is written for this
     /// stop, now or after a restart.
-    public func cancel() {
+    public func cancel() throws {
         guard let standing else { return }
         armed?.disarm()
         armed = nil
         record(standing, nil)
-        display(nil)
+        try display(nil)
     }
 
     /// The message is due: its words, once, or nothing when it is not due
     /// after all — cancelled meanwhile, turned off in Settings, or a timer
     /// that came early. Whatever it returns, the resume is over; the caller
     /// writes the words and says, through `failed`, if that did not happen.
-    public func take() -> String? {
+    public func take() throws -> String? {
         guard let armed, let standing else { return nil }
         let left = armed.at - options.clock.now()
         if left > 0 {
@@ -210,16 +210,16 @@ public final class LimitResumer {
         }
         self.armed = nil
         record(standing, nil)
-        display(nil)
+        try display(nil)
         let settings = options.settings()
         return settings.enabled ? settings.message : nil
     }
 
     /// Writing the message failed, for `why`: said until the conversation
     /// moves on or it is dismissed.
-    public func failed(_ why: String) {
+    public func failed(_ why: String) throws {
         guard standing != nil else { return }
-        display(.failed(failure: why))
+        try display(.failed(failure: why))
     }
 
     /// Stop timing: the conversation is no longer followed. What was decided is kept.
@@ -229,12 +229,12 @@ public final class LimitResumer {
         armed = nil
     }
 
-    private func decide() {
+    private func decide() throws {
         guard let standing, armed == nil else { return }
         if case .failed? = shown { return }
         let recorded = options.record.get()
         if let recorded, recorded.entry == standing.entry.raw {
-            if let at = recorded.at { arm(at) }
+            if let at = recorded.at { try arm(at) }
             return
         }
         // A stop before the recorded one, passed on the way through the
@@ -243,24 +243,24 @@ public final class LimitResumer {
         let settings = options.settings()
         if !settings.enabled { return }
         guard let resetsAt = standing.resetsAt else {
-            display(.unscheduled(reason: "the CLI did not say when the limit resets"))
+            try display(.unscheduled(reason: "the CLI did not say when the limit resets"))
             return
         }
         if resetsAt <= options.clock.now() {
-            display(.unscheduled(reason: "the limit had already reset when DevHub read it"))
+            try display(.unscheduled(reason: "the limit had already reset when DevHub read it"))
             return
         }
         let at = resetsAt + RESET_MARGIN_MS
         record(standing, at)
-        arm(at)
+        try arm(at)
     }
 
-    private func arm(_ dueAt: Double) {
+    private func arm(_ dueAt: Double) throws {
         if stopped { return }
         let now = options.clock.now()
         let at = max(dueAt, now + SOONEST_MS)
         armed = (at, options.clock.after(at - now, due))
-        display(.scheduled(at: at))
+        try display(.scheduled(at: at))
     }
 
     private func over() {
@@ -273,9 +273,9 @@ public final class LimitResumer {
         options.record.set(LimitResumeRecord(entry: standing.entry.raw, since: standing.since, at: at))
     }
 
-    private func display(_ resume: LimitResume?) {
+    private func display(_ resume: LimitResume?) throws {
         if resume == shown { return }
         shown = resume
-        show(resume)
+        try show(resume)
     }
 }
