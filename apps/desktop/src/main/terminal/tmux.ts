@@ -1409,6 +1409,39 @@ export interface TmuxOutput extends CommandOutput {
 	refusal(): PortFailure;
 }
 
+/** A tmux pane id, which is the only target DevHub addresses a pane by. */
+const PANE_ID = /^%[0-9]+$/u;
+
+/**
+ * `new-window` in a session, at its next free index, in `root`, running
+ * `argv` directly (several arguments are exec'd, not handed to a shell), and
+ * printing the new pane's id. `--` ends tmux's own options, so a program
+ * whose path starts with `-` is still the program.
+ */
+export function editorWindowArgs(
+	session: string,
+	root: string,
+	argv: readonly string[],
+): readonly string[] {
+	return [
+		"new-window",
+		"-P",
+		"-F",
+		"#{pane_id}",
+		"-t",
+		`${session}:`,
+		"-c",
+		root,
+		"--",
+		...argv,
+	];
+}
+
+/** Bring a pane's window to the front of its session, and the pane in it. */
+export function activatePaneArgs(paneId: string): readonly string[] {
+	return ["select-window", "-t", paneId, ";", "select-pane", "-t", paneId];
+}
+
 export class TmuxTerminalRuntime {
 	private readonly context: RuntimeLaunchContext;
 	private readonly tmux: RuntimeExecutable;
@@ -2074,6 +2107,146 @@ export class TmuxTerminalRuntime {
 		} finally {
 			release();
 		}
+	}
+
+	/**
+	 * Start `argv` in a new window of a Workspace's own (`ws-`) session, made
+	 * first when it is not there: terminal mode's managed Neovim
+	 * (`editor/managedNeovim.ts`). A window and not a split, so the editor has
+	 * the whole editor area and the person's layout is left alone. Answers the
+	 * new pane's id (`%12`).
+	 */
+	async openEditorWindow(
+		target: WorkspaceTerminalTarget,
+		argv: readonly string[],
+		cancel = new CancellationToken(),
+	): Promise<string> {
+		if (argv.length === 0 || argv.some((part) => part.includes("\0"))) {
+			throw portFailure("failed");
+		}
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const workspace = workspaceTarget(
+				target.machine,
+				target.workspaceId,
+				target.root,
+			);
+			await this.ensureSyncOnSocket(socket, workspace, cancel);
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const sessions = await this.listSessions(socket, cancel, deadline);
+			const session = this.targetIdentity(workspace, sessions).sessionName;
+			const output = await this.runTmux(
+				socket,
+				editorWindowArgs(session, target.root, argv),
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw output.refusal();
+			const paneId = output.stdout.toString("utf8").trim();
+			if (!PANE_ID.test(paneId)) {
+				throw shapeFailure("new-window answered with no pane id");
+			}
+			return paneId;
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Whether `paneId` is one of a Workspace's own panes, and running: `gone`
+	 * when it is not a pane of that Workspace's marked session at all (closed,
+	 * or never its), `dead` when it is but its program exited and
+	 * `remain-on-exit` kept it.
+	 */
+	async editorPaneState(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		cancel = new CancellationToken(),
+	): Promise<"alive" | "dead" | "gone"> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const pane = await this.workspacePaneUnlocked(target, paneId, cancel);
+			if (pane === undefined) return "gone";
+			return pane.dead ? "dead" : "alive";
+		} finally {
+			release();
+		}
+	}
+
+	/** Bring one of a Workspace's panes to the front: its window, then it. */
+	async activateEditorPane(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.onWorkspacePane(
+			target,
+			paneId,
+			activatePaneArgs(paneId),
+			cancel,
+		);
+	}
+
+	/** Kill one of a Workspace's panes. One already gone is not a failure. */
+	async killEditorPane(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.onWorkspacePane(
+			target,
+			paneId,
+			["kill-pane", "-t", paneId],
+			cancel,
+		);
+	}
+
+	/**
+	 * Run a command on a pane once it is read back, in the same held permit,
+	 * as one of this Workspace's: a pane id is only unique on its server, and
+	 * acting on another session's pane cannot be taken back.
+	 */
+	private async onWorkspacePane(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		args: readonly string[],
+		cancel: CancellationToken,
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const pane = await this.workspacePaneUnlocked(target, paneId, cancel);
+			if (pane === undefined) return;
+			const output = await this.runTmux(
+				this.socket(),
+				args,
+				this.contextHome,
+				cancel,
+				OperationDeadline.in(this.timeoutMs),
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
+	private async workspacePaneUnlocked(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		cancel: CancellationToken,
+	): Promise<MarkedPane | undefined> {
+		if (!PANE_ID.test(paneId)) return undefined;
+		const panes = await this.markedPanesOn(
+			this.socket(),
+			cancel,
+			OperationDeadline.in(this.timeoutMs),
+			parseWorkspacePanes,
+		);
+		return panes.find(
+			(pane) =>
+				pane.paneId === paneId && pane.workspaceId === target.workspaceId,
+		);
 	}
 
 	/**
