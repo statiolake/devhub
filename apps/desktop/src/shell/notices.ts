@@ -9,19 +9,20 @@
  * it (`components/shell/Toasts.tsx`) and this is the one state behind it, so a
  * new app-wide condition has one place to arrive and one place to be drawn.
  *
- * # Channels, and why there is more than one notice
+ * # Slots, and why there is more than one notice
  *
- * The lifetime rule is `useAlertLifetime`, unchanged and not copied: it holds
- * exactly one thing at a time, because "a newer failure replaces the one on
- * screen" is only true of failures that are about the same kind of thing. A
- * *channel* is that "kind of thing" — one source of notices, holding at most
- * one live notice, under the shared rule. The stack on screen is the channels
- * that have something to say, in the order they last said it.
+ * Failures share one slot under `useAlertLifetime`, unchanged and not copied:
+ * "a newer failure replaces the one on screen" is the failure rule. Conditions
+ * do not share one: each *source* holds its own (keyed by
+ * `appConditionIdentity`), because two sources are two standing facts and one
+ * of them ending says nothing about the other. The stack on screen is every
+ * slot that has something to say: a condition where it first appeared, the
+ * failure slot moved to the newest end whenever a failure is raised.
  *
- * That is why a repeat cannot pile up: a channel has one slot, so the same
+ * That is why a repeat cannot pile up: a source has one slot, so its
  * condition arriving a second time replaces itself rather than stacking, and
- * a condition the person has put away stays away because the rule remembers
- * which identity was dismissed.
+ * a condition the person has put away stays away because which identities
+ * were put away is remembered until their own source retracts them.
  *
  * # Failures and conditions are retired differently
  *
@@ -53,7 +54,14 @@
  * entry there, whichever way it leaves.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   appConditionIdentity,
   appFailureIdentity,
@@ -100,15 +108,10 @@ export interface Notice {
 }
 
 /**
- * The channels, in the order they are read when nothing has happened yet.
- *
- * One `useAlertLifetime` call each, named rather than built from a list,
- * because a hook cannot be called in a loop over data that changes — and
- * because a channel is a decision about what shares one slot, which is worth
- * writing down rather than deriving.
+ * The failures' one slot in the stack's order. Every other slot is a
+ * condition's identity, which starts `condition\u0000` and so cannot be this.
  */
-const CHANNELS = ["condition", "failure"] as const;
-type Channel = (typeof CHANNELS)[number];
+const FAILURE_SLOT = "failure";
 
 function identityOf(notice: Notice): string {
   return notice.identity;
@@ -195,12 +198,6 @@ export function useAppNotices(
   // depending on it would run on every render, which is how a condition
   // observed in an effect becomes a loop that never settles.
   const {
-    alert: conditionAlert,
-    raise: raiseConditionNotice,
-    clear: clearCondition,
-    dismiss: dismissCondition,
-  } = useAlertLifetime<Notice>(identityOf);
-  const {
     alert: failureAlert,
     raise: raiseFailureNotice,
     clear: clearFailureNotice,
@@ -211,11 +208,8 @@ export function useAppNotices(
   // a `clearFailure` that changed identity whenever a notice arrived would run
   // every effect built on it again, which is the loop `useAlertLifetime`'s own
   // comment warns about.
-  const held = useRef<{ condition: Notice | null; failure: Notice | null }>({
-    condition: null,
-    failure: null,
-  });
-  held.current = { condition: conditionAlert, failure: failureAlert };
+  const heldFailure = useRef<Notice | null>(null);
+  heldFailure.current = failureAlert;
   const reportRef = useRef(report);
   reportRef.current = report;
 
@@ -241,9 +235,6 @@ export function useAppNotices(
     });
   }, []);
   useEffect(() => {
-    if (conditionAlert) record(conditionAlert);
-  }, [conditionAlert, record]);
-  useEffect(() => {
     if (failureAlert) record(failureAlert);
   }, [failureAlert, record]);
 
@@ -257,16 +248,13 @@ export function useAppNotices(
    * rate of their own and take the rate of whatever is failing. Below this
    * line there is one notice per episode, so none of them can flap.
    *
-   * One per channel, for the same reason there is one `useAlertLifetime` per
-   * channel: a failure's episode ends when the person starts another action
-   * and a condition's does not, and a single gate would have had to be told
-   * which kind it was holding.
+   * Failures only: a condition comes from main's set
+   * (`main/shell/appConditions.ts`), which already sends only a change.
    */
   const failureEpisodes = useRef(new NoticeEpisodes());
-  const conditionEpisodes = useRef(new NoticeEpisodes());
 
   const clearFailure = useCallback(() => {
-    const retiring = held.current.failure;
+    const retiring = heldFailure.current;
     if (retiring) {
       reportRef.current({
         identity: retiring.identity,
@@ -285,31 +273,31 @@ export function useAppNotices(
     );
   }, [clearFailureNotice]);
 
-  // Which channel spoke last, kept as state rather than a ref because the
-  // order the stack is drawn in is something the render reads.
-  const [order, setOrder] = useState<readonly Channel[]>(CHANNELS);
-  const promote = useCallback((channel: Channel) => {
-    setOrder((current) => {
-      // The same channel speaking again does not change the order, and saying
-      // so is what stops it becoming work: a fresh array here is a fresh
-      // `notices`, which is a fresh context value and a re-render of the stack
-      // — at the rate a reconcile round publishes into a condition that is
-      // already up, which is once a second per machine and nothing to show
-      // for it.
-      if (current[current.length - 1] === channel) return current;
-      return [...current.filter((c) => c !== channel), channel];
-    });
-  }, []);
+  // The conditions that hold and are on screen, one per source, and the
+  // order of every slot on screen. Refs, so a callback reads what is held now
+  // — several retirements in one gesture (Clear All) each see the last — and
+  // a counter that re-renders when either moves.
+  const conditions = useRef(new Map<string, Notice>());
+  const order = useRef<readonly string[]>([]);
+  const putAwayConditions = useRef(new Set<string>());
+  const [standing, changed] = useReducer((n: number) => n + 1, 0);
 
   const notices = useMemo(() => {
-    const held: Record<Channel, Notice | null> = {
-      condition: conditionAlert,
-      failure: failureAlert,
-    };
-    return order
-      .map((channel) => held[channel])
-      .filter((notice): notice is Notice => notice !== null);
-  }, [order, conditionAlert, failureAlert]);
+    void standing;
+    return order.current
+      .map((slot) =>
+        slot === FAILURE_SLOT ? failureAlert : conditions.current.get(slot),
+      )
+      .filter((notice): notice is Notice => notice != null);
+  }, [standing, failureAlert]);
+
+  /** A condition leaves the screen; `false` if it was not on it. */
+  const takeCondition = useCallback((identity: string): boolean => {
+    if (!conditions.current.delete(identity)) return false;
+    order.current = order.current.filter((slot) => slot !== identity);
+    changed();
+    return true;
+  }, []);
 
   const raiseFailure = useCallback(
     (error: AppError) => {
@@ -318,71 +306,72 @@ export function useAppNotices(
       // saying the same thing about the same subject. Its own words went to
       // the main log, where a second reason is worth having.
       if (!failureEpisodes.current.begins(notice.identity)) return;
-      promote("failure");
+      // The newest failure is the newest slot, so `Cmd+Q D` reaches it.
+      if (order.current[order.current.length - 1] !== FAILURE_SLOT) {
+        order.current = [
+          ...order.current.filter((slot) => slot !== FAILURE_SLOT),
+          FAILURE_SLOT,
+        ];
+        changed();
+      }
       raiseFailureNotice(notice);
     },
-    [raiseFailureNotice, promote],
+    [raiseFailureNotice],
   );
 
   const observeCondition = useCallback(
     (source: string, summary: string | undefined) => {
+      // The source alone is the identity, because the source *is* the slot:
+      // one source holds one condition. The words used to be part of it, and
+      // a source that reworded a standing fact then read as one condition
+      // ending and another beginning, i.e. a remove and an add, i.e. a blink.
+      const identity = appConditionIdentity(source);
       if (summary === undefined) {
-        // The source retracted it. `clear` and not `dismiss`: the condition
-        // ended, so nothing about it is being kept away.
-        const retiring = held.current.condition;
-        if (retiring) {
-          reportRef.current({ identity: retiring.identity, reason: "source" });
-          conditionEpisodes.current.ended(retiring.identity);
-        }
-        // This source's own condition is over, on screen or hidden: a hidden
-        // one is not held, and its coming back is news all the same.
-        const own = appConditionIdentity(source);
-        conditionEpisodes.current.ended(own);
+        // This source retracted its own — and only its own. `clear` and not
+        // `dismiss`: it ended, so nothing about it is kept away, and its
+        // coming back is news.
+        putAwayConditions.current.delete(identity);
         setCenter((center) =>
-          noticesEnded(center, (notice) => notice.identity === own),
+          noticesEnded(center, (notice) => notice.identity === identity),
         );
-        clearCondition();
+        if (takeCondition(identity)) {
+          reportRef.current({ identity, reason: "source" });
+        }
         return;
       }
-      const identity = appConditionIdentity(source);
-      if (!conditionEpisodes.current.begins(identity)) return;
-      promote("condition");
-      raiseConditionNotice({
-        // The source alone is the identity, because the source *is* the slot:
-        // one source holds one condition. The words used to be part of it, and
-        // a source that reworded a standing fact — which is what a round that
-        // fails differently does — then read as one condition ending and
-        // another beginning, i.e. a remove and an add, i.e. a blink.
+      // Put away by the person or the clock: a repeat is not news.
+      if (putAwayConditions.current.has(identity)) return;
+      const held = conditions.current.get(identity);
+      if (held?.summary === summary) return;
+      const notice: Notice = {
         identity,
         summary,
         actions: [],
         live: "status",
-      });
+      };
+      conditions.current.set(identity, notice);
+      if (!held) order.current = [...order.current, identity];
+      changed();
+      record(notice);
     },
-    [clearCondition, raiseConditionNotice, promote],
+    [record, takeCondition],
   );
 
-  // Off the stack, by the person or by the clock. Either way the lifetime
-  // rule remembers it, so a repeat does not put it straight back.
+  // Off the stack, by the person or by the clock. Either way it is
+  // remembered, so a repeat does not put it straight back.
   const putAway = useCallback(
     (identity: string, reason: "person" | "timeout") => {
-      const matched =
-        conditionAlert?.identity === identity ||
-        failureAlert?.identity === identity;
-      if (conditionAlert?.identity === identity) dismissCondition();
-      if (failureAlert?.identity === identity) dismissFailure();
-      if (!matched) return;
-      reportRef.current({ identity, reason });
-      // Ended in the channel it was drawn in, so a dismissal of one does not
-      // let the other start over.
-      if (conditionAlert?.identity === identity) {
-        conditionEpisodes.current.ended(identity);
-      }
-      if (failureAlert?.identity === identity) {
+      const wasCondition = takeCondition(identity);
+      if (wasCondition) putAwayConditions.current.add(identity);
+      const wasFailure = heldFailure.current?.identity === identity;
+      if (wasFailure) {
+        dismissFailure();
         failureEpisodes.current.ended(identity);
       }
+      if (!wasCondition && !wasFailure) return;
+      reportRef.current({ identity, reason });
     },
-    [conditionAlert, failureAlert, dismissCondition, dismissFailure],
+    [takeCondition, dismissFailure],
   );
 
   const seen = useCallback((identity: string) => {

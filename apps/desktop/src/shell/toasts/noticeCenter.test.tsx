@@ -247,6 +247,55 @@ describe("a toast's time on screen", () => {
   });
 });
 
+describe("conditions from two sources", () => {
+  const MACHINE = "machine:ssh:build-box";
+
+  it("hide on their own clocks, each into the center", () => {
+    const page = mount();
+    page.observe("repository_status", "`gh` is not on the PATH.");
+    wait(4_000);
+    page.observe(MACHINE, "DevHub is not getting an answer.");
+    wait(4_100);
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0]).toHaveTextContent("DevHub is not getting an answer.");
+    wait(4_000);
+    expect(toasts()).toHaveLength(0);
+    expect(page.retired).toEqual([
+      { identity: "condition\u0000repository_status", reason: "timeout" },
+      { identity: `condition\u0000${MACHINE}`, reason: "timeout" },
+    ]);
+  });
+
+  it("are Ongoing and Resolved each by its own source", () => {
+    const page = mount();
+    page.observe("repository_status", "`gh` is not on the PATH.");
+    page.observe(MACHINE, "DevHub is not getting an answer.");
+    page.chord("show_notifications");
+    const states = () =>
+      entries().map((entry) =>
+        entry.textContent?.includes("Ongoing") ? "Ongoing" : "Resolved",
+      );
+    expect(states()).toEqual(["Ongoing", "Ongoing"]);
+
+    // Newest first: the machine, then the repository.
+    page.observe("repository_status");
+    expect(states()).toEqual(["Ongoing", "Resolved"]);
+    page.observe(MACHINE);
+    expect(states()).toEqual(["Resolved", "Resolved"]);
+  });
+
+  it("report a source retracting its own on-screen condition under its key", () => {
+    const page = mount();
+    page.observe("repository_status", "`gh` is not on the PATH.");
+    page.observe(MACHINE, "DevHub is not getting an answer.");
+    page.observe("repository_status");
+    expect(page.retired).toEqual([
+      { identity: "condition\u0000repository_status", reason: "source" },
+    ]);
+    expect(toasts()).toHaveLength(1);
+  });
+});
+
 describe("the notice center", () => {
   it("lists what was said newest first, and keeps one put away as read", () => {
     const page = mount();

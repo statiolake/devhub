@@ -443,8 +443,10 @@ export interface WorkspaceRepositoryWire {
  * `summary` being absent means, and it is the *only* thing that takes one off
  * screen besides the person putting it away.
  *
- * `source` is the slot: one source holds at most one condition, so a source
- * that keeps saying the same thing replaces itself in place and never blinks.
+ * `source` is the key: main keeps one entry per source
+ * (`main/shell/appConditions.ts`) and sends only a change to it, and the page
+ * draws each source's condition as its own toast — so one source retracting
+ * its own leaves every other source's standing.
  */
 export interface AppConditionWire {
 	readonly source: string;

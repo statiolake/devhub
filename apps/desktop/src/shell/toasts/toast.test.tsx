@@ -259,6 +259,45 @@ describe("a condition about the whole application", () => {
   });
 });
 
+describe("two conditions from two sources", () => {
+  afterEach(cleanup);
+
+  const MACHINE = "machine:ssh:build-box";
+  const NOT_ANSWERING = "DevHub is not getting an answer from build-box.";
+
+  it("are two toasts, and one source clearing its own leaves the other", () => {
+    const { look, observe } = mount();
+    look(1, GH_MISSING);
+    observe(MACHINE, NOT_ANSWERING);
+    expect(said()).toEqual([
+      expect.stringContaining(GH_MISSING),
+      expect.stringContaining(NOT_ANSWERING),
+    ]);
+
+    // The repository look succeeding: its own condition goes, and only that.
+    const machine = screen.getByText(NOT_ANSWERING).closest(".toast");
+    look(2);
+    expect(said()).toEqual([expect.stringContaining(NOT_ANSWERING)]);
+    expect(screen.getByText(NOT_ANSWERING).closest(".toast")).toBe(machine);
+
+    observe(MACHINE);
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("are put away one at a time", async () => {
+    const { look, observe } = mount();
+    look(1, GH_MISSING);
+    observe(MACHINE, NOT_ANSWERING);
+    await act(async () => {
+      screen.getAllByRole("button", { name: "Dismiss" })[0]?.click();
+    });
+    expect(said()).toEqual([expect.stringContaining(NOT_ANSWERING)]);
+    // The one put away stays away; the other is untouched by it.
+    look(2, GH_MISSING);
+    expect(said()).toEqual([expect.stringContaining(NOT_ANSWERING)]);
+  });
+});
+
 describe("a failure and a condition at once", () => {
   afterEach(cleanup);
 

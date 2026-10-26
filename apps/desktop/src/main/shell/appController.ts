@@ -78,7 +78,6 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type AgentActionWire,
-	type AppConditionWire,
 	type ChordHelpRowWire,
 	type NoticeSettingsWire,
 	type LayoutPreviewWire,
@@ -358,6 +357,7 @@ import {
 	editorPlaceFromWorkspaceUri,
 	type WorkspaceUriParts,
 } from "./editorPlace.js";
+import { AppConditions } from "./appConditions.js";
 import { MachineConditions } from "./machineConditions.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
@@ -3132,11 +3132,17 @@ export class AppController {
 	 * that has no model at all.
 	 */
 	private publishCondition(source: string, summary: string | undefined): void {
-		this.sendToDisplay(CHANNELS.appCondition, {
-			source,
-			...(summary === undefined ? {} : { summary }),
-		} satisfies AppConditionWire);
+		this.conditions.observe(source, summary);
 	}
+
+	/**
+	 * What holds right now, one entry per source — so a source clearing its
+	 * own condition leaves every other source's standing. See
+	 * `appConditions.ts`.
+	 */
+	private readonly conditions = new AppConditions((condition) => {
+		this.sendToDisplay(CHANNELS.appCondition, condition);
+	});
 
 	/** `general.notice_seconds`, to the page that draws the notices. */
 	private publishNoticeSettings(): void {
@@ -8693,6 +8699,7 @@ export class AppController {
 		// `noteStartupFailure`.
 		receive(CHANNELS.noticesListening, () => {
 			this.publishNoticeSettings();
+			this.conditions.replay();
 			const pending = this.startupFailures;
 			this.startupFailures = [];
 			for (const failure of pending) this.publishError(failure);
