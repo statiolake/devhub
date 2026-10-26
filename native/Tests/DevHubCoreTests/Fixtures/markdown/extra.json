@@ -1,0 +1,446 @@
+[
+{
+"markdown": "a\n| b | c |\n|---|---|\n| d | e |",
+"mdast": "(p (text \"a\")) (table \"none,none\" (tr (td (text \"b\")) (td (text \"c\"))) (tr (td (text \"d\")) (td (text \"e\"))))"
+},
+{
+"markdown": "a\nb | c\n--|--",
+"mdast": "(p (text \"a\")) (table \"none,none\" (tr (td (text \"b\")) (td (text \"c\"))))"
+},
+{
+"markdown": "para\n[^1]: x\n\n[^1]",
+"mdast": "(p (text \"para\")) (fndef \"1\" (p (text \"x\"))) (p (fnref \"1\"))"
+},
+{
+"markdown": "- a\n[^1]: x",
+"mdast": "(list bullet tight (item (p (text \"a\")))) (fndef \"1\" (p (text \"x\")))"
+},
+{
+"markdown": "x\n$$\nm\n$$",
+"mdast": "(p (text \"x\")) (math \"m\")"
+},
+{
+"markdown": "| a |\n|---|\nb\n\nc",
+"mdast": "(table \"none\" (tr (td (text \"a\"))) (tr (td (text \"b\")))) (p (text \"c\"))"
+},
+{
+"markdown": "| a | b |\n|---|\n| c |",
+"mdast": "(p (text \"| a | b |\\n|---|\\n| c |\"))"
+},
+{
+"markdown": "[^1]\n\n[^1]: a\n    b\n\n    c\nd",
+"mdast": "(p (fnref \"1\")) (fndef \"1\" (p (text \"a\\nb\")) (p (text \"c\\nd\")))"
+},
+{
+"markdown": "a $$x$$ b",
+"mdast": "(p (text \"a \") (imath \"x\") (text \" b\"))"
+},
+{
+"markdown": "a ~one~ ~~two~~ ~~~three~~~",
+"mdast": "(p (text \"a \") (del (text \"one\")) (text \" \") (del (text \"two\")) (text \" ~~~three~~~\"))"
+},
+{
+"markdown": "www.a.com/b(c) and https://x.y/z. a@b.co",
+"mdast": "(p (link \"http://www.a.com/b(c)\" \"\" (text \"www.a.com/b(c)\")) (text \" and \") (link \"https://x.y/z\" \"\" (text \"https://x.y/z\")) (text \". \") (link \"mailto:a@b.co\" \"\" (text \"a@b.co\")))"
+},
+{
+"markdown": "$$ meta\nx\n$$",
+"mdast": "(math \"x\")"
+},
+{
+"markdown": "$$x$$",
+"mdast": "(p (imath \"x\"))"
+},
+{
+"markdown": "$$ x\ny",
+"mdast": "(math \"y\")"
+},
+{
+"markdown": "  $$\n  a\n   b\n  $$",
+"mdast": "(math \"a\\n b\")"
+},
+{
+"markdown": "> $$\n> a\nb",
+"mdast": "(quote (math \"a\")) (p (text \"b\"))"
+},
+{
+"markdown": "$$\na\n$$$ x",
+"mdast": "(math \"a\\n$$$ x\")"
+},
+{
+"markdown": "$x$y",
+"mdast": "(p (imath \"x\") (text \"y\"))"
+},
+{
+"markdown": "$ x $",
+"mdast": "(p (imath \"x\"))"
+},
+{
+"markdown": "$$$x$$",
+"mdast": "(p (text \"$$$x$$\"))"
+},
+{
+"markdown": "1$x$",
+"mdast": "(p (text \"1\") (imath \"x\"))"
+},
+{
+"markdown": "a $b",
+"mdast": "(p (text \"a $b\"))"
+},
+{
+"markdown": "\\$x$",
+"mdast": "(p (text \"$x$\"))"
+},
+{
+"markdown": "~~a~",
+"mdast": "(p (text \"~~a~\"))"
+},
+{
+"markdown": "a~~b~~c",
+"mdast": "(p (text \"a\") (del (text \"b\")) (text \"c\"))"
+},
+{
+"markdown": "~a~~",
+"mdast": "(p (text \"~a~~\"))"
+},
+{
+"markdown": "***a** b*",
+"mdast": "(p (em (strong (text \"a\")) (text \" b\")))"
+},
+{
+"markdown": "<b>x</b> y",
+"mdast": "(p (html \"<b>\") (text \"x\") (html \"</b>\") (text \" y\"))"
+},
+{
+"markdown": "[a](<b c>) [d]: e",
+"mdast": "(p (link \"b c\" \"\" (text \"a\")) (text \" [d]: e\"))"
+},
+{
+"markdown": "- a\n\n- b",
+"mdast": "(list bullet loose (item (p (text \"a\"))) (item (p (text \"b\"))))"
+},
+{
+"markdown": "- a\n- b\n\n  c",
+"mdast": "(list bullet tight (item (p (text \"a\"))) (item spread (p (text \"b\")) (p (text \"c\"))))"
+},
+{
+"markdown": "- a\n  - b\n\n  c",
+"mdast": "(list bullet tight (item spread (p (text \"a\")) (list bullet tight (item (p (text \"b\")))) (p (text \"c\"))))"
+},
+{
+"markdown": "- a\n\n  b\n- c",
+"mdast": "(list bullet tight (item spread (p (text \"a\")) (p (text \"b\"))) (item (p (text \"c\"))))"
+},
+{
+"markdown": "* a\n*\n\n* c",
+"mdast": "(list bullet loose (item (p (text \"a\"))) (item ) (item (p (text \"c\"))))"
+},
+{
+"markdown": "- a\n- b\n\n- c",
+"mdast": "(list bullet loose (item (p (text \"a\"))) (item (p (text \"b\"))) (item (p (text \"c\"))))"
+},
+{
+"markdown": "1. a\n\n   b",
+"mdast": "(list ordered start=1 tight (item spread (p (text \"a\")) (p (text \"b\"))))"
+},
+{
+"markdown": "- a\n  > b\n  >\n- c",
+"mdast": "(list bullet tight (item (p (text \"a\")) (quote (p (text \"b\")))) (item (p (text \"c\"))))"
+},
+{
+"markdown": "- a\n\n\n- b",
+"mdast": "(list bullet loose (item (p (text \"a\"))) (item (p (text \"b\"))))"
+},
+{
+"markdown": "- \n  foo",
+"mdast": "(list bullet tight (item (p (text \"foo\"))))"
+},
+{
+"markdown": "- a\n  ```\n  b\n\n\n  ```\n- c",
+"mdast": "(list bullet tight (item (p (text \"a\")) (code \"\" \"\" \"b\\n\\n\")) (item (p (text \"c\"))))"
+},
+{
+"markdown": "| a |\n|---|\n- b",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (list bullet tight (item (p (text \"b\"))))"
+},
+{
+"markdown": "| a |\n|---|\n> b",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (quote (p (text \"b\")))"
+},
+{
+"markdown": "| a |\n|---|\n# b",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (h1 (text \"b\"))"
+},
+{
+"markdown": "| a |\n|---|\n    b",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (code \"\" \"\" \"b\")"
+},
+{
+"markdown": "| a |\n|---|\n<div>",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (html \"<div>\")"
+},
+{
+"markdown": "| a |\n|---|\n***",
+"mdast": "(table \"none\" (tr (td (text \"a\")))) (hr)"
+},
+{
+"markdown": "- [ ] a",
+"mdast": "(list bullet tight (item [ ] (p (text \"a\"))))"
+},
+{
+"markdown": "- [x]\n  b",
+"mdast": "(list bullet tight (item [x] (p (text \"b\"))))"
+},
+{
+"markdown": "- [ ]",
+"mdast": "(list bullet tight (item (p (text \"[ ]\"))))"
+},
+{
+"markdown": "- [x] ",
+"mdast": "(list bullet tight (item (p (text \"[x]\"))))"
+},
+{
+"markdown": "- [x]a",
+"mdast": "(list bullet tight (item (p (text \"[x]a\"))))"
+},
+{
+"markdown": "- [X] *b*",
+"mdast": "(list bullet tight (item [x] (p (em (text \"b\")))))"
+},
+{
+"markdown": "1. [x] a",
+"mdast": "(list ordered start=1 tight (item [x] (p (text \"a\"))))"
+},
+{
+"markdown": "- [ ] [x] a",
+"mdast": "(list bullet tight (item [ ] (p (text \"[x] a\"))))"
+},
+{
+"markdown": "- *[x]* a",
+"mdast": "(list bullet tight (item (p (em (text \"[x]\")) (text \" a\"))))"
+},
+{
+"markdown": "- [x]\t a",
+"mdast": "(list bullet tight (item [x] (p (text \" a\"))))"
+},
+{
+"markdown": "> [x] a",
+"mdast": "(quote (p (text \"[x] a\")))"
+},
+{
+"markdown": "- [x] \n  b",
+"mdast": "(list bullet tight (item [x] (p (text \"b\"))))"
+},
+{
+"markdown": "`a\nb`",
+"mdast": "(p (icode \"a\\nb\"))"
+},
+{
+"markdown": "a  \nb",
+"mdast": "(p (text \"a\") (br) (text \"b\"))"
+},
+{
+"markdown": "a\\\nb",
+"mdast": "(p (text \"a\") (br) (text \"b\"))"
+},
+{
+"markdown": "a \nb",
+"mdast": "(p (text \"a\\nb\"))"
+},
+{
+"markdown": "[^a b]: x\n\n[^a b]",
+"mdast": "(def \"^a b\" \"x\" \"\") (p (linkref \"^a b\" shortcut (text \"^a b\")))"
+},
+{
+"markdown": "[^ab]: x\n\nx[^ab]y [^AB]",
+"mdast": "(fndef \"ab\" (p (text \"x\"))) (p (text \"x\") (fnref \"ab\") (text \"y \") (fnref \"ab\"))"
+},
+{
+"markdown": "&amp; &#35; &#x22; &bogus; &#0;",
+"mdast": "(p (text \"& # \\\" &bogus; �\"))"
+},
+{
+"markdown": "<http://a.b/c> <a@b.c> <x:y>",
+"mdast": "(p (link \"http://a.b/c\" \"\" (text \"http://a.b/c\")) (text \" \") (link \"mailto:a@b.c\" \"\" (text \"a@b.c\")) (text \" <x:y>\"))"
+},
+{
+"markdown": "a.www.b.com x_y@a.com /a@b.com",
+"mdast": "(p (text \"a.\") (link \"http://www.b.com\" \"\" (text \"www.b.com\")) (text \" \") (link \"mailto:x_y@a.com\" \"\" (text \"x_y@a.com\")) (text \" /a@b.com\"))"
+},
+{
+"markdown": "*www.a.com*",
+"mdast": "(p (em (link \"http://www.a.com\" \"\" (text \"www.a.com\"))))"
+},
+{
+"markdown": "**a *b** c*",
+"mdast": "(p (em (em (text \"a \") (em (text \"b\"))) (text \" c\")))"
+},
+{
+"markdown": "_a_b_",
+"mdast": "(p (em (text \"a_b\")))"
+},
+{
+"markdown": "foo*bar*",
+"mdast": "(p (text \"foo\") (em (text \"bar\")))"
+},
+{
+"markdown": "[a *b](c)*",
+"mdast": "(p (link \"c\" \"\" (text \"a *b\")) (text \"*\"))"
+},
+{
+"markdown": "![a *b*](c \"t\")",
+"mdast": "(p (img \"c\" \"t\" \"a b\"))"
+},
+{
+"markdown": "[x]: y\n[a][x] [x][] [x]",
+"mdast": "(def \"x\" \"y\" \"\") (p (linkref \"x\" full (text \"a\")) (text \" \") (linkref \"x\" collapsed (text \"x\")) (text \" \") (linkref \"x\" shortcut (text \"x\")))"
+},
+{
+"markdown": "- a\n  - b\n\n- c",
+"mdast": "(list bullet loose (item (p (text \"a\")) (list bullet tight (item (p (text \"b\"))))) (item (p (text \"c\"))))"
+},
+{
+"markdown": "- a\n  - b\n\n  - c",
+"mdast": "(list bullet tight (item (p (text \"a\")) (list bullet loose (item (p (text \"b\"))) (item (p (text \"c\"))))))"
+},
+{
+"markdown": "1) a\n2) b\n3. c",
+"mdast": "(list ordered start=1 tight (item (p (text \"a\"))) (item (p (text \"b\")))) (list ordered start=3 tight (item (p (text \"c\"))))"
+},
+{
+"markdown": "## 実装の概要\n\n`src/a.ts` を変更しました。**重要**: テストは`npm test`で実行します。\n\n1. まず `foo()` を呼ぶ\n2. 次に*確認*する\n\n```ts\nconst x = 1;\n```\n",
+"mdast": "(h2 (text \"実装の概要\")) (p (icode \"src/a.ts\") (text \" を変更しました。\") (strong (text \"重要\")) (text \": テストは\") (icode \"npm test\") (text \"で実行します。\")) (list ordered start=1 tight (item (p (text \"まず \") (icode \"foo()\") (text \" を呼ぶ\"))) (item (p (text \"次に\") (em (text \"確認\")) (text \"する\")))) (code \"ts\" \"\" \"const x = 1;\")"
+},
+{
+"markdown": "Here is a table:\n\n| File | Change |\n| :--- | :---: |\n| `a.ts` | added `x` |\n| b.ts | removed ~~y~~ |\n\nDone.",
+"mdast": "(p (text \"Here is a table:\")) (table \"left,center\" (tr (td (text \"File\")) (td (text \"Change\"))) (tr (td (icode \"a.ts\")) (td (text \"added \") (icode \"x\"))) (tr (td (text \"b.ts\")) (td (text \"removed \") (del (text \"y\"))))) (p (text \"Done.\"))"
+},
+{
+"markdown": "> **Note**\n> This is a note\n\n---\n\n- [x] done\n- [ ] todo\n  - nested *item*\n\nSee https://example.com/path?q=1, or www.example.org.",
+"mdast": "(quote (p (strong (text \"Note\")) (text \"\\nThis is a note\"))) (hr) (list bullet tight (item [x] (p (text \"done\"))) (item [ ] (p (text \"todo\")) (list bullet tight (item (p (text \"nested \") (em (text \"item\"))))))) (p (text \"See \") (link \"https://example.com/path?q=1\" \"\" (text \"https://example.com/path?q=1\")) (text \", or \") (link \"http://www.example.org\" \"\" (text \"www.example.org\")) (text \".\"))"
+},
+{
+"markdown": "Footnote here[^n].\n\n[^n]: The note, with `code`.\n",
+"mdast": "(p (text \"Footnote here\") (fnref \"n\") (text \".\")) (fndef \"n\" (p (text \"The note, with \") (icode \"code\") (text \".\")))"
+},
+{
+"markdown": "Math: $E = mc^2$ and $$\\int_0^1 x\\,dx$$\n\n$$\n\\sum_{i=0}^n i\n$$\n",
+"mdast": "(p (text \"Math: \") (imath \"E = mc^2\") (text \" and \") (imath \"\\\\int_0^1 x\\\\,dx\")) (math \"\\\\sum_{i=0}^n i\")"
+},
+{
+"markdown": "Line one\\\nline two  \nline three",
+"mdast": "(p (text \"Line one\") (br) (text \"line two\") (br) (text \"line three\"))"
+},
+{
+"markdown": "*a **b** c*",
+"mdast": "(p (em (text \"a \") (strong (text \"b\")) (text \" c\")))"
+},
+{
+"markdown": "**bold**text",
+"mdast": "(p (strong (text \"bold\")) (text \"text\"))"
+},
+{
+"markdown": "__a__b",
+"mdast": "(p (text \"__a__b\"))"
+},
+{
+"markdown": "a**b**c",
+"mdast": "(p (text \"a\") (strong (text \"b\")) (text \"c\"))"
+},
+{
+"markdown": "_a*b_c*",
+"mdast": "(p (text \"_a\") (em (text \"b_c\")))"
+},
+{
+"markdown": "```\nunclosed\nfence",
+"mdast": "(code \"\" \"\" \"unclosed\\nfence\")"
+},
+{
+"markdown": "~~~py\nprint(1)\n~~~",
+"mdast": "(code \"py\" \"\" \"print(1)\")"
+},
+{
+"markdown": "    indented\n    code\n\npara",
+"mdast": "(code \"\" \"\" \"indented\\ncode\") (p (text \"para\"))"
+},
+{
+"markdown": "<!-- comment -->\ntext",
+"mdast": "(html \"<!-- comment -->\") (p (text \"text\"))"
+},
+{
+"markdown": "<details>\n<summary>x</summary>\n\nbody\n</details>",
+"mdast": "(html \"<details>\\n<summary>x</summary>\") (p (text \"body\")) (html \"</details>\")"
+},
+{
+"markdown": "Setext\n===\n\nAnother\n---",
+"mdast": "(h1 (text \"Setext\")) (h2 (text \"Another\"))"
+},
+{
+"markdown": "# Heading #\n## h2 ##  \n### h3 #not",
+"mdast": "(h1 (text \"Heading\")) (h2 (text \"h2\")) (h3 (text \"h3 #not\"))"
+},
+{
+"markdown": "[link](http://a.com \"title\") ![img](i.png)",
+"mdast": "(p (link \"http://a.com\" \"title\" (text \"link\")) (text \" \") (img \"i.png\" \"\" \"img\"))"
+},
+{
+"markdown": "[ref]\n\n[ref]: http://x.com 'T'",
+"mdast": "(p (linkref \"ref\" shortcut (text \"ref\"))) (def \"ref\" \"http://x.com\" \"T\")"
+},
+{
+"markdown": "a | b\n- | -\n1 | 2",
+"mdast": "(p (text \"a | b\")) (list bullet tight (item (p (text \"| -\\n1 | 2\"))))"
+},
+{
+"markdown": "|a|\n|:-:|\n|`|`|",
+"mdast": "(table \"center\" (tr (td (text \"a\"))) (tr (td (text \"`\")) (td (text \"`\"))))"
+},
+{
+"markdown": "| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n| 4 |",
+"mdast": "(table \"none,none\" (tr (td (text \"a\")) (td (text \"b\"))) (tr (td (text \"1\")) (td (text \"2\")) (td (text \"3\"))) (tr (td (text \"4\"))))"
+},
+{
+"markdown": "x\n\n\n\ny",
+"mdast": "(p (text \"x\")) (p (text \"y\"))"
+},
+{
+"markdown": "* * *",
+"mdast": "(hr)"
+},
+{
+"markdown": "- - -\n- a",
+"mdast": "(hr) (list bullet tight (item (p (text \"a\"))))"
+},
+{
+"markdown": "Auto <https://x.com/a_b> and https://x.com/a_b_c.",
+"mdast": "(p (text \"Auto \") (link \"https://x.com/a_b\" \"\" (text \"https://x.com/a_b\")) (text \" and \") (link \"https://x.com/a_b_c\" \"\" (text \"https://x.com/a_b_c\")) (text \".\"))"
+},
+{
+"markdown": "Email me: me+x@ex-ample.com.",
+"mdast": "(p (text \"Email me: \") (link \"mailto:me+x@ex-ample.com\" \"\" (text \"me+x@ex-ample.com\")) (text \".\"))"
+},
+{
+"markdown": "(www.a.com) [https://b.com]",
+"mdast": "(p (text \"(\") (link \"http://www.a.com\" \"\" (text \"www.a.com\")) (text \") [\") (link \"https://b.com\" \"\" (text \"https://b.com\")) (text \"]\"))"
+},
+{
+"markdown": "http://a.b/c?d=e&f=g;",
+"mdast": "(p (link \"http://a.b/c?d=e&f=g\" \"\" (text \"http://a.b/c?d=e&f=g\")) (text \";\"))"
+},
+{
+"markdown": "Mixed **太字**と*斜体*と`コード`。",
+"mdast": "(p (text \"Mixed \") (strong (text \"太字\")) (text \"と\") (em (text \"斜体\")) (text \"と\") (icode \"コード\") (text \"。\"))"
+},
+{
+"markdown": "「括弧」の**強調**です。",
+"mdast": "(p (text \"「括弧」の\") (strong (text \"強調\")) (text \"です。\"))"
+},
+{
+"markdown": "**「強調」**です",
+"mdast": "(p (text \"**「強調」**です\"))"
+},
+{
+"markdown": "a\n\n- b\n  c\n- d\n\n  e",
+"mdast": "(p (text \"a\")) (list bullet tight (item (p (text \"b\\nc\"))) (item spread (p (text \"d\")) (p (text \"e\"))))"
+}
+]
