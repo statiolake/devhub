@@ -91,6 +91,9 @@ final class FakeAgents: AgentPort, @unchecked Sendable {
     func confirmInjection(_ agentId: AgentId, injectionId: String, text: String) throws -> Bool { true }
     func cancelInjection(_ agentId: AgentId, injectionId: String) -> Bool { true }
     func conversation(_ agentId: AgentId) async throws -> (any TellConversation)? { nil }
+    var guiSession: String? = "gui-session"
+    func conversationSession(_ agentId: AgentId) async throws -> String? { guiSession }
+    func terminalSession(_ agentId: AgentId) async throws -> String { "terminal-session" }
 }
 
 final class FakeTerminals: TerminalPort, @unchecked Sendable {

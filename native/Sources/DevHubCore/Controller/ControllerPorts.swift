@@ -37,6 +37,22 @@ public protocol AgentPort: Sendable {
     func cancelInjection(_ agentId: AgentId, injectionId: String) -> Bool
     /// A GUI Agent's conversation as `devhub --tell` reaches into it.
     func conversation(_ agentId: AgentId) async throws -> (any TellConversation)?
+    /// The session a GUI Agent's CLI named, for its terminal mode to resume;
+    /// nil while it has named none.
+    func conversationSession(_ agentId: AgentId) async throws -> String?
+    /// The session a terminal Claude or Codex Agent's CLI is in, for a GUI
+    /// Agent to go on with. Refused, saying why, when it cannot be told.
+    func terminalSession(_ agentId: AgentId) async throws -> String
+}
+
+extension AgentPort {
+    public func conversationSession(_ agentId: AgentId) async throws -> String? {
+        throw ControlRefusal("This DevHub has no conversation runtime.")
+    }
+
+    public func terminalSession(_ agentId: AgentId) async throws -> String {
+        throw ControlRefusal("This DevHub cannot tell which session a terminal Agent is in.")
+    }
 }
 
 /// A Workspace as the terminal runtime is asked about it.

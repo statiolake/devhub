@@ -13,10 +13,69 @@ import Foundation
 public final class ControllerModelMirror: TerminalAgentModel, @unchecked Sendable {
     private let lock = NSLock()
     private var snapshot: AppSnapshot?
+    private var launching: [String] = []
+    private var launchingTerminalIds: Set<String> = []
+    private var remembered: [String] = []
 
     public init() {}
 
-    func update(_ snapshot: AppSnapshot) { lock.withLock { self.snapshot = snapshot } }
+    func snapshotNow() -> AppSnapshot? { lock.withLock { snapshot } }
+
+    func setLaunchingTerminals(_ terminals: Set<String>) { lock.withLock { launchingTerminalIds = terminals } }
+
+    func setSessionMachines(_ machines: [String]) { lock.withLock { remembered = machines } }
+
+    /// The persisted `session_machines`, as last saved.
+    public func sessionMachines() -> [String] { lock.withLock { remembered } }
+
+    /// Every machine a Workspace is on right now, this one always among them.
+    public func workspaceMachines() -> [RuntimeId] {
+        lock.withLock {
+            var machines: [RuntimeId] = [.local]
+            for workspace in snapshot?.workspaces ?? [] {
+                if let machine = try? RuntimeId.parse(workspace.location.runtimeId), !machines.contains(machine) {
+                    machines.append(machine)
+                }
+            }
+            return machines
+        }
+    }
+
+    func update(_ snapshot: AppSnapshot, launching: [String] = []) {
+        lock.withLock {
+            self.snapshot = snapshot
+            self.launching = launching
+        }
+    }
+
+    /// Every Agent the model has, and those being launched (which have their
+    /// session, and a GUI Agent its host files, before they have a row): what
+    /// a record or a session is accounted for by.
+    public func agentIds() -> Set<String> {
+        lock.withLock {
+            var ids = Set(launching)
+            for workspace in snapshot?.workspaces ?? [] { for agent in workspace.agents { ids.insert(agent.id.rawValue) } }
+            return ids
+        }
+    }
+
+    /// What a session sweep finds accounted for (`accounted` in
+    /// `startRuntimes`): the Workspaces, the Agents — those being launched
+    /// too — and the Agents' terminals, those being opened too (whose
+    /// session exists before the model knows of them).
+    public func sweepAccounting() -> SweepAccounting {
+        lock.withLock {
+            var accounting = SweepAccounting(agents: Set(launching), terminals: launchingTerminalIds)
+            for workspace in snapshot?.workspaces ?? [] {
+                accounting.workspaces.insert(workspace.id.rawValue)
+                for agent in workspace.agents {
+                    accounting.agents.insert(agent.id.rawValue)
+                    if let terminal = agent.terminal { accounting.terminals.insert(terminal.terminalId) }
+                }
+            }
+            return accounting
+        }
+    }
 
     public func workspaces() -> [TerminalAgentWorkspace] {
         guard let snapshot = lock.withLock({ snapshot }) else { return [] }
@@ -53,6 +112,8 @@ public protocol GuiAgentControl: Sendable {
     func launch(workspaceId: WorkspaceId, agentId: AgentId, profile: AgentProfile, root: String) async -> AgentLaunchResult
     func restart(_ agentId: AgentId) async throws
     func conversation(_ agentId: AgentId) async throws -> (any TellConversation)?
+    /// The session a GUI Agent's CLI named; nil while it has named none.
+    func session(_ agentId: String) async throws -> String?
 }
 
 /// `AgentPort` on WP3's `TerminalAgentWiring`, with the GUI half from
@@ -112,6 +173,7 @@ public struct TerminalAgentPort: AgentPort {
                     status: AgentStatus(observation.status),
                     runtimeHealth: AgentRuntimeHealth(rawValue: observation.runtimeHealth) ?? .unavailable,
                     activity: observation.activity,
+                    promptCache: observation.promptCache,
                     injection: observation.injection,
                     failure: observation.failure.map { AgentFailure(code: Self.code($0.code), detail: $0.detail) }
                 )
@@ -138,6 +200,15 @@ public struct TerminalAgentPort: AgentPort {
 
     public func conversation(_ agentId: AgentId) async throws -> (any TellConversation)? {
         try await gui?.conversation(agentId)
+    }
+
+    public func conversationSession(_ agentId: AgentId) async throws -> String? {
+        guard let gui else { throw ControlRefusal("This DevHub has no conversation runtime.") }
+        return try await gui.session(agentId.rawValue)
+    }
+
+    public func terminalSession(_ agentId: AgentId) async throws -> String {
+        try await wiring.terminalSession(agentId.rawValue)
     }
 }
 

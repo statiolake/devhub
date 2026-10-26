@@ -354,6 +354,15 @@ public func errorWire(_ error: Error) -> AppError {
     // are the ones to show.
     // WP1's refusal of an agent action that comes to nothing, under its title.
     if let empty = error as? AgentActionEmpty { return AppError.at(.agentActionEmpty).withDetail(empty.reason) }
+    // WP5's conversation failures and WP3's session lookup are the
+    // TypeScript app's `ConversationFailure`s: a code of their own, and the
+    // raiser's sentence as the detail.
+    if let conversation = error as? ConversationError, let code = AppErrorCode(rawValue: conversation.code) {
+        return AppError.at(code).withDetail(conversation.reason)
+    }
+    if let lookup = error as? TerminalAgentSessionLookupError, let code = AppErrorCode(rawValue: lookup.code) {
+        return AppError.at(code).withDetail(lookup.description)
+    }
     if let coded = error as? CodedFailure {
         var wire = AppError.at(AppErrorCode(rawValue: coded.code) ?? .nativeUnavailable)
         wire.summary = coded.summary

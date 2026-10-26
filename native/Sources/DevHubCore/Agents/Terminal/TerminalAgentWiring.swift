@@ -77,11 +77,14 @@ public protocol GuiAgentRounds: Sendable {
 public struct TerminalAgentReading: Sendable, Equatable {
     public var status: TerminalAgentStatus
     public var activity: String?
+    /// A GUI Claude Agent's prompt cache, as its conversation last reported it.
+    public var promptCache: PromptCache?
     /// An `AgentFailureCode` and its sentence, when the Agent has failed.
     public var failure: AgentRefusal?
-    public init(status: TerminalAgentStatus, activity: String?, failure: AgentRefusal? = nil) {
+    public init(status: TerminalAgentStatus, activity: String?, promptCache: PromptCache? = nil, failure: AgentRefusal? = nil) {
         self.status = status
         self.activity = activity
+        self.promptCache = promptCache
         self.failure = failure
     }
 }
@@ -103,6 +106,8 @@ public struct TerminalAgentObservation: Sendable, Equatable {
     /// `healthy` or `unavailable` (`RuntimeHealth`).
     public var runtimeHealth: String
     public var activity: String?
+    /// A GUI Claude Agent's prompt cache, as its conversation last reported it.
+    public var promptCache: PromptCache?
     public var injection: AgentInjection
     public var failure: AgentRefusal?
 }
@@ -147,8 +152,11 @@ public final class TerminalAgentWiring: @unchecked Sendable {
     /// Agent behind it in the batch its screen.
     private var lastMarkers: [String: String?] = [:]
 
+    /// `sessions`: the one `AgentSessions` the GUI half launches through too,
+    /// so a GUI Agent being launched is not taken for one that ended.
     public init(
         runtimeFor: @escaping @Sendable (RuntimeId) async throws -> TmuxTerminalRuntime,
+        sessions: AgentSessions? = nil,
         model: any TerminalAgentModel,
         machineRuntime: @escaping @Sendable (RuntimeId) throws -> any MachineRuntime = { try MachineRuntimes.runtime(for: $0) },
         gui: (any GuiAgentRounds)? = nil,
@@ -156,7 +164,7 @@ public final class TerminalAgentWiring: @unchecked Sendable {
         freshnessClock: AgentScreenFreshness.Clock? = nil,
         log: (@Sendable (String) -> Void)? = nil
     ) {
-        sessions = AgentSessions(runtimeFor: runtimeFor)
+        self.sessions = sessions ?? AgentSessions(runtimeFor: runtimeFor)
         self.model = model
         self.machineRuntime = machineRuntime
         self.gui = gui
@@ -300,6 +308,7 @@ public final class TerminalAgentWiring: @unchecked Sendable {
                 status: reading.status,
                 runtimeHealth: health,
                 activity: reading.activity,
+                promptCache: reading.promptCache,
                 injection: injections.state(agent.id, status: reading.status),
                 failure: reading.failure
             ))

@@ -37,6 +37,14 @@ public struct AppControllerOptions: Sendable {
     public var controlExtras: ControlExtras
     /// The Issue flow, for `devhub --tell issue assign`.
     public var issueAssigner: (any IssueAssigner)?
+    /// The GUI Agents' conversations (`wireAgents`' GUI half), when there is
+    /// a conversation runtime.
+    public var guiAgents: GuiAgentWiring?
+    /// The GUI Agents' drafts and usage-limit records beside `state.json`.
+    public var agentRecords: GuiAgentRecords?
+    /// The model as WP3's rounds read it; made before the controller when
+    /// the Agent ports built before it need to read it.
+    public var mirror: ControllerModelMirror
     /// The login environment's PATH, which every profile lookup searches.
     public var launchPath: String
     /// Why the login environment could not be imported, when it could not.
@@ -57,7 +65,9 @@ public struct AppControllerOptions: Sendable {
         terminals: (any TerminalPort)? = nil, repositories: (any RepositoryPort)? = nil,
         machines: any MachinePort = RuntimeMachines(), shell: any AppShell = HeadlessShell(),
         neovims: ManagedNeovims? = nil, controlExtras: ControlExtras = ControlExtras(),
-        issueAssigner: (any IssueAssigner)? = nil, launchPath: String = ProcessInfo.processInfo.environment["PATH"] ?? "",
+        issueAssigner: (any IssueAssigner)? = nil, guiAgents: GuiAgentWiring? = nil, agentRecords: GuiAgentRecords? = nil,
+        mirror: ControllerModelMirror = ControllerModelMirror(),
+        launchPath: String = ProcessInfo.processInfo.environment["PATH"] ?? "",
         loginFailure: String? = nil, version: String = DevHubVersion.marketing,
         operationTimeoutMs: Int = CloseDeadline.budgetMs + 20_000,
         crash: @escaping @Sendable (Error) -> Void = { preconditionFailure(String(describing: $0)) },
@@ -75,6 +85,9 @@ public struct AppControllerOptions: Sendable {
         self.neovims = neovims
         self.controlExtras = controlExtras
         self.issueAssigner = issueAssigner
+        self.guiAgents = guiAgents
+        self.agentRecords = agentRecords
+        self.mirror = mirror
         self.launchPath = launchPath
         self.loginFailure = loginFailure
         self.version = version
@@ -127,6 +140,8 @@ public actor AppController {
     let neovims: ManagedNeovims?
     let controlExtras: ControlExtras
     let issueAssigner: (any IssueAssigner)?
+    public nonisolated let guiAgents: GuiAgentWiring?
+    let agentRecords: GuiAgentRecords?
     let launchPath: String
     let loginFailure: String?
     let version: String
@@ -136,7 +151,7 @@ public actor AppController {
     let now: @Sendable () -> Double
     let repositoryFacts: RepositoryFactsBox
     /// The model as WP3's rounds read it (`TerminalAgentModel`).
-    public nonisolated let mirror = ControllerModelMirror()
+    public nonisolated let mirror: ControllerModelMirror
     let machineConditions: MachineConditions
     /// Each machine's pane activity, across rounds.
     var paneTrackers: [String: PaneActivityTracker] = [:]
@@ -149,7 +164,9 @@ public actor AppController {
     /// Each machine's home, learned as it answers; this Mac's is known.
     var homes: [String: String] = ["local": NSHomeDirectory()]
     /// Agent terminals being started, which a tmux reading must not judge.
-    var launchingTerminals: Set<String> = []
+    var launchingTerminals: Set<String> = [] {
+        didSet { mirror.setLaunchingTerminals(launchingTerminals) }
+    }
     /// Failures from before there was a window, kept until there is one.
     private var startupFailures: [AppError] = []
     private var shellOpen = false
@@ -182,6 +199,9 @@ public actor AppController {
         neovims = options.neovims
         controlExtras = options.controlExtras
         issueAssigner = options.issueAssigner
+        guiAgents = options.guiAgents
+        agentRecords = options.agentRecords
+        mirror = options.mirror
         launchPath = options.launchPath
         loginFailure = options.loginFailure
         version = options.version
@@ -210,7 +230,8 @@ public actor AppController {
         machineConditions = MachineConditions(publish: { source, summary, reason in
             continuation.yield(.condition(source: source, summary: summary, reason: reason))
         })
-        mirror.update(coordinator.snapshot())
+        mirror.update(coordinator.snapshot(), launching: coordinator.launchingAgents().map(\.rawValue))
+        mirror.setSessionMachines(options.state.sessionMachines)
     }
 
     deinit {
@@ -339,6 +360,9 @@ public actor AppController {
     /// `adoptConfig`: settings accepted while running.
     public func adoptConfig(_ config: Config) {
         self.config = config
+        // `[agents] auto_compact_*` is read when a conversation changes; an
+        // idle one would not notice the setting turned on until too late.
+        if let guiAgents { Task { await guiAgents.reconsiderCacheKeeping() } }
     }
 
     /// `learnHome`: a machine said where its home is.
@@ -349,7 +373,10 @@ public actor AppController {
     }
 
     func publishSnapshot() {
-        mirror.update(coordinator.snapshot())
+        mirror.update(coordinator.snapshot(), launching: coordinator.launchingAgents().map(\.rawValue))
+        // A draft lives as long as its Agent: one that has just gone takes
+        // its draft with it. `prune` compares before it writes.
+        agentRecords?.prune(log)
         runAutomaticActions()
         do {
             outbox.yield(.snapshot(try snapshotWire()))
@@ -595,6 +622,7 @@ public actor AppController {
         var remembered = state.sessionMachines
         for machine in workspaceMachines() where !remembered.contains(machine) { remembered.append(machine) }
         state.sessionMachines = remembered
+        mirror.setSessionMachines(remembered)
         try await stateStore.saveState(state)
     }
 
